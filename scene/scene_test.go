@@ -10,6 +10,24 @@ import (
 	"github.com/odvcencio/gosx/engine"
 )
 
+func TestSceneIRSchemaIsOptionalButPreserved(t *testing.T) {
+	payload, err := json.Marshal(SceneIR{
+		Schema:  SceneIRSchema,
+		Objects: []ObjectIR{{ID: "box", Kind: "box"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"schema":"gosx.scene3d.ir.v1"`) {
+		t.Fatalf("schema was not preserved in SceneIR JSON: %s", payload)
+	}
+
+	legacy := SceneIR{Schema: SceneIRSchema}.legacyProps()
+	if legacy["schema"] != SceneIRSchema {
+		t.Fatalf("legacy schema = %#v", legacy["schema"])
+	}
+}
+
 func TestPropsLegacyPropsLowerNestedGraph(t *testing.T) {
 	props := Props{
 		Width:      920,
@@ -1675,20 +1693,22 @@ func TestPropsSceneIRLowersPointsNode(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
 			Points{
-				ID:          "stars",
-				Count:       3,
-				Positions:   []Vector3{Vec3(1, 2, 3), Vec3(4, 5, 6), Vec3(7, 8, 9)},
-				Sizes:       []float64{2.0, 3.0, 4.0},
-				Colors:      []string{"#ff0000", "#00ff00", "#0000ff"},
-				Color:       "#ffffff",
-				Style:       PointStyleFocus,
-				Size:        5.0,
-				Opacity:     0.8,
-				BlendMode:   BlendAdditive,
-				DepthWrite:  false,
-				Attenuation: true,
-				Position:    Vec3(10, 20, 30),
-				Spin:        Rotate(0.1, 0.2, 0.3),
+				ID:           "stars",
+				Count:        3,
+				Positions:    []Vector3{Vec3(1, 2, 3), Vec3(4, 5, 6), Vec3(7, 8, 9)},
+				Sizes:        []float64{2.0, 3.0, 4.0},
+				Colors:       []string{"#ff0000", "#00ff00", "#0000ff"},
+				Color:        "#ffffff",
+				Style:        PointStyleFocus,
+				Size:         5.0,
+				MinPixelSize: 1.75,
+				MaxPixelSize: 9.5,
+				Opacity:      0.8,
+				BlendMode:    BlendAdditive,
+				DepthWrite:   false,
+				Attenuation:  true,
+				Position:     Vec3(10, 20, 30),
+				Spin:         Rotate(0.1, 0.2, 0.3),
 			},
 		),
 	}
@@ -1725,6 +1745,12 @@ func TestPropsSceneIRLowersPointsNode(t *testing.T) {
 	}
 	if pts.Size != 5.0 {
 		t.Fatalf("expected uniform size 5.0, got %v", pts.Size)
+	}
+	if pts.MinPixelSize != 1.75 {
+		t.Fatalf("expected min pixel size 1.75, got %v", pts.MinPixelSize)
+	}
+	if pts.MaxPixelSize != 9.5 {
+		t.Fatalf("expected max pixel size 9.5, got %v", pts.MaxPixelSize)
 	}
 	if pts.Opacity != 0.8 {
 		t.Fatalf("expected opacity 0.8, got %v", pts.Opacity)
@@ -1766,6 +1792,12 @@ func TestPropsSceneIRLowersPointsNode(t *testing.T) {
 	}
 	if got := pointsList[0]["style"]; got != "focus" {
 		t.Fatalf("expected style focus in legacy props, got %#v", got)
+	}
+	if got := pointsList[0]["maxPixelSize"]; got != 9.5 {
+		t.Fatalf("expected maxPixelSize 9.5 in legacy props, got %#v", got)
+	}
+	if got := pointsList[0]["minPixelSize"]; got != 1.75 {
+		t.Fatalf("expected minPixelSize 1.75 in legacy props, got %#v", got)
 	}
 }
 
@@ -1860,6 +1892,113 @@ func TestPropsSceneIRLowersDepthWriteOnMesh(t *testing.T) {
 	}
 	if _, exists := objects[1]["depthWrite"]; exists {
 		t.Fatalf("did not expect depthWrite key on default object, got %#v", objects[1]["depthWrite"])
+	}
+}
+
+func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID:       "hero",
+				Geometry: BoxGeometry{Width: 1.4, Height: 1.1, Depth: 0.9},
+				Material: FlatMaterial{Color: "#8de1ff"},
+				Position: Vec3(1.2, 0.4, -0.2),
+			},
+			HTML{
+				ID:            "inspect-card",
+				Target:        "hero",
+				Markup:        `<button>Inspect</button>`,
+				ClassName:     "scene-card",
+				Position:      Vec3(0, 1.05, 0.2),
+				Width:         220,
+				Height:        88,
+				Priority:      5,
+				AnchorX:       0.5,
+				AnchorY:       1,
+				Occlude:       true,
+				PointerEvents: "auto",
+			},
+			HTMLSurface{
+				ID:     "panel",
+				Target: "hero",
+				Markup: `<div>Panel</div>`,
+				Width:  512,
+				Height: 320,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.HTML) != 2 {
+		t.Fatalf("expected two lowered html entries, got %#v", ir.HTML)
+	}
+	card := ir.HTML[0]
+	if card.ID != "inspect-card" || card.HTML != `<button>Inspect</button>` {
+		t.Fatalf("expected html overlay content, got %#v", card)
+	}
+	if card.Target != "hero" {
+		t.Fatalf("expected html target preservation, got %#v", card.Target)
+	}
+	if math.Abs(card.X-1.2) > 1e-9 || math.Abs(card.Y-1.45) > 1e-9 {
+		t.Fatalf("expected targeted html position near hero, got (%#v,%#v)", card.X, card.Y)
+	}
+	if card.PointerEvents != "auto" || !card.Occlude {
+		t.Fatalf("expected html interaction fields, got %#v", card)
+	}
+	if ir.HTML[1].Mode != string(HTMLTexture) {
+		t.Fatalf("expected html surface texture mode marker, got %#v", ir.HTML[1].Mode)
+	}
+	if ir.HTML[1].Target != "hero" || ir.HTML[1].Fallback != "dom-overlay" || ir.HTML[1].FallbackReason == "" {
+		t.Fatalf("expected html surface target and fallback metadata, got %#v", ir.HTML[1])
+	}
+	if ir.HTML[1].TextureWidth != 512 || ir.HTML[1].TextureHeight != 320 {
+		t.Fatalf("expected html surface texture dimensions, got %#v", ir.HTML[1])
+	}
+	if math.Abs(ir.HTML[1].Width-1.8) > 1e-9 || math.Abs(ir.HTML[1].Height-1.125) > 1e-9 {
+		t.Fatalf("expected html surface fallback world size, got (%#v,%#v)", ir.HTML[1].Width, ir.HTML[1].Height)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	html, ok := sceneValue["html"].([]map[string]any)
+	if !ok || len(html) != 2 {
+		t.Fatalf("expected two lowered html records, got %#v", sceneValue["html"])
+	}
+	if got := html[0]["pointerEvents"]; got != "auto" {
+		t.Fatalf("expected pointerEvents in legacy props, got %#v", got)
+	}
+	if got := html[0]["target"]; got != "hero" {
+		t.Fatalf("expected target in legacy props, got %#v", got)
+	}
+	if got := html[1]["mode"]; got != string(HTMLTexture) {
+		t.Fatalf("expected texture mode in legacy props, got %#v", got)
+	}
+	if got := html[1]["fallback"]; got != "dom-overlay" {
+		t.Fatalf("expected html surface fallback metadata in legacy props, got %#v", got)
+	}
+	if got := html[1]["textureWidth"]; got != 512 {
+		t.Fatalf("expected html surface texture width in legacy props, got %#v", got)
+	}
+
+	canonical := props.CanonicalIR()
+	var htmlNodes int
+	for _, node := range canonical.Nodes {
+		if node.Kind != "html" || node.HTML == nil {
+			continue
+		}
+		htmlNodes++
+		if node.ID == "inspect-card" && node.HTML.Target != "hero" {
+			t.Fatalf("expected canonical html target preservation, got %#v", node.HTML)
+		}
+		if node.ID == "panel" && (node.HTML.Target != "hero" || node.HTML.Fallback != "dom-overlay" || node.HTML.TextureWidth != 512) {
+			t.Fatalf("expected canonical html surface fallback metadata, got %#v", node.HTML)
+		}
+	}
+	if htmlNodes != 2 {
+		t.Fatalf("expected two canonical html nodes, got %#v", canonical.Nodes)
 	}
 }
 
@@ -1978,6 +2117,67 @@ func TestPropsSceneIRLowersInstancedMesh(t *testing.T) {
 	}
 	if got := instancedMeshes[0]["attributes"]; got == nil {
 		t.Fatalf("expected attributes in legacy props, got %#v", instancedMeshes[0])
+	}
+}
+
+func TestPropsSceneIRLowersInstancedMeshPrimitiveParameters(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			InstancedMesh{
+				ID:       "columns",
+				Count:    1,
+				Geometry: CylinderGeometry{RadiusTop: 0.4, RadiusBottom: 0.8, Height: 3, Segments: 24},
+				Positions: []Vector3{
+					Vec3(0, 0, 0),
+				},
+			},
+			InstancedMesh{
+				ID:       "rings",
+				Count:    1,
+				Geometry: TorusGeometry{Radius: 1.25, Tube: 0.18, RadialSegments: 40, TubularSegments: 12},
+				Positions: []Vector3{
+					Vec3(2, 0, 0),
+				},
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.InstancedMeshes) != 2 {
+		t.Fatalf("expected two instanced meshes, got %d", len(ir.InstancedMeshes))
+	}
+	cyl := ir.InstancedMeshes[0]
+	if cyl.Kind != "cylinder" {
+		t.Fatalf("expected cylinder kind, got %q", cyl.Kind)
+	}
+	if cyl.RadiusTop != 0.4 || cyl.RadiusBottom != 0.8 || cyl.Height != 3 || cyl.Segments != 24 {
+		t.Fatalf("cylinder parameters were not preserved: %#v", cyl)
+	}
+	tor := ir.InstancedMeshes[1]
+	if tor.Kind != "torus" {
+		t.Fatalf("expected torus kind, got %q", tor.Kind)
+	}
+	if tor.Radius != 1.25 || tor.Tube != 0.18 || tor.RadialSegments != 40 || tor.TubularSegments != 12 {
+		t.Fatalf("torus parameters were not preserved: %#v", tor)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	instancedMeshes, ok := sceneValue["instancedMeshes"].([]map[string]any)
+	if !ok || len(instancedMeshes) != 2 {
+		t.Fatalf("expected two instanced mesh records, got %#v", sceneValue["instancedMeshes"])
+	}
+	if got := instancedMeshes[0]["radiusTop"]; got != 0.4 {
+		t.Fatalf("expected radiusTop in legacy props, got %#v", got)
+	}
+	if got := instancedMeshes[1]["tube"]; got != 0.18 {
+		t.Fatalf("expected tube in legacy props, got %#v", got)
+	}
+	if got := instancedMeshes[1]["radialSegments"]; got != 40 {
+		t.Fatalf("expected radialSegments in legacy props, got %#v", got)
 	}
 }
 
@@ -2398,6 +2598,21 @@ func TestShadowMaxPixelsConstants(t *testing.T) {
 	}
 	if ShadowMaxPixelsUnbounded != 1073741824 {
 		t.Errorf("ShadowMaxPixelsUnbounded = %d, want 1073741824", ShadowMaxPixelsUnbounded)
+	}
+}
+
+func TestHTMLTextureMaxPixelsConstants(t *testing.T) {
+	if HTMLTextureMaxPixels512 != 262144 {
+		t.Errorf("HTMLTextureMaxPixels512 = %d, want 262144", HTMLTextureMaxPixels512)
+	}
+	if HTMLTextureMaxPixels1024 != 1048576 {
+		t.Errorf("HTMLTextureMaxPixels1024 = %d, want 1048576", HTMLTextureMaxPixels1024)
+	}
+	if HTMLTextureMaxPixels2048 != 4194304 {
+		t.Errorf("HTMLTextureMaxPixels2048 = %d, want 4194304", HTMLTextureMaxPixels2048)
+	}
+	if HTMLTextureMaxPixelsUnbounded != 1073741824 {
+		t.Errorf("HTMLTextureMaxPixelsUnbounded = %d, want 1073741824", HTMLTextureMaxPixelsUnbounded)
 	}
 }
 

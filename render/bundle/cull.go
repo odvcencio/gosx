@@ -25,16 +25,22 @@ struct CullUniforms {
   _pad0     : vec2<f32>,
 };
 
+struct InstanceRecord {
+  model    : mat4x4<f32>,
+  pickData : vec4<u32>,
+};
+
 @group(0) @binding(0) var<uniform> cull      : CullUniforms;
-@group(0) @binding(1) var<storage, read>         input : array<mat4x4<f32>>;
-@group(0) @binding(2) var<storage, read_write>   output : array<mat4x4<f32>>;
+@group(0) @binding(1) var<storage, read>         input : array<InstanceRecord>;
+@group(0) @binding(2) var<storage, read_write>   output : array<InstanceRecord>;
 @group(0) @binding(3) var<storage, read_write>   drawArgs : array<atomic<u32>, 4>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
   if (i >= arrayLength(&input)) { return; }
-  let m = input[i];
+  let record = input[i];
+  let m = record.model;
   // Translation column of a column-major mat4 lives at m[3].xyz.
   let center = m[3].xyz;
   var inside = true;
@@ -48,10 +54,12 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   }
   if (inside) {
     let slot = atomicAdd(&drawArgs[1], 1u);
-    output[slot] = m;
+    output[slot] = record;
   }
 }
 `
+
+const instanceRecordStride = 80
 
 // cullResources are the per-InstancedMesh GPU resources for culling: input
 // storage, output storage (bound as vertex for the main pass), and the
@@ -79,7 +87,7 @@ func (r *Renderer) ensureCullResources(key string, instanceCount int) (*cullReso
 		destroyCullResources(res)
 	}
 
-	bufBytes := newCap * 64 // mat4 per instance
+	bufBytes := newCap * instanceRecordStride // mat4 + pick metadata per instance
 
 	inputBuf, err := r.device.CreateBuffer(gpu.BufferDesc{
 		Size:  bufBytes,

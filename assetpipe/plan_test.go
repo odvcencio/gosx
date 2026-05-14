@@ -53,6 +53,9 @@ func TestPlanSceneAssetOptimizationSurface(t *testing.T) {
 	if report.Totals.Variants == 0 {
 		t.Fatalf("expected planned variants in totals: %+v", report.Totals)
 	}
+	if report.Budget.ExpectedGPUBytes == 0 || report.Totals.ExpectedGPUBytes != report.Budget.ExpectedGPUBytes {
+		t.Fatalf("expected GPU budget totals, budget=%+v totals=%+v", report.Budget, report.Totals)
+	}
 
 	hero := findAsset(t, report, "public/models/hero.glb")
 	if hero.GLTF == nil || hero.GLTF.Primitives != 1 || hero.GLTF.Images != 1 || hero.GLTF.Animations != 1 || hero.GLTF.Skins != 1 {
@@ -75,13 +78,25 @@ func TestPlanSceneAssetOptimizationSurface(t *testing.T) {
 	assertAction(t, ktx, "webgpu-upload-ready", "ready")
 
 	env := findAsset(t, report, "public/env/studio.hdr")
+	if env.Environment == nil || env.Environment.PlanKind != "ggx-prefiltered-cubemap" || env.Environment.TargetCubeSize == 0 || env.Environment.EstimatedGeneratedBytes == 0 {
+		t.Fatalf("unexpected environment probe: %+v", env.Environment)
+	}
 	assertAction(t, env, "prefilter-ibl-ggx", "candidate")
 	assertAction(t, env, "generate-split-sum-lut", "candidate")
 	assertVariant(t, env, "public/env/studio.ibl.ktx2", "ktx2")
 
 	audio := findAsset(t, report, "public/audio/hit.ogg")
+	if audio.Media == nil || audio.Media.Kind != "audio" || !audio.Media.Streamable {
+		t.Fatalf("unexpected audio metadata: %+v", audio.Media)
+	}
 	assertAction(t, audio, "positional-audio-node", "planned")
 	assertVariant(t, audio, "public/audio/hit.opus", "opus")
+
+	shader := findAsset(t, report, "public/shaders/spark.wgsl")
+	if shader.Shader == nil || len(shader.Shader.EntryPoints) != 1 || shader.Shader.EntryPoints[0].Stage != "compute" || !shader.Shader.HasWorkgroupSize {
+		t.Fatalf("unexpected shader probe: %+v", shader.Shader)
+	}
+	assertAction(t, shader, "shader-entrypoint-inventory", "ready")
 }
 
 func TestPlanLargeGLTFUsesFallbackWithoutReadingWholeFile(t *testing.T) {
@@ -112,6 +127,96 @@ func TestPlanLargeGLTFUsesFallbackWithoutReadingWholeFile(t *testing.T) {
 	}
 	assertAction(t, asset, "inspect-gltf", "planned")
 	assertAction(t, asset, "turboquant-streams", "candidate")
+}
+
+func TestPlanHTMLTextureManifest(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteBytes(t, filepath.Join(dir, "public", "ui", "hud.html-textures.json"), []byte(`{
+		"surfaces": [
+			{
+				"id": "hud-panel",
+				"textureWidth": 512,
+				"textureHeight": 256,
+				"maxTexturePixels": 262144,
+				"dirtyRegions": [{"x": 0, "y": 0, "width": 128, "height": 64}],
+				"accessibilityFallback": {"role": "region"}
+			},
+			{
+				"id": "readout",
+				"width": 128,
+				"height": 64,
+				"fallback": {"mode": "dom"}
+			}
+		]
+	}`))
+
+	report, err := Plan([]string{dir}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Assets != 1 || report.Totals.HTMLTextureManifest != 1 {
+		t.Fatalf("unexpected totals: %+v", report.Totals)
+	}
+	asset := findAsset(t, report, "public/ui/hud.html-textures.json")
+	if asset.Kind != "html-texture-manifest" || asset.HTML == nil {
+		t.Fatalf("unexpected html texture manifest asset: %+v", asset)
+	}
+	if asset.HTML.Surfaces != 2 || asset.HTML.TexturePixels != 139264 || asset.HTML.TextureBytes != 557056 {
+		t.Fatalf("unexpected html texture manifest probe: %+v", asset.HTML)
+	}
+	if asset.HTML.MaxTexturePixels != 262144 || asset.HTML.DirtyRegionEntries != 1 || asset.HTML.AccessibilityFallbacks != 2 {
+		t.Fatalf("unexpected html texture manifest metadata: %+v", asset.HTML)
+	}
+	assertAction(t, asset, "measure-html-textures", "planned")
+	assertAction(t, asset, "enforce-html-texture-budgets", "planned")
+	assertAction(t, asset, "dirty-region-upload-plan", "candidate")
+	assertAction(t, asset, "accessibility-mirror-dom", "planned")
+	assertActionTargetContains(t, asset, "enforce-html-texture-budgets", "557056 bytes")
+}
+
+func TestPlanMediaBuffersAndBasisInventory(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteBytes(t, filepath.Join(dir, "public", "video", "demo.mp4"), []byte("mp4"))
+	mustWriteBytes(t, filepath.Join(dir, "public", "models", "scene.bin"), []byte("bin"))
+	mustWriteBytes(t, filepath.Join(dir, "public", "textures", "albedo.basis"), []byte("basis"))
+
+	report, err := Plan([]string{dir}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Video != 1 || report.Totals.DataBuffer != 1 || report.Totals.BasisTexture != 1 {
+		t.Fatalf("unexpected totals: %+v", report.Totals)
+	}
+	video := findAsset(t, report, "public/video/demo.mp4")
+	if video.Media == nil || video.Media.Kind != "video" || video.Media.Container != "mp4" || !video.Media.Streamable {
+		t.Fatalf("unexpected video media metadata: %+v", video.Media)
+	}
+	assertAction(t, video, "video-surface-manifest", "planned")
+	assertVariant(t, video, "public/video/demo.webm", "vp9-opus")
+
+	buffer := findAsset(t, report, "public/models/scene.bin")
+	assertAction(t, buffer, "buffer-inventory", "planned")
+
+	basis := findAsset(t, report, "public/textures/albedo.basis")
+	assertAction(t, basis, "basis-transcode-ktx2", "candidate")
+	assertVariant(t, basis, "public/textures/albedo.bc7.ktx2", "ktx2-bc7")
+}
+
+func TestPlanStructuredDiagnosticsFromWarnings(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteBytes(t, filepath.Join(dir, "public", "ui", "empty.html-textures.json"), []byte(`{}`))
+
+	report, err := Plan([]string{dir}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := findAsset(t, report, "public/ui/empty.html-textures.json")
+	if len(asset.Diagnostics) != 1 || asset.Diagnostics[0].Code != "html-texture-manifest" {
+		t.Fatalf("unexpected asset diagnostics: %+v", asset.Diagnostics)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Path != "public/ui/empty.html-textures.json" {
+		t.Fatalf("unexpected report diagnostics: %+v", report.Diagnostics)
+	}
 }
 
 func findAsset(t *testing.T, report Report, path string) Asset {

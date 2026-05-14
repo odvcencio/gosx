@@ -28,7 +28,12 @@ type MeshElementProps struct {
 	Height             float64
 	Depth              float64
 	Radius             float64
+	RadiusTop          float64
+	RadiusBottom       float64
+	Tube               float64
 	Segments           int
+	RadialSegments     int
+	TubularSegments    int
 	CastShadow         bool
 	ReceiveShadow      bool
 	Pickable           *bool
@@ -43,36 +48,44 @@ type MeshElementProps struct {
 }
 
 type PointsElementProps struct {
-	ID          string
-	Transform   IRTransform
-	Count       int
-	Positions   []float64
-	Sizes       []float64
-	Colors      []string
-	Color       string
-	Style       string
-	Size        float64
-	Opacity     float64
-	BlendMode   string
-	DepthWrite  *bool
-	Attenuation bool
+	ID           string
+	Transform    IRTransform
+	Count        int
+	Positions    []float64
+	Sizes        []float64
+	Colors       []string
+	Color        string
+	Style        string
+	Size         float64
+	MinPixelSize float64
+	MaxPixelSize float64
+	Opacity      float64
+	BlendMode    string
+	DepthWrite   *bool
+	Attenuation  bool
 }
 
 type InstancedMeshElementProps struct {
-	ID            string
-	MaterialIndex int
-	Count         int
-	Kind          string
-	Width         float64
-	Height        float64
-	Depth         float64
-	Radius        float64
-	Segments      int
-	Transforms    []float64
-	Colors        []string
-	Attributes    map[string][]float64
-	CastShadow    bool
-	ReceiveShadow bool
+	ID              string
+	MaterialIndex   int
+	Count           int
+	Kind            string
+	Size            float64
+	Width           float64
+	Height          float64
+	Depth           float64
+	Radius          float64
+	RadiusTop       float64
+	RadiusBottom    float64
+	Tube            float64
+	Segments        int
+	RadialSegments  int
+	TubularSegments int
+	Transforms      []float64
+	Colors          []string
+	Attributes      map[string][]float64
+	CastShadow      bool
+	ReceiveShadow   bool
 }
 
 type ComputeParticlesElementProps struct {
@@ -94,6 +107,12 @@ type LabelElementProps struct {
 	ID        string
 	Transform IRTransform
 	Label     IRLabelNode
+}
+
+type HTMLElementProps struct {
+	ID        string
+	Transform IRTransform
+	HTML      IRHTMLNode
 }
 
 // LowerScene3D materializes a compiler-built Scene3D catalog into canonical IR.
@@ -123,7 +142,12 @@ func LowerMesh(props MeshElementProps) IRNode {
 			Height:             props.Height,
 			Depth:              props.Depth,
 			Radius:             props.Radius,
+			RadiusTop:          props.RadiusTop,
+			RadiusBottom:       props.RadiusBottom,
+			Tube:               props.Tube,
 			Segments:           props.Segments,
+			RadialSegments:     props.RadialSegments,
+			TubularSegments:    props.TubularSegments,
 			CastShadow:         props.CastShadow,
 			ReceiveShadow:      props.ReceiveShadow,
 			Pickable:           props.Pickable,
@@ -145,17 +169,19 @@ func LowerPoints(props PointsElementProps) IRNode {
 		ID:        strings.TrimSpace(props.ID),
 		Transform: props.Transform,
 		Points: &IRPointsNode{
-			Count:       props.Count,
-			Positions:   append([]float64(nil), props.Positions...),
-			Sizes:       append([]float64(nil), props.Sizes...),
-			Colors:      append([]string(nil), props.Colors...),
-			Color:       strings.TrimSpace(props.Color),
-			Style:       strings.TrimSpace(props.Style),
-			Size:        props.Size,
-			Opacity:     props.Opacity,
-			BlendMode:   strings.TrimSpace(props.BlendMode),
-			DepthWrite:  props.DepthWrite,
-			Attenuation: props.Attenuation,
+			Count:        props.Count,
+			Positions:    append([]float64(nil), props.Positions...),
+			Sizes:        append([]float64(nil), props.Sizes...),
+			Colors:       append([]string(nil), props.Colors...),
+			Color:        strings.TrimSpace(props.Color),
+			Style:        strings.TrimSpace(props.Style),
+			Size:         props.Size,
+			MinPixelSize: props.MinPixelSize,
+			MaxPixelSize: props.MaxPixelSize,
+			Opacity:      props.Opacity,
+			BlendMode:    strings.TrimSpace(props.BlendMode),
+			DepthWrite:   props.DepthWrite,
+			Attenuation:  props.Attenuation,
 		},
 	}
 }
@@ -166,18 +192,24 @@ func LowerInstancedMesh(props InstancedMeshElementProps) IRNode {
 		ID:            strings.TrimSpace(props.ID),
 		MaterialIndex: props.MaterialIndex,
 		InstancedMesh: &IRInstancedMesh{
-			Count:         props.Count,
-			Kind:          strings.TrimSpace(props.Kind),
-			Width:         props.Width,
-			Height:        props.Height,
-			Depth:         props.Depth,
-			Radius:        props.Radius,
-			Segments:      props.Segments,
-			Transforms:    append([]float64(nil), props.Transforms...),
-			Colors:        append([]string(nil), props.Colors...),
-			Attributes:    cloneFloat64Slices(props.Attributes),
-			CastShadow:    props.CastShadow,
-			ReceiveShadow: props.ReceiveShadow,
+			Count:           props.Count,
+			Kind:            strings.TrimSpace(props.Kind),
+			Size:            props.Size,
+			Width:           props.Width,
+			Height:          props.Height,
+			Depth:           props.Depth,
+			Radius:          props.Radius,
+			RadiusTop:       props.RadiusTop,
+			RadiusBottom:    props.RadiusBottom,
+			Tube:            props.Tube,
+			Segments:        props.Segments,
+			RadialSegments:  props.RadialSegments,
+			TubularSegments: props.TubularSegments,
+			Transforms:      append([]float64(nil), props.Transforms...),
+			Colors:          append([]string(nil), props.Colors...),
+			Attributes:      cloneFloat64Slices(props.Attributes),
+			CastShadow:      props.CastShadow,
+			ReceiveShadow:   props.ReceiveShadow,
 		},
 	}
 }
@@ -212,6 +244,15 @@ func LowerLabel(props LabelElementProps) IRNode {
 		ID:        strings.TrimSpace(props.ID),
 		Transform: props.Transform,
 		Label:     &props.Label,
+	}
+}
+
+func LowerHTML(props HTMLElementProps) IRNode {
+	return IRNode{
+		Kind:      "html",
+		ID:        strings.TrimSpace(props.ID),
+		Transform: props.Transform,
+		HTML:      &props.HTML,
 	}
 }
 

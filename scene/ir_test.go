@@ -233,6 +233,12 @@ func TestPropsCanonicalIRValidatesEveryNodeKind(t *testing.T) {
 				ID:   "label",
 				Text: "Hello",
 			},
+			HTML{
+				ID:     "html",
+				Markup: `<button>Inspect</button>`,
+				Width:  180,
+				Height: 64,
+			},
 		),
 	}
 
@@ -247,7 +253,7 @@ func TestPropsCanonicalIRValidatesEveryNodeKind(t *testing.T) {
 	for _, node := range ir.Nodes {
 		kinds[node.Kind] = true
 	}
-	for _, kind := range []string{"mesh", "points", "instanced-mesh", "compute-particles", "sprite", "label"} {
+	for _, kind := range []string{"mesh", "points", "instanced-mesh", "compute-particles", "sprite", "label", "html"} {
 		if !kinds[kind] {
 			t.Fatalf("expected canonical IR to include %s node, got %#v", kind, ir.Nodes)
 		}
@@ -307,5 +313,51 @@ func TestScene3DElementLoweringAndCapabilityGate(t *testing.T) {
 	}
 	if err := ValidateCapabilities(generic, []string{"raytrace"}); err != nil {
 		t.Fatalf("expected explicit raytrace capability to pass: %v", err)
+	}
+}
+
+func TestIRMaterialCapabilityVariantsRoundTrip(t *testing.T) {
+	wire := []byte(`{
+		"version": 1,
+		"materials": [{
+			"name": "hero",
+			"kind": "standard",
+			"color": "#77c6ff",
+			"roughness": 0.25,
+			"variants": {
+				"constrained": {
+					"color": "#cbd5e1",
+					"roughness": 0.85,
+					"normalMap": "lite-normal.ktx2"
+				}
+			}
+		}],
+		"nodes": [{
+			"kind": "mesh",
+			"id": "hero",
+			"materialIndex": 0,
+			"mesh": { "kind": "box" }
+		}]
+	}`)
+	var ir IR
+	if err := json.Unmarshal(wire, &ir); err != nil {
+		t.Fatalf("unmarshal IR: %v", err)
+	}
+	if err := ir.Validate(); err != nil {
+		t.Fatalf("validate IR: %v", err)
+	}
+	variant, ok := ir.Materials[0].Variants["constrained"]
+	if !ok {
+		t.Fatalf("missing constrained material variant: %#v", ir.Materials[0].Variants)
+	}
+	if variant.Color != "#cbd5e1" || variant.Roughness != 0.85 || variant.NormalMap != "lite-normal.ktx2" {
+		t.Fatalf("unexpected variant: %#v", variant)
+	}
+	encoded, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("marshal IR: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"variants"`) {
+		t.Fatalf("encoded IR lost material variants: %s", encoded)
 	}
 }

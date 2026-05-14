@@ -3,14 +3,36 @@ package bundle
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"sync"
 
+	"github.com/odvcencio/gosx/engine"
 	"github.com/odvcencio/gosx/render/gpu"
 )
 
-// PickCallback receives the object ID under the requested pixel. ID 0
+// PickResult is the renderer-facing structured result for a queued pick.
+// ID 0 means background. Native GPU readback resolves object/instance identity
+// from the ID buffer; primitive meshes also get CPU-side ray reconstruction for
+// triangle, UV, world position, local position, and depth.
+type PickResult struct {
+	ID             uint32
+	ObjectID       string
+	ObjectIndex    int
+	InstanceIndex  int
+	PrimitiveIndex int
+	TriangleIndex  int
+	LocalPosition  [3]float32
+	WorldPosition  [3]float32
+	UV             [2]float32
+	Depth          float32
+}
+
+// PickCallback receives the numeric object ID under the requested pixel. ID 0
 // means the cursor was over background (no pickable surface).
 type PickCallback func(id uint32)
+
+// PickResultCallback receives a structured pick result.
+type PickResultCallback func(result PickResult)
 
 // pickRowAlignment is WebGPU's minimum bytesPerRow alignment for
 // copyTextureToBuffer. The spec guarantees 256.
@@ -20,7 +42,8 @@ const pickRowAlignment = 256
 // buffer has been copied to + read back.
 type pickRequest struct {
 	x, y        int
-	cb          PickCallback
+	cb          PickResultCallback
+	targets     map[uint32]PickResult
 	staging     gpu.Buffer
 	inFlight    bool
 	submitFrame bool // flagged on the frame we enqueued the copy
@@ -31,6 +54,17 @@ type pickRequest struct {
 // buffer is available — typically 1–2 frames of latency. Only one pick may
 // be in flight at a time; subsequent calls replace the pending request.
 func (r *Renderer) QueuePick(x, y int, cb PickCallback) {
+	if cb == nil {
+		return
+	}
+	r.QueuePickResult(x, y, func(result PickResult) {
+		cb(result.ID)
+	})
+}
+
+// QueuePickResult schedules a one-pixel readback and returns structured
+// target metadata when the result is available.
+func (r *Renderer) QueuePickResult(x, y int, cb PickResultCallback) {
 	if cb == nil {
 		return
 	}
@@ -57,7 +91,7 @@ func (r *Renderer) QueuePick(x, y int, cb PickCallback) {
 // allocates a staging buffer and records a 1×1 texture→buffer copy from
 // the id buffer at the pick coordinates. Called between the main pass and
 // the present pass so the id buffer has just been written.
-func (r *Renderer) recordPickCopy(enc gpu.CommandEncoder, surfaceWidth, surfaceHeight int) {
+func (r *Renderer) recordPickCopy(enc gpu.CommandEncoder, b engine.RenderBundle, surfaceWidth, surfaceHeight int) {
 	r.pickMu.Lock()
 	req := r.pendingPick
 	if req == nil || req.submitFrame {
@@ -74,7 +108,7 @@ func (r *Renderer) recordPickCopy(enc gpu.CommandEncoder, surfaceWidth, surfaceH
 		}
 		r.pickMu.Unlock()
 		if current {
-			req.cb(0)
+			req.cb(backgroundPickResult())
 		}
 		return
 	}
@@ -93,7 +127,7 @@ func (r *Renderer) recordPickCopy(enc gpu.CommandEncoder, surfaceWidth, surfaceH
 		}
 		r.pickMu.Unlock()
 		if current {
-			req.cb(0)
+			req.cb(backgroundPickResult())
 		}
 		return
 	}
@@ -104,6 +138,7 @@ func (r *Renderer) recordPickCopy(enc gpu.CommandEncoder, surfaceWidth, surfaceH
 		return
 	}
 	req.staging = staging
+	req.targets = r.pickTargetsForRequest(b, req.x, req.y, surfaceWidth, surfaceHeight)
 	req.submitFrame = true
 	r.pickMu.Unlock()
 
@@ -145,7 +180,8 @@ func (r *Renderer) finishPickReadback() {
 type pickReadbackStart struct {
 	req      *pickRequest
 	staging  gpu.Buffer
-	cb       PickCallback
+	cb       PickResultCallback
+	targets  map[uint32]PickResult
 	callback bool
 }
 
@@ -154,7 +190,7 @@ func markPickReadbackLocked(req *pickRequest, callback bool) (pickReadbackStart,
 		return pickReadbackStart{}, false
 	}
 	req.inFlight = true
-	return pickReadbackStart{req: req, staging: req.staging, cb: req.cb, callback: callback}, true
+	return pickReadbackStart{req: req, staging: req.staging, cb: req.cb, targets: req.targets, callback: callback}, true
 }
 
 func (r *Renderer) finishPickReadbackAsync(start pickReadbackStart) {
@@ -177,8 +213,439 @@ func (r *Renderer) finishPickReadbackAsync(start pickReadbackStart) {
 		if !current {
 			return
 		}
-		start.cb(id)
+		start.cb(pickResultForID(start.targets, id))
 	}()
+}
+
+func backgroundPickResult() PickResult {
+	return PickResult{
+		ObjectIndex:    -1,
+		InstanceIndex:  -1,
+		PrimitiveIndex: -1,
+		TriangleIndex:  -1,
+	}
+}
+
+func pickResultForID(targets map[uint32]PickResult, id uint32) PickResult {
+	if id == 0 {
+		return backgroundPickResult()
+	}
+	if result, ok := targets[id]; ok {
+		return result
+	}
+	result := backgroundPickResult()
+	result.ID = id
+	result.ObjectIndex = int(id) - 1
+	return result
+}
+
+func clonePickTargets(src map[uint32]PickResult) map[uint32]PickResult {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[uint32]PickResult, len(src))
+	for id, target := range src {
+		dst[id] = target
+	}
+	return dst
+}
+
+func buildPickTargets(meshes []engine.RenderInstancedMesh) ([]uint32, map[uint32]PickResult) {
+	bases, targets, _ := buildInstancedPickTargets(meshes, 1)
+	return bases, targets
+}
+
+func buildInstancedPickTargets(meshes []engine.RenderInstancedMesh, startID uint32) ([]uint32, map[uint32]PickResult, uint32) {
+	if len(meshes) == 0 {
+		return nil, nil, startID
+	}
+	bases := make([]uint32, len(meshes))
+	targets := make(map[uint32]PickResult)
+	nextID := startID
+	for objectIndex, mesh := range meshes {
+		if mesh.InstanceCount <= 0 {
+			continue
+		}
+		bases[objectIndex] = nextID
+		for instanceIndex := 0; instanceIndex < mesh.InstanceCount; instanceIndex++ {
+			id := nextID + uint32(instanceIndex)
+			targets[id] = PickResult{
+				ID:             id,
+				ObjectID:       mesh.ID,
+				ObjectIndex:    objectIndex,
+				InstanceIndex:  instanceIndex,
+				PrimitiveIndex: -1,
+				TriangleIndex:  -1,
+			}
+		}
+		nextID += uint32(mesh.InstanceCount)
+		if nextID == 0 {
+			break
+		}
+	}
+	return bases, targets, nextID
+}
+
+func buildObjectPickTargets(objects []engine.RenderObject, startID uint32, targets map[uint32]PickResult) ([]uint32, map[uint32]PickResult, uint32) {
+	if len(objects) == 0 {
+		return nil, targets, startID
+	}
+	if targets == nil {
+		targets = make(map[uint32]PickResult)
+	}
+	bases := make([]uint32, len(objects))
+	nextID := startID
+	for objectIndex, object := range objects {
+		if object.VertexCount <= 0 || !renderObjectPickable(object) {
+			continue
+		}
+		bases[objectIndex] = nextID
+		targets[nextID] = PickResult{
+			ID:             nextID,
+			ObjectID:       object.ID,
+			ObjectIndex:    objectIndex,
+			InstanceIndex:  -1,
+			PrimitiveIndex: -1,
+			TriangleIndex:  -1,
+		}
+		nextID++
+		if nextID == 0 {
+			break
+		}
+	}
+	return bases, targets, nextID
+}
+
+func buildSurfacePickTargets(surfaces []engine.RenderSurface, startID uint32, targets map[uint32]PickResult) ([]uint32, map[uint32]PickResult, uint32) {
+	if len(surfaces) == 0 {
+		return nil, targets, startID
+	}
+	if targets == nil {
+		targets = make(map[uint32]PickResult)
+	}
+	bases := make([]uint32, len(surfaces))
+	nextID := startID
+	for surfaceIndex, surface := range surfaces {
+		if !surfaceDrawable(surface) {
+			continue
+		}
+		bases[surfaceIndex] = nextID
+		targets[nextID] = PickResult{
+			ID:             nextID,
+			ObjectID:       surface.ID,
+			ObjectIndex:    surfaceIndex,
+			InstanceIndex:  -1,
+			PrimitiveIndex: -1,
+			TriangleIndex:  -1,
+		}
+		nextID++
+		if nextID == 0 {
+			break
+		}
+	}
+	return bases, targets, nextID
+}
+
+func renderObjectPickable(object engine.RenderObject) bool {
+	if object.Pickable != nil && !*object.Pickable {
+		return false
+	}
+	return true
+}
+
+func (r *Renderer) preparePickTargets(b engine.RenderBundle) {
+	meshBases, targets, nextID := buildInstancedPickTargets(b.InstancedMeshes, 1)
+	objectBases, targets, nextID := buildObjectPickTargets(b.Objects, nextID, targets)
+	surfaceBases, targets, _ := buildSurfacePickTargets(b.Surfaces, nextID, targets)
+	r.pickBases = meshBases
+	r.objectPickBases = objectBases
+	r.surfacePickBases = surfaceBases
+	r.pickTargets = targets
+}
+
+func (r *Renderer) pickTargetsForRequest(b engine.RenderBundle, x, y, width, height int) map[uint32]PickResult {
+	targets := clonePickTargets(r.pickTargets)
+	enrichPickTargetsWithRay(targets, b, r.pickBases, r.objectPickBases, r.surfacePickBases, x, y, width, height)
+	return targets
+}
+
+func (r *Renderer) pickBaseForMesh(index int) uint32 {
+	if index < 0 || index >= len(r.pickBases) {
+		return 0
+	}
+	return r.pickBases[index]
+}
+
+func (r *Renderer) pickBaseForObject(index int) uint32 {
+	if index < 0 || index >= len(r.objectPickBases) {
+		return 0
+	}
+	return r.objectPickBases[index]
+}
+
+func (r *Renderer) pickBaseForSurface(index int) uint32 {
+	if index < 0 || index >= len(r.surfacePickBases) {
+		return 0
+	}
+	return r.surfacePickBases[index]
+}
+
+type pickRay struct {
+	origin [3]float32
+	dir    [3]float32
+}
+
+type primitiveHit struct {
+	triangleIndex int
+	localPosition [3]float32
+	worldPosition [3]float32
+	uv            [2]float32
+	depth         float32
+}
+
+func enrichPickTargetsWithRay(targets map[uint32]PickResult, b engine.RenderBundle, bases, objectBases, surfaceBases []uint32, x, y, width, height int) {
+	if len(targets) == 0 || width <= 0 || height <= 0 {
+		return
+	}
+	ray := pickRayForCamera(b.Camera, x, y, width, height)
+	for objectIndex, mesh := range b.InstancedMeshes {
+		if objectIndex >= len(bases) || bases[objectIndex] == 0 || mesh.InstanceCount <= 0 {
+			continue
+		}
+		geo := primitiveForParams(primitiveParamsForInstancedMesh(mesh))
+		if geo == nil || geo.vertexCount <= 0 {
+			continue
+		}
+		for instanceIndex := 0; instanceIndex < mesh.InstanceCount; instanceIndex++ {
+			id := bases[objectIndex] + uint32(instanceIndex)
+			target, ok := targets[id]
+			if !ok {
+				continue
+			}
+			if hit, ok := raycastPrimitiveInstance(ray, geo, matrixForInstance(mesh.Transforms, instanceIndex)); ok {
+				target.PrimitiveIndex = hit.triangleIndex
+				target.TriangleIndex = hit.triangleIndex
+				target.LocalPosition = hit.localPosition
+				target.WorldPosition = hit.worldPosition
+				target.UV = hit.uv
+				target.Depth = hit.depth
+				targets[id] = target
+			}
+		}
+	}
+	enrichObjectPickTargetsWithRay(targets, b, objectBases, ray)
+	enrichSurfacePickTargetsWithRay(targets, b, surfaceBases, ray)
+}
+
+func enrichObjectPickTargetsWithRay(targets map[uint32]PickResult, b engine.RenderBundle, objectBases []uint32, ray pickRay) {
+	if len(targets) == 0 {
+		return
+	}
+	for objectIndex, object := range b.Objects {
+		if objectIndex >= len(objectBases) || objectBases[objectIndex] == 0 {
+			continue
+		}
+		if !nativeObjectDrawable(b, object) || !renderObjectPickable(object) {
+			continue
+		}
+		id := objectBases[objectIndex]
+		target, ok := targets[id]
+		if !ok {
+			continue
+		}
+		if hit, ok := raycastWorldObject(ray, b, object); ok {
+			target.PrimitiveIndex = hit.triangleIndex
+			target.TriangleIndex = hit.triangleIndex
+			target.LocalPosition = hit.localPosition
+			target.WorldPosition = hit.worldPosition
+			target.UV = hit.uv
+			target.Depth = hit.depth
+			target.ObjectIndex = objectIndex
+			targets[id] = target
+		}
+	}
+}
+
+func enrichSurfacePickTargetsWithRay(targets map[uint32]PickResult, b engine.RenderBundle, surfaceBases []uint32, ray pickRay) {
+	if len(targets) == 0 {
+		return
+	}
+	for surfaceIndex, surface := range b.Surfaces {
+		if surfaceIndex >= len(surfaceBases) || surfaceBases[surfaceIndex] == 0 || !surfaceDrawable(surface) {
+			continue
+		}
+		id := surfaceBases[surfaceIndex]
+		target, ok := targets[id]
+		if !ok {
+			continue
+		}
+		if hit, ok := raycastSurface(ray, surface); ok {
+			target.PrimitiveIndex = hit.triangleIndex
+			target.TriangleIndex = hit.triangleIndex
+			target.LocalPosition = hit.localPosition
+			target.WorldPosition = hit.worldPosition
+			target.UV = hit.uv
+			target.Depth = hit.depth
+			target.ObjectIndex = surfaceIndex
+			targets[id] = target
+		}
+	}
+}
+
+func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay {
+	fov := float32(cam.FOV)
+	if fov <= 0 {
+		fov = float32(math.Pi / 3)
+	}
+	aspect := float32(1)
+	if height > 0 {
+		aspect = float32(width) / float32(height)
+	}
+	nx := (float32(x)+0.5)/float32(max(1, width))*2 - 1
+	ny := 1 - (float32(y)+0.5)/float32(max(1, height))*2
+	tanHalf := float32(math.Tan(float64(fov) / 2))
+	dir := [3]float32{nx * aspect * tanHalf, ny * tanHalf, -1}
+	invRot := mat4Mul(mat4RotateY(-float32(cam.RotationY)), mat4RotateX(-float32(cam.RotationX)))
+	dir = transformVector(invRot, dir)
+	dir = normalize3(dir[0], dir[1], dir[2])
+	return pickRay{
+		origin: [3]float32{float32(cam.X), float32(cam.Y), float32(cam.Z)},
+		dir:    dir,
+	}
+}
+
+func matrixForInstance(transforms []float64, instanceIndex int) mat4 {
+	if instanceIndex < 0 || len(transforms) < (instanceIndex+1)*16 {
+		return mat4Identity()
+	}
+	var m mat4
+	offset := instanceIndex * 16
+	for i := 0; i < 16; i++ {
+		m[i] = float32(transforms[offset+i])
+	}
+	return m
+}
+
+func raycastPrimitiveInstance(ray pickRay, geo *primitiveGeometry, model mat4) (primitiveHit, bool) {
+	var best primitiveHit
+	best.depth = float32(math.Inf(1))
+	found := false
+	for tri := 0; tri+2 < geo.vertexCount; tri += 3 {
+		lp0 := primitivePositionAt(geo, tri)
+		lp1 := primitivePositionAt(geo, tri+1)
+		lp2 := primitivePositionAt(geo, tri+2)
+		wp0 := transformPoint(model, lp0)
+		wp1 := transformPoint(model, lp1)
+		wp2 := transformPoint(model, lp2)
+		dist, u, v, ok := rayIntersectsTriangle(ray.origin, ray.dir, wp0, wp1, wp2)
+		if !ok || dist >= best.depth {
+			continue
+		}
+		w := 1 - u - v
+		best = primitiveHit{
+			triangleIndex: tri / 3,
+			localPosition: barycentric3(lp0, lp1, lp2, w, u, v),
+			worldPosition: [3]float32{
+				ray.origin[0] + ray.dir[0]*dist,
+				ray.origin[1] + ray.dir[1]*dist,
+				ray.origin[2] + ray.dir[2]*dist,
+			},
+			uv:    barycentric2(primitiveUVAt(geo, tri), primitiveUVAt(geo, tri+1), primitiveUVAt(geo, tri+2), w, u, v),
+			depth: dist,
+		}
+		found = true
+	}
+	return best, found
+}
+
+func rayIntersectsTriangle(origin, dir, v0, v1, v2 [3]float32) (float32, float32, float32, bool) {
+	const eps = float32(1e-7)
+	edge1 := sub3(v1, v0)
+	edge2 := sub3(v2, v0)
+	h := cross3(dir, edge2)
+	a := dot3(edge1, h)
+	if a > -eps && a < eps {
+		return 0, 0, 0, false
+	}
+	f := 1 / a
+	s := sub3(origin, v0)
+	u := f * dot3(s, h)
+	if u < 0 || u > 1 {
+		return 0, 0, 0, false
+	}
+	q := cross3(s, edge1)
+	v := f * dot3(dir, q)
+	if v < 0 || u+v > 1 {
+		return 0, 0, 0, false
+	}
+	t := f * dot3(edge2, q)
+	if t <= eps {
+		return 0, 0, 0, false
+	}
+	return t, u, v, true
+}
+
+func primitivePositionAt(geo *primitiveGeometry, index int) [3]float32 {
+	offset := index * 3
+	if geo == nil || offset+2 >= len(geo.positions) {
+		return [3]float32{}
+	}
+	return [3]float32{geo.positions[offset], geo.positions[offset+1], geo.positions[offset+2]}
+}
+
+func primitiveUVAt(geo *primitiveGeometry, index int) [2]float32 {
+	offset := index * 2
+	if geo == nil || offset+1 >= len(geo.uvs) {
+		return [2]float32{}
+	}
+	return [2]float32{geo.uvs[offset], geo.uvs[offset+1]}
+}
+
+func transformPoint(m mat4, p [3]float32) [3]float32 {
+	return [3]float32{
+		m[0]*p[0] + m[4]*p[1] + m[8]*p[2] + m[12],
+		m[1]*p[0] + m[5]*p[1] + m[9]*p[2] + m[13],
+		m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14],
+	}
+}
+
+func transformVector(m mat4, p [3]float32) [3]float32 {
+	return [3]float32{
+		m[0]*p[0] + m[4]*p[1] + m[8]*p[2],
+		m[1]*p[0] + m[5]*p[1] + m[9]*p[2],
+		m[2]*p[0] + m[6]*p[1] + m[10]*p[2],
+	}
+}
+
+func barycentric3(a, b, c [3]float32, wa, wb, wc float32) [3]float32 {
+	return [3]float32{
+		a[0]*wa + b[0]*wb + c[0]*wc,
+		a[1]*wa + b[1]*wb + c[1]*wc,
+		a[2]*wa + b[2]*wb + c[2]*wc,
+	}
+}
+
+func barycentric2(a, b, c [2]float32, wa, wb, wc float32) [2]float32 {
+	return [2]float32{
+		a[0]*wa + b[0]*wb + c[0]*wc,
+		a[1]*wa + b[1]*wb + c[1]*wc,
+	}
+}
+
+func sub3(a, b [3]float32) [3]float32 {
+	return [3]float32{a[0] - b[0], a[1] - b[1], a[2] - b[2]}
+}
+
+func dot3(a, b [3]float32) float32 {
+	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+}
+
+func cross3(a, b [3]float32) [3]float32 {
+	return [3]float32{
+		a[1]*b[2] - a[2]*b[1],
+		a[2]*b[0] - a[0]*b[2],
+		a[0]*b[1] - a[1]*b[0],
+	}
 }
 
 // pickState holds synchronous access to the single in-flight pick request.

@@ -3,6 +3,7 @@
   // compiler/planner contract before a backend sees a scene.
 
   const SCENE_IR_VERSION = 1;
+  const SCENE_IR_SCHEMA = "gosx.scene3d.ir.v1";
   const SCENE_RENDER_BUNDLE_VERSION = 1;
 
   /**
@@ -74,7 +75,7 @@
 
   /**
    * @typedef {object} SceneNode
-   * @property {"mesh"|"points"|"instanced-mesh"|"compute-particles"|"sprite"|"label"|string} kind
+   * @property {"mesh"|"points"|"instanced-mesh"|"compute-particles"|"sprite"|"label"|"html"|string} kind
    * @property {string} [id]
    * @property {number} [materialIndex]
    * @property {object} transform
@@ -84,6 +85,7 @@
    * @property {object} [compute]
    * @property {object} [sprite]
    * @property {object} [label]
+   * @property {object} [html]
    */
 
   /**
@@ -109,6 +111,9 @@
       return { valid: false, errors: ["scene IR must be an object"] };
     }
     const isRenderBundle = ir.bundleVersion != null;
+    if (ir.schema != null && ir.schema !== SCENE_IR_SCHEMA) {
+      errors.push("schema must be " + SCENE_IR_SCHEMA);
+    }
     if (isRenderBundle) {
       if (ir.bundleVersion != null && ir.bundleVersion !== SCENE_RENDER_BUNDLE_VERSION) {
         errors.push("bundleVersion must be " + SCENE_RENDER_BUNDLE_VERSION);
@@ -166,6 +171,7 @@
       "compute-particles": "compute",
       "sprite": "sprite",
       "label": "label",
+      "html": "html",
     };
     for (let index = 0; index < nodes.length; index += 1) {
       const node = nodes[index];
@@ -194,6 +200,7 @@
         node.compute,
         node.sprite,
         node.label,
+        node.html,
       ].filter(Boolean).length;
       if (payloadCount !== 1) {
         errors.push("nodes[" + index + "] must set exactly one payload");

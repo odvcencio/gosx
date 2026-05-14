@@ -114,17 +114,19 @@ type MeshProps struct {
 
 // PointsProps is a partial points prop bag used for transition states.
 type PointsProps struct {
-	Count       *int
-	Color       *string
-	Style       *PointStyle
-	Size        *float64
-	Opacity     *float64
-	BlendMode   *MaterialBlendMode
-	DepthWrite  *bool
-	Attenuation *bool
-	Position    *Vector3
-	Rotation    *Euler
-	Spin        *Euler
+	Count        *int
+	Color        *string
+	Style        *PointStyle
+	Size         *float64
+	MinPixelSize *float64
+	MaxPixelSize *float64
+	Opacity      *float64
+	BlendMode    *MaterialBlendMode
+	DepthWrite   *bool
+	Attenuation  *bool
+	Position     *Vector3
+	Rotation     *Euler
+	Spin         *Euler
 }
 
 // InstancedMeshProps is a partial instanced-mesh prop bag used for transition states.
@@ -293,6 +295,8 @@ func (props *PointsProps) legacyProps() map[string]any {
 	setStringPtr(record, "color", props.Color)
 	setEnumPtr(record, "style", props.Style)
 	setNumericPtr(record, "size", props.Size)
+	setNumericPtr(record, "minPixelSize", props.MinPixelSize)
+	setNumericPtr(record, "maxPixelSize", props.MaxPixelSize)
 	setNumericPtr(record, "opacity", props.Opacity)
 	setEnumPtr(record, "blendMode", props.BlendMode)
 	setBoolPtr(record, "depthWrite", props.DepthWrite)

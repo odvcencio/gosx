@@ -38,6 +38,13 @@ type Renderer struct {
 	skinnedLitBGLayout       gpu.BindGroupLayout
 	skinnedLitMaterialLayout gpu.BindGroupLayout
 	skinnedPaletteLayout     gpu.BindGroupLayout
+	surfacePipelines         map[string]gpu.RenderPipeline
+	surfaceBGLayouts         map[string]gpu.BindGroupLayout
+	surfaceMaterialLayouts   map[string]gpu.BindGroupLayout
+	surfaceBindGrps          map[string]gpu.BindGroup
+	worldLinePipeline        gpu.RenderPipeline
+	worldLineBGLayout        gpu.BindGroupLayout
+	worldLineBindGrp         gpu.BindGroup
 	shadowPipeline           gpu.RenderPipeline
 	shadowBGLayout           gpu.BindGroupLayout
 
@@ -102,11 +109,15 @@ type Renderer struct {
 	// R4 GPU picking: per-pixel object ID as a second color attachment on
 	// the main pass + the async readback state that ties QueuePick to the
 	// copy-to-buffer + map-async sequence.
-	idBufferTex  gpu.Texture
-	idBufferView gpu.TextureView
-	pickMu       sync.Mutex
-	pendingPick  *pickRequest
-	retiredPicks []*pickRequest
+	idBufferTex      gpu.Texture
+	idBufferView     gpu.TextureView
+	pickMu           sync.Mutex
+	pendingPick      *pickRequest
+	retiredPicks     []*pickRequest
+	pickTargets      map[uint32]PickResult
+	pickBases        []uint32
+	objectPickBases  []uint32
+	surfacePickBases []uint32
 
 	// Bloom chain (bright-pass + 2 blur passes → composited into present).
 	brightPipeline gpu.RenderPipeline
@@ -114,6 +125,18 @@ type Renderer struct {
 	blurPipeline   gpu.RenderPipeline
 	blurBGLayout   gpu.BindGroupLayout
 	bloom          *bloomResources
+	bloomSourceKey string
+
+	// Native depth-backed post-FX run in HDR before bloom/present.
+	ssaoPipeline       gpu.RenderPipeline
+	ssaoBGLayout       gpu.BindGroupLayout
+	dofPipeline        gpu.RenderPipeline
+	dofBGLayout        gpu.BindGroupLayout
+	vignettePipeline   gpu.RenderPipeline
+	vignetteBGLayout   gpu.BindGroupLayout
+	colorGradePipeline gpu.RenderPipeline
+	colorGradeBGLayout gpu.BindGroupLayout
+	nativePostFX       *nativePostFXResources
 
 	// Compute-particle pipelines. Per-system resources live in particleCache.
 	particleUpdatePipeline gpu.ComputePipeline
@@ -130,6 +153,9 @@ type Renderer struct {
 	// Caches keyed by identity strings, reused across frames.
 	passCache          map[string]*passResources
 	primitiveCache     map[string]*primitiveResources
+	objectMeshCache    map[string]*objectMeshResources
+	surfaceCache       map[string]*surfaceResources
+	worldLineCache     *worldLineResources
 	materialCache      map[materialFingerprint]*materialResources
 	textureCache       map[string]*textureResources
 	cullCache          map[string]*cullResources
@@ -159,6 +185,38 @@ type primitiveResources struct {
 	colors      gpu.Buffer
 	normals     gpu.Buffer
 	uvs         gpu.Buffer
+	vertexCount int
+}
+
+type objectMeshResources struct {
+	positions   gpu.Buffer
+	colors      gpu.Buffer
+	normals     gpu.Buffer
+	uvs         gpu.Buffer
+	instance    gpu.Buffer
+	positionLen int
+	colorLen    int
+	normalLen   int
+	uvLen       int
+	instanceLen int
+	vertexCount int
+}
+
+type surfaceResources struct {
+	positions   gpu.Buffer
+	uvs         gpu.Buffer
+	pickIDs     gpu.Buffer
+	positionLen int
+	uvLen       int
+	pickIDLen   int
+	vertexCount int
+}
+
+type worldLineResources struct {
+	positions   gpu.Buffer
+	colors      gpu.Buffer
+	positionLen int
+	colorLen    int
 	vertexCount int
 }
 
@@ -197,19 +255,26 @@ func New(cfg Config) (*Renderer, error) {
 		return nil, fmt.Errorf("bundle.New: HDR format %v is not supported by device", hdrFormat)
 	}
 	r := &Renderer{
-		device:         cfg.Device,
-		surface:        cfg.Surface,
-		surfaceFormat:  cfg.Device.PreferredSurfaceFormat(),
-		depthFormat:    gpu.FormatDepth24Plus,
-		hdrFormat:      hdrFormat,
-		passCache:      make(map[string]*passResources),
-		primitiveCache: make(map[string]*primitiveResources),
-		materialCache:  make(map[materialFingerprint]*materialResources),
-		textureCache:   make(map[string]*textureResources),
-		cullCache:      make(map[string]*cullResources),
-		particleCache:  make(map[string]*particleResources),
-		skinCache:      make(map[string]*skinResources),
-		bonePalettes:   make(map[string]*BonePalette),
+		device:                 cfg.Device,
+		surface:                cfg.Surface,
+		surfaceFormat:          cfg.Device.PreferredSurfaceFormat(),
+		depthFormat:            gpu.FormatDepth24Plus,
+		hdrFormat:              hdrFormat,
+		surfacePipelines:       make(map[string]gpu.RenderPipeline),
+		surfaceBGLayouts:       make(map[string]gpu.BindGroupLayout),
+		surfaceMaterialLayouts: make(map[string]gpu.BindGroupLayout),
+		surfaceBindGrps:        make(map[string]gpu.BindGroup),
+		passCache:              make(map[string]*passResources),
+		primitiveCache:         make(map[string]*primitiveResources),
+		objectMeshCache:        make(map[string]*objectMeshResources),
+		surfaceCache:           make(map[string]*surfaceResources),
+		materialCache:          make(map[materialFingerprint]*materialResources),
+		textureCache:           make(map[string]*textureResources),
+		cullCache:              make(map[string]*cullResources),
+		particleCache:          make(map[string]*particleResources),
+		skinCache:              make(map[string]*skinResources),
+		bonePalettes:           make(map[string]*BonePalette),
+		pickTargets:            make(map[uint32]PickResult),
 	}
 	if err := r.buildUniformBuffers(); err != nil {
 		return nil, err
@@ -232,6 +297,12 @@ func New(cfg Config) (*Renderer, error) {
 	if err := r.buildSkinnedLitPipeline(); err != nil {
 		return nil, err
 	}
+	if err := r.buildSurfacePipelines(); err != nil {
+		return nil, err
+	}
+	if err := r.buildWorldLinePipeline(); err != nil {
+		return nil, err
+	}
 	if err := r.buildDefaultBonePalette(); err != nil {
 		return nil, err
 	}
@@ -251,6 +322,9 @@ func New(cfg Config) (*Renderer, error) {
 		return nil, err
 	}
 	if err := r.buildBloomPipelines(); err != nil {
+		return nil, err
+	}
+	if err := r.buildNativePostFXPipelines(); err != nil {
 		return nil, err
 	}
 	if err := r.buildParticlePipelines(); err != nil {
@@ -284,6 +358,16 @@ func (r *Renderer) Destroy() {
 		destroyPrimitiveResources(p)
 	}
 	r.primitiveCache = nil
+	for _, p := range r.objectMeshCache {
+		destroyObjectMeshResources(p)
+	}
+	r.objectMeshCache = nil
+	for _, s := range r.surfaceCache {
+		destroySurfaceResources(s)
+	}
+	r.surfaceCache = nil
+	destroyWorldLineResources(r.worldLineCache)
+	r.worldLineCache = nil
 	for _, m := range r.materialCache {
 		if m != nil && m.buf != nil {
 			m.buf.Destroy()
@@ -293,6 +377,11 @@ func (r *Renderer) Destroy() {
 		}
 		if m != nil && m.skinnedBindGroup != nil {
 			m.skinnedBindGroup.Destroy()
+		}
+		for _, bg := range m.surfaceBindGroups {
+			if bg != nil {
+				bg.Destroy()
+			}
 		}
 	}
 	r.materialCache = nil
@@ -333,11 +422,27 @@ func (r *Renderer) Destroy() {
 		destroyBloomResources(r.bloom)
 		r.bloom = nil
 	}
+	if r.nativePostFX != nil {
+		destroyNativePostFXResources(r.nativePostFX)
+		r.nativePostFX = nil
+	}
 	if r.brightPipeline != nil {
 		r.brightPipeline.Destroy()
 	}
 	if r.blurPipeline != nil {
 		r.blurPipeline.Destroy()
+	}
+	if r.ssaoPipeline != nil {
+		r.ssaoPipeline.Destroy()
+	}
+	if r.dofPipeline != nil {
+		r.dofPipeline.Destroy()
+	}
+	if r.vignettePipeline != nil {
+		r.vignettePipeline.Destroy()
+	}
+	if r.colorGradePipeline != nil {
+		r.colorGradePipeline.Destroy()
 	}
 	if r.presentPipeline != nil {
 		r.presentPipeline.Destroy()
@@ -400,6 +505,25 @@ func (r *Renderer) Destroy() {
 	if r.skinnedLitPipeline != nil {
 		r.skinnedLitPipeline.Destroy()
 	}
+	for _, pipeline := range r.surfacePipelines {
+		if pipeline != nil {
+			pipeline.Destroy()
+		}
+	}
+	r.surfacePipelines = nil
+	for _, bg := range r.surfaceBindGrps {
+		if bg != nil {
+			bg.Destroy()
+		}
+	}
+	r.surfaceBindGrps = nil
+	if r.worldLineBindGrp != nil {
+		r.worldLineBindGrp.Destroy()
+		r.worldLineBindGrp = nil
+	}
+	if r.worldLinePipeline != nil {
+		r.worldLinePipeline.Destroy()
+	}
 	if r.shadowPipeline != nil {
 		r.shadowPipeline.Destroy()
 	}
@@ -426,6 +550,8 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	if width <= 0 || height <= 0 {
 		return nil
 	}
+	b = applyNativeAnimations(b, timeSeconds)
+	r.preparePickTargets(b)
 	depthView, err := r.ensureDepth(width, height)
 	if err != nil {
 		return err
@@ -457,19 +583,22 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 
 	enc := r.device.CreateCommandEncoder()
 
-	// 1) One shadow pass per cascade. Shadow passes intentionally don't run
-	// through culling — a shadow caster outside the main frustum can still
-	// cast into it. CSM cascades bound the shadow draw volume on their own.
-	for i := 0; i < cascadeCount; i++ {
-		r.recordShadowPass(enc, b, i)
-	}
-
-	// 2) GPU-driven culling: compute pass writes a compacted visible-
-	// transforms buffer + indirect draw args per InstancedMesh. Must run
-	// BEFORE the main render pass since compute + render can't interleave
-	// within the same pass encoder.
+	// 1) GPU-driven culling: compute pass writes a compacted visible-
+	// transforms buffer + indirect draw args per InstancedMesh. It also
+	// uploads per-mesh source transforms that the shadow pass binds directly.
 	if err := r.recordCullPass(enc, b, frustum); err != nil {
 		return err
+	}
+	if err := r.prepareObjectMeshResources(b); err != nil {
+		return err
+	}
+
+	// 2) One shadow pass per cascade. Shadow passes intentionally bind the
+	// unculled per-mesh transform buffers; a shadow caster outside the main
+	// frustum can still cast into it. CSM cascades bound the shadow draw volume
+	// on their own.
+	for i := 0; i < cascadeCount; i++ {
+		r.recordShadowPass(enc, b, i)
 	}
 
 	// 2b) Advance particle state (compute pass). Runs before the main pass
@@ -487,6 +616,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		return err
 	}
 	bloom := resolveBloomConfig(b)
+	nativePostFX := resolveNativePostFXEffects(b)
 
 	// The main pass now writes into the HDR intermediate instead of the
 	// swap chain. Bloom chain + present pass then tone-map HDR → swap chain.
@@ -499,8 +629,15 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		return err
 	}
 	r.configureBloom(bloom)
+	r.configureToneMap(resolveToneMapConfig(b))
 	if err := r.ensurePostFX(width, height); err != nil {
 		return err
+	}
+	if len(nativePostFX) > 0 {
+		if _, err := r.ensureNativePostFX(width, height, depthView); err != nil {
+			return err
+		}
+		r.configureNativePostFX(nativePostFX)
 	}
 	if err := r.ensureEnvironmentBindGroups(b.Environment); err != nil {
 		return err
@@ -574,7 +711,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			if isSkinnedMesh(im) || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
 			}
-			prim, err := r.ensurePrimitive(im.Kind)
+			prim, err := r.ensurePrimitiveForMesh(im)
 			if err != nil {
 				mainPass.End()
 				return err
@@ -603,7 +740,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			if !isSkinnedMesh(im) || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
 			}
-			prim, err := r.ensurePrimitive(im.Kind)
+			prim, err := r.ensurePrimitiveForMesh(im)
 			if err != nil {
 				mainPass.End()
 				return err
@@ -644,6 +781,19 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		}
 	}
 
+	if err := r.drawObjectMeshes(mainPass, b); err != nil {
+		mainPass.End()
+		return err
+	}
+	if err := r.drawSurfaces(mainPass, b); err != nil {
+		mainPass.End()
+		return err
+	}
+	if err := r.drawWorldLines(mainPass, b); err != nil {
+		mainPass.End()
+		return err
+	}
+
 	// Particles last in the main pass so they composite additively over the
 	// opaque lit geometry, with depth test but no depth write.
 	r.drawParticles(mainPass, b)
@@ -654,7 +804,16 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// into a staging buffer for async readback after submission. Must run
 	// between the main pass (which writes the id buffer) and any later
 	// passes that might clobber it.
-	r.recordPickCopy(enc, width, height)
+	r.recordPickCopy(enc, b, width, height)
+
+	hdrSourceView, hdrSourceScratch := r.recordNativePostFXPasses(enc, nativePostFX)
+	hdrSourceKey := "hdr"
+	if hdrSourceScratch {
+		hdrSourceKey = "native"
+	}
+	if err := r.ensureBloomSourceBindGroups(hdrSourceView, hdrSourceKey); err != nil {
+		return err
+	}
 
 	// 4) Optional bloom chain (bright-pass + horizontal + vertical blurs).
 	if bloom.enabled {
@@ -683,15 +842,29 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	return nil
 }
 
-// recordShadowPass renders cascade-specific depth-only draws into the
-// cascade's layer of the shadow texture array. Called once per cascade index.
-// The instance-transform buffer is shared across cascades — it's written
-// once per Frame before any pass begins (outside this function).
-// instancedMeshKey returns the cull-cache key for one InstancedMesh slot.
-// Combines the bundle index with the Kind so different mesh entries using
-// the same Kind (e.g., two cube-only layers) don't share cull output.
+// instancedMeshKey returns the cull/skin-cache key for one InstancedMesh slot.
+// Combines the bundle index with the full primitive key so entries with the
+// same Kind but different authored geometry parameters do not share stale
+// vertex-count-dependent resources.
 func instancedMeshKey(idx int, im engine.RenderInstancedMesh) string {
-	return fmt.Sprintf("%d:%s", idx, im.Kind)
+	return fmt.Sprintf("%d:%s", idx, primitiveCacheKey(primitiveParamsForInstancedMesh(im)))
+}
+
+func primitiveParamsForInstancedMesh(im engine.RenderInstancedMesh) primitiveParams {
+	return primitiveParams{
+		Kind:            im.Kind,
+		Size:            im.Size,
+		Width:           im.Width,
+		Height:          im.Height,
+		Depth:           im.Depth,
+		Radius:          im.Radius,
+		RadiusTop:       im.RadiusTop,
+		RadiusBottom:    im.RadiusBottom,
+		Tube:            im.Tube,
+		Segments:        im.Segments,
+		RadialSegments:  im.RadialSegments,
+		TubularSegments: im.TubularSegments,
+	}
 }
 
 // recordCullPass uploads per-mesh instance data, resets indirect-draw args,
@@ -709,7 +882,7 @@ func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle,
 		if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 			continue
 		}
-		prim, err := r.ensurePrimitive(im.Kind)
+		prim, err := r.ensurePrimitiveForMesh(im)
 		if err != nil {
 			return err
 		}
@@ -721,11 +894,11 @@ func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle,
 		if err != nil {
 			return err
 		}
-		transformBytes := float64sToFloat32Bytes(im.Transforms)
-		r.device.Queue().WriteBuffer(cull.inputBuf, 0, transformBytes)
+		instanceBytes := instanceRecordBytes(im.Transforms, im.InstanceCount, r.pickBaseForMesh(i))
+		r.device.Queue().WriteBuffer(cull.inputBuf, 0, instanceBytes)
 		r.device.Queue().WriteBuffer(cull.drawArgsBuf, 0, drawArgsResetBytes(uint32(prim.vertexCount)))
 		r.device.Queue().WriteBuffer(cull.cullUniform, 0,
-			cullUniformBytes(frustum, uint32(prim.vertexCount), defaultCullRadius(im.Kind)))
+			cullUniformBytes(frustum, uint32(prim.vertexCount), primitiveCullRadius(primitiveParamsForInstancedMesh(im))))
 	}
 
 	pass := enc.BeginComputePass()
@@ -748,23 +921,8 @@ func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle,
 	return nil
 }
 
-// defaultCullRadius returns a conservative bounding-sphere radius for a
-// primitive kind, accounting for a unit primitive scaled by the instance
-// transform. Per-instance uniform scale factors out into the diagonal of
-// the transform — a real implementation would read that in the shader —
-// but for R3's MVP we use a fixed padded radius per primitive kind.
-func defaultCullRadius(kind string) float32 {
-	switch kind {
-	case "plane", "planeGeometry":
-		return 8.0 // planes are often very large in world units
-	case "sphere", "sphereGeometry":
-		return 1.1
-	case "cube", "box", "boxGeometry":
-		return 1.8 // sqrt(3) padded
-	}
-	return 2.0
-}
-
+// recordShadowPass renders cascade-specific depth-only draws into the
+// cascade's layer of the shadow texture array. Called once per cascade index.
 func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle, cascade int) {
 	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
 		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
@@ -778,27 +936,37 @@ func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundl
 	if len(b.InstancedMeshes) > 0 {
 		pass.SetPipeline(r.shadowPipeline)
 		pass.SetBindGroup(0, r.shadowBindGrps[cascade])
-		for _, im := range b.InstancedMeshes {
+		for i, im := range b.InstancedMeshes {
 			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
 			}
-			prim, err := r.ensurePrimitive(im.Kind)
+			prim, err := r.ensurePrimitiveForMesh(im)
 			if err != nil || prim == nil || prim.vertexCount == 0 {
 				continue
 			}
-			// Instance buffer is populated once per frame on cascade 0 (or
-			// first pass to see instances). Writing on cascade 0 ensures it's
-			// ready before cascades 1 and 2 record their draws.
-			if cascade == 0 {
-				transformBytes := float64sToFloat32Bytes(im.Transforms)
-				if err := r.ensureInstanceBuffer(len(transformBytes)); err != nil {
-					continue
-				}
-				r.device.Queue().WriteBuffer(r.instanceBuf, 0, transformBytes)
+			cull, ok := r.cullCache[instancedMeshKey(i, im)]
+			if !ok || cull == nil {
+				continue
 			}
 			pass.SetVertexBuffer(0, prim.positions)
-			pass.SetVertexBuffer(1, r.instanceBuf)
+			pass.SetVertexBuffer(1, cull.inputBuf)
 			pass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
+		}
+	}
+	if len(b.Objects) > 0 {
+		pass.SetPipeline(r.shadowPipeline)
+		pass.SetBindGroup(0, r.shadowBindGrps[cascade])
+		for i, object := range b.Objects {
+			if !object.CastShadow || !nativeObjectDrawable(b, object) {
+				continue
+			}
+			res := r.objectMeshCache[objectMeshKey(i, object)]
+			if res == nil || res.vertexCount == 0 || res.instance == nil {
+				continue
+			}
+			pass.SetVertexBuffer(0, res.positions)
+			pass.SetVertexBuffer(1, res.instance)
+			pass.Draw(res.vertexCount, 1, 0, 0)
 		}
 	}
 	pass.End()
@@ -818,7 +986,7 @@ func (r *Renderer) ensureDepth(width, height int) (gpu.TextureView, error) {
 		Width:  width,
 		Height: height,
 		Format: r.depthFormat,
-		Usage:  gpu.TextureUsageRenderAttachment,
+		Usage:  gpu.TextureUsageRenderAttachment | gpu.TextureUsageTextureBinding,
 		Label:  "bundle.depth",
 	})
 	if err != nil {
@@ -831,31 +999,41 @@ func (r *Renderer) ensureDepth(width, height int) (gpu.TextureView, error) {
 	return r.depthView, nil
 }
 
-// ensurePrimitive uploads the geometry for a Kind on first request.
-func (r *Renderer) ensurePrimitive(kind string) (*primitiveResources, error) {
-	if res, ok := r.primitiveCache[kind]; ok {
+// ensurePrimitiveForMesh uploads the geometry for an instanced mesh on first
+// request. The cache key includes primitive parameters, so two torus batches
+// with different segment counts do not accidentally share buffers.
+func (r *Renderer) ensurePrimitiveForMesh(im engine.RenderInstancedMesh) (*primitiveResources, error) {
+	return r.ensurePrimitive(primitiveParamsForInstancedMesh(im))
+}
+
+func (r *Renderer) ensurePrimitive(params primitiveParams) (*primitiveResources, error) {
+	key := primitiveCacheKey(params)
+	if key == "" {
+		return nil, nil
+	}
+	if res, ok := r.primitiveCache[key]; ok {
 		return res, nil
 	}
-	geo := primitiveForKind(kind)
+	geo := primitiveForParams(params)
 	if geo == nil {
 		return nil, nil
 	}
-	posBuf, err := r.uploadVertexBuffer(geo.positions, "bundle.primitive.positions:"+kind)
+	posBuf, err := r.uploadVertexBuffer(geo.positions, "bundle.primitive.positions:"+key)
 	if err != nil {
 		return nil, err
 	}
-	colBuf, err := r.uploadVertexBuffer(geo.colors, "bundle.primitive.colors:"+kind)
+	colBuf, err := r.uploadVertexBuffer(geo.colors, "bundle.primitive.colors:"+key)
 	if err != nil {
 		posBuf.Destroy()
 		return nil, err
 	}
-	nrmBuf, err := r.uploadVertexBuffer(geo.normals, "bundle.primitive.normals:"+kind)
+	nrmBuf, err := r.uploadVertexBuffer(geo.normals, "bundle.primitive.normals:"+key)
 	if err != nil {
 		posBuf.Destroy()
 		colBuf.Destroy()
 		return nil, err
 	}
-	uvBuf, err := r.uploadVertexBuffer(geo.uvs, "bundle.primitive.uvs:"+kind)
+	uvBuf, err := r.uploadVertexBuffer(geo.uvs, "bundle.primitive.uvs:"+key)
 	if err != nil {
 		posBuf.Destroy()
 		colBuf.Destroy()
@@ -869,7 +1047,7 @@ func (r *Renderer) ensurePrimitive(kind string) (*primitiveResources, error) {
 		uvs:         uvBuf,
 		vertexCount: geo.vertexCount,
 	}
-	r.primitiveCache[kind] = res
+	r.primitiveCache[key] = res
 	return res, nil
 }
 
@@ -1225,11 +1403,12 @@ func (r *Renderer) buildLitPipeline() error {
 				{ArrayStride: 8, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
 					{ShaderLocation: 3, Offset: 0, Format: gpu.VertexFormatFloat32x2},
 				}},
-				{ArrayStride: 64, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
+				{ArrayStride: instanceRecordStride, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
 					{ShaderLocation: 4, Offset: 0, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 5, Offset: 16, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 6, Offset: 32, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 7, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 8, Offset: 64, Format: gpu.VertexFormatUint32x4},
 				}},
 			},
 		},
@@ -1292,23 +1471,24 @@ func (r *Renderer) buildSkinnedLitPipeline() error {
 				{ArrayStride: 8, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
 					{ShaderLocation: 3, Offset: 0, Format: gpu.VertexFormatFloat32x2},
 				}},
-				{ArrayStride: 64, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
+				{ArrayStride: instanceRecordStride, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
 					{ShaderLocation: 4, Offset: 0, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 5, Offset: 16, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 6, Offset: 32, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 7, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 8, Offset: 64, Format: gpu.VertexFormatUint32x4},
 				}},
 				{ArrayStride: 16, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
-					{ShaderLocation: 8, Offset: 0, Format: gpu.VertexFormatUint32x4},
+					{ShaderLocation: 9, Offset: 0, Format: gpu.VertexFormatUint32x4},
 				}},
 				{ArrayStride: 16, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
-					{ShaderLocation: 9, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 10, Offset: 0, Format: gpu.VertexFormatFloat32x4},
 				}},
 				{ArrayStride: 64, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
-					{ShaderLocation: 10, Offset: 0, Format: gpu.VertexFormatFloat32x4},
-					{ShaderLocation: 11, Offset: 16, Format: gpu.VertexFormatFloat32x4},
-					{ShaderLocation: 12, Offset: 32, Format: gpu.VertexFormatFloat32x4},
-					{ShaderLocation: 13, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 11, Offset: 0, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 12, Offset: 16, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 13, Offset: 32, Format: gpu.VertexFormatFloat32x4},
+					{ShaderLocation: 14, Offset: 48, Format: gpu.VertexFormatFloat32x4},
 				}},
 			},
 		},
@@ -1361,7 +1541,7 @@ func (r *Renderer) buildShadowPipeline() error {
 				{ArrayStride: 12, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
 					{ShaderLocation: 0, Offset: 0, Format: gpu.VertexFormatFloat32x3},
 				}},
-				{ArrayStride: 64, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
+				{ArrayStride: instanceRecordStride, StepMode: gpu.StepInstance, Attributes: []gpu.VertexAttribute{
 					{ShaderLocation: 1, Offset: 0, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 2, Offset: 16, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 3, Offset: 32, Format: gpu.VertexFormatFloat32x4},
@@ -1403,6 +1583,25 @@ func (r *Renderer) buildBindGroups() error {
 	if err != nil {
 		return fmt.Errorf("bundle.buildBindGroups (unlit): %w", err)
 	}
+	for _, mode := range []string{surfacePassOpaque, surfacePassAlpha, surfacePassAdditive} {
+		bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+			Layout:  r.surfaceBGLayouts[mode],
+			Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.sceneUniformBuf, Size: sceneUniformSize}},
+			Label:   "bundle.surface.bindgroup." + mode,
+		})
+		if err != nil {
+			return fmt.Errorf("bundle.buildBindGroups (surface %s): %w", mode, err)
+		}
+		r.surfaceBindGrps[mode] = bg
+	}
+	worldLine, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout:  r.worldLineBGLayout,
+		Entries: []gpu.BindGroupEntry{{Binding: 0, Buffer: r.sceneUniformBuf, Size: sceneUniformSize}},
+		Label:   "bundle.worldLine.bindgroup",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildBindGroups (worldLine): %w", err)
+	}
 	envTex, err := r.ensureFallbackCubeTexture()
 	if err != nil {
 		return fmt.Errorf("bundle.buildBindGroups (environment): %w", err)
@@ -1429,6 +1628,7 @@ func (r *Renderer) buildBindGroups() error {
 		r.shadowBindGrps[i] = bg
 	}
 	r.unlitBindGrp = unlit
+	r.worldLineBindGrp = worldLine
 	r.litBindGrp = lit
 	r.skinnedLitBindGrp = skinnedLit
 	r.envBindGroupKey = fallbackEnvironmentKey
@@ -1604,6 +1804,36 @@ func float64sToFloat32Bytes(src []float64) []byte {
 		out[i*4+1] = byte(bits >> 8)
 		out[i*4+2] = byte(bits >> 16)
 		out[i*4+3] = byte(bits >> 24)
+	}
+	return out
+}
+
+// instanceRecordBytes packs one instance record per transform. The first
+// 64 bytes are the column-major model matrix consumed by the render and
+// culling pipelines; the trailing vec4<u32> carries the stable pick ID.
+func instanceRecordBytes(transforms []float64, instanceCount int, pickBase uint32) []byte {
+	if instanceCount <= 0 {
+		return nil
+	}
+	out := make([]byte, instanceCount*instanceRecordStride)
+	for inst := 0; inst < instanceCount; inst++ {
+		recordOffset := inst * instanceRecordStride
+		transformOffset := inst * 16
+		for j := 0; j < 16; j++ {
+			value := float64(0)
+			if idx := transformOffset + j; idx >= 0 && idx < len(transforms) {
+				value = transforms[idx]
+			}
+			bits := math.Float32bits(float32(value))
+			base := recordOffset + j*4
+			out[base+0] = byte(bits)
+			out[base+1] = byte(bits >> 8)
+			out[base+2] = byte(bits >> 16)
+			out[base+3] = byte(bits >> 24)
+		}
+		if pickBase != 0 {
+			putUint32LE(out[recordOffset+64:recordOffset+68], pickBase+uint32(inst))
+		}
 	}
 	return out
 }

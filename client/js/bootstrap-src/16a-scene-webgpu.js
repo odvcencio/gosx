@@ -712,16 +712,10 @@
     "",
     "struct PointsUniforms {",
     "    modelMatrix: mat4x4f,",
-    "    defaultSize: f32,",
-    "    defaultColor: vec3f,",
-    "    hasPerVertexColor: u32,",
-    "    hasPerVertexSize: u32,",
-    "    sizeAttenuation: u32,",
-    "    pointStyle: u32,",
-    "    opacity: f32,",
-    "    hasFog: u32,",
-    "    fogDensity: f32,",
-    "    fogColor: vec3f,",
+    "    defaultColorAndSize: vec4f,",
+    "    flags: vec4u,",
+    "    params: vec4f,",
+    "    fogColor: vec4f,",
     "};",
     "",
     "struct PointsOutput {",
@@ -755,13 +749,20 @@
     "",
     "    // Compute point size with optional attenuation.",
     "    var rawSize = p.size;",
-    "    if (points.hasPerVertexSize == 0u) { rawSize = points.defaultSize; }",
+    "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
     "",
     "    var pixelSize: f32;",
-    "    if (points.sizeAttenuation != 0u) {",
+    "    if (points.flags.z != 0u) {",
     "        pixelSize = max(rawSize * (frame.viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
     "    } else {",
     "        pixelSize = max(rawSize, 1.0);",
+    "    }",
+    "    let minPixelSize = max(points.fogColor.a, 0.0);",
+    "    if (minPixelSize > 0.0) {",
+    "        pixelSize = max(pixelSize, minPixelSize);",
+    "    }",
+    "    if (points.params.w > 0.0) {",
+    "        pixelSize = min(pixelSize, points.params.w);",
     "    }",
     "",
     "    // Billboard: offset in clip space by quad * pixelSize.",
@@ -773,19 +774,111 @@
     "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
     "",
     "    // Color.",
-    "    if (points.hasPerVertexColor != 0u) {",
+    "    if (points.flags.x != 0u) {",
     "        out.color = p.color.rgb;",
     "    } else {",
-    "        out.color = points.defaultColor;",
+    "        out.color = points.defaultColorAndSize.rgb;",
     "    }",
-    "    out.alpha = p.color.a * points.opacity;",
+    "    out.alpha = p.color.a * points.params.x;",
     "    out.pointCoord = quad + vec2f(0.5, 0.5);",
     "    out.pointSize = pixelSize;",
     "",
     "    // Fog.",
-    "    if (points.hasFog != 0u) {",
+    "    if (points.params.y != 0.0) {",
     "        let dist = length(viewPos.xyz);",
-    "        out.fogFactor = clamp(exp(-points.fogDensity * points.fogDensity * dist * dist), 0.0, 1.0);",
+    "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
+    "    } else {",
+    "        out.fogFactor = 1.0;",
+    "    }",
+    "",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_POINTS_INSTANCED_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct PointsUniforms {",
+    "    modelMatrix: mat4x4f,",
+    "    defaultColorAndSize: vec4f,",
+    "    flags: vec4u,",
+    "    params: vec4f,",
+    "    fogColor: vec4f,",
+    "};",
+    "",
+    "struct PointsInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) size: f32,",
+    "    @location(2) color: vec4f,",
+    "};",
+    "",
+    "struct PointsOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) color: vec3f,",
+    "    @location(1) fogFactor: f32,",
+    "    @location(2) alpha: f32,",
+    "    @location(3) pointCoord: vec2f,",
+    "    @location(4) pointSize: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
+    "",
+    "// Unit quad: 6 vertices for 2 triangles.",
+    "const quadPos = array<vec2f, 6>(",
+    "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
+    "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
+    ");",
+    "",
+    "@vertex fn vertexMain(",
+    "    @builtin(vertex_index) vertexIndex: u32,",
+    "    in: PointsInput,",
+    ") -> PointsOutput {",
+    "    let quad = quadPos[vertexIndex];",
+    "",
+    "    let worldPos = (points.modelMatrix * vec4f(in.position, 1.0)).xyz;",
+    "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
+    "",
+    "    // Compute point size with optional attenuation.",
+    "    var rawSize = in.size;",
+    "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
+    "",
+    "    var pixelSize: f32;",
+    "    if (points.flags.z != 0u) {",
+    "        pixelSize = max(rawSize * (frame.viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
+    "    } else {",
+    "        pixelSize = max(rawSize, 1.0);",
+    "    }",
+    "    let minPixelSize = max(points.fogColor.a, 0.0);",
+    "    if (minPixelSize > 0.0) {",
+    "        pixelSize = max(pixelSize, minPixelSize);",
+    "    }",
+    "    if (points.params.w > 0.0) {",
+    "        pixelSize = min(pixelSize, points.params.w);",
+    "    }",
+    "",
+    "    // Billboard: offset in clip space by quad * pixelSize.",
+    "    let clipPos = frame.projMatrix * viewPos;",
+    "    let ndcOffsetX = quad.x * pixelSize / frame.viewportWidth * clipPos.w * 2.0;",
+    "    let ndcOffsetY = quad.y * pixelSize / frame.viewportHeight * clipPos.w * 2.0;",
+    "",
+    "    var out: PointsOutput;",
+    "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
+    "",
+    "    // Color.",
+    "    if (points.flags.x != 0u) {",
+    "        out.color = in.color.rgb;",
+    "    } else {",
+    "        out.color = points.defaultColorAndSize.rgb;",
+    "    }",
+    "    out.alpha = in.color.a * points.params.x;",
+    "    out.pointCoord = quad + vec2f(0.5, 0.5);",
+    "    out.pointSize = pixelSize;",
+    "",
+    "    // Fog.",
+    "    if (points.params.y != 0.0) {",
+    "        let dist = length(viewPos.xyz);",
+    "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
     "    } else {",
     "        out.fogFactor = 1.0;",
     "    }",
@@ -801,16 +894,10 @@
   var WGSL_POINTS_FRAGMENT = [
     "struct PointsUniforms {",
     "    modelMatrix: mat4x4f,",
-    "    defaultSize: f32,",
-    "    defaultColor: vec3f,",
-    "    hasPerVertexColor: u32,",
-    "    hasPerVertexSize: u32,",
-    "    sizeAttenuation: u32,",
-    "    pointStyle: u32,",
-    "    opacity: f32,",
-    "    hasFog: u32,",
-    "    fogDensity: f32,",
-    "    fogColor: vec3f,",
+    "    defaultColorAndSize: vec4f,",
+    "    flags: vec4u,",
+    "    params: vec4f,",
+    "    fogColor: vec4f,",
     "};",
     "",
     "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
@@ -826,7 +913,7 @@
     "@fragment fn fragmentMain(in: PointsInput) -> @location(0) vec4f {",
     "    var color = in.color;",
     "    var alpha = in.alpha;",
-    "    if (points.pointStyle == 1u) {",
+    "    if (points.flags.w == 1u) {",
     "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
     "        let radial = length(centered);",
     "        let square = max(abs(centered.x), abs(centered.y));",
@@ -839,9 +926,23 @@
     "        let streak = max(streakX, streakY) * focus;",
     "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0) * in.alpha;",
     "        color = mix(color, vec3f(1.0, 1.0, 1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
+    "    } else if (points.flags.w == 2u) {",
+    "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
+    "        let radial = length(centered) * 2.0;",
+    "        if (radial > 1.0) {",
+    "            discard;",
+    "        }",
+    "        let sizeFocus = clamp((in.pointSize - 4.0) / 48.0, 0.0, 1.0);",
+    "        let falloff = mix(4.2, 3.2, sizeFocus);",
+    "        let core = exp(-radial * radial * falloff);",
+    "        let edgeFeather = 1.0 - smoothstep(0.78, 1.0, radial);",
+    "        alpha = core * edgeFeather * in.alpha;",
     "    }",
-    "    if (points.hasFog != 0u) {",
-    "        color = mix(points.fogColor, color, in.fogFactor);",
+    "    if (alpha <= 0.003) {",
+    "        discard;",
+    "    }",
+    "    if (points.params.y != 0.0) {",
+    "        color = mix(points.fogColor.rgb, color, in.fogFactor);",
     "    }",
     "    return vec4f(color, alpha);",
     "}",
@@ -984,9 +1085,10 @@
     "",
     "    let offsets = array<f32, 4>(1.0, 2.0, 3.0, 4.0);",
     "    let weights = array<f32, 4>(0.1945946, 0.1216216, 0.054054, 0.016216);",
+    "    let radiusStep = clamp(params.radius * 0.35, 1.0, 4.0);",
     "",
     "    for (var i = 0u; i < 4u; i = i + 1u) {",
-    "        let offset = params.direction * texelSize * offsets[i] * params.radius;",
+    "        let offset = params.direction * texelSize * offsets[i] * radiusStep;",
     "        result = result + textureSample(inputTex, inputSamp, uv + offset).rgb * weights[i];",
     "        result = result + textureSample(inputTex, inputSamp, uv - offset).rgb * weights[i];",
     "    }",
@@ -1055,6 +1157,90 @@
     "    let gray = dot(color, vec3f(0.2126, 0.7152, 0.0722));",
     "    color = mix(vec3f(gray), color, params.saturation);",
     "    return vec4f(clamp(color, vec3f(0.0), vec3f(1.0)), 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_SSAO_FRAGMENT = [
+    "struct SSAOParams {",
+    "    radius: f32,",
+    "    intensity: f32,",
+    "    bias: f32,",
+    "    _pad0: f32,",
+    "    texelSize: vec2f,",
+    "    _pad1: vec2f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "@group(0) @binding(2) var depthTex: texture_depth_2d;",
+    "@group(0) @binding(3) var<uniform> params: SSAOParams;",
+    "",
+    "fn depthAt(uv: vec2f) -> f32 {",
+    "    let dims = vec2f(textureDimensions(depthTex));",
+    "    let p = vec2i(clamp(uv * dims, vec2f(0.0), dims - vec2f(1.0)));",
+    "    return textureLoad(depthTex, p, 0);",
+    "}",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    let color = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    let centerDepth = depthAt(uv);",
+    "    if (centerDepth >= 0.9999) {",
+    "        return vec4f(color, 1.0);",
+    "    }",
+    "    let offsets = array<vec2f, 8>(",
+    "        vec2f(1.0, 0.0), vec2f(-1.0, 0.0), vec2f(0.0, 1.0), vec2f(0.0, -1.0),",
+    "        vec2f(0.707, 0.707), vec2f(-0.707, 0.707), vec2f(0.707, -0.707), vec2f(-0.707, -0.707)",
+    "    );",
+    "    let radius = clamp(params.radius, 1.0, 64.0);",
+    "    var occlusion = 0.0;",
+    "    for (var i = 0u; i < 8u; i = i + 1u) {",
+    "        let sampleDepth = depthAt(uv + offsets[i] * params.texelSize * radius);",
+    "        let delta = centerDepth - sampleDepth;",
+    "        let range = 1.0 - smoothstep(0.0, 0.035 * radius, abs(delta));",
+    "        if (delta > max(params.bias, 0.0001)) {",
+    "            occlusion = occlusion + range;",
+    "        }",
+    "    }",
+    "    let ao = 1.0 - clamp((occlusion / 8.0) * clamp(params.intensity, 0.0, 2.0), 0.0, 0.92);",
+    "    return vec4f(color * ao, 1.0);",
+    "}",
+  ].join("\n");
+
+  var WGSL_POST_DOF_FRAGMENT = [
+    "struct DOFParams {",
+    "    focusDepth: f32,",
+    "    aperture: f32,",
+    "    maxBlur: f32,",
+    "    _pad0: f32,",
+    "    texelSize: vec2f,",
+    "    _pad1: vec2f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "@group(0) @binding(2) var depthTex: texture_depth_2d;",
+    "@group(0) @binding(3) var<uniform> params: DOFParams;",
+    "",
+    "fn depthAt(uv: vec2f) -> f32 {",
+    "    let dims = vec2f(textureDimensions(depthTex));",
+    "    let p = vec2i(clamp(uv * dims, vec2f(0.0), dims - vec2f(1.0)));",
+    "    return textureLoad(depthTex, p, 0);",
+    "}",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    let center = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    let depth = depthAt(uv);",
+    "    let coc = clamp(abs(depth - params.focusDepth) * max(params.aperture, 0.0) * 80.0, 0.0, 1.0);",
+    "    let radius = clamp(params.maxBlur, 0.0, 48.0) * coc;",
+    "    let offsets = array<vec2f, 8>(",
+    "        vec2f(1.0, 0.0), vec2f(-1.0, 0.0), vec2f(0.0, 1.0), vec2f(0.0, -1.0),",
+    "        vec2f(0.707, 0.707), vec2f(-0.707, 0.707), vec2f(0.707, -0.707), vec2f(-0.707, -0.707)",
+    "    );",
+    "    var blur = center * 0.28;",
+    "    for (var i = 0u; i < 8u; i = i + 1u) {",
+    "        blur = blur + textureSample(inputTex, inputSamp, uv + offsets[i] * params.texelSize * radius).rgb * 0.09;",
+    "    }",
+    "    return vec4f(mix(center, blur, coc), 1.0);",
     "}",
   ].join("\n");
 
@@ -1224,6 +1410,15 @@
     });
   }
 
+  function wgpuCreatePointsUniformBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-points-uniform",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      ],
+    });
+  }
+
   function wgpuCreateShadowBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-shadow-frame",
@@ -1263,6 +1458,18 @@
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      ],
+    });
+  }
+
+  function wgpuCreateSSAOBindGroupLayout(device) {
+    return device.createBindGroupLayout({
+      label: "gosx-ssao",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
       ],
     });
   }
@@ -1330,6 +1537,18 @@
     { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 4 }] },
     { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 5 }] },
     { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 6 }] },
+  ];
+
+  var WGPU_POINTS_INSTANCE_VERTEX_LAYOUT = [
+    {
+      arrayStride: 32,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x3", offset: 0, shaderLocation: 0 },
+        { format: "float32", offset: 12, shaderLocation: 1 },
+        { format: "float32x4", offset: 16, shaderLocation: 2 },
+      ],
+    },
   ];
 
   function wgpuBlendState(mode) {
@@ -1546,6 +1765,33 @@
     });
   }
 
+  function wgpuCreatePointsVertexPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-points-vertex-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_POINTS_INSTANCE_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
   function wgpuCreatePostPipeline(device, layout, fragmentModule, targetFormat) {
     var vertModule = device.createShaderModule({ label: "post-vert", code: WGSL_POST_VERTEX });
     return device.createRenderPipeline({
@@ -1605,6 +1851,7 @@
     var postParamsLayout = null;
     var bloomCompositeLayout = null;
     var postBlitLayout = null;
+    var ssaoLayout = null;
     // Uniform buffers for post params (reused each frame).
     var postParamBuffers = {};
 
@@ -1619,6 +1866,10 @@
     function getPostBlitLayout() {
       if (!postBlitLayout) postBlitLayout = wgpuCreatePostBindGroupLayout(device);
       return postBlitLayout;
+    }
+    function getSSAOLayout() {
+      if (!ssaoLayout) ssaoLayout = wgpuCreateSSAOBindGroupLayout(device);
+      return ssaoLayout;
     }
 
     function getPipeline(name, fragmentSource, layout) {
@@ -1642,6 +1893,13 @@
       return postParamBuffers[name];
     }
 
+    function focusDepthForEffect(effect, camera) {
+      var focus = Math.max(0, sceneNumber(effect && effect.focusDistance, 8));
+      var near = Math.max(0.0001, sceneNumber(camera && camera.near, 0.1));
+      var far = Math.max(near + 0.0001, sceneNumber(camera && camera.far, 1000));
+      return clamp01((focus - near) / (far - near));
+    }
+
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
@@ -1657,7 +1915,7 @@
       depthTex = device.createTexture({
         size: [width, height, 1],
         format: "depth24plus",
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       });
       depthTexView = depthTex.createView();
 
@@ -1704,11 +1962,12 @@
         return { colorView: sceneTexView, depthView: depthTexView };
       },
 
-      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView) {
+      apply: function(encoder, effects, scaledW, scaledH, canvasW, canvasH, finalView, camera) {
         ensureFBOs(scaledW, scaledH);
 
         var currentTexView = sceneTexView;
         var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
+        var stats = { postEffects: effects.length, postSSAOPasses: 0, postDOFPasses: 0 };
 
         for (var i = 0; i < effects.length; i++) {
           var effect = effects[i];
@@ -1803,6 +2062,63 @@
               currentTexView = outputView;
               break;
             }
+            case SCENE_POST_SSAO: {
+              var ssaoPipeline = getPipeline("ssao", WGSL_POST_SSAO_FRAGMENT, getSSAOLayout());
+              var ssaoBuf = getParamBuffer("ssao", 32);
+              var radius = sceneNumber(effect.radius, 4.0);
+              var intensity = sceneNumber(effect.intensity, 0.55);
+              var bias = sceneNumber(effect.bias, 0.01);
+              device.queue.writeBuffer(ssaoBuf, 0, new Float32Array([
+                radius,
+                intensity,
+                bias,
+                0,
+                1 / Math.max(1, scaledW),
+                1 / Math.max(1, scaledH),
+                0,
+                0,
+              ]));
+              var ssaoBG = device.createBindGroup({
+                layout: getSSAOLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: depthTexView },
+                  { binding: 3, resource: { buffer: ssaoBuf } },
+                ],
+              });
+              fullscreenPass(encoder, ssaoPipeline, ssaoBG, outputView);
+              stats.postSSAOPasses += 1;
+              currentTexView = outputView;
+              break;
+            }
+            case SCENE_POST_DOF: {
+              var dofPipeline = getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout());
+              var dofBuf = getParamBuffer("dof", 32);
+              device.queue.writeBuffer(dofBuf, 0, new Float32Array([
+                focusDepthForEffect(effect, camera),
+                sceneNumber(effect.aperture, 0.04),
+                sceneNumber(effect.maxBlur, 8.0),
+                0,
+                1 / Math.max(1, scaledW),
+                1 / Math.max(1, scaledH),
+                0,
+                0,
+              ]));
+              var dofBG = device.createBindGroup({
+                layout: getSSAOLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: depthTexView },
+                  { binding: 3, resource: { buffer: dofBuf } },
+                ],
+              });
+              fullscreenPass(encoder, dofPipeline, dofBG, outputView);
+              stats.postDOFPasses += 1;
+              currentTexView = outputView;
+              break;
+            }
             case SCENE_POST_VIGNETTE: {
               var vigPipeline = getPipeline("vignette", WGSL_POST_VIGNETTE_FRAGMENT, getPostParamsLayout());
               var vigBuf = getParamBuffer("vignette", 16);
@@ -1856,6 +2172,7 @@
           });
           fullscreenPass(encoder, blitPipeline, blitBG, finalView);
         }
+        return stats;
       },
 
       dispose: function() {
@@ -1971,9 +2288,11 @@
     var frameBindGroupLayout = null;
     var materialBindGroupLayout = null;
     var pointsBindGroupLayout = null;
+    var pointsUniformBindGroupLayout = null;
     var shadowBindGroupLayout = null;
     var pbrPipelineLayout = null;
     var pointsPipelineLayout = null;
+    var pointsVertexPipelineLayout = null;
 
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
@@ -1989,6 +2308,7 @@
     var thickLineVertexModule = null;
     var thickLineFragmentModule = null;
     var pointsVertexModule = null;
+    var pointsInstancedVertexModule = null;
     var pointsFragmentModule = null;
 
     // Pipeline cache.
@@ -2024,16 +2344,20 @@
     // change.
     var pointsEntryGPUBuffers = new Set(); // all allocated GPUBuffers for dispose()
     // Hoisted scratches so uniform uploads don't allocate fresh 128-byte
-    // ArrayBuffers per entry per frame. The uniform layout is 128 bytes
-    // aligned (see PointsUniforms comment in drawPointsEntries). Wrapped
-    // Float32Array / Uint32Array views are created once for the same
-    // underlying storage.
+    // ArrayBuffers per entry per frame. The WGSL PointsUniforms layout is
+    // vec4-aligned: mat4 + vec4 color/size + vec4 flags + vec4 params +
+    // vec4 fog color. Wrapped Float32Array / Uint32Array views are created
+    // once for the same underlying storage.
     var pointsUniformScratch = new ArrayBuffer(128);
     var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
     var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
     var lastPreparedScene = null;
+    var lastWebGPUFrameStats = null;
+    var webGPUFrameSeq = 0;
+    var pendingWebGPUErrorScope = false;
+    var webGPUErrorReportCount = 0;
 
     // Shadow pass buffer.
     var shadowPositionBuffer = null;
@@ -2192,6 +2516,16 @@
       );
     }
 
+    function ensurePointsParticleVertexGPUBuffer(entry, particleData) {
+      return wgpuCachedTrackedBuffer(
+        entry,
+        "_gosxWGPUPointsParticleVertexBuffer",
+        particleData,
+        GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        false
+      );
+    }
+
     function pointsDefaultColorChanged(entry, rgba) {
       var cached = entry._cachedParticleDefaultColor;
       return !cached ||
@@ -2280,6 +2614,7 @@
         frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(device);
         materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device);
         pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(device);
+        pointsUniformBindGroupLayout = wgpuCreatePointsUniformBindGroupLayout(device);
         shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
 
         // Pipeline layouts.
@@ -2288,6 +2623,9 @@
         });
         pointsPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout, pointsBindGroupLayout],
+        });
+        pointsVertexPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout, pointsUniformBindGroupLayout],
         });
 
         // Compile shader modules.
@@ -2305,6 +2643,7 @@
         thickLineVertexModule = device.createShaderModule({ label: "thick-line-vert", code: WGSL_THICK_LINE_VERTEX });
         thickLineFragmentModule = device.createShaderModule({ label: "thick-line-frag", code: WGSL_THICK_LINE_FRAGMENT });
         pointsVertexModule = device.createShaderModule({ label: "points-vert", code: WGSL_POINTS_VERTEX });
+        pointsInstancedVertexModule = device.createShaderModule({ label: "points-instanced-vert", code: WGSL_POINTS_INSTANCED_VERTEX });
         pointsFragmentModule = device.createShaderModule({ label: "points-frag", code: WGSL_POINTS_FRAGMENT });
 
         // Create persistent uniform buffers.
@@ -2488,6 +2827,14 @@
       return pipeline;
     }
 
+    function getPointsVertexPipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("points-vertex", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreatePointsVertexPipeline(device, pointsVertexPipelineLayout, pointsInstancedVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
     function disposeComputeParticleSystems() {
       for (const record of computeParticleSystems.values()) {
         if (record && record.system && typeof record.system.dispose === "function") {
@@ -2564,6 +2911,18 @@
       } else {
         scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
       }
+
+      // scenePBRProjectionMatrix produces a WebGL-convention matrix whose
+      // clip-z range is [-w, w]. WebGPU's clip volume keeps z in [0, w],
+      // so without this remap every primitive in the front half of the
+      // frustum is silently clipped. Pre-multiplying by the depth-remap
+      // matrix R (row 2 = 0.5 * (row 2 + row 3)) converts to WebGPU clip
+      // space. Affects every WebGPU pipeline that consumes frame.projMatrix
+      // (PBR meshes, world lines, surfaces, points, compute particles).
+      scratchProjMatrix[2]  = 0.5 * (scratchProjMatrix[2]  + scratchProjMatrix[3]);
+      scratchProjMatrix[6]  = 0.5 * (scratchProjMatrix[6]  + scratchProjMatrix[7]);
+      scratchProjMatrix[10] = 0.5 * (scratchProjMatrix[10] + scratchProjMatrix[11]);
+      scratchProjMatrix[14] = 0.5 * (scratchProjMatrix[14] + scratchProjMatrix[15]);
 
       // FrameUniforms layout (std140):
       // mat4x4f viewMatrix:  0  (64 bytes)
@@ -3051,15 +3410,35 @@
 
     function getInstancedGeometry(mesh) {
       if (typeof generateInstancedGeometry !== "function") return null;
-      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      var kind = typeof normalizeInstancedGeometryKind === "function"
+        ? normalizeInstancedGeometryKind(mesh && mesh.kind)
+        : (typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box");
+      var size = sceneNumber(mesh && mesh.size, 0);
       var w = sceneNumber(mesh.width, 1);
       var h = sceneNumber(mesh.height, 1);
       var d = sceneNumber(mesh.depth, 1);
       var r = sceneNumber(mesh.radius, 0.5);
-      var s = sceneNumber(mesh.segments, 16);
-      var key = kind + ":" + w + ":" + h + ":" + d + ":" + r + ":" + s;
+      var rt = sceneNumber(mesh.radiusTop, r);
+      var rb = sceneNumber(mesh.radiusBottom, r);
+      var tube = sceneNumber(mesh.tube, 0.3);
+      var s = sceneNumber(mesh.segments, 32);
+      var radial = sceneNumber(mesh.radialSegments, 32);
+      var tubular = sceneNumber(mesh.tubularSegments, 16);
+      var key = kind + ":" + size + ":" + w + ":" + h + ":" + d + ":" + r + ":" + rt + ":" + rb + ":" + tube + ":" + s + ":" + radial + ":" + tubular;
       if (instancedGeometryCache[key]) return instancedGeometryCache[key];
-      var geom = generateInstancedGeometry(kind, { width: w, height: h, depth: d, radius: r, segments: s });
+      var geom = generateInstancedGeometry(kind, {
+        size: size,
+        width: w,
+        height: h,
+        depth: d,
+        radius: r,
+        radiusTop: rt,
+        radiusBottom: rb,
+        tube: tube,
+        segments: s,
+        radialSegments: radial,
+        tubularSegments: tubular,
+      });
       instancedGeometryCache[key] = geom;
       return geom;
     }
@@ -3121,10 +3500,25 @@
     }
 
     function instancedLocalBounds(mesh) {
-      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      var kind = typeof normalizeInstancedGeometryKind === "function"
+        ? normalizeInstancedGeometryKind(mesh && mesh.kind)
+        : (typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box");
       if (kind === "sphere") {
         var radius = Math.max(0.0001, sceneNumber(mesh.radius, 0.5));
         return { minX: -radius, minY: -radius, minZ: -radius, maxX: radius, maxY: radius, maxZ: radius };
+      }
+      if (kind === "cylinder" || kind === "cone") {
+        var top = kind === "cone" ? 0 : Math.max(0, sceneNumber(mesh.radiusTop, sceneNumber(mesh.radius, 0.5)));
+        var bottom = Math.max(0, sceneNumber(mesh.radiusBottom, sceneNumber(mesh.radius, 0.5)));
+        var cylinderRadius = Math.max(top, bottom);
+        var cylinderHeight = Math.max(0.0001, sceneNumber(mesh.height, 1));
+        return { minX: -cylinderRadius, minY: -cylinderHeight * 0.5, minZ: -cylinderRadius, maxX: cylinderRadius, maxY: cylinderHeight * 0.5, maxZ: cylinderRadius };
+      }
+      if (kind === "torus") {
+        var major = Math.max(0.0001, sceneNumber(mesh.radius, 0.7));
+        var tube = Math.max(0.0001, sceneNumber(mesh.tube, 0.3));
+        var torusRadius = major + tube;
+        return { minX: -torusRadius, minY: -tube, minZ: -torusRadius, maxX: torusRadius, maxY: tube, maxZ: torusRadius };
       }
       var w = Math.max(0.0001, sceneNumber(mesh.width, 1));
       var h = kind === "plane" ? 0 : Math.max(0.0001, sceneNumber(mesh.height, 1));
@@ -3545,9 +3939,20 @@
     // Points drawing (instanced billboard quads)
     // -----------------------------------------------------------------------
 
+    function webGPUEmptyPointDrawStats() {
+      return {
+        pointDrawEntries: 0,
+        pointDrawInstances: 0,
+        pointDrawCalls: 0,
+        pointSkippedEmpty: 0,
+        pointSkippedNoPositions: 0,
+      };
+    }
+
     function drawPointsEntries(pass, bundle, cam, timeSeconds) {
+      var stats = webGPUEmptyPointDrawStats();
       var pointsArray = Array.isArray(bundle.points) ? bundle.points : [];
-      if (pointsArray.length === 0) return;
+      if (pointsArray.length === 0) return stats;
 
       var env = bundle.environment || {};
       var fogDensity = sceneNumber(env.fogDensity, 0);
@@ -3560,7 +3965,10 @@
       for (var i = 0; i < pointsArray.length; i++) {
         var entry = pointsArray[i];
         var count = sceneNumber(entry.count, 0);
-        if (count <= 0) continue;
+        if (count <= 0) {
+          stats.pointSkippedEmpty += 1;
+          continue;
+        }
 
         // Compute model matrix (same logic as WebGL2 backend).
         var px = sceneNumber(entry.x, 0);
@@ -3606,28 +4014,30 @@
         }
 
         // Build PointsUniforms buffer.
-        // Layout: mat4x4f(64) + f32 defaultSize(4) + vec3f defaultColor(12) + 4*u32(16) + f32 opacity(4) +
-        //         u32 hasFog(4) + f32 fogDensity(4) + vec3f fogColor(12) = 120 -> align to 128.
+        // Layout: mat4x4f(64) + vec4 defaultColorAndSize(16) +
+        // vec4u flags(16) + vec4 params(16) + vec4 fogColor(16) = 128.
         pointsUniformScratchF.fill(0);
         var puF = pointsUniformScratchF;
         var puU = pointsUniformScratchU;
 
         puF.set(_pointsModelMat, 0);   // modelMatrix @ 0
-        puF[16] = sceneNumber(entry.size, 1); // defaultSize @ 64
         var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
-        puF[17] = defaultColorRGBA[0]; // defaultColor @ 68
-        puF[18] = defaultColorRGBA[1];
-        puF[19] = defaultColorRGBA[2];
-        puU[20] = 0; // hasPerVertexColor
-        puU[21] = 0; // hasPerVertexSize
-        puU[22] = entry.attenuation ? 1 : 0; // sizeAttenuation
-        puU[23] = scenePointStyleCode(entry.style); // pointStyle
-        puF[24] = clamp01(sceneNumber(entry.opacity, 1)); // opacity
-        puU[25] = fogDensity > 0 ? 1 : 0; // hasFog
-        puF[26] = fogDensity; // fogDensity
-        puF[27] = fogColorRGBA[0]; // fogColor
-        puF[28] = fogColorRGBA[1];
-        puF[29] = fogColorRGBA[2];
+        puF[16] = defaultColorRGBA[0]; // defaultColorAndSize.r @ 64
+        puF[17] = defaultColorRGBA[1];
+        puF[18] = defaultColorRGBA[2];
+        puF[19] = sceneNumber(entry.size, 1); // defaultColorAndSize.w/defaultSize
+        puU[20] = 0; // flags.x: hasPerVertexColor
+        puU[21] = 0; // flags.y: hasPerVertexSize
+        puU[22] = entry.attenuation ? 1 : 0; // flags.z: sizeAttenuation
+        puU[23] = scenePointStyleCode(entry.style); // flags.w: pointStyle
+        puF[24] = clamp01(sceneNumber(entry.opacity, 1)); // params.x: opacity
+        puF[25] = fogDensity > 0 ? 1 : 0; // params.y: hasFog
+        puF[26] = fogDensity; // params.z: fogDensity
+        puF[27] = sceneNumber(entry.maxPixelSize, 0); // params.w: maxPixelSize
+        puF[28] = fogColorRGBA[0]; // fogColor.r @ 112
+        puF[29] = fogColorRGBA[1];
+        puF[30] = fogColorRGBA[2];
+        puF[31] = sceneNumber(entry.minPixelSize, 0); // fogColor.a carries minPixelSize for points.
 
         // Cache particle typed arrays on entry.
         var rawPositions = entry.positions;
@@ -3662,7 +4072,10 @@
           }
         }
 
-        if (!entry._cachedPos) continue;
+        if (!entry._cachedPos) {
+          stats.pointSkippedNoPositions += 1;
+          continue;
+        }
 
         var hasSizes = !!entry._cachedSizes;
         var hasColors = !!entry._cachedColors;
@@ -3671,16 +4084,15 @@
 
         var pointsUniformBuffer = ensurePointsUniformGPUBuffer(entry, puF);
 
-        // Build particle instance storage buffer.
+        // Build particle instance vertex buffer.
         // Each particle: vec3f position(12) + f32 size(4) + vec4f color(16) = 32 bytes.
         var particleData = ensurePointsParticleData(entry, count, hasSizes, hasColors, defaultColorRGBA);
-        var pointsParticleBuffer = ensurePointsParticleGPUBuffer(entry, particleData);
+        var pointsParticleBuffer = ensurePointsParticleVertexGPUBuffer(entry, particleData);
 
         var pointsBG = device.createBindGroup({
-          layout: pointsBindGroupLayout,
+          layout: pointsUniformBindGroupLayout,
           entries: [
             { binding: 0, resource: { buffer: pointsUniformBuffer } },
-            { binding: 1, resource: { buffer: pointsParticleBuffer } },
           ],
         });
 
@@ -3688,16 +4100,28 @@
         var blendMode = typeof entry.blendMode === "string" ? entry.blendMode.toLowerCase() : "";
         var depthWrite = entry.depthWrite !== false;
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
-        var pipeline = getPointsPipeline(validBlend, depthWrite);
+        var pipeline = getPointsVertexPipeline(validBlend, depthWrite);
 
         pass.setPipeline(pipeline);
+        pass.setVertexBuffer(0, pointsParticleBuffer);
         pass.setBindGroup(2, pointsBG);
         pass.draw(6, count); // 6 vertices per quad, count instances
+        stats.pointDrawEntries += 1;
+        stats.pointDrawInstances += count;
+        stats.pointDrawCalls += 1;
       }
+      return stats;
     }
 
     function drawComputeParticleEntries(pass, records, environment) {
-      if (!Array.isArray(records) || records.length === 0) return;
+      var stats = {
+        computeParticleDrawEntries: 0,
+        computeParticleDrawInstances: 0,
+        computeParticleDrawCalls: 0,
+        computeParticleSkippedNotReady: 0,
+        computeParticleSkippedEmpty: 0,
+      };
+      if (!Array.isArray(records) || records.length === 0) return stats;
 
       var env = environment || {};
       var fogDensity = sceneNumber(env.fogDensity, 0);
@@ -3706,8 +4130,14 @@
       for (var i = 0; i < records.length; i++) {
         var record = records[i];
         var system = record && record.system;
-        if (!system || !system.renderBuffer || system.count <= 0) continue;
-        if (typeof system.isReady === "function" && !system.isReady()) continue;
+        if (!system || !system.renderBuffer || system.count <= 0) {
+          stats.computeParticleSkippedEmpty += 1;
+          continue;
+        }
+        if (typeof system.isReady === "function" && !system.isReady()) {
+          stats.computeParticleSkippedNotReady += 1;
+          continue;
+        }
 
         var entry = system.entry && typeof system.entry === "object" ? system.entry : {};
         var material = entry.material && typeof entry.material === "object" ? entry.material : {};
@@ -3718,20 +4148,22 @@
         puF.set(pointsIdentityMatrix, 0);
 
         var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
-        puF[16] = sceneNumber(material.size, 1);
-        puF[17] = defaultColorRGBA[0];
-        puF[18] = defaultColorRGBA[1];
-        puF[19] = defaultColorRGBA[2];
+        puF[16] = defaultColorRGBA[0];
+        puF[17] = defaultColorRGBA[1];
+        puF[18] = defaultColorRGBA[2];
+        puF[19] = sceneNumber(material.size, 1);
         puU[20] = 1;
         puU[21] = 1;
         puU[22] = material.attenuation ? 1 : 0;
         puU[23] = scenePointStyleCode(material.style);
         puF[24] = 1;
-        puU[25] = fogDensity > 0 ? 1 : 0;
+        puF[25] = fogDensity > 0 ? 1 : 0;
         puF[26] = fogDensity;
-        puF[27] = fogColorRGBA[0];
-        puF[28] = fogColorRGBA[1];
-        puF[29] = fogColorRGBA[2];
+        puF[27] = sceneNumber(material.maxPixelSize, 0);
+        puF[28] = fogColorRGBA[0];
+        puF[29] = fogColorRGBA[1];
+        puF[30] = fogColorRGBA[2];
+        puF[31] = sceneNumber(material.minPixelSize, 0);
 
         var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
 
@@ -3751,6 +4183,164 @@
         pass.setPipeline(pipeline);
         pass.setBindGroup(2, pointsBG);
         pass.draw(6, system.count);
+        stats.computeParticleDrawEntries += 1;
+        stats.computeParticleDrawInstances += system.count;
+        stats.computeParticleDrawCalls += 1;
+      }
+      return stats;
+    }
+
+    function webGPUPlannedPointStats(bundle, computeParticleRecords) {
+      var pointsArray = Array.isArray(bundle && bundle.points) ? bundle.points : [];
+      var pointInstances = 0;
+      for (var i = 0; i < pointsArray.length; i++) {
+        pointInstances += Math.max(0, Math.floor(sceneNumber(pointsArray[i] && pointsArray[i].count, 0)));
+      }
+      var computeRecords = Array.isArray(computeParticleRecords) ? computeParticleRecords : [];
+      var computeInstances = 0;
+      for (var c = 0; c < computeRecords.length; c++) {
+        var system = computeRecords[c] && computeRecords[c].system;
+        computeInstances += Math.max(0, Math.floor(sceneNumber(system && system.count, 0)));
+      }
+      return {
+        pointEntries: pointsArray.length,
+        pointInstances: pointInstances,
+        computeParticleEntries: computeRecords.length,
+        computeParticleInstances: computeInstances,
+      };
+    }
+
+    function webGPUPlannedInstanceCount(list) {
+      var total = 0;
+      var source = Array.isArray(list) ? list : [];
+      for (var i = 0; i < source.length; i++) {
+        total += Math.max(0, Math.floor(sceneNumber(source[i] && source[i].count, 0)));
+      }
+      return total;
+    }
+
+    function webGPUCustomMaterialStats(materials) {
+      var stats = { customMaterialFallbacks: 0, customWGSLFallbacks: 0, customUniformFallbacks: 0 };
+      var source = Array.isArray(materials) ? materials : [];
+      for (var i = 0; i < source.length; i++) {
+        var material = source[i] || {};
+        var hasWGSL = (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
+          (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim());
+        var hasCustomUniforms = material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0;
+        if (!hasWGSL && !hasCustomUniforms) {
+          continue;
+        }
+        stats.customMaterialFallbacks += 1;
+        if (hasWGSL) {
+          stats.customWGSLFallbacks += 1;
+        }
+        if (hasCustomUniforms) {
+          stats.customUniformFallbacks += 1;
+        }
+      }
+      return stats;
+    }
+
+    function publishWebGPUFrameStats(stats) {
+      var mount = canvas && canvas.parentNode;
+      if (!mount) return;
+      webGPUFrameSeq += 1;
+      var published = Object.assign({}, stats || {}, {
+        frameSeq: webGPUFrameSeq,
+        frameAt: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
+      });
+      lastWebGPUFrameStats = published;
+      mount.__gosxScene3DWebGPUStats = published;
+      if (typeof mount.setAttribute !== "function") return;
+      mount.setAttribute("data-gosx-scene3d-webgpu-frame-seq", String(published.frameSeq || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-frame-at", String(published.frameAt || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-entries", String(published.pointEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-instances", String(published.pointInstances || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-draw-entries", String(published.pointDrawEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-draw-instances", String(published.pointDrawInstances || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-draw-calls", String(published.pointDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-skipped-empty", String(published.pointSkippedEmpty || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-skipped-no-positions", String(published.pointSkippedNoPositions || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-entries", String(published.computeParticleEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-instances", String(published.computeParticleInstances || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-draw-entries", String(published.computeParticleDrawEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-draw-instances", String(published.computeParticleDrawInstances || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-draw-calls", String(published.computeParticleDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-empty", String(published.computeParticleSkippedEmpty || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-not-ready", String(published.computeParticleSkippedNotReady || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-mesh-objects", String(published.meshObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-instanced-meshes", String(published.instancedMeshes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-instanced-instances", String(published.instancedInstances || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-line-entries", String(published.lineEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-surface-entries", String(published.surfaceEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-post-effects", String(published.postEffects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-post-ssao-passes", String(published.postSSAOPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-post-dof-passes", String(published.postDOFPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-custom-material-fallbacks", String(published.customMaterialFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-custom-wgsl-fallbacks", String(published.customWGSLFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-custom-uniform-fallbacks", String(published.customUniformFallbacks || 0));
+      if (published.customMaterialFallbacks > 0) {
+        mount.setAttribute("data-gosx-scene3d-webgpu-custom-material-fallback-reason", "custom-wgsl-hooks-unsupported");
+      } else {
+        mount.removeAttribute("data-gosx-scene3d-webgpu-custom-material-fallback-reason");
+      }
+      if (published.lastError) {
+        mount.setAttribute("data-gosx-scene3d-webgpu-last-error", String(published.lastError));
+      } else {
+        mount.removeAttribute("data-gosx-scene3d-webgpu-last-error");
+      }
+    }
+
+    function reportWebGPUFrameError(message) {
+      var text = String(message || "").slice(0, 500);
+      if (!text) return;
+      var stats = Object.assign({}, lastWebGPUFrameStats || {}, { renderer: "webgpu", lastError: text });
+      publishWebGPUFrameStats(stats);
+      if (webGPUErrorReportCount >= 3) return;
+      webGPUErrorReportCount += 1;
+      try {
+        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+          window.__gosx_emit("error", "scene3d-webgpu", "render-error", {
+            error: text,
+            pointEntries: stats.pointEntries || 0,
+            pointInstances: stats.pointInstances || 0,
+            pointDrawEntries: stats.pointDrawEntries || 0,
+            pointDrawInstances: stats.pointDrawInstances || 0,
+            computeParticleDrawInstances: stats.computeParticleDrawInstances || 0,
+          });
+        }
+      } catch (_err) {}
+    }
+
+    function beginWebGPUErrorScope() {
+      if (!device || pendingWebGPUErrorScope || typeof device.pushErrorScope !== "function") return false;
+      try {
+        device.pushErrorScope("validation");
+        pendingWebGPUErrorScope = true;
+        return true;
+      } catch (_err) {
+        pendingWebGPUErrorScope = false;
+        return false;
+      }
+    }
+
+    function endWebGPUErrorScope() {
+      if (!device || !pendingWebGPUErrorScope || typeof device.popErrorScope !== "function") return;
+      pendingWebGPUErrorScope = false;
+      try {
+        device.popErrorScope().then(function(error) {
+          if (error) {
+            reportWebGPUFrameError(error.message || String(error));
+          } else if (lastWebGPUFrameStats && lastWebGPUFrameStats.lastError) {
+            var clean = Object.assign({}, lastWebGPUFrameStats);
+            delete clean.lastError;
+            publishWebGPUFrameStats(clean);
+          }
+        }).catch(function(error) {
+          reportWebGPUFrameError(error && error.message ? error.message : String(error));
+        });
+      } catch (error) {
+        reportWebGPUFrameError(error && error.message ? error.message : String(error));
       }
     }
 
@@ -3847,6 +4437,7 @@
       var activeShadowCount = 0;
 
       var encoder = device.createCommandEncoder({ label: "gosx-frame" });
+      var scopedFrameErrors = beginWebGPUErrorScope();
       var frameTimeSeconds = performance.now() / 1000;
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
 
@@ -3951,6 +4542,23 @@
         : { opaque: [], alpha: [], additive: [] };
       var thickLineRecord = hasWorldLines ? webGPUThickLineRecord(bundle) : null;
       var worldLineEntries = hasWorldLines && !thickLineRecord ? webGPUWorldLinePasses(bundle) : [];
+      var pointStats = webGPUPlannedPointStats(bundle, computeParticleRecords);
+      var customMaterialStats = webGPUCustomMaterialStats(materials);
+      var frameStats = {
+        renderer: "webgpu",
+        pointEntries: pointStats.pointEntries,
+        pointInstances: pointStats.pointInstances,
+        computeParticleEntries: pointStats.computeParticleEntries,
+        computeParticleInstances: pointStats.computeParticleInstances,
+        meshObjects: Array.isArray(bundle.meshObjects) ? bundle.meshObjects.length : 0,
+        instancedMeshes: Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0,
+        instancedInstances: webGPUPlannedInstanceCount(bundle.instancedMeshes),
+        lineEntries: thickLineRecord ? 1 : worldLineEntries.length,
+        surfaceEntries: Array.isArray(bundle.surfaces) ? bundle.surfaces.length : 0,
+        customMaterialFallbacks: customMaterialStats.customMaterialFallbacks,
+        customWGSLFallbacks: customMaterialStats.customWGSLFallbacks,
+        customUniformFallbacks: customMaterialStats.customUniformFallbacks,
+      };
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
       if (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces) {
@@ -4031,8 +4639,8 @@
         // Create a dummy material bind group for group 1 (points pipeline layout requires it).
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG);
-        drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds);
-        drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment);
+        Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds));
+        Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment));
       }
 
       mainPass.end();
@@ -4040,10 +4648,12 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
-        postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView);
+        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera));
       }
 
       device.queue.submit([encoder.finish()]);
+      publishWebGPUFrameStats(frameStats);
+      if (scopedFrameErrors) endWebGPUErrorScope();
 
       if (perfEnabled) {
         performance.mark("scene3d-render-end");
@@ -4138,6 +4748,8 @@
       out.presentationToneMappingMode = activePresentation.toneMappingMode;
       out.powerPreference = activePowerPreference;
       out.postProcessing = !!postProcessor;
+      out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
+      out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
       return out;
     }
 

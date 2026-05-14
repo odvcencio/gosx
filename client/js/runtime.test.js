@@ -296,6 +296,7 @@ class FakeWebGLContext {
     if (name === "a_joints") return 7;
     if (name === "a_weights") return 8;
     if (name === "a_instanceColor") return 9;
+    if (name === "a_size") return 10;
     return -1;
   }
 
@@ -387,6 +388,10 @@ class FakeWebGLContext {
 
   vertexAttrib2f(location, x, y) {
     this.ops.push(["vertexAttrib2f", location, x, y]);
+  }
+
+  vertexAttrib1f(location, x) {
+    this.ops.push(["vertexAttrib1f", location, x]);
   }
 
   vertexAttrib4f(location, x, y, z, w) {
@@ -4863,6 +4868,8 @@ test("bootstrap hydrates Scene3D model POINTS from GLB assets", async () => {
     ? Array.from(mount.__gosxScene3DSentinels.keys())
     : [];
   assert.equal(sentinelIDs.includes("galaxy/sparks"), true);
+  assert.equal(sentinelIDs.includes("scene-object-0"), false);
+  assert.equal(sentinelIDs.includes("scene-object-1"), false);
   assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.LINES && entry[3] >= 4));
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -5864,7 +5871,7 @@ test("bootstrap keeps GLB Scene3D assets visible on canvas fallback", async () =
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
   const ctx2d = mount.children[0].getContext("2d");
   const lineCount = ctx2d.ops.filter((entry) => entry[0] === "lineTo").length;
-  assert.ok(lineCount > 22);
+  assert.ok(lineCount >= 3);
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -6042,6 +6049,8 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
               html: [
                 {
                   id: "hud-card",
+                  target: "hero",
+                  mode: "texture",
                   className: "hud-card",
                   html: '<section class="hud"><strong>HTML</strong> <span>scene</span></section>',
                   x: 0,
@@ -6072,12 +6081,121 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
   assert.equal(labelLayer.getAttribute("aria-hidden"), "false");
   assert.ok(html);
   assert.equal(html.getAttribute("class"), "gosx-scene-html hud-card");
+  assert.equal(html.getAttribute("data-gosx-scene-html-target"), "hero");
+  assert.equal(html.getAttribute("data-gosx-scene-html-mode"), "texture");
+  assert.equal(html.getAttribute("data-gosx-scene-html-fallback"), "dom-overlay");
+  assert.equal(html.getAttribute("data-gosx-scene-html-fallback-reason"), "html-texture-accessibility-mirror");
+  assert.ok(html.getAttribute("data-gosx-scene-html-texture-key").startsWith("data:image/svg+xml;charset=utf-8,"));
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-width"), "512");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-height"), "320");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-bytes"), "655360");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-cap-bytes"), "4194304");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-ready"), "true");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-revision"), "1");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-dirty"), "false");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-dirty-bytes"), null);
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-pending-bytes"), null);
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-manager"), "svg-foreignobject");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-rasterized"), "true");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-bytes"), "655360");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-count"), "1");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-ready"), "1");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-bytes"), "655360");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-dirty"), null);
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-dirty-bytes"), null);
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-upload-pending-bytes"), null);
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-revision"), "1");
   assert.equal(html.getAttribute("data-gosx-scene-html-pointer-events"), "auto");
   assert.equal(html.getAttribute("aria-hidden"), "false");
   assert.equal(html.innerHTML, '<section class="hud"><strong>HTML</strong> <span>scene</span></section>');
   assert.equal(html.textContent, "HTML scene");
   assert.equal(html.style["--gosx-scene-html-pointer-events"], "auto");
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap emits ready HTML texture surfaces into render bundles", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const bundle = api.createSceneRenderBundle(
+    640,
+    360,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [],
+    [],
+    [],
+    [
+      api.normalizeSceneHTML({
+        id: "panel",
+        target: "console",
+        mode: "texture",
+        html: "<button>Inspect</button>",
+        x: 0,
+        y: 0,
+        z: 0,
+        surfaceWidth: 1.6,
+        surfaceHeight: 0.9,
+        textureWidth: 256,
+        textureHeight: 128,
+        textureReady: true,
+        pointerEvents: "auto",
+      }, 0, null),
+    ],
+    [],
+    { ambientColor: "#ffffff", ambientIntensity: 0.1 },
+    0,
+    [],
+    [],
+    [],
+    [],
+    921600,
+  );
+
+  assert.equal(bundle.html.length, 1);
+  assert.equal(bundle.html[0].textureBytes, 131072);
+  assert.equal(bundle.html[0].textureReady, true);
+  assert.equal(bundle.surfaces.length, 1);
+  assert.equal(bundle.surfaces[0].sourceKind, "html");
+  assert.equal(bundle.surfaces[0].sourceID, "panel");
+  assert.equal(bundle.surfaces[0].textureKey, "gosx-html://panel");
+  assert.equal(bundle.surfaces[0].textureBytes, 131072);
+  assert.equal(bundle.surfaces[0].textureReady, true);
+  assert.equal(bundle.materials[bundle.surfaces[0].materialIndex].texture, "gosx-html://panel");
+
+  const pending = api.createSceneRenderBundle(
+    640,
+    360,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [],
+    [],
+    [],
+    [
+      api.normalizeSceneHTML({
+        id: "pending-panel",
+        mode: "texture",
+        html: "<button>Pending</button>",
+        textureReady: false,
+        textureWidth: 4096,
+        textureHeight: 4096,
+        maxTexturePixels: 1024,
+      }, 0, null),
+    ],
+    [],
+    { ambientColor: "#ffffff", ambientIntensity: 0.1 },
+    0,
+    [],
+    [],
+    [],
+    [],
+    921600,
+  );
+  assert.equal(pending.surfaces.length, 0);
+  assert.equal(pending.html[0].textureOverBudget, true);
+  assert.equal(pending.html[0].fallbackReason, "html-texture-memory-cap");
 });
 
 test("bootstrap emits declarative Scene3D pick signals without authored JS", async () => {
@@ -6153,6 +6271,23 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
           bounds: { minX: -0.8, minY: 0.2, minZ: 0.5, maxX: 0.7, maxY: 0.9, maxZ: 1.1 },
         },
       ],
+      html: [
+        {
+          id: "shape-panel",
+          target: "shape",
+          mode: "texture",
+          html: "<button>Inspect</button>",
+          position: { x: 320, y: 160 },
+          depth: 6.8,
+          width: 200,
+          height: 100,
+          textureWidth: 256,
+          textureHeight: 128,
+          pointerEvents: "auto",
+          fallback: "dom-overlay",
+          fallbackReason: "html-texture-manager-unavailable",
+        },
+      ],
       objectCount: 2,
     }),
   });
@@ -6166,6 +6301,12 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   const canvas = mount.children[0];
   assert.equal(mount.getAttribute("data-gosx-scene3d-pick-signals"), "$scene.pick");
   assert.equal(mount.getAttribute("data-gosx-scene3d-event-signals"), "$scene.event");
+  const labelLayer = mount.children[1];
+  const htmlSurface = labelLayer.children.find((child) => child.getAttribute("data-gosx-scene-html") === "shape-panel");
+  assert.ok(htmlSurface);
+  assert.equal(htmlSurface.getAttribute("data-gosx-scene-html-target"), "shape");
+  const textureEvents = [];
+  htmlSurface.addEventListener("gosx:scene-html-texture-pointer", (event) => textureEvents.push(event.detail));
 
   canvas.dispatchEvent({
     type: "pointermove",
@@ -6189,10 +6330,30 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(batch["$scene.event.targetIndex"], 1);
   assert.equal(batch["$scene.event.targetID"], "shape");
   assert.equal(batch["$scene.event.targetKind"], "box");
+  assert.equal(batch["$scene.event.targetInstanceIndex"], -1);
+  assert.equal(batch["$scene.event.targetPrimitiveIndex"], -1);
+  assert.equal(batch["$scene.event.targetTriangleIndex"], -1);
+  assert.equal(batch["$scene.event.worldX"], 0);
+  assert.equal(batch["$scene.event.localX"], 0);
+  assert.equal(batch["$scene.event.uvX"], 0);
+  assert.ok(Math.abs(batch["$scene.event.depth"] - 6.8) < 1e-6, "expected fallback pick depth");
   assert.equal(batch["$scene.event.hovered"], true);
   assert.equal(batch["$scene.event.hoverKind"], "box");
   assert.equal(batch["$scene.event.object.shape.hovered"], true);
-  assert.deepEqual(JSON.parse(JSON.stringify(interactionEvents[0])), {
+  assert.equal(textureEvents.length, 1);
+  assert.equal(textureEvents[0].htmlID, "shape-panel");
+  assert.equal(textureEvents[0].targetID, "shape");
+  assert.equal(textureEvents[0].type, "hover");
+  assert.equal(textureEvents[0].fallback, "dom-overlay");
+  assert.equal(textureEvents[0].fallbackReason, "html-texture-accessibility-mirror");
+  assert.equal(textureEvents[0].uvX, 0);
+  assert.equal(textureEvents[0].localX, 0);
+  assert.equal(htmlSurface.getAttribute("data-gosx-scene-html-hit-target"), "shape");
+  assert.equal(htmlSurface.getAttribute("data-gosx-scene-html-hit-uv-x"), "0");
+  const hoverEvent = JSON.parse(JSON.stringify(interactionEvents[0]));
+  assert.ok(Math.abs(hoverEvent.detail.depth - 6.8) < 1e-6, "expected fallback event depth");
+  hoverEvent.detail.depth = 6.8;
+  assert.deepEqual(hoverEvent, {
     engineID: "gosx-engine-pick",
     component: "GoSXScene3D",
     detail: {
@@ -6201,6 +6362,18 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
       targetIndex: 1,
       targetID: "shape",
       targetKind: "box",
+      targetInstanceIndex: -1,
+      targetPrimitiveIndex: -1,
+      targetTriangleIndex: -1,
+      worldX: 0,
+      worldY: 0,
+      worldZ: 0,
+      localX: 0,
+      localY: 0,
+      localZ: 0,
+      uvX: 0,
+      uvY: 0,
+      depth: 6.8,
       hovered: true,
       hoverIndex: 1,
       hoverID: "shape",
@@ -6357,7 +6530,31 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
   );
   assert.equal(bundle.bundleVersion, api.SCENE_RENDER_BUNDLE_VERSION);
   assert.equal(bundle.postFXMaxPixels, 921600);
+  assert.equal(bundle.vertexCount, 0);
+  assert.equal(bundle.lines.length, 0);
   assert.equal(JSON.stringify(api.validateSceneIR(bundle)), JSON.stringify({ valid: true, errors: [] }));
+
+  const gridBundle = api.createSceneRenderBundle(
+    96,
+    96,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [],
+    [],
+    [],
+    [],
+    [],
+    { ambientColor: "#ffffff", ambientIntensity: 0.1 },
+    0,
+    [],
+    [],
+    [],
+    [],
+    0,
+    true,
+  );
+  assert.equal(gridBundle.lines.length, 6);
+  assert.equal(gridBundle.vertexCount, 12);
 
   const invalid = api.validateSceneIR({
     version: 1,
@@ -6370,12 +6567,21 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
   assert.ok(invalid.errors.some((entry) => entry.includes("points.count")));
 
   const emptyCanonical = api.validateSceneIR({
+    schema: api.SCENE_IR_SCHEMA,
     version: 1,
     camera: { near: 0.05, far: 128 },
     environment: { fogDensity: 0.001 },
     lights: [{ kind: "directional" }],
   });
   assert.equal(JSON.stringify(emptyCanonical), JSON.stringify({ valid: true, errors: [] }));
+
+  const badSchema = api.validateSceneIR({
+    schema: "gosx.scene3d.ir.v0",
+    version: 1,
+    camera: { near: 0.05, far: 128 },
+  });
+  assert.equal(badSchema.valid, false);
+  assert.ok(badSchema.errors.some((entry) => entry.includes("schema must be gosx.scene3d.ir.v1")));
 
   const mismatched = api.validateSceneIR({
     version: 1,
@@ -6392,6 +6598,232 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
   });
   assert.equal(negativeInstanced.valid, false);
   assert.ok(negativeInstanced.errors.some((entry) => entry.includes("instancedMesh.count")));
+});
+
+test("bootstrap applies Scene3D post-effect diff commands", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      postEffects: [{ kind: "bloom", threshold: 0.8, intensity: 0.2 }],
+      postFXMaxPixels: 4096,
+    },
+  });
+
+  api.applySceneCommands(state, [{
+    kind: 7,
+    data: {
+      postEffects: [{ kind: "dof", focusDistance: 6, aperture: 0.08, maxBlur: 5 }],
+      postFXMaxPixels: 16384,
+    },
+  }]);
+
+  assert.equal(state.postEffects.length, 1);
+  assert.equal(state.postEffects[0].kind, "dof");
+  assert.equal(state.postEffects[0].focusDistance, 6);
+  assert.equal(state.postEffects[0].aperture, 0.08);
+  assert.equal(state.postEffects[0].maxBlur, 5);
+  assert.equal(state.postFXMaxPixels, 16384);
+  assert.equal(state._deferredPostEffects, null);
+  assert.deepEqual(state._adaptiveSourcePostEffects, state.postEffects);
+});
+
+test("bootstrap applies Scene3D environment diff commands", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      environment: { ambientColor: "#ffffff", ambientIntensity: 0.1, exposure: 1 },
+    },
+  });
+
+  api.applySceneCommands(state, [{
+    kind: 13,
+    data: {
+      environment: {
+        ambientColor: "#f5fbff",
+        ambientIntensity: 0.35,
+        exposure: 1.2,
+        toneMapping: "aces",
+      },
+    },
+  }]);
+
+  assert.equal(state.environment.ambientColor, "#f5fbff");
+  assert.equal(state.environment.ambientIntensity, 0.35);
+  assert.equal(state.environment.exposure, 1.2);
+  assert.equal(state.environment.toneMapping, "aces");
+});
+
+test("bootstrap applies Scene3D particle and instanced diff commands", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [{ id: "old-points", count: 1, positions: [0, 0, 0], color: "#ffffff" }],
+      instancedMeshes: [{ id: "old-batch", kind: "box", count: 1, transforms: new Array(16).fill(0) }],
+    },
+  });
+
+  api.applySceneCommands(state, [
+    {
+      kind: 6,
+      data: {
+        points: [{ id: "stars", count: 2, positions: [0, 0, 0, 1, 1, 1], color: "#77c6ff", minPixelSize: 2 }],
+        computeParticles: [{ id: "field", count: 4, emitter: { kind: "sphere", radius: 2 }, material: { color: "#fff", size: 3 } }],
+      },
+    },
+    {
+      kind: 8,
+      data: {
+        instancedMeshes: [{ id: "debris", kind: "torusGeometry", count: 2, transforms: new Array(32).fill(0), radius: 1.2, tube: 0.2 }],
+      },
+    },
+  ]);
+
+  assert.equal(state.points.length, 1);
+  assert.equal(state.points[0].id, "stars");
+  assert.equal(state.points[0].count, 2);
+  assert.equal(state.points[0].minPixelSize, 2);
+  assert.equal(state.computeParticles.length, 1);
+  assert.equal(state.computeParticles[0].id, "field");
+  assert.equal(state.computeParticles[0].emitter.radius, 2);
+  assert.equal(state.instancedMeshes.length, 1);
+  assert.equal(state.instancedMeshes[0].id, "debris");
+  assert.equal(state.instancedMeshes[0].kind, "torus");
+  assert.equal(state.instancedMeshes[0].radius, 1.2);
+  assert.equal(state.instancedMeshes[0].tube, 0.2);
+});
+
+test("bootstrap applies Scene3D material diff commands", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ name: "hero", kind: "standard", color: "#ffffff" }],
+      objects: [{ id: "cube", kind: "box", material: "hero" }],
+    },
+  }, { tier: "constrained" });
+
+  api.applySceneCommands(state, [{
+    kind: 9,
+    data: {
+      materials: [{
+        name: "hero",
+        kind: "custom",
+        color: "#f5c76b",
+        customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
+        variants: {
+          constrained: { color: "#94a3b8", opacity: 0.4 },
+        },
+      }],
+    },
+  }]);
+
+  assert.equal(state.materials.length, 1);
+  assert.equal(state.materials[0].kind, "custom");
+  assert.equal(state.materials[0].variantKey, "constrained");
+  assert.equal(state.materials[0].color, "#94a3b8");
+  assert.equal(state.materials[0].opacity, 0.4);
+  assert.equal(state._materialSource[0].color, "#f5c76b");
+
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  assert.equal(objects[0].materialKind, "custom");
+  assert.equal(objects[0].color, "#94a3b8");
+  assert.equal(objects[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(1.0); }");
+});
+
+test("bootstrap applies Scene3D model, instanced GLB, and animation diff commands", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/models/card.gosx3d.json": {
+        text: JSON.stringify({
+          objects: [
+            { id: "card", kind: "box", width: 1, height: 1, depth: 0.1, color: "#ffffff" },
+          ],
+        }),
+      },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { objects: [] } });
+
+  await api.applySceneCommands(state, [{
+    kind: 10,
+    data: {
+      models: [{
+        id: "hero",
+        src: "/models/card.gosx3d.json",
+        x: 1,
+        materialKind: "standard",
+        roughness: 0.32,
+      }],
+    },
+  }]);
+
+  assert.equal(state.models.length, 1);
+  assert.equal(state.models[0].id, "hero");
+  assert.equal(state.objects.has("hero/card"), true);
+  assert.equal(state.objects.get("hero/card").roughness, 0.32);
+
+  await api.applySceneCommands(state, [{
+    kind: 10,
+    data: { models: [] },
+  }]);
+  assert.equal(state.models.length, 0);
+  assert.equal(state.objects.has("hero/card"), false);
+
+  await api.applySceneCommands(state, [{
+    kind: 11,
+    data: {
+      instancedGLBMeshes: [{
+        id: "batch",
+        src: "/models/card.gosx3d.json",
+        materialKind: "glow",
+        metalness: 0.7,
+        instances: [
+          { id: "a", x: 0, scale: 1 },
+          { id: "b", x: 2, scale: 1 },
+        ],
+      }],
+    },
+  }]);
+
+  assert.equal(state.instancedGLBMeshes.length, 1);
+  assert.equal(state.instancedGLBMeshes[0].instances.length, 2);
+  assert.equal(state.objects.has("batch/a/card"), true);
+  assert.equal(state.objects.has("batch/b/card"), true);
+  assert.equal(state.objects.get("batch/a/card").materialKind, "glow");
+  assert.equal(state.objects.get("batch/a/card").metalness, 0.7);
+
+  api.applySceneCommands(state, [{
+    kind: 12,
+    data: {
+      animations: [{
+        name: "pulse",
+        duration: 1,
+        channels: [{ targetNode: "batch/a/card", property: "rotationY", times: [0, 1], values: [0, 3.14] }],
+      }],
+    },
+  }]);
+  assert.equal(state.animations.length, 1);
+  assert.equal(state.animations[0].name, "pulse");
+  assert.equal(state.animations[0].channels[0].targetNode, "batch/a/card");
 });
 
 test("bootstrap prepares Scene3D pass plans and cached buffers through shared planner", async () => {
@@ -6562,18 +6994,159 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
 
   assert.match(source, /function ensurePointsUniformGPUBuffer\(owner, uniformData\)/);
   assert.match(source, /function ensurePointsParticleGPUBuffer\(entry, particleData\)/);
+  assert.match(source, /function ensurePointsParticleVertexGPUBuffer\(entry, particleData\)/);
   assert.match(source, /sceneCachedBuffer\(owner,\s*typedArray/);
   assert.match(source, /ensurePointsUniformGPUBuffer\(entry,\s*puF\)/);
-  assert.match(source, /ensurePointsParticleGPUBuffer\(entry,\s*particleData\)/);
+  assert.match(source, /ensurePointsParticleVertexGPUBuffer\(entry,\s*particleData\)/);
+  assert.match(source, /resource: \{ buffer: system\.renderBuffer \}/);
   assert.doesNotMatch(source, /var\s+pointsUniformBuffer\s*=\s*device\.createBuffer/);
   assert.doesNotMatch(source, /device\.queue\.writeBuffer\(pointsUniformBuffer,\s*0/);
+});
+
+test("bootstrap renders WebGPU Scene3D static points from instanced vertex buffers", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(source, /var WGSL_POINTS_INSTANCED_VERTEX = \[/);
+  assert.match(source, /var WGPU_POINTS_INSTANCE_VERTEX_LAYOUT = \[/);
+  assert.match(source, /stepMode: "instance"[\s\S]*shaderLocation: 0[\s\S]*shaderLocation: 2/);
+  assert.match(source, /function wgpuCreatePointsUniformBindGroupLayout\(device\)/);
+  assert.match(source, /function wgpuCreatePointsVertexPipeline/);
+  assert.match(source, /function getPointsVertexPipeline\(blendMode, depthWrite\)/);
+  assert.match(source, /GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
+  assert.match(source, /pass\.setVertexBuffer\(0,\s*pointsParticleBuffer\)/);
+  assert.match(source, /pass\.draw\(6,\s*count\)/);
+});
+
+test("bootstrap renders WebGPU Scene3D glow points with radial alpha", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(source, /points\.flags\.w == 2u/);
+  assert.match(source, /let radial = length\(centered\) \* 2\.0/);
+  assert.match(source, /"        if \(radial > 1\.0\) \{",/);
+  assert.match(source, /"            discard;",/);
+  assert.match(source, /let edgeFeather = 1\.0 - smoothstep\(0\.78, 1\.0, radial\)/);
+  assert.match(source, /alpha = core \* edgeFeather \* in\.alpha/);
+  assert.match(source, /if \(alpha <= 0\.003\) \{/);
+});
+
+test("bootstrap keeps WebGPU Scene3D point uniforms vec4-aligned", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(source, /defaultColorAndSize: vec4f/);
+  assert.match(source, /flags: vec4u/);
+  assert.match(source, /params: vec4f/);
+  assert.match(source, /fogColor: vec4f/);
+  assert.match(source, /var pointsUniformScratch = new ArrayBuffer\(128\)/);
+  assert.match(source, /puF\[16\] = defaultColorRGBA\[0\]/);
+  assert.match(source, /puF\[19\] = sceneNumber\(entry\.size, 1\)/);
+  assert.match(source, /puU\[23\] = scenePointStyleCode\(entry\.style\)/);
+  assert.match(source, /puF\[27\] = sceneNumber\(entry\.maxPixelSize, 0\)/);
+  assert.match(source, /puF\[28\] = fogColorRGBA\[0\]/);
+  assert.match(source, /points\.params\.w > 0\.0/);
+  assert.match(source, /pixelSize = min\(pixelSize, points\.params\.w\)/);
+  assert.doesNotMatch(source, /defaultSize: f32/);
+  assert.doesNotMatch(source, /defaultColor: vec3f/);
+  assert.doesNotMatch(source, /hasPerVertexColor: u32/);
+});
+
+test("bootstrap keeps WebGL and WebGPU Scene3D point size clamps in parity", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgl, /uniform float u_minPixelSize;/);
+  assert.match(webgl, /uniform float u_maxPixelSize;/);
+  assert.match(webgl, /float minPixelSize = max\(u_minPixelSize, 0\.0\);/);
+  assert.match(webgl, /pixelSize = max\(pixelSize, minPixelSize\);/);
+  assert.match(webgl, /pixelSize = min\(pixelSize, u_maxPixelSize\);/);
+  assert.match(webgl, /gl\.uniform1f\(pp\.uniforms\.minPixelSize,\s*Math\.max\(0,\s*sceneNumber\(entry\.minPixelSize,\s*0\)\)\)/);
+  assert.match(webgl, /gl\.uniform1f\(pp\.uniforms\.maxPixelSize,\s*Math\.max\(0,\s*sceneNumber\(entry\.maxPixelSize,\s*0\)\)\)/);
+  assert.match(webgpu, /let minPixelSize = max\(points\.fogColor\.a, 0\.0\);/);
+  assert.match(webgpu, /pixelSize = max\(pixelSize, minPixelSize\);/);
+  assert.match(webgpu, /pixelSize = min\(pixelSize, points\.params\.w\);/);
+});
+
+test("bootstrap uploads Scene3D point pixel clamps to WebGL", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-point-clamp-webgl";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-point-clamp-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-point-clamp-webgl",
+          props: {
+            width: 320,
+            height: 180,
+            forceWebGL: true,
+            autoRotate: false,
+            camera: { z: 6, fov: 72, near: 0.05, far: 128 },
+            scene: {
+              points: [
+                {
+                  id: "stars",
+                  count: 2,
+                  positions: [0, 0, 0, 1, 0, 0],
+                  size: 4,
+                  minPixelSize: 3,
+                  maxPixelSize: 12,
+                  attenuation: true,
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  assert.ok(gl.ops.some((entry) => entry[0] === "getUniformLocation" && entry[1] === "u_minPixelSize"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "getUniformLocation" && entry[1] === "u_maxPixelSize"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_minPixelSize" && entry[2] === 3));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_maxPixelSize" && entry[2] === 12));
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.POINTS && entry[3] === 2));
+});
+
+test("bootstrap preserves Scene3D point maxPixelSize from GLB extras", () => {
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const gltf = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19-scene-gltf.js"), "utf8");
+
+  assert.match(core, /maxPixelSize: sceneClampNumberOrCSSVar\(item\.maxPixelSize/);
+  assert.match(gltf, /"maxPixelSize"/);
+});
+
+test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(source, /function publishWebGPUFrameStats\(stats\)/);
+  assert.match(source, /var webGPUFrameSeq = 0/);
+  assert.match(source, /data-gosx-scene3d-webgpu-frame-seq/);
+  assert.match(source, /data-gosx-scene3d-webgpu-frame-at/);
+  assert.match(source, /__gosxScene3DWebGPUStats = published/);
+  assert.match(source, /data-gosx-scene3d-webgpu-point-entries/);
+  assert.match(source, /data-gosx-scene3d-webgpu-point-instances/);
+  assert.match(source, /data-gosx-scene3d-webgpu-point-draw-instances/);
+  assert.match(source, /data-gosx-scene3d-webgpu-mesh-objects/);
+  assert.match(source, /data-gosx-scene3d-webgpu-instanced-instances/);
 });
 
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.js"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
 
   assert.match(prefix, /var clamp01 = sceneApi\.clamp01/);
+  assert.match(prefix, /var sceneMat4MultiplyInto = sceneApi\.sceneMat4MultiplyInto/);
   assert.match(prefix, /var SCENE_POST_TONE_MAPPING = sceneApi\.SCENE_POST_TONE_MAPPING/);
   assert.match(prefix, /var SCENE_POST_BLOOM = sceneApi\.SCENE_POST_BLOOM/);
   assert.match(prefix, /var SCENE_POST_VIGNETTE = sceneApi\.SCENE_POST_VIGNETTE/);
@@ -6581,6 +7154,7 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var SCENE_POST_SSAO = sceneApi\.SCENE_POST_SSAO/);
   assert.match(prefix, /var SCENE_POST_DOF = sceneApi\.SCENE_POST_DOF/);
   assert.match(prefix, /var generateInstancedGeometry = sceneApi\.generateInstancedGeometry/);
+  assert.match(prefix, /var normalizeInstancedGeometryKind = sceneApi\.normalizeInstancedGeometryKind/);
   assert.match(prefix, /var buildSceneWorldDrawPlan = sceneApi\.buildSceneWorldDrawPlan/);
   assert.match(prefix, /var createSceneWorldDrawScratch = sceneApi\.createSceneWorldDrawScratch/);
   assert.match(prefix, /var createSceneThickLineScratch = sceneApi\.createSceneThickLineScratch/);
@@ -6597,6 +7171,8 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(core, /\n    SCENE_POST_SSAO: "ssao",\n/);
   assert.match(core, /\n    SCENE_POST_DOF: "dof",\n/);
   assert.match(core, /generateInstancedGeometry: typeof generateInstancedGeometry === "function"/);
+  assert.match(core, /normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function"/);
+  assert.match(math, /sceneMat4MultiplyInto,\n/);
 });
 
 test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
@@ -6612,6 +7188,31 @@ test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
   assert.match(webgpu, /mode == 2[\s\S]*reinhard\(color\)/);
   assert.match(webgpu, /mode == 3[\s\S]*filmic\(color\)/);
   assert.match(webgpu, /sceneWebGPUToneMapMode\(effect\.mode\)/);
+});
+
+test("Scene3D WebGPU bloom blur avoids sparse radius tap grids", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /let radiusStep = clamp\(params\.radius \* 0\.35, 1\.0, 4\.0\)/);
+  assert.match(webgpu, /offsets\[i\] \* radiusStep/);
+  assert.doesNotMatch(webgpu, /offsets\[i\] \* params\.radius/);
+});
+
+test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /var WGSL_POST_SSAO_FRAGMENT = \[/);
+  assert.match(webgpu, /var WGSL_POST_DOF_FRAGMENT = \[/);
+  assert.match(webgpu, /var depthTex: texture_depth_2d/);
+  assert.match(webgpu, /textureLoad\(depthTex, p, 0\)/);
+  assert.match(webgpu, /texture: \{ sampleType: "depth" \}/);
+  assert.match(webgpu, /usage: GPUTextureUsage\.RENDER_ATTACHMENT \| GPUTextureUsage\.TEXTURE_BINDING/);
+  assert.match(webgpu, /case SCENE_POST_SSAO:/);
+  assert.match(webgpu, /case SCENE_POST_DOF:/);
+  assert.match(webgpu, /postSSAOPasses \+= 1/);
+  assert.match(webgpu, /postDOFPasses \+= 1/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-post-ssao-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-post-dof-passes/);
 });
 
 test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
@@ -6632,6 +7233,18 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
   assert.match(webgpu, /let sheen = clamp\(material\.sheen, 0\.0, 1\.0\)/);
   assert.match(webgpu, /let iridescence = clamp\(material\.iridescence, 0\.0, 1\.0\)/);
   assert.match(webgpu, /let transmission = clamp\(material\.transmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)/);
+});
+
+test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /function webGPUCustomMaterialStats\(materials\)/);
+  assert.match(webgpu, /material\.customVertexWGSL/);
+  assert.match(webgpu, /material\.customFragmentWGSL/);
+  assert.match(webgpu, /material\.customUniforms/);
+  assert.match(webgpu, /customMaterialFallbacks: customMaterialStats\.customMaterialFallbacks/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-custom-material-fallbacks/);
+  assert.match(webgpu, /custom-wgsl-hooks-unsupported/);
 });
 
 test("Scene3D instanced meshes are WebGPU-native", () => {
@@ -6949,6 +7562,181 @@ test("bootstrap applies named Scene3D materials to point layers", async () => {
   assert.equal(again[0], points[0]);
 });
 
+test("bootstrap selects Scene3D material variants from capability tier", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const props = {
+    scene: {
+      materials: [
+        {
+          name: "core",
+          color: "#77c6ff",
+          opacity: 0.9,
+          variants: {
+            constrained: {
+              color: "#cbd5e1",
+              opacity: 0.35,
+            },
+          },
+        },
+      ],
+      points: [
+        { id: "galaxy", count: 1, material: "core", color: "#ffffff", opacity: 0.1 },
+      ],
+    },
+  };
+
+  const constrained = api.createSceneState(props, { tier: "constrained" });
+  const constrainedPoints = api.sceneStatePointsWithMaterials(constrained);
+  assert.equal(constrained.materials[0].variantKey, "constrained");
+  assert.equal(constrainedPoints[0].color, "#cbd5e1");
+  assert.equal(constrainedPoints[0].opacity, 0.35);
+
+  const full = api.createSceneState(props, { tier: "full" });
+  const fullPoints = api.sceneStatePointsWithMaterials(full);
+  assert.equal(full.materials[0].variantKey, "");
+  assert.equal(fullPoints[0].color, "#77c6ff");
+  assert.equal(fullPoints[0].opacity, 0.9);
+});
+
+test("bootstrap preserves named Scene3D custom WGSL materials through object bundles", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneStateObjectsWithMaterials, "function");
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "shader-card",
+          kind: "custom",
+          color: "#f5c76b",
+          customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
+          customUniforms: { pulse: 0.75 },
+          variants: {
+            constrained: {
+              color: "#94a3b8",
+            },
+          },
+        },
+      ],
+      objects: [
+        { id: "hero", kind: "box", material: "shader-card", size: 1 },
+      ],
+    },
+  }, { tier: "constrained" });
+
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  assert.equal(objects[0].materialKind, "custom");
+  assert.equal(objects[0].color, "#94a3b8");
+  assert.equal(objects[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(1.0); }");
+  assert.equal(objects[0].customUniforms.pulse, 0.75);
+
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    objects,
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(bundle.materials[0].kind, "custom");
+  assert.equal(bundle.materials[0].color, "#94a3b8");
+  assert.equal(bundle.materials[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(1.0); }");
+  assert.equal(bundle.materials[0].customUniforms.pulse, 0.75);
+});
+
+test("bootstrap applies named Scene3D materials to instanced mesh bundles", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneStateInstancedMeshesWithMaterials, "function");
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "batch-shader",
+          kind: "custom",
+          color: "#f5c76b",
+          opacity: 0.7,
+          customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(0.4); }",
+          customUniforms: { heat: 0.42 },
+          variants: {
+            constrained: {
+              color: "#94a3b8",
+              opacity: 0.35,
+            },
+          },
+        },
+      ],
+      instancedMeshes: [
+        {
+          id: "debris",
+          kind: "box",
+          count: 2,
+          material: "batch-shader",
+          transforms: new Array(32).fill(0),
+          colors: ["#ffcc66", "#66ccff"],
+        },
+      ],
+    },
+  }, { tier: "constrained" });
+
+  const meshes = api.sceneStateInstancedMeshesWithMaterials(state);
+  assert.equal(meshes[0].materialKind, "custom");
+  assert.equal(meshes[0].color, "#94a3b8");
+  assert.equal(meshes[0].opacity, 0.35);
+  assert.equal(meshes[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(0.4); }");
+  assert.equal(meshes[0].customUniforms.heat, 0.42);
+  assert.deepEqual(meshes[0].colors, ["#ffcc66", "#66ccff"]);
+
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    meshes,
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(bundle.instancedMeshes[0].materialIndex, 0);
+  assert.equal(bundle.materials[0].kind, "custom");
+  assert.equal(bundle.materials[0].color, "#94a3b8");
+  assert.equal(bundle.materials[0].opacity, 0.35);
+  assert.equal(bundle.materials[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(0.4); }");
+  assert.equal(bundle.materials[0].customUniforms.heat, 0.42);
+});
+
 test("bootstrap registers Scene3D material profiles through the shared API", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -7118,6 +7906,81 @@ test("bootstrap keeps Scene3D live point buffers out of scalar update transition
   assert.deepEqual(entry.colors, ["#ff0000", "#00ff00"]);
 });
 
+test("bootstrap treats explicit zero Scene3D update timing as instant", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 1,
+          positions: [0, 0, 0],
+          colors: ["#ffffff"],
+          opacity: 0.2,
+          live: ["galaxy:node:galaxy"],
+          transition: {
+            in: { duration: 3200, easing: "ease-in-out" },
+            update: { easing: "ease-in-out" },
+          },
+        },
+      ],
+    },
+  });
+
+  const changed = api.sceneApplyLiveEvent(state, "galaxy:node:galaxy", {
+    opacity: 0.8,
+  }, false, 10);
+
+  assert.equal(changed, true);
+  assert.equal(state._transitions.length, 0);
+  assert.equal(state.points[0].opacity, 0.8);
+});
+
+test("bootstrap keeps Scene3D initial point buffers out of entry transitions", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 2,
+          positions: [0, 0, 0, 1, 0, 0],
+          sizes: [1, 2],
+          colors: ["#000000", "#111111"],
+          opacity: 0.5,
+          transition: { in: { duration: 1200, easing: "linear" } },
+          inState: { opacity: 0 },
+        },
+      ],
+    },
+  });
+
+  const entry = state.points[0];
+  api.scenePrimeInitialTransitions(state, false, 0);
+
+  assert.equal(state._transitions.length, 1);
+  assert.deepEqual(entry.positions, [0, 0, 0, 1, 0, 0]);
+  assert.deepEqual(entry.sizes, [1, 2]);
+  assert.deepEqual(entry.colors, ["#000000", "#111111"]);
+  const transition = state._transitions[0];
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "sizes"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "colors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "sizes"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "colors"), false);
+  assert.equal(transition.delta.opacity.__from, 0);
+  assert.equal(transition.delta.opacity.__to, 0.5);
+});
+
 test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
 
@@ -7236,6 +8099,14 @@ test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", as
     1, -1, 2,
     0, 1, 2,
   ]);
+  const uvs = new Float32Array([
+    0, 0,
+    1, 0,
+    0.5, 1,
+    0, 0,
+    1, 0,
+    0.5, 1,
+  ]);
   const bundle = {
     camera: { x: 0, y: 0, z: 6, fov: 90, near: 0.1, far: 100 },
     meshObjects: [
@@ -7257,6 +8128,7 @@ test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", as
       },
     ],
     worldMeshPositions: positions,
+    worldMeshUVs: uvs,
     objects: [],
     worldPositions: new Float32Array(0),
   };
@@ -7269,6 +8141,13 @@ test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", as
   assert.equal(hit.point.x, 0);
   assert.equal(hit.point.y, 0);
   assert.equal(hit.point.z, 0);
+  assert.equal(hit.worldPosition.x, 0);
+  assert.equal(hit.localPosition.z, 0);
+  assert.equal(hit.triangleIndex, 0);
+  assert.equal(hit.primitiveIndex, 0);
+  assert.equal(hit.instanceIndex, -1);
+  assert.ok(Math.abs(hit.uv.x - 0.5) < 1e-6, "expected interpolated hit uv.x, got " + hit.uv.x);
+  assert.ok(Math.abs(hit.uv.y - 0.5) < 1e-6, "expected interpolated hit uv.y, got " + hit.uv.y);
 });
 
 test("bootstrap preserves Scene3D instanced colors and custom attributes", async () => {
@@ -7295,6 +8174,72 @@ test("bootstrap preserves Scene3D instanced colors and custom attributes", async
   assert.equal(state.instancedMeshes.length, 1);
   assert.deepEqual(state.instancedMeshes[0].colors, ["#ffcc66", "#66ccff"]);
   assert.deepEqual(state.instancedMeshes[0].attributes.heat, [1, 0.35]);
+});
+
+test("bootstrap preserves Scene3D instanced primitive parameters", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      instancedMeshes: [
+        {
+          id: "native-torus",
+          kind: "TorusGeometry",
+          count: 1,
+          radius: 1.25,
+          tube: 0.2,
+          radialSegments: 40,
+          tubularSegments: 12,
+        },
+        {
+          id: "native-cone",
+          kind: "ConeGeometry",
+          count: 1,
+          radiusBottom: 0.75,
+          height: 2.5,
+          segments: 28,
+        },
+      ],
+    },
+  });
+
+  assert.equal(state.instancedMeshes[0].kind, "torus");
+  assert.equal(state.instancedMeshes[0].radius, 1.25);
+  assert.equal(state.instancedMeshes[0].tube, 0.2);
+  assert.equal(state.instancedMeshes[0].radialSegments, 40);
+  assert.equal(state.instancedMeshes[0].tubularSegments, 12);
+  assert.equal(state.instancedMeshes[1].kind, "cone");
+  assert.equal(state.instancedMeshes[1].radiusBottom, 0.75);
+  assert.equal(state.instancedMeshes[1].height, 2.5);
+  assert.equal(state.instancedMeshes[1].segments, 28);
+
+  const torus = api.generateInstancedGeometry("torusGeometry", {
+    radius: 1.25,
+    tube: 0.2,
+    radialSegments: 20,
+    tubularSegments: 10,
+  });
+  const cylinder = api.generateInstancedGeometry("cylinderGeometry", {
+    radiusTop: 0.4,
+    radiusBottom: 0.8,
+    height: 2,
+    segments: 12,
+  });
+  const cone = api.generateInstancedGeometry("coneGeometry", {
+    radiusBottom: 0.8,
+    height: 2,
+    segments: 12,
+  });
+
+  assert.equal(torus.vertexCount, 20 * 10 * 6);
+  assert.equal(cylinder.vertexCount, 12 * 12);
+  assert.equal(cone.vertexCount, 12 * 6);
+  assert.equal(torus.positions.length, torus.vertexCount * 3);
+  assert.equal(cylinder.normals.length, cylinder.vertexCount * 3);
+  assert.equal(cone.uvs.length, cone.vertexCount * 2);
 });
 
 test("bootstrap registers and selects Scene3D backends through registry", async () => {

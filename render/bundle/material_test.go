@@ -90,6 +90,37 @@ func TestMaterialUniformEncodesOpacity(t *testing.T) {
 	}
 }
 
+func TestMaterialUniformEncodesPhysicalMaterialFields(t *testing.T) {
+	fp := materialFromRender(engine.RenderMaterial{
+		Color:        "#ffffff",
+		Clearcoat:    0.35,
+		Sheen:        0.2,
+		Transmission: 0.12,
+		Iridescence:  0.18,
+		Anisotropy:   -0.25,
+	})
+	gotPhysical := materialUniformBytes(fp)[80:96]
+	wantPhysical := float32sToBytes([]float32{
+		dequantize(quantize(0.35)),
+		dequantize(quantize(0.2)),
+		dequantize(quantize(0.12)),
+		dequantize(quantize(0.18)),
+	})
+	if string(gotPhysical) != string(wantPhysical) {
+		t.Fatalf("physicalParams bytes = %v, want %v", gotPhysical, wantPhysical)
+	}
+	gotPhysical2 := materialUniformBytes(fp)[96:112]
+	wantPhysical2 := float32sToBytes([]float32{dequantizeSignedUnit(quantizeSignedUnit(-0.25)), 0, 0, 0})
+	if string(gotPhysical2) != string(wantPhysical2) {
+		t.Fatalf("physicalParams2 bytes = %v, want %v", gotPhysical2, wantPhysical2)
+	}
+
+	plain := materialFromRender(engine.RenderMaterial{Color: "#ffffff"})
+	if fp == plain {
+		t.Fatal("physical material fields should participate in the material fingerprint")
+	}
+}
+
 func TestLitPipelinesEnableSourceAlphaBlend(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})

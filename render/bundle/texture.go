@@ -1,7 +1,16 @@
 package bundle
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"net/url"
+	"os"
+	"strings"
 
 	"github.com/odvcencio/gosx/render/gpu"
 )
@@ -69,6 +78,56 @@ func (r *Renderer) createTextureFromRGBA(rgba []byte, width, height int, label s
 		r.device.Queue().WriteTextureLevel(tex, level, mip.Pixels, mip.Width*4, mip.Width, mip.Height)
 	}
 	return &textureResources{tex: tex, view: tex.CreateView(), viewDimension: gpu.TextureViewDimension2D}, nil
+}
+
+// RegisterRGBATexture uploads caller-supplied RGBA8 pixels and stores them in
+// the material texture cache under key. Browser hosts can use this to hand the
+// native renderer already-decoded image, video, canvas, or HTML texture bytes.
+func (r *Renderer) RegisterRGBATexture(key string, rgba []byte, width, height int) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("bundle.RegisterRGBATexture: key is required")
+	}
+	res, err := r.createTextureFromRGBA(rgba, width, height, "bundle.texture:"+key)
+	if err != nil {
+		return err
+	}
+	if old := r.textureCache[key]; old != nil && old.tex != nil {
+		old.tex.Destroy()
+	}
+	r.textureCache[key] = res
+	r.envBindGroupKey = ""
+	return nil
+}
+
+// LoadImageTexture decodes PNG/JPEG/GIF bytes through Go's image package and
+// uploads the result as RGBA8. WebP/AVIF and SVG remain host-decoded inputs
+// through RegisterRGBATexture or KTX2 variants.
+func (r *Renderer) LoadImageTexture(data []byte, label string) (*textureResources, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("bundle.LoadImageTexture: decode: %w", err)
+	}
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("bundle.LoadImageTexture: empty image %dx%d", width, height)
+	}
+	rgba := make([]byte, width*height*4)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			cr, cg, cb, ca := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+			idx := (y*width + x) * 4
+			rgba[idx+0] = byte(cr >> 8)
+			rgba[idx+1] = byte(cg >> 8)
+			rgba[idx+2] = byte(cb >> 8)
+			rgba[idx+3] = byte(ca >> 8)
+		}
+	}
+	if strings.TrimSpace(label) == "" {
+		label = "bundle.texture.image"
+	}
+	return r.createTextureFromRGBA(rgba, width, height, label)
 }
 
 type rgbaMipLevel struct {
@@ -145,11 +204,18 @@ func (r *Renderer) ensureFallbackTexture() (*textureResources, error) {
 // Procedural URL-keyed checkerboards keep the material texture path exercised
 // in pure-Go tests; KTX2 payloads enter through LoadKTX2Texture.
 func (r *Renderer) ensureMaterialTexture(url string) (*textureResources, error) {
+	url = strings.TrimSpace(url)
 	if url == "" {
 		return r.ensureFallbackTexture()
 	}
 	if cached, ok := r.textureCache[url]; ok {
 		return cached, nil
+	}
+	if res, ok, err := r.tryLoadTextureSource(url); err != nil {
+		return nil, err
+	} else if ok {
+		r.textureCache[url] = res
+		return res, nil
 	}
 	// Seed a checker pattern from the URL's hash so different URLs render
 	// visibly different without needing a real decoder.
@@ -160,6 +226,72 @@ func (r *Renderer) ensureMaterialTexture(url string) (*textureResources, error) 
 	}
 	r.textureCache[url] = res
 	return res, nil
+}
+
+func (r *Renderer) tryLoadTextureSource(key string) (*textureResources, bool, error) {
+	if data, ok := decodeDataURLBytes(key); ok {
+		res, err := r.LoadImageTexture(data, "bundle.texture:data")
+		if err != nil {
+			// SVG/WebP/AVIF data URLs are expected until the host supplies
+			// decoded bytes. Keep the visible checker fallback instead of
+			// failing the frame for unsupported source formats.
+			return nil, false, nil
+		}
+		return res, true, nil
+	}
+	if looksRemoteTextureURL(key) {
+		return nil, false, nil
+	}
+	path := strings.TrimPrefix(key, "file://")
+	if strings.HasPrefix(key, "file://") {
+		if parsed, err := url.Parse(key); err == nil {
+			path = parsed.Path
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, nil
+	}
+	res, err := r.LoadImageTexture(data, "bundle.texture:"+key)
+	if err != nil {
+		return nil, false, nil
+	}
+	return res, true, nil
+}
+
+func decodeDataURLBytes(value string) ([]byte, bool) {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "data:") {
+		return nil, false
+	}
+	comma := strings.IndexByte(value, ',')
+	if comma < 0 {
+		return nil, false
+	}
+	meta := strings.ToLower(value[5:comma])
+	if strings.Contains(meta, "image/svg") || strings.Contains(meta, "image/webp") || strings.Contains(meta, "image/avif") {
+		return nil, false
+	}
+	payload := value[comma+1:]
+	if strings.Contains(meta, ";base64") {
+		data, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return nil, false
+		}
+		return data, true
+	}
+	decoded, err := url.QueryUnescape(payload)
+	if err != nil {
+		return nil, false
+	}
+	return []byte(decoded), true
+}
+
+func looksRemoteTextureURL(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "blob:") ||
+		strings.HasPrefix(lower, "gosx-html://")
 }
 
 // colorPairFromString produces two deterministic contrasting RGB triplets

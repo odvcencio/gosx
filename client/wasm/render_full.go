@@ -56,6 +56,7 @@ func registerRenderToCanvasRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_render_engine_to_canvas", renderEngineToCanvasRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose_engine_renderer", disposeEngineRendererRuntimeFunc())
 	setRuntimeFunc("__gosx_pick_engine", pickEngineRuntimeFunc(b))
+	setRuntimeFunc("__gosx_register_engine_rgba_texture", registerEngineRGBATextureRuntimeFunc())
 }
 
 // renderEngineToCanvasRuntimeFunc returns a js.Func exposed as
@@ -85,6 +86,41 @@ func renderEngineToCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
 		}
 		if err := er.renderer.Frame(bundleData, width, height, timeSec); err != nil {
 			return jsError(fmt.Errorf("frame engine %q: %w", engineID, err))
+		}
+		return js.Null()
+	})
+}
+
+// registerEngineRGBATextureRuntimeFunc exposes decoded browser texture uploads:
+// __gosx_register_engine_rgba_texture(engineID, key, width, height, Uint8Array).
+// The JS host owns fetch/decode/rasterization; Go owns mip generation and GPU
+// upload through bundle.Renderer.RegisterRGBATexture.
+func registerEngineRGBATextureRuntimeFunc() js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 5 {
+			return jsErrorf("need 5 args (engineID, key, width, height, rgbaBytes)")
+		}
+		engineID := args[0].String()
+		key := args[1].String()
+		width := args[2].Int()
+		height := args[3].Int()
+		src := args[4]
+		if src.IsUndefined() || src.IsNull() || src.Get("byteLength").Type() != js.TypeNumber {
+			return jsErrorf("rgbaBytes must be a Uint8Array or ArrayBuffer view")
+		}
+		data := make([]byte, src.Get("byteLength").Int())
+		if copied := js.CopyBytesToGo(data, src); copied != len(data) {
+			return jsErrorf(fmt.Sprintf("copied %d texture bytes, want %d", copied, len(data)))
+		}
+
+		engineRendererMu.Lock()
+		er, ok := engineRendererRegistry[engineID]
+		engineRendererMu.Unlock()
+		if !ok {
+			return jsErrorf(fmt.Sprintf("no renderer for engine %q", engineID))
+		}
+		if err := er.renderer.RegisterRGBATexture(key, data, width, height); err != nil {
+			return jsError(err)
 		}
 		return js.Null()
 	})
@@ -126,11 +162,11 @@ func pickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 		promiseCtor := js.Global().Get("Promise")
 		return promiseCtor.New(js.FuncOf(func(_ js.Value, pargs []js.Value) any {
 			resolve := pargs[0]
-			er.renderer.QueuePick(x, y, func(id uint32) {
+			er.renderer.QueuePickResult(x, y, func(result bundle.PickResult) {
 				// Push the pick result into SceneEventSignals via the shared
 				// store, if the caller tagged the event with a known kind.
-				pushPickToSignals(b, engineID, eventType, x, y, id)
-				resolve.Invoke(float64(id))
+				pushPickToSignals(b, engineID, eventType, x, y, result)
+				resolve.Invoke(float64(result.ID))
 			})
 			return nil
 		}))
@@ -140,7 +176,7 @@ func pickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 // pushPickToSignals writes the pick outcome into the SceneEventSignals
 // namespace for an engine. Signal names follow the $scene.event convention
 // baked into engine/builder.go's DeclareSceneEventSignals.
-func pushPickToSignals(b *bridge.Bridge, engineID, eventType string, x, y int, id uint32) {
+func pushPickToSignals(b *bridge.Bridge, engineID, eventType string, x, y int, result bundle.PickResult) {
 	if eventType == "" {
 		return
 	}
@@ -152,35 +188,56 @@ func pushPickToSignals(b *bridge.Bridge, engineID, eventType string, x, y int, i
 	set := func(name string, value any) {
 		store.Set(name, vmValueOf(value))
 	}
+	id := result.ID
+	targetIndex := result.ObjectIndex
+	if targetIndex < 0 && id != 0 {
+		targetIndex = int(id) - 1
+	}
+	targetID := result.ObjectID
+	if targetID == "" {
+		targetID = pickIDToString(id)
+	}
 	set("$scene.event.pointerX", float64(x))
 	set("$scene.event.pointerY", float64(y))
 	set("$scene.event.type", eventType)
-	set("$scene.event.targetIndex", float64(int32(id)-1))
-	set("$scene.event.targetID", pickIDToString(id))
+	set("$scene.event.targetIndex", float64(targetIndex))
+	set("$scene.event.targetID", targetID)
+	set("$scene.event.targetInstanceIndex", float64(result.InstanceIndex))
+	set("$scene.event.targetPrimitiveIndex", float64(result.PrimitiveIndex))
+	set("$scene.event.targetTriangleIndex", float64(result.TriangleIndex))
+	set("$scene.event.worldX", float64(result.WorldPosition[0]))
+	set("$scene.event.worldY", float64(result.WorldPosition[1]))
+	set("$scene.event.worldZ", float64(result.WorldPosition[2]))
+	set("$scene.event.localX", float64(result.LocalPosition[0]))
+	set("$scene.event.localY", float64(result.LocalPosition[1]))
+	set("$scene.event.localZ", float64(result.LocalPosition[2]))
+	set("$scene.event.uvX", float64(result.UV[0]))
+	set("$scene.event.uvY", float64(result.UV[1]))
+	set("$scene.event.depth", float64(result.Depth))
 	set("$scene.event.revision", float64(nextPickRevision()))
 
 	// Event-type-specific projections.
 	switch eventType {
 	case "hover":
 		set("$scene.event.hovered", id != 0)
-		set("$scene.event.hoverIndex", float64(int32(id)-1))
-		set("$scene.event.hoverID", pickIDToString(id))
+		set("$scene.event.hoverIndex", float64(targetIndex))
+		set("$scene.event.hoverID", targetID)
 	case "down":
 		set("$scene.event.down", id != 0)
-		set("$scene.event.downIndex", float64(int32(id)-1))
-		set("$scene.event.downID", pickIDToString(id))
+		set("$scene.event.downIndex", float64(targetIndex))
+		set("$scene.event.downID", targetID)
 	case "select":
 		set("$scene.event.selected", id != 0)
-		set("$scene.event.selectedIndex", float64(int32(id)-1))
-		set("$scene.event.selectedID", pickIDToString(id))
+		set("$scene.event.selectedIndex", float64(targetIndex))
+		set("$scene.event.selectedID", targetID)
 	case "click":
 		// A click is (down + release) in the same spot. Increment the click
 		// counter so computed signals that watch clickCount can run their
 		// handlers. SelectedID follows click for Figma-style single-select.
 		set("$scene.event.clickCount", float64(nextClickCount(engineID)))
 		set("$scene.event.selected", id != 0)
-		set("$scene.event.selectedIndex", float64(int32(id)-1))
-		set("$scene.event.selectedID", pickIDToString(id))
+		set("$scene.event.selectedIndex", float64(targetIndex))
+		set("$scene.event.selectedID", targetID)
 	}
 }
 

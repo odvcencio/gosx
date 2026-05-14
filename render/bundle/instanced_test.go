@@ -41,13 +41,12 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	}
 
 	// Primitive geometry: positions + colors + normals + uvs = 4 buffers.
-	// Shared shadow-pass instance buffer = 1.
 	// Material uniform = 1.
 	// Cull resources (input + output + drawArgs + cullUniform) = 4.
-	// Post-FX resources: bloom params + blurH + blurV uniforms = 3.
+	// Post-FX resources: bloom params + present tonemap + blurH + blurV uniforms = 4.
 	// Total = 13.
 	if got := len(d.buffers) - buffersBefore; got != 13 {
-		t.Errorf("expected 13 new buffers (geometry + instance + material + cull + post-fx), got %d", got)
+		t.Errorf("expected 13 new buffers (geometry + material + cull + post-fx), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {
@@ -88,6 +87,67 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	}
 }
 
+func TestFrameShadowPassUsesPerMeshCullInputs(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	b := engine.RenderBundle{
+		Camera:    engine.RenderCamera{Z: 6, FOV: 60, Near: 0.1, Far: 100},
+		Materials: []engine.RenderMaterial{{Kind: "standard", Color: "#ffffff"}},
+		InstancedMeshes: []engine.RenderInstancedMesh{
+			{
+				ID:            "near",
+				Kind:          "box",
+				MaterialIndex: 0,
+				InstanceCount: 1,
+				Transforms:    identityTransform(),
+				CastShadow:    true,
+			},
+			{
+				ID:            "far",
+				Kind:          "sphere",
+				MaterialIndex: 0,
+				InstanceCount: 1,
+				Transforms:    translatedTransform(4, 0, 0),
+				CastShadow:    true,
+			},
+		},
+	}
+	if err := r.Frame(b, 640, 360, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	if r.instanceBuf != nil {
+		t.Fatalf("shadow path should bind per-mesh cull input buffers, not allocate the shared instance buffer")
+	}
+	for cascade := 0; cascade < 3; cascade++ {
+		pass := d.encoders[0].passes[cascade]
+		if len(pass.draws) != 2 {
+			t.Fatalf("cascade %d shadow draws = %d, want 2", cascade, len(pass.draws))
+		}
+	}
+}
+
+func identityTransform() []float64 {
+	return []float64{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	}
+}
+
+func translatedTransform(x, y, z float64) []float64 {
+	out := identityTransform()
+	out[12] = x
+	out[13] = y
+	out[14] = z
+	return out
+}
+
 func TestFrameSkinnedInstancedMeshUsesSkinnedPipelineInputs(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
@@ -119,7 +179,7 @@ func TestFrameSkinnedInstancedMeshUsesSkinnedPipelineInputs(t *testing.T) {
 		t.Fatalf("Frame: %v", err)
 	}
 	if got := len(d.buffers) - buffersBefore; got != 16 {
-		t.Fatalf("expected 16 new buffers (geometry + instance + material + cull + skin + post-fx), got %d", got)
+		t.Fatalf("expected 16 new buffers (geometry + material + cull + skin + post-fx), got %d", got)
 	}
 	mainPass := d.encoders[0].passes[3]
 	if mainPass.indirectDraws != 1 {
@@ -127,33 +187,6 @@ func TestFrameSkinnedInstancedMeshUsesSkinnedPipelineInputs(t *testing.T) {
 	}
 	if mainPass.vbufSets < 8 {
 		t.Fatalf("main pass vertex buffer sets = %d, want at least 8 for skinned inputs", mainPass.vbufSets)
-	}
-}
-
-// TestPrimitiveForKnownKinds verifies all documented primitive kinds yield
-// non-empty geometry with positions, colors, AND normals.
-func TestPrimitiveForKnownKinds(t *testing.T) {
-	for _, kind := range []string{"cube", "box", "plane", "sphere"} {
-		geo := primitiveForKind(kind)
-		if geo == nil {
-			t.Errorf("%s: primitive should be non-nil", kind)
-			continue
-		}
-		if geo.vertexCount == 0 {
-			t.Errorf("%s: vertexCount is 0", kind)
-		}
-		if len(geo.positions) != geo.vertexCount*3 {
-			t.Errorf("%s: positions len %d, want %d", kind, len(geo.positions), geo.vertexCount*3)
-		}
-		if len(geo.colors) != geo.vertexCount*3 {
-			t.Errorf("%s: colors len %d, want %d", kind, len(geo.colors), geo.vertexCount*3)
-		}
-		if len(geo.normals) != geo.vertexCount*3 {
-			t.Errorf("%s: normals len %d, want %d", kind, len(geo.normals), geo.vertexCount*3)
-		}
-	}
-	if got := primitiveForKind("nosuchkind"); got != nil {
-		t.Error("unknown kind should return nil")
 	}
 }
 

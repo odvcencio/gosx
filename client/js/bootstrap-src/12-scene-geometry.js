@@ -5,6 +5,16 @@
     return Math.max(6, Math.min(24, segments));
   }
 
+  function scenePrimitiveSegmentResolution(value, fallback, minValue, maxValue) {
+    const segments = Math.round(sceneNumber(value, fallback));
+    return Math.max(minValue, Math.min(maxValue, segments));
+  }
+
+  function scenePositiveNumber(value, fallback) {
+    const number = sceneNumber(value, fallback);
+    return number > 0 ? number : fallback;
+  }
+
   function boxVertices(width, height, depth) {
     const halfWidth = width / 2;
     const halfHeight = height / 2;
@@ -94,6 +104,78 @@
       .concat(circleSegments(object.radius, "yz", object.segments));
   }
 
+  function cylinderSegments(object) {
+    const segments = scenePrimitiveSegmentResolution(object && object.segments, 32, 3, 256);
+    const radiusTop = scenePositiveNumber(object && object.radiusTop, scenePositiveNumber(object && object.radius, 0.5));
+    const radiusBottom = scenePositiveNumber(object && object.radiusBottom, scenePositiveNumber(object && object.radius, 0.5));
+    const halfHeight = scenePositiveNumber(object && object.height, 1) * 0.5;
+    const bottom = [];
+    const top = [];
+    for (let i = 0; i < segments; i += 1) {
+      const angle = (Math.PI * 2 * i) / segments;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      bottom.push({ x: radiusBottom * cos, y: -halfHeight, z: radiusBottom * sin });
+      top.push({ x: radiusTop * cos, y: halfHeight, z: radiusTop * sin });
+    }
+    const out = [];
+    for (let i = 0; i < segments; i += 1) {
+      const next = (i + 1) % segments;
+      out.push([bottom[i], bottom[next]]);
+      out.push([top[i], top[next]]);
+      out.push([bottom[i], top[i]]);
+    }
+    return out;
+  }
+
+  function coneSegments(object) {
+    const segments = scenePrimitiveSegmentResolution(object && object.segments, 32, 3, 256);
+    const radius = scenePositiveNumber(object && object.radiusBottom, scenePositiveNumber(object && object.radius, 0.5));
+    const halfHeight = scenePositiveNumber(object && object.height, 1) * 0.5;
+    const apex = { x: 0, y: halfHeight, z: 0 };
+    const base = [];
+    for (let i = 0; i < segments; i += 1) {
+      const angle = (Math.PI * 2 * i) / segments;
+      base.push({ x: radius * Math.cos(angle), y: -halfHeight, z: radius * Math.sin(angle) });
+    }
+    const out = [];
+    for (let i = 0; i < segments; i += 1) {
+      const next = (i + 1) % segments;
+      out.push([base[i], base[next]]);
+      out.push([base[i], apex]);
+    }
+    return out;
+  }
+
+  function torusSegments(object) {
+    const radialSegments = scenePrimitiveSegmentResolution(object && object.radialSegments, 32, 3, 256);
+    const tubularSegments = scenePrimitiveSegmentResolution(object && object.tubularSegments, 16, 3, 128);
+    const radius = scenePositiveNumber(object && object.radius, 0.7);
+    const tube = scenePositiveNumber(object && object.tube, 0.3);
+    function point(i, j) {
+      const u = (Math.PI * 2 * i) / radialSegments;
+      const v = (Math.PI * 2 * j) / tubularSegments;
+      const cu = Math.cos(u);
+      const su = Math.sin(u);
+      const cv = Math.cos(v);
+      const r = radius + tube * cv;
+      return { x: r * cu, y: tube * Math.sin(v), z: r * su };
+    }
+    const out = [];
+    for (let i = 0; i < radialSegments; i += 1) {
+      const next = (i + 1) % radialSegments;
+      out.push([point(i, 0), point(next, 0)]);
+      out.push([point(i, Math.floor(tubularSegments / 2)), point(next, Math.floor(tubularSegments / 2))]);
+    }
+    const radialStride = Math.max(1, Math.floor(radialSegments / 8));
+    for (let i = 0; i < radialSegments; i += radialStride) {
+      for (let j = 0; j < tubularSegments; j += 1) {
+        out.push([point(i, j), point(i, (j + 1) % tubularSegments)]);
+      }
+    }
+    return out;
+  }
+
   function lineSegments(object) {
     const points = Array.isArray(object && object.points) ? object.points : [];
     const segments = Array.isArray(object && object.lineSegments) ? object.lineSegments : [];
@@ -125,6 +207,12 @@
         return pyramidSegments(object);
       case "sphere":
         return sphereSegments(object);
+      case "cylinder":
+        return cylinderSegments(object);
+      case "cone":
+        return coneSegments(object);
+      case "torus":
+        return torusSegments(object);
       default:
         return boxSegments(object);
     }

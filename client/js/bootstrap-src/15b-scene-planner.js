@@ -1567,6 +1567,17 @@
   function scenePlannerHashInstancedEntry(hash, entry) {
     hash = scenePlannerHashString(hash, entry && entry.id || "");
     hash = scenePlannerHashString(hash, entry && entry.kind || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.size, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.width, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.height, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.depth, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.radius, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.radiusTop, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.radiusBottom, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.tube, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.segments, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.radialSegments, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.tubularSegments, 0));
     hash = scenePlannerHashString(hash, entry && entry.material || "");
     hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.count, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(entry && entry.materialIndex, 0));

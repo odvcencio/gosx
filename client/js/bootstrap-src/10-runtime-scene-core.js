@@ -1021,7 +1021,46 @@
 
   function rawSceneObjects(props) {
     const scene = sceneProps(props);
-    return sceneObjectList(scene && scene.objects) || sceneObjectList(props && props.objects) || defaultSceneObjects();
+    if (scene && Array.isArray(scene.objects)) {
+      return scene.objects;
+    }
+    if (props && Array.isArray(props.objects)) {
+      return props.objects;
+    }
+    if (sceneHasAuthoredRenderableContent(props)) {
+      return [];
+    }
+    return defaultSceneObjects();
+  }
+
+  function sceneHasAuthoredRenderableContent(props) {
+    const scene = sceneProps(props);
+    const sources = scene ? [scene, props] : [props];
+    const keys = [
+      "models",
+      "points",
+      "instancedMeshes",
+      "instancedGLBMeshes",
+      "computeParticles",
+      "lines",
+      "surfaces",
+      "labels",
+      "sprites",
+      "html",
+      "htmlOverlays",
+      "lights",
+    ];
+    for (const source of sources) {
+      if (!source || typeof source !== "object") {
+        continue;
+      }
+      for (const key of keys) {
+        if (Array.isArray(source[key]) && source[key].length > 0) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   function rawSceneLabels(props) {
@@ -1081,6 +1120,14 @@
     return props && Array.isArray(props.models) ? props.models : [];
   }
 
+  function rawSceneInstancedGLBMeshes(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.instancedGLBMeshes)) {
+      return scene.instancedGLBMeshes;
+    }
+    return props && Array.isArray(props.instancedGLBMeshes) ? props.instancedGLBMeshes : [];
+  }
+
   function rawScenePoints(props) {
     const scene = sceneProps(props);
     if (scene && Array.isArray(scene.points)) {
@@ -1127,6 +1174,14 @@
     return props && Array.isArray(props.postFX) ? props.postFX : [];
   }
 
+  function rawSceneAnimations(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.animations)) {
+      return scene.animations;
+    }
+    return props && Array.isArray(props.animations) ? props.animations : [];
+  }
+
   function sceneProps(props) {
     return props && props.scene && typeof props.scene === "object" ? props.scene : null;
   }
@@ -1156,6 +1211,96 @@
 
   function sceneIsPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value) && !(typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value));
+  }
+
+  function normalizeSceneMaterialCapabilityTier(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "constrained":
+      case "balanced":
+      case "full":
+        return String(value).trim().toLowerCase();
+      default:
+        return "";
+    }
+  }
+
+  function normalizeSceneMaterialVariantName(value) {
+    const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    switch (normalized) {
+      case "full":
+      case "balanced":
+      case "constrained":
+        return normalized;
+      case "lowpower":
+        return "lowPower";
+      case "reduceddata":
+        return "reducedData";
+      case "coarsepointer":
+        return "coarsePointer";
+      default:
+        return normalized;
+    }
+  }
+
+  function sceneMaterialCapabilityVariantKeys(capability) {
+    const caps = sceneIsPlainObject(capability) ? capability : {};
+    const keys = [];
+    const tier = normalizeSceneMaterialCapabilityTier(caps.tier);
+    if (tier) {
+      keys.push(tier);
+    }
+    if (caps.lowPower) {
+      keys.push("lowPower");
+    }
+    if (caps.reducedData) {
+      keys.push("reducedData");
+    }
+    if (caps.coarsePointer) {
+      keys.push("coarsePointer");
+    }
+    return keys;
+  }
+
+  function sceneMaterialVariantForKey(variants, key) {
+    if (!sceneIsPlainObject(variants)) {
+      return null;
+    }
+    if (sceneIsPlainObject(variants[key])) {
+      return variants[key];
+    }
+    const normalized = normalizeSceneMaterialVariantName(key);
+    const names = Object.keys(variants);
+    for (let index = 0; index < names.length; index += 1) {
+      const name = names[index];
+      if (normalizeSceneMaterialVariantName(name) === normalized && sceneIsPlainObject(variants[name])) {
+        return variants[name];
+      }
+    }
+    return null;
+  }
+
+  function sceneMaterialRecordForCapability(raw, capability) {
+    const source = sceneIsPlainObject(raw) ? raw : {};
+    if (!sceneIsPlainObject(source.variants)) {
+      return source;
+    }
+    const out = Object.assign({}, source);
+    delete out.variants;
+    const selected = [];
+    const keys = sceneMaterialCapabilityVariantKeys(capability);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      const variant = sceneMaterialVariantForKey(source.variants, key);
+      if (!variant) {
+        continue;
+      }
+      Object.assign(out, variant);
+      selected.push(key);
+    }
+    if (selected.length) {
+      out._variantKey = selected.join(",");
+    }
+    return out;
   }
 
   function sceneTransitionMetadataKey(key) {
@@ -1383,6 +1528,12 @@
       numericOpacity,
     );
     const lifecycle = sceneNormalizeLifecycle(item, current);
+    const segmentSource = Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments;
+    const radialSegmentSource = Object.prototype.hasOwnProperty.call(item, "radialSegments") ? item.radialSegments : current.radialSegments;
+    const tubularSegmentSource = Object.prototype.hasOwnProperty.call(item, "tubularSegments") ? item.tubularSegments : current.tubularSegments;
+    const radius = sceneNumber(item.radius, sceneNumber(current.radius, lineMetrics ? lineMetrics.radius : (kind === "torus" ? 0.7 : (size / 2))));
+    const radiusTop = Math.max(0, sceneNumber(item.radiusTop, sceneNumber(current.radiusTop, radius)));
+    const radiusBottom = Math.max(0, sceneNumber(item.radiusBottom, sceneNumber(current.radiusBottom, radius)));
     const normalized = {
       id: item.id || current.id || ("scene-object-" + index),
       kind,
@@ -1391,8 +1542,13 @@
       width: sceneNumber(item.width, sceneNumber(current.width, lineMetrics ? lineMetrics.width : size)),
       height: sceneNumber(item.height, sceneNumber(current.height, lineMetrics ? lineMetrics.height : size)),
       depth: sceneNumber(item.depth, sceneNumber(current.depth, kind === "plane" ? sceneNumber(item.height, size) : (lineMetrics ? lineMetrics.depth : size))),
-      radius: sceneNumber(item.radius, sceneNumber(current.radius, lineMetrics ? lineMetrics.radius : (size / 2))),
-      segments: sceneSegmentResolution(Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments),
+      radius,
+      radiusTop,
+      radiusBottom,
+      tube: Math.max(0.0001, sceneNumber(item.tube, sceneNumber(current.tube, 0.3))),
+      segments: scenePrimitiveSegmentResolution(segmentSource, kind === "sphere" || kind === "cylinder" || kind === "cone" ? 32 : 12, 3, 256),
+      radialSegments: scenePrimitiveSegmentResolution(radialSegmentSource, 32, 3, 256),
+      tubularSegments: scenePrimitiveSegmentResolution(tubularSegmentSource, 16, 3, 128),
       points,
       lineSegments: kind === "lines" ? sceneLineSegments(Array.isArray(item.lineSegments) ? item.lineSegments : (Array.isArray(current.lineSegments) ? current.lineSegments : item.segments), points.length) : [],
       vertices: vertices || current.vertices || null,
@@ -1699,6 +1855,21 @@
     }
   }
 
+  function normalizeSceneHTMLMode(value, fallback) {
+    const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+    switch (raw) {
+      case "texture":
+      case "htmltexture":
+        return "texture";
+      case "dom":
+      case "world":
+      case "htmldom":
+        return "dom";
+      default:
+        return fallback || "dom";
+    }
+  }
+
   function normalizeSceneHTML(entry, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(entry) ? entry : {};
@@ -1706,10 +1877,28 @@
     const height = Math.max(0.05, sceneNumber(item.height, sceneNumber(current.height, 0.72)));
     const scale = Math.max(0.05, sceneNumber(item.scale, sceneNumber(current.scale, 1)));
     const lifecycle = sceneNormalizeLifecycle(item, current);
+    const id = item.id || current.id || ("scene-html-" + index);
+    const mode = normalizeSceneHTMLMode(item.mode, normalizeSceneHTMLMode(current.mode, "dom"));
+    const fallbackMode = sceneHTMLStringField(item, current, ["fallback", "fallbackMode"]);
+    const fallbackReason = sceneHTMLStringField(item, current, ["fallbackReason", "degradeReason", "degradationReason"]);
+    const textureWidth = sceneHTMLTextureDimension(item.textureWidth, current.textureWidth, mode === "texture" ? 512 : 0);
+    const textureHeight = sceneHTMLTextureDimension(item.textureHeight, current.textureHeight, mode === "texture" ? 320 : 0);
+    const maxTexturePixels = Math.max(0, Math.floor(sceneNumber(item.maxTexturePixels, sceneNumber(current.maxTexturePixels, mode === "texture" ? 1024 * 1024 : 0))));
     return {
-      id: item.id || current.id || ("scene-html-" + index),
+      id,
+      target: sceneHTMLStringField(item, current, ["target", "targetID"]),
+      mode,
       html: sceneHTMLMarkup(item, current),
       className: sceneLabelClassName(item) || sceneLabelClassName(current),
+      fallback: fallbackMode || (mode === "texture" ? "dom-overlay" : ""),
+      fallbackReason: fallbackReason || (mode === "texture" ? "html-texture-manager-unavailable" : ""),
+      textureKey: sceneHTMLStringField(item, current, ["textureKey", "texture", "src"]) || (mode === "texture" ? "gosx-html://" + id : ""),
+      textureWidth,
+      textureHeight,
+      maxTexturePixels,
+      textureReady: sceneBool(Object.prototype.hasOwnProperty.call(item, "textureReady") ? item.textureReady : current.textureReady, false),
+      surfaceWidth: Math.max(0.05, sceneNumber(item.surfaceWidth, sceneNumber(current.surfaceWidth, width))),
+      surfaceHeight: Math.max(0.05, sceneNumber(item.surfaceHeight, sceneNumber(current.surfaceHeight, height))),
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
       z: sceneNumber(item.z, sceneNumber(current.z, 0)),
@@ -1736,6 +1925,28 @@
     };
   }
 
+  function sceneHTMLTextureDimension(value, fallback, defaultValue) {
+    const number = sceneNumber(value, sceneNumber(fallback, defaultValue));
+    if (number <= 0) {
+      return 0;
+    }
+    return Math.max(1, Math.floor(number));
+  }
+
+  function sceneHTMLStringField(item, current, keys) {
+    for (const key of keys) {
+      if (typeof item[key] === "string" && item[key].trim()) {
+        return item[key].trim();
+      }
+    }
+    for (const key of keys) {
+      if (typeof current[key] === "string" && current[key].trim()) {
+        return current[key].trim();
+      }
+    }
+    return "";
+  }
+
   function sceneLabelClassName(item) {
     if (!item || typeof item !== "object") {
       return "";
@@ -1752,11 +1963,35 @@
   function normalizeSceneKind(value) {
     const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
     switch (kind) {
+      case "boxgeometry":
+        return "box";
+      case "cubegeometry":
+        return "cube";
+      case "planegeometry":
+      case "quad":
+      case "quadgeometry":
+        return "plane";
+      case "pyramidgeometry":
+        return "pyramid";
+      case "spheregeometry":
+      case "uvsphere":
+      case "uvspheregeometry":
+        return "sphere";
+      case "cylindergeometry":
+        return "cylinder";
+      case "conegeometry":
+        return "cone";
+      case "torusgeometry":
+        return "torus";
       case "box":
+      case "cube":
       case "lines":
       case "plane":
       case "pyramid":
       case "sphere":
+      case "cylinder":
+      case "cone":
+      case "torus":
       case "gltf-mesh":
         return kind;
       default:
@@ -1827,9 +2062,9 @@
       rotationX: sceneNumber(current.rotationX, 0),
       rotationY: sceneNumber(current.rotationY, 0),
       rotationZ: sceneNumber(current.rotationZ, 0),
-      scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource && scaleSource.x, sceneNumber(current.scale, 1))),
-      scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource && scaleSource.y, sceneNumber(current.scale, 1))),
-      scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource && scaleSource.z, sceneNumber(current.scale, 1))),
+      scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scale, 1))),
+      scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scale, 1))),
+      scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
       animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
       animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
@@ -1858,6 +2093,142 @@
       model.animationFadeOutMS = Math.max(0, sceneNumber(current.animationFadeOutMS, 0));
     }
     return model;
+  }
+
+  function normalizeSceneInstancedGLBInstance(item, index) {
+    const current = item && typeof item === "object" ? item : {};
+    const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
+    const rawID = typeof current.id === "string" && current.id.trim() ? current.id.trim() : "";
+    return {
+      id: rawID || ("instance-" + index),
+      x: sceneNumber(current.x, 0),
+      y: sceneNumber(current.y, 0),
+      z: sceneNumber(current.z, 0),
+      rotationX: sceneNumber(current.rotationX, 0),
+      rotationY: sceneNumber(current.rotationY, 0),
+      rotationZ: sceneNumber(current.rotationZ, 0),
+      scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scale, 1))),
+      scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scale, 1))),
+      scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
+    };
+  }
+
+  function normalizeSceneInstancedGLBMeshEntry(item, index, fallback) {
+    const current = fallback && typeof fallback === "object" ? fallback : {};
+    const raw = item && typeof item === "object" ? item : {};
+    const materialKind = sceneObjectMaterialKindValue(raw) || current.materialKind || "";
+    const lifecycle = sceneNormalizeLifecycle(raw, current);
+    const rawInstances = Array.isArray(raw.instances)
+      ? raw.instances
+      : (Array.isArray(current.instances) ? current.instances : []);
+    const batch = {
+      id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : (typeof current.id === "string" && current.id ? current.id : ("scene-instanced-glb-" + index)),
+      src: typeof raw.src === "string" && raw.src.trim() ? raw.src.trim() : (typeof current.src === "string" ? current.src : ""),
+      material: typeof raw.material === "string" && raw.material ? raw.material : (typeof current.material === "string" ? current.material : ""),
+      materialKind: materialKind ? normalizeSceneMaterialKind(materialKind) : "",
+      color: sceneObjectMaterialHasValue(raw, "color") ? sceneObjectMaterialValue(raw, "color") : current.color,
+      texture: typeof sceneObjectMaterialValue(raw, "texture") === "string" ? sceneObjectMaterialValue(raw, "texture").trim() : (typeof current.texture === "string" ? current.texture : ""),
+      opacity: sceneObjectMaterialHasValue(raw, "opacity") ? sceneClampNumberOrCSSVar(sceneObjectMaterialValue(raw, "opacity"), sceneNumber(current.opacity, 1), 0, 1) : current.opacity,
+      emissive: sceneObjectMaterialHasValue(raw, "emissive") ? sceneClampNumberOrCSSVar(sceneObjectMaterialValue(raw, "emissive"), sceneNumber(current.emissive, 0), 0, 1) : current.emissive,
+      blendMode: normalizeSceneMaterialBlendMode(
+        sceneObjectMaterialHasValue(raw, "blendMode") ? sceneObjectMaterialValue(raw, "blendMode") : current.blendMode,
+        materialKind || current.materialKind || "flat",
+        sceneNumber(sceneObjectMaterialValue(raw, "opacity"), sceneNumber(current.opacity, 1)),
+      ),
+      roughness: sceneObjectMaterialHasValue(raw, "roughness") ? sceneNumberOrCSSVar(sceneObjectMaterialValue(raw, "roughness"), sceneNumber(current.roughness, 0.5)) : current.roughness,
+      metalness: sceneObjectMaterialHasValue(raw, "metalness") ? sceneNumberOrCSSVar(sceneObjectMaterialValue(raw, "metalness"), sceneNumber(current.metalness, 0)) : current.metalness,
+      pickable: Object.prototype.hasOwnProperty.call(raw, "pickable") ? sceneBool(raw.pickable, false) : current.pickable,
+      static: Object.prototype.hasOwnProperty.call(raw, "static") ? sceneBool(raw.static, false) : current.static,
+      instances: rawInstances.map(function(instance, instanceIndex) {
+        return normalizeSceneInstancedGLBInstance(instance, instanceIndex);
+      }),
+      _transition: lifecycle.transition,
+      _inState: lifecycle.inState,
+      _outState: lifecycle.outState,
+      _live: lifecycle.live,
+    };
+    return batch;
+  }
+
+  function sceneInstancedGLBMeshes(props) {
+    return rawSceneInstancedGLBMeshes(props)
+      .map(function(entry, index) {
+        return normalizeSceneInstancedGLBMeshEntry(entry, index, null);
+      })
+      .filter(function(entry) {
+        return Boolean(entry && entry.src && Array.isArray(entry.instances) && entry.instances.length > 0);
+      });
+  }
+
+  function sceneInstancedGLBMeshToModels(batch, batchIndex) {
+    if (!batch || !batch.src || !Array.isArray(batch.instances)) {
+      return [];
+    }
+    const models = [];
+    for (let index = 0; index < batch.instances.length; index += 1) {
+      const instance = batch.instances[index];
+      if (!instance) {
+        continue;
+      }
+      const raw = {
+        id: batch.id + "/" + (instance.id || ("instance-" + index)),
+        src: batch.src,
+        x: instance.x,
+        y: instance.y,
+        z: instance.z,
+        rotationX: instance.rotationX,
+        rotationY: instance.rotationY,
+        rotationZ: instance.rotationZ,
+        scaleX: instance.scaleX,
+        scaleY: instance.scaleY,
+        scaleZ: instance.scaleZ,
+      };
+      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "pickable", "static"]) {
+        if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
+          raw[key] = batch[key];
+        }
+      }
+      models.push(normalizeSceneModel(raw, batchIndex + "-" + index));
+    }
+    return models;
+  }
+
+  function sceneInstancedGLBModelsFromBatches(batches) {
+    const models = [];
+    const entries = Array.isArray(batches) ? batches : [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const batchModels = sceneInstancedGLBMeshToModels(entries[index], index);
+      for (let modelIndex = 0; modelIndex < batchModels.length; modelIndex += 1) {
+        models.push(batchModels[modelIndex]);
+      }
+    }
+    return models;
+  }
+
+  function normalizeSceneAnimationClip(item, index) {
+    const raw = item && typeof item === "object" ? item : {};
+    const channels = Array.isArray(raw.channels) ? raw.channels.map(function(channel) {
+      const ch = channel && typeof channel === "object" ? channel : {};
+      return {
+        targetID: ch.targetID != null ? ch.targetID : ch.targetNode,
+        targetNode: ch.targetNode != null ? ch.targetNode : ch.targetID,
+        property: typeof ch.property === "string" && ch.property ? ch.property : "translation",
+        interpolation: typeof ch.interpolation === "string" && ch.interpolation ? ch.interpolation : "LINEAR",
+        times: ch.times instanceof Float32Array ? new Float32Array(ch.times) : sceneTypedFloatArray(ch.times),
+        values: ch.values instanceof Float32Array ? new Float32Array(ch.values) : sceneTypedFloatArray(ch.values),
+      };
+    }) : [];
+    return {
+      name: typeof raw.name === "string" && raw.name ? raw.name : ("scene-animation-" + index),
+      duration: sceneNumber(raw.duration, 0),
+      channels,
+    };
+  }
+
+  function sceneAnimations(props) {
+    return rawSceneAnimations(props).map(function(entry, index) {
+      return normalizeSceneAnimationClip(entry, index);
+    });
   }
 
   function sceneModels(props) {
@@ -2052,10 +2423,12 @@
       color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#ffffff"),
       style: normalizeScenePointStyle(item.style, current.style),
       size: sceneClampNumberOrCSSVar(item.size, sceneNumber(current.size, 1), 0, Number.POSITIVE_INFINITY),
+      minPixelSize: sceneClampNumberOrCSSVar(item.minPixelSize, sceneNumber(current.minPixelSize, 0), 0, Number.POSITIVE_INFINITY),
       opacity: sceneClampNumberOrCSSVar(item.opacity, sceneNumber(current.opacity, 1), 0, 1),
       blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
+      maxPixelSize: sceneClampNumberOrCSSVar(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0), 0, Number.POSITIVE_INFINITY),
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
       z: sceneNumber(item.z, sceneNumber(current.z, 0)),
@@ -2118,19 +2491,71 @@
     const attributes = Object.prototype.hasOwnProperty.call(item, "attributes")
       ? sceneCloneData(item.attributes)
       : (Object.prototype.hasOwnProperty.call(current, "attributes") ? current.attributes : undefined);
+    const kind = normalizeSceneKind(item.kind || current.kind);
+    const size = Math.max(0.0001, sceneNumber(item.size, sceneNumber(current.size, 1.2)));
+    const radius = Math.max(0.0001, sceneNumber(item.radius, sceneNumber(current.radius, kind === "torus" ? 0.7 : (size * 0.5))));
+    const segmentSource = Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments;
+    const radialSegmentSource = Object.prototype.hasOwnProperty.call(item, "radialSegments") ? item.radialSegments : current.radialSegments;
+    const tubularSegmentSource = Object.prototype.hasOwnProperty.call(item, "tubularSegments") ? item.tubularSegments : current.tubularSegments;
+    const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item) || current.materialKind);
+    const opacity = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)), 0, 1);
+    const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)));
+    const blendMode = normalizeSceneMaterialBlendMode(
+      sceneObjectMaterialHasValue(item, "blendMode") ? sceneObjectMaterialValue(item, "blendMode") : current.blendMode,
+      materialKind,
+      numericOpacity,
+    );
     const normalized = {
       id: item.id || current.id || ("scene-instanced-" + index),
       count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
-      kind: normalizeSceneKind(item.kind || current.kind),
-      width: Math.max(0.0001, sceneNumber(item.width, sceneNumber(current.width, sceneNumber(current.size, 1.2)))),
-      height: Math.max(0.0001, sceneNumber(item.height, sceneNumber(current.height, sceneNumber(current.size, 1.2)))),
-      depth: Math.max(0.0001, sceneNumber(item.depth, sceneNumber(current.depth, sceneNumber(current.size, 1.2)))),
-      radius: Math.max(0.0001, sceneNumber(item.radius, sceneNumber(current.radius, sceneNumber(current.size, 0.6)))),
-      segments: sceneSegmentResolution(Object.prototype.hasOwnProperty.call(item, "segments") ? item.segments : current.segments),
-      materialKind: normalizeSceneMaterialKind(item.materialKind || current.materialKind),
-      color: typeof item.color === "string" && item.color ? item.color : (typeof current.color === "string" ? current.color : "#8de1ff"),
-      roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0)),
-      metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
+      kind,
+      material: Object.prototype.hasOwnProperty.call(item, "material")
+        ? sceneCloneData(item.material)
+        : (Object.prototype.hasOwnProperty.call(current, "material") ? current.material : undefined),
+      size,
+      width: Math.max(0.0001, sceneNumber(item.width, sceneNumber(current.width, size))),
+      height: Math.max(0.0001, sceneNumber(item.height, sceneNumber(current.height, size))),
+      depth: Math.max(0.0001, sceneNumber(item.depth, sceneNumber(current.depth, size))),
+      radius,
+      radiusTop: Math.max(0, sceneNumber(item.radiusTop, sceneNumber(current.radiusTop, radius))),
+      radiusBottom: Math.max(0, sceneNumber(item.radiusBottom, sceneNumber(current.radiusBottom, radius))),
+      tube: Math.max(0.0001, sceneNumber(item.tube, sceneNumber(current.tube, 0.3))),
+      segments: scenePrimitiveSegmentResolution(segmentSource, 32, 3, 256),
+      radialSegments: scenePrimitiveSegmentResolution(radialSegmentSource, 32, 3, 256),
+      tubularSegments: scenePrimitiveSegmentResolution(tubularSegmentSource, 16, 3, 128),
+      materialKind,
+      color: typeof sceneObjectMaterialValue(item, "color") === "string" && sceneObjectMaterialValue(item, "color") ? sceneObjectMaterialValue(item, "color") : (typeof current.color === "string" ? current.color : "#8de1ff"),
+      texture: typeof sceneObjectMaterialValue(item, "texture") === "string" ? sceneObjectMaterialValue(item, "texture").trim() : (typeof current.texture === "string" ? current.texture : ""),
+      opacity,
+      emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
+      roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
+      metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
+      clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
+      sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
+      transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
+      iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
+      anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
+      roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
+      metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
+      emissiveMap: typeof sceneObjectMaterialValue(item, "emissiveMap") === "string" ? sceneObjectMaterialValue(item, "emissiveMap").trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      blendMode,
+      renderPass: normalizeSceneMaterialRenderPass(
+        sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
+        blendMode,
+        numericOpacity,
+        materialKind,
+      ),
+      wireframe: sceneBool(sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe, false),
+      depthWrite: sceneObjectMaterialHasValue(item, "depthWrite") ? sceneBool(sceneObjectMaterialValue(item, "depthWrite"), true) : current.depthWrite,
+      lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
+      dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
+      gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
+      customVertex: typeof sceneObjectMaterialValue(item, "customVertex") === "string" ? sceneObjectMaterialValue(item, "customVertex") : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof sceneObjectMaterialValue(item, "customFragment") === "string" ? sceneObjectMaterialValue(item, "customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       transforms,
       colors,
       attributes,
@@ -2286,6 +2711,7 @@
       customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
       customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+      variantKey: typeof item._variantKey === "string" ? item._variantKey : (typeof current.variantKey === "string" ? current.variantKey : ""),
       _colorSpecified: colorSpecified || current._colorSpecified === true,
       _opacitySpecified: opacitySpecified || current._opacitySpecified === true,
       _blendModeSpecified: blendModeSpecified || current._blendModeSpecified === true,
@@ -2296,9 +2722,14 @@
     return out;
   }
 
-  function sceneMaterials(props) {
-    return rawSceneMaterials(props).map(function(entry, index) {
-      return normalizeSceneMaterialRecord(entry, index, null);
+  function sceneMaterials(props, capability) {
+    return sceneNormalizeMaterialList(rawSceneMaterials(props), capability);
+  }
+
+  function sceneNormalizeMaterialList(materials, capability) {
+    const entries = Array.isArray(materials) ? materials : [];
+    return entries.map(function(entry, index) {
+      return normalizeSceneMaterialRecord(sceneMaterialRecordForCapability(entry, capability), index, null);
     });
   }
 
@@ -2484,7 +2915,7 @@
     }, base);
   }
 
-  function createSceneState(props) {
+  function createSceneState(props, capability) {
     // Decompress any TurboQuant-compressed vertex data before the render loop.
     // Progressive mode: decompress preview now, schedule full-res upgrade after first frame.
     if (typeof sceneDecompressProps === "function") {
@@ -2505,10 +2936,15 @@
       sprites: new Map(),
       html: new Map(),
       lights: new Map(),
+      models: sceneModels(props),
       points: scenePoints(props),
       instancedMeshes: sceneInstancedMeshes(props),
+      instancedGLBMeshes: sceneInstancedGLBMeshes(props),
       computeParticles: sceneComputeParticles(props),
-      materials: sceneMaterials(props),
+      animations: sceneAnimations(props),
+      materials: sceneMaterials(props, capability),
+      _materialSource: rawSceneMaterials(props).map(sceneCloneData),
+      capability: capability || null,
       postEffects: deferPostFX ? [] : postEffects,
       postFXMaxPixels: postFXMaxPixels,
       _deferredPostEffects: deferPostFX ? postEffects : null,
@@ -2571,6 +3007,21 @@
     });
   }
 
+  function sceneStateInstancedMeshesWithMaterials(state) {
+    const meshes = Array.isArray(state && state.instancedMeshes) ? state.instancedMeshes : [];
+    const lookup = sceneMaterialLookup(state);
+    if (!lookup.size) {
+      return meshes;
+    }
+    return meshes.map(function(mesh) {
+      const material = sceneNamedMaterialForRecord(lookup, mesh);
+      if (!material) {
+        return mesh;
+      }
+      return sceneApplyNamedMaterialToInstancedMesh(mesh, material);
+    });
+  }
+
   function sceneMaterialLookup(state) {
     const materials = Array.isArray(state && state.materials) ? state.materials : [];
     if (!materials.length) {
@@ -2619,7 +3070,20 @@
       renderPass: material.renderPass || object.renderPass,
       wireframe: material.wireframe != null ? material.wireframe : object.wireframe,
       depthWrite: material.depthWrite != null ? material.depthWrite : object.depthWrite,
+      lineDash: material.lineDash != null ? material.lineDash : object.lineDash,
+      dashSize: material.dashSize != null ? material.dashSize : object.dashSize,
+      gapSize: material.gapSize != null ? material.gapSize : object.gapSize,
+      customVertex: typeof material.customVertex === "string" ? material.customVertex : object.customVertex,
+      customFragment: typeof material.customFragment === "string" ? material.customFragment : object.customFragment,
+      customVertexWGSL: typeof material.customVertexWGSL === "string" ? material.customVertexWGSL : object.customVertexWGSL,
+      customFragmentWGSL: typeof material.customFragmentWGSL === "string" ? material.customFragmentWGSL : object.customFragmentWGSL,
+      customUniforms: sceneIsPlainObject(material.customUniforms) ? Object.assign({}, material.customUniforms) : object.customUniforms,
+      variantKey: material.variantKey || object.variantKey,
     });
+  }
+
+  function sceneApplyNamedMaterialToInstancedMesh(mesh, material) {
+    return sceneApplyNamedMaterialToObject(mesh, material);
   }
 
   function sceneApplyNamedMaterialToPoints(point, material) {
@@ -2714,7 +3178,8 @@
 
   function sceneTransitionTimingForPhase(entry, phase) {
     const transition = sceneIsPlainObject(entry && entry._transition) ? entry._transition : null;
-    const fallback = transition && phase === "update" ? transition.in : null;
+    const hasPhase = transition && Object.prototype.hasOwnProperty.call(transition, phase);
+    const fallback = transition && phase === "update" && !hasPhase ? transition.in : null;
     const timing = transition && sceneIsPlainObject(transition[phase]) ? transition[phase] : null;
     const duration = Math.max(0, Math.round(sceneNumber(timing && timing.duration, sceneNumber(fallback && fallback.duration, 0))));
     const easing = normalizeSceneEasing((timing && timing.easing) || (fallback && fallback.easing));
@@ -3108,8 +3573,10 @@
     if ((!startPatch || !Object.keys(startPatch).length) && timing.duration <= 0) {
       return false;
     }
-    const target = sceneCloneData(entry);
-    const startState = sceneNormalizeEntryByKind(kind, startPatch || {}, target);
+    const fullTarget = sceneCloneData(entry);
+    const fullStartState = sceneNormalizeEntryByKind(kind, startPatch || {}, fullTarget);
+    const target = sceneCloneTransitionData(kind, fullTarget);
+    const startState = sceneCloneTransitionData(kind, fullStartState);
     sceneApplyTransitionPatch(entry, startState);
     if (reducedMotion || timing.duration <= 0) {
       sceneApplyTransitionPatch(entry, target);
@@ -3300,12 +3767,27 @@
   const SCENE_CMD_SET_LIGHT = 4;
   const SCENE_CMD_SET_CAMERA = 5;
   const SCENE_CMD_SET_PARTICLES = 6;
+  const SCENE_CMD_SET_POST_EFFECTS = 7;
+  const SCENE_CMD_SET_INSTANCED_MESHES = 8;
+  const SCENE_CMD_SET_MATERIALS = 9;
+  const SCENE_CMD_SET_MODELS = 10;
+  const SCENE_CMD_SET_INSTANCED_GLB_MESHES = 11;
+  const SCENE_CMD_SET_ANIMATIONS = 12;
+  const SCENE_CMD_SET_ENVIRONMENT = 13;
 
   function applySceneCommands(state, commands) {
     if (!state || !Array.isArray(commands) || commands.length === 0) return;
+    const pending = [];
     for (const command of commands) {
-      applySceneCommand(state, command);
+      const result = applySceneCommand(state, command);
+      if (result && typeof result.then === "function") {
+        pending.push(result);
+      }
     }
+    if (pending.length > 0) {
+      return Promise.all(pending);
+    }
+    return null;
   }
 
   function applySceneCommand(state, command) {
@@ -3332,8 +3814,148 @@
         applySceneLightPatch(state, command.objectId, command.data);
         return;
       case SCENE_CMD_SET_PARTICLES:
+        applySceneParticlesCommand(state, command.data);
+        return;
+      case SCENE_CMD_SET_POST_EFFECTS:
+        applyScenePostEffectsCommand(state, command.data);
+        return;
+      case SCENE_CMD_SET_INSTANCED_MESHES:
+        applySceneInstancedMeshesCommand(state, command.data);
+        return;
+      case SCENE_CMD_SET_MATERIALS:
+        applySceneMaterialsCommand(state, command.data);
+        return;
+      case SCENE_CMD_SET_MODELS:
+        return applySceneModelsCommand(state, command.data);
+      case SCENE_CMD_SET_INSTANCED_GLB_MESHES:
+        return applySceneInstancedGLBMeshesCommand(state, command.data);
+      case SCENE_CMD_SET_ANIMATIONS:
+        applySceneAnimationsCommand(state, command.data);
+        return;
+      case SCENE_CMD_SET_ENVIRONMENT:
+        applySceneEnvironmentCommand(state, command.data);
+        return;
       default:
         return;
+    }
+  }
+
+  function applySceneMaterialsCommand(state, data) {
+    if (!state) return;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawMaterials = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.materials) ? payload.materials : []);
+    state._materialSource = rawMaterials.map(sceneCloneData);
+    state.materials = sceneNormalizeMaterialList(state._materialSource, state.capability);
+  }
+
+  function applySceneEnvironmentCommand(state, data) {
+    if (!state) return;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawEnvironment = sceneIsPlainObject(payload.environment) ? payload.environment : payload;
+    state.environment = normalizeSceneEnvironment(rawEnvironment, state.environment);
+  }
+
+  function applySceneParticlesCommand(state, data) {
+    if (!state) return;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawPoints = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.points) ? payload.points : []);
+    const rawCompute = Array.isArray(payload.computeParticles) ? payload.computeParticles : [];
+    state.points = rawPoints.map(function(entry, index) {
+      return normalizeScenePointsEntry(entry, index, null);
+    });
+    state.computeParticles = rawCompute.map(function(entry, index) {
+      return normalizeSceneComputeParticlesEntry(entry, index, null);
+    });
+  }
+
+  function applySceneInstancedMeshesCommand(state, data) {
+    if (!state) return;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawMeshes = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.instancedMeshes) ? payload.instancedMeshes : []);
+    state.instancedMeshes = rawMeshes.map(function(entry, index) {
+      return normalizeSceneInstancedMeshEntry(entry, index, null);
+    });
+  }
+
+  function sceneRehydrateModelsAfterCommand(state) {
+    if (!state || typeof hydrateSceneStateModels !== "function") {
+      return null;
+    }
+    const promise = hydrateSceneStateModels(state, null);
+    if (promise && typeof promise.then === "function") {
+      state._modelHydrationPromise = promise;
+      promise.finally(function() {
+        if (state._modelHydrationPromise === promise) {
+          state._modelHydrationPromise = null;
+        }
+      });
+    }
+    return promise;
+  }
+
+  function applySceneModelsCommand(state, data) {
+    if (!state) return null;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawModels = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.models) ? payload.models : []);
+    state.models = rawModels.map(function(entry, index) {
+      return normalizeSceneModel(entry, index);
+    }).filter(function(model) {
+      return Boolean(model && model.src);
+    });
+    return sceneRehydrateModelsAfterCommand(state);
+  }
+
+  function applySceneInstancedGLBMeshesCommand(state, data) {
+    if (!state) return null;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawMeshes = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.instancedGLBMeshes) ? payload.instancedGLBMeshes : []);
+    state.instancedGLBMeshes = rawMeshes.map(function(entry, index) {
+      return normalizeSceneInstancedGLBMeshEntry(entry, index, null);
+    }).filter(function(entry) {
+      return Boolean(entry && entry.src && Array.isArray(entry.instances) && entry.instances.length > 0);
+    });
+    return sceneRehydrateModelsAfterCommand(state);
+  }
+
+  function applySceneAnimationsCommand(state, data) {
+    if (!state) return;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawAnimations = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.animations) ? payload.animations : []);
+    state.animations = rawAnimations.map(function(entry, index) {
+      return normalizeSceneAnimationClip(entry, index);
+    });
+  }
+
+  function applyScenePostEffectsCommand(state, data) {
+    if (!state) return;
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawEffects = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.postEffects) ? payload.postEffects : []);
+    const postEffects = [];
+    for (let index = 0; index < rawEffects.length; index += 1) {
+      const effect = normalizeScenePostEffect(rawEffects[index], index, null);
+      if (effect) {
+        postEffects.push(effect);
+      }
+    }
+    state.postEffects = postEffects;
+    state._adaptiveSourcePostEffects = postEffects.slice();
+    state._deferredPostEffects = null;
+    if (Object.prototype.hasOwnProperty.call(payload, "postFXMaxPixels")) {
+      state.postFXMaxPixels = Math.max(0, Math.floor(sceneNumber(payload.postFXMaxPixels, 0)));
     }
   }
 
@@ -3787,7 +4409,7 @@
     return selected;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels, showDebugGrid) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const renderCamera = sceneRenderCamera(camera);
     const bundle = {
@@ -3806,7 +4428,7 @@
       html: [],
       lines: [],
       points: Array.isArray(points) ? points : [],
-      instancedMeshes: Array.isArray(instancedMeshes) ? instancedMeshes : [],
+      instancedMeshes: [],
       computeParticles: Array.isArray(computeParticles) ? computeParticles : [],
       positions: [],
       colors: [],
@@ -3844,7 +4466,9 @@
       bundle.postFXMaxPixels = normalizedPostFXMaxPixels;
     }
     const materialLookup = new Map();
-    appendSceneGridToBundle(bundle, width, height);
+    if (sceneBool(showDebugGrid, false)) {
+      appendSceneGridToBundle(bundle, width, height);
+    }
     for (const object of sceneSelectLODObjects(objects, renderCamera)) {
       appendSceneObjectToBundle(bundle, materialLookup, renderCamera, width, height, object, bundle.lights, resolvedEnvironment, timeSeconds);
     }
@@ -3855,8 +4479,9 @@
       appendSceneSpriteToBundle(bundle, camera, width, height, sprite, timeSeconds);
     }
     for (const entry of html || []) {
-      appendSceneHTMLToBundle(bundle, camera, width, height, entry, timeSeconds);
+      appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes);
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;
@@ -3873,6 +4498,24 @@
     bundle.worldMeshVertexCount = bundle.worldMeshPositions.length / 3;
     bundle.objectCount = bundle.objects.length;
     return bundle;
+  }
+
+  function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes) {
+    const meshes = Array.isArray(instancedMeshes) ? instancedMeshes : [];
+    for (let index = 0; index < meshes.length; index += 1) {
+      const mesh = meshes[index];
+      if (!mesh || typeof mesh !== "object") {
+        continue;
+      }
+      const material = sceneObjectMaterialProfile(mesh);
+      const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+      const entry = Object.assign({}, mesh, {
+        materialIndex,
+        materialKind: material.kind || mesh.materialKind,
+        renderPass: material.renderPass || mesh.renderPass,
+      });
+      bundle.instancedMeshes.push(entry);
+    }
   }
 
   // translateScenePointInto is the alloc-free core of the scene-space
@@ -4536,7 +5179,7 @@
     });
   }
 
-  function appendSceneHTMLToBundle(bundle, camera, width, height, entry, timeSeconds) {
+  function appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds) {
     const point = sceneSpritePoint(entry, timeSeconds);
     const projected = sceneProjectPoint(point, camera, width, height);
     if (!projected) {
@@ -4551,10 +5194,26 @@
     if (projected.x < -marginX || projected.x > width + marginX || projected.y < -marginY || projected.y > height + marginY) {
       return;
     }
+    const mode = normalizeSceneHTMLMode(entry.mode, "dom");
+    const texture = sceneHTMLTextureMetadata(entry);
+    appendSceneHTMLTextureSurfaceToBundle(bundle, materialLookup, camera, entry, point, texture, timeSeconds);
     bundle.html.push({
       id: entry.id,
+      target: entry.target,
+      mode,
       html: entry.html,
       className: entry.className,
+      fallback: entry.fallback,
+      fallbackReason: texture.overBudget ? "html-texture-memory-cap" : entry.fallbackReason,
+      textureKey: texture.key,
+      textureWidth: texture.width,
+      textureHeight: texture.height,
+      textureBytes: texture.bytes,
+      textureMaxBytes: texture.maxBytes,
+      textureOverBudget: texture.overBudget,
+      textureReady: texture.ready,
+      surfaceWidth: sceneNumber(entry.surfaceWidth, sceneNumber(entry.width, 1.8)),
+      surfaceHeight: sceneNumber(entry.surfaceHeight, sceneNumber(entry.height, 0.72)),
       position: { x: projected.x, y: projected.y },
       depth: projected.depth,
       priority: sceneNumber(entry.priority, 0),
@@ -4568,6 +5227,115 @@
       occlude: Boolean(entry.occlude),
       pointerEvents: normalizeSceneHTMLPointerEvents(entry.pointerEvents, "none"),
     });
+  }
+
+  function sceneHTMLTextureMetadata(entry) {
+    const mode = normalizeSceneHTMLMode(entry && entry.mode, "dom");
+    if (mode !== "texture") {
+      return { key: "", width: 0, height: 0, bytes: 0, maxBytes: 0, overBudget: false, ready: false };
+    }
+    const width = Math.max(1, Math.floor(sceneNumber(entry.textureWidth, 512)));
+    const height = Math.max(1, Math.floor(sceneNumber(entry.textureHeight, 320)));
+    const maxPixels = Math.max(0, Math.floor(sceneNumber(entry.maxTexturePixels, 1024 * 1024)));
+    const bytes = width * height * 4;
+    const maxBytes = maxPixels > 0 ? maxPixels * 4 : 0;
+    return {
+      key: typeof entry.textureKey === "string" && entry.textureKey.trim() ? entry.textureKey.trim() : "gosx-html://" + (entry.id || "scene-html"),
+      width,
+      height,
+      bytes,
+      maxBytes,
+      overBudget: maxBytes > 0 && bytes > maxBytes,
+      ready: sceneBool(entry.textureReady, false),
+    };
+  }
+
+  function sceneHTMLTextureSurfaceObject(entry, point) {
+    return {
+      x: point.x,
+      y: point.y,
+      z: point.z,
+      width: sceneNumber(entry.surfaceWidth, sceneNumber(entry.width, 1.8)),
+      depth: sceneNumber(entry.surfaceHeight, sceneNumber(entry.height, 0.72)),
+      height: 0,
+      scaleX: 1,
+      scaleY: 1,
+      scaleZ: 1,
+      rotationX: 0,
+      rotationY: 0,
+      rotationZ: 0,
+      spinX: 0,
+      spinY: 0,
+      spinZ: 0,
+      shiftX: sceneNumber(entry.shiftX, 0),
+      shiftY: sceneNumber(entry.shiftY, 0),
+      shiftZ: sceneNumber(entry.shiftZ, 0),
+      driftSpeed: sceneNumber(entry.driftSpeed, 0),
+      driftPhase: sceneNumber(entry.driftPhase, 0),
+    };
+  }
+
+  function appendSceneHTMLTextureSurfaceToBundle(bundle, materialLookup, camera, entry, point, texture, timeSeconds) {
+    if (!texture || !texture.ready || texture.overBudget) {
+      return;
+    }
+    const surfaceObject = sceneHTMLTextureSurfaceObject(entry, point);
+    const corners = scenePlaneSurfaceCorners(surfaceObject, timeSeconds);
+    const bounds = renderBoundsFromPoints(corners);
+    if (!bounds) {
+      return;
+    }
+    const material = {
+      kind: "flat",
+      color: "#ffffff",
+      texture: texture.key,
+      opacity: clamp01(sceneNumber(entry.opacity, 1)),
+      wireframe: false,
+      blendMode: "alpha",
+      renderPass: "alpha",
+      emissive: 1,
+      unlit: true,
+    };
+    material.key = "html-texture|" + String(entry.id || "") + "|" + texture.key + "|" + texture.width + "x" + texture.height + "|" + material.opacity.toFixed(3);
+    material.shaderData = sceneMaterialShaderData(material);
+    const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+    const depth = sceneBoundsDepthMetrics(bounds, camera, surfaceObject);
+    bundle.surfaces.push({
+      id: entry.id,
+      kind: "html",
+      sourceKind: "html",
+      sourceID: entry.id,
+      textureKey: texture.key,
+      textureWidth: texture.width,
+      textureHeight: texture.height,
+      textureBytes: texture.bytes,
+      textureMaxBytes: texture.maxBytes,
+      textureReady: true,
+      fallback: entry.fallback,
+      fallbackReason: entry.fallbackReason,
+      materialIndex,
+      renderPass: "alpha",
+      static: false,
+      positions: scenePlaneSurfacePositions(corners),
+      uv: scenePlaneSurfaceUVs(),
+      vertexCount: 6,
+      bounds,
+      depthNear: depth.near,
+      depthFar: depth.far,
+      depthCenter: depth.center,
+      viewCulled: sceneBoundsViewCulled(bounds, camera, surfaceObject),
+    });
+  }
+
+  function renderBoundsFromPoints(points) {
+    if (!Array.isArray(points) || points.length === 0) {
+      return null;
+    }
+    let bounds = null;
+    for (const point of points) {
+      bounds = sceneExpandWorldBounds(bounds, point);
+    }
+    return bounds;
   }
 
   function sceneExpandWorldBounds(bounds, point) {
@@ -5009,6 +5777,7 @@
     const filtered = surfaces.filter(function(surface) {
       return surface &&
         !surface.viewCulled &&
+        !(surface.sourceKind === "html" && !surface.textureReady) &&
         Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))) > 0 &&
         String(surface.renderPass || "opaque") === renderPass;
     });
@@ -6219,6 +6988,7 @@
     createSceneRenderBundle,
     sceneSelectLODObjects,
     SCENE_IR_VERSION: 1,
+    SCENE_IR_SCHEMA: "gosx.scene3d.ir.v1",
     SCENE_RENDER_BUNDLE_VERSION: 1,
     SCENE_POST_TONE_MAPPING: "toneMapping",
     SCENE_POST_BLOOM: "bloom",
@@ -6235,11 +7005,14 @@
     sceneBackendRegistry: undefined,
     createSceneState,
     createSceneParticleSystem: typeof createSceneParticleSystem === "function" ? createSceneParticleSystem : undefined,
+    sceneStateObjectsWithMaterials,
     sceneStatePointsWithMaterials,
+    sceneStateInstancedMeshesWithMaterials,
     createSceneWebGLRenderer,
     engineFrame,
     normalizeSceneEnvironment,
     normalizeSceneHTML,
+    normalizeSceneInstancedGLBMeshEntry,
     normalizeSceneLabel,
     normalizeSceneLabelAlign,
     normalizeSceneLabelCollision,
@@ -6276,6 +7049,9 @@
     sceneHTMLAnimated,
     sceneLabelAnimated,
     sceneMeshMaterialArray,
+    sceneAnimations,
+    sceneInstancedGLBMeshes,
+    sceneInstancedGLBModelsFromBatches,
     sceneModels,
     sceneNormalizeDirection,
     sceneNowMilliseconds,
@@ -6307,6 +7083,7 @@
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
     generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
+    normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function" ? normalizeInstancedGeometryKind : undefined,
 
     // Post-fx helpers from 15a-scene-postfx-shared.js.
     resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,

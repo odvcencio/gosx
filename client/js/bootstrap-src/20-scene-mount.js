@@ -1587,13 +1587,52 @@
     return true;
   }
 
+  function sceneHydrationModels(state, props) {
+    const models = Array.isArray(state && state.models) ? state.models : sceneModels(props);
+    const instancedGLBMeshes = Array.isArray(state && state.instancedGLBMeshes)
+      ? state.instancedGLBMeshes
+      : sceneInstancedGLBMeshes(props);
+    return models.concat(sceneInstancedGLBModelsFromBatches(instancedGLBMeshes));
+  }
+
+  function sceneClearHydratedModelRecords(state) {
+    if (!state || !state._hydratedModelRecords) {
+      return;
+    }
+    const records = state._hydratedModelRecords;
+    for (const id of (Array.isArray(records.objects) ? records.objects : [])) {
+      state.objects.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.labels) ? records.labels : [])) {
+      state.labels.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.sprites) ? records.sprites : [])) {
+      state.sprites.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.html) ? records.html : [])) {
+      state.html.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.lights) ? records.lights : [])) {
+      state.lights.delete(sceneObjectKey(id));
+    }
+    if (Array.isArray(records.points) && records.points.length > 0 && Array.isArray(state.points)) {
+      const pointIDs = new Set(records.points.map(function(id) { return sceneObjectKey(id); }));
+      state.points = state.points.filter(function(point) {
+        return !pointIDs.has(sceneObjectKey(point && point.id));
+      });
+    }
+    state._hydratedModelRecords = null;
+  }
+
   async function hydrateSceneStateModels(state, props) {
-    const models = sceneModels(props);
+    const models = sceneHydrationModels(state, props);
     state._modelAnimations = [];
     state._modelSkins = [];
+    sceneClearHydratedModelRecords(state);
     if (!models.length) {
       return { models: 0, objects: 0, points: 0, labels: 0, sprites: 0, html: 0, lights: 0 };
     }
+    const hydrated = { objects: [], points: [], labels: [], sprites: [], html: [], lights: [] };
     let objectCount = 0;
     let pointCount = 0;
     let labelCount = 0;
@@ -1611,6 +1650,7 @@
           continue;
         }
         state.objects.set(object.id, object);
+        hydrated.objects.push(object.id);
         objectIDs.push(object.id);
         objectCount += 1;
       }
@@ -1620,6 +1660,7 @@
           continue;
         }
         state.points.push(point);
+        hydrated.points.push(point.id);
         pointCount += 1;
       }
       for (let i = 0; i < asset.labels.length; i += 1) {
@@ -1628,6 +1669,7 @@
           continue;
         }
         state.labels.set(label.id, label);
+        hydrated.labels.push(label.id);
         labelCount += 1;
       }
       for (let i = 0; i < asset.sprites.length; i += 1) {
@@ -1636,6 +1678,7 @@
           continue;
         }
         state.sprites.set(sprite.id, sprite);
+        hydrated.sprites.push(sprite.id);
         spriteCount += 1;
       }
       for (let i = 0; i < asset.html.length; i += 1) {
@@ -1644,6 +1687,7 @@
           continue;
         }
         state.html.set(entry.id, entry);
+        hydrated.html.push(entry.id);
         htmlCount += 1;
       }
       for (let i = 0; i < asset.lights.length; i += 1) {
@@ -1652,10 +1696,12 @@
           continue;
         }
         state.lights.set(light.id, light);
+        hydrated.lights.push(light.id);
         lightCount += 1;
       }
       await scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs);
     }));
+    state._hydratedModelRecords = hydrated;
     return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, html: htmlCount, lights: lightCount };
   }
 
@@ -3151,6 +3197,24 @@
     const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(htmlEntry.priority, 0) * 10) - Math.round(sceneNumber(htmlEntry.depth, 0) * 10));
     element.setAttribute("data-gosx-scene-html", htmlEntry.id || "");
     setAttrValue(element, "class", htmlEntry.className ? ("gosx-scene-html " + htmlEntry.className) : "gosx-scene-html");
+    setAttrValue(element, "data-gosx-scene-html-target", htmlEntry.target || "");
+    setAttrValue(element, "data-gosx-scene-html-mode", htmlEntry.mode || "dom");
+    setAttrValue(element, "data-gosx-scene-html-fallback", htmlEntry.fallback || "");
+    setAttrValue(element, "data-gosx-scene-html-fallback-reason", htmlEntry.fallbackReason || "");
+    setAttrValue(element, "data-gosx-scene-html-texture-key", htmlEntry.textureKey || "");
+    setAttrValue(element, "data-gosx-scene-html-texture-width", sceneNumber(htmlEntry.textureWidth, 0) > 0 ? sceneNumber(htmlEntry.textureWidth, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-height", sceneNumber(htmlEntry.textureHeight, 0) > 0 ? sceneNumber(htmlEntry.textureHeight, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-bytes", sceneNumber(htmlEntry.textureBytes, 0) > 0 ? sceneNumber(htmlEntry.textureBytes, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-cap-bytes", sceneNumber(htmlEntry.textureMaxBytes, 0) > 0 ? sceneNumber(htmlEntry.textureMaxBytes, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-over-budget", htmlEntry.textureOverBudget ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-ready", htmlEntry.textureReady ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-revision", sceneNumber(htmlEntry.textureRevision, 0) > 0 ? sceneNumber(htmlEntry.textureRevision, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-dirty", htmlEntry.textureDirty ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-dirty-bytes", sceneNumber(htmlEntry.textureDirtyBytes, 0) > 0 ? sceneNumber(htmlEntry.textureDirtyBytes, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-upload-pending-bytes", sceneNumber(htmlEntry.texturePendingUploadBytes, 0) > 0 ? sceneNumber(htmlEntry.texturePendingUploadBytes, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-manager", htmlEntry.textureManager || "");
+    setAttrValue(element, "data-gosx-scene-html-texture-rasterized", htmlEntry.textureRasterized ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-upload-bytes", sceneNumber(htmlEntry.textureUploadBytes, 0) > 0 ? sceneNumber(htmlEntry.textureUploadBytes, 0) : "");
     setAttrValue(element, "data-gosx-scene-html-occlude", htmlEntry.occlude ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-occluded", occluded ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-visibility", hidden ? "hidden" : "visible");
@@ -3174,13 +3238,338 @@
     }
   }
 
-  function renderSceneHTML(layer, bundle, elements, width, height) {
+  function sceneHTMLTextureTargetID(htmlEntry) {
+    if (!htmlEntry || typeof htmlEntry !== "object") {
+      return "";
+    }
+    if (typeof htmlEntry.target === "string" && htmlEntry.target.trim()) {
+      return htmlEntry.target.trim();
+    }
+    if (typeof htmlEntry.targetID === "string" && htmlEntry.targetID.trim()) {
+      return htmlEntry.targetID.trim();
+    }
+    return "";
+  }
+
+  function sceneHTMLTextureNumber(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function dispatchSceneHTMLTexturePointer(bundle, elements, detail) {
+    if (!bundle || !elements || !detail || typeof detail !== "object") {
+      return false;
+    }
+    const targetID = typeof detail.targetID === "string" ? detail.targetID.trim() : "";
+    if (!targetID || !Array.isArray(bundle.html)) {
+      return false;
+    }
+    let dispatched = false;
+    for (const htmlEntry of bundle.html) {
+      if (!htmlEntry || normalizeSceneHTMLMode(htmlEntry.mode, "dom") !== "texture") {
+        continue;
+      }
+      const htmlTargetID = sceneHTMLTextureTargetID(htmlEntry);
+      if (htmlTargetID !== targetID && htmlEntry.id !== targetID) {
+        continue;
+      }
+      const id = htmlEntry.id || "";
+      const element = elements.get(id);
+      if (!element || typeof element.dispatchEvent !== "function") {
+        continue;
+      }
+      const width = Math.max(1, sceneNumber(htmlEntry.width, 1));
+      const height = Math.max(1, sceneNumber(htmlEntry.height, 1));
+      const uvX = clamp01(sceneHTMLTextureNumber(detail.uvX, 0));
+      const uvY = clamp01(sceneHTMLTextureNumber(detail.uvY, 0));
+      const localX = uvX * width;
+      const localY = uvY * height;
+      const pointerDetail = {
+        htmlID: id,
+        targetID,
+        type: typeof detail.type === "string" ? detail.type : "",
+        pointerX: sceneHTMLTextureNumber(detail.pointerX, 0),
+        pointerY: sceneHTMLTextureNumber(detail.pointerY, 0),
+        uvX,
+        uvY,
+        localX,
+        localY,
+        width,
+        height,
+        fallback: htmlEntry.fallback || (normalizeSceneHTMLMode(htmlEntry.mode, "dom") === "texture" ? "dom-overlay" : ""),
+        fallbackReason: htmlEntry.fallbackReason || (normalizeSceneHTMLMode(htmlEntry.mode, "dom") === "texture" ? "html-texture-manager-unavailable" : ""),
+        scene: detail,
+      };
+      setAttrValue(element, "data-gosx-scene-html-hit-type", pointerDetail.type);
+      setAttrValue(element, "data-gosx-scene-html-hit-target", pointerDetail.targetID);
+      setAttrValue(element, "data-gosx-scene-html-hit-uv-x", pointerDetail.uvX);
+      setAttrValue(element, "data-gosx-scene-html-hit-uv-y", pointerDetail.uvY);
+      setAttrValue(element, "data-gosx-scene-html-hit-local-x", pointerDetail.localX);
+      setAttrValue(element, "data-gosx-scene-html-hit-local-y", pointerDetail.localY);
+      setStyleValue(element.style, "--gosx-scene-html-hit-uv-x", String(pointerDetail.uvX));
+      setStyleValue(element.style, "--gosx-scene-html-hit-uv-y", String(pointerDetail.uvY));
+      setStyleValue(element.style, "--gosx-scene-html-hit-local-x", pointerDetail.localX + "px");
+      setStyleValue(element.style, "--gosx-scene-html-hit-local-y", pointerDetail.localY + "px");
+      const event = typeof CustomEvent === "function"
+        ? new CustomEvent("gosx:scene-html-texture-pointer", { detail: pointerDetail })
+        : { type: "gosx:scene-html-texture-pointer", detail: pointerDetail };
+      element.dispatchEvent(event);
+      dispatched = true;
+    }
+    return dispatched;
+  }
+
+  function createSceneHTMLTextureState() {
+    return {
+      records: new Map(),
+      revision: 0,
+      disposed: 0,
+      disposedBytes: 0,
+      requestRender: null,
+    };
+  }
+
+  function disposeSceneHTMLTextureState(state) {
+    if (!state || !state.records) {
+      return;
+    }
+    state.records.clear();
+  }
+
+  function sceneHTMLTextureLifecycleID(html, index) {
+    if (html && typeof html.id === "string" && html.id.trim()) {
+      return html.id.trim();
+    }
+    if (html && typeof html.textureKey === "string" && html.textureKey.trim()) {
+      return html.textureKey.trim();
+    }
+    return "scene-html-" + index;
+  }
+
+  function sceneHTMLTextureLifecycleSignature(html, record) {
+    const textureKey = record && record.textureKey === (html && html.textureKey) && record.sourceKey
+      ? record.sourceKey
+      : (html && html.textureKey ? html.textureKey : "");
+    return [
+      textureKey,
+      sceneNumber(html && html.textureWidth, 0),
+      sceneNumber(html && html.textureHeight, 0),
+      sceneNumber(html && html.textureBytes, 0),
+      sceneNumber(html && html.textureMaxBytes, 0),
+      html && html.html ? html.html : "",
+    ].join("|");
+  }
+
+  function syncSceneHTMLTextureState(state, entries) {
+    const lifecycle = { dirty: 0, dirtyBytes: 0, pendingUploadBytes: 0, disposed: 0, disposedBytes: 0, revision: 0 };
+    if (!state || !state.records) {
+      return lifecycle;
+    }
+    const active = new Set();
+    for (let index = 0; index < entries.length; index += 1) {
+      const html = entries[index] && entries[index].html;
+      if (!html || normalizeSceneHTMLMode(html.mode, "dom") !== "texture") {
+        continue;
+      }
+      const id = sceneHTMLTextureLifecycleID(html, index);
+      active.add(id);
+      let record = state.records.get(id);
+      if (!record) {
+        record = { id, revision: 0, signature: "", bytes: 0, dirty: false, dirtyBytes: 0, pendingUploadBytes: 0 };
+        state.records.set(id, record);
+      }
+      const signature = sceneHTMLTextureLifecycleSignature(html, record);
+      const bytes = Math.max(0, Math.floor(sceneNumber(html.textureBytes, 0)));
+      if (record.signature !== signature) {
+        record.signature = signature;
+        record.revision += 1;
+        state.revision += 1;
+        record.dirty = !html.textureOverBudget;
+        record.dirtyBytes = record.dirty ? bytes : 0;
+        record.pendingUploadBytes = record.dirty && !html.textureReady ? bytes : 0;
+      }
+      record.bytes = bytes;
+      record.ready = Boolean(html.textureReady && !html.textureOverBudget);
+      if (record.ready) {
+        record.dirty = false;
+        record.dirtyBytes = 0;
+        record.pendingUploadBytes = 0;
+      }
+      html.textureRevision = record.revision;
+      html.textureDirty = record.dirty;
+      html.textureDirtyBytes = record.dirtyBytes;
+      html.texturePendingUploadBytes = record.pendingUploadBytes;
+      html.textureManager = record.manager || "";
+      html.textureRasterized = Boolean(record.rasterized);
+      html.textureUploadBytes = record.uploadBytes || 0;
+      if (record.dirty) {
+        lifecycle.dirty += 1;
+        lifecycle.dirtyBytes += record.dirtyBytes;
+      }
+      lifecycle.pendingUploadBytes += record.pendingUploadBytes;
+    }
+    state.records.forEach(function(record, id) {
+      if (active.has(id)) {
+        return;
+      }
+      state.disposed += 1;
+      state.disposedBytes += Math.max(0, Math.floor(sceneNumber(record && record.bytes, 0)));
+      state.records.delete(id);
+    });
+    lifecycle.disposed = state.disposed;
+    lifecycle.disposedBytes = state.disposedBytes;
+    lifecycle.revision = state.revision;
+    return lifecycle;
+  }
+
+  function sceneHTMLTextureStats(entries, lifecycle) {
+    const stats = { bytes: 0, capBytes: 0, overBudget: 0, ready: 0, count: 0, dirty: 0, dirtyBytes: 0, pendingUploadBytes: 0, disposed: 0, disposedBytes: 0, revision: 0 };
+    for (const entry of entries || []) {
+      const html = entry && entry.html;
+      if (!html || normalizeSceneHTMLMode(html.mode, "dom") !== "texture") {
+        continue;
+      }
+      stats.count += 1;
+      stats.bytes += Math.max(0, Math.floor(sceneNumber(html.textureBytes, 0)));
+      stats.capBytes += Math.max(0, Math.floor(sceneNumber(html.textureMaxBytes, 0)));
+      if (html.textureOverBudget) {
+        stats.overBudget += 1;
+      }
+      if (html.textureReady) {
+        stats.ready += 1;
+      }
+    }
+    if (lifecycle) {
+      stats.dirty = Math.max(0, Math.floor(sceneNumber(lifecycle.dirty, 0)));
+      stats.dirtyBytes = Math.max(0, Math.floor(sceneNumber(lifecycle.dirtyBytes, 0)));
+      stats.pendingUploadBytes = Math.max(0, Math.floor(sceneNumber(lifecycle.pendingUploadBytes, 0)));
+      stats.disposed = Math.max(0, Math.floor(sceneNumber(lifecycle.disposed, 0)));
+      stats.disposedBytes = Math.max(0, Math.floor(sceneNumber(lifecycle.disposedBytes, 0)));
+      stats.revision = Math.max(0, Math.floor(sceneNumber(lifecycle.revision, 0)));
+    }
+    return stats;
+  }
+
+  function sceneHTMLTextureDataURL(html) {
+    const width = Math.max(1, Math.floor(sceneNumber(html && html.textureWidth, 512)));
+    const height = Math.max(1, Math.floor(sceneNumber(html && html.textureHeight, 320)));
+    const markup = typeof html.html === "string" ? html.html : "";
+    if (!markup.trim()) {
+      return "";
+    }
+    const bodyStyle = [
+      "box-sizing:border-box",
+      "width:" + width + "px",
+      "min-height:" + height + "px",
+      "font:14px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif",
+      "color:#fff",
+    ].join(";");
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '">',
+      '<foreignObject x="0" y="0" width="100%" height="100%">',
+      '<div xmlns="http://www.w3.org/1999/xhtml" style="' + bodyStyle + '">',
+      markup,
+      "</div></foreignObject></svg>",
+    ].join("");
+    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  }
+
+  function rasterizeSceneHTMLTextureEntry(textureState, html, element, index) {
+    if (!textureState || !textureState.records || !html || normalizeSceneHTMLMode(html.mode, "dom") !== "texture") {
+      return false;
+    }
+    const id = sceneHTMLTextureLifecycleID(html, index || 0);
+    const record = textureState.records.get(id);
+    if (!record || html.textureOverBudget || !record.dirty) {
+      return false;
+    }
+    const textureKey = sceneHTMLTextureDataURL(html);
+    if (!textureKey) {
+      record.manager = "unavailable";
+      return false;
+    }
+    record.sourceKey = html.textureKey || ("gosx-html://" + id);
+    record.textureKey = textureKey;
+    record.manager = "svg-foreignobject";
+    record.rasterized = true;
+    record.ready = true;
+    record.dirty = false;
+    record.dirtyBytes = 0;
+    record.pendingUploadBytes = 0;
+    record.uploadBytes = Math.max(0, Math.floor(sceneNumber(html.textureBytes, 0)));
+    html.textureKey = textureKey;
+    html.textureReady = true;
+    html.textureManager = record.manager;
+    html.textureRasterized = true;
+    html.textureDirty = false;
+    html.textureDirtyBytes = 0;
+    html.texturePendingUploadBytes = 0;
+    html.textureUploadBytes = record.uploadBytes;
+    if (html.fallbackReason === "html-texture-manager-unavailable" || !html.fallbackReason) {
+      html.fallbackReason = "html-texture-accessibility-mirror";
+    }
+    if (element) {
+      element.__gosxHTMLTextureKey = textureKey;
+    }
+    if (typeof textureState.requestRender === "function") {
+      textureState.requestRender("html-texture");
+    }
+    return true;
+  }
+
+  function applySceneHTMLTextureRecordsToState(sceneState, textureState) {
+    if (!sceneState || !textureState || !textureState.records || typeof sceneStateHTML !== "function") {
+      return;
+    }
+    const entries = sceneStateHTML(sceneState);
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (!entry || normalizeSceneHTMLMode(entry.mode, "dom") !== "texture") {
+        continue;
+      }
+      const record = textureState.records.get(sceneHTMLTextureLifecycleID(entry, index));
+      if (!record || !record.ready || !record.textureKey) {
+        continue;
+      }
+      entry.textureKey = record.textureKey;
+      entry.textureReady = true;
+      entry.textureManager = record.manager || "";
+      entry.textureRasterized = Boolean(record.rasterized);
+      entry.textureUploadBytes = record.uploadBytes || 0;
+      entry.textureDirty = false;
+      entry.textureDirtyBytes = 0;
+      entry.texturePendingUploadBytes = 0;
+      if (entry.fallbackReason === "html-texture-manager-unavailable" || !entry.fallbackReason) {
+        entry.fallbackReason = "html-texture-accessibility-mirror";
+      }
+    }
+  }
+
+  function setSceneHTMLTextureLayerAttrs(layer, textureStats, entryCount) {
+    setAttrValue(layer, "aria-hidden", entryCount > 0 ? "false" : "true");
+    setAttrValue(layer, "data-gosx-scene-html-texture-count", textureStats.count > 0 ? textureStats.count : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-ready", textureStats.ready > 0 ? textureStats.ready : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-bytes", textureStats.bytes > 0 ? textureStats.bytes : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-cap-bytes", textureStats.capBytes > 0 ? textureStats.capBytes : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-over-budget", textureStats.overBudget > 0 ? textureStats.overBudget : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-dirty", textureStats.dirty > 0 ? textureStats.dirty : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-dirty-bytes", textureStats.dirtyBytes > 0 ? textureStats.dirtyBytes : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-upload-pending-bytes", textureStats.pendingUploadBytes > 0 ? textureStats.pendingUploadBytes : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-disposed", textureStats.disposed > 0 ? textureStats.disposed : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-disposed-bytes", textureStats.disposedBytes > 0 ? textureStats.disposedBytes : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-revision", textureStats.revision > 0 ? textureStats.revision : "");
+  }
+
+  function renderSceneHTML(layer, bundle, elements, width, height, textureState) {
     if (!layer) {
       return;
     }
     const entries = prepareSceneHTMLEntries(bundle, width, height);
-    setAttrValue(layer, "aria-hidden", entries.length > 0 ? "false" : "true");
+    const textureLifecycle = syncSceneHTMLTextureState(textureState, entries);
+    const textureStats = sceneHTMLTextureStats(entries, textureLifecycle);
+    setSceneHTMLTextureLayerAttrs(layer, textureStats, entries.length);
     const active = new Set();
+    let rasterizedAny = false;
     for (const entry of entries) {
       const id = entry.id;
       active.add(id);
@@ -3191,6 +3580,10 @@
         elements.set(id, element);
       }
       renderSceneHTMLElement(element, entry.html, entry.box, entry.hidden, entry.occluded);
+      if (rasterizeSceneHTMLTextureEntry(textureState, entry.html, element, entry.order)) {
+        rasterizedAny = true;
+        renderSceneHTMLElement(element, entry.html, entry.box, entry.hidden, entry.occluded);
+      }
     }
     for (const [id, element] of elements.entries()) {
       if (active.has(id)) {
@@ -3200,6 +3593,10 @@
         layer.removeChild(element);
       }
       elements.delete(id);
+    }
+    if (rasterizedAny) {
+      const nextLifecycle = syncSceneHTMLTextureState(textureState, entries);
+      setSceneHTMLTextureLayerAttrs(layer, sceneHTMLTextureStats(entries, nextLifecycle), entries.length);
     }
   }
 
@@ -4029,7 +4426,7 @@
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
-    const sceneState = createSceneState(props);
+    const sceneState = createSceneState(props, capability);
     const sceneModelHydration = hydrateSceneStateModels(sceneState, props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const lifecycle = initialSceneLifecycleState();
@@ -4164,6 +4561,8 @@
     const labelElements = new Map();
     const spriteElements = new Map();
     const htmlElements = new Map();
+    const htmlTextureState = createSceneHTMLTextureState();
+    htmlTextureState.requestRender = scheduleRender;
     let labelRefreshHandle = null;
 
     function syncSceneNodeSentinels(bundle) {
@@ -4232,7 +4631,7 @@
         }
         renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
         renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-        renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+        renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       });
     });
 
@@ -4453,7 +4852,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       return true;
     }
 
@@ -4895,6 +5294,7 @@
     }, function() {
       return latestBundle;
     }, function(detail) {
+      dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
       ctx.emit("scene-interaction", detail);
     });
     let pendingMotionData = null;
@@ -4953,6 +5353,8 @@
       // Capability change (DPR / WebGL availability shift) invalidates
       // the viewport — mark dirty so the next renderFrame re-measures.
       viewportDirty = true;
+      sceneState.capability = capability;
+      sceneState.materials = sceneNormalizeMaterialList(sceneState._materialSource, capability);
       const desiredFallback = sceneRendererFallbackReason(props, capability, renderer && renderer.kind);
       const webglPreference = sceneCapabilityWebGLPreference(props, capability);
       if (renderer && renderer.kind === "webgl" && !(webglPreference === "prefer" || webglPreference === "force")) {
@@ -5000,7 +5402,7 @@
 
     if (runtimeScene) {
       if (ctx.runtime && ctx.runtime.available()) {
-        applySceneCommands(sceneState, await ctx.runtime.hydrateFromProgramRef());
+        await applySceneCommands(sceneState, await ctx.runtime.hydrateFromProgramRef());
       } else {
         console.warn("[gosx] Scene3D runtime requested but shared engine runtime is unavailable");
       }
@@ -5056,7 +5458,7 @@
           renderer.render(effectiveBundle, viewport);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-          renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+          renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
           if (statsOverlay) {
             statsOverlay.update(effectiveBundle, frameStart, renderer, viewport);
           }
@@ -5068,7 +5470,12 @@
         }
       }
       if (runtimeScene && ctx.runtime) {
-        applySceneCommands(sceneState, ctx.runtime.tick());
+        const commandResult = applySceneCommands(sceneState, ctx.runtime.tick());
+        if (commandResult && typeof commandResult.then === "function") {
+          commandResult.then(function() {
+            scheduleRender("runtime-model-commands");
+          });
+        }
       }
       sceneAdvanceTransitions(sceneState, now);
       // LOD: swap vertex data based on camera distance before building render bundle.
@@ -5081,6 +5488,7 @@
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
       const activeCamera = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
+      applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
       latestBundle = createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
@@ -5094,10 +5502,11 @@
         sceneState.environment,
         timeSeconds,
         sceneStatePointsWithMaterials(sceneState),
-        sceneState.instancedMeshes,
+        sceneStateInstancedMeshesWithMaterials(sceneState),
         sceneState.computeParticles,
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
+        sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
       );
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       if (perfEnabled) {
@@ -5115,7 +5524,7 @@
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
-      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight);
+      renderSceneHTML(labelLayer, latestBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
       if (statsOverlay) {
         statsOverlay.update(latestBundle, frameStart, renderer, viewport);
       }
@@ -5350,7 +5759,12 @@
 
     return {
       applyCommands(commands) {
-        applySceneCommands(sceneState, commands);
+        const result = applySceneCommands(sceneState, commands);
+        if (result && typeof result.then === "function") {
+          result.then(function() {
+            scheduleRender("commands-models");
+          });
+        }
         scheduleRender("commands");
       },
       getCamera() {
@@ -5383,6 +5797,7 @@
         pickHandle.dispose();
         sceneControlHandle.dispose();
         renderer.dispose();
+        disposeSceneHTMLTextureState(htmlTextureState);
         cancelFrame();
         cancelScheduledRender();
         if (pendingMotionHandle != null) {

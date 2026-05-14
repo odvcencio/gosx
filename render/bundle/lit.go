@@ -37,6 +37,8 @@ struct Material {
   emissive      : vec4<f32>,
   textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
   textureParams2: vec4<f32>, // x=hasEmissiveMap
+  physicalParams : vec4<f32>, // x=clearcoat, y=sheen, z=transmission, w=iridescence
+  physicalParams2: vec4<f32>, // x=anisotropy
 };
 
 @group(0) @binding(0) var<uniform> scene             : Scene;
@@ -78,6 +80,7 @@ fn vs_main(
   @location(5) m1     : vec4<f32>,
   @location(6) m2     : vec4<f32>,
   @location(7) m3     : vec4<f32>,
+  @location(8) pickData : vec4<u32>,
 ) -> VSOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
@@ -95,6 +98,7 @@ fn vs_main(
   let toCam = world.xyz - scene.cameraPos.xyz;
   out.viewZ    = length(toCam);
   out.uv       = uv;
+  out.pickId   = pickData.x;
   return out;
 }
 
@@ -206,7 +210,9 @@ fn fs_main(in : VSOut) -> FSOut {
   let roughSample = textureSample(roughnessMapTex, baseColorSampler, in.uv).r;
   let metalSample = textureSample(metalnessMapTex, baseColorSampler, in.uv).r;
   let metalness = clamp(material.pbrParams.x * mix(1.0, metalSample, hasMetalMap), 0.0, 1.0);
-  let roughness = clamp(material.pbrParams.y * mix(1.0, roughSample, hasRoughMap), 0.04, 1.0);
+  var roughness = clamp(material.pbrParams.y * mix(1.0, roughSample, hasRoughMap), 0.04, 1.0);
+  let anisotropy = clamp(material.physicalParams2.x, -1.0, 1.0);
+  roughness = clamp(roughness * (1.0 - abs(anisotropy) * 0.28), 0.04, 1.0);
 
   // F0: 0.04 for dielectrics, baseColor for metals, linearly interpolated.
   let F0 = mix(vec3<f32>(0.04), baseColor, metalness);
@@ -241,7 +247,17 @@ fn fs_main(in : VSOut) -> FSOut {
   let emissiveSample = textureSample(emissiveMapTex, baseColorSampler, in.uv).rgb;
   let emissiveTint = material.emissive.rgb * mix(vec3<f32>(1.0), emissiveSample, hasEmissiveMap);
   let emissive = emissiveTint * material.pbrParams.z;
-  let color = direct + ambient + cubeIBL + emissive;
+  var color = direct + ambient + cubeIBL + emissive;
+  let clearcoat = clamp(material.physicalParams.x, 0.0, 1.0);
+  let clearcoatPower = mix(12.0, 96.0, 1.0 - roughness);
+  color = color + vec3<f32>(pow(NdotV, clearcoatPower) * clearcoat);
+  let sheen = clamp(material.physicalParams.y, 0.0, 1.0);
+  color = mix(color, color + baseColor * pow(1.0 - NdotV, 3.0), sheen * 0.35);
+  let iridescence = clamp(material.physicalParams.w, 0.0, 1.0);
+  let iri = 0.5 + 0.5 * cos(vec3<f32>(0.0, 2.0943951, 4.1887902) + NdotV * 6.2831853);
+  color = mix(color, color * (vec3<f32>(0.65) + iri * 0.7), iridescence * pow(1.0 - NdotV, 2.0));
+  let transmission = clamp(material.physicalParams.z, 0.0, 1.0) * (1.0 - metalness);
+  color = mix(color, ambient + baseColor * 0.1, transmission * 0.55);
   var out : FSOut;
   out.color  = vec4<f32>(color, clamp(material.baseColor.a, 0.0, 1.0));
   out.pickId = in.pickId;
@@ -259,6 +275,7 @@ func skinnedLitWGSL() string {
   @location(5) m1     : vec4<f32>,
   @location(6) m2     : vec4<f32>,
   @location(7) m3     : vec4<f32>,
+  @location(8) pickData : vec4<u32>,
 ) -> VSOut {`
 	const skinnedSignature = `fn vs_main(
   @location(0) pos     : vec3<f32>,
@@ -269,12 +286,13 @@ func skinnedLitWGSL() string {
   @location(5) m1      : vec4<f32>,
   @location(6) m2      : vec4<f32>,
   @location(7) m3      : vec4<f32>,
-  @location(8) joints  : vec4<u32>,
-  @location(9) weights : vec4<f32>,
-  @location(10) b0     : vec4<f32>,
-  @location(11) b1     : vec4<f32>,
-  @location(12) b2     : vec4<f32>,
-  @location(13) b3     : vec4<f32>,
+  @location(8) pickData : vec4<u32>,
+  @location(9) joints  : vec4<u32>,
+  @location(10) weights : vec4<f32>,
+  @location(11) b0     : vec4<f32>,
+  @location(12) b1     : vec4<f32>,
+  @location(13) b2     : vec4<f32>,
+  @location(14) b3     : vec4<f32>,
 ) -> VSOut {`
 	const rigidTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);

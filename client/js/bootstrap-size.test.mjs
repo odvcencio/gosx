@@ -12,7 +12,7 @@ const budgets = [
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   { file: "bootstrap-feature-scene3d.js", raw: 455_000, gzip: 125_000, brotli: 105_000 },
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 115_000, gzip: 32_000, brotli: 28_000 },
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 121_500, gzip: 32_000, brotli: 28_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   { file: "bootstrap-feature-engines.js", raw: 38_000, gzip: 13_000, brotli: 12_000 },

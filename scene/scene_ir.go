@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// SceneIRSchema identifies the compatibility SceneIR payload shape when it is
+// emitted outside a same-version GoSX server/runtime bundle.
+const SceneIRSchema = "gosx.scene3d.ir.v1"
+
 // CompressedArray holds a TurboQuant-compressed float array.
 // The client checks for compressed fields first and falls back to raw arrays.
 type CompressedArray struct {
@@ -26,6 +30,7 @@ type CompressedArray struct {
 // reflection-based json.Marshal(sceneIR) produces the same wire shape
 // directly, and Props.MarshalJSON takes that fast path.
 type SceneIR struct {
+	Schema             string               `json:"schema,omitempty"`
 	Objects            []ObjectIR           `json:"objects,omitempty"`
 	Models             []ModelIR            `json:"models,omitempty"`
 	Points             []PointsIR           `json:"points,omitempty"`
@@ -35,6 +40,7 @@ type SceneIR struct {
 	Animations         []AnimationClipIR    `json:"animations,omitempty"`
 	Labels             []LabelIR            `json:"labels,omitempty"`
 	Sprites            []SpriteIR           `json:"sprites,omitempty"`
+	HTML               []HTMLIR             `json:"html,omitempty"`
 	Lights             []LightIR            `json:"lights,omitempty"`
 	Environment        EnvironmentIR        `json:"environment,omitzero"`
 	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
@@ -303,6 +309,44 @@ type SpriteIR struct {
 	Live       []string       `json:"live,omitempty"`
 }
 
+// HTMLIR is the typed compatibility record for one DOM-backed scene overlay.
+type HTMLIR struct {
+	ID               string       `json:"id"`
+	Target           string       `json:"target,omitempty"`
+	Mode             string       `json:"mode,omitempty"`
+	HTML             string       `json:"html"`
+	ClassName        string       `json:"className,omitempty"`
+	Fallback         string       `json:"fallback,omitempty"`
+	FallbackReason   string       `json:"fallbackReason,omitempty"`
+	TextureKey       string       `json:"textureKey,omitempty"`
+	TextureWidth     int          `json:"textureWidth,omitempty"`
+	TextureHeight    int          `json:"textureHeight,omitempty"`
+	MaxTexturePixels int          `json:"maxTexturePixels,omitempty"`
+	SurfaceWidth     float64      `json:"surfaceWidth,omitempty"`
+	SurfaceHeight    float64      `json:"surfaceHeight,omitempty"`
+	X                float64      `json:"x,omitempty"`
+	Y                float64      `json:"y,omitempty"`
+	Z                float64      `json:"z,omitempty"`
+	Priority         float64      `json:"priority,omitempty"`
+	ShiftX           float64      `json:"shiftX,omitempty"`
+	ShiftY           float64      `json:"shiftY,omitempty"`
+	ShiftZ           float64      `json:"shiftZ,omitempty"`
+	DriftSpeed       float64      `json:"driftSpeed,omitempty"`
+	DriftPhase       float64      `json:"driftPhase,omitempty"`
+	Width            float64      `json:"width,omitempty"`
+	Height           float64      `json:"height,omitempty"`
+	Scale            float64      `json:"scale,omitempty"`
+	Opacity          float64      `json:"opacity,omitempty"`
+	OffsetX          float64      `json:"offsetX,omitempty"`
+	OffsetY          float64      `json:"offsetY,omitempty"`
+	AnchorX          float64      `json:"anchorX,omitempty"`
+	AnchorY          float64      `json:"anchorY,omitempty"`
+	Occlude          bool         `json:"occlude,omitempty"`
+	PointerEvents    string       `json:"pointerEvents,omitempty"`
+	Transition       TransitionIR `json:"transition,omitzero"`
+	Live             []string     `json:"live,omitempty"`
+}
+
 // LightIR is the typed compatibility record for one lowered scene light.
 type LightIR struct {
 	ID             string         `json:"id"`
@@ -344,6 +388,8 @@ type PointsIR struct {
 	Color               string            `json:"color,omitempty"`
 	Style               string            `json:"style,omitempty"`
 	Size                float64           `json:"size,omitempty"`
+	MinPixelSize        float64           `json:"minPixelSize,omitempty"`
+	MaxPixelSize        float64           `json:"maxPixelSize,omitempty"`
 	Opacity             float64           `json:"opacity,omitempty"`
 	BlendMode           string            `json:"blendMode,omitempty"`
 	DepthWrite          *bool             `json:"depthWrite,omitempty"`
@@ -373,11 +419,17 @@ type InstancedMeshIR struct {
 	ID                   string               `json:"id"`
 	Count                int                  `json:"count"`
 	Kind                 string               `json:"kind"`
+	Size                 float64              `json:"size,omitempty"`
 	Width                float64              `json:"width,omitempty"`
 	Height               float64              `json:"height,omitempty"`
 	Depth                float64              `json:"depth,omitempty"`
 	Radius               float64              `json:"radius,omitempty"`
+	RadiusTop            float64              `json:"radiusTop,omitempty"`
+	RadiusBottom         float64              `json:"radiusBottom,omitempty"`
+	Tube                 float64              `json:"tube,omitempty"`
 	Segments             int                  `json:"segments,omitempty"`
+	RadialSegments       int                  `json:"radialSegments,omitempty"`
+	TubularSegments      int                  `json:"tubularSegments,omitempty"`
 	MaterialKind         string               `json:"materialKind,omitempty"`
 	Color                string               `json:"color,omitempty"`
 	Roughness            float64              `json:"roughness,omitempty"`
@@ -565,12 +617,13 @@ func (g Graph) SceneIR() SceneIR {
 		Animations:         lowerer.animations,
 		Labels:             lowerer.resolveLabels(),
 		Sprites:            lowerer.resolveSprites(),
+		HTML:               lowerer.resolveHTML(),
 		Lights:             lowerer.lights,
 	}
 }
 
 func (ir SceneIR) isZero() bool {
-	return len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
+	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -584,6 +637,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	// capacity skips the 1-2 bucket grows the default-sized literal path
 	// incurred on every marshal.
 	out := make(map[string]any, 16)
+	if strings.TrimSpace(ir.Schema) != "" {
+		out["schema"] = strings.TrimSpace(ir.Schema)
+	}
 	if objects := legacyObjects(ir.Objects); len(objects) > 0 {
 		out["objects"] = objects
 	}
@@ -610,6 +666,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if sprites := legacySprites(ir.Sprites); len(sprites) > 0 {
 		out["sprites"] = sprites
+	}
+	if html := legacyHTML(ir.HTML); len(html) > 0 {
+		out["html"] = html
 	}
 	if lights := legacyLights(ir.Lights); len(lights) > 0 {
 		out["lights"] = lights
@@ -869,6 +928,8 @@ func (item PointsIR) legacyProps() map[string]any {
 	setString(record, "color", item.Color)
 	setString(record, "style", item.Style)
 	setNumeric(record, "size", item.Size)
+	setNumeric(record, "minPixelSize", item.MinPixelSize)
+	setNumeric(record, "maxPixelSize", item.MaxPixelSize)
 	setNumeric(record, "opacity", item.Opacity)
 	setString(record, "blendMode", item.BlendMode)
 	if item.DepthWrite != nil {
@@ -908,11 +969,17 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		"count": item.Count,
 		"kind":  item.Kind,
 	}
+	setNumeric(record, "size", item.Size)
 	setNumeric(record, "width", item.Width)
 	setNumeric(record, "height", item.Height)
 	setNumeric(record, "depth", item.Depth)
 	setNumeric(record, "radius", item.Radius)
+	setNumeric(record, "radiusTop", item.RadiusTop)
+	setNumeric(record, "radiusBottom", item.RadiusBottom)
+	setNumeric(record, "tube", item.Tube)
 	setInt(record, "segments", item.Segments)
+	setInt(record, "radialSegments", item.RadialSegments)
+	setInt(record, "tubularSegments", item.TubularSegments)
 	setString(record, "materialKind", item.MaterialKind)
 	setString(record, "color", item.Color)
 	setNumeric(record, "roughness", item.Roughness)
@@ -1141,6 +1208,19 @@ func legacySprites(items []SpriteIR) []map[string]any {
 	return out
 }
 
+func legacyHTML(items []HTMLIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if record := item.legacyProps(); record != nil {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
 func (item LabelIR) legacyProps() map[string]any {
 	text := strings.TrimSpace(item.Text)
 	if text == "" {
@@ -1216,6 +1296,51 @@ func (item SpriteIR) legacyProps() map[string]any {
 	}
 	setString(record, "fit", item.Fit)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	return record
+}
+
+func (item HTMLIR) legacyProps() map[string]any {
+	html := strings.TrimSpace(item.HTML)
+	if html == "" {
+		return nil
+	}
+	record := map[string]any{
+		"id":   item.ID,
+		"html": html,
+	}
+	setString(record, "target", item.Target)
+	setString(record, "mode", item.Mode)
+	setString(record, "className", item.ClassName)
+	setString(record, "fallback", item.Fallback)
+	setString(record, "fallbackReason", item.FallbackReason)
+	setString(record, "textureKey", item.TextureKey)
+	setInt(record, "textureWidth", item.TextureWidth)
+	setInt(record, "textureHeight", item.TextureHeight)
+	setInt(record, "maxTexturePixels", item.MaxTexturePixels)
+	setNumeric(record, "surfaceWidth", item.SurfaceWidth)
+	setNumeric(record, "surfaceHeight", item.SurfaceHeight)
+	setNumeric(record, "x", item.X)
+	setNumeric(record, "y", item.Y)
+	setNumeric(record, "z", item.Z)
+	setNumeric(record, "priority", item.Priority)
+	setNumeric(record, "shiftX", item.ShiftX)
+	setNumeric(record, "shiftY", item.ShiftY)
+	setNumeric(record, "shiftZ", item.ShiftZ)
+	setNumeric(record, "driftSpeed", item.DriftSpeed)
+	setNumeric(record, "driftPhase", item.DriftPhase)
+	setNumeric(record, "width", item.Width)
+	setNumeric(record, "height", item.Height)
+	setNumeric(record, "scale", item.Scale)
+	setNumeric(record, "opacity", item.Opacity)
+	setNumeric(record, "offsetX", item.OffsetX)
+	setNumeric(record, "offsetY", item.OffsetY)
+	setNumeric(record, "anchorX", item.AnchorX)
+	setNumeric(record, "anchorY", item.AnchorY)
+	if item.Occlude {
+		record["occlude"] = true
+	}
+	setString(record, "pointerEvents", item.PointerEvents)
+	applySceneLifecycleRecord(record, item.Transition, nil, nil, item.Live)
 	return record
 }
 

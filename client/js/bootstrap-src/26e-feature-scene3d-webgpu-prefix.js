@@ -43,6 +43,18 @@
   var SCENE_POST_SSAO = sceneApi.SCENE_POST_SSAO || "ssao";
   var SCENE_POST_DOF = sceneApi.SCENE_POST_DOF || "dof";
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
+  var sceneMat4MultiplyInto = sceneApi.sceneMat4MultiplyInto || function(out, a, b) {
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[row]      * b[col * 4] +
+          a[4 + row]  * b[col * 4 + 1] +
+          a[8 + row]  * b[col * 4 + 2] +
+          a[12 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  };
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
   var buildSceneWorldDrawPlan = sceneApi.buildSceneWorldDrawPlan;
@@ -60,6 +72,7 @@
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
+  var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
   // createSceneParticleSystem + sceneComputeSystemSignature are defined

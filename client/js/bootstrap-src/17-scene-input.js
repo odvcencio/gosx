@@ -93,6 +93,30 @@
     return target && target.object && typeof target.object.kind === "string" ? target.object.kind : "";
   }
 
+  function sceneTargetInt(target, key) {
+    return target && target[key] != null ? Math.max(-1, Math.floor(sceneNumber(target[key], -1))) : -1;
+  }
+
+  function sceneTargetHitSnapshot(target) {
+    const world = target && (target.worldPosition || target.point) ? (target.worldPosition || target.point) : null;
+    const local = target && target.localPosition ? target.localPosition : world;
+    const uv = target && target.uv ? target.uv : null;
+    return {
+      targetInstanceIndex: sceneTargetInt(target, "instanceIndex"),
+      targetPrimitiveIndex: sceneTargetInt(target, "primitiveIndex"),
+      targetTriangleIndex: sceneTargetInt(target, "triangleIndex"),
+      worldX: sceneNumber(world && world.x, 0),
+      worldY: sceneNumber(world && world.y, 0),
+      worldZ: sceneNumber(world && world.z, 0),
+      localX: sceneNumber(local && local.x, 0),
+      localY: sceneNumber(local && local.y, 0),
+      localZ: sceneNumber(local && local.z, 0),
+      uvX: sceneNumber(uv && uv.x, 0),
+      uvY: sceneNumber(uv && uv.y, 0),
+      depth: sceneNumber(target && target.depth, 0),
+    };
+  }
+
   function sceneObjectSignalSlug(index, id, kind) {
     const targetID = typeof id === "string" ? id.trim() : "";
     if (targetID) {
@@ -157,6 +181,18 @@
     queueInputSignal(namespace + ".targetIndex", snapshot.targetIndex);
     queueInputSignal(namespace + ".targetID", snapshot.targetID);
     queueInputSignal(namespace + ".targetKind", snapshot.targetKind);
+    queueInputSignal(namespace + ".targetInstanceIndex", snapshot.targetInstanceIndex);
+    queueInputSignal(namespace + ".targetPrimitiveIndex", snapshot.targetPrimitiveIndex);
+    queueInputSignal(namespace + ".targetTriangleIndex", snapshot.targetTriangleIndex);
+    queueInputSignal(namespace + ".worldX", snapshot.worldX);
+    queueInputSignal(namespace + ".worldY", snapshot.worldY);
+    queueInputSignal(namespace + ".worldZ", snapshot.worldZ);
+    queueInputSignal(namespace + ".localX", snapshot.localX);
+    queueInputSignal(namespace + ".localY", snapshot.localY);
+    queueInputSignal(namespace + ".localZ", snapshot.localZ);
+    queueInputSignal(namespace + ".uvX", snapshot.uvX);
+    queueInputSignal(namespace + ".uvY", snapshot.uvY);
+    queueInputSignal(namespace + ".depth", snapshot.depth);
     queueInputSignal(namespace + ".hovered", snapshot.hovered);
     queueInputSignal(namespace + ".hoverIndex", snapshot.hoverIndex);
     queueInputSignal(namespace + ".hoverID", snapshot.hoverID);
@@ -199,6 +235,18 @@
     pick.targetIndex = Math.max(-1, Math.floor(sceneNumber(state.eventTargetIndex, -1)));
     pick.targetID = state.eventTargetID || "";
     pick.targetKind = state.eventTargetKind || "";
+    pick.targetInstanceIndex = Math.max(-1, Math.floor(sceneNumber(state.eventTargetInstanceIndex, -1)));
+    pick.targetPrimitiveIndex = Math.max(-1, Math.floor(sceneNumber(state.eventTargetPrimitiveIndex, -1)));
+    pick.targetTriangleIndex = Math.max(-1, Math.floor(sceneNumber(state.eventTargetTriangleIndex, -1)));
+    pick.worldX = sceneNumber(state.eventTargetWorldX, 0);
+    pick.worldY = sceneNumber(state.eventTargetWorldY, 0);
+    pick.worldZ = sceneNumber(state.eventTargetWorldZ, 0);
+    pick.localX = sceneNumber(state.eventTargetLocalX, 0);
+    pick.localY = sceneNumber(state.eventTargetLocalY, 0);
+    pick.localZ = sceneNumber(state.eventTargetLocalZ, 0);
+    pick.uvX = sceneNumber(state.eventTargetUVX, 0);
+    pick.uvY = sceneNumber(state.eventTargetUVY, 0);
+    pick.depth = sceneNumber(state.eventTargetDepth, 0);
     pick.hoverKind = state.hoverKind || "";
     pick.downKind = state.downKind || "";
     pick.selectedKind = state.selectedKind || "";
@@ -229,6 +277,18 @@
       snapshot.targetIndex,
       snapshot.targetID,
       snapshot.targetKind,
+      snapshot.targetInstanceIndex,
+      snapshot.targetPrimitiveIndex,
+      snapshot.targetTriangleIndex,
+      snapshot.worldX,
+      snapshot.worldY,
+      snapshot.worldZ,
+      snapshot.localX,
+      snapshot.localY,
+      snapshot.localZ,
+      snapshot.uvX,
+      snapshot.uvY,
+      snapshot.depth,
       snapshot.hovered ? 1 : 0,
       snapshot.hoverIndex,
       snapshot.hoverID,
@@ -321,6 +381,33 @@
       x: sceneNumber(source[offset], 0),
       y: sceneNumber(source[offset + 1], 0),
       z: sceneNumber(source[offset + 2], 0),
+    };
+  }
+
+  function sceneWorldUVAt(source, vertexIndex) {
+    if (!source || typeof source.length !== "number") {
+      return null;
+    }
+    const offset = Math.max(0, vertexIndex * 2);
+    if (offset + 1 >= source.length) {
+      return null;
+    }
+    return {
+      x: sceneNumber(source[offset], 0),
+      y: sceneNumber(source[offset + 1], 0),
+    };
+  }
+
+  function sceneInterpolatedHitUV(uv0, uv1, uv2, hit) {
+    if (!uv0 || !uv1 || !uv2 || !hit) {
+      return null;
+    }
+    const u = sceneNumber(hit.u, 0);
+    const v = sceneNumber(hit.v, 0);
+    const w = 1 - u - v;
+    return {
+      x: uv0.x * w + uv1.x * u + uv2.x * v,
+      y: uv0.y * w + uv1.y * u + uv2.y * v,
     };
   }
 
@@ -520,14 +607,14 @@
     }
 
     var ray = sceneScreenToRay(pointerX, pointerY, width, height, camera);
-    var closest = sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions, 0);
+    var closest = sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions, 0, bundle.worldMeshUVs);
     if (closest) {
       return closest;
     }
-    return sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0);
+    return sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0, null);
   }
 
-  function sceneRaycastPickGroup(ray, objects, positions, indexOffset) {
+  function sceneRaycastPickGroup(ray, objects, positions, indexOffset, uvs) {
     if (!Array.isArray(objects) || !objects.length || !positions || typeof positions.length !== "number") {
       return null;
     }
@@ -562,6 +649,18 @@
 
         var hit = sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2);
         if (hit && (!closest || hit.distance < closest.distance)) {
+          var point = {
+            x: ray.origin.x + ray.dir.x * hit.distance,
+            y: ray.origin.y + ray.dir.y * hit.distance,
+            z: ray.origin.z + ray.dir.z * hit.distance,
+          };
+          var uv = sceneInterpolatedHitUV(
+            sceneWorldUVAt(uvs, vertexOffset + tri),
+            sceneWorldUVAt(uvs, vertexOffset + tri + 1),
+            sceneWorldUVAt(uvs, vertexOffset + tri + 2),
+            hit,
+          );
+          var triangleIndex = Math.floor(tri / 3);
           closest = {
             index: safeIndexOffset + i,
             object: obj,
@@ -569,11 +668,13 @@
             inside: true,
             depth: hit.distance,
             area: Math.max(1, (boundsMax.x - boundsMin.x) * (boundsMax.y - boundsMin.y)),
-            point: {
-              x: ray.origin.x + ray.dir.x * hit.distance,
-              y: ray.origin.y + ray.dir.y * hit.distance,
-              z: ray.origin.z + ray.dir.z * hit.distance,
-            },
+            point: point,
+            worldPosition: point,
+            localPosition: point,
+            uv: uv,
+            instanceIndex: sceneTargetInt(obj, "instanceIndex"),
+            primitiveIndex: triangleIndex,
+            triangleIndex: triangleIndex,
           };
         }
       }
@@ -617,7 +718,7 @@
 
   function sceneBundlePointerPickTarget(bundle, point, width, height) {
     // Try raycast-based picking first when world positions are available.
-    if (bundle && bundle.camera && bundle.worldPositions) {
+    if (bundle && bundle.camera && (bundle.worldMeshPositions || bundle.worldPositions)) {
       var rayHit = sceneRaycastPick(point.x, point.y, width, height, bundle.camera, bundle);
       if (rayHit) {
         return rayHit;
@@ -671,6 +772,30 @@
       eventTargetIndex: -1,
       eventTargetID: "",
       eventTargetKind: "",
+      eventTargetInstanceIndex: -1,
+      eventTargetPrimitiveIndex: -1,
+      eventTargetTriangleIndex: -1,
+      eventTargetWorldX: 0,
+      eventTargetWorldY: 0,
+      eventTargetWorldZ: 0,
+      eventTargetLocalX: 0,
+      eventTargetLocalY: 0,
+      eventTargetLocalZ: 0,
+      eventTargetUVX: 0,
+      eventTargetUVY: 0,
+      eventTargetDepth: 0,
+      targetInstanceIndex: -1,
+      targetPrimitiveIndex: -1,
+      targetTriangleIndex: -1,
+      targetWorldX: 0,
+      targetWorldY: 0,
+      targetWorldZ: 0,
+      targetLocalX: 0,
+      targetLocalY: 0,
+      targetLocalZ: 0,
+      targetUVX: 0,
+      targetUVY: 0,
+      targetDepth: 0,
       publishedKey: "",
       publishedEventKey: "",
       publishedHoverSlug: "",
@@ -781,6 +906,38 @@
     return event.pointerId === state.pointerId;
   }
 
+  function sceneApplyCurrentHitMetadata(state, target) {
+    const hit = sceneTargetHitSnapshot(target);
+    state.targetInstanceIndex = hit.targetInstanceIndex;
+    state.targetPrimitiveIndex = hit.targetPrimitiveIndex;
+    state.targetTriangleIndex = hit.targetTriangleIndex;
+    state.targetWorldX = hit.worldX;
+    state.targetWorldY = hit.worldY;
+    state.targetWorldZ = hit.worldZ;
+    state.targetLocalX = hit.localX;
+    state.targetLocalY = hit.localY;
+    state.targetLocalZ = hit.localZ;
+    state.targetUVX = hit.uvX;
+    state.targetUVY = hit.uvY;
+    state.targetDepth = hit.depth;
+  }
+
+  function sceneApplyEventHitMetadata(state, target) {
+    const hit = sceneTargetHitSnapshot(target);
+    state.eventTargetInstanceIndex = hit.targetInstanceIndex;
+    state.eventTargetPrimitiveIndex = hit.targetPrimitiveIndex;
+    state.eventTargetTriangleIndex = hit.targetTriangleIndex;
+    state.eventTargetWorldX = hit.worldX;
+    state.eventTargetWorldY = hit.worldY;
+    state.eventTargetWorldZ = hit.worldZ;
+    state.eventTargetLocalX = hit.localX;
+    state.eventTargetLocalY = hit.localY;
+    state.eventTargetLocalZ = hit.localZ;
+    state.eventTargetUVX = hit.uvX;
+    state.eventTargetUVY = hit.uvY;
+    state.eventTargetDepth = hit.depth;
+  }
+
   function sceneApplyPickTarget(state, sample) {
     const target = sample && sample.target ? sample.target : null;
     const pointer = sample && sample.pointer ? sample.pointer : { x: 0, y: 0 };
@@ -789,6 +946,7 @@
     state.hoverIndex = target ? target.index : -1;
     state.hoverID = sceneTargetID(target);
     state.hoverKind = sceneTargetKind(target);
+    sceneApplyCurrentHitMetadata(state, target);
     return target;
   }
 
@@ -835,27 +993,51 @@
     } catch (_) {}
   }
 
-  function sceneSnapshotTarget(index, id, kind) {
+  function sceneCurrentHitTarget(state) {
+    return {
+      instanceIndex: Math.max(-1, Math.floor(sceneNumber(state && state.targetInstanceIndex, -1))),
+      primitiveIndex: Math.max(-1, Math.floor(sceneNumber(state && state.targetPrimitiveIndex, -1))),
+      triangleIndex: Math.max(-1, Math.floor(sceneNumber(state && state.targetTriangleIndex, -1))),
+      worldPosition: {
+        x: sceneNumber(state && state.targetWorldX, 0),
+        y: sceneNumber(state && state.targetWorldY, 0),
+        z: sceneNumber(state && state.targetWorldZ, 0),
+      },
+      localPosition: {
+        x: sceneNumber(state && state.targetLocalX, 0),
+        y: sceneNumber(state && state.targetLocalY, 0),
+        z: sceneNumber(state && state.targetLocalZ, 0),
+      },
+      uv: {
+        x: sceneNumber(state && state.targetUVX, 0),
+        y: sceneNumber(state && state.targetUVY, 0),
+      },
+      depth: sceneNumber(state && state.targetDepth, 0),
+    };
+  }
+
+  function sceneSnapshotTarget(index, id, kind, hit) {
     const targetIndex = Math.max(-1, Math.floor(sceneNumber(index, -1)));
     const targetID = typeof id === "string" ? id : "";
     const targetKind = typeof kind === "string" ? kind : "";
     if (targetIndex < 0 && !targetID && !targetKind) {
       return null;
     }
-    return {
+    return Object.assign({
       index: targetIndex,
       object: {
         id: targetID,
         kind: targetKind,
       },
-    };
+    }, hit || {});
   }
 
   function scenePickStateSnapshot(state) {
+    const hit = sceneCurrentHitTarget(state);
     return {
-      hover: sceneSnapshotTarget(state.hoverIndex, state.hoverID, state.hoverKind),
-      down: sceneSnapshotTarget(state.downIndex, state.downID, state.downKind),
-      selected: sceneSnapshotTarget(state.selectedIndex, state.selectedID, state.selectedKind),
+      hover: sceneSnapshotTarget(state.hoverIndex, state.hoverID, state.hoverKind, hit),
+      down: sceneSnapshotTarget(state.downIndex, state.downID, state.downKind, hit),
+      selected: sceneSnapshotTarget(state.selectedIndex, state.selectedID, state.selectedKind, hit),
       clickCount: Math.max(0, Math.floor(sceneNumber(state.clickCount, 0))),
       pointerX: sceneNumber(state.pointerX, 0),
       pointerY: sceneNumber(state.pointerY, 0),
@@ -912,6 +1094,7 @@
     state.eventTargetIndex = sceneTargetIndex(interaction.target);
     state.eventTargetID = sceneTargetID(interaction.target);
     state.eventTargetKind = sceneTargetKind(interaction.target);
+    sceneApplyEventHitMetadata(state, interaction.target);
     const detail = sceneInteractionSnapshot(state);
     return {
       type: detail.type,
@@ -919,6 +1102,18 @@
       targetIndex: detail.targetIndex,
       targetID: detail.targetID,
       targetKind: detail.targetKind,
+      targetInstanceIndex: detail.targetInstanceIndex,
+      targetPrimitiveIndex: detail.targetPrimitiveIndex,
+      targetTriangleIndex: detail.targetTriangleIndex,
+      worldX: detail.worldX,
+      worldY: detail.worldY,
+      worldZ: detail.worldZ,
+      localX: detail.localX,
+      localY: detail.localY,
+      localZ: detail.localZ,
+      uvX: detail.uvX,
+      uvY: detail.uvY,
+      depth: detail.depth,
       hovered: detail.hovered,
       hoverIndex: detail.hoverIndex,
       hoverID: detail.hoverID,
@@ -1012,6 +1207,7 @@
     state.hoverIndex = -1;
     state.hoverID = "";
     state.hoverKind = "";
+    sceneApplyCurrentHitMetadata(state, null);
     return true;
   }
 
@@ -1276,6 +1472,8 @@
         state.eventTargetIndex = -1;
         state.eventTargetID = "";
         state.eventTargetKind = "";
+        sceneApplyEventHitMetadata(state, null);
+        sceneApplyCurrentHitMetadata(state, null);
         state.objectClickCounts = Object.create(null);
         publish();
       },

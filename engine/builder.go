@@ -33,26 +33,38 @@ type InputSignals struct {
 // SceneEventSignals exposes framework-owned Scene3D interaction state and the
 // latest semantic event revision routed through the shared runtime.
 type SceneEventSignals struct {
-	Revision      islandprogram.ExprID
-	Type          islandprogram.ExprID
-	TargetIndex   islandprogram.ExprID
-	TargetID      islandprogram.ExprID
-	TargetKind    islandprogram.ExprID
-	Hovered       islandprogram.ExprID
-	HoverIndex    islandprogram.ExprID
-	HoverID       islandprogram.ExprID
-	HoverKind     islandprogram.ExprID
-	Down          islandprogram.ExprID
-	DownIndex     islandprogram.ExprID
-	DownID        islandprogram.ExprID
-	DownKind      islandprogram.ExprID
-	Selected      islandprogram.ExprID
-	SelectedIndex islandprogram.ExprID
-	SelectedID    islandprogram.ExprID
-	SelectedKind  islandprogram.ExprID
-	ClickCount    islandprogram.ExprID
-	PointerX      islandprogram.ExprID
-	PointerY      islandprogram.ExprID
+	Revision             islandprogram.ExprID
+	Type                 islandprogram.ExprID
+	TargetIndex          islandprogram.ExprID
+	TargetID             islandprogram.ExprID
+	TargetKind           islandprogram.ExprID
+	TargetInstanceIndex  islandprogram.ExprID
+	TargetPrimitiveIndex islandprogram.ExprID
+	TargetTriangleIndex  islandprogram.ExprID
+	WorldX               islandprogram.ExprID
+	WorldY               islandprogram.ExprID
+	WorldZ               islandprogram.ExprID
+	LocalX               islandprogram.ExprID
+	LocalY               islandprogram.ExprID
+	LocalZ               islandprogram.ExprID
+	UVX                  islandprogram.ExprID
+	UVY                  islandprogram.ExprID
+	Depth                islandprogram.ExprID
+	Hovered              islandprogram.ExprID
+	HoverIndex           islandprogram.ExprID
+	HoverID              islandprogram.ExprID
+	HoverKind            islandprogram.ExprID
+	Down                 islandprogram.ExprID
+	DownIndex            islandprogram.ExprID
+	DownID               islandprogram.ExprID
+	DownKind             islandprogram.ExprID
+	Selected             islandprogram.ExprID
+	SelectedIndex        islandprogram.ExprID
+	SelectedID           islandprogram.ExprID
+	SelectedKind         islandprogram.ExprID
+	ClickCount           islandprogram.ExprID
+	PointerX             islandprogram.ExprID
+	PointerY             islandprogram.ExprID
 }
 
 // SceneObjectSignals exposes interaction state for one Scene3D object ID.
@@ -148,26 +160,38 @@ func (b *Builder) DeclareViewportInputSignals(width, height islandprogram.ExprID
 func (b *Builder) DeclareSceneEventSignals(namespace string) SceneEventSignals {
 	namespace = sceneSignalNamespace(namespace)
 	return SceneEventSignals{
-		Revision:      b.DeclareSignal(namespace+".revision", islandprogram.TypeFloat, b.Float(0)),
-		Type:          b.DeclareSignal(namespace+".type", islandprogram.TypeString, b.String("")),
-		TargetIndex:   b.DeclareSignal(namespace+".targetIndex", islandprogram.TypeFloat, b.Float(-1)),
-		TargetID:      b.DeclareSignal(namespace+".targetID", islandprogram.TypeString, b.String("")),
-		TargetKind:    b.DeclareSignal(namespace+".targetKind", islandprogram.TypeString, b.String("")),
-		Hovered:       b.DeclareSignal(namespace+".hovered", islandprogram.TypeBool, b.Bool(false)),
-		HoverIndex:    b.DeclareSignal(namespace+".hoverIndex", islandprogram.TypeFloat, b.Float(-1)),
-		HoverID:       b.DeclareSignal(namespace+".hoverID", islandprogram.TypeString, b.String("")),
-		HoverKind:     b.DeclareSignal(namespace+".hoverKind", islandprogram.TypeString, b.String("")),
-		Down:          b.DeclareSignal(namespace+".down", islandprogram.TypeBool, b.Bool(false)),
-		DownIndex:     b.DeclareSignal(namespace+".downIndex", islandprogram.TypeFloat, b.Float(-1)),
-		DownID:        b.DeclareSignal(namespace+".downID", islandprogram.TypeString, b.String("")),
-		DownKind:      b.DeclareSignal(namespace+".downKind", islandprogram.TypeString, b.String("")),
-		Selected:      b.DeclareSignal(namespace+".selected", islandprogram.TypeBool, b.Bool(false)),
-		SelectedIndex: b.DeclareSignal(namespace+".selectedIndex", islandprogram.TypeFloat, b.Float(-1)),
-		SelectedID:    b.DeclareSignal(namespace+".selectedID", islandprogram.TypeString, b.String("")),
-		SelectedKind:  b.DeclareSignal(namespace+".selectedKind", islandprogram.TypeString, b.String("")),
-		ClickCount:    b.DeclareSignal(namespace+".clickCount", islandprogram.TypeFloat, b.Float(0)),
-		PointerX:      b.DeclareSignal(namespace+".pointerX", islandprogram.TypeFloat, b.Float(0)),
-		PointerY:      b.DeclareSignal(namespace+".pointerY", islandprogram.TypeFloat, b.Float(0)),
+		Revision:             b.DeclareSignal(namespace+".revision", islandprogram.TypeFloat, b.Float(0)),
+		Type:                 b.DeclareSignal(namespace+".type", islandprogram.TypeString, b.String("")),
+		TargetIndex:          b.DeclareSignal(namespace+".targetIndex", islandprogram.TypeFloat, b.Float(-1)),
+		TargetID:             b.DeclareSignal(namespace+".targetID", islandprogram.TypeString, b.String("")),
+		TargetKind:           b.DeclareSignal(namespace+".targetKind", islandprogram.TypeString, b.String("")),
+		TargetInstanceIndex:  b.DeclareSignal(namespace+".targetInstanceIndex", islandprogram.TypeFloat, b.Float(-1)),
+		TargetPrimitiveIndex: b.DeclareSignal(namespace+".targetPrimitiveIndex", islandprogram.TypeFloat, b.Float(-1)),
+		TargetTriangleIndex:  b.DeclareSignal(namespace+".targetTriangleIndex", islandprogram.TypeFloat, b.Float(-1)),
+		WorldX:               b.DeclareSignal(namespace+".worldX", islandprogram.TypeFloat, b.Float(0)),
+		WorldY:               b.DeclareSignal(namespace+".worldY", islandprogram.TypeFloat, b.Float(0)),
+		WorldZ:               b.DeclareSignal(namespace+".worldZ", islandprogram.TypeFloat, b.Float(0)),
+		LocalX:               b.DeclareSignal(namespace+".localX", islandprogram.TypeFloat, b.Float(0)),
+		LocalY:               b.DeclareSignal(namespace+".localY", islandprogram.TypeFloat, b.Float(0)),
+		LocalZ:               b.DeclareSignal(namespace+".localZ", islandprogram.TypeFloat, b.Float(0)),
+		UVX:                  b.DeclareSignal(namespace+".uvX", islandprogram.TypeFloat, b.Float(0)),
+		UVY:                  b.DeclareSignal(namespace+".uvY", islandprogram.TypeFloat, b.Float(0)),
+		Depth:                b.DeclareSignal(namespace+".depth", islandprogram.TypeFloat, b.Float(0)),
+		Hovered:              b.DeclareSignal(namespace+".hovered", islandprogram.TypeBool, b.Bool(false)),
+		HoverIndex:           b.DeclareSignal(namespace+".hoverIndex", islandprogram.TypeFloat, b.Float(-1)),
+		HoverID:              b.DeclareSignal(namespace+".hoverID", islandprogram.TypeString, b.String("")),
+		HoverKind:            b.DeclareSignal(namespace+".hoverKind", islandprogram.TypeString, b.String("")),
+		Down:                 b.DeclareSignal(namespace+".down", islandprogram.TypeBool, b.Bool(false)),
+		DownIndex:            b.DeclareSignal(namespace+".downIndex", islandprogram.TypeFloat, b.Float(-1)),
+		DownID:               b.DeclareSignal(namespace+".downID", islandprogram.TypeString, b.String("")),
+		DownKind:             b.DeclareSignal(namespace+".downKind", islandprogram.TypeString, b.String("")),
+		Selected:             b.DeclareSignal(namespace+".selected", islandprogram.TypeBool, b.Bool(false)),
+		SelectedIndex:        b.DeclareSignal(namespace+".selectedIndex", islandprogram.TypeFloat, b.Float(-1)),
+		SelectedID:           b.DeclareSignal(namespace+".selectedID", islandprogram.TypeString, b.String("")),
+		SelectedKind:         b.DeclareSignal(namespace+".selectedKind", islandprogram.TypeString, b.String("")),
+		ClickCount:           b.DeclareSignal(namespace+".clickCount", islandprogram.TypeFloat, b.Float(0)),
+		PointerX:             b.DeclareSignal(namespace+".pointerX", islandprogram.TypeFloat, b.Float(0)),
+		PointerY:             b.DeclareSignal(namespace+".pointerY", islandprogram.TypeFloat, b.Float(0)),
 	}
 }
 

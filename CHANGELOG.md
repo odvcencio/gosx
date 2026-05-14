@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## v0.18.29
+
+Scene3D native dominance release.
+
+This release makes the native Scene3D path substantially more complete across
+the shared IR, engine VM, browser runtime, WASM bridge, and Go WebGPU bundle
+renderer. Built-in primitive generation now covers cube/box, plane/quad,
+pyramid, sphere, cylinder, cone, and torus with parameterized native geometry,
+buffer tests, and backend aliases.
+
+The native renderer now executes major WebGPU features directly: SSAO, DOF,
+vignette, color grade, tone-map modes, textured surfaces, world lines,
+top-level primitive animations, physical PBR material fields, decoded raster
+texture ingestion, surface UV picking, and world-object mesh buffers with
+shadow participation. The WASM bridge can register decoded RGBA textures by
+key, so browser hosts can feed image/canvas/video/HTML texture pixels into the
+native renderer without a JavaScript scene graph.
+
+Scene3D's authoring and runtime contracts also grew: optional SceneIR schema
+identity, broader server-driven diff coverage, HTML/HTMLSurface and texture
+lifecycle metadata, structured diagnostics, richer asset planning, named
+materials for instancing, and structured pick signals with local/world/UV hit
+metadata. Browser WebGPU/WebGL parity was tightened for point sizing, physical
+materials, post-FX, primitive geometry, GLB/model commands, and HTML surface
+fallbacks.
+
 ## v0.18.28
 
 Scene3D collaborative camera handle release.

@@ -123,7 +123,42 @@ type IREnvironment struct {
 
 // IRMaterial is a reusable material profile referenced by node materialIndex.
 type IRMaterial struct {
-	Name               string         `json:"name,omitempty"`
+	Name               string                       `json:"name,omitempty"`
+	Kind               string                       `json:"kind,omitempty"`
+	Color              string                       `json:"color,omitempty"`
+	Albedo             []float64                    `json:"albedo,omitempty"`
+	Opacity            float64                      `json:"opacity,omitempty"`
+	Emissive           float64                      `json:"emissive,omitempty"`
+	Roughness          float64                      `json:"roughness,omitempty"`
+	Metalness          float64                      `json:"metalness,omitempty"`
+	Clearcoat          float64                      `json:"clearcoat,omitempty"`
+	Sheen              float64                      `json:"sheen,omitempty"`
+	Transmission       float64                      `json:"transmission,omitempty"`
+	Iridescence        float64                      `json:"iridescence,omitempty"`
+	Anisotropy         float64                      `json:"anisotropy,omitempty"`
+	Texture            string                       `json:"texture,omitempty"`
+	NormalMap          string                       `json:"normalMap,omitempty"`
+	RoughnessMap       string                       `json:"roughnessMap,omitempty"`
+	MetalnessMap       string                       `json:"metalnessMap,omitempty"`
+	EmissiveMap        string                       `json:"emissiveMap,omitempty"`
+	BlendMode          string                       `json:"blendMode,omitempty"`
+	RenderPass         string                       `json:"renderPass,omitempty"`
+	Wireframe          *bool                        `json:"wireframe,omitempty"`
+	DepthWrite         *bool                        `json:"depthWrite,omitempty"`
+	LineDash           *bool                        `json:"lineDash,omitempty"`
+	DashSize           float64                      `json:"dashSize,omitempty"`
+	GapSize            float64                      `json:"gapSize,omitempty"`
+	CustomVertex       string                       `json:"customVertex,omitempty"`
+	CustomFragment     string                       `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string                       `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string                       `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms     map[string]any               `json:"customUniforms,omitempty"`
+	Variants           map[string]IRMaterialVariant `json:"variants,omitempty"`
+}
+
+// IRMaterialVariant is a partial material override selected by a runtime
+// capability tier such as "full", "balanced", or "constrained".
+type IRMaterialVariant struct {
 	Kind               string         `json:"kind,omitempty"`
 	Color              string         `json:"color,omitempty"`
 	Albedo             []float64      `json:"albedo,omitempty"`
@@ -168,6 +203,7 @@ type IRNode struct {
 	Compute       *IRComputeNode   `json:"compute,omitempty"`
 	Sprite        *IRSpriteNode    `json:"sprite,omitempty"`
 	Label         *IRLabelNode     `json:"label,omitempty"`
+	HTML          *IRHTMLNode      `json:"html,omitempty"`
 	Capabilities  []string         `json:"capabilities,omitempty"`
 	Metadata      map[string]any   `json:"metadata,omitempty"`
 }
@@ -232,6 +268,8 @@ type IRPointsNode struct {
 	Color          string    `json:"color,omitempty"`
 	Style          string    `json:"style,omitempty"`
 	Size           float64   `json:"size,omitempty"`
+	MinPixelSize   float64   `json:"minPixelSize,omitempty"`
+	MaxPixelSize   float64   `json:"maxPixelSize,omitempty"`
 	Opacity        float64   `json:"opacity,omitempty"`
 	BlendMode      string    `json:"blendMode,omitempty"`
 	DepthWrite     *bool     `json:"depthWrite,omitempty"`
@@ -241,18 +279,24 @@ type IRPointsNode struct {
 
 // IRInstancedMesh describes one instanced primitive batch.
 type IRInstancedMesh struct {
-	Count         int                  `json:"count"`
-	Kind          string               `json:"kind"`
-	Width         float64              `json:"width,omitempty"`
-	Height        float64              `json:"height,omitempty"`
-	Depth         float64              `json:"depth,omitempty"`
-	Radius        float64              `json:"radius,omitempty"`
-	Segments      int                  `json:"segments,omitempty"`
-	Transforms    []float64            `json:"transforms"`
-	Colors        []string             `json:"colors,omitempty"`
-	Attributes    map[string][]float64 `json:"attributes,omitempty"`
-	CastShadow    bool                 `json:"castShadow,omitempty"`
-	ReceiveShadow bool                 `json:"receiveShadow,omitempty"`
+	Count           int                  `json:"count"`
+	Kind            string               `json:"kind"`
+	Size            float64              `json:"size,omitempty"`
+	Width           float64              `json:"width,omitempty"`
+	Height          float64              `json:"height,omitempty"`
+	Depth           float64              `json:"depth,omitempty"`
+	Radius          float64              `json:"radius,omitempty"`
+	RadiusTop       float64              `json:"radiusTop,omitempty"`
+	RadiusBottom    float64              `json:"radiusBottom,omitempty"`
+	Tube            float64              `json:"tube,omitempty"`
+	Segments        int                  `json:"segments,omitempty"`
+	RadialSegments  int                  `json:"radialSegments,omitempty"`
+	TubularSegments int                  `json:"tubularSegments,omitempty"`
+	Transforms      []float64            `json:"transforms"`
+	Colors          []string             `json:"colors,omitempty"`
+	Attributes      map[string][]float64 `json:"attributes,omitempty"`
+	CastShadow      bool                 `json:"castShadow,omitempty"`
+	ReceiveShadow   bool                 `json:"receiveShadow,omitempty"`
 }
 
 // IRComputeNode describes a GPU particle system.
@@ -340,6 +384,32 @@ type IRLabelNode struct {
 	Occlude     bool    `json:"occlude,omitempty"`
 	WhiteSpace  string  `json:"whiteSpace,omitempty"`
 	TextAlign   string  `json:"textAlign,omitempty"`
+}
+
+type IRHTMLNode struct {
+	Target           string  `json:"target,omitempty"`
+	Mode             string  `json:"mode,omitempty"`
+	HTML             string  `json:"html"`
+	ClassName        string  `json:"className,omitempty"`
+	Fallback         string  `json:"fallback,omitempty"`
+	FallbackReason   string  `json:"fallbackReason,omitempty"`
+	TextureKey       string  `json:"textureKey,omitempty"`
+	TextureWidth     int     `json:"textureWidth,omitempty"`
+	TextureHeight    int     `json:"textureHeight,omitempty"`
+	MaxTexturePixels int     `json:"maxTexturePixels,omitempty"`
+	SurfaceWidth     float64 `json:"surfaceWidth,omitempty"`
+	SurfaceHeight    float64 `json:"surfaceHeight,omitempty"`
+	Priority         float64 `json:"priority,omitempty"`
+	Width            float64 `json:"width,omitempty"`
+	Height           float64 `json:"height,omitempty"`
+	Scale            float64 `json:"scale,omitempty"`
+	Opacity          float64 `json:"opacity,omitempty"`
+	OffsetX          float64 `json:"offsetX,omitempty"`
+	OffsetY          float64 `json:"offsetY,omitempty"`
+	AnchorX          float64 `json:"anchorX,omitempty"`
+	AnchorY          float64 `json:"anchorY,omitempty"`
+	Occlude          bool    `json:"occlude,omitempty"`
+	PointerEvents    string  `json:"pointerEvents,omitempty"`
 }
 
 type IRVector3 struct {
@@ -458,6 +528,9 @@ func validateIRNode(index int, node IRNode, materialCount int) []string {
 	if node.Label != nil {
 		payloads++
 	}
+	if node.HTML != nil {
+		payloads++
+	}
 	if payloads != 1 {
 		problems = append(problems, fmt.Sprintf("nodes[%d] must set exactly one payload", index))
 	}
@@ -493,6 +566,10 @@ func validateIRNode(index int, node IRNode, materialCount int) []string {
 		if node.Label == nil {
 			problems = append(problems, fmt.Sprintf("nodes[%d].label is required", index))
 		}
+	case "html":
+		if node.HTML == nil {
+			problems = append(problems, fmt.Sprintf("nodes[%d].html is required", index))
+		}
 	default:
 		problems = append(problems, fmt.Sprintf("nodes[%d].kind %q is unknown", index, kind))
 	}
@@ -508,7 +585,7 @@ func (p Props) CanonicalIR() IR {
 		Camera:      p.cameraToIR(),
 		Environment: environmentToIR(p.Background, legacy.Environment),
 		Lights:      lightsToIR(legacy.Lights),
-		Nodes:       make([]IRNode, 0, len(legacy.Objects)+len(legacy.Models)+len(legacy.Points)+len(legacy.InstancedMeshes)+len(legacy.ComputeParticles)+len(legacy.Sprites)+len(legacy.Labels)),
+		Nodes:       make([]IRNode, 0, len(legacy.Objects)+len(legacy.Models)+len(legacy.Points)+len(legacy.InstancedMeshes)+len(legacy.ComputeParticles)+len(legacy.Sprites)+len(legacy.Labels)+len(legacy.HTML)),
 	}
 	materialIndexes := map[string]int{}
 	for _, object := range legacy.Objects {
@@ -534,6 +611,9 @@ func (p Props) CanonicalIR() IR {
 	}
 	for _, label := range legacy.Labels {
 		out.Nodes = append(out.Nodes, labelToIRNode(label))
+	}
+	for _, html := range legacy.HTML {
+		out.Nodes = append(out.Nodes, htmlToIRNode(html))
 	}
 	if physics := physicsToIR(p); physics != nil {
 		out.Physics = physics
@@ -881,6 +961,8 @@ func pointsToIRNode(points PointsIR) IRNode {
 			Color:          points.Color,
 			Style:          points.Style,
 			Size:           points.Size,
+			MinPixelSize:   points.MinPixelSize,
+			MaxPixelSize:   points.MaxPixelSize,
 			Opacity:        points.Opacity,
 			BlendMode:      points.BlendMode,
 			DepthWrite:     points.DepthWrite,
@@ -896,18 +978,24 @@ func instancedToIRNode(mesh InstancedMeshIR, materialIndex int) IRNode {
 		ID:            mesh.ID,
 		MaterialIndex: materialIndex,
 		InstancedMesh: &IRInstancedMesh{
-			Count:         mesh.Count,
-			Kind:          mesh.Kind,
-			Width:         mesh.Width,
-			Height:        mesh.Height,
-			Depth:         mesh.Depth,
-			Radius:        mesh.Radius,
-			Segments:      mesh.Segments,
-			Transforms:    append([]float64(nil), mesh.Transforms...),
-			Colors:        append([]string(nil), mesh.Colors...),
-			Attributes:    cloneFloat64Slices(mesh.Attributes),
-			CastShadow:    mesh.CastShadow,
-			ReceiveShadow: mesh.ReceiveShadow,
+			Count:           mesh.Count,
+			Kind:            mesh.Kind,
+			Size:            mesh.Size,
+			Width:           mesh.Width,
+			Height:          mesh.Height,
+			Depth:           mesh.Depth,
+			Radius:          mesh.Radius,
+			RadiusTop:       mesh.RadiusTop,
+			RadiusBottom:    mesh.RadiusBottom,
+			Tube:            mesh.Tube,
+			Segments:        mesh.Segments,
+			RadialSegments:  mesh.RadialSegments,
+			TubularSegments: mesh.TubularSegments,
+			Transforms:      append([]float64(nil), mesh.Transforms...),
+			Colors:          append([]string(nil), mesh.Colors...),
+			Attributes:      cloneFloat64Slices(mesh.Attributes),
+			CastShadow:      mesh.CastShadow,
+			ReceiveShadow:   mesh.ReceiveShadow,
 		},
 	}
 }
@@ -979,6 +1067,39 @@ func labelToIRNode(label LabelIR) IRNode {
 	}
 }
 
+func htmlToIRNode(html HTMLIR) IRNode {
+	return IRNode{
+		Kind:      "html",
+		ID:        html.ID,
+		Transform: transformFromHTMLIR(html),
+		HTML: &IRHTMLNode{
+			Target:           html.Target,
+			Mode:             html.Mode,
+			HTML:             html.HTML,
+			ClassName:        html.ClassName,
+			Fallback:         html.Fallback,
+			FallbackReason:   html.FallbackReason,
+			TextureKey:       html.TextureKey,
+			TextureWidth:     html.TextureWidth,
+			TextureHeight:    html.TextureHeight,
+			MaxTexturePixels: html.MaxTexturePixels,
+			SurfaceWidth:     html.SurfaceWidth,
+			SurfaceHeight:    html.SurfaceHeight,
+			Priority:         html.Priority,
+			Width:            html.Width,
+			Height:           html.Height,
+			Scale:            html.Scale,
+			Opacity:          html.Opacity,
+			OffsetX:          html.OffsetX,
+			OffsetY:          html.OffsetY,
+			AnchorX:          html.AnchorX,
+			AnchorY:          html.AnchorY,
+			Occlude:          html.Occlude,
+			PointerEvents:    html.PointerEvents,
+		},
+	}
+}
+
 func transformFromObjectIR(object ObjectIR) IRTransform {
 	return IRTransform{
 		X:         object.X,
@@ -1029,6 +1150,17 @@ func transformFromLabelIR(label LabelIR) IRTransform {
 		X:      label.X,
 		Y:      label.Y,
 		Z:      label.Z,
+		ScaleX: 1,
+		ScaleY: 1,
+		ScaleZ: 1,
+	}
+}
+
+func transformFromHTMLIR(html HTMLIR) IRTransform {
+	return IRTransform{
+		X:      html.X,
+		Y:      html.Y,
+		Z:      html.Z,
 		ScaleX: 1,
 		ScaleY: 1,
 		ScaleZ: 1,

@@ -2,6 +2,7 @@ package enginevm
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gosx/client/vm"
@@ -664,13 +665,17 @@ func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 
 func TestRuntimeRenderBundleUsesRegisteredMaterialProfile(t *testing.T) {
 	cleanup := RegisterMaterialProfile("cloth", MaterialProfile{
-		Opacity:      0.64,
-		HasOpacity:   true,
-		BlendMode:    "alpha",
-		HasBlendMode: true,
-		Emissive:     0.18,
-		HasEmissive:  true,
-		ShaderData:   []float64{7, 0.18, 0.44},
+		Opacity:       0.64,
+		HasOpacity:    true,
+		BlendMode:     "alpha",
+		HasBlendMode:  true,
+		Emissive:      0.18,
+		HasEmissive:   true,
+		Clearcoat:     0.22,
+		HasClearcoat:  true,
+		Anisotropy:    0.4,
+		HasAnisotropy: true,
+		ShaderData:    []float64{7, 0.18, 0.44},
 	})
 	defer cleanup()
 
@@ -706,11 +711,225 @@ func TestRuntimeRenderBundleUsesRegisteredMaterialProfile(t *testing.T) {
 		t.Fatalf("expected one material, got %#v", bundle.Materials)
 	}
 	material := bundle.Materials[0]
-	if material.Kind != "cloth" || material.Opacity != 0.64 || material.BlendMode != "alpha" || material.RenderPass != "alpha" || material.Emissive != 0.18 {
+	if material.Kind != "cloth" || material.Opacity != 0.64 || material.BlendMode != "alpha" || material.RenderPass != "alpha" || material.Emissive != 0.18 || material.Clearcoat != 0.22 || material.Anisotropy != 0.4 {
 		t.Fatalf("expected registered cloth defaults, got %#v", material)
 	}
 	if len(material.ShaderData) != 3 || material.ShaderData[0] != 7 || material.ShaderData[2] != 0.44 {
 		t.Fatalf("expected registered cloth shader data, got %#v", material.ShaderData)
+	}
+}
+
+func TestRuntimeRenderBundlePreservesCustomWGSLMaterial(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "CustomWGSLMaterial",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z": 0,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "custom",
+				Props: map[string]islandprogram.ExprID{
+					"size":               1,
+					"color":              2,
+					"customVertexWGSL":   3,
+					"customFragmentWGSL": 4,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.2", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#f5c76b", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "fn gosx_vertex() {}", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }", Type: islandprogram.TypeString},
+		},
+	}
+
+	rt := New(prog, "")
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Materials) != 1 {
+		t.Fatalf("expected one material, got %#v", bundle.Materials)
+	}
+	material := bundle.Materials[0]
+	if material.Kind != "custom" || material.Color != "#f5c76b" {
+		t.Fatalf("expected custom material, got %#v", material)
+	}
+	if material.CustomVertexWGSL != "fn gosx_vertex() {}" {
+		t.Fatalf("CustomVertexWGSL = %q", material.CustomVertexWGSL)
+	}
+	if material.CustomFragmentWGSL != "fn gosx_fragment() -> vec4f { return vec4f(1.0); }" {
+		t.Fatalf("CustomFragmentWGSL = %q", material.CustomFragmentWGSL)
+	}
+	if !strings.Contains(material.Key, "fn gosx_fragment") {
+		t.Fatalf("material key should include custom WGSL, got %q", material.Key)
+	}
+}
+
+func TestRuntimeRenderBundlePreservesPBRMaterialFields(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "PBRMaterial",
+		Nodes: []rootengine.Node{
+			{
+				Kind: "camera",
+				Props: map[string]islandprogram.ExprID{
+					"z": 0,
+				},
+			},
+			{
+				Kind:     "mesh",
+				Geometry: "sphere",
+				Material: "standard",
+				Props: map[string]islandprogram.ExprID{
+					"size":         1,
+					"color":        2,
+					"roughness":    3,
+					"metalness":    4,
+					"texture":      5,
+					"normalMap":    6,
+					"roughnessMap": 7,
+					"metalnessMap": 8,
+					"emissive":     9,
+					"emissiveMap":  10,
+					"clearcoat":    11,
+					"sheen":        12,
+					"transmission": 13,
+					"iridescence":  14,
+					"anisotropy":   15,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "6", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.2", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#77c6ff", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.32", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.8", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "/albedo.webp", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "/normal.webp", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "/roughness.webp", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "/metalness.webp", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.27", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "/emissive.webp", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "0.35", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.2", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.12", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.18", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "-0.25", Type: islandprogram.TypeFloat},
+		},
+	}
+
+	rt := New(prog, "")
+	bundle := rt.RenderBundle(640, 360, 0)
+	if len(bundle.Materials) != 1 {
+		t.Fatalf("expected one material, got %#v", bundle.Materials)
+	}
+	material := bundle.Materials[0]
+	if material.Kind != "standard" || material.Color != "#77c6ff" {
+		t.Fatalf("unexpected material identity: %#v", material)
+	}
+	if material.Roughness != 0.32 || material.Metalness != 0.8 || material.Emissive != 0.27 {
+		t.Fatalf("PBR scalar fields were not preserved: %#v", material)
+	}
+	if material.Clearcoat != 0.35 || material.Sheen != 0.2 || material.Transmission != 0.12 || material.Iridescence != 0.18 || material.Anisotropy != -0.25 {
+		t.Fatalf("physical PBR fields were not preserved: %#v", material)
+	}
+	if material.Texture != "/albedo.webp" || material.NormalMap != "/normal.webp" || material.RoughnessMap != "/roughness.webp" || material.MetalnessMap != "/metalness.webp" || material.EmissiveMap != "/emissive.webp" {
+		t.Fatalf("PBR texture maps were not preserved: %#v", material)
+	}
+	for _, fragment := range []string{"/normal.webp", "/roughness.webp", "/metalness.webp", "/emissive.webp", "0.320", "0.800", "0.350", "0.200", "0.120", "0.180", "-0.250"} {
+		if !strings.Contains(material.Key, fragment) {
+			t.Fatalf("material key %q does not include %q", material.Key, fragment)
+		}
+	}
+}
+
+func TestRuntimeRenderBundlePropagatesNativePostEffects(t *testing.T) {
+	props := `{
+		"scene": {
+			"postEffects": [
+				{"kind": "bloom", "threshold": 0.7, "intensity": 0.45, "radius": 6, "scale": 0.5},
+				{"kind": "dof", "focusDistance": 7, "aperture": 0.05, "maxBlur": 4},
+				{"kind": "vignette", "intensity": 0.2},
+				{"kind": "colorGrade", "exposure": 1.1, "contrast": 0.9, "saturation": 0.8},
+				{"kind": "toneMapping", "mode": "reinhard", "exposure": 1.2}
+			],
+			"postFXMaxPixels": 921600
+		}
+	}`
+	rt := New(&rootengine.Program{}, props)
+	bundle := rt.RenderBundle(640, 360, 0)
+
+	if bundle.PostFXMaxPixels != 921600 {
+		t.Fatalf("PostFXMaxPixels = %d, want 921600", bundle.PostFXMaxPixels)
+	}
+	if len(bundle.PostEffects) != 5 {
+		t.Fatalf("PostEffects = %#v, want bloom, native DOF, vignette, colorGrade, and preserved toneMapping", bundle.PostEffects)
+	}
+	bloom := bundle.PostEffects[0]
+	if bloom.Kind != "bloom" || bloom.Threshold != 0.7 || bloom.Intensity != 0.45 || bloom.Radius != 6 || bloom.Scale != 0.5 {
+		t.Fatalf("unexpected bloom effect: %#v", bloom)
+	}
+	if bloom.Params["threshold"] != 0.7 || bloom.Params["intensity"] != 0.45 {
+		t.Fatalf("bloom params = %#v", bloom.Params)
+	}
+	dof := bundle.PostEffects[1]
+	if dof.Kind != "dof" || dof.Params["focusDistance"] != 7 || dof.Params["aperture"] != 0.05 || dof.Params["maxBlur"] != 4 {
+		t.Fatalf("DOF should be preserved with params, got %#v", dof)
+	}
+	vignette := bundle.PostEffects[2]
+	if vignette.Kind != "vignette" || vignette.Params["intensity"] != 0.2 {
+		t.Fatalf("vignette should be preserved with params, got %#v", vignette)
+	}
+	colorGrade := bundle.PostEffects[3]
+	if colorGrade.Kind != "colorGrade" || colorGrade.Params["exposure"] != 1.1 || colorGrade.Params["contrast"] != 0.9 || colorGrade.Params["saturation"] != 0.8 {
+		t.Fatalf("color grade should be preserved with params, got %#v", colorGrade)
+	}
+	toneMapping := bundle.PostEffects[4]
+	if toneMapping.Kind != "toneMapping" || toneMapping.Mode != "reinhard" || toneMapping.Params["exposure"] != 1.2 {
+		t.Fatalf("toneMapping should be preserved with params, got %#v", toneMapping)
+	}
+	if len(bundle.Diagnostics) != 0 {
+		t.Fatalf("Diagnostics = %#v, want all listed post-FX supported by native engine VM", bundle.Diagnostics)
+	}
+}
+
+func TestRuntimeRenderBundlePreservesSceneAnimations(t *testing.T) {
+	props := `{
+		"scene": {
+			"animations": [{
+				"name": "pulse",
+				"duration": 1.5,
+				"channels": [{
+					"targetNode": 4,
+					"property": "rotationY",
+					"times": [0, 1.5],
+					"values": [0, 3.14],
+					"interpolation": "LINEAR"
+				}]
+			}]
+		}
+	}`
+	rt := New(&rootengine.Program{}, props)
+	bundle := rt.RenderBundle(640, 360, 0)
+
+	if len(bundle.Animations) != 1 {
+		t.Fatalf("Animations = %#v, want one clip", bundle.Animations)
+	}
+	clip := bundle.Animations[0]
+	if clip.Name != "pulse" || clip.Duration != 1.5 || len(clip.Channels) != 1 {
+		t.Fatalf("animation clip = %#v", clip)
+	}
+	channel := clip.Channels[0]
+	if channel.TargetID != "4" || channel.Property != "rotationY" || channel.Interpolation != "LINEAR" {
+		t.Fatalf("animation channel = %#v", channel)
+	}
+	if len(channel.Times) != 2 || channel.Times[1] != 1.5 || len(channel.Values) != 2 || channel.Values[1] != 3.14 {
+		t.Fatalf("animation keyframes = times %#v values %#v", channel.Times, channel.Values)
 	}
 }
 

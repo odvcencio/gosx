@@ -583,6 +583,8 @@
     "uniform bool u_sizeAttenuation;",
     "uniform int u_pointStyle;",
     "uniform float u_viewportHeight;",
+    "uniform float u_minPixelSize;",
+    "uniform float u_maxPixelSize;",
     "",
     "// Fog",
     "uniform int u_hasFog;",
@@ -598,11 +600,20 @@
     "    gl_Position = u_projectionMatrix * viewPos;",
     "",
     "    float size = u_hasPerVertexSize ? a_size : u_defaultSize;",
+    "    float pixelSize;",
     "    if (u_sizeAttenuation) {",
-    "        gl_PointSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
+    "        pixelSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
     "    } else {",
-    "        gl_PointSize = max(size, 1.0);",
+    "        pixelSize = max(size, 1.0);",
     "    }",
+    "    float minPixelSize = max(u_minPixelSize, 0.0);",
+    "    if (minPixelSize > 0.0) {",
+    "        pixelSize = max(pixelSize, minPixelSize);",
+    "    }",
+    "    if (u_maxPixelSize > 0.0) {",
+    "        pixelSize = min(pixelSize, u_maxPixelSize);",
+    "    }",
+    "    gl_PointSize = pixelSize;",
     "    v_pointSize = gl_PointSize;",
     "",
     "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
@@ -2631,6 +2642,8 @@
       sizeAttenuation: gl.getUniformLocation(program, "u_sizeAttenuation"),
       pointStyle: gl.getUniformLocation(program, "u_pointStyle"),
       viewportHeight: gl.getUniformLocation(program, "u_viewportHeight"),
+      minPixelSize: gl.getUniformLocation(program, "u_minPixelSize"),
+      maxPixelSize: gl.getUniformLocation(program, "u_maxPixelSize"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       hasFog: gl.getUniformLocation(program, "u_hasFog"),
       fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
@@ -2685,22 +2698,87 @@
   // kind. Returns { positions, normals, uvs, tangents, vertexCount } where each
   // array is a Float32Array ready for GPU upload.
   function generateInstancedGeometry(kind, dims) {
+    kind = normalizeInstancedGeometryKind(kind);
     var w = sceneNumber(dims && dims.width, 1);
     var h = sceneNumber(dims && dims.height, 1);
     var d = sceneNumber(dims && dims.depth, 1);
+    var size = sceneNumber(dims && dims.size, 0);
+    if (kind === "cube" && size > 0) {
+      w = size;
+      h = size;
+      d = size;
+    }
 
     if (kind === "sphere") {
       return generateInstancedSphereGeometry(
         sceneNumber(dims && dims.radius, 0.5),
-        sceneNumber(dims && dims.segments, 16)
+        sceneNumber(dims && dims.segments, 32)
       );
     }
     if (kind === "plane") {
       return generateInstancedPlaneGeometry(w, d);
     }
+    if (kind === "pyramid") {
+      return generateInstancedPyramidGeometry(w, h, d);
+    }
+    if (kind === "cylinder") {
+      return generateInstancedCylinderGeometry(
+        sceneNumber(dims && dims.radiusTop, sceneNumber(dims && dims.radius, 0.5)),
+        sceneNumber(dims && dims.radiusBottom, sceneNumber(dims && dims.radius, 0.5)),
+        h,
+        sceneNumber(dims && dims.segments, 32)
+      );
+    }
+    if (kind === "cone") {
+      return generateInstancedCylinderGeometry(
+        0,
+        sceneNumber(dims && dims.radiusBottom, sceneNumber(dims && dims.radius, 0.5)),
+        h,
+        sceneNumber(dims && dims.segments, 32)
+      );
+    }
+    if (kind === "torus") {
+      return generateInstancedTorusGeometry(
+        sceneNumber(dims && dims.radius, 0.7),
+        sceneNumber(dims && dims.tube, 0.3),
+        sceneNumber(dims && dims.radialSegments, 32),
+        sceneNumber(dims && dims.tubularSegments, 16)
+      );
+    }
 
     // Default: box geometry.
     return generateInstancedBoxGeometry(w, h, d);
+  }
+
+  function normalizeInstancedGeometryKind(kind) {
+    if (typeof normalizeSceneKind === "function") {
+      return normalizeSceneKind(kind);
+    }
+    var text = typeof kind === "string" ? kind.trim().toLowerCase() : "";
+    switch (text) {
+      case "cubegeometry":
+        return "cube";
+      case "boxgeometry":
+        return "box";
+      case "planegeometry":
+      case "quad":
+      case "quadgeometry":
+        return "plane";
+      case "pyramidgeometry":
+        return "pyramid";
+      case "spheregeometry":
+      case "uvsphere":
+      case "uvspheregeometry":
+        return "sphere";
+      case "cylindergeometry":
+        return "cylinder";
+      case "conegeometry":
+        return "cone";
+      case "torusgeometry":
+        return "torus";
+      default:
+        return text || "box";
+    }
   }
 
   // Generate a unit box with the given dimensions. 36 vertices (12 triangles).
@@ -2787,8 +2865,8 @@
 
   // Generate a UV sphere with the given radius and segment count.
   function generateInstancedSphereGeometry(radius, segments) {
-    var rings = Math.max(4, segments);
-    var slices = Math.max(4, segments * 2);
+    var slices = instancedSegmentCount(segments, 32, 3, 256);
+    var rings = Math.max(2, Math.floor(slices / 2));
 
     // Count: each ring-slice quad = 2 triangles = 6 vertices,
     // except the top and bottom caps which are single triangles.
@@ -2834,6 +2912,202 @@
     }
 
     return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vi };
+  }
+
+  function instancedSegmentCount(value, fallback, minValue, maxValue) {
+    var count = Math.round(sceneNumber(value, fallback));
+    return Math.max(minValue, Math.min(maxValue, count));
+  }
+
+  function instancedPositiveNumber(value, fallback) {
+    var number = sceneNumber(value, fallback);
+    return number > 0 ? number : fallback;
+  }
+
+  function instancedNormalize3(x, y, z) {
+    var length = Math.sqrt(x * x + y * y + z * z);
+    if (!Number.isFinite(length) || length <= 0.000001) {
+      return [0, 1, 0];
+    }
+    return [x / length, y / length, z / length];
+  }
+
+  function instancedTriangleNormal(a, b, c) {
+    var abx = b[0] - a[0];
+    var aby = b[1] - a[1];
+    var abz = b[2] - a[2];
+    var acx = c[0] - a[0];
+    var acy = c[1] - a[1];
+    var acz = c[2] - a[2];
+    return instancedNormalize3(
+      aby * acz - abz * acy,
+      abz * acx - abx * acz,
+      abx * acy - aby * acx
+    );
+  }
+
+  function createInstancedGeometryWriter(vertexCount) {
+    var positions = new Float32Array(vertexCount * 3);
+    var normals = new Float32Array(vertexCount * 3);
+    var uvs = new Float32Array(vertexCount * 2);
+    var tangents = new Float32Array(vertexCount * 4);
+    var vi = 0;
+    function push(position, normal, uv, tangent) {
+      positions[vi * 3] = position[0];
+      positions[vi * 3 + 1] = position[1];
+      positions[vi * 3 + 2] = position[2];
+      normals[vi * 3] = normal[0];
+      normals[vi * 3 + 1] = normal[1];
+      normals[vi * 3 + 2] = normal[2];
+      uvs[vi * 2] = uv[0];
+      uvs[vi * 2 + 1] = uv[1];
+      tangents[vi * 4] = tangent[0];
+      tangents[vi * 4 + 1] = tangent[1];
+      tangents[vi * 4 + 2] = tangent[2];
+      tangents[vi * 4 + 3] = tangent[3];
+      vi++;
+    }
+    function build() {
+      return {
+        positions: vi * 3 === positions.length ? positions : positions.subarray(0, vi * 3),
+        normals: vi * 3 === normals.length ? normals : normals.subarray(0, vi * 3),
+        uvs: vi * 2 === uvs.length ? uvs : uvs.subarray(0, vi * 2),
+        tangents: vi * 4 === tangents.length ? tangents : tangents.subarray(0, vi * 4),
+        vertexCount: vi,
+      };
+    }
+    return { push: push, build: build };
+  }
+
+  function pushInstancedFlatTri(writer, p0, p1, p2, uv0, uv1, uv2) {
+    var normal = instancedTriangleNormal(p0, p1, p2);
+    var tangent3 = instancedNormalize3(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+    var tangent = [tangent3[0], tangent3[1], tangent3[2], 1];
+    writer.push(p0, normal, uv0, tangent);
+    writer.push(p1, normal, uv1, tangent);
+    writer.push(p2, normal, uv2, tangent);
+  }
+
+  function generateInstancedPyramidGeometry(w, h, d) {
+    var hw = instancedPositiveNumber(w, 1) * 0.5;
+    var hh = instancedPositiveNumber(h, 1) * 0.5;
+    var hd = instancedPositiveNumber(d, 1) * 0.5;
+    var base = [[-hw, -hh, -hd], [hw, -hh, -hd], [hw, -hh, hd], [-hw, -hh, hd]];
+    var apex = [0, hh, 0];
+    var writer = createInstancedGeometryWriter(18);
+
+    pushInstancedFlatTri(writer, base[0], base[1], base[2], [0, 0], [1, 0], [1, 1]);
+    pushInstancedFlatTri(writer, base[0], base[2], base[3], [0, 0], [1, 1], [0, 1]);
+    for (var i = 0; i < 4; i++) {
+      pushInstancedFlatTri(writer, base[i], apex, base[(i + 1) % 4], [0, 1], [0.5, 0], [1, 1]);
+    }
+    return writer.build();
+  }
+
+  function generateInstancedCylinderGeometry(radiusTop, radiusBottom, height, segments) {
+    var rt = Math.max(0, sceneNumber(radiusTop, 0.5));
+    var rb = Math.max(0, sceneNumber(radiusBottom, 0.5));
+    var h = instancedPositiveNumber(height, 1);
+    if (rt === 0 && rb === 0) {
+      rb = 0.5;
+    }
+    var count = instancedSegmentCount(segments, 32, 3, 256);
+    var vertsPerSegment = (rt > 0 && rb > 0 ? 6 : 3) + (rb > 0 ? 3 : 0) + (rt > 0 ? 3 : 0);
+    var writer = createInstancedGeometryWriter(count * vertsPerSegment);
+    var halfH = h * 0.5;
+    var slopeY = (rb - rt) / h;
+
+    for (var i = 0; i < count; i++) {
+      var u0 = i / count;
+      var u1 = (i + 1) / count;
+      var th0 = (Math.PI * 2 * i) / count;
+      var th1 = (Math.PI * 2 * (i + 1)) / count;
+      var c0 = Math.cos(th0);
+      var s0 = Math.sin(th0);
+      var c1 = Math.cos(th1);
+      var s1 = Math.sin(th1);
+      var n0 = instancedNormalize3(c0, slopeY, s0);
+      var n1 = instancedNormalize3(c1, slopeY, s1);
+      var t0 = [-s0, 0, c0, 1];
+      var t1 = [-s1, 0, c1, 1];
+      var b0 = [rb * c0, -halfH, rb * s0];
+      var b1 = [rb * c1, -halfH, rb * s1];
+      var top0 = [rt * c0, halfH, rt * s0];
+      var top1 = [rt * c1, halfH, rt * s1];
+
+      if (rb > 0 && rt > 0) {
+        writer.push(b0, n0, [u0, 1], t0);
+        writer.push(top1, n1, [u1, 0], t1);
+        writer.push(b1, n1, [u1, 1], t1);
+        writer.push(b0, n0, [u0, 1], t0);
+        writer.push(top0, n0, [u0, 0], t0);
+        writer.push(top1, n1, [u1, 0], t1);
+      } else if (rt === 0) {
+        writer.push(b0, n0, [u0, 1], t0);
+        writer.push(top1, n1, [u1, 0], t1);
+        writer.push(b1, n1, [u1, 1], t1);
+      } else {
+        writer.push(b0, n0, [u0, 1], t0);
+        writer.push(top0, n0, [u0, 0], t0);
+        writer.push(top1, n1, [u1, 0], t1);
+      }
+
+      if (rb > 0) {
+        writer.push([0, -halfH, 0], [0, -1, 0], [0.5, 0.5], [1, 0, 0, 1]);
+        writer.push(b0, [0, -1, 0], [0.5 + c0 * 0.5, 0.5 + s0 * 0.5], [1, 0, 0, 1]);
+        writer.push(b1, [0, -1, 0], [0.5 + c1 * 0.5, 0.5 + s1 * 0.5], [1, 0, 0, 1]);
+      }
+      if (rt > 0) {
+        writer.push([0, halfH, 0], [0, 1, 0], [0.5, 0.5], [1, 0, 0, 1]);
+        writer.push(top1, [0, 1, 0], [0.5 + c1 * 0.5, 0.5 + s1 * 0.5], [1, 0, 0, 1]);
+        writer.push(top0, [0, 1, 0], [0.5 + c0 * 0.5, 0.5 + s0 * 0.5], [1, 0, 0, 1]);
+      }
+    }
+    return writer.build();
+  }
+
+  function generateInstancedTorusGeometry(radius, tube, radialSegments, tubularSegments) {
+    var major = instancedPositiveNumber(radius, 0.7);
+    var minor = instancedPositiveNumber(tube, 0.3);
+    var radial = instancedSegmentCount(radialSegments, 32, 3, 256);
+    var tubular = instancedSegmentCount(tubularSegments, 16, 3, 128);
+    var writer = createInstancedGeometryWriter(radial * tubular * 6);
+
+    function vertexAt(i, j) {
+      var u = (Math.PI * 2 * i) / radial;
+      var v = (Math.PI * 2 * j) / tubular;
+      var cu = Math.cos(u);
+      var su = Math.sin(u);
+      var cv = Math.cos(v);
+      var sv = Math.sin(v);
+      var r = major + minor * cv;
+      return {
+        position: [r * cu, minor * sv, r * su],
+        normal: instancedNormalize3(cv * cu, sv, cv * su),
+        uv: [i / radial, j / tubular],
+        tangent: [-su, 0, cu, 1],
+      };
+    }
+
+    function pushTorusVertex(v) {
+      writer.push(v.position, v.normal, v.uv, v.tangent);
+    }
+
+    for (var i = 0; i < radial; i++) {
+      for (var j = 0; j < tubular; j++) {
+        var a = vertexAt(i, j);
+        var b = vertexAt(i, j + 1);
+        var c = vertexAt(i + 1, j);
+        var dd = vertexAt(i + 1, j + 1);
+        pushTorusVertex(a);
+        pushTorusVertex(b);
+        pushTorusVertex(c);
+        pushTorusVertex(c);
+        pushTorusVertex(b);
+        pushTorusVertex(dd);
+      }
+    }
+    return writer.build();
   }
 
   function scenePBRCompileShader(gl, type, source) {
@@ -3798,7 +4072,9 @@
         (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
       const hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
       const hasLineData = bundle.worldVertexCount > 0 ||
-        (Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
+        (Array.isArray(bundle.surfaces) && bundle.surfaces.some(function(surface) {
+          return surface && !(surface.sourceKind === "html" && !surface.textureReady);
+        }));
       if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasLineData) {
         return;
       }
@@ -4561,6 +4837,8 @@
         gl.uniform1f(pp.uniforms.defaultSize, sceneNumber(entry.size, 1));
         gl.uniform1i(pp.uniforms.sizeAttenuation, entry.attenuation ? 1 : 0);
         gl.uniform1i(pp.uniforms.pointStyle, scenePointStyleCode(entry.style));
+        gl.uniform1f(pp.uniforms.minPixelSize, Math.max(0, sceneNumber(entry.minPixelSize, 0)));
+        gl.uniform1f(pp.uniforms.maxPixelSize, Math.max(0, sceneNumber(entry.maxPixelSize, 0)));
 
         // Cache typed arrays on first use — positions/sizes/colors are static.
         var rawPositions = entry.positions;
@@ -4660,15 +4938,33 @@
 
     // Look up or generate geometry for an instanced mesh entry.
     function getInstancedGeometry(mesh) {
-      var kind = typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box";
+      var kind = normalizeInstancedGeometryKind(mesh && mesh.kind);
+      var size = sceneNumber(mesh && mesh.size, 0);
       var w = sceneNumber(mesh.width, 1);
       var h = sceneNumber(mesh.height, 1);
       var d = sceneNumber(mesh.depth, 1);
       var r = sceneNumber(mesh.radius, 0.5);
-      var s = sceneNumber(mesh.segments, 16);
-      var key = kind + ":" + w + ":" + h + ":" + d + ":" + r + ":" + s;
+      var rt = sceneNumber(mesh.radiusTop, r);
+      var rb = sceneNumber(mesh.radiusBottom, r);
+      var tube = sceneNumber(mesh.tube, 0.3);
+      var s = sceneNumber(mesh.segments, 32);
+      var radial = sceneNumber(mesh.radialSegments, 32);
+      var tubular = sceneNumber(mesh.tubularSegments, 16);
+      var key = kind + ":" + size + ":" + w + ":" + h + ":" + d + ":" + r + ":" + rt + ":" + rb + ":" + tube + ":" + s + ":" + radial + ":" + tubular;
       if (instancedGeometryCache[key]) return instancedGeometryCache[key];
-      var geom = generateInstancedGeometry(kind, { width: w, height: h, depth: d, radius: r, segments: s });
+      var geom = generateInstancedGeometry(kind, {
+        size: size,
+        width: w,
+        height: h,
+        depth: d,
+        radius: r,
+        radiusTop: rt,
+        radiusBottom: rb,
+        tube: tube,
+        segments: s,
+        radialSegments: radial,
+        tubularSegments: tubular,
+      });
       instancedGeometryCache[key] = geom;
       return geom;
     }

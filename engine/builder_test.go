@@ -68,10 +68,10 @@ func TestBuilderDeclaresSceneEventSignals(t *testing.T) {
 	core := builder.DeclareSceneObjectSignals("$scene.runtime.event", "Runtime Core")
 	prog := builder.Build()
 
-	if len(prog.Signals) != 24 {
-		t.Fatalf("expected 24 scene event signals, got %d", len(prog.Signals))
+	if len(prog.Signals) != 36 {
+		t.Fatalf("expected 36 scene event signals, got %d", len(prog.Signals))
 	}
-	if events.Type < 0 || events.SelectedID < 0 || core.Hovered < 0 || core.ClickCount < 0 {
+	if events.Type < 0 || events.SelectedID < 0 || events.UVX < 0 || events.Depth < 0 || core.Hovered < 0 || core.ClickCount < 0 {
 		t.Fatalf("expected usable scene event expressions, got %#v / %#v", events, core)
 	}
 	if got := prog.Signals[len(prog.Signals)-4].Name; got != "$scene.runtime.event.object.runtime-core.hovered" {

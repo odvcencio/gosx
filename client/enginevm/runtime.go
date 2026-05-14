@@ -198,58 +198,107 @@ type sceneCamera struct {
 }
 
 type sceneObject struct {
-	ID           string
-	Kind         string
-	Material     string
-	Size         float64
-	Width        float64
-	Height       float64
-	Depth        float64
-	Radius       float64
-	Segments     int
-	Points       []point3
-	LineSegments [][2]int
-	X            float64
-	Y            float64
-	Z            float64
-	Color        string
-	Texture      string
-	RotationX    float64
-	RotationY    float64
-	RotationZ    float64
-	SpinX        float64
-	SpinY        float64
-	SpinZ        float64
-	ShiftX       float64
-	ShiftY       float64
-	ShiftZ       float64
-	DriftSpeed   float64
-	DriftPhase   float64
-	Opacity      float64
-	Wireframe    bool
-	BlendMode    string
-	Emissive     float64
-	Pickable     *bool
-	HasTexture   bool
-	HasOpacity   bool
-	HasWireframe bool
-	HasBlendMode bool
-	HasEmissive  bool
-	Static       bool
+	ID                 string
+	Kind               string
+	Material           string
+	Size               float64
+	Width              float64
+	Height             float64
+	Depth              float64
+	Radius             float64
+	Segments           int
+	Points             []point3
+	LineSegments       [][2]int
+	X                  float64
+	Y                  float64
+	Z                  float64
+	Color              string
+	Texture            string
+	RotationX          float64
+	RotationY          float64
+	RotationZ          float64
+	SpinX              float64
+	SpinY              float64
+	SpinZ              float64
+	ShiftX             float64
+	ShiftY             float64
+	ShiftZ             float64
+	DriftSpeed         float64
+	DriftPhase         float64
+	Opacity            float64
+	Wireframe          bool
+	BlendMode          string
+	Emissive           float64
+	Roughness          float64
+	Metalness          float64
+	Clearcoat          float64
+	Sheen              float64
+	Transmission       float64
+	Iridescence        float64
+	Anisotropy         float64
+	NormalMap          string
+	RoughnessMap       string
+	MetalnessMap       string
+	EmissiveMap        string
+	CustomVertex       string
+	CustomFragment     string
+	CustomVertexWGSL   string
+	CustomFragmentWGSL string
+	CustomUniforms     map[string]any
+	Pickable           *bool
+	HasTexture         bool
+	HasOpacity         bool
+	HasWireframe       bool
+	HasBlendMode       bool
+	HasEmissive        bool
+	HasRoughness       bool
+	HasMetalness       bool
+	HasClearcoat       bool
+	HasSheen           bool
+	HasTransmission    bool
+	HasIridescence     bool
+	HasAnisotropy      bool
+	HasNormalMap       bool
+	HasRoughnessMap    bool
+	HasMetalnessMap    bool
+	HasEmissiveMap     bool
+	Static             bool
 }
 
 // MaterialProfile registers a render-material preset for the shared engine VM.
 // It lets embedders add material kinds without editing the engine VM switch.
 type MaterialProfile struct {
-	Opacity      float64
-	HasOpacity   bool
-	Wireframe    bool
-	HasWireframe bool
-	BlendMode    string
-	HasBlendMode bool
-	Emissive     float64
-	HasEmissive  bool
-	ShaderData   []float64
+	Opacity         float64
+	HasOpacity      bool
+	Wireframe       bool
+	HasWireframe    bool
+	BlendMode       string
+	HasBlendMode    bool
+	Emissive        float64
+	HasEmissive     bool
+	Roughness       float64
+	HasRoughness    bool
+	Metalness       float64
+	HasMetalness    bool
+	Clearcoat       float64
+	HasClearcoat    bool
+	Sheen           float64
+	HasSheen        bool
+	Transmission    float64
+	HasTransmission bool
+	Iridescence     float64
+	HasIridescence  bool
+	Anisotropy      float64
+	HasAnisotropy   bool
+	NormalMap       string
+	HasNormalMap    bool
+	RoughnessMap    string
+	HasRoughnessMap bool
+	MetalnessMap    string
+	HasMetalnessMap bool
+	EmissiveMap     string
+	HasEmissiveMap  bool
+	ShaderData      []float64
 }
 
 var (
@@ -317,6 +366,18 @@ func cloneMaterialShaderData(values []float64) []float64 {
 	}
 	out := make([]float64, 3)
 	copy(out, values[:3])
+	return out
+}
+
+func cloneAnyMap(value any) map[string]any {
+	source, ok := value.(map[string]any)
+	if !ok || len(source) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(source))
+	for key, item := range source {
+		out[key] = item
+	}
 	return out
 }
 
@@ -427,6 +488,8 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	if height <= 0 {
 		height = 420
 	}
+	postEffects, diagnostics := nativeRenderPostEffects(props)
+	animations := nativeRenderAnimations(props)
 
 	bundle := rootengine.RenderBundle{
 		Background:      sceneBackground(props),
@@ -441,7 +504,10 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		Colors:          []float64{},
 		WorldPositions:  []float64{},
 		WorldColors:     []float64{},
+		Animations:      animations,
+		PostEffects:     postEffects,
 		PostFXMaxPixels: int(math.Max(0, math.Floor(numberFromAny(sceneValue(props, "postFXMaxPixels"), numberFromAny(propValue(props, "postFXMaxPixels"), 0))))),
+		Diagnostics:     diagnostics,
 	}
 
 	camera := sceneCameraFromProps(props)
@@ -536,6 +602,274 @@ func sceneBackground(props map[string]any) string {
 		}
 	}
 	return "#08151f"
+}
+
+func nativeRenderPostEffects(props map[string]any) ([]rootengine.RenderPostEffect, []rootengine.RenderDiagnostic) {
+	raw := scenePostEffectList(sceneValue(props, "postEffects"))
+	if len(raw) == 0 {
+		raw = scenePostEffectList(sceneValue(props, "postFX"))
+	}
+	if len(raw) == 0 {
+		raw = scenePostEffectList(propValue(props, "postEffects"))
+	}
+	if len(raw) == 0 {
+		raw = scenePostEffectList(propValue(props, "postFX"))
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	effects := make([]rootengine.RenderPostEffect, 0, len(raw))
+	var diagnostics []rootengine.RenderDiagnostic
+	for _, item := range raw {
+		effect := renderPostEffectFromMap(item)
+		if effect.Kind == "" {
+			continue
+		}
+		effects = append(effects, effect)
+		if !nativeRenderPostEffectSupported(effect.Kind) {
+			diagnostics = append(diagnostics, rootengine.RenderDiagnostic{
+				Severity: "warning",
+				Code:     "native-postfx-unsupported",
+				Backend:  "native",
+				Target:   effect.Kind,
+				Message:  "native Go render/bundle does not execute this post-FX yet; this effect remains in the render bundle as an explicit capability degradation",
+			})
+		}
+	}
+	return effects, diagnostics
+}
+
+func nativeRenderPostEffectSupported(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "bloom", "ssao", "dof", "vignette", "colorgrade", "color-grade", "tonemapping", "tone-mapping", "tonemap":
+		return true
+	default:
+		return false
+	}
+}
+
+func scenePostEffectList(value any) []map[string]any {
+	switch items := value.(type) {
+	case []map[string]any:
+		if len(items) == 0 {
+			return nil
+		}
+		return append([]map[string]any(nil), items...)
+	case []any:
+		if len(items) == 0 {
+			return nil
+		}
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			mapped, ok := item.(map[string]any)
+			if ok {
+				out = append(out, mapped)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func renderPostEffectFromMap(raw map[string]any) rootengine.RenderPostEffect {
+	kind := strings.TrimSpace(stringFromAny(rawValue(raw, "kind"), ""))
+	if kind == "" {
+		return rootengine.RenderPostEffect{}
+	}
+	effect := rootengine.RenderPostEffect{
+		Kind:      kind,
+		Mode:      strings.TrimSpace(stringFromAny(rawValue(raw, "mode"), "")),
+		Threshold: numberFromAny(rawValue(raw, "threshold"), 0),
+		Intensity: numberFromAny(rawValue(raw, "intensity"), numberFromAny(rawValue(raw, "strength"), 0)),
+		Radius:    numberFromAny(rawValue(raw, "radius"), 0),
+		Scale:     numberFromAny(rawValue(raw, "scale"), 0),
+		Params:    map[string]float64{},
+	}
+	for _, key := range []string{
+		"threshold",
+		"intensity",
+		"strength",
+		"radius",
+		"scale",
+		"bias",
+		"saturation",
+		"contrast",
+		"exposure",
+		"focusDistance",
+		"aperture",
+		"maxBlur",
+	} {
+		if value := numberFromAny(rawValue(raw, key), math.NaN()); !math.IsNaN(value) {
+			effect.Params[key] = value
+		}
+	}
+	if len(effect.Params) == 0 {
+		effect.Params = nil
+	}
+	return effect
+}
+
+func nativeRenderAnimations(props map[string]any) []rootengine.RenderAnimation {
+	raw := sceneAnimationList(sceneValue(props, "animations"))
+	if len(raw) == 0 {
+		raw = sceneAnimationList(propValue(props, "animations"))
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	animations := make([]rootengine.RenderAnimation, 0, len(raw))
+	for index, item := range raw {
+		animation := renderAnimationFromMap(item, index)
+		if animation.Name == "" || len(animation.Channels) == 0 {
+			continue
+		}
+		animations = append(animations, animation)
+	}
+	return animations
+}
+
+func sceneAnimationList(value any) []map[string]any {
+	switch items := value.(type) {
+	case []map[string]any:
+		if len(items) == 0 {
+			return nil
+		}
+		return append([]map[string]any(nil), items...)
+	case []any:
+		if len(items) == 0 {
+			return nil
+		}
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			mapped, ok := item.(map[string]any)
+			if ok {
+				out = append(out, mapped)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func renderAnimationFromMap(raw map[string]any, index int) rootengine.RenderAnimation {
+	name := strings.TrimSpace(stringFromAny(rawValue(raw, "name"), ""))
+	if name == "" {
+		name = "scene-animation-" + strconv.Itoa(index)
+	}
+	return rootengine.RenderAnimation{
+		Name:     name,
+		Duration: math.Max(0, numberFromAny(rawValue(raw, "duration"), 0)),
+		Channels: renderAnimationChannels(rawValue(raw, "channels")),
+	}
+}
+
+func renderAnimationChannels(value any) []rootengine.RenderAnimationChannel {
+	var raw []map[string]any
+	switch items := value.(type) {
+	case []map[string]any:
+		raw = items
+	case []any:
+		for _, item := range items {
+			if mapped, ok := item.(map[string]any); ok {
+				raw = append(raw, mapped)
+			}
+		}
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	channels := make([]rootengine.RenderAnimationChannel, 0, len(raw))
+	for _, item := range raw {
+		property := strings.TrimSpace(stringFromAny(rawValue(item, "property"), ""))
+		if property == "" {
+			property = "translation"
+		}
+		channel := rootengine.RenderAnimationChannel{
+			TargetID:      renderAnimationTargetID(item),
+			Property:      property,
+			Times:         numberSliceFromAny(rawValue(item, "times")),
+			Values:        numberSliceFromAny(rawValue(item, "values")),
+			Interpolation: strings.TrimSpace(stringFromAny(rawValue(item, "interpolation"), "")),
+		}
+		if channel.Interpolation == "" {
+			channel.Interpolation = "LINEAR"
+		}
+		if channel.TargetID == "" || len(channel.Times) == 0 || len(channel.Values) == 0 {
+			continue
+		}
+		channels = append(channels, channel)
+	}
+	return channels
+}
+
+func renderAnimationTargetID(raw map[string]any) string {
+	for _, key := range []string{"targetID", "targetId", "target", "targetNode"} {
+		value := rawValue(raw, key)
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				return strings.TrimSpace(typed)
+			}
+		case json.Number:
+			if parsed, err := typed.Int64(); err == nil {
+				return strconv.FormatInt(parsed, 10)
+			}
+		case int:
+			return strconv.Itoa(typed)
+		case int64:
+			return strconv.FormatInt(typed, 10)
+		case int32:
+			return strconv.FormatInt(int64(typed), 10)
+		case float64:
+			if !math.IsNaN(typed) && !math.IsInf(typed, 0) {
+				return strconv.Itoa(int(math.Round(typed)))
+			}
+		case float32:
+			asFloat := float64(typed)
+			if !math.IsNaN(asFloat) && !math.IsInf(asFloat, 0) {
+				return strconv.Itoa(int(math.Round(asFloat)))
+			}
+		}
+	}
+	return ""
+}
+
+func numberSliceFromAny(value any) []float64 {
+	switch items := value.(type) {
+	case []float64:
+		return append([]float64(nil), items...)
+	case []float32:
+		out := make([]float64, 0, len(items))
+		for _, item := range items {
+			out = append(out, float64(item))
+		}
+		return out
+	case []int:
+		out := make([]float64, 0, len(items))
+		for _, item := range items {
+			out = append(out, float64(item))
+		}
+		return out
+	case []any:
+		out := make([]float64, 0, len(items))
+		for _, item := range items {
+			value := numberFromAny(item, math.NaN())
+			if !math.IsNaN(value) && !math.IsInf(value, 0) {
+				out = append(out, value)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func sceneCameraFromProps(props map[string]any) sceneCamera {
@@ -825,50 +1159,88 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		rawBlendMode = propValue(node.Props, "blend")
 	}
 	rawEmissive := propValue(node.Props, "emissive")
+	rawRoughness := propValue(node.Props, "roughness")
+	rawMetalness := propValue(node.Props, "metalness")
+	rawClearcoat := propValue(node.Props, "clearcoat")
+	rawSheen := propValue(node.Props, "sheen")
+	rawTransmission := propValue(node.Props, "transmission")
+	rawIridescence := propValue(node.Props, "iridescence")
+	rawAnisotropy := propValue(node.Props, "anisotropy")
 	rawTexture := propValue(node.Props, "texture")
+	rawNormalMap := propValue(node.Props, "normalMap")
+	rawRoughnessMap := propValue(node.Props, "roughnessMap")
+	rawMetalnessMap := propValue(node.Props, "metalnessMap")
+	rawEmissiveMap := propValue(node.Props, "emissiveMap")
 	rawPickable := propValue(node.Props, "pickable")
 	kind := normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry))
 	points := scenePointList(propValue(node.Props, "points"))
 	lineMetrics := sceneLineGeometryMetrics(points)
 	return sceneObject{
-		ID:           stringFromAny(propValue(node.Props, "id"), "scene-object-"+strconv.Itoa(index)),
-		Kind:         kind,
-		Material:     stringFromAny(node.Material, "flat"),
-		Size:         size,
-		Width:        numberFromAny(propValue(node.Props, "width"), fallbackLineMetric(lineMetrics, "width", size)),
-		Height:       numberFromAny(propValue(node.Props, "height"), fallbackLineMetric(lineMetrics, "height", size)),
-		Depth:        numberFromAny(propValue(node.Props, "depth"), fallbackSceneDepth(kind, node.Props, lineMetrics, size)),
-		Radius:       numberFromAny(propValue(node.Props, "radius"), fallbackLineMetric(lineMetrics, "radius", size/2)),
-		Segments:     sceneSegmentResolution(propValue(node.Props, "segments")),
-		Points:       points,
-		LineSegments: sceneLineSegments(propValue(node.Props, "segments"), len(points)),
-		X:            numberFromAny(propValue(node.Props, "x"), 0),
-		Y:            numberFromAny(propValue(node.Props, "y"), 0),
-		Z:            numberFromAny(propValue(node.Props, "z"), 0),
-		Color:        stringFromAny(propValue(node.Props, "color"), "#8de1ff"),
-		Texture:      strings.TrimSpace(stringFromAny(rawTexture, "")),
-		RotationX:    numberFromAny(propValue(node.Props, "rotationX"), 0),
-		RotationY:    numberFromAny(propValue(node.Props, "rotationY"), 0),
-		RotationZ:    numberFromAny(propValue(node.Props, "rotationZ"), 0),
-		SpinX:        numberFromAny(propValue(node.Props, "spinX"), 0),
-		SpinY:        numberFromAny(propValue(node.Props, "spinY"), 0),
-		SpinZ:        numberFromAny(propValue(node.Props, "spinZ"), 0),
-		ShiftX:       numberFromAny(propValue(node.Props, "shiftX"), 0),
-		ShiftY:       numberFromAny(propValue(node.Props, "shiftY"), 0),
-		ShiftZ:       numberFromAny(propValue(node.Props, "shiftZ"), 0),
-		DriftSpeed:   numberFromAny(propValue(node.Props, "driftSpeed"), 0),
-		DriftPhase:   numberFromAny(propValue(node.Props, "driftPhase"), 0),
-		Opacity:      clamp(numberFromAny(rawOpacity, 1), 0, 1),
-		Wireframe:    boolFromAny(rawWireframe, rawTexture == nil),
-		BlendMode:    normalizeBlendMode(stringFromAny(rawBlendMode, "")),
-		Emissive:     clamp(numberFromAny(rawEmissive, 0), 0, 1),
-		Pickable:     boolPtrFromAny(rawPickable),
-		HasTexture:   rawTexture != nil,
-		HasOpacity:   rawOpacity != nil,
-		HasWireframe: rawWireframe != nil,
-		HasBlendMode: rawBlendMode != nil,
-		HasEmissive:  rawEmissive != nil,
-		Static:       node.Static,
+		ID:                 stringFromAny(propValue(node.Props, "id"), "scene-object-"+strconv.Itoa(index)),
+		Kind:               kind,
+		Material:           stringFromAny(node.Material, "flat"),
+		Size:               size,
+		Width:              numberFromAny(propValue(node.Props, "width"), fallbackLineMetric(lineMetrics, "width", size)),
+		Height:             numberFromAny(propValue(node.Props, "height"), fallbackLineMetric(lineMetrics, "height", size)),
+		Depth:              numberFromAny(propValue(node.Props, "depth"), fallbackSceneDepth(kind, node.Props, lineMetrics, size)),
+		Radius:             numberFromAny(propValue(node.Props, "radius"), fallbackLineMetric(lineMetrics, "radius", size/2)),
+		Segments:           sceneSegmentResolution(propValue(node.Props, "segments")),
+		Points:             points,
+		LineSegments:       sceneLineSegments(propValue(node.Props, "segments"), len(points)),
+		X:                  numberFromAny(propValue(node.Props, "x"), 0),
+		Y:                  numberFromAny(propValue(node.Props, "y"), 0),
+		Z:                  numberFromAny(propValue(node.Props, "z"), 0),
+		Color:              stringFromAny(propValue(node.Props, "color"), "#8de1ff"),
+		Texture:            strings.TrimSpace(stringFromAny(rawTexture, "")),
+		RotationX:          numberFromAny(propValue(node.Props, "rotationX"), 0),
+		RotationY:          numberFromAny(propValue(node.Props, "rotationY"), 0),
+		RotationZ:          numberFromAny(propValue(node.Props, "rotationZ"), 0),
+		SpinX:              numberFromAny(propValue(node.Props, "spinX"), 0),
+		SpinY:              numberFromAny(propValue(node.Props, "spinY"), 0),
+		SpinZ:              numberFromAny(propValue(node.Props, "spinZ"), 0),
+		ShiftX:             numberFromAny(propValue(node.Props, "shiftX"), 0),
+		ShiftY:             numberFromAny(propValue(node.Props, "shiftY"), 0),
+		ShiftZ:             numberFromAny(propValue(node.Props, "shiftZ"), 0),
+		DriftSpeed:         numberFromAny(propValue(node.Props, "driftSpeed"), 0),
+		DriftPhase:         numberFromAny(propValue(node.Props, "driftPhase"), 0),
+		Opacity:            clamp(numberFromAny(rawOpacity, 1), 0, 1),
+		Wireframe:          boolFromAny(rawWireframe, rawTexture == nil),
+		BlendMode:          normalizeBlendMode(stringFromAny(rawBlendMode, "")),
+		Emissive:           clamp(numberFromAny(rawEmissive, 0), 0, 1),
+		Roughness:          clamp(numberFromAny(rawRoughness, 0.55), 0, 1),
+		Metalness:          clamp(numberFromAny(rawMetalness, 0), 0, 1),
+		Clearcoat:          clamp(numberFromAny(rawClearcoat, 0), 0, 1),
+		Sheen:              clamp(numberFromAny(rawSheen, 0), 0, 1),
+		Transmission:       clamp(numberFromAny(rawTransmission, 0), 0, 1),
+		Iridescence:        clamp(numberFromAny(rawIridescence, 0), 0, 1),
+		Anisotropy:         clamp(numberFromAny(rawAnisotropy, 0), -1, 1),
+		NormalMap:          strings.TrimSpace(stringFromAny(rawNormalMap, "")),
+		RoughnessMap:       strings.TrimSpace(stringFromAny(rawRoughnessMap, "")),
+		MetalnessMap:       strings.TrimSpace(stringFromAny(rawMetalnessMap, "")),
+		EmissiveMap:        strings.TrimSpace(stringFromAny(rawEmissiveMap, "")),
+		CustomVertex:       strings.TrimSpace(stringFromAny(propValue(node.Props, "customVertex"), "")),
+		CustomFragment:     strings.TrimSpace(stringFromAny(propValue(node.Props, "customFragment"), "")),
+		CustomVertexWGSL:   strings.TrimSpace(stringFromAny(propValue(node.Props, "customVertexWGSL"), "")),
+		CustomFragmentWGSL: strings.TrimSpace(stringFromAny(propValue(node.Props, "customFragmentWGSL"), "")),
+		CustomUniforms:     cloneAnyMap(propValue(node.Props, "customUniforms")),
+		Pickable:           boolPtrFromAny(rawPickable),
+		HasTexture:         rawTexture != nil,
+		HasOpacity:         rawOpacity != nil,
+		HasWireframe:       rawWireframe != nil,
+		HasBlendMode:       rawBlendMode != nil,
+		HasEmissive:        rawEmissive != nil,
+		HasRoughness:       rawRoughness != nil,
+		HasMetalness:       rawMetalness != nil,
+		HasClearcoat:       rawClearcoat != nil,
+		HasSheen:           rawSheen != nil,
+		HasTransmission:    rawTransmission != nil,
+		HasIridescence:     rawIridescence != nil,
+		HasAnisotropy:      rawAnisotropy != nil,
+		HasNormalMap:       rawNormalMap != nil,
+		HasRoughnessMap:    rawRoughnessMap != nil,
+		HasMetalnessMap:    rawMetalnessMap != nil,
+		HasEmissiveMap:     rawEmissiveMap != nil,
+		Static:             node.Static,
 	}
 }
 
@@ -1275,7 +1647,23 @@ func renderMaterialEqual(left, right rootengine.RenderMaterial) bool {
 		left.Wireframe != right.Wireframe ||
 		left.BlendMode != right.BlendMode ||
 		left.RenderPass != right.RenderPass ||
-		left.Emissive != right.Emissive {
+		left.Emissive != right.Emissive ||
+		left.Roughness != right.Roughness ||
+		left.Metalness != right.Metalness ||
+		left.Clearcoat != right.Clearcoat ||
+		left.Sheen != right.Sheen ||
+		left.Transmission != right.Transmission ||
+		left.Iridescence != right.Iridescence ||
+		left.Anisotropy != right.Anisotropy ||
+		left.NormalMap != right.NormalMap ||
+		left.RoughnessMap != right.RoughnessMap ||
+		left.MetalnessMap != right.MetalnessMap ||
+		left.EmissiveMap != right.EmissiveMap ||
+		left.CustomVertex != right.CustomVertex ||
+		left.CustomFragment != right.CustomFragment ||
+		left.CustomVertexWGSL != right.CustomVertexWGSL ||
+		left.CustomFragmentWGSL != right.CustomFragmentWGSL ||
+		!reflect.DeepEqual(left.CustomUniforms, right.CustomUniforms) {
 		return false
 	}
 	if len(left.ShaderData) != len(right.ShaderData) {
@@ -1298,7 +1686,14 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 		Wireframe: true,
 		BlendMode: "opaque",
 		Emissive:  0,
+		Roughness: 0.55,
+		Metalness: 0,
 	}
+	profile.CustomVertex = object.CustomVertex
+	profile.CustomFragment = object.CustomFragment
+	profile.CustomVertexWGSL = object.CustomVertexWGSL
+	profile.CustomFragmentWGSL = object.CustomFragmentWGSL
+	profile.CustomUniforms = cloneAnyMap(object.CustomUniforms)
 
 	kindKey := strings.ToLower(strings.TrimSpace(profile.Kind))
 	customProfile, hasCustomProfile := materialProfileForKind(kindKey)
@@ -1315,6 +1710,39 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 		}
 		if customProfile.HasEmissive {
 			profile.Emissive = customProfile.Emissive
+		}
+		if customProfile.HasRoughness {
+			profile.Roughness = clamp(customProfile.Roughness, 0, 1)
+		}
+		if customProfile.HasMetalness {
+			profile.Metalness = clamp(customProfile.Metalness, 0, 1)
+		}
+		if customProfile.HasClearcoat {
+			profile.Clearcoat = clamp(customProfile.Clearcoat, 0, 1)
+		}
+		if customProfile.HasSheen {
+			profile.Sheen = clamp(customProfile.Sheen, 0, 1)
+		}
+		if customProfile.HasTransmission {
+			profile.Transmission = clamp(customProfile.Transmission, 0, 1)
+		}
+		if customProfile.HasIridescence {
+			profile.Iridescence = clamp(customProfile.Iridescence, 0, 1)
+		}
+		if customProfile.HasAnisotropy {
+			profile.Anisotropy = clamp(customProfile.Anisotropy, -1, 1)
+		}
+		if customProfile.HasNormalMap {
+			profile.NormalMap = strings.TrimSpace(customProfile.NormalMap)
+		}
+		if customProfile.HasRoughnessMap {
+			profile.RoughnessMap = strings.TrimSpace(customProfile.RoughnessMap)
+		}
+		if customProfile.HasMetalnessMap {
+			profile.MetalnessMap = strings.TrimSpace(customProfile.MetalnessMap)
+		}
+		if customProfile.HasEmissiveMap {
+			profile.EmissiveMap = strings.TrimSpace(customProfile.EmissiveMap)
 		}
 	}
 
@@ -1356,8 +1784,41 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	if object.HasEmissive {
 		profile.Emissive = object.Emissive
 	}
+	if object.HasRoughness {
+		profile.Roughness = object.Roughness
+	}
+	if object.HasMetalness {
+		profile.Metalness = object.Metalness
+	}
+	if object.HasClearcoat {
+		profile.Clearcoat = object.Clearcoat
+	}
+	if object.HasSheen {
+		profile.Sheen = object.Sheen
+	}
+	if object.HasTransmission {
+		profile.Transmission = object.Transmission
+	}
+	if object.HasIridescence {
+		profile.Iridescence = object.Iridescence
+	}
+	if object.HasAnisotropy {
+		profile.Anisotropy = object.Anisotropy
+	}
 	if object.HasTexture {
 		profile.Texture = strings.TrimSpace(object.Texture)
+	}
+	if object.HasNormalMap {
+		profile.NormalMap = strings.TrimSpace(object.NormalMap)
+	}
+	if object.HasRoughnessMap {
+		profile.RoughnessMap = strings.TrimSpace(object.RoughnessMap)
+	}
+	if object.HasMetalnessMap {
+		profile.MetalnessMap = strings.TrimSpace(object.MetalnessMap)
+	}
+	if object.HasEmissiveMap {
+		profile.EmissiveMap = strings.TrimSpace(object.EmissiveMap)
 	}
 	if profile.Opacity < 0.999 && profile.BlendMode == "opaque" {
 		profile.BlendMode = "alpha"
@@ -1391,14 +1852,40 @@ func renderMaterialKey(profile rootengine.RenderMaterial) string {
 	kind := strings.ToLower(strings.TrimSpace(profile.Kind))
 	color := strings.TrimSpace(profile.Color)
 	texture := strings.TrimSpace(profile.Texture)
+	normalMap := strings.TrimSpace(profile.NormalMap)
+	roughnessMap := strings.TrimSpace(profile.RoughnessMap)
+	metalnessMap := strings.TrimSpace(profile.MetalnessMap)
+	emissiveMap := strings.TrimSpace(profile.EmissiveMap)
 	blendMode := strings.ToLower(strings.TrimSpace(profile.BlendMode))
 	var b strings.Builder
-	b.Grow(len(kind) + len(color) + len(texture) + len(blendMode) + len(profile.RenderPass) + 40)
+	b.Grow(len(kind) + len(color) + len(texture) + len(normalMap) + len(roughnessMap) + len(metalnessMap) + len(emissiveMap) + len(blendMode) + len(profile.RenderPass) + 120)
 	b.WriteString(kind)
 	b.WriteByte('|')
 	b.WriteString(color)
 	b.WriteByte('|')
 	b.WriteString(texture)
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Roughness, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Metalness, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Clearcoat, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Sheen, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Transmission, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Iridescence, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(profile.Anisotropy, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(normalMap)
+	b.WriteByte('|')
+	b.WriteString(roughnessMap)
+	b.WriteByte('|')
+	b.WriteString(metalnessMap)
+	b.WriteByte('|')
+	b.WriteString(emissiveMap)
 	b.WriteByte('|')
 	b.WriteString(strconv.FormatFloat(profile.Opacity, 'f', 3, 64))
 	b.WriteByte('|')
@@ -1409,7 +1896,30 @@ func renderMaterialKey(profile rootengine.RenderMaterial) string {
 	b.WriteString(profile.RenderPass)
 	b.WriteByte('|')
 	b.WriteString(strconv.FormatFloat(profile.Emissive, 'f', 3, 64))
+	b.WriteByte('|')
+	b.WriteString(strings.TrimSpace(profile.CustomVertex))
+	b.WriteByte('|')
+	b.WriteString(strings.TrimSpace(profile.CustomFragment))
+	b.WriteByte('|')
+	b.WriteString(strings.TrimSpace(profile.CustomVertexWGSL))
+	b.WriteByte('|')
+	b.WriteString(strings.TrimSpace(profile.CustomFragmentWGSL))
+	if len(profile.CustomUniforms) > 0 {
+		b.WriteByte('|')
+		b.WriteString(renderMaterialCustomUniformKey(profile.CustomUniforms))
+	}
 	return b.String()
+}
+
+func renderMaterialCustomUniformKey(values map[string]any) string {
+	if len(values) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func renderMaterialShaderData(profile rootengine.RenderMaterial) []float64 {

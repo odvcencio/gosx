@@ -143,6 +143,11 @@ struct BloomUniforms {
 };
 @group(0) @binding(4) var<uniform> bloom : BloomUniforms;
 
+struct PresentUniforms {
+  params : vec4<f32>, // x = tone-map mode, y = exposure
+};
+@group(0) @binding(5) var<uniform> present : PresentUniforms;
+
 @vertex
 fn vs_main(@builtin(vertex_index) vid : u32) -> VSOut {
   var p = array<vec2<f32>, 3>(
@@ -171,10 +176,32 @@ fn acesFilmic(x : vec3<f32>) -> vec3<f32> {
                vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+fn reinhardToneMap(x : vec3<f32>) -> vec3<f32> {
+  return x / (vec3<f32>(1.0) + x);
+}
+
+fn filmicToneMap(x : vec3<f32>) -> vec3<f32> {
+  let c = max(vec3<f32>(0.0), x - vec3<f32>(0.004));
+  return clamp((c * (6.2 * c + 0.5)) / (c * (6.2 * c + 1.7) + 0.06),
+               vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn applyToneMap(x : vec3<f32>) -> vec3<f32> {
+  let exposed = max(x * max(present.params.y, 0.0), vec3<f32>(0.0));
+  let mode = present.params.x;
+  if (mode > 1.5) {
+    return filmicToneMap(exposed);
+  }
+  if (mode > 0.5) {
+    return reinhardToneMap(exposed);
+  }
+  return acesFilmic(exposed);
+}
+
 fn toneMapAt(uv : vec2<f32>) -> vec3<f32> {
   let hdr   = textureSample(hdrTexture, hdrSampler, uv).rgb;
   let glow = textureSample(bloomTexture, bloomSampler, uv).rgb;
-  return acesFilmic(hdr + glow * bloom.params.y);
+  return applyToneMap(hdr + glow * bloom.params.y);
 }
 
 @fragment
@@ -196,9 +223,10 @@ type bloomResources struct {
 	blurHBindGrp  gpu.BindGroup // reads texA → writes texB
 	blurVBindGrp  gpu.BindGroup // reads texB → writes texA
 
-	paramsUniform gpu.Buffer // threshold/intensity/scale shared by bloom + present
-	blurHUniform  gpu.Buffer // horizontal texel-offset uniform
-	blurVUniform  gpu.Buffer // vertical texel-offset uniform
+	paramsUniform  gpu.Buffer // threshold/intensity/scale shared by bloom + present
+	presentUniform gpu.Buffer // tone-map mode/exposure used by the compose pass
+	blurHUniform   gpu.Buffer // horizontal texel-offset uniform
+	blurVUniform   gpu.Buffer // vertical texel-offset uniform
 }
 
 type bloomConfig struct {
@@ -207,6 +235,11 @@ type bloomConfig struct {
 	intensity float64
 	radius    float64
 	scale     float64
+}
+
+type toneMapConfig struct {
+	mode     string
+	exposure float64
 }
 
 // buildBloomPipelines constructs the three bloom pipelines (bright pass +
@@ -311,6 +344,16 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 		texB.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
+	presentUniform, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size: 16, Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
+		Label: "bundle.present.tonemap.uniform",
+	})
+	if err != nil {
+		texA.Destroy()
+		texB.Destroy()
+		paramsUniform.Destroy()
+		return fmt.Errorf("bundle.ensureBloom: %w", err)
+	}
 	blurHUniform, err := r.device.CreateBuffer(gpu.BufferDesc{
 		Size: 16, Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
 		Label: "bundle.bloom.blurH.uniform",
@@ -319,6 +362,7 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 		texA.Destroy()
 		texB.Destroy()
 		paramsUniform.Destroy()
+		presentUniform.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
 	blurVUniform, err := r.device.CreateBuffer(gpu.BufferDesc{
@@ -329,6 +373,7 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 		texA.Destroy()
 		texB.Destroy()
 		paramsUniform.Destroy()
+		presentUniform.Destroy()
 		blurHUniform.Destroy()
 		return fmt.Errorf("bundle.ensureBloom: %w", err)
 	}
@@ -338,13 +383,14 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 	next := &bloomResources{
 		width: w, height: h,
 		surfaceWidth: surfaceWidth, surfaceHeight: surfaceHeight,
-		texA:          texA,
-		texB:          texB,
-		viewA:         viewA,
-		viewB:         viewB,
-		paramsUniform: paramsUniform,
-		blurHUniform:  blurHUniform,
-		blurVUniform:  blurVUniform,
+		texA:           texA,
+		texB:           texB,
+		viewA:          viewA,
+		viewB:          viewB,
+		paramsUniform:  paramsUniform,
+		presentUniform: presentUniform,
+		blurHUniform:   blurHUniform,
+		blurVUniform:   blurVUniform,
 	}
 
 	brightBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
@@ -399,6 +445,7 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 			{Binding: 2, TextureView: viewA},
 			{Binding: 3, Sampler: r.presentSampler},
 			{Binding: 4, Buffer: paramsUniform, Size: 16},
+			{Binding: 5, Buffer: presentUniform, Size: 16},
 		},
 		Label: "bundle.present.compose.bg",
 	})
@@ -414,6 +461,57 @@ func (r *Renderer) ensureBloom(surfaceWidth, surfaceHeight int, cfg bloomConfig)
 	}
 	r.bloom = next
 	r.presentBindGrp = bg
+	r.bloomSourceKey = "hdr"
+	return nil
+}
+
+func (r *Renderer) ensureBloomSourceBindGroups(source gpu.TextureView, sourceKey string) error {
+	if r.bloom == nil {
+		return nil
+	}
+	if sourceKey == "" {
+		sourceKey = "hdr"
+	}
+	if r.bloomSourceKey == sourceKey && r.bloom.brightBindGrp != nil && r.presentBindGrp != nil {
+		return nil
+	}
+	brightBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: r.brightBGLayout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, TextureView: source},
+			{Binding: 1, Sampler: r.presentSampler},
+			{Binding: 2, Buffer: r.bloom.paramsUniform, Size: 16},
+		},
+		Label: "bundle.bloom.bright.bg",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.ensureBloomSourceBindGroups: %w", err)
+	}
+	presentBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: r.presentBGLayout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, TextureView: source},
+			{Binding: 1, Sampler: r.presentSampler},
+			{Binding: 2, TextureView: r.bloom.viewA},
+			{Binding: 3, Sampler: r.presentSampler},
+			{Binding: 4, Buffer: r.bloom.paramsUniform, Size: 16},
+			{Binding: 5, Buffer: r.bloom.presentUniform, Size: 16},
+		},
+		Label: "bundle.present.compose.bg",
+	})
+	if err != nil {
+		brightBG.Destroy()
+		return fmt.Errorf("bundle.ensureBloomSourceBindGroups: %w", err)
+	}
+	if r.bloom.brightBindGrp != nil {
+		r.bloom.brightBindGrp.Destroy()
+	}
+	if r.presentBindGrp != nil {
+		r.presentBindGrp.Destroy()
+	}
+	r.bloom.brightBindGrp = brightBG
+	r.presentBindGrp = presentBG
+	r.bloomSourceKey = sourceKey
 	return nil
 }
 
@@ -464,6 +562,44 @@ func bloomEffectNumber(effect engine.RenderPostEffect, name string, fallback flo
 	return fallback
 }
 
+func resolveToneMapConfig(b engine.RenderBundle) toneMapConfig {
+	cfg := toneMapConfig{
+		mode:     strings.TrimSpace(b.Environment.ToneMapping),
+		exposure: b.Environment.Exposure,
+	}
+	if cfg.mode == "" {
+		cfg.mode = "aces"
+	}
+	if cfg.exposure <= 0 {
+		cfg.exposure = 1
+	}
+	for _, effect := range b.PostEffects {
+		kind := strings.ToLower(strings.TrimSpace(effect.Kind))
+		if kind != "tonemapping" && kind != "tonemap" && kind != "tone-mapping" {
+			continue
+		}
+		if strings.TrimSpace(effect.Mode) != "" {
+			cfg.mode = strings.TrimSpace(effect.Mode)
+		}
+		if value, ok := effect.Params["exposure"]; ok && value > 0 {
+			cfg.exposure = value
+		}
+		return cfg
+	}
+	return cfg
+}
+
+func toneMapModeCode(mode string) float32 {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "reinhard":
+		return 1
+	case "filmic":
+		return 2
+	default:
+		return 0
+	}
+}
+
 func (r *Renderer) configureBloom(cfg bloomConfig) {
 	if r.bloom == nil {
 		return
@@ -487,6 +623,22 @@ func (r *Renderer) configureBloom(cfg bloomConfig) {
 	dy := float32(radiusScale) / float32(r.bloom.height)
 	r.device.Queue().WriteBuffer(r.bloom.blurHUniform, 0, float32sToBytes([]float32{dx, 0, 0, 0}))
 	r.device.Queue().WriteBuffer(r.bloom.blurVUniform, 0, float32sToBytes([]float32{0, dy, 0, 0}))
+}
+
+func (r *Renderer) configureToneMap(cfg toneMapConfig) {
+	if r.bloom == nil || r.bloom.presentUniform == nil {
+		return
+	}
+	exposure := cfg.exposure
+	if exposure <= 0 {
+		exposure = 1
+	}
+	r.device.Queue().WriteBuffer(r.bloom.presentUniform, 0, float32sToBytes([]float32{
+		toneMapModeCode(cfg.mode),
+		float32(exposure),
+		0,
+		0,
+	}))
 }
 
 // recordBloomPasses runs the three bloom passes between the main HDR pass
@@ -549,6 +701,9 @@ func destroyBloomResources(b *bloomResources) {
 	}
 	if b.paramsUniform != nil {
 		b.paramsUniform.Destroy()
+	}
+	if b.presentUniform != nil {
+		b.presentUniform.Destroy()
 	}
 	if b.blurHUniform != nil {
 		b.blurHUniform.Destroy()

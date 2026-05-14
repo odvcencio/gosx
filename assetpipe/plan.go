@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -34,40 +35,74 @@ type Options struct {
 // Report is the JSON-serializable contract emitted by `gosx assets plan` and
 // by `gosx build` when Scene3D-grade assets are present.
 type Report struct {
-	SchemaVersion int      `json:"schemaVersion"`
-	Roots         []string `json:"roots"`
-	Assets        []Asset  `json:"assets"`
-	Totals        Totals   `json:"totals"`
-	Warnings      []string `json:"warnings,omitempty"`
+	SchemaVersion int          `json:"schemaVersion"`
+	Roots         []string     `json:"roots"`
+	Assets        []Asset      `json:"assets"`
+	Totals        Totals       `json:"totals"`
+	Budget        BudgetInfo   `json:"budget,omitempty"`
+	Warnings      []string     `json:"warnings,omitempty"`
+	Diagnostics   []Diagnostic `json:"diagnostics,omitempty"`
 }
 
 // Totals summarizes a report for the build manifest.
 type Totals struct {
-	Assets              int   `json:"assets"`
-	Bytes               int64 `json:"bytes"`
-	GLB                 int   `json:"glb,omitempty"`
-	GLTF                int   `json:"gltf,omitempty"`
-	KTX2                int   `json:"ktx2,omitempty"`
-	Texture             int   `json:"texture,omitempty"`
-	Environment         int   `json:"environment,omitempty"`
-	Audio               int   `json:"audio,omitempty"`
-	USDZ                int   `json:"usdz,omitempty"`
-	Shader              int   `json:"shader,omitempty"`
-	OptimizationActions int   `json:"optimizationActions,omitempty"`
-	Variants            int   `json:"variants,omitempty"`
+	Assets                int   `json:"assets"`
+	Bytes                 int64 `json:"bytes"`
+	GLB                   int   `json:"glb,omitempty"`
+	GLTF                  int   `json:"gltf,omitempty"`
+	KTX2                  int   `json:"ktx2,omitempty"`
+	Texture               int   `json:"texture,omitempty"`
+	BasisTexture          int   `json:"basisTexture,omitempty"`
+	Environment           int   `json:"environment,omitempty"`
+	Audio                 int   `json:"audio,omitempty"`
+	Video                 int   `json:"video,omitempty"`
+	DataBuffer            int   `json:"dataBuffer,omitempty"`
+	USDZ                  int   `json:"usdz,omitempty"`
+	Shader                int   `json:"shader,omitempty"`
+	HTMLTextureManifest   int   `json:"htmlTextureManifest,omitempty"`
+	OptimizationActions   int   `json:"optimizationActions,omitempty"`
+	Variants              int   `json:"variants,omitempty"`
+	ExpectedGPUBytes      int64 `json:"expectedGPUBytes,omitempty"`
+	FirstFrameUploadBytes int64 `json:"firstFrameUploadBytes,omitempty"`
 }
 
 // Asset describes one discovered file and the build-time work it merits.
 type Asset struct {
-	Path     string    `json:"path"`
-	Kind     string    `json:"kind"`
-	Bytes    int64     `json:"bytes"`
-	MIME     string    `json:"mime,omitempty"`
-	Actions  []Action  `json:"actions,omitempty"`
-	Variants []Variant `json:"variants,omitempty"`
-	Warnings []string  `json:"warnings,omitempty"`
-	GLTF     *GLTFInfo `json:"gltf,omitempty"`
-	KTX2     *KTX2Info `json:"ktx2,omitempty"`
+	Path        string                   `json:"path"`
+	Kind        string                   `json:"kind"`
+	Bytes       int64                    `json:"bytes"`
+	MIME        string                   `json:"mime,omitempty"`
+	Actions     []Action                 `json:"actions,omitempty"`
+	Variants    []Variant                `json:"variants,omitempty"`
+	Warnings    []string                 `json:"warnings,omitempty"`
+	Diagnostics []Diagnostic             `json:"diagnostics,omitempty"`
+	GLTF        *GLTFInfo                `json:"gltf,omitempty"`
+	KTX2        *KTX2Info                `json:"ktx2,omitempty"`
+	HTML        *HTMLTextureManifestInfo `json:"htmlTextureManifest,omitempty"`
+	Shader      *ShaderInfo              `json:"shader,omitempty"`
+	Environment *EnvironmentInfo         `json:"environment,omitempty"`
+	Media       *MediaInfo               `json:"media,omitempty"`
+}
+
+// BudgetInfo summarizes expected runtime memory/upload pressure by category.
+type BudgetInfo struct {
+	ExpectedGPUBytes      int64 `json:"expectedGPUBytes,omitempty"`
+	FirstFrameUploadBytes int64 `json:"firstFrameUploadBytes,omitempty"`
+	ModelBytes            int64 `json:"modelBytes,omitempty"`
+	TextureBytes          int64 `json:"textureBytes,omitempty"`
+	EnvironmentBytes      int64 `json:"environmentBytes,omitempty"`
+	HTMLTextureBytes      int64 `json:"htmlTextureBytes,omitempty"`
+	ShaderBytes           int64 `json:"shaderBytes,omitempty"`
+	MediaBytes            int64 `json:"mediaBytes,omitempty"`
+}
+
+// Diagnostic is a structured, machine-readable planner warning.
+type Diagnostic struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Path     string `json:"path,omitempty"`
+	Message  string `json:"message"`
+	Action   string `json:"action,omitempty"`
 }
 
 // Action is intentionally declarative. Follow-on build passes can execute these
@@ -117,6 +152,51 @@ type KTX2Info struct {
 	Faces      int    `json:"faces,omitempty"`
 	Levels     int    `json:"levels"`
 	Compressed bool   `json:"compressed,omitempty"`
+}
+
+// HTMLTextureManifestInfo records cheap planning facts for texture-backed HTML.
+type HTMLTextureManifestInfo struct {
+	Surfaces               int   `json:"surfaces,omitempty"`
+	TexturePixels          int64 `json:"texturePixels,omitempty"`
+	TextureBytes           int64 `json:"textureBytes,omitempty"`
+	MaxTexturePixels       int64 `json:"maxTexturePixels,omitempty"`
+	DirtyRegionEntries     int   `json:"dirtyRegionEntries,omitempty"`
+	AccessibilityFallbacks int   `json:"accessibilityFallbacks,omitempty"`
+}
+
+// ShaderInfo records cheap WGSL reflection hints without compiling the shader.
+type ShaderInfo struct {
+	Lines            int                `json:"lines,omitempty"`
+	Stages           []string           `json:"stages,omitempty"`
+	EntryPoints      []ShaderEntryPoint `json:"entryPoints,omitempty"`
+	BindGroups       int                `json:"bindGroups,omitempty"`
+	Bindings         int                `json:"bindings,omitempty"`
+	HasWorkgroupSize bool               `json:"hasWorkgroupSize,omitempty"`
+}
+
+// ShaderEntryPoint describes one discovered WGSL entry function.
+type ShaderEntryPoint struct {
+	Name  string `json:"name"`
+	Stage string `json:"stage,omitempty"`
+}
+
+// EnvironmentInfo describes the planned IBL products for HDR/EXR inputs.
+type EnvironmentInfo struct {
+	SourceFormat                  string `json:"sourceFormat,omitempty"`
+	PlanKind                      string `json:"planKind,omitempty"`
+	TargetCubeSize                int    `json:"targetCubeSize,omitempty"`
+	MipLevels                     int    `json:"mipLevels,omitempty"`
+	BRDFLUTSize                   int    `json:"brdfLUTSize,omitempty"`
+	EstimatedGeneratedBytes       int64  `json:"estimatedGeneratedBytes,omitempty"`
+	ExpectedFirstFrameUploadBytes int64  `json:"expectedFirstFrameUploadBytes,omitempty"`
+}
+
+// MediaInfo describes browser media files used by Scene3D surfaces or audio.
+type MediaInfo struct {
+	Kind                string `json:"kind,omitempty"`
+	Container           string `json:"container,omitempty"`
+	Streamable          bool   `json:"streamable,omitempty"`
+	ExpectedUploadBytes int64  `json:"expectedUploadBytes,omitempty"`
 }
 
 // Plan scans roots and returns a low-memory asset optimization plan.
@@ -177,6 +257,10 @@ func Plan(roots []string, opts Options) (Report, error) {
 		return report.Assets[i].Path < report.Assets[j].Path
 	})
 	report.Totals = reportTotals(report.Assets)
+	report.Budget = reportBudget(report.Assets)
+	report.Totals.ExpectedGPUBytes = report.Budget.ExpectedGPUBytes
+	report.Totals.FirstFrameUploadBytes = report.Budget.FirstFrameUploadBytes
+	report.Diagnostics = reportDiagnostics(report.Warnings, report.Assets)
 	sort.Strings(report.Roots)
 	return report, nil
 }
@@ -232,20 +316,28 @@ func planFile(path, root string, opts Options) (Asset, bool, error) {
 	case "texture":
 		asset.Actions = textureActions()
 		asset.Variants = textureVariants(asset.Path)
+	case "basis-texture":
+		asset.Actions = basisTextureActions()
+		asset.Variants = textureVariants(asset.Path)
 	case "environment":
-		asset.Actions = environmentActions()
-		asset.Variants = environmentVariants(asset.Path)
+		asset = planEnvironment(asset)
 	case "audio":
-		asset.Actions = audioActions()
-		asset.Variants = audioVariants(asset.Path)
+		asset = planAudio(asset)
+	case "video":
+		asset = planVideo(asset)
+	case "data-buffer":
+		asset.Actions = dataBufferActions()
 	case "usdz":
 		asset.Actions = usdzActions()
 		asset.Variants = usdzVariants(asset.Path)
 	case "shader":
-		asset.Actions = shaderActions()
+		asset = planShader(asset, path, opts)
+	case "html-texture-manifest":
+		asset = planHTMLTextureManifest(asset, path, opts)
 	default:
 		asset.Actions = append(asset.Actions, Action{Name: "classify-asset", Status: "candidate"})
 	}
+	asset.Diagnostics = diagnosticsFromWarnings(asset.Path, asset.Warnings)
 	return asset, true, nil
 }
 
@@ -257,6 +349,8 @@ func classify(path string) (kind string, mime string, ok bool) {
 		return "gltf", "model/gltf+json", true
 	case ".ktx2":
 		return "ktx2", "image/ktx2", true
+	case ".basis":
+		return "basis-texture", "image/vnd.basis", true
 	case ".hdr":
 		return "environment", "image/vnd.radiance", true
 	case ".exr":
@@ -279,13 +373,37 @@ func classify(path string) (kind string, mime string, ok bool) {
 		return "audio", "audio/ogg", true
 	case ".m4a":
 		return "audio", "audio/mp4", true
+	case ".mp4", ".m4v":
+		return "video", "video/mp4", true
+	case ".webm":
+		return "video", "video/webm", true
+	case ".mov":
+		return "video", "video/quicktime", true
+	case ".m3u8":
+		return "video", "application/vnd.apple.mpegurl", true
+	case ".bin":
+		return "data-buffer", "application/octet-stream", true
 	case ".usdz":
 		return "usdz", "model/vnd.usdz+zip", true
 	case ".wgsl":
 		return "shader", "text/wgsl", true
+	case ".htmltex", ".htmltexture":
+		return "html-texture-manifest", "application/vnd.gosx.html-texture-manifest+json", true
+	case ".json":
+		if isHTMLTextureManifestPath(path) {
+			return "html-texture-manifest", "application/vnd.gosx.html-texture-manifest+json", true
+		}
+		return "", "", false
 	default:
 		return "", "", false
 	}
+}
+
+func isHTMLTextureManifestPath(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	name = strings.ReplaceAll(name, "_", "-")
+	return strings.Contains(name, "html-texture") || strings.Contains(name, "htmltexture")
 }
 
 func planGLB(asset Asset, path string, opts Options) Asset {
@@ -457,6 +575,33 @@ func planKTX2(asset Asset, path string, opts Options) Asset {
 	return asset
 }
 
+func planHTMLTextureManifest(asset Asset, path string, opts Options) Asset {
+	data, err := readSmallFile(path, opts.MaxProbeBytes)
+	if err != nil {
+		asset.Warnings = append(asset.Warnings, err.Error())
+		asset.Actions = htmlTextureManifestActions(nil)
+		return asset
+	}
+	info, warnings := inspectHTMLTextureManifest(data)
+	asset.HTML = &info
+	asset.Warnings = append(asset.Warnings, warnings...)
+	asset.Actions = htmlTextureManifestActions(&info)
+	return asset
+}
+
+func htmlTextureManifestActions(info *HTMLTextureManifestInfo) []Action {
+	target := ""
+	if info != nil && info.TextureBytes > 0 {
+		target = fmt.Sprintf("%d surfaces, %d bytes", info.Surfaces, info.TextureBytes)
+	}
+	return []Action{
+		{Name: "measure-html-textures", Status: "planned", Reason: "texture-backed HTML must be measured before raster upload", Target: target},
+		{Name: "enforce-html-texture-budgets", Status: "planned", Reason: "HTML textures share the Scene3D GPU memory budget", Target: target},
+		{Name: "dirty-region-upload-plan", Status: "candidate", Reason: "runtime should upload changed rectangles instead of full HTML textures"},
+		{Name: "accessibility-mirror-dom", Status: "planned", Reason: "texture-backed HTML needs DOM fallback content in document order"},
+	}
+}
+
 func textureActions() []Action {
 	return []Action{
 		{
@@ -472,6 +617,13 @@ func textureActions() []Action {
 
 func textureVariants(path string) []Variant {
 	return ktx2TextureVariants(path, "")
+}
+
+func basisTextureActions() []Action {
+	return []Action{
+		{Name: "basis-transcode-ktx2", Status: "candidate", Reason: "Basis payloads should become explicit KTX2 GPU upload variants"},
+		{Name: "generate-mips", Status: "candidate", Reason: "stable minification and lower shimmer in 3D views"},
+	}
 }
 
 func modelTextureVariants(path string) []Variant {
@@ -511,6 +663,30 @@ func environmentActions() []Action {
 	}
 }
 
+func planEnvironment(asset Asset) Asset {
+	asset.Environment = environmentInfo(asset.Path)
+	asset.Actions = environmentActions()
+	asset.Variants = environmentVariants(asset.Path)
+	return asset
+}
+
+func environmentInfo(path string) *EnvironmentInfo {
+	const targetCubeSize = 1024
+	const brdfLUTSize = 256
+	cubeBytes := cubeMipBytes(targetCubeSize, 8)
+	lutBytes := int64(brdfLUTSize) * int64(brdfLUTSize) * 8
+	format := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	return &EnvironmentInfo{
+		SourceFormat:                  format,
+		PlanKind:                      "ggx-prefiltered-cubemap",
+		TargetCubeSize:                targetCubeSize,
+		MipLevels:                     mipLevels(targetCubeSize),
+		BRDFLUTSize:                   brdfLUTSize,
+		EstimatedGeneratedBytes:       cubeBytes + lutBytes,
+		ExpectedFirstFrameUploadBytes: cubeBytes + lutBytes,
+	}
+}
+
 func environmentVariants(path string) []Variant {
 	return []Variant{
 		{
@@ -535,6 +711,18 @@ func audioActions() []Action {
 	}
 }
 
+func planAudio(asset Asset) Asset {
+	asset.Media = &MediaInfo{
+		Kind:                "audio",
+		Container:           strings.TrimPrefix(strings.ToLower(filepath.Ext(asset.Path)), "."),
+		Streamable:          true,
+		ExpectedUploadBytes: asset.Bytes,
+	}
+	asset.Actions = audioActions()
+	asset.Variants = audioVariants(asset.Path)
+	return asset
+}
+
 func audioVariants(path string) []Variant {
 	return []Variant{
 		{
@@ -549,6 +737,54 @@ func audioVariants(path string) []Variant {
 			Compression:  "aac",
 			SourceAction: "audio-transcode",
 		},
+	}
+}
+
+func planVideo(asset Asset) Asset {
+	asset.Media = &MediaInfo{
+		Kind:                "video",
+		Container:           strings.TrimPrefix(strings.ToLower(filepath.Ext(asset.Path)), "."),
+		Streamable:          true,
+		ExpectedUploadBytes: asset.Bytes,
+	}
+	asset.Actions = videoActions()
+	asset.Variants = videoVariants(asset.Path)
+	return asset
+}
+
+func videoActions() []Action {
+	return []Action{
+		{Name: "video-transcode", Status: "candidate", Reason: "ship MP4/WebM/HLS variants for browser coverage"},
+		{Name: "video-surface-manifest", Status: "planned", Reason: "Scene3D video surfaces need sampler, poster, and autoplay policy metadata"},
+	}
+}
+
+func videoVariants(path string) []Variant {
+	return []Variant{
+		{
+			URI:          siblingVariant(path, "", ".mp4"),
+			Kind:         "video",
+			Compression:  "h264-aac",
+			SourceAction: "video-transcode",
+		},
+		{
+			URI:          siblingVariant(path, "", ".webm"),
+			Kind:         "video",
+			Compression:  "vp9-opus",
+			SourceAction: "video-transcode",
+		},
+		{
+			URI:          siblingVariant(path, ".hls", ".m3u8"),
+			Kind:         "video",
+			Compression:  "hls",
+			SourceAction: "video-transcode",
+		},
+	}
+}
+
+func dataBufferActions() []Action {
+	return []Action{
+		{Name: "buffer-inventory", Status: "planned", Reason: "glTF and field-data buffers should be tracked for streaming and upload budgets"},
 	}
 }
 
@@ -574,6 +810,27 @@ func shaderActions() []Action {
 		{Name: "validate-wgsl", Status: "candidate", Reason: "custom WebGPU shader hooks should fail at build time"},
 		{Name: "reflect-bindings", Status: "candidate", Reason: "typed shader bindings make custom pipelines safer"},
 	}
+}
+
+func planShader(asset Asset, path string, opts Options) Asset {
+	data, err := readSmallFile(path, opts.MaxProbeBytes)
+	if err != nil {
+		asset.Warnings = append(asset.Warnings, err.Error())
+		asset.Actions = shaderActions()
+		return asset
+	}
+	info := inspectWGSL(data)
+	asset.Shader = &info
+	asset.Actions = shaderActions()
+	if len(info.EntryPoints) > 0 {
+		asset.Actions = append(asset.Actions, Action{
+			Name:   "shader-entrypoint-inventory",
+			Status: "ready",
+			Reason: "WGSL entry points were discovered during the low-memory probe",
+			Target: strings.Join(info.Stages, ","),
+		})
+	}
+	return asset
 }
 
 func siblingVariant(path, suffix, ext string) string {
@@ -697,6 +954,120 @@ func inspectGLTF(data []byte) (GLTFInfo, []string) {
 	return info, warnings
 }
 
+type htmlTextureManifestProbe struct {
+	Surfaces     []htmlTextureSurfaceProbe `json:"surfaces"`
+	Textures     []htmlTextureSurfaceProbe `json:"textures"`
+	HTMLTextures []htmlTextureSurfaceProbe `json:"htmlTextures"`
+	HTML         []htmlTextureSurfaceProbe `json:"html"`
+}
+
+type htmlTextureSurfaceProbe struct {
+	Width                 int               `json:"width"`
+	Height                int               `json:"height"`
+	TextureWidth          int               `json:"textureWidth"`
+	TextureHeight         int               `json:"textureHeight"`
+	MaxTexturePixels      int               `json:"maxTexturePixels"`
+	DirtyRegions          []json.RawMessage `json:"dirtyRegions"`
+	AccessibilityFallback json.RawMessage   `json:"accessibilityFallback"`
+	Fallback              json.RawMessage   `json:"fallback"`
+}
+
+func inspectHTMLTextureManifest(data []byte) (HTMLTextureManifestInfo, []string) {
+	var doc htmlTextureManifestProbe
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return HTMLTextureManifestInfo{}, []string{fmt.Sprintf("parse html texture manifest json: %v", err)}
+	}
+	entries := append([]htmlTextureSurfaceProbe{}, doc.Surfaces...)
+	entries = append(entries, doc.Textures...)
+	entries = append(entries, doc.HTMLTextures...)
+	entries = append(entries, doc.HTML...)
+	info := HTMLTextureManifestInfo{Surfaces: len(entries)}
+	for _, entry := range entries {
+		width := entry.TextureWidth
+		if width <= 0 {
+			width = entry.Width
+		}
+		height := entry.TextureHeight
+		if height <= 0 {
+			height = entry.Height
+		}
+		if width > 0 && height > 0 {
+			pixels := int64(width) * int64(height)
+			info.TexturePixels += pixels
+			info.TextureBytes += pixels * 4
+		}
+		if entry.MaxTexturePixels > 0 {
+			info.MaxTexturePixels += int64(entry.MaxTexturePixels)
+		}
+		info.DirtyRegionEntries += len(entry.DirtyRegions)
+		if len(entry.AccessibilityFallback) > 0 || len(entry.Fallback) > 0 {
+			info.AccessibilityFallbacks++
+		}
+	}
+	var warnings []string
+	if info.Surfaces == 0 {
+		warnings = append(warnings, "html texture manifest contains no surfaces")
+	}
+	return info, warnings
+}
+
+var (
+	wgslFunctionRE = regexp.MustCompile(`\bfn\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	wgslGroupRE    = regexp.MustCompile(`@group\(\s*([0-9]+)\s*\)`)
+	wgslBindingRE  = regexp.MustCompile(`@binding\(\s*([0-9]+)\s*\)`)
+)
+
+func inspectWGSL(data []byte) ShaderInfo {
+	text := string(data)
+	lines := strings.Split(text, "\n")
+	info := ShaderInfo{Lines: len(lines)}
+	stageSet := stringSet{}
+	entryNames := map[string]struct{}{}
+	pendingStage := ""
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if strings.Contains(line, "@vertex") {
+			pendingStage = "vertex"
+		}
+		if strings.Contains(line, "@fragment") {
+			pendingStage = "fragment"
+		}
+		if strings.Contains(line, "@compute") {
+			pendingStage = "compute"
+		}
+		if strings.Contains(line, "@workgroup_size") {
+			info.HasWorkgroupSize = true
+		}
+		match := wgslFunctionRE.FindStringSubmatch(line)
+		if len(match) == 2 {
+			name := match[1]
+			key := pendingStage + ":" + name
+			if _, ok := entryNames[key]; !ok {
+				entryNames[key] = struct{}{}
+				info.EntryPoints = append(info.EntryPoints, ShaderEntryPoint{Name: name, Stage: pendingStage})
+			}
+			if pendingStage != "" {
+				stageSet.add(pendingStage)
+				pendingStage = ""
+			}
+		}
+	}
+	info.Stages = sortedStrings(stageSet)
+	info.BindGroups = len(uniqueRegexMatches(wgslGroupRE, text))
+	info.Bindings = len(uniqueRegexMatches(wgslBindingRE, text))
+	return info
+}
+
+func uniqueRegexMatches(re *regexp.Regexp, text string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, match := range re.FindAllStringSubmatch(text, -1) {
+		if len(match) == 2 {
+			out[match[1]] = struct{}{}
+		}
+	}
+	return out
+}
+
 type stringSet map[string]struct{}
 
 func (s stringSet) add(value string) {
@@ -778,17 +1149,141 @@ func reportTotals(assets []Asset) Totals {
 			totals.KTX2++
 		case "texture":
 			totals.Texture++
+		case "basis-texture":
+			totals.BasisTexture++
 		case "environment":
 			totals.Environment++
 		case "audio":
 			totals.Audio++
+		case "video":
+			totals.Video++
+		case "data-buffer":
+			totals.DataBuffer++
 		case "usdz":
 			totals.USDZ++
 		case "shader":
 			totals.Shader++
+		case "html-texture-manifest":
+			totals.HTMLTextureManifest++
 		}
 	}
 	return totals
+}
+
+func reportBudget(assets []Asset) BudgetInfo {
+	var budget BudgetInfo
+	for _, asset := range assets {
+		switch asset.Kind {
+		case "glb", "gltf", "data-buffer":
+			budget.ModelBytes += asset.Bytes
+			budget.FirstFrameUploadBytes += asset.Bytes
+		case "ktx2", "texture", "basis-texture":
+			bytes := asset.Bytes
+			if asset.KTX2 != nil && asset.KTX2.Width > 0 && asset.KTX2.Height > 0 && !asset.KTX2.Compressed {
+				bytes = int64(asset.KTX2.Width) * int64(asset.KTX2.Height) * 4
+			}
+			budget.TextureBytes += bytes
+			budget.FirstFrameUploadBytes += bytes
+		case "environment":
+			if asset.Environment != nil {
+				budget.EnvironmentBytes += asset.Environment.EstimatedGeneratedBytes
+				budget.FirstFrameUploadBytes += asset.Environment.ExpectedFirstFrameUploadBytes
+			} else {
+				budget.EnvironmentBytes += asset.Bytes
+				budget.FirstFrameUploadBytes += asset.Bytes
+			}
+		case "html-texture-manifest":
+			if asset.HTML != nil {
+				budget.HTMLTextureBytes += asset.HTML.TextureBytes
+				budget.FirstFrameUploadBytes += asset.HTML.TextureBytes
+			}
+		case "shader":
+			budget.ShaderBytes += asset.Bytes
+			budget.FirstFrameUploadBytes += asset.Bytes
+		case "audio", "video":
+			budget.MediaBytes += asset.Bytes
+		}
+	}
+	budget.ExpectedGPUBytes = budget.ModelBytes + budget.TextureBytes + budget.EnvironmentBytes + budget.HTMLTextureBytes + budget.ShaderBytes
+	return budget
+}
+
+func reportDiagnostics(reportWarnings []string, assets []Asset) []Diagnostic {
+	var diagnostics []Diagnostic
+	for _, warning := range reportWarnings {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: "warning",
+			Code:     "asset-plan-warning",
+			Message:  warning,
+		})
+	}
+	for _, asset := range assets {
+		diagnostics = append(diagnostics, asset.Diagnostics...)
+	}
+	return diagnostics
+}
+
+func diagnosticsFromWarnings(path string, warnings []string) []Diagnostic {
+	if len(warnings) == 0 {
+		return nil
+	}
+	out := make([]Diagnostic, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, Diagnostic{
+			Severity: "warning",
+			Code:     diagnosticCodeForWarning(warning),
+			Path:     path,
+			Message:  warning,
+			Action:   diagnosticActionForWarning(warning),
+		})
+	}
+	return out
+}
+
+func diagnosticCodeForWarning(warning string) string {
+	switch {
+	case strings.Contains(warning, "html texture manifest"):
+		return "html-texture-manifest"
+	case strings.Contains(warning, "gltf"):
+		return "gltf-probe"
+	case strings.Contains(warning, "ktx2"):
+		return "ktx2-probe"
+	case strings.Contains(warning, errProbeTooLarge.Error()):
+		return "probe-too-large"
+	default:
+		return "asset-warning"
+	}
+}
+
+func diagnosticActionForWarning(warning string) string {
+	switch diagnosticCodeForWarning(warning) {
+	case "probe-too-large":
+		return "increase max probe bytes or use a manifest sidecar"
+	case "html-texture-manifest":
+		return "fix the HTML texture manifest before relying on dirty-region uploads"
+	case "gltf-probe":
+		return "validate the glTF/GLB asset before build"
+	case "ktx2-probe":
+		return "rebuild or re-export the KTX2 texture"
+	default:
+		return ""
+	}
+}
+
+func cubeMipBytes(size int, bytesPerPixel int64) int64 {
+	var pixels int64
+	for level := size; level > 0; level /= 2 {
+		pixels += int64(level) * int64(level)
+	}
+	return pixels * 6 * bytesPerPixel
+}
+
+func mipLevels(size int) int {
+	levels := 0
+	for level := size; level > 0; level /= 2 {
+		levels++
+	}
+	return levels
 }
 
 func ktx2FormatName(format int) string {

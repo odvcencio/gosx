@@ -675,10 +675,34 @@
     }) : [];
     bundle.html = Array.isArray(bundle.html) ? bundle.html.map(function(entry, index) {
       const item = entry && typeof entry === "object" ? entry : {};
+      const mode = normalizeSceneHTMLMode(item.mode, "dom");
+      const fallback = typeof item.fallback === "string" && item.fallback.trim()
+        ? item.fallback.trim()
+        : (mode === "texture" ? "dom-overlay" : "");
+      const fallbackReason = typeof item.fallbackReason === "string" && item.fallbackReason.trim()
+        ? item.fallbackReason.trim()
+        : (mode === "texture" ? "html-texture-manager-unavailable" : "");
+      const textureWidth = Math.max(0, Math.floor(sceneNumber(item.textureWidth, 0)));
+      const textureHeight = Math.max(0, Math.floor(sceneNumber(item.textureHeight, 0)));
+      const textureBytes = Math.max(0, Math.floor(sceneNumber(item.textureBytes, textureWidth * textureHeight * 4)));
+      const textureMaxBytes = Math.max(0, Math.floor(sceneNumber(item.textureMaxBytes, sceneNumber(item.maxTexturePixels, 0) * 4)));
       return {
         id: item.id || ("scene-html-" + index),
+        target: typeof item.target === "string" && item.target.trim() ? item.target.trim() : (typeof item.targetID === "string" ? item.targetID.trim() : ""),
+        mode,
         html: typeof item.html === "string" ? item.html : (typeof item.markup === "string" ? item.markup : ""),
         className: sceneLabelClassName(item),
+        fallback,
+        fallbackReason,
+        textureKey: typeof item.textureKey === "string" ? item.textureKey.trim() : "",
+        textureWidth,
+        textureHeight,
+        textureBytes,
+        textureMaxBytes,
+        textureOverBudget: sceneBool(item.textureOverBudget, textureMaxBytes > 0 && textureBytes > textureMaxBytes),
+        textureReady: sceneBool(item.textureReady, false),
+        surfaceWidth: Math.max(0, sceneNumber(item.surfaceWidth, 0)),
+        surfaceHeight: Math.max(0, sceneNumber(item.surfaceHeight, 0)),
         position: {
           x: sceneNumber(item.position && item.position.x, 0),
           y: sceneNumber(item.position && item.position.y, 0),
@@ -702,6 +726,20 @@
     bundle.colors = sceneFloatArray(bundle.colors);
     bundle.worldPositions = sceneFloatArray(bundle.worldPositions);
     bundle.worldColors = sceneFloatArray(bundle.worldColors);
+    bundle.surfaces = Array.isArray(bundle.surfaces) ? bundle.surfaces.map(function(surface, index) {
+      const item = surface && typeof surface === "object" ? surface : {};
+      return Object.assign({}, item, {
+        id: item.id || ("scene-surface-" + index),
+        sourceKind: typeof item.sourceKind === "string" ? item.sourceKind.trim() : "",
+        sourceID: typeof item.sourceID === "string" ? item.sourceID.trim() : "",
+        textureKey: typeof item.textureKey === "string" ? item.textureKey.trim() : "",
+        textureWidth: Math.max(0, Math.floor(sceneNumber(item.textureWidth, 0))),
+        textureHeight: Math.max(0, Math.floor(sceneNumber(item.textureHeight, 0))),
+        textureBytes: Math.max(0, Math.floor(sceneNumber(item.textureBytes, 0))),
+        textureMaxBytes: Math.max(0, Math.floor(sceneNumber(item.textureMaxBytes, 0))),
+        textureReady: sceneBool(item.textureReady, false),
+      });
+    }) : [];
     return bundle;
   }
 

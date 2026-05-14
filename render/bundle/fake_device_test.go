@@ -284,22 +284,40 @@ func (p *fakeComputePass) DispatchWorkgroups(x, y, z int) {
 func (p *fakeComputePass) End() { p.ended = true }
 
 type fakeRenderPass struct {
-	desc          gpu.RenderPassDesc
-	pipelineSet   bool
-	bindGroupSet  bool
-	vbufSets      int
-	draws         []fakeDraw
-	indirectDraws int
-	ended         bool
+	desc            gpu.RenderPassDesc
+	pipelineSet     bool
+	pipelineLabels  []string
+	bindGroupSet    bool
+	bindGroupLabels []string
+	vbufSets        int
+	vbufLabels      []string
+	draws           []fakeDraw
+	indirectDraws   int
+	ended           bool
 }
 
 type fakeDraw struct {
 	vertexCount, instanceCount, firstVertex, firstInstance int
 }
 
-func (p *fakeRenderPass) SetPipeline(gpu.RenderPipeline)             { p.pipelineSet = true }
-func (p *fakeRenderPass) SetBindGroup(int, gpu.BindGroup)            { p.bindGroupSet = true }
-func (p *fakeRenderPass) SetVertexBuffer(int, gpu.Buffer)            { p.vbufSets++ }
+func (p *fakeRenderPass) SetPipeline(pipeline gpu.RenderPipeline) {
+	p.pipelineSet = true
+	if fp, ok := pipeline.(*fakePipeline); ok {
+		p.pipelineLabels = append(p.pipelineLabels, fp.desc.Label)
+	}
+}
+func (p *fakeRenderPass) SetBindGroup(_ int, bg gpu.BindGroup) {
+	p.bindGroupSet = true
+	if fbg, ok := bg.(*fakeBindGroup); ok {
+		p.bindGroupLabels = append(p.bindGroupLabels, fbg.desc.Label)
+	}
+}
+func (p *fakeRenderPass) SetVertexBuffer(_ int, buf gpu.Buffer) {
+	p.vbufSets++
+	if fb, ok := buf.(*fakeBuffer); ok {
+		p.vbufLabels = append(p.vbufLabels, fb.label)
+	}
+}
 func (p *fakeRenderPass) SetIndexBuffer(gpu.Buffer, gpu.IndexFormat) {}
 func (p *fakeRenderPass) Draw(vc, ic, fv, fi int) {
 	p.draws = append(p.draws, fakeDraw{vc, ic, fv, fi})

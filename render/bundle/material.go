@@ -17,6 +17,8 @@ type materialFingerprint struct {
 	// so the type stays comparable with == and usable as a map key.
 	baseColorR, baseColorG, baseColorB, opacity uint16
 	metalness, roughness                        uint16
+	clearcoat, sheen, transmission, iridescence uint16
+	anisotropy                                  int16
 	emissiveR, emissiveG, emissiveB             uint16
 	emissiveStrength                            uint16
 	// textureURL: "" means no texture; the fallback 1×1 white is bound so
@@ -40,15 +42,16 @@ type materialFingerprint struct {
 
 // materialResources holds the GPU-side material record.
 type materialResources struct {
-	buf              gpu.Buffer
-	bindGroup        gpu.BindGroup
-	skinnedBindGroup gpu.BindGroup
+	buf               gpu.Buffer
+	bindGroup         gpu.BindGroup
+	skinnedBindGroup  gpu.BindGroup
+	surfaceBindGroups map[string]gpu.BindGroup
 }
 
 // materialUniformSize is the std140-aligned size of the WGSL Material struct.
-// Five vec4 records = 80 bytes (baseColor + pbrParams + emissive + two
-// texture-flag vectors covering baseColor/normal/roughness/metal/emissive).
-const materialUniformSize = 80
+// Seven vec4 records = 112 bytes (baseColor + pbrParams + emissive + two
+// texture-flag vectors + two physical-material vectors).
+const materialUniformSize = 112
 
 // resolveMaterialFingerprint picks the effective material for one instanced
 // mesh. Lookup prefers bundle.Materials[MaterialIndex]; out-of-range or
@@ -70,6 +73,11 @@ func defaultVertexColorMaterial() materialFingerprint {
 		opacity:          quantize(1),
 		metalness:        quantize(0.0),
 		roughness:        quantize(0.6),
+		clearcoat:        0,
+		sheen:            0,
+		transmission:     0,
+		iridescence:      0,
+		anisotropy:       0,
 		emissiveR:        0,
 		emissiveG:        0,
 		emissiveB:        0,
@@ -99,6 +107,11 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		opacity:          quantize(opacity),
 		metalness:        quantize(metal),
 		roughness:        quantize(rough),
+		clearcoat:        quantize(clamp01f(float32(mat.Clearcoat))),
+		sheen:            quantize(clamp01f(float32(mat.Sheen))),
+		transmission:     quantize(clamp01f(float32(mat.Transmission))),
+		iridescence:      quantize(clamp01f(float32(mat.Iridescence))),
+		anisotropy:       quantizeSignedUnit(float32(mat.Anisotropy)),
 		emissiveR:        quantize(base[0]),
 		emissiveG:        quantize(base[1]),
 		emissiveB:        quantize(base[2]),
@@ -143,6 +156,28 @@ func quantize(v float32) uint16 {
 }
 
 func dequantize(u uint16) float32 { return float32(u) / 1024 }
+
+func clamp01f(v float32) float32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func quantizeSignedUnit(v float32) int16 {
+	if v < -1 {
+		v = -1
+	}
+	if v > 1 {
+		v = 1
+	}
+	return int16(v * 1024)
+}
+
+func dequantizeSignedUnit(v int16) float32 { return float32(v) / 1024 }
 
 // ensureMaterial vends a (uniform-buffer, bind-group) pair for this
 // fingerprint, creating + uploading on cache miss. The bind group includes
@@ -192,46 +227,37 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 		return nil, fmt.Errorf("bundle: resolve emissive map: %w", err)
 	}
 
-	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout: r.litMaterialLayout,
-		Entries: []gpu.BindGroupEntry{
-			{Binding: 0, Buffer: buf, Size: materialUniformSize},
-			{Binding: 1, TextureView: tex.view},
-			{Binding: 2, Sampler: r.materialSampler},
-			{Binding: 3, TextureView: normalTex.view},
-			{Binding: 4, Sampler: r.materialSampler},
-			{Binding: 5, TextureView: roughTex.view},
-			{Binding: 6, TextureView: metalTex.view},
-			{Binding: 7, TextureView: emissiveTex.view},
-		},
-		Label: "bundle.material.bindgroup",
-	})
+	bg, err := r.createMaterialBindGroup(r.litMaterialLayout, buf, tex, normalTex, roughTex, metalTex, emissiveTex, "bundle.material.bindgroup")
 	if err != nil {
 		buf.Destroy()
 		return nil, fmt.Errorf("bundle: create material bind group: %w", err)
 	}
-	skinnedBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
-		Layout: r.skinnedLitMaterialLayout,
-		Entries: []gpu.BindGroupEntry{
-			{Binding: 0, Buffer: buf, Size: materialUniformSize},
-			{Binding: 1, TextureView: tex.view},
-			{Binding: 2, Sampler: r.materialSampler},
-			{Binding: 3, TextureView: normalTex.view},
-			{Binding: 4, Sampler: r.materialSampler},
-			{Binding: 5, TextureView: roughTex.view},
-			{Binding: 6, TextureView: metalTex.view},
-			{Binding: 7, TextureView: emissiveTex.view},
-		},
-		Label: "bundle.material.skinned.bindgroup",
-	})
+	skinnedBG, err := r.createMaterialBindGroup(r.skinnedLitMaterialLayout, buf, tex, normalTex, roughTex, metalTex, emissiveTex, "bundle.material.skinned.bindgroup")
 	if err != nil {
 		buf.Destroy()
 		bg.Destroy()
 		return nil, fmt.Errorf("bundle: create skinned material bind group: %w", err)
 	}
-	res := &materialResources{buf: buf, bindGroup: bg, skinnedBindGroup: skinnedBG}
+	res := &materialResources{buf: buf, bindGroup: bg, skinnedBindGroup: skinnedBG, surfaceBindGroups: make(map[string]gpu.BindGroup)}
 	r.materialCache[fp] = res
 	return res, nil
+}
+
+func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.Buffer, tex, normalTex, roughTex, metalTex, emissiveTex *textureResources, label string) (gpu.BindGroup, error) {
+	return r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: layout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: buf, Size: materialUniformSize},
+			{Binding: 1, TextureView: tex.view},
+			{Binding: 2, Sampler: r.materialSampler},
+			{Binding: 3, TextureView: normalTex.view},
+			{Binding: 4, Sampler: r.materialSampler},
+			{Binding: 5, TextureView: roughTex.view},
+			{Binding: 6, TextureView: metalTex.view},
+			{Binding: 7, TextureView: emissiveTex.view},
+		},
+		Label: label,
+	})
 }
 
 // materialUniformBytes encodes the Material struct layout expected by
@@ -242,6 +268,8 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 //	32..48  emissive      vec4 (rgba)
 //	48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
 //	64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
+//	80..96  physicalParams vec4 (clearcoat, sheen, transmission, iridescence)
+//	96..112 physicalParams2 vec4 (anisotropy, 0, 0, 0)
 func materialUniformBytes(fp materialFingerprint) []byte {
 	useVertex := float32(0)
 	if fp.useVertexColor {
@@ -264,6 +292,10 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		flag(fp.textureURL), flag(fp.normalURL), flag(fp.roughnessURL), flag(fp.metalnessURL),
 		// textureParams2 (hasEmissive, 0, 0, 0)
 		flag(fp.emissiveURL), 0, 0, 0,
+		// physicalParams (clearcoat, sheen, transmission, iridescence)
+		dequantize(fp.clearcoat), dequantize(fp.sheen), dequantize(fp.transmission), dequantize(fp.iridescence),
+		// physicalParams2 (anisotropy, 0, 0, 0)
+		dequantizeSignedUnit(fp.anisotropy), 0, 0, 0,
 	}
 	out := make([]byte, materialUniformSize)
 	copy(out[:len(values)*4], float32sToBytes(values))

@@ -188,6 +188,17 @@ const (
 	ShadowMaxPixels4096 = 4096 * 4096 // 16_777_216
 )
 
+// HTMLTextureMaxPixelsUnbounded opts out of per-surface HTML texture caps.
+const HTMLTextureMaxPixelsUnbounded = 1 << 30
+
+// Common HTML texture pixel caps. The default is 1024² pixels, matching the
+// default shadow-map cap and keeping each RGBA8 HTML surface near 4 MB.
+const (
+	HTMLTextureMaxPixels512  = 512 * 512
+	HTMLTextureMaxPixels1024 = 1024 * 1024
+	HTMLTextureMaxPixels2048 = 2048 * 2048
+)
+
 // Shadows configures scene-wide shadow map allocation policy. Individual
 // directional and spot lights still declare their own ShadowSize; this
 // struct caps how many pixels each of those shadow maps may actually
@@ -297,25 +308,27 @@ func (m Mesh) SpreadProps() map[string]any {
 
 // Points renders a particle system using GL_POINTS.
 type Points struct {
-	ID          string
-	Count       int       // number of particles
-	Positions   []Vector3 // per-particle positions
-	Sizes       []float64 // per-particle sizes (optional, default 1.0)
-	Colors      []string  // per-particle hex colors (optional)
-	Color       string    // uniform color if no per-vertex colors
-	Style       PointStyle
-	Size        float64 // uniform size if no per-vertex sizes
-	Opacity     float64 // 0-1
-	BlendMode   MaterialBlendMode
-	DepthWrite  bool    // whether to write to depth buffer
-	Attenuation bool    // size scales with distance
-	Position    Vector3 // transform position
-	Rotation    Euler   // transform rotation
-	Spin        Euler   // procedural rotation animation
-	Transition  Transition
-	InState     *PointsProps
-	OutState    *PointsProps
-	Live        []string
+	ID           string
+	Count        int       // number of particles
+	Positions    []Vector3 // per-particle positions
+	Sizes        []float64 // per-particle sizes (optional, default 1.0)
+	Colors       []string  // per-particle hex colors (optional)
+	Color        string    // uniform color if no per-vertex colors
+	Style        PointStyle
+	Size         float64 // uniform size if no per-vertex sizes
+	MinPixelSize float64 // optional screen-space floor for point sprites
+	MaxPixelSize float64 // optional screen-space cap for attenuated points
+	Opacity      float64 // 0-1
+	BlendMode    MaterialBlendMode
+	DepthWrite   bool    // whether to write to depth buffer
+	Attenuation  bool    // size scales with distance
+	Position     Vector3 // transform position
+	Rotation     Euler   // transform rotation
+	Spin         Euler   // procedural rotation animation
+	Transition   Transition
+	InState      *PointsProps
+	OutState     *PointsProps
+	Live         []string
 }
 
 // InstancedMesh renders N copies of one geometry with per-instance transforms.
@@ -466,6 +479,75 @@ type Sprite struct {
 	InState    *SpriteProps
 	OutState   *SpriteProps
 	Live       []string
+}
+
+type HTMLMode string
+
+const (
+	HTMLDOM     HTMLMode = "dom"
+	HTMLTexture HTMLMode = "texture"
+)
+
+// HTML lowers into a DOM-backed Scene3D overlay projected from world space.
+type HTML struct {
+	ID               string
+	Target           string
+	Mode             HTMLMode
+	Markup           string
+	ClassName        string
+	Fallback         string
+	FallbackReason   string
+	TextureKey       string
+	TextureWidth     int
+	TextureHeight    int
+	MaxTexturePixels int
+	SurfaceWidth     float64
+	SurfaceHeight    float64
+	Position         Vector3
+	Priority         float64
+	Shift            Vector3
+	DriftSpeed       float64
+	DriftPhase       float64
+	Width            float64
+	Height           float64
+	Scale            float64
+	Opacity          float64
+	OffsetX          float64
+	OffsetY          float64
+	AnchorX          float64
+	AnchorY          float64
+	Occlude          bool
+	PointerEvents    string
+	Transition       Transition
+	Live             []string
+}
+
+// HTMLSurface declares a texture-mode HTML surface. Until the native texture
+// manager lands, it lowers as an explicit DOM overlay fallback with mode kept
+// in SceneIR so runtimes and tooling can diagnose the degradation.
+type HTMLSurface struct {
+	ID               string
+	Target           string
+	Markup           string
+	ClassName        string
+	Position         Vector3
+	SurfaceWidth     float64
+	SurfaceHeight    float64
+	Width            float64
+	Height           float64
+	TextureKey       string
+	TextureWidth     int
+	TextureHeight    int
+	MaxTexturePixels int
+	Scale            float64
+	Priority         float64
+	Opacity          float64
+	AnchorX          float64
+	AnchorY          float64
+	Occlude          bool
+	PointerEvents    string
+	Transition       Transition
+	Live             []string
 }
 
 // Model instances a framework-owned scene model asset with a transform and
@@ -879,6 +961,11 @@ type pendingSprite struct {
 	parent worldTransform
 }
 
+type pendingHTML struct {
+	html   HTML
+	parent worldTransform
+}
+
 type graphLowerer struct {
 	objects            []ObjectIR
 	models             []ModelIR
@@ -889,11 +976,13 @@ type graphLowerer struct {
 	animations         []AnimationClipIR
 	pending            []pendingLabel
 	pendingSprites     []pendingSprite
+	pendingHTML        []pendingHTML
 	lights             []LightIR
 	anchors            map[string]worldTransform
 	nextObjectID       int
 	nextLabelID        int
 	nextSpriteID       int
+	nextHTMLID         int
 	nextLightID        int
 	nextModelID        int
 	nextPointsID       int
@@ -912,6 +1001,8 @@ func (InstancedGLBMesh) sceneNode()  {}
 func (ComputeParticles) sceneNode()  {}
 func (Label) sceneNode()             {}
 func (Sprite) sceneNode()            {}
+func (HTML) sceneNode()              {}
+func (HTMLSurface) sceneNode()       {}
 func (Model) sceneNode()             {}
 func (AmbientLight) sceneNode()      {}
 func (DirectionalLight) sceneNode()  {}
@@ -1479,6 +1570,18 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		if current != nil {
 			l.pendingSprites = append(l.pendingSprites, pendingSprite{sprite: *current, parent: parent})
 		}
+	case HTML:
+		l.pendingHTML = append(l.pendingHTML, pendingHTML{html: current, parent: parent})
+	case *HTML:
+		if current != nil {
+			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: *current, parent: parent})
+		}
+	case HTMLSurface:
+		l.pendingHTML = append(l.pendingHTML, pendingHTML{html: htmlSurfaceFallback(current), parent: parent})
+	case *HTMLSurface:
+		if current != nil {
+			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: htmlSurfaceFallback(*current), parent: parent})
+		}
 	case Model:
 		l.lowerModel(current, parent)
 	case *Model:
@@ -1570,6 +1673,77 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 			l.lowerTransformControls(*current, parent)
 		}
 	}
+}
+
+func htmlSurfaceFallback(surface HTMLSurface) HTML {
+	textureWidth, textureHeight := htmlSurfaceTextureSize(surface)
+	surfaceWidth, surfaceHeight := htmlSurfaceWorldSize(surface, textureWidth, textureHeight)
+	return HTML{
+		ID:               surface.ID,
+		Target:           surface.Target,
+		Mode:             HTMLTexture,
+		Markup:           surface.Markup,
+		ClassName:        surface.ClassName,
+		Fallback:         "dom-overlay",
+		FallbackReason:   "html-texture-manager-unavailable",
+		TextureKey:       strings.TrimSpace(surface.TextureKey),
+		TextureWidth:     textureWidth,
+		TextureHeight:    textureHeight,
+		MaxTexturePixels: surface.MaxTexturePixels,
+		SurfaceWidth:     surfaceWidth,
+		SurfaceHeight:    surfaceHeight,
+		Position:         surface.Position,
+		Priority:         surface.Priority,
+		Width:            surfaceWidth,
+		Height:           surfaceHeight,
+		Scale:            surface.Scale,
+		Opacity:          surface.Opacity,
+		AnchorX:          surface.AnchorX,
+		AnchorY:          surface.AnchorY,
+		Occlude:          surface.Occlude,
+		PointerEvents:    surface.PointerEvents,
+		Transition:       surface.Transition,
+		Live:             surface.Live,
+	}
+}
+
+func htmlSurfaceTextureSize(surface HTMLSurface) (int, int) {
+	width := surface.TextureWidth
+	if width <= 0 && surface.Width > 0 {
+		width = int(math.Round(surface.Width))
+	}
+	if width <= 0 {
+		width = 512
+	}
+	height := surface.TextureHeight
+	if height <= 0 && surface.Height > 0 {
+		height = int(math.Round(surface.Height))
+	}
+	if height <= 0 {
+		height = 320
+	}
+	return width, height
+}
+
+func htmlSurfaceWorldSize(surface HTMLSurface, textureWidth, textureHeight int) (float64, float64) {
+	width := surface.SurfaceWidth
+	if width <= 0 && surface.Width > 0 && surface.Width <= 16 {
+		width = surface.Width
+	}
+	if width <= 0 {
+		width = 1.8
+	}
+	height := surface.SurfaceHeight
+	if height <= 0 && surface.Height > 0 && surface.Height <= 16 {
+		height = surface.Height
+	}
+	if height <= 0 && textureWidth > 0 && textureHeight > 0 {
+		height = width * float64(textureHeight) / float64(textureWidth)
+	}
+	if height <= 0 {
+		height = 0.72
+	}
+	return width, height
 }
 
 func (l *graphLowerer) lowerGroup(group Group, parent worldTransform) {
@@ -1885,22 +2059,24 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		id = "scene-points-" + intString(l.nextPointsID)
 	}
 	record := PointsIR{
-		ID:          id,
-		Count:       pts.Count,
-		Color:       strings.TrimSpace(pts.Color),
-		Style:       strings.TrimSpace(string(pts.Style)),
-		Size:        pts.Size,
-		Opacity:     pts.Opacity,
-		BlendMode:   strings.TrimSpace(string(pts.BlendMode)),
-		DepthWrite:  Bool(pts.DepthWrite),
-		Attenuation: pts.Attenuation,
-		X:           world.Position.X,
-		Y:           world.Position.Y,
-		Z:           world.Position.Z,
-		Transition:  lowerTransition(pts.Transition),
-		InState:     pts.InState.legacyProps(),
-		OutState:    pts.OutState.legacyProps(),
-		Live:        normalizeLive(pts.Live),
+		ID:           id,
+		Count:        pts.Count,
+		Color:        strings.TrimSpace(pts.Color),
+		Style:        strings.TrimSpace(string(pts.Style)),
+		Size:         pts.Size,
+		MinPixelSize: pts.MinPixelSize,
+		MaxPixelSize: pts.MaxPixelSize,
+		Opacity:      pts.Opacity,
+		BlendMode:    strings.TrimSpace(string(pts.BlendMode)),
+		DepthWrite:   Bool(pts.DepthWrite),
+		Attenuation:  pts.Attenuation,
+		X:            world.Position.X,
+		Y:            world.Position.Y,
+		Z:            world.Position.Z,
+		Transition:   lowerTransition(pts.Transition),
+		InState:      pts.InState.legacyProps(),
+		OutState:     pts.OutState.legacyProps(),
+		Live:         normalizeLive(pts.Live),
 	}
 	rotation := eulerFromQuaternion(world.Rotation)
 	record.RotationX = rotation.X
@@ -1951,11 +2127,17 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 	}
 	// Apply geometry dimensions.
 	if geometryProps != nil {
+		record.Size = mapFloat64(geometryProps["size"])
 		record.Width = mapFloat64(geometryProps["width"])
 		record.Height = mapFloat64(geometryProps["height"])
 		record.Depth = mapFloat64(geometryProps["depth"])
 		record.Radius = mapFloat64(geometryProps["radius"])
+		record.RadiusTop = mapFloat64(geometryProps["radiusTop"])
+		record.RadiusBottom = mapFloat64(geometryProps["radiusBottom"])
+		record.Tube = mapFloat64(geometryProps["tube"])
 		record.Segments = mapInt(geometryProps["segments"])
+		record.RadialSegments = mapInt(geometryProps["radialSegments"])
+		record.TubularSegments = mapInt(geometryProps["tubularSegments"])
 	}
 	// Apply material kind.
 	if materialProps != nil {
@@ -2240,6 +2422,19 @@ func (l *graphLowerer) resolveSprites() []SpriteIR {
 	return out
 }
 
+func (l *graphLowerer) resolveHTML() []HTMLIR {
+	if len(l.pendingHTML) == 0 {
+		return nil
+	}
+	out := make([]HTMLIR, 0, len(l.pendingHTML))
+	for _, item := range l.pendingHTML {
+		if record, ok := l.resolveHTMLNode(item); ok {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
 func (l *graphLowerer) lowerAmbientLight(light AmbientLight) {
 	l.lights = append(l.lights, LightIR{
 		ID:         l.nextSceneLightID("ambient-light", light.ID),
@@ -2487,6 +2682,54 @@ func (l *graphLowerer) resolveSprite(item pendingSprite) (SpriteIR, bool) {
 	}, true
 }
 
+func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
+	markup := strings.TrimSpace(item.html.Markup)
+	if markup == "" {
+		return HTMLIR{}, false
+	}
+	position := l.resolveAnchoredPosition(item.parent, item.html.Target, item.html.Position)
+	mode := strings.TrimSpace(string(item.html.Mode))
+	if mode == "" {
+		mode = string(HTMLDOM)
+	}
+	return HTMLIR{
+		ID:               l.nextSceneHTMLID(item.html.ID),
+		Target:           strings.TrimSpace(item.html.Target),
+		Mode:             mode,
+		HTML:             markup,
+		ClassName:        strings.TrimSpace(item.html.ClassName),
+		Fallback:         strings.TrimSpace(item.html.Fallback),
+		FallbackReason:   strings.TrimSpace(item.html.FallbackReason),
+		TextureKey:       strings.TrimSpace(item.html.TextureKey),
+		TextureWidth:     item.html.TextureWidth,
+		TextureHeight:    item.html.TextureHeight,
+		MaxTexturePixels: item.html.MaxTexturePixels,
+		SurfaceWidth:     item.html.SurfaceWidth,
+		SurfaceHeight:    item.html.SurfaceHeight,
+		X:                position.X,
+		Y:                position.Y,
+		Z:                position.Z,
+		Priority:         item.html.Priority,
+		ShiftX:           item.html.Shift.X,
+		ShiftY:           item.html.Shift.Y,
+		ShiftZ:           item.html.Shift.Z,
+		DriftSpeed:       item.html.DriftSpeed,
+		DriftPhase:       item.html.DriftPhase,
+		Width:            item.html.Width,
+		Height:           item.html.Height,
+		Scale:            item.html.Scale,
+		Opacity:          item.html.Opacity,
+		OffsetX:          item.html.OffsetX,
+		OffsetY:          item.html.OffsetY,
+		AnchorX:          item.html.AnchorX,
+		AnchorY:          item.html.AnchorY,
+		Occlude:          item.html.Occlude,
+		PointerEvents:    strings.TrimSpace(item.html.PointerEvents),
+		Transition:       lowerTransition(item.html.Transition),
+		Live:             normalizeLive(item.html.Live),
+	}, true
+}
+
 func (l *graphLowerer) resolveLabelPosition(item pendingLabel) Vector3 {
 	return l.resolveAnchoredPosition(item.parent, item.label.Target, item.label.Position)
 }
@@ -2520,6 +2763,15 @@ func (l *graphLowerer) nextSceneSpriteID(raw string) string {
 	}
 	l.nextSpriteID += 1
 	return "scene-sprite-" + intString(l.nextSpriteID)
+}
+
+func (l *graphLowerer) nextSceneHTMLID(raw string) string {
+	id := strings.TrimSpace(raw)
+	if id != "" {
+		return id
+	}
+	l.nextHTMLID += 1
+	return "scene-html-" + intString(l.nextHTMLID)
 }
 
 func (l *graphLowerer) nextSceneLightID(prefix, raw string) string {

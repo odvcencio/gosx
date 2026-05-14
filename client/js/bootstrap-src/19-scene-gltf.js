@@ -509,8 +509,8 @@
   var GLTF_POINT_EXTRA_KEYS = [
     "id", "material", "color", "style", "size", "opacity", "blendMode",
     "depthWrite", "attenuation", "x", "y", "z", "rotationX", "rotationY",
-    "rotationZ", "spinX", "spinY", "spinZ", "transition", "inState",
-    "outState", "live",
+    "rotationZ", "spinX", "spinY", "spinZ", "minPixelSize", "maxPixelSize",
+    "transition", "inState", "outState", "live",
   ];
 
   var GLTF_OBJECT_EXTRA_KEYS = [

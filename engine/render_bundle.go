@@ -128,40 +128,60 @@ type RenderPoints struct {
 
 // RenderMaterial is a resolved material profile for a draw bundle.
 type RenderMaterial struct {
-	Key          string    `json:"key,omitempty"`
-	Kind         string    `json:"kind,omitempty"`
-	Color        string    `json:"color,omitempty"`
-	Texture      string    `json:"texture,omitempty"`
-	Opacity      float64   `json:"opacity,omitempty"`
-	Wireframe    bool      `json:"wireframe,omitempty"`
-	BlendMode    string    `json:"blendMode,omitempty"`
-	RenderPass   string    `json:"renderPass,omitempty"`
-	ShaderData   []float64 `json:"shaderData,omitempty"`
-	Emissive     float64   `json:"emissive,omitempty"`
-	Roughness    float64   `json:"roughness,omitempty"`
-	Metalness    float64   `json:"metalness,omitempty"`
-	NormalMap    string    `json:"normalMap,omitempty"`
-	RoughnessMap string    `json:"roughnessMap,omitempty"`
-	MetalnessMap string    `json:"metalnessMap,omitempty"`
-	EmissiveMap  string    `json:"emissiveMap,omitempty"`
-	Unlit        bool      `json:"unlit,omitempty"`
+	Key                string         `json:"key,omitempty"`
+	Kind               string         `json:"kind,omitempty"`
+	Color              string         `json:"color,omitempty"`
+	Texture            string         `json:"texture,omitempty"`
+	Opacity            float64        `json:"opacity,omitempty"`
+	Wireframe          bool           `json:"wireframe,omitempty"`
+	BlendMode          string         `json:"blendMode,omitempty"`
+	RenderPass         string         `json:"renderPass,omitempty"`
+	ShaderData         []float64      `json:"shaderData,omitempty"`
+	Emissive           float64        `json:"emissive,omitempty"`
+	Roughness          float64        `json:"roughness,omitempty"`
+	Metalness          float64        `json:"metalness,omitempty"`
+	Clearcoat          float64        `json:"clearcoat,omitempty"`
+	Sheen              float64        `json:"sheen,omitempty"`
+	Transmission       float64        `json:"transmission,omitempty"`
+	Iridescence        float64        `json:"iridescence,omitempty"`
+	Anisotropy         float64        `json:"anisotropy,omitempty"`
+	NormalMap          string         `json:"normalMap,omitempty"`
+	RoughnessMap       string         `json:"roughnessMap,omitempty"`
+	MetalnessMap       string         `json:"metalnessMap,omitempty"`
+	EmissiveMap        string         `json:"emissiveMap,omitempty"`
+	CustomVertex       string         `json:"customVertex,omitempty"`
+	CustomFragment     string         `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
+	Unlit              bool           `json:"unlit,omitempty"`
 }
 
 // RenderSurface is a textured world-space quad emitted alongside line geometry.
 type RenderSurface struct {
-	ID            string       `json:"id,omitempty"`
-	Kind          string       `json:"kind,omitempty"`
-	MaterialIndex int          `json:"materialIndex,omitempty"`
-	RenderPass    string       `json:"renderPass,omitempty"`
-	Static        bool         `json:"static,omitempty"`
-	Positions     []float64    `json:"positions,omitempty"`
-	UV            []float64    `json:"uv,omitempty"`
-	VertexCount   int          `json:"vertexCount,omitempty"`
-	Bounds        RenderBounds `json:"bounds,omitempty"`
-	DepthNear     float64      `json:"depthNear,omitempty"`
-	DepthFar      float64      `json:"depthFar,omitempty"`
-	DepthCenter   float64      `json:"depthCenter,omitempty"`
-	ViewCulled    bool         `json:"viewCulled,omitempty"`
+	ID              string       `json:"id,omitempty"`
+	Kind            string       `json:"kind,omitempty"`
+	SourceKind      string       `json:"sourceKind,omitempty"`
+	SourceID        string       `json:"sourceID,omitempty"`
+	TextureKey      string       `json:"textureKey,omitempty"`
+	TextureWidth    int          `json:"textureWidth,omitempty"`
+	TextureHeight   int          `json:"textureHeight,omitempty"`
+	TextureBytes    int          `json:"textureBytes,omitempty"`
+	TextureMaxBytes int          `json:"textureMaxBytes,omitempty"`
+	TextureReady    bool         `json:"textureReady,omitempty"`
+	Fallback        string       `json:"fallback,omitempty"`
+	FallbackReason  string       `json:"fallbackReason,omitempty"`
+	MaterialIndex   int          `json:"materialIndex,omitempty"`
+	RenderPass      string       `json:"renderPass,omitempty"`
+	Static          bool         `json:"static,omitempty"`
+	Positions       []float64    `json:"positions,omitempty"`
+	UV              []float64    `json:"uv,omitempty"`
+	VertexCount     int          `json:"vertexCount,omitempty"`
+	Bounds          RenderBounds `json:"bounds,omitempty"`
+	DepthNear       float64      `json:"depthNear,omitempty"`
+	DepthFar        float64      `json:"depthFar,omitempty"`
+	DepthCenter     float64      `json:"depthCenter,omitempty"`
+	ViewCulled      bool         `json:"viewCulled,omitempty"`
 }
 
 // RenderBounds is a world-space axis-aligned bounds record for a render object.
@@ -230,6 +250,7 @@ type RenderAnimationChannel struct {
 // RenderPostEffect describes a post-processing effect applied after scene rendering.
 type RenderPostEffect struct {
 	Kind      string             `json:"kind"`
+	Mode      string             `json:"mode,omitempty"`
 	Intensity float64            `json:"intensity,omitempty"`
 	Threshold float64            `json:"threshold,omitempty"`
 	Radius    float64            `json:"radius,omitempty"`
@@ -237,22 +258,43 @@ type RenderPostEffect struct {
 	Params    map[string]float64 `json:"params,omitempty"`
 }
 
+// RenderDiagnostic describes an explicit renderer/backend decision surfaced to
+// development tools and headless tests.
+type RenderDiagnostic struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Backend  string `json:"backend,omitempty"`
+	Target   string `json:"target,omitempty"`
+}
+
 // RenderInstancedMesh is a GPU-ready instanced mesh entry for the render bundle.
 type RenderInstancedMesh struct {
-	ID            string               `json:"id,omitempty"`
-	Kind          string               `json:"kind"`
-	MaterialIndex int                  `json:"materialIndex"`
-	VertexCount   int                  `json:"vertexCount"`
-	InstanceCount int                  `json:"instanceCount"`
-	Transforms    []float64            `json:"transforms"`
-	Colors        []float64            `json:"colors,omitempty"`
-	Attributes    map[string][]float64 `json:"attributes,omitempty"`
-	SkinID        string               `json:"skinID,omitempty"`
-	JointIndices  []uint32             `json:"jointIndices,omitempty"`
-	Weights       []float64            `json:"weights,omitempty"`
-	BindPose      []float64            `json:"bindPose,omitempty"`
-	CastShadow    bool                 `json:"castShadow,omitempty"`
-	ReceiveShadow bool                 `json:"receiveShadow,omitempty"`
+	ID              string               `json:"id,omitempty"`
+	Kind            string               `json:"kind"`
+	Size            float64              `json:"size,omitempty"`
+	Width           float64              `json:"width,omitempty"`
+	Height          float64              `json:"height,omitempty"`
+	Depth           float64              `json:"depth,omitempty"`
+	Radius          float64              `json:"radius,omitempty"`
+	RadiusTop       float64              `json:"radiusTop,omitempty"`
+	RadiusBottom    float64              `json:"radiusBottom,omitempty"`
+	Tube            float64              `json:"tube,omitempty"`
+	Segments        int                  `json:"segments,omitempty"`
+	RadialSegments  int                  `json:"radialSegments,omitempty"`
+	TubularSegments int                  `json:"tubularSegments,omitempty"`
+	MaterialIndex   int                  `json:"materialIndex"`
+	VertexCount     int                  `json:"vertexCount"`
+	InstanceCount   int                  `json:"instanceCount"`
+	Transforms      []float64            `json:"transforms"`
+	Colors          []float64            `json:"colors,omitempty"`
+	Attributes      map[string][]float64 `json:"attributes,omitempty"`
+	SkinID          string               `json:"skinID,omitempty"`
+	JointIndices    []uint32             `json:"jointIndices,omitempty"`
+	Weights         []float64            `json:"weights,omitempty"`
+	BindPose        []float64            `json:"bindPose,omitempty"`
+	CastShadow      bool                 `json:"castShadow,omitempty"`
+	ReceiveShadow   bool                 `json:"receiveShadow,omitempty"`
 }
 
 // RenderParticleEmitter describes an emitter for the render bundle particle system.
@@ -331,4 +373,5 @@ type RenderBundle struct {
 	Animations       []RenderAnimation        `json:"animations,omitempty"`
 	PostEffects      []RenderPostEffect       `json:"postEffects,omitempty"`
 	PostFXMaxPixels  int                      `json:"postFXMaxPixels,omitempty"`
+	Diagnostics      []RenderDiagnostic       `json:"diagnostics,omitempty"`
 }
