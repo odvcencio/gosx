@@ -2258,6 +2258,7 @@ func TestPropsSceneIRLowersComputeParticles(t *testing.T) {
 					Arms:     4,
 					Wind:     0.3,
 					Scatter:  0.15,
+					Once:     true,
 				},
 				Forces: []ParticleForce{
 					{
@@ -2321,6 +2322,9 @@ func TestPropsSceneIRLowersComputeParticles(t *testing.T) {
 	}
 	if cp.Emitter.Scatter != 0.15 {
 		t.Fatalf("expected emitter scatter 0.15, got %v", cp.Emitter.Scatter)
+	}
+	if !cp.Emitter.Once {
+		t.Fatalf("expected one-shot emitter")
 	}
 	if cp.Material.Style != "focus" {
 		t.Fatalf("expected material style focus, got %q", cp.Material.Style)
@@ -2386,6 +2390,13 @@ func TestPropsSceneIRLowersComputeParticles(t *testing.T) {
 	}
 	if got := particles[0]["id"]; got != "galaxy" {
 		t.Fatalf("expected id in legacy props, got %#v", got)
+	}
+	emitter, ok := particles[0]["emitter"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected compute emitter record, got %#v", particles[0]["emitter"])
+	}
+	if got := emitter["once"]; got != true {
+		t.Fatalf("expected compute emitter once in legacy props, got %#v", got)
 	}
 	material, ok := particles[0]["material"].(map[string]any)
 	if !ok {

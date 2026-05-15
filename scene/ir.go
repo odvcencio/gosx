@@ -325,6 +325,7 @@ type IRParticleEmitter struct {
 	Arms      int     `json:"arms,omitempty"`
 	Wind      float64 `json:"wind,omitempty"`
 	Scatter   float64 `json:"scatter,omitempty"`
+	Once      bool    `json:"once,omitempty"`
 }
 
 type IRParticleForce struct {
@@ -1196,6 +1197,7 @@ func emitterToIR(emitter ParticleEmitterIR) IRParticleEmitter {
 		Arms:      emitter.Arms,
 		Wind:      emitter.Wind,
 		Scatter:   emitter.Scatter,
+		Once:      emitter.Once,
 	}
 }
 

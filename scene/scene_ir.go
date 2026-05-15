@@ -479,6 +479,7 @@ type ParticleEmitterIR struct {
 	Arms      int     `json:"arms,omitempty"`
 	Wind      float64 `json:"wind,omitempty"`
 	Scatter   float64 `json:"scatter,omitempty"`
+	Once      bool    `json:"once,omitempty"`
 }
 
 // ParticleForceIR describes one force acting on a GPU particle system.
@@ -1098,6 +1099,9 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 	setNumeric(emitter, "spinX", item.Emitter.SpinX)
 	setNumeric(emitter, "spinY", item.Emitter.SpinY)
 	setNumeric(emitter, "spinZ", item.Emitter.SpinZ)
+	if item.Emitter.Once {
+		emitter["once"] = true
+	}
 	record["emitter"] = emitter
 	if len(item.Forces) > 0 {
 		forces := make([]map[string]any, 0, len(item.Forces))

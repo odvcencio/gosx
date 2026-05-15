@@ -28,7 +28,7 @@
     "    emitterRadius: f32,",
     "    emitterRate: f32,",
     "    emitterLifetime: f32,",
-    "    _pad1: u32,",
+    "    emitterOnce: u32,",
     "    emitterArms: u32,",
     "    emitterWind: f32,",
     "    emitterScatter: f32,",
@@ -39,7 +39,7 @@
     "    colorEndR: f32, colorEndG: f32, colorEndB: f32,",
     "    opacityStart: f32, opacityEnd: f32,",
     "    forceCount: u32,",
-    "    _pad3: u32,",
+    "    bounds: f32,",
     "};",
     "",
     "struct Force {",
@@ -150,18 +150,27 @@
     "",
     "fn particleLifetime(index: u32, p: SimParams) -> f32 {",
     "    let base = max(p.emitterLifetime, 0.001);",
-    "    return base * (0.72 + hash2(index, 44u) * 0.66);",
+    "    return base * (0.64 + hash2(index, 44u) * 0.92);",
     "}",
     "",
     "fn particleDelay(index: u32, p: SimParams) -> f32 {",
     "    let base = max(p.emitterLifetime, 0.001);",
+    "    if (p.emitterOnce != 0u) {",
+    "        return pow(hash2(index, 47u), 1.8) * max(0.08, base * 0.12);",
+    "    }",
     "    var window = base;",
     "    if (p.emitterRate > 0.001) {",
     "        window = max(base * 0.35, f32(p.count) / p.emitterRate);",
     "    }",
-    "    let wave = floor(hash2(index, 46u) * 4.0) / 4.0;",
-    "    let jitter = hash2(index, 47u) * 0.22;",
+    "    let wave = floor(hash2(index, 46u) * 5.0) / 5.0;",
+    "    let jitter = pow(hash2(index, 47u), 2.2) * 0.18;",
     "    return min(window, (wave + jitter) * window);",
+    "}",
+    "",
+    "fn particleEnvelope(t: f32) -> f32 {",
+    "    let born = smoothstep(0.0, 0.11, t);",
+    "    let spent = 1.0 - smoothstep(0.66, 1.0, t);",
+    "    return born * spent;",
     "}",
     "",
     "fn makeDormant(index: u32, p: SimParams) -> Particle {",
@@ -170,6 +179,15 @@
     "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
     "    out.age = -particleDelay(index, p);",
     "    out.lifetime = particleLifetime(index, p);",
+    "    return out;",
+    "}",
+    "",
+    "fn makeFinished(index: u32) -> Particle {",
+    "    var out: Particle;",
+    "    out.posX = 0.0; out.posY = 0.0; out.posZ = 0.0;",
+    "    out.velX = 0.0; out.velY = 0.0; out.velZ = 0.0;",
+    "    out.age = -1.0;",
+    "    out.lifetime = -1.0;",
     "    return out;",
     "}",
     "",
@@ -228,6 +246,10 @@
     "    var p = particles[i];",
     "",
     "    if (p.age < 0.0) {",
+    "        if (params.emitterOnce != 0u && p.lifetime < -0.5) {",
+    "            writeDormant(i, p);",
+    "            return;",
+    "        }",
     "        if (p.lifetime <= 0.0) {",
     "            p = emitParticle(i, params);",
     "        } else {",
@@ -243,6 +265,11 @@
     "    p.age += params.deltaTime;",
     "",
     "    if (p.lifetime > 0.0 && p.age >= p.lifetime) {",
+    "        if (params.emitterOnce != 0u) {",
+    "            p = makeFinished(i);",
+    "            writeDormant(i, p);",
+    "            return;",
+    "        }",
     "        p = makeDormant(i, params);",
     "        p.age += params.deltaTime;",
     "        if (p.age < 0.0) {",
@@ -269,6 +296,12 @@
     "    p.posY += p.velY * params.deltaTime;",
     "    p.posZ += p.velZ * params.deltaTime;",
     "",
+    "    if (params.emitterOnce != 0u && params.bounds > 0.0 && length(vec3<f32>(p.posX, p.posY, p.posZ)) > params.bounds) {",
+    "        p = makeFinished(i);",
+    "        writeDormant(i, p);",
+    "        return;",
+    "    }",
+    "",
     "    particles[i] = p;",
     "",
     "    let t = clamp(select(p.age / p.lifetime, 0.0, p.lifetime <= 0.0), 0.0, 1.0);",
@@ -280,7 +313,7 @@
     "    rv.r = mix(params.colorStartR, params.colorEndR, t);",
     "    rv.g = mix(params.colorStartG, params.colorEndG, t);",
     "    rv.b = mix(params.colorStartB, params.colorEndB, t);",
-    "    rv.a = mix(params.opacityStart, params.opacityEnd, t);",
+    "    rv.a = mix(params.opacityStart, params.opacityEnd, t) * particleEnvelope(t);",
     "    renderData[i] = rv;",
     "}",
   ].join("\n");
@@ -446,7 +479,7 @@
     view.setFloat32(offset, sceneNumber(emitter.radius, 0), true); offset += 4;
     view.setFloat32(offset, sceneNumber(emitter.rate, 0), true); offset += 4;
     view.setFloat32(offset, sceneNumber(emitter.lifetime, 0), true); offset += 4;
-    view.setUint32(offset, 0, true); offset += 4;                     // _pad1
+    view.setUint32(offset, emitter.once === true ? 1 : 0, true); offset += 4;
 
     view.setUint32(offset, sceneNumber(emitter.arms, 2), true); offset += 4;
     view.setFloat32(offset, sceneNumber(emitter.wind, 0), true); offset += 4;
@@ -470,7 +503,7 @@
 
     // Force count
     view.setUint32(offset, forces.length, true); offset += 4;
-    view.setUint32(offset, 0, true); offset += 4;                     // _pad3
+    view.setFloat32(offset, sceneNumber(entry.bounds, 0), true); offset += 4;
 
     device.queue.writeBuffer(buffer, 0, buf, 0, 256);
   }
@@ -668,6 +701,8 @@
         arms: Math.max(1, Math.floor(sceneNumber(emitter.arms, 2))),
         wind: sceneNumber(emitter.wind, 0),
         scatter: sceneNumber(emitter.scatter, 0),
+        bounds: sceneNumber(entry && entry.bounds, 0),
+        once: emitter.once === true,
       };
     }
 
@@ -689,19 +724,31 @@
 
     function particleLifetime(index, emitterConfig) {
       var base = Math.max(sceneNumber(emitterConfig.lifetime, 0), 0.001);
-      return base * (0.72 + hash2(index, 44) * 0.66);
+      return base * (0.64 + hash2(index, 44) * 0.92);
     }
 
     function particleDelay(index, emitterConfig) {
       var base = Math.max(sceneNumber(emitterConfig.lifetime, 0), 0.001);
+      if (emitterConfig.once) {
+        return Math.pow(hash2(index, 47), 1.8) * Math.max(0.08, base * 0.12);
+      }
       var rate = sceneNumber(entry && entry.emitter && entry.emitter.rate, 0);
       var windowSeconds = base;
       if (rate > 0.001) {
         windowSeconds = Math.max(base * 0.35, count / rate);
       }
-      var wave = Math.floor(hash2(index, 46) * 4) / 4;
-      var jitter = hash2(index, 47) * 0.22;
+      var wave = Math.floor(hash2(index, 46) * 5) / 5;
+      var jitter = Math.pow(hash2(index, 47), 2.2) * 0.18;
       return Math.min(windowSeconds, (wave + jitter) * windowSeconds);
+    }
+
+    function smoothstep(edge0, edge1, x) {
+      var t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+      return t * t * (3 - 2 * t);
+    }
+
+    function particleEnvelope(t) {
+      return smoothstep(0, 0.11, t) * (1 - smoothstep(0.66, 1, t));
     }
 
     function makeDormant(index, base, emitterConfig) {
@@ -709,6 +756,13 @@
       base[3] = 0; base[4] = 0; base[5] = 0;
       base[6] = -particleDelay(index, emitterConfig);
       base[7] = particleLifetime(index, emitterConfig);
+    }
+
+    function makeFinished(base) {
+      base[0] = 0; base[1] = 0; base[2] = 0;
+      base[3] = 0; base[4] = 0; base[5] = 0;
+      base[6] = -1;
+      base[7] = -1;
     }
 
     function writeDormantOutput(index) {
@@ -801,6 +855,10 @@
 
           // Initialize on first frame.
           if (age < 0) {
+            if (emitterConfig.once && lifetime < -0.5) {
+              writeDormantOutput(i);
+              continue;
+            }
             if (lifetime <= 0) {
               emitParticle(i, particles.subarray(base, base + 8), emitterConfig);
             } else {
@@ -826,6 +884,11 @@
 
           // Respawn dead particles.
           if (lifetime > 0 && age >= lifetime) {
+            if (emitterConfig.once) {
+              makeFinished(particles.subarray(base, base + 8));
+              writeDormantOutput(i);
+              continue;
+            }
             makeDormant(i, particles.subarray(base, base + 8), emitterConfig);
             particles[base + 6] += deltaTime;
             if (particles[base + 6] < 0) {
@@ -946,6 +1009,12 @@
           posY += velY * deltaTime;
           posZ += velZ * deltaTime;
 
+          if (emitterConfig.once && emitterConfig.bounds > 0 && Math.sqrt(posX * posX + posY * posY + posZ * posZ) > emitterConfig.bounds) {
+            makeFinished(particles.subarray(base, base + 8));
+            writeDormantOutput(i);
+            continue;
+          }
+
           // Write state back.
           particles[base] = posX;
           particles[base + 1] = posY;
@@ -967,7 +1036,7 @@
           colors[i * 3] = materialConfig.colorStart[0] + (materialConfig.colorEnd[0] - materialConfig.colorStart[0]) * t;
           colors[i * 3 + 1] = materialConfig.colorStart[1] + (materialConfig.colorEnd[1] - materialConfig.colorStart[1]) * t;
           colors[i * 3 + 2] = materialConfig.colorStart[2] + (materialConfig.colorEnd[2] - materialConfig.colorStart[2]) * t;
-          opacities[i] = materialConfig.opacityStart + (materialConfig.opacityEnd - materialConfig.opacityStart) * t;
+          opacities[i] = (materialConfig.opacityStart + (materialConfig.opacityEnd - materialConfig.opacityStart) * t) * particleEnvelope(t);
         }
       },
 
@@ -993,8 +1062,20 @@
   }
 
   function sceneComputeSystemSignature(entry) {
+    var emitter = entry && entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
     return JSON.stringify({
       count: Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0))),
+      emitter: {
+        kind: String(emitter.kind || ""),
+        radius: sceneNumber(emitter.radius, 0),
+        rate: sceneNumber(emitter.rate, 0),
+        lifetime: sceneNumber(emitter.lifetime, 0),
+        arms: Math.max(1, Math.floor(sceneNumber(emitter.arms, 2))),
+        wind: sceneNumber(emitter.wind, 0),
+        scatter: sceneNumber(emitter.scatter, 0),
+        bounds: sceneNumber(entry && entry.bounds, 0),
+        once: emitter.once === true,
+      },
       forces: Array.isArray(entry && entry.forces) ? entry.forces : [],
       forceRegistryVersion: sceneParticleForceRegistryVersion,
     });

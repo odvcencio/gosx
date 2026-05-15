@@ -401,6 +401,7 @@ type ParticleEmitter struct {
 	Arms     int
 	Wind     float64
 	Scatter  float64
+	Once     bool
 }
 
 type ParticleForce struct {
@@ -2237,6 +2238,7 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 			Arms:      cp.Emitter.Arms,
 			Wind:      cp.Emitter.Wind,
 			Scatter:   cp.Emitter.Scatter,
+			Once:      cp.Emitter.Once,
 		},
 		Forces: forces,
 		Material: ParticleMaterialIR{

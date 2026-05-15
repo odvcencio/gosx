@@ -7843,6 +7843,78 @@ test("selective Scene3D bootstrap exposes CPU compute particles for WebGL", asyn
   assert.equal(system.positions.length, 3);
 });
 
+test("Scene3D CPU compute particles use a soft lifetime opacity envelope", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const system = api.createSceneParticleSystem(null, {
+    id: "soft-birth",
+    count: 1,
+    emitter: { kind: "point", lifetime: 10 },
+    forces: [],
+    material: { opacity: 1, opacityEnd: 0 },
+  });
+
+  system.update(0.01, 0.01);
+  assert.ok(system.opacities[0] < 0.04, String(system.opacities[0]));
+
+  system.update(1.2, 1.21);
+  assert.ok(system.opacities[0] > 0.75, String(system.opacities[0]));
+});
+
+test("Scene3D CPU compute particles can emit a one-shot burst", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const system = api.createSceneParticleSystem(null, {
+    id: "one-shot",
+    count: 1,
+    emitter: { kind: "point", lifetime: 0.4, once: true },
+    forces: [{ kind: "wind", x: 1, strength: 1 }],
+    material: { opacity: 1, opacityEnd: 0 },
+  });
+
+  system.update(0.02, 0.02);
+  assert.ok(system.opacities[0] > 0, String(system.opacities[0]));
+
+  system.update(1.0, 1.02);
+  assert.equal(system.opacities[0], 0);
+
+  system.update(1.0, 2.02);
+  assert.equal(system.opacities[0], 0);
+  assert.equal(system.positions[0], 0);
+});
+
+test("Scene3D CPU one-shot particles retire when leaving bounds", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const system = api.createSceneParticleSystem(null, {
+    id: "one-shot-bounds",
+    count: 1,
+    bounds: 0.02,
+    emitter: { kind: "point", lifetime: 10, once: true },
+    forces: [{ kind: "wind", x: 1, strength: 3 }],
+    material: { opacity: 1, opacityEnd: 0 },
+  });
+
+  system.update(0.02, 0.02);
+  assert.ok(system.opacities[0] > 0, String(system.opacities[0]));
+
+  system.update(0.1, 0.12);
+  assert.equal(system.opacities[0], 0);
+  assert.equal(system.positions[0], 0);
+
+  system.update(1.0, 1.12);
+  assert.equal(system.opacities[0], 0);
+});
+
 test("bootstrap applies Scene3D live point buffers outside update tweens", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
