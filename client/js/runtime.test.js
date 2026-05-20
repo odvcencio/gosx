@@ -13333,6 +13333,18 @@ test("bootstrap mounts builtin video engines and bridges shared signals", async 
   assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
     { id: "en", language: "en", srclang: "en", title: "English", kind: "subtitles", src: "", default: false, forced: false },
   ]);
+
+  video.setAttribute("data-gosx-video-duration", "7200");
+  video.duration = 120;
+  video.dispatchEvent({ type: "durationchange", target: video });
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.duration"), 7200);
+
+  video.duration = 7300;
+  video.dispatchEvent({ type: "durationchange", target: video });
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.duration"), 7300);
+
   let rectCalls = 0;
   const originalGetBoundingClientRect = mount.getBoundingClientRect.bind(mount);
   mount.getBoundingClientRect = function() {

@@ -1539,8 +1539,34 @@
       writeVideoOutputSignal("viewport", videoViewport);
     }
 
+    function configuredVideoDuration() {
+      const propDuration = sceneNumber(videoPropValue(props, ["duration", "durationSeconds", "duration_seconds"], 0), 0);
+      if (propDuration > 0) {
+        return propDuration;
+      }
+      if (!video || typeof video.getAttribute !== "function") {
+        return 0;
+      }
+      for (const name of ["data-gosx-video-duration", "data-duration-seconds", "data-duration"]) {
+        const attrDuration = sceneNumber(video.getAttribute(name), 0);
+        if (attrDuration > 0) {
+          return attrDuration;
+        }
+      }
+      return 0;
+    }
+
+    function videoOutputDuration() {
+      const mediaDuration = Math.max(0, sceneNumber(video.duration, 0));
+      const configuredDuration = configuredVideoDuration();
+      if (configuredDuration > 0 && (mediaDuration <= 0 || mediaDuration + 1 < configuredDuration)) {
+        return configuredDuration;
+      }
+      return mediaDuration;
+    }
+
     function updateVideoOutputs() {
-      const duration = Math.max(0, sceneNumber(video.duration, 0));
+      const duration = videoOutputDuration();
       const playing = !sceneBool(video.paused, true) && !sceneBool(video.ended, false);
       writeVideoOutputSignal("position", Math.max(0, sceneNumber(video.currentTime, 0)));
       writeVideoOutputSignal("duration", duration);
