@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const goModuleCommandFlags = "-mod=mod -buildvcs=false"
+
 func ensureModuleDependencies(projectDir string) error {
 	if err := goListDeps(projectDir, nil, "./..."); err != nil {
 		return fmt.Errorf("resolve module dependencies: %w", err)
@@ -27,7 +29,7 @@ func goListDeps(projectDir string, extraEnv []string, packages ...string) error 
 
 	cmd := exec.Command("go", args...)
 	cmd.Dir = projectDir
-	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod", "GOWORK=off")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	cmd.Env = append(cmd.Env, extraEnv...)
 	if err := cmd.Run(); err != nil {
 		return err

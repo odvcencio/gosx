@@ -383,7 +383,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			}
 		} else {
 			cmd := exec.Command("go", goWASMBuildArgs(tmpPath, extraTags...)...)
-			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS=-mod=mod")
+			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS="+goModuleCommandFlags)
 			cmd.Dir = dir
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
@@ -802,7 +802,7 @@ func getGOROOT() string {
 func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
 	cmd.Dir = dir
-	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod", "GOWORK=off")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -820,7 +820,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 
 	buildCmd := exec.Command("go", "build", "-o", outputPath, ".")
 	buildCmd.Dir = dir
-	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-mod=mod", "GOWORK=off")
+	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
 		return false, err
