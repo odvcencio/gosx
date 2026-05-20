@@ -1373,6 +1373,14 @@
     let currentSource = "";
     let interactionTimer = 0;
     let subtitleOverlay = null;
+    let syncOverlay = null;
+    let countdownTimer = 0;
+    let syncPhase = "";
+    let syncCountdown = 0;
+    let cacheWaiting = false;
+    let cacheProgress = 0;
+    let cacheSegments = 0;
+    let cacheStatus = "";
     let videoViewport = null;
     let nativeSubtitleTrack = null;
     const videoOutputPayloads = new Map();
@@ -1398,6 +1406,7 @@
     function setError(message) {
       lastError = String(message || "").trim();
       writeVideoOutputSignal("error", lastError);
+      renderSyncOverlay();
     }
 
     function clearError() {
@@ -1406,6 +1415,7 @@
       }
       lastError = "";
       writeVideoOutputSignal("error", "");
+      renderSyncOverlay();
     }
 
     function updateSubtitleOutputs() {
@@ -1465,6 +1475,295 @@
         }
         overlay.appendChild(node);
       }
+    }
+
+    function ensureSyncOverlay() {
+      if (syncOverlay) {
+        return syncOverlay;
+      }
+      syncOverlay = document.createElement("div");
+      syncOverlay.setAttribute("class", "gosx-video-sync-overlay");
+      syncOverlay.setAttribute("data-gosx-video-sync-overlay", "true");
+      syncOverlay.setAttribute("aria-live", "polite");
+      syncOverlay.setAttribute("hidden", "true");
+      return syncOverlay;
+    }
+
+    function syncLockedToServer() {
+      return String(videoPropValue(props, ["syncMode", "sync_mode"], "follow") || "follow").trim().toLowerCase() === "follow" &&
+        String(videoPropValue(props, ["sync"], "") || "").trim() !== "";
+    }
+
+    function shouldBlockLocalPlayback() {
+      if (!syncLockedToServer()) {
+        return false;
+      }
+      if (cacheWaiting || syncPhase === "prepare" || syncPhase === "waiting") {
+        return true;
+      }
+      return !followState || !sceneBool(followState.playing, false);
+    }
+
+    function clampVideoPercent(value) {
+      return Math.max(0, Math.min(100, Math.round(sceneNumber(value, 0))));
+    }
+
+    function renderSyncOverlay() {
+      const overlay = ensureSyncOverlay();
+      let mode = "";
+      let title = "";
+      let detail = "";
+      let count = "";
+      const progress = clampVideoPercent(cacheProgress);
+      if (lastError) {
+        mode = "error";
+        title = "Playback error";
+        detail = lastError;
+      } else if (cacheWaiting) {
+        mode = "buffering";
+        title = "Buffering for synced start";
+        detail = cacheStatus || (progress > 0 ? "Buffering " + progress + "%" : "Buffering");
+        if (cacheSegments > 0) {
+          detail += " · " + cacheSegments + " segments";
+        }
+      } else if (syncPhase === "prepare") {
+        mode = "countdown";
+        title = "Starting in";
+        count = syncCountdown > 0 ? String(syncCountdown) : "Sync";
+        detail = "Locking to server sync";
+      } else if (syncPhase === "waiting") {
+        mode = "waiting";
+        title = "Waiting for server sync";
+        detail = "Playback will start automatically";
+      } else if (stalled && !sceneBool(video.paused, true)) {
+        mode = "buffering";
+        title = "Buffering";
+        detail = "Waiting for the stream";
+      }
+
+      videoClearChildren(overlay);
+      if (!mode) {
+        overlay.setAttribute("hidden", "true");
+        if (mount && typeof mount.removeAttribute === "function") {
+          mount.removeAttribute("data-gosx-video-overlay-state");
+        }
+        writeVideoOutputSignal("syncPhase", "");
+        writeVideoOutputSignal("syncCountdown", 0);
+        writeVideoOutputSignal("cacheWaiting", false);
+        writeVideoOutputSignal("cacheProgress", progress);
+        return;
+      }
+
+      overlay.removeAttribute("hidden");
+      if (mount && typeof mount.setAttribute === "function") {
+        mount.setAttribute("data-gosx-video-overlay-state", mode);
+      }
+      const panel = document.createElement("div");
+      panel.setAttribute("class", "gosx-video-sync-overlay__panel");
+      const titleNode = document.createElement("div");
+      titleNode.setAttribute("class", "gosx-video-sync-overlay__title");
+      titleNode.textContent = title;
+      panel.appendChild(titleNode);
+      if (count) {
+        const countNode = document.createElement("div");
+        countNode.setAttribute("class", "gosx-video-sync-overlay__count");
+        countNode.textContent = count;
+        panel.appendChild(countNode);
+      }
+      if (detail) {
+        const detailNode = document.createElement("div");
+        detailNode.setAttribute("class", "gosx-video-sync-overlay__detail");
+        detailNode.textContent = detail;
+        panel.appendChild(detailNode);
+      }
+      if (mode === "buffering" && progress > 0) {
+        const meter = document.createElement("div");
+        meter.setAttribute("class", "gosx-video-sync-overlay__meter");
+        const bar = document.createElement("div");
+        bar.setAttribute("class", "gosx-video-sync-overlay__bar");
+        bar.style.width = progress + "%";
+        meter.appendChild(bar);
+        panel.appendChild(meter);
+      }
+      overlay.appendChild(panel);
+      writeVideoOutputSignal("syncPhase", mode);
+      writeVideoOutputSignal("syncCountdown", mode === "countdown" ? syncCountdown : 0);
+      writeVideoOutputSignal("cacheWaiting", cacheWaiting);
+      writeVideoOutputSignal("cacheProgress", progress);
+      writeVideoOutputSignal("cacheSegments", cacheSegments);
+    }
+
+    function clearCountdownTimer() {
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = 0;
+      }
+    }
+
+    function setCacheWaiting(waiting, progress, segments, status) {
+      cacheWaiting = Boolean(waiting);
+      cacheProgress = clampVideoPercent(progress);
+      cacheSegments = Math.max(0, Math.floor(sceneNumber(segments, 0)));
+      cacheStatus = String(status || "").trim();
+      if (cacheWaiting) {
+        syncPhase = "waiting";
+        clearCountdownTimer();
+        if (!sceneBool(video.paused, true)) {
+          video.pause();
+        }
+      } else if (syncPhase === "waiting") {
+        syncPhase = "";
+      }
+      renderSyncOverlay();
+      updateVideoOutputs();
+    }
+
+    function videoAttr(name, fallback) {
+      if (!video || typeof video.getAttribute !== "function") {
+        return fallback;
+      }
+      const value = video.getAttribute(name);
+      return value == null ? fallback : value;
+    }
+
+    function readInitialVideoCacheState() {
+      const waiting = sceneBool(videoAttr("data-gosx-video-cache-waiting", false), false);
+      const progress = videoAttr("data-gosx-video-cache-progress", 0);
+      const segments = videoAttr("data-gosx-video-cache-segments", 0);
+      const status = videoAttr("data-gosx-video-cache-status", "");
+      setCacheWaiting(waiting, progress, segments, status);
+    }
+
+    function followMessagePosition(message) {
+      return Math.max(0, sceneNumber(message && (message.position != null ? message.position : message.position_seconds), 0));
+    }
+
+    function followMessageRate(message) {
+      return Math.max(0.1, sceneNumber(message && (message.rate != null ? message.rate : message.playback_rate), 1));
+    }
+
+    function followMessageTimeMS(message) {
+      if (!message || typeof message !== "object") {
+        return Date.now();
+      }
+      const raw = message.sentAtMS != null ? message.sentAtMS :
+        (message.sent_at_ms != null ? message.sent_at_ms :
+        (message.serverTime != null ? message.serverTime :
+        (message.server_time != null ? message.server_time : message.timestamp)));
+      return sceneNumber(raw, Date.now());
+    }
+
+    function applyServerPosition(message) {
+      const position = followMessagePosition(message);
+      if (Number.isFinite(position)) {
+        video.currentTime = position;
+      }
+      return position;
+    }
+
+    function startSyncPrepare(message) {
+      const mediaID = message && (message.mediaID || message.media_id);
+      if (mediaID && currentSource && String(mediaID) !== String(currentSource)) {
+        return;
+      }
+      clearError();
+      cacheWaiting = false;
+      cacheProgress = 100;
+      syncPhase = "prepare";
+      applyServerPosition(message);
+      if (!sceneBool(video.paused, true)) {
+        video.pause();
+      }
+      const countdownMS = message && message.countdown_ms != null ? message.countdown_ms : (message && message.countdownMS);
+      const startValue = message && message.start_at != null ? message.start_at : (message && message.startAt);
+      const fallbackStart = Date.now() + sceneNumber(countdownMS, 3000);
+      const startAt = sceneNumber(startValue, fallbackStart);
+      const tick = function() {
+        const remaining = Math.max(0, startAt - Date.now());
+        syncCountdown = remaining > 0 ? Math.max(1, Math.ceil(remaining / 1000)) : 0;
+        renderSyncOverlay();
+        if (remaining <= 0) {
+          clearCountdownTimer();
+        }
+      };
+      clearCountdownTimer();
+      tick();
+      countdownTimer = setInterval(tick, 100);
+      updateVideoOutputs();
+    }
+
+    function applySyncPlay(message) {
+      const mediaID = message && (message.mediaID || message.media_id);
+      if (mediaID && currentSource && String(mediaID) !== String(currentSource)) {
+        return;
+      }
+      clearCountdownTimer();
+      cacheWaiting = false;
+      cacheProgress = 100;
+      cacheStatus = "";
+      syncPhase = "";
+      followState = {
+        type: "sync",
+        mediaID: mediaID || currentSource,
+        position: followMessagePosition(message),
+        playing: true,
+        rate: followMessageRate(message),
+        sentAtMS: followMessageTimeMS(message),
+        viewerCount: Math.max(0, Math.floor(sceneNumber(message && (message.viewerCount || message.viewer_count), 0))),
+      };
+      if (syncLockedToServer()) {
+        ensureFollowTimer();
+        applyFollowState();
+      }
+      renderSyncOverlay();
+    }
+
+    function applySyncPause(message) {
+      const mediaID = message && (message.mediaID || message.media_id);
+      if (mediaID && currentSource && String(mediaID) !== String(currentSource)) {
+        return;
+      }
+      clearCountdownTimer();
+      if (syncPhase !== "waiting") {
+        syncPhase = "";
+      }
+      followState = {
+        type: "sync",
+        mediaID: mediaID || currentSource,
+        position: followMessagePosition(message),
+        playing: false,
+        rate: followMessageRate(message),
+        sentAtMS: followMessageTimeMS(message),
+        viewerCount: Math.max(0, Math.floor(sceneNumber(message && (message.viewerCount || message.viewer_count), 0))),
+      };
+      applyServerPosition(message);
+      if (!sceneBool(video.paused, true)) {
+        video.pause();
+      }
+      renderSyncOverlay();
+      updateVideoOutputs();
+    }
+
+    function applySyncSeek(message) {
+      const mediaID = message && (message.mediaID || message.media_id);
+      if (mediaID && currentSource && String(mediaID) !== String(currentSource)) {
+        return;
+      }
+      applyServerPosition(message);
+      if (followState) {
+        followState.position = followMessagePosition(message);
+        followState.sentAtMS = followMessageTimeMS(message);
+      }
+      updateVideoOutputs();
+    }
+
+    function applyChannelStatus(message) {
+      const state = message && message.state && typeof message.state === "object" ? message.state : {};
+      const waiting = sceneBool(state.cache_paused, false) || sceneBool(state.cachePaused, false) || sceneBool(state.cache_waiting, false);
+      const progress = state.transcode_progress != null ? state.transcode_progress : (state.cache_progress != null ? state.cache_progress : state.cacheProgress);
+      const segments = state.transcode_segments_finished != null ? state.transcode_segments_finished : (state.cache_segments != null ? state.cache_segments : state.cacheSegments);
+      const status = waiting ? "Buffering " + clampVideoPercent(progress) + "%" : "";
+      setCacheWaiting(waiting, progress, segments, status);
     }
 
     function videoIsPoppedOut() {
@@ -1679,6 +1978,11 @@
       const target = projectedFollowPosition(followState);
       const drift = Math.max(-9999, Math.min(9999, sceneNumber(video.currentTime, 0) - target));
       if (playing) {
+        cacheWaiting = false;
+        if (syncPhase === "prepare" || syncPhase === "waiting") {
+          syncPhase = "";
+        }
+        clearCountdownTimer();
         if (sceneBool(video.paused, true) || sceneBool(video.ended, false)) {
           safePlay();
         }
@@ -1700,6 +2004,7 @@
       } else {
         video.playbackRate = requestedRate;
       }
+      renderSyncOverlay();
       updateVideoOutputs();
     }
 
@@ -1764,7 +2069,8 @@
       if (!message || disposed) {
         return;
       }
-      if (message.type === "ping") {
+      const type = String(message.type || "").trim();
+      if (type === "ping") {
         if (message.payload && syncSocket && syncSocket.readyState === 1) {
           try {
             syncSocket.send(message.payload);
@@ -1773,10 +2079,31 @@
         }
         return;
       }
-      if (message.type !== "sync") {
+      if (type === "channel_status") {
+        applyChannelStatus(message);
         return;
       }
-      if (message.mediaID && currentSource && String(message.mediaID) !== String(currentSource)) {
+      if (type === "sync_prepare") {
+        startSyncPrepare(message);
+        return;
+      }
+      if (type === "sync_play") {
+        applySyncPlay(message);
+        return;
+      }
+      if (type === "pause") {
+        applySyncPause(message);
+        return;
+      }
+      if (type === "seek") {
+        applySyncSeek(message);
+        return;
+      }
+      if (type !== "sync") {
+        return;
+      }
+      const mediaID = message.mediaID || message.media_id;
+      if (mediaID && currentSource && String(mediaID) !== String(currentSource)) {
         return;
       }
       followState = message;
@@ -2101,7 +2428,9 @@
     videoClearChildren(mount);
     mount.appendChild(video);
     mount.appendChild(ensureSubtitleOverlay());
+    mount.appendChild(ensureSyncOverlay());
     subtitleState.status = subtitleState.tracks.length > 0 ? "ready" : "idle";
+    readInitialVideoCacheState();
     updateSubtitleOutputs();
     writeVideoOutputSignal("activeCues", []);
     writeVideoOutputSignal("syncConnected", false);
@@ -2119,6 +2448,17 @@
       updateVideoOutputs();
     });
     addListener(video, "play", function() {
+      if (shouldBlockLocalPlayback()) {
+        if (!cacheWaiting && syncPhase !== "prepare") {
+          syncPhase = "waiting";
+        }
+        video.pause();
+        stalled = false;
+        markInteractionActive(0);
+        renderSyncOverlay();
+        updateVideoOutputs();
+        return;
+      }
       stalled = false;
       clearError();
       markInteractionActive(1800);
@@ -2138,11 +2478,13 @@
     addListener(video, "waiting", function() {
       stalled = true;
       markInteractionActive(0);
+      renderSyncOverlay();
       updateVideoOutputs();
     });
     addListener(video, "stalled", function() {
       stalled = true;
       markInteractionActive(0);
+      renderSyncOverlay();
       updateVideoOutputs();
     });
     addListener(video, "volumechange", function() {
@@ -2263,6 +2605,7 @@
       dispose() {
         disposed = true;
         clearInteractionTimer();
+        clearCountdownTimer();
         closeSyncSocket();
         teardownHLS();
         if (resizeObserver && typeof resizeObserver.disconnect === "function") {

@@ -25,6 +25,7 @@
       engineFactories,
       fetchProgram,
       inferProgramFormat,
+      loadScriptTag,
       engineFrame,
       cancelEngineFrame,
       capabilityList,

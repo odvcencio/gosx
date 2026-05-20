@@ -13734,10 +13734,17 @@ test("bootstrap video follow sync nudges both ahead and behind without repeated 
   mount.id = "video-sync-root";
   let socket = null;
 
-  const env = createContext({
+  let env;
+  env = createContext({
     elements: [mount],
     fetchRoutes: {
       "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
     },
     createWebSocket(url) {
       socket = {
@@ -13870,6 +13877,163 @@ test("bootstrap video follow sync consumes binary heartbeats and answers pings",
   const pong = new Uint8Array(socket.sent[0]);
   assert.equal(pong[0], 0x04);
   assert.deepEqual(Array.from(pong.slice(1)), Array.from(new Uint8Array(ping).slice(1)));
+});
+
+test("bootstrap video follow sync honors prepare countdown before server play", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-countdown-root";
+  let socket = null;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-countdown-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-sync-overlay") === "true");
+  assert.ok(overlay);
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync_prepare", position: 14, start_at: Date.now() + 3000, countdown_ms: 3000 }) });
+  assert.equal(video.currentTime, 14);
+  assert.equal(video.paused, true);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.match(overlay.textContent, /Starting in/);
+  assert.equal(sharedSignalValue(env, "$video.syncPhase"), "countdown");
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync_play", position: 14, rate: 1, sentAtMS: 0 }) });
+  assert.equal(video.playCalls.length, 1);
+  assert.equal(video.paused, false);
+  assert.equal(overlay.hasAttribute("hidden"), true);
+});
+
+test("bootstrap video follow sync shows cache progress and blocks local play", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-cache-wait-root";
+  let socket = null;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-cache-wait-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-sync-overlay") === "true");
+  assert.ok(overlay);
+
+  socket.onmessage({
+    data: JSON.stringify({
+      type: "channel_status",
+      state: {
+        cache_paused: true,
+        transcode_progress: 42,
+        transcode_segments_finished: 123,
+      },
+    }),
+  });
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.match(overlay.textContent, /42%/);
+  assert.equal(sharedSignalValue(env, "$video.cacheWaiting"), true);
+
+  video.paused = false;
+  video.dispatchEvent({ type: "play", target: video });
+  assert.equal(video.paused, true);
+  assert.ok(video.pauseCalls.length >= 1);
+  assert.equal(sharedSignalValue(env, "$video.syncPhase"), "buffering");
 });
 
 test("bootstrap video subtitle warmup does not block sync connection", async () => {
@@ -14314,6 +14478,58 @@ test("selective runtime mounts builtin video sync without the hub feature chunk"
   assert.equal(socket.url, "ws://localhost:3000/api/theatre/ROOM01/ws");
   assert.equal(
     env.consoleLogs.error.some((entry) => entry.includes("failed to mount engine gosx-engine-video")),
+    false,
+  );
+});
+
+test("selective runtime video engines load HLS.js through the feature API", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hls-runtime-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/hls.min.js": {
+        text: `window.__hlsLoads = [];
+window.Hls = function FakeHls() {
+  this.attachMedia = function(video) { this.video = video; };
+  this.loadSource = function(src) { window.__hlsLoads.push(src); };
+  this.on = function() {};
+  this.destroy = function() {};
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = {};`,
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-video-hls",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-hls-runtime-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.m3u8",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/hls.min.js"), true);
+  assert.deepEqual(Array.from(env.context.__hlsLoads || []), ["/media/promo.m3u8"]);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(
+    env.consoleLogs.error.some((entry) => entry.includes("failed to mount engine gosx-engine-video-hls")),
     false,
   );
 });
