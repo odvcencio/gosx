@@ -14036,6 +14036,75 @@ test("bootstrap video follow sync shows cache progress and blocks local play", a
   assert.equal(sharedSignalValue(env, "$video.syncPhase"), "buffering");
 });
 
+test("bootstrap video follow sync treats bare cache waiting attributes as active", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-initial-cache-wait-root";
+  const fallback = new FakeElement("video", null);
+  fallback.setAttribute("data-gosx-video-cache-waiting", "");
+  fallback.setAttribute("data-gosx-video-cache-progress", "37");
+  fallback.setAttribute("data-gosx-video-cache-segments", "55");
+  mount.appendChild(fallback);
+  let socket = null;
+  let env;
+
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-initial-cache-wait-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-sync-overlay") === "true");
+  assert.ok(overlay);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.match(overlay.textContent, /37%/);
+  assert.equal(sharedSignalValue(env, "$video.cacheWaiting"), true);
+});
+
 test("bootstrap video subtitle warmup does not block sync connection", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "video-subtitle-sync-root";

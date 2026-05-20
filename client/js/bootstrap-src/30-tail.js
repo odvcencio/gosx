@@ -1626,8 +1626,19 @@
       return value == null ? fallback : value;
     }
 
+    function videoBoolAttr(name, fallback) {
+      if (!video || typeof video.hasAttribute !== "function" || !video.hasAttribute(name)) {
+        return fallback;
+      }
+      const value = videoAttr(name, "");
+      if (String(value).trim() === "") {
+        return true;
+      }
+      return sceneBool(value, fallback);
+    }
+
     function readInitialVideoCacheState() {
-      const waiting = sceneBool(videoAttr("data-gosx-video-cache-waiting", false), false);
+      const waiting = videoBoolAttr("data-gosx-video-cache-waiting", false);
       const progress = videoAttr("data-gosx-video-cache-progress", 0);
       const segments = videoAttr("data-gosx-video-cache-segments", 0);
       const status = videoAttr("data-gosx-video-cache-status", "");
