@@ -190,7 +190,11 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "patch.js"), filepath.Join(gosxRoot, "client", "js", "patch.js")); err != nil {
 		return fmt.Errorf("stage patch.js: %w", err)
 	}
-	if err := copyFile(filepath.Join(buildDir, "hls.min.js"), filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js")); err != nil {
+	hlsData, err := os.ReadFile(filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"))
+	if err != nil {
+		return fmt.Errorf("read hls.min.js: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "hls.min.js"), runtimeJSAssetData("hls.min", hlsData), 0644); err != nil {
 		return fmt.Errorf("stage hls.min.js: %w", err)
 	}
 	if err := copyFile(filepath.Join(buildDir, "stripe-bridge.js"), filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js")); err != nil {

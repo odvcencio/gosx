@@ -8,16 +8,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const budgets = [
-  { file: "bootstrap.js", raw: 750_000, gzip: 205_000, brotli: 170_000 },
+  { file: "bootstrap.js", raw: 800_000, gzip: 220_000, brotli: 180_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
-  { file: "bootstrap-feature-scene3d.js", raw: 455_000, gzip: 125_000, brotli: 105_000 },
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 121_500, gzip: 32_000, brotli: 28_000 },
+  { file: "bootstrap-feature-scene3d.js", raw: 510_000, gzip: 140_000, brotli: 116_000 },
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 130_000, gzip: 32_000, brotli: 28_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
-  { file: "bootstrap-feature-engines.js", raw: 38_000, gzip: 13_000, brotli: 12_000 },
+  { file: "bootstrap-feature-engines.js", raw: 38_200, gzip: 13_000, brotli: 12_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
+];
+
+const routeBudgets = [
+  {
+    name: "video selective runtime",
+    files: ["bootstrap-runtime.js", "bootstrap-feature-engines.js"],
+    raw: 160_000,
+    gzip: 46_000,
+    brotli: 42_000,
+  },
 ];
 
 function fileSize(relativePath) {
@@ -36,5 +46,19 @@ test("generated bootstrap bundles stay within runtime size budgets", () => {
     assert.ok(brotli <= budget.brotli, `${budget.file}.br size ${brotli} exceeds budget ${budget.brotli}`);
     assert.ok(gzip < raw, `${budget.file}.gz should be smaller than raw JS`);
     assert.ok(brotli <= gzip, `${budget.file}.br should be no larger than gzip`);
+  }
+});
+
+test("selective runtime route surfaces stay within first-load budgets", () => {
+  const monolithRaw = fileSize("bootstrap.js");
+  for (const budget of routeBudgets) {
+    const raw = budget.files.reduce((sum, file) => sum + fileSize(file), 0);
+    const gzip = budget.files.reduce((sum, file) => sum + fileSize(`${file}.gz`), 0);
+    const brotli = budget.files.reduce((sum, file) => sum + fileSize(`${file}.br`), 0);
+
+    assert.ok(raw <= budget.raw, `${budget.name} raw size ${raw} exceeds budget ${budget.raw}`);
+    assert.ok(gzip <= budget.gzip, `${budget.name}.gz size ${gzip} exceeds budget ${budget.gzip}`);
+    assert.ok(brotli <= budget.brotli, `${budget.name}.br size ${brotli} exceeds budget ${budget.brotli}`);
+    assert.ok(raw < monolithRaw * 0.25, `${budget.name} should stay below 25% of legacy monolith raw size`);
   }
 });

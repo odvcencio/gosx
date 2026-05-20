@@ -505,6 +505,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", js.path, err)
 		}
+		data = runtimeJSAssetData(js.name, data)
 		asset, err := writeHashed(runtimeDir, js.name, ".js", data)
 		if err != nil {
 			return fmt.Errorf("write %s: %w", js.name, err)
@@ -873,6 +874,29 @@ func stageManifestCompatibilityRuntime(distDir string, manifest *BuildManifest, 
 		}
 	}
 	return nil
+}
+
+func runtimeJSAssetData(name string, data []byte) []byte {
+	if name != "hls.min" {
+		return data
+	}
+	return stripSourceMappingURLTrailer(data, "hls.min.js.map")
+}
+
+func stripSourceMappingURLTrailer(data []byte, mapName string) []byte {
+	if len(data) == 0 || strings.TrimSpace(mapName) == "" {
+		return data
+	}
+	trailer := []byte("//# sourceMappingURL=" + strings.TrimSpace(mapName))
+	trimmed := bytes.TrimRight(data, " \t\r\n")
+	if !bytes.HasSuffix(trimmed, trailer) {
+		return data
+	}
+	trimmed = bytes.TrimRight(bytes.TrimSuffix(trimmed, trailer), " \t\r\n")
+	out := make([]byte, 0, len(trimmed)+1)
+	out = append(out, trimmed...)
+	out = append(out, '\n')
+	return out
 }
 
 func copyCompressedSidecars(dst, src string) error {

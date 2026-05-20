@@ -10,6 +10,22 @@ import (
 	sceneinspect "github.com/odvcencio/gosx/scene/inspect"
 )
 
+func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
+	raw := []byte("window.Hls = function() {};\n//# sourceMappingURL=hls.min.js.map\n")
+	got := string(runtimeJSAssetData("hls.min", raw))
+	if strings.Contains(got, "sourceMappingURL") {
+		t.Fatalf("HLS runtime retained source map trailer: %q", got)
+	}
+	if got != "window.Hls = function() {};\n" {
+		t.Fatalf("HLS runtime data = %q", got)
+	}
+
+	other := []byte("console.log('bootstrap');\n//# sourceMappingURL=bootstrap.js.map\n")
+	if got := string(runtimeJSAssetData("bootstrap", other)); got != string(other) {
+		t.Fatalf("non-HLS runtime asset was changed: %q", got)
+	}
+}
+
 func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) {
 	projectDir := t.TempDir()
 	distDir := filepath.Join(t.TempDir(), "dist")

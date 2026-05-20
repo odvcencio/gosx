@@ -1172,6 +1172,14 @@ class FakeResponse {
     this._text = options.text || "";
     this._bytes = options.bytes || [];
     this.url = options.url || "";
+    const headerEntries = Object.entries(options.headers || {}).map(([key, value]) => [String(key).toLowerCase(), String(value)]);
+    const headerMap = new Map(headerEntries);
+    this._headers = Object.fromEntries(headerEntries);
+    this.headers = {
+      get(name) {
+        return headerMap.get(String(name || "").toLowerCase()) || null;
+      },
+    };
   }
 
   clone() {
@@ -1181,6 +1189,7 @@ class FakeResponse {
       text: this._text,
       bytes: this._bytes.slice(),
       url: this.url,
+      headers: this._headers,
     });
   }
 
@@ -1703,6 +1712,7 @@ function createContext(options) {
   const context = {
     Array,
     ArrayBuffer,
+    DataView,
     Intl,
     JSON,
     Map,
@@ -1751,7 +1761,9 @@ function createContext(options) {
       if (!routes.has(url)) {
         throw new Error("unexpected fetch: " + url);
       }
-      return new FakeResponse(routes.get(url));
+      const route = routes.get(url);
+      const response = typeof route === "function" ? await route(url, init, fetchCalls.length) : route;
+      return new FakeResponse(Object.assign({ url }, response || {}));
     },
     getComputedStyle(element) {
       return createComputedStyleSnapshot(element, options);
@@ -2139,6 +2151,31 @@ function appendManagedHead(document, nodes) {
     document.head.appendChild(node);
   }
   document.head.appendChild(end);
+}
+
+function theatreSyncHeartbeat({ serverTime = 0, position = 0, playing = false, viewerCount = 0 } = {}) {
+  const buffer = new ArrayBuffer(16);
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const timestamp = Math.max(0, Math.floor(Number(serverTime) || 0));
+  bytes[0] = 0x01;
+  view.setUint32(1, Math.floor(timestamp / 4294967296), false);
+  view.setUint32(5, timestamp % 4294967296, false);
+  view.setFloat32(9, Number(position) || 0, false);
+  bytes[13] = playing ? 1 : 0;
+  view.setUint16(14, Math.max(0, Math.min(65535, Math.floor(Number(viewerCount) || 0))), false);
+  return buffer;
+}
+
+function theatrePing(timestamp = 0) {
+  const buffer = new ArrayBuffer(9);
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const value = Math.max(0, Math.floor(Number(timestamp) || 0));
+  bytes[0] = 0x05;
+  view.setUint32(1, Math.floor(value / 4294967296), false);
+  view.setUint32(5, value % 4294967296, false);
+  return buffer;
 }
 
 function buildNavigatedDocument(options) {
@@ -13296,6 +13333,24 @@ test("bootstrap mounts builtin video engines and bridges shared signals", async 
   assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
     { id: "en", language: "en", srclang: "en", title: "English", kind: "subtitles", src: "", default: false, forced: false },
   ]);
+  let rectCalls = 0;
+  const originalGetBoundingClientRect = mount.getBoundingClientRect.bind(mount);
+  mount.getBoundingClientRect = function() {
+    rectCalls += 1;
+    return originalGetBoundingClientRect();
+  };
+  const callsAfterFirstOutputUpdate = env.sharedSignalCalls.length;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+  assert.equal(env.sharedSignalCalls.length, callsAfterFirstOutputUpdate);
+  assert.equal(rectCalls, 0);
+
+  mount.width = 800;
+  mount.height = 450;
+  env.resizeObservers.at(-1).trigger([mount]);
+  await flushAsyncWork();
+  assert.deepEqual(sharedSignalValue(env, "$video.viewport"), [800, 450]);
+  assert.ok(rectCalls >= 1);
 
   env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("play"));
   await flushAsyncWork();
@@ -13553,9 +13608,11 @@ test("bootstrap upgrades server-rendered video fallbacks in place and loads expl
   assert.equal(video.getAttribute("data-gosx-video"), "true");
   assert.equal(video.getAttribute("poster"), "/media/poster.jpg");
   assert.equal(video.getAttribute("src"), null);
-  assert.equal(video.children.length, 2);
+  assert.equal(video.children.length, 3);
   assert.equal(video.children[0], source);
   assert.equal(video.children[1], track);
+  assert.equal(video.children[2].tagName, "TRACK");
+  assert.equal(video.children[2].getAttribute("src"), "/subs/en-custom.vtt");
   assert.ok(video.loadCalls.length >= 1);
   assert.ok(env.fetchCalls.some((call) => call.url === "/subs/en-custom.vtt"));
   assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
@@ -13571,6 +13628,361 @@ test("bootstrap upgrades server-rendered video fallbacks in place and loads expl
     },
   ]);
   assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "ready");
+});
+
+test("bootstrap video engines retry warming subtitle tracks with Retry-After", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-subtitle-root";
+
+  let subtitleFetches = 0;
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/en.vtt": () => {
+        subtitleFetches += 1;
+        if (subtitleFetches === 1) {
+          return { status: 202, headers: { "Retry-After": "0.5" } };
+        }
+        return {
+          text: "WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nLong span\n\n00:00:01.000 --> 00:00:01.500\nExpired overlap\n\n00:00:03.000 --> 00:00:04.000\nHello after warmup",
+        };
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-subtitle-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            subtitleTrack: "en",
+            subtitleTracks: [
+              { id: "en", language: "en", title: "English", kind: "subtitles", src: "/subs/en.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "warming");
+  assert.equal(subtitleFetches, 1);
+
+  assert.equal(timers.runDelay(500), 1);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(subtitleFetches, 2);
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "ready");
+
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-subtitles") === "true");
+  assert.ok(overlay, "expected managed subtitle overlay");
+  const nativeTrack = video.children.find((child) => child.tagName === "TRACK" && child.getAttribute("src") === "/subs/en.vtt");
+  assert.ok(nativeTrack, "expected native subtitle mirror");
+  assert.equal(nativeTrack.getAttribute("src"), "/subs/en.vtt");
+  assert.equal(nativeTrack.mode, "hidden");
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.equal(overlay.children[0].innerHTML, "Long span");
+  env.document.pictureInPictureElement = video;
+  video.dispatchEvent({ type: "enterpictureinpicture", target: video });
+  assert.equal(nativeTrack.mode, "showing");
+  env.document.pictureInPictureElement = null;
+  video.dispatchEvent({ type: "leavepictureinpicture", target: video });
+  assert.equal(nativeTrack.mode, "hidden");
+  video.currentTime = 3.2;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+  assert.deepEqual(sharedSignalValue(env, "$video.activeCues"), [{ text: "Long span" }, { text: "Hello after warmup" }]);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.equal(overlay.children[0].getAttribute("class"), "gosx-video-subtitle-cue subtitle-cue");
+  assert.equal(overlay.children[0].innerHTML, "Long span");
+  assert.equal(overlay.children[1].innerHTML, "Hello after warmup");
+});
+
+test("bootstrap video follow sync nudges both ahead and behind without repeated play calls", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-sync-root";
+  let socket = null;
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-sync-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  video.paused = false;
+  video.ended = false;
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync", position: 10, playing: true, rate: 1, sentAtMS: 0 }) });
+  video.currentTime = 12;
+  socket.onmessage({ data: JSON.stringify({ type: "sync", position: 10, playing: true, rate: 1, sentAtMS: 0 }) });
+  assert.equal(video.playbackRate, 0.92);
+  assert.equal(video.playCalls.length, 0);
+
+  video.currentTime = 8;
+  socket.onmessage({ data: JSON.stringify({ type: "sync", position: 10, playing: true, rate: 1, sentAtMS: 0 }) });
+  assert.equal(video.playbackRate, 1.08);
+  assert.equal(video.playCalls.length, 0);
+});
+
+test("bootstrap video follow sync consumes binary heartbeats and answers pings", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-binary-sync-root";
+  let socket = null;
+  let env;
+
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-binary-sync-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  assert.equal(socket.binaryType, "arraybuffer");
+
+  const video = mount.firstChild;
+  video.paused = false;
+  video.ended = false;
+  video.currentTime = 22;
+  socket.onmessage({ data: theatreSyncHeartbeat({ position: 20, playing: true, viewerCount: 7 }) });
+  assert.equal(video.playbackRate, 0.92);
+  assert.equal(sharedSignalValue(env, "$video.viewerCount"), 7);
+
+  const ping = theatrePing(1706000000000);
+  socket.onmessage({ data: ping });
+  assert.equal(socket.sent.length, 1);
+  const pong = new Uint8Array(socket.sent[0]);
+  assert.equal(pong[0], 0x04);
+  assert.deepEqual(Array.from(pong.slice(1)), Array.from(new Uint8Array(ping).slice(1)));
+});
+
+test("bootstrap video subtitle warmup does not block sync connection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-subtitle-sync-root";
+  let socket = null;
+  let subtitleFetches = 0;
+  let env;
+
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/en.vtt": () => {
+        subtitleFetches += 1;
+        return { status: 202, headers: { "Retry-After": "5" } };
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedSubtitleVideo",
+          kind: "video",
+          mountId: "video-subtitle-sync-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            subtitleTrack: "en",
+            subtitleTracks: [
+              { id: "en", language: "en", title: "English", kind: "subtitles", src: "/subs/en.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket, "expected websocket to connect before subtitle warmup finishes");
+  assert.equal(socket.binaryType, "arraybuffer");
+  assert.ok(subtitleFetches >= 1);
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "warming");
+});
+
+test("bootstrap video engine owns hover interaction state", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hover-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "HoverVideo",
+          kind: "video",
+          mountId: "video-hover-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4" },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.equal(mount.getAttribute("data-gosx-video-interaction"), "active");
+  assert.equal(video.getAttribute("data-gosx-video-interaction"), "active");
+
+  video.paused = false;
+  video.ended = false;
+  mount.dispatchEvent({ type: "pointermove", target: mount });
+  assert.equal(sharedSignalValue(env, "$video.interaction"), "active");
+  assert.equal(timers.runDelay(2400), 1);
+  assert.equal(mount.getAttribute("data-gosx-video-interaction"), "idle");
+  assert.equal(video.getAttribute("data-gosx-video-interaction"), "idle");
+
+  mount.dispatchEvent({ type: "pointerenter", target: mount });
+  assert.equal(mount.getAttribute("data-gosx-video-interaction"), "active");
+  assert.equal(sharedSignalValue(env, "$video.interaction"), "active");
 });
 
 test("bootstrap video engines load HLS.js from the document runtime contract", async () => {
