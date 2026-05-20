@@ -1305,7 +1305,35 @@
     if (!source) {
       return "";
     }
-    return isAbsoluteHubURL(source) ? source : hubURL(source);
+    return videoIsAbsoluteSyncURL(source) ? source : videoHubURL(source);
+  }
+
+  function videoHubURL(path) {
+    if (!path) return "";
+    if (videoIsAbsoluteSyncURL(path)) {
+      return path;
+    }
+    return videoHubOrigin() + videoNormalizeHubPath(path);
+  }
+
+  function videoIsAbsoluteSyncURL(path) {
+    return path.startsWith("ws://") || path.startsWith("wss://");
+  }
+
+  function videoHubOrigin() {
+    return videoHubScheme() + videoHubHost();
+  }
+
+  function videoHubScheme() {
+    return window.location && window.location.protocol === "https:" ? "wss://" : "ws://";
+  }
+
+  function videoHubHost() {
+    return window.location && window.location.host ? window.location.host : "";
+  }
+
+  function videoNormalizeHubPath(path) {
+    return path.startsWith("/") ? path : "/" + path;
   }
 
   async function createBuiltInVideoEngine(ctx) {

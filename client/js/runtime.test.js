@@ -14257,6 +14257,67 @@ test("selective runtime mounts native JS engines without loading the shared wasm
   assert.equal(mount.getAttribute("data-disposed"), "true");
 });
 
+test("selective runtime mounts builtin video sync without the hub feature chunk", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-runtime-root";
+  let socket = null;
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-video",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-runtime-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.firstChild && mount.firstChild.tagName, "VIDEO");
+  assert.ok(socket, "expected video sync websocket to connect");
+  assert.equal(socket.url, "ws://localhost:3000/api/theatre/ROOM01/ws");
+  assert.equal(
+    env.consoleLogs.error.some((entry) => entry.includes("failed to mount engine gosx-engine-video")),
+    false,
+  );
+});
+
 test("bootstrap blocks engines when required browser capabilities are missing", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "strict-engine-root";
