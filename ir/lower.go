@@ -888,9 +888,132 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 		comp.IsEngine = true
 		comp.EngineKind = engineKind
 		comp.EngineCapabilities = engineDirectiveCapabilities(engineKind, l.parseCapabilities(n))
+		// Surface engines require additional lowering: validate root is <canvas>
+		// and collect on* handler bindings.
+		if engineKind == "surface" {
+			l.lowerEngineSurface(&comp)
+		}
 	}
 
 	l.prog.Components = append(l.prog.Components, comp)
+}
+
+// surfaceAllowedHandlers is the exhaustive set of on* event names permitted on
+// a surface component's root <canvas> element.
+var surfaceAllowedHandlers = map[string]bool{
+	"onMount":         true,
+	"onClick":         true,
+	"onDblClick":      true,
+	"onPointerDown":   true,
+	"onPointerMove":   true,
+	"onPointerUp":     true,
+	"onPointerCancel": true,
+	"onWheel":         true,
+	"onKeyDown":       true,
+	"onKeyUp":         true,
+	"onResize":        true,
+	"onDispose":       true,
+}
+
+// lowerEngineSurface validates and lowers a surface engine component.
+// It verifies the root is <canvas>, collects on* handler bindings, and sets
+// comp.EngineSurface when all checks pass.
+func (l *lowerer) lowerEngineSurface(comp *Component) {
+	if int(comp.Root) >= len(l.prog.Nodes) {
+		l.errs = append(l.errs, Diagnostic{
+			Span:    comp.Span,
+			Message: "engine surface component has no root node",
+		})
+		return
+	}
+
+	root := &l.prog.Nodes[comp.Root]
+
+	// The root element must be <canvas>.
+	if root.Kind != NodeElement || root.Tag != "canvas" {
+		tag := root.Tag
+		if root.Kind == NodeFragment {
+			tag = "(fragment)"
+		} else if root.Kind == NodeComponent {
+			tag = root.Tag
+		}
+		l.errs = append(l.errs, Diagnostic{
+			Span:    root.Span,
+			Message: fmt.Sprintf("engine surface root must be <canvas>; got <%s>", tag),
+		})
+		// Do NOT set EngineSurface — the component is invalid.
+		return
+	}
+
+	// Walk on* attrs; collect valid handlers, emit diagnostics for unknown ones.
+	var handlers []SurfaceHandlerRef
+	for _, attr := range root.Attrs {
+		if !strings.HasPrefix(attr.Name, "on") || len(attr.Name) <= 2 {
+			continue
+		}
+		if attr.Name[2] < 'A' || attr.Name[2] > 'Z' {
+			continue // not an event handler (e.g. "one", "only")
+		}
+		// It is an on* event handler attribute.
+		if !surfaceAllowedHandlers[attr.Name] {
+			l.errs = append(l.errs, Diagnostic{
+				Span:    root.Span,
+				Message: fmt.Sprintf("unknown engine surface event handler %q; allowed: onMount, onClick, onDblClick, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onWheel, onKeyDown, onKeyUp, onResize, onDispose", attr.Name),
+			})
+			continue
+		}
+		// Validate function name shape: non-empty, valid Go identifier.
+		fnName := strings.TrimSpace(attr.Expr)
+		if fnName == "" {
+			l.errs = append(l.errs, Diagnostic{
+				Span:    root.Span,
+				Message: fmt.Sprintf("engine surface handler %q has empty function name", attr.Name),
+			})
+			continue
+		}
+		if !isValidGoIdent(fnName) {
+			l.errs = append(l.errs, Diagnostic{
+				Span:    root.Span,
+				Message: fmt.Sprintf("engine surface handler %q references %q which is not a valid Go identifier", attr.Name, fnName),
+			})
+			continue
+		}
+		handlers = append(handlers, SurfaceHandlerRef{
+			EventName:    attr.Name,
+			FunctionName: fnName,
+		})
+	}
+
+	comp.EngineSurface = true
+	comp.SurfaceHandlers = handlers
+}
+
+// isValidGoIdent reports whether s is a valid (non-empty) Go identifier.
+// It does not check for reserved keywords — that is fine at this stage.
+func isValidGoIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 {
+			if !isGoIdentStart(r) {
+				return false
+			}
+		} else {
+			if !isGoIdentContinue(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isGoIdentStart(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
+}
+
+func isGoIdentContinue(r rune) bool {
+	return isGoIdentStart(r) || (r >= '0' && r <= '9')
 }
 
 // findGSXReturn searches a function body for a return statement containing GSX.

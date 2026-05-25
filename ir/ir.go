@@ -18,6 +18,18 @@ type Program struct {
 	// Package is the Go package name.
 	Package string
 
+	// PackagePath is the Go import path for this package (e.g.
+	// "github.com/odvcencio/gosx/examples/mygraph"). It is empty when the
+	// program is produced by ir.Lower alone; callers that need the full import
+	// path (e.g. the build pipeline) must set it after Lower returns.
+	PackagePath string
+
+	// Dir is the absolute path to the directory that contains the source files
+	// for this package. It is empty when the program is produced by ir.Lower
+	// alone; the build pipeline sets it so that LowerEngineSurface can read
+	// the package's *.go files.
+	Dir string
+
 	// Imports collected from the source file.
 	Imports []Import
 
@@ -63,10 +75,29 @@ type Component struct {
 	// Span tracks source location for diagnostics.
 	Span Span
 
+	// EngineSurface is true when EngineKind == "surface" and the root element
+	// is <canvas>. Set by the lowering pass after surface-specific validation.
+	EngineSurface bool
+
+	// SurfaceHandlers holds the canvas on* event handler bindings for engine
+	// surface components. Populated during lowering when EngineSurface is true.
+	SurfaceHandlers []SurfaceHandlerRef
+
 	// Scope holds extracted signals, computeds, and handlers from the
 	// component's function body. Populated by the body analyzer when
 	// the source is a .gsx file with a full component body.
 	Scope *ComponentScope
+}
+
+// SurfaceHandlerRef records a single on* attribute binding on a surface
+// component's root <canvas> element.
+type SurfaceHandlerRef struct {
+	// EventName is the camelCase JSX attribute name, e.g. "onMount", "onClick".
+	EventName string
+
+	// FunctionName is the top-level package function referenced by the attribute,
+	// e.g. "mount", "onSelect".
+	FunctionName string
 }
 
 // ComponentScope holds declarations extracted from a component function body

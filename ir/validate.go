@@ -68,6 +68,11 @@ func (v *validator) validateComponent(comp *Component) {
 	if comp.IsIsland {
 		v.diags = append(v.diags, validateIslandExprs(v.prog, comp)...)
 	}
+
+	// For engine surface components, run surface-specific validation.
+	if comp.IsEngine && comp.EngineKind == "surface" {
+		v.diags = append(v.diags, validateEngineSurface(v.prog, comp)...)
+	}
 }
 
 func (v *validator) validateNode(node *Node) {
@@ -264,6 +269,55 @@ func isUnsupportedIslandComponentRef(tag string) bool {
 	default:
 		return false
 	}
+}
+
+// validateEngineSurface performs validation specific to engine surface
+// components that goes beyond what the lowering pass checks. It produces
+// informational diagnostics that are appropriate for IDE integration.
+func validateEngineSurface(prog *Program, comp *Component) []Diagnostic {
+	var diags []Diagnostic
+
+	if int(comp.Root) >= len(prog.Nodes) {
+		return diags
+	}
+	root := &prog.Nodes[comp.Root]
+
+	// Root must be <canvas>. (The lowering pass already rejects this, but
+	// Validate is a separate pass that may run on programs not produced by
+	// Lower, so we check here too.)
+	if root.Kind != NodeElement || root.Tag != "canvas" {
+		tag := root.Tag
+		if root.Kind == NodeFragment {
+			tag = "(fragment)"
+		}
+		diags = append(diags, Diagnostic{
+			Span:    root.Span,
+			Message: fmt.Sprintf("engine surface root must be <canvas>; got <%s>", tag),
+			Hint:    "An engine surface component must return a single <canvas> element.",
+		})
+		return diags
+	}
+
+	// Validate each SurfaceHandlerRef: function name must be a non-empty valid
+	// Go identifier. (Existence in the package is deferred to the build pipeline.)
+	for _, ref := range comp.SurfaceHandlers {
+		if strings.TrimSpace(ref.FunctionName) == "" {
+			diags = append(diags, Diagnostic{
+				Span:    root.Span,
+				Message: fmt.Sprintf("engine surface handler %q has empty function name", ref.EventName),
+			})
+			continue
+		}
+		if !isValidGoIdent(ref.FunctionName) {
+			diags = append(diags, Diagnostic{
+				Span:    root.Span,
+				Message: fmt.Sprintf("engine surface handler %q references %q which is not a valid Go identifier", ref.EventName, ref.FunctionName),
+				Hint:    "The handler must be the name of a top-level function in the same package.",
+			})
+		}
+	}
+
+	return diags
 }
 
 // VoidElements are HTML elements that cannot have children.

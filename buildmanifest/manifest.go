@@ -10,10 +10,11 @@ import (
 
 // Manifest describes all build outputs for deployment.
 type Manifest struct {
-	Runtime     RuntimeAssets       `json:"runtime"`
-	Islands     []IslandAsset       `json:"islands"`
-	CSS         []CSSAsset          `json:"css"`
-	SceneAssets *SceneAssetManifest `json:"sceneAssets,omitempty"`
+	Runtime        RuntimeAssets        `json:"runtime"`
+	Islands        []IslandAsset        `json:"islands"`
+	CSS            []CSSAsset           `json:"css"`
+	SceneAssets    *SceneAssetManifest  `json:"sceneAssets,omitempty"`
+	EngineSurfaces []EngineSurfaceAsset `json:"engineSurfaces,omitempty"`
 }
 
 type RuntimeAssets struct {
@@ -44,6 +45,15 @@ type IslandAsset struct {
 type CSSAsset struct {
 	Component string `json:"component"`
 	Source    string `json:"source,omitempty"`
+	HashedAsset
+}
+
+// EngineSurfaceAsset describes a compiled surface WASM module in the build manifest.
+type EngineSurfaceAsset struct {
+	Component     string   `json:"component"`
+	Capabilities  []string `json:"capabilities,omitempty"`
+	Compiler      string   `json:"compiler"` // "go" or "tinygo"
+	PropsTypeName string   `json:"propsType,omitempty"`
 	HashedAsset
 }
 

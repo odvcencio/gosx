@@ -1,0 +1,375 @@
+// Package buildsurface compiles a *ir.SurfaceProgram into a cached WASM module
+// that the browser-side bootstrap can mount onto a canvas element.
+package buildsurface
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/odvcencio/gosx/internal/version"
+	"github.com/odvcencio/gosx/ir"
+)
+
+// Compiler selects the Go toolchain to use when compiling surface WASM modules.
+type Compiler int
+
+const (
+	// CompilerGo uses the standard gc toolchain (go build). Preferred in dev
+	// mode for fast incremental builds.
+	CompilerGo Compiler = iota
+
+	// CompilerTinyGo uses TinyGo for smaller WASM output. Preferred in
+	// production builds.
+	CompilerTinyGo
+)
+
+// Options controls how Build compiles and caches a surface WASM module.
+type Options struct {
+	// Compiler selects the toolchain. Use CompilerGo during development (called
+	// from Discover); CompilerTinyGo for production (called from the CLI build).
+	Compiler Compiler
+
+	// CacheDir is the directory used for content-addressed WASM caching.
+	// Typically <projectRoot>/.gosx/cache/surfaces.
+	CacheDir string
+
+	// OutputDir is the public serving directory where the cached WASM is copied
+	// so that the HTTP handler can serve it.
+	OutputDir string
+
+	// GoSXRoot is the absolute path to the GoSX module root. When empty, Build
+	// resolves it via `go list`.
+	GoSXRoot string
+
+	// ProjectDir is the directory used to resolve module roots. When empty,
+	// the current working directory is used.
+	ProjectDir string
+}
+
+const gosxModuleImportPath = "github.com/odvcencio/gosx"
+
+// Build compiles sp into a WASM module using the toolchain selected by opts.
+// Results are content-addressed by a fingerprint derived from sp.SourceFingerprint,
+// the compiler tag, and the GoSX version. The compiled WASM is cached inside
+// opts.CacheDir and also copied to opts.OutputDir for serving.
+//
+// Returns the absolute output file path and the full fingerprint hash.
+func Build(ctx context.Context, sp *ir.SurfaceProgram, opts Options) (wasmPath, hash string, err error) {
+	if sp == nil {
+		return "", "", fmt.Errorf("buildsurface.Build: nil SurfaceProgram")
+	}
+	if opts.CacheDir == "" {
+		return "", "", fmt.Errorf("buildsurface.Build: CacheDir is required")
+	}
+	if opts.OutputDir == "" {
+		return "", "", fmt.Errorf("buildsurface.Build: OutputDir is required")
+	}
+
+	projectDir := opts.ProjectDir
+	if projectDir == "" {
+		projectDir, err = os.Getwd()
+		if err != nil {
+			return "", "", fmt.Errorf("buildsurface.Build: getwd: %w", err)
+		}
+	}
+
+	gosxRoot := opts.GoSXRoot
+	if gosxRoot == "" {
+		gosxRoot, err = resolveModuleRoot(projectDir, gosxModuleImportPath)
+		if err != nil {
+			return "", "", fmt.Errorf("buildsurface.Build: resolve gosx root: %w", err)
+		}
+	}
+
+	// 1. Compute fingerprint.
+	fp := buildFingerprint(sp, opts.Compiler)
+
+	// 2. Cache lookup.
+	if cachedPath, ok := lookupCache(opts.CacheDir, fp); ok {
+		out := outputWASMPath(opts.OutputDir, sp.Name, fp)
+		if err := copyToOutput(out, cachedPath); err != nil {
+			return "", "", fmt.Errorf("buildsurface.Build: copy from cache: %w", err)
+		}
+		return out, fp, nil
+	}
+
+	// 3. Build scratch module.
+	scratchDir, cleanup, err := prepareScratchModule(sp, fp, gosxRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("buildsurface.Build: prepare scratch module: %w", err)
+	}
+	defer cleanup()
+
+	// 4. Compile.
+	compiledPath := filepath.Join(scratchDir, "out.wasm")
+	if err := compileSurface(ctx, opts.Compiler, scratchDir, compiledPath); err != nil {
+		return "", "", fmt.Errorf("buildsurface.Build: compile: %w", err)
+	}
+
+	// 5. Optional wasm-opt.
+	_ = tryOptimizeWASM(compiledPath)
+
+	// 6. Read compiled bytes.
+	data, err := os.ReadFile(compiledPath)
+	if err != nil {
+		return "", "", fmt.Errorf("buildsurface.Build: read compiled wasm: %w", err)
+	}
+
+	// 7. Write cache atomically.
+	cachedPath, err := writeCache(opts.CacheDir, fp, data)
+	if err != nil {
+		return "", "", fmt.Errorf("buildsurface.Build: write cache: %w", err)
+	}
+
+	// 8. Copy to output.
+	out := outputWASMPath(opts.OutputDir, sp.Name, fp)
+	if err := copyToOutput(out, cachedPath); err != nil {
+		return "", "", fmt.Errorf("buildsurface.Build: copy to output: %w", err)
+	}
+
+	return out, fp, nil
+}
+
+// buildFingerprint combines the surface source fingerprint with the compiler
+// tag and the GoSX version, so the cache invalidates when either changes.
+func buildFingerprint(sp *ir.SurfaceProgram, compiler Compiler) string {
+	compilerTag := "go"
+	if compiler == CompilerTinyGo {
+		compilerTag = "tinygo"
+	}
+	h := sha256.New()
+	h.Write([]byte(sp.SourceFingerprint))
+	h.Write([]byte{0})
+	h.Write([]byte(compilerTag))
+	h.Write([]byte{0})
+	h.Write([]byte(version.Current))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// prepareScratchModule creates a temporary module directory containing:
+//   - go.mod with a replace directive pointing to the GoSX module root
+//   - user/ subdirectory holding every file in sp.SourceFiles
+//   - main.go at the module root, generated by GenerateMain
+//   - go.sum copied from the GoSX root (if present)
+func prepareScratchModule(sp *ir.SurfaceProgram, fp, gosxRoot string) (string, func(), error) {
+	short := fp
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	modName := fmt.Sprintf("gosx_surface_%s_%s", sanitizeName(sp.Name), short)
+
+	scratchDir, err := os.MkdirTemp("", "gosx-surface-wasm-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create scratch dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(scratchDir) }
+
+	if err := writeScratchGoMod(scratchDir, modName, gosxRoot); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+
+	// Copy user source files into user/ subdirectory.
+	userDir := filepath.Join(scratchDir, "user")
+	if err := os.MkdirAll(userDir, 0755); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("create user dir: %w", err)
+	}
+	for _, sf := range sp.SourceFiles {
+		dst := filepath.Join(userDir, sf.Path)
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("create dir for %s: %w", sf.Path, err)
+		}
+		if err := os.WriteFile(dst, sf.Content, 0644); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("write user file %s: %w", sf.Path, err)
+		}
+	}
+
+	// Generate main.go.
+	userImportPath := modName + "/user"
+	mainSrc, err := GenerateMain(sp, userImportPath)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("generate main.go: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(scratchDir, "main.go"), mainSrc, 0644); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("write main.go: %w", err)
+	}
+
+	// Copy go.sum from GoSX root to satisfy the module requirements of the replace.
+	if data, err := os.ReadFile(filepath.Join(gosxRoot, "go.sum")); err == nil {
+		_ = os.WriteFile(filepath.Join(scratchDir, "go.sum"), data, 0644)
+	}
+
+	return scratchDir, cleanup, nil
+}
+
+// writeScratchGoMod writes a minimal go.mod for the scratch surface module.
+func writeScratchGoMod(dir, modName, gosxRoot string) error {
+	var sb strings.Builder
+	sb.WriteString("module ")
+	sb.WriteString(modName)
+	sb.WriteString("\n\ngo 1.21\n")
+	sb.WriteString("\nrequire ")
+	sb.WriteString(gosxModuleImportPath)
+	sb.WriteString(" v0.0.0\n")
+	sb.WriteString("\nreplace ")
+	sb.WriteString(gosxModuleImportPath)
+	sb.WriteString(" => ")
+	sb.WriteString(gosxRoot)
+	sb.WriteString("\n")
+	return os.WriteFile(filepath.Join(dir, "go.mod"), []byte(sb.String()), 0644)
+}
+
+// compileSurface dispatches to the appropriate compiler.
+func compileSurface(ctx context.Context, compiler Compiler, scratchDir, outputPath string) error {
+	switch compiler {
+	case CompilerTinyGo:
+		return compileTinyGo(ctx, scratchDir, outputPath)
+	default:
+		return compileGo(ctx, scratchDir, outputPath)
+	}
+}
+
+// compileGo runs `GOOS=js GOARCH=wasm go build -o outputPath .` in scratchDir.
+func compileGo(ctx context.Context, scratchDir, outputPath string) error {
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", outputPath, ".")
+	cmd.Dir = scratchDir
+	cmd.Env = append(execEnvWithoutGoFlags(),
+		"GOOS=js",
+		"GOARCH=wasm",
+		"GOWORK=off",
+		"GOFLAGS=-mod=mod -buildvcs=false",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("go build: %w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// compileTinyGo invokes TinyGo on scratchDir targeting wasm.
+func compileTinyGo(ctx context.Context, scratchDir, outputPath string) error {
+	tinygoPath, err := exec.LookPath("tinygo")
+	if err != nil {
+		return fmt.Errorf("tinygo not found on PATH: %w", err)
+	}
+
+	baseEnv := execEnvWithoutGoFlags()
+	baseEnv = setEnvVar(baseEnv, "GOWORK", "off")
+	baseEnv = setEnvVar(baseEnv, "GOFLAGS", "-mod=mod -buildvcs=false")
+
+	args := []string{
+		"build",
+		"-target", "wasm",
+		"-no-debug",
+		"-panic=trap",
+		"-o", outputPath,
+		".",
+	}
+
+	cmd := exec.CommandContext(ctx, tinygoPath, args...)
+	cmd.Dir = scratchDir
+	cmd.Env = baseEnv
+	outBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tinygo build: %w\n%s", err, strings.TrimSpace(string(outBytes)))
+	}
+	return nil
+}
+
+// tryOptimizeWASM runs wasm-opt -Oz on path if wasm-opt is available.
+// Errors are silently ignored — optimisation is best-effort.
+func tryOptimizeWASM(path string) bool {
+	woptPath, err := exec.LookPath("wasm-opt")
+	if err != nil {
+		return false
+	}
+	optTmp := path + ".opt"
+	cmd := exec.Command(woptPath, "-Oz",
+		"--enable-bulk-memory",
+		"--enable-nontrapping-float-to-int",
+		"--strip-debug",
+		"--strip-producers",
+		path, "-o", optTmp)
+	if cmd.Run() != nil {
+		return false
+	}
+	if err := os.Rename(optTmp, path); err != nil {
+		_ = os.Remove(optTmp)
+		return false
+	}
+	return true
+}
+
+// resolveModuleRoot returns the on-disk root directory of importPath by running
+// `go list -f {{.Dir}} <importPath>` in projectDir.
+func resolveModuleRoot(projectDir, importPath string) (string, error) {
+	cmd := exec.Command("go", "list", "-f", "{{.Dir}}", importPath)
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("go list %s: %w", importPath, err)
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return "", fmt.Errorf("go list %s: empty result", importPath)
+	}
+	return dir, nil
+}
+
+// sanitizeName replaces non-alphanumeric runes with underscores.
+func sanitizeName(name string) string {
+	var sb strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			sb.WriteRune(r)
+		} else {
+			sb.WriteRune('_')
+		}
+	}
+	return sb.String()
+}
+
+// execEnvWithoutGoFlags returns os.Environ() with any GOFLAGS entry stripped.
+func execEnvWithoutGoFlags() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GOFLAGS=") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// setEnvVar sets key=value in env, replacing any existing entry for key.
+func setEnvVar(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			if !replaced {
+				out = append(out, prefix+value)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !replaced {
+		out = append(out, prefix+value)
+	}
+	return out
+}
