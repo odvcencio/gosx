@@ -10,7 +10,7 @@ require (
 	golang.org/x/net v0.52.0
 )
 
-require github.com/odvcencio/turboquant v0.1.2
+require github.com/odvcencio/turboquant v0.1.3
 
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
