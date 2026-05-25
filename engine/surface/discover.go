@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -178,8 +179,17 @@ func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manif
 		}
 
 		ctx := context.Background()
+		// Default to TinyGo for size — Go-WASM is 20+ MB for nontrivial programs
+		// and violates the gosx "inspectable runtime cost" principle. Fall back
+		// to the standard gc toolchain only when TinyGo isn't on PATH OR when
+		// no compatible Go SDK is installed (TinyGo ≤0.40 caps at Go 1.25).
+		compiler := buildsurface.CompilerTinyGo
+		if reason := tinyGoUnavailableReason(); reason != "" {
+			compiler = buildsurface.CompilerGo
+			fmt.Fprintf(os.Stderr, "gosx/surface: %s; falling back to standard Go (-trimpath -ldflags=-s -w) — WASM will be larger than TinyGo output\n", reason)
+		}
 		wasmPath, hash, buildErr := buildsurface.Build(ctx, sp, buildsurface.Options{
-			Compiler:  buildsurface.CompilerGo,
+			Compiler:  compiler,
 			CacheDir:  cacheDir,
 			OutputDir: outputDir,
 		})
@@ -229,4 +239,59 @@ func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manif
 		})
 	}
 	return nil
+}
+
+// tinyGoUnavailableReason returns "" if TinyGo can actually build (binary on
+// PATH AND a compatible Go SDK is available), or a human-readable reason why
+// not. Honors GOSX_FORCE_GO_COMPILER as an explicit "skip TinyGo" override
+// (set to any non-empty value when transitive dep go-directives push past
+// TinyGo's supported Go range and you want the standard gc fallback).
+func tinyGoUnavailableReason() string {
+	if strings.TrimSpace(os.Getenv("GOSX_FORCE_GO_COMPILER")) != "" {
+		return "GOSX_FORCE_GO_COMPILER set"
+	}
+	if _, err := exec.LookPath("tinygo"); err != nil {
+		return "tinygo not on PATH (install: https://tinygo.org/getting-started/install/)"
+	}
+	// TinyGo (≤0.40.x) supports Go 1.19–1.25. We need to find either:
+	//   - current Go in that range, or
+	//   - an SDK under $HOME/sdk/go1.N matching, or
+	//   - $GOSX_TINYGO_GOROOT pointing somewhere usable.
+	// Be conservative: if we can't find a 1.19–1.25 SDK, fall back.
+	if root := strings.TrimSpace(os.Getenv("GOSX_TINYGO_GOROOT")); root != "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		matches, _ := filepath.Glob(filepath.Join(home, "sdk", "go1.*"))
+		for _, root := range matches {
+			base := filepath.Base(root)
+			if !strings.HasPrefix(base, "go1.") {
+				continue
+			}
+			rest := strings.TrimPrefix(base, "go1.")
+			dot := strings.Index(rest, ".")
+			minorStr := rest
+			if dot >= 0 {
+				minorStr = rest[:dot]
+			}
+			var minor int
+			if _, err := fmt.Sscanf(minorStr, "%d", &minor); err != nil {
+				continue
+			}
+			if minor >= 19 && minor <= 25 {
+				// Check the SDK has a usable go binary AND that gosx's own
+				// transitive deps don't require something higher than this SDK.
+				if _, statErr := os.Stat(filepath.Join(root, "bin", "go")); statErr == nil {
+					// Heuristic: we can't easily probe deep transitive go-directives
+					// from here, so assume the SDK is usable. If TinyGo actually
+					// fails to build (e.g. because the gosx module declares
+					// go >= 1.26), Build() will return an error and the caller
+					// will log it.
+					return ""
+				}
+			}
+		}
+	}
+	return "tinygo present but no compatible Go SDK in 1.19–1.25 range found under ~/sdk/go1.*"
 }
