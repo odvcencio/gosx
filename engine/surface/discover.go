@@ -91,6 +91,16 @@ func Discover(projectRoot string) error {
 		return nil
 	}
 
+	// Resolve to an absolute path so that filepath.WalkDir does not receive "."
+	// as the root, which would cause the skip-hidden-dirs heuristic to
+	// immediately SkipDir the entire tree (d.Name() == "." starts with '.').
+	if !filepath.IsAbs(projectRoot) {
+		abs, err := filepath.Abs(projectRoot)
+		if err == nil {
+			projectRoot = abs
+		}
+	}
+
 	cacheDir := filepath.Join(projectRoot, ".gosx", "cache", "surfaces")
 	outputDir := filepath.Join(projectRoot, ".gosx", "cache", "surfaces", "wasm")
 

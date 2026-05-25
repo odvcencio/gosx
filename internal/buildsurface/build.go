@@ -218,7 +218,7 @@ func writeScratchGoMod(dir, modName, gosxRoot string) error {
 	var sb strings.Builder
 	sb.WriteString("module ")
 	sb.WriteString(modName)
-	sb.WriteString("\n\ngo 1.21\n")
+	sb.WriteString("\n\ngo 1.26\n")
 	sb.WriteString("\nrequire ")
 	sb.WriteString(gosxModuleImportPath)
 	sb.WriteString(" v0.0.0\n")
