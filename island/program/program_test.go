@@ -1008,3 +1008,77 @@ func TestProgramVersionRoundTripWhenSet(t *testing.T) {
 		t.Errorf("Version = %q, want \"1\"", p.Version)
 	}
 }
+
+// --- Slice X.A: statement sequencing + locals opcodes ---
+
+// TestSequencingOpcodesAreDistinct guards against accidental reuse of the
+// iota slots the AST-compiler initiative added. These five opcodes underpin
+// every multi-statement handler body lowered from Go source; collisions
+// would silently corrupt any program that uses sequencing or locals.
+func TestSequencingOpcodesAreDistinct(t *testing.T) {
+	added := []OpCode{OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet}
+	seen := map[OpCode]bool{}
+	for _, op := range added {
+		if seen[op] {
+			t.Errorf("OpCode %d appears twice in the X.A additions", op)
+		}
+		seen[op] = true
+	}
+	// Cross-check: none of the additions collides with the pre-existing
+	// opcode space that TestOpCodeRange already covers (OpLitString..OpRange).
+	prior := []OpCode{
+		OpLitString, OpLitInt, OpLitFloat, OpLitBool,
+		OpPropGet, OpSignalGet, OpSignalSet, OpSignalUpdate,
+		OpAdd, OpSub, OpMul, OpDiv, OpMod, OpNeg,
+		OpEq, OpNeq, OpLt, OpGt, OpLte, OpGte,
+		OpAnd, OpOr, OpNot,
+		OpConcat, OpFormat,
+		OpCond, OpCall, OpIndex, OpLen, OpRange,
+		OpEventGet,
+		OpMap, OpFilter, OpFind, OpSlice, OpAppend, OpContains,
+		OpToUpper, OpToLower, OpTrim, OpSplit, OpJoin, OpReplace,
+		OpSubstring, OpStartsWith, OpEndsWith,
+		OpToString, OpToInt, OpToFloat,
+	}
+	for _, op := range prior {
+		if seen[op] {
+			t.Errorf("X.A addition collides with prior opcode %d", op)
+		}
+	}
+}
+
+// TestSequencingOpcodeShapes documents the operand shape each new opcode
+// expects so callers (the X.C lowerer, hand-rolled tests) can construct
+// programs with confidence. The constructors here are illustrative — the
+// VM-level behavior tests live in client/vm/vm_test.go.
+func TestSequencingOpcodeShapes(t *testing.T) {
+	// OpSeq: any positive count of operands; returns last.
+	seq := Expr{Op: OpSeq, Operands: []ExprID{0, 1, 2}}
+	if len(seq.Operands) != 3 {
+		t.Errorf("OpSeq operands = %d, want 3", len(seq.Operands))
+	}
+
+	// OpAssign: Value is target name, Operands[0] is value expr.
+	assign := Expr{Op: OpAssign, Value: "x", Operands: []ExprID{0}}
+	if assign.Value != "x" || len(assign.Operands) != 1 {
+		t.Errorf("OpAssign shape unexpected: %+v", assign)
+	}
+
+	// OpLocalDecl: Value is local name; no operands.
+	decl := Expr{Op: OpLocalDecl, Value: "i"}
+	if decl.Value != "i" || len(decl.Operands) != 0 {
+		t.Errorf("OpLocalDecl shape unexpected: %+v", decl)
+	}
+
+	// OpLocalGet: Value is local name; no operands.
+	get := Expr{Op: OpLocalGet, Value: "i"}
+	if get.Value != "i" {
+		t.Errorf("OpLocalGet shape unexpected: %+v", get)
+	}
+
+	// OpLocalSet: Value is local name; Operands[0] is value expr.
+	set := Expr{Op: OpLocalSet, Value: "i", Operands: []ExprID{0}}
+	if set.Value != "i" || len(set.Operands) != 1 {
+		t.Errorf("OpLocalSet shape unexpected: %+v", set)
+	}
+}
