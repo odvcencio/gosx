@@ -56,7 +56,13 @@ func (s *Store) SetObserver(fn func(name string, value vm.Value)) {
 }
 
 // Set creates or updates a shared signal.
+//
+// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// $scene.event.* writes are redirected to the canonical $surface.event.*
+// target. Renderer-driven writes already use the canonical names; the alias
+// pass here is defensive for hand-rolled callers that haven't migrated.
 func (s *Store) Set(name string, val vm.Value) {
+	name = signal.ResolveAlias(name)
 	if sig, ok := s.signals[name]; ok {
 		sig.Set(val)
 	} else {
@@ -86,7 +92,14 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 }
 
 // Get reads a shared signal value.
+//
+// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// $scene.event.* reads transparently forward to the canonical
+// $surface.event.* target. A subscriber reading $scene.event.selectedID
+// after a renderer-driven write to $surface.event.selectedID gets the
+// fresh value.
 func (s *Store) Get(name string) (vm.Value, bool) {
+	name = signal.ResolveAlias(name)
 	if sig, ok := s.signals[name]; ok {
 		return sig.Get(), true
 	}
@@ -96,7 +109,12 @@ func (s *Store) Get(name string) (vm.Value, bool) {
 // Signal returns a shared signal, creating it with the given initial value
 // if it doesn't exist yet. If it already exists, the init value is ignored
 // (first island to declare wins).
+//
+// Per ADR 0007 the name is run through signal.ResolveAlias before lookup, so
+// an island declaring a dependency on the legacy $scene.event.X automatically
+// hooks into the canonical $surface.event.X signal.
 func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
+	name = signal.ResolveAlias(name)
 	if sig, ok := s.signals[name]; ok {
 		return sig
 	}
