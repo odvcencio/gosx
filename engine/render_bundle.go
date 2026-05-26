@@ -60,7 +60,14 @@ type RenderSprite struct {
 }
 
 // RenderCamera describes the camera used for world-space rendering.
+//
+// Mode selects the projection pipeline. The empty string is the default
+// (perspective 3D, Scene3D's path). The constant bundle.OrthoCamera2DMode
+// switches to the 2D pipeline (orthographic projection, depth + lighting
+// + post-FX disabled) per ADR 0004. For ortho2d cameras, X/Y are reused
+// as pan offsets and Z is the zoom factor (1 = 1 world unit per pixel).
 type RenderCamera struct {
+	Mode      string  `json:"mode,omitempty"`
 	X         float64 `json:"x,omitempty"`
 	Y         float64 `json:"y,omitempty"`
 	Z         float64 `json:"z,omitempty"`
