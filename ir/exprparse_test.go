@@ -519,3 +519,131 @@ func TestParseEmptyString(t *testing.T) {
 		t.Fatal("expected error for empty expression")
 	}
 }
+
+// Phase 4: closure-based predicates for map/filter/find.
+// The parser binds the single closure parameter to the existing _item
+// magic prop, lowering to the same shape as the legacy
+// "items.map(_item * 2)" form.
+
+func TestParseFilterClosureWithReturn(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr(`items.filter(func(i){ return i.active })`, scope)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exprs[rootID].Op != program.OpFilter {
+		t.Fatalf("expected OpFilter, got %d", exprs[rootID].Op)
+	}
+	if len(exprs[rootID].Operands) != 2 {
+		t.Fatalf("expected receiver + body operand, got %d", len(exprs[rootID].Operands))
+	}
+	// Body should be an OpIndex (i.active) where the receiver resolves to _item.
+	bodyID := exprs[rootID].Operands[1]
+	body := exprs[bodyID]
+	if body.Op != program.OpIndex {
+		t.Fatalf("expected body OpIndex for i.active, got %d", body.Op)
+	}
+	// The receiver of i.active should be a PropGet on _item.
+	recv := exprs[body.Operands[0]]
+	if recv.Op != program.OpPropGet || recv.Value != "_item" {
+		t.Fatalf("expected closure param to bind to _item PropGet, got Op=%d Value=%q", recv.Op, recv.Value)
+	}
+}
+
+func TestParseFilterClosureExpressionBody(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr(`items.filter(func(i){ i.active })`, scope)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exprs[rootID].Op != program.OpFilter {
+		t.Fatalf("expected OpFilter, got %d", exprs[rootID].Op)
+	}
+	bodyID := exprs[rootID].Operands[1]
+	body := exprs[bodyID]
+	if body.Op != program.OpIndex {
+		t.Fatalf("expected body OpIndex for i.active, got %d", body.Op)
+	}
+}
+
+func TestParseMapClosure(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr(`items.map(func(i){ return i.name })`, scope)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exprs[rootID].Op != program.OpMap {
+		t.Fatalf("expected OpMap, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseFindClosure(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr(`items.find(func(i){ return i.id == 3 })`, scope)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exprs[rootID].Op != program.OpFind {
+		t.Fatalf("expected OpFind, got %d", exprs[rootID].Op)
+	}
+}
+
+func TestParseChainedMethodCall(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	exprs, rootID, err := ParseExpr(`items.filter(func(i){ return i.active }).map(func(i){ return i.name })`, scope)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exprs[rootID].Op != program.OpMap {
+		t.Fatalf("expected outer OpMap, got %d", exprs[rootID].Op)
+	}
+	inner := exprs[exprs[rootID].Operands[0]]
+	if inner.Op != program.OpFilter {
+		t.Fatalf("expected inner OpFilter, got %d", inner.Op)
+	}
+}
+
+func TestParseClosureMustBeSingleParam(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	_, _, err := ParseExpr(`items.filter(func(i, j){ return i })`, scope)
+	if err == nil {
+		t.Fatal("expected error for multi-param closure")
+	}
+}
+
+func TestParseClosureRejectsZeroParams(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	_, _, err := ParseExpr(`items.filter(func(){ return true })`, scope)
+	if err == nil {
+		t.Fatal("expected error for zero-param closure")
+	}
+}
+
+func TestParseClosureRejectsMultiStatementBody(t *testing.T) {
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	_, _, err := ParseExpr(`items.filter(func(i){ x := 1; return x })`, scope)
+	if err == nil {
+		t.Fatal("expected error for multi-statement closure body")
+	}
+}
+
+func TestParseClosureOnlyAllowedInMapFilterFindArgs(t *testing.T) {
+	// A bare closure outside a map/filter/find argument should fail.
+	_, _, err := ParseExpr(`func(i){ return i }`, &ExprScope{})
+	if err == nil {
+		t.Fatal("expected error for top-level closure")
+	}
+}
+
+func TestParseChainDepthCap(t *testing.T) {
+	// Four levels of method chaining are allowed.
+	scope := &ExprScope{Props: map[string]bool{"items": true}}
+	if _, _, err := ParseExpr(`items.filter(func(i){ return i.a }).filter(func(i){ return i.b }).filter(func(i){ return i.c }).filter(func(i){ return i.d })`, scope); err != nil {
+		t.Fatalf("expected 4-level chain to parse, got %v", err)
+	}
+	// Five levels should be rejected with a helpful error.
+	_, _, err := ParseExpr(`items.filter(func(i){ return i.a }).filter(func(i){ return i.b }).filter(func(i){ return i.c }).filter(func(i){ return i.d }).filter(func(i){ return i.e })`, scope)
+	if err == nil {
+		t.Fatal("expected error for 5-level method chain")
+	}
+}
