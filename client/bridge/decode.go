@@ -3,7 +3,7 @@ package bridge
 import (
 	"fmt"
 
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/island/program"
 )
 
 // DecodeProgram dispatches to JSON or binary decoder based on format.

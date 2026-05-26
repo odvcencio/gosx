@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx/ir"
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 

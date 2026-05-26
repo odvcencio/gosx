@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 func TestTranspileParseErrorIncludesLocationAndSnippet(t *testing.T) {
@@ -140,8 +140,8 @@ func TestTranspileGoSXUIImportedComponentProps(t *testing.T) {
 	source := []byte(`package main
 
 import (
-	"github.com/odvcencio/gosx"
-	ui "github.com/odvcencio/gosx/ui"
+	"m31labs.dev/gosx"
+	ui "m31labs.dev/gosx/ui"
 )
 
 func View(disabled bool) gosx.Node {

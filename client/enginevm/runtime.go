@@ -10,10 +10,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx/client/vm"
-	rootengine "github.com/odvcencio/gosx/engine"
-	islandprogram "github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/signal"
+	"m31labs.dev/gosx/client/vm"
+	rootengine "m31labs.dev/gosx/engine"
+	islandprogram "m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/signal"
 )
 
 type resolvedNode struct {

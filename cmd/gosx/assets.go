@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/odvcencio/gosx/assetpipe"
+	"m31labs.dev/gosx/assetpipe"
 )
 
 func cmdAssets() {

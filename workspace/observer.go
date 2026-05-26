@@ -1,8 +1,8 @@
 package workspace
 
 import (
-	"github.com/odvcencio/gosx/crdt"
-	"github.com/odvcencio/gosx/vecdb"
+	"m31labs.dev/gosx/crdt"
+	"m31labs.dev/gosx/vecdb"
 )
 
 // observer watches a CRDT doc for vector mutations and keeps a vecdb index in sync.

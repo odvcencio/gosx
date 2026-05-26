@@ -3,11 +3,11 @@ package docs
 import (
 	"strings"
 
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/auth"
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/auth"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/session"
 )
 
 func init() {

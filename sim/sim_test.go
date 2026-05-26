@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/hub"
+	"m31labs.dev/gosx/hub"
 )
 
 // mockSim implements Simulation for testing.

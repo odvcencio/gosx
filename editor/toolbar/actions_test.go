@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/editor/input"
-	"github.com/odvcencio/gosx/editor/textmodel"
+	"m31labs.dev/gosx/editor/input"
+	"m31labs.dev/gosx/editor/textmodel"
 )
 
 func TestActionSnippet_Defaults(t *testing.T) {

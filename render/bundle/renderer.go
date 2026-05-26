@@ -6,8 +6,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // shadowMapSize is the square resolution of each cascaded-shadow-map layer.

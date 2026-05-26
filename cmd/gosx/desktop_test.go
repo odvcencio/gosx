@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/desktop"
+	"m31labs.dev/gosx/desktop"
 )
 
 func TestDesktopListenAddrDefaultsToLoopback(t *testing.T) {

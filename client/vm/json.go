@@ -3,7 +3,7 @@ package vm
 import (
 	"encoding/json"
 
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/island/program"
 )
 
 // ValueFromAny converts a decoded Go value into a VM value.

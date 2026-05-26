@@ -99,7 +99,7 @@ func TestGoWASMBuildArgsAppendVariantTags(t *testing.T) {
 	if !stringSliceContains(args, "-tags=gosx_tiny_runtime gosx_tiny_islands_only") {
 		t.Fatalf("expected combined Go runtime tags in args: %v", args)
 	}
-	if !stringSliceContains(args, "github.com/odvcencio/gosx/client/wasm") {
+	if !stringSliceContains(args, "m31labs.dev/gosx/client/wasm") {
 		t.Fatalf("expected wasm package in args: %v", args)
 	}
 }

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx/buildmanifest"
-	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/route"
+	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/route"
 	"golang.org/x/net/html"
 )
 

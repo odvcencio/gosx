@@ -3,7 +3,7 @@ package docs
 import (
 	"math"
 
-	"github.com/odvcencio/gosx/scene"
+	"m31labs.dev/gosx/scene"
 )
 
 // GeometryZooProgram returns a cinematic Scene3D that showcases PBR material

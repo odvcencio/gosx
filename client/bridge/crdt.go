@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/odvcencio/gosx/crdt"
-	crdtsync "github.com/odvcencio/gosx/crdt/sync"
-	"github.com/odvcencio/gosx/signal"
+	"m31labs.dev/gosx/crdt"
+	crdtsync "m31labs.dev/gosx/crdt/sync"
+	"m31labs.dev/gosx/signal"
 )
 
 // CRDTSignal mirrors a signal write into a CRDT document.

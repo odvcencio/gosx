@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/internal/version"
+	"m31labs.dev/gosx/internal/version"
 )
 
 func TestRunReleaseCheckCommandPassesCurrentRepo(t *testing.T) {

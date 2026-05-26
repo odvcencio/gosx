@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	islandprogram "github.com/odvcencio/gosx/island/program"
+	islandprogram "m31labs.dev/gosx/island/program"
 )
 
 // Handle is an index-based reference to a node in a builder.

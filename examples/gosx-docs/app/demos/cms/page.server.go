@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/odvcencio/gosx/action"
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/examples/gosx-docs/app/demos/democtl"
-	"github.com/odvcencio/gosx/route"
+	"m31labs.dev/gosx/action"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
+	"m31labs.dev/gosx/route"
 )
 
 // publishStore is an in-memory store for the last published CMS state.

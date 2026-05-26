@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/examples/gosx-docs/app/demos/democtl"
+	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
 )
 
 // ---------------------------------------------------------------------------

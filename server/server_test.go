@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/buildmanifest"
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/engine"
 )
 
 type wrappedStatusError struct {

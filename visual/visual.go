@@ -39,7 +39,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"github.com/odvcencio/gosx/perf"
+	"m31labs.dev/gosx/perf"
 	"github.com/orisano/pixelmatch"
 )
 

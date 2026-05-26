@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	crdtsync "github.com/odvcencio/gosx/crdt/sync"
+	crdtsync "m31labs.dev/gosx/crdt/sync"
 )
 
 func TestDocConvergesAcrossPartitionedConcurrentTextEdits(t *testing.T) {

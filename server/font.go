@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 // FontSource describes one font file used by Font.

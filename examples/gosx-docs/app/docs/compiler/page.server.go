@@ -1,8 +1,8 @@
 package docs
 
 import (
-	docs "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/route"
+	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/route"
 )
 
 func init() {

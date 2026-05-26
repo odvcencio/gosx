@@ -11,13 +11,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/auth"
-	"github.com/odvcencio/gosx/engine"
-	islandprogram "github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/server"
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/auth"
+	"m31labs.dev/gosx/engine"
+	islandprogram "m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
 )
 
 type fileRenderEnv struct {

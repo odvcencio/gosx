@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/scene/cert"
-	sceneschema "github.com/odvcencio/gosx/scene/schema"
+	"m31labs.dev/gosx/scene/cert"
+	sceneschema "m31labs.dev/gosx/scene/schema"
 )
 
 func TestRunSceneCertifyCommandJSON(t *testing.T) {

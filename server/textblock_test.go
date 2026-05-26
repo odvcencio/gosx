@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/textlayout"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/textlayout"
 )
 
 func textBlockAttrMap(attrs []TextBlockAttr) map[string]TextBlockAttr {

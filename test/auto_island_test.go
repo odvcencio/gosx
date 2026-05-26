@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/ir"
-	"github.com/odvcencio/gosx/island"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/island/program"
 )
 
 // TestAutoIslandFromGSX proves the fully automatic island path:

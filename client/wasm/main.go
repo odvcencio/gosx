@@ -6,8 +6,8 @@ import (
 	"errors"
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/client/vm"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/client/vm"
 )
 
 func registerRuntime(b *bridge.Bridge) {

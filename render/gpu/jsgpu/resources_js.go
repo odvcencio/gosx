@@ -5,8 +5,8 @@ package jsgpu
 import (
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/client/jsutil"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/client/jsutil"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // queue wraps a GPUQueue.

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 type nativePostFXKind int

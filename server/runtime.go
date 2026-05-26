@@ -3,11 +3,11 @@ package server
 import (
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/island"
-	islandprogram "github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/island"
+	islandprogram "m31labs.dev/gosx/island/program"
 )
 
 // PageRuntime tracks page-scoped islands, engines, and hubs plus the bootstrap

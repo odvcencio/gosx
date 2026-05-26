@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {

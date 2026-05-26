@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/vecdb"
+	"m31labs.dev/gosx/vecdb"
 )
 
 type smokeResult struct {

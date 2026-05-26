@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/crdt"
-	rootengine "github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/crdt"
+	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/island/program"
 )
 
 func TestBridgeHydrateAndDispatch(t *testing.T) {

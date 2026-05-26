@@ -7,7 +7,7 @@ import (
 	"sync"
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/engine/surface"
+	"m31labs.dev/gosx/engine/surface"
 )
 
 // instanceRecord tracks the live state of one mounted surface instance.

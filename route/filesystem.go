@@ -10,9 +10,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/ir"
 )
 
 // FilePage describes a discovered file-based page route.

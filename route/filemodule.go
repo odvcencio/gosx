@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/server"
 )
 
 // FileLoadFunc loads request-scoped data for a file-routed page.

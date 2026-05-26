@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 func TestPrimitiveForKnownKinds(t *testing.T) {

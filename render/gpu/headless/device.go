@@ -6,7 +6,7 @@ import (
 	"image/color"
 	"math"
 
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // Device is a pure-Go gpu.Device whose "swap chain" is a CPU-backed RGBA

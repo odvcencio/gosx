@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/physics"
-	"github.com/odvcencio/gosx/scene"
-	"github.com/odvcencio/gosx/sim"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/physics"
+	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/sim"
 )
 
 func TestClockFixedStepAndClamp(t *testing.T) {

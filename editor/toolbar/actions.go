@@ -3,8 +3,8 @@ package toolbar
 import (
 	"strings"
 
-	"github.com/odvcencio/gosx/editor/input"
-	"github.com/odvcencio/gosx/editor/textmodel"
+	"m31labs.dev/gosx/editor/input"
+	"m31labs.dev/gosx/editor/textmodel"
 )
 
 // Action maps a toolbar command to a concrete text operation.

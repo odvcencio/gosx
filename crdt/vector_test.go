@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	crdtsync "github.com/odvcencio/gosx/crdt/sync"
+	crdtsync "m31labs.dev/gosx/crdt/sync"
 )
 
 func randomVec(dim int, rng *rand.Rand) []float32 {

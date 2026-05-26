@@ -3,7 +3,7 @@ package sim
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/hub"
+	"m31labs.dev/gosx/hub"
 )
 
 func TestReplayRecordAndPlayback(t *testing.T) {

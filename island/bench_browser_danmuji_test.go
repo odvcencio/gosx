@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/perf/perftest"
+	"m31labs.dev/gosx/perf/perftest"
 )
 
 func TestBrowserPageLifecycle(t *testing.T) {

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"sync"
 
-	gosx "github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/internal/buildsurface"
-	"github.com/odvcencio/gosx/ir"
+	gosx "m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/buildsurface"
+	"m31labs.dev/gosx/ir"
 )
 
 // surfaceManifestEntry is the per-component record written to the JSON manifest.

@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	crdtsync "github.com/odvcencio/gosx/crdt/sync"
+	crdtsync "m31labs.dev/gosx/crdt/sync"
 )
 
 func TestNewDocChecked(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/session"
 )
 
 var (

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx/perf"
+	"m31labs.dev/gosx/perf"
 )
 
 func cmdPerf() {

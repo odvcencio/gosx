@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/route"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
 )
 
 func TestComposableLoweringLiteralVarRefs(t *testing.T) {

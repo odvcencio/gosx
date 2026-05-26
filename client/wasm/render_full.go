@@ -7,11 +7,11 @@ import (
 	"sync"
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/client/vm"
-	"github.com/odvcencio/gosx/render/bundle"
-	"github.com/odvcencio/gosx/render/gpu"
-	"github.com/odvcencio/gosx/render/gpu/jsgpu"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/render/bundle"
+	"m31labs.dev/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu/jsgpu"
 )
 
 // vmValueOf wraps a Go primitive into a vm.Value for injection into the

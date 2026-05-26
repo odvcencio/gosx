@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/island/program"
 )
 
 func TestLowerIslandSimpleElement(t *testing.T) {

@@ -1,11 +1,11 @@
 package livesim
 
 import (
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/hub"
-	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/sim"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/sim"
 )
 
 // Hub is the package-level hub that main.go mounts at /demos/livesim/ws.

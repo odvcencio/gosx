@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/assetpipe"
+	"m31labs.dev/gosx/assetpipe"
 )
 
 func TestRunAssetsPlanCommandJSON(t *testing.T) {

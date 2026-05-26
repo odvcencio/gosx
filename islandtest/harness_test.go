@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/client/vm"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/island/program"
 )
 
 func listProgram() *program.Program {

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/island/program"
 )
 
 // Value is the runtime representation of all values in the island expression VM.

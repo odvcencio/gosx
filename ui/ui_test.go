@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/components"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/components"
 )
 
 func TestButtonRendersLinkVariant(t *testing.T) {

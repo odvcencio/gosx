@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 func TestAppSuspenseStreamsComponentBoundariesByCompletion(t *testing.T) {

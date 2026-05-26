@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 const streamTailMarker = "<!--gosx-stream-tail-->"

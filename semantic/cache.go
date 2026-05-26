@@ -4,8 +4,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/odvcencio/gosx/embed"
-	"github.com/odvcencio/gosx/vecdb"
+	"m31labs.dev/gosx/embed"
+	"m31labs.dev/gosx/vecdb"
 )
 
 // CacheOptions configures a semantic cache.

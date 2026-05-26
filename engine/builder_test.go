@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	islandprogram "github.com/odvcencio/gosx/island/program"
+	islandprogram "m31labs.dev/gosx/island/program"
 )
 
 func TestBuilderDeclaresViewportInputSignals(t *testing.T) {

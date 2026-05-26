@@ -7,9 +7,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/bundle"
-	"github.com/odvcencio/gosx/render/gpu/headless"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/bundle"
+	"m31labs.dev/gosx/render/gpu/headless"
 )
 
 func TestScene3DBenchHeadlessFrameIsDeterministic(t *testing.T) {

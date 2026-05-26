@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	islandprogram "github.com/odvcencio/gosx/island/program"
+	islandprogram "m31labs.dev/gosx/island/program"
 )
 
 func TestProgramJSONRoundTrip(t *testing.T) {

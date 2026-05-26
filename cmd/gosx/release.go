@@ -11,8 +11,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/internal/version"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/version"
 )
 
 type releaseCheckReport struct {

@@ -15,7 +15,7 @@ package docs
 import (
 	"math"
 
-	"github.com/odvcencio/gosx/scene"
+	"m31labs.dev/gosx/scene"
 )
 
 // BenchScene dispatches to a workload-specific scene builder based on the

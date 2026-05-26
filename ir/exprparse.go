@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/island/program"
 )
 
 // ExprScope holds the names known at the island level for resolving identifiers.

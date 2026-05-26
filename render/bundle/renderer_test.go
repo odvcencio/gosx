@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // TestNewBuildsAllPipelines verifies that Renderer construction creates the

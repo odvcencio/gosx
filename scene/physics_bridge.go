@@ -4,7 +4,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/odvcencio/gosx/physics"
+	"m31labs.dev/gosx/physics"
 )
 
 // PhysicsSpec lowers the scene IR's physics declaration into a

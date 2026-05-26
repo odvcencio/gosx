@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/embed"
+	"m31labs.dev/gosx/embed"
 )
 
 func TestCache_SetGet(t *testing.T) {

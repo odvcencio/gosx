@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/textlayout"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/textlayout"
 )
 
 const textBlockAttr = "data-gosx-text-layout"

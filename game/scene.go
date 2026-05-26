@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/physics"
-	"github.com/odvcencio/gosx/scene"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/physics"
+	"m31labs.dev/gosx/scene"
 )
 
 // SceneBuilder renders the current runtime state into Scene3D props.

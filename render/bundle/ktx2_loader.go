@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/odvcencio/gosx/render/bundle/ktx2"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/bundle/ktx2"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // LoadKTX2Texture parses data as a KTX2 container, creates a matching GPU

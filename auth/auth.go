@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/session"
 )
 
 type contextKey string

@@ -3,9 +3,9 @@ package docs
 import (
 	"strings"
 
-	"github.com/odvcencio/gosx/action"
-	docs "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/route"
+	"m31labs.dev/gosx/action"
+	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/route"
 )
 
 func init() {

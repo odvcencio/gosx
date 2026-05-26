@@ -2,7 +2,7 @@
 
 package jsgpu
 
-import "github.com/odvcencio/gosx/render/gpu"
+import "m31labs.dev/gosx/render/gpu"
 
 // Open on non-WASM builds returns gpu.ErrUnsupported. The jsgpu backend only
 // compiles under js && wasm; this stub exists so server-side or test code can

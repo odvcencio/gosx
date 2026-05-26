@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx/assetpipe"
-	"github.com/odvcencio/gosx/internal/version"
-	"github.com/odvcencio/gosx/scene/cert"
-	sceneinspect "github.com/odvcencio/gosx/scene/inspect"
-	sceneschema "github.com/odvcencio/gosx/scene/schema"
+	"m31labs.dev/gosx/assetpipe"
+	"m31labs.dev/gosx/internal/version"
+	"m31labs.dev/gosx/scene/cert"
+	sceneinspect "m31labs.dev/gosx/scene/inspect"
+	sceneschema "m31labs.dev/gosx/scene/schema"
 )
 
 type sceneValidationFileReport struct {

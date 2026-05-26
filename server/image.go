@@ -19,7 +19,7 @@ import (
 
 	"golang.org/x/image/draw"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 const defaultImageEndpoint = "/_gosx/image"

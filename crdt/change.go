@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	enc "github.com/odvcencio/gosx/crdt/encoding"
+	enc "m31labs.dev/gosx/crdt/encoding"
 )
 
 type ActorID [16]byte

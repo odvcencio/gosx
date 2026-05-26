@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/odvcencio/gosx/visual"
+	"m31labs.dev/gosx/visual"
 )
 
 func cmdVisual() {

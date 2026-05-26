@@ -3,7 +3,7 @@ package ir
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/island/program"
 )
 
 func TestParseIntLiteral(t *testing.T) {

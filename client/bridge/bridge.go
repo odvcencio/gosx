@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/odvcencio/gosx/client/enginevm"
-	"github.com/odvcencio/gosx/client/vm"
-	rootengine "github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/signal"
+	"m31labs.dev/gosx/client/enginevm"
+	"m31labs.dev/gosx/client/vm"
+	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/signal"
 )
 
 // Bridge manages active island instances and shared state.

@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx/scene"
-	sceneschema "github.com/odvcencio/gosx/scene/schema"
+	"m31labs.dev/gosx/scene"
+	sceneschema "m31labs.dev/gosx/scene/schema"
 )
 
 const Schema = "gosx.scene3d.inspect.v1"

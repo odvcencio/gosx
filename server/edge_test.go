@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 func TestAppUseEdgeRegistersDescriptorAndMiddleware(t *testing.T) {

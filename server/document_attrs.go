@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 type documentAttr struct {

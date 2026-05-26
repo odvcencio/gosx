@@ -3,9 +3,9 @@ package settings
 import (
 	"log"
 
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {

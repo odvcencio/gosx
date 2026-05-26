@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/odvcencio/gosx/hub"
-	"github.com/odvcencio/gosx/sim"
+	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/sim"
 )
 
 func TestWorldFixedTimestepAccumulator(t *testing.T) {

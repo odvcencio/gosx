@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/odvcencio/gosx/hub"
+	"m31labs.dev/gosx/hub"
 )
 
 // Input holds raw per-client input data for a single tick.

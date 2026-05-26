@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/server"
 )
 
 const (

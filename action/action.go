@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/session"
 )
 
 const maxActionBodyBytes = 1024 * 1024

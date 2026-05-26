@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/textlayout"
+	"m31labs.dev/gosx/textlayout"
 )
 
 func registerTextLayoutRuntime() {

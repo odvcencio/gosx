@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx/auth"
+	"m31labs.dev/gosx/auth"
 	goredis "github.com/redis/go-redis/v9"
 )
 

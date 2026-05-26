@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 func TestSceneIRSchemaIsOptionalButPreserved(t *testing.T) {

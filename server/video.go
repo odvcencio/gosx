@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/engine"
 )
 
 const defaultVideoEngineName = "GoSXVideo"

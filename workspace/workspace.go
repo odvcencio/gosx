@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/odvcencio/gosx/crdt"
-	"github.com/odvcencio/gosx/hub"
-	"github.com/odvcencio/gosx/vecdb"
+	"m31labs.dev/gosx/crdt"
+	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/vecdb"
 )
 
 // Options configures a workspace.

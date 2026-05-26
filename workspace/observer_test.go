@@ -3,8 +3,8 @@ package workspace
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/crdt"
-	"github.com/odvcencio/gosx/vecdb"
+	"m31labs.dev/gosx/crdt"
+	"m31labs.dev/gosx/vecdb"
 )
 
 func TestObserverIndexesVectorOnPut(t *testing.T) {

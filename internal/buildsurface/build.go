@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/odvcencio/gosx/internal/version"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx/internal/version"
+	"m31labs.dev/gosx/ir"
 )
 
 // Compiler selects the Go toolchain to use when compiling surface WASM modules.
@@ -52,7 +52,7 @@ type Options struct {
 	ProjectDir string
 }
 
-const gosxModuleImportPath = "github.com/odvcencio/gosx"
+const gosxModuleImportPath = "m31labs.dev/gosx"
 
 // Build compiles sp into a WASM module using the toolchain selected by opts.
 // Results are content-addressed by a fingerprint derived from sp.SourceFingerprint,

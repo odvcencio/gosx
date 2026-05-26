@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/format"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/format"
+	"m31labs.dev/gosx/ir"
 )
 
 const (

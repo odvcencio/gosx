@@ -4,8 +4,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/odvcencio/gosx/embed"
-	"github.com/odvcencio/gosx/vecdb"
+	"m31labs.dev/gosx/embed"
+	"m31labs.dev/gosx/vecdb"
 )
 
 // ContentOptions configures a content index.

@@ -3,9 +3,9 @@ package docs
 import (
 	"log"
 
-	"github.com/odvcencio/gosx/auth"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/auth"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 var docsAuth *auth.Manager

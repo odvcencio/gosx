@@ -5,7 +5,7 @@ package main
 import (
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/highlight"
+	"m31labs.dev/gosx/highlight"
 )
 
 func registerHighlightRuntime() {

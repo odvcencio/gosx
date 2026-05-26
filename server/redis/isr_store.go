@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/server"
 	goredis "github.com/redis/go-redis/v9"
 )
 

@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 type MotionPreset string

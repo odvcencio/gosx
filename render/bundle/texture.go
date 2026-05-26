@@ -12,7 +12,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // textureResources holds a GPU texture + its default view. Samplers are

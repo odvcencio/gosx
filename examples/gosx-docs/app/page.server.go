@@ -1,7 +1,7 @@
 package docs
 
 import (
-	"github.com/odvcencio/gosx/route"
+	"m31labs.dev/gosx/route"
 )
 
 func init() {

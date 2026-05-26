@@ -7,7 +7,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/odvcencio/gosx/scene"
+	"m31labs.dev/gosx/scene"
 )
 
 type Severity string

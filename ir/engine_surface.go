@@ -19,7 +19,7 @@ type SurfaceProgram struct {
 	Name string
 
 	// Package is the source package import path, e.g.
-	// "github.com/odvcencio/gosx/examples/mygraph".
+	// "m31labs.dev/gosx/examples/mygraph".
 	// Populated from Program.PackagePath; may be empty when PackagePath is not set.
 	Package string
 

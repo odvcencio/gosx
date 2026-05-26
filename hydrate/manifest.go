@@ -5,7 +5,7 @@ package hydrate
 import (
 	"encoding/json"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 // Manifest describes all islands and engines on a page.

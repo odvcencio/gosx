@@ -5,8 +5,8 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/bundle"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/bundle"
 	"github.com/orisano/pixelmatch"
 )
 

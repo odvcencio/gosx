@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/odvcencio/gosx/buildmanifest"
+	"m31labs.dev/gosx/buildmanifest"
 )
 
 const isrBypassHeader = "X-GoSX-ISR-Revalidate"

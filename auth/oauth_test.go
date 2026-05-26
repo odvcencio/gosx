@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/session"
 )
 
 func TestOAuthCallbackSignsIn(t *testing.T) {

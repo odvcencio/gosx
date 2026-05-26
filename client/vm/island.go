@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/signal"
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/signal"
 )
 
 // Island is a live instance of an island component with reactive state.

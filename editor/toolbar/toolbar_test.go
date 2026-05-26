@@ -3,7 +3,7 @@ package toolbar
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/editor/input"
+	"m31labs.dev/gosx/editor/input"
 )
 
 func TestToolbar_Without(t *testing.T) {

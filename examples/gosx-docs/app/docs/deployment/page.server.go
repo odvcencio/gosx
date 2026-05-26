@@ -1,8 +1,8 @@
 package docs
 
 import (
-	docs "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/route"
+	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/route"
 )
 
 func init() {
@@ -16,6 +16,7 @@ func init() {
 				"toc": []map[string]string{
 					{"href": "#build-modes", "label": "Build Modes"},
 					{"href": "#static-export", "label": "Static Export"},
+					{"href": "#github-pages", "label": "GitHub Pages"},
 					{"href": "#server-deployment", "label": "Server Deployment"},
 					{"href": "#isr", "label": "ISR"},
 					{"href": "#edge-bundles", "label": "Edge Bundles"},
@@ -25,25 +26,78 @@ func init() {
 gosx build --prod
 
 # Static export
-gosx export --out ./dist
+gosx export
 
 # Edge bundle
-gosx build --prod --target edge`,
-				"sampleExport": `gosx export --out ./dist
+gosx build --prod`,
+				"sampleExport": `# Development-style static export
+gosx export
+
+# Production bundle with hashed runtime assets
+gosx build --prod
 
 # Output structure
 dist/
-  index.html
-  docs/
-    compiler/
-      index.html
-    deployment/
-      index.html
-  _gosx/
-    bootstrap-lite.js    # 18 KB
-    bootstrap.js         # 94 KB  (islands + engines)
-    gosx-runtime.wasm    # 2.1 MB (island VM)
-    css/`,
+  static/
+    index.html
+    docs/
+      compiler/
+        index.html
+      deployment/
+        index.html
+    404.html
+    gosx/
+      assets/
+      islands/
+      css/
+  export.json`,
+				"sampleGitHubPages": `name: Deploy GoSX site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install TinyGo
+        run: |
+          curl -fsSL -o tinygo.deb https://github.com/tinygo-org/tinygo/releases/download/v0.40.1/tinygo_0.40.1_amd64.deb
+          sudo dpkg -i tinygo.deb
+      - uses: actions/configure-pages@v5
+      - name: Build static site
+        run: go run github.com/odvcencio/gosx/cmd/gosx build --prod .
+      - name: Disable Jekyll
+        run: touch dist/static/.nojekyll
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/static
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4`,
 				"sampleServerBuild": `go build -o gosx-app ./cmd/server
 
 # Binary contains everything — templates, assets, WASM.

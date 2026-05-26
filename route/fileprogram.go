@@ -10,14 +10,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	gosxcss "github.com/odvcencio/gosx/css"
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/ir"
-	islandprogram "github.com/odvcencio/gosx/island/program"
-	gosxscene "github.com/odvcencio/gosx/scene"
-	"github.com/odvcencio/gosx/server"
-	"github.com/odvcencio/gosx/textlayout"
+	"m31labs.dev/gosx"
+	gosxcss "m31labs.dev/gosx/css"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/ir"
+	islandprogram "m31labs.dev/gosx/island/program"
+	gosxscene "m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/textlayout"
 )
 
 type fileProgramRenderer struct {

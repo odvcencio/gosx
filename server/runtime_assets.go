@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/odvcencio/gosx/buildmanifest"
-	"github.com/odvcencio/gosx/island"
+	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/island"
 )
 
 // bootstrapStub is a minimal no-op bootstrap script served when the real

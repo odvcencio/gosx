@@ -3,8 +3,8 @@ package test
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/island/program"
 )
 
 func hydrateAndDispatch(t *testing.T, prog *program.Program, handler string) []byte {

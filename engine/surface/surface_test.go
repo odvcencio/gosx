@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	gosx "github.com/odvcencio/gosx"
+	gosx "m31labs.dev/gosx"
 )
 
 // TestNewRenderer_Mount_DataAttrs verifies that NewRenderer("Graph").Mount(props)

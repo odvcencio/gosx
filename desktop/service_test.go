@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/desktop/bridge"
+	"m31labs.dev/gosx/desktop/bridge"
 )
 
 type desktopTestService struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/desktop/bridge"
+	"m31labs.dev/gosx/desktop/bridge"
 )
 
 func TestNormalizeOptionsDefaults(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 	"github.com/odvcencio/mdpp"
 )
 

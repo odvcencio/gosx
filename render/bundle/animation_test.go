@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 func TestFrameAppliesTopLevelAnimationToInstancedMeshTransforms(t *testing.T) {

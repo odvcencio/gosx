@@ -14,7 +14,7 @@ import (
 func makeCanvasProgram(attrs []Attr) (*Program, int) {
 	prog := &Program{
 		Package:     "graph",
-		PackagePath: "github.com/odvcencio/gosx/examples/graph",
+		PackagePath: "m31labs.dev/gosx/examples/graph",
 	}
 	prog.Nodes = append(prog.Nodes, Node{
 		Kind:  NodeElement,
@@ -77,8 +77,8 @@ func TestLowerEngineSurfaceHappyPath(t *testing.T) {
 	if sp.Name != "Graph" {
 		t.Errorf("Name: want %q, got %q", "Graph", sp.Name)
 	}
-	if sp.Package != "github.com/odvcencio/gosx/examples/graph" {
-		t.Errorf("Package: want %q, got %q", "github.com/odvcencio/gosx/examples/graph", sp.Package)
+	if sp.Package != "m31labs.dev/gosx/examples/graph" {
+		t.Errorf("Package: want %q, got %q", "m31labs.dev/gosx/examples/graph", sp.Package)
 	}
 	if sp.PropsTypeName != "GraphProps" {
 		t.Errorf("PropsTypeName: want %q, got %q", "GraphProps", sp.PropsTypeName)
@@ -131,7 +131,7 @@ func TestLowerEngineSurfaceRejectNonCanvas(t *testing.T) {
 	// Build a program where the root is <div>, not <canvas>.
 	prog := &Program{
 		Package:     "graph",
-		PackagePath: "github.com/odvcencio/gosx/examples/graph",
+		PackagePath: "m31labs.dev/gosx/examples/graph",
 	}
 	prog.Nodes = append(prog.Nodes, Node{
 		Kind: NodeElement,
@@ -190,7 +190,7 @@ func TestLowerEngineSurfaceRejectNonCanvas(t *testing.T) {
 func TestLowerEngineSurfaceRejectUnknownHandler(t *testing.T) {
 	prog := &Program{
 		Package:     "graph",
-		PackagePath: "github.com/odvcencio/gosx/examples/graph",
+		PackagePath: "m31labs.dev/gosx/examples/graph",
 	}
 	prog.Nodes = append(prog.Nodes, Node{
 		Kind: NodeElement,

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/odvcencio/gosx/client/vm"
-	"github.com/odvcencio/gosx/island"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/island/program"
 )
 
 // Harness runs an island program entirely inside go test.

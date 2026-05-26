@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 func TestRegistryRendersRegisteredComponent(t *testing.T) {

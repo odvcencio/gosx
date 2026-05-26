@@ -5,7 +5,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 // AssetURL returns a root-relative public asset URL for local assets while

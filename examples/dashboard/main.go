@@ -22,13 +22,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/highlight"
-	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/island"
-	"github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/route"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/highlight"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/route"
 )
 
 func main() {

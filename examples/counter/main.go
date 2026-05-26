@@ -13,10 +13,10 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/island"
-	"github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/server"
 )
 
 func main() {

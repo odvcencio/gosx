@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 // PageHandler renders an HTML page for a given request context.

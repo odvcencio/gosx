@@ -3,10 +3,10 @@ package test
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/ir"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/program"
 )
 
 // TestEndToEndPipeline tests the complete flow:

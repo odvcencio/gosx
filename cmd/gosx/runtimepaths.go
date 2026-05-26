@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const gosxModuleImportPath = "github.com/odvcencio/gosx"
+const gosxModuleImportPath = "m31labs.dev/gosx"
 
 func resolveGoSXModuleRoot(projectDir string) (string, error) {
 	out, err := goListDir(projectDir, gosxModuleImportPath)

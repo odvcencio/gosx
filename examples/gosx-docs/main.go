@@ -9,17 +9,17 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/auth"
-	"github.com/odvcencio/gosx/env"
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	collab "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/collab"
-	fluid "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/fluid"
-	livesim "github.com/odvcencio/gosx/examples/gosx-docs/app/demos/livesim"
-	_ "github.com/odvcencio/gosx/examples/gosx-docs/modules"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/auth"
+	"m31labs.dev/gosx/env"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
+	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
+	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
+	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
 )
 
 func main() {

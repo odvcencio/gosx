@@ -3,8 +3,8 @@ package route
 import (
 	"net/http"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/scene"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/scene"
 )
 
 // benchStaticRouter returns a router with a few static routes for measuring

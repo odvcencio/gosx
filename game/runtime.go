@@ -5,9 +5,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/odvcencio/gosx/hub"
-	"github.com/odvcencio/gosx/physics"
-	"github.com/odvcencio/gosx/sim"
+	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/physics"
+	"m31labs.dev/gosx/sim"
 )
 
 // Phase is a runtime system phase.

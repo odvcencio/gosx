@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
@@ -346,7 +346,7 @@ func (t *transpiler) typedPropsType(tag string) (string, bool) {
 
 func (t *transpiler) gosxUIPropsType(tag string) (string, bool) {
 	alias, component, ok := splitMemberTag(tag)
-	if !ok || t.imports[alias] != "github.com/odvcencio/gosx/ui" {
+	if !ok || t.imports[alias] != "m31labs.dev/gosx/ui" {
 		return "", false
 	}
 	propsType := gosxUIComponentPropsType(component)
@@ -395,7 +395,7 @@ func (t *transpiler) emitTypedAttrsForTag(tag string, n *gotreesitter.Node) []st
 
 func (t *transpiler) isGoSXUITag(tag string) bool {
 	alias, _, ok := splitMemberTag(tag)
-	return ok && t.imports[alias] == "github.com/odvcencio/gosx/ui"
+	return ok && t.imports[alias] == "m31labs.dev/gosx/ui"
 }
 
 func (t *transpiler) emitGoSXUIAttrs(tag string, n *gotreesitter.Node) []string {

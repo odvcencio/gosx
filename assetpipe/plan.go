@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx/render/bundle/ktx2"
+	"m31labs.dev/gosx/render/bundle/ktx2"
 )
 
 const (

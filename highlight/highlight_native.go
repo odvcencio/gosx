@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	gosxlang "github.com/odvcencio/gosx"
+	gosxlang "m31labs.dev/gosx"
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )

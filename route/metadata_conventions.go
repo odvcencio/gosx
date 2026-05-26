@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/server"
 )
 
 // FileMetadataAssetKind identifies a convention-driven metadata asset.

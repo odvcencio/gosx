@@ -3,8 +3,8 @@ package semantic
 import (
 	"sync"
 
-	"github.com/odvcencio/gosx/embed"
-	"github.com/odvcencio/gosx/vecdb"
+	"m31labs.dev/gosx/embed"
+	"m31labs.dev/gosx/vecdb"
 )
 
 // RouterOptions configures a semantic router.

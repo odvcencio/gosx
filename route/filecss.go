@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx"
-	gosxcss "github.com/odvcencio/gosx/css"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	gosxcss "m31labs.dev/gosx/css"
+	"m31labs.dev/gosx/server"
 )
 
 var fileCSSNodeCache sync.Map

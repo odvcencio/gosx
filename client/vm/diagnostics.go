@@ -3,7 +3,7 @@ package vm
 import (
 	"fmt"
 
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/island/program"
 )
 
 // DiagnosticSeverity classifies an island VM diagnostic.

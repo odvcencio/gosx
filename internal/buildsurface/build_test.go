@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/internal/buildsurface"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx/internal/buildsurface"
+	"m31labs.dev/gosx/ir"
 )
 
 // testFingerprint replicates the fingerprint algorithm from ir for test use.
@@ -47,7 +47,7 @@ func minimalSurfaceProgram() *ir.SurfaceProgram {
 	userSrc := `package user
 
 import (
-	"github.com/odvcencio/gosx/engine/surface"
+	"m31labs.dev/gosx/engine/surface"
 )
 
 func Mount(ctx *surface.Context, c *surface.Canvas) {}

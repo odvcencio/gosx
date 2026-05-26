@@ -4,10 +4,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/ir"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/program"
 )
 
 // TestGSXPipelineEndToEnd is the proof that GoSX works end-to-end:

@@ -5,7 +5,7 @@
 // isolates the WebGPU-specific strings from the rest of the backend.
 package jsgpu
 
-import "github.com/odvcencio/gosx/render/gpu"
+import "m31labs.dev/gosx/render/gpu"
 
 func encodeFilterMode(f gpu.FilterMode) string {
 	if f == gpu.FilterLinear {

@@ -3,7 +3,7 @@ package bundle
 import (
 	"fmt"
 
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // fakeDevice is a gpu.Device test double that records every call against it

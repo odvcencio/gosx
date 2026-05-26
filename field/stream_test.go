@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/hub"
+	"m31labs.dev/gosx/hub"
 )
 
 func TestPublishSubscribeField(t *testing.T) {

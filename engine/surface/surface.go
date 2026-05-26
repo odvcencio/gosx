@@ -32,7 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	gosx "github.com/odvcencio/gosx"
+	gosx "m31labs.dev/gosx"
 )
 
 // Modifier is a bitfield of keyboard modifier keys active during an event.

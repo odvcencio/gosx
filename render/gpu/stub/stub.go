@@ -7,7 +7,7 @@
 package stub
 
 import (
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // Device is a no-op Device that satisfies the gpu.Device interface for

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/scene"
+	"m31labs.dev/gosx/scene"
 )
 
 func TestValidateJSONAcceptsMinimalScene(t *testing.T) {

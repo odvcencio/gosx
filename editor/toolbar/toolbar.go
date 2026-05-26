@@ -1,6 +1,6 @@
 package toolbar
 
-import "github.com/odvcencio/gosx/editor/input"
+import "m31labs.dev/gosx/editor/input"
 
 // Item is a single toolbar button.
 type Item struct {

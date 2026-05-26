@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/odvcencio/gosx/sim"
+	"m31labs.dev/gosx/sim"
 )
 
 // helper: make an input map with a single player click at (x, y)

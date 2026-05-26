@@ -9,8 +9,8 @@ import (
 	"html"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 )
 
 // ExprEvaluator is called to evaluate Go expression holes during rendering.

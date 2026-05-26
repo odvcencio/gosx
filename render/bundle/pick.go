@@ -6,8 +6,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // PickResult is the renderer-facing structured result for a queued pick.

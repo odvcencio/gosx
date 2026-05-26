@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/client/jsutil"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/client/jsutil"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // Device is the WebGPU-backed gpu.Device. Construct via Open.

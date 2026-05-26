@@ -3,10 +3,10 @@ package docs
 import (
 	"time"
 
-	"github.com/odvcencio/gosx"
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {

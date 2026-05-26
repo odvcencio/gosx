@@ -3,7 +3,7 @@ package bundle
 import (
 	"math"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 // mat4 is a column-major 4x4 float32 matrix. m[0..3] = column 0, etc.

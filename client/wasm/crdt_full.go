@@ -5,8 +5,8 @@ package main
 import (
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/crdt"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/crdt"
 )
 
 func registerCRDTRuntime() {

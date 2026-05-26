@@ -3,8 +3,8 @@ package vm
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/signal"
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/signal"
 )
 
 // helper to build a minimal program from expressions.

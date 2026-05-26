@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/odvcencio/gosx/auth"
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/auth"
+	"m31labs.dev/gosx/session"
 	goredis "github.com/redis/go-redis/v9"
 )
 

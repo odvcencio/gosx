@@ -1,8 +1,8 @@
 package playground
 
 import (
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/route"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/route"
 )
 
 // playgroundCompiler is the per-process Compiler instance used by the

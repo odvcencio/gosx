@@ -3,7 +3,7 @@ package bundle
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 // TestFrameInstancedMeshDispatches verifies that a RenderInstancedMesh

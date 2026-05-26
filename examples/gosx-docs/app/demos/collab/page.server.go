@@ -3,10 +3,10 @@ package collab
 import (
 	"encoding/json"
 
-	docsapp "github.com/odvcencio/gosx/examples/gosx-docs/app"
-	"github.com/odvcencio/gosx/hub"
-	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/route"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/route"
 )
 
 // Hub is exported for main.go to mount at /demos/collab/ws.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	sceneinspect "github.com/odvcencio/gosx/scene/inspect"
+	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
 
 func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
@@ -418,9 +418,9 @@ func Page() Node {
 	mustWriteFile(t, filepath.Join(dir, "app", "verify", "page.server.go"), `package app
 
 import (
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {

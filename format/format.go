@@ -7,7 +7,7 @@ package format
 import (
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 

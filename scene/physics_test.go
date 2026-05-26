@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/odvcencio/gosx/physics"
+	"m31labs.dev/gosx/physics"
 )
 
 func TestPropsPhysicsIRIsOmittedWhenUnused(t *testing.T) {

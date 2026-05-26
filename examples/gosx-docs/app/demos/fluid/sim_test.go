@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/field"
-	"github.com/odvcencio/gosx/hub"
+	"m31labs.dev/gosx/field"
+	"m31labs.dev/gosx/hub"
 )
 
 func TestComputeFrameShape(t *testing.T) {

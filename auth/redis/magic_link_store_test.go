@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/odvcencio/gosx/auth"
+	"m31labs.dev/gosx/auth"
 	goredis "github.com/redis/go-redis/v9"
 )
 

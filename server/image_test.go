@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 func TestImageHelperBuildsResponsiveMarkup(t *testing.T) {

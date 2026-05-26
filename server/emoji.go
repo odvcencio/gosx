@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/internal/emoji"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/emoji"
 )
 
 //go:embed emoji_complete.js

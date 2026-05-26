@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 // Props are dynamic component props used by registry-backed component libraries.

@@ -1,10 +1,10 @@
 package editor
 
 import (
-	"github.com/odvcencio/gosx/editor/input"
-	"github.com/odvcencio/gosx/editor/textmodel"
-	"github.com/odvcencio/gosx/editor/toolbar"
-	"github.com/odvcencio/gosx/hub"
+	"m31labs.dev/gosx/editor/input"
+	"m31labs.dev/gosx/editor/textmodel"
+	"m31labs.dev/gosx/editor/toolbar"
+	"m31labs.dev/gosx/hub"
 )
 
 // MoodChoice is one option in the mood dropdown.

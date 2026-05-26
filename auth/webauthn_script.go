@@ -3,7 +3,7 @@ package auth
 import (
 	_ "embed"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 //go:embed webauthn_runtime.js

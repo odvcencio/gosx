@@ -1,7 +1,7 @@
 package docs
 
 import (
-	"github.com/odvcencio/gosx/scene"
+	"m31labs.dev/gosx/scene"
 )
 
 // DemoLightningScene is a visual QA fixture for the v0.15.0 thick-line

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/editor/textmodel"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/editor/textmodel"
 )
 
 // Editor is the component descriptor returned by New.

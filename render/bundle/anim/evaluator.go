@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 // Joint describes one skeleton joint in palette order.

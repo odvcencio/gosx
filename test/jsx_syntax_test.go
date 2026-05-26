@@ -3,8 +3,8 @@ package test
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 )
 
 // mustCompile is a test helper that compiles .gsx source and fails the test on error.

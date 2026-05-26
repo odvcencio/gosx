@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // materialFingerprint is the hashable identity of a material as seen by the

@@ -3,8 +3,8 @@ package test
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 )
 
 // TestBodyAnalyzerSignals verifies that signal.New() declarations
@@ -122,7 +122,7 @@ func Dashboard() Node {
 func TestBodyAnalyzerRecognizesAliasedSignalImportsInVarDecls(t *testing.T) {
 	source := []byte(`package main
 
-import sig "github.com/odvcencio/gosx/signal"
+import sig "m31labs.dev/gosx/signal"
 
 //gosx:island
 func Counter() Node {
@@ -159,7 +159,7 @@ func Counter() Node {
 func TestBodyAnalyzerRecognizesDotImportedSignalHelpers(t *testing.T) {
 	source := []byte(`package main
 
-import . "github.com/odvcencio/gosx/signal"
+import . "m31labs.dev/gosx/signal"
 
 //gosx:island
 func Dashboard() Node {

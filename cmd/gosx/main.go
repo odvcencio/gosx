@@ -36,10 +36,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/format"
-	"github.com/odvcencio/gosx/internal/transpile"
-	"github.com/odvcencio/gosx/render"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/format"
+	"m31labs.dev/gosx/internal/transpile"
+	"m31labs.dev/gosx/render"
 )
 
 func main() {

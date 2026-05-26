@@ -5,9 +5,9 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/bundle/ktx2"
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/bundle/ktx2"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 func TestLoadKTX2TextureUploadsCompressedFormat(t *testing.T) {

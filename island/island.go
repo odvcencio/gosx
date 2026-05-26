@@ -21,12 +21,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/buildmanifest"
-	"github.com/odvcencio/gosx/client/vm"
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/hydrate"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/island/program"
 )
 
 // Renderer handles island-aware rendering of GoSX component trees.

@@ -8,12 +8,12 @@ import (
 	"syscall/js"
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/client/vm"
-	rootengine "github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/ir"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/client/vm"
+	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/program"
 	"github.com/rivo/uniseg"
 )
 

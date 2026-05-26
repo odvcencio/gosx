@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx/ir"
 )
 
 func TestGrammarGeneration(t *testing.T) {

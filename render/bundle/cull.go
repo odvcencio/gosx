@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // cullWGSL is the R3 frustum-culling compute shader. One thread per instance

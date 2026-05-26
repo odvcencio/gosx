@@ -13,9 +13,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/server"
 )
 
 // Route defines a URL pattern → component mapping.

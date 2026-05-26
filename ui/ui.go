@@ -6,11 +6,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/components"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/components"
 )
 
-const packageName = "github.com/odvcencio/gosx/ui"
+const packageName = "m31labs.dev/gosx/ui"
 
 // BaseProps are shared by GoSX UI components.
 type BaseProps struct {

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/session"
 )
 
 func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {

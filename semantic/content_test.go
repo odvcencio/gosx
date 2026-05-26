@@ -3,7 +3,7 @@ package semantic
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/embed"
+	"m31labs.dev/gosx/embed"
 )
 
 func TestContentIndex_AddSearch(t *testing.T) {

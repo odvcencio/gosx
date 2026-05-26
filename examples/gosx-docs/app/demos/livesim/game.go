@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/odvcencio/gosx/sim"
+	"m31labs.dev/gosx/sim"
 )
 
 const (

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/server"
 )
 
 // FileRouteConfig describes inheritable directory-scoped configuration loaded

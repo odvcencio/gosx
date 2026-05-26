@@ -3,7 +3,7 @@ package test
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/hydrate"
+	"m31labs.dev/gosx/hydrate"
 )
 
 func TestEngineDirectiveWorker(t *testing.T) {

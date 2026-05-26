@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx/hub"
-	"github.com/odvcencio/gosx/sim"
+	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/sim"
 )
 
 // BodyState is the serializable state for one rigid body in a physics world.

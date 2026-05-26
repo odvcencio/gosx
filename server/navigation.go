@@ -3,7 +3,7 @@ package server
 import (
 	_ "embed"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 //go:embed navigation_runtime.js

@@ -18,12 +18,12 @@ import (
 	"sync"
 
 	"github.com/andybalholm/brotli"
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/buildmanifest"
-	"github.com/odvcencio/gosx/internal/buildsurface"
-	"github.com/odvcencio/gosx/ir"
-	"github.com/odvcencio/gosx/island/program"
-	sceneinspect "github.com/odvcencio/gosx/scene/inspect"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/buildsurface"
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/program"
+	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
 
 // BuildManifest describes all build outputs for deployment.

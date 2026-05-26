@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/odvcencio/gosx/examples/gosx-docs/app/demos/democtl"
+	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
 )
 
 // realClock is a local implementation of democtl.Clock that delegates to

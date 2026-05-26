@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/odvcencio/gosx/lsp"
+	"m31labs.dev/gosx/lsp"
 )
 
 func cmdLSP() {

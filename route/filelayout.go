@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx"
-	gosxcss "github.com/odvcencio/gosx/css"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	gosxcss "m31labs.dev/gosx/css"
+	"m31labs.dev/gosx/ir"
 )
 
 // gsxCompileCache caches compiled .gsx IR programs by content hash.

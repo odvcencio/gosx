@@ -19,7 +19,7 @@ type Program struct {
 	Package string
 
 	// PackagePath is the Go import path for this package (e.g.
-	// "github.com/odvcencio/gosx/examples/mygraph"). It is empty when the
+	// "m31labs.dev/gosx/examples/mygraph"). It is empty when the
 	// program is produced by ir.Lower alone; callers that need the full import
 	// path (e.g. the build pipeline) must set it after Lower returns.
 	PackagePath string

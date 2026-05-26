@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/scene"
-	"github.com/odvcencio/gosx/server"
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
 )
 
 func TestScanDirDiscoversPagesAndSpecialFiles(t *testing.T) {

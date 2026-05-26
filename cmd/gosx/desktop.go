@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/odvcencio/gosx/desktop"
-	"github.com/odvcencio/gosx/dev"
-	"github.com/odvcencio/gosx/env"
+	"m31labs.dev/gosx/desktop"
+	"m31labs.dev/gosx/dev"
+	"m31labs.dev/gosx/env"
 )
 
 // DesktopRunOptions configures the native desktop development host.

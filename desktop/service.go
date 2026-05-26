@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/odvcencio/gosx/desktop/bridge"
+	"m31labs.dev/gosx/desktop/bridge"
 )
 
 const (

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/examples/gosx-docs/app/demos/democtl"
-	"github.com/odvcencio/gosx/ir"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/program"
 )
 
 // ---------------------------------------------------------------------------

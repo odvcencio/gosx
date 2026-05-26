@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/odvcencio/gosx/crdt"
-	crdtsync "github.com/odvcencio/gosx/crdt/sync"
+	"m31labs.dev/gosx/crdt"
+	crdtsync "m31labs.dev/gosx/crdt/sync"
 )
 
 type syncedDoc struct {

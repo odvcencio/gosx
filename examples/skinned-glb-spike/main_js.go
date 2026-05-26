@@ -7,9 +7,9 @@ import (
 	"math"
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/render/bundle"
-	"github.com/odvcencio/gosx/render/gpu/jsgpu"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/bundle"
+	"m31labs.dev/gosx/render/gpu/jsgpu"
 )
 
 func identity() []float32 {

@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/odvcencio/gosx/island/program"
-	"github.com/odvcencio/gosx/signal"
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/signal"
 )
 
 // VM evaluates island expressions against props and signal state.

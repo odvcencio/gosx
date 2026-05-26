@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/server"
 )
 
 var fileMetadataCache sync.Map

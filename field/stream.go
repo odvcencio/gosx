@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/odvcencio/gosx/hub"
+	"m31labs.dev/gosx/hub"
 )
 
 const fieldEventPrefix = "field:"

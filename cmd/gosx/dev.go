@@ -15,12 +15,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/dev"
-	"github.com/odvcencio/gosx/env"
-	"github.com/odvcencio/gosx/internal/buildsurface"
-	"github.com/odvcencio/gosx/ir"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/dev"
+	"m31labs.dev/gosx/env"
+	"m31labs.dev/gosx/internal/buildsurface"
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/program"
 )
 
 const defaultDevListenAddr = ":3000"

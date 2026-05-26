@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 const (

@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	enc "github.com/odvcencio/gosx/crdt/encoding"
-	crdtsync "github.com/odvcencio/gosx/crdt/sync"
+	enc "m31labs.dev/gosx/crdt/encoding"
+	crdtsync "m31labs.dev/gosx/crdt/sync"
 )
 
 type objectKind string

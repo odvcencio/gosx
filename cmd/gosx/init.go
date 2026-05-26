@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 func cmdInit() {
@@ -175,7 +175,7 @@ func localGoSXDependencyReplaceLines(repoRoot string) []string {
 			continue
 		}
 		modulePath := fields[1]
-		if modulePath == "github.com/odvcencio/gosx" {
+		if modulePath == "m31labs.dev/gosx" {
 			continue
 		}
 		target := fields[3]
@@ -204,11 +204,11 @@ import (
 	"time"
 
 	_ "__MODULE__/modules"
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/env"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/env"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
 )
 
 func main() {
@@ -310,10 +310,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/odvcencio/gosx/action"
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
-	"github.com/odvcencio/gosx/session"
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
 )
 
 func init() {
@@ -451,8 +451,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/odvcencio/gosx/route"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {

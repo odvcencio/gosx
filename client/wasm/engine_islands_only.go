@@ -2,6 +2,6 @@
 
 package main
 
-import "github.com/odvcencio/gosx/client/bridge"
+import "m31labs.dev/gosx/client/bridge"
 
 func registerEngineRuntime(b *bridge.Bridge) {}

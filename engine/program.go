@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	islandprogram "github.com/odvcencio/gosx/island/program"
+	islandprogram "m31labs.dev/gosx/island/program"
 )
 
 // Program describes a VM-driven engine scene graph.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx/ir"
 )
 
 // eventMapping maps a canonical DOM event name to the runtime struct field
@@ -37,8 +37,8 @@ var mainTemplate = template.Must(template.New("surface_main").Parse(`//go:build 
 package main
 
 import (
-	"github.com/odvcencio/gosx/engine/surface"
-	"github.com/odvcencio/gosx/engine/surface/runtime"
+	"m31labs.dev/gosx/engine/surface"
+	"m31labs.dev/gosx/engine/surface/runtime"
 	user "{{.UserImportPath}}"
 )
 

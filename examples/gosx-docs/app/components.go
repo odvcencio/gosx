@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/highlight"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/highlight"
+	"m31labs.dev/gosx/server"
 )
 
 var tooltipID atomic.Int64

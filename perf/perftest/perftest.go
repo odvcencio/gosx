@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/odvcencio/gosx/perf"
+	"m31labs.dev/gosx/perf"
 )
 
 // RunOption configures a browser profiling scenario.

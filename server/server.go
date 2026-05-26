@@ -25,7 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 type Middleware func(http.Handler) http.Handler

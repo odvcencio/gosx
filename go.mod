@@ -1,4 +1,4 @@
-module github.com/odvcencio/gosx
+module m31labs.dev/gosx
 
 go 1.26
 

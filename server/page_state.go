@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/engine"
-	"github.com/odvcencio/gosx/island"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/island"
 )
 
 // PageState carries shared request-scoped page response state used by both

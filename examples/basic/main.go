@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/server"
 )
 
 func main() {

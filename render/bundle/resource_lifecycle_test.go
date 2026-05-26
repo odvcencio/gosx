@@ -3,7 +3,7 @@ package bundle
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 func TestEnsureHDRPreservesOldResourcesOnIDBufferFailure(t *testing.T) {

@@ -5,8 +5,8 @@ package main
 import (
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/client/bridge"
-	rootengine "github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/client/bridge"
+	rootengine "m31labs.dev/gosx/engine"
 )
 
 func registerEngineRuntime(b *bridge.Bridge) {

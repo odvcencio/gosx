@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/engine"
 )
 
 func TestVideoRendersServerBaselineWithSingleSourceAttrs(t *testing.T) {

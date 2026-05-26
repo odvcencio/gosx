@@ -827,7 +827,7 @@ func (l *lowerer) lowerImportSpec(n *gotreesitter.Node) {
 }
 
 func (l *lowerer) recordSignalImport(imp Import) {
-	if strings.TrimSpace(imp.Path) != "github.com/odvcencio/gosx/signal" {
+	if strings.TrimSpace(imp.Path) != "m31labs.dev/gosx/signal" {
 		return
 	}
 	alias := strings.TrimSpace(imp.Alias)

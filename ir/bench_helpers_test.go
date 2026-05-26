@@ -1,6 +1,6 @@
 package ir_test
 
-import "github.com/odvcencio/gosx/ir"
+import "m31labs.dev/gosx/ir"
 
 // benchCounterSource is the small island fixture used by Lower benchmarks.
 const benchCounterSource = `package counter

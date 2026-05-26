@@ -3,8 +3,8 @@ package playground
 import (
 	"testing"
 
-	gosx "github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/ir"
+	gosx "m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 )
 
 // expectedSlugs is the canonical list of preset slugs the suite enforces.

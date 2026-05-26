@@ -4,9 +4,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/odvcencio/gosx/client/bridge"
-	"github.com/odvcencio/gosx/client/vm"
-	"github.com/odvcencio/gosx/island/program"
+	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/island/program"
 )
 
 // TestSharedStoreBasic verifies typed signal creation and read-back.

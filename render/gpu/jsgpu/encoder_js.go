@@ -5,7 +5,7 @@ package jsgpu
 import (
 	"syscall/js"
 
-	"github.com/odvcencio/gosx/render/gpu"
+	"m31labs.dev/gosx/render/gpu"
 )
 
 // commandEncoder wraps a GPUCommandEncoder.

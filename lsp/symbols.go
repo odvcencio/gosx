@@ -3,8 +3,8 @@ package lsp
 import (
 	"strings"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 )
 
 const (

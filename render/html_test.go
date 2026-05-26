@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx/ir"
 )
 
 func TestCompactIslandRendering(t *testing.T) {

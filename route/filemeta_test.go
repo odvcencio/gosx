@@ -3,7 +3,7 @@ package route
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx/server"
+	"m31labs.dev/gosx/server"
 )
 
 func TestIsZeroMetadataTreatsRichFieldsAsNonZero(t *testing.T) {

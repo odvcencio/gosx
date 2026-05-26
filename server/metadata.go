@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 // MetadataResolver derives request-scoped metadata from the current request

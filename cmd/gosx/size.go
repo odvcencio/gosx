@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/andybalholm/brotli"
-	"github.com/odvcencio/gosx/buildmanifest"
+	"m31labs.dev/gosx/buildmanifest"
 )
 
 type sizeReport struct {

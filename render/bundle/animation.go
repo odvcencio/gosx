@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/odvcencio/gosx/engine"
+	"m31labs.dev/gosx/engine"
 )
 
 type nativeAnimationState struct {

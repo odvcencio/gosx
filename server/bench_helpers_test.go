@@ -1,6 +1,6 @@
 package server
 
-import "github.com/odvcencio/gosx"
+import "m31labs.dev/gosx"
 
 // benchSimplePageNode is a tiny body node for the lightweight bench cases.
 func benchSimplePageNode() gosx.Node {
