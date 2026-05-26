@@ -33,6 +33,7 @@ import (
 	"fmt"
 
 	gosx "m31labs.dev/gosx"
+	"m31labs.dev/gosx/island/program"
 )
 
 // Modifier is a bitfield of keyboard modifier keys active during an event.
@@ -256,6 +257,15 @@ type registryEntry struct {
 	// the most-recent build failed. The Mount renderer surfaces this to the
 	// client bootstrap via data-gosx-engine-stale="1" (spec §B).
 	stale bool
+
+	// bytecodeURL (Slice X.D) is the path the client bootstrap fetches
+	// shared-VM bytecode from when the surface lowers via ir/golower
+	// instead of internal/buildsurface. When non-empty the bootstrap
+	// hydrates through the shared client WASM's surface reconciler
+	// rather than fetching a per-component WASM module.
+	bytecodeURL  string
+	bytecodePath string
+	surfaceKind  program.SurfaceKind
 }
 
 // registry holds the per-process surface component entries populated by Discover.
@@ -302,11 +312,32 @@ func (r *Renderer) Mount(props any) gosx.Node {
 		}
 	}
 
+	// Bytecode path (Slice X.D): when the registry entry has a
+	// bytecode URL, emit a data-gosx-engine-bytecode attribute that
+	// the unified bootstrap dispatcher routes through the shared
+	// client WASM. The bytecode path takes precedence over wasmURL
+	// so a surface that lowered cleanly to bytecode never accidentally
+	// reaches the legacy per-component WASM path.
+	if ok && entry.bytecodeURL != "" {
+		propsJSON := encodeProps(props)
+		attrPairs = append(attrPairs,
+			gosx.Attr("data-gosx-engine-bytecode", entry.bytecodeURL),
+			gosx.Attr("data-gosx-engine-surface-kind", entry.surfaceKind.String()),
+			gosx.Attr("data-gosx-engine-props", propsJSON),
+		)
+		if len(entry.capabilities) > 0 {
+			attrPairs = append(attrPairs,
+				gosx.Attr("data-gosx-engine-caps", joinStrings(entry.capabilities, ",")),
+			)
+		}
+		return gosx.El("canvas", gosx.Attrs(attrPairs...))
+	}
+
 	// Defect 4 (spec §D): when the registry entry is missing OR its wasmURL
-	// is empty, do NOT emit data-gosx-engine-wasm="" — that confuses the
-	// bootstrap into trying to fetch the empty URL. Emit a status attribute
-	// instead so the bootstrap can paint a "surface unavailable" placeholder
-	// without losing the layout slot.
+	// is empty AND there's no bytecode URL, do NOT emit data-gosx-engine-wasm=""
+	// — that confuses the bootstrap into trying to fetch the empty URL. Emit a
+	// status attribute instead so the bootstrap can paint a "surface
+	// unavailable" placeholder without losing the layout slot.
 	if !ok || entry.wasmURL == "" {
 		attrPairs = append(attrPairs, gosx.Attr("data-gosx-engine-status", "missing"))
 		return gosx.El("canvas", gosx.Attrs(attrPairs...))

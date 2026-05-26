@@ -1,5 +1,16 @@
 // Package buildsurface compiles a *ir.SurfaceProgram into a cached WASM module
 // that the browser-side bootstrap can mount onto a canvas element.
+//
+// DEPRECATED (ADR 0003, Slice X.D 2026-05-25): engine surfaces lower
+// to shared-VM bytecode by default through engine/surface/lowering.go
+// (LowerToBytecode). This package now serves only the `surface=wasm`
+// escape-hatch path defined by ADR 0006. The package is scheduled for
+// deletion after the 90-day coexistence window from ADR 0005 expires;
+// the clock starts when Slice X.D ships.
+//
+// New code should NOT depend on this package. Authors who need a
+// capability the bytecode lowerer doesn't yet support should file a
+// gap entry in gosx-vm-capability-gaps.md per ADR 0006 §1 instead.
 package buildsurface
 
 import (

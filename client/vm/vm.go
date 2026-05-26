@@ -16,6 +16,8 @@ type VM struct {
 	signals        map[string]*signal.Signal[Value]
 	exprs          []program.Expr
 	eventData      map[string]string // current event data (set during handler dispatch)
+	frame          *frame            // locals table for the current handler evaluation (X.A)
+	forCap         int               // per-loop iteration cap (X.C); 0 → default
 	diagnostics    []Diagnostic
 	diagnosticSink DiagnosticSink
 }
@@ -119,6 +121,9 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 	if value, ok := vm.evalConversionExpr(e); ok {
 		return value
 	}
+	if value, ok := vm.evalSequencingExpr(e); ok {
+		return value
+	}
 	vm.recordExprDiagnostic(
 		"unknown_opcode",
 		fmt.Sprintf("unknown island VM opcode %d", e.Op),
@@ -126,6 +131,190 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 		e.Value,
 	)
 	return ZeroValue(program.TypeAny)
+}
+
+// evalSequencingExpr dispatches the Slice X.A statement-sequencing opcodes:
+// OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet, plus the Slice X.C
+// imperative iteration opcodes OpFor and OpForRange. These let a Program
+// carry multi-statement handler bodies as a single Expr tree.
+func (vm *VM) evalSequencingExpr(e program.Expr) (Value, bool) {
+	switch e.Op {
+	case program.OpSeq:
+		return vm.seqValue(e), true
+	case program.OpAssign:
+		return vm.assignValue(e), true
+	case program.OpLocalDecl:
+		return vm.localDeclValue(e), true
+	case program.OpLocalGet:
+		return vm.localGetValue(e), true
+	case program.OpLocalSet:
+		return vm.localSetValue(e), true
+	case program.OpFor:
+		return vm.forValue(e), true
+	case program.OpForRange:
+		return vm.forRangeValue(e), true
+	case program.OpReturn:
+		return vm.returnValue(e), true
+	case program.OpBreak:
+		return Value{Control: ControlBreak}, true
+	case program.OpContinue:
+		return Value{Control: ControlContinue}, true
+	default:
+		return Value{}, false
+	}
+}
+
+// returnValue evaluates Operands[0] (or yields zero when absent) and
+// marks the result with ControlReturn so OpSeq and EvalWithFrame can
+// unwind to the handler boundary.
+func (vm *VM) returnValue(e program.Expr) Value {
+	var payload Value
+	if len(e.Operands) > 0 {
+		payload = vm.Eval(e.Operands[0])
+	}
+	payload.Control = ControlReturn
+	return payload
+}
+
+// seqValue evaluates each operand in order and returns the last one's
+// value. An empty OpSeq is harmless — it produces the zero Value of
+// TypeAny so handler bodies can be no-ops without a missing-operand
+// diagnostic.
+//
+// If any operand returns a Control signal (return / break / continue
+// from X.C), evaluation stops and the signal propagates up; the
+// enclosing loop or EvalWithFrame is responsible for catching it.
+func (vm *VM) seqValue(e program.Expr) Value {
+	if len(e.Operands) == 0 {
+		return ZeroValue(program.TypeAny)
+	}
+	var last Value
+	for _, op := range e.Operands {
+		last = vm.Eval(op)
+		if last.Control != ControlNone {
+			return last
+		}
+	}
+	return last
+}
+
+// assignValue writes the value expression to the target named in Value.
+// Targets resolve in this order:
+//  1. registered signal — same effect as OpSignalSet.
+//  2. local declared in the current frame — same effect as OpLocalSet.
+//  3. local declared on-demand in the current frame (treats OpAssign as
+//     `:=` when the lowerer hasn't emitted a prior OpLocalDecl).
+//  4. with no frame and no signal — diagnostic and zero return.
+//
+// Returns the assigned value so OpSeq sequences can chain assignments.
+func (vm *VM) assignValue(e program.Expr) Value {
+	if !vm.requireOperands(e, 1) {
+		return ZeroValue(program.TypeAny)
+	}
+	value := vm.Eval(e.Operands[0])
+	if _, ok := vm.signals[e.Value]; ok {
+		vm.signals[e.Value].Set(value)
+		return value
+	}
+	if vm.frame == nil {
+		vm.recordExprDiagnostic(
+			"missing_frame",
+			fmt.Sprintf("OpAssign target %q resolves to neither a signal nor a local (no frame active)", e.Value),
+			e.Op,
+			e.Value,
+		)
+		return ZeroValue(program.TypeAny)
+	}
+	vm.frame.set(e.Value, value)
+	return value
+}
+
+// localDeclValue reserves a slot in the current frame. Re-declarations
+// are no-ops so the lowerer can emit OpLocalDecl idempotently. Returns
+// the zero Value of TypeAny.
+func (vm *VM) localDeclValue(e program.Expr) Value {
+	if vm.frame == nil {
+		vm.recordExprDiagnostic(
+			"missing_frame",
+			fmt.Sprintf("OpLocalDecl %q evaluated without an active frame", e.Value),
+			e.Op,
+			e.Value,
+		)
+		return ZeroValue(program.TypeAny)
+	}
+	vm.frame.declare(e.Value)
+	return ZeroValue(program.TypeAny)
+}
+
+// localGetValue returns the value of a declared local. If no frame is
+// active or the name isn't a local, it falls back to signals then to
+// props. This three-tier lookup lets the X.C lowerer emit OpLocalGet
+// for every bare identifier without knowing in advance whether the
+// name refers to a function local, a package var (signal), or a
+// handler parameter (prop) — runtime resolution is one map lookup
+// per tier and is correct for all three cases.
+//
+// Only when none of the tiers contain the name does the VM record a
+// missing_local diagnostic and return the zero value.
+func (vm *VM) localGetValue(e program.Expr) Value {
+	if v, ok := vm.frame.get(e.Value); ok {
+		return v
+	}
+	if sig, ok := vm.signals[e.Value]; ok {
+		return sig.Get()
+	}
+	if v, ok := vm.props[e.Value]; ok {
+		return v
+	}
+	vm.recordExprDiagnostic(
+		"missing_local",
+		fmt.Sprintf("identifier %q is not declared as a local, signal, or prop", e.Value),
+		e.Op,
+		e.Value,
+	)
+	return ZeroValue(program.TypeAny)
+}
+
+// localSetValue writes Operands[0] to the local named in Value. Unlike
+// OpAssign, OpLocalSet never falls through to signals; the lowerer
+// emits it only when the target is known to be a local.
+func (vm *VM) localSetValue(e program.Expr) Value {
+	if !vm.requireOperands(e, 1) {
+		return ZeroValue(program.TypeAny)
+	}
+	if vm.frame == nil {
+		vm.recordExprDiagnostic(
+			"missing_frame",
+			fmt.Sprintf("OpLocalSet %q evaluated without an active frame", e.Value),
+			e.Op,
+			e.Value,
+		)
+		return ZeroValue(program.TypeAny)
+	}
+	value := vm.Eval(e.Operands[0])
+	vm.frame.set(e.Value, value)
+	return value
+}
+
+// EvalWithFrame evaluates the given expression with a fresh locals
+// frame, restoring any previous frame after the evaluation completes.
+// This is the entry point for handler-body evaluation (Slice X.A): a
+// handler that uses OpLocalDecl / OpAssign must be evaluated through
+// this method so the locals table is set up.
+//
+// A ControlReturn signal from inside the frame is consumed here — the
+// caller observes the wrapped value with Control reset to None, so
+// return semantics terminate at the handler boundary rather than
+// leaking out into surrounding evaluation.
+func (vm *VM) EvalWithFrame(id program.ExprID) Value {
+	prev := vm.frame
+	vm.frame = newFrame()
+	defer func() { vm.frame = prev }()
+	v := vm.Eval(id)
+	if v.Control == ControlReturn {
+		v.Control = ControlNone
+	}
+	return v
 }
 
 func (vm *VM) evalLiteralExpr(e program.Expr) (Value, bool) {
@@ -235,6 +424,20 @@ func (vm *VM) evalControlExpr(e program.Expr) (Value, bool) {
 	case program.OpCond:
 		return vm.conditionalValue(e), true
 	case program.OpCall:
+		// Slice X.B: OpCall first tries the stdlib intrinsic registry
+		// (math.Sin, strings.Split, ...). Unknown callee names fall back
+		// to the existing zero-Value behavior so legacy programs that
+		// never registered an intrinsic keep evaluating identically.
+		//
+		// sort.Slice is dispatched via a dedicated path because its
+		// comparator operand is a body expression that must be
+		// re-evaluated for each comparison, not pre-evaluated once.
+		if e.Value == "sort.Slice" {
+			return vm.sortSliceValue(e), true
+		}
+		if v, ok := vm.callIntrinsic(e); ok {
+			return v, true
+		}
 		return ZeroValue(program.TypeAny), true
 	default:
 		return Value{}, false

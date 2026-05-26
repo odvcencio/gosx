@@ -115,6 +115,36 @@ const (
 	OpToString // Operands[0] = any → string
 	OpToInt    // Operands[0] = string/float → int
 	OpToFloat  // Operands[0] = string/int → float
+
+	// Statement sequencing + locals (Slice X.A — AST-compiler initiative).
+	// These opcodes let a Program carry multi-statement function bodies, not
+	// just single expressions. Backwards-compatible additions per ADR 0002:
+	// existing programs that never emit them keep evaluating exactly as before.
+	OpSeq       // Sequence: Operands = ordered expressions; evaluate all, return last.
+	OpAssign    // Assign Operands[0] to target named in Value (signal or local).
+	OpLocalDecl // Reserve a local slot in the current frame; Value = local name.
+	OpLocalGet  // Read a local by name (Value); panic-free zero if unset.
+	OpLocalSet  // Write Operands[0] to local named in Value (frame-scoped).
+
+	// Imperative iteration (Slice X.C — AST-compiler initiative).
+	// Backwards-compatible like the sequencing opcodes above. Both
+	// carry a max-iteration safety cap (configurable via VM.SetForCap)
+	// so a runaway loop in lowered Go can't hang the shared client WASM.
+	OpFor      // 3-clause: Operands=[init, cond, post, body]. Evaluates init; while cond is truthy, evaluates body then post. Returns last body value (or zero).
+	OpForRange // range: Operands=[collection, body]. Body reads "_index" + "_item" props (or "_key" + "_item" for maps). Returns last body value (or zero).
+
+	// Control flow exit (Slice X.C). OpReturn evaluates Operands[0]
+	// (or yields the zero value when absent) and unwinds the enclosing
+	// OpSeq / OpFor / OpForRange / OpCond chain. The VM implements this
+	// via a sentinel that callers check; the unwind stops at the nearest
+	// EvalWithFrame boundary so handler bodies "return" while the
+	// surrounding bytecode keeps running.
+	OpReturn
+	// OpBreak unwinds the nearest enclosing loop without exiting the
+	// handler. OpContinue advances to the next iteration. Both honor
+	// the same sentinel mechanism as OpReturn.
+	OpBreak
+	OpContinue
 )
 
 // SurfaceKind identifies the rendering surface a program targets.
