@@ -17,6 +17,11 @@ type Bridge struct {
 	islands        map[string]*vm.Island
 	computeIslands map[string]struct{}
 	engines        map[string]*enginevm.Runtime
+	// boards holds canvas2d adapter instances (Phase 2). Kept in a separate
+	// typed map from engines because *vm.CanvasBoardAdapter and
+	// *enginevm.Runtime (alias for *vm.SceneAdapter) are different concrete
+	// types — the unification across both lives in reconcilers below.
+	boards map[string]*vm.CanvasBoardAdapter
 	// reconcilers is the unified lifecycle map populated alongside the
 	// surface-specific maps above. It exists so callers can count, look up,
 	// and (eventually) dispose any reconciler by id without knowing whether
@@ -134,6 +139,7 @@ func New() *Bridge {
 		islands:        make(map[string]*vm.Island),
 		computeIslands: make(map[string]struct{}),
 		engines:        make(map[string]*enginevm.Runtime),
+		boards:         make(map[string]*vm.CanvasBoardAdapter),
 		reconcilers:    make(map[string]vm.Reconciler),
 		store:          NewStore(),
 		unsubs:         make(map[string][]func()),
@@ -167,15 +173,15 @@ const (
 //
 //   - "dom"      → existing island path (DOM patches via HydrateIsland)
 //   - "scene3d"  → existing scene-engine path (engine commands via HydrateEngine)
-//   - "canvas2d" → stub; returns an error until Phase 2 wires the CanvasBoard adapter
+//   - "canvas2d" → CanvasBoardAdapter path (Phase 2 — <CanvasBoard> primitive)
 //
-// The scene3d path is gated by build tag — in islands-only builds it returns
-// an error rather than pulling in the engine reconciler. See
-// bridge_reconciler_full.go vs bridge_reconciler_islands.go.
+// The scene3d and canvas2d paths are gated by build tag — in islands-only
+// builds they return an error rather than pulling in the engine reconciler.
+// See bridge_reconciler_full.go vs bridge_reconciler_islands.go.
 //
-// Engine commands produced by the scene3d path are discarded here; the legacy
-// HydrateEngine remains for callers that need the initial command stream.
-// Phase 2 will widen the return shape if needed.
+// Engine commands produced by the scene3d / canvas2d paths are discarded
+// here; the legacy HydrateEngine remains for callers that need the initial
+// command stream. Phase 2 will widen the return shape if needed.
 func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON string, programData []byte, format string) error {
 	switch surfaceKind {
 	case SurfaceKindDOM:
@@ -183,7 +189,7 @@ func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON str
 	case SurfaceKindScene3D:
 		return b.hydrateScene3D(id, componentName, propsJSON, programData, format)
 	case SurfaceKindCanvas2D:
-		return fmt.Errorf("canvas2d not yet supported; install Phase 2 (<CanvasBoard> primitive)")
+		return b.hydrateCanvas2D(id, componentName, propsJSON, programData, format)
 	default:
 		return fmt.Errorf("unknown surfaceKind %q (expected one of: %q, %q, %q)",
 			surfaceKind, SurfaceKindDOM, SurfaceKindScene3D, SurfaceKindCanvas2D)
@@ -388,6 +394,13 @@ func (b *Bridge) ComputeIslandCount() int {
 // EngineCount returns the number of active engine runtimes.
 func (b *Bridge) EngineCount() int {
 	return len(b.engines)
+}
+
+// CanvasBoardCount reports the number of live canvas2d adapters. Available
+// in every build (returns 0 in islands-only where boards are never
+// constructed).
+func (b *Bridge) CanvasBoardCount() int {
+	return len(b.boards)
 }
 
 // ReconcilerCount returns the number of active reconcilers across all surface
