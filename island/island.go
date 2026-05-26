@@ -50,6 +50,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dGLTFPath      string
 	bootstrapFeatureScene3dAnimationPath string
 	videoHLSPath                         string
+	relayPath                            string
 	islandRuntime                        hydrate.RuntimeRef
 	runtimeAssets                        buildmanifest.RuntimeAssets
 	bootstrapOnly                        bool
@@ -89,6 +90,13 @@ type clientRuntimePlan struct {
 	SharedRuntime bool
 	WASMExec      bool
 	Patch         bool
+	// PreviewRelay is true when the page should emit the cross-frame relay
+	// script (gosx/relay.js) alongside the standard bootstrap. Driven by
+	// the process-level previewBootstrapEnabled flag — see
+	// island/preview_bootstrap.go and ADR 0009. Independent of Mode: a
+	// page may emit relay.js with mode="preview" (no islands, no engines)
+	// or with mode="full" (islands present AND preview enabled).
+	PreviewRelay bool
 }
 
 // ComputeIslandConfig describes a headless shared-runtime island. It uses the
@@ -144,6 +152,9 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dGLTFPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-gltf.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DGLTF.Hash))
 	renderer.bootstrapFeatureScene3dAnimationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-animation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DAnimation.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
+	// Cross-frame relay script. Default unversioned; SetRelayPath can
+	// override with a hashed URL during a build-manifest apply.
+	renderer.relayPath = "/gosx/relay.js"
 	if manifest := loadDefaultBuildManifest(); manifest != nil {
 		_ = renderer.ApplyBuildManifest(manifest, "/gosx/assets")
 	}
@@ -606,6 +617,14 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 
 	var b strings.Builder
 	plan := r.clientRuntimePlan()
+	// Preview-mode relay (ADR 0009) emits an additional script that wires
+	// window.__gosx_relay_* before the bootstrap runs. Emitted FIRST so
+	// the relay's message listener is installed before any cross-frame
+	// signals arrive — see plan section C and client/js/relay.js.
+	if plan.PreviewRelay && r.relayPath != "" {
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"></script>`, html.EscapeString(r.relayPath)))
+		b.WriteByte('\n')
+	}
 	if plan.WASMExec && r.wasmExecPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
@@ -1267,23 +1286,36 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	computeIslands := len(r.manifest.ComputeIslands)
 	engines := len(r.manifest.Engines)
 	hubs := len(r.manifest.Hubs)
-	bootstrap := r.bootstrapOnly || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0
+	previewRelay := PreviewBootstrapEnabled()
+	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0
 	mode := "none"
 	if bootstrap {
 		mode = "full"
 	}
-	if r.bootstrapOnly && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 {
+	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 {
 		mode = "lite"
 	}
+	// Preview-relay-only pages (no islands, no engines, no hubs, just the
+	// cross-frame relay) get a dedicated "preview" mode. They emit
+	// wasm_exec + the tiny islands runtime + relay.js, but no manifest
+	// (no islands to hydrate yet — the storefront subscriber island is
+	// added by slice 6's downstream consumer).
+	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 {
+		mode = "preview"
+	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()
+	// In preview mode, the bridge is required even without islands —
+	// otherwise the iframe has no Bridge.DispatchInboundSignal target.
+	previewNeedsRuntime := previewRelay && mode == "preview"
 	return clientRuntimePlan{
 		Bootstrap:     bootstrap,
 		Mode:          mode,
-		Manifest:      bootstrap && mode != "lite",
-		Selective:     bootstrap && mode != "lite",
-		SharedRuntime: islands > 0 || computeIslands > 0 || sharedEngine,
-		WASMExec:      islands > 0 || computeIslands > 0 || r.hasWASMEngines() || sharedEngine,
+		Manifest:      bootstrap && mode != "lite" && mode != "preview",
+		Selective:     bootstrap && mode != "lite" && mode != "preview",
+		SharedRuntime: previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
+		WASMExec:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || r.hasWASMEngines() || sharedEngine,
 		Patch:         islands > 0,
+		PreviewRelay:  previewRelay,
 	}
 }
 

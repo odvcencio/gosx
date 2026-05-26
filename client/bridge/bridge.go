@@ -35,6 +35,19 @@ type Bridge struct {
 	signalFn    func(name, valueJSON string)     // callback to notify JS of shared signal changes
 	dispatching string                           // ID of the island currently dispatching
 	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
+
+	// crossFrameRelays records the prefix → allowed-origin bindings opted-in
+	// via EnableCrossFrameRelay. See cross_frame.go and ADR 0009. Both the
+	// outbound observer path (relaySharedSignal) and the inbound message
+	// listener (DispatchInboundSignal) consult these.
+	crossFrameRelays []CrossFrameRelayConfig
+	// relaySendFn is invoked when a local write to a relayed-prefix signal
+	// needs to postMessage to peer frames. Wired by the wasm-side; see
+	// client/wasm/cross_frame.go.
+	relaySendFn func(name, valueJSON string)
+	// relayInboundDepth suppresses outbound relay during DispatchInboundSignal.
+	// Prevents a peer's write from looping back through our outbound relay.
+	relayInboundDepth int
 }
 
 // SetPatchCallback registers the function called when shared signal changes
@@ -522,14 +535,20 @@ func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
 }
 
 func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
-	if b == nil || b.signalFn == nil || strings.TrimSpace(name) == "" {
+	if b == nil || strings.TrimSpace(name) == "" {
 		return
 	}
 	valueJSON, err := marshalSharedSignalValue(value)
 	if err != nil {
 		return
 	}
-	b.signalFn(name, valueJSON)
+	if b.signalFn != nil {
+		b.signalFn(name, valueJSON)
+	}
+	// Outbound cross-frame relay fans out for matching prefixes only.
+	// Separate from the JS notify path so single-frame consumers are
+	// unaffected; see ADR 0009 and cross_frame.go.
+	b.relaySharedSignal(name, valueJSON)
 }
 
 func marshalSharedSignalValue(value vm.Value) (string, error) {
