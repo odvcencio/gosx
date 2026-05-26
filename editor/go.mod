@@ -1,4 +1,4 @@
-module github.com/odvcencio/gosx/editor
+module m31labs.dev/gosx/editor
 
 go 1.26
 
