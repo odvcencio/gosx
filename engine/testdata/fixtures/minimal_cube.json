@@ -1,0 +1,41 @@
+{
+  "name": "MinimalCube",
+  "props": null,
+  "nodes": null,
+  "root": 0,
+  "exprs": [
+    {
+      "op": 0,
+      "operands": null,
+      "value": "0,0,0",
+      "type": 0
+    },
+    {
+      "op": 0,
+      "operands": null,
+      "value": "#ffffff",
+      "type": 0
+    }
+  ],
+  "signals": null,
+  "computeds": null,
+  "handlers": null,
+  "static_mask": null,
+  "engineNodes": [
+    {
+      "kind": "mesh",
+      "geometry": "cube",
+      "material": "basic",
+      "props": {
+        "color": 1,
+        "position": 0
+      }
+    },
+    {
+      "kind": "camera",
+      "children": [
+        0
+      ]
+    }
+  ]
+}
