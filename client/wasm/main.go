@@ -37,17 +37,48 @@ func setRuntimeFunc(name string, fn js.Func) {
 	js.Global().Set(name, fn)
 }
 
+// hydrateRuntimeFunc returns the unified __gosx_hydrate dispatcher.
+//
+// Call shapes (both are accepted to preserve the islands bootstrap that ships
+// without a surfaceKind):
+//
+//   __gosx_hydrate(islandID, componentName, propsJSON, programData, format)
+//   __gosx_hydrate(surfaceKind, id, componentName, propsJSON, programData, format)
+//
+// The 5-arg form is treated as surfaceKind="dom". The 6-arg form routes via
+// Bridge.HydrateReconciler — "dom" delegates to the island path, "scene3d"
+// to the engine path, "canvas2d" returns a Phase 2 stub error.
 func hydrateRuntimeFunc(b *bridge.Bridge) js.Func {
 	return js.FuncOf(func(this js.Value, args []js.Value) any {
-		call, err := parseHydrateCall(args)
+		surfaceKind, hydrateArgs, err := parseUnifiedHydrateArgs(args)
 		if err != nil {
 			return jsError(err)
 		}
-		if err := b.HydrateIsland(call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
+		call, err := parseHydrateCall(hydrateArgs)
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.HydrateReconciler(surfaceKind, call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
 			return jsError(err)
 		}
 		return js.Null()
 	})
+}
+
+// parseUnifiedHydrateArgs detects the call shape and returns the surfaceKind
+// plus the trailing 5-arg slice the per-surface adapters expect.
+func parseUnifiedHydrateArgs(args []js.Value) (string, []js.Value, error) {
+	switch len(args) {
+	case 5:
+		return bridge.SurfaceKindDOM, args, nil
+	case 6:
+		if args[0].Type() != js.TypeString {
+			return "", nil, errors.New("surfaceKind (arg 0) must be a string")
+		}
+		return args[0].String(), args[1:], nil
+	default:
+		return "", nil, errors.New("need 5 args (id, name, propsJSON, programData, format) or 6 args (surfaceKind, id, name, propsJSON, programData, format)")
+	}
 }
 
 func hydrateComputeRuntimeFunc(b *bridge.Bridge) js.Func {
