@@ -252,6 +252,10 @@ type registryEntry struct {
 	propsType    string
 	capabilities []string
 	mountAttrs   map[string]string
+	// stale is true when this entry is serving a prior cached WASM because
+	// the most-recent build failed. The Mount renderer surfaces this to the
+	// client bootstrap via data-gosx-engine-stale="1" (spec §B).
+	stale bool
 }
 
 // registry holds the per-process surface component entries populated by Discover.
@@ -284,25 +288,45 @@ func NewRenderer(component string) *Renderer {
 func (r *Renderer) Mount(props any) gosx.Node {
 	entry, ok := registry.lookup(r.component)
 
-	propsJSON := encodeProps(props)
-
 	attrPairs := []any{
 		gosx.Attr("data-gosx-engine-component", r.component),
 	}
 
+	// Forward any static mount attributes (id, tabindex, …) from the .gsx
+	// source regardless of registry presence; they affect layout/focus and
+	// the bootstrap may rely on them (e.g. id="graph-canvas" anchors the
+	// hyphae-viz CSS).
 	if ok {
-		attrPairs = append(attrPairs,
-			gosx.Attr("data-gosx-engine-wasm", entry.wasmURL),
-			gosx.Attr("data-gosx-engine-props", propsJSON),
-		)
-		if len(entry.capabilities) > 0 {
-			attrPairs = append(attrPairs,
-				gosx.Attr("data-gosx-engine-caps", joinStrings(entry.capabilities, ",")),
-			)
-		}
 		for k, v := range entry.mountAttrs {
 			attrPairs = append(attrPairs, gosx.Attr(k, v))
 		}
+	}
+
+	// Defect 4 (spec §D): when the registry entry is missing OR its wasmURL
+	// is empty, do NOT emit data-gosx-engine-wasm="" — that confuses the
+	// bootstrap into trying to fetch the empty URL. Emit a status attribute
+	// instead so the bootstrap can paint a "surface unavailable" placeholder
+	// without losing the layout slot.
+	if !ok || entry.wasmURL == "" {
+		attrPairs = append(attrPairs, gosx.Attr("data-gosx-engine-status", "missing"))
+		return gosx.El("canvas", gosx.Attrs(attrPairs...))
+	}
+
+	propsJSON := encodeProps(props)
+	attrPairs = append(attrPairs,
+		gosx.Attr("data-gosx-engine-wasm", entry.wasmURL),
+		gosx.Attr("data-gosx-engine-props", propsJSON),
+	)
+	if len(entry.capabilities) > 0 {
+		attrPairs = append(attrPairs,
+			gosx.Attr("data-gosx-engine-caps", joinStrings(entry.capabilities, ",")),
+		)
+	}
+	// Defect 2 (spec §B): a stale entry is the previous build's WASM; the
+	// bootstrap still mounts it but can render a corner badge so the user
+	// knows the most-recent build failed.
+	if entry.stale {
+		attrPairs = append(attrPairs, gosx.Attr("data-gosx-engine-stale", "1"))
 	}
 
 	return gosx.El("canvas", gosx.Attrs(attrPairs...))

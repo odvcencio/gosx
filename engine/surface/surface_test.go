@@ -63,6 +63,55 @@ func TestNewRenderer_Mount_NoEntry(t *testing.T) {
 	if strings.Contains(html, "data-gosx-engine-wasm") {
 		t.Errorf("expected no data-gosx-engine-wasm attr for unregistered component, got: %s", html)
 	}
+	// Must include the missing-status attribute so the bootstrap can paint
+	// a "surface unavailable" placeholder (spec §D, defect 4).
+	checkAttr(t, html, `data-gosx-engine-status="missing"`)
+}
+
+// TestMountEmitsMissingStatusWhenWasmURLEmpty covers spec §D / defect 4: a
+// registered component whose wasmURL is empty (build failed with no cached
+// prior) must not leak data-gosx-engine-wasm="" into the canvas attrs.
+// Instead, the bootstrap sees data-gosx-engine-status="missing" and can
+// degrade gracefully.
+func TestMountEmitsMissingStatusWhenWasmURLEmpty(t *testing.T) {
+	const componentName = "GraphMissingWasm"
+	injectRegistryEntry(componentName, &registryEntry{
+		wasmURL:      "",
+		hash:         "",
+		capabilities: []string{"canvas"},
+	})
+
+	r := NewRenderer(componentName)
+	html := gosx.RenderHTML(r.Mount(nil))
+
+	if strings.Contains(html, `data-gosx-engine-wasm=""`) {
+		t.Errorf("empty wasmURL leaked into output: %s", html)
+	}
+	if strings.Contains(html, `data-gosx-engine-wasm=`) {
+		t.Errorf("data-gosx-engine-wasm attr should be omitted when URL empty, got: %s", html)
+	}
+	if strings.Contains(html, `data-gosx-engine-props=`) {
+		t.Errorf("data-gosx-engine-props should be omitted alongside missing wasm, got: %s", html)
+	}
+	checkAttr(t, html, `data-gosx-engine-status="missing"`)
+	checkAttr(t, html, `data-gosx-engine-component="`+componentName+`"`)
+}
+
+// TestMountEmitsStaleAttrWhenEntryStale covers spec §B / defect 2: when the
+// registry entry is stale (last build failed but we still have a usable
+// cached WASM), the canvas must carry data-gosx-engine-stale="1" so the
+// bootstrap can show a corner badge while mounting.
+func TestMountEmitsStaleAttrWhenEntryStale(t *testing.T) {
+	const componentName = "GraphStale"
+	injectRegistryEntry(componentName, &registryEntry{
+		wasmURL: "/gosx/engines/GraphStale.cafef00d.wasm",
+		hash:    "cafef00d",
+		stale:   true,
+	})
+	r := NewRenderer(componentName)
+	html := gosx.RenderHTML(r.Mount(nil))
+	checkAttr(t, html, `data-gosx-engine-stale="1"`)
+	checkAttr(t, html, `data-gosx-engine-wasm="/gosx/engines/GraphStale.cafef00d.wasm"`)
 }
 
 // TestPropsRoundTrip verifies that Context.PropsInto correctly unmarshals
