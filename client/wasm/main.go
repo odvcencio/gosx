@@ -21,6 +21,7 @@ func registerRuntime(b *bridge.Bridge) {
 		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
 	})
 	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
+	setRuntimeFunc("__gosx_hydrate_canvas", hydrateCanvasRuntimeFunc(b))
 	setRuntimeFunc("__gosx_hydrate_compute", hydrateComputeRuntimeFunc(b))
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
@@ -79,6 +80,32 @@ func parseUnifiedHydrateArgs(args []js.Value) (string, []js.Value, error) {
 	default:
 		return "", nil, errors.New("need 5 args (id, name, propsJSON, programData, format) or 6 args (surfaceKind, id, name, propsJSON, programData, format)")
 	}
+}
+
+// hydrateCanvasRuntimeFunc returns the convenience entry point exposed as
+// __gosx_hydrate_canvas. It forwards into the unified __gosx_hydrate
+// dispatcher with surfaceKind="canvas2d" so authors can write a shorter
+// call from the JS bootstrap:
+//
+//	__gosx_hydrate_canvas(id, componentName, propsJSON, programData, format)
+//
+// is equivalent to:
+//
+//	__gosx_hydrate("canvas2d", id, componentName, propsJSON, programData, format)
+//
+// The Phase 1d dispatcher accepts both shapes; this alias just removes the
+// boilerplate for the canvas2d case.
+func hydrateCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		call, err := parseHydrateCall(args)
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.HydrateReconciler(bridge.SurfaceKindCanvas2D, call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
 }
 
 func hydrateComputeRuntimeFunc(b *bridge.Bridge) js.Func {

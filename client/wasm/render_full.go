@@ -173,9 +173,14 @@ func pickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 	})
 }
 
-// pushPickToSignals writes the pick outcome into the SceneEventSignals
-// namespace for an engine. Signal names follow the $scene.event convention
-// baked into engine/builder.go's DeclareSceneEventSignals.
+// pushPickToSignals writes the pick outcome into the unified surface-event
+// signal namespace ($surface.event.*) per ADR 0007. Legacy $scene.event.*
+// consumers continue to receive these writes via the read-only alias table
+// in package signal — see signal/aliases.go.
+//
+// Signal names follow the field set baked into signal.SurfaceEventNames; the
+// list is kept synchronized via the surfaceEventFields slice in
+// signal/aliases.go (CI's grep gate flips loose updates).
 func pushPickToSignals(b *bridge.Bridge, engineID, eventType string, x, y int, result bundle.PickResult) {
 	if eventType == "" {
 		return
@@ -197,47 +202,47 @@ func pushPickToSignals(b *bridge.Bridge, engineID, eventType string, x, y int, r
 	if targetID == "" {
 		targetID = pickIDToString(id)
 	}
-	set("$scene.event.pointerX", float64(x))
-	set("$scene.event.pointerY", float64(y))
-	set("$scene.event.type", eventType)
-	set("$scene.event.targetIndex", float64(targetIndex))
-	set("$scene.event.targetID", targetID)
-	set("$scene.event.targetInstanceIndex", float64(result.InstanceIndex))
-	set("$scene.event.targetPrimitiveIndex", float64(result.PrimitiveIndex))
-	set("$scene.event.targetTriangleIndex", float64(result.TriangleIndex))
-	set("$scene.event.worldX", float64(result.WorldPosition[0]))
-	set("$scene.event.worldY", float64(result.WorldPosition[1]))
-	set("$scene.event.worldZ", float64(result.WorldPosition[2]))
-	set("$scene.event.localX", float64(result.LocalPosition[0]))
-	set("$scene.event.localY", float64(result.LocalPosition[1]))
-	set("$scene.event.localZ", float64(result.LocalPosition[2]))
-	set("$scene.event.uvX", float64(result.UV[0]))
-	set("$scene.event.uvY", float64(result.UV[1]))
-	set("$scene.event.depth", float64(result.Depth))
-	set("$scene.event.revision", float64(nextPickRevision()))
+	set("$surface.event.pointerX", float64(x))
+	set("$surface.event.pointerY", float64(y))
+	set("$surface.event.type", eventType)
+	set("$surface.event.targetIndex", float64(targetIndex))
+	set("$surface.event.targetID", targetID)
+	set("$surface.event.targetInstanceIndex", float64(result.InstanceIndex))
+	set("$surface.event.targetPrimitiveIndex", float64(result.PrimitiveIndex))
+	set("$surface.event.targetTriangleIndex", float64(result.TriangleIndex))
+	set("$surface.event.worldX", float64(result.WorldPosition[0]))
+	set("$surface.event.worldY", float64(result.WorldPosition[1]))
+	set("$surface.event.worldZ", float64(result.WorldPosition[2]))
+	set("$surface.event.localX", float64(result.LocalPosition[0]))
+	set("$surface.event.localY", float64(result.LocalPosition[1]))
+	set("$surface.event.localZ", float64(result.LocalPosition[2]))
+	set("$surface.event.uvX", float64(result.UV[0]))
+	set("$surface.event.uvY", float64(result.UV[1]))
+	set("$surface.event.depth", float64(result.Depth))
+	set("$surface.event.revision", float64(nextPickRevision()))
 
 	// Event-type-specific projections.
 	switch eventType {
 	case "hover":
-		set("$scene.event.hovered", id != 0)
-		set("$scene.event.hoverIndex", float64(targetIndex))
-		set("$scene.event.hoverID", targetID)
+		set("$surface.event.hovered", id != 0)
+		set("$surface.event.hoverIndex", float64(targetIndex))
+		set("$surface.event.hoverID", targetID)
 	case "down":
-		set("$scene.event.down", id != 0)
-		set("$scene.event.downIndex", float64(targetIndex))
-		set("$scene.event.downID", targetID)
+		set("$surface.event.down", id != 0)
+		set("$surface.event.downIndex", float64(targetIndex))
+		set("$surface.event.downID", targetID)
 	case "select":
-		set("$scene.event.selected", id != 0)
-		set("$scene.event.selectedIndex", float64(targetIndex))
-		set("$scene.event.selectedID", targetID)
+		set("$surface.event.selected", id != 0)
+		set("$surface.event.selectedIndex", float64(targetIndex))
+		set("$surface.event.selectedID", targetID)
 	case "click":
 		// A click is (down + release) in the same spot. Increment the click
 		// counter so computed signals that watch clickCount can run their
 		// handlers. SelectedID follows click for Figma-style single-select.
-		set("$scene.event.clickCount", float64(nextClickCount(engineID)))
-		set("$scene.event.selected", id != 0)
-		set("$scene.event.selectedIndex", float64(targetIndex))
-		set("$scene.event.selectedID", targetID)
+		set("$surface.event.clickCount", float64(nextClickCount(engineID)))
+		set("$surface.event.selected", id != 0)
+		set("$surface.event.selectedIndex", float64(targetIndex))
+		set("$surface.event.selectedID", targetID)
 	}
 }
 

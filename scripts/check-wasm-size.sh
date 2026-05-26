@@ -13,13 +13,19 @@
 # ADR per the Phase 1d plan.
 set -euo pipefail
 
-# Phase 1d baseline budgets:
+# Phase 2 baseline budgets:
 #   - Phase 1c shipped: full=7883412 bytes (~7699 KB), tiny=5618126 bytes (~5486 KB).
-#   - +5% headroom + room for Phase 1d's unified dispatcher additions yields
-#     the budgets below. Phase 2's <CanvasBoard> primitive may need a one-time
-#     bump (track via ADR).
+#   - Phase 1d shipped: full=7887532 bytes (~7702 KB), tiny=5623128 bytes (~5491 KB).
+#   - Phase 2 shipped: full=~7914000 bytes (~7729 KB), tiny=~6148000 bytes (~6003 KB).
+#     Tiny growth: +525 KB vs Phase 1c (9.4% — under the 10% ADR threshold).
+#     The growth comes from the new vm.CanvasBoardAdapter type (always built),
+#     signal/aliases.go's ResolveAlias table, and gosx.CanvasBoard's wire-
+#     payload helpers in the top-level package. The unused-canvas2d code path
+#     in islands-only builds is retained because vm package compiles the
+#     adapter unconditionally; a future slice can gate it behind a build tag.
+# Budgets below leave ~200 KB headroom for incremental refinement.
 FULL_BUDGET_KB="${WASM_FULL_BUDGET_KB:-8500}"
-TINY_BUDGET_KB="${WASM_TINY_BUDGET_KB:-5900}"
+TINY_BUDGET_KB="${WASM_TINY_BUDGET_KB:-6200}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${TMPDIR:-/tmp}"

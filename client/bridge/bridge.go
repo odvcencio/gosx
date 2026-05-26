@@ -17,6 +17,12 @@ type Bridge struct {
 	islands        map[string]*vm.Island
 	computeIslands map[string]struct{}
 	engines        map[string]*enginevm.Runtime
+	// boards holds canvas2d adapter instances (Phase 2). Typed as the
+	// Reconciler interface so the islands-only build can elide the concrete
+	// *vm.CanvasBoardAdapter from the binary entirely; the full build's
+	// hydrateCanvas2D casts back to *vm.CanvasBoardAdapter for the typed
+	// TickCanvasBoard / RenderCanvasBoard entry points.
+	boards map[string]vm.Reconciler
 	// reconcilers is the unified lifecycle map populated alongside the
 	// surface-specific maps above. It exists so callers can count, look up,
 	// and (eventually) dispose any reconciler by id without knowing whether
@@ -56,7 +62,13 @@ func (s *Store) SetObserver(fn func(name string, value vm.Value)) {
 }
 
 // Set creates or updates a shared signal.
+//
+// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// $scene.event.* writes are redirected to the canonical $surface.event.*
+// target. Renderer-driven writes already use the canonical names; the alias
+// pass here is defensive for hand-rolled callers that haven't migrated.
 func (s *Store) Set(name string, val vm.Value) {
+	name = signal.ResolveAlias(name)
 	if sig, ok := s.signals[name]; ok {
 		sig.Set(val)
 	} else {
@@ -86,7 +98,14 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 }
 
 // Get reads a shared signal value.
+//
+// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// $scene.event.* reads transparently forward to the canonical
+// $surface.event.* target. A subscriber reading $scene.event.selectedID
+// after a renderer-driven write to $surface.event.selectedID gets the
+// fresh value.
 func (s *Store) Get(name string) (vm.Value, bool) {
+	name = signal.ResolveAlias(name)
 	if sig, ok := s.signals[name]; ok {
 		return sig.Get(), true
 	}
@@ -96,7 +115,12 @@ func (s *Store) Get(name string) (vm.Value, bool) {
 // Signal returns a shared signal, creating it with the given initial value
 // if it doesn't exist yet. If it already exists, the init value is ignored
 // (first island to declare wins).
+//
+// Per ADR 0007 the name is run through signal.ResolveAlias before lookup, so
+// an island declaring a dependency on the legacy $scene.event.X automatically
+// hooks into the canonical $surface.event.X signal.
 func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
+	name = signal.ResolveAlias(name)
 	if sig, ok := s.signals[name]; ok {
 		return sig
 	}
@@ -116,6 +140,7 @@ func New() *Bridge {
 		islands:        make(map[string]*vm.Island),
 		computeIslands: make(map[string]struct{}),
 		engines:        make(map[string]*enginevm.Runtime),
+		boards:         make(map[string]vm.Reconciler),
 		reconcilers:    make(map[string]vm.Reconciler),
 		store:          NewStore(),
 		unsubs:         make(map[string][]func()),
@@ -149,15 +174,15 @@ const (
 //
 //   - "dom"      → existing island path (DOM patches via HydrateIsland)
 //   - "scene3d"  → existing scene-engine path (engine commands via HydrateEngine)
-//   - "canvas2d" → stub; returns an error until Phase 2 wires the CanvasBoard adapter
+//   - "canvas2d" → CanvasBoardAdapter path (Phase 2 — <CanvasBoard> primitive)
 //
-// The scene3d path is gated by build tag — in islands-only builds it returns
-// an error rather than pulling in the engine reconciler. See
-// bridge_reconciler_full.go vs bridge_reconciler_islands.go.
+// The scene3d and canvas2d paths are gated by build tag — in islands-only
+// builds they return an error rather than pulling in the engine reconciler.
+// See bridge_reconciler_full.go vs bridge_reconciler_islands.go.
 //
-// Engine commands produced by the scene3d path are discarded here; the legacy
-// HydrateEngine remains for callers that need the initial command stream.
-// Phase 2 will widen the return shape if needed.
+// Engine commands produced by the scene3d / canvas2d paths are discarded
+// here; the legacy HydrateEngine remains for callers that need the initial
+// command stream. Phase 2 will widen the return shape if needed.
 func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON string, programData []byte, format string) error {
 	switch surfaceKind {
 	case SurfaceKindDOM:
@@ -165,7 +190,7 @@ func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON str
 	case SurfaceKindScene3D:
 		return b.hydrateScene3D(id, componentName, propsJSON, programData, format)
 	case SurfaceKindCanvas2D:
-		return fmt.Errorf("canvas2d not yet supported; install Phase 2 (<CanvasBoard> primitive)")
+		return b.hydrateCanvas2D(id, componentName, propsJSON, programData, format)
 	default:
 		return fmt.Errorf("unknown surfaceKind %q (expected one of: %q, %q, %q)",
 			surfaceKind, SurfaceKindDOM, SurfaceKindScene3D, SurfaceKindCanvas2D)
@@ -370,6 +395,13 @@ func (b *Bridge) ComputeIslandCount() int {
 // EngineCount returns the number of active engine runtimes.
 func (b *Bridge) EngineCount() int {
 	return len(b.engines)
+}
+
+// CanvasBoardCount reports the number of live canvas2d adapters. Available
+// in every build (returns 0 in islands-only where boards are never
+// constructed).
+func (b *Bridge) CanvasBoardCount() int {
+	return len(b.boards)
 }
 
 // ReconcilerCount returns the number of active reconcilers across all surface

@@ -131,7 +131,16 @@ func mat4LookAt(eye, center, upHint [3]float32) mat4 {
 // computeMVP derives the combined projection*view matrix from a RenderCamera
 // plus framebuffer aspect. R2 treats the camera as a free-moving rig with
 // RotationX/Y driving orientation (R3 adds quaternion rotations).
+//
+// When cam.Mode == OrthoCamera2DMode the function branches into the 2D path:
+// an asymmetric orthographic projection sized to the framebuffer scaled by
+// the camera's zoom (carried in cam.Z), translated by the camera's pan
+// (carried in cam.X/Y). Depth/rotation are ignored — the 2D pipeline runs
+// with depth disabled per ADR 0004.
 func computeMVP(cam engine.RenderCamera, width, height int) mat4 {
+	if cam.Mode == orthoCamera2DModeString {
+		return computeOrthoCamera2DMVP(cam, width, height)
+	}
 	aspect := float32(1)
 	if height > 0 {
 		aspect = float32(width) / float32(height)
@@ -156,6 +165,74 @@ func computeMVP(cam engine.RenderCamera, width, height int) mat4 {
 	view := mat4Mul(mat4Mul(rotX, rotY), trans)
 
 	return mat4Mul(proj, view)
+}
+
+// orthoCamera2DModeString mirrors bundle.OrthoCamera2DMode without taking a
+// dependency cycle. Kept private — public callers go through OrthoCamera2D.
+const orthoCamera2DModeString = "ortho2d"
+
+// computeOrthoCamera2DMVP builds the projection*view matrix for the 2D board
+// path. Mapping: world (x, y) → screen pixels with zoom (cam.Z), centered on
+// the pan point (cam.X, cam.Y). Output is column-major like computeMVP.
+//
+// Math: orthographic from -halfW..halfW × -halfH..halfH where halfW/H are the
+// framebuffer half-extents divided by zoom; then translate by (-panX, -panY).
+// The Y axis is intentionally NOT flipped here — the renderer's NDC convention
+// already has +Y up, so a board-space "up" matches screen-space "up". The
+// CanvasBoardAdapter's input handlers compensate for the screen-down Y of
+// pointer events.
+func computeOrthoCamera2DMVP(cam engine.RenderCamera, width, height int) mat4 {
+	zoom := float32(cam.Z)
+	if zoom <= 0 {
+		zoom = 1
+	}
+	w := float32(width)
+	h := float32(height)
+	if w <= 0 {
+		w = 1
+	}
+	if h <= 0 {
+		h = 1
+	}
+	halfW := w / (2 * zoom)
+	halfH := h / (2 * zoom)
+	near := float32(cam.Near)
+	if near == 0 {
+		near = -1
+	}
+	far := float32(cam.Far)
+	if far == 0 {
+		far = 1
+	}
+	proj := mat4OrthographicAsym(-halfW, halfW, -halfH, halfH, near, far)
+	trans := mat4Translate(-float32(cam.X), -float32(cam.Y), 0)
+	return mat4Mul(proj, trans)
+}
+
+// mat4OrthographicAsym is an asymmetric orthographic projection matrix
+// (right-handed, NDC z in [-1, 1]). Used by the 2D camera path.
+func mat4OrthographicAsym(left, right, bottom, top, near, far float32) mat4 {
+	rl := right - left
+	tb := top - bottom
+	fn := far - near
+	if rl == 0 {
+		rl = 1
+	}
+	if tb == 0 {
+		tb = 1
+	}
+	if fn == 0 {
+		fn = 1
+	}
+	var m mat4
+	m[0] = 2 / rl
+	m[5] = 2 / tb
+	m[10] = -2 / fn
+	m[12] = -(right + left) / rl
+	m[13] = -(top + bottom) / tb
+	m[14] = -(far + near) / fn
+	m[15] = 1
+	return m
 }
 
 // cascadeData is a per-frame packet of cascaded-shadow-map view-proj

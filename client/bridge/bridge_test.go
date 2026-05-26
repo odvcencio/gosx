@@ -558,16 +558,25 @@ func TestBridgeHydrateReconcilerScene3DMatchesHydrateEngine(t *testing.T) {
 	}
 }
 
-func TestBridgeHydrateReconcilerCanvas2DReturnsNotYetSupported(t *testing.T) {
-	// Canvas2D dispatch is a stub in Phase 1d. The unified dispatcher must
-	// return a clear error rather than panic; Phase 2 wires the real adapter.
-	b := New()
-	err := b.HydrateReconciler("canvas2d", "board-0", "Board", `{}`, []byte("{}"), "json")
-	if err == nil {
-		t.Fatal("expected canvas2d to return an error stub")
+func TestBridgeHydrateReconcilerCanvas2DDispatchesToCanvasBoardAdapter(t *testing.T) {
+	// Phase 2 replaces the Phase 1d stub with a real CanvasBoardAdapter mount
+	// in the full build; the islands-only build still returns the stub error.
+	// The unified dispatcher must succeed for canvas2d in the full build and
+	// register the resulting adapter in the boards + reconcilers maps.
+	// Detailed coverage of the adapter behavior lives in
+	// bridge_canvasboard_test.go (also gated by !gosx_tiny_islands_only).
+	if islandsOnlyBuild {
+		t.Skip("canvas2d unavailable in islands-only build")
 	}
-	if !strings.Contains(err.Error(), "canvas2d") {
-		t.Fatalf("expected error to mention canvas2d, got %v", err)
+	b := New()
+	if err := b.HydrateReconciler("canvas2d", "board-0", "Board", `{}`, []byte("{}"), "json"); err != nil {
+		t.Fatalf("expected canvas2d dispatch to succeed post-Phase 2, got %v", err)
+	}
+	if b.CanvasBoardCount() != 1 {
+		t.Fatalf("expected canvas2d to register a board, got %d", b.CanvasBoardCount())
+	}
+	if b.ReconcilerCount() != 1 {
+		t.Fatalf("expected canvas2d to register in reconcilers, got %d", b.ReconcilerCount())
 	}
 }
 
