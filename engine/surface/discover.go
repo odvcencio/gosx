@@ -11,11 +11,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	gosx "m31labs.dev/gosx"
 	"m31labs.dev/gosx/internal/buildsurface"
 	"m31labs.dev/gosx/ir"
 )
+
+// defaultNow is the seam currentTimeFn delegates to by default. Tests
+// override currentTimeFn directly to pin a specific moment.
+func defaultNow() time.Time { return time.Now() }
 
 // surfaceManifestEntry is the per-component record written to the JSON manifest.
 //
@@ -23,16 +28,25 @@ import (
 // rebuild fails but a prior good WASM is still on disk, we keep WasmPath/
 // WasmURL/Hash pointing at the cached file, set Stale=true, and record the
 // build error so embedders can surface it.
+//
+// BytecodeURL / BytecodePath / SurfaceKind (Slice X.D) are populated
+// for surfaces that lowered to shared-VM bytecode rather than WASM.
+// WASMPath/WASMURL stay empty in that case — the two paths are
+// mutually exclusive per ADR 0003.
 type surfaceManifestEntry struct {
 	Component      string            `json:"component"`
-	WASMPath       string            `json:"wasmPath"`
-	WASMURL        string            `json:"wasmURL"`
+	WASMPath       string            `json:"wasmPath,omitempty"`
+	WASMURL        string            `json:"wasmURL,omitempty"`
 	Hash           string            `json:"hash"`
 	PropsType      string            `json:"propsType,omitempty"`
 	Capabilities   []string          `json:"capabilities,omitempty"`
 	MountAttrs     map[string]string `json:"mountAttrs,omitempty"`
 	Stale          bool              `json:"stale,omitempty"`
 	LastBuildError string            `json:"lastBuildError,omitempty"`
+
+	BytecodePath string `json:"bytecodePath,omitempty"`
+	BytecodeURL  string `json:"bytecodeURL,omitempty"`
+	SurfaceKind  string `json:"surfaceKind,omitempty"`
 }
 
 // surfaceManifest is written to .gosx/cache/surfaces/manifest.json.
@@ -289,6 +303,14 @@ func mergeBuildResult(fresh surfaceManifestEntry, prior surfaceManifestEntry, ha
 // registers routes, and appends manifest entries. priors contains the
 // previous manifest's entries keyed by component name so that build failures
 // can fall back to the last-known-good WASM (spec §B).
+//
+// Slice X.D routes per surface backend (per ADR 0006):
+//   - no `surface=wasm` annotation → bytecode lowering via ir/golower
+//     (LowerToBytecode) — the unified-VM default.
+//   - `//gosx:engine surface=wasm` → per-component WASM build via
+//     internal/buildsurface. The escape-hatch policy
+//     (escape_hatch_policy.go) gates this path: missing gap entry,
+//     stale review, or Studio path fails the build.
 func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manifest *surfaceManifest, priors map[string]surfaceManifestEntry) error {
 	src, err := os.ReadFile(gszPath)
 	if err != nil {
@@ -305,6 +327,8 @@ func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manif
 	// Populate Dir and PackagePath so LowerEngineSurface can read source files.
 	prog.Dir = filepath.Dir(gszPath)
 
+	annotation := scanSurfaceAnnotation(src)
+
 	for i, comp := range prog.Components {
 		if !comp.EngineSurface {
 			continue
@@ -316,80 +340,154 @@ func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manif
 			continue
 		}
 
-		ctx := context.Background()
-		// Default to TinyGo for size — Go-WASM is 20+ MB for nontrivial programs
-		// and violates the gosx "inspectable runtime cost" principle. Fall back
-		// to the standard gc toolchain only when TinyGo isn't on PATH OR when
-		// no compatible Go SDK is installed (TinyGo ≤0.40 caps at Go 1.25).
-		compiler := buildsurface.CompilerTinyGo
-		if reason := tinyGoUnavailableReason(); reason != "" {
-			compiler = buildsurface.CompilerGo
-			fmt.Fprintf(os.Stderr, "gosx/surface: %s; falling back to standard Go (-trimpath -ldflags=-s -w) — WASM will be larger than TinyGo output\n", reason)
+		if annotation.backend == backendBytecode {
+			discoverComponentBytecode(sp, gszPath, cacheDir, mux, manifest)
+			continue
 		}
-		wasmPath, hash, buildErr := buildsurface.Build(ctx, sp, buildsurface.Options{
-			Compiler:  compiler,
-			CacheDir:  cacheDir,
-			OutputDir: outputDir,
-		})
-
-		freshWasmURL := ""
-		if hash != "" {
-			freshWasmURL = fmt.Sprintf("/gosx/engines/%s.%s.wasm", sp.Name, hash)
+		// ADR 0006 escape hatch: validate then fall through to WASM build.
+		if err := enforceEscapeHatchPolicy(gszPath, annotation.line); err != nil {
+			fmt.Fprintf(os.Stderr, "gosx/surface: %v\n", err)
+			fireBuildEvent(sp.Name, BuildFailure, err)
+			continue
 		}
-
-		fresh := surfaceManifestEntry{
-			Component:    sp.Name,
-			WASMPath:     wasmPath,
-			WASMURL:      freshWasmURL,
-			Hash:         hash,
-			PropsType:    sp.PropsTypeName,
-			Capabilities: sp.Capabilities,
-			MountAttrs:   sp.MountAttrs,
-		}
-
-		prior, hasPrior := priors[sp.Name]
-		entry, serveURL, servePath := mergeBuildResult(fresh, prior, hasPrior, buildErr)
-
-		switch {
-		case buildErr == nil:
-			fireBuildEvent(sp.Name, BuildSuccess, nil)
-		case entry.Stale:
-			fmt.Fprintf(os.Stderr, "gosx/surface: reusing stale WASM for %q (build failed: %v)\n", sp.Name, buildErr)
-			fireBuildEvent(sp.Name, BuildFailureStaleFallback, buildErr)
-		default:
-			// Either there was no prior entry, or its cached WASM is gone.
-			fmt.Fprintf(os.Stderr, "gosx/surface: build WASM for %q: %v\n", sp.Name, buildErr)
-			fireBuildEvent(sp.Name, BuildFailure, buildErr)
-		}
-
-		// Register the file-serving route if (now) the WASM is available —
-		// either freshly built or reused from cache.
-		if serveURL != "" && servePath != "" {
-			localPath := servePath // capture for closure
-			handlerMu.Lock()
-			mux.HandleFunc(serveURL, func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/wasm")
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-				http.ServeFile(w, r, localPath)
-			})
-			handlerMu.Unlock()
-		}
-
-		// Register in the in-memory registry for Renderer.Mount.
-		registry.register(sp.Name, &registryEntry{
-			wasmURL:      entry.WASMURL,
-			hash:         entry.Hash,
-			propsType:    entry.PropsType,
-			capabilities: entry.Capabilities,
-			mountAttrs:   entry.MountAttrs,
-			stale:        entry.Stale,
-		})
-
-		// Append to manifest.
-		manifest.Surfaces = append(manifest.Surfaces, entry)
+		discoverComponentWASM(sp, cacheDir, outputDir, mux, manifest, priors)
 	}
 	return nil
 }
+
+// discoverComponentBytecode runs the X.D bytecode lowering pipeline
+// for one component: golower → JSON cache → manifest entry → http
+// route registration → in-memory registry register.
+//
+// Lowering errors are non-fatal at the file level (other components in
+// the same file still get a chance to build) but they do fire a
+// BuildFailure event so the embedder can surface them.
+func discoverComponentBytecode(sp *ir.SurfaceProgram, gszPath, cacheDir string, mux *http.ServeMux, manifest *surfaceManifest) {
+	res, err := LowerToBytecode(sp, cacheDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gosx/surface: lower bytecode for %q (%s): %v\n", sp.Name, gszPath, err)
+		fireBuildEvent(sp.Name, BuildFailure, err)
+		return
+	}
+	fireBuildEvent(sp.Name, BuildSuccess, nil)
+
+	entry := surfaceManifestEntry{
+		Component:    sp.Name,
+		Hash:         res.Hash,
+		PropsType:    sp.PropsTypeName,
+		Capabilities: sp.Capabilities,
+		MountAttrs:   sp.MountAttrs,
+		BytecodeURL:  res.JSONURL,
+		BytecodePath: res.JSONPath,
+		SurfaceKind:  res.SurfaceKind.String(),
+	}
+
+	// Register an http route that serves the JSON bytecode.
+	localPath := res.JSONPath
+	handlerMu.Lock()
+	mux.HandleFunc(res.JSONURL, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		http.ServeFile(w, r, localPath)
+	})
+	handlerMu.Unlock()
+
+	registry.register(sp.Name, &registryEntry{
+		hash:         entry.Hash,
+		propsType:    entry.PropsType,
+		capabilities: entry.Capabilities,
+		mountAttrs:   entry.MountAttrs,
+		bytecodeURL:  res.JSONURL,
+		bytecodePath: res.JSONPath,
+		surfaceKind:  res.SurfaceKind,
+	})
+	manifest.Surfaces = append(manifest.Surfaces, entry)
+}
+
+// discoverComponentWASM is the legacy per-component WASM build path,
+// preserved unchanged behind the `surface=wasm` escape hatch. See
+// internal/buildsurface for the build pipeline and ADR 0003 for the
+// deprecation timeline.
+func discoverComponentWASM(sp *ir.SurfaceProgram, cacheDir, outputDir string, mux *http.ServeMux, manifest *surfaceManifest, priors map[string]surfaceManifestEntry) {
+	ctx := context.Background()
+	compiler := buildsurface.CompilerTinyGo
+	if reason := tinyGoUnavailableReason(); reason != "" {
+		compiler = buildsurface.CompilerGo
+		fmt.Fprintf(os.Stderr, "gosx/surface: %s; falling back to standard Go (-trimpath -ldflags=-s -w) — WASM will be larger than TinyGo output\n", reason)
+	}
+	wasmPath, hash, buildErr := buildsurface.Build(ctx, sp, buildsurface.Options{
+		Compiler:  compiler,
+		CacheDir:  cacheDir,
+		OutputDir: outputDir,
+	})
+
+	freshWasmURL := ""
+	if hash != "" {
+		freshWasmURL = fmt.Sprintf("/gosx/engines/%s.%s.wasm", sp.Name, hash)
+	}
+
+	fresh := surfaceManifestEntry{
+		Component:    sp.Name,
+		WASMPath:     wasmPath,
+		WASMURL:      freshWasmURL,
+		Hash:         hash,
+		PropsType:    sp.PropsTypeName,
+		Capabilities: sp.Capabilities,
+		MountAttrs:   sp.MountAttrs,
+	}
+
+	prior, hasPrior := priors[sp.Name]
+	entry, serveURL, servePath := mergeBuildResult(fresh, prior, hasPrior, buildErr)
+
+	switch {
+	case buildErr == nil:
+		fireBuildEvent(sp.Name, BuildSuccess, nil)
+	case entry.Stale:
+		fmt.Fprintf(os.Stderr, "gosx/surface: reusing stale WASM for %q (build failed: %v)\n", sp.Name, buildErr)
+		fireBuildEvent(sp.Name, BuildFailureStaleFallback, buildErr)
+	default:
+		fmt.Fprintf(os.Stderr, "gosx/surface: build WASM for %q: %v\n", sp.Name, buildErr)
+		fireBuildEvent(sp.Name, BuildFailure, buildErr)
+	}
+
+	if serveURL != "" && servePath != "" {
+		localPath := servePath
+		handlerMu.Lock()
+		mux.HandleFunc(serveURL, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/wasm")
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			http.ServeFile(w, r, localPath)
+		})
+		handlerMu.Unlock()
+	}
+
+	registry.register(sp.Name, &registryEntry{
+		wasmURL:      entry.WASMURL,
+		hash:         entry.Hash,
+		propsType:    entry.PropsType,
+		capabilities: entry.Capabilities,
+		mountAttrs:   entry.MountAttrs,
+		stale:        entry.Stale,
+	})
+	manifest.Surfaces = append(manifest.Surfaces, entry)
+}
+
+// enforceEscapeHatchPolicy checks the surface=wasm annotation against
+// the capability-gap ledger. Returns nil on policy success (warning
+// already emitted), or an error to block the build per ADR 0006.
+func enforceEscapeHatchPolicy(gszPath string, line int) error {
+	ledger := loadCapabilityGapLedger(gapFilePath())
+	warning, err := checkEscapeHatch(gszPath, line, ledger, currentTimeFn())
+	if err != nil {
+		return err
+	}
+	emitEscapeHatchWarning(warning)
+	return nil
+}
+
+// currentTimeFn is a small seam so tests can pin "now" without
+// importing time in this file's call site.
+var currentTimeFn = defaultNow
 
 // mergeManifestForTest is a test-only seam exposing the merge-and-write path
 // without invoking the full Discover walk. Tests use it to assert spec §B
