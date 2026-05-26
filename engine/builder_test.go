@@ -50,12 +50,12 @@ func TestBuilderIncludeRemapsExprsAndChildren(t *testing.T) {
 		t.Fatalf("expected two included handles, got %d", len(included))
 	}
 
-	includedMesh := prog.Nodes[included[0]]
+	includedMesh := prog.EngineNodes[included[0]]
 	if includedMesh.Props["x"] < 1 {
 		t.Fatalf("expected included expression ids to be remapped, got %d", includedMesh.Props["x"])
 	}
 
-	includedGroup := prog.Nodes[included[1]]
+	includedGroup := prog.EngineNodes[included[1]]
 	if len(includedGroup.Children) != 1 || includedGroup.Children[0] != int(included[0]) {
 		t.Fatalf("expected included child handle to be remapped, got %#v", includedGroup.Children)
 	}
@@ -90,7 +90,7 @@ func TestBuilderSpriteCreatesSpriteNode(t *testing.T) {
 	if handle != 0 {
 		t.Fatalf("expected first sprite handle to be 0, got %d", handle)
 	}
-	if len(prog.Nodes) != 1 || prog.Nodes[0].Kind != "sprite" {
-		t.Fatalf("expected one sprite node, got %#v", prog.Nodes)
+	if len(prog.EngineNodes) != 1 || prog.EngineNodes[0].Kind != "sprite" {
+		t.Fatalf("expected one sprite node, got %#v", prog.EngineNodes)
 	}
 }

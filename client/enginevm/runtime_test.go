@@ -14,7 +14,7 @@ import (
 func TestRuntimeInitialReconcileCreatesObjects(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "GeometryZoo",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -55,7 +55,7 @@ func TestRuntimeInitialReconcileCreatesObjects(t *testing.T) {
 func TestRuntimeTickProducesIncrementalMaterialAndTransformCommands(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "GeometryZoo",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind:     "mesh",
 				Geometry: "box",
@@ -105,7 +105,7 @@ func TestRuntimeTickProducesIncrementalMaterialAndTransformCommands(t *testing.T
 func TestRuntimeTickProducesIncrementalLightCommands(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "SceneLights",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "light",
 				Props: map[string]islandprogram.ExprID{
@@ -147,7 +147,7 @@ func TestRuntimeTickProducesIncrementalLightCommands(t *testing.T) {
 func TestRuntimeMarksOnlyDependentNodesDirty(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "DirtyTracking",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "mesh",
 				Props: map[string]islandprogram.ExprID{
@@ -205,7 +205,7 @@ func TestRuntimeMarksOnlyDependentNodesDirty(t *testing.T) {
 func TestRuntimeClearsDirtyFlagsAfterReconcile(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "DirtyReconcile",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "mesh",
 				Props: map[string]islandprogram.ExprID{
@@ -251,7 +251,7 @@ func TestRuntimeClearsDirtyFlagsAfterReconcile(t *testing.T) {
 func TestRuntimeRenderBundleAppliesSceneMotionOffsets(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "MotionOffsets",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind:     "mesh",
 				Geometry: "box",
@@ -310,7 +310,7 @@ func TestRuntimeRenderBundleAppliesSceneMotionOffsets(t *testing.T) {
 func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "RenderBundle",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -423,7 +423,7 @@ func TestRuntimeRenderBundleSyncsDirtyNodes(t *testing.T) {
 func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "SceneLabels",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -515,7 +515,7 @@ func TestRuntimeRenderBundleProjectsSceneLabels(t *testing.T) {
 func TestRuntimeRenderBundleProjectsSceneSprites(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "SceneSprites",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -589,7 +589,7 @@ func TestRuntimeRenderBundleProjectsSceneSprites(t *testing.T) {
 func TestRuntimeRenderBundleResolvesMaterialPresets(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "MaterialProfiles",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -681,7 +681,7 @@ func TestRuntimeRenderBundleUsesRegisteredMaterialProfile(t *testing.T) {
 
 	prog := &rootengine.Program{
 		Name: "CustomMaterialProfile",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -722,7 +722,7 @@ func TestRuntimeRenderBundleUsesRegisteredMaterialProfile(t *testing.T) {
 func TestRuntimeRenderBundlePreservesCustomWGSLMaterial(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "CustomWGSLMaterial",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -773,7 +773,7 @@ func TestRuntimeRenderBundlePreservesCustomWGSLMaterial(t *testing.T) {
 func TestRuntimeRenderBundlePreservesPBRMaterialFields(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "PBRMaterial",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -936,7 +936,7 @@ func TestRuntimeRenderBundlePreservesSceneAnimations(t *testing.T) {
 func TestRuntimeRenderBundleEmitsTexturedPlaneSurfaces(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "TexturedPlane",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -1005,7 +1005,7 @@ func TestRuntimeRenderBundleEmitsTexturedPlaneSurfaces(t *testing.T) {
 func TestRuntimeRenderBundleCarriesPickabilityMetadata(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "Pickability",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{
@@ -1056,7 +1056,7 @@ func TestRuntimeRenderBundleCarriesPickabilityMetadata(t *testing.T) {
 func TestRuntimeRenderBundleAppliesSceneLightingAndInvalidatesStaticPassCache(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "LightingCache",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "light",
 				Props: map[string]islandprogram.ExprID{
@@ -1127,7 +1127,7 @@ func TestRuntimeRenderBundleAppliesSceneLightingAndInvalidatesStaticPassCache(t 
 func TestRuntimeRenderBundleMarksOffscreenObjectsCulled(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "FrustumCull",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]islandprogram.ExprID{

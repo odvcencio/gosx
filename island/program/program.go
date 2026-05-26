@@ -166,17 +166,18 @@ const (
 // no wire field). It is set by the surface-specific decoder (island, engine,
 // future canvas2d) and is never serialized.
 type Program struct {
-	Version    string        `json:"version,omitempty"`
-	Name       string        `json:"name"`
-	Props      []PropDef     `json:"props"`
-	Nodes      []Node        `json:"nodes"`
-	Root       NodeID        `json:"root"`
-	Exprs      []Expr        `json:"exprs"`
-	Signals    []SignalDef   `json:"signals"`
-	Computeds  []ComputedDef `json:"computeds"`
-	Handlers   []Handler     `json:"handlers"`
-	StaticMask []bool        `json:"static_mask"`
-	Surface    SurfaceKind   `json:"-"`
+	Version     string        `json:"version,omitempty"`
+	Name        string        `json:"name"`
+	Props       []PropDef     `json:"props"`
+	Nodes       []Node        `json:"nodes"`
+	Root        NodeID        `json:"root"`
+	Exprs       []Expr        `json:"exprs"`
+	Signals     []SignalDef   `json:"signals"`
+	Computeds   []ComputedDef `json:"computeds"`
+	Handlers    []Handler     `json:"handlers"`
+	StaticMask  []bool        `json:"static_mask"`
+	EngineNodes []EngineNode  `json:"engineNodes,omitempty"` // populated for SurfaceScene3D/Canvas2D
+	Surface     SurfaceKind   `json:"-"`
 }
 
 // Node represents a single node in the island's DOM tree.
@@ -230,4 +231,21 @@ type Handler struct {
 type PropDef struct {
 	Name string   `json:"name"`
 	Type ExprType `json:"type"`
+}
+
+// EngineNode is the scene-oriented node carried by SurfaceScene3D and
+// SurfaceCanvas2D programs. It lives here (exported) so that engine.Node can
+// alias it during Phase 1a, keeping the engine package as a thin adapter over
+// the unified Program type.
+//
+// TODO(phase-1c): move this into a dedicated scene/ subpackage alongside the
+// scene reconciler; engine.Node can then alias the new home and this re-export
+// gets dropped.
+type EngineNode struct {
+	Kind     string            `json:"kind"`
+	Geometry string            `json:"geometry,omitempty"`
+	Material string            `json:"material,omitempty"`
+	Props    map[string]ExprID `json:"props,omitempty"`
+	Children []int             `json:"children,omitempty"`
+	Static   bool              `json:"static,omitempty"`
 }

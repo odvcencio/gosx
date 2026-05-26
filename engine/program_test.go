@@ -10,7 +10,7 @@ import (
 func TestProgramJSONRoundTrip(t *testing.T) {
 	original := &Program{
 		Name: "GeometryZoo",
-		Nodes: []Node{
+		EngineNodes: []Node{
 			{
 				Kind:     "mesh",
 				Geometry: "box",
@@ -47,14 +47,25 @@ func TestProgramJSONRoundTrip(t *testing.T) {
 	if decoded.Name != original.Name {
 		t.Fatalf("expected name %q, got %q", original.Name, decoded.Name)
 	}
-	if len(decoded.Nodes) != 2 {
-		t.Fatalf("expected 2 nodes, got %d", len(decoded.Nodes))
+	if len(decoded.EngineNodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(decoded.EngineNodes))
 	}
-	if decoded.Nodes[0].Props["color"] != 2 {
-		t.Fatalf("expected color expr 2, got %d", decoded.Nodes[0].Props["color"])
+	if decoded.EngineNodes[0].Props["color"] != 2 {
+		t.Fatalf("expected color expr 2, got %d", decoded.EngineNodes[0].Props["color"])
 	}
 	if len(decoded.Signals) != 1 || decoded.Signals[0].Name != "$scene.color" {
 		t.Fatalf("unexpected signals: %#v", decoded.Signals)
+	}
+}
+
+func TestDecodeProgramJSONInjectsSurfaceScene3D(t *testing.T) {
+	data := []byte(`{"engineNodes":[],"exprs":[]}`)
+	p, err := DecodeProgramJSON(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Surface != islandprogram.SurfaceScene3D {
+		t.Errorf("Surface = %v, want SurfaceScene3D", p.Surface)
 	}
 }
 

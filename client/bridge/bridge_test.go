@@ -283,7 +283,7 @@ func TestBridgeHydrateTickAndDisposeEngine(t *testing.T) {
 
 	prog := &rootengine.Program{
 		Name: "GeometryZoo",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind:     "mesh",
 				Geometry: "box",
@@ -382,7 +382,7 @@ func TestBridgeRenderEngineBundle(t *testing.T) {
 
 	prog := &rootengine.Program{
 		Name: "RenderBundle",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind: "camera",
 				Props: map[string]program.ExprID{
