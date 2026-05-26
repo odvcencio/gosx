@@ -451,6 +451,18 @@ func TestBridgeReconcilerMapCount(t *testing.T) {
 	}
 }
 
+func TestReconcilerCountInvariant(t *testing.T) {
+	b := New()
+	hydrateMinimalIslandFor(t, b, "i1")
+	hydrateMinimalIslandFor(t, b, "i2")
+	hydrateMinimalEngineFor(t, b, "e1")
+
+	want := b.IslandCount() + b.ComputeIslandCount() + b.EngineCount()
+	if got := b.ReconcilerCount(); got != want {
+		t.Errorf("ReconcilerCount = %d, want IslandCount+ComputeIslandCount+EngineCount = %d", got, want)
+	}
+}
+
 func TestBridgeRenderEngineBundle(t *testing.T) {
 	b := New()
 
