@@ -17,7 +17,30 @@ type Value struct {
 	Bool   bool
 	Items  []Value
 	Fields map[string]Value
+
+	// Control is a non-zero unwind sentinel emitted by OpReturn /
+	// OpBreak / OpContinue (Slice X.C). OpSeq, OpFor, OpForRange, and
+	// EvalWithFrame check this field after each operand evaluation and
+	// stop propagating accordingly. Regular evaluation never reads or
+	// writes Control, so existing programs and tests are unaffected.
+	Control ControlSignal
 }
+
+// ControlSignal is the sentinel kind carried in Value.Control.
+type ControlSignal uint8
+
+const (
+	// ControlNone is the default; evaluation proceeds normally.
+	ControlNone ControlSignal = iota
+	// ControlReturn unwinds the enclosing handler frame, carrying the
+	// Value's payload as the handler's return value.
+	ControlReturn
+	// ControlBreak terminates the nearest enclosing loop.
+	ControlBreak
+	// ControlContinue advances the nearest enclosing loop to its next
+	// iteration (post + cond), skipping the rest of the body.
+	ControlContinue
+)
 
 // ArrayVal creates an array Value from a slice of Values.
 func ArrayVal(items []Value) Value {
