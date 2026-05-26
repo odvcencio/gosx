@@ -117,6 +117,31 @@ const (
 	OpToFloat  // Operands[0] = string/int → float
 )
 
+// SurfaceKind identifies the rendering surface a program targets.
+// Carried as a runtime-only field on Program — not serialized.
+// SurfaceDOM is the zero value so legacy island JSON deserializes correctly.
+type SurfaceKind uint8
+
+const (
+	SurfaceDOM      SurfaceKind = iota // HTML DOM patches
+	SurfaceCanvas2D                    // 2D canvas board (Miro/Figma-style)
+	SurfaceScene3D                     // 3D scene graph
+)
+
+// String returns the canonical surface name.
+func (s SurfaceKind) String() string {
+	switch s {
+	case SurfaceDOM:
+		return "dom"
+	case SurfaceCanvas2D:
+		return "canvas2d"
+	case SurfaceScene3D:
+		return "scene3d"
+	default:
+		return fmt.Sprintf("SurfaceKind(%d)", s)
+	}
+}
+
 // ExprType describes the type of an expression result.
 type ExprType uint8
 
@@ -132,6 +157,10 @@ const (
 // Program is the client-side representation of an island component.
 // It is the VM-oriented artifact shipped to the browser, distinct from the
 // compiler IR.
+//
+// Surface is a runtime-only field per ADR 0001 (per-decoder surface injection,
+// no wire field). It is set by the surface-specific decoder (island, engine,
+// future canvas2d) and is never serialized.
 type Program struct {
 	Name       string        `json:"name"`
 	Props      []PropDef     `json:"props"`
@@ -142,6 +171,7 @@ type Program struct {
 	Computeds  []ComputedDef `json:"computeds"`
 	Handlers   []Handler     `json:"handlers"`
 	StaticMask []bool        `json:"static_mask"`
+	Surface    SurfaceKind   `json:"-"`
 }
 
 // Node represents a single node in the island's DOM tree.

@@ -953,3 +953,26 @@ func TestListProgram(t *testing.T) {
 		t.Errorf("round-trip Exprs length mismatch: %d != %d", len(p2.Exprs), len(p.Exprs))
 	}
 }
+
+func TestSurfaceKindString(t *testing.T) {
+	cases := []struct {
+		kind SurfaceKind
+		want string
+	}{
+		{SurfaceDOM, "dom"},
+		{SurfaceCanvas2D, "canvas2d"},
+		{SurfaceScene3D, "scene3d"},
+	}
+	for _, c := range cases {
+		if got := c.kind.String(); got != c.want {
+			t.Errorf("SurfaceKind(%d).String() = %q, want %q", c.kind, got, c.want)
+		}
+	}
+}
+
+func TestProgramSurfaceZeroValue(t *testing.T) {
+	var p Program
+	if p.Surface != SurfaceDOM {
+		t.Errorf("zero-value Program.Surface = %v, want SurfaceDOM (kind 0)", p.Surface)
+	}
+}
