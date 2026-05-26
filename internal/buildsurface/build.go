@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"m31labs.dev/gosx/internal/version"
@@ -282,20 +283,8 @@ func compileTinyGo(ctx context.Context, scratchDir, outputPath string) error {
 		return fmt.Errorf("tinygo not found on PATH: %w", err)
 	}
 
-	baseEnv := execEnvWithoutGoFlags()
-	baseEnv = setEnvVar(baseEnv, "GOWORK", "off")
-	baseEnv = setEnvVar(baseEnv, "GOFLAGS", "-mod=mod -buildvcs=false")
-
-	// TinyGo (currently ≤0.40.x) supports Go 1.19–1.25. If the current Go is
-	// outside that range, try to point at a compatible SDK installed under
-	// ~/sdk/go1.* (matching the existing convention in cmd/gosx/tinygo_build.go).
-	if root := tinyGoCompatibleGoRoot(); root != "" {
-		baseEnv = setEnvVar(baseEnv, "GOROOT", root)
-		baseEnv = setEnvVar(baseEnv, "GOTOOLCHAIN", "local")
-		// Prepend the compatible Go's bin/ to PATH so tinygo's subprocess go invocations resolve it.
-		oldPath := envValueOf(baseEnv, "PATH")
-		baseEnv = setEnvVar(baseEnv, "PATH", filepath.Join(root, "bin")+string(os.PathListSeparator)+oldPath)
-	}
+	root := tinyGoCompatibleGoRoot()
+	env := tinygoEnvFor(root)
 
 	args := []string{
 		"build",
@@ -308,12 +297,63 @@ func compileTinyGo(ctx context.Context, scratchDir, outputPath string) error {
 
 	cmd := exec.CommandContext(ctx, tinygoPath, args...)
 	cmd.Dir = scratchDir
-	cmd.Env = baseEnv
+	cmd.Env = env
 	outBytes, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("tinygo build: %w\n%s", err, strings.TrimSpace(string(outBytes)))
+		raw := strings.TrimSpace(string(outBytes))
+		if hint := parseTinyGoToolchainError(raw); hint != "" {
+			return fmt.Errorf("tinygo build: %w\n%s\n\n%s", err, raw, hint)
+		}
+		return fmt.Errorf("tinygo build: %w\n%s", err, raw)
 	}
 	return nil
+}
+
+// tinygoEnvFor returns the env slice that compileTinyGo should pass to the
+// tinygo subprocess. When goroot != "" the function pins GOROOT, prepends
+// <goroot>/bin to PATH, and sets GOTOOLCHAIN=auto.
+//
+// GOTOOLCHAIN was previously set to "local" — that pinned TinyGo's nested
+// `go build` to the selected SDK and blocked it from satisfying a higher
+// `go` directive in the gosx replace target. Setting "auto" lets the nested
+// `go` resolve / download the needed toolchain when present. Closes spec §C.
+func tinygoEnvFor(goroot string) []string {
+	env := execEnvWithoutGoFlags()
+	env = setEnvVar(env, "GOWORK", "off")
+	env = setEnvVar(env, "GOFLAGS", "-mod=mod -buildvcs=false")
+	if goroot != "" {
+		env = setEnvVar(env, "GOROOT", goroot)
+		env = setEnvVar(env, "GOTOOLCHAIN", "auto")
+		oldPath := envValueOf(env, "PATH")
+		env = setEnvVar(env, "PATH", filepath.Join(goroot, "bin")+string(os.PathListSeparator)+oldPath)
+	}
+	return env
+}
+
+// toolchainMismatchPattern captures TinyGo's nested `go build` complaint when
+// the module's go directive exceeds the selected SDK. Example stderr:
+//
+//	go: module /home/.../gosx requires go >= 1.26 (running go 1.25.9; GOTOOLCHAIN=local)
+var toolchainMismatchPattern = regexp.MustCompile(`requires go >= (?P<want>[0-9]+(?:\.[0-9]+)+).*?running go (?P<have>[0-9]+(?:\.[0-9]+)+)`)
+
+// parseTinyGoToolchainError inspects raw TinyGo stderr for a Go-version
+// mismatch and, if one is present, returns a human-readable clarifying
+// message that names the target version, observed version, and the env
+// var overrides that can unblock the build. Returns "" when no mismatch
+// pattern is found.
+func parseTinyGoToolchainError(stderr string) string {
+	m := toolchainMismatchPattern.FindStringSubmatch(stderr)
+	if m == nil {
+		return ""
+	}
+	want := m[toolchainMismatchPattern.SubexpIndex("want")]
+	have := m[toolchainMismatchPattern.SubexpIndex("have")]
+	return fmt.Sprintf(
+		"hint: tinygo's nested go build requires Go >= %s but the selected SDK is %s; "+
+			"set GOSX_TINYGO_GOROOT to a compatible SDK or run with GOSX_FORCE_GO_COMPILER=1 "+
+			"to fall back to the standard gc toolchain.",
+		want, have,
+	)
 }
 
 // tinyGoCompatibleGoRoot finds the newest installed Go SDK under
