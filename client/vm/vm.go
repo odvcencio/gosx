@@ -371,6 +371,20 @@ func (vm *VM) evalControlExpr(e program.Expr) (Value, bool) {
 	case program.OpCond:
 		return vm.conditionalValue(e), true
 	case program.OpCall:
+		// Slice X.B: OpCall first tries the stdlib intrinsic registry
+		// (math.Sin, strings.Split, ...). Unknown callee names fall back
+		// to the existing zero-Value behavior so legacy programs that
+		// never registered an intrinsic keep evaluating identically.
+		//
+		// sort.Slice is dispatched via a dedicated path because its
+		// comparator operand is a body expression that must be
+		// re-evaluated for each comparison, not pre-evaluated once.
+		if e.Value == "sort.Slice" {
+			return vm.sortSliceValue(e), true
+		}
+		if v, ok := vm.callIntrinsic(e); ok {
+			return v, true
+		}
 		return ZeroValue(program.TypeAny), true
 	default:
 		return Value{}, false
