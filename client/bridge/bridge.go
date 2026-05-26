@@ -17,11 +17,12 @@ type Bridge struct {
 	islands        map[string]*vm.Island
 	computeIslands map[string]struct{}
 	engines        map[string]*enginevm.Runtime
-	// boards holds canvas2d adapter instances (Phase 2). Kept in a separate
-	// typed map from engines because *vm.CanvasBoardAdapter and
-	// *enginevm.Runtime (alias for *vm.SceneAdapter) are different concrete
-	// types — the unification across both lives in reconcilers below.
-	boards map[string]*vm.CanvasBoardAdapter
+	// boards holds canvas2d adapter instances (Phase 2). Typed as the
+	// Reconciler interface so the islands-only build can elide the concrete
+	// *vm.CanvasBoardAdapter from the binary entirely; the full build's
+	// hydrateCanvas2D casts back to *vm.CanvasBoardAdapter for the typed
+	// TickCanvasBoard / RenderCanvasBoard entry points.
+	boards map[string]vm.Reconciler
 	// reconcilers is the unified lifecycle map populated alongside the
 	// surface-specific maps above. It exists so callers can count, look up,
 	// and (eventually) dispose any reconciler by id without knowing whether
@@ -139,7 +140,7 @@ func New() *Bridge {
 		islands:        make(map[string]*vm.Island),
 		computeIslands: make(map[string]struct{}),
 		engines:        make(map[string]*enginevm.Runtime),
-		boards:         make(map[string]*vm.CanvasBoardAdapter),
+		boards:         make(map[string]vm.Reconciler),
 		reconcilers:    make(map[string]vm.Reconciler),
 		store:          NewStore(),
 		unsubs:         make(map[string][]func()),

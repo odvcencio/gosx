@@ -57,11 +57,18 @@ func connectSharedBoardSignals(adapter *vm.CanvasBoardAdapter, store *Store, def
 }
 
 // TickCanvasBoard reconciles a live board adapter and returns pending
-// commands. Mirrors TickEngine for the canvas2d surface.
+// commands. Mirrors TickEngine for the canvas2d surface. The boards map
+// stores values as the vm.Reconciler interface (so the islands-only build
+// can drop the concrete adapter from the binary); this entry point casts
+// back to the typed adapter for the Reconcile call's Command return.
 func (b *Bridge) TickCanvasBoard(id string) ([]rootengine.Command, error) {
-	adapter, ok := b.boards[id]
+	entry, ok := b.boards[id]
 	if !ok {
 		return nil, fmt.Errorf("canvas board %q not found", id)
+	}
+	adapter, ok := entry.(*vm.CanvasBoardAdapter)
+	if !ok {
+		return nil, fmt.Errorf("board %q is not a canvas board adapter", id)
 	}
 	return adapter.Reconcile(), nil
 }
@@ -69,9 +76,13 @@ func (b *Bridge) TickCanvasBoard(id string) ([]rootengine.Command, error) {
 // RenderCanvasBoard builds a 2D-mode render bundle for the named board.
 // The bundle's camera is always OrthoCamera2D per Section A.
 func (b *Bridge) RenderCanvasBoard(id string, width, height int, timeSeconds float64) (rootengine.RenderBundle, error) {
-	adapter, ok := b.boards[id]
+	entry, ok := b.boards[id]
 	if !ok {
 		return rootengine.RenderBundle{}, fmt.Errorf("canvas board %q not found", id)
+	}
+	adapter, ok := entry.(*vm.CanvasBoardAdapter)
+	if !ok {
+		return rootengine.RenderBundle{}, fmt.Errorf("board %q is not a canvas board adapter", id)
 	}
 	return adapter.RenderBundle(width, height, timeSeconds), nil
 }
