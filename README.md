@@ -174,7 +174,7 @@ GSX syntax is parsed by [gotreesitter](https://github.com/odvcencio/gotreesitter
        -> per-island programs are 1-10KB each
 ```
 
-Island expressions are constrained to what the client VM can evaluate: literals, property and signal access, arithmetic, comparisons, boolean logic, string operations, conditionals, handler dispatch, and list iteration. Goroutines, channels, and arbitrary Go are compile-time errors in islands.
+Island expressions are constrained to what the client VM can evaluate: literals, property and signal access, arithmetic, comparisons, boolean logic, string operations, conditionals, handler dispatch, and list iteration. Goroutines, channels, and arbitrary Go are compile-time errors in islands. The full supported subset — array-method shorthand (`.filter`, `.map`, `.find`, `.slice`, `.append`), string methods, and single-param closures — is specified in [`docs/expressions.md`](docs/expressions.md).
 
 ## Reactive State
 
