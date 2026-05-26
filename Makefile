@@ -23,7 +23,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -109,6 +109,12 @@ test-wasm:
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
 
+# wasm-size-budget builds both client/wasm flavors and asserts they stay within
+# the budget. Override WASM_FULL_BUDGET_KB / WASM_TINY_BUDGET_KB to raise the
+# bar for a planned-growth slice (require an ADR for any >10% bump).
+wasm-size-budget:
+	$(SHELL) ./scripts/check-wasm-size.sh
+
 test-e2e:
 	$(NODE) --test e2e/gosx_docs_e2e.test.mjs
 	$(GO) test ./e2e
@@ -150,4 +156,4 @@ build-desktop-macos:
 build-runtime:
 	$(GO) run ./cmd/gosx build-runtime build
 
-ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands test-e2e perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime

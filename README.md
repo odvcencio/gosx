@@ -548,6 +548,24 @@ Budget metrics include lifecycle and vitals (`ttfb`, `dcl`, `lcp`, `cls`, `tbt`)
 
 Production builds and static exports also write route capability metadata into `dist/export.json`. Each route records whether the rendered page actually shipped navigation, bootstrap, WASM, islands, engines, hubs, Scene3D, managed video, or motion. That makes the "pay for what you use" contract inspectable from the build artifact, not just from source assumptions.
 
+### WASM size-budget gate
+
+`make wasm-size-budget` (script: `scripts/check-wasm-size.sh`) builds both
+flavors of `client/wasm` and asserts the resulting WebAssembly artifacts stay
+within budget. CI runs the gate on every PR. Baselines (Phase 1c shipped):
+
+| Flavor | Build tags                    | Shipped (Phase 1c) | Budget |
+|--------|-------------------------------|--------------------|--------|
+| full   | _(none)_                      | ~7,883 KB          | 8,500 KB |
+| tiny   | `gosx_tiny_islands_only`      | ~5,618 KB          | 5,900 KB |
+
+Override the budget for a planned-growth slice by exporting
+`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. **Any budget increase
+greater than 10% over the Phase 1c baseline requires an ADR** explaining what
+deliberate growth shipped (e.g. Phase 2's `<CanvasBoard>` primitive, future
+opcode-set expansion). The gate fires on incidental regressions so they get
+caught at the PR boundary instead of slipping into a release.
+
 `gosx desktop [app]` opens the dev server in the native desktop host. On Windows
 it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url
 https://example.com` opens a URL directly for host smoke checks. `gosx desktop
