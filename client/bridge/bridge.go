@@ -17,11 +17,18 @@ type Bridge struct {
 	islands        map[string]*vm.Island
 	computeIslands map[string]struct{}
 	engines        map[string]*enginevm.Runtime
-	store          *Store
-	patchFn        func(islandID, patchJSON string) // callback to push patches to JS
-	signalFn       func(name, valueJSON string)     // callback to notify JS of shared signal changes
-	dispatching    string                           // ID of the island currently dispatching
-	unsubs         map[string][]func()              // per-island unsubscribe handles for shared signals
+	// reconcilers is the unified lifecycle map populated alongside the
+	// surface-specific maps above. It exists so callers can count, look up,
+	// and (eventually) dispose any reconciler by id without knowing whether
+	// it is a DOM island or a scene engine. Surface-specific dispatch
+	// (Hydrate*, Dispatch*, Tick*, Render*) still goes through the typed
+	// maps — collapsing those is Phase 1d work.
+	reconcilers map[string]vm.Reconciler
+	store       *Store
+	patchFn     func(islandID, patchJSON string) // callback to push patches to JS
+	signalFn    func(name, valueJSON string)     // callback to notify JS of shared signal changes
+	dispatching string                           // ID of the island currently dispatching
+	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
 }
 
 // SetPatchCallback registers the function called when shared signal changes
@@ -109,6 +116,7 @@ func New() *Bridge {
 		islands:        make(map[string]*vm.Island),
 		computeIslands: make(map[string]struct{}),
 		engines:        make(map[string]*enginevm.Runtime),
+		reconcilers:    make(map[string]vm.Reconciler),
 		store:          NewStore(),
 		unsubs:         make(map[string][]func()),
 	}
@@ -159,6 +167,7 @@ func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData 
 	b.unsubs[id] = b.subscribeSharedSignals(id, defs)
 
 	b.islands[id] = island
+	b.reconcilers[id] = island
 	if compute {
 		b.computeIslands[id] = struct{}{}
 	} else {
@@ -184,6 +193,7 @@ func (b *Bridge) HydrateEngine(id, componentName, propsJSON string, programData 
 	runtime := enginevm.New(prog, propsJSON)
 	connectSharedEngineSignals(runtime, b.store, prog.Signals)
 	b.engines[id] = runtime
+	b.reconcilers[id] = runtime
 
 	return runtime.Reconcile(), nil
 }
@@ -299,6 +309,7 @@ func (b *Bridge) DisposeIsland(id string) {
 		delete(b.islands, id)
 	}
 	delete(b.computeIslands, id)
+	delete(b.reconcilers, id)
 }
 
 // DisposeEngine removes a live engine runtime from the bridge.
@@ -307,6 +318,7 @@ func (b *Bridge) DisposeEngine(id string) {
 		runtime.Dispose()
 		delete(b.engines, id)
 	}
+	delete(b.reconcilers, id)
 }
 
 // IslandCount returns the number of active islands.
@@ -322,6 +334,23 @@ func (b *Bridge) ComputeIslandCount() int {
 // EngineCount returns the number of active engine runtimes.
 func (b *Bridge) EngineCount() int {
 	return len(b.engines)
+}
+
+// ReconcilerCount returns the number of active reconcilers across all surface
+// kinds (islands + compute islands + engines). This is the unified lifecycle
+// view introduced in Phase 1b; the surface-specific count methods above stay
+// for callers that need to distinguish kinds.
+func (b *Bridge) ReconcilerCount() int {
+	return len(b.reconcilers)
+}
+
+// LookupReconciler returns the reconciler registered under id, if any. The
+// returned value satisfies the vm.Reconciler lifecycle interface; callers
+// that need surface-specific behavior (PatchOp emission, Command emission)
+// must type-assert to *vm.Island or *enginevm.Runtime.
+func (b *Bridge) LookupReconciler(id string) (vm.Reconciler, bool) {
+	r, ok := b.reconcilers[id]
+	return r, ok
 }
 
 func normalizePropsJSON(componentName, propsJSON string) (string, error) {

@@ -377,6 +377,92 @@ func TestCRDTBridgeInitPutAndGet(t *testing.T) {
 	}
 }
 
+// hydrateMinimalIslandFor hydrates a tiny island under the given id using the
+// shared CounterProgram fixture. Keeps the Reconciler-map tests narrow.
+func hydrateMinimalIslandFor(t *testing.T, b *Bridge, id string) {
+	t.Helper()
+	prog := program.CounterProgram()
+	data, err := program.EncodeJSON(prog)
+	if err != nil {
+		t.Fatalf("encode minimal island program: %v", err)
+	}
+	if err := b.HydrateIsland(id, "Counter", `{}`, data, "json"); err != nil {
+		t.Fatalf("hydrate minimal island %q: %v", id, err)
+	}
+}
+
+// hydrateMinimalEngineFor hydrates a tiny engine runtime under the given id
+// using a near-empty engine program. Keeps the Reconciler-map tests narrow.
+func hydrateMinimalEngineFor(t *testing.T, b *Bridge, id string) {
+	t.Helper()
+	prog := &rootengine.Program{
+		Name: "MinimalEngine",
+		EngineNodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]program.ExprID{
+					"x": 0,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpLitFloat, Value: "0", Type: program.TypeFloat},
+		},
+	}
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode minimal engine program: %v", err)
+	}
+	if _, err := b.HydrateEngine(id, prog.Name, `{}`, data, "json"); err != nil {
+		t.Fatalf("hydrate minimal engine %q: %v", id, err)
+	}
+}
+
+func TestBridgeReconcilerMapCount(t *testing.T) {
+	b := New()
+
+	// Pre-condition: no reconcilers.
+	if got := b.ReconcilerCount(); got != 0 {
+		t.Fatalf("ReconcilerCount = %d, want 0", got)
+	}
+
+	hydrateMinimalIslandFor(t, b, "i1")
+	hydrateMinimalEngineFor(t, b, "e1")
+
+	if got := b.ReconcilerCount(); got != 2 {
+		t.Errorf("ReconcilerCount = %d, want 2", got)
+	}
+	if _, ok := b.LookupReconciler("i1"); !ok {
+		t.Errorf("LookupReconciler(\"i1\") not found")
+	}
+	if _, ok := b.LookupReconciler("e1"); !ok {
+		t.Errorf("LookupReconciler(\"e1\") not found")
+	}
+
+	b.DisposeIsland("i1")
+	if got := b.ReconcilerCount(); got != 1 {
+		t.Errorf("after DisposeIsland, ReconcilerCount = %d, want 1", got)
+	}
+	b.DisposeEngine("e1")
+	if got := b.ReconcilerCount(); got != 0 {
+		t.Errorf("after DisposeEngine, ReconcilerCount = %d, want 0", got)
+	}
+}
+
+func TestReconcilerCountInvariant(t *testing.T) {
+	b := New()
+	hydrateMinimalIslandFor(t, b, "i1")
+	hydrateMinimalIslandFor(t, b, "i2")
+	hydrateMinimalEngineFor(t, b, "e1")
+
+	want := b.IslandCount() + b.ComputeIslandCount() + b.EngineCount()
+	if got := b.ReconcilerCount(); got != want {
+		t.Errorf("ReconcilerCount = %d, want IslandCount+ComputeIslandCount+EngineCount = %d", got, want)
+	}
+}
+
 func TestBridgeRenderEngineBundle(t *testing.T) {
 	b := New()
 
