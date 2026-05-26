@@ -71,6 +71,9 @@ jobs:
       - name: Island-only WASM runtime tests
         run: make test-wasm-islands
 
+      - name: WASM size-budget gate
+        run: make wasm-size-budget
+
       - name: Browser docs E2E gate
         env:
           PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}

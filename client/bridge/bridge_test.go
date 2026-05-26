@@ -463,6 +463,122 @@ func TestReconcilerCountInvariant(t *testing.T) {
 	}
 }
 
+func TestBridgeHydrateReconcilerDOMMatchesHydrateIsland(t *testing.T) {
+	// HydrateReconciler with surfaceKind="dom" must register the same kind of
+	// island as the legacy HydrateIsland path. The unified dispatcher is the
+	// Phase 1d single entry point; the legacy method now delegates to it.
+	bUnified := New()
+	bLegacy := New()
+
+	prog := program.CounterProgram()
+	data, err := program.EncodeJSON(prog)
+	if err != nil {
+		t.Fatalf("encode program: %v", err)
+	}
+
+	if err := bUnified.HydrateReconciler("dom", "island-0", "Counter", `{}`, data, "json"); err != nil {
+		t.Fatalf("HydrateReconciler(dom): %v", err)
+	}
+	if err := bLegacy.HydrateIsland("island-0", "Counter", `{}`, data, "json"); err != nil {
+		t.Fatalf("HydrateIsland: %v", err)
+	}
+
+	if bUnified.IslandCount() != 1 {
+		t.Fatalf("unified IslandCount = %d, want 1", bUnified.IslandCount())
+	}
+	if bLegacy.IslandCount() != 1 {
+		t.Fatalf("legacy IslandCount = %d, want 1", bLegacy.IslandCount())
+	}
+	if bUnified.ReconcilerCount() != bLegacy.ReconcilerCount() {
+		t.Fatalf("reconciler counts differ: unified=%d legacy=%d", bUnified.ReconcilerCount(), bLegacy.ReconcilerCount())
+	}
+
+	// Dispatch the same action through both bridges — patches should match.
+	unifiedPatches, err := bUnified.DispatchAction("island-0", "increment", "{}")
+	if err != nil {
+		t.Fatalf("unified dispatch: %v", err)
+	}
+	legacyPatches, err := bLegacy.DispatchAction("island-0", "increment", "{}")
+	if err != nil {
+		t.Fatalf("legacy dispatch: %v", err)
+	}
+	if len(unifiedPatches) != len(legacyPatches) {
+		t.Fatalf("patch count mismatch: unified=%d legacy=%d", len(unifiedPatches), len(legacyPatches))
+	}
+}
+
+func TestBridgeHydrateReconcilerScene3DMatchesHydrateEngine(t *testing.T) {
+	// HydrateReconciler with surfaceKind="scene3d" must register the same kind
+	// of engine runtime as the legacy HydrateEngine path.
+	bUnified := New()
+	bLegacy := New()
+
+	prog := &rootengine.Program{
+		Name: "GeometryZoo",
+		EngineNodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]program.ExprID{
+					"x":     0,
+					"color": 1,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: "$scene.x", Type: program.TypeFloat},
+			{Op: program.OpSignalGet, Value: "$scene.color", Type: program.TypeString},
+			{Op: program.OpLitFloat, Value: "0", Type: program.TypeFloat},
+			{Op: program.OpLitString, Value: "#8de1ff", Type: program.TypeString},
+		},
+		Signals: []program.SignalDef{
+			{Name: "$scene.x", Type: program.TypeFloat, Init: 2},
+			{Name: "$scene.color", Type: program.TypeString, Init: 3},
+		},
+	}
+
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode engine program: %v", err)
+	}
+
+	if err := bUnified.HydrateReconciler("scene3d", "engine-0", prog.Name, `{}`, data, "json"); err != nil {
+		t.Fatalf("HydrateReconciler(scene3d): %v", err)
+	}
+	if _, err := bLegacy.HydrateEngine("engine-0", prog.Name, `{}`, data, "json"); err != nil {
+		t.Fatalf("HydrateEngine: %v", err)
+	}
+
+	if bUnified.EngineCount() != 1 {
+		t.Fatalf("unified EngineCount = %d, want 1", bUnified.EngineCount())
+	}
+	if bLegacy.EngineCount() != 1 {
+		t.Fatalf("legacy EngineCount = %d, want 1", bLegacy.EngineCount())
+	}
+}
+
+func TestBridgeHydrateReconcilerCanvas2DReturnsNotYetSupported(t *testing.T) {
+	// Canvas2D dispatch is a stub in Phase 1d. The unified dispatcher must
+	// return a clear error rather than panic; Phase 2 wires the real adapter.
+	b := New()
+	err := b.HydrateReconciler("canvas2d", "board-0", "Board", `{}`, []byte("{}"), "json")
+	if err == nil {
+		t.Fatal("expected canvas2d to return an error stub")
+	}
+	if !strings.Contains(err.Error(), "canvas2d") {
+		t.Fatalf("expected error to mention canvas2d, got %v", err)
+	}
+}
+
+func TestBridgeHydrateReconcilerUnknownSurfaceKind(t *testing.T) {
+	b := New()
+	err := b.HydrateReconciler("not-a-surface", "x", "X", `{}`, []byte("{}"), "json")
+	if err == nil {
+		t.Fatal("expected error for unknown surfaceKind")
+	}
+}
+
 func TestBridgeRenderEngineBundle(t *testing.T) {
 	b := New()
 

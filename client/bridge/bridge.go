@@ -136,6 +136,42 @@ func (b *Bridge) SetSharedSignalCallback(fn func(name, valueJSON string)) {
 	b.signalFn = fn
 }
 
+// Surface kinds accepted by HydrateReconciler. Treat these strings as the
+// stable cross-VM contract — the JS bootstrap pins them too.
+const (
+	SurfaceKindDOM      = "dom"
+	SurfaceKindScene3D  = "scene3d"
+	SurfaceKindCanvas2D = "canvas2d"
+)
+
+// HydrateReconciler is the unified hydrate entry point introduced in Phase 1d.
+// It dispatches by surfaceKind to the appropriate adapter constructor:
+//
+//   - "dom"      → existing island path (DOM patches via HydrateIsland)
+//   - "scene3d"  → existing scene-engine path (engine commands via HydrateEngine)
+//   - "canvas2d" → stub; returns an error until Phase 2 wires the CanvasBoard adapter
+//
+// The scene3d path is gated by build tag — in islands-only builds it returns
+// an error rather than pulling in the engine reconciler. See
+// bridge_reconciler_full.go vs bridge_reconciler_islands.go.
+//
+// Engine commands produced by the scene3d path are discarded here; the legacy
+// HydrateEngine remains for callers that need the initial command stream.
+// Phase 2 will widen the return shape if needed.
+func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON string, programData []byte, format string) error {
+	switch surfaceKind {
+	case SurfaceKindDOM:
+		return b.HydrateIsland(id, componentName, propsJSON, programData, format)
+	case SurfaceKindScene3D:
+		return b.hydrateScene3D(id, componentName, propsJSON, programData, format)
+	case SurfaceKindCanvas2D:
+		return fmt.Errorf("canvas2d not yet supported; install Phase 2 (<CanvasBoard> primitive)")
+	default:
+		return fmt.Errorf("unknown surfaceKind %q (expected one of: %q, %q, %q)",
+			surfaceKind, SurfaceKindDOM, SurfaceKindScene3D, SurfaceKindCanvas2D)
+	}
+}
+
 // HydrateIsland creates and registers an island from a program and props.
 // Shared signals (prefixed with "$") are connected to the bridge's store.
 func (b *Bridge) HydrateIsland(id, componentName, propsJSON string, programData []byte, format string) error {

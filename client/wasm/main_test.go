@@ -689,3 +689,123 @@ func TestRuntimeSceneEventSignalsDriveHydratedEngine(t *testing.T) {
 		t.Fatalf("expected selected scene event data to drive object props, got commands %q", tickRet.String())
 	}
 }
+
+// TestRuntimeUnifiedHydrateDispatcherRoutesDOM covers Phase 1d Task A3.1: the
+// __gosx_hydrate entry point, called with the 6-arg shape
+// (surfaceKind, id, name, propsJSON, programData, format), routes "dom" to
+// the islands path.
+func TestRuntimeUnifiedHydrateDispatcherRoutesDOM(t *testing.T) {
+	prog := compileIslandProgram(t, `package main
+
+//gosx:island
+func Counter() Node {
+	count := signal.New(0)
+	increment := func() { count.Set(count.Get() + 1) }
+	return <div class="counter">
+		<span>{count.Get()}</span>
+		<button onClick={increment}>+</button>
+	</div>
+}`)
+
+	data, err := program.EncodeJSON(prog)
+	if err != nil {
+		t.Fatalf("encode json: %v", err)
+	}
+
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	hydrateRet := js.Global().Get("__gosx_hydrate").Invoke(
+		"dom", "counter-u", prog.Name, `{}`, string(data), "json",
+	)
+	if !hydrateRet.IsNull() {
+		t.Fatalf("expected null hydrate result, got %q", hydrateRet.String())
+	}
+	if b.IslandCount() != 1 {
+		t.Fatalf("expected 1 island, got %d", b.IslandCount())
+	}
+}
+
+// TestRuntimeUnifiedHydrateDispatcherRoutesScene3D covers Phase 1d Task A3.1:
+// the unified __gosx_hydrate entry, called with surfaceKind="scene3d", routes
+// through the engine reconciler path. The legacy __gosx_hydrate_engine remains
+// for callers that need the initial command stream.
+func TestRuntimeUnifiedHydrateDispatcherRoutesScene3D(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "GeometryZooU",
+		EngineNodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]program.ExprID{
+					"x": 0,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpLitFloat, Value: "0", Type: program.TypeFloat},
+		},
+	}
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode engine program: %v", err)
+	}
+
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	hydrateRet := js.Global().Get("__gosx_hydrate").Invoke(
+		"scene3d", "engine-u", prog.Name, `{}`, string(data), "json",
+	)
+	if !hydrateRet.IsNull() {
+		t.Fatalf("expected null hydrate result, got %q", hydrateRet.String())
+	}
+	if b.EngineCount() != 1 {
+		t.Fatalf("expected 1 engine, got %d", b.EngineCount())
+	}
+}
+
+// TestRuntimeUnifiedHydrateDispatcherCanvas2DStub covers Phase 1d Task A3.1:
+// the canvas2d branch returns a clear stub error pointing at Phase 2.
+func TestRuntimeUnifiedHydrateDispatcherCanvas2DStub(t *testing.T) {
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	registerRuntime(bridge.New())
+
+	hydrateRet := js.Global().Get("__gosx_hydrate").Invoke(
+		"canvas2d", "board-u", "Board", `{}`, "{}", "json",
+	)
+	if hydrateRet.Type() != js.TypeString {
+		t.Fatalf("expected string error result, got %v", hydrateRet.Type())
+	}
+	if got := hydrateRet.String(); !strings.Contains(got, "canvas2d") {
+		t.Fatalf("expected canvas2d stub error, got %q", got)
+	}
+}
+
+// TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind covers an unknown
+// surfaceKind returning a stable error.
+func TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind(t *testing.T) {
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	registerRuntime(bridge.New())
+
+	hydrateRet := js.Global().Get("__gosx_hydrate").Invoke(
+		"not-a-surface", "x", "X", `{}`, "{}", "json",
+	)
+	if hydrateRet.Type() != js.TypeString {
+		t.Fatalf("expected string error result, got %v", hydrateRet.Type())
+	}
+	if got := hydrateRet.String(); !strings.Contains(got, "unknown surfaceKind") {
+		t.Fatalf("expected unknown surfaceKind error, got %q", got)
+	}
+}
