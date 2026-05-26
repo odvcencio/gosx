@@ -51,3 +51,14 @@ func TestFixturesRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeProgramJSONInjectsSurfaceDOM(t *testing.T) {
+	data := []byte(`{"nodes":[],"exprs":[]}`)
+	p, err := DecodeProgramJSON(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Surface != SurfaceDOM {
+		t.Errorf("Surface = %v, want SurfaceDOM", p.Surface)
+	}
+}
