@@ -49,12 +49,19 @@ func ParseExpr(source string, scope *ExprScope) ([]program.Expr, program.ExprID,
 }
 
 type exprParser struct {
-	source string
-	scope  *ExprScope
-	exprs  []program.Expr
-	tokens []exprToken
-	pos    int
+	source       string
+	scope        *ExprScope
+	exprs        []program.Expr
+	tokens       []exprToken
+	pos          int
+	closureAlias map[string]string // parameter name → underlying magic prop (e.g. "_item")
+	chainDepth   int               // method-chain depth tracker for the cap
 }
+
+// maxMethodChainDepth is the sanity cap on chained .foo().bar()... calls
+// surfaced through .gsx expressions. Captured here so the error message
+// stays in sync with the limit.
+const maxMethodChainDepth = 4
 
 func (p *exprParser) addExpr(e program.Expr) program.ExprID {
 	id := program.ExprID(len(p.exprs))
@@ -285,6 +292,7 @@ func (p *exprParser) parsePostfix() (program.ExprID, error) {
 		return 0, err
 	}
 
+	depth := 0
 	for {
 		switch {
 		case p.match(tokenDot):
@@ -293,7 +301,11 @@ func (p *exprParser) parsePostfix() (program.ExprID, error) {
 				return 0, err
 			}
 			if p.match(tokenLParen) {
-				args, err := p.parseArgs()
+				depth++
+				if depth > maxMethodChainDepth {
+					return 0, fmt.Errorf("method chain exceeds %d-level cap; refactor by pre-shaping data Go-side or filing a follow-up to raise the cap", maxMethodChainDepth)
+				}
+				args, err := p.parseArgs(closuresAllowedFor(nameTok.text))
 				if err != nil {
 					return 0, err
 				}
@@ -327,6 +339,17 @@ func (p *exprParser) parsePostfix() (program.ExprID, error) {
 			return baseID, nil
 		}
 	}
+}
+
+// closuresAllowedFor reports whether a method's arguments may include a
+// single-param closure literal. Only the iteration methods (map/filter/find)
+// take a predicate or transformer body, so closures are scoped to those.
+func closuresAllowedFor(method string) bool {
+	switch strings.ToLower(method) {
+	case "map", "filter", "find":
+		return true
+	}
+	return false
 }
 
 func (p *exprParser) parsePrimary() (program.ExprID, error) {
@@ -367,10 +390,14 @@ func (p *exprParser) parsePrimary() (program.ExprID, error) {
 				Value: tok.text,
 				Type:  program.TypeBool,
 			}), nil
+		case "func":
+			// Bare top-level `func(...)` is not a valid expression — closures
+			// are only valid as arguments to .map/.filter/.find.
+			return 0, fmt.Errorf("closure literals are only allowed as the argument to .map/.filter/.find (got bare func)")
 		}
 
 		if p.match(tokenLParen) {
-			args, err := p.parseArgs()
+			args, err := p.parseArgs(false)
 			if err != nil {
 				return 0, err
 			}
@@ -382,13 +409,13 @@ func (p *exprParser) parsePrimary() (program.ExprID, error) {
 	return 0, fmt.Errorf("cannot parse expression: %q", p.source)
 }
 
-func (p *exprParser) parseArgs() ([]program.ExprID, error) {
+func (p *exprParser) parseArgs(closuresAllowed bool) ([]program.ExprID, error) {
 	var args []program.ExprID
 	if p.match(tokenRParen) {
 		return args, nil
 	}
 	for {
-		argID, err := p.parseConditional()
+		argID, err := p.parseArg(closuresAllowed)
 		if err != nil {
 			return nil, err
 		}
@@ -401,6 +428,84 @@ func (p *exprParser) parseArgs() ([]program.ExprID, error) {
 			return nil, err
 		}
 	}
+}
+
+// parseArg consumes one argument. If closuresAllowed is true and the next
+// token starts a `func(...)` literal, parses it as a single-param closure
+// per the Phase 4 supported subset; otherwise falls through to a regular
+// expression.
+func (p *exprParser) parseArg(closuresAllowed bool) (program.ExprID, error) {
+	if closuresAllowed && p.peek().kind == tokenIdent && p.peek().text == "func" {
+		return p.parseClosureExpr()
+	}
+	return p.parseConditional()
+}
+
+// parseClosureExpr parses `func(<paramName>){ [return] <expression> }`,
+// binding paramName to the magic `_item` prop for the duration of the body.
+// Single parameter, single-statement body — broader forms are out of scope
+// for Phase 4 (see gosx/docs/expressions.md).
+func (p *exprParser) parseClosureExpr() (program.ExprID, error) {
+	// Consume the leading `func` ident.
+	if tok := p.next(); tok.kind != tokenIdent || tok.text != "func" {
+		return 0, fmt.Errorf("expected 'func' to start closure, got %q", tok.text)
+	}
+	if _, err := p.expect(tokenLParen); err != nil {
+		return 0, fmt.Errorf("closure: %w", err)
+	}
+	// Require exactly one parameter name; reject zero-param and multi-param.
+	if p.peek().kind == tokenRParen {
+		return 0, fmt.Errorf("closure must take exactly one parameter; zero-param closures are not supported in .gsx expressions")
+	}
+	paramTok, err := p.expect(tokenIdent)
+	if err != nil {
+		return 0, fmt.Errorf("closure parameter: %w", err)
+	}
+	if p.peek().kind == tokenComma {
+		return 0, fmt.Errorf("closure must take exactly one parameter; multi-param closures are not supported in .gsx expressions")
+	}
+	if _, err := p.expect(tokenRParen); err != nil {
+		return 0, fmt.Errorf("closure: %w", err)
+	}
+	if _, err := p.expect(tokenLBrace); err != nil {
+		return 0, fmt.Errorf("closure body: %w", err)
+	}
+	// Optional leading `return` keyword. Both `func(x){ return expr }` and
+	// `func(x){ expr }` are equivalent — the body is a single value expression.
+	if p.peek().kind == tokenIdent && p.peek().text == "return" {
+		p.next()
+	}
+
+	// Alias the parameter name to the iteration magic prop `_item` so the
+	// body lowers identically to the bare-expression form `xs.map(_item * 2)`.
+	prev, hadPrev := "", false
+	if p.closureAlias == nil {
+		p.closureAlias = map[string]string{}
+	} else if v, ok := p.closureAlias[paramTok.text]; ok {
+		prev, hadPrev = v, true
+	}
+	p.closureAlias[paramTok.text] = "_item"
+	bodyID, err := p.parseConditional()
+	if hadPrev {
+		p.closureAlias[paramTok.text] = prev
+	} else {
+		delete(p.closureAlias, paramTok.text)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("closure body: %w", err)
+	}
+
+	// Optional trailing semicolon, then the closing brace.
+	p.match(tokenSemi)
+	// Reject anything else inside the braces — multi-statement bodies are
+	// explicitly out of scope.
+	if p.peek().kind != tokenRBrace {
+		return 0, fmt.Errorf("closure body must contain exactly one expression; multi-statement bodies are not supported (got %q)", p.peek().text)
+	}
+	if _, err := p.expect(tokenRBrace); err != nil {
+		return 0, fmt.Errorf("closure body: %w", err)
+	}
+	return bodyID, nil
 }
 
 func (p *exprParser) buildFieldAccess(receiverID program.ExprID, field string) (program.ExprID, error) {
@@ -586,6 +691,16 @@ func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (prog
 }
 
 func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
+	// Closure parameter binding takes precedence so the body lowers to a
+	// PropGet on the underlying iteration magic (`_item`) regardless of the
+	// parameter name the author chose.
+	if aliased, ok := p.closureAlias[name]; ok {
+		return p.addExpr(program.Expr{
+			Op:    program.OpPropGet,
+			Value: aliased,
+			Type:  program.TypeAny,
+		}), nil
+	}
 	if p.scope != nil && p.scope.EventFields != nil && p.scope.EventFields[name] {
 		return p.addExpr(program.Expr{
 			Op:    program.OpEventGet,
@@ -792,6 +907,9 @@ const (
 	tokenGt
 	tokenLte
 	tokenGte
+	tokenLBrace
+	tokenRBrace
+	tokenSemi
 )
 
 func (k exprTokenKind) String() string {
@@ -848,6 +966,12 @@ func (k exprTokenKind) String() string {
 		return "<="
 	case tokenGte:
 		return ">="
+	case tokenLBrace:
+		return "{"
+	case tokenRBrace:
+		return "}"
+	case tokenSemi:
+		return ";"
 	default:
 		return "token"
 	}
@@ -996,6 +1120,12 @@ func lexExpr(source string) ([]exprToken, error) {
 			tokens = append(tokens, exprToken{kind: tokenLt, text: singleCharTokenText[ch]})
 		case '>':
 			tokens = append(tokens, exprToken{kind: tokenGt, text: singleCharTokenText[ch]})
+		case '{':
+			tokens = append(tokens, exprToken{kind: tokenLBrace, text: singleCharTokenText[ch]})
+		case '}':
+			tokens = append(tokens, exprToken{kind: tokenRBrace, text: singleCharTokenText[ch]})
+		case ';':
+			tokens = append(tokens, exprToken{kind: tokenSemi, text: singleCharTokenText[ch]})
 		default:
 			return nil, fmt.Errorf("unexpected character %q", ch)
 		}
