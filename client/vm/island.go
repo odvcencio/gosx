@@ -9,6 +9,11 @@ import (
 	"m31labs.dev/gosx/signal"
 )
 
+// Compile-time assertion: *Island satisfies the Reconciler interface.
+// If this stops compiling, Reconciler or Island has diverged — Phase 1c/1d
+// must not break this conformance.
+var _ Reconciler = (*Island)(nil)
+
 // Island is a live instance of an island component with reactive state.
 type Island struct {
 	vm       *VM
