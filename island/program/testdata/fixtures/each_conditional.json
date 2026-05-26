@@ -1,0 +1,85 @@
+{
+  "name": "EachConditional",
+  "props": null,
+  "nodes": [
+    {
+      "kind": 5,
+      "tag": "",
+      "text": "",
+      "expr": 0,
+      "attrs": null,
+      "children": [
+        1
+      ]
+    },
+    {
+      "kind": 4,
+      "tag": "",
+      "text": "",
+      "expr": 1,
+      "attrs": null,
+      "children": [
+        2
+      ]
+    },
+    {
+      "kind": 0,
+      "tag": "li",
+      "text": "",
+      "expr": 0,
+      "attrs": null,
+      "children": [
+        3
+      ]
+    },
+    {
+      "kind": 2,
+      "tag": "",
+      "text": "",
+      "expr": 2,
+      "attrs": null,
+      "children": null
+    }
+  ],
+  "root": 0,
+  "exprs": [
+    {
+      "op": 5,
+      "operands": null,
+      "value": "hasItems",
+      "type": 3
+    },
+    {
+      "op": 5,
+      "operands": null,
+      "value": "items",
+      "type": 5
+    },
+    {
+      "op": 30,
+      "operands": null,
+      "value": "item",
+      "type": 0
+    }
+  ],
+  "signals": [
+    {
+      "name": "hasItems",
+      "type": 3,
+      "init": 0
+    },
+    {
+      "name": "items",
+      "type": 5,
+      "init": 0
+    }
+  ],
+  "computeds": null,
+  "handlers": null,
+  "static_mask": [
+    false,
+    false,
+    false,
+    false
+  ]
+}

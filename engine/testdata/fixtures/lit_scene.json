@@ -1,0 +1,69 @@
+{
+  "name": "LitScene",
+  "props": null,
+  "nodes": null,
+  "root": 0,
+  "exprs": [
+    {
+      "op": 0,
+      "operands": null,
+      "value": "0,1,0",
+      "type": 0
+    },
+    {
+      "op": 5,
+      "operands": null,
+      "value": "$scene.color",
+      "type": 0
+    },
+    {
+      "op": 2,
+      "operands": null,
+      "value": "1.5",
+      "type": 2
+    },
+    {
+      "op": 2,
+      "operands": null,
+      "value": "60",
+      "type": 2
+    }
+  ],
+  "signals": [
+    {
+      "name": "$scene.color",
+      "type": 0,
+      "init": 0
+    }
+  ],
+  "computeds": null,
+  "handlers": null,
+  "static_mask": null,
+  "engineNodes": [
+    {
+      "kind": "mesh",
+      "geometry": "sphere",
+      "material": "phong",
+      "props": {
+        "color": 1,
+        "position": 0
+      },
+      "children": [
+        1,
+        2
+      ]
+    },
+    {
+      "kind": "light",
+      "props": {
+        "intensity": 2
+      }
+    },
+    {
+      "kind": "camera",
+      "props": {
+        "fov": 3
+      }
+    }
+  ]
+}

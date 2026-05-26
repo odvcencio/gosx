@@ -1,0 +1,123 @@
+{
+  "name": "CapturedShowcase3D",
+  "props": null,
+  "nodes": null,
+  "root": 0,
+  "exprs": [
+    {
+      "op": 2,
+      "operands": null,
+      "value": "75",
+      "type": 2
+    },
+    {
+      "op": 0,
+      "operands": null,
+      "value": "0,0,-5",
+      "type": 0
+    },
+    {
+      "op": 5,
+      "operands": null,
+      "value": "$scene.tint",
+      "type": 0
+    },
+    {
+      "op": 2,
+      "operands": null,
+      "value": "0.4",
+      "type": 2
+    },
+    {
+      "op": 0,
+      "operands": null,
+      "value": "logo.png",
+      "type": 0
+    },
+    {
+      "op": 0,
+      "operands": null,
+      "value": "2,1,0",
+      "type": 0
+    },
+    {
+      "op": 0,
+      "operands": null,
+      "value": "Hello GoSX",
+      "type": 0
+    },
+    {
+      "op": 0,
+      "operands": null,
+      "value": "-2,1,0",
+      "type": 0
+    },
+    {
+      "op": 2,
+      "operands": null,
+      "value": "2.0",
+      "type": 2
+    },
+    {
+      "op": 0,
+      "operands": null,
+      "value": "#fff5cc",
+      "type": 0
+    }
+  ],
+  "signals": [
+    {
+      "name": "$scene.tint",
+      "type": 0,
+      "init": 2
+    }
+  ],
+  "computeds": null,
+  "handlers": null,
+  "static_mask": null,
+  "engineNodes": [
+    {
+      "kind": "camera",
+      "props": {
+        "fov": 0
+      },
+      "children": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "kind": "mesh",
+      "geometry": "cube",
+      "material": "pbr",
+      "props": {
+        "color": 2,
+        "position": 1,
+        "roughness": 3
+      }
+    },
+    {
+      "kind": "sprite",
+      "props": {
+        "position": 5,
+        "texture": 4
+      }
+    },
+    {
+      "kind": "label",
+      "props": {
+        "position": 7,
+        "text": 6
+      }
+    },
+    {
+      "kind": "light",
+      "props": {
+        "color": 9,
+        "intensity": 8
+      },
+      "static": true
+    }
+  ]
+}

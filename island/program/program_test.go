@@ -1,6 +1,7 @@
 package program
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 )
@@ -951,5 +952,59 @@ func TestListProgram(t *testing.T) {
 	}
 	if len(p2.Exprs) != len(p.Exprs) {
 		t.Errorf("round-trip Exprs length mismatch: %d != %d", len(p2.Exprs), len(p.Exprs))
+	}
+}
+
+func TestSurfaceKindString(t *testing.T) {
+	cases := []struct {
+		kind SurfaceKind
+		want string
+	}{
+		{SurfaceDOM, "dom"},
+		{SurfaceCanvas2D, "canvas2d"},
+		{SurfaceScene3D, "scene3d"},
+	}
+	for _, c := range cases {
+		if got := c.kind.String(); got != c.want {
+			t.Errorf("SurfaceKind(%d).String() = %q, want %q", c.kind, got, c.want)
+		}
+	}
+}
+
+func TestProgramSurfaceZeroValue(t *testing.T) {
+	var p Program
+	if p.Surface != SurfaceDOM {
+		t.Errorf("zero-value Program.Surface = %v, want SurfaceDOM (kind 0)", p.Surface)
+	}
+}
+
+func TestProgramVersionOmittedRoundTrip(t *testing.T) {
+	// Programs without a version field decode with empty Version and re-encode
+	// without emitting the field (per omitempty). Reserved per ADR 0002.
+	src := `{"nodes":[],"exprs":[]}`
+	var p Program
+	if err := json.Unmarshal([]byte(src), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Version != "" {
+		t.Errorf("Version = %q, want empty for legacy payloads", p.Version)
+	}
+	out, err := json.Marshal(&p)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if bytes.Contains(out, []byte(`"version"`)) {
+		t.Errorf("re-encoded payload should not contain \"version\" key: %s", out)
+	}
+}
+
+func TestProgramVersionRoundTripWhenSet(t *testing.T) {
+	src := `{"version":"1","nodes":[],"exprs":[]}`
+	var p Program
+	if err := json.Unmarshal([]byte(src), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Version != "1" {
+		t.Errorf("Version = %q, want \"1\"", p.Version)
 	}
 }

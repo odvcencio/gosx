@@ -7,25 +7,19 @@ import (
 	islandprogram "m31labs.dev/gosx/island/program"
 )
 
-// Program describes a VM-driven engine scene graph.
-// It mirrors the island program model closely enough that the runtime can
-// share expression and signal infrastructure while targeting a non-DOM surface.
-type Program struct {
-	Name    string                    `json:"name"`
-	Nodes   []Node                    `json:"nodes"`
-	Exprs   []islandprogram.Expr      `json:"exprs,omitempty"`
-	Signals []islandprogram.SignalDef `json:"signals,omitempty"`
-}
+// Program is the VM-driven engine scene graph.
+//
+// Aliased to the unified islandprogram.Program per Phase 1a (ADR 0001).
+// Engine programs populate the EngineNodes slice and carry Surface=SurfaceScene3D
+// after decode via DecodeProgramJSON.
+type Program = islandprogram.Program
 
-// Node describes a single engine-scene node.
-type Node struct {
-	Kind     string                          `json:"kind"`
-	Geometry string                          `json:"geometry,omitempty"`
-	Material string                          `json:"material,omitempty"`
-	Props    map[string]islandprogram.ExprID `json:"props,omitempty"`
-	Children []int                           `json:"children,omitempty"`
-	Static   bool                            `json:"static,omitempty"`
-}
+// Node is a single engine-scene node, aliased to islandprogram.EngineNode so
+// existing engine.Node references continue to compile after the unification.
+//
+// TODO(phase-1c): when scene reconciler moves to its own package, re-target
+// this alias to that home and drop the re-export from island/program.
+type Node = islandprogram.EngineNode
 
 // CommandKind identifies a renderer-facing scene command.
 type CommandKind uint8
@@ -74,11 +68,13 @@ func EncodeProgramJSON(p *Program) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-// DecodeProgramJSON deserializes an engine program from JSON.
+// DecodeProgramJSON deserializes an engine program from JSON, injecting
+// Surface=SurfaceScene3D into the in-memory model per ADR 0001.
 func DecodeProgramJSON(data []byte) (*Program, error) {
 	var p Program
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, err
 	}
+	p.Surface = islandprogram.SurfaceScene3D
 	return &p, nil
 }

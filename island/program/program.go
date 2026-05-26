@@ -117,6 +117,31 @@ const (
 	OpToFloat  // Operands[0] = string/int → float
 )
 
+// SurfaceKind identifies the rendering surface a program targets.
+// Carried as a runtime-only field on Program — not serialized.
+// SurfaceDOM is the zero value so legacy island JSON deserializes correctly.
+type SurfaceKind uint8
+
+const (
+	SurfaceDOM      SurfaceKind = iota // HTML DOM patches
+	SurfaceCanvas2D                    // 2D canvas board (Miro/Figma-style)
+	SurfaceScene3D                     // 3D scene graph
+)
+
+// String returns the canonical surface name.
+func (s SurfaceKind) String() string {
+	switch s {
+	case SurfaceDOM:
+		return "dom"
+	case SurfaceCanvas2D:
+		return "canvas2d"
+	case SurfaceScene3D:
+		return "scene3d"
+	default:
+		return fmt.Sprintf("SurfaceKind(%d)", s)
+	}
+}
+
 // ExprType describes the type of an expression result.
 type ExprType uint8
 
@@ -132,16 +157,27 @@ const (
 // Program is the client-side representation of an island component.
 // It is the VM-oriented artifact shipped to the browser, distinct from the
 // compiler IR.
+//
+// Version is a reserved envelope field per ADR 0002 (versioning posture: stay
+// on v1). It is never default-emitted today; absent → treat as v1. A future
+// v2 wire format would set this explicitly and add wire-level discriminators.
+//
+// Surface is a runtime-only field per ADR 0001 (per-decoder surface injection,
+// no wire field). It is set by the surface-specific decoder (island, engine,
+// future canvas2d) and is never serialized.
 type Program struct {
-	Name       string        `json:"name"`
-	Props      []PropDef     `json:"props"`
-	Nodes      []Node        `json:"nodes"`
-	Root       NodeID        `json:"root"`
-	Exprs      []Expr        `json:"exprs"`
-	Signals    []SignalDef   `json:"signals"`
-	Computeds  []ComputedDef `json:"computeds"`
-	Handlers   []Handler     `json:"handlers"`
-	StaticMask []bool        `json:"static_mask"`
+	Version     string        `json:"version,omitempty"`
+	Name        string        `json:"name"`
+	Props       []PropDef     `json:"props"`
+	Nodes       []Node        `json:"nodes"`
+	Root        NodeID        `json:"root"`
+	Exprs       []Expr        `json:"exprs"`
+	Signals     []SignalDef   `json:"signals"`
+	Computeds   []ComputedDef `json:"computeds"`
+	Handlers    []Handler     `json:"handlers"`
+	StaticMask  []bool        `json:"static_mask"`
+	EngineNodes []EngineNode  `json:"engineNodes,omitempty"` // populated for SurfaceScene3D/Canvas2D
+	Surface     SurfaceKind   `json:"-"`
 }
 
 // Node represents a single node in the island's DOM tree.
@@ -195,4 +231,21 @@ type Handler struct {
 type PropDef struct {
 	Name string   `json:"name"`
 	Type ExprType `json:"type"`
+}
+
+// EngineNode is the scene-oriented node carried by SurfaceScene3D and
+// SurfaceCanvas2D programs. It lives here (exported) so that engine.Node can
+// alias it during Phase 1a, keeping the engine package as a thin adapter over
+// the unified Program type.
+//
+// TODO(phase-1c): move this into a dedicated scene/ subpackage alongside the
+// scene reconciler; engine.Node can then alias the new home and this re-export
+// gets dropped.
+type EngineNode struct {
+	Kind     string            `json:"kind"`
+	Geometry string            `json:"geometry,omitempty"`
+	Material string            `json:"material,omitempty"`
+	Props    map[string]ExprID `json:"props,omitempty"`
+	Children []int             `json:"children,omitempty"`
+	Static   bool              `json:"static,omitempty"`
 }

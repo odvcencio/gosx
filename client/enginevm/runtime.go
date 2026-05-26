@@ -49,7 +49,7 @@ func New(prog *rootengine.Program, propsJSON string) *Runtime {
 		program:    prog,
 		props:      rawProps,
 		vm:         vm.NewVM(vmProg, vmProps(rawProps)),
-		dirty:      make([]bool, len(prog.Nodes)),
+		dirty:      make([]bool, len(prog.EngineNodes)),
 		signalDeps: buildSignalDeps(prog),
 		unsubs:     make(map[string]func()),
 	}
@@ -83,7 +83,7 @@ func (rt *Runtime) EvalExpr(id islandprogram.ExprID) vm.Value {
 
 // Reconcile evaluates the current scene and produces incremental commands.
 func (rt *Runtime) Reconcile() []rootengine.Command {
-	if rt == nil || len(rt.program.Nodes) == 0 {
+	if rt == nil || len(rt.program.EngineNodes) == 0 {
 		return nil
 	}
 	if len(rt.prev) == 0 {
@@ -139,15 +139,15 @@ func initSignals(machine *vm.VM, prog *rootengine.Program) {
 }
 
 func (rt *Runtime) resolveAll() []resolvedNode {
-	out := make([]resolvedNode, len(rt.program.Nodes))
-	for i := range rt.program.Nodes {
+	out := make([]resolvedNode, len(rt.program.EngineNodes))
+	for i := range rt.program.EngineNodes {
 		out[i] = rt.resolveNode(i)
 	}
 	return out
 }
 
 func (rt *Runtime) snapshot() []resolvedNode {
-	if rt == nil || len(rt.program.Nodes) == 0 {
+	if rt == nil || len(rt.program.EngineNodes) == 0 {
 		return nil
 	}
 	if len(rt.prev) == 0 {
@@ -161,7 +161,7 @@ func (rt *Runtime) snapshot() []resolvedNode {
 
 func (rt *Runtime) syncDirty() []rootengine.Command {
 	var commands []rootengine.Command
-	for i := range rt.program.Nodes {
+	for i := range rt.program.EngineNodes {
 		if !rt.dirty[i] {
 			continue
 		}
@@ -174,7 +174,7 @@ func (rt *Runtime) syncDirty() []rootengine.Command {
 }
 
 func (rt *Runtime) resolveNode(index int) resolvedNode {
-	node := rt.program.Nodes[index]
+	node := rt.program.EngineNodes[index]
 	return resolvedNode{
 		Kind:     node.Kind,
 		Geometry: node.Geometry,
@@ -3292,14 +3292,14 @@ func clearDirty(flags []bool) {
 }
 
 func buildSignalDeps(prog *rootengine.Program) map[string][]int {
-	if prog == nil || len(prog.Nodes) == 0 || len(prog.Exprs) == 0 {
+	if prog == nil || len(prog.EngineNodes) == 0 || len(prog.Exprs) == 0 {
 		return map[string][]int{}
 	}
 	deps := make(map[string][]int)
 	memo := make(map[islandprogram.ExprID]map[string]struct{}, len(prog.Exprs))
 	visiting := make(map[islandprogram.ExprID]bool, len(prog.Exprs))
 
-	for index, node := range prog.Nodes {
+	for index, node := range prog.EngineNodes {
 		if node.Static {
 			continue
 		}

@@ -543,7 +543,7 @@ func TestRuntimeHydrateTickAndDisposeEngine(t *testing.T) {
 
 	prog := &rootengine.Program{
 		Name: "GeometryZoo",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind:     "mesh",
 				Geometry: "box",
@@ -607,7 +607,7 @@ func TestRuntimeSceneEventSignalsDriveHydratedEngine(t *testing.T) {
 
 	prog := &rootengine.Program{
 		Name: "KilnPickInteraction",
-		Nodes: []rootengine.Node{
+		EngineNodes: []rootengine.Node{
 			{
 				Kind:     "mesh",
 				Geometry: "box",

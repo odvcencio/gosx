@@ -1,0 +1,83 @@
+{
+  "name": "ButtonWithHandler",
+  "props": null,
+  "nodes": [
+    {
+      "kind": 0,
+      "tag": "button",
+      "text": "",
+      "expr": 0,
+      "attrs": [
+        {
+          "kind": 3,
+          "name": "click",
+          "value": "",
+          "expr": 0,
+          "event": "toggle"
+        }
+      ],
+      "children": [
+        1
+      ]
+    },
+    {
+      "kind": 1,
+      "tag": "",
+      "text": "Click",
+      "expr": 0,
+      "attrs": null,
+      "children": null
+    }
+  ],
+  "root": 0,
+  "exprs": [
+    {
+      "op": 3,
+      "operands": null,
+      "value": "false",
+      "type": 3
+    },
+    {
+      "op": 5,
+      "operands": null,
+      "value": "open",
+      "type": 3
+    },
+    {
+      "op": 22,
+      "operands": [
+        1
+      ],
+      "value": "",
+      "type": 3
+    },
+    {
+      "op": 6,
+      "operands": [
+        2
+      ],
+      "value": "open",
+      "type": 3
+    }
+  ],
+  "signals": [
+    {
+      "name": "open",
+      "type": 3,
+      "init": 0
+    }
+  ],
+  "computeds": null,
+  "handlers": [
+    {
+      "name": "toggle",
+      "body": [
+        3
+      ]
+    }
+  ],
+  "static_mask": [
+    false,
+    true
+  ]
+}

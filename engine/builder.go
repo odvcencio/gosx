@@ -95,10 +95,10 @@ func (b *Builder) Build() *Program {
 		return &Program{}
 	}
 	return &Program{
-		Name:    b.name,
-		Exprs:   cloneExprs(b.exprs),
-		Signals: cloneSignals(b.signals),
-		Nodes:   cloneNodes(b.nodes),
+		Name:        b.name,
+		Exprs:       cloneExprs(b.exprs),
+		Signals:     cloneSignals(b.signals),
+		EngineNodes: cloneNodes(b.nodes),
 	}
 }
 
@@ -343,8 +343,8 @@ func (b *Builder) Include(program *Program) []Handle {
 		b.signals = append(b.signals, cloned)
 	}
 
-	handles := make([]Handle, len(program.Nodes))
-	for i, node := range program.Nodes {
+	handles := make([]Handle, len(program.EngineNodes))
+	for i, node := range program.EngineNodes {
 		cloned := cloneNode(node)
 		for key, id := range cloned.Props {
 			cloned.Props[key] = remapExprID(id, exprOffset)
