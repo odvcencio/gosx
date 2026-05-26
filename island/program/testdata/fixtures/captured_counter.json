@@ -1,0 +1,189 @@
+{
+  "name": "Counter",
+  "props": null,
+  "nodes": [
+    {
+      "kind": 0,
+      "tag": "div",
+      "text": "",
+      "expr": 0,
+      "attrs": [
+        {
+          "kind": 0,
+          "name": "class",
+          "value": "counter",
+          "expr": 0,
+          "event": ""
+        }
+      ],
+      "children": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "kind": 0,
+      "tag": "button",
+      "text": "",
+      "expr": 0,
+      "attrs": [
+        {
+          "kind": 3,
+          "name": "click",
+          "value": "",
+          "expr": 0,
+          "event": "decrement"
+        }
+      ],
+      "children": [
+        4
+      ]
+    },
+    {
+      "kind": 2,
+      "tag": "",
+      "text": "",
+      "expr": 0,
+      "attrs": null,
+      "children": null
+    },
+    {
+      "kind": 0,
+      "tag": "button",
+      "text": "",
+      "expr": 0,
+      "attrs": [
+        {
+          "kind": 3,
+          "name": "click",
+          "value": "",
+          "expr": 0,
+          "event": "increment"
+        }
+      ],
+      "children": [
+        5
+      ]
+    },
+    {
+      "kind": 1,
+      "tag": "",
+      "text": "-",
+      "expr": 0,
+      "attrs": null,
+      "children": null
+    },
+    {
+      "kind": 1,
+      "tag": "",
+      "text": "+",
+      "expr": 0,
+      "attrs": null,
+      "children": null
+    }
+  ],
+  "root": 0,
+  "exprs": [
+    {
+      "op": 5,
+      "operands": null,
+      "value": "count",
+      "type": 1
+    },
+    {
+      "op": 1,
+      "operands": null,
+      "value": "0",
+      "type": 1
+    },
+    {
+      "op": 6,
+      "operands": [
+        4
+      ],
+      "value": "count",
+      "type": 1
+    },
+    {
+      "op": 6,
+      "operands": [
+        5
+      ],
+      "value": "count",
+      "type": 1
+    },
+    {
+      "op": 9,
+      "operands": [
+        6,
+        7
+      ],
+      "value": "",
+      "type": 1
+    },
+    {
+      "op": 8,
+      "operands": [
+        8,
+        9
+      ],
+      "value": "",
+      "type": 1
+    },
+    {
+      "op": 5,
+      "operands": null,
+      "value": "count",
+      "type": 1
+    },
+    {
+      "op": 1,
+      "operands": null,
+      "value": "1",
+      "type": 1
+    },
+    {
+      "op": 5,
+      "operands": null,
+      "value": "count",
+      "type": 1
+    },
+    {
+      "op": 1,
+      "operands": null,
+      "value": "1",
+      "type": 1
+    }
+  ],
+  "signals": [
+    {
+      "name": "count",
+      "type": 1,
+      "init": 1
+    }
+  ],
+  "computeds": null,
+  "handlers": [
+    {
+      "name": "decrement",
+      "body": [
+        2
+      ]
+    },
+    {
+      "name": "increment",
+      "body": [
+        3
+      ]
+    }
+  ],
+  "static_mask": [
+    false,
+    true,
+    false,
+    true,
+    true,
+    true
+  ]
+}

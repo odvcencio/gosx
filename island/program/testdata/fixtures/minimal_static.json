@@ -1,0 +1,33 @@
+{
+  "name": "MinimalStatic",
+  "props": null,
+  "nodes": [
+    {
+      "kind": 0,
+      "tag": "div",
+      "text": "",
+      "expr": 0,
+      "attrs": null,
+      "children": [
+        1
+      ]
+    },
+    {
+      "kind": 1,
+      "tag": "",
+      "text": "Hello",
+      "expr": 0,
+      "attrs": null,
+      "children": null
+    }
+  ],
+  "root": 0,
+  "exprs": null,
+  "signals": null,
+  "computeds": null,
+  "handlers": null,
+  "static_mask": [
+    true,
+    true
+  ]
+}
