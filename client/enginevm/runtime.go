@@ -16,6 +16,11 @@ import (
 	"m31labs.dev/gosx/signal"
 )
 
+// Compile-time assertion: *Runtime satisfies the vm.Reconciler interface.
+// Phase 1c will move scene-specific code out of this file but the
+// conformance must survive.
+var _ vm.Reconciler = (*Runtime)(nil)
+
 type resolvedNode struct {
 	Kind     string
 	Geometry string
