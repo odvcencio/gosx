@@ -113,7 +113,7 @@ test-wasm-islands:
 # the budget. Override WASM_FULL_BUDGET_KB / WASM_TINY_BUDGET_KB to raise the
 # bar for a planned-growth slice (require an ADR for any >10% bump).
 wasm-size-budget:
-	$(SHELL) ./scripts/check-wasm-size.sh
+	./scripts/check-wasm-size.sh
 
 test-e2e:
 	$(NODE) --test e2e/gosx_docs_e2e.test.mjs
