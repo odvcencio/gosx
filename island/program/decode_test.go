@@ -62,3 +62,19 @@ func TestDecodeProgramJSONInjectsSurfaceDOM(t *testing.T) {
 		t.Errorf("Surface = %v, want SurfaceDOM", p.Surface)
 	}
 }
+
+func TestDecodeProgramJSONDoesNotInjectScene3D(t *testing.T) {
+	// Even if the payload "looks" engine-ish (has engineNodes), the island
+	// decoder must still mark it SurfaceDOM. The unified Program type allows
+	// the field to deserialize; the surface kind is recovered from the
+	// decoder, not from field presence. See ADR 0001 §"Test contract" — the
+	// decoder identity wins over payload shape.
+	data := []byte(`{"engineNodes":[{"kind":"mesh"}]}`)
+	p, err := DecodeProgramJSON(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Surface != SurfaceDOM {
+		t.Errorf("Surface = %v, want SurfaceDOM (decoder identity wins over payload shape)", p.Surface)
+	}
+}

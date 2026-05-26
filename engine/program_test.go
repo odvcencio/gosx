@@ -71,6 +71,20 @@ func TestDecodeProgramJSONInjectsSurfaceScene3D(t *testing.T) {
 	}
 }
 
+func TestEngineDecodeProgramJSONDoesNotInjectDOM(t *testing.T) {
+	// Mirror of TestDecodeProgramJSONDoesNotInjectScene3D in island/program:
+	// even if the payload "looks" island-ish (has nodes), the engine decoder
+	// must still mark it SurfaceScene3D. The decoder identity wins.
+	data := []byte(`{"nodes":[{"kind":1}]}`)
+	p, err := DecodeProgramJSON(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if p.Surface != islandprogram.SurfaceScene3D {
+		t.Errorf("Surface = %v, want SurfaceScene3D (decoder identity wins)", p.Surface)
+	}
+}
+
 // TestEngineFixturesRoundTrip is the engine-side wire-format contract test
 // (ADR 0001 §"Test contract"). A failure on the captured fixture is the
 // signal that the per-decoder surface-injection design is insufficient and a
