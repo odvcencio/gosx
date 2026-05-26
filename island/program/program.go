@@ -158,10 +158,15 @@ const (
 // It is the VM-oriented artifact shipped to the browser, distinct from the
 // compiler IR.
 //
+// Version is a reserved envelope field per ADR 0002 (versioning posture: stay
+// on v1). It is never default-emitted today; absent → treat as v1. A future
+// v2 wire format would set this explicitly and add wire-level discriminators.
+//
 // Surface is a runtime-only field per ADR 0001 (per-decoder surface injection,
 // no wire field). It is set by the surface-specific decoder (island, engine,
 // future canvas2d) and is never serialized.
 type Program struct {
+	Version    string        `json:"version,omitempty"`
 	Name       string        `json:"name"`
 	Props      []PropDef     `json:"props"`
 	Nodes      []Node        `json:"nodes"`
