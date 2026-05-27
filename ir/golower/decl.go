@@ -38,7 +38,15 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 		return
 	}
 	c.handler = fn.Name.Name
-	defer func() { c.handler = "" }()
+	// Slice Y.D: thread the declared return-value count through so
+	// lowerReturnStmt knows whether to emit the multi-value ObjectVal
+	// carrier or stay on the single-return path.
+	prevResults := c.currentResults
+	c.currentResults = countResults(fn.Type.Results)
+	defer func() {
+		c.handler = ""
+		c.currentResults = prevResults
+	}()
 
 	if fn.Body == nil {
 		// Forward declaration / external linkage — skip silently.
@@ -65,6 +73,21 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 		Name: fn.Name.Name,
 		Body: []program.ExprID{seqID},
 	})
+
+	// Slice Y.D: every user function is ALSO registered as a FuncDef
+	// so OpIndirectCall can dispatch into it from another handler.
+	// Reusing the same Body ExprID keeps the lowering single-pass —
+	// edits flow into both call sites and the event-dispatch path
+	// uniformly. The registry pre-pass (scanUserFuncs) populates the
+	// param/result metadata so we don't re-walk the FieldList here.
+	if info, ok := c.lookupUserFunc(fn.Name.Name); ok {
+		c.prog.Funcs = append(c.prog.Funcs, program.FuncDef{
+			Name:    fn.Name.Name,
+			Params:  info.params,
+			Body:    []program.ExprID{seqID},
+			Results: info.results,
+		})
+	}
 }
 
 // lowerGenDecl handles `var` and `const` declarations. `var x = expr`

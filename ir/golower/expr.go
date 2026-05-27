@@ -211,6 +211,14 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 			argID := c.lowerExpr(call.Args[0])
 			return c.addExpr(program.Expr{Op: program.OpToString, Operands: []program.ExprID{argID}})
 		default:
+			// Slice Y.D: route in-package calls into OpIndirectCall when
+			// the name resolves through the user-function registry built
+			// by scanUserFuncs. Unregistered bare identifiers still emit
+			// the legacy diagnostic so authors get a clear pointer when
+			// they typo a sibling function or call into a deleted helper.
+			if _, ok := c.lookupUserFunc(id.Name); ok {
+				return c.emitIndirectCall(id.Name, call.Args)
+			}
 			c.addIssue(call, fmt.Sprintf("calls to user-defined function %q are not supported", id.Name), escapeHatchSuggestion)
 			return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
 		}

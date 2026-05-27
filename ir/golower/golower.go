@@ -115,6 +115,14 @@ func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error)
 	// cheap and keeps the lowering paths uniform.
 	ctx.scanStructTypes(file)
 
+	// Pre-pass (Slice Y.D): build the user-function registry so
+	// in-package calls (`updatePosition(node)` calling a sibling
+	// helper) can resolve through OpIndirectCall instead of the
+	// legacy "calls to user-defined function" diagnostic. The pass
+	// runs BEFORE lowerTopLevelDecl so forward references resolve
+	// (Go allows `func A() { B() }; func B() {}`).
+	ctx.scanUserFuncs(file)
+
 	// Two passes:
 	//   1. Hoist package-level var declarations into signal defs so
 	//      function bodies can reference them by name. Init expressions
@@ -142,12 +150,26 @@ type lowerCtx struct {
 	exprs   []program.Expr
 	handler string // name of the handler currently being lowered (for diagnostics)
 
+	// currentResults is the declared return-value count of the function
+	// whose body is currently being lowered. Used by lowerReturnStmt
+	// (Slice Y.D) to decide whether `return a, b` lowers to a multi-
+	// value ObjectVal carrier or stays a diagnostic. Zero outside a
+	// FuncDecl body.
+	currentResults int
+
 	// structs holds the ordered field-name list for every struct type
 	// declared at the top level of the file. Populated by
 	// scanStructTypes (Slice Y.A) so positional struct literals like
 	// `vec2{x, y}` can recover field names without a separate
 	// go/types pass.
 	structs map[string]structTypeInfo
+
+	// funcs is the per-file user-function registry. Populated by
+	// scanUserFuncs (Slice Y.D) so call sites can detect a
+	// bare-identifier call into a sibling helper and emit
+	// OpIndirectCall instead of the legacy "calls to user-defined
+	// function" diagnostic.
+	funcs funcRegistry
 }
 
 // addExpr appends e to the program's expression table and returns the

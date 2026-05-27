@@ -248,6 +248,12 @@ func (c *lowerCtx) lowerOptionalCond(e ast.Expr) program.ExprID {
 // lowerReturnStmt emits OpReturn so the enclosing OpSeq / OpFor /
 // OpForRange unwinds back to the handler's EvalWithFrame boundary.
 // `return` with no value lowers to a bare OpReturn with no operand.
+//
+// Slice Y.D extends this for multi-value returns: `return a, b` in a
+// function declared with 2+ return values lowers to an OpReturn whose
+// payload is an OpComposite ObjectVal carrier keyed `__ret_<i>`. The
+// caller's lowerMultiAssign reads each `__ret_<i>` field via OpIndex
+// — same pattern as Slice Y.B's OpMapLookup carrier.
 func (c *lowerCtx) lowerReturnStmt(s *ast.ReturnStmt) program.ExprID {
 	switch len(s.Results) {
 	case 0:
@@ -256,9 +262,44 @@ func (c *lowerCtx) lowerReturnStmt(s *ast.ReturnStmt) program.ExprID {
 		valueID := c.lowerExpr(s.Results[0])
 		return c.addExpr(program.Expr{Op: program.OpReturn, Operands: []program.ExprID{valueID}})
 	default:
-		c.addIssue(s, "multi-value returns are not supported", escapeHatchSuggestion)
-		return c.addExpr(program.Expr{Op: program.OpReturn})
+		// Multi-value return: build an OpComposite carrier of kind
+		// "map" with __ret_<i> keys. This reuses Y.A's compositeMap
+		// path without expanding the Value model. The caller binds
+		// each LHS via OpIndex against the carrier (Y.B's bindFromTmp
+		// helper, called via lowerMultiAssign).
+		carrierID := c.buildReturnCarrier(s.Results)
+		return c.addExpr(program.Expr{Op: program.OpReturn, Operands: []program.ExprID{carrierID}})
 	}
+}
+
+// buildReturnCarrier emits an OpComposite ObjectVal of kind "map"
+// whose Fields are keyed `__ret_0`, `__ret_1`, ... — one per return
+// value, in declaration order. The Slice Y.D multi-return contract
+// expects the OpIndirectCall caller to read each slot via OpIndex on
+// the same key scheme.
+func (c *lowerCtx) buildReturnCarrier(results []ast.Expr) program.ExprID {
+	operands := make([]program.ExprID, 0, len(results)*2)
+	for i, res := range results {
+		keyID := c.addExpr(program.Expr{
+			Op:    program.OpLitString,
+			Value: returnKey(i),
+			Type:  program.TypeString,
+		})
+		valueID := c.lowerExpr(res)
+		operands = append(operands, keyID, valueID)
+	}
+	return c.addExpr(program.Expr{
+		Op:       program.OpComposite,
+		Value:    "map",
+		Operands: operands,
+	})
+}
+
+// returnKey is the Y.D multi-return carrier's key scheme. Reserved
+// prefix (`__ret_`) prevents collision with user identifiers and
+// matches Y.B's `__y_b_*` / Y.D's `__y_d_*` namespacing convention.
+func returnKey(i int) string {
+	return fmt.Sprintf("__ret_%d", i)
 }
 
 // lowerBlockStmt wraps a block's statements in OpSeq. Empty blocks
