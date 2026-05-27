@@ -1251,8 +1251,10 @@ func TestIndirectCallOpcodeIsDistinct(t *testing.T) {
 		OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet,
 		OpFor, OpForRange, OpReturn, OpBreak, OpContinue,
 		OpComposite, OpMapLookup, OpFieldSet, OpIndexSet,
-		// Y.D (new)
+		// Y.D
 		OpIndirectCall,
+		// Y.E (new)
+		OpMake,
 	}
 	seen := map[OpCode]bool{}
 	for _, op := range all {
@@ -1350,5 +1352,31 @@ func TestProgramMaxCallDepthDefault(t *testing.T) {
 	}
 	if DefaultMaxCallDepth != 256 {
 		t.Errorf("DefaultMaxCallDepth = %d, want 256", DefaultMaxCallDepth)
+	}
+}
+
+// TestMakeOpcodeShape documents the operand encoding for the make()
+// builtin (Slice Y.E). Maps carry no operands (the optional capacity
+// hint is dropped at lowering time); slices carry the length expression
+// in Operands[0] (the optional cap argument is dropped). The kind tag
+// lives in Value — "map" or "slice".
+func TestMakeOpcodeShape(t *testing.T) {
+	mk := Expr{Op: OpMake, Value: "map"}
+	if mk.Op != OpMake {
+		t.Errorf("opcode = %d, want OpMake", mk.Op)
+	}
+	if mk.Value != "map" {
+		t.Errorf("OpMake kind tag lives in Value, got %q", mk.Value)
+	}
+	if len(mk.Operands) != 0 {
+		t.Errorf("OpMake(map) has no operands; got len=%d", len(mk.Operands))
+	}
+
+	sl := Expr{Op: OpMake, Value: "slice", Operands: []ExprID{42}}
+	if sl.Value != "slice" {
+		t.Errorf("OpMake(slice) kind tag = %q, want \"slice\"", sl.Value)
+	}
+	if len(sl.Operands) != 1 || sl.Operands[0] != 42 {
+		t.Errorf("OpMake(slice) Operands[0] carries the length expr, got %v", sl.Operands)
 	}
 }

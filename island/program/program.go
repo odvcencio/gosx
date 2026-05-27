@@ -260,6 +260,28 @@ const (
 	// Backwards-compatible per ADR 0002 — programs that never emit
 	// OpIndirectCall keep evaluating exactly as before.
 	OpIndirectCall
+
+	// make(...) builtin (Slice Y.E — AST-compiler initiative).
+	// OpMake allocates an empty collection: a fresh ObjectVal carrying a
+	// Fields map (for `make(map[K]V)`) or an ArrayVal carrying an Items
+	// slice (for `make([]T, n)`). Y.A's OpComposite handles populated
+	// composite literals; OpMake covers the explicit allocation form
+	// graph_surface.go's stepLayout uses to build per-tick force tables.
+	//
+	//   Value    — kind tag: "map" (always empty), "slice" (length-only)
+	//   Operands — for "slice", Operands[0] is the length expression
+	//              (cap is ignored — the VM has no capacity concept);
+	//              for "map", Operands is empty (the optional hint is
+	//              ignored, matching Go's runtime behavior).
+	//
+	// The lowerer detects `make(...)` BEFORE the user-function registry
+	// probe so a user can't accidentally shadow the builtin. Per Y.D's
+	// retrospective handoff, this lives alongside len/append/int/
+	// float64/string in lowerCallExpr's `switch id.Name` block.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpMake keep evaluating exactly as before.
+	OpMake
 )
 
 // FuncDef defines a user-defined function callable from a handler or
