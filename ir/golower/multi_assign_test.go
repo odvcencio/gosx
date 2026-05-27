@@ -239,6 +239,41 @@ func F() string {
 	}
 }
 
+// TestLowerGraphSurfaceMultiAssignPatterns exercises the exact
+// multi-assignment shapes that graph_surface.go uses inside its
+// stepLayout handler — parallel `:=`, parallel `=`, two-value map
+// indexing, and the `ux, uy := dx/dist, dy/dist` form. This is the
+// canonical "does Y.B unblock the real consumer?" regression check.
+// Numbers chosen so the answer is exact float arithmetic.
+func TestLowerGraphSurfaceMultiAssignPatterns(t *testing.T) {
+	src := []byte(`package handlers
+
+func F() float64 {
+	pos := map[string]float64{"a": 3.0, "b": 5.0}
+	pa, paOK := pos["a"]
+	pb, pbOK := pos["b"]
+	if !paOK || !pbOK {
+		return -1
+	}
+	dx := pb - pa
+	dy := pb + pa
+	dist := dx + dy
+	ux, uy := dx/dist, dy/dist
+	return ux + uy
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	// dx=2, dy=8, dist=10, ux=0.2, uy=0.8, ux+uy = 1.0
+	if got.Num != 1.0 {
+		t.Errorf("F() = %f, want 1.0", got.Num)
+	}
+}
+
 // TestLowerIfInitTwoValueMap verifies the canonical existence-check
 // pattern `if _, ok := m[k]; !ok { ... }` lowers cleanly. The Init
 // clause is itself a multi-value assignment that the lowerer must
