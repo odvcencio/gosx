@@ -170,6 +170,44 @@ func F() float64 {
 	}
 }
 
+// TestLowerGraphSurfaceBoolAndIntFieldSet mirrors `gDrag.HasMoved = true`
+// and `gDrag.StartX = e.X` from graph_surface.go's OnDown handler.
+// Mixed-type struct field sets surface a subtle bug if the OpFieldSet
+// evaluator coerces or stringifies the value before storing it (it
+// shouldn't — the value should land as-stored, preserving its kind).
+func TestLowerGraphSurfaceBoolAndIntFieldSet(t *testing.T) {
+	src := []byte(`package handlers
+
+type drag struct {
+	Active   bool
+	HasMoved bool
+	StartX   int
+	StartY   int
+}
+
+func F() int {
+	d := drag{Active: false, HasMoved: false, StartX: 0, StartY: 0}
+	d.Active = true
+	d.HasMoved = true
+	d.StartX = 17
+	d.StartY = 25
+	if d.Active && d.HasMoved {
+		return d.StartX + d.StartY
+	}
+	return -1
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if int(got.Num) != 42 {
+		t.Errorf("F() = %d, want 42", int(got.Num))
+	}
+}
+
 // TestLowerGraphSurfaceMapKeyByExprNotLiteral mirrors `fx[a.ID] = 0`
 // where the key is a non-literal expression (a field access). Confirms
 // the lowerer doesn't shortcut on literal-only keys; the OpIndexSet
