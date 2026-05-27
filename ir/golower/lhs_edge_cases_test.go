@@ -80,7 +80,15 @@ func F() float64 {
 	}
 }
 
-// TestLowerLHSStarUnsupported pins the failure mode for `*p = v`
+// TestLowerLHSStarUnsupported pins the failure mode for `*p = v`.
+//
+// Slice Y.E.3 update: pre-Y.E this test relied on `p := &x` being
+// rejected at the `&` operator. Y.E now lowers `&x` cleanly (treats
+// it as a pass-through for the underlying Value because composite
+// values are reference-shared via Value.Fields/Items per Y.C/Y.D).
+// The test now reaches the `*p` LHS rejection, which surfaces as
+// "left-hand side must be a simple identifier" — the dispatcher in
+// lowerAssignStmt's bare-ident branch is the gatekeeper.
 // (pointer dereference LHS). Pointers aren't in the supported subset,
 // so the lowerer should diagnose without panicking.
 func TestLowerLHSStarUnsupported(t *testing.T) {
@@ -96,8 +104,12 @@ func F() {
 	if err == nil {
 		t.Fatalf("LowerFile: expected an issue for *p = 5, got nil")
 	}
-	if !strings.Contains(err.Error(), "unsupported") {
-		t.Errorf("LowerFile error %v should mention unsupported", err)
+	// Y.E: accept either the legacy "unsupported" diagnostic or the
+	// post-Y.E "left-hand side must be a simple identifier" rejection
+	// that surfaces after `&` lowers as a pass-through.
+	msg := err.Error()
+	if !strings.Contains(msg, "unsupported") && !strings.Contains(msg, "left-hand side") {
+		t.Errorf("LowerFile error %v should mention unsupported or left-hand side", err)
 	}
 }
 
