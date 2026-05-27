@@ -53,6 +53,8 @@ func (c *lowerCtx) lowerStmt(s ast.Stmt) program.ExprID {
 		return c.lowerIncDecStmt(st)
 	case *ast.BranchStmt:
 		return c.lowerBranchStmt(st)
+	case *ast.SwitchStmt:
+		return c.lowerSwitchStmt(st)
 	case *ast.EmptyStmt:
 		return c.addExpr(program.Expr{Op: program.OpSeq})
 	default:

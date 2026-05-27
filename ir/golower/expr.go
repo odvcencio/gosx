@@ -50,6 +50,8 @@ func (c *lowerCtx) lowerExpr(e ast.Expr) program.ExprID {
 		return c.lowerCallExpr(ex)
 	case *ast.IndexExpr:
 		return c.lowerIndexExpr(ex)
+	case *ast.SliceExpr:
+		return c.lowerSliceExpr(ex)
 	case *ast.CompositeLit:
 		return c.lowerCompositeLit(ex)
 	default:
@@ -129,6 +131,18 @@ func (c *lowerCtx) lowerUnaryExpr(u *ast.UnaryExpr) program.ExprID {
 	case token.NOT:
 		argID := c.lowerExpr(u.X)
 		return c.addExpr(program.Expr{Op: program.OpNot, Operands: []program.ExprID{argID}})
+	case token.AND:
+		// Slice Y.E.3: `&x` (address-of). The VM has no pointer
+		// concept — composite Values (struct/slice/map) are already
+		// reference-shared because Value.Fields/Items are Go reference
+		// types (Y.C / Y.D contract). For scalar `x`, taking the
+		// address has no meaningful semantics in the supported subset.
+		// We honor the Go author's intent (pass by reference) by
+		// simply lowering to the underlying Value — host receivers and
+		// user functions both already propagate composite mutations
+		// through this path. Documented as ADR-style decision in
+		// Y.E's retrospective.
+		return c.lowerExpr(u.X)
 	default:
 		c.addIssue(u, fmt.Sprintf("unsupported unary operator %s", u.Op), escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
@@ -210,6 +224,14 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 			}
 			argID := c.lowerExpr(call.Args[0])
 			return c.addExpr(program.Expr{Op: program.OpToString, Operands: []program.ExprID{argID}})
+		case "make":
+			// Slice Y.E: `make(...)` allocates an empty collection. Routed
+			// BEFORE the user-fn registry probe per Y.D's retrospective
+			// handoff so a user-declared `make` can't accidentally shadow
+			// the builtin. The first arg is the collection type literal
+			// (a *ast.MapType or *ast.ArrayType); the rest are the
+			// optional length / capacity hints.
+			return c.lowerMakeCall(call)
 		default:
 			// Slice Y.D: route in-package calls into OpIndirectCall when
 			// the name resolves through the user-function registry built
@@ -224,6 +246,17 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 		}
 	}
 
+	// Slice Y.E.3: ArrayType "call" — Go's `[]T(x)` conversion syntax.
+	// The canonical case from graph_surface.go is `[]rune(label)`, used
+	// to rune-count + truncate a label string. The lowerer treats it as
+	// a runtime string-to-rune-array conversion via OpToRunes; the VM
+	// produces an ArrayVal whose Items are one-rune StringVals so
+	// subsequent OpLen returns the rune count and OpSlice returns a
+	// rune subsequence (which `string(...)` re-collapses).
+	if at, ok := call.Fun.(*ast.ArrayType); ok {
+		return c.lowerArrayTypeCast(at, call)
+	}
+
 	// Selector: pkg.Func or obj.Method.
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -235,16 +268,30 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 		c.addIssue(call, "method calls on non-package receivers are not supported", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
 	}
-	qualified := pkg + "." + sel.Sel.Name
-	if !isIntrinsic(qualified) {
-		c.addIssue(call, fmt.Sprintf("call to %s is not in the supported intrinsic set", qualified), escapeHatchSuggestion)
-		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
+	// Slice Y.E: discriminate intrinsic vs host call by checking the
+	// receiver against the file's import set. Receivers that aren't
+	// imported packages (`c`, `ctx`, ...) route into OpHostCall;
+	// imported packages stay on the OpCall intrinsic path. This is
+	// also the catch-all for stdlib package names — `math.Sin` is
+	// imported, so it goes through intrinsics; a typo `maht.Sin`
+	// falls through to host dispatch and records a `host_unbound`
+	// diagnostic at evaluation time.
+	if c.isImportedPackage(pkg) {
+		qualified := pkg + "." + sel.Sel.Name
+		if !isIntrinsic(qualified) {
+			c.addIssue(call, fmt.Sprintf("call to %s is not in the supported intrinsic set", qualified), escapeHatchSuggestion)
+			return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
+		}
+		argIDs := make([]program.ExprID, 0, len(call.Args))
+		for _, a := range call.Args {
+			argIDs = append(argIDs, c.lowerExpr(a))
+		}
+		return c.addExpr(program.Expr{Op: program.OpCall, Value: qualified, Operands: argIDs})
 	}
-	argIDs := make([]program.ExprID, 0, len(call.Args))
-	for _, a := range call.Args {
-		argIDs = append(argIDs, c.lowerExpr(a))
-	}
-	return c.addExpr(program.Expr{Op: program.OpCall, Value: qualified, Operands: argIDs})
+	// Receiver is not an imported package — treat as a host method
+	// call. The VM looks up the bound HostReceiver by the receiver
+	// identifier ("c", "ctx", ...) at evaluation time.
+	return c.lowerHostCall(pkg, sel, call.Args)
 }
 
 // lowerIndexExpr emits OpIndex for both slice and map indexing — the

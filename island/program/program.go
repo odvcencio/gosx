@@ -260,6 +260,79 @@ const (
 	// Backwards-compatible per ADR 0002 — programs that never emit
 	// OpIndirectCall keep evaluating exactly as before.
 	OpIndirectCall
+
+	// make(...) builtin (Slice Y.E — AST-compiler initiative).
+	// OpMake allocates an empty collection: a fresh ObjectVal carrying a
+	// Fields map (for `make(map[K]V)`) or an ArrayVal carrying an Items
+	// slice (for `make([]T, n)`). Y.A's OpComposite handles populated
+	// composite literals; OpMake covers the explicit allocation form
+	// graph_surface.go's stepLayout uses to build per-tick force tables.
+	//
+	//   Value    — kind tag: "map" (always empty), "slice" (length-only)
+	//   Operands — for "slice", Operands[0] is the length expression
+	//              (cap is ignored — the VM has no capacity concept);
+	//              for "map", Operands is empty (the optional hint is
+	//              ignored, matching Go's runtime behavior).
+	//
+	// The lowerer detects `make(...)` BEFORE the user-function registry
+	// probe so a user can't accidentally shadow the builtin. Per Y.D's
+	// retrospective handoff, this lives alongside len/append/int/
+	// float64/string in lowerCallExpr's `switch id.Name` block.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpMake keep evaluating exactly as before.
+	OpMake
+
+	// Host-receiver method call (Slice Y.E — AST-compiler initiative).
+	// OpHostCall dispatches a method call into a runtime-bound host
+	// receiver — the engine-surface canvas, the surface context, or any
+	// other host-side object whose methods cannot be expressed as a pure
+	// Value transformation. Bound by the surface bootstrap via
+	// vm.BindHost(name, receiver).
+	//
+	//   Value    — qualified call target "<receiver>.<MethodName>"
+	//              (e.g., "c.MoveTo", "ctx.PropsInto"). The receiver
+	//              prefix is the source-level identifier the author
+	//              wrote, NOT a type name — multiple surfaces may bind
+	//              the same identifier to different concrete objects.
+	//   Operands — argument expressions, in source order, evaluated by
+	//              the VM left-to-right before the host call fires.
+	//
+	// The result is whatever the host receiver returns, as a Value. Void
+	// methods return the zero Value of TypeAny. Errors from the host
+	// receiver surface as `host_call_error` diagnostics — the VM stays
+	// panic-free.
+	//
+	// Unlike OpCall (stdlib intrinsics — global registry, pure
+	// functions), OpHostCall reaches into per-VM state: the bound
+	// receivers live on the VM struct, so each engine-surface instance
+	// has its own canvas/context bindings. This is the cleanest place
+	// to land the "host-supplied capability dispatch" surface that the
+	// engine-surface authoring contract has implicitly assumed since
+	// X.A but never had a first-class opcode for.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpHostCall keep evaluating exactly as before.
+	OpHostCall
+
+	// String-to-rune-array conversion (Slice Y.E.3 — AST-compiler
+	// initiative). OpToRunes corresponds to Go's `[]rune(s)`
+	// conversion. The operand is a string Value; the result is an
+	// ArrayVal whose Items are one-rune StringVals (each containing
+	// exactly one UTF-8-encoded rune).
+	//
+	// This lets graph_surface.go's label truncation pattern
+	// (`len([]rune(label))` + `string([]rune(label)[:22])`) lower
+	// cleanly: OpLen on the resulting array gives the rune count,
+	// OpSlice gives a rune subsequence, and OpToString concatenates
+	// it back into a string (via the Y.E.3 ToStringVal join path).
+	//
+	//   Operands — Operands[0] evaluates to the source string.
+	//   Value    — unused.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpToRunes keep evaluating exactly as before.
+	OpToRunes
 )
 
 // FuncDef defines a user-defined function callable from a handler or

@@ -20,6 +20,7 @@ type VM struct {
 	forCap         int                  // per-loop iteration cap (X.C); 0 → default
 	funcs          map[string]*program.FuncDef // user-function registry (Y.D)
 	callDepth      int                  // current OpIndirectCall recursion depth (Y.D)
+	hosts          map[string]HostReceiver // per-VM host-receiver bindings for OpHostCall (Y.E)
 	diagnostics    []Diagnostic
 	diagnosticSink DiagnosticSink
 }
@@ -146,6 +147,12 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 		return value
 	}
 	if value, ok := vm.evalIndirectCallExpr(e); ok {
+		return value
+	}
+	if value, ok := vm.evalMakeExpr(e); ok {
+		return value
+	}
+	if value, ok := vm.evalHostCallExpr(e); ok {
 		return value
 	}
 	vm.recordExprDiagnostic(
@@ -671,6 +678,21 @@ func (vm *VM) evalConversionExpr(e program.Expr) (Value, bool) {
 		return vm.intUnary(e, Value.ToIntVal), true
 	case program.OpToFloat:
 		return vm.floatUnary(e, Value.ToFloatVal), true
+	case program.OpToRunes:
+		// Slice Y.E.3: `[]rune(s)` / `[]byte(s)` — convert a string
+		// into an ArrayVal whose Items are one-rune StringVals. Reading
+		// len() returns the rune count; slicing returns a rune
+		// subsequence; OpToString concatenates back to a string via
+		// the ToStringVal join path.
+		if !vm.requireOperands(e, 1) {
+			return ArrayVal(nil), true
+		}
+		src := vm.Eval(e.Operands[0]).Str
+		items := make([]Value, 0, len(src))
+		for _, r := range src {
+			items = append(items, StringVal(string(r)))
+		}
+		return ArrayVal(items), true
 	default:
 		return Value{}, false
 	}
@@ -803,6 +825,16 @@ func (vm *VM) sliceValue(e program.Expr) Value {
 		coll := vm.Eval(e.Operands[0])
 		start := int(vm.Eval(e.Operands[1]).Num)
 		end := int(vm.Eval(e.Operands[2]).Num)
+		// Slice Y.E.3: OpSlice now dispatches on the runtime collection
+		// kind so the lowerer's *ast.SliceExpr handler can emit a single
+		// opcode without knowing whether the source operand is a slice
+		// or a string. String operands route through SubstringVal;
+		// rune-array operands (produced by Y.E's `[]rune(s)` cast)
+		// route through the existing SliceVal path because they carry
+		// Items, not Str.
+		if coll.Items == nil && coll.Str != "" {
+			return coll.SubstringVal(start, end)
+		}
 		return coll.SliceVal(start, end)
 	}
 	return ArrayVal(nil)

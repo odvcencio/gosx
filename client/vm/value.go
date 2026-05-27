@@ -462,8 +462,38 @@ func (v Value) EndsWithVal(suffix Value) Value {
 // --- Type conversions ---
 
 // ToStringVal converts any Value to a StringVal.
+//
+// Slice Y.E.3: when v is an ArrayVal whose Items are all StringVals
+// (the shape produced by `[]rune(s)` via OpToRunes), the conversion
+// concatenates the items — mirroring Go's `string([]rune{...})` which
+// joins the runes back into a string. This is what makes the
+// graph_surface.go pattern `string([]rune(label)[:22])` produce a
+// truncated label rather than the debug-formatted `"[h, e, l, l, o]"`
+// shape that the array's String() form returns.
 func (v Value) ToStringVal() Value {
+	if v.Items != nil && allStringItems(v.Items) {
+		var b strings.Builder
+		for _, item := range v.Items {
+			b.WriteString(item.Str)
+		}
+		return StringVal(b.String())
+	}
 	return StringVal(v.String())
+}
+
+// allStringItems reports whether every element in items is a TypeString
+// Value. Used by ToStringVal to decide between joining (the rune-array
+// case) and debug-formatting (heterogeneous arrays).
+func allStringItems(items []Value) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		if item.Type != program.TypeString {
+			return false
+		}
+	}
+	return true
 }
 
 // ToIntVal converts a Value to an IntVal. Parses strings, truncates floats.
