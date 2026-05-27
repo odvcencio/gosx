@@ -63,10 +63,14 @@ func (c *lowerCtx) lowerStmt(s ast.Stmt) program.ExprID {
 
 // lowerAssignStmt handles `x = expr` (`=`) and `x := expr` (`:=`),
 // plus the compound-assign forms (`+=`, `-=`, ...). Multi-value
-// assigns (`a, b = f()`) are rejected because the VM has no tuple
-// return story.
+// assigns dispatch to lowerMultiAssign (Slice Y.B) for the comma-ok
+// map idiom and parallel assignment; multi-return function calls
+// remain Y.D territory and surface as a clear diagnostic from there.
 func (c *lowerCtx) lowerAssignStmt(s *ast.AssignStmt) program.ExprID {
-	if len(s.Lhs) != 1 || len(s.Rhs) != 1 {
+	if len(s.Lhs) > 1 {
+		return c.lowerMultiAssign(s)
+	}
+	if len(s.Rhs) != 1 {
 		c.addIssue(s, "multi-value assignment is not supported", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpSeq})
 	}
