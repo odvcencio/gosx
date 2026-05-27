@@ -15,6 +15,48 @@ import (
 	"m31labs.dev/gosx/client/vm"
 )
 
+// TestLowerGraphSurfaceMatrixZoom mirrors the OnZoom handler shape
+// `gTx.X = mx - factor*(mx-gTx.X)` — a self-referential RHS that reads
+// the field being assigned and combines it with another expression.
+// The lowering must read gTx.X once on the RHS (via OpFieldGet through
+// OpIndex) and write it back via OpFieldSet; the values seen on the
+// RHS must be the *original* (pre-assignment) values, not the partial
+// updates from earlier assignments in the same handler.
+func TestLowerGraphSurfaceMatrixZoom(t *testing.T) {
+	src := []byte(`package handlers
+
+type tx struct {
+	X float64
+	Y float64
+	Scale float64
+}
+
+func F() float64 {
+	gTx := tx{X: 100.0, Y: 50.0, Scale: 2.0}
+	mx := 200.0
+	my := 150.0
+	factor := 1.5
+	gTx.X = mx - factor*(mx-gTx.X)
+	gTx.Y = my - factor*(my-gTx.Y)
+	gTx.Scale = gTx.Scale * factor
+	return gTx.X + gTx.Y + gTx.Scale
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	// gTx.X = 200 - 1.5 * (200 - 100) = 200 - 150 = 50.
+	// gTx.Y = 150 - 1.5 * (150 - 50) = 150 - 150 = 0.
+	// gTx.Scale = 2 * 1.5 = 3.
+	// sum = 50 + 0 + 3 = 53.
+	if got.Num != 53.0 {
+		t.Errorf("F() = %f, want 53.0", got.Num)
+	}
+}
+
 // TestLowerGraphSurfaceMapKeyWriteback mirrors the stepLayout
 // writeback pattern: read the velocity by ID, mutate the local copy,
 // write back to the shared map. This is the canonical "Go's value
