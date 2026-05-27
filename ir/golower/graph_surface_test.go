@@ -92,6 +92,102 @@ func TestGraphSurfaceTier2AccumulateAngle(t *testing.T) {
 	}
 }
 
+// TestGraphSurfaceTier4StepLayoutKernel is a Slice Y.C addition: it
+// lowers a fixture that mirrors the stepLayout repulsion-accumulator
+// kernel from graph_surface.go but scrubbed of canvas calls and
+// user-function dispatch (still Y.D/Y.E territory). The kernel
+// exercises the full Y.A-Y.C lowering stack end-to-end:
+//
+//   - Y.A composite literals for the initial fx/fy slices and the
+//     gPos/gVel maps
+//   - Y.B comma-ok map lookups for the `pa, paOK := gPos[a.ID]` form
+//     (here simplified to a present-only path so we don't need Y.D
+//     to dispatch the "missing-pair skip" check)
+//   - Y.C LHS selector / indexed-set for the `fx[i] = 0`, `v.X = ...`,
+//     `gVel[id] = v`, `gPos[id] = p` writebacks
+//
+// The reference implementation in refStepLayoutKernel uses the same
+// arithmetic so the lowered bytecode and the Go runtime should agree
+// to within float64 epsilon.
+func TestGraphSurfaceTier4StepLayoutKernel(t *testing.T) {
+	src := []byte(`package handlers
+
+type vec2 struct {
+	X float64
+	Y float64
+}
+
+func F() float64 {
+	gPos := map[string]vec2{"n0": vec2{0.0, 0.0}, "n1": vec2{10.0, 0.0}}
+	gVel := map[string]vec2{"n0": vec2{0.0, 0.0}, "n1": vec2{0.0, 0.0}}
+	fx := []float64{0.0, 0.0}
+	fy := []float64{0.0, 0.0}
+	// Zero the force accumulators (LHS slice index set).
+	for i := 0; i < 2; i = i + 1 {
+		fx[i] = 0.0
+		fy[i] = 0.0
+	}
+	// Apply a fake repulsion force on node 0 from node 1
+	// using the Y.B comma-ok lookup pattern.
+	pa, paOK := gPos["n0"]
+	pb, pbOK := gPos["n1"]
+	if paOK && pbOK {
+		dx := pa.X - pb.X
+		dy := pa.Y - pb.Y
+		dist := dx*dx + dy*dy
+		if dist < 1.0 {
+			dist = 1.0
+		}
+		fx[0] += dx * 100.0 / dist
+		fy[0] += dy * 100.0 / dist
+	}
+	// Integrate velocity for n0 (LHS struct field set + writeback).
+	v := gVel["n0"]
+	v.X = (v.X + fx[0]) * 0.9
+	v.Y = (v.Y + fy[0]) * 0.9
+	gVel["n0"] = v
+	// Step position (chained map-of-struct mutation).
+	p := gPos["n0"]
+	p.X = p.X + v.X
+	p.Y = p.Y + v.Y
+	gPos["n0"] = p
+	out := gPos["n0"]
+	return out.X
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	want := refStepLayoutKernel()
+	if math.Abs(got.Num-want) > 1e-9 {
+		t.Errorf("F() = %f, want %f", got.Num, want)
+	}
+}
+
+// refStepLayoutKernel is the Go reference for the StepLayoutKernel
+// fixture above. Computes the same arithmetic in pure Go so the lowered
+// bytecode can be cross-checked.
+func refStepLayoutKernel() float64 {
+	pa := struct{ X, Y float64 }{0.0, 0.0}
+	pb := struct{ X, Y float64 }{10.0, 0.0}
+	dx := pa.X - pb.X
+	dy := pa.Y - pb.Y
+	dist := dx*dx + dy*dy
+	if dist < 1.0 {
+		dist = 1.0
+	}
+	fx0 := dx * 100.0 / dist
+	fy0 := dy * 100.0 / dist
+	vx := (0.0 + fx0) * 0.9
+	vy := (0.0 + fy0) * 0.9
+	_ = vy
+	px := pa.X + vx
+	return px
+}
+
 func TestGraphSurfaceTier3ForceFalloff(t *testing.T) {
 	prog, err := LowerFile([]byte(fixture))
 	if err != nil {
