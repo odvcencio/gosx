@@ -42,17 +42,43 @@ func buildLargeSource(lines int) []byte {
 	return []byte(b.String())
 }
 
-// makeBenchFunc produces one function. Three shapes rotate so the
+// makeBenchFunc produces one function. Four shapes rotate so the
 // benchmarked code matches the diversity of real engine-surface files.
+// Slice Y.C added the fourth shape (LHS selector / indexed-set) so the
+// bench picks up the lowering cost of OpFieldSet / OpIndexSet handlers
+// — the actual shape graph_surface.go uses for state mutations.
 func makeBenchFunc(i int) string {
-	switch i % 3 {
+	switch i % 4 {
 	case 0:
 		return funcPure(i)
 	case 1:
 		return funcLoop(i)
-	default:
+	case 2:
 		return funcIntrinsic(i)
+	default:
+		return funcLHS(i)
 	}
+}
+
+// funcLHS produces a Y.C-shaped handler that exercises both
+// OpFieldSet (`p.X = ...`) and OpIndexSet (`m[k] += ...` and
+// `s[i] *= ...`) in a tight loop — the kind of body stepLayout
+// and the force-accumulator passes generate in graph_surface.go.
+func funcLHS(i int) string {
+	return `type lhs` + itoa(i) + ` struct { X, Y float64 }
+
+func LHS` + itoa(i) + `(n int) float64 {
+	p := lhs` + itoa(i) + `{X: 0.0, Y: 0.0}
+	s := []float64{0.0, 0.0, 0.0, 0.0}
+	m := map[string]float64{}
+	for j := 0; j < n; j = j + 1 {
+		p.X = p.X + 1.0
+		p.Y = p.Y + 2.0
+		s[j % 4] += float64(j)
+		m["acc"] += p.X
+	}
+	return p.X + s[0] + m["acc"]
+}`
 }
 
 func funcPure(i int) string {

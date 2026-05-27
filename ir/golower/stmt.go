@@ -66,6 +66,8 @@ func (c *lowerCtx) lowerStmt(s ast.Stmt) program.ExprID {
 // assigns dispatch to lowerMultiAssign (Slice Y.B) for the comma-ok
 // map idiom and parallel assignment; multi-return function calls
 // remain Y.D territory and surface as a clear diagnostic from there.
+// LHS selector / indexed-set forms (e.g. `node.X = ...`, `m[k] = ...`)
+// dispatch to lowerSelectorOrIndexAssign (Slice Y.C).
 func (c *lowerCtx) lowerAssignStmt(s *ast.AssignStmt) program.ExprID {
 	if len(s.Lhs) > 1 {
 		return c.lowerMultiAssign(s)
@@ -73,6 +75,13 @@ func (c *lowerCtx) lowerAssignStmt(s *ast.AssignStmt) program.ExprID {
 	if len(s.Rhs) != 1 {
 		c.addIssue(s, "multi-value assignment is not supported", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpSeq})
+	}
+	// Slice Y.C: route selector / index LHS forms before the bare-ident
+	// check so `node.X = ...` and `m[k] = ...` lower through the new
+	// OpFieldSet / OpIndexSet path instead of falling through to the
+	// "left-hand side must be a simple identifier" diagnostic.
+	if isLHSSelectorOrIndex(s.Lhs[0]) {
+		return c.lowerSelectorOrIndexAssign(s)
 	}
 	lhsName, ok := identName(s.Lhs[0])
 	if !ok {

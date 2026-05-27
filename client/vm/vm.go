@@ -130,6 +130,9 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 	if value, ok := vm.evalMapLookupExpr(e); ok {
 		return value
 	}
+	if value, ok := vm.evalLHSSetExpr(e); ok {
+		return value
+	}
 	vm.recordExprDiagnostic(
 		"unknown_opcode",
 		fmt.Sprintf("unknown island VM opcode %d", e.Op),

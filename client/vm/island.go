@@ -197,6 +197,21 @@ func initSignals(vm *VM, prog *program.Program) {
 	}
 }
 
+// InitSignals is the exported wrapper around initSignals for tests and
+// surface bootstraps that don't go through the full Island lifecycle.
+// It evaluates each SignalDef's init expression against the VM and
+// registers a fresh signal.Signal for it. Idempotency is the caller's
+// responsibility; calling InitSignals twice for the same Program
+// re-evaluates the init exprs and replaces the prior signals.
+//
+// Engine-surface handlers that mutate package-level struct/map/slice
+// state via OpFieldSet / OpIndexSet (Slice Y.C) rely on this — without
+// initialized signals, OpLocalGet falls through to a zero Value with
+// nil Fields, and the in-place mutation silently no-ops.
+func InitSignals(vm *VM, prog *program.Program) {
+	initSignals(vm, prog)
+}
+
 func handlerMap(prog *program.Program) map[string]*program.Handler {
 	handlers := make(map[string]*program.Handler, len(prog.Handlers))
 	for i := range prog.Handlers {
