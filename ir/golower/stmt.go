@@ -63,10 +63,14 @@ func (c *lowerCtx) lowerStmt(s ast.Stmt) program.ExprID {
 
 // lowerAssignStmt handles `x = expr` (`=`) and `x := expr` (`:=`),
 // plus the compound-assign forms (`+=`, `-=`, ...). Multi-value
-// assigns (`a, b = f()`) are rejected because the VM has no tuple
-// return story.
+// assigns dispatch to lowerMultiAssign (Slice Y.B) for the comma-ok
+// map idiom and parallel assignment; multi-return function calls
+// remain Y.D territory and surface as a clear diagnostic from there.
 func (c *lowerCtx) lowerAssignStmt(s *ast.AssignStmt) program.ExprID {
-	if len(s.Lhs) != 1 || len(s.Rhs) != 1 {
+	if len(s.Lhs) > 1 {
+		return c.lowerMultiAssign(s)
+	}
+	if len(s.Rhs) != 1 {
 		c.addIssue(s, "multi-value assignment is not supported", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpSeq})
 	}
@@ -166,20 +170,27 @@ func (c *lowerCtx) lowerForStmt(s *ast.ForStmt) program.ExprID {
 	})
 }
 
-// lowerRangeStmt lowers `for i, v := range coll { body }` to OpForRange.
+// lowerRangeStmt lowers `for k, v := range coll { body }` to OpForRange.
 // The VM injects "_index" / "_item" / "_key" props inside the body's
-// frame; the lowerer rewrites the user's index/value identifiers to
+// frame; the lowerer rewrites the user's key/value identifiers to
 // reference those props by emitting a leading OpLocalDecl + OpAssign
 // pair that pulls from the synthetic props.
+//
+// The user's first range variable (Go's `k` in `for k, v := range`)
+// binds to "_key" instead of "_index" — for slices the VM sets
+// _key = _index (an IntVal of the iteration counter), so slice code
+// like `for i, v := range s` continues to behave identically; for
+// maps _key holds the StringVal map key, which is what graph
+// surfaces like `for id, p := range gPos` actually want (Slice Y.B).
 func (c *lowerCtx) lowerRangeStmt(s *ast.RangeStmt) program.ExprID {
 	collID := c.lowerExpr(s.X)
 
-	// Pre-emit binding statements: if the user wrote `for i, v := range`,
-	// alias their local names to the VM's _index / _item props before
+	// Pre-emit binding statements: if the user wrote `for k, v := range`,
+	// alias their local names to the VM's _key / _item props before
 	// each body iteration.
 	var bodyOps []program.ExprID
 	if name, ok := identName(s.Key); ok && name != "_" {
-		bodyOps = append(bodyOps, c.bindRangeAlias(name, "_index"))
+		bodyOps = append(bodyOps, c.bindRangeAlias(name, "_key"))
 	}
 	if s.Value != nil {
 		if name, ok := identName(s.Value); ok && name != "_" {

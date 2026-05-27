@@ -1109,8 +1109,10 @@ func TestCompositeOpcodeIsDistinct(t *testing.T) {
 		OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet,
 		// X.C
 		OpFor, OpForRange, OpReturn, OpBreak, OpContinue,
-		// Y.A (new)
+		// Y.A
 		OpComposite,
+		// Y.B (new)
+		OpMapLookup,
 	}
 	seen := map[OpCode]bool{}
 	for _, op := range all {
@@ -1157,5 +1159,25 @@ func TestCompositeOpcodeShape(t *testing.T) {
 	}
 	if mapLit.Value != "map" {
 		t.Errorf("map Value = %q, want %q", mapLit.Value, "map")
+	}
+}
+
+// --- Slice Y.B: two-value map lookup opcode ---
+
+// TestMapLookupOpcodeShape documents the operand encoding for the
+// comma-ok map lookup (`v, ok := m[k]`). Operands[0] is the map
+// expression; Operands[1] is the key expression. The VM materializes
+// the result as an ObjectVal with "value" and "ok" fields so the
+// lowerer can emit two OpIndex reads against it for the LHS bindings.
+func TestMapLookupOpcodeShape(t *testing.T) {
+	lookup := Expr{
+		Op:       OpMapLookup,
+		Operands: []ExprID{0, 1}, // (map, key)
+	}
+	if lookup.Op != OpMapLookup {
+		t.Errorf("opcode = %d, want OpMapLookup", lookup.Op)
+	}
+	if len(lookup.Operands) != 2 {
+		t.Errorf("OpMapLookup must carry exactly 2 operands (map, key); got %d", len(lookup.Operands))
 	}
 }

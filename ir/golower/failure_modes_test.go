@@ -52,6 +52,26 @@ func F() { fmt.Println("hi") }`)
 	requireLowerError(t, err, "ADR 0006", 0)
 }
 
+// TestFailureMode_MultiReturnUserFunctionCall verifies Y.B's multi-
+// value assignment dispatch emits a clear, actionable diagnostic for
+// the user-function multi-return form (`a, b := f()`) — pointing at
+// Slice Y.D as the natural follow-up rather than the generic escape
+// hatch. Y.B explicitly defers this to Y.D so the diagnostic must
+// say so.
+func TestFailureMode_MultiReturnUserFunctionCall(t *testing.T) {
+	src := []byte(`package handlers
+
+func screenToWorld(x int, y int) (int, int) { return x, y }
+
+func F() int {
+	wx, wy := screenToWorld(1, 2)
+	return wx + wy
+}`)
+	_, err := LowerFile(src)
+	requireLowerError(t, err, "Slice Y.D", 0)
+	requireLowerError(t, err, "ADR 0006", 0)
+}
+
 func TestFailureMode_LabeledBreak(t *testing.T) {
 	// Labeled statements themselves are rejected before the lowerer
 	// even sees the inner break. Either error message is acceptable

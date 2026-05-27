@@ -164,6 +164,28 @@ const (
 	// Backwards-compatible per ADR 0002 — programs that never emit
 	// OpComposite keep evaluating exactly as before.
 	OpComposite
+
+	// Two-value map lookup (Slice Y.B — AST-compiler initiative).
+	// OpMapLookup evaluates Operands[0] as the map (any Value with
+	// Fields populated) and Operands[1] as the lookup key, and returns
+	// an ObjectVal carrying two named fields:
+	//
+	//   - "value" — the looked-up value, or the zero Value when the key
+	//     is absent.
+	//   - "ok"    — BoolVal(true) when the key exists in the map's
+	//     Fields, BoolVal(false) otherwise.
+	//
+	// This encoding lets the comma-ok idiom (`v, ok := m[k]`) lower
+	// without expanding the Value model with a Tuple kind — the lowerer
+	// emits a single OpMapLookup plus per-LHS OpIndex reads of "value"
+	// and "ok" against the resulting ObjectVal. Y.A's Decision Point
+	// chose the ObjectVal carrier over a dedicated TupleVal because
+	// it reuses the existing OpIndex / Value.Fields machinery without
+	// touching formatters, equality, or JSON marshaling.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpMapLookup keep evaluating exactly as before.
+	OpMapLookup
 )
 
 // SurfaceKind identifies the rendering surface a program targets.
