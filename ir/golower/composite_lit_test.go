@@ -145,3 +145,112 @@ func F() float64 {
 		t.Errorf("F() = %f, want 4.0", got.Num)
 	}
 }
+
+// TestLowerNestedStructInSlice covers the graph_surface.go-style
+// pattern of building a `[]Node` whose elements are named struct
+// literals — exercises both slice and (nested) struct composites in
+// the same expression.
+func TestLowerNestedStructInSlice(t *testing.T) {
+	src := []byte(`package handlers
+
+type Node struct {
+	ID  string
+	Pos float64
+}
+
+func F() string {
+	xs := []Node{
+		Node{ID: "first", Pos: 1.0},
+		Node{ID: "second", Pos: 2.0},
+	}
+	return xs[1].ID
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if got.Str != "second" {
+		t.Errorf("F() = %q, want %q", got.Str, "second")
+	}
+}
+
+// TestLowerMapOfStructValues covers `map[string]vec2{ "origin": vec2{0,0} }`
+// — the pattern hyphae graph_surface.go uses for gPos / gVel.
+func TestLowerMapOfStructValues(t *testing.T) {
+	src := []byte(`package handlers
+
+type vec2 struct{ X, Y float64 }
+
+func F() float64 {
+	m := map[string]vec2{
+		"a": vec2{1.0, 2.0},
+		"b": vec2{3.0, 4.0},
+	}
+	return m["b"].Y
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if got.Num != 4.0 {
+		t.Errorf("F() = %f, want 4.0", got.Num)
+	}
+}
+
+// TestLowerEmptyMapLiteral covers `map[string]vec2{}` — the
+// initialization pattern hyphae graph_surface.go uses for package-level
+// `gPos = map[string]vec2{}`.
+func TestLowerEmptyMapLiteral(t *testing.T) {
+	src := []byte(`package handlers
+
+type vec2 struct{ X, Y float64 }
+
+func F() int {
+	m := map[string]vec2{}
+	return len(m)
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if int(got.Num) != 0 {
+		t.Errorf("F() = %d, want 0", int(got.Num))
+	}
+}
+
+// TestLowerPackageVarMapLiteral verifies that a package-level
+// `var x = map[string]vec2{}` declaration produces a SignalDef whose
+// Init evaluates to an empty map Value at runtime. This is the
+// hyphae graph_surface.go pattern (`var gPos = map[string]vec2{}`).
+func TestLowerPackageVarMapLiteral(t *testing.T) {
+	src := []byte(`package handlers
+
+type vec2 struct{ X, Y float64 }
+
+var positions = map[string]vec2{}
+
+func Count() int { return len(positions) }`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	if len(prog.Signals) != 1 || prog.Signals[0].Name != "positions" {
+		t.Fatalf("Signals = %+v, want one entry named positions", prog.Signals)
+	}
+	machine := vm.NewVM(prog, nil)
+	// Initialize the signal from its Init expr — mirrors how the
+	// runtime sets up signals before invoking handlers.
+	initVal := machine.Eval(prog.Signals[0].Init)
+	if initVal.Fields == nil {
+		t.Errorf("positions init = %+v, want empty Fields map", initVal)
+	}
+}
