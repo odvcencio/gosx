@@ -210,6 +210,14 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 			}
 			argID := c.lowerExpr(call.Args[0])
 			return c.addExpr(program.Expr{Op: program.OpToString, Operands: []program.ExprID{argID}})
+		case "make":
+			// Slice Y.E: `make(...)` allocates an empty collection. Routed
+			// BEFORE the user-fn registry probe per Y.D's retrospective
+			// handoff so a user-declared `make` can't accidentally shadow
+			// the builtin. The first arg is the collection type literal
+			// (a *ast.MapType or *ast.ArrayType); the rest are the
+			// optional length / capacity hints.
+			return c.lowerMakeCall(call)
 		default:
 			// Slice Y.D: route in-package calls into OpIndirectCall when
 			// the name resolves through the user-function registry built
