@@ -1227,3 +1227,128 @@ func TestIndexSetOpcodeShape(t *testing.T) {
 		t.Errorf("OpIndexSet Value must stay empty (key lives in Operands[1]); got %q", iset.Value)
 	}
 }
+
+// --- Slice Y.D: user-defined function call opcode ---
+
+// TestIndirectCallOpcodeIsDistinct guards Y.D's iota slot from
+// colliding with Y.A/Y.B/Y.C additions. A collision would route every
+// user-function call into the wrong evaluator silently.
+func TestIndirectCallOpcodeIsDistinct(t *testing.T) {
+	all := []OpCode{
+		// pre-existing (TestOpCodeRange + Y.A/Y.B/Y.C)
+		OpLitString, OpLitInt, OpLitFloat, OpLitBool,
+		OpPropGet, OpSignalGet, OpSignalSet, OpSignalUpdate,
+		OpAdd, OpSub, OpMul, OpDiv, OpMod, OpNeg,
+		OpEq, OpNeq, OpLt, OpGt, OpLte, OpGte,
+		OpAnd, OpOr, OpNot,
+		OpConcat, OpFormat,
+		OpCond, OpCall, OpIndex, OpLen, OpRange,
+		OpEventGet,
+		OpMap, OpFilter, OpFind, OpSlice, OpAppend, OpContains,
+		OpToUpper, OpToLower, OpTrim, OpSplit, OpJoin, OpReplace,
+		OpSubstring, OpStartsWith, OpEndsWith,
+		OpToString, OpToInt, OpToFloat,
+		OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet,
+		OpFor, OpForRange, OpReturn, OpBreak, OpContinue,
+		OpComposite, OpMapLookup, OpFieldSet, OpIndexSet,
+		// Y.D (new)
+		OpIndirectCall,
+	}
+	seen := map[OpCode]bool{}
+	for _, op := range all {
+		if seen[op] {
+			t.Errorf("OpCode %d appears twice in the opcode ladder", op)
+		}
+		seen[op] = true
+	}
+}
+
+// TestIndirectCallOpcodeShape documents the operand encoding for a
+// user-function call. The callee name lives in Value (the FuncDef
+// lookup key); Operands are the argument expressions in source order.
+func TestIndirectCallOpcodeShape(t *testing.T) {
+	call := Expr{
+		Op:       OpIndirectCall,
+		Value:    "helper",
+		Operands: []ExprID{0, 1, 2}, // three args
+	}
+	if call.Op != OpIndirectCall {
+		t.Errorf("opcode = %d, want OpIndirectCall", call.Op)
+	}
+	if call.Value != "helper" {
+		t.Errorf("OpIndirectCall callee name lives in Value, want %q got %q", "helper", call.Value)
+	}
+	if len(call.Operands) != 3 {
+		t.Errorf("OpIndirectCall Operands carry the call args; got len=%d", len(call.Operands))
+	}
+}
+
+// TestFuncDefShape verifies the FuncDef carrier fields are wired so the
+// lowerer can stash the per-surface registry. Params is the ordered
+// parameter-name list; Body is the OpSeq root for the function's
+// statement body; Results is the count of return values (0 for void,
+// 1 for the common case, 2+ for multi-return).
+func TestFuncDefShape(t *testing.T) {
+	def := FuncDef{
+		Name:    "split",
+		Params:  []string{"n"},
+		Body:    []ExprID{0},
+		Results: 2,
+	}
+	if def.Name != "split" {
+		t.Errorf("FuncDef.Name = %q, want %q", def.Name, "split")
+	}
+	if len(def.Params) != 1 || def.Params[0] != "n" {
+		t.Errorf("FuncDef.Params = %v, want [n]", def.Params)
+	}
+	if len(def.Body) != 1 {
+		t.Errorf("FuncDef.Body should carry the OpSeq root; got len=%d", len(def.Body))
+	}
+	if def.Results != 2 {
+		t.Errorf("FuncDef.Results = %d, want 2", def.Results)
+	}
+}
+
+// TestProgramFuncsField verifies the Program.Funcs slice serializes
+// round-trip through JSON without dropping FuncDef metadata. This is
+// the carrier that ferries a surface's user-helpers to the VM.
+func TestProgramFuncsField(t *testing.T) {
+	p := Program{
+		Name: "TestSurface",
+		Funcs: []FuncDef{
+			{Name: "greet", Params: nil, Body: []ExprID{0}, Results: 1},
+			{Name: "split", Params: []string{"n"}, Body: []ExprID{1}, Results: 2},
+		},
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(p2.Funcs) != 2 {
+		t.Fatalf("round-trip len(Funcs) = %d, want 2", len(p2.Funcs))
+	}
+	if p2.Funcs[1].Results != 2 {
+		t.Errorf("round-trip Funcs[1].Results = %d, want 2", p2.Funcs[1].Results)
+	}
+	if len(p2.Funcs[1].Params) != 1 || p2.Funcs[1].Params[0] != "n" {
+		t.Errorf("round-trip Funcs[1].Params = %v, want [n]", p2.Funcs[1].Params)
+	}
+}
+
+// TestProgramMaxCallDepthDefault documents that an unset (zero)
+// MaxCallDepth means "use DefaultMaxCallDepth". The VM reads the field
+// at OpIndirectCall dispatch time; surfaces opt into a deeper stack by
+// raising the value at lowering time.
+func TestProgramMaxCallDepthDefault(t *testing.T) {
+	p := Program{Name: "TestSurface"}
+	if p.MaxCallDepth != 0 {
+		t.Errorf("zero MaxCallDepth = %d, want 0 (sentinel for DefaultMaxCallDepth)", p.MaxCallDepth)
+	}
+	if DefaultMaxCallDepth != 256 {
+		t.Errorf("DefaultMaxCallDepth = %d, want 256", DefaultMaxCallDepth)
+	}
+}

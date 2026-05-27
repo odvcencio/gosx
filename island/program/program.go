@@ -225,7 +225,72 @@ const (
 	// OpFieldSet / OpIndexSet keep evaluating exactly as before.
 	OpFieldSet
 	OpIndexSet
+
+	// User-defined function call (Slice Y.D — AST-compiler initiative).
+	// OpIndirectCall dispatches into a user-function registered on the
+	// containing Program (FuncDef table). The callee name lives in
+	// Value; the call arguments are evaluated left-to-right and bound
+	// to the callee's parameter names in a fresh call frame.
+	//
+	//   Value    — callee function name (the FuncDef.Name).
+	//   Operands — argument expressions, in source order.
+	//
+	// The result is the value returned by the callee. Multi-return
+	// callees materialize their results into an ObjectVal carrier
+	// keyed by the callee's output param names ("__ret_0", "__ret_1",
+	// ...) so the lowerer can bind each LHS via OpIndex reads — same
+	// shape as Slice Y.B's OpMapLookup result. Void callees return
+	// the zero Value of TypeAny.
+	//
+	// **Recursion safety.** The VM enforces a per-evaluation call-stack
+	// depth cap (Program.MaxCallDepth; default 256) so a runaway
+	// recursion records a structured `call_depth_exceeded` diagnostic
+	// instead of stack-overflowing the host. Tunable per Program for
+	// surfaces that genuinely need deeper recursion.
+	//
+	// **Parameter semantics.** Composite params (struct/slice/map) pass
+	// by reference because Value.Fields and Value.Items are map / slice
+	// reference types — the callee's mutations via OpFieldSet /
+	// OpIndexSet land in the caller's storage. This matches Slice Y.C's
+	// in-place mutation contract and explicitly preserves the Y.C
+	// retrospective's "OpFieldSet on parameter-typed receivers already
+	// propagates" guarantee. Scalar params (int/float/bool/string) are
+	// passed by Value-by-value copy — Go's normal scalar semantics.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpIndirectCall keep evaluating exactly as before.
+	OpIndirectCall
 )
+
+// FuncDef defines a user-defined function callable from a handler or
+// from another user function via OpIndirectCall (Slice Y.D). The lowerer
+// (ir/golower/decl.go's pre-pass) walks the surface's top-level FuncDecls
+// and emits one FuncDef per declaration; the VM looks them up by Name
+// when an OpIndirectCall fires.
+//
+// Params is the ordered list of parameter names; the call site evaluates
+// each argument expression and binds it to the corresponding name in the
+// callee's fresh frame. Body is the OpSeq root for the function's
+// statement body, identical in shape to Handler.Body.
+//
+// Results is the count of return values (0 for void, 1 for the common
+// case, 2+ for multi-return like `func split(n int) (int, int)`). The
+// VM uses Results to decide whether to materialize the return as an
+// ObjectVal carrier (Y.B-style) for the lowerer's multi-LHS bindings.
+type FuncDef struct {
+	Name    string   `json:"name"`
+	Params  []string `json:"params"`
+	Body    []ExprID `json:"body"`
+	Results int      `json:"results"`
+}
+
+// DefaultMaxCallDepth is the cap applied when Program.MaxCallDepth is
+// zero. 256 is comfortably below typical Go goroutine stack limits
+// (typically 8MB starting size on 64-bit) yet deep enough that any
+// recursive engine-surface helper a human would write fits within it.
+// Surfaces that genuinely need deeper recursion can raise the cap via
+// Program.MaxCallDepth.
+const DefaultMaxCallDepth = 256
 
 // SurfaceKind identifies the rendering surface a program targets.
 // Carried as a runtime-only field on Program — not serialized.
@@ -285,9 +350,15 @@ type Program struct {
 	Signals     []SignalDef   `json:"signals"`
 	Computeds   []ComputedDef `json:"computeds"`
 	Handlers    []Handler     `json:"handlers"`
+	Funcs       []FuncDef     `json:"funcs,omitempty"` // user-defined helpers (Slice Y.D)
 	StaticMask  []bool        `json:"static_mask"`
 	EngineNodes []EngineNode  `json:"engineNodes,omitempty"` // populated for SurfaceScene3D/Canvas2D
 	Surface     SurfaceKind   `json:"-"`
+
+	// MaxCallDepth caps the OpIndirectCall recursion depth (Slice Y.D).
+	// Zero means "use DefaultMaxCallDepth (256)". Surfaces with
+	// genuinely-deep recursion can raise the value at lowering time.
+	MaxCallDepth int `json:"maxCallDepth,omitempty"`
 }
 
 // Node represents a single node in the island's DOM tree.
