@@ -243,16 +243,30 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 		c.addIssue(call, "method calls on non-package receivers are not supported", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
 	}
-	qualified := pkg + "." + sel.Sel.Name
-	if !isIntrinsic(qualified) {
-		c.addIssue(call, fmt.Sprintf("call to %s is not in the supported intrinsic set", qualified), escapeHatchSuggestion)
-		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
+	// Slice Y.E: discriminate intrinsic vs host call by checking the
+	// receiver against the file's import set. Receivers that aren't
+	// imported packages (`c`, `ctx`, ...) route into OpHostCall;
+	// imported packages stay on the OpCall intrinsic path. This is
+	// also the catch-all for stdlib package names — `math.Sin` is
+	// imported, so it goes through intrinsics; a typo `maht.Sin`
+	// falls through to host dispatch and records a `host_unbound`
+	// diagnostic at evaluation time.
+	if c.isImportedPackage(pkg) {
+		qualified := pkg + "." + sel.Sel.Name
+		if !isIntrinsic(qualified) {
+			c.addIssue(call, fmt.Sprintf("call to %s is not in the supported intrinsic set", qualified), escapeHatchSuggestion)
+			return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
+		}
+		argIDs := make([]program.ExprID, 0, len(call.Args))
+		for _, a := range call.Args {
+			argIDs = append(argIDs, c.lowerExpr(a))
+		}
+		return c.addExpr(program.Expr{Op: program.OpCall, Value: qualified, Operands: argIDs})
 	}
-	argIDs := make([]program.ExprID, 0, len(call.Args))
-	for _, a := range call.Args {
-		argIDs = append(argIDs, c.lowerExpr(a))
-	}
-	return c.addExpr(program.Expr{Op: program.OpCall, Value: qualified, Operands: argIDs})
+	// Receiver is not an imported package — treat as a host method
+	// call. The VM looks up the bound HostReceiver by the receiver
+	// identifier ("c", "ctx", ...) at evaluation time.
+	return c.lowerHostCall(pkg, sel, call.Args)
 }
 
 // lowerIndexExpr emits OpIndex for both slice and map indexing — the

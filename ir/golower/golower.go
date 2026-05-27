@@ -123,6 +123,12 @@ func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error)
 	// (Go allows `func A() { B() }; func B() {}`).
 	ctx.scanUserFuncs(file)
 
+	// Pre-pass (Slice Y.E): record the source-level identifier of
+	// each imported package so lowerCallExpr's selector branch can
+	// tell pkg.Func (intrinsic) apart from receiver.Method (host
+	// dispatch through OpHostCall).
+	ctx.scanImports(file)
+
 	// Two passes:
 	//   1. Hoist package-level var declarations into signal defs so
 	//      function bodies can reference them by name. Init expressions
@@ -170,6 +176,13 @@ type lowerCtx struct {
 	// OpIndirectCall instead of the legacy "calls to user-defined
 	// function" diagnostic.
 	funcs funcRegistry
+
+	// imports holds the source-level identifier of each imported
+	// package in the current file (Slice Y.E). Populated by
+	// scanImports so lowerCallExpr can tell `math.Sin(x)` (intrinsic
+	// dispatch through OpCall) apart from `c.MoveTo(x, y)` (host
+	// receiver dispatch through OpHostCall).
+	imports map[string]bool
 }
 
 // addExpr appends e to the program's expression table and returns the

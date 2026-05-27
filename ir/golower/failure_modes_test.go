@@ -29,7 +29,22 @@ func F() {
 	requireLowerError(t, err, "ADR 0006", 0)
 }
 
-func TestFailureMode_Interface(t *testing.T) {
+// TestFailureMode_Interface_NowHostDispatched documents the Y.E-era
+// behavior shift: pre-Y.E the lowerer rejected every method call on
+// a non-package receiver with "method calls on non-package receivers
+// are not supported." Y.E generalizes that path into OpHostCall (so
+// `c.MoveTo()` and `ctx.PropsInto()` can lower against runtime-bound
+// HostReceivers). The trade is that an interface call now lowers
+// cleanly and only fails at *evaluation* time, recording a
+// `host_unbound` diagnostic when no receiver is bound.
+//
+// The test pins the new contract: lowering succeeds, and the surface
+// bootstrap (or test setup) is responsible for binding the host
+// receiver. Interfaces remain semantically unsupported — there's no
+// way to ship a generic interface-method dispatch through the VM
+// without a separate vtable mechanism — but the lowerer is no longer
+// the gatekeeper.
+func TestFailureMode_Interface_NowHostDispatched(t *testing.T) {
 	src := []byte(`package handlers
 
 type Greeter interface {
@@ -37,8 +52,13 @@ type Greeter interface {
 }
 
 func F(g Greeter) string { return g.Hello() }`)
-	_, err := LowerFile(src)
-	requireLowerError(t, err, "ADR 0006", 0)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("Y.E lowers interface method calls as OpHostCall; got error: %v", err)
+	}
+	if prog == nil {
+		t.Fatal("expected a non-nil Program from successful lowering")
+	}
 }
 
 func TestFailureMode_UnknownIntrinsic(t *testing.T) {
