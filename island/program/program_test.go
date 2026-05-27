@@ -1111,8 +1111,10 @@ func TestCompositeOpcodeIsDistinct(t *testing.T) {
 		OpFor, OpForRange, OpReturn, OpBreak, OpContinue,
 		// Y.A
 		OpComposite,
-		// Y.B (new)
+		// Y.B
 		OpMapLookup,
+		// Y.C (new)
+		OpFieldSet, OpIndexSet,
 	}
 	seen := map[OpCode]bool{}
 	for _, op := range all {
@@ -1179,5 +1181,49 @@ func TestMapLookupOpcodeShape(t *testing.T) {
 	}
 	if len(lookup.Operands) != 2 {
 		t.Errorf("OpMapLookup must carry exactly 2 operands (map, key); got %d", len(lookup.Operands))
+	}
+}
+
+// --- Slice Y.C: LHS selector / indexed-set opcodes ---
+
+// TestFieldSetOpcodeShape documents the operand encoding for
+// `target.<Value> = expr`. Operands[0] is the target expression (which
+// must evaluate to an ObjectVal with a populated Fields map); the
+// field name lives in Value because it's always a compile-time
+// identifier in Go; Operands[1] is the value expression.
+func TestFieldSetOpcodeShape(t *testing.T) {
+	fset := Expr{
+		Op:       OpFieldSet,
+		Value:    "X",
+		Operands: []ExprID{0, 1}, // (target, value)
+	}
+	if fset.Op != OpFieldSet {
+		t.Errorf("opcode = %d, want OpFieldSet", fset.Op)
+	}
+	if fset.Value != "X" {
+		t.Errorf("OpFieldSet field name lives in Value, want %q got %q", "X", fset.Value)
+	}
+	if len(fset.Operands) != 2 {
+		t.Errorf("OpFieldSet must carry exactly 2 operands (target, value); got %d", len(fset.Operands))
+	}
+}
+
+// TestIndexSetOpcodeShape documents the operand encoding for
+// `target[key] = expr`. Operands[0] is the collection, Operands[1] is
+// the key expression (evaluated at runtime — string for maps, int for
+// slices), Operands[2] is the value expression.
+func TestIndexSetOpcodeShape(t *testing.T) {
+	iset := Expr{
+		Op:       OpIndexSet,
+		Operands: []ExprID{0, 1, 2}, // (collection, key, value)
+	}
+	if iset.Op != OpIndexSet {
+		t.Errorf("opcode = %d, want OpIndexSet", iset.Op)
+	}
+	if len(iset.Operands) != 3 {
+		t.Errorf("OpIndexSet must carry exactly 3 operands (collection, key, value); got %d", len(iset.Operands))
+	}
+	if iset.Value != "" {
+		t.Errorf("OpIndexSet Value must stay empty (key lives in Operands[1]); got %q", iset.Value)
 	}
 }

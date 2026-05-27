@@ -186,6 +186,45 @@ const (
 	// Backwards-compatible per ADR 0002 — programs that never emit
 	// OpMapLookup keep evaluating exactly as before.
 	OpMapLookup
+
+	// LHS selector / indexed-set (Slice Y.C — AST-compiler initiative).
+	// Two opcodes that mutate a collection in place so engine-surface
+	// handlers can write through their package-level state:
+	//
+	//   OpFieldSet — `target.<Value> = Operands[1]` where Operands[0]
+	//     evaluates to an ObjectVal. The field name lives in Value
+	//     (it's always a compile-time identifier in Go). The VM looks
+	//     up Operands[0] (an OpLocalGet, an OpIndex, another OpFieldGet
+	//     read — anything that returns a Value with a non-nil Fields
+	//     map) and writes Operands[1]'s evaluated result into
+	//     Fields[Value]. The mutation is in place: since Value.Fields
+	//     is a map (reference), every other Value that aliases the same
+	//     Fields map sees the change.
+	//
+	//   OpIndexSet — `target[Operands[1]] = Operands[2]` where
+	//     Operands[0] is the collection expression. The collection's
+	//     materialized Value is inspected at runtime: ArrayVal (Items
+	//     non-nil) writes Items[int(key)]; ObjectVal (Fields non-nil)
+	//     writes Fields[key.String()]. A non-collection target records
+	//     an `index_set_non_collection` diagnostic and is a no-op so
+	//     the VM stays panic-free.
+	//
+	// **Mutation semantics.** Both opcodes mutate the underlying
+	// map/slice — they do NOT clone. Y.A's exit decision flagged the
+	// copy-on-write vs in-place question for Y.C; in-place won because
+	// (a) graph_surface.go's `gPos[id] = vec2{...}` and
+	// `fx[a.ID] += force` already rely on the map/slice being mutated
+	// by reference, (b) Y.B's range loop already mutates `_item` in
+	// place, and (c) Go's actual value-semantics for struct assignment
+	// surface here as the author's explicit `gVel[n.ID] = v` writeback
+	// in stepLayout, which Y.C lowers as an explicit OpIndexSet — the
+	// Go-level copy already happened on the OpLocalGet read; the
+	// writeback restores the mutated value to the shared collection.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpFieldSet / OpIndexSet keep evaluating exactly as before.
+	OpFieldSet
+	OpIndexSet
 )
 
 // SurfaceKind identifies the rendering surface a program targets.
