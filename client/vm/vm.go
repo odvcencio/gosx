@@ -127,6 +127,9 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 	if value, ok := vm.evalCompositeExpr(e); ok {
 		return value
 	}
+	if value, ok := vm.evalMapLookupExpr(e); ok {
+		return value
+	}
 	vm.recordExprDiagnostic(
 		"unknown_opcode",
 		fmt.Sprintf("unknown island VM opcode %d", e.Op),
@@ -220,6 +223,58 @@ func (vm *VM) compositeMap(e program.Expr) Value {
 		fields[key] = vm.Eval(e.Operands[i+1])
 	}
 	return ObjectVal(fields)
+}
+
+// evalMapLookupExpr dispatches the Slice Y.B two-value map lookup
+// opcode. OpMapLookup mirrors Go's comma-ok form (`v, ok := m[k]`) by
+// returning an ObjectVal with "value" and "ok" fields so the lowerer
+// can extract each binding via two OpIndex reads against the result.
+//
+// Per Y.A's deferred decision point (Tuple vs Object carrier), the
+// ObjectVal route was chosen: it reuses Value.Fields machinery without
+// touching equality, String, JSON, or any of the formatters that would
+// have to learn a new Kind. Y.B exit report documents the trade.
+//
+// The lookup honors map presence semantics:
+//   - key present  → {"value": <stored>, "ok": true}
+//   - key absent   → {"value": <zero Any>, "ok": false}
+//   - non-map LHS  → {"value": <zero Any>, "ok": false} + diagnostic
+func (vm *VM) evalMapLookupExpr(e program.Expr) (Value, bool) {
+	if e.Op != program.OpMapLookup {
+		return Value{}, false
+	}
+	if !vm.requireOperands(e, 2) {
+		return ObjectVal(map[string]Value{
+			"value": ZeroValue(program.TypeAny),
+			"ok":    BoolVal(false),
+		}), true
+	}
+	coll := vm.Eval(e.Operands[0])
+	key := vm.Eval(e.Operands[1]).String()
+	if coll.Fields == nil {
+		// Non-map collection — diagnose and yield the zero/false pair so
+		// downstream OpIndex reads still resolve to safe defaults.
+		vm.recordExprDiagnostic(
+			"map_lookup_non_map",
+			fmt.Sprintf("OpMapLookup target has no Fields map (Value type %d)", coll.Type),
+			e.Op,
+			e.Value,
+		)
+		return ObjectVal(map[string]Value{
+			"value": ZeroValue(program.TypeAny),
+			"ok":    BoolVal(false),
+		}), true
+	}
+	if got, ok := coll.Fields[key]; ok {
+		return ObjectVal(map[string]Value{
+			"value": got,
+			"ok":    BoolVal(true),
+		}), true
+	}
+	return ObjectVal(map[string]Value{
+		"value": ZeroValue(program.TypeAny),
+		"ok":    BoolVal(false),
+	}), true
 }
 
 // evalSequencingExpr dispatches the Slice X.A statement-sequencing opcodes:
