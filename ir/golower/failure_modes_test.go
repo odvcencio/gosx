@@ -52,13 +52,17 @@ func F() { fmt.Println("hi") }`)
 	requireLowerError(t, err, "ADR 0006", 0)
 }
 
-// TestFailureMode_MultiReturnUserFunctionCall verifies Y.B's multi-
-// value assignment dispatch emits a clear, actionable diagnostic for
-// the user-function multi-return form (`a, b := f()`) — pointing at
-// Slice Y.D as the natural follow-up rather than the generic escape
-// hatch. Y.B explicitly defers this to Y.D so the diagnostic must
-// say so.
-func TestFailureMode_MultiReturnUserFunctionCall(t *testing.T) {
+// TestFailureMode_MultiReturnUserFunctionCall_NowSupported is the
+// Y.D-era successor to Y.B's failure-mode test for `a, b := f()`.
+// Y.B explicitly deferred the user-function multi-return form to
+// Slice Y.D; Y.D now lowers it through OpIndirectCall + the
+// `__ret_<i>` ObjectVal carrier so the call resolves cleanly. We
+// keep the test in failure_modes_test.go (rather than relocating to
+// user_fn_calls_test.go) as a permanent regression guard: if the
+// LowerFile call ever starts emitting a Y.D-deferral diagnostic
+// again, this test catches the regression before any handler-level
+// test does.
+func TestFailureMode_MultiReturnUserFunctionCall_NowSupported(t *testing.T) {
 	src := []byte(`package handlers
 
 func screenToWorld(x int, y int) (int, int) { return x, y }
@@ -68,8 +72,9 @@ func F() int {
 	return wx + wy
 }`)
 	_, err := LowerFile(src)
-	requireLowerError(t, err, "Slice Y.D", 0)
-	requireLowerError(t, err, "ADR 0006", 0)
+	if err != nil {
+		t.Fatalf("Y.D should lower multi-return user function calls cleanly, got: %v", err)
+	}
 }
 
 func TestFailureMode_LabeledBreak(t *testing.T) {

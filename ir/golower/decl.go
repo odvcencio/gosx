@@ -38,7 +38,15 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 		return
 	}
 	c.handler = fn.Name.Name
-	defer func() { c.handler = "" }()
+	// Slice Y.D: thread the declared return-value count through so
+	// lowerReturnStmt knows whether to emit the multi-value ObjectVal
+	// carrier or stay on the single-return path.
+	prevResults := c.currentResults
+	c.currentResults = countResults(fn.Type.Results)
+	defer func() {
+		c.handler = ""
+		c.currentResults = prevResults
+	}()
 
 	if fn.Body == nil {
 		// Forward declaration / external linkage — skip silently.

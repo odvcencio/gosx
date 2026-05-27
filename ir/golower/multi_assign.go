@@ -43,13 +43,26 @@ func (c *lowerCtx) lowerMultiAssign(s *ast.AssignStmt) program.ExprID {
 
 	// Pattern A: comma-ok map index. `v, ok := m[k]` — exactly two LHS,
 	// single Rhs that is an *ast.IndexExpr.
-	if len(s.Lhs) == 2 && len(s.Rhs) == 1 {
-		if idx, ok := s.Rhs[0].(*ast.IndexExpr); ok {
+	if len(s.Lhs) >= 2 && len(s.Rhs) == 1 {
+		if idx, ok := s.Rhs[0].(*ast.IndexExpr); ok && len(s.Lhs) == 2 {
 			return c.lowerCommaOkMapIndex(s, idx)
 		}
-		// Single-Rhs multi-Lhs that isn't a map index would be a
-		// multi-return function call — Y.D territory.
-		c.addIssue(s, "multi-value assignment from a function call is not supported (use comma-ok map index, parallel assign, or wait for Slice Y.D)", escapeHatchSuggestion)
+		// Slice Y.D: user-function multi-return — `a, b := f()`.
+		// Resolve the call's callee through the user-function
+		// registry. If it's a registered multi-return user function,
+		// emit OpIndirectCall into a tmp ObjectVal carrier and bind
+		// each LHS via OpIndex against the `__ret_<i>` keys (reusing
+		// Y.B's bindFromTmp helper verbatim per Y.C's handoff note).
+		if call, ok := s.Rhs[0].(*ast.CallExpr); ok {
+			if id, idOK := call.Fun.(*ast.Ident); idOK {
+				if info, regOK := c.lookupUserFunc(id.Name); regOK && info.results == len(s.Lhs) {
+					return c.lowerUserFnMultiReturn(s, call, id.Name)
+				}
+			}
+		}
+		// Anything else (intrinsic multi-return is out of scope for Y.D)
+		// surfaces the legacy diagnostic so the author has a clear pointer.
+		c.addIssue(s, "multi-value assignment from a function call is not supported (use comma-ok map index, parallel assign, or a registered user function)", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpSeq})
 	}
 
@@ -203,4 +216,51 @@ func lhsTarget(e ast.Expr) (string, bool) {
 // statements in the same handler from colliding on their tmp slot.
 func (c *lowerCtx) freshLocal(kind string, pos token.Pos) string {
 	return fmt.Sprintf("__y_b_%s_%d", kind, int(pos))
+}
+
+// freshCallLocal mirrors freshLocal with Y.D's own prefix so the
+// retrospective-friendly bisect-on-tmp-name property survives: a tmp
+// named `__y_d_call_<pos>` is unambiguously a Y.D multi-return
+// carrier, while `__y_b_*` belongs to Y.B. Suggested by Y.C's handoff
+// notes for Y.D.
+func (c *lowerCtx) freshCallLocal(pos token.Pos) string {
+	return fmt.Sprintf("__y_d_call_%d", int(pos))
+}
+
+// lowerUserFnMultiReturn emits the bytecode for `a, b := f()` where f
+// is a registered user function with 2+ returns. The shape:
+//
+//     __tmp := OpIndirectCall(f, args...)   // returns ObjectVal{__ret_0, __ret_1, ...}
+//     a     := __tmp["__ret_0"]              // OpIndex read
+//     b     := __tmp["__ret_1"]              // OpIndex read
+//
+// Reuses Y.B's bindFromTmp helper directly — the key scheme is the
+// only thing that differs from comma-ok lookups. Blank-identifier
+// bindings (`_`) skip the per-LHS bind, matching Y.B's semantics.
+func (c *lowerCtx) lowerUserFnMultiReturn(s *ast.AssignStmt, call *ast.CallExpr, calleeName string) program.ExprID {
+	// Lower the call as a normal OpIndirectCall — same code path as a
+	// single-return user fn, but the VM materializes the multi-value
+	// return as an ObjectVal carrier (FuncDef.Results > 1 triggers
+	// that in lowerReturnStmt → buildReturnCarrier).
+	callID := c.emitIndirectCall(calleeName, call.Args)
+
+	tmpName := c.freshCallLocal(s.Pos())
+
+	var ops []program.ExprID
+	ops = append(ops, c.addExpr(program.Expr{Op: program.OpLocalDecl, Value: tmpName}))
+	ops = append(ops, c.addExpr(program.Expr{
+		Op:       program.OpAssign,
+		Value:    tmpName,
+		Operands: []program.ExprID{callID},
+	}))
+
+	for i, lhs := range s.Lhs {
+		name, isBlank := lhsTarget(lhs)
+		if isBlank {
+			continue
+		}
+		ops = append(ops, c.bindFromTmp(name, tmpName, returnKey(i), s.Tok))
+	}
+
+	return c.addExpr(program.Expr{Op: program.OpSeq, Operands: ops})
 }
