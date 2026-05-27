@@ -48,16 +48,42 @@ func buildLargeSource(lines int) []byte {
 // bench picks up the lowering cost of OpFieldSet / OpIndexSet handlers
 // — the actual shape graph_surface.go uses for state mutations.
 func makeBenchFunc(i int) string {
-	switch i % 4 {
+	switch i % 5 {
 	case 0:
 		return funcPure(i)
 	case 1:
 		return funcLoop(i)
 	case 2:
 		return funcIntrinsic(i)
-	default:
+	case 3:
 		return funcLHS(i)
+	default:
+		return funcUserFn(i)
 	}
+}
+
+// funcUserFn produces a Y.D-shaped handler that exercises the user-
+// function call registry: a helper declared in the same package is
+// called from the handler with multiple arguments and a composite
+// return. Mirrors the `makeNode(id, x, y)` / `screenToWorld(sx, sy)`
+// dispatch shape from graph_surface.go.
+func funcUserFn(i int) string {
+	idx := itoa(i)
+	return `type pt` + idx + ` struct { X, Y float64 }
+
+func makePt` + idx + `(x float64, y float64) pt` + idx + ` {
+	return pt` + idx + `{X: x, Y: y}
+}
+
+func split` + idx + `(n float64) (float64, float64) {
+	return n * 0.5, n * 0.25
+}
+
+func UserFn` + idx + `(n float64) float64 {
+	p := makePt` + idx + `(n, n*2.0)
+	hx, hy := split` + idx + `(n)
+	return p.X + p.Y + hx + hy
+}`
 }
 
 // funcLHS produces a Y.C-shaped handler that exercises both
