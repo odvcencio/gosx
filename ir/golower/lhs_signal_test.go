@@ -132,6 +132,46 @@ func Read() float64 {
 	}
 }
 
+// TestLowerPackageVarMapWriteThenReadVisible pins a subtle contract:
+// after `m["new"] = v`, reading `m["new"]` in the same handler must
+// return v. This sounds obvious but matters because the OpIndexSet
+// path goes through the same Fields map the signal owns, and any
+// stale Value snapshot (e.g., if OpIndex were memoized) would break
+// this. Mirrors the OnPointer-down sequence:
+//
+//   gPos[id] = vec2{wx, wy}
+//   p, ok := gPos[id]   // ok must be true; p must match the inserted value
+func TestLowerPackageVarMapWriteThenReadVisible(t *testing.T) {
+	src := []byte(`package handlers
+
+type vec2 struct {
+	X float64
+	Y float64
+}
+
+var gPos = map[string]vec2{}
+
+func F() float64 {
+	gPos["fresh"] = vec2{X: 7.0, Y: 8.0}
+	p, ok := gPos["fresh"]
+	if !ok {
+		return -1.0
+	}
+	return p.X + p.Y
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	vm.InitSignals(machine, prog)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if got.Num != 15.0 {
+		t.Errorf("F() = %f, want 15.0 (7 + 8)", got.Num)
+	}
+}
+
 // TestLowerPackageVarSliceInForLoop exercises a tight for-loop that
 // repeatedly mutates a package-level slice signal — the canonical
 // stepLayout repulsion-accumulator shape.
