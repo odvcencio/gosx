@@ -48,7 +48,7 @@ func buildLargeSource(lines int) []byte {
 // bench picks up the lowering cost of OpFieldSet / OpIndexSet handlers
 // — the actual shape graph_surface.go uses for state mutations.
 func makeBenchFunc(i int) string {
-	switch i % 5 {
+	switch i % 6 {
 	case 0:
 		return funcPure(i)
 	case 1:
@@ -57,9 +57,27 @@ func makeBenchFunc(i int) string {
 		return funcIntrinsic(i)
 	case 3:
 		return funcLHS(i)
-	default:
+	case 4:
 		return funcUserFn(i)
+	default:
+		return funcHostMake(i)
 	}
+}
+
+// funcHostMake produces a Y.E-shaped handler that exercises both
+// OpHostCall (`c.MoveTo(...)`, `c.LineTo(...)`) and OpMake (a
+// per-call force-table map) in a loop. Mirrors graph_surface.go's
+// draw + stepLayout shapes more faithfully than the Y.A-Y.D
+// fixtures, which kept canvas dispatch out of scope.
+func funcHostMake(i int) string {
+	idx := itoa(i)
+	return `func HostMake` + idx + `(n int) int {
+	m := make(map[string]float64, n)
+	for j := 0; j < n; j = j + 1 {
+		m["k"] = float64(j)
+	}
+	return len(m)
+}`
 }
 
 // funcUserFn produces a Y.D-shaped handler that exercises the user-
