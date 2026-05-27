@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,7 +19,6 @@ import (
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
-	"m31labs.dev/gosx/internal/buildsurface"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
@@ -241,7 +239,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	fmt.Printf("  Sources: %d .gsx files\n", len(gsxFiles))
 
 	var islandProgs []*program.Program
-	var surfaceProgs []*ir.SurfaceProgram
 
 	for _, file := range gsxFiles {
 		source, err := os.ReadFile(file)
@@ -261,13 +258,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 					return fmt.Errorf("lower island %s in %s: %w", comp.Name, file, err)
 				}
 				islandProgs = append(islandProgs, island)
-			}
-			if comp.EngineSurface {
-				sp, err := ir.LowerEngineSurface(irProg, i)
-				if err != nil {
-					return fmt.Errorf("lower surface %s in %s: %w", comp.Name, file, err)
-				}
-				surfaceProgs = append(surfaceProgs, sp)
 			}
 		}
 	}
@@ -547,45 +537,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		)
 	}
 
-	// ── Tier 3: Engine surface WASM modules (content-hashed) ─────────────
-
-	if len(surfaceProgs) > 0 {
-		fmt.Println("\n  Engine Surfaces:")
-		surfaceEngineDir := filepath.Join(distDir, "assets", "engines")
-		if err := os.MkdirAll(surfaceEngineDir, 0755); err != nil {
-			return fmt.Errorf("create engine surface dir: %w", err)
-		}
-		surfaceCacheDir := filepath.Join(dir, ".gosx", "cache", "surfaces")
-		for _, sp := range surfaceProgs {
-			out, hash, err := buildsurface.Build(context.Background(), sp, buildsurface.Options{
-				Compiler:   buildsurface.CompilerTinyGo,
-				CacheDir:   surfaceCacheDir,
-				OutputDir:  surfaceEngineDir,
-				GoSXRoot:   gosxRoot,
-				ProjectDir: dir,
-			})
-			if err != nil {
-				return fmt.Errorf("build surface %s: %w", sp.Name, err)
-			}
-			info, _ := os.Stat(out)
-			size := int64(0)
-			if info != nil {
-				size = info.Size()
-			}
-			manifest.EngineSurfaces = append(manifest.EngineSurfaces, buildmanifest.EngineSurfaceAsset{
-				Component:     sp.Name,
-				Capabilities:  sp.Capabilities,
-				Compiler:      "tinygo",
-				PropsTypeName: sp.PropsTypeName,
-				HashedAsset: buildmanifest.HashedAsset{
-					File: filepath.Base(out),
-					Hash: hash,
-					Size: size,
-				},
-			})
-			fmt.Printf("    %s → %s (%d bytes, tinygo)\n", sp.Name, filepath.Base(out), size)
-		}
-	}
+	// ── Engine surface bytecode lowering ────────────────────────────────
+	//
+	// Engine surfaces no longer produce a per-component WASM artifact at
+	// build time. They lower to shared-VM bytecode at server start via
+	// engine/surface.Discover, which writes JSON programs into
+	// .gosx/cache/surfaces/. See ADR 0003 (supersedure) and ADR 0005
+	// (buildsurface deletion) in the m31labs-gosx hyphae space.
 
 	// ── Build manifest ──────────────────────────────────────────────────
 
