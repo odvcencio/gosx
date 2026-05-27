@@ -1082,3 +1082,80 @@ func TestSequencingOpcodeShapes(t *testing.T) {
 		t.Errorf("OpLocalSet shape unexpected: %+v", set)
 	}
 }
+
+// --- Slice Y.A: composite literal opcode ---
+
+// TestCompositeOpcodeIsDistinct guards the new Y.A iota slot against
+// accidental collision with the X.A/X.B/X.C additions or any prior
+// opcode. OpComposite is the single new opcode introduced by Slice Y.A
+// (composite-literal lowering); a collision would silently corrupt
+// every struct/slice/map literal in lowered handlers.
+func TestCompositeOpcodeIsDistinct(t *testing.T) {
+	all := []OpCode{
+		// pre-existing (TestOpCodeRange)
+		OpLitString, OpLitInt, OpLitFloat, OpLitBool,
+		OpPropGet, OpSignalGet, OpSignalSet, OpSignalUpdate,
+		OpAdd, OpSub, OpMul, OpDiv, OpMod, OpNeg,
+		OpEq, OpNeq, OpLt, OpGt, OpLte, OpGte,
+		OpAnd, OpOr, OpNot,
+		OpConcat, OpFormat,
+		OpCond, OpCall, OpIndex, OpLen, OpRange,
+		OpEventGet,
+		OpMap, OpFilter, OpFind, OpSlice, OpAppend, OpContains,
+		OpToUpper, OpToLower, OpTrim, OpSplit, OpJoin, OpReplace,
+		OpSubstring, OpStartsWith, OpEndsWith,
+		OpToString, OpToInt, OpToFloat,
+		// X.A
+		OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet,
+		// X.C
+		OpFor, OpForRange, OpReturn, OpBreak, OpContinue,
+		// Y.A (new)
+		OpComposite,
+	}
+	seen := map[OpCode]bool{}
+	for _, op := range all {
+		if seen[op] {
+			t.Errorf("OpCode %d appears twice in the opcode ladder", op)
+		}
+		seen[op] = true
+	}
+}
+
+// TestCompositeOpcodeShape documents the operand encoding for the three
+// kinds of composite literal (struct/slice/map). Operand pairs are
+// (keyExpr, valueExpr); the lowerer is responsible for pre-emitting the
+// keys as OpLitString / OpLitInt as appropriate.
+func TestCompositeOpcodeShape(t *testing.T) {
+	// struct: Value = "struct:vec2"; operands are (keyExpr, valueExpr) pairs.
+	structLit := Expr{
+		Op:       OpComposite,
+		Value:    "struct:vec2",
+		Operands: []ExprID{0, 1, 2, 3}, // ("X", x), ("Y", y)
+	}
+	if structLit.Value != "struct:vec2" {
+		t.Errorf("struct Value = %q, want %q", structLit.Value, "struct:vec2")
+	}
+	if len(structLit.Operands)%2 != 0 {
+		t.Errorf("struct operand count %d must be even (key/value pairs)", len(structLit.Operands))
+	}
+
+	// slice: Value = "slice"; operands are (indexExpr, valueExpr) pairs.
+	sliceLit := Expr{
+		Op:       OpComposite,
+		Value:    "slice",
+		Operands: []ExprID{0, 1, 2, 3, 4, 5}, // (0, a), (1, b), (2, c)
+	}
+	if sliceLit.Value != "slice" {
+		t.Errorf("slice Value = %q, want %q", sliceLit.Value, "slice")
+	}
+
+	// map: Value = "map"; operands are arbitrary (keyExpr, valueExpr) pairs.
+	mapLit := Expr{
+		Op:       OpComposite,
+		Value:    "map",
+		Operands: []ExprID{0, 1, 2, 3}, // ("x", 1.5), ("y", 2.5)
+	}
+	if mapLit.Value != "map" {
+		t.Errorf("map Value = %q, want %q", mapLit.Value, "map")
+	}
+}
