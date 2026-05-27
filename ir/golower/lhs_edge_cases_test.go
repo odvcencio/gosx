@@ -154,6 +154,43 @@ func F() float64 {
 	}
 }
 
+// TestLowerDeeplyNestedFieldSet exercises three-level chained selector
+// LHS (`outer.middle.inner.X = v`). The lowering recipe is recursive:
+// OpFieldSet's target is OpIndex over OpIndex over OpLocalGet, all of
+// which yield Values whose Fields maps share the underlying storage.
+// The terminal OpFieldSet writes through to the innermost map.
+func TestLowerDeeplyNestedFieldSet(t *testing.T) {
+	src := []byte(`package handlers
+
+type leaf struct {
+	X float64
+}
+
+type mid struct {
+	Inner leaf
+}
+
+type root struct {
+	Mid mid
+}
+
+func F() float64 {
+	r := root{Mid: mid{Inner: leaf{X: 1.0}}}
+	r.Mid.Inner.X = 42.0
+	return r.Mid.Inner.X
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if got.Num != 42.0 {
+		t.Errorf("F() = %f, want 42.0", got.Num)
+	}
+}
+
 // TestLowerNestedMapAssign exercises map-of-map LHS:
 // `nested[k1][k2] = v` → OpIndexSet on the inner map. This isn't a
 // graph_surface.go pattern but it's the natural extension of the
