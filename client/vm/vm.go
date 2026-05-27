@@ -148,6 +148,9 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 	if value, ok := vm.evalIndirectCallExpr(e); ok {
 		return value
 	}
+	if value, ok := vm.evalMakeExpr(e); ok {
+		return value
+	}
 	vm.recordExprDiagnostic(
 		"unknown_opcode",
 		fmt.Sprintf("unknown island VM opcode %d", e.Op),
