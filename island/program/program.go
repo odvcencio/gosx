@@ -282,6 +282,38 @@ const (
 	// Backwards-compatible per ADR 0002 — programs that never emit
 	// OpMake keep evaluating exactly as before.
 	OpMake
+
+	// Host-receiver method call (Slice Y.E — AST-compiler initiative).
+	// OpHostCall dispatches a method call into a runtime-bound host
+	// receiver — the engine-surface canvas, the surface context, or any
+	// other host-side object whose methods cannot be expressed as a pure
+	// Value transformation. Bound by the surface bootstrap via
+	// vm.BindHost(name, receiver).
+	//
+	//   Value    — qualified call target "<receiver>.<MethodName>"
+	//              (e.g., "c.MoveTo", "ctx.PropsInto"). The receiver
+	//              prefix is the source-level identifier the author
+	//              wrote, NOT a type name — multiple surfaces may bind
+	//              the same identifier to different concrete objects.
+	//   Operands — argument expressions, in source order, evaluated by
+	//              the VM left-to-right before the host call fires.
+	//
+	// The result is whatever the host receiver returns, as a Value. Void
+	// methods return the zero Value of TypeAny. Errors from the host
+	// receiver surface as `host_call_error` diagnostics — the VM stays
+	// panic-free.
+	//
+	// Unlike OpCall (stdlib intrinsics — global registry, pure
+	// functions), OpHostCall reaches into per-VM state: the bound
+	// receivers live on the VM struct, so each engine-surface instance
+	// has its own canvas/context bindings. This is the cleanest place
+	// to land the "host-supplied capability dispatch" surface that the
+	// engine-surface authoring contract has implicitly assumed since
+	// X.A but never had a first-class opcode for.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpHostCall keep evaluating exactly as before.
+	OpHostCall
 )
 
 // FuncDef defines a user-defined function callable from a handler or

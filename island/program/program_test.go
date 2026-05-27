@@ -1255,6 +1255,7 @@ func TestIndirectCallOpcodeIsDistinct(t *testing.T) {
 		OpIndirectCall,
 		// Y.E (new)
 		OpMake,
+		OpHostCall,
 	}
 	seen := map[OpCode]bool{}
 	for _, op := range all {
@@ -1378,5 +1379,27 @@ func TestMakeOpcodeShape(t *testing.T) {
 	}
 	if len(sl.Operands) != 1 || sl.Operands[0] != 42 {
 		t.Errorf("OpMake(slice) Operands[0] carries the length expr, got %v", sl.Operands)
+	}
+}
+
+// TestHostCallOpcodeShape documents the operand encoding for OpHostCall
+// (Slice Y.E). The Value carries the qualified call target
+// "<receiver>.<MethodName>" — the receiver prefix is the source-level
+// identifier, NOT the receiver's type. Operands are the call args in
+// source order.
+func TestHostCallOpcodeShape(t *testing.T) {
+	call := Expr{
+		Op:       OpHostCall,
+		Value:    "c.MoveTo",
+		Operands: []ExprID{0, 1},
+	}
+	if call.Op != OpHostCall {
+		t.Errorf("opcode = %d, want OpHostCall", call.Op)
+	}
+	if call.Value != "c.MoveTo" {
+		t.Errorf("OpHostCall qualified target lives in Value, got %q", call.Value)
+	}
+	if len(call.Operands) != 2 {
+		t.Errorf("OpHostCall Operands carry the args; got len=%d", len(call.Operands))
 	}
 }
