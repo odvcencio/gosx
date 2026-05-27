@@ -15,9 +15,11 @@ type VM struct {
 	props          map[string]Value
 	signals        map[string]*signal.Signal[Value]
 	exprs          []program.Expr
-	eventData      map[string]string // current event data (set during handler dispatch)
-	frame          *frame            // locals table for the current handler evaluation (X.A)
-	forCap         int               // per-loop iteration cap (X.C); 0 → default
+	eventData      map[string]string    // current event data (set during handler dispatch)
+	frame          *frame               // locals table for the current handler evaluation (X.A)
+	forCap         int                  // per-loop iteration cap (X.C); 0 → default
+	funcs          map[string]*program.FuncDef // user-function registry (Y.D)
+	callDepth      int                  // current OpIndirectCall recursion depth (Y.D)
 	diagnostics    []Diagnostic
 	diagnosticSink DiagnosticSink
 }
@@ -63,6 +65,16 @@ func NewVM(prog *program.Program, props map[string]Value) *VM {
 		return vm
 	}
 	vm.exprs = prog.Exprs
+	// Slice Y.D: build a fast funcDef lookup so OpIndirectCall is one
+	// map probe. Programs without user functions (Funcs nil/empty)
+	// pay nothing — the map stays nil and the dispatcher records the
+	// missing-callee diagnostic.
+	if len(prog.Funcs) > 0 {
+		vm.funcs = make(map[string]*program.FuncDef, len(prog.Funcs))
+		for i := range prog.Funcs {
+			vm.funcs[prog.Funcs[i].Name] = &prog.Funcs[i]
+		}
+	}
 	return vm
 }
 
@@ -131,6 +143,9 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 		return value
 	}
 	if value, ok := vm.evalLHSSetExpr(e); ok {
+		return value
+	}
+	if value, ok := vm.evalIndirectCallExpr(e); ok {
 		return value
 	}
 	vm.recordExprDiagnostic(
