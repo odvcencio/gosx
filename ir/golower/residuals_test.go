@@ -151,6 +151,52 @@ func F(s string) int {
 	}
 }
 
+// TestLowerAddressOfDropsThrough verifies that `&x` lowers to the
+// underlying expression (composite reference semantics already
+// propagate through Value.Fields/Items per Y.C/Y.D; the explicit `&`
+// has no additional opcode-level meaning in the supported subset).
+// Mirrors graph_surface.go's Mount handler: `ctx.PropsInto(&props)`.
+func TestLowerAddressOfDropsThrough(t *testing.T) {
+	src := []byte(`package handlers
+
+func F(x float64) float64 {
+	p := &x
+	return *p
+}`)
+	// We use `*p` here only to check the read side eventually — but
+	// the supported subset doesn't have * (dereference) either, so
+	// the test focuses on the &x side: lowering must succeed AND
+	// emit a Program; the dereference is rejected as a separate
+	// diagnostic. To keep the test simple we use &x as an arg to a
+	// host call instead.
+	_ = src
+
+	src2 := []byte(`package handlers
+
+import "m31labs.dev/gosx/engine/surface"
+
+func F(ctx *surface.Context, x float64) {
+	ctx.Set(&x)
+}`)
+	prog, err := LowerFile(src2)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	rec := vm.NewHostRecorder()
+	machine := vm.NewVM(prog, map[string]vm.Value{
+		"x": vm.FloatVal(7.5),
+	})
+	machine.BindHost("ctx", rec)
+	machine.EvalWithFrame(handler.Body[0])
+	if len(rec.Calls) != 1 || rec.Calls[0].Method != "Set" {
+		t.Fatalf("expected one Set call; got %+v", rec.Calls)
+	}
+	if rec.Calls[0].Args[0].Num != 7.5 {
+		t.Errorf("&x lowered arg = %f, want 7.5 (underlying value)", rec.Calls[0].Args[0].Num)
+	}
+}
+
 // TestLowerArrayTypeCastThenSliceThenString verifies the full
 // graph_surface.go pattern: `string([]rune(label)[:22]) + "…"`.
 func TestLowerArrayTypeCastThenSliceThenString(t *testing.T) {

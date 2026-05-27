@@ -131,6 +131,18 @@ func (c *lowerCtx) lowerUnaryExpr(u *ast.UnaryExpr) program.ExprID {
 	case token.NOT:
 		argID := c.lowerExpr(u.X)
 		return c.addExpr(program.Expr{Op: program.OpNot, Operands: []program.ExprID{argID}})
+	case token.AND:
+		// Slice Y.E.3: `&x` (address-of). The VM has no pointer
+		// concept — composite Values (struct/slice/map) are already
+		// reference-shared because Value.Fields/Items are Go reference
+		// types (Y.C / Y.D contract). For scalar `x`, taking the
+		// address has no meaningful semantics in the supported subset.
+		// We honor the Go author's intent (pass by reference) by
+		// simply lowering to the underlying Value — host receivers and
+		// user functions both already propagate composite mutations
+		// through this path. Documented as ADR-style decision in
+		// Y.E's retrospective.
+		return c.lowerExpr(u.X)
 	default:
 		c.addIssue(u, fmt.Sprintf("unsupported unary operator %s", u.Op), escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
