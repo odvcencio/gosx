@@ -207,6 +207,38 @@ func F() float64 {
 	}
 }
 
+// TestLowerRangeMapKeyAndValue verifies that `for k, v := range m`
+// binds the map key (not an integer index) when iterating a map. The
+// VM provides "_key" alongside "_item" for maps so the lowerer's
+// range alias must distinguish slice (k = _index) from map (k = _key).
+// Y.B picks _key when the range target's runtime kind is a map; the
+// lowerer can't know in advance so it emits a dual-alias that prefers
+// _key when present and falls back to _index otherwise.
+func TestLowerRangeMapKeyAndValue(t *testing.T) {
+	src := []byte(`package handlers
+
+func F() string {
+	m := map[string]float64{"alpha": 1.0, "beta": 2.0}
+	out := ""
+	for k, v := range m {
+		if v > 1.5 {
+			out = k
+		}
+	}
+	return out
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if got.Str != "beta" {
+		t.Errorf("F() = %q, want %q", got.Str, "beta")
+	}
+}
+
 // TestLowerIfInitTwoValueMap verifies the canonical existence-check
 // pattern `if _, ok := m[k]; !ok { ... }` lowers cleanly. The Init
 // clause is itself a multi-value assignment that the lowerer must
