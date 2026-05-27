@@ -20,6 +20,7 @@ type VM struct {
 	forCap         int                  // per-loop iteration cap (X.C); 0 → default
 	funcs          map[string]*program.FuncDef // user-function registry (Y.D)
 	callDepth      int                  // current OpIndirectCall recursion depth (Y.D)
+	hosts          map[string]HostReceiver // per-VM host-receiver bindings for OpHostCall (Y.E)
 	diagnostics    []Diagnostic
 	diagnosticSink DiagnosticSink
 }
@@ -149,6 +150,9 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 		return value
 	}
 	if value, ok := vm.evalMakeExpr(e); ok {
+		return value
+	}
+	if value, ok := vm.evalHostCallExpr(e); ok {
 		return value
 	}
 	vm.recordExprDiagnostic(
