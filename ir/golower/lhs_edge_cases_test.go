@@ -130,6 +130,38 @@ func F() {
 	// arrangement.
 }
 
+// TestLowerSliceSelfShiftAssign exercises the read-write-from-same-
+// slice idiom (`s[i] = s[i+1]`). The RHS reads through OpIndex while
+// the LHS writes through OpIndexSet — both touch the same Items slice
+// but at different indices, so the write should not corrupt the read.
+// In our implementation this is trivially correct because lowerExpr
+// reads BEFORE the OpIndexSet mutates, but pinning the contract here
+// prevents a future "optimize evaluation order" refactor from
+// regressing the semantics.
+func TestLowerSliceSelfShiftAssign(t *testing.T) {
+	src := []byte(`package handlers
+
+func F() float64 {
+	s := []float64{1.0, 2.0, 3.0, 4.0, 5.0}
+	for i := 0; i < 4; i = i + 1 {
+		s[i] = s[i+1]
+	}
+	// After shifting left by one: [2,3,4,5,5].
+	return s[0] + s[1] + s[2] + s[3] + s[4]
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	// 2 + 3 + 4 + 5 + 5 = 19.
+	if got.Num != 19.0 {
+		t.Errorf("F() = %f, want 19.0", got.Num)
+	}
+}
+
 // TestLowerSliceIndexExprKey exercises an OpIndexSet where the key
 // is itself a runtime expression (a local read), not a literal.
 // Mirrors `fx[n.ID] = 0` shape where the key is computed.
