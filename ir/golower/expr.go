@@ -50,6 +50,8 @@ func (c *lowerCtx) lowerExpr(e ast.Expr) program.ExprID {
 		return c.lowerCallExpr(ex)
 	case *ast.IndexExpr:
 		return c.lowerIndexExpr(ex)
+	case *ast.SliceExpr:
+		return c.lowerSliceExpr(ex)
 	case *ast.CompositeLit:
 		return c.lowerCompositeLit(ex)
 	default:

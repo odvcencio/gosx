@@ -810,6 +810,16 @@ func (vm *VM) sliceValue(e program.Expr) Value {
 		coll := vm.Eval(e.Operands[0])
 		start := int(vm.Eval(e.Operands[1]).Num)
 		end := int(vm.Eval(e.Operands[2]).Num)
+		// Slice Y.E.3: OpSlice now dispatches on the runtime collection
+		// kind so the lowerer's *ast.SliceExpr handler can emit a single
+		// opcode without knowing whether the source operand is a slice
+		// or a string. String operands route through SubstringVal;
+		// rune-array operands (produced by Y.E's `[]rune(s)` cast)
+		// route through the existing SliceVal path because they carry
+		// Items, not Str.
+		if coll.Items == nil && coll.Str != "" {
+			return coll.SubstringVal(start, end)
+		}
 		return coll.SliceVal(start, end)
 	}
 	return ArrayVal(nil)
