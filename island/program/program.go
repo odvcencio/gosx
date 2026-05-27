@@ -314,6 +314,25 @@ const (
 	// Backwards-compatible per ADR 0002 — programs that never emit
 	// OpHostCall keep evaluating exactly as before.
 	OpHostCall
+
+	// String-to-rune-array conversion (Slice Y.E.3 — AST-compiler
+	// initiative). OpToRunes corresponds to Go's `[]rune(s)`
+	// conversion. The operand is a string Value; the result is an
+	// ArrayVal whose Items are one-rune StringVals (each containing
+	// exactly one UTF-8-encoded rune).
+	//
+	// This lets graph_surface.go's label truncation pattern
+	// (`len([]rune(label))` + `string([]rune(label)[:22])`) lower
+	// cleanly: OpLen on the resulting array gives the rune count,
+	// OpSlice gives a rune subsequence, and OpToString concatenates
+	// it back into a string (via the Y.E.3 ToStringVal join path).
+	//
+	//   Operands — Operands[0] evaluates to the source string.
+	//   Value    — unused.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpToRunes keep evaluating exactly as before.
+	OpToRunes
 )
 
 // FuncDef defines a user-defined function callable from a handler or

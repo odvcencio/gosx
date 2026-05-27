@@ -1256,6 +1256,7 @@ func TestIndirectCallOpcodeIsDistinct(t *testing.T) {
 		// Y.E (new)
 		OpMake,
 		OpHostCall,
+		OpToRunes,
 	}
 	seen := map[OpCode]bool{}
 	for _, op := range all {

@@ -234,6 +234,17 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 		}
 	}
 
+	// Slice Y.E.3: ArrayType "call" — Go's `[]T(x)` conversion syntax.
+	// The canonical case from graph_surface.go is `[]rune(label)`, used
+	// to rune-count + truncate a label string. The lowerer treats it as
+	// a runtime string-to-rune-array conversion via OpToRunes; the VM
+	// produces an ArrayVal whose Items are one-rune StringVals so
+	// subsequent OpLen returns the rune count and OpSlice returns a
+	// rune subsequence (which `string(...)` re-collapses).
+	if at, ok := call.Fun.(*ast.ArrayType); ok {
+		return c.lowerArrayTypeCast(at, call)
+	}
+
 	// Selector: pkg.Func or obj.Method.
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {

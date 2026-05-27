@@ -678,6 +678,21 @@ func (vm *VM) evalConversionExpr(e program.Expr) (Value, bool) {
 		return vm.intUnary(e, Value.ToIntVal), true
 	case program.OpToFloat:
 		return vm.floatUnary(e, Value.ToFloatVal), true
+	case program.OpToRunes:
+		// Slice Y.E.3: `[]rune(s)` / `[]byte(s)` — convert a string
+		// into an ArrayVal whose Items are one-rune StringVals. Reading
+		// len() returns the rune count; slicing returns a rune
+		// subsequence; OpToString concatenates back to a string via
+		// the ToStringVal join path.
+		if !vm.requireOperands(e, 1) {
+			return ArrayVal(nil), true
+		}
+		src := vm.Eval(e.Operands[0]).Str
+		items := make([]Value, 0, len(src))
+		for _, r := range src {
+			items = append(items, StringVal(string(r)))
+		}
+		return ArrayVal(items), true
 	default:
 		return Value{}, false
 	}
