@@ -1,6 +1,6 @@
-// Slice X.D tests: confirm Discover routes annotation-free surfaces
-// through the bytecode lowering path and surface=wasm surfaces through
-// the legacy WASM path, with escape-hatch policy enforcement.
+// Confirm Discover correctly detects (and rejects) the obsolete
+// `//gosx:engine surface=wasm` escape-hatch annotation after the
+// buildsurface deletion (ADR 0005).
 
 package surface
 
@@ -8,52 +8,38 @@ import (
 	"testing"
 )
 
-func TestScanSurfaceAnnotationDefaultsToBytecode(t *testing.T) {
-	src := []byte(`//gosx:engine surface
-//gosx:caps canvas
-func Foo() {}
-`)
-	got := scanSurfaceAnnotation(src)
-	if got.backend != backendBytecode {
-		t.Errorf("backend = %v, want bytecode", got.backend)
-	}
-	if got.line != 1 {
-		t.Errorf("line = %d, want 1", got.line)
-	}
-}
-
-func TestScanSurfaceAnnotationDetectsWASM(t *testing.T) {
+func TestHasWASMEscapeHatchDetectsCanonicalForm(t *testing.T) {
 	src := []byte(`// header
 //gosx:engine surface=wasm
 //gosx:caps canvas
 `)
-	got := scanSurfaceAnnotation(src)
-	if got.backend != backendWASM {
-		t.Errorf("backend = %v, want WASM", got.backend)
-	}
-	if got.line != 2 {
-		t.Errorf("line = %d, want 2", got.line)
+	if !hasWASMEscapeHatch(src) {
+		t.Errorf("expected escape-hatch annotation to be detected")
 	}
 }
 
-func TestScanSurfaceAnnotationDetectsSpaceWASM(t *testing.T) {
-	// Tolerate `//gosx:engine surface wasm` (space-separated).
+func TestHasWASMEscapeHatchDetectsSpaceForm(t *testing.T) {
 	src := []byte(`//gosx:engine surface wasm`)
-	got := scanSurfaceAnnotation(src)
-	if got.backend != backendWASM {
-		t.Errorf("backend = %v, want WASM", got.backend)
+	if !hasWASMEscapeHatch(src) {
+		t.Errorf("expected space-separated escape-hatch annotation to be detected")
 	}
 }
 
-func TestScanSurfaceAnnotationMissingAnnotation(t *testing.T) {
+func TestHasWASMEscapeHatchIgnoresPlainEngineAnnotation(t *testing.T) {
+	src := []byte(`//gosx:engine surface
+//gosx:caps canvas
+func Foo() {}
+`)
+	if hasWASMEscapeHatch(src) {
+		t.Errorf("plain //gosx:engine surface should NOT trigger escape-hatch detection")
+	}
+}
+
+func TestHasWASMEscapeHatchIgnoresMissingAnnotation(t *testing.T) {
 	src := []byte(`// header only
 func Foo() {}
 `)
-	got := scanSurfaceAnnotation(src)
-	if got.backend != backendBytecode {
-		t.Errorf("backend = %v, want bytecode (default)", got.backend)
-	}
-	if got.line != 0 {
-		t.Errorf("line = %d, want 0 (no annotation)", got.line)
+	if hasWASMEscapeHatch(src) {
+		t.Errorf("absence of annotation should NOT trigger escape-hatch detection")
 	}
 }

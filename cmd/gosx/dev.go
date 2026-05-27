@@ -18,7 +18,6 @@ import (
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/dev"
 	"m31labs.dev/gosx/env"
-	"m31labs.dev/gosx/internal/buildsurface"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 )
@@ -208,61 +207,9 @@ func prepareDevAssets(dir string) error {
 	if err := stageSidecarCSS(dir, cssDir); err != nil {
 		return err
 	}
-	if err := compileDevSurfaces(dir, buildDir, gosxRoot); err != nil {
-		return err
-	}
-	return nil
-}
-
-func compileDevSurfaces(dir, buildDir, gosxRoot string) error {
-	surfaceEngineDir := filepath.Join(buildDir, "engines")
-	surfaceCacheDir := filepath.Join(dir, ".gosx", "cache", "surfaces")
-
-	var gsxFiles []string
-	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && shouldSkipProjectDir(info.Name()) {
-			return filepath.SkipDir
-		}
-		if strings.HasSuffix(path, ".gsx") {
-			gsxFiles = append(gsxFiles, path)
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("walk gsx files for surfaces: %w", err)
-	}
-
-	for _, file := range gsxFiles {
-		source, err := os.ReadFile(file)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", file, err)
-		}
-		irProg, err := gosx.Compile(source)
-		if err != nil {
-			return fmt.Errorf("compile %s: %w", file, err)
-		}
-		for i, comp := range irProg.Components {
-			if !comp.EngineSurface {
-				continue
-			}
-			sp, err := ir.LowerEngineSurface(irProg, i)
-			if err != nil {
-				return fmt.Errorf("lower surface %s in %s: %w", comp.Name, file, err)
-			}
-			_, _, err = buildsurface.Build(context.Background(), sp, buildsurface.Options{
-				Compiler:   buildsurface.CompilerGo,
-				CacheDir:   surfaceCacheDir,
-				OutputDir:  surfaceEngineDir,
-				GoSXRoot:   gosxRoot,
-				ProjectDir: dir,
-			})
-			if err != nil {
-				return fmt.Errorf("build surface %s: %w", sp.Name, err)
-			}
-		}
-	}
+	// Engine surfaces are no longer pre-compiled in dev. The server-side
+	// engine/surface.Discover lowers them to shared-VM bytecode at start.
+	// See ADR 0003 (supersedure) and ADR 0005 (buildsurface deletion).
 	return nil
 }
 

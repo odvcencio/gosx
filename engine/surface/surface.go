@@ -247,22 +247,19 @@ func (c *Canvas) StartLoop(step func(dt float64)) { c.impl.startLoop(step) }
 // --- Server-side renderer ---
 
 // registryEntry is the in-memory record for a discovered surface component.
+//
+// Every surface lowers to shared-VM bytecode (ADR 0003 / ADR 0005); the
+// legacy per-component WASM fields (wasmURL, stale) were removed when
+// internal/buildsurface was deleted.
 type registryEntry struct {
-	wasmURL      string
 	hash         string
 	propsType    string
 	capabilities []string
 	mountAttrs   map[string]string
-	// stale is true when this entry is serving a prior cached WASM because
-	// the most-recent build failed. The Mount renderer surfaces this to the
-	// client bootstrap via data-gosx-engine-stale="1" (spec §B).
-	stale bool
 
-	// bytecodeURL (Slice X.D) is the path the client bootstrap fetches
-	// shared-VM bytecode from when the surface lowers via ir/golower
-	// instead of internal/buildsurface. When non-empty the bootstrap
-	// hydrates through the shared client WASM's surface reconciler
-	// rather than fetching a per-component WASM module.
+	// bytecodeURL is the path the client bootstrap fetches the shared-VM
+	// bytecode program from. The bootstrap hydrates through the shared
+	// client WASM's surface reconciler.
 	bytecodeURL  string
 	bytecodePath string
 	surfaceKind  program.SurfaceKind
@@ -285,16 +282,20 @@ func NewRenderer(component string) *Renderer {
 }
 
 // Mount emits the <canvas> placeholder node that the client-side bootstrap
-// uses to mount the WASM engine. The returned gosx.Node includes:
+// uses to hydrate the surface through the shared-VM bytecode reconciler.
+// The returned gosx.Node includes:
 //
 //   - data-gosx-engine-component — the component name
-//   - data-gosx-engine-wasm — absolute URL to the compiled WASM file
+//   - data-gosx-engine-bytecode — absolute URL to the shared-VM program JSON
+//   - data-gosx-engine-surface-kind — reconciler discriminator (e.g. canvas2d)
 //   - data-gosx-engine-props — base64-encoded JSON of props
 //   - data-gosx-engine-caps — comma-joined capabilities list
 //   - any static MountAttrs forwarded from the .gsx source
 //
-// If the component has not been discovered, a <canvas> with only the
-// component name attr is returned (safe fallback).
+// If the component has not been discovered, a <canvas> with the component
+// name and data-gosx-engine-status="missing" is returned so the bootstrap
+// can paint a "surface unavailable" placeholder without losing the layout
+// slot.
 func (r *Renderer) Mount(props any) gosx.Node {
 	entry, ok := registry.lookup(r.component)
 
@@ -312,40 +313,15 @@ func (r *Renderer) Mount(props any) gosx.Node {
 		}
 	}
 
-	// Bytecode path (Slice X.D): when the registry entry has a
-	// bytecode URL, emit a data-gosx-engine-bytecode attribute that
-	// the unified bootstrap dispatcher routes through the shared
-	// client WASM. The bytecode path takes precedence over wasmURL
-	// so a surface that lowered cleanly to bytecode never accidentally
-	// reaches the legacy per-component WASM path.
-	if ok && entry.bytecodeURL != "" {
-		propsJSON := encodeProps(props)
-		attrPairs = append(attrPairs,
-			gosx.Attr("data-gosx-engine-bytecode", entry.bytecodeURL),
-			gosx.Attr("data-gosx-engine-surface-kind", entry.surfaceKind.String()),
-			gosx.Attr("data-gosx-engine-props", propsJSON),
-		)
-		if len(entry.capabilities) > 0 {
-			attrPairs = append(attrPairs,
-				gosx.Attr("data-gosx-engine-caps", joinStrings(entry.capabilities, ",")),
-			)
-		}
-		return gosx.El("canvas", gosx.Attrs(attrPairs...))
-	}
-
-	// Defect 4 (spec §D): when the registry entry is missing OR its wasmURL
-	// is empty AND there's no bytecode URL, do NOT emit data-gosx-engine-wasm=""
-	// — that confuses the bootstrap into trying to fetch the empty URL. Emit a
-	// status attribute instead so the bootstrap can paint a "surface
-	// unavailable" placeholder without losing the layout slot.
-	if !ok || entry.wasmURL == "" {
+	if !ok || entry.bytecodeURL == "" {
 		attrPairs = append(attrPairs, gosx.Attr("data-gosx-engine-status", "missing"))
 		return gosx.El("canvas", gosx.Attrs(attrPairs...))
 	}
 
 	propsJSON := encodeProps(props)
 	attrPairs = append(attrPairs,
-		gosx.Attr("data-gosx-engine-wasm", entry.wasmURL),
+		gosx.Attr("data-gosx-engine-bytecode", entry.bytecodeURL),
+		gosx.Attr("data-gosx-engine-surface-kind", entry.surfaceKind.String()),
 		gosx.Attr("data-gosx-engine-props", propsJSON),
 	)
 	if len(entry.capabilities) > 0 {
@@ -353,28 +329,23 @@ func (r *Renderer) Mount(props any) gosx.Node {
 			gosx.Attr("data-gosx-engine-caps", joinStrings(entry.capabilities, ",")),
 		)
 	}
-	// Defect 2 (spec §B): a stale entry is the previous build's WASM; the
-	// bootstrap still mounts it but can render a corner badge so the user
-	// knows the most-recent build failed.
-	if entry.stale {
-		attrPairs = append(attrPairs, gosx.Attr("data-gosx-engine-stale", "1"))
-	}
 
 	return gosx.El("canvas", gosx.Attrs(attrPairs...))
 }
 
-// PageHead returns an optional <link rel="preload"> node for the WASM asset.
-// Compose into the page <head> to start the WASM fetch before the bootstrap runs.
-// Returns an empty fragment if the component has not been discovered.
+// PageHead returns an optional <link rel="preload"> node for the surface
+// bytecode program. Compose into the page <head> to start the fetch
+// before the bootstrap runs. Returns an empty fragment if the component
+// has not been discovered.
 func (r *Renderer) PageHead() gosx.Node {
 	entry, ok := registry.lookup(r.component)
-	if !ok {
+	if !ok || entry.bytecodeURL == "" {
 		return gosx.Fragment()
 	}
 	return gosx.El("link",
 		gosx.Attrs(
 			gosx.Attr("rel", "preload"),
-			gosx.Attr("href", entry.wasmURL),
+			gosx.Attr("href", entry.bytecodeURL),
 			gosx.Attr("as", "fetch"),
 			gosx.Attr("crossorigin", "anonymous"),
 		),

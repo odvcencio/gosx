@@ -1,20 +1,17 @@
 package surface
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	gosx "m31labs.dev/gosx"
-	"m31labs.dev/gosx/internal/buildsurface"
 	"m31labs.dev/gosx/ir"
 )
 
@@ -24,25 +21,16 @@ func defaultNow() time.Time { return time.Now() }
 
 // surfaceManifestEntry is the per-component record written to the JSON manifest.
 //
-// Stale and LastBuildError support the spec §B fallback semantics: when a
-// rebuild fails but a prior good WASM is still on disk, we keep WasmPath/
-// WasmURL/Hash pointing at the cached file, set Stale=true, and record the
-// build error so embedders can surface it.
-//
-// BytecodeURL / BytecodePath / SurfaceKind (Slice X.D) are populated
-// for surfaces that lowered to shared-VM bytecode rather than WASM.
-// WASMPath/WASMURL stay empty in that case — the two paths are
-// mutually exclusive per ADR 0003.
+// BytecodeURL / BytecodePath / SurfaceKind name the shared-VM bytecode
+// program the client bootstrap fetches and hydrates through the shared
+// runtime. The legacy per-component WASM fields are gone — see ADR
+// 0003 (supersedure) and ADR 0005 (buildsurface deletion).
 type surfaceManifestEntry struct {
-	Component      string            `json:"component"`
-	WASMPath       string            `json:"wasmPath,omitempty"`
-	WASMURL        string            `json:"wasmURL,omitempty"`
-	Hash           string            `json:"hash"`
-	PropsType      string            `json:"propsType,omitempty"`
-	Capabilities   []string          `json:"capabilities,omitempty"`
-	MountAttrs     map[string]string `json:"mountAttrs,omitempty"`
-	Stale          bool              `json:"stale,omitempty"`
-	LastBuildError string            `json:"lastBuildError,omitempty"`
+	Component    string            `json:"component"`
+	Hash         string            `json:"hash"`
+	PropsType    string            `json:"propsType,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	MountAttrs   map[string]string `json:"mountAttrs,omitempty"`
 
 	BytecodePath string `json:"bytecodePath,omitempty"`
 	BytecodeURL  string `json:"bytecodeURL,omitempty"`
@@ -59,24 +47,21 @@ type surfaceManifest struct {
 }
 
 // manifestSchemaVersion is the current value of surfaceManifest.Version.
-const manifestSchemaVersion = 1
+const manifestSchemaVersion = 2
 
 // BuildEvent is the kind of structured event passed to a BuildEventHook.
 type BuildEvent int
 
 const (
-	// BuildSuccess is fired after a successful WASM compile for a component.
+	// BuildSuccess is fired after a successful bytecode lower for a component.
 	BuildSuccess BuildEvent = iota
-	// BuildFailure is fired when a compile fails. The Err field on the
+	// BuildFailure is fired when lowering fails. The Err field on the
 	// event payload carries the underlying error.
 	BuildFailure
-	// BuildFailureStaleFallback is fired when a compile fails but a prior
-	// cached WASM survives and is reused.
-	BuildFailureStaleFallback
 )
 
 // BuildEventHook receives notifications about Discover's per-component build
-// outcomes. Embedders may use it to surface stale state in their UI.
+// outcomes.
 type BuildEventHook func(component string, event BuildEvent, err error)
 
 var (
@@ -120,8 +105,8 @@ func ensureHandler() *http.ServeMux {
 	return handlerMux
 }
 
-// Handler returns an http.Handler that serves /gosx/engines/ WASM assets
-// registered by Discover. Compose this into the host app's mux:
+// Handler returns an http.Handler that serves /gosx/engines/ bytecode
+// assets registered by Discover. Compose this into the host app's mux:
 //
 //	mux.Handle("/gosx/engines/", surface.Handler())
 //
@@ -141,8 +126,8 @@ func Handler() http.Handler {
 }
 
 // Discover walks projectRoot looking for *.gsx files, lowers each engine
-// surface component, compiles the corresponding WASM via
-// internal/buildsurface.Build, registers in-memory asset routes, and writes
+// surface component to shared-VM bytecode via ir/golower, registers an
+// in-memory asset route for each, and writes
 // .gosx/cache/surfaces/manifest.json.
 //
 // Discover is idempotent; call it once from server.New() or equivalent.
@@ -150,15 +135,10 @@ func Handler() http.Handler {
 // value to skip discovery entirely (useful in test environments that do not
 // have a real .gsx tree).
 //
-// Integration risks:
-//  1. Chunk C's buildsurface.Build must be implemented before compiled WASM
-//     is available. Until then, Discover logs a warning and continues; the
-//     placeholder node is still rendered but the WASM URL will be empty.
-//  2. Chunk C's JS bootstrap must call globalThis.__gosx_surface_register(name)
-//     with the exact component name registered via runtime.Register, which in
-//     turn comes from the manifest. Any name mismatch will silently fail to mount.
-//  3. The event payload shape documented in runtime/runtime.go must match what
-//     the JS bootstrap emits. See runtime/runtime.go for the canonical table.
+// All surfaces lower through the unified shared-VM bytecode path. The
+// per-component WASM backend (internal/buildsurface) was deleted per
+// ADR 0005; the `surface=wasm` escape hatch (ADR 0006) is no longer
+// recognized and fails the build.
 func Discover(projectRoot string) error {
 	if os.Getenv("GOSX_DISABLE_SURFACE_AUTO") != "" {
 		return nil
@@ -175,22 +155,13 @@ func Discover(projectRoot string) error {
 	}
 
 	cacheDir := filepath.Join(projectRoot, ".gosx", "cache", "surfaces")
-	outputDir := filepath.Join(projectRoot, ".gosx", "cache", "surfaces", "wasm")
 
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return fmt.Errorf("surface.Discover: create cache dir: %w", err)
 	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("surface.Discover: create output dir: %w", err)
-	}
 
 	mux := ensureHandler()
 	manifest := surfaceManifest{Version: manifestSchemaVersion}
-
-	// Read prior manifest so per-component build failures can fall back to
-	// the last-known-good cached WASM (spec §B). A missing or unparseable
-	// prior manifest is treated as "no priors known" — never fatal.
-	priors := loadPreviousManifestByComponent(filepath.Join(cacheDir, "manifest.json"))
 
 	err := filepath.WalkDir(projectRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -207,7 +178,7 @@ func Discover(projectRoot string) error {
 		if !strings.HasSuffix(path, ".gsx") {
 			return nil
 		}
-		return discoverFile(path, cacheDir, outputDir, mux, &manifest, priors)
+		return discoverFile(path, cacheDir, mux, &manifest)
 	})
 	if err != nil {
 		return fmt.Errorf("surface.Discover: walk %s: %w", projectRoot, err)
@@ -219,29 +190,6 @@ func Discover(projectRoot string) error {
 	}
 
 	return nil
-}
-
-// loadPreviousManifestByComponent returns a map of component → prior manifest
-// entry. Returns an empty map on any error (missing file, unparseable JSON,
-// wrong schema). This is intentionally permissive: a corrupt prior manifest
-// must not block Discover.
-func loadPreviousManifestByComponent(path string) map[string]surfaceManifestEntry {
-	out := map[string]surfaceManifestEntry{}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return out
-	}
-	var prev surfaceManifest
-	if err := json.Unmarshal(raw, &prev); err != nil {
-		return out
-	}
-	for _, e := range prev.Surfaces {
-		if e.Component == "" {
-			continue
-		}
-		out[e.Component] = e
-	}
-	return out
 }
 
 // writeManifest serializes m to <cacheDir>/manifest.json with the schema
@@ -261,57 +209,12 @@ func writeManifest(cacheDir string, m *surfaceManifest) error {
 	return nil
 }
 
-// mergeBuildResult takes the freshly attempted build's outcome and either
-// applies it (success) or falls back to a prior entry (failure with a
-// cached WASM still on disk). Returns the entry to write into the manifest
-// and the URL+path pair that should be registered as the serving route.
-//
-// Semantics (spec §B):
-//   - buildErr == nil:                    use fresh entry as-is.
-//   - buildErr != nil, prior with cache:  reuse prior URL/path/hash, set Stale and LastBuildError.
-//   - buildErr != nil, no prior or cache: keep fresh (empty) entry, record LastBuildError.
-func mergeBuildResult(fresh surfaceManifestEntry, prior surfaceManifestEntry, hasPrior bool, buildErr error) (entry surfaceManifestEntry, serveURL, servePath string) {
-	if buildErr == nil {
-		return fresh, fresh.WASMURL, fresh.WASMPath
-	}
-	// Build failed. Try to recover from prior.
-	if hasPrior && prior.WASMPath != "" && prior.WASMURL != "" {
-		if _, statErr := os.Stat(prior.WASMPath); statErr == nil {
-			merged := prior
-			// Refresh non-binary fields from the fresh attempt (capabilities,
-			// propsType, mountAttrs may legitimately change without recompiling).
-			if fresh.PropsType != "" {
-				merged.PropsType = fresh.PropsType
-			}
-			if len(fresh.Capabilities) > 0 {
-				merged.Capabilities = fresh.Capabilities
-			}
-			if len(fresh.MountAttrs) > 0 {
-				merged.MountAttrs = fresh.MountAttrs
-			}
-			merged.Stale = true
-			merged.LastBuildError = buildErr.Error()
-			return merged, merged.WASMURL, merged.WASMPath
-		}
-	}
-	// No usable fallback: record the failure on the empty entry.
-	fresh.LastBuildError = buildErr.Error()
-	return fresh, "", ""
-}
-
-// discoverFile handles a single .gsx file: compiles its surface components,
-// registers routes, and appends manifest entries. priors contains the
-// previous manifest's entries keyed by component name so that build failures
-// can fall back to the last-known-good WASM (spec §B).
-//
-// Slice X.D routes per surface backend (per ADR 0006):
-//   - no `surface=wasm` annotation → bytecode lowering via ir/golower
-//     (LowerToBytecode) — the unified-VM default.
-//   - `//gosx:engine surface=wasm` → per-component WASM build via
-//     internal/buildsurface. The escape-hatch policy
-//     (escape_hatch_policy.go) gates this path: missing gap entry,
-//     stale review, or Studio path fails the build.
-func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manifest *surfaceManifest, priors map[string]surfaceManifestEntry) error {
+// discoverFile handles a single .gsx file: lowers each surface component
+// to bytecode, registers routes, and appends manifest entries. Surfaces
+// carrying the legacy `//gosx:engine surface=wasm` escape-hatch
+// annotation are rejected with a clear error pointing at the deletion
+// ADR — the WASM backend they targeted no longer exists.
+func discoverFile(gszPath, cacheDir string, mux *http.ServeMux, manifest *surfaceManifest) error {
 	src, err := os.ReadFile(gszPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", gszPath, err)
@@ -327,7 +230,16 @@ func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manif
 	// Populate Dir and PackagePath so LowerEngineSurface can read source files.
 	prog.Dir = filepath.Dir(gszPath)
 
-	annotation := scanSurfaceAnnotation(src)
+	if hasWASMEscapeHatch(src) {
+		err := fmt.Errorf(
+			"gosx/surface: %s declares //gosx:engine surface=wasm, which is no longer supported. "+
+				"The per-component WASM backend was removed per ADR 0005 (buildsurface deletion). "+
+				"Remove the `surface=wasm` annotation; surfaces now lower to shared-VM bytecode automatically",
+			gszPath,
+		)
+		fmt.Fprintln(os.Stderr, err)
+		return nil //nolint:nilerr — log + skip, do not fail the whole walk
+	}
 
 	for i, comp := range prog.Components {
 		if !comp.EngineSurface {
@@ -340,24 +252,14 @@ func discoverFile(gszPath, cacheDir, outputDir string, mux *http.ServeMux, manif
 			continue
 		}
 
-		if annotation.backend == backendBytecode {
-			discoverComponentBytecode(sp, gszPath, cacheDir, mux, manifest)
-			continue
-		}
-		// ADR 0006 escape hatch: validate then fall through to WASM build.
-		if err := enforceEscapeHatchPolicy(gszPath, annotation.line); err != nil {
-			fmt.Fprintf(os.Stderr, "gosx/surface: %v\n", err)
-			fireBuildEvent(sp.Name, BuildFailure, err)
-			continue
-		}
-		discoverComponentWASM(sp, cacheDir, outputDir, mux, manifest, priors)
+		discoverComponentBytecode(sp, gszPath, cacheDir, mux, manifest)
 	}
 	return nil
 }
 
-// discoverComponentBytecode runs the X.D bytecode lowering pipeline
-// for one component: golower → JSON cache → manifest entry → http
-// route registration → in-memory registry register.
+// discoverComponentBytecode runs the bytecode lowering pipeline for one
+// component: golower → JSON cache → manifest entry → http route
+// registration → in-memory registry register.
 //
 // Lowering errors are non-fatal at the file level (other components in
 // the same file still get a chance to build) but they do fire a
@@ -404,176 +306,6 @@ func discoverComponentBytecode(sp *ir.SurfaceProgram, gszPath, cacheDir string, 
 	manifest.Surfaces = append(manifest.Surfaces, entry)
 }
 
-// discoverComponentWASM is the legacy per-component WASM build path,
-// preserved unchanged behind the `surface=wasm` escape hatch. See
-// internal/buildsurface for the build pipeline and ADR 0003 for the
-// deprecation timeline.
-func discoverComponentWASM(sp *ir.SurfaceProgram, cacheDir, outputDir string, mux *http.ServeMux, manifest *surfaceManifest, priors map[string]surfaceManifestEntry) {
-	ctx := context.Background()
-	compiler := buildsurface.CompilerTinyGo
-	if reason := tinyGoUnavailableReason(); reason != "" {
-		compiler = buildsurface.CompilerGo
-		fmt.Fprintf(os.Stderr, "gosx/surface: %s; falling back to standard Go (-trimpath -ldflags=-s -w) — WASM will be larger than TinyGo output\n", reason)
-	}
-	wasmPath, hash, buildErr := buildsurface.Build(ctx, sp, buildsurface.Options{
-		Compiler:  compiler,
-		CacheDir:  cacheDir,
-		OutputDir: outputDir,
-	})
-
-	freshWasmURL := ""
-	if hash != "" {
-		freshWasmURL = fmt.Sprintf("/gosx/engines/%s.%s.wasm", sp.Name, hash)
-	}
-
-	fresh := surfaceManifestEntry{
-		Component:    sp.Name,
-		WASMPath:     wasmPath,
-		WASMURL:      freshWasmURL,
-		Hash:         hash,
-		PropsType:    sp.PropsTypeName,
-		Capabilities: sp.Capabilities,
-		MountAttrs:   sp.MountAttrs,
-	}
-
-	prior, hasPrior := priors[sp.Name]
-	entry, serveURL, servePath := mergeBuildResult(fresh, prior, hasPrior, buildErr)
-
-	switch {
-	case buildErr == nil:
-		fireBuildEvent(sp.Name, BuildSuccess, nil)
-	case entry.Stale:
-		fmt.Fprintf(os.Stderr, "gosx/surface: reusing stale WASM for %q (build failed: %v)\n", sp.Name, buildErr)
-		fireBuildEvent(sp.Name, BuildFailureStaleFallback, buildErr)
-	default:
-		fmt.Fprintf(os.Stderr, "gosx/surface: build WASM for %q: %v\n", sp.Name, buildErr)
-		fireBuildEvent(sp.Name, BuildFailure, buildErr)
-	}
-
-	if serveURL != "" && servePath != "" {
-		localPath := servePath
-		handlerMu.Lock()
-		mux.HandleFunc(serveURL, func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/wasm")
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			http.ServeFile(w, r, localPath)
-		})
-		handlerMu.Unlock()
-	}
-
-	registry.register(sp.Name, &registryEntry{
-		wasmURL:      entry.WASMURL,
-		hash:         entry.Hash,
-		propsType:    entry.PropsType,
-		capabilities: entry.Capabilities,
-		mountAttrs:   entry.MountAttrs,
-		stale:        entry.Stale,
-	})
-	manifest.Surfaces = append(manifest.Surfaces, entry)
-}
-
-// enforceEscapeHatchPolicy checks the surface=wasm annotation against
-// the capability-gap ledger. Returns nil on policy success (warning
-// already emitted), or an error to block the build per ADR 0006.
-func enforceEscapeHatchPolicy(gszPath string, line int) error {
-	ledger := loadCapabilityGapLedger(gapFilePath())
-	warning, err := checkEscapeHatch(gszPath, line, ledger, currentTimeFn())
-	if err != nil {
-		return err
-	}
-	emitEscapeHatchWarning(warning)
-	return nil
-}
-
-// currentTimeFn is a small seam so tests can pin "now" without
-// importing time in this file's call site.
+// currentTimeFn is a small seam tests can override; retained for
+// parity with prior call sites that pinned "now".
 var currentTimeFn = defaultNow
-
-// mergeManifestForTest is a test-only seam exposing the merge-and-write path
-// without invoking the full Discover walk. Tests use it to assert spec §B
-// fallback behavior under synthetic build outcomes.
-//
-// Callers seed cacheDir/manifest.json (via seedManifest) with the desired
-// prior state, then call this helper. The merged manifest is written back to
-// disk just like Discover would.
-func mergeManifestForTest(t TestingTBLike, cacheDir, component string, fresh surfaceManifestEntry, buildErr error) {
-	priors := loadPreviousManifestByComponent(filepath.Join(cacheDir, "manifest.json"))
-	prior, hasPrior := priors[component]
-	entry, _, _ := mergeBuildResult(fresh, prior, hasPrior, buildErr)
-
-	switch {
-	case buildErr == nil:
-		fireBuildEvent(component, BuildSuccess, nil)
-	case entry.Stale:
-		fireBuildEvent(component, BuildFailureStaleFallback, buildErr)
-	default:
-		fireBuildEvent(component, BuildFailure, buildErr)
-	}
-
-	out := surfaceManifest{Version: manifestSchemaVersion, Surfaces: []surfaceManifestEntry{entry}}
-	if err := writeManifest(cacheDir, &out); err != nil {
-		t.Fatalf("mergeManifestForTest: writeManifest: %v", err)
-	}
-}
-
-// TestingTBLike is the minimal testing.TB surface mergeManifestForTest needs.
-// Defined to avoid importing testing into a non-test file.
-type TestingTBLike interface {
-	Helper()
-	Fatalf(format string, args ...any)
-}
-
-// tinyGoUnavailableReason returns "" if TinyGo can actually build (binary on
-// PATH AND a compatible Go SDK is available), or a human-readable reason why
-// not. Honors GOSX_FORCE_GO_COMPILER as an explicit "skip TinyGo" override
-// (set to any non-empty value when transitive dep go-directives push past
-// TinyGo's supported Go range and you want the standard gc fallback).
-func tinyGoUnavailableReason() string {
-	if strings.TrimSpace(os.Getenv("GOSX_FORCE_GO_COMPILER")) != "" {
-		return "GOSX_FORCE_GO_COMPILER set"
-	}
-	if _, err := exec.LookPath("tinygo"); err != nil {
-		return "tinygo not on PATH (install: https://tinygo.org/getting-started/install/)"
-	}
-	// TinyGo (≤0.40.x) supports Go 1.19–1.25. We need to find either:
-	//   - current Go in that range, or
-	//   - an SDK under $HOME/sdk/go1.N matching, or
-	//   - $GOSX_TINYGO_GOROOT pointing somewhere usable.
-	// Be conservative: if we can't find a 1.19–1.25 SDK, fall back.
-	if root := strings.TrimSpace(os.Getenv("GOSX_TINYGO_GOROOT")); root != "" {
-		return ""
-	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		matches, _ := filepath.Glob(filepath.Join(home, "sdk", "go1.*"))
-		for _, root := range matches {
-			base := filepath.Base(root)
-			if !strings.HasPrefix(base, "go1.") {
-				continue
-			}
-			rest := strings.TrimPrefix(base, "go1.")
-			dot := strings.Index(rest, ".")
-			minorStr := rest
-			if dot >= 0 {
-				minorStr = rest[:dot]
-			}
-			var minor int
-			if _, err := fmt.Sscanf(minorStr, "%d", &minor); err != nil {
-				continue
-			}
-			if minor >= 19 && minor <= 25 {
-				// Check the SDK has a usable go binary AND that gosx's own
-				// transitive deps don't require something higher than this SDK.
-				if _, statErr := os.Stat(filepath.Join(root, "bin", "go")); statErr == nil {
-					// Heuristic: we can't easily probe deep transitive go-directives
-					// from here, so assume the SDK is usable. If TinyGo actually
-					// fails to build (e.g. because the gosx module declares
-					// go >= 1.26), Build() will return an error and the caller
-					// will log it.
-					return ""
-				}
-			}
-		}
-	}
-	return "tinygo present but no compatible Go SDK in 1.19–1.25 range found under ~/sdk/go1.*"
-}
