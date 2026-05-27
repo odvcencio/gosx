@@ -145,6 +145,25 @@ const (
 	// the same sentinel mechanism as OpReturn.
 	OpBreak
 	OpContinue
+
+	// Composite literals (Slice Y.A — AST-compiler initiative). OpComposite
+	// materializes a struct, slice, or map value at runtime. Value carries
+	// the kind tag — one of:
+	//   - "struct:<TypeName>" — named or positional struct literal.
+	//   - "slice"             — slice/array literal.
+	//   - "map"               — map literal.
+	// Operands are an interleaved key/value list:
+	//   - struct: pairs of (string-literal key expr, value expr); for
+	//     positional literals the lowerer pre-emits the field name as
+	//     the key from a compile-time type registry built from the
+	//     surrounding file's TypeSpec declarations.
+	//   - slice:  pairs of (int-literal index expr, value expr); indices
+	//     run 0..len-1 and are emitted by the lowerer.
+	//   - map:    pairs of (key expr, value expr); keys may be any
+	//     expression whose String() form becomes the map key.
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpComposite keep evaluating exactly as before.
+	OpComposite
 )
 
 // SurfaceKind identifies the rendering surface a program targets.

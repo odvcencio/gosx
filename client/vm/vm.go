@@ -124,6 +124,9 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 	if value, ok := vm.evalSequencingExpr(e); ok {
 		return value
 	}
+	if value, ok := vm.evalCompositeExpr(e); ok {
+		return value
+	}
 	vm.recordExprDiagnostic(
 		"unknown_opcode",
 		fmt.Sprintf("unknown island VM opcode %d", e.Op),
@@ -131,6 +134,92 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 		e.Value,
 	)
 	return ZeroValue(program.TypeAny)
+}
+
+// evalCompositeExpr dispatches the Slice Y.A composite-literal opcode.
+// OpComposite materializes a struct, slice, or map value from its
+// operand pairs. The kind tag in Value selects the materialization
+// strategy:
+//
+//   - "struct:<TypeName>" — ObjectVal whose Fields map is keyed by the
+//     string-literal first-operand of each pair.
+//   - "slice"             — ArrayVal whose Items list is the
+//     second-operand of each pair in pair order (the index operand is
+//     informational; the lowerer emits 0..len-1 to keep the encoding
+//     uniform with the struct/map cases).
+//   - "map"               — ObjectVal keyed by each pair's first operand
+//     evaluated and stringified.
+//
+// Unknown kind tags record an "invalid_composite" diagnostic and fall
+// back to the zero Any value so the VM's panic-free contract holds.
+func (vm *VM) evalCompositeExpr(e program.Expr) (Value, bool) {
+	if e.Op != program.OpComposite {
+		return Value{}, false
+	}
+	if len(e.Operands)%2 != 0 {
+		vm.recordExprDiagnostic(
+			"invalid_composite",
+			fmt.Sprintf("OpComposite %q requires an even operand count (key/value pairs), got %d", e.Value, len(e.Operands)),
+			e.Op,
+			e.Value,
+		)
+		return ZeroValue(program.TypeAny), true
+	}
+	switch {
+	case e.Value == "slice":
+		return vm.compositeSlice(e), true
+	case e.Value == "map":
+		return vm.compositeMap(e), true
+	case len(e.Value) >= 7 && e.Value[:7] == "struct:":
+		return vm.compositeStruct(e), true
+	default:
+		vm.recordExprDiagnostic(
+			"invalid_composite",
+			fmt.Sprintf("OpComposite has unknown kind tag %q (want struct:<Name>, slice, or map)", e.Value),
+			e.Op,
+			e.Value,
+		)
+		return ZeroValue(program.TypeAny), true
+	}
+}
+
+// compositeStruct materializes a struct Value from interleaved
+// (keyExpr, valueExpr) operand pairs. Keys must evaluate to strings —
+// the lowerer always emits OpLitString for them, so this is a near-
+// noop string read at runtime.
+func (vm *VM) compositeStruct(e program.Expr) Value {
+	fields := make(map[string]Value, len(e.Operands)/2)
+	for i := 0; i < len(e.Operands); i += 2 {
+		key := vm.Eval(e.Operands[i]).String()
+		fields[key] = vm.Eval(e.Operands[i+1])
+	}
+	return ObjectVal(fields)
+}
+
+// compositeSlice materializes an array Value from the value half of
+// each (indexExpr, valueExpr) operand pair. The index operand is
+// evaluated for side effects but its result is discarded — items
+// land in the slice in pair order.
+func (vm *VM) compositeSlice(e program.Expr) Value {
+	items := make([]Value, 0, len(e.Operands)/2)
+	for i := 0; i < len(e.Operands); i += 2 {
+		// Evaluate the index expr for any side effects (typically a literal).
+		vm.Eval(e.Operands[i])
+		items = append(items, vm.Eval(e.Operands[i+1]))
+	}
+	return ArrayVal(items)
+}
+
+// compositeMap materializes a map Value whose Fields keys are each
+// pair's evaluated key (stringified through Value.String). Duplicate
+// keys are last-wins, matching Go's map literal evaluation order.
+func (vm *VM) compositeMap(e program.Expr) Value {
+	fields := make(map[string]Value, len(e.Operands)/2)
+	for i := 0; i < len(e.Operands); i += 2 {
+		key := vm.Eval(e.Operands[i]).String()
+		fields[key] = vm.Eval(e.Operands[i+1])
+	}
+	return ObjectVal(fields)
 }
 
 // evalSequencingExpr dispatches the Slice X.A statement-sequencing opcodes:
