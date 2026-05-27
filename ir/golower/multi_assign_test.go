@@ -274,6 +274,35 @@ func F() float64 {
 	}
 }
 
+// TestLowerCommaOkReassignment verifies the comma-ok form works with
+// `=` (reassignment) just as well as `:=` (definition). The lowerer's
+// bindLHS helper distinguishes the two; this test pins that both
+// paths produce correct runtime behavior.
+func TestLowerCommaOkReassignment(t *testing.T) {
+	src := []byte(`package handlers
+
+func F() float64 {
+	m := map[string]float64{"a": 1.0, "b": 2.0}
+	v := 0.0
+	ok := false
+	v, ok = m["a"]
+	if !ok {
+		return -1
+	}
+	return v
+}`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(handler.Body[0])
+	if got.Num != 1.0 {
+		t.Errorf("F() = %f, want 1.0", got.Num)
+	}
+}
+
 // TestLowerIfInitTwoValueMap verifies the canonical existence-check
 // pattern `if _, ok := m[k]; !ok { ... }` lowers cleanly. The Init
 // clause is itself a multi-value assignment that the lowerer must
