@@ -7,19 +7,20 @@ import (
 	"testing"
 
 	gosx "m31labs.dev/gosx"
+	"m31labs.dev/gosx/island/program"
 )
 
 // TestNewRenderer_Mount_DataAttrs verifies that NewRenderer("Graph").Mount(props)
 // produces a gosx.Node whose attributes include the required data-gosx-engine-*
-// attributes with the correct values.
+// attributes with the correct values for the shared-VM bytecode path.
 func TestNewRenderer_Mount_DataAttrs(t *testing.T) {
-	// Seed the registry with a known entry.
 	const componentName = "Graph"
-	const wasmURL = "/gosx/engines/Graph.abc12345.wasm"
+	const bytecodeURL = "/gosx/engines/Graph.abc12345.json"
 	const hashVal = "abc12345"
 
 	injectRegistryEntry(componentName, &registryEntry{
-		wasmURL:      wasmURL,
+		bytecodeURL:  bytecodeURL,
+		surfaceKind:  program.SurfaceCanvas2D,
 		hash:         hashVal,
 		capabilities: []string{"canvas", "pointer"},
 		mountAttrs:   map[string]string{"tabindex": "0"},
@@ -39,15 +40,19 @@ func TestNewRenderer_Mount_DataAttrs(t *testing.T) {
 
 	r := NewRenderer(componentName)
 	node := r.Mount(props)
-
-	// Render to HTML so we can inspect attributes.
 	html := gosx.RenderHTML(node)
 
 	checkAttr(t, html, `data-gosx-engine-component="Graph"`)
-	checkAttr(t, html, `data-gosx-engine-wasm="/gosx/engines/Graph.abc12345.wasm"`)
+	checkAttr(t, html, `data-gosx-engine-bytecode="/gosx/engines/Graph.abc12345.json"`)
+	checkAttr(t, html, `data-gosx-engine-surface-kind="canvas2d"`)
 	checkAttr(t, html, `data-gosx-engine-props="`+wantPropsB64+`"`)
 	checkAttr(t, html, `data-gosx-engine-caps="canvas,pointer"`)
 	checkAttr(t, html, `tabindex="0"`)
+
+	// The legacy WASM-backend attribute must NOT appear after ADR 0005.
+	if strings.Contains(html, "data-gosx-engine-wasm") {
+		t.Errorf("data-gosx-engine-wasm leaked into bytecode-only output: %s", html)
+	}
 }
 
 // TestNewRenderer_Mount_NoEntry returns a safe fallback node when the component
@@ -57,26 +62,21 @@ func TestNewRenderer_Mount_NoEntry(t *testing.T) {
 	node := r.Mount(nil)
 	html := gosx.RenderHTML(node)
 
-	// Must include the component name attr.
 	checkAttr(t, html, `data-gosx-engine-component="UnknownComponent"`)
-	// Must NOT contain a wasm attr (entry is absent).
-	if strings.Contains(html, "data-gosx-engine-wasm") {
-		t.Errorf("expected no data-gosx-engine-wasm attr for unregistered component, got: %s", html)
+	if strings.Contains(html, "data-gosx-engine-bytecode") {
+		t.Errorf("expected no data-gosx-engine-bytecode attr for unregistered component, got: %s", html)
 	}
-	// Must include the missing-status attribute so the bootstrap can paint
-	// a "surface unavailable" placeholder (spec §D, defect 4).
 	checkAttr(t, html, `data-gosx-engine-status="missing"`)
 }
 
-// TestMountEmitsMissingStatusWhenWasmURLEmpty covers spec §D / defect 4: a
-// registered component whose wasmURL is empty (build failed with no cached
-// prior) must not leak data-gosx-engine-wasm="" into the canvas attrs.
-// Instead, the bootstrap sees data-gosx-engine-status="missing" and can
-// degrade gracefully.
-func TestMountEmitsMissingStatusWhenWasmURLEmpty(t *testing.T) {
-	const componentName = "GraphMissingWasm"
+// TestMountEmitsMissingStatusWhenBytecodeURLEmpty covers the bootstrap
+// contract: a registered component whose bytecodeURL is empty (lowering
+// failed) must not leak data-gosx-engine-bytecode="" — emit the missing
+// status attribute instead so the bootstrap degrades gracefully.
+func TestMountEmitsMissingStatusWhenBytecodeURLEmpty(t *testing.T) {
+	const componentName = "GraphMissingBytecode"
 	injectRegistryEntry(componentName, &registryEntry{
-		wasmURL:      "",
+		bytecodeURL:  "",
 		hash:         "",
 		capabilities: []string{"canvas"},
 	})
@@ -84,34 +84,17 @@ func TestMountEmitsMissingStatusWhenWasmURLEmpty(t *testing.T) {
 	r := NewRenderer(componentName)
 	html := gosx.RenderHTML(r.Mount(nil))
 
-	if strings.Contains(html, `data-gosx-engine-wasm=""`) {
-		t.Errorf("empty wasmURL leaked into output: %s", html)
+	if strings.Contains(html, `data-gosx-engine-bytecode=""`) {
+		t.Errorf("empty bytecodeURL leaked into output: %s", html)
 	}
-	if strings.Contains(html, `data-gosx-engine-wasm=`) {
-		t.Errorf("data-gosx-engine-wasm attr should be omitted when URL empty, got: %s", html)
+	if strings.Contains(html, `data-gosx-engine-bytecode=`) {
+		t.Errorf("data-gosx-engine-bytecode attr should be omitted when URL empty, got: %s", html)
 	}
 	if strings.Contains(html, `data-gosx-engine-props=`) {
-		t.Errorf("data-gosx-engine-props should be omitted alongside missing wasm, got: %s", html)
+		t.Errorf("data-gosx-engine-props should be omitted alongside missing bytecode, got: %s", html)
 	}
 	checkAttr(t, html, `data-gosx-engine-status="missing"`)
 	checkAttr(t, html, `data-gosx-engine-component="`+componentName+`"`)
-}
-
-// TestMountEmitsStaleAttrWhenEntryStale covers spec §B / defect 2: when the
-// registry entry is stale (last build failed but we still have a usable
-// cached WASM), the canvas must carry data-gosx-engine-stale="1" so the
-// bootstrap can show a corner badge while mounting.
-func TestMountEmitsStaleAttrWhenEntryStale(t *testing.T) {
-	const componentName = "GraphStale"
-	injectRegistryEntry(componentName, &registryEntry{
-		wasmURL: "/gosx/engines/GraphStale.cafef00d.wasm",
-		hash:    "cafef00d",
-		stale:   true,
-	})
-	r := NewRenderer(componentName)
-	html := gosx.RenderHTML(r.Mount(nil))
-	checkAttr(t, html, `data-gosx-engine-stale="1"`)
-	checkAttr(t, html, `data-gosx-engine-wasm="/gosx/engines/GraphStale.cafef00d.wasm"`)
 }
 
 // TestPropsRoundTrip verifies that Context.PropsInto correctly unmarshals
