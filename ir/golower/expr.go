@@ -50,6 +50,8 @@ func (c *lowerCtx) lowerExpr(e ast.Expr) program.ExprID {
 		return c.lowerCallExpr(ex)
 	case *ast.IndexExpr:
 		return c.lowerIndexExpr(ex)
+	case *ast.CompositeLit:
+		return c.lowerCompositeLit(ex)
 	default:
 		c.addIssue(e, fmt.Sprintf("unsupported expression %T", e), escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})

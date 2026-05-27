@@ -108,6 +108,13 @@ func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error)
 		exprs:  []program.Expr{},
 	}
 
+	// Pre-pass (Slice Y.A): build the struct-type registry so positional
+	// composite literals (`vec2{x, y}`) can recover field names without
+	// a full go/types pass. Named-form literals (`Node{ID: id}`) don't
+	// need this — they carry field names inline — but the registry is
+	// cheap and keeps the lowering paths uniform.
+	ctx.scanStructTypes(file)
+
 	// Two passes:
 	//   1. Hoist package-level var declarations into signal defs so
 	//      function bodies can reference them by name. Init expressions
@@ -134,6 +141,13 @@ type lowerCtx struct {
 	issues  *LowerError
 	exprs   []program.Expr
 	handler string // name of the handler currently being lowered (for diagnostics)
+
+	// structs holds the ordered field-name list for every struct type
+	// declared at the top level of the file. Populated by
+	// scanStructTypes (Slice Y.A) so positional struct literals like
+	// `vec2{x, y}` can recover field names without a separate
+	// go/types pass.
+	structs map[string]structTypeInfo
 }
 
 // addExpr appends e to the program's expression table and returns the
