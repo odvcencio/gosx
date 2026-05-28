@@ -20,6 +20,7 @@
 package surface
 
 import (
+	"runtime"
 	"testing"
 
 	"m31labs.dev/gosx/client/vm"
@@ -235,6 +236,49 @@ func TestCanvasHostReceiver_StartLoopRejectsBadArity(t *testing.T) {
 	}
 	if recv.HasLoop() {
 		t.Errorf("HasLoop = true after rejected calls; want false")
+	}
+}
+
+// TestBindCanvas_DisposeOnContextClose verifies that the BindCanvas
+// convenience helper correctly cancels the loop and unbinds the host
+// receiver from the VM when the surface context is closed.
+func TestBindCanvas_DisposeOnContextClose(t *testing.T) {
+	machine, ticks := newTestVMWithFunc(t, "__test_bind_dispose")
+	ctx := NewContext(nil)
+
+	recv := BindCanvas(machine, "c", newNoopCanvas(), ctx)
+
+	if _, err := recv.Call("StartLoop", []vm.Value{closureForFunc("__test_bind_dispose")}); err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	recv.RunFrames(2)
+	if len(*ticks) != 2 {
+		t.Fatalf("pre-close ticks = %d, want 2", len(*ticks))
+	}
+
+	// Verify the host is bound under "c".
+	if got, ok := machine.LookupHost("c"); !ok || got == nil {
+		t.Fatal("host receiver not bound under 'c' after BindCanvas")
+	}
+
+	// Closing the context fires the watcher goroutine; give it a
+	// moment to run.
+	ctx.Close()
+	// Synchronization without sleeps: poll the receiver state via
+	// the (already-tested) HasLoop / LookupHost contract.
+	for i := 0; i < 100; i++ {
+		_, bound := machine.LookupHost("c")
+		if !recv.HasLoop() && !bound {
+			break
+		}
+		runtime.Gosched()
+	}
+
+	if recv.HasLoop() {
+		t.Errorf("HasLoop = true after ctx.Close; want false (Dispose must drop closure)")
+	}
+	if _, bound := machine.LookupHost("c"); bound {
+		t.Errorf("host receiver still bound after ctx.Close; want unbound")
 	}
 }
 

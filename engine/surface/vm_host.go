@@ -101,6 +101,37 @@ func NewCanvasHostReceiver(machine *vm.VM, canvas *Canvas) *CanvasHostReceiver {
 	return &CanvasHostReceiver{vm: machine, canvas: canvas}
 }
 
+// BindCanvas is the convenience helper future bytecode-VM hydration
+// paths will use: it constructs a CanvasHostReceiver, binds it under
+// name (conventionally "c") on the VM, and spawns a single watcher
+// goroutine that calls Dispose when ctx is torn down.
+//
+// Returns the receiver so callers can drive RunFrames in tests or
+// hold a reference for explicit teardown. ctx may be nil — callers
+// that own their teardown can omit the watcher and call Dispose
+// directly.
+//
+// This is the natural "wire it once" entry point; both sides
+// (StartLoop closure capture + Dispose-on-dismount) are handled
+// together so future hydration code doesn't have to remember the
+// dispose hook.
+func BindCanvas(machine *vm.VM, name string, canvas *Canvas, ctx *Context) *CanvasHostReceiver {
+	recv := NewCanvasHostReceiver(machine, canvas)
+	if machine != nil {
+		machine.BindHost(name, recv)
+	}
+	if ctx != nil {
+		go func() {
+			<-ctx.Done()
+			recv.Dispose()
+			if machine != nil {
+				machine.BindHost(name, nil)
+			}
+		}()
+	}
+	return recv
+}
+
 // Call satisfies vm.HostReceiver. The method name comes from the
 // source-level `c.<Method>` call as it was lowered by Y.E's host-call
 // path. Argument values are pre-evaluated by the VM.
