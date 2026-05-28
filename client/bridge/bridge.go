@@ -36,6 +36,14 @@ type Bridge struct {
 	dispatching string                           // ID of the island currently dispatching
 	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
 
+	// engineSurfaces holds live engine-surface VM+canvas+receiver
+	// triples keyed by mount id. Populated by HydrateEngineSurface
+	// (bridge_engine_surface.go); cleared by DisposeEngineSurface.
+	// Stored as a map of opaque interface values so the islands-only
+	// build can elide the *engineSurfaceInstance type (and its
+	// engine/surface dependency) without changing the Bridge layout.
+	engineSurfaces map[string]any
+
 	// crossFrameRelays records the prefix → allowed-origin bindings opted-in
 	// via EnableCrossFrameRelay. See cross_frame.go and ADR 0009. Both the
 	// outbound observer path (relaySharedSignal) and the inbound message
@@ -155,6 +163,7 @@ func New() *Bridge {
 		engines:        make(map[string]*enginevm.Runtime),
 		boards:         make(map[string]vm.Reconciler),
 		reconcilers:    make(map[string]vm.Reconciler),
+		engineSurfaces: make(map[string]any),
 		store:          NewStore(),
 		unsubs:         make(map[string][]func()),
 	}

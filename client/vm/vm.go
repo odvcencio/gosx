@@ -84,6 +84,34 @@ func (vm *VM) SetSignal(name string, sig *signal.Signal[Value]) {
 	vm.signals[name] = sig
 }
 
+// SetProp installs a value under name in the VM's prop map. Use this
+// when an out-of-band caller (engine-surface event dispatcher, host
+// bridge, …) needs to feed values to a handler that reads them via
+// OpPropGet without going through the constructor's initial map. The
+// write is direct — no signal subscription is created, no diagnostic
+// is emitted — so callers must restore prior values via GetProp + a
+// subsequent SetProp if they care about scoping.
+func (vm *VM) SetProp(name string, value Value) {
+	if vm.props == nil {
+		vm.props = make(map[string]Value)
+	}
+	vm.props[name] = value
+}
+
+// GetProp returns the value under name plus a presence flag. Mirrors
+// SetProp so callers can snapshot prior state, mutate during a
+// dispatch, and restore afterwards.
+func (vm *VM) GetProp(name string) (Value, bool) {
+	v, ok := vm.props[name]
+	return v, ok
+}
+
+// DeleteProp removes name from the prop map. Used by callers
+// restoring previously-absent slots after a temporary SetProp.
+func (vm *VM) DeleteProp(name string) {
+	delete(vm.props, name)
+}
+
 // Eval evaluates an expression by ID and returns its value. The VM keeps its
 // panic-free contract: malformed programs produce zero values and structured
 // diagnostics instead of panics.
