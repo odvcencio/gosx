@@ -117,9 +117,31 @@ func (r *ContextHostReceiver) propsInto(args []vm.Value) (vm.Value, error) {
 	}
 
 	for key, val := range raw {
-		target.Fields[key] = jsonToVMValue(val)
+		v := jsonToVMValue(val)
+		target.Fields[key] = v
+		if pascal := pascalCase(key); pascal != key {
+			target.Fields[pascal] = v
+		}
 	}
 	return vm.ZeroValue(0), nil
+}
+
+// pascalCase upper-cases the first rune of s. Used to map a JSON key
+// (lowercase by convention) to the PascalCase Go field name the
+// bytecode VM reads through OpFieldGet. Go encoding/json uses
+// struct-tag mappings to round-trip lowercase JSON to PascalCase
+// fields, but the bytecode VM has no struct-tag awareness — so we
+// dual-key the Fields map with both forms here, letting OpFieldGet
+// resolve either way.
+func pascalCase(s string) string {
+	if s == "" {
+		return s
+	}
+	c := s[0]
+	if c >= 'a' && c <= 'z' {
+		return string(c-32) + s[1:]
+	}
+	return s
 }
 
 // jsonToVMValue converts a decoded JSON value (from encoding/json's
@@ -144,9 +166,13 @@ func jsonToVMValue(v any) vm.Value {
 		}
 		return vm.Value{Type: program.TypeAny, Items: items}
 	case map[string]any:
-		fields := make(map[string]vm.Value, len(x))
+		fields := make(map[string]vm.Value, len(x)*2)
 		for k, val := range x {
-			fields[k] = jsonToVMValue(val)
+			child := jsonToVMValue(val)
+			fields[k] = child
+			if pascal := pascalCase(k); pascal != k {
+				fields[pascal] = child
+			}
 		}
 		return vm.ObjectVal(fields)
 	default:
