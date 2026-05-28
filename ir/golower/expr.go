@@ -54,6 +54,13 @@ func (c *lowerCtx) lowerExpr(e ast.Expr) program.ExprID {
 		return c.lowerSliceExpr(ex)
 	case *ast.CompositeLit:
 		return c.lowerCompositeLit(ex)
+	case *ast.FuncLit:
+		// Slice Y.G — closure lowering. Walks the body for captured
+		// names, registers a synthetic FuncDef in prog.Funcs, and
+		// emits OpClosure. The captured frame is resolved by the VM
+		// at evaluation time so callers see Go's capture-by-reference
+		// semantics.
+		return c.lowerFuncLit(ex)
 	default:
 		c.addIssue(e, fmt.Sprintf("unsupported expression %T", e), escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
@@ -235,10 +242,18 @@ func (c *lowerCtx) lowerCallExpr(call *ast.CallExpr) program.ExprID {
 		default:
 			// Slice Y.D: route in-package calls into OpIndirectCall when
 			// the name resolves through the user-function registry built
-			// by scanUserFuncs. Unregistered bare identifiers still emit
-			// the legacy diagnostic so authors get a clear pointer when
-			// they typo a sibling function or call into a deleted helper.
+			// by scanUserFuncs. Slice Y.G: ALSO route the call into
+			// OpIndirectCall when the identifier is a known closure-
+			// holding local (detected by the per-handler closureLocals
+			// pre-pass). The VM dispatches by name and prefers a
+			// local-bound ClosureVal over the FuncDef registry.
+			// Unregistered bare identifiers that aren't tracked as
+			// closure-holders still emit the legacy diagnostic so
+			// typo'd callees and deleted helpers get a clear pointer.
 			if _, ok := c.lookupUserFunc(id.Name); ok {
+				return c.emitIndirectCall(id.Name, call.Args)
+			}
+			if c.isClosureLocal(id.Name) {
 				return c.emitIndirectCall(id.Name, call.Args)
 			}
 			c.addIssue(call, fmt.Sprintf("calls to user-defined function %q are not supported", id.Name), escapeHatchSuggestion)

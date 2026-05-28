@@ -183,6 +183,14 @@ type lowerCtx struct {
 	// dispatch through OpCall) apart from `c.MoveTo(x, y)` (host
 	// receiver dispatch through OpHostCall).
 	imports map[string]bool
+
+	// closureLocals holds the set of bare identifiers that the current
+	// handler body assigns a *ast.FuncLit value to (Slice Y.G). Used
+	// by lowerCallExpr to decide between OpIndirectCall (closure
+	// dispatch via the VM's local-first contract) and the legacy
+	// "unsupported user function" diagnostic. Re-populated per
+	// handler in lowerFuncDecl.
+	closureLocals map[string]bool
 }
 
 // addExpr appends e to the program's expression table and returns the
