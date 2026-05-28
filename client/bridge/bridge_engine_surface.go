@@ -158,15 +158,14 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 	recv := surface.NewCanvasHostReceiver(machine, canvas)
 	machine.BindHost("c", recv)
 
-	// "ctx" is the other half of the surface author contract (per
-	// surface.go package doc). Today the only operation lowerer-side is
-	// ctx.PropsInto(&p) which the Y.E + Y.G machinery resolves through
-	// OpHostCall on a host that no-ops in this minimal hydrator. A
-	// follow-up will wire a real ctx receiver that materializes
-	// propsJSON into the struct local — for now leaving it unbound is
-	// safe; the VM records a `host_unbound` diagnostic but evaluation
-	// continues panic-free per the engine-surface contract.
-	_ = propsJSON
+	// "ctx" is the other half of the surface author contract. The
+	// ContextHostReceiver decodes propsJSON into the surface's typed
+	// props struct via OpHostCall("ctx.PropsInto", [&props]) — Y.G's
+	// eager struct zero-init guarantees props.Fields is non-nil at the
+	// call site, and Y.C's in-place mutation propagates the writes
+	// back to the handler's local.
+	ctxRecv := surface.NewContextHostReceiver([]byte(propsJSON))
+	machine.BindHost("ctx", ctxRecv)
 
 	inst := &engineSurfaceInstance{
 		machine:       machine,
