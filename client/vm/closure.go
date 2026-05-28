@@ -128,6 +128,22 @@ func (vm *VM) invokeClosureFromIndirectCall(cv Value, args []Value, e program.Ex
 	return result
 }
 
+// NewHostClosure constructs a ClosureVal for use cases where the
+// closure has no enclosing frame to capture against — primarily host-
+// side bridge tests that want to feed `c.StartLoop(closure)` a real
+// ClosureVal without going through OpClosure. funcName must name a
+// FuncDef registered in vm.funcs at invocation time; captured is the
+// list of captured-by-reference names (typically nil for host-test
+// closures with no enclosing scope). The returned Value satisfies
+// IsClosure and is dispatchable via vm.InvokeClosure.
+//
+// Production closures continue to be created exclusively by OpClosure
+// (see evalClosureExpr) so the captured-frame pointer reflects the
+// caller's live locals.
+func NewHostClosure(funcName string, captured []string) Value {
+	return ClosureVal(funcName, captured, nil)
+}
+
 // InvokeClosure is the public host-side hook to invoke a ClosureVal
 // the host captured (e.g. via c.StartLoop(cb)) at a later time. This
 // is the symmetric companion to BindHost — it lets a HostReceiver
