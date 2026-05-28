@@ -3,7 +3,7 @@
       runtimeReady(manifest) {
         return Promise.all([
           mountAllEngines(manifest),
-          mountAllSurfaceWASMs(),
+          mountAllEngineSurfaces(),
         ]);
       },
       disposePage() {
@@ -11,7 +11,7 @@
           window.__gosx_dispose_engine(engineID);
         }
         for (const id of Array.from(surfaceInstances.keys())) {
-          _disposeSurface(id);
+          _disposeEngineSurface(id);
         }
       },
       disposeEngine: window.__gosx_dispose_engine,
