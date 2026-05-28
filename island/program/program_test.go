@@ -1257,6 +1257,8 @@ func TestIndirectCallOpcodeIsDistinct(t *testing.T) {
 		OpMake,
 		OpHostCall,
 		OpToRunes,
+		// Y.G (new)
+		OpClosure,
 	}
 	seen := map[OpCode]bool{}
 	for _, op := range all {
@@ -1402,5 +1404,59 @@ func TestHostCallOpcodeShape(t *testing.T) {
 	}
 	if len(call.Operands) != 2 {
 		t.Errorf("OpHostCall Operands carry the args; got len=%d", len(call.Operands))
+	}
+}
+
+// --- Slice Y.G: closure allocation opcode ---
+
+// TestClosureOpcodeShape documents the operand encoding for OpClosure
+// (Slice Y.G). The Value carries the synthetic FuncDef name registered
+// by the lowerer for the anonymous body; Operands are the captured
+// local names (each lowered as an OpLitString) which the VM resolves
+// against the CURRENT frame at evaluation time to snapshot slot
+// references for capture-by-reference semantics.
+func TestClosureOpcodeShape(t *testing.T) {
+	cl := Expr{
+		Op:       OpClosure,
+		Value:    "__y_g_funclit_42",
+		Operands: []ExprID{0, 1, 2}, // three captured locals: y, x, count
+	}
+	if cl.Op != OpClosure {
+		t.Errorf("opcode = %d, want OpClosure", cl.Op)
+	}
+	if cl.Value != "__y_g_funclit_42" {
+		t.Errorf("OpClosure synthetic FuncDef name lives in Value, got %q", cl.Value)
+	}
+	if len(cl.Operands) != 3 {
+		t.Errorf("OpClosure captured locals live in Operands; got len=%d", len(cl.Operands))
+	}
+}
+
+// TestClosureFuncDefRegistration verifies an anonymous FuncDef
+// registered for an OpClosure round-trips through Program.Funcs JSON
+// the same way named user functions do (Slice Y.D).
+func TestClosureFuncDefRegistration(t *testing.T) {
+	p := Program{
+		Name: "TestSurface",
+		Funcs: []FuncDef{
+			{Name: "__y_g_funclit_42", Params: []string{"dt"}, Body: []ExprID{0}, Results: 0},
+		},
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var p2 Program
+	if err := json.Unmarshal(data, &p2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(p2.Funcs) != 1 {
+		t.Fatalf("round-trip len(Funcs) = %d, want 1", len(p2.Funcs))
+	}
+	if p2.Funcs[0].Name != "__y_g_funclit_42" {
+		t.Errorf("round-trip Funcs[0].Name = %q, want __y_g_funclit_42", p2.Funcs[0].Name)
+	}
+	if len(p2.Funcs[0].Params) != 1 || p2.Funcs[0].Params[0] != "dt" {
+		t.Errorf("round-trip Funcs[0].Params = %v, want [dt]", p2.Funcs[0].Params)
 	}
 }

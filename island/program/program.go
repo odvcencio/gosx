@@ -333,6 +333,40 @@ const (
 	// Backwards-compatible per ADR 0002 — programs that never emit
 	// OpToRunes keep evaluating exactly as before.
 	OpToRunes
+
+	// Closure allocation (Slice Y.G — AST-compiler initiative).
+	// OpClosure materializes a ClosureVal at runtime that wraps a
+	// pre-registered anonymous FuncDef plus a snapshot of the locals
+	// the closure captures BY REFERENCE.
+	//
+	//   Value    — the synthetic FuncDef name registered by the
+	//              lowerer (e.g., "__y_g_funclit_<pos>") which lives
+	//              in Program.Funcs alongside Y.D's user functions.
+	//   Operands — ordered captured-local names, each lowered as an
+	//              OpLitString. The VM resolves each name against the
+	//              CURRENT frame at OpClosure-evaluation time, takes
+	//              the slot reference, and stores it in the
+	//              ClosureVal's capture map.
+	//
+	// **Capture semantics.** Go closures capture variables, not
+	// values — a write to the captured local in the enclosing scope
+	// AFTER the closure was created is visible inside the closure
+	// when it later runs. The VM implements this by storing the
+	// caller-frame slot REFERENCES (not value copies) in the
+	// ClosureVal and forwarding both reads and writes through the
+	// caller's frame. Mutations inside the closure body therefore
+	// propagate back to the caller; mutations in the caller after
+	// the closure was created are visible inside the closure.
+	//
+	// Closures dispatch through OpIndirectCall — the VM detects that
+	// the callee is a ClosureVal (vs a registered function name) and
+	// pushes a closure-aware frame that consults the captured slot
+	// references before falling through to the synthetic FuncDef's
+	// own locals.
+	//
+	// Backwards-compatible per ADR 0002 — programs that never emit
+	// OpClosure keep evaluating exactly as before.
+	OpClosure
 )
 
 // FuncDef defines a user-defined function callable from a handler or

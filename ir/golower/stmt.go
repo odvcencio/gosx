@@ -317,6 +317,22 @@ func (c *lowerCtx) lowerBlockStmt(s *ast.BlockStmt) program.ExprID {
 // lowerDeclStmt handles `var x int` and `var x = expr` inside a function
 // body. The local-declaration opcode reserves a slot; the optional
 // initializer is appended as an OpAssign.
+//
+// Slice Y.G — eager struct-zero-init: when the declared type is a
+// known struct (registered by scanStructTypes), emit an OpComposite
+// zero-initializer alongside OpLocalDecl so the local starts with a
+// non-nil Fields map. This matches Go's `var x T` semantics ("x is
+// the zero value of T from the moment of declaration") and is what
+// makes `var props GraphProps; host.PropsInto(&props)` work — `&props`
+// pass-through (Y.E) now gives the host a Value whose Fields map
+// EXISTS (even if empty), so host writes land in storage shared with
+// the caller's local. Without the eager init, the host receives a
+// nil-Fields Value and either panics (nil-map write) or writes into
+// a host-local copy that doesn't propagate back.
+//
+// The init Value uses the OpComposite "struct:<TypeName>" kind with
+// zero key/value operand pairs; the VM materializes an ObjectVal
+// with an empty Fields map (see evalCompositeExpr).
 func (c *lowerCtx) lowerDeclStmt(s *ast.DeclStmt) program.ExprID {
 	gen, ok := s.Decl.(*ast.GenDecl)
 	if !ok || (gen.Tok != token.VAR && gen.Tok != token.CONST) {
@@ -337,10 +353,47 @@ func (c *lowerCtx) lowerDeclStmt(s *ast.DeclStmt) program.ExprID {
 			if i < len(vs.Values) {
 				valueID := c.lowerExpr(vs.Values[i])
 				ops = append(ops, c.addExpr(program.Expr{Op: program.OpAssign, Value: name.Name, Operands: []program.ExprID{valueID}}))
+				continue
+			}
+			// Slice Y.G — eager struct zero-init for known struct
+			// types, so `var x StructT` produces a non-nil Fields map
+			// that host calls and `&x` pass-through can populate.
+			if initID, ok := c.zeroInitForType(vs.Type); ok {
+				ops = append(ops, c.addExpr(program.Expr{
+					Op:       program.OpAssign,
+					Value:    name.Name,
+					Operands: []program.ExprID{initID},
+				}))
 			}
 		}
 	}
 	return c.addExpr(program.Expr{Op: program.OpSeq, Operands: ops})
+}
+
+// zeroInitForType returns an OpComposite expression that materializes
+// a zero-valued instance of t when t names a registered struct type.
+// Reports (id, false) for non-struct types (the existing OpLocalDecl
+// behavior remains — bare Value{} for scalars).
+//
+// Slice Y.G addition. Today only handles bare `*ast.Ident` type
+// expressions ("var x Box"). Pointer / array / slice / map types fall
+// through to the legacy zero — adding eager init for those is a
+// future expansion if a graph_surface-shaped pattern needs it.
+func (c *lowerCtx) zeroInitForType(t ast.Expr) (program.ExprID, bool) {
+	id, ok := t.(*ast.Ident)
+	if !ok {
+		return 0, false
+	}
+	if _, registered := c.structs[id.Name]; !registered {
+		return 0, false
+	}
+	// Zero-init: OpComposite with kind "struct:<TypeName>" and no
+	// operand pairs. evalCompositeExpr materializes an ObjectVal with
+	// an empty (but non-nil) Fields map.
+	return c.addExpr(program.Expr{
+		Op:    program.OpComposite,
+		Value: "struct:" + id.Name,
+	}), true
 }
 
 // lowerIncDecStmt lowers `x++` / `x--` as a self-add/sub of 1.

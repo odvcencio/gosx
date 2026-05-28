@@ -42,10 +42,17 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 	// lowerReturnStmt knows whether to emit the multi-value ObjectVal
 	// carrier or stay on the single-return path.
 	prevResults := c.currentResults
+	prevClosureLocals := c.closureLocals
 	c.currentResults = countResults(fn.Type.Results)
+	// Slice Y.G: populate the per-handler closure-local set so
+	// lowerCallExpr can route `f()` where f is a local holding a
+	// ClosureVal through OpIndirectCall instead of the legacy
+	// "unsupported user function" diagnostic.
+	c.closureLocals = scanClosureLocals(fn.Body)
 	defer func() {
 		c.handler = ""
 		c.currentResults = prevResults
+		c.closureLocals = prevClosureLocals
 	}()
 
 	if fn.Body == nil {

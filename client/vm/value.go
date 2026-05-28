@@ -24,6 +24,68 @@ type Value struct {
 	// stop propagating accordingly. Regular evaluation never reads or
 	// writes Control, so existing programs and tests are unaffected.
 	Control ControlSignal
+
+	// closure carries the captured-frame reference for ClosureVal
+	// (Slice Y.G). It is unexported so JSON marshal / equality / String
+	// formatting all skip it — closures only exist in-VM and never
+	// cross the wire. ClosureVal() / IsClosure() are the public seams.
+	// nil for every non-closure Value.
+	closure *closureRef
+}
+
+// closureRef carries the runtime bookkeeping for a ClosureVal: which
+// synthetic FuncDef to dispatch into when the closure is invoked, plus
+// the captured-frame reference that provides BY-REFERENCE access to
+// the enclosing scope's locals. The same *frame pointer the lowerer
+// captured at OpClosure-evaluation time is reused for every invocation,
+// so mutations in the enclosing scope after the closure was created
+// remain visible inside the closure (matching Go's semantics).
+type closureRef struct {
+	funcName string
+	captured map[string]bool // names the closure captures (lookup gate)
+	frame    *frame          // caller frame holding the captured slots
+}
+
+// ClosureVal builds a closure Value that, when invoked through
+// OpIndirectCall, dispatches into the named synthetic FuncDef with the
+// enclosing frame's captured slots visible by reference.
+//
+// funcName is the FuncDef registered by the lowerer for the anonymous
+// body. captured names the variables the body references that are NOT
+// its own parameters or fresh declarations (i.e., the closed-over
+// locals). frame is the caller's *frame at OpClosure-evaluation time —
+// the closure forwards reads and writes for any captured name through
+// this exact frame, giving Go's variable-capture semantics.
+func ClosureVal(funcName string, captured []string, frame *frame) Value {
+	capMap := make(map[string]bool, len(captured))
+	for _, name := range captured {
+		capMap[name] = true
+	}
+	return Value{
+		Type: program.TypeAny,
+		closure: &closureRef{
+			funcName: funcName,
+			captured: capMap,
+			frame:    frame,
+		},
+	}
+}
+
+// IsClosure reports whether v is a ClosureVal produced by OpClosure.
+// Hosts and the VM use this to decide whether to dispatch into the
+// closure-aware path of OpIndirectCall vs the regular user-function
+// path.
+func IsClosure(v Value) bool {
+	return v.closure != nil
+}
+
+// ClosureFuncName returns the synthetic FuncDef name carried by v if
+// v is a ClosureVal, otherwise "".
+func ClosureFuncName(v Value) string {
+	if v.closure == nil {
+		return ""
+	}
+	return v.closure.funcName
 }
 
 // ControlSignal is the sentinel kind carried in Value.Control.

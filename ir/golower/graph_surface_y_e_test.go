@@ -1,12 +1,14 @@
-// Slice Y.E.4 — graph_surface.go end-to-end lowering check.
+// Slice Y.E.4 / Slice Y.G — graph_surface.go end-to-end lowering check.
 //
 // Lowers the actual graph_surface.go from `~/work/hyphae/cmd/hypha-viz`
-// and verifies the issue count drops to the Y.E exit target.
+// and verifies the lowerer produces a clean Program.
 //
 // Pre-Y.E:   40 issues
-// Post-Y.E:  1 issue (the *ast.FuncLit closure in Mount's StartLoop —
-//            deferred to Y.G or a future "expression-language breadth"
-//            slice; not in Y.E's plan-defined scope).
+// Post-Y.E:  1 issue (the *ast.FuncLit closure in Mount's StartLoop)
+// Post-Y.G:  0 issues (Y.G's FuncLit closure lowering closes the
+//            last residual; the entire Mount handler — props decode,
+//            initPositions seed, StartLoop with closure body — lowers
+//            cleanly).
 //
 // The test runs only when GOSX_TEST_GRAPH_SURFACE_PATH is set or the
 // default hyphae checkout is present. CI runners without the hyphae
@@ -18,15 +20,15 @@ package golower
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/island/program"
 )
 
 // TestY_E_GraphSurfaceEndToEnd lowers the real graph_surface.go and
-// pins the post-Y.E issue count. The test is the canonical proof that
-// Y.E's surface coverage matches the plan's exit criteria.
+// pins the post-Y.G issue count. The test is the canonical proof that
+// Y.E's surface coverage + Y.G's FuncLit lowering combine to give
+// graph_surface.go a fully-supported lowering path.
 func TestY_E_GraphSurfaceEndToEnd(t *testing.T) {
 	path := graphSurfacePath()
 	if path == "" {
@@ -40,23 +42,10 @@ func TestY_E_GraphSurfaceEndToEnd(t *testing.T) {
 	if prog == nil {
 		t.Fatal("LowerFile returned a nil Program — the lowerer should never drop the whole file")
 	}
-	// Issue count target: 1 (the FuncLit closure in StartLoop).
-	const wantIssues = 1
-	if lerr == nil {
-		if wantIssues == 0 {
-			return
-		}
-		t.Fatalf("LowerFile: expected %d residual issue(s), got 0", wantIssues)
-	}
-	got := lowerErrorIssueCount(lerr)
-	if got != wantIssues {
-		t.Errorf("LowerFile: post-Y.E issue count = %d, want %d. Errors:\n%s", got, wantIssues, lerr.Error())
-	}
-	// The one residual must be the FuncLit case — fail loudly if any
-	// other diagnostic creeps back so a regression in Y.E's coverage
-	// is visible immediately.
-	if !strings.Contains(lerr.Error(), "FuncLit") {
-		t.Errorf("post-Y.E residual should be the FuncLit (closure) gap; got:\n%s", lerr.Error())
+	// Issue count target: 0 (Y.G's FuncLit lowering closes the residual).
+	if lerr != nil {
+		t.Fatalf("LowerFile: expected 0 residual issues, got %d:\n%s",
+			lowerErrorIssueCount(lerr), lerr.Error())
 	}
 }
 

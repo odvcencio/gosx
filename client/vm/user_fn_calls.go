@@ -52,10 +52,33 @@ import (
 // user-function registry. Returns (zero, false) for non-IndirectCall
 // opcodes so the dispatcher in evalExpr keeps cascading; returns
 // (result, true) once the call resolves (success OR diagnostic).
+//
+// Slice Y.G — closure-aware dispatch: before consulting vm.funcs, the
+// callee name is looked up as a LOCAL in the current frame. If the
+// local holds a ClosureVal (IsClosure(v) reports true), dispatch goes
+// through invokeClosureFromIndirectCall — the closure's body runs in
+// a fresh frame that bridges captured names through to the enclosing
+// frame for Go's capture-by-reference semantics. Otherwise the
+// existing Y.D path runs.
 func (vm *VM) evalIndirectCallExpr(e program.Expr) (Value, bool) {
 	if e.Op != program.OpIndirectCall {
 		return Value{}, false
 	}
+
+	// Slice Y.G — closure-aware path. If a local with this name holds a
+	// ClosureVal, dispatch through it instead of looking up the FuncDef
+	// registry. Evaluate args in the caller's frame BEFORE pushing the
+	// closure frame, matching Y.D's argument-evaluation contract.
+	if vm.frame != nil {
+		if local, ok := vm.frame.get(e.Value); ok && IsClosure(local) {
+			args := make([]Value, len(e.Operands))
+			for i, opID := range e.Operands {
+				args[i] = vm.Eval(opID)
+			}
+			return vm.invokeClosureFromIndirectCall(local, args, e), true
+		}
+	}
+
 	def, ok := vm.funcs[e.Value]
 	if !ok {
 		vm.recordExprDiagnostic(
