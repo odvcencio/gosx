@@ -282,6 +282,60 @@ func TestBindCanvas_DisposeOnContextClose(t *testing.T) {
 	}
 }
 
+// TestCanvasHostReceiver_StepFnInstalledOnCanvas pins the key
+// production contract: StartLoop must install the wrapped Go closure
+// as the canvas's step function via the package-internal startLoop
+// path. On WASM, this is the hook __gosx_surface_frame → TickFrame
+// reads — so installing it correctly is what makes the rAF loop
+// actually drive the closure each frame in the browser. Here we
+// observe the install via a recording canvas impl.
+func TestCanvasHostReceiver_StepFnInstalledOnCanvas(t *testing.T) {
+	machine, ticks := newTestVMWithFunc(t, "__test_install")
+	rec := &recordingCanvasImpl{}
+	canvas := &Canvas{impl: rec}
+	recv := NewCanvasHostReceiver(machine, canvas)
+
+	if _, err := recv.Call("StartLoop", []vm.Value{closureForFunc("__test_install")}); err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if rec.stepFn == nil {
+		t.Fatal("CanvasHostReceiver did not install a step fn on the canvas")
+	}
+
+	// Drive the installed step fn directly, mimicking what
+	// __gosx_surface_frame would do via canvas.TickFrame on WASM:
+	// the step fn must dispatch through vm.InvokeClosure into the
+	// captured ClosureVal.
+	rec.stepFn(0.016)
+	rec.stepFn(0.033)
+	if len(*ticks) != 2 {
+		t.Fatalf("ticks after 2 rAF-style invocations = %d, want 2", len(*ticks))
+	}
+	if (*ticks)[0] != 0.016 || (*ticks)[1] != 0.033 {
+		t.Errorf("step fn delivered dts %v, want [0.016 0.033]", *ticks)
+	}
+
+	// Dispose drops the receiver-held closure so future RunFrames
+	// is a no-op (HasLoop returns false). Clearing the canvas-side
+	// stepFn is a WASM-only contract via SetStepFn (canvas_js.go's
+	// TickFrame guards on stepFn != nil); on host builds the canvas
+	// step is irrelevant because no rAF loop runs.
+	recv.Dispose()
+	if recv.HasLoop() {
+		t.Error("Dispose did not drop receiver closure")
+	}
+}
+
+// recordingCanvasImpl is a stubImpl-shaped canvas impl that records
+// the step function passed to startLoop so the test above can drive
+// it the way __gosx_surface_frame does on WASM.
+type recordingCanvasImpl struct {
+	stubImpl
+	stepFn func(dt float64)
+}
+
+func (r *recordingCanvasImpl) startLoop(step func(dt float64)) { r.stepFn = step }
+
 // TestCanvasHostReceiver_DispatchesCanvasMethods verifies that the
 // receiver forwards regular canvas method calls (Width/Height/...) to
 // the wrapped *Canvas rather than treating them as unknown methods.
