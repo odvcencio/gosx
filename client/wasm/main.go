@@ -26,6 +26,7 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
 	registerEngineRuntime(b)
+	registerEngineSurfaceRuntime(b)
 	registerHighlightRuntime()
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
 	setRuntimeFunc("__gosx_get_shared_signal", sharedSignalGetRuntimeFunc(b))
