@@ -128,6 +128,30 @@ func (vm *VM) invokeClosureFromIndirectCall(cv Value, args []Value, e program.Ex
 	return result
 }
 
+// InvokeClosure is the public host-side hook to invoke a ClosureVal
+// the host captured (e.g. via c.StartLoop(cb)) at a later time. This
+// is the symmetric companion to BindHost — it lets a HostReceiver
+// drive the lowered closure body from outside the VM's regular
+// OpIndirectCall dispatch path.
+//
+// The host typically receives a ClosureVal as one of the args to its
+// Call method, stores it, and later invokes it (animation tick,
+// async response, etc.). Each invocation runs the closure body with
+// args bound to the synthetic FuncDef's params and the captured
+// frame visible via the by-reference bridge — same semantics as
+// inline closure calls.
+//
+// Returns the zero Value when cv isn't a closure or its synthetic
+// FuncDef is missing; otherwise the body's return value. Panic-free
+// per the engine-surface contract.
+func (vm *VM) InvokeClosure(cv Value, args []Value) Value {
+	if !IsClosure(cv) {
+		return ZeroValue(program.TypeAny)
+	}
+	synthetic := program.Expr{Op: program.OpIndirectCall, Value: cv.closure.funcName}
+	return vm.invokeClosureFromIndirectCall(cv, args, synthetic)
+}
+
 // itoa is a tiny helper so closure.go doesn't pull strconv (keeps the
 // file dependency-light alongside its sibling evaluators).
 func itoa(n int) string {
