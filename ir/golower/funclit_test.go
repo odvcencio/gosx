@@ -149,11 +149,8 @@ func Mount(c *surface.Canvas) {
 		t.Fatalf("expected 1 arg, got %d", len(rec.Calls[0].Args))
 	}
 	cv := rec.Calls[0].Args[0]
-	// Y.G.2 will add vm.IsClosure; until then assert the arg is at least
-	// non-zero (the placeholder ZeroValue from the legacy diagnostic
-	// would have an empty Str AND no fields, so this still fails).
-	if cv.Fields == nil {
-		t.Errorf("StartLoop arg should carry closure Fields; got Value{Type=%v Str=%q Fields=nil}", cv.Type, cv.Str)
+	if !vm.IsClosure(cv) {
+		t.Errorf("StartLoop arg should be a ClosureVal; got Value{Type=%v Str=%q}", cv.Type, cv.Str)
 	}
 }
 
