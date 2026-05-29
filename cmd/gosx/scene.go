@@ -13,6 +13,7 @@ import (
 
 	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/internal/version"
+	"m31labs.dev/gosx/scene/capability"
 	"m31labs.dev/gosx/scene/cert"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 	sceneschema "m31labs.dev/gosx/scene/schema"
@@ -245,6 +246,15 @@ func runSceneSchemaCommand(args []string, stdout io.Writer) error {
 	return err
 }
 
+// sceneBackendCapsExtract is a minimal struct for extracting only the
+// backendCaps field from a serialized scene JSON. The full SceneIR type has
+// custom MarshalJSON methods on its sub-types (ObjectIR, ModelIR) that do not
+// affect deserialization, but using the minimal extract is simpler and avoids
+// any round-trip surprises.
+type sceneBackendCapsExtract struct {
+	BackendCaps *capability.BackendCaps `json:"backendCaps"`
+}
+
 func runSceneCertifyCommand(args []string, stdout io.Writer) error {
 	if len(args) > 0 && isHelpArg(args[0]) {
 		sceneCertifyUsage(stdout)
@@ -254,26 +264,161 @@ func runSceneCertifyCommand(args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	strict := fs.Bool("strict", false, "fail if the current certification floor is not met")
+	backend := fs.String("backend", "", "check scene-file against a specific backend (webgpu|webgl|canvas2d)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected scene certify operand %q", fs.Arg(0))
+
+	// When --backend is not set, preserve existing behavior: no operands allowed.
+	if *backend == "" {
+		if fs.NArg() > 0 {
+			return fmt.Errorf("unexpected scene certify operand %q", fs.Arg(0))
+		}
+		report := cert.BuildReport()
+		if *jsonOut {
+			data, err := json.MarshalIndent(report, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal certification report: %w", err)
+			}
+			if _, err := stdout.Write(append(data, '\n')); err != nil {
+				return err
+			}
+		} else {
+			printSceneCertification(stdout, report)
+		}
+		if *strict && len(report.Summary.StrictFailures) > 0 {
+			return errors.New("scene certification strict gate failed")
+		}
+		return nil
 	}
+
+	// --backend is set: require exactly one scene-file operand.
+	targetBackend := capability.Backend(*backend)
+	switch targetBackend {
+	case capability.BackendWebGPU, capability.BackendWebGL, capability.BackendCanvas2D:
+		// valid
+	default:
+		return fmt.Errorf("unknown backend %q: must be one of webgpu, webgl, canvas2d", *backend)
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("scene certify --backend requires exactly one scene-file operand")
+	}
+	scenePath := fs.Arg(0)
+	data, err := os.ReadFile(scenePath)
+	if err != nil {
+		return fmt.Errorf("read scene file %q: %w", scenePath, err)
+	}
+	var extract sceneBackendCapsExtract
+	if err := json.Unmarshal(data, &extract); err != nil {
+		return fmt.Errorf("parse scene file %q: %w", scenePath, err)
+	}
+	caps := extract.BackendCaps
+
+	// Compute structural cert report (additive — always included).
 	report := cert.BuildReport()
+
+	// Determine whether the target backend is capable.
+	capable := false
+	if caps != nil {
+		for _, b := range caps.Capable {
+			if b == targetBackend {
+				capable = true
+				break
+			}
+		}
+	}
+
+	// Gather reasons that exclude the target backend from caps.Reasons.
+	var excludingReasons []capability.CapReason
+	if caps != nil {
+		for _, r := range caps.Reasons {
+			if r.Excludes == targetBackend {
+				excludingReasons = append(excludingReasons, r)
+			}
+		}
+	}
+
 	if *jsonOut {
-		data, err := json.MarshalIndent(report, "", "  ")
+		type backendCapsSection struct {
+			Target   capability.Backend     `json:"target"`
+			Capable  bool                   `json:"capable"`
+			Degraded []capability.Feature   `json:"degraded,omitempty"`
+			Reasons  []capability.CapReason `json:"reasons,omitempty"`
+			NoCaps   bool                   `json:"noCaps,omitempty"`
+		}
+		type certifyWithBackend struct {
+			cert.Report
+			BackendCaps backendCapsSection `json:"backendCaps"`
+		}
+		section := backendCapsSection{
+			Target:  targetBackend,
+			Capable: capable,
+		}
+		if caps == nil {
+			section.NoCaps = true
+		} else {
+			section.Degraded = caps.Degraded[targetBackend]
+			section.Reasons = caps.Reasons
+		}
+		combined := certifyWithBackend{Report: report, BackendCaps: section}
+		out, err := json.MarshalIndent(combined, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal certification report: %w", err)
 		}
-		if _, err := stdout.Write(append(data, '\n')); err != nil {
+		if _, err := stdout.Write(append(out, '\n')); err != nil {
 			return err
 		}
 	} else {
 		printSceneCertification(stdout, report)
+		fmt.Fprintf(stdout, "\nBackend: %s\n", targetBackend)
+		if caps == nil {
+			fmt.Fprintln(stdout, "  no backendCaps in scene (older scene format)")
+		} else {
+			if capable {
+				fmt.Fprintf(stdout, "  Capable: yes\n")
+			} else {
+				fmt.Fprintf(stdout, "  Capable: no\n")
+			}
+			if degraded := caps.Degraded[targetBackend]; len(degraded) > 0 {
+				features := make([]string, len(degraded))
+				for i, f := range degraded {
+					features[i] = string(f)
+				}
+				fmt.Fprintf(stdout, "  Degraded: %s\n", strings.Join(features, ", "))
+			}
+			if len(caps.Reasons) > 0 {
+				fmt.Fprintln(stdout, "  Reasons:")
+				for _, r := range caps.Reasons {
+					if r.Excludes != "" {
+						fmt.Fprintf(stdout, "    %s excludes %s\n", r.Feature, r.Excludes)
+					} else if r.Degrades != "" {
+						fmt.Fprintf(stdout, "    %s degrades %s\n", r.Feature, r.Degrades)
+					}
+				}
+			}
+		}
 	}
+
+	// Strict gate for structural failures (no-backend behavior).
 	if *strict && len(report.Summary.StrictFailures) > 0 {
 		return errors.New("scene certification strict gate failed")
+	}
+	// Strict gate for backend capability.
+	if *strict {
+		if caps == nil {
+			return errors.New("scene certify --strict: no backendCaps in scene")
+		}
+		if !capable {
+			// Build error message naming the excluding features.
+			var features []string
+			for _, r := range excludingReasons {
+				features = append(features, string(r.Feature))
+			}
+			if len(features) == 0 {
+				return fmt.Errorf("scene certify --strict: backend %s is not capable", targetBackend)
+			}
+			return fmt.Errorf("scene certify --strict: backend %s excluded by: %s", targetBackend, strings.Join(features, ", "))
+		}
 	}
 	return nil
 }
@@ -583,7 +728,7 @@ func sceneUsage(w io.Writer) {
 	fmt.Fprintf(w, `gosx scene - Inspect and certify Scene3D contracts
 
 Usage:
-  gosx scene certify [--json] [--strict]
+  gosx scene certify [--json] [--strict] [--backend webgpu|webgl|canvas2d <scene-file>]
   gosx scene inspect [--json] [--strict] [--cert] [--budget file] [--assets root] <file-or-dir>...
   gosx scene schema [--out path]
   gosx scene validate [--json] [--strict] [--max-texture-pixels N] <file-or-dir>...
@@ -607,6 +752,15 @@ func sceneCertifyUsage(w io.Writer) {
 
 Usage:
   gosx scene certify [--json] [--strict]
+  gosx scene certify [--json] [--strict] --backend <webgpu|webgl|canvas2d> <scene-file>
+
+Flags:
+  --json             Emit JSON output.
+  --strict           Fail if the certification floor is not met or if --backend
+                     is set and the target backend is not capable.
+  --backend <name>   Check a serialized scene file against the named backend.
+                     Requires exactly one scene-file operand. The scene file
+                     must contain a backendCaps field (produced by Props.SceneIR()).
 
 `)
 }
