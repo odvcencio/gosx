@@ -620,7 +620,7 @@
   }
 
   function sceneWebGPUFeatureGap(source) {
-    const bc = source && typeof source === "object" ? source.backendCaps : null;
+    const bc = sceneBackendCapsOf(source);
     if (bc && Array.isArray(bc.capable)) {
       return bc.capable.some(function(b) { return String(b).toLowerCase() === "webgpu"; }) ? "" : "backendcaps-excluded";
     }
@@ -639,6 +639,13 @@
 
   function sceneNeedsWebGLForWebGPUCoverage(source) {
     return sceneWebGPUFeatureGap(source) !== "";
+  }
+
+  function sceneBackendCapsOf(props) {
+    if (!props || typeof props !== "object") return null;
+    var s = props.scene;
+    if (s && typeof s === "object" && s.backendCaps) return s.backendCaps;
+    return props.backendCaps || null; // fallback if caller passes the scene object directly
   }
 
   function chooseSceneBackend(backendCaps, prefs, availability) {
@@ -711,7 +718,7 @@
       preferCanvas: sceneBool(props && props.preferCanvas, false),
       preferWebGPU: webgpuPreference === "prefer",
     };
-    const backendCaps = props && typeof props === "object" ? props.backendCaps : null;
+    const backendCaps = sceneBackendCapsOf(props);
     const verdict = chooseSceneBackend(backendCaps, prefs, { webgpu: webgpuAvail, webgl: true });
     if (verdict) {
       if (verdict.backend === "webgpu" && webgpuAvail && typeof createSceneWebGPURendererOrFallback === "function") {
@@ -767,7 +774,7 @@
     const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
     const requireWebGL = sceneRequiresWebGL(props);
     const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
-    const backendCaps = props && typeof props === "object" ? props.backendCaps : null;
+    const backendCaps = sceneBackendCapsOf(props);
     const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
     const verdict = chooseSceneBackend(backendCaps, {
       requireWebGL, forceWebGL: sceneBool(props && props.forceWebGL, false),
@@ -4980,6 +4987,7 @@
   }
 
   window.__gosx_choose_scene_backend = chooseSceneBackend;
+  window.__gosx_scene_backend_caps_of = sceneBackendCapsOf;
 
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
     if (!ctx.mount || typeof document.createElement !== "function") {

@@ -15001,3 +15001,40 @@ test("chooseSceneBackend honours forceWebGL override even when webgpu is in capa
   assert.equal(result.backend, "webgl", "forceWebGL must override capable verdict");
   assert.equal(result.fallbackReason, "");
 });
+
+// read-path regression: sceneBackendCapsOf must extract backendCaps from props.scene
+// This test proves that passing a props-shaped object (with backendCaps nested under
+// props.scene) correctly routes to webgl via the skinning exclusion reason.
+test("sceneBackendCapsOf extracts backendCaps from props.scene and honesty gate takes effect", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const capsOf = env.context.__gosx_scene_backend_caps_of;
+  assert.ok(typeof capsOf === "function", "__gosx_scene_backend_caps_of must be exposed");
+
+  // props-shaped object: backendCaps nested under props.scene (as Go serializes it)
+  const props = {
+    preferWebGPU: true,
+    scene: {
+      backendCaps: {
+        capable: ["webgl"],
+        reasons: [{ feature: "skinning", excludes: "webgpu" }],
+      },
+    },
+  };
+
+  const extracted = capsOf(props);
+  assert.ok(extracted !== null, "sceneBackendCapsOf must extract backendCaps from props.scene");
+  assert.deepEqual(extracted.capable, ["webgl"], "extracted.capable should be [webgl]");
+
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+  const result = choose(extracted, prefs, availability);
+
+  assert.ok(result !== null, "chooseSceneBackend result must not be null");
+  assert.equal(result.backend, "webgl", "backend must be webgl — skinning excludes webgpu");
+  assert.equal(result.fallbackReason, "skinning", "fallbackReason must be skinning from reasons[]");
+});
