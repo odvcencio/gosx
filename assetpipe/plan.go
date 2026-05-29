@@ -32,6 +32,21 @@ type Options struct {
 	IncludeUntrackedFormats bool
 }
 
+// SkinInfo records skinning facts for one GLB/glTF asset derived from the
+// cheap structural probe. A runtime backstop (later JS task) covers GLBs the
+// build never saw.
+type SkinInfo struct {
+	Skinned      bool `json:"skinned"`
+	MorphTargets bool `json:"morphTargets,omitempty"`
+}
+
+// skinInfoFromGLTF maps a probed GLTFInfo to SkinInfo. MorphTargets is always
+// false because the current gltfProbe does not inspect mesh.primitives[].targets;
+// the field is reserved for a future probe pass.
+func skinInfoFromGLTF(info GLTFInfo) SkinInfo {
+	return SkinInfo{Skinned: info.Skins > 0}
+}
+
 // Report is the JSON-serializable contract emitted by `gosx assets plan` and
 // by `gosx build` when Scene3D-grade assets are present.
 type Report struct {
@@ -42,6 +57,9 @@ type Report struct {
 	Budget        BudgetInfo   `json:"budget,omitempty"`
 	Warnings      []string     `json:"warnings,omitempty"`
 	Diagnostics   []Diagnostic `json:"diagnostics,omitempty"`
+	// SkinManifest maps each GLB/glTF asset path (relative slash path from the
+	// scan root) to its SkinInfo. Only assets with Skinned=true are included.
+	SkinManifest map[string]SkinInfo `json:"skinManifest,omitempty"`
 }
 
 // Totals summarizes a report for the build manifest.
@@ -262,6 +280,20 @@ func Plan(roots []string, opts Options) (Report, error) {
 	report.Totals.FirstFrameUploadBytes = report.Budget.FirstFrameUploadBytes
 	report.Diagnostics = reportDiagnostics(report.Warnings, report.Assets)
 	sort.Strings(report.Roots)
+	// Populate SkinManifest from probed GLB/glTF assets that have skins.
+	for _, asset := range report.Assets {
+		if asset.GLTF == nil {
+			continue
+		}
+		si := skinInfoFromGLTF(*asset.GLTF)
+		if !si.Skinned {
+			continue
+		}
+		if report.SkinManifest == nil {
+			report.SkinManifest = make(map[string]SkinInfo)
+		}
+		report.SkinManifest[asset.Path] = si
+	}
 	return report, nil
 }
 

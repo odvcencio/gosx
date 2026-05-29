@@ -611,6 +611,23 @@ func (p Props) SceneIR() SceneIR {
 // without changing any callers.
 var defaultShaderResolver capability.ShaderResolver = capability.PresenceResolver{}
 
+// SkinLookup is a build-time probe that reports whether a given GLB/glTF asset
+// source URL is skinned. collectFeatures consults it so that Model and
+// InstancedGLBMesh records whose GLB was probed at build time get
+// FeatureSkinning tagged without needing to load the binary at runtime.
+// A nil skinLookup means no build-time probe is available; the runtime
+// backstop (later JS task) covers that path.
+type SkinLookup interface {
+	Skinned(src string) bool
+}
+
+// skinLookup is the package-level SkinLookup. Nil by default.
+var skinLookup SkinLookup
+
+// SetSkinLookup replaces the package-level SkinLookup. Pass nil to disable.
+// Intended for use by assetpipe integration and tests.
+func SetSkinLookup(l SkinLookup) { skinLookup = l }
+
 // customShaderUnservedBackends returns the de-duped set of backends that are
 // unserved by at least one custom-material object in the SceneIR. A backend
 // is "unserved" by a material if the resolver says the material cannot serve
@@ -1619,6 +1636,24 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 		for i := range ir.Models {
 			if ir.Models[i].LineDash != nil && *ir.Models[i].LineDash {
 				seen[capability.FeatureLineDashed] = true
+				break
+			}
+		}
+	}
+
+	// skinning: check build-time probe for each Model and InstancedGLBMesh.
+	if skinLookup != nil && !seen[capability.FeatureSkinning] {
+		for i := range ir.Models {
+			if skinLookup.Skinned(ir.Models[i].Src) {
+				seen[capability.FeatureSkinning] = true
+				break
+			}
+		}
+	}
+	if skinLookup != nil && !seen[capability.FeatureSkinning] {
+		for i := range ir.InstancedGLBMeshes {
+			if skinLookup.Skinned(ir.InstancedGLBMeshes[i].Src) {
+				seen[capability.FeatureSkinning] = true
 				break
 			}
 		}
