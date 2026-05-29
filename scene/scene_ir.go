@@ -3,6 +3,8 @@ package scene
 import (
 	"encoding/json"
 	"strings"
+
+	"m31labs.dev/gosx/scene/capability"
 )
 
 // SceneIRSchema identifies the compatibility SceneIR payload shape when it is
@@ -1482,4 +1484,63 @@ func applySceneLifecycleRecord(record map[string]any, transition TransitionIR, i
 	if len(live) > 0 {
 		record["live"] = append([]string(nil), live...)
 	}
+}
+
+// collectFeatures inspects the wire SceneIR and returns the de-duplicated set
+// of backend-constrained features the scene uses. Only features detectable
+// from the wire record are returned; caller-side features (skinning, custom
+// shader) are handled by later tasks.
+func collectFeatures(ir SceneIR) []capability.Feature {
+	seen := map[capability.Feature]bool{}
+
+	// ibl: environment has a non-empty env-map.
+	if strings.TrimSpace(ir.Environment.EnvMap) != "" {
+		seen[capability.FeatureIBL] = true
+	}
+
+	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.
+	for i := range ir.Objects {
+		if ir.Objects[i].Pickable != nil && *ir.Objects[i].Pickable {
+			seen[capability.FeatureGPUPicking] = true
+			break
+		}
+	}
+	if !seen[capability.FeatureGPUPicking] {
+		for i := range ir.Models {
+			if ir.Models[i].Pickable != nil && *ir.Models[i].Pickable {
+				seen[capability.FeatureGPUPicking] = true
+				break
+			}
+		}
+	}
+	if !seen[capability.FeatureGPUPicking] {
+		for i := range ir.InstancedGLBMeshes {
+			if ir.InstancedGLBMeshes[i].Pickable != nil && *ir.InstancedGLBMeshes[i].Pickable {
+				seen[capability.FeatureGPUPicking] = true
+				break
+			}
+		}
+	}
+
+	// line-dashed: any ObjectIR has LineDash set to true (set by LineDashedMaterial lowering).
+	for i := range ir.Objects {
+		if ir.Objects[i].LineDash != nil && *ir.Objects[i].LineDash {
+			seen[capability.FeatureLineDashed] = true
+			break
+		}
+	}
+	if !seen[capability.FeatureLineDashed] {
+		for i := range ir.Models {
+			if ir.Models[i].LineDash != nil && *ir.Models[i].LineDash {
+				seen[capability.FeatureLineDashed] = true
+				break
+			}
+		}
+	}
+
+	features := make([]capability.Feature, 0, len(seen))
+	for f := range seen {
+		features = append(features, f)
+	}
+	return features
 }
