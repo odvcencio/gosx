@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## v0.24.0
+
+Scene3D WebGPU honesty gate.
+
+Scene3D backend selection is now Go-authoritative. A `scene/capability` matrix
+maps each backend-constrained feature (skinning, image-based lighting, GPU
+picking, custom WGSL/GLSL materials, dashed lines, compute particles) to the
+backends that implement it today, and scene lowering computes a per-scene
+`backendCaps` verdict — capable backends (best-first), per-backend degraded
+features, and reasons — that is serialized into the scene wire format under
+`scene.backendCaps`. The browser runtime now *obeys* this verdict when choosing
+WebGPU vs WebGL vs Canvas2D instead of computing its own ad-hoc feature gap, so a
+scene that uses a WebGPU-unsupported required feature (for example a skinned
+glTF) deterministically falls back to WebGL with a recorded reason instead of
+silently rendering incorrectly (previously: bind pose on WebGPU). Image-based
+lighting and dashed lines degrade gracefully on WebGPU; skinning and active GPU
+picking force WebGL.
+
+`gosx scene certify --backend <webgpu|webgl|canvas2d> <scene.json>` checks a
+serialized scene against a target backend and, with `--strict`, exits non-zero
+when that backend cannot render it — naming the excluding feature. `scene/inspect`
+now derives its backend intent from the verdict rather than a hardcoded list, and
+the `scene/schema` document carries `backendCaps`. A drift-guard test ties the Go
+capability matrix to per-renderer `*.capabilities.json` manifests so the two
+cannot silently diverge. Skinned-GLB detection uses the asset pipeline's glTF
+skin probe at build time, with a runtime backstop for dynamically loaded models.
+
+The native Go renderer (`render/bundle` / `render/gpu`) is unchanged and remains
+the SSR / headless / thumbnail oracle; the browser runtime stays the JS renderer.
+
 ## v0.18.30
 
 Scene3D production inspection release.
