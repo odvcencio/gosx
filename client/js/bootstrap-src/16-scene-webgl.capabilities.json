@@ -1,0 +1,7 @@
+{
+  "skinning": true,
+  "ibl": true,
+  "gpu-picking": true,
+  "line-dashed": true,
+  "compute-particles": false
+}
