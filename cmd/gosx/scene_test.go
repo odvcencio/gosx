@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"m31labs.dev/gosx/scene"
 	"m31labs.dev/gosx/scene/cert"
 	sceneschema "m31labs.dev/gosx/scene/schema"
 )
@@ -223,5 +224,65 @@ func TestRunSceneInspectBudgetFails(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in output:\n%s", want, text)
 		}
+	}
+}
+
+// mustPickableSceneFile marshals a scene with a pickable mesh (which forces
+// BackendCaps.Capable == [webgl]) to a temp file and returns its path.
+func mustPickableSceneFile(t *testing.T) string {
+	t.Helper()
+	pickable := true
+	props := scene.Props{
+		Graph: scene.NewGraph(scene.Mesh{
+			ID:       "m",
+			Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1},
+			Material: scene.StandardMaterial{Color: "#fff"},
+			Pickable: &pickable,
+		}),
+	}
+	data, err := json.Marshal(props.SceneIR())
+	if err != nil {
+		t.Fatalf("marshal pickable scene: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "pickable.scene.json")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write pickable scene: %v", err)
+	}
+	return path
+}
+
+// TestCertifyBackendWebGPUStrictFailsPickable verifies that --backend webgpu
+// --strict on a scene that requires gpu-picking (webgl-only) returns an error
+// that names the excluding feature.
+func TestCertifyBackendWebGPUStrictFailsPickable(t *testing.T) {
+	scenePath := mustPickableSceneFile(t)
+	var out bytes.Buffer
+	err := runSceneCommand([]string{"certify", "--backend", "webgpu", "--strict", scenePath}, &out)
+	if err == nil {
+		t.Fatalf("expected error for webgpu strict on pickable scene, got output:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), "gpu-picking") {
+		t.Errorf("expected error to name gpu-picking, got: %v", err)
+	}
+}
+
+// TestCertifyBackendWebGLStrictPassesPickable verifies that --backend webgl
+// --strict on the same pickable scene passes (webgl supports gpu-picking).
+func TestCertifyBackendWebGLStrictPassesPickable(t *testing.T) {
+	scenePath := mustPickableSceneFile(t)
+	var out bytes.Buffer
+	if err := runSceneCommand([]string{"certify", "--backend", "webgl", "--strict", scenePath}, &out); err != nil {
+		t.Fatalf("expected no error for webgl strict on pickable scene: %v\noutput:\n%s", err, out.String())
+	}
+}
+
+// TestCertifyNoBackendOperandRejected verifies that without --backend, any
+// operand still causes an error (preserving existing behavior).
+func TestCertifyNoBackendOperandRejected(t *testing.T) {
+	scenePath := mustPickableSceneFile(t)
+	var out bytes.Buffer
+	err := runSceneCommand([]string{"certify", scenePath}, &out)
+	if err == nil {
+		t.Fatalf("expected error when passing operand without --backend")
 	}
 }

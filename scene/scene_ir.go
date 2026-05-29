@@ -3,6 +3,8 @@ package scene
 import (
 	"encoding/json"
 	"strings"
+
+	"m31labs.dev/gosx/scene/capability"
 )
 
 // SceneIRSchema identifies the compatibility SceneIR payload shape when it is
@@ -46,6 +48,10 @@ type SceneIR struct {
 	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
+	// BackendCaps is the honesty-gate verdict: which rendering backends can
+	// faithfully render this scene, plus per-backend feature degradations. It
+	// is computed once during Props.SceneIR() and ships to the JS runtime.
+	BackendCaps *capability.BackendCaps `json:"backendCaps,omitempty"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
@@ -574,7 +580,103 @@ func (p Props) SceneIR() SceneIR {
 		}
 		compressSceneIR(&ir, p.Compression.BitWidth, previewBW)
 	}
+	// Compute the honesty-gate verdict now that the wire records are assembled
+	// AND the author-side gates (RequireWebGL / RequiredCapabilities) are in
+	// scope. The verdict ships on the SceneIR so the JS runtime can obey it.
+	ir.BackendCaps = ptrTo(capability.Verdict(collectFeatures(ir), requiredBackends(p), capability.DefaultPolicy()))
+
+	// Post-filter: remove backends that no custom-shader material can serve.
+	// This is a post-filter (not fed into Verdict) because custom-shader
+	// exclusion is per-material, not a flat feature-matrix entry.
+	for _, b := range customShaderUnservedBackends(ir, defaultShaderResolver) {
+		caps := ir.BackendCaps
+		newCapable := caps.Capable[:0:len(caps.Capable)]
+		for _, c := range caps.Capable {
+			if c != b {
+				newCapable = append(newCapable, c)
+			}
+		}
+		caps.Capable = newCapable
+		caps.Reasons = append(caps.Reasons, capability.CapReason{
+			Feature:  capability.FeatureCustomShader,
+			Excludes: b,
+		})
+	}
+
 	return ir
+}
+
+// defaultShaderResolver is the package-level ShaderResolver used by
+// Props.SceneIR(). A future task can swap this to a transpiling resolver
+// without changing any callers.
+var defaultShaderResolver capability.ShaderResolver = capability.PresenceResolver{}
+
+// SkinLookup is a build-time probe that reports whether a given GLB/glTF asset
+// source URL is skinned. collectFeatures consults it so that Model and
+// InstancedGLBMesh records whose GLB was probed at build time get
+// FeatureSkinning tagged without needing to load the binary at runtime.
+// A nil skinLookup means no build-time probe is available; the runtime
+// backstop (later JS task) covers that path.
+type SkinLookup interface {
+	Skinned(src string) bool
+}
+
+// skinLookup is the package-level SkinLookup. Nil by default.
+var skinLookup SkinLookup
+
+// SetSkinLookup replaces the package-level SkinLookup. Pass nil to disable.
+// Intended for use by assetpipe integration and tests.
+func SetSkinLookup(l SkinLookup) { skinLookup = l }
+
+// customShaderUnservedBackends returns the de-duped set of backends that are
+// unserved by at least one custom-material object in the SceneIR. A backend
+// is "unserved" by a material if the resolver says the material cannot serve
+// it (i.e. the required shading language is absent).
+func customShaderUnservedBackends(ir SceneIR, r capability.ShaderResolver) []capability.Backend {
+	seen := map[capability.Backend]bool{}
+	for _, obj := range ir.Objects {
+		if obj.CustomVertex == "" && obj.CustomFragment == "" &&
+			obj.CustomVertexWGSL == "" && obj.CustomFragmentWGSL == "" {
+			continue
+		}
+		src := capability.CustomMaterialSources{
+			GLSL: obj.CustomVertex != "" || obj.CustomFragment != "",
+			WGSL: obj.CustomVertexWGSL != "" || obj.CustomFragmentWGSL != "",
+		}
+		served := r.Serves(src)
+		for b, ok := range served {
+			if !ok {
+				seen[b] = true
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]capability.Backend, 0, len(seen))
+	for b := range seen {
+		out = append(out, b)
+	}
+	return out
+}
+
+// ptrTo returns the address of v. Used to store capability.Verdict's value
+// result as the *capability.BackendCaps the wire format carries.
+func ptrTo[T any](v T) *T { return &v }
+
+// requiredBackends maps a Props' author-declared hard gates onto the backend
+// set the verdict must restrict itself to. An empty result means no hard gate
+// (PreferWebGPU/PreferWebGL only reorder at runtime — they are not gates).
+func requiredBackends(p Props) []capability.Backend {
+	if p.RequireWebGL != nil && *p.RequireWebGL {
+		return []capability.Backend{capability.BackendWebGL}
+	}
+	for _, capName := range p.EngineRequiredCapabilities() {
+		if strings.EqualFold(strings.TrimSpace(capName), string(capability.BackendWebGPU)) {
+			return []capability.Backend{capability.BackendWebGPU}
+		}
+	}
+	return nil
 }
 
 // SceneIR lowers a typed graph into a typed intermediate representation.
@@ -689,6 +791,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if ir.ShadowMaxPixels != 0 {
 		out["shadowMaxPixels"] = ir.ShadowMaxPixels
+	}
+	if ir.BackendCaps != nil {
+		out["backendCaps"] = ir.BackendCaps
 	}
 	return out
 }
@@ -1482,4 +1587,81 @@ func applySceneLifecycleRecord(record map[string]any, transition TransitionIR, i
 	if len(live) > 0 {
 		record["live"] = append([]string(nil), live...)
 	}
+}
+
+// collectFeatures inspects the wire SceneIR and returns the de-duplicated set
+// of backend-constrained features the scene uses. Only features detectable
+// from the wire record are returned; caller-side features (skinning, custom
+// shader) are handled by later tasks.
+func collectFeatures(ir SceneIR) []capability.Feature {
+	seen := map[capability.Feature]bool{}
+
+	// ibl: environment has a non-empty env-map.
+	if strings.TrimSpace(ir.Environment.EnvMap) != "" {
+		seen[capability.FeatureIBL] = true
+	}
+
+	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.
+	for i := range ir.Objects {
+		if ir.Objects[i].Pickable != nil && *ir.Objects[i].Pickable {
+			seen[capability.FeatureGPUPicking] = true
+			break
+		}
+	}
+	if !seen[capability.FeatureGPUPicking] {
+		for i := range ir.Models {
+			if ir.Models[i].Pickable != nil && *ir.Models[i].Pickable {
+				seen[capability.FeatureGPUPicking] = true
+				break
+			}
+		}
+	}
+	if !seen[capability.FeatureGPUPicking] {
+		for i := range ir.InstancedGLBMeshes {
+			if ir.InstancedGLBMeshes[i].Pickable != nil && *ir.InstancedGLBMeshes[i].Pickable {
+				seen[capability.FeatureGPUPicking] = true
+				break
+			}
+		}
+	}
+
+	// line-dashed: any ObjectIR has LineDash set to true (set by LineDashedMaterial lowering).
+	for i := range ir.Objects {
+		if ir.Objects[i].LineDash != nil && *ir.Objects[i].LineDash {
+			seen[capability.FeatureLineDashed] = true
+			break
+		}
+	}
+	if !seen[capability.FeatureLineDashed] {
+		for i := range ir.Models {
+			if ir.Models[i].LineDash != nil && *ir.Models[i].LineDash {
+				seen[capability.FeatureLineDashed] = true
+				break
+			}
+		}
+	}
+
+	// skinning: check build-time probe for each Model and InstancedGLBMesh.
+	if skinLookup != nil && !seen[capability.FeatureSkinning] {
+		for i := range ir.Models {
+			if skinLookup.Skinned(ir.Models[i].Src) {
+				seen[capability.FeatureSkinning] = true
+				break
+			}
+		}
+	}
+	if skinLookup != nil && !seen[capability.FeatureSkinning] {
+		for i := range ir.InstancedGLBMeshes {
+			if skinLookup.Skinned(ir.InstancedGLBMeshes[i].Src) {
+				seen[capability.FeatureSkinning] = true
+				break
+			}
+		}
+	}
+
+	features := make([]capability.Feature, 0, len(seen))
+	for f := range seen {
+		features = append(features, f)
+	}
+	return features
 }

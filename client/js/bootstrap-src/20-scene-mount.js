@@ -620,18 +620,17 @@
   }
 
   function sceneWebGPUFeatureGap(source) {
+    const bc = sceneBackendCapsOf(source);
+    if (bc && Array.isArray(bc.capable)) {
+      return bc.capable.some(function(b) { return String(b).toLowerCase() === "webgpu"; }) ? "" : "backendcaps-excluded";
+    }
     const root = source && typeof source === "object" ? source : {};
     const scene = root.scene && typeof root.scene === "object" ? root.scene : null;
     const candidates = scene ? [root, scene] : [root];
-    if (sceneWebGPUUnsupportedLineBundle(root)) {
-      return "line-styles";
-    }
+    if (sceneWebGPUUnsupportedLineBundle(root)) { return "line-styles"; }
     for (let i = 0; i < candidates.length; i += 1) {
       const item = candidates[i] || {};
-      if (
-        sceneWebGPUUnsupportedLineCollection(item.lines) ||
-        sceneWebGPUUnsupportedLineCollection(item.objects)
-      ) {
+      if (sceneWebGPUUnsupportedLineCollection(item.lines) || sceneWebGPUUnsupportedLineCollection(item.objects)) {
         return "line-styles";
       }
     }
@@ -642,6 +641,68 @@
     return sceneWebGPUFeatureGap(source) !== "";
   }
 
+  function sceneBackendCapsOf(props) {
+    if (!props || typeof props !== "object") return null;
+    var s = props.scene;
+    if (s && typeof s === "object" && s.backendCaps) return s.backendCaps;
+    return props.backendCaps || null; // fallback if caller passes the scene object directly
+  }
+
+  function chooseSceneBackend(backendCaps, prefs, availability) {
+    const avail = availability && typeof availability === "object" ? availability : {};
+    const webgpuAvail = Boolean(avail.webgpu);
+    const webglAvail = avail.webgl !== false;
+    if (prefs && (prefs.requireWebGL || prefs.forceWebGL)) { return { backend: "webgl", fallbackReason: "", degraded: [] }; }
+    if (prefs && prefs.preferCanvas) { return { backend: "canvas2d", fallbackReason: "", degraded: [] }; }
+    if (!backendCaps || !Array.isArray(backendCaps.capable)) { return null; }
+    const capable = backendCaps.capable;
+    const degraded = backendCaps.degraded && typeof backendCaps.degraded === "object" ? backendCaps.degraded : {};
+    const reasons = Array.isArray(backendCaps.reasons) ? backendCaps.reasons : [];
+    let exclusionReason = "";
+    for (let k = 0; k < reasons.length; k += 1) {
+      const rk = reasons[k];
+      if (rk && String(rk.excludes || "").toLowerCase() === "webgpu" && rk.feature) { exclusionReason = String(rk.feature); break; }
+    }
+    for (let i = 0; i < capable.length; i += 1) {
+      const b = String(capable[i]).toLowerCase();
+      if (b === "webgpu") {
+        if (webgpuAvail) { return { backend: "webgpu", fallbackReason: "", degraded: Array.isArray(degraded["webgpu"]) ? degraded["webgpu"].map(String) : [] }; }
+        continue;
+      }
+      if (b === "webgl" || b === "webgl2") {
+        if (webglAvail) {
+          const skipped = capable.slice(0, i).some(function(c) { return String(c).toLowerCase() === "webgpu"; });
+          return { backend: "webgl", fallbackReason: skipped ? "webgpu-unavailable" : exclusionReason, degraded: [] };
+        }
+        continue;
+      }
+      if (b === "canvas2d" || b === "canvas") { return { backend: "canvas2d", fallbackReason: "", degraded: [] }; }
+    }
+    if (webglAvail) { return { backend: "webgl", fallbackReason: exclusionReason || "backendcaps-override", degraded: [] }; }
+    return { backend: null, fallbackReason: exclusionReason || "no-capable-backend", degraded: [] };
+  }
+
+  function createSceneWebGLResult(canvas, props, capability, fallbackReason) {
+    if (typeof createScenePBRRendererOrFallback === "function") {
+      const useCanvasAlpha = sceneCanvasAlpha(props);
+      const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+        alpha: useCanvasAlpha,
+        premultipliedAlpha: useCanvasAlpha,
+        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+      }) : null;
+      if (gl) {
+        const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
+        if (pbrRenderer) { return { renderer: pbrRenderer, fallbackReason: fallbackReason, degraded: [] }; }
+      }
+    }
+    const webglRenderer = createSceneWebGLRenderer(canvas, {
+      antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+      powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+    });
+    return webglRenderer ? { renderer: webglRenderer, fallbackReason: fallbackReason, degraded: [] } : null;
+  }
+
   function createSceneRenderer(canvas, props, capability) {
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
@@ -650,8 +711,36 @@
 
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
     const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
+    const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    const prefs = {
+      requireWebGL: sceneRequiresWebGL(props),
+      forceWebGL: sceneBool(props && props.forceWebGL, false),
+      preferCanvas: sceneBool(props && props.preferCanvas, false),
+      preferWebGPU: webgpuPreference === "prefer",
+    };
+    const backendCaps = sceneBackendCapsOf(props);
+    const verdict = chooseSceneBackend(backendCaps, prefs, { webgpu: webgpuAvail, webgl: true });
+    if (verdict) {
+      if (verdict.backend === "webgpu" && webgpuAvail && typeof createSceneWebGPURendererOrFallback === "function") {
+        const gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
+        if (gpuRenderer) {
+          return { renderer: gpuRenderer, fallbackReason: verdict.fallbackReason || "", degraded: verdict.degraded || [] };
+        }
+      }
+      if (verdict.backend === "webgl" || (verdict.backend === "webgpu" && !webgpuAvail)) {
+        const fallback = verdict.backend === "webgpu" ? "webgpu-unavailable" : (verdict.fallbackReason || "");
+        return createSceneWebGLResult(canvas, props, capability, fallback);
+      }
+      if (verdict.backend === "canvas2d") {
+        if (sceneRequiresWebGL(props)) { return null; }
+        const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+        if (!ctx2d) { return null; }
+        return { renderer: createSceneCanvasRenderer(ctx2d, canvas), fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"), degraded: [] };
+      }
+      return null;
+    }
     const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
-    if (webgpuPreference === "prefer" && !webgpuFeatureGap && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+    if (webgpuPreference === "prefer" && !webgpuFeatureGap && webgpuAvail && typeof createSceneWebGPURendererOrFallback === "function") {
       var gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
       if (gpuRenderer) {
         return {
@@ -661,34 +750,8 @@
       }
     }
     if (webglPreference === "prefer" || webglPreference === "force") {
-      if (typeof createScenePBRRendererOrFallback === "function") {
-        const useCanvasAlpha = sceneCanvasAlpha(props);
-        const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-          alpha: useCanvasAlpha,
-          premultipliedAlpha: useCanvasAlpha,
-          antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
-          powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
-        }) : null;
-        if (gl) {
-          const pbrRenderer = createScenePBRRendererOrFallback(gl, canvas, {});
-          if (pbrRenderer) {
-            return {
-              renderer: pbrRenderer,
-              fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
-            };
-          }
-        }
-      }
-      const webglRenderer = createSceneWebGLRenderer(canvas, {
-        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
-        powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
-      });
-      if (webglRenderer) {
-        return {
-          renderer: webglRenderer,
-          fallbackReason: webgpuFeatureGap ? "webgpu-feature-gap" : "",
-        };
-      }
+      const webglResult = createSceneWebGLResult(canvas, props, capability, webgpuFeatureGap ? "webgpu-feature-gap" : "");
+      if (webglResult) { return webglResult; }
     }
     if (sceneRequiresWebGL(props)) {
       return null;
@@ -711,7 +774,14 @@
     const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
     const requireWebGL = sceneRequiresWebGL(props);
     const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
-    const preferWebGPU = webgpuPreference === "prefer" && !webgpuFeatureGap;
+    const backendCaps = sceneBackendCapsOf(props);
+    const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    const verdict = chooseSceneBackend(backendCaps, {
+      requireWebGL, forceWebGL: sceneBool(props && props.forceWebGL, false),
+      preferCanvas: sceneBool(props && props.preferCanvas, false), preferWebGPU: webgpuPreference === "prefer",
+    }, { webgpu: webgpuAvail, webgl: true });
+    const preferWebGPU = verdict ? verdict.backend === "webgpu" : (webgpuPreference === "prefer" && !webgpuFeatureGap);
+    const verdictFallback = verdict ? verdict.fallbackReason : "";
     const request = {
       props,
       capability,
@@ -729,11 +799,14 @@
       }
       const renderer = entry.create(canvas, props, capability);
       if (renderer) {
+        const isCanvas = entry.kind === "canvas2d" || renderer.kind === "canvas";
+        let fallbackReason = isCanvas
+          ? sceneRendererFallbackReason(props, capability, "canvas")
+          : (verdictFallback || (webgpuFeatureGap && renderer.kind === "webgl" ? "webgpu-feature-gap" : ""));
         return {
           renderer,
-          fallbackReason: entry.kind === "canvas2d" || renderer.kind === "canvas"
-            ? sceneRendererFallbackReason(props, capability, "canvas")
-            : (webgpuFeatureGap && renderer.kind === "webgl" ? "webgpu-feature-gap" : ""),
+          fallbackReason,
+          degraded: verdict && renderer.kind === "webgpu" ? (verdict.degraded || []) : [],
         };
       }
     }
@@ -2344,12 +2417,18 @@
     }).filter(Boolean).join(",");
   }
 
-  function applySceneRendererState(mount, renderer, fallbackReason) {
+  function applySceneRendererState(mount, renderer, fallbackReason, degraded) {
     if (!mount) {
       return;
     }
-    setAttrValue(mount, "data-gosx-scene3d-renderer", renderer && renderer.kind ? renderer.kind : "");
+    const chosenBackend = renderer && renderer.kind ? renderer.kind : "";
+    setAttrValue(mount, "data-gosx-scene3d-renderer", chosenBackend);
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+    // data-gosx-scene3d-backend mirrors the renderer kind (canonical chosen backend name).
+    setAttrValue(mount, "data-gosx-scene3d-backend", chosenBackend);
+    // data-gosx-scene3d-dropped lists features skipped per the backendCaps degraded verdict.
+    setAttrValue(mount, "data-gosx-scene3d-dropped",
+      Array.isArray(degraded) && degraded.length > 0 ? degraded.join(",") : "");
     const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
       ? renderer.diagnostics()
       : null;
@@ -4907,6 +4986,9 @@
     };
   }
 
+  window.__gosx_choose_scene_backend = chooseSceneBackend;
+  window.__gosx_scene_backend_caps_of = sceneBackendCapsOf;
+
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
     if (!ctx.mount || typeof document.createElement !== "function") {
       console.warn("[gosx] Scene3D requires a mount element");
@@ -5063,7 +5145,7 @@
       };
     }
     let renderer = initialRenderer.renderer;
-    applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "");
+    applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
     let latestBundle = null;
     const labelLayoutCache = new Map();
     const labelElements = new Map();
@@ -5374,6 +5456,14 @@
       let feature = "";
       if (typeof renderer.supportsBundle === "function" && renderer.supportsBundle(bundle) === false) {
         feature = "backend-declared";
+      }
+      // Skinning backstop: log a clear warning when a skinned GLB is loaded on
+      // webgpu (which cannot skin). Full re-mount fallback is a TODO — it needs
+      // async wiring into the model-load callback path.
+      if (!feature && renderer.kind === "webgpu" && Array.isArray(bundle.objects) &&
+          bundle.objects.some(function(o) { return o && o.skin && typeof o.skin === "object"; })) {
+        console.warn("[gosx] skinned GLB on webgpu (no skinning). Use requireWebGL=true. TODO: auto re-mount.");
+        gosxSceneEmit("warn", "webgpu-skinned-bundle", { rendererKind: "webgpu", feature: "skinning" });
       }
       if (!feature) {
         return true;

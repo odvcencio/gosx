@@ -219,6 +219,66 @@ func TestPlanStructuredDiagnosticsFromWarnings(t *testing.T) {
 	}
 }
 
+// TestSkinInfoFromGLTF unit-tests the mapping helper directly — no binary
+// fixture required.
+func TestSkinInfoFromGLTF(t *testing.T) {
+	t.Run("skins>0 sets Skinned=true", func(t *testing.T) {
+		info := GLTFInfo{Skins: 2, Meshes: 1}
+		got := skinInfoFromGLTF(info)
+		if !got.Skinned {
+			t.Error("expected Skinned=true for Skins=2; got false")
+		}
+		if got.MorphTargets {
+			t.Error("expected MorphTargets=false (not probed); got true")
+		}
+	})
+
+	t.Run("skins==0 sets Skinned=false", func(t *testing.T) {
+		info := GLTFInfo{Skins: 0, Meshes: 3}
+		got := skinInfoFromGLTF(info)
+		if got.Skinned {
+			t.Error("expected Skinned=false for Skins=0; got true")
+		}
+	})
+}
+
+// TestPlanSkinManifest verifies that Plan populates Report.SkinManifest for a
+// skinned GLB and omits non-skinned assets.
+func TestPlanSkinManifest(t *testing.T) {
+	dir := t.TempDir()
+	// Skinned GLB: one skin.
+	mustWriteBytes(t, filepath.Join(dir, "public", "models", "soldier.glb"), buildTestGLB(t, map[string]any{
+		"asset":  map[string]any{"version": "2.0"},
+		"meshes": []map[string]any{{"primitives": []map[string]any{{"attributes": map[string]any{"POSITION": 0}}}}},
+		"skins":  []map[string]any{{"joints": []int{0}}},
+		"nodes":  []map[string]any{{"mesh": 0}},
+	}))
+	// Static (non-skinned) GLB.
+	mustWriteBytes(t, filepath.Join(dir, "public", "models", "rock.glb"), buildTestGLB(t, map[string]any{
+		"asset":  map[string]any{"version": "2.0"},
+		"meshes": []map[string]any{{"primitives": []map[string]any{{"attributes": map[string]any{"POSITION": 0}}}}},
+	}))
+
+	report, err := Plan([]string{dir}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// SkinManifest must include the skinned asset.
+	si, ok := report.SkinManifest["public/models/soldier.glb"]
+	if !ok {
+		t.Fatalf("expected public/models/soldier.glb in SkinManifest; got %v", report.SkinManifest)
+	}
+	if !si.Skinned {
+		t.Error("expected Skinned=true for soldier.glb")
+	}
+
+	// Non-skinned asset must not appear.
+	if _, bad := report.SkinManifest["public/models/rock.glb"]; bad {
+		t.Error("expected rock.glb absent from SkinManifest (no skins)")
+	}
+}
+
 func findAsset(t *testing.T, report Report, path string) Asset {
 	t.Helper()
 	for _, asset := range report.Assets {

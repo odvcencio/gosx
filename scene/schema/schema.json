@@ -65,6 +65,20 @@
     "shadowMaxPixels": {
       "type": "integer",
       "minimum": 0
+    },
+    "backendCaps": {
+      "type": "object",
+      "properties": {
+        "capable": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "degraded": { "type": "object" },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
     }
   },
   "$defs": {

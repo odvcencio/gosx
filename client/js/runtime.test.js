@@ -14901,3 +14901,140 @@ test("engine factory context does not receive activateInputProviders even with i
   await env.context.__gosx_dispose_page();
   assert.equal(raf.count(), 0, "page disposal should release the gamepad input provider RAF");
 });
+
+// chooseSceneBackend — backendCaps verdict tests
+// The helper is exposed on window.__gosx_choose_scene_backend after running the
+// main bootstrap script (which includes 20-scene-mount.js).
+
+test("chooseSceneBackend selects webgl when backendCaps.capable==[webgl] despite preferWebGPU", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgl"],
+    degraded: {},
+    reasons: [{ feature: "skinning", excludes: "webgpu" }],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, "webgl", "backend should be webgl (webgpu excluded by backendCaps)");
+  assert.ok(result.fallbackReason.length > 0, "fallbackReason should be non-empty when downgraded from webgpu");
+  assert.equal(result.fallbackReason, "skinning", "fallbackReason should be derived from the exclusion reason");
+});
+
+test("chooseSceneBackend selects webgpu and records degraded features when ibl is listed", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgpu", "webgl"],
+    degraded: { webgpu: ["ibl"] },
+    reasons: [{ feature: "ibl", degrades: "webgpu" }],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, "webgpu", "backend should be webgpu (it is in capable[])");
+  assert.equal(result.fallbackReason, "", "no fallbackReason when webgpu is selected");
+  assert.deepEqual(result.degraded, ["ibl"], "ibl should be listed in degraded features");
+});
+
+test("chooseSceneBackend falls back to webgl when webgpu is capable but unavailable at runtime", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgpu", "webgl"],
+    degraded: {},
+    reasons: [],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: false, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, "webgl", "backend should be webgl when webgpu is unavailable at runtime");
+  assert.equal(result.fallbackReason, "webgpu-unavailable", "fallbackReason should be webgpu-unavailable");
+});
+
+test("chooseSceneBackend returns null (backward-compat) when backendCaps is absent", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const result = choose(null, { preferWebGPU: true }, { webgpu: true, webgl: true });
+  assert.equal(result, null, "null backendCaps must return null so caller uses legacy path");
+});
+
+test("chooseSceneBackend honours forceWebGL override even when webgpu is in capable[]", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+
+  const backendCaps = { capable: ["webgpu", "webgl"], degraded: {}, reasons: [] };
+  const prefs = { forceWebGL: true, requireWebGL: false, preferWebGPU: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null);
+  assert.equal(result.backend, "webgl", "forceWebGL must override capable verdict");
+  assert.equal(result.fallbackReason, "");
+});
+
+// read-path regression: sceneBackendCapsOf must extract backendCaps from props.scene
+// This test proves that passing a props-shaped object (with backendCaps nested under
+// props.scene) correctly routes to webgl via the skinning exclusion reason.
+test("sceneBackendCapsOf extracts backendCaps from props.scene and honesty gate takes effect", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const capsOf = env.context.__gosx_scene_backend_caps_of;
+  assert.ok(typeof capsOf === "function", "__gosx_scene_backend_caps_of must be exposed");
+
+  // props-shaped object: backendCaps nested under props.scene (as Go serializes it)
+  const props = {
+    preferWebGPU: true,
+    scene: {
+      backendCaps: {
+        capable: ["webgl"],
+        reasons: [{ feature: "skinning", excludes: "webgpu" }],
+      },
+    },
+  };
+
+  const extracted = capsOf(props);
+  assert.ok(extracted !== null, "sceneBackendCapsOf must extract backendCaps from props.scene");
+  assert.deepEqual(extracted.capable, ["webgl"], "extracted.capable should be [webgl]");
+
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+  const result = choose(extracted, prefs, availability);
+
+  assert.ok(result !== null, "chooseSceneBackend result must not be null");
+  assert.equal(result.backend, "webgl", "backend must be webgl — skinning excludes webgpu");
+  assert.equal(result.fallbackReason, "skinning", "fallbackReason must be skinning from reasons[]");
+});
