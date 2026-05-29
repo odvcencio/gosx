@@ -48,6 +48,10 @@ type SceneIR struct {
 	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
+	// BackendCaps is the honesty-gate verdict: which rendering backends can
+	// faithfully render this scene, plus per-backend feature degradations. It
+	// is computed once during Props.SceneIR() and ships to the JS runtime.
+	BackendCaps *capability.BackendCaps `json:"backendCaps,omitempty"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
@@ -576,7 +580,30 @@ func (p Props) SceneIR() SceneIR {
 		}
 		compressSceneIR(&ir, p.Compression.BitWidth, previewBW)
 	}
+	// Compute the honesty-gate verdict now that the wire records are assembled
+	// AND the author-side gates (RequireWebGL / RequiredCapabilities) are in
+	// scope. The verdict ships on the SceneIR so the JS runtime can obey it.
+	ir.BackendCaps = ptrTo(capability.Verdict(collectFeatures(ir), requiredBackends(p), capability.DefaultPolicy()))
 	return ir
+}
+
+// ptrTo returns the address of v. Used to store capability.Verdict's value
+// result as the *capability.BackendCaps the wire format carries.
+func ptrTo[T any](v T) *T { return &v }
+
+// requiredBackends maps a Props' author-declared hard gates onto the backend
+// set the verdict must restrict itself to. An empty result means no hard gate
+// (PreferWebGPU/PreferWebGL only reorder at runtime — they are not gates).
+func requiredBackends(p Props) []capability.Backend {
+	if p.RequireWebGL != nil && *p.RequireWebGL {
+		return []capability.Backend{capability.BackendWebGL}
+	}
+	for _, capName := range p.EngineRequiredCapabilities() {
+		if strings.EqualFold(strings.TrimSpace(capName), string(capability.BackendWebGPU)) {
+			return []capability.Backend{capability.BackendWebGPU}
+		}
+	}
+	return nil
 }
 
 // SceneIR lowers a typed graph into a typed intermediate representation.
@@ -691,6 +718,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if ir.ShadowMaxPixels != 0 {
 		out["shadowMaxPixels"] = ir.ShadowMaxPixels
+	}
+	if ir.BackendCaps != nil {
+		out["backendCaps"] = ir.BackendCaps
 	}
 	return out
 }

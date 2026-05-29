@@ -333,7 +333,7 @@ func surfaceReport(path string, doc sceneschema.Document) SurfaceReport {
 	drawCalls += len(doc.PostEffects)
 	return SurfaceReport{
 		ID:                 sceneID(path),
-		BackendIntent:      []string{"webgpu", "webgl", "canvas"},
+		BackendIntent:      backendIntent(doc),
 		Objects:            len(doc.Objects),
 		Models:             len(doc.Models),
 		Points:             len(doc.Points),
@@ -348,6 +348,21 @@ func surfaceReport(path string, doc sceneschema.Document) SurfaceReport {
 		PostEffects:        len(doc.PostEffects),
 		EstimatedDrawCalls: drawCalls,
 	}
+}
+
+// backendIntent reports which rendering backends the scene can faithfully
+// target. When the document carries the Go-computed honesty-gate verdict
+// (backendCaps), the surface report mirrors it; otherwise it falls back to the
+// legacy assumption that every backend is viable.
+func backendIntent(doc sceneschema.Document) []string {
+	if doc.BackendCaps != nil && len(doc.BackendCaps.Capable) > 0 {
+		out := make([]string, 0, len(doc.BackendCaps.Capable))
+		for _, b := range doc.BackendCaps.Capable {
+			out = append(out, string(b))
+		}
+		return out
+	}
+	return []string{"webgpu", "webgl", "canvas"}
 }
 
 const defaultTextureBytes int64 = 4 << 20

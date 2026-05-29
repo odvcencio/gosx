@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/scene/capability"
 )
 
 type Severity string
@@ -56,6 +57,7 @@ type Document struct {
 	PostEffects        []json.RawMessage          `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                        `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                        `json:"shadowMaxPixels,omitempty"`
+	BackendCaps        *capability.BackendCaps    `json:"backendCaps,omitempty"`
 }
 
 const Schema = "gosx.scene3d.schema.validation.v1"
