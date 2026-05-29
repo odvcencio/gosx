@@ -584,7 +584,63 @@ func (p Props) SceneIR() SceneIR {
 	// AND the author-side gates (RequireWebGL / RequiredCapabilities) are in
 	// scope. The verdict ships on the SceneIR so the JS runtime can obey it.
 	ir.BackendCaps = ptrTo(capability.Verdict(collectFeatures(ir), requiredBackends(p), capability.DefaultPolicy()))
+
+	// Post-filter: remove backends that no custom-shader material can serve.
+	// This is a post-filter (not fed into Verdict) because custom-shader
+	// exclusion is per-material, not a flat feature-matrix entry.
+	for _, b := range customShaderUnservedBackends(ir, defaultShaderResolver) {
+		caps := ir.BackendCaps
+		newCapable := caps.Capable[:0:len(caps.Capable)]
+		for _, c := range caps.Capable {
+			if c != b {
+				newCapable = append(newCapable, c)
+			}
+		}
+		caps.Capable = newCapable
+		caps.Reasons = append(caps.Reasons, capability.CapReason{
+			Feature:  capability.FeatureCustomShader,
+			Excludes: b,
+		})
+	}
+
 	return ir
+}
+
+// defaultShaderResolver is the package-level ShaderResolver used by
+// Props.SceneIR(). A future task can swap this to a transpiling resolver
+// without changing any callers.
+var defaultShaderResolver capability.ShaderResolver = capability.PresenceResolver{}
+
+// customShaderUnservedBackends returns the de-duped set of backends that are
+// unserved by at least one custom-material object in the SceneIR. A backend
+// is "unserved" by a material if the resolver says the material cannot serve
+// it (i.e. the required shading language is absent).
+func customShaderUnservedBackends(ir SceneIR, r capability.ShaderResolver) []capability.Backend {
+	seen := map[capability.Backend]bool{}
+	for _, obj := range ir.Objects {
+		if obj.CustomVertex == "" && obj.CustomFragment == "" &&
+			obj.CustomVertexWGSL == "" && obj.CustomFragmentWGSL == "" {
+			continue
+		}
+		src := capability.CustomMaterialSources{
+			GLSL: obj.CustomVertex != "" || obj.CustomFragment != "",
+			WGSL: obj.CustomVertexWGSL != "" || obj.CustomFragmentWGSL != "",
+		}
+		served := r.Serves(src)
+		for b, ok := range served {
+			if !ok {
+				seen[b] = true
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]capability.Backend, 0, len(seen))
+	for b := range seen {
+		out = append(out, b)
+	}
+	return out
 }
 
 // ptrTo returns the address of v. Used to store capability.Verdict's value
