@@ -238,9 +238,12 @@ func copyTinyGoPackage(gosxRoot, scratchRoot string, pkg tinyGoPackage) error {
 	if err != nil {
 		return fmt.Errorf("relative tinygo package %s: %w", pkg.ImportPath, err)
 	}
-	if relDir == "." || strings.HasPrefix(relDir, ".."+string(filepath.Separator)) || relDir == ".." || filepath.IsAbs(relDir) {
+	if strings.HasPrefix(relDir, ".."+string(filepath.Separator)) || relDir == ".." || filepath.IsAbs(relDir) {
 		return fmt.Errorf("tinygo package %s is outside GoSX root: %s", pkg.ImportPath, pkg.Dir)
 	}
+	// relDir == "." is the GoSX root package itself (m31labs.dev/gosx), which
+	// engine/surface imports and the wasm closure legitimately needs; copy its
+	// files to the scratch module root alongside the generated go.mod.
 
 	dstDir := filepath.Join(scratchRoot, relDir)
 	if err := os.MkdirAll(dstDir, 0755); err != nil {
