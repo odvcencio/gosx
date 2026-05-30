@@ -312,6 +312,9 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 }
 
 func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
+	}
 	dir := filepath.Join(t.TempDir(), "build-app")
 	if err := RunInit(dir, "example.com/build-app", ""); err != nil {
 		t.Fatal(err)
@@ -364,6 +367,9 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 }
 
 func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
+	}
 	root := t.TempDir()
 	projectDir := filepath.Join(root, "build-app")
 	if err := RunInit(projectDir, "example.com/build-app", ""); err != nil {
@@ -401,6 +407,9 @@ func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 }
 
 func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
+	}
 	dir := filepath.Join(t.TempDir(), "build-app")
 	if err := RunInit(dir, "example.com/build-app", ""); err != nil {
 		t.Fatal(err)

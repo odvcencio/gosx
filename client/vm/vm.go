@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync"
 
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/signal"
@@ -21,6 +22,7 @@ type VM struct {
 	funcs          map[string]*program.FuncDef // user-function registry (Y.D)
 	callDepth      int                         // current OpIndirectCall recursion depth (Y.D)
 	hosts          map[string]HostReceiver     // per-VM host-receiver bindings for OpHostCall (Y.E)
+	hostsMu        sync.RWMutex                // guards hosts: BindHost may run on a teardown goroutine concurrently with LookupHost / dispatch
 	diagnostics    []Diagnostic
 	diagnosticSink DiagnosticSink
 }

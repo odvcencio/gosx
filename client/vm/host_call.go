@@ -67,6 +67,8 @@ type HostReceiver interface {
 // for tests that swap a recorder in mid-evaluation. A nil receiver
 // clears the binding.
 func (vm *VM) BindHost(name string, recv HostReceiver) {
+	vm.hostsMu.Lock()
+	defer vm.hostsMu.Unlock()
 	if vm.hosts == nil {
 		vm.hosts = make(map[string]HostReceiver)
 	}
@@ -80,6 +82,8 @@ func (vm *VM) BindHost(name string, recv HostReceiver) {
 // LookupHost returns the host receiver bound to name (mainly for
 // tests). The second return is false when no binding exists.
 func (vm *VM) LookupHost(name string) (HostReceiver, bool) {
+	vm.hostsMu.RLock()
+	defer vm.hostsMu.RUnlock()
 	recv, ok := vm.hosts[name]
 	return recv, ok
 }
@@ -111,7 +115,9 @@ func (vm *VM) evalHostCallExpr(e program.Expr) (Value, bool) {
 	}
 	recvName := e.Value[:dot]
 	methodName := e.Value[dot+1:]
+	vm.hostsMu.RLock()
 	recv, ok := vm.hosts[recvName]
+	vm.hostsMu.RUnlock()
 	if !ok {
 		vm.recordExprDiagnostic(
 			"host_unbound",

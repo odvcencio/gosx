@@ -84,6 +84,9 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 }
 
 func TestRunInitStarterProjectBuilds(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("shells out to `go test ./...` in a generated module; race instrumentation adds no value and blows the -race timeout")
+	}
 	dir := filepath.Join(t.TempDir(), "starter-build")
 
 	if err := RunInit(dir, "example.com/starter-build", ""); err != nil {
@@ -237,6 +240,9 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 }
 
 func TestRunInitDocsTemplateBuilds(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("shells out to `go test ./...` in a generated module; race instrumentation adds no value and blows the -race timeout")
+	}
 	dir := filepath.Join(t.TempDir(), "docs-build")
 
 	if err := RunInit(dir, "example.com/docs-build", "docs"); err != nil {

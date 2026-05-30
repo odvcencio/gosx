@@ -59,6 +59,7 @@ package surface
 
 import (
 	"fmt"
+	"sync"
 
 	"m31labs.dev/gosx/client/vm"
 )
@@ -80,6 +81,11 @@ type CanvasHostReceiver struct {
 	vm     *vm.VM
 	canvas *Canvas
 
+	// mu guards loop. Dispose() may run on the BindCanvas teardown
+	// goroutine (on ctx.Done) concurrently with HasLoop()/RunFrames()/
+	// startLoop() reads from the surface or test goroutine, so every
+	// access to loop is serialized through mu.
+	mu sync.Mutex
 	// loop holds the most recently-registered animation-loop closure,
 	// or the zero Value when no loop is active. We keep it explicitly
 	// (rather than only inside the canvas.stepFn) so HasLoop() and
@@ -170,7 +176,9 @@ func (r *CanvasHostReceiver) startLoop(args []vm.Value) (vm.Value, error) {
 		return vm.ZeroValue(0), fmt.Errorf("StartLoop: no VM bound to host receiver")
 	}
 
+	r.mu.Lock()
 	r.loop = cv
+	r.mu.Unlock()
 	machine := r.vm
 	step := func(dt float64) {
 		machine.InvokeClosure(cv, []vm.Value{vm.FloatVal(dt)})
@@ -183,6 +191,8 @@ func (r *CanvasHostReceiver) startLoop(args []vm.Value) (vm.Value, error) {
 // closure that hasn't yet been cleared by Dispose. Primarily a test
 // observability hook; production callers should not need this.
 func (r *CanvasHostReceiver) HasLoop() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return vm.IsClosure(r.loop)
 }
 
@@ -195,7 +205,9 @@ func (r *CanvasHostReceiver) HasLoop() bool {
 // Idempotent: safe to call multiple times. After Dispose, a fresh
 // StartLoop call re-arms the loop (the receiver is re-usable).
 func (r *CanvasHostReceiver) Dispose() {
+	r.mu.Lock()
 	r.loop = vm.Value{}
+	r.mu.Unlock()
 	if r.canvas != nil {
 		// SetStepFn is the existing exported seam on Canvas that
 		// canvas_js.go uses to install the step fn. Setting it to nil
@@ -219,7 +231,17 @@ func (r *CanvasHostReceiver) Dispose() {
 // On WASM, the production rAF path drives invocations directly via
 // canvas.TickFrame; this method is not used in the browser.
 func (r *CanvasHostReceiver) RunFrames(n int) {
-	if n <= 0 || !r.HasLoop() || r.vm == nil {
+	if n <= 0 || r.vm == nil {
+		return
+	}
+	// Snapshot the active closure under the lock so a concurrent
+	// Dispose() (teardown goroutine) can't tear it out from under the
+	// invocation loop. If no loop is active, this is a no-op.
+	r.mu.Lock()
+	loop := r.loop
+	active := vm.IsClosure(loop)
+	r.mu.Unlock()
+	if !active {
 		return
 	}
 	const frameDuration = 1.0 / 60.0 // seconds (~16.67ms at 60fps)
@@ -228,7 +250,7 @@ func (r *CanvasHostReceiver) RunFrames(n int) {
 		if i == 0 {
 			dt = 0
 		}
-		r.vm.InvokeClosure(r.loop, []vm.Value{vm.FloatVal(dt)})
+		r.vm.InvokeClosure(loop, []vm.Value{vm.FloatVal(dt)})
 	}
 }
 
