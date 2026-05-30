@@ -428,25 +428,43 @@ func (s *Scheduler) updateStatus(task Task, mutate func(*TaskStatus)) {
 	_ = s.opts.Store.Save(st)
 }
 
+// liveRunSummary holds the subset of live-run state needed by Status.
+type liveRunSummary struct {
+	attempt      int
+	progress     string
+	progressAt   time.Time
+	progressTOMs *int64 // ProgressTimeout in milliseconds, nil if not set
+}
+
 // Status returns a snapshot of every registered task's status, overlaying live
 // run state (current attempt / progress) for tasks that are mid-run.
 func (s *Scheduler) Status() []TaskStatus {
+	now := s.opts.Now()
+
 	s.mu.Lock()
 	// Collect a stable view of tasks and the newest live run per task.
 	names := make([]string, 0, len(s.tasks))
 	scheduleStrings := make(map[string]string, len(s.tasks))
+	progressTimeouts := make(map[string]*int64, len(s.tasks))
 	for name, r := range s.tasks {
 		names = append(names, name)
 		scheduleStrings[name] = scheduleString(r.task.Schedule)
+		if r.task.ProgressTimeout > 0 {
+			ms := r.task.ProgressTimeout.Milliseconds()
+			progressTimeouts[name] = &ms
+		}
 	}
-	liveAttempt := make(map[string]int)
-	liveProgress := make(map[string]string)
+	live := make(map[string]liveRunSummary)
 	for _, run := range s.runs {
-		_, progress := run.snapshot()
+		progressAt, progress := run.snapshot()
 		// Prefer the highest-attempt live run per task.
-		if a, ok := liveAttempt[run.taskName]; !ok || run.attempt >= a {
-			liveAttempt[run.taskName] = run.attempt
-			liveProgress[run.taskName] = progress
+		if existing, ok := live[run.taskName]; !ok || run.attempt >= existing.attempt {
+			live[run.taskName] = liveRunSummary{
+				attempt:      run.attempt,
+				progress:     progress,
+				progressAt:   progressAt,
+				progressTOMs: progressTimeouts[run.taskName],
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -456,9 +474,15 @@ func (s *Scheduler) Status() []TaskStatus {
 		st, _ := s.opts.Store.Load(name)
 		st.Name = name
 		st.Schedule = scheduleStrings[name]
-		if a, ok := liveAttempt[name]; ok {
-			st.CurrentAttempt = a
-			st.CurrentProgress = liveProgress[name]
+		// Always reflect the task's ProgressTimeout configuration.
+		st.ProgressTimeoutMs = progressTimeouts[name]
+		if summary, ok := live[name]; ok {
+			st.CurrentAttempt = summary.attempt
+			st.CurrentProgress = summary.progress
+			if !summary.progressAt.IsZero() {
+				ageMs := now.Sub(summary.progressAt).Milliseconds()
+				st.CurrentProgressAgeMs = &ageMs
+			}
 		}
 		out = append(out, st)
 	}

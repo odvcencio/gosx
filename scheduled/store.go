@@ -7,14 +7,16 @@ import (
 
 // TaskStatus records the observable state of a task.
 type TaskStatus struct {
-	Name            string    `json:"name"`
-	Schedule        string    `json:"schedule,omitempty"`
-	LastRunAt       time.Time `json:"last_run_at,omitempty"`
-	LastSuccessAt   time.Time `json:"last_success_at,omitempty"`
-	NextDueAt       time.Time `json:"next_due_at,omitempty"`
-	CurrentAttempt  int       `json:"current_attempt,omitempty"`
-	CurrentProgress string    `json:"current_progress,omitempty"`
-	RecentError     string    `json:"recent_error,omitempty"`
+	Name                 string    `json:"name"`
+	Schedule             string    `json:"schedule,omitempty"`
+	LastRunAt            time.Time `json:"last_run_at,omitempty"`
+	LastSuccessAt        time.Time `json:"last_success_at,omitempty"`
+	NextDueAt            time.Time `json:"next_due_at,omitempty"`
+	CurrentAttempt       int       `json:"current_attempt,omitempty"`
+	CurrentProgress      string    `json:"current_progress,omitempty"`
+	CurrentProgressAgeMs *int64    `json:"current_progress_age_ms,omitempty"`
+	ProgressTimeoutMs    *int64    `json:"progress_timeout_ms,omitempty"`
+	RecentError          string    `json:"recent_error,omitempty"`
 }
 
 // Store is the persistence seam for task status records.
