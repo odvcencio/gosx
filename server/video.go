@@ -32,27 +32,53 @@ type VideoTrack struct {
 	Forced   bool   `json:"forced,omitempty"`
 }
 
+// SyncTuning holds optional overrides for the follow-mode drift engine.
+// nil ⇒ proven defaults. All fields optional (zero ⇒ default for that field).
+type SyncTuning struct {
+	ToleranceThreshold     float64 `json:"toleranceThreshold,omitempty"`
+	RateThreshold          float64 `json:"rateThreshold,omitempty"`
+	SeekThreshold          float64 `json:"seekThreshold,omitempty"`
+	EmergencySeekThreshold float64 `json:"emergencySeekThreshold,omitempty"`
+	HysteresisCount        int     `json:"hysteresisCount,omitempty"`
+	SeekCooldownMs         float64 `json:"seekCooldownMs,omitempty"`
+	RateHoldMs             float64 `json:"rateHoldMs,omitempty"`
+	MaxSeeksPerMinute      int     `json:"maxSeeksPerMinute,omitempty"`
+	WarmupMs               float64 `json:"warmupMs,omitempty"`
+	MaxLatencySamples      int     `json:"maxLatencySamples,omitempty"`
+	PingIntervalMs         float64 `json:"pingIntervalMs,omitempty"`
+	MinBufferAhead         float64 `json:"minBufferAhead,omitempty"`
+	MaxPreloadMs           float64 `json:"maxPreloadMs,omitempty"`
+}
+
 // VideoProps configures both the server-rendered baseline <video> element and
 // the built-in video engine runtime contract.
 type VideoProps struct {
-	EngineName     string         `json:"-"`
-	Src            string         `json:"src,omitempty"`
-	Sources        []VideoSource  `json:"sources,omitempty"`
-	Poster         string         `json:"poster,omitempty"`
-	Preload        string         `json:"preload,omitempty"`
-	CrossOrigin    string         `json:"crossOrigin,omitempty"`
-	AutoPlay       bool           `json:"autoPlay,omitempty"`
-	Controls       bool           `json:"controls,omitempty"`
-	Loop           bool           `json:"loop,omitempty"`
-	Muted          bool           `json:"muted,omitempty"`
-	PlaysInline    bool           `json:"playsInline,omitempty"`
-	Width          int            `json:"width,omitempty"`
-	Height         int            `json:"height,omitempty"`
-	Volume         float64        `json:"volume,omitempty"`
-	Rate           float64        `json:"rate,omitempty"`
-	Sync           string         `json:"sync,omitempty"`
-	SyncMode       string         `json:"syncMode,omitempty"`
-	SyncStrategy   string         `json:"syncStrategy,omitempty"`
+	EngineName  string        `json:"-"`
+	Src         string        `json:"src,omitempty"`
+	Sources     []VideoSource `json:"sources,omitempty"`
+	Poster      string        `json:"poster,omitempty"`
+	Preload     string        `json:"preload,omitempty"`
+	CrossOrigin string        `json:"crossOrigin,omitempty"`
+	AutoPlay    bool          `json:"autoPlay,omitempty"`
+	Controls    bool          `json:"controls,omitempty"`
+	Loop        bool          `json:"loop,omitempty"`
+	Muted       bool          `json:"muted,omitempty"`
+	PlaysInline bool          `json:"playsInline,omitempty"`
+	Width       int           `json:"width,omitempty"`
+	Height      int           `json:"height,omitempty"`
+	Volume      float64       `json:"volume,omitempty"`
+	Rate        float64       `json:"rate,omitempty"`
+	Sync        string        `json:"sync,omitempty"`
+	SyncMode    string        `json:"syncMode,omitempty"`
+	// SyncStrategy selects the drift-correction strategy for follow mode.
+	// ""/"nudge" = proven ported drift engine (default); "snap" = simple
+	// seek-on-threshold; "nudge-legacy" = per-page rollback to the old
+	// memoryless nudge. The JS factory reads this value; behaviour lives
+	// there — this field only carries the contract through the props.
+	SyncStrategy string `json:"syncStrategy,omitempty"`
+	// SyncTuning carries optional overrides for the follow-mode drift engine.
+	// nil means the JS factory uses proven defaults for every field.
+	SyncTuning     *SyncTuning    `json:"syncTuning,omitempty"`
 	HLS            map[string]any `json:"hls,omitempty"`
 	HLSConfig      map[string]any `json:"hlsConfig,omitempty"`
 	SubtitleBase   string         `json:"subtitleBase,omitempty"`
