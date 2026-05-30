@@ -13,7 +13,7 @@ package vm
 import (
 	"testing"
 
-	"m31labs.dev/gosx/island/program"
+	"github.com/odvcencio/gosx/island/program"
 )
 
 func BenchmarkResolveInitialTreeCounter(b *testing.B) {

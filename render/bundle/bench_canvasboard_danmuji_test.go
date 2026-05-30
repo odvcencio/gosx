@@ -15,13 +15,12 @@
 package bundle
 
 import (
-	"testing"
-
 	"m31labs.dev/gosx/engine"
+	"testing"
 )
 
 func BenchmarkCanvasboardMvpAt1000Nodes(b *testing.B) {
-//line render/bundle/bench_canvasboard.dmj:21
+//line render/bundle/bench_canvasboard.dmj:20
 	cam := OrthoCamera2D(1.0, 0, 0, 1280, 720)
 	nodes := canvasBoardBenchTransforms(1000)
 	b.ReportAllocs()
@@ -45,7 +44,7 @@ func BenchmarkCanvasboardConfigure2dBundle(b *testing.B) {
 }
 
 func BenchmarkCanvasboardBundleAssemble1000Nodes(b *testing.B) {
-//line render/bundle/bench_canvasboard.dmj:43
+//line render/bundle/bench_canvasboard.dmj:44
 	cam := OrthoCamera2D(1.0, 0, 0, 1280, 720)
 	nodes := canvasBoardBenchTransforms(1000)
 	b.ReportAllocs()

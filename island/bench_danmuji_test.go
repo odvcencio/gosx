@@ -24,8 +24,8 @@ package island
 import (
 	"testing"
 
-	"m31labs.dev/gosx/client/vm"
-	"m31labs.dev/gosx/island/program"
+	"github.com/odvcencio/gosx/client/vm"
+	"github.com/odvcencio/gosx/island/program"
 )
 
 func BenchmarkCounterFullCycle(b *testing.B) {

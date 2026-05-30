@@ -10,7 +10,7 @@ package route
 
 import (
 	"fmt"
-	"m31labs.dev/gosx"
+	"github.com/odvcencio/gosx"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
