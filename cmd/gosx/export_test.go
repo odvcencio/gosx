@@ -317,7 +317,7 @@ func addLocalGoSXReplace(t *testing.T, dir string) {
 	goModPath := filepath.Join(dir, "go.mod")
 	goMod := readFile(t, goModPath)
 	repoRoot := testRepoRoot(t)
-	replaceLine := "\nreplace github.com/odvcencio/gosx => " + repoRoot + "\n"
+	replaceLine := "\nreplace m31labs.dev/gosx => " + repoRoot + "\n"
 	if strings.Contains(goMod, replaceLine) {
 		return
 	}
