@@ -1384,6 +1384,12 @@
     let syncBrainActive = false;
     let syncBrainAvailable = typeof window !== "undefined" && typeof window.__gosx_video_sync_new === "function";
     let syncBrainWarned = false;
+    // JS fallback drift engine — the brain-absent, parity-locked port of the
+    // Go videosync engine (28-video-sync-fallback.js). Used on the default
+    // "nudge" path when the WASM brain is unavailable. One instance per
+    // follow session, created lazily.
+    const jsBrainAvailable = typeof window !== "undefined" && typeof window.__gosx_video_sync_js_create === "function";
+    let jsBrain = null;
     let pingTimer = 0;
     let lastPingSentAt = null;
     let requestedRate = Math.max(0.1, sceneNumber(readVideoSignal("rate", videoPropValue(props, ["rate"], 1)), 1));
@@ -2150,7 +2156,30 @@
       writeVideoSignalPayload(videoSignalName("stalled"), JSON.stringify(Boolean(stalledFlag)));
     }
 
-    // Decision array layout from the brain:
+    // Shared actuation for both the WASM brain and the JS fallback engine.
+    // Both produce the same Decision shape; this applies it to the <video>
+    // element and publishes the preload/readiness signals.
+    //   kind: 0=none, 1=rate, 2=seek. resetRate forces nominal 1.0x.
+    function actuateSyncDecision(kind, rate, seekTo, ready, stalledFlag, actualRate, resetRate) {
+      if (kind === 2) {
+        if (Number.isFinite(seekTo)) {
+          video.currentTime = Math.max(0, seekTo);
+        }
+      } else if (kind === 1) {
+        if (Number.isFinite(rate) && rate > 0) {
+          video.playbackRate = rate;
+        }
+      }
+      if (resetRate || kind === 0) {
+        video.playbackRate = 1.0;
+      }
+      stalled = stalledFlag;
+      publishSyncBrainSignals(actualRate, ready, stalledFlag);
+      renderSyncOverlay();
+      updateVideoOutputs();
+    }
+
+    // Decision array layout from the WASM brain:
     //   [kind, rate, seekTo, ready, stalled, actualRate, preloadPhase, resetRate]
     // kind: 0=none, 1=rate, 2=seek. ready/stalled/resetRate: 1/0.
     function applySyncBrainTick() {
@@ -2181,22 +2210,86 @@
       const stalledFlag = sceneNumber(decision[4], 0) === 1;
       const actualRate = sceneNumber(decision[5], video.playbackRate);
       const resetRate = sceneNumber(decision[7], 0) === 1;
-      if (kind === 2) {
-        if (Number.isFinite(seekTo)) {
-          video.currentTime = Math.max(0, seekTo);
-        }
-      } else if (kind === 1) {
-        if (Number.isFinite(rate) && rate > 0) {
-          video.playbackRate = rate;
-        }
+      actuateSyncDecision(kind, rate, seekTo, ready, stalledFlag, actualRate, resetRate);
+    }
+
+    // -------------------------------------------------------------------------
+    // JS fallback drift engine (brain-absent "nudge" path).
+    // Mirrors the WASM brain's ingest/tick/rtt/playback-start surface, but the
+    // engine itself is the pure-JS port installed by 28-video-sync-fallback.js
+    // (parity-locked to the Go videosync engine). Time is injected via nowPerf().
+    // -------------------------------------------------------------------------
+    function useJSBrain() {
+      if (!jsBrainAvailable) {
+        return false;
       }
-      if (resetRate || kind === 0) {
-        video.playbackRate = 1.0;
+      const strategy = syncStrategyName();
+      return strategy === "nudge" || strategy === "";
+    }
+
+    function ensureJSBrain() {
+      if (jsBrain) {
+        return true;
       }
-      stalled = stalledFlag;
-      publishSyncBrainSignals(actualRate, ready, stalledFlag);
-      renderSyncOverlay();
-      updateVideoOutputs();
+      if (!useJSBrain()) {
+        return false;
+      }
+      try {
+        jsBrain = window.__gosx_video_sync_js_create(syncTuning() || {});
+      } catch (_error) {
+        jsBrain = null;
+        return false;
+      }
+      return !!jsBrain;
+    }
+
+    function ingestJSBrain(message) {
+      if (!jsBrain) {
+        return;
+      }
+      jsBrain.ingest(
+        followMessageTimeMS(message),
+        sceneNumber(message && message.position, 0),
+        sceneBool(message && message.playing, false),
+        nowPerf()
+      );
+    }
+
+    function jsBrainPlaybackStart() {
+      if (!jsBrain) {
+        return;
+      }
+      jsBrain.onPlaybackStart(nowPerf());
+    }
+
+    function jsBrainRTT(rttMs) {
+      if (!jsBrain) {
+        return;
+      }
+      jsBrain.rtt(rttMs);
+    }
+
+    function applyJSBrainTick() {
+      if (disposed || !jsBrain) {
+        return;
+      }
+      const decision = jsBrain.tick(
+        Math.max(0, sceneNumber(video.currentTime, 0)),
+        nowPerf(),
+        syncBrainBufferedAhead(),
+        sceneBool(video.paused, true)
+      );
+      if (!decision || typeof decision !== "object") {
+        return;
+      }
+      const kind = sceneNumber(decision.kind, 0);
+      const rate = sceneNumber(decision.rate, 1);
+      const seekTo = sceneNumber(decision.seekTo, 0);
+      const ready = sceneBool(decision.ready, false);
+      const stalledFlag = sceneBool(decision.stalled, false);
+      const actualRate = sceneNumber(decision.actualRate, video.playbackRate);
+      const resetRate = sceneBool(decision.resetRate, false);
+      actuateSyncDecision(kind, rate, seekTo, ready, stalledFlag, actualRate, resetRate);
     }
 
     function syncBrainTickInterval() {
@@ -2255,6 +2348,15 @@
       if (ensureSyncBrain()) {
         if (!followTimer) {
           followTimer = setInterval(applySyncBrainTick, syncBrainTickInterval());
+        }
+        ensurePingTimer();
+        return;
+      }
+      // Brain absent: on the default "nudge" path, use the parity-locked JS
+      // fallback engine. "nudge-legacy"/"snap" fall through to applyFollowState.
+      if (ensureJSBrain()) {
+        if (!followTimer) {
+          followTimer = setInterval(applyJSBrainTick, syncBrainTickInterval());
         }
         ensurePingTimer();
         return;
@@ -2334,6 +2436,8 @@
             } catch (error) {
               disableSyncBrain(error);
             }
+          } else if (jsBrain) {
+            jsBrainRTT(rttMs);
           }
         }
         return;
@@ -2371,6 +2475,9 @@
         if (syncBrainActive) {
           ingestSyncBrain(message);
           applySyncBrainTick();
+        } else if (jsBrain) {
+          ingestJSBrain(message);
+          applyJSBrainTick();
         } else {
           applyFollowState();
         }
@@ -2727,6 +2834,7 @@
       clearError();
       markInteractionActive(1800);
       syncBrainPlaybackStart();
+      jsBrainPlaybackStart();
       updateVideoOutputs();
       sendLeadSnapshot(true);
     });
@@ -2881,6 +2989,9 @@
           } catch (_error) {
           }
         }
+        // Release the JS fallback engine (no native handle to free; just drop
+        // the reference so no post-dispose tick can touch it).
+        jsBrain = null;
         teardownHLS();
         if (resizeObserver && typeof resizeObserver.disconnect === "function") {
           resizeObserver.disconnect();

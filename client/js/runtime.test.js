@@ -13729,6 +13729,9 @@ test("bootstrap video engines retry warming subtitle tracks with Retry-After", a
   assert.equal(overlay.children[1].innerHTML, "Hello after warmup");
 });
 
+// Memoryless legacy nudge: 0.92 behind / 1.08 ahead, snap past 5s drift. This
+// behavior now lives behind syncStrategy "nudge-legacy"; the default "nudge"
+// path routes through the parity-locked JS/WASM drift engine.
 test("bootstrap video follow sync nudges both ahead and behind without repeated play calls", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "video-sync-root";
@@ -13775,7 +13778,7 @@ test("bootstrap video follow sync nudges both ahead and behind without repeated 
             src: "/media/promo.mp4",
             sync: "/api/theatre/ROOM01/ws",
             syncMode: "follow",
-            syncStrategy: "nudge",
+            syncStrategy: "nudge-legacy",
           },
         },
       ],
@@ -13803,6 +13806,8 @@ test("bootstrap video follow sync nudges both ahead and behind without repeated 
   assert.equal(video.playCalls.length, 0);
 });
 
+// Uses syncStrategy "nudge-legacy" to assert the memoryless 0.92 nudge; the
+// binary heartbeat/ping plumbing it also exercises is strategy-independent.
 test("bootstrap video follow sync consumes binary heartbeats and answers pings", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "video-binary-sync-root";
@@ -13849,7 +13854,7 @@ test("bootstrap video follow sync consumes binary heartbeats and answers pings",
             src: "/media/promo.mp4",
             sync: "/api/theatre/ROOM01/ws",
             syncMode: "follow",
-            syncStrategy: "nudge",
+            syncStrategy: "nudge-legacy",
           },
         },
       ],
@@ -15093,4 +15098,98 @@ test("sceneBackendCapsOf extracts backendCaps from props.scene and honesty gate 
   assert.ok(result !== null, "chooseSceneBackend result must not be null");
   assert.equal(result.backend, "webgl", "backend must be webgl — skinning excludes webgpu");
   assert.equal(result.fallbackReason, "skinning", "fallbackReason must be skinning from reasons[]");
+});
+
+// ---------------------------------------------------------------------------
+// Video drift engine: JS fallback ↔ Go golden parity.
+//
+// 28-video-sync-fallback.js is a pure-JS port of the Go videosync engine
+// (client/videosync). The committed golden vector — produced by the Go
+// Engine — is replayed through a fresh JS engine; the decision stream MUST
+// match. kind/preloadPhase/ready/stalled/resetRate are exact; rate/seekTo/
+// actualRate within 1e-3. If this diverges, the JS port is wrong (the Go side
+// is the source of truth) — do NOT edit the golden to fit the JS.
+// ---------------------------------------------------------------------------
+function loadVideoSyncJSEngineFactory() {
+  // Extract the factory from the UNMINIFIED 28- source (mirrors how the other
+  // source-extraction tests read bootstrap-src/*.js directly), eval it in an
+  // isolated context whose only global is `window`, and pull the factory off.
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.js"),
+    "utf8",
+  );
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.js" });
+  const factory = sandbox.window.__gosx_video_sync_js_create;
+  assert.equal(
+    typeof factory,
+    "function",
+    "28-video-sync-fallback.js must install window.__gosx_video_sync_js_create",
+  );
+  return factory;
+}
+
+test("video sync JS fallback engine matches the Go golden parity vector", () => {
+  const factory = loadVideoSyncJSEngineFactory();
+  const golden = JSON.parse(
+    fs.readFileSync(
+      path.join(__dirname, "..", "videosync", "testdata", "parity_basic.json"),
+      "utf8",
+    ),
+  );
+
+  const engine = factory({});
+  const got = [];
+  for (const event of golden.events) {
+    if (event.t === "ingest") {
+      engine.ingest(
+        event.serverTimeMs,
+        event.position,
+        event.playing,
+        event.recvPerfMs == null ? 0 : event.recvPerfMs,
+      );
+    } else if (event.t === "rtt") {
+      engine.rtt(event.rttMs);
+    } else if (event.t === "tick") {
+      // The golden ticks are all playing (paused=false); the engine derives
+      // isPlaying internally from the last ingested heartbeat for projection.
+      got.push(engine.tick(event.currentTime, event.perfNowMs, event.bufferedAhead, false));
+    } else if (event.t === "playbackStart") {
+      engine.onPlaybackStart(event.perfNowMs);
+    }
+  }
+
+  const expected = golden.expected;
+  assert.equal(
+    got.length,
+    expected.length,
+    `expected ${expected.length} tick decisions, got ${got.length}`,
+  );
+
+  const EPS = 1e-3;
+  for (let i = 0; i < expected.length; i += 1) {
+    const e = expected[i];
+    const g = got[i];
+    const where = `tick ${i} (go reason="${e.reason}", js reason="${g.reason}")`;
+    // Exact fields.
+    assert.equal(g.kind, e.kind, `${where}: kind`);
+    assert.equal(g.preloadPhase, e.preloadPhase, `${where}: preloadPhase`);
+    assert.equal(Boolean(g.ready), Boolean(e.ready), `${where}: ready`);
+    assert.equal(Boolean(g.stalled), Boolean(e.stalled), `${where}: stalled`);
+    assert.equal(Boolean(g.resetRate), Boolean(e.resetRate), `${where}: resetRate`);
+    // Near fields (1e-3).
+    assert.ok(
+      Math.abs(g.rate - e.rate) <= EPS,
+      `${where}: rate expected ${e.rate} got ${g.rate}`,
+    );
+    assert.ok(
+      Math.abs(g.seekTo - e.seekTo) <= EPS,
+      `${where}: seekTo expected ${e.seekTo} got ${g.seekTo}`,
+    );
+    assert.ok(
+      Math.abs(g.actualRate - e.actualRate) <= EPS,
+      `${where}: actualRate expected ${e.actualRate} got ${g.actualRate}`,
+    );
+  }
 });
