@@ -32,6 +32,59 @@ skin probe at build time, with a runtime backstop for dynamically loaded models.
 The native Go renderer (`render/bundle` / `render/gpu`) is unchanged and remains
 the SSR / headless / thumbnail oracle; the browser runtime stays the JS renderer.
 
+## v0.23.2
+
+`ContextHostReceiver` dual-keys JSON keys with PascalCase aliases so Go-tag-mapped
+fields (`json:"nodes"` → field `Nodes`) resolve through `OpFieldGet` without
+struct-tag awareness in the VM.
+
+## v0.23.1
+
+`ContextHostReceiver` for surface props decoding. Completes the `ctx` side of the
+bytecode-engine browser hydration bridge — surfaces using `ctx.PropsInto(&props)`
+now populate from the per-mount `propsJSON` via Y.C in-place mutation + Y.G eager
+zero-init.
+
+## v0.23.0
+
+Bytecode-engine browser hydration pipeline (PR #19). JS-side fetcher + WASM
+hydrate entry points + DOM event dispatcher + rAF tick + dispose lifecycle.
+Completes the VM-unification arc at the architecture level.
+
+## v0.22.1
+
+Y.G rAF scheduler (PR #18). Adds the Canvas VM host receiver bridge:
+`CanvasHostReceiver` bridges bytecode handlers to the Canvas API, `StartLoop`
+injects VM closures into the canvas animation loop for rAF scheduling, with
+`Dispose`/`RunFrames` for teardown and deterministic tests; `BindCanvas`
+convenience helper for VM hydration; `NewHostClosure` test helper.
+
+## v0.22.0
+
+Slice Y.G closes the AST-compiler Y initiative (PR #17). New `OpClosure` opcode +
+`ClosureVal` value kind + `InvokeClosure` host entry; eager struct zero-init for
+nil-`Fields` propagation. `graph_surface.go` lowers to 0 issues end-to-end (Mount
+handler included).
+
+## v0.21.0
+
+`internal/buildsurface` deletion (PR #16). Removes the per-component WASM compile
+path and the `surface=wasm` escape hatch. ADR 0005 closed.
+
+## v0.20.0
+
+Module path rename (`m31labs.dev/gosx`) + Phase 1 unification + Phase 2
+CanvasBoard + Phase 4 expression breadth + AST-compiler slices X.A–X.D +
+cross-frame postMessage signal relay (ADR 0009).
+
+## v0.19.0
+
+Module path migration: `github.com/odvcencio/gosx` → `m31labs.dev/gosx`. First
+release under the new vanity import path. Functional changes vs v0.18.32 are
+limited to the module declaration; all public APIs are unchanged. Consumers
+update their `go.mod` and rewrite imports; the `github.com/odvcencio/gosx` path
+remains resolvable for pinned consumers up to v0.18.32.
+
 ## v0.18.30
 
 Scene3D production inspection release.
