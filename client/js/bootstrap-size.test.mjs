@@ -8,14 +8,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const budgets = [
-  { file: "bootstrap.js", raw: 804_000, gzip: 222_000, brotli: 182_000 },
+  // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.js
+  // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
+  // headroom unchanged.
+  { file: "bootstrap.js", raw: 812_000, gzip: 222_000, brotli: 182_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   { file: "bootstrap-feature-scene3d.js", raw: 510_000, gzip: 140_000, brotli: 116_000 },
   { file: "bootstrap-feature-scene3d-webgpu.js", raw: 130_000, gzip: 32_000, brotli: 28_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
-  { file: "bootstrap-feature-engines.js", raw: 52_000, gzip: 16_000, brotli: 14_500 },
+  // bootstrap-feature-engines.js carries the video factory, so it now also
+  // carries 28-video-sync-fallback.js (the JS drift engine): raw 52_000 ->
+  // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
+  { file: "bootstrap-feature-engines.js", raw: 58_000, gzip: 18_500, brotli: 16_500 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -24,7 +30,9 @@ const routeBudgets = [
   {
     name: "video selective runtime",
     files: ["bootstrap-runtime.js", "bootstrap-feature-engines.js"],
-    raw: 160_000,
+    // raw bumped 160_000 -> 164_000 for 28-video-sync-fallback.js folded into
+    // the engines surface; gzip/brotli headroom unchanged.
+    raw: 164_000,
     gzip: 46_000,
     brotli: 42_000,
   },

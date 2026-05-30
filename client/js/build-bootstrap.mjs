@@ -104,6 +104,10 @@ const outputs = [
       sourceFile("bootstrap-src/19-scene-gltf.js"),
       sourceFile("bootstrap-src/19a-scene-animation.js"),
       sourceFile("bootstrap-src/20-scene-mount.js"),
+      // 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
+      // engine the video factory (in 30-tail.js) uses on the brain-absent
+      // path. It must load before the tail.
+      sourceFile("bootstrap-src/28-video-sync-fallback.js"),
       sourceFile(TAIL_FILE),
     ],
   },
@@ -144,6 +148,11 @@ const outputs = [
     path: path.join(__dirname, "bootstrap-feature-engines.js"),
     sources: [
       sourceFile("bootstrap-src/26b-feature-engines-prefix.js"),
+      // 28 installs window.__gosx_video_sync_js_create, the pure-JS drift
+      // engine the video factory uses when the WASM brain is absent. The
+      // engines feature carries the video factory, so it must carry the
+      // fallback engine too.
+      sourceFile("bootstrap-src/28-video-sync-fallback.js"),
       sourceExtract(TAIL_FILE, "runtime-capability-probe", SECTION_RUNTIME_CAPABILITY_PROBE, `  async function hydrateIsland(entry) {
 `),
       sourceExtract(TAIL_FILE, "engines-mounting", SECTION_ENGINE_MOUNTING, SECTION_HUB_CONNECTIONS),

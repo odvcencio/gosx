@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/client/enginevm"
+	"m31labs.dev/gosx/client/videosync"
 	"m31labs.dev/gosx/client/vm"
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/island/program"
@@ -43,6 +44,11 @@ type Bridge struct {
 	// build can elide the *engineSurfaceInstance type (and its
 	// engine/surface dependency) without changing the Bridge layout.
 	engineSurfaces map[string]any
+
+	// videoSyncEngines holds live drift-correction Engine instances keyed by
+	// mount id. Populated by NewVideoSync (bridge_video_sync.go); cleared by
+	// DisposeVideoSync. Nil until the first NewVideoSync call (lazy init).
+	videoSyncEngines map[string]*videosync.Engine
 
 	// crossFrameRelays records the prefix → allowed-origin bindings opted-in
 	// via EnableCrossFrameRelay. See cross_frame.go and ADR 0009. Both the

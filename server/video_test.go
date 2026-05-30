@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -85,5 +86,72 @@ func TestVideoEngineConfigUsesManagedVideoDefaults(t *testing.T) {
 	}
 	if got := len(cfg.Capabilities); got != 3 {
 		t.Fatalf("expected three default capabilities, got %d", got)
+	}
+}
+
+func TestSyncTuningMarshalOmitsZeroFields(t *testing.T) {
+	props := VideoProps{
+		Src: "media/test.mp4",
+		SyncTuning: &SyncTuning{
+			ToleranceThreshold: 1.0,
+			MaxSeeksPerMinute:  6,
+		},
+	}
+	data, err := json.Marshal(normalizeVideoProps(props))
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `"syncTuning":`) {
+		t.Fatalf("expected syncTuning key in JSON, got %s", got)
+	}
+	if !strings.Contains(got, `"toleranceThreshold":1`) {
+		t.Fatalf("expected toleranceThreshold:1 in syncTuning, got %s", got)
+	}
+	if !strings.Contains(got, `"maxSeeksPerMinute":6`) {
+		t.Fatalf("expected maxSeeksPerMinute:6 in syncTuning, got %s", got)
+	}
+	// Zero fields must be omitted (omitempty).
+	if strings.Contains(got, `"rateThreshold"`) {
+		t.Fatalf("expected zero rateThreshold to be omitted, got %s", got)
+	}
+	if strings.Contains(got, `"seekThreshold"`) {
+		t.Fatalf("expected zero seekThreshold to be omitted, got %s", got)
+	}
+}
+
+func TestSyncTuningNilOmitsKey(t *testing.T) {
+	props := VideoProps{
+		Src:        "media/test.mp4",
+		SyncTuning: nil,
+	}
+	data, err := json.Marshal(normalizeVideoProps(props))
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, `"syncTuning"`) {
+		t.Fatalf("expected syncTuning key to be absent when nil, got %s", got)
+	}
+}
+
+func TestSyncStrategyRoundTrips(t *testing.T) {
+	for _, strategy := range []string{"", "nudge", "snap", "nudge-legacy"} {
+		props := VideoProps{
+			Src:          "media/test.mp4",
+			SyncStrategy: strategy,
+		}
+		normalized := normalizeVideoProps(props)
+		if normalized.SyncStrategy != strings.TrimSpace(strategy) {
+			t.Fatalf("SyncStrategy %q did not survive normalize, got %q", strategy, normalized.SyncStrategy)
+		}
+		data, err := json.Marshal(normalized)
+		if err != nil {
+			t.Fatalf("unexpected marshal error for strategy %q: %v", strategy, err)
+		}
+		got := string(data)
+		if strategy != "" && !strings.Contains(got, `"syncStrategy":"`+strategy+`"`) {
+			t.Fatalf("SyncStrategy %q not found in JSON: %s", strategy, got)
+		}
 	}
 }
