@@ -38,7 +38,7 @@ func TestEngineDirectiveSurface(t *testing.T) {
 //gosx:engine surface
 //gosx:capabilities canvas animation webgl
 func Whiteboard(props BoardProps) Engine {
-	return <div>canvas</div>
+	return <canvas></canvas>
 }
 `)
 	prog, err := compileGSX(t, source)

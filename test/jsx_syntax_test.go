@@ -752,7 +752,7 @@ func TestJSXEngineDirective(t *testing.T) {
 //gosx:engine surface
 //gosx:capabilities canvas webgl
 func Renderer() Node {
-	return <div>canvas</div>
+	return <canvas></canvas>
 }`)
 
 	if len(prog.Components) != 1 {
