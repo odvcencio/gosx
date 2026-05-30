@@ -1,3 +1,5 @@
+//go:build !js
+
 package gosx
 
 // Re-export grammargen types and DSL functions for use in grammar definitions.

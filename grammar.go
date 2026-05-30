@@ -1,3 +1,5 @@
+//go:build !js
+
 package gosx
 
 // GosxGrammar returns a grammar extending Go with native GSX component syntax.

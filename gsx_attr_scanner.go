@@ -1,3 +1,5 @@
+//go:build !js
+
 package gosx
 
 import gotreesitter "github.com/odvcencio/gotreesitter"
