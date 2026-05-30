@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/scheduled"
 )
 
 type Middleware func(http.Handler) http.Handler
@@ -96,6 +97,10 @@ type App struct {
 	revalidator        *Revalidator
 	operations         []OperationObserver
 	clientEventsLogger *slog.Logger
+
+	schedulerOnce sync.Once
+	scheduler     *scheduled.Scheduler
+	srv           *http.Server
 }
 
 // New creates a new GoSX server app.
@@ -504,6 +509,9 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 			Logger: a.clientEventsLogger,
 		}))
 	}
+	if !a.hasRoute("GET /_gosx/scheduled") {
+		mux.Handle("GET /_gosx/scheduled", ScheduledStatusHandler(a.Scheduler()))
+	}
 }
 
 // SetClientEventsLogger overrides the slog.Logger used by the
@@ -513,6 +521,27 @@ func (a *App) SetClientEventsLogger(logger *slog.Logger) {
 		return
 	}
 	a.clientEventsLogger = logger
+}
+
+// Scheduler returns the app's Scheduler, creating it on first access with
+// default options. Callers that never invoke Scheduler pay no overhead.
+func (a *App) Scheduler() *scheduled.Scheduler {
+	a.schedulerOnce.Do(func() {
+		a.scheduler = scheduled.New(scheduled.Options{})
+	})
+	return a.scheduler
+}
+
+// Shutdown stops the scheduler (if one was created) and then gracefully shuts
+// down the HTTP server using the provided context.
+func (a *App) Shutdown(ctx context.Context) error {
+	if a.scheduler != nil {
+		a.scheduler.Stop(30 * time.Second)
+	}
+	if a.srv != nil {
+		return a.srv.Shutdown(ctx)
+	}
+	return nil
 }
 
 func (a *App) registerPageRoutes(mux *http.ServeMux) {
@@ -636,6 +665,8 @@ func (a *App) ListenAndServe(addr string) error {
 		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	a.srv = srv
+	a.Scheduler().Start(context.Background())
 	return srv.ListenAndServe()
 }
 
