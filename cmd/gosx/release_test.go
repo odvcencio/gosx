@@ -24,6 +24,34 @@ func TestRunReleaseCheckCommandPassesCurrentRepo(t *testing.T) {
 	}
 }
 
+func TestCheckCITagIgnoresBranchPushes(t *testing.T) {
+	// Branch/PR push: GITHUB_REF_NAME is the branch ("main"), not a release
+	// tag. The check must skip, not fail.
+	t.Setenv("GITHUB_REF_TYPE", "branch")
+	t.Setenv("GITHUB_REF_NAME", "main")
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+	t.Setenv("CI_COMMIT_TAG", "")
+	if got := checkCITag(version.Current); got.Status != "skip" {
+		t.Fatalf("branch push must skip ci.tag, got %+v", got)
+	}
+}
+
+func TestCheckCITagValidatesTagPushes(t *testing.T) {
+	t.Setenv("GITHUB_REF_TYPE", "tag")
+	t.Setenv("GITHUB_REF_NAME", version.Current)
+	t.Setenv("GITHUB_REF", "refs/tags/"+version.Current)
+	t.Setenv("CI_COMMIT_TAG", "")
+	if got := checkCITag(version.Current); got.Status != "pass" {
+		t.Fatalf("matching tag push must pass ci.tag, got %+v", got)
+	}
+
+	t.Setenv("GITHUB_REF_NAME", "v0.0.1")
+	t.Setenv("GITHUB_REF", "refs/tags/v0.0.1")
+	if got := checkCITag(version.Current); got.Status != "fail" {
+		t.Fatalf("mismatched tag push must fail ci.tag, got %+v", got)
+	}
+}
+
 func TestReleaseCheckDetectsStaleReadme(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "README.md"), "Current release: **v0.18.28**.\n")

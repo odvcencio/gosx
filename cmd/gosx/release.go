@@ -186,7 +186,14 @@ func checkChangelogRelease(path, tag, name string) releaseCheckEntry {
 }
 
 func checkCITag(current string) releaseCheckEntry {
-	tag := strings.TrimSpace(os.Getenv("GITHUB_REF_NAME"))
+	// GitHub Actions sets GITHUB_REF_NAME to the branch name on branch/PR
+	// pushes and only to the tag name on tag pushes. Gate on GITHUB_REF_TYPE
+	// so a branch like "main" is never mistaken for a release tag (which made
+	// the release check fail on every non-tag CI run).
+	tag := ""
+	if strings.TrimSpace(os.Getenv("GITHUB_REF_TYPE")) == "tag" {
+		tag = strings.TrimSpace(os.Getenv("GITHUB_REF_NAME"))
+	}
 	if tag == "" {
 		ref := strings.TrimSpace(os.Getenv("GITHUB_REF"))
 		tag = strings.TrimPrefix(ref, "refs/tags/")
