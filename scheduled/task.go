@@ -32,52 +32,6 @@ type TickHandle interface {
 	Metadata() map[string]string
 }
 
-// runRecord holds the mutable state for a single run, updated by tickHandle.
-type runRecord struct {
-	lastProgressAt time.Time
-	lastProgress   string
-	attempt        int
-}
-
-// tickHandle is the concrete TickHandle passed to task functions.
-type tickHandle struct {
-	run      *runRecord
-	now      func() time.Time
-	metadata map[string]string
-}
-
-// Progress updates the run's last-progress message and timestamp using the
-// injected clock.
-func (h *tickHandle) Progress(message string) {
-	h.run.lastProgress = message
-	h.run.lastProgressAt = h.now()
-}
-
-// Attempt returns the 1-based attempt number for this run.
-func (h *tickHandle) Attempt() int {
-	return h.run.attempt
-}
-
-// Metadata returns the task's metadata map.
-func (h *tickHandle) Metadata() map[string]string {
-	return h.metadata
-}
-
-// newTickHandle constructs a TickHandle for the given attempt, backed by a
-// new runRecord and the provided clock function.
-func newTickHandle(attempt int, now func() time.Time, metadata map[string]string) (*tickHandle, *runRecord) {
-	rec := &runRecord{
-		attempt:        attempt,
-		lastProgressAt: now(),
-	}
-	h := &tickHandle{
-		run:      rec,
-		now:      now,
-		metadata: metadata,
-	}
-	return h, rec
-}
-
 // Task describes a schedulable unit of work.
 type Task struct {
 	// Name is a unique identifier for the task.

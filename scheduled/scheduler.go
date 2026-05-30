@@ -40,10 +40,9 @@ type registered struct {
 	task Task
 }
 
-// schedTick is the scheduler's TickHandle implementation. Unlike the foundation
-// tickHandle it guards progress state with a mutex, because the watchdog
-// goroutine reads lastProgressAt/lastProgress concurrently with the task
-// goroutine's Progress calls.
+// schedTick is the scheduler's TickHandle implementation. It guards progress
+// state with a mutex because the watchdog goroutine reads lastProgressAt and
+// lastProgress concurrently with the task goroutine's Progress calls.
 type schedTick struct {
 	run *activeRun
 }
