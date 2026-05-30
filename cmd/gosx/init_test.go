@@ -116,7 +116,7 @@ func TestRunInitAddsLocalGoSXReplaceWhenRepoRootIsAvailable(t *testing.T) {
 	}
 
 	goMod := readFile(t, filepath.Join(dir, "go.mod"))
-	replaceLine := "replace github.com/odvcencio/gosx => " + filepath.ToSlash(testRepoRoot(t))
+	replaceLine := "replace m31labs.dev/gosx => " + filepath.ToSlash(testRepoRoot(t))
 	if !strings.Contains(goMod, replaceLine) {
 		t.Fatalf("expected go.mod to contain %q, got:\n%s", replaceLine, goMod)
 	}

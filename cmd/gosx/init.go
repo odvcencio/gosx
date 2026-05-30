@@ -128,10 +128,10 @@ func goModTemplate(module string) string {
 
 go 1.25.1
 
-require github.com/odvcencio/gosx v%s
+require m31labs.dev/gosx v%s
 `, module, gosx.Version)
 	if replacePath := localGoSXReplacePath(); replacePath != "" {
-		template += fmt.Sprintf("\nreplace github.com/odvcencio/gosx => %s\n", replacePath)
+		template += fmt.Sprintf("\nreplace m31labs.dev/gosx => %s\n", replacePath)
 		for _, line := range localGoSXDependencyReplaceLines(replacePath) {
 			template += line
 		}
@@ -150,7 +150,7 @@ func localGoSXReplacePath() string {
 	if err != nil {
 		return ""
 	}
-	if !strings.Contains(string(data), "module github.com/odvcencio/gosx") {
+	if !strings.Contains(string(data), "module m31labs.dev/gosx") {
 		return ""
 	}
 	for _, dir := range []string{"env", "session"} {
