@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
 	"m31labs.dev/gosx/auth"
 	"m31labs.dev/gosx/session"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 func TestRedisMagicLinkStoreSupportsCallbackFlow(t *testing.T) {

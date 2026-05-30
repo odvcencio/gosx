@@ -78,9 +78,9 @@ func (c *lowerCtx) lowerMultiAssign(s *ast.AssignStmt) program.ExprID {
 // lowerCommaOkMapIndex emits the bytecode for `v, ok := m[k]`. The
 // shape is:
 //
-//     __tmp := OpMapLookup(m, k)        // single ObjectVal{value, ok}
-//     v     := __tmp["value"]            // OpIndex read
-//     ok    := __tmp["ok"]               // OpIndex read
+//	__tmp := OpMapLookup(m, k)        // single ObjectVal{value, ok}
+//	v     := __tmp["value"]            // OpIndex read
+//	ok    := __tmp["ok"]               // OpIndex read
 //
 // Blank-identifier bindings (`_`) are skipped — the lowerer omits the
 // LocalDecl + Assign pair so a `_, ok := m[k]` lowering doesn't leak
@@ -230,9 +230,9 @@ func (c *lowerCtx) freshCallLocal(pos token.Pos) string {
 // lowerUserFnMultiReturn emits the bytecode for `a, b := f()` where f
 // is a registered user function with 2+ returns. The shape:
 //
-//     __tmp := OpIndirectCall(f, args...)   // returns ObjectVal{__ret_0, __ret_1, ...}
-//     a     := __tmp["__ret_0"]              // OpIndex read
-//     b     := __tmp["__ret_1"]              // OpIndex read
+//	__tmp := OpIndirectCall(f, args...)   // returns ObjectVal{__ret_0, __ret_1, ...}
+//	a     := __tmp["__ret_0"]              // OpIndex read
+//	b     := __tmp["__ret_1"]              // OpIndex read
 //
 // Reuses Y.B's bindFromTmp helper directly — the key scheme is the
 // only thing that differs from comma-ok lookups. Blank-identifier

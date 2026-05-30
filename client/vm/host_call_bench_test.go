@@ -81,15 +81,15 @@ func BenchmarkOpHostCallTwoArgs(b *testing.B) {
 func BenchmarkOpHostCallDrawShape(b *testing.B) {
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpLitFloat, Value: "1.0", Type: program.TypeFloat},                 // id 0
-			{Op: program.OpLitFloat, Value: "2.0", Type: program.TypeFloat},                 // id 1
-			{Op: program.OpLitFloat, Value: "3.0", Type: program.TypeFloat},                 // id 2
-			{Op: program.OpLitFloat, Value: "4.0", Type: program.TypeFloat},                 // id 3
-			{Op: program.OpHostCall, Value: "c.BeginPath"},                                  // id 4
-			{Op: program.OpHostCall, Value: "c.MoveTo", Operands: []program.ExprID{0, 1}},   // id 5
-			{Op: program.OpHostCall, Value: "c.LineTo", Operands: []program.ExprID{2, 3}},   // id 6
-			{Op: program.OpHostCall, Value: "c.Stroke"},                                     // id 7
-			{Op: program.OpSeq, Operands: []program.ExprID{4, 5, 6, 7}},                     // id 8
+			{Op: program.OpLitFloat, Value: "1.0", Type: program.TypeFloat},               // id 0
+			{Op: program.OpLitFloat, Value: "2.0", Type: program.TypeFloat},               // id 1
+			{Op: program.OpLitFloat, Value: "3.0", Type: program.TypeFloat},               // id 2
+			{Op: program.OpLitFloat, Value: "4.0", Type: program.TypeFloat},               // id 3
+			{Op: program.OpHostCall, Value: "c.BeginPath"},                                // id 4
+			{Op: program.OpHostCall, Value: "c.MoveTo", Operands: []program.ExprID{0, 1}}, // id 5
+			{Op: program.OpHostCall, Value: "c.LineTo", Operands: []program.ExprID{2, 3}}, // id 6
+			{Op: program.OpHostCall, Value: "c.Stroke"},                                   // id 7
+			{Op: program.OpSeq, Operands: []program.ExprID{4, 5, 6, 7}},                   // id 8
 		},
 	}
 	vm := NewVM(prog, nil)

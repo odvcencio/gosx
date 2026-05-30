@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"m31labs.dev/gosx/server"
 	goredis "github.com/redis/go-redis/v9"
+	"m31labs.dev/gosx/server"
 )
 
 func TestISRStorePersistsArtifactsAndStateAcrossClients(t *testing.T) {

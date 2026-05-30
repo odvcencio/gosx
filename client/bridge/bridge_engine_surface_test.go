@@ -44,40 +44,45 @@ import (
 // host-call bridge. Mirrors the parity-test harness pattern Y.F established
 // (see hyphae/cmd/hypha-viz before the dogfood-parity deletion).
 type engineSurfaceRecordingCanvas struct {
-	calls       []string
-	fillStyle   string
-	lastFillX   float64
-	lastFillW   float64
+	calls     []string
+	fillStyle string
+	lastFillX float64
+	lastFillW float64
 }
 
-func (r *engineSurfaceRecordingCanvas) Width() int                                    { return 400 }
-func (r *engineSurfaceRecordingCanvas) Height() int                                   { return 300 }
-func (r *engineSurfaceRecordingCanvas) Clear()                                        { r.calls = append(r.calls, "Clear") }
-func (r *engineSurfaceRecordingCanvas) ClearRect(x, y, w, h float64)                  { r.calls = append(r.calls, "ClearRect") }
+func (r *engineSurfaceRecordingCanvas) Width() int  { return 400 }
+func (r *engineSurfaceRecordingCanvas) Height() int { return 300 }
+func (r *engineSurfaceRecordingCanvas) Clear()      { r.calls = append(r.calls, "Clear") }
+func (r *engineSurfaceRecordingCanvas) ClearRect(x, y, w, h float64) {
+	r.calls = append(r.calls, "ClearRect")
+}
 func (r *engineSurfaceRecordingCanvas) FillRect(x, y, w, h float64) {
 	r.calls = append(r.calls, "FillRect")
 	r.lastFillX = x
 	r.lastFillW = w
 }
-func (r *engineSurfaceRecordingCanvas) BeginPath()                                    { r.calls = append(r.calls, "BeginPath") }
-func (r *engineSurfaceRecordingCanvas) MoveTo(x, y float64)                           {}
-func (r *engineSurfaceRecordingCanvas) LineTo(x, y float64)                           {}
-func (r *engineSurfaceRecordingCanvas) Arc(x, y, ra, s, e float64)                    {}
-func (r *engineSurfaceRecordingCanvas) Stroke()                                       {}
-func (r *engineSurfaceRecordingCanvas) Fill()                                         {}
-func (r *engineSurfaceRecordingCanvas) FillText(text string, x, y float64)            {}
-func (r *engineSurfaceRecordingCanvas) SetFillStyle(css string)                       { r.fillStyle = css; r.calls = append(r.calls, "SetFillStyle:"+css) }
-func (r *engineSurfaceRecordingCanvas) SetStrokeStyle(css string)                     {}
-func (r *engineSurfaceRecordingCanvas) SetLineWidth(w float64)                        {}
-func (r *engineSurfaceRecordingCanvas) SetFont(css string)                            {}
-func (r *engineSurfaceRecordingCanvas) SetTextAlign(s string)                         {}
-func (r *engineSurfaceRecordingCanvas) Save()                                         {}
-func (r *engineSurfaceRecordingCanvas) Restore()                                      {}
-func (r *engineSurfaceRecordingCanvas) Translate(x, y float64)                        {}
-func (r *engineSurfaceRecordingCanvas) Scale(x, y float64)                            {}
-func (r *engineSurfaceRecordingCanvas) Rotate(rad float64)                            {}
-func (r *engineSurfaceRecordingCanvas) SetTransform(a, b, c, d, e, f float64)         {}
-func (r *engineSurfaceRecordingCanvas) RequestFrame()                                 {}
+func (r *engineSurfaceRecordingCanvas) BeginPath()                         { r.calls = append(r.calls, "BeginPath") }
+func (r *engineSurfaceRecordingCanvas) MoveTo(x, y float64)                {}
+func (r *engineSurfaceRecordingCanvas) LineTo(x, y float64)                {}
+func (r *engineSurfaceRecordingCanvas) Arc(x, y, ra, s, e float64)         {}
+func (r *engineSurfaceRecordingCanvas) Stroke()                            {}
+func (r *engineSurfaceRecordingCanvas) Fill()                              {}
+func (r *engineSurfaceRecordingCanvas) FillText(text string, x, y float64) {}
+func (r *engineSurfaceRecordingCanvas) SetFillStyle(css string) {
+	r.fillStyle = css
+	r.calls = append(r.calls, "SetFillStyle:"+css)
+}
+func (r *engineSurfaceRecordingCanvas) SetStrokeStyle(css string)             {}
+func (r *engineSurfaceRecordingCanvas) SetLineWidth(w float64)                {}
+func (r *engineSurfaceRecordingCanvas) SetFont(css string)                    {}
+func (r *engineSurfaceRecordingCanvas) SetTextAlign(s string)                 {}
+func (r *engineSurfaceRecordingCanvas) Save()                                 {}
+func (r *engineSurfaceRecordingCanvas) Restore()                              {}
+func (r *engineSurfaceRecordingCanvas) Translate(x, y float64)                {}
+func (r *engineSurfaceRecordingCanvas) Scale(x, y float64)                    {}
+func (r *engineSurfaceRecordingCanvas) Rotate(rad float64)                    {}
+func (r *engineSurfaceRecordingCanvas) SetTransform(a, b, c, d, e, f float64) {}
+func (r *engineSurfaceRecordingCanvas) RequestFrame()                         {}
 
 // TestHydrateEngineSurfaceRunsMountHandler is the canonical acceptance: a
 // minimal Mount handler that paints two FillRects through the canvas host

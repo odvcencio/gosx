@@ -25,7 +25,7 @@ import (
 // outside its own evaluation, and we surface our own mutex so the
 // behavior stays predictable in tests.
 var (
-	randMu sync.Mutex
+	randMu  sync.Mutex
 	randSrc = rand.New(rand.NewSource(1))
 )
 

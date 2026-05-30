@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"m31labs.dev/gosx"
 	"github.com/odvcencio/mdpp"
+	"m31labs.dev/gosx"
 )
 
 // Collection describes a directory of content documents.

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"m31labs.dev/gosx/auth"
 	goredis "github.com/redis/go-redis/v9"
+	"m31labs.dev/gosx/auth"
 )
 
 // WebAuthnStore is a Redis-backed implementation of auth.WebAuthnStore.

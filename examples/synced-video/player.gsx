@@ -16,11 +16,5 @@ func SyncedPlayer(props struct {
 	Sync     string
 	SyncMode string
 }) Node {
-	return <video
-		src={props.Src}
-		sync={props.Sync}
-		syncMode={props.SyncMode}
-		playsinline
-		muted
-	/>
+	return <video src={props.Src} sync={props.Sync} syncMode={props.SyncMode} playsinline muted />
 }

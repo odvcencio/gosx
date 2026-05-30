@@ -63,9 +63,9 @@ func F() float64 {
 // semantics + author writeback" pattern that motivated the in-place
 // mutation decision documented in client/vm/lhs_set.go.
 //
-//   v := gVel[n.ID]
-//   v.X = (v.X + delta) * damping
-//   gVel[n.ID] = v
+//	v := gVel[n.ID]
+//	v.X = (v.X + delta) * damping
+//	gVel[n.ID] = v
 //
 // The test confirms the writeback round-trips through the map: after
 // stepping a single ID, `gVel["n0"].X` reflects the mutated value.
@@ -103,11 +103,11 @@ func F() float64 {
 // accumulator pattern: a slice that starts at zero and gets `+=` on
 // every iteration. Tests the slice-index compound-assign path.
 //
-//   fx := []float64{0, 0, 0}
-//   for i := 0; i < 3; i++ {
-//       fx[i] += float64(i) * 10
-//   }
-//   return fx[0] + fx[1] + fx[2]
+//	fx := []float64{0, 0, 0}
+//	for i := 0; i < 3; i++ {
+//	    fx[i] += float64(i) * 10
+//	}
+//	return fx[0] + fx[1] + fx[2]
 func TestLowerGraphSurfaceForceAccumulation(t *testing.T) {
 	src := []byte(`package handlers
 

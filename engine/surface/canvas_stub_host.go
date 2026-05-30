@@ -9,31 +9,31 @@ type stubImpl struct {
 	w, h int
 }
 
-func (s *stubImpl) width() int                                   { return s.w }
-func (s *stubImpl) height() int                                  { return s.h }
-func (s *stubImpl) clear()                                       {}
-func (s *stubImpl) clearRect(x, y, w, h float64)                {}
-func (s *stubImpl) fillRect(x, y, w, h float64)                 {}
-func (s *stubImpl) beginPath()                                   {}
-func (s *stubImpl) moveTo(x, y float64)                         {}
-func (s *stubImpl) lineTo(x, y float64)                         {}
-func (s *stubImpl) arc(x, y, r, start, end float64)             {}
-func (s *stubImpl) stroke()                                      {}
-func (s *stubImpl) fill()                                        {}
-func (s *stubImpl) fillText(text string, x, y float64)          {}
-func (s *stubImpl) setFillStyle(css string)                      {}
-func (s *stubImpl) setStrokeStyle(css string)                    {}
-func (s *stubImpl) setLineWidth(w float64)                       {}
-func (s *stubImpl) setFont(css string)                           {}
-func (s *stubImpl) setTextAlign(align string)                    {}
-func (s *stubImpl) save()                                        {}
-func (s *stubImpl) restore()                                     {}
-func (s *stubImpl) translate(x, y float64)                       {}
-func (s *stubImpl) scale(x, y float64)                           {}
-func (s *stubImpl) rotate(rad float64)                           {}
-func (s *stubImpl) setTransform(a, b, c2, d, e, f float64)      {}
-func (s *stubImpl) requestFrame()                                {}
-func (s *stubImpl) startLoop(step func(dt float64))              {}
+func (s *stubImpl) width() int                             { return s.w }
+func (s *stubImpl) height() int                            { return s.h }
+func (s *stubImpl) clear()                                 {}
+func (s *stubImpl) clearRect(x, y, w, h float64)           {}
+func (s *stubImpl) fillRect(x, y, w, h float64)            {}
+func (s *stubImpl) beginPath()                             {}
+func (s *stubImpl) moveTo(x, y float64)                    {}
+func (s *stubImpl) lineTo(x, y float64)                    {}
+func (s *stubImpl) arc(x, y, r, start, end float64)        {}
+func (s *stubImpl) stroke()                                {}
+func (s *stubImpl) fill()                                  {}
+func (s *stubImpl) fillText(text string, x, y float64)     {}
+func (s *stubImpl) setFillStyle(css string)                {}
+func (s *stubImpl) setStrokeStyle(css string)              {}
+func (s *stubImpl) setLineWidth(w float64)                 {}
+func (s *stubImpl) setFont(css string)                     {}
+func (s *stubImpl) setTextAlign(align string)              {}
+func (s *stubImpl) save()                                  {}
+func (s *stubImpl) restore()                               {}
+func (s *stubImpl) translate(x, y float64)                 {}
+func (s *stubImpl) scale(x, y float64)                     {}
+func (s *stubImpl) rotate(rad float64)                     {}
+func (s *stubImpl) setTransform(a, b, c2, d, e, f float64) {}
+func (s *stubImpl) requestFrame()                          {}
+func (s *stubImpl) startLoop(step func(dt float64))        {}
 
 // newNoopCanvas returns a Canvas backed by the no-op stub.
 // Used as a fallback when no real canvas context is available.

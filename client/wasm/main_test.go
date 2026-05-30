@@ -8,13 +8,13 @@ import (
 	"syscall/js"
 	"testing"
 
+	"github.com/rivo/uniseg"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/client/bridge"
 	"m31labs.dev/gosx/client/vm"
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
-	"github.com/rivo/uniseg"
 )
 
 func compileIslandProgram(t *testing.T, source string) *program.Program {

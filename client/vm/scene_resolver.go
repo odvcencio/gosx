@@ -1413,4 +1413,3 @@ func parseHexByte(value string) uint64 {
 	}
 	return parsed
 }
-

@@ -42,10 +42,11 @@ func (vm *VM) effectiveForCap() int {
 }
 
 // forValue evaluates an OpFor expression. Operands order:
-//   [0] init — evaluated once before the loop.
-//   [1] cond — evaluated before each iteration; loop ends when false.
-//   [2] post — evaluated after each body.
-//   [3] body — evaluated each iteration.
+//
+//	[0] init — evaluated once before the loop.
+//	[1] cond — evaluated before each iteration; loop ends when false.
+//	[2] post — evaluated after each body.
+//	[3] body — evaluated each iteration.
 //
 // Any missing operand is treated as a noop. This lets the lowerer omit
 // init/post when the Go source omits them.
@@ -89,9 +90,10 @@ func (vm *VM) forValue(e program.Expr) Value {
 }
 
 // forRangeValue evaluates an OpForRange expression. Operands order:
-//   [0] collection — evaluated once.
-//   [1] body — evaluated each iteration with "_item", "_index", and
-//              (for maps) "_key" injected into the props table.
+//
+//	[0] collection — evaluated once.
+//	[1] body — evaluated each iteration with "_item", "_index", and
+//	           (for maps) "_key" injected into the props table.
 //
 // Returns the last body value, or the zero value of TypeAny when the
 // collection is empty. Honors the same iteration cap as OpFor for

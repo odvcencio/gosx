@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"m31labs.dev/gosx/ir"
 	gotreesitter "github.com/odvcencio/gotreesitter"
+	"m31labs.dev/gosx/ir"
 )
 
 // Cached language to avoid regenerating on every compilation.

@@ -54,9 +54,9 @@ func canvasBoardBenchProgram(n int) *rootengine.Program {
 		nodes = append(nodes, rootengine.Node{
 			Kind: "rect",
 			Props: map[string]islandprogram.ExprID{
-				"x":     xExpr,
-				"y":     yExpr,
-				"width": wExpr,
+				"x":      xExpr,
+				"y":      yExpr,
+				"width":  wExpr,
 				"height": hExpr,
 				"color":  colorExpr,
 			},

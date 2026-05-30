@@ -22,22 +22,22 @@ import (
 // TestCanvasHostReceiver_E2E_OpHostCallDispatchAndStep proves the
 // full round-trip:
 //
-//   1. Lowerer emits OpHostCall("c.StartLoop", [OpClosure ...]) (we
-//      construct this by hand).
-//   2. VM evaluates the OpHostCall → CanvasHostReceiver.Call.
-//   3. Receiver wraps the ClosureVal in a Go func(dt) and installs it
-//      on the canvas.
-//   4. Driving the canvas-installed step fn (what TickFrame does on
-//      WASM) invokes the closure via vm.InvokeClosure, which records
-//      ticks against the bound recorder.
+//  1. Lowerer emits OpHostCall("c.StartLoop", [OpClosure ...]) (we
+//     construct this by hand).
+//  2. VM evaluates the OpHostCall → CanvasHostReceiver.Call.
+//  3. Receiver wraps the ClosureVal in a Go func(dt) and installs it
+//     on the canvas.
+//  4. Driving the canvas-installed step fn (what TickFrame does on
+//     WASM) invokes the closure via vm.InvokeClosure, which records
+//     ticks against the bound recorder.
 func TestCanvasHostReceiver_E2E_OpHostCallDispatchAndStep(t *testing.T) {
 	// Synthetic FuncDef body: `OpHostCall("rec.Tick", [OpLocalGet("dt")])`
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "dt"},                                            // 0
-			{Op: program.OpHostCall, Value: "rec.Tick", Operands: []program.ExprID{0}},       // 1
-			{Op: program.OpClosure, Value: "__e2e_synth_closure"},                            // 2
-			{Op: program.OpHostCall, Value: "c.StartLoop", Operands: []program.ExprID{2}},    // 3
+			{Op: program.OpLocalGet, Value: "dt"},                                         // 0
+			{Op: program.OpHostCall, Value: "rec.Tick", Operands: []program.ExprID{0}},    // 1
+			{Op: program.OpClosure, Value: "__e2e_synth_closure"},                         // 2
+			{Op: program.OpHostCall, Value: "c.StartLoop", Operands: []program.ExprID{2}}, // 3
 		},
 		Funcs: []program.FuncDef{
 			{Name: "__e2e_synth_closure", Params: []string{"dt"}, Body: []program.ExprID{1}},

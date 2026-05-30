@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	gosxlang "m31labs.dev/gosx"
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+	gosxlang "m31labs.dev/gosx"
 )
 
 type parseResult struct {

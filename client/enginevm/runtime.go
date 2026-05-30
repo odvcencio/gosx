@@ -12,8 +12,8 @@
 package enginevm
 
 import (
-	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/client/vm"
+	rootengine "m31labs.dev/gosx/engine"
 )
 
 // Runtime is the legacy public alias for vm.SceneAdapter.

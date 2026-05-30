@@ -24,9 +24,9 @@ import (
 // init time with the ADR 0007 field list. Public callers go through
 // ResolveAlias and AliasedFrom; do not mutate the table at runtime.
 var (
-	aliasMu     sync.RWMutex
-	aliasTable  = map[string]string{}
-	reverseMu   sync.RWMutex
+	aliasMu      sync.RWMutex
+	aliasTable   = map[string]string{}
+	reverseMu    sync.RWMutex
 	reverseAlias = map[string][]string{}
 )
 

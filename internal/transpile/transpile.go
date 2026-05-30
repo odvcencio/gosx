@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"m31labs.dev/gosx"
 	gotreesitter "github.com/odvcencio/gotreesitter"
+	"m31labs.dev/gosx"
 )
 
 // Options controls transpiler behavior.

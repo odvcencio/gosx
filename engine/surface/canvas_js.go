@@ -68,27 +68,27 @@ func (c *jsCanvas) clearRect(x, y, w, h float64) {
 func (c *jsCanvas) fillRect(x, y, w, h float64) {
 	c.ctx2d.Call("fillRect", x, y, w, h)
 }
-func (c *jsCanvas) beginPath()               { c.ctx2d.Call("beginPath") }
-func (c *jsCanvas) moveTo(x, y float64)      { c.ctx2d.Call("moveTo", x, y) }
-func (c *jsCanvas) lineTo(x, y float64)      { c.ctx2d.Call("lineTo", x, y) }
+func (c *jsCanvas) beginPath()          { c.ctx2d.Call("beginPath") }
+func (c *jsCanvas) moveTo(x, y float64) { c.ctx2d.Call("moveTo", x, y) }
+func (c *jsCanvas) lineTo(x, y float64) { c.ctx2d.Call("lineTo", x, y) }
 func (c *jsCanvas) arc(x, y, r, s, e float64) {
 	c.ctx2d.Call("arc", x, y, r, s, e)
 }
-func (c *jsCanvas) stroke()                         { c.ctx2d.Call("stroke") }
-func (c *jsCanvas) fill()                           { c.ctx2d.Call("fill") }
+func (c *jsCanvas) stroke() { c.ctx2d.Call("stroke") }
+func (c *jsCanvas) fill()   { c.ctx2d.Call("fill") }
 func (c *jsCanvas) fillText(text string, x, y float64) {
 	c.ctx2d.Call("fillText", text, x, y)
 }
-func (c *jsCanvas) setFillStyle(css string)    { c.ctx2d.Set("fillStyle", css) }
-func (c *jsCanvas) setStrokeStyle(css string)  { c.ctx2d.Set("strokeStyle", css) }
-func (c *jsCanvas) setLineWidth(w float64)     { c.ctx2d.Set("lineWidth", w) }
-func (c *jsCanvas) setFont(css string)         { c.ctx2d.Set("font", css) }
-func (c *jsCanvas) setTextAlign(align string)  { c.ctx2d.Set("textAlign", align) }
-func (c *jsCanvas) save()                      { c.ctx2d.Call("save") }
-func (c *jsCanvas) restore()                   { c.ctx2d.Call("restore") }
-func (c *jsCanvas) translate(x, y float64)     { c.ctx2d.Call("translate", x, y) }
-func (c *jsCanvas) scale(x, y float64)         { c.ctx2d.Call("scale", x, y) }
-func (c *jsCanvas) rotate(rad float64)         { c.ctx2d.Call("rotate", rad) }
+func (c *jsCanvas) setFillStyle(css string)   { c.ctx2d.Set("fillStyle", css) }
+func (c *jsCanvas) setStrokeStyle(css string) { c.ctx2d.Set("strokeStyle", css) }
+func (c *jsCanvas) setLineWidth(w float64)    { c.ctx2d.Set("lineWidth", w) }
+func (c *jsCanvas) setFont(css string)        { c.ctx2d.Set("font", css) }
+func (c *jsCanvas) setTextAlign(align string) { c.ctx2d.Set("textAlign", align) }
+func (c *jsCanvas) save()                     { c.ctx2d.Call("save") }
+func (c *jsCanvas) restore()                  { c.ctx2d.Call("restore") }
+func (c *jsCanvas) translate(x, y float64)    { c.ctx2d.Call("translate", x, y) }
+func (c *jsCanvas) scale(x, y float64)        { c.ctx2d.Call("scale", x, y) }
+func (c *jsCanvas) rotate(rad float64)        { c.ctx2d.Call("rotate", rad) }
 func (c *jsCanvas) setTransform(a, b, c2, d, e, f float64) {
 	c.ctx2d.Call("setTransform", a, b, c2, d, e, f)
 }

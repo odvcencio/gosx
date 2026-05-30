@@ -42,10 +42,11 @@ func init() {
 //
 // The comparator reads through three synthetic props (lowercase,
 // underscore-prefixed to avoid colliding with Go identifiers):
-//   _i, _j   — current indices being compared.
-//   _items   — the live working copy of the slice. The comparator must
-//              index into _items (not the original collection prop) so
-//              that comparisons see swaps performed during the sort.
+//
+//	_i, _j   — current indices being compared.
+//	_items   — the live working copy of the slice. The comparator must
+//	           index into _items (not the original collection prop) so
+//	           that comparisons see swaps performed during the sort.
 //
 // The X.C lowerer rewrites `s[i]` inside the comparator body to read
 // from _items when the surrounding call is sort.Slice. This matches

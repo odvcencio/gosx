@@ -24,8 +24,8 @@ func TestVM_OpClosureBuildsClosureVal(t *testing.T) {
 			{Name: "__y_g_funclit_1", Params: nil, Body: []program.ExprID{0}, Results: 1},
 		},
 		Exprs: []program.Expr{
-			{Op: program.OpLitInt, Value: "42", Type: program.TypeInt}, // 0: body
-			{Op: program.OpLitString, Value: "y", Type: program.TypeString}, // 1: captured-name literal
+			{Op: program.OpLitInt, Value: "42", Type: program.TypeInt},                       // 0: body
+			{Op: program.OpLitString, Value: "y", Type: program.TypeString},                  // 1: captured-name literal
 			{Op: program.OpClosure, Value: "__y_g_funclit_1", Operands: []program.ExprID{1}}, // 2
 		},
 	}
@@ -49,11 +49,11 @@ func TestVM_OpClosureInvokeRunsBody(t *testing.T) {
 		},
 		Exprs: []program.Expr{
 			{Op: program.OpLitInt, Value: "2", Type: program.TypeInt}, // 0: literal 2
-			{Op: program.OpLocalGet, Value: "x"},                       // 1: load x
-			{Op: program.OpMul, Operands: []program.ExprID{1, 0}},      // 2: x * 2
-			{Op: program.OpReturn, Operands: []program.ExprID{2}},      // 3: return x*2
-			{Op: program.OpSeq, Operands: []program.ExprID{3}},         // 4: body
-			{Op: program.OpClosure, Value: "__y_g_double"},             // 5: closure ref
+			{Op: program.OpLocalGet, Value: "x"},                      // 1: load x
+			{Op: program.OpMul, Operands: []program.ExprID{1, 0}},     // 2: x * 2
+			{Op: program.OpReturn, Operands: []program.ExprID{2}},     // 3: return x*2
+			{Op: program.OpSeq, Operands: []program.ExprID{3}},        // 4: body
+			{Op: program.OpClosure, Value: "__y_g_double"},            // 5: closure ref
 		},
 	}
 	vm := NewVM(prog, nil)
@@ -88,9 +88,9 @@ func TestVM_ClosureCaptureByReferenceWriteback(t *testing.T) {
 			},
 		},
 		Exprs: []program.Expr{
-			{Op: program.OpLitInt, Value: "1", Type: program.TypeInt}, // 0
-			{Op: program.OpLocalGet, Value: "n"},                       // 1
-			{Op: program.OpAdd, Operands: []program.ExprID{1, 0}},      // 2: n + 1
+			{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},         // 0
+			{Op: program.OpLocalGet, Value: "n"},                              // 1
+			{Op: program.OpAdd, Operands: []program.ExprID{1, 0}},             // 2: n + 1
 			{Op: program.OpAssign, Value: "n", Operands: []program.ExprID{2}}, // 3: n = n + 1
 		},
 	}
@@ -123,14 +123,14 @@ func TestVM_ClosureShadowingParamWinsOverCapture(t *testing.T) {
 		Funcs: []program.FuncDef{
 			{
 				Name:    "__y_g_shadow",
-				Params:  []string{"x"},          // param shadows capture
-				Body:    []program.ExprID{1},    // body: return x
+				Params:  []string{"x"},       // param shadows capture
+				Body:    []program.ExprID{1}, // body: return x
 				Results: 1,
 			},
 		},
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "x"},                       // 0
-			{Op: program.OpReturn, Operands: []program.ExprID{0}},      // 1
+			{Op: program.OpLocalGet, Value: "x"},                  // 0
+			{Op: program.OpReturn, Operands: []program.ExprID{0}}, // 1
 		},
 	}
 	vm := NewVM(prog, nil)
@@ -155,9 +155,9 @@ func TestVM_ClosureRecursionCap(t *testing.T) {
 			{Name: "__y_g_recur", Params: []string{"n"}, Body: []program.ExprID{2}, Results: 0},
 		},
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "n"}, // 0
+			{Op: program.OpLocalGet, Value: "n"},                                              // 0
 			{Op: program.OpIndirectCall, Value: "__y_g_recur", Operands: []program.ExprID{0}}, // 1
-			{Op: program.OpSeq, Operands: []program.ExprID{1}}, // 2 body
+			{Op: program.OpSeq, Operands: []program.ExprID{1}},                                // 2 body
 		},
 	}
 	vm := NewVM(prog, nil)

@@ -39,12 +39,12 @@ func TestEvalIndirectCallZeroArg(t *testing.T) {
 func TestEvalIndirectCallSingleParam(t *testing.T) {
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "n"},                            // 0: read param
-			{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},       // 1
-			{Op: program.OpMul, Operands: []program.ExprID{0, 1}},           // 2: n*2
-			{Op: program.OpReturn, Operands: []program.ExprID{2}},           // 3
-			{Op: program.OpSeq, Operands: []program.ExprID{3}},              // 4 (body)
-			{Op: program.OpLitInt, Value: "21", Type: program.TypeInt},      // 5 (arg)
+			{Op: program.OpLocalGet, Value: "n"},                                         // 0: read param
+			{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},                    // 1
+			{Op: program.OpMul, Operands: []program.ExprID{0, 1}},                        // 2: n*2
+			{Op: program.OpReturn, Operands: []program.ExprID{2}},                        // 3
+			{Op: program.OpSeq, Operands: []program.ExprID{3}},                           // 4 (body)
+			{Op: program.OpLitInt, Value: "21", Type: program.TypeInt},                   // 5 (arg)
 			{Op: program.OpIndirectCall, Value: "double", Operands: []program.ExprID{5}}, // 6 (call)
 		},
 		Funcs: []program.FuncDef{
@@ -80,10 +80,10 @@ func TestEvalIndirectCallUnknownCallee(t *testing.T) {
 func TestEvalIndirectCallDepthCapDefault(t *testing.T) {
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpIndirectCall, Value: "rec"},               // 0: rec() inside body
-			{Op: program.OpReturn, Operands: []program.ExprID{0}},    // 1
-			{Op: program.OpSeq, Operands: []program.ExprID{1}},       // 2: body
-			{Op: program.OpIndirectCall, Value: "rec"},               // 3: outer call
+			{Op: program.OpIndirectCall, Value: "rec"},            // 0: rec() inside body
+			{Op: program.OpReturn, Operands: []program.ExprID{0}}, // 1
+			{Op: program.OpSeq, Operands: []program.ExprID{1}},    // 2: body
+			{Op: program.OpIndirectCall, Value: "rec"},            // 3: outer call
 		},
 		Funcs: []program.FuncDef{
 			{Name: "rec", Params: nil, Body: []program.ExprID{2}, Results: 1},
@@ -105,10 +105,10 @@ func TestEvalIndirectCallDepthCapCustom(t *testing.T) {
 	prog := &program.Program{
 		MaxCallDepth: 3,
 		Exprs: []program.Expr{
-			{Op: program.OpIndirectCall, Value: "rec"},               // 0
-			{Op: program.OpReturn, Operands: []program.ExprID{0}},    // 1
-			{Op: program.OpSeq, Operands: []program.ExprID{1}},       // 2
-			{Op: program.OpIndirectCall, Value: "rec"},               // 3
+			{Op: program.OpIndirectCall, Value: "rec"},            // 0
+			{Op: program.OpReturn, Operands: []program.ExprID{0}}, // 1
+			{Op: program.OpSeq, Operands: []program.ExprID{1}},    // 2
+			{Op: program.OpIndirectCall, Value: "rec"},            // 3
 		},
 		Funcs: []program.FuncDef{
 			{Name: "rec", Params: nil, Body: []program.ExprID{2}, Results: 1},
@@ -126,10 +126,10 @@ func TestEvalIndirectCallDepthCapCustom(t *testing.T) {
 func TestEvalIndirectCallArityMismatch(t *testing.T) {
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "a"},                            // 0
-			{Op: program.OpReturn, Operands: []program.ExprID{0}},           // 1
-			{Op: program.OpSeq, Operands: []program.ExprID{1}},              // 2: body
-			{Op: program.OpIndirectCall, Value: "ident", Operands: nil},     // 3: 0 args (expects 1)
+			{Op: program.OpLocalGet, Value: "a"},                        // 0
+			{Op: program.OpReturn, Operands: []program.ExprID{0}},       // 1
+			{Op: program.OpSeq, Operands: []program.ExprID{1}},          // 2: body
+			{Op: program.OpIndirectCall, Value: "ident", Operands: nil}, // 3: 0 args (expects 1)
 		},
 		Funcs: []program.FuncDef{
 			{Name: "ident", Params: []string{"a"}, Body: []program.ExprID{2}, Results: 1},

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"m31labs.dev/gosx/auth"
 	goredis "github.com/redis/go-redis/v9"
+	"m31labs.dev/gosx/auth"
 )
 
 var consumeMagicLinkScript = goredis.NewScript(`

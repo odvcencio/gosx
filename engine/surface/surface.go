@@ -48,9 +48,9 @@ const (
 
 // PointerEvent holds the state of a pointer (mouse/touch) event.
 type PointerEvent struct {
-	X, Y    float64
-	Button  int
-	Buttons int
+	X, Y     float64
+	Button   int
+	Buttons  int
 	Modifier Modifier
 }
 

@@ -15,12 +15,12 @@ type VM struct {
 	props          map[string]Value
 	signals        map[string]*signal.Signal[Value]
 	exprs          []program.Expr
-	eventData      map[string]string    // current event data (set during handler dispatch)
-	frame          *frame               // locals table for the current handler evaluation (X.A)
-	forCap         int                  // per-loop iteration cap (X.C); 0 → default
+	eventData      map[string]string           // current event data (set during handler dispatch)
+	frame          *frame                      // locals table for the current handler evaluation (X.A)
+	forCap         int                         // per-loop iteration cap (X.C); 0 → default
 	funcs          map[string]*program.FuncDef // user-function registry (Y.D)
-	callDepth      int                  // current OpIndirectCall recursion depth (Y.D)
-	hosts          map[string]HostReceiver // per-VM host-receiver bindings for OpHostCall (Y.E)
+	callDepth      int                         // current OpIndirectCall recursion depth (Y.D)
+	hosts          map[string]HostReceiver     // per-VM host-receiver bindings for OpHostCall (Y.E)
 	diagnostics    []Diagnostic
 	diagnosticSink DiagnosticSink
 }

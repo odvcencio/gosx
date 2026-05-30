@@ -139,8 +139,8 @@ func Read() float64 {
 // stale Value snapshot (e.g., if OpIndex were memoized) would break
 // this. Mirrors the OnPointer-down sequence:
 //
-//   gPos[id] = vec2{wx, wy}
-//   p, ok := gPos[id]   // ok must be true; p must match the inserted value
+//	gPos[id] = vec2{wx, wy}
+//	p, ok := gPos[id]   // ok must be true; p must match the inserted value
 func TestLowerPackageVarMapWriteThenReadVisible(t *testing.T) {
 	src := []byte(`package handlers
 

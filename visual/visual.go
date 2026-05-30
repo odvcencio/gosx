@@ -39,8 +39,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/perf"
 	"github.com/orisano/pixelmatch"
+	"m31labs.dev/gosx/perf"
 )
 
 // Viewport is the browser viewport (device-independent pixels).

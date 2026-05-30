@@ -157,15 +157,15 @@ func (c *lowerCtx) lowerUnaryExpr(u *ast.UnaryExpr) program.ExprID {
 }
 
 // lowerSelectorExpr handles three cases:
-//   1. math.Pi (and any other constant intrinsic) → zero-arg OpCall.
-//   2. pkg.Ident where pkg is the importing alias for a stdlib package
-//      → emit a marker that the parent CallExpr lowers as OpCall. To
-//      keep things simple we emit OpCall("pkg.Ident") with no operands
-//      when used outside a call site — runtime treats unrecognized
-//      callees as zero, which is the right behavior for the rare bare
-//      selector.
-//   3. obj.Field (a non-intrinsic selector) → OpIndex with a literal
-//      string key, treating the LHS as a Value with .Fields populated.
+//  1. math.Pi (and any other constant intrinsic) → zero-arg OpCall.
+//  2. pkg.Ident where pkg is the importing alias for a stdlib package
+//     → emit a marker that the parent CallExpr lowers as OpCall. To
+//     keep things simple we emit OpCall("pkg.Ident") with no operands
+//     when used outside a call site — runtime treats unrecognized
+//     callees as zero, which is the right behavior for the rare bare
+//     selector.
+//  3. obj.Field (a non-intrinsic selector) → OpIndex with a literal
+//     string key, treating the LHS as a Value with .Fields populated.
 func (c *lowerCtx) lowerSelectorExpr(s *ast.SelectorExpr) program.ExprID {
 	if pkg, ok := identName(s.X); ok {
 		qualified := pkg + "." + s.Sel.Name

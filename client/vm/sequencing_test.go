@@ -119,11 +119,11 @@ func TestOpAssignWithoutFrameDiagnostic(t *testing.T) {
 // locals are restored when the inner evaluation returns.
 func TestEvalWithFrameIsIsolated(t *testing.T) {
 	prog := progFromExprs([]program.Expr{
-		{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},      // 0
-		{Op: program.OpLitInt, Value: "99", Type: program.TypeInt},     // 1
+		{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},         // 0
+		{Op: program.OpLitInt, Value: "99", Type: program.TypeInt},        // 1
 		{Op: program.OpAssign, Value: "x", Operands: []program.ExprID{0}}, // 2: outer x = 1
 		{Op: program.OpAssign, Value: "x", Operands: []program.ExprID{1}}, // 3: inner x = 99
-		{Op: program.OpLocalGet, Value: "x"},                            // 4: read x
+		{Op: program.OpLocalGet, Value: "x"},                              // 4: read x
 	})
 	vm := NewVM(prog, nil)
 

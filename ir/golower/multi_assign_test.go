@@ -4,14 +4,14 @@
 // out as the next gap blocking graph_surface.go. Pre-Y.B the lowerer
 // rejects every form with "multi-value assignment is not supported".
 //
-//   1. parallel assignment:        a, b := expr1, expr2
-//   2. parallel assignment of ops: ux, uy := dx/dist, dy/dist
-//   3. two-value map index:        v, ok := m[k]
-//   4. blank-ident parallel:       _, y := f(), g()
-//   5. blank-ident map index:      _, ok := m[k]
-//   6. range with two slice vars:  for i, v := range s
-//   7. range with two map vars:    for k, v := range m
-//   8. if-init two-value map:      if _, ok := m[k]; !ok { ... }
+//  1. parallel assignment:        a, b := expr1, expr2
+//  2. parallel assignment of ops: ux, uy := dx/dist, dy/dist
+//  3. two-value map index:        v, ok := m[k]
+//  4. blank-ident parallel:       _, y := f(), g()
+//  5. blank-ident map index:      _, ok := m[k]
+//  6. range with two slice vars:  for i, v := range s
+//  7. range with two map vars:    for k, v := range m
+//  8. if-init two-value map:      if _, ok := m[k]; !ok { ... }
 //
 // At Y.B.1 each lowering call still fails: stmt.go's lowerAssignStmt
 // rejects every `len(Lhs) != 1 || len(Rhs) != 1` case up front. Y.B.2-Y.B.4

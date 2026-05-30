@@ -66,9 +66,9 @@ func BenchmarkInvokeClosureCapturedWrite(b *testing.B) {
 			{Name: "__y_g_incCount", Params: nil, Body: []program.ExprID{3}, Results: 0},
 		},
 		Exprs: []program.Expr{
-			{Op: program.OpLitInt, Value: "1", Type: program.TypeInt}, // 0
-			{Op: program.OpLocalGet, Value: "count"},                   // 1
-			{Op: program.OpAdd, Operands: []program.ExprID{1, 0}},      // 2
+			{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},             // 0
+			{Op: program.OpLocalGet, Value: "count"},                              // 1
+			{Op: program.OpAdd, Operands: []program.ExprID{1, 0}},                 // 2
 			{Op: program.OpAssign, Value: "count", Operands: []program.ExprID{2}}, // 3
 		},
 	}

@@ -50,8 +50,8 @@ func setRuntimeFunc(name string, fn js.Func) {
 // Call shapes (both are accepted to preserve the islands bootstrap that ships
 // without a surfaceKind):
 //
-//   __gosx_hydrate(islandID, componentName, propsJSON, programData, format)
-//   __gosx_hydrate(surfaceKind, id, componentName, propsJSON, programData, format)
+//	__gosx_hydrate(islandID, componentName, propsJSON, programData, format)
+//	__gosx_hydrate(surfaceKind, id, componentName, propsJSON, programData, format)
 //
 // The 5-arg form is treated as surfaceKind="dom". The 6-arg form routes via
 // Bridge.HydrateReconciler — "dom" delegates to the island path, "scene3d"

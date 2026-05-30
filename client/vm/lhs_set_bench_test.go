@@ -21,9 +21,9 @@ func BenchmarkFieldSet(b *testing.B) {
 	// Program: OpFieldSet v.X = 42
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "v"},                                            // 0
-			{Op: program.OpLitFloat, Value: "42", Type: program.TypeFloat},                  // 1
-			{Op: program.OpFieldSet, Value: "X", Operands: []program.ExprID{0, 1}},          // 2
+			{Op: program.OpLocalGet, Value: "v"},                                   // 0
+			{Op: program.OpLitFloat, Value: "42", Type: program.TypeFloat},         // 1
+			{Op: program.OpFieldSet, Value: "X", Operands: []program.ExprID{0, 1}}, // 2
 		},
 	}
 	machine := NewVM(prog, nil)
@@ -44,10 +44,10 @@ func BenchmarkFieldSet(b *testing.B) {
 func BenchmarkIndexSetSlice(b *testing.B) {
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "s"},                                            // 0
-			{Op: program.OpLitInt, Value: "50", Type: program.TypeInt},                      // 1
-			{Op: program.OpLitFloat, Value: "3.14", Type: program.TypeFloat},                // 2
-			{Op: program.OpIndexSet, Operands: []program.ExprID{0, 1, 2}},                   // 3
+			{Op: program.OpLocalGet, Value: "s"},                             // 0
+			{Op: program.OpLitInt, Value: "50", Type: program.TypeInt},       // 1
+			{Op: program.OpLitFloat, Value: "3.14", Type: program.TypeFloat}, // 2
+			{Op: program.OpIndexSet, Operands: []program.ExprID{0, 1, 2}},    // 3
 		},
 	}
 	items := make([]Value, 100)
@@ -71,10 +71,10 @@ func BenchmarkIndexSetSlice(b *testing.B) {
 func BenchmarkIndexSetMap(b *testing.B) {
 	prog := &program.Program{
 		Exprs: []program.Expr{
-			{Op: program.OpLocalGet, Value: "m"},                                            // 0
-			{Op: program.OpLitString, Value: "key_42", Type: program.TypeString},            // 1
-			{Op: program.OpLitFloat, Value: "1.5", Type: program.TypeFloat},                 // 2
-			{Op: program.OpIndexSet, Operands: []program.ExprID{0, 1, 2}},                   // 3
+			{Op: program.OpLocalGet, Value: "m"},                                 // 0
+			{Op: program.OpLitString, Value: "key_42", Type: program.TypeString}, // 1
+			{Op: program.OpLitFloat, Value: "1.5", Type: program.TypeFloat},      // 2
+			{Op: program.OpIndexSet, Operands: []program.ExprID{0, 1, 2}},        // 3
 		},
 	}
 	fields := make(map[string]Value, 100)

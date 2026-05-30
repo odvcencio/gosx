@@ -5,9 +5,9 @@ import (
 	"image/color"
 	"testing"
 
+	"github.com/orisano/pixelmatch"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/render/bundle"
-	"github.com/orisano/pixelmatch"
 )
 
 func TestBundleFrameMatchesGoldenFullscreenQuad(t *testing.T) {

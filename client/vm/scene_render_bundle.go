@@ -1508,4 +1508,3 @@ func lerpPoint3(from, to point3, t float64) point3 {
 		Z: from.Z + (to.Z-from.Z)*t,
 	}
 }
-

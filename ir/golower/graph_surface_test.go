@@ -24,11 +24,12 @@ import (
 
 // fixture is the source snippet the three tests share. The three
 // functions mirror graph_surface.go's complexity tiers:
-//   IsGraftKind  — pure boolean (analogue of isGraftKind)
-//   AccumulateAngle — for-loop with arithmetic (analogue of initPositions
-//                     ring layout)
-//   ForceFalloff — math.Sqrt + arithmetic (analogue of stepLayout's
-//                  repulsion term in isolation)
+//
+//	IsGraftKind  — pure boolean (analogue of isGraftKind)
+//	AccumulateAngle — for-loop with arithmetic (analogue of initPositions
+//	                  ring layout)
+//	ForceFalloff — math.Sqrt + arithmetic (analogue of stepLayout's
+//	               repulsion term in isolation)
 const fixture = `package handlers
 
 import "math"

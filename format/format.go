@@ -7,8 +7,8 @@ package format
 import (
 	"strings"
 
-	"m31labs.dev/gosx"
 	gotreesitter "github.com/odvcencio/gotreesitter"
+	"m31labs.dev/gosx"
 )
 
 // Source formats a GoSX source file.

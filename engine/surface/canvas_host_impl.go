@@ -78,31 +78,33 @@ type hostImplAdapter struct {
 	h HostCanvasImpl
 }
 
-func (a *hostImplAdapter) width() int                                 { return a.h.Width() }
-func (a *hostImplAdapter) height() int                                { return a.h.Height() }
-func (a *hostImplAdapter) clear()                                     { a.h.Clear() }
-func (a *hostImplAdapter) clearRect(x, y, w, h float64)               { a.h.ClearRect(x, y, w, h) }
-func (a *hostImplAdapter) fillRect(x, y, w, h float64)                { a.h.FillRect(x, y, w, h) }
-func (a *hostImplAdapter) beginPath()                                 { a.h.BeginPath() }
-func (a *hostImplAdapter) moveTo(x, y float64)                        { a.h.MoveTo(x, y) }
-func (a *hostImplAdapter) lineTo(x, y float64)                        { a.h.LineTo(x, y) }
-func (a *hostImplAdapter) arc(x, y, r, start, end float64)            { a.h.Arc(x, y, r, start, end) }
-func (a *hostImplAdapter) stroke()                                    { a.h.Stroke() }
-func (a *hostImplAdapter) fill()                                      { a.h.Fill() }
-func (a *hostImplAdapter) fillText(text string, x, y float64)         { a.h.FillText(text, x, y) }
-func (a *hostImplAdapter) setFillStyle(css string)                    { a.h.SetFillStyle(css) }
-func (a *hostImplAdapter) setStrokeStyle(css string)                  { a.h.SetStrokeStyle(css) }
-func (a *hostImplAdapter) setLineWidth(w float64)                     { a.h.SetLineWidth(w) }
-func (a *hostImplAdapter) setFont(css string)                         { a.h.SetFont(css) }
-func (a *hostImplAdapter) setTextAlign(align string)                  { a.h.SetTextAlign(align) }
-func (a *hostImplAdapter) save()                                      { a.h.Save() }
-func (a *hostImplAdapter) restore()                                   { a.h.Restore() }
-func (a *hostImplAdapter) translate(x, y float64)                     { a.h.Translate(x, y) }
-func (a *hostImplAdapter) scale(x, y float64)                         { a.h.Scale(x, y) }
-func (a *hostImplAdapter) rotate(rad float64)                         { a.h.Rotate(rad) }
-func (a *hostImplAdapter) setTransform(p, q, c2, d, e, f float64)     { a.h.SetTransform(p, q, c2, d, e, f) }
-func (a *hostImplAdapter) requestFrame()                              { a.h.RequestFrame() }
-func (a *hostImplAdapter) startLoop(step func(dt float64))            { /* host drives the loop */ }
+func (a *hostImplAdapter) width() int                         { return a.h.Width() }
+func (a *hostImplAdapter) height() int                        { return a.h.Height() }
+func (a *hostImplAdapter) clear()                             { a.h.Clear() }
+func (a *hostImplAdapter) clearRect(x, y, w, h float64)       { a.h.ClearRect(x, y, w, h) }
+func (a *hostImplAdapter) fillRect(x, y, w, h float64)        { a.h.FillRect(x, y, w, h) }
+func (a *hostImplAdapter) beginPath()                         { a.h.BeginPath() }
+func (a *hostImplAdapter) moveTo(x, y float64)                { a.h.MoveTo(x, y) }
+func (a *hostImplAdapter) lineTo(x, y float64)                { a.h.LineTo(x, y) }
+func (a *hostImplAdapter) arc(x, y, r, start, end float64)    { a.h.Arc(x, y, r, start, end) }
+func (a *hostImplAdapter) stroke()                            { a.h.Stroke() }
+func (a *hostImplAdapter) fill()                              { a.h.Fill() }
+func (a *hostImplAdapter) fillText(text string, x, y float64) { a.h.FillText(text, x, y) }
+func (a *hostImplAdapter) setFillStyle(css string)            { a.h.SetFillStyle(css) }
+func (a *hostImplAdapter) setStrokeStyle(css string)          { a.h.SetStrokeStyle(css) }
+func (a *hostImplAdapter) setLineWidth(w float64)             { a.h.SetLineWidth(w) }
+func (a *hostImplAdapter) setFont(css string)                 { a.h.SetFont(css) }
+func (a *hostImplAdapter) setTextAlign(align string)          { a.h.SetTextAlign(align) }
+func (a *hostImplAdapter) save()                              { a.h.Save() }
+func (a *hostImplAdapter) restore()                           { a.h.Restore() }
+func (a *hostImplAdapter) translate(x, y float64)             { a.h.Translate(x, y) }
+func (a *hostImplAdapter) scale(x, y float64)                 { a.h.Scale(x, y) }
+func (a *hostImplAdapter) rotate(rad float64)                 { a.h.Rotate(rad) }
+func (a *hostImplAdapter) setTransform(p, q, c2, d, e, f float64) {
+	a.h.SetTransform(p, q, c2, d, e, f)
+}
+func (a *hostImplAdapter) requestFrame()                   { a.h.RequestFrame() }
+func (a *hostImplAdapter) startLoop(step func(dt float64)) { /* host drives the loop */ }
 
 // NewCanvasFromHostImpl returns a *Canvas whose drawing methods
 // forward to impl. The returned Canvas is fully usable by any

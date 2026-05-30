@@ -29,7 +29,7 @@ func makeCanvasProgram(attrs []Attr) (*Program, int) {
 		EngineKind:         "surface",
 		EngineCapabilities: []string{"canvas", "pointer"},
 		EngineSurface:      true,
-		SurfaceHandlers: collectHandlers(attrs),
+		SurfaceHandlers:    collectHandlers(attrs),
 	})
 	return prog, 0
 }
@@ -138,10 +138,10 @@ func TestLowerEngineSurfaceRejectNonCanvas(t *testing.T) {
 		Tag:  "div",
 	})
 	prog.Components = append(prog.Components, Component{
-		Name:          "Graph",
-		Root:          0,
-		IsEngine:      true,
-		EngineKind:    "surface",
+		Name:       "Graph",
+		Root:       0,
+		IsEngine:   true,
+		EngineKind: "surface",
 		// EngineSurface intentionally NOT set — simulates what Lower produces
 		// after encountering a non-canvas root.
 		EngineSurface: false,

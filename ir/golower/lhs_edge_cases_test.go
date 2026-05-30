@@ -24,7 +24,7 @@ import (
 // canonical chained LHS shape graph_surface.go's `nodes[i].Y = ...`
 // (if it ever appeared) would produce. The lowering recipe is:
 //
-//   OpFieldSet target=s[i] field=Field value=v
+//	OpFieldSet target=s[i] field=Field value=v
 //
 // because Go's AST already nests this as SelectorExpr{X: IndexExpr}
 // — our dispatcher routes on the outer Lhs[0] (SelectorExpr) and

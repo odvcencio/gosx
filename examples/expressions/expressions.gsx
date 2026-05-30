@@ -23,23 +23,34 @@ type Catalog struct {
 func Expressions(props Catalog) Node {
 	return <section class="expressions">
 		// Length / array methods using closures
-		<p>Total: {items.length}</p>
-		<p>Active: {items.filter(func(i){ return i.active }).length}</p>
-
+		<p>
+			Total:
+			{items.length}
+		</p>
+		<p>
+			Active:
+			{items.filter(func(i){ return i.active }).length}
+		</p>
 		// Chained filter + map with closures
 		<ul>
 			<Each of={items.filter(func(i){ return i.active }).map(func(i){ return i.name })} as="name">
 				<li>{name}</li>
 			</Each>
 		</ul>
-
 		// String methods on a search query
-		<p>Normalized query: {query.trim().toLower()}</p>
-
+		<p>
+			Normalized query:
+			{query.trim().toLower()}
+		</p>
 		// Slice + append composition
-		<p>First three: {items.slice(0, 3).map(func(i){ return i.name })}</p>
-
+		<p>
+			First three:
+			{items.slice(0, 3).map(func(i){ return i.name })}
+		</p>
 		// Predicate find — single match
-		<p>Top tag: {items.find(func(i){ return i.tag.startsWith("hero") })}</p>
+		<p>
+			Top tag:
+			{items.find(func(i){ return i.tag.startsWith("hero") })}
+		</p>
 	</section>
 }

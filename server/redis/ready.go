@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"m31labs.dev/gosx/server"
 	goredis "github.com/redis/go-redis/v9"
+	"m31labs.dev/gosx/server"
 )
 
 // ReadyCheck returns a GoSX readiness check backed by Redis PING.

@@ -13,30 +13,32 @@ type recordingHost struct {
 	calls []string
 }
 
-func (r *recordingHost) Width() int                                  { return r.w }
-func (r *recordingHost) Height() int                                 { return r.h }
-func (r *recordingHost) Clear()                                      { r.calls = append(r.calls, "Clear") }
-func (r *recordingHost) ClearRect(x, y, w, h float64)                { r.calls = append(r.calls, "ClearRect") }
-func (r *recordingHost) FillRect(x, y, w, h float64)                 { r.calls = append(r.calls, "FillRect") }
-func (r *recordingHost) BeginPath()                                  { r.calls = append(r.calls, "BeginPath") }
-func (r *recordingHost) MoveTo(x, y float64)                         { r.calls = append(r.calls, "MoveTo") }
-func (r *recordingHost) LineTo(x, y float64)                         { r.calls = append(r.calls, "LineTo") }
-func (r *recordingHost) Arc(x, y, rad, s, e float64)                 { r.calls = append(r.calls, "Arc") }
-func (r *recordingHost) Stroke()                                     { r.calls = append(r.calls, "Stroke") }
-func (r *recordingHost) Fill()                                       { r.calls = append(r.calls, "Fill") }
-func (r *recordingHost) FillText(text string, x, y float64)          { r.calls = append(r.calls, "FillText") }
-func (r *recordingHost) SetFillStyle(css string)                     { r.calls = append(r.calls, "SetFillStyle") }
-func (r *recordingHost) SetStrokeStyle(css string)                   { r.calls = append(r.calls, "SetStrokeStyle") }
-func (r *recordingHost) SetLineWidth(w float64)                      { r.calls = append(r.calls, "SetLineWidth") }
-func (r *recordingHost) SetFont(css string)                          { r.calls = append(r.calls, "SetFont") }
-func (r *recordingHost) SetTextAlign(a string)                       { r.calls = append(r.calls, "SetTextAlign") }
-func (r *recordingHost) Save()                                       { r.calls = append(r.calls, "Save") }
-func (r *recordingHost) Restore()                                    { r.calls = append(r.calls, "Restore") }
-func (r *recordingHost) Translate(x, y float64)                      { r.calls = append(r.calls, "Translate") }
-func (r *recordingHost) Scale(x, y float64)                          { r.calls = append(r.calls, "Scale") }
-func (r *recordingHost) Rotate(rad float64)                          { r.calls = append(r.calls, "Rotate") }
-func (r *recordingHost) SetTransform(a, b, c, d, e, f float64)       { r.calls = append(r.calls, "SetTransform") }
-func (r *recordingHost) RequestFrame()                               { r.calls = append(r.calls, "RequestFrame") }
+func (r *recordingHost) Width() int                         { return r.w }
+func (r *recordingHost) Height() int                        { return r.h }
+func (r *recordingHost) Clear()                             { r.calls = append(r.calls, "Clear") }
+func (r *recordingHost) ClearRect(x, y, w, h float64)       { r.calls = append(r.calls, "ClearRect") }
+func (r *recordingHost) FillRect(x, y, w, h float64)        { r.calls = append(r.calls, "FillRect") }
+func (r *recordingHost) BeginPath()                         { r.calls = append(r.calls, "BeginPath") }
+func (r *recordingHost) MoveTo(x, y float64)                { r.calls = append(r.calls, "MoveTo") }
+func (r *recordingHost) LineTo(x, y float64)                { r.calls = append(r.calls, "LineTo") }
+func (r *recordingHost) Arc(x, y, rad, s, e float64)        { r.calls = append(r.calls, "Arc") }
+func (r *recordingHost) Stroke()                            { r.calls = append(r.calls, "Stroke") }
+func (r *recordingHost) Fill()                              { r.calls = append(r.calls, "Fill") }
+func (r *recordingHost) FillText(text string, x, y float64) { r.calls = append(r.calls, "FillText") }
+func (r *recordingHost) SetFillStyle(css string)            { r.calls = append(r.calls, "SetFillStyle") }
+func (r *recordingHost) SetStrokeStyle(css string)          { r.calls = append(r.calls, "SetStrokeStyle") }
+func (r *recordingHost) SetLineWidth(w float64)             { r.calls = append(r.calls, "SetLineWidth") }
+func (r *recordingHost) SetFont(css string)                 { r.calls = append(r.calls, "SetFont") }
+func (r *recordingHost) SetTextAlign(a string)              { r.calls = append(r.calls, "SetTextAlign") }
+func (r *recordingHost) Save()                              { r.calls = append(r.calls, "Save") }
+func (r *recordingHost) Restore()                           { r.calls = append(r.calls, "Restore") }
+func (r *recordingHost) Translate(x, y float64)             { r.calls = append(r.calls, "Translate") }
+func (r *recordingHost) Scale(x, y float64)                 { r.calls = append(r.calls, "Scale") }
+func (r *recordingHost) Rotate(rad float64)                 { r.calls = append(r.calls, "Rotate") }
+func (r *recordingHost) SetTransform(a, b, c, d, e, f float64) {
+	r.calls = append(r.calls, "SetTransform")
+}
+func (r *recordingHost) RequestFrame() { r.calls = append(r.calls, "RequestFrame") }
 
 func TestY_F_NewCanvasFromHostImplForwardsCalls(t *testing.T) {
 	host := &recordingHost{w: 400, h: 300}

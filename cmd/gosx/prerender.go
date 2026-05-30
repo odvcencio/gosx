@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/html"
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/route"
-	"golang.org/x/net/html"
 )
 
 type exportManifest struct {
