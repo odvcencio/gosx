@@ -13879,6 +13879,62 @@ test("bootstrap video follow sync consumes binary heartbeats and answers pings",
   assert.deepEqual(Array.from(pong.slice(1)), Array.from(new Uint8Array(ping).slice(1)));
 });
 
+test("video sync binary decode parses a 0x04 pong frame into an echoedTimestamp", () => {
+  // Extract the module-private decode helpers from the unminified source so we
+  // can exercise the new 0x04 case directly without a full DOM/brain mount.
+  const videoSource = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "30-tail.js"),
+    "utf8",
+  );
+  function extractFn(name) {
+    const marker = "function " + name + "(";
+    const start = videoSource.indexOf(marker);
+    assert.notEqual(start, -1, "missing source function " + name);
+    let depth = 0;
+    let seenBody = false;
+    for (let i = start; i < videoSource.length; i += 1) {
+      const ch = videoSource[i];
+      if (ch === "{") {
+        depth += 1;
+        seenBody = true;
+      } else if (ch === "}") {
+        depth -= 1;
+        if (seenBody && depth === 0) {
+          return videoSource.slice(start, i + 1);
+        }
+      }
+    }
+    throw new Error("unterminated source function " + name);
+  }
+
+  const factory = new Function(
+    extractFn("videoBytesFromRaw") +
+      "\n" +
+      extractFn("videoReadU32BE") +
+      "\n" +
+      "function videoReadFloat32BE() { return 0; }\n" +
+      "function videoEncodePong() { return null; }\n" +
+      extractFn("videoDecodeBinarySyncMessage") +
+      "\nreturn videoDecodeBinarySyncMessage;",
+  );
+  const decode = factory();
+
+  // Craft a 9-byte 0x04 frame carrying a u64 big-endian timestamp.
+  const timestamp = 1706000000000;
+  const buffer = new ArrayBuffer(9);
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  bytes[0] = 0x04;
+  view.setUint32(1, Math.floor(timestamp / 4294967296), false);
+  view.setUint32(5, timestamp % 4294967296, false);
+
+  const decoded = decode(buffer);
+  assert.deepEqual(decoded, { type: "pong", echoedTimestamp: timestamp });
+
+  // A short (sub-9-byte) 0x04 frame is rejected.
+  assert.equal(decode(new Uint8Array([0x04, 0x00, 0x00]).buffer), null);
+});
+
 test("bootstrap video follow sync honors prepare countdown before server play", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "video-countdown-root";

@@ -918,6 +918,14 @@
         rate: 1,
         viewerCount: (bytes[14] << 8) + bytes[15],
       };
+    case 0x04:
+      if (bytes.length < 9) {
+        return null;
+      }
+      return {
+        type: "pong",
+        echoedTimestamp: videoReadU32BE(bytes, 1) * 4294967296 + videoReadU32BE(bytes, 5),
+      };
     case 0x05:
       return {
         type: "ping",
@@ -968,6 +976,12 @@
     }
     await loadScriptTag(path);
     return typeof window.Hls === "function" ? window.Hls : null;
+  }
+
+  function videoNowPerf() {
+    return (typeof performance !== "undefined" && performance && typeof performance.now === "function")
+      ? performance.now()
+      : Date.now();
   }
 
   function videoBufferedAhead(video) {
@@ -1366,6 +1380,12 @@
     let followTimer = 0;
     let lastLeadSendAt = 0;
     let followState = null;
+    const syncBrainID = String((ctx && ctx.id) || "gosx-video-sync");
+    let syncBrainActive = false;
+    let syncBrainAvailable = typeof window !== "undefined" && typeof window.__gosx_video_sync_new === "function";
+    let syncBrainWarned = false;
+    let pingTimer = 0;
+    let lastPingSentAt = null;
     let requestedRate = Math.max(0.1, sceneNumber(readVideoSignal("rate", videoPropValue(props, ["rate"], 1)), 1));
     let lastError = "";
     let stalled = false;
@@ -2019,15 +2039,227 @@
       updateVideoOutputs();
     }
 
+    function nowPerf() {
+      return videoNowPerf();
+    }
+
+    function syncTuning() {
+      const tuning = props && props.syncTuning && typeof props.syncTuning === "object" ? props.syncTuning : {};
+      return tuning;
+    }
+
+    function syncStrategyName() {
+      return String(videoPropValue(props, ["syncStrategy", "sync_strategy"], "nudge") || "nudge").trim().toLowerCase();
+    }
+
+    // The WASM drift-correction brain only drives the default "nudge" path.
+    // "nudge-legacy" and "snap" keep the existing JS behavior. A brain throw
+    // disables the brain for the rest of the session (hot-swap, no re-probe).
+    function useSyncBrain() {
+      if (!syncBrainAvailable) {
+        return false;
+      }
+      const strategy = syncStrategyName();
+      return strategy === "nudge" || strategy === "";
+    }
+
+    function disableSyncBrain(error) {
+      const wasActive = syncBrainActive;
+      syncBrainAvailable = false;
+      syncBrainActive = false;
+      if (!syncBrainWarned) {
+        syncBrainWarned = true;
+        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+          try {
+            window.__gosx_emit("warn", "video-sync", "video sync brain failed; falling back to legacy follow path", {
+              engineID: syncBrainID,
+              message: error && error.message ? String(error.message) : String(error || ""),
+            });
+          } catch (_emitError) {
+          }
+        }
+      }
+      // Hot-swap to the legacy path: drop the brain tick/ping intervals and
+      // re-arm the 500ms applyFollowState loop for the rest of the session.
+      if (wasActive && !disposed) {
+        clearFollowTimer();
+        ensureFollowTimer();
+      }
+    }
+
+    function ensureSyncBrain() {
+      if (syncBrainActive || !useSyncBrain()) {
+        return syncBrainActive;
+      }
+      try {
+        let cfg = "";
+        try {
+          cfg = JSON.stringify(syncTuning() || {});
+        } catch (_cfgError) {
+          cfg = "";
+        }
+        window.__gosx_video_sync_new(syncBrainID, cfg);
+        syncBrainActive = true;
+      } catch (error) {
+        disableSyncBrain(error);
+        return false;
+      }
+      return syncBrainActive;
+    }
+
+    function ingestSyncBrain(message) {
+      if (!syncBrainActive) {
+        return;
+      }
+      try {
+        window.__gosx_video_sync_ingest(
+          syncBrainID,
+          followMessageTimeMS(message),
+          sceneNumber(message && message.position, 0),
+          sceneBool(message && message.playing, false),
+          nowPerf()
+        );
+      } catch (error) {
+        disableSyncBrain(error);
+      }
+    }
+
+    function syncBrainPlaybackStart() {
+      if (!syncBrainActive) {
+        return;
+      }
+      try {
+        window.__gosx_video_sync_playback_start(syncBrainID, nowPerf());
+      } catch (error) {
+        disableSyncBrain(error);
+      }
+    }
+
+    function syncBrainBufferedAhead() {
+      if (!video || !video.buffered || typeof video.buffered.length !== "number" || typeof video.buffered.end !== "function") {
+        return 1e9;
+      }
+      return videoBufferedAhead(video);
+    }
+
+    // Publishes preload/readiness signals via the same feature-detected
+    // shared-signal path the factory already uses.
+    function publishSyncBrainSignals(actualRate, ready, stalledFlag) {
+      writeVideoSignalPayload(videoSignalName("actualRate"), JSON.stringify(sceneNumber(actualRate, requestedRate)));
+      writeVideoSignalPayload(videoSignalName("ready"), JSON.stringify(Boolean(ready)));
+      writeVideoSignalPayload(videoSignalName("stalled"), JSON.stringify(Boolean(stalledFlag)));
+    }
+
+    // Decision array layout from the brain:
+    //   [kind, rate, seekTo, ready, stalled, actualRate, preloadPhase, resetRate]
+    // kind: 0=none, 1=rate, 2=seek. ready/stalled/resetRate: 1/0.
+    function applySyncBrainTick() {
+      if (disposed || !syncBrainActive) {
+        return;
+      }
+      let decision = null;
+      try {
+        decision = window.__gosx_video_sync_tick(
+          syncBrainID,
+          Math.max(0, sceneNumber(video.currentTime, 0)),
+          nowPerf(),
+          syncBrainBufferedAhead(),
+          sceneBool(video.paused, true)
+        );
+      } catch (error) {
+        // disableSyncBrain hot-swaps to the legacy 500ms applyFollowState path.
+        disableSyncBrain(error);
+        return;
+      }
+      if (!decision || typeof decision.length !== "number") {
+        return;
+      }
+      const kind = sceneNumber(decision[0], 0);
+      const rate = sceneNumber(decision[1], 1);
+      const seekTo = sceneNumber(decision[2], 0);
+      const ready = sceneNumber(decision[3], 0) === 1;
+      const stalledFlag = sceneNumber(decision[4], 0) === 1;
+      const actualRate = sceneNumber(decision[5], video.playbackRate);
+      const resetRate = sceneNumber(decision[7], 0) === 1;
+      if (kind === 2) {
+        if (Number.isFinite(seekTo)) {
+          video.currentTime = Math.max(0, seekTo);
+        }
+      } else if (kind === 1) {
+        if (Number.isFinite(rate) && rate > 0) {
+          video.playbackRate = rate;
+        }
+      }
+      if (resetRate || kind === 0) {
+        video.playbackRate = 1.0;
+      }
+      stalled = stalledFlag;
+      publishSyncBrainSignals(actualRate, ready, stalledFlag);
+      renderSyncOverlay();
+      updateVideoOutputs();
+    }
+
+    function syncBrainTickInterval() {
+      return Math.max(50, sceneNumber(syncTuning().monitorIntervalMs, 1200));
+    }
+
+    function syncBrainPingInterval() {
+      return Math.max(1000, sceneNumber(syncTuning().pingIntervalMs, 15000));
+    }
+
+    function sendSyncBrainPing() {
+      if (disposed || !syncSocket || syncSocket.readyState !== 1) {
+        return;
+      }
+      // Exactly one client ping outstanding at a time.
+      if (lastPingSentAt != null) {
+        return;
+      }
+      const now = nowPerf();
+      const frame = new Uint8Array(9);
+      frame[0] = 0x05;
+      try {
+        syncSocket.send(frame.buffer);
+        lastPingSentAt = now;
+      } catch (_error) {
+      }
+    }
+
+    function clearPingTimer() {
+      if (pingTimer) {
+        clearInterval(pingTimer);
+        pingTimer = 0;
+      }
+    }
+
+    function ensurePingTimer() {
+      if (pingTimer) {
+        return;
+      }
+      pingTimer = setInterval(sendSyncBrainPing, syncBrainPingInterval());
+      sendSyncBrainPing();
+    }
+
     function clearFollowTimer() {
       if (followTimer) {
         clearInterval(followTimer);
         followTimer = 0;
       }
+      clearPingTimer();
     }
 
     function ensureFollowTimer() {
-      if (followTimer || String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase() !== "follow") {
+      if (String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase() !== "follow") {
+        return;
+      }
+      if (ensureSyncBrain()) {
+        if (!followTimer) {
+          followTimer = setInterval(applySyncBrainTick, syncBrainTickInterval());
+        }
+        ensurePingTimer();
+        return;
+      }
+      if (followTimer) {
         return;
       }
       followTimer = setInterval(applyFollowState, 500);
@@ -2069,6 +2301,7 @@
     function closeSyncSocket() {
       clearReconnectTimer();
       clearFollowTimer();
+      lastPingSentAt = null;
       if (syncSocket && typeof syncSocket.close === "function") {
         syncSocket.close();
       }
@@ -2086,6 +2319,21 @@
           try {
             syncSocket.send(message.payload);
           } catch (_error) {
+          }
+        }
+        return;
+      }
+      if (type === "pong") {
+        // Client-originated RTT sample. Ignore unsolicited pongs (lastPingSentAt null).
+        if (lastPingSentAt != null) {
+          const rttMs = nowPerf() - lastPingSentAt;
+          lastPingSentAt = null;
+          if (syncBrainActive) {
+            try {
+              window.__gosx_video_sync_rtt(syncBrainID, rttMs);
+            } catch (error) {
+              disableSyncBrain(error);
+            }
           }
         }
         return;
@@ -2120,7 +2368,12 @@
       followState = message;
       if (String(videoPropValue(props, ["syncMode", "sync_mode"], "follow")).trim().toLowerCase() === "follow") {
         ensureFollowTimer();
-        applyFollowState();
+        if (syncBrainActive) {
+          ingestSyncBrain(message);
+          applySyncBrainTick();
+        } else {
+          applyFollowState();
+        }
       }
     }
 
@@ -2473,6 +2726,7 @@
       stalled = false;
       clearError();
       markInteractionActive(1800);
+      syncBrainPlaybackStart();
       updateVideoOutputs();
       sendLeadSnapshot(true);
     });
@@ -2618,6 +2872,15 @@
         clearInteractionTimer();
         clearCountdownTimer();
         closeSyncSocket();
+        // Dispose the brain AFTER intervals are cleared and `disposed` is set,
+        // so no correction tick can race the dispose.
+        if (syncBrainActive) {
+          syncBrainActive = false;
+          try {
+            window.__gosx_video_sync_dispose(syncBrainID);
+          } catch (_error) {
+          }
+        }
         teardownHLS();
         if (resizeObserver && typeof resizeObserver.disconnect === "function") {
           resizeObserver.disconnect();

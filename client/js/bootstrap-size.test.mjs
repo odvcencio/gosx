@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const budgets = [
-  { file: "bootstrap.js", raw: 804_000, gzip: 222_000, brotli: 182_000 },
+  { file: "bootstrap.js", raw: 806_000, gzip: 222_000, brotli: 182_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   { file: "bootstrap-feature-scene3d.js", raw: 510_000, gzip: 140_000, brotli: 116_000 },
