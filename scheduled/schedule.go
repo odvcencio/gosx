@@ -4,6 +4,7 @@ package scheduled
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,16 +32,21 @@ func Interval(d time.Duration) Schedule {
 
 // onceSchedule is a programmatic one-shot: the first NextDue returns (after, true)
 // (i.e. due immediately); subsequent calls return (zero, false).
+//
+// fired is an atomic so the type is safe even if a future caller shares the same
+// *onceSchedule across goroutines. The scheduler keeps the schedule loop as the
+// sole NextDue caller, but this guards against accidental concurrent use.
 type onceSchedule struct {
-	fired bool
+	fired atomic.Bool
 }
 
-// NextDue returns (after, true) on first call, then (zero, false) forever.
+// NextDue returns (after, true) on the first call, then (zero, false) forever.
+// CompareAndSwap makes the one-shot transition atomic, so exactly one caller can
+// observe the (after, true) result even under concurrent invocation.
 func (s *onceSchedule) NextDue(after time.Time) (time.Time, bool) {
-	if s.fired {
+	if !s.fired.CompareAndSwap(false, true) {
 		return time.Time{}, false
 	}
-	s.fired = true
 	return after, true
 }
 

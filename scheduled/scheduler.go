@@ -171,14 +171,22 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 // scheduleLoop fires task on its schedule until ctx is done, Stop is called, or
-// the schedule reports "never again".
+// the schedule reports "never again". It is the sole caller of Schedule.NextDue
+// for this task and records the computed next-due time into status so Status can
+// report it without re-evaluating (and mutating) the schedule.
 func (s *Scheduler) scheduleLoop(ctx context.Context, t Task) {
 	last := s.opts.Now()
 	for {
 		due, ok := t.Schedule.NextDue(last)
 		if !ok {
+			// No further due time: clear NextDueAt so Status reports a sane
+			// (zero) value for an exhausted one-shot.
+			s.storeNextDue(t.Name, time.Time{})
 			return
 		}
+		// Publish the next-due time for Status. The schedule loop owns this
+		// computation; Status must never recompute it from the Schedule.
+		s.storeNextDue(t.Name, due)
 		wait := due.Sub(s.opts.Now())
 		if wait < 0 {
 			wait = 0
@@ -415,15 +423,24 @@ func watchdogCadence(timeout, progressTimeout time.Duration) time.Duration {
 }
 
 // updateStatus applies mutate to the task's stored TaskStatus, refreshing the
-// schedule string and next-due time, then saves it.
+// schedule string, then saves it. It does NOT touch the schedule: NextDueAt is
+// owned by scheduleLoop (the sole Schedule.NextDue caller) and is preserved here
+// by loading the existing row before mutating. This keeps status reporting from
+// mutating a one-shot's fired state and avoids racing the schedule loop.
 func (s *Scheduler) updateStatus(task Task, mutate func(*TaskStatus)) {
 	st, _ := s.opts.Store.Load(task.Name)
 	st.Name = task.Name
 	st.Schedule = scheduleString(task.Schedule)
 	mutate(&st)
-	if due, ok := nextDue(task.Schedule, s.opts.Now()); ok {
-		st.NextDueAt = due
-	}
+	_ = s.opts.Store.Save(st)
+}
+
+// storeNextDue records the schedule loop's computed next-due time onto the task's
+// stored status, preserving the rest of the row. Only scheduleLoop calls this.
+func (s *Scheduler) storeNextDue(name string, due time.Time) {
+	st, _ := s.opts.Store.Load(name)
+	st.Name = name
+	st.NextDueAt = due
 	_ = s.opts.Store.Save(st)
 }
 
@@ -552,22 +569,5 @@ func scheduleString(sch Schedule) string {
 		return ""
 	default:
 		return fmt.Sprintf("%T", sch)
-	}
-}
-
-// nextDue computes the next fire time without mutating one-shot schedule state.
-func nextDue(sch Schedule, now time.Time) (time.Time, bool) {
-	switch v := sch.(type) {
-	case intervalSchedule:
-		return now.Add(v.d), true
-	case *onceSchedule:
-		// A one-shot's next due is "now" until it fires; after that there is
-		// no further due time. We avoid mutating it here.
-		if v.fired {
-			return time.Time{}, false
-		}
-		return now, true
-	default:
-		return time.Time{}, false
 	}
 }

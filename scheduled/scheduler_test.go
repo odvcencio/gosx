@@ -310,6 +310,68 @@ func TestScheduler_EnqueueAndCancel(t *testing.T) {
 	}
 }
 
+func TestScheduler_OnceEnqueueStatusNoRace(t *testing.T) {
+	t.Parallel()
+	var ran int32
+	s := New(Options{Logger: discardLogger()})
+	err := s.Register(Task{
+		Name:        "once-race",
+		Schedule:    Once(),
+		MaxAttempts: 1,
+		Fn: func(ctx context.Context, tick TickHandle) error {
+			atomic.AddInt32(&ran, 1)
+			tick.Progress("x")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+	defer s.Stop(100 * time.Millisecond)
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// Goroutine A: Enqueue the same once-scheduled task a few times. Each
+	// Enqueue run touches the schedule via updateStatus, racing the loop's
+	// NextDue on the shared *onceSchedule.fired field.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			if _, err := s.Enqueue("once-race", nil); err != nil {
+				t.Errorf("Enqueue: %v", err)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	// Goroutine B: hammer Status() in a tight loop for ~50ms.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		deadline := time.Now().Add(50 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			_ = s.Status()
+		}
+		close(stop)
+	}()
+
+	<-stop
+	wg.Wait()
+
+	// Semantic guard: the one-shot must actually have run at least once.
+	// (A status computation must not be able to flip fired=true and skip the run.)
+	if !waitFor(200*time.Millisecond, func() bool { return atomic.LoadInt32(&ran) >= 1 }) {
+		t.Fatalf("once task never ran (semantic bug: status mutated the schedule), ran=%d", atomic.LoadInt32(&ran))
+	}
+}
+
 func TestScheduler_StopDrains(t *testing.T) {
 	t.Parallel()
 	before := runtime.NumGoroutine()
