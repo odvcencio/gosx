@@ -1,0 +1,271 @@
+{
+  "events": [
+    {
+      "t": "ingest",
+      "serverTimeMs": 1000,
+      "position": 100,
+      "playing": true
+    },
+    {
+      "t": "rtt",
+      "rttMs": 80
+    },
+    {
+      "t": "ingest",
+      "serverTimeMs": 2000,
+      "position": 101,
+      "playing": true,
+      "recvPerfMs": 1000
+    },
+    {
+      "t": "rtt",
+      "rttMs": 80
+    },
+    {
+      "t": "ingest",
+      "serverTimeMs": 3000,
+      "position": 102,
+      "playing": true,
+      "recvPerfMs": 2000
+    },
+    {
+      "t": "rtt",
+      "rttMs": 80
+    },
+    {
+      "t": "tick",
+      "currentTime": 100.5,
+      "perfNowMs": 500,
+      "bufferedAhead": 2
+    },
+    {
+      "t": "ingest",
+      "serverTimeMs": 9000,
+      "position": 108.5,
+      "playing": true,
+      "recvPerfMs": 8000
+    },
+    {
+      "t": "rtt",
+      "rttMs": 80
+    },
+    {
+      "t": "tick",
+      "currentTime": 105.5,
+      "perfNowMs": 8500,
+      "bufferedAhead": 4
+    },
+    {
+      "t": "tick",
+      "currentTime": 105.8,
+      "perfNowMs": 9000,
+      "bufferedAhead": 4
+    },
+    {
+      "t": "tick",
+      "currentTime": 106.1,
+      "perfNowMs": 9500,
+      "bufferedAhead": 4
+    },
+    {
+      "t": "tick",
+      "currentTime": 106.4,
+      "perfNowMs": 10000,
+      "bufferedAhead": 8
+    },
+    {
+      "t": "tick",
+      "currentTime": 106.7,
+      "perfNowMs": 10500,
+      "bufferedAhead": 8
+    },
+    {
+      "t": "tick",
+      "currentTime": 107,
+      "perfNowMs": 11000,
+      "bufferedAhead": 8
+    },
+    {
+      "t": "ingest",
+      "serverTimeMs": 11500,
+      "position": 107.2,
+      "playing": true,
+      "recvPerfMs": 11000
+    },
+    {
+      "t": "tick",
+      "currentTime": 107.25,
+      "perfNowMs": 11500,
+      "bufferedAhead": 8
+    },
+    {
+      "t": "tick",
+      "currentTime": 107.35,
+      "perfNowMs": 12000,
+      "bufferedAhead": 8
+    },
+    {
+      "t": "tick",
+      "currentTime": 107.5,
+      "perfNowMs": 12500,
+      "bufferedAhead": 8
+    },
+    {
+      "t": "ingest",
+      "serverTimeMs": 16000,
+      "position": 115.8,
+      "playing": true,
+      "recvPerfMs": 15300
+    },
+    {
+      "t": "rtt",
+      "rttMs": 80
+    },
+    {
+      "t": "tick",
+      "currentTime": 116,
+      "perfNowMs": 15400,
+      "bufferedAhead": 8
+    },
+    {
+      "t": "tick",
+      "currentTime": 116.3,
+      "perfNowMs": 15700,
+      "bufferedAhead": 8
+    }
+  ],
+  "expected": [
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": false,
+      "stalled": true,
+      "actualRate": 1,
+      "preloadPhase": 2,
+      "reason": "seek-cooldown"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": false,
+      "stalled": true,
+      "actualRate": 1,
+      "preloadPhase": 2,
+      "reason": "hysteresis-pending"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": false,
+      "stalled": true,
+      "actualRate": 1,
+      "preloadPhase": 2,
+      "reason": "hysteresis-pending"
+    },
+    {
+      "kind": 1,
+      "rate": 1.065,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": false,
+      "stalled": true,
+      "actualRate": 1.065,
+      "preloadPhase": 2,
+      "reason": "medium-drift"
+    },
+    {
+      "kind": 2,
+      "rate": 0,
+      "seekTo": 110.54,
+      "resetRate": false,
+      "ready": false,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 3,
+      "reason": "large-drift-seek"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": false,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 3,
+      "reason": "seek-cooldown"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": false,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 3,
+      "reason": "seek-cooldown"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": true,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 4,
+      "reason": "seek-cooldown"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": true,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 5,
+      "reason": "seek-cooldown"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": false,
+      "ready": true,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 5,
+      "reason": "seek-cooldown"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": true,
+      "ready": true,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 5,
+      "reason": "within-tolerance"
+    },
+    {
+      "kind": 0,
+      "rate": 0,
+      "seekTo": 0,
+      "resetRate": true,
+      "ready": true,
+      "stalled": false,
+      "actualRate": 1,
+      "preloadPhase": 5,
+      "reason": "within-tolerance"
+    }
+  ]
+}
