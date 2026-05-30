@@ -772,9 +772,13 @@ func TestRuntimeUnifiedHydrateDispatcherRoutesScene3D(t *testing.T) {
 	}
 }
 
-// TestRuntimeUnifiedHydrateDispatcherCanvas2DStub covers Phase 1d Task A3.1:
-// the canvas2d branch returns a clear stub error pointing at Phase 2.
-func TestRuntimeUnifiedHydrateDispatcherCanvas2DStub(t *testing.T) {
+// TestRuntimeUnifiedHydrateDispatcherCanvas2D covers the canvas2d branch of the
+// unified dispatcher in the full build. Phase 2 implemented canvas2d
+// (bridge_canvasboard_full.go), so a valid program hydrates a CanvasBoardAdapter
+// and __gosx_hydrate returns null on success — matching the scene3d path above.
+// (The islands-only build stubs canvas2d with an error via its own dispatcher;
+// this test file only builds for the full runtime.)
+func TestRuntimeUnifiedHydrateDispatcherCanvas2D(t *testing.T) {
 	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
 	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
 
@@ -783,11 +787,8 @@ func TestRuntimeUnifiedHydrateDispatcherCanvas2DStub(t *testing.T) {
 	hydrateRet := js.Global().Get("__gosx_hydrate").Invoke(
 		"canvas2d", "board-u", "Board", `{}`, "{}", "json",
 	)
-	if hydrateRet.Type() != js.TypeString {
-		t.Fatalf("expected string error result, got %v", hydrateRet.Type())
-	}
-	if got := hydrateRet.String(); !strings.Contains(got, "canvas2d") {
-		t.Fatalf("expected canvas2d stub error, got %q", got)
+	if !hydrateRet.IsNull() {
+		t.Fatalf("expected null hydrate result for canvas2d, got %v", hydrateRet.Type())
 	}
 }
 
