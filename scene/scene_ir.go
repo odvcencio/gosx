@@ -160,6 +160,7 @@ type ObjectIR struct {
 	InState            map[string]any `json:"inState,omitempty"`
 	OutState           map[string]any `json:"outState,omitempty"`
 	Live               []string       `json:"live,omitempty"`
+	Vertices           *MeshVertices  `json:"vertices,omitempty"`
 }
 
 // MarshalJSON encodes ObjectIR via the standard reflection path but
@@ -825,6 +826,19 @@ func (item ObjectIR) legacyProps() map[string]any {
 	}
 	if segments := legacyLineSegments(item.LineSegments); len(segments) > 0 {
 		record["lineSegments"] = segments
+	}
+	if v := item.Vertices; v != nil && len(v.Positions) > 0 {
+		vert := map[string]any{
+			"positions": append([]float64(nil), v.Positions...),
+			"count":     v.Count,
+		}
+		if len(v.Normals) > 0 {
+			vert["normals"] = append([]float64(nil), v.Normals...)
+		}
+		if len(v.UVs) > 0 {
+			vert["uvs"] = append([]float64(nil), v.UVs...)
+		}
+		record["vertices"] = vert
 	}
 	setNumeric(record, "lineWidth", item.LineWidth)
 	setNumeric(record, "radiusTop", item.RadiusTop)

@@ -2987,6 +2987,14 @@ func applyGeometryToObjectIR(record *ObjectIR, geometry Geometry) string {
 			record.TubularSegments = g.TubularSegments
 		}
 		return "torus"
+	case BufferGeometry:
+		record.Vertices = bufferGeometryVertices(g)
+		return "gltf-mesh"
+	case *BufferGeometry:
+		if g != nil {
+			record.Vertices = bufferGeometryVertices(*g)
+		}
+		return "gltf-mesh"
 	}
 	// Fallback for any future geometry type that hasn't been type-switched
 	// above yet — use the legacy map round-trip so correctness is
