@@ -12,8 +12,8 @@ package ir_test
 import (
 	"testing"
 
-	"github.com/odvcencio/gosx"
-	"github.com/odvcencio/gosx/ir"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 )
 
 func BenchmarkLowerCounter(b *testing.B) {

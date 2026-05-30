@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gosx"
+	"m31labs.dev/gosx"
 )
 
 unit "router specificity danmuji scenarios" {
