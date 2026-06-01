@@ -85,6 +85,36 @@ func (d *Device) Queue() gpu.Queue { return d.queue }
 // PreferredSurfaceFormat returns the format the swap chain was configured with.
 func (d *Device) PreferredSurfaceFormat() gpu.TextureFormat { return d.format }
 
+// NativeDevice returns the underlying WebGPU GPUDevice as a syscall/js value, so
+// an external system (a Manta inference runtime or an Elio compute pass) can
+// record onto the same device this renderer draws on. One half of the
+// device-sharing seam for the Manta↔Elio↔Selena triad.
+func (d *Device) NativeDevice() js.Value { return d.dev }
+
+// WrapDevice adopts an externally-created GPUDevice — one already shared with an
+// inference runtime, or supplied by the host — as a gpu.Device, instead of
+// requesting a fresh adapter+device via Open. The returned Device has no
+// Surface; pair it with a surface separately, or use it for compute only. The
+// other half of the triad device-sharing seam.
+func WrapDevice(dev js.Value) (*Device, error) {
+	if dev.IsNull() || dev.IsUndefined() {
+		return nil, errors.New("jsgpu: WrapDevice: nil device")
+	}
+	gpuNS := js.Global().Get("navigator").Get("gpu")
+	format := gpu.FormatBGRA8Unorm
+	if !gpuNS.IsUndefined() {
+		format = parseCanvasFormat(gpuNS.Call("getPreferredCanvasFormat").String())
+	}
+	d := &Device{
+		gpuNS:    gpuNS,
+		dev:      dev,
+		format:   format,
+		features: map[string]bool{},
+	}
+	d.queue = &queue{js: dev.Get("queue")}
+	return d, nil
+}
+
 func (d *Device) SupportsTextureFormat(format gpu.TextureFormat) bool {
 	switch format {
 	case gpu.FormatRGBA8Unorm, gpu.FormatRGBA8UnormSRGB,
