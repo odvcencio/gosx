@@ -548,6 +548,22 @@ func (c *ComputePassEncoder) DispatchWorkgroups(x, _, _ int) {
 		runParticleUpdate(bg, max(0, x)*64)
 	}
 }
+
+// DispatchWorkgroupsIndirect approximates indirect dispatch in the CPU
+// backend: the workgroup count lives in a GPU buffer the headless backend does
+// not introspect, so only count-independent passthroughs (cull) run.
+func (c *ComputePassEncoder) DispatchWorkgroupsIndirect(_ gpu.Buffer, _ int) {
+	if c.pipeline == nil {
+		return
+	}
+	bg := c.bindGroups[0]
+	if bg == nil {
+		return
+	}
+	if c.pipeline.desc.Label == "bundle.cull" {
+		runCullPassThrough(bg)
+	}
+}
 func (c *ComputePassEncoder) End() {}
 
 // fill paints the framebuffer with a clear color in sRGB-encoded bytes.

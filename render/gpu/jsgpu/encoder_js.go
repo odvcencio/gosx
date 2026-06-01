@@ -88,6 +88,14 @@ func (e *computePassEncoder) DispatchWorkgroups(x, y, z int) {
 	e.js.Call("dispatchWorkgroups", x, y, z)
 }
 
+func (e *computePassEncoder) DispatchWorkgroupsIndirect(buf gpu.Buffer, offset int) {
+	b, ok := buf.(*buffer)
+	if !ok || b == nil {
+		return
+	}
+	e.js.Call("dispatchWorkgroupsIndirect", b.js, offset)
+}
+
 func (e *computePassEncoder) End() { e.js.Call("end") }
 
 // commandBuffer wraps a GPUCommandBuffer.

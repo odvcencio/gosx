@@ -260,6 +260,11 @@ type ComputePassEncoder interface {
 	SetPipeline(ComputePipeline)
 	SetBindGroup(group int, bg BindGroup)
 	DispatchWorkgroups(x, y, z int)
+	// DispatchWorkgroupsIndirect reads the workgroup counts (3×u32) from
+	// indirectBuffer at offset and dispatches them. The buffer must carry
+	// BufferUsageIndirect. Enables GPU-driven dispatch where the count is
+	// produced on the GPU by an upstream compute pass.
+	DispatchWorkgroupsIndirect(indirectBuffer Buffer, offset int)
 	End()
 }
 
