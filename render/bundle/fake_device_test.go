@@ -271,15 +271,24 @@ type fakeComputePass struct {
 	pipelineSet  bool
 	bindGroupSet bool
 	dispatches   []fakeDispatch
+	indirect     []fakeIndirectDispatch
 	ended        bool
 }
 
 type fakeDispatch struct{ x, y, z int }
 
+type fakeIndirectDispatch struct {
+	buf    gpu.Buffer
+	offset int
+}
+
 func (p *fakeComputePass) SetPipeline(gpu.ComputePipeline) { p.pipelineSet = true }
 func (p *fakeComputePass) SetBindGroup(int, gpu.BindGroup) { p.bindGroupSet = true }
 func (p *fakeComputePass) DispatchWorkgroups(x, y, z int) {
 	p.dispatches = append(p.dispatches, fakeDispatch{x, y, z})
+}
+func (p *fakeComputePass) DispatchWorkgroupsIndirect(buf gpu.Buffer, offset int) {
+	p.indirect = append(p.indirect, fakeIndirectDispatch{buf, offset})
 }
 func (p *fakeComputePass) End() { p.ended = true }
 

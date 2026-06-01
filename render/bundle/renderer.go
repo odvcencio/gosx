@@ -752,10 +752,9 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			mainPass.SetVertexBuffer(1, prim.colors)
 			mainPass.SetVertexBuffer(2, prim.normals)
 			mainPass.SetVertexBuffer(3, prim.uvs)
-			cull, _ := r.cullCache[instancedMeshKey(i, im)]
-			if cull != nil {
-				mainPass.SetVertexBuffer(4, cull.outputBuf)
-				mainPass.DrawIndirect(cull.drawArgsBuf, 0)
+			if inst, args, ok := r.instanceDrawSource(instancedMeshKey(i, im)); ok {
+				mainPass.SetVertexBuffer(4, inst)
+				mainPass.DrawIndirect(args, 0)
 			} else {
 				mainPass.SetVertexBuffer(4, r.instanceBuf)
 				mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
@@ -795,14 +794,13 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			mainPass.SetVertexBuffer(5, skin.joints)
 			mainPass.SetVertexBuffer(6, skin.weights)
 			mainPass.SetVertexBuffer(7, skin.bindPose)
-			cull, _ := r.cullCache[instancedMeshKey(i, im)]
-			if cull != nil {
-				mainPass.SetVertexBuffer(4, cull.outputBuf)
-				mainPass.DrawIndirect(cull.drawArgsBuf, 0)
+			if inst, args, ok := r.instanceDrawSource(instancedMeshKey(i, im)); ok {
+				mainPass.SetVertexBuffer(4, inst)
+				mainPass.DrawIndirect(args, 0)
 			} else {
-				// Should never happen — recordCullPass populates the cache
-				// for every mesh before the main pass runs. Falling back to
-				// non-culled draw prevents a missing frame if it does.
+				// recordCullPass populates the cull cache for every mesh, so this
+				// falls back to a non-culled draw only if both the bus and the
+				// cache miss — preventing a dropped frame.
 				mainPass.SetVertexBuffer(4, r.instanceBuf)
 				mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
 			}
@@ -868,6 +866,27 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// particle integration; reuse it here so the numbers match.
 	r.stats.record(dt)
 	return nil
+}
+
+// instanceDrawSource selects the instance buffer + indirect-draw args for one
+// InstancedMesh draw, preferring an external compute pass's published output
+// (RoleInstanceAttr + RoleIndirectArgs under "<key>.instances"/"<key>.drawArgs")
+// over the renderer's built-in GPU cull. This is the consumption side of the
+// render-coupled compute bus: an Elio-generated culling/instancing pass drives
+// the draw in place of the engine cull. Returns ok=false when neither source is
+// available, so the caller falls back to an unculled draw.
+func (r *Renderer) instanceDrawSource(key string) (instances, drawArgs gpu.Buffer, ok bool) {
+	if inst, iok := r.published[key+".instances"]; iok {
+		if args, aok := r.published[key+".drawArgs"]; aok &&
+			inst.Role == compute.RoleInstanceAttr && args.Role == compute.RoleIndirectArgs &&
+			inst.Buffer != nil && args.Buffer != nil {
+			return inst.Buffer, args.Buffer, true
+		}
+	}
+	if cull := r.cullCache[key]; cull != nil {
+		return cull.outputBuf, cull.drawArgsBuf, true
+	}
+	return nil, nil, false
 }
 
 // instancedMeshKey returns the cull/skin-cache key for one InstancedMesh slot.
