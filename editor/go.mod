@@ -3,8 +3,8 @@ module m31labs.dev/gosx/editor
 go 1.26
 
 require (
-	github.com/odvcencio/gosx v0.18.0
 	github.com/odvcencio/gotreesitter v0.15.3
+	m31labs.dev/gosx v0.24.0
 )
 
 require (
@@ -23,4 +23,4 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
 
-replace github.com/odvcencio/gosx => ..
+replace m31labs.dev/gosx => ..
