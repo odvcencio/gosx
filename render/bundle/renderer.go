@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/render/compute"
 	"m31labs.dev/gosx/render/gpu"
 )
 
@@ -27,6 +28,11 @@ type Renderer struct {
 	surface       gpu.Surface
 	surfaceFormat gpu.TextureFormat
 	depthFormat   gpu.TextureFormat
+
+	// Render-coupled compute extension (M0): external passes plus the
+	// per-frame bus of resources they publish for later passes to consume.
+	externalPasses []compute.ExternalComputePass
+	published      map[string]compute.GPUResource
 
 	// Pipelines created once and reused across frames.
 	unlitPipeline            gpu.RenderPipeline
@@ -237,6 +243,11 @@ type Config struct {
 	// HDRMemoryBudgetBytes controls automatic HDR format selection. Zero uses
 	// the renderer default budget.
 	HDRMemoryBudgetBytes int
+	// ExternalComputePasses are render-coupled compute passes contributed from
+	// outside the renderer (e.g. Elio-generated kernels). They run at their
+	// declared PassPhase within Frame() and may publish bus resources for the
+	// draw to consume.
+	ExternalComputePasses []compute.ExternalComputePass
 }
 
 // New constructs a Renderer, building all pipelines, uniform buffers, and the
@@ -271,6 +282,8 @@ func New(cfg Config) (*Renderer, error) {
 		materialCache:          make(map[materialFingerprint]*materialResources),
 		textureCache:           make(map[string]*textureResources),
 		cullCache:              make(map[string]*cullResources),
+		externalPasses:         cfg.ExternalComputePasses,
+		published:              make(map[string]compute.GPUResource),
 		particleCache:          make(map[string]*particleResources),
 		skinCache:              make(map[string]*skinResources),
 		bonePalettes:           make(map[string]*BonePalette),
@@ -583,10 +596,19 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 
 	enc := r.device.CreateCommandEncoder()
 
+	// Render-coupled compute: reset the per-frame bus of published resources.
+	for k := range r.published {
+		delete(r.published, k)
+	}
+
 	// 1) GPU-driven culling: compute pass writes a compacted visible-
 	// transforms buffer + indirect draw args per InstancedMesh. It also
 	// uploads per-mesh source transforms that the shadow pass binds directly.
 	if err := r.recordCullPass(enc, b, frustum); err != nil {
+		return err
+	}
+	// External render-coupled compute that feeds culling/instancing.
+	if err := r.runExternalPasses(enc, compute.PhaseAfterCull); err != nil {
 		return err
 	}
 	if err := r.prepareObjectMeshResources(b); err != nil {
@@ -640,6 +662,12 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		r.configureNativePostFX(nativePostFX)
 	}
 	if err := r.ensureEnvironmentBindGroups(b.Environment); err != nil {
+		return err
+	}
+
+	// External render-coupled compute that produces geometry/instance data
+	// (skinning, procedural meshing) consumed by the main pass.
+	if err := r.runExternalPasses(enc, compute.PhaseBeforeMain); err != nil {
 		return err
 	}
 
@@ -865,6 +893,34 @@ func primitiveParamsForInstancedMesh(im engine.RenderInstancedMesh) primitivePar
 		RadialSegments:  im.RadialSegments,
 		TubularSegments: im.TubularSegments,
 	}
+}
+
+// runExternalPasses records every registered ExternalComputePass whose phase
+// matches, in registration order, onto enc. Each pass dispatches and may
+// publish bus resources (instance/indirect buffers) into r.published for later
+// passes to consume. WebGPU auto-synchronizes the compute writes against the
+// render passes that follow within this encoder.
+func (r *Renderer) runExternalPasses(enc gpu.CommandEncoder, phase compute.PassPhase) error {
+	if len(r.externalPasses) == 0 {
+		return nil
+	}
+	if r.published == nil {
+		r.published = make(map[string]compute.GPUResource)
+	}
+	ctx := compute.PassContext{
+		Device:  r.device,
+		Encoder: enc,
+		Publish: func(res compute.GPUResource) { r.published[res.Name] = res },
+	}
+	for _, p := range r.externalPasses {
+		if p.Phase() != phase {
+			continue
+		}
+		if err := p.Record(ctx); err != nil {
+			return fmt.Errorf("bundle: external compute pass %q: %w", p.ID(), err)
+		}
+	}
+	return nil
 }
 
 // recordCullPass uploads per-mesh instance data, resets indirect-draw args,
