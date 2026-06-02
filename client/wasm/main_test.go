@@ -792,6 +792,108 @@ func TestRuntimeUnifiedHydrateDispatcherCanvas2D(t *testing.T) {
 	}
 }
 
+// TestRuntimeRenderCanvasReturnsBundleJSON covers the canvas2d paint-loop
+// WASM globals: after hydrating a CanvasBoard, __gosx_render_canvas must
+// return a parseable RenderBundle JSON whose camera is in OrthoCamera2D mode
+// and whose rect node carries world-space bounds plus a material color the JS
+// painter can read. __gosx_tick_canvas reconciles the board, and
+// __gosx_dispose_canvas tears it down.
+func TestRuntimeRenderCanvasReturnsBundleJSON(t *testing.T) {
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	prog := &rootengine.Program{
+		Name: "PaintBoard",
+		EngineNodes: []rootengine.Node{
+			{
+				Kind: "rect",
+				Props: map[string]program.ExprID{
+					"id":     0,
+					"x":      1,
+					"y":      2,
+					"width":  3,
+					"height": 4,
+					"color":  5,
+				},
+			},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpLitString, Value: "rect-a", Type: program.TypeString},
+			{Op: program.OpLitFloat, Value: "10", Type: program.TypeFloat},
+			{Op: program.OpLitFloat, Value: "20", Type: program.TypeFloat},
+			{Op: program.OpLitFloat, Value: "44", Type: program.TypeFloat},
+			{Op: program.OpLitFloat, Value: "32", Type: program.TypeFloat},
+			{Op: program.OpLitString, Value: "#ff8866", Type: program.TypeString},
+		},
+	}
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode engine program: %v", err)
+	}
+
+	// Hydrate via the unified dispatcher's canvas2d branch.
+	if ret := js.Global().Get("__gosx_hydrate").Invoke(
+		"canvas2d", "paint-0", prog.Name, `{"background":"#0f1720","zoom":1}`, string(data), "json",
+	); !ret.IsNull() {
+		t.Fatalf("hydrate canvas2d: %q", ret.String())
+	}
+
+	// __gosx_tick_canvas reconciles; it must not error.
+	if ret := js.Global().Get("__gosx_tick_canvas").Invoke("paint-0"); ret.Type() == js.TypeString && strings.HasPrefix(ret.String(), "error") {
+		t.Fatalf("tick canvas returned error: %q", ret.String())
+	}
+
+	// __gosx_render_canvas(id, width, height, timeSeconds) returns JSON.
+	renderRet := js.Global().Get("__gosx_render_canvas").Invoke("paint-0", 800, 600, 0.0)
+	if renderRet.Type() != js.TypeString {
+		t.Fatalf("expected JSON string from __gosx_render_canvas, got %v", renderRet.Type())
+	}
+	var bundle rootengine.RenderBundle
+	if err := json.Unmarshal([]byte(renderRet.String()), &bundle); err != nil {
+		t.Fatalf("unmarshal render bundle %q: %v", renderRet.String(), err)
+	}
+
+	if bundle.Camera.Mode != "ortho2d" {
+		t.Errorf("camera mode = %q, want ortho2d", bundle.Camera.Mode)
+	}
+	if bundle.Camera.Z != 1 {
+		t.Errorf("camera zoom (z) = %v, want 1", bundle.Camera.Z)
+	}
+	if bundle.Background != "#0f1720" {
+		t.Errorf("background = %q, want #0f1720", bundle.Background)
+	}
+	if len(bundle.Objects) != 1 {
+		t.Fatalf("expected one rect object, got %d (%#v)", len(bundle.Objects), bundle.Objects)
+	}
+	obj := bundle.Objects[0]
+	if obj.Kind != "rect" {
+		t.Errorf("object kind = %q, want rect", obj.Kind)
+	}
+	if obj.Bounds.MinX != 10 || obj.Bounds.MaxX != 54 {
+		t.Errorf("bounds X = (%v, %v), want (10, 54)", obj.Bounds.MinX, obj.Bounds.MaxX)
+	}
+	if obj.Bounds.MinY != 20 || obj.Bounds.MaxY != 52 {
+		t.Errorf("bounds Y = (%v, %v), want (20, 52)", obj.Bounds.MinY, obj.Bounds.MaxY)
+	}
+	// The painter reads color from bundle.Materials[obj.MaterialIndex].Color.
+	if obj.MaterialIndex < 0 || obj.MaterialIndex >= len(bundle.Materials) {
+		t.Fatalf("MaterialIndex %d out of range for %d materials", obj.MaterialIndex, len(bundle.Materials))
+	}
+	if got := bundle.Materials[obj.MaterialIndex].Color; got != "#ff8866" {
+		t.Errorf("rect material color = %q, want #ff8866", got)
+	}
+
+	// Dispose tears the board down; a subsequent render must error (unknown id).
+	js.Global().Get("__gosx_dispose_canvas").Invoke("paint-0")
+	afterDispose := js.Global().Get("__gosx_render_canvas").Invoke("paint-0", 800, 600, 0.0)
+	if got := afterDispose.String(); !strings.Contains(got, "error") {
+		t.Fatalf("expected error rendering disposed board, got %q", got)
+	}
+}
+
 // TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind covers an unknown
 // surfaceKind returning a stable error.
 func TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind(t *testing.T) {

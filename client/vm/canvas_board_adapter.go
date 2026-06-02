@@ -285,6 +285,7 @@ func buildCanvasBoardRenderBundle(props map[string]any, nodes []resolvedNode, wi
 		Background: canvasBoardBackground(props),
 		Camera:     cam,
 		Objects:    []rootengine.RenderObject{},
+		Materials:  []rootengine.RenderMaterial{},
 		Labels:     []rootengine.RenderLabel{},
 		Sprites:    []rootengine.RenderSprite{},
 		Lines:      []rootengine.RenderLine{},
@@ -293,7 +294,14 @@ func buildCanvasBoardRenderBundle(props map[string]any, nodes []resolvedNode, wi
 	for index, node := range nodes {
 		switch strings.ToLower(strings.TrimSpace(node.Kind)) {
 		case "rect":
-			b.Objects = append(b.Objects, canvasBoardRectObject(index, node))
+			obj := canvasBoardRectObject(index, node)
+			// Carry the rect's fill color through bundle.Materials so the
+			// renderer (GPU path) and the JS canvas2d painter can both read it
+			// via Objects[i].MaterialIndex → Materials[MaterialIndex].Color —
+			// the same lookup render/bundle/object_mesh.go uses for 3D meshes.
+			color, _ := node.Props["color"].(string)
+			obj.MaterialIndex = ensureCanvasBoardMaterial(&b, color)
+			b.Objects = append(b.Objects, obj)
 		case "line":
 			b.Lines = append(b.Lines, canvasBoardLine(index, node))
 		case "label":
@@ -385,6 +393,26 @@ func canvasBoardRectObject(index int, node resolvedNode) rootengine.RenderObject
 	}
 	obj.Pickable = &pickable
 	return obj
+}
+
+// ensureCanvasBoardMaterial appends a deduplicated unlit material carrying the
+// given fill color to b.Materials and returns its index. Empty colors collapse
+// onto a single shared default-material slot. Mirrors the scene path's
+// ensureRenderMaterial dedup so a 100-rect board with a small palette emits
+// only a handful of materials, not one per node.
+func ensureCanvasBoardMaterial(b *rootengine.RenderBundle, color string) int {
+	color = strings.TrimSpace(color)
+	for i, existing := range b.Materials {
+		if existing.Color == color {
+			return i
+		}
+	}
+	b.Materials = append(b.Materials, rootengine.RenderMaterial{
+		Kind:  "flat",
+		Color: color,
+		Unlit: true,
+	})
+	return len(b.Materials) - 1
 }
 
 func canvasBoardLine(index int, node resolvedNode) rootengine.RenderLine {

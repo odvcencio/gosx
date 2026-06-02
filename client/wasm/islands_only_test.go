@@ -167,6 +167,9 @@ func TestIslandsOnlyRuntimeOmitsFullRuntimeExports(t *testing.T) {
 		"__gosx_engine_dispose",
 		"__gosx_text_layout",
 		"__gosx_crdt_apply",
+		"__gosx_render_canvas",
+		"__gosx_tick_canvas",
+		"__gosx_dispose_canvas",
 	} {
 		if got := js.Global().Get(name); got.Type() != js.TypeUndefined {
 			t.Fatalf("expected %s to be omitted from islands-only runtime, got %v", name, got.Type())

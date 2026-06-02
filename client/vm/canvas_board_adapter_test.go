@@ -197,6 +197,59 @@ func TestCanvasBoardAdapterRenderBundleEmitsRectObjects(t *testing.T) {
 	}
 }
 
+// TestCanvasBoardAdapterRenderBundleCarriesRectColorViaMaterials is the
+// paint-loop prerequisite: a rect's authored fill color must reach the bundle
+// so both the GPU renderer and the JS canvas2d painter can draw it. Color
+// flows through bundle.Materials[obj.MaterialIndex].Color (the same contract
+// render/bundle/object_mesh.go uses for 3D meshes), and identical colors are
+// deduplicated onto one shared material slot.
+func TestCanvasBoardAdapterRenderBundleCarriesRectColorViaMaterials(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "ColoredBoard",
+		EngineNodes: []rootengine.Node{
+			{Kind: "rect", Props: map[string]islandprogram.ExprID{"x": 0, "color": 1}},
+			{Kind: "rect", Props: map[string]islandprogram.ExprID{"x": 0, "color": 2}},
+			{Kind: "rect", Props: map[string]islandprogram.ExprID{"x": 0, "color": 1}}, // dup color
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#ff8866", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "#88ddff", Type: islandprogram.TypeString},
+		},
+	}
+
+	rt := NewCanvasBoardAdapter(prog, `{}`)
+	b := rt.RenderBundle(800, 600, 0)
+	if len(b.Objects) != 3 {
+		t.Fatalf("expected three rect objects, got %d", len(b.Objects))
+	}
+	// Two distinct colors → two materials (the duplicate reuses slot 0).
+	if len(b.Materials) != 2 {
+		t.Fatalf("expected two deduplicated materials, got %d (%#v)", len(b.Materials), b.Materials)
+	}
+	colorOf := func(obj rootengine.RenderObject) string {
+		if obj.MaterialIndex < 0 || obj.MaterialIndex >= len(b.Materials) {
+			t.Fatalf("MaterialIndex %d out of range", obj.MaterialIndex)
+		}
+		return b.Materials[obj.MaterialIndex].Color
+	}
+	if got := colorOf(b.Objects[0]); got != "#ff8866" {
+		t.Errorf("object 0 color = %q, want #ff8866", got)
+	}
+	if got := colorOf(b.Objects[1]); got != "#88ddff" {
+		t.Errorf("object 1 color = %q, want #88ddff", got)
+	}
+	if b.Objects[0].MaterialIndex != b.Objects[2].MaterialIndex {
+		t.Errorf("duplicate-color rects should share a material slot: %d vs %d",
+			b.Objects[0].MaterialIndex, b.Objects[2].MaterialIndex)
+	}
+	// 2D materials must be unlit so Configure2DBundle / the renderer never tries
+	// to light a board rect.
+	if !b.Materials[0].Unlit {
+		t.Errorf("board material should be unlit")
+	}
+}
+
 // TestCanvasBoardAdapterRenderBundleStripsLightingAndPostFX is the
 // integration check that Configure2DBundle runs on the adapter output. A 2D
 // bundle should NEVER carry lights, post-FX, or environment data — even if
