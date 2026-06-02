@@ -33,7 +33,52 @@ const (
 	// $surface.event.* (ADR 0007).
 	//   floats = [screenX, screenY, cssWidth, cssHeight]
 	CanvasBoardEventPick CanvasBoardEventKind = 3
+	// CanvasBoardEventMarquee hit-tests a screen-space rectangle (shift-drag on
+	// empty canvas) and writes the comma-joined ids of every pickable node it
+	// covers into $surface.event.selectedIDs, plus the first/primary into
+	// selectedID (ADR 0007). A zero-area rect clears the selection (the Escape
+	// gesture). Mirrors the DOM board's startMarquee → selectedNodes.
+	//   floats = [x0, y0, x1, y1, cssWidth, cssHeight]
+	CanvasBoardEventMarquee CanvasBoardEventKind = 4
+	// CanvasBoardEventNav walks the selection to the spatially-nearest node in a
+	// direction (arrow keys) via the adapter's NavFrom and writes the result into
+	// $surface.event.selectedID. The current selection is read from selectedID;
+	// an empty current selection lands on the topmost-leftmost node. Mirrors the
+	// DOM board's navigateNodes → nearestNodeKey.
+	//   floats = [dirCode]  (see the CanvasNav* direction codes)
+	CanvasBoardEventNav CanvasBoardEventKind = 5
 )
+
+// CanvasNavDirection codes pin the arrow-key direction the JS bootstrap sends in
+// a CanvasBoardEventNav payload (floats[0]) to the string directions NavFrom
+// understands. The integers cross the JS↔WASM boundary, so the bootstrap's
+// keydown handler maps ArrowUp/Down/Left/Right to these exact values.
+type CanvasNavDirection int
+
+const (
+	CanvasNavUp    CanvasNavDirection = 0
+	CanvasNavDown  CanvasNavDirection = 1
+	CanvasNavLeft  CanvasNavDirection = 2
+	CanvasNavRight CanvasNavDirection = 3
+)
+
+// canvasNavDirString maps a wire direction code to the string NavFrom expects.
+// An unknown code yields "" so NavFrom returns "" (selection unchanged) rather
+// than guessing a direction.
+func canvasNavDirString(code CanvasNavDirection) string {
+	switch code {
+	case CanvasNavUp:
+		return "up"
+	case CanvasNavDown:
+		return "down"
+	case CanvasNavLeft:
+		return "left"
+	case CanvasNavRight:
+		return "right"
+	default:
+		return ""
+	}
+}
 
 // CanvasBoardEvent routes a single interaction event into the named board's
 // adapter. Pan/zoom mutate the adapter's runtime camera (SetCamera) so the next
@@ -69,6 +114,18 @@ func (b *Bridge) CanvasBoardEvent(id string, kind CanvasBoardEventKind, floats [
 			return fmt.Errorf("canvas pick needs [screenX, screenY, cssW, cssH], got %d floats", len(floats))
 		}
 		b.canvasBoardApplyPick(adapter, floats[0], floats[1], floats[2], floats[3])
+		return nil
+	case CanvasBoardEventMarquee:
+		if len(floats) < 6 {
+			return fmt.Errorf("canvas marquee needs [x0, y0, x1, y1, cssW, cssH], got %d floats", len(floats))
+		}
+		b.canvasBoardApplyMarquee(adapter, floats[0], floats[1], floats[2], floats[3], floats[4], floats[5])
+		return nil
+	case CanvasBoardEventNav:
+		if len(floats) < 1 {
+			return fmt.Errorf("canvas nav needs [dirCode], got %d floats", len(floats))
+		}
+		b.canvasBoardApplyNav(adapter, CanvasNavDirection(int(floats[0])))
 		return nil
 	default:
 		return fmt.Errorf("unknown canvas board event kind %d", int(kind))
@@ -157,6 +214,93 @@ func (b *Bridge) canvasBoardApplyPick(adapter *vm.CanvasBoardAdapter, screenX, s
 	set("$surface.event.selected", id != "")
 	set("$surface.event.clickCount", float64(nextCanvasBoardClickCount()))
 	set("$surface.event.revision", float64(nextCanvasBoardPickRevision()))
+}
+
+// canvasBoardApplyMarquee converts a screen-space rectangle to world (via the
+// live camera, the same inverse-transform a single pick uses) and writes the
+// ids of every pickable node it covers into $surface.event.selectedIDs
+// (comma-joined, back-to-front) plus the first as the primary selectedID (ADR
+// 0007). A zero-area rect (the Escape / clear gesture) writes empty strings so
+// the muddy bridge clears the board's multi-selection. The two screen corners
+// are each inverted to world; PickWorldRect re-normalizes, so corner order does
+// not matter.
+func (b *Bridge) canvasBoardApplyMarquee(adapter *vm.CanvasBoardAdapter, x0, y0, x1, y1, cssW, cssH float64) {
+	store := b.GetStore()
+	if store == nil {
+		return
+	}
+	set := func(name string, value any) {
+		store.Set(name, canvasBoardSignalValue(value))
+	}
+
+	var ids []string
+	// A zero-area rect is the clear gesture — skip the hit test, write empties.
+	if x0 != x1 || y0 != y1 {
+		panX, panY, zoom := adapter.Camera()
+		if zoom <= 0 {
+			zoom = 1
+		}
+		wx0, wy0 := canvasBoardScreenToWorld(x0, y0, panX, panY, zoom, cssW, cssH)
+		wx1, wy1 := canvasBoardScreenToWorld(x1, y1, panX, panY, zoom, cssW, cssH)
+		ids = adapter.PickWorldRect(wx0, wy0, wx1, wy1)
+	}
+
+	primary := ""
+	if len(ids) > 0 {
+		primary = ids[0]
+	}
+	set("$surface.event.selectedIDs", canvasBoardJoinIDs(ids))
+	set("$surface.event.selectedID", primary)
+	set("$surface.event.targetID", primary)
+	set("$surface.event.selected", primary != "")
+	set("$surface.event.type", "marquee")
+	set("$surface.event.revision", float64(nextCanvasBoardPickRevision()))
+}
+
+// canvasBoardApplyNav resolves the spatially-nearest node in the pressed
+// direction from the current selectedID (read from the shared store) via the
+// adapter's NavFrom and writes the result back into $surface.event.selectedID.
+// NavFrom returns "" when there is no node in that direction, in which case the
+// current selection is left untouched (a felt-better no-op than clearing). An
+// empty current selection lands on the topmost-leftmost node.
+func (b *Bridge) canvasBoardApplyNav(adapter *vm.CanvasBoardAdapter, dir CanvasNavDirection) {
+	store := b.GetStore()
+	if store == nil {
+		return
+	}
+	current := ""
+	if cur, ok := store.Get("$surface.event.selectedID"); ok {
+		current = cur.Str
+	}
+	next := adapter.NavFrom(current, canvasNavDirString(dir))
+	if next == "" {
+		// No neighbor in that direction — keep the current selection.
+		return
+	}
+	set := func(name string, value any) {
+		store.Set(name, canvasBoardSignalValue(value))
+	}
+	set("$surface.event.selectedID", next)
+	set("$surface.event.targetID", next)
+	set("$surface.event.selected", true)
+	set("$surface.event.type", "nav")
+	set("$surface.event.revision", float64(nextCanvasBoardPickRevision()))
+}
+
+// canvasBoardJoinIDs comma-joins ids without pulling in strings.Join's import
+// churn at this seam (the file is otherwise import-light). Empty input → "".
+func canvasBoardJoinIDs(ids []string) string {
+	switch len(ids) {
+	case 0:
+		return ""
+	case 1:
+		return ids[0]
+	}
+	out := ids[0]
+	for _, id := range ids[1:] {
+		out += "," + id
+	}
+	return out
 }
 
 // canvasBoardScreenToWorld inverts the OrthoCamera2D screen transform the JS
