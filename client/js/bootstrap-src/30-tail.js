@@ -851,8 +851,13 @@
     if (!video || typeof video.canPlayType !== "function") {
       return false;
     }
-    const result = String(video.canPlayType("application/vnd.apple.mpegurl") || "");
-    return result !== "" && result !== "no";
+    const result = String(video.canPlayType("application/vnd.apple.mpegurl") || "").trim().toLowerCase();
+    // Only "probably" indicates reliable native HLS (Safari / iOS). Chrome and
+    // Chromium-Edge return the speculative "maybe" but cannot actually decode
+    // an .m3u8 playlist natively — they must use hls.js (MSE). Treating "maybe"
+    // as native support black-screens Chrome: it sets video.src=playlist,
+    // decodes a few frames, then stalls. Anything but "probably" → use hls.js.
+    return result === "probably";
   }
 
   function videoBytesFromRaw(raw) {
