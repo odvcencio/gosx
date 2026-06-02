@@ -6,6 +6,7 @@ import (
 	"math"
 	"testing"
 
+	"m31labs.dev/gosx/client/vm"
 	rootengine "m31labs.dev/gosx/engine"
 	islandprogram "m31labs.dev/gosx/island/program"
 )
@@ -226,6 +227,193 @@ func TestCanvasBoardEventPickPointerSignals(t *testing.T) {
 	}
 	if _, ok := store.Get("$surface.event.revision"); !ok {
 		t.Errorf("revision not written on pick")
+	}
+}
+
+// gridBoardProg builds a multi-rect board program from (id, x, y, w, h) tuples
+// so the marquee + nav bridge tests can lay out a spatial grid of nodes.
+func gridBoardProg(specs [][5]any) *rootengine.Program {
+	prog := &rootengine.Program{Name: "GridEventBoard"}
+	itoa := func(f float64) string {
+		neg := f < 0
+		n := int(math.Abs(f))
+		if n == 0 {
+			return "0"
+		}
+		var buf []byte
+		for n > 0 {
+			buf = append([]byte{byte('0' + n%10)}, buf...)
+			n /= 10
+		}
+		if neg {
+			buf = append([]byte{'-'}, buf...)
+		}
+		return string(buf)
+	}
+	push := func(e islandprogram.Expr) islandprogram.ExprID {
+		prog.Exprs = append(prog.Exprs, e)
+		return islandprogram.ExprID(len(prog.Exprs) - 1)
+	}
+	for _, s := range specs {
+		id := s[0].(string)
+		x := s[1].(float64)
+		y := s[2].(float64)
+		w := s[3].(float64)
+		h := s[4].(float64)
+		prog.EngineNodes = append(prog.EngineNodes, rootengine.Node{
+			Kind: "rect",
+			Props: map[string]islandprogram.ExprID{
+				"x":      push(islandprogram.Expr{Op: islandprogram.OpLitFloat, Value: itoa(x), Type: islandprogram.TypeFloat}),
+				"y":      push(islandprogram.Expr{Op: islandprogram.OpLitFloat, Value: itoa(y), Type: islandprogram.TypeFloat}),
+				"width":  push(islandprogram.Expr{Op: islandprogram.OpLitFloat, Value: itoa(w), Type: islandprogram.TypeFloat}),
+				"height": push(islandprogram.Expr{Op: islandprogram.OpLitFloat, Value: itoa(h), Type: islandprogram.TypeFloat}),
+				"id":     push(islandprogram.Expr{Op: islandprogram.OpLitString, Value: id, Type: islandprogram.TypeString}),
+			},
+		})
+	}
+	return prog
+}
+
+// TestCanvasBoardEventMarqueeWritesSelectedIDs is the marquee keystone for the
+// bridge: a "marquee" event with a screen rect converts the rect to world via
+// the camera, hit-tests every pickable node it covers, and writes the comma-
+// joined ids into $surface.event.selectedIDs plus the first/primary into
+// selectedID (ADR 0007).
+func TestCanvasBoardEventMarqueeWritesSelectedIDs(t *testing.T) {
+	b := New()
+	_ = b.HydrateReconciler("canvas2d", "board-mq", "Board", `{}`, []byte("{}"), "json")
+	// Two rects side by side at world x∈[0,100] and x∈[150,250], y∈[0,100].
+	mountTypedBoard(t, b, "board-mq", gridBoardProg([][5]any{
+		{"node-A", 0.0, 0.0, 100.0, 100.0},
+		{"node-B", 150.0, 0.0, 100.0, 100.0},
+	}))
+
+	const cssW, cssH = 600.0, 400.0
+	// Screen→world: worldX=(sx-cssW/2)/zoom+panX, worldY=panY-(sy-cssH/2)/zoom.
+	// At pan=(0,0) zoom=1: world (0,0) is screen (300,200). Build a screen rect
+	// covering world x∈[-20,300], y∈[-20,120] so it spans BOTH rects.
+	// world x=-20 → screen 280 ; x=300 → screen 600. world y=120 → screen 80 ;
+	// y=-20 → screen 220.
+	x0, y0 := 280.0, 80.0
+	x1, y1 := 600.0, 220.0
+	if err := b.CanvasBoardEvent("board-mq", CanvasBoardEventMarquee, []float64{x0, y0, x1, y1, cssW, cssH}, ""); err != nil {
+		t.Fatalf("marquee event: %v", err)
+	}
+	store := b.GetStore()
+	ids, ok := store.Get("$surface.event.selectedIDs")
+	if !ok {
+		t.Fatalf("$surface.event.selectedIDs not written")
+	}
+	if ids.Str != "node-A,node-B" {
+		t.Errorf("selectedIDs = %q, want \"node-A,node-B\"", ids.Str)
+	}
+	primary, _ := store.Get("$surface.event.selectedID")
+	if primary.Str != "node-A" {
+		t.Errorf("primary selectedID = %q, want node-A (first of the marquee set)", primary.Str)
+	}
+}
+
+// TestCanvasBoardEventMarqueeEmptyClears verifies a zero-area marquee (the
+// Escape / clear gesture) empties both selectedIDs and selectedID.
+func TestCanvasBoardEventMarqueeEmptyClears(t *testing.T) {
+	b := New()
+	_ = b.HydrateReconciler("canvas2d", "board-mqc", "Board", `{}`, []byte("{}"), "json")
+	mountTypedBoard(t, b, "board-mqc", gridBoardProg([][5]any{
+		{"node-A", 0.0, 0.0, 100.0, 100.0},
+	}))
+	store := b.GetStore()
+	// First select something.
+	_ = b.CanvasBoardEvent("board-mqc", CanvasBoardEventMarquee, []float64{0, 0, 600, 400, 600, 400}, "")
+	if got, _ := store.Get("$surface.event.selectedIDs"); got.Str == "" {
+		t.Fatalf("precondition: expected a selection before clear")
+	}
+	// A zero-area marquee clears.
+	if err := b.CanvasBoardEvent("board-mqc", CanvasBoardEventMarquee, []float64{0, 0, 0, 0, 600, 400}, ""); err != nil {
+		t.Fatalf("clear marquee: %v", err)
+	}
+	if got, _ := store.Get("$surface.event.selectedIDs"); got.Str != "" {
+		t.Errorf("selectedIDs after clear = %q, want empty", got.Str)
+	}
+	if got, _ := store.Get("$surface.event.selectedID"); got.Str != "" {
+		t.Errorf("selectedID after clear = %q, want empty", got.Str)
+	}
+}
+
+// TestCanvasBoardEventNavWritesSelectedID is the nav keystone for the bridge: a
+// "nav" event with a direction code + the current selectedID walks to the
+// spatial neighbor and writes it back into $surface.event.selectedID.
+func TestCanvasBoardEventNavWritesSelectedID(t *testing.T) {
+	b := New()
+	_ = b.HydrateReconciler("canvas2d", "board-nav", "Board", `{}`, []byte("{}"), "json")
+	// C at (90..110), R at (190..210) — R is to the right of C.
+	mountTypedBoard(t, b, "board-nav", gridBoardProg([][5]any{
+		{"C", 90.0, 90.0, 20.0, 20.0},
+		{"R", 190.0, 90.0, 20.0, 20.0},
+	}))
+	store := b.GetStore()
+	// Seed the current selection.
+	store.Set("$surface.event.selectedID", vm.StringVal("C"))
+
+	if err := b.CanvasBoardEvent("board-nav", CanvasBoardEventNav, []float64{float64(CanvasNavRight)}, ""); err != nil {
+		t.Fatalf("nav event: %v", err)
+	}
+	got, _ := store.Get("$surface.event.selectedID")
+	if got.Str != "R" {
+		t.Errorf("selectedID after nav right = %q, want R", got.Str)
+	}
+}
+
+// TestCanvasBoardEventNavFromEmptyPicksFirst verifies a nav with no current
+// selection lands on the topmost-leftmost node (NavFrom's empty-current rule).
+func TestCanvasBoardEventNavFromEmptyPicksFirst(t *testing.T) {
+	b := New()
+	_ = b.HydrateReconciler("canvas2d", "board-nav0", "Board", `{}`, []byte("{}"), "json")
+	mountTypedBoard(t, b, "board-nav0", gridBoardProg([][5]any{
+		{"low", 40.0, 0.0, 20.0, 20.0},
+		{"high", 40.0, 500.0, 20.0, 20.0}, // largest world-Y → topmost on screen
+	}))
+	store := b.GetStore()
+	if err := b.CanvasBoardEvent("board-nav0", CanvasBoardEventNav, []float64{float64(CanvasNavDown)}, ""); err != nil {
+		t.Fatalf("nav event: %v", err)
+	}
+	got, _ := store.Get("$surface.event.selectedID")
+	if got.Str != "high" {
+		t.Errorf("selectedID after nav from empty = %q, want high (topmost-leftmost)", got.Str)
+	}
+}
+
+// TestCanvasBoardEventNavNoNeighborKeepsSelection verifies that when no node
+// lies in the pressed direction, nav leaves the current selectedID untouched
+// (NavFrom returns "" and the bridge does not overwrite a good selection).
+func TestCanvasBoardEventNavNoNeighborKeepsSelection(t *testing.T) {
+	b := New()
+	_ = b.HydrateReconciler("canvas2d", "board-navk", "Board", `{}`, []byte("{}"), "json")
+	mountTypedBoard(t, b, "board-navk", gridBoardProg([][5]any{
+		{"C", 0.0, 0.0, 20.0, 20.0},
+		{"L", -100.0, 0.0, 20.0, 20.0},
+	}))
+	store := b.GetStore()
+	store.Set("$surface.event.selectedID", vm.StringVal("C"))
+	// Nothing to the right of C.
+	if err := b.CanvasBoardEvent("board-navk", CanvasBoardEventNav, []float64{float64(CanvasNavRight)}, ""); err != nil {
+		t.Fatalf("nav event: %v", err)
+	}
+	got, _ := store.Get("$surface.event.selectedID")
+	if got.Str != "C" {
+		t.Errorf("selectedID after no-neighbor nav = %q, want unchanged C", got.Str)
+	}
+}
+
+// TestCanvasBoardEventMarqueeNavArgValidation verifies malformed payloads return
+// an error rather than panic.
+func TestCanvasBoardEventMarqueeNavArgValidation(t *testing.T) {
+	b := New()
+	_ = b.HydrateReconciler("canvas2d", "board-val", "Board", `{}`, []byte("{}"), "json")
+	if err := b.CanvasBoardEvent("board-val", CanvasBoardEventMarquee, []float64{1, 2, 3}, ""); err == nil {
+		t.Error("expected error for short marquee payload")
+	}
+	if err := b.CanvasBoardEvent("board-val", CanvasBoardEventNav, []float64{}, ""); err == nil {
+		t.Error("expected error for empty nav payload")
 	}
 }
 

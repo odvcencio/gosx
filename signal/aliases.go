@@ -72,6 +72,9 @@ var surfaceEventFields = []string{
 	"marqueeStartY",
 	"marqueeEndX",
 	"marqueeEndY",
+	// Slice 3 — multi-select. selectedIDs is the comma-joined set a marquee
+	// produces; selectedID stays the primary (first). No $scene.event.* alias.
+	"selectedIDs",
 }
 
 func init() {

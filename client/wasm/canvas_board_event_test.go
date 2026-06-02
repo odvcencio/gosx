@@ -147,6 +147,113 @@ func TestCanvasEventPickWritesSignal(t *testing.T) {
 	}
 }
 
+// gridBoardJSON encodes a multi-rect board program to wire JSON for the marquee
+// / nav wasm tests. specs are (id, x, y, w, h) tuples; rects paint in order.
+func gridBoardJSON(t *testing.T, specs [][5]any) string {
+	t.Helper()
+	prog := &rootengine.Program{Name: "WasmGridBoard"}
+	push := func(e program.Expr) program.ExprID {
+		prog.Exprs = append(prog.Exprs, e)
+		return program.ExprID(len(prog.Exprs) - 1)
+	}
+	for _, s := range specs {
+		id := s[0].(string)
+		x := s[1].(float64)
+		y := s[2].(float64)
+		w := s[3].(float64)
+		h := s[4].(float64)
+		prog.EngineNodes = append(prog.EngineNodes, rootengine.Node{
+			Kind: "rect",
+			Props: map[string]program.ExprID{
+				"x":      push(program.Expr{Op: program.OpLitFloat, Value: ftoaWasm(x), Type: program.TypeFloat}),
+				"y":      push(program.Expr{Op: program.OpLitFloat, Value: ftoaWasm(y), Type: program.TypeFloat}),
+				"width":  push(program.Expr{Op: program.OpLitFloat, Value: ftoaWasm(w), Type: program.TypeFloat}),
+				"height": push(program.Expr{Op: program.OpLitFloat, Value: ftoaWasm(h), Type: program.TypeFloat}),
+				"id":     push(program.Expr{Op: program.OpLitString, Value: id, Type: program.TypeString}),
+			},
+		})
+	}
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatalf("encode program: %v", err)
+	}
+	return string(data)
+}
+
+func sharedSignalString(name string) string {
+	got := js.Global().Get("__gosx_get_shared_signal").Invoke(name)
+	if got.Type() != js.TypeString {
+		return ""
+	}
+	s := got.String()
+	// The getter returns JSON; a string value comes back quoted.
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+// TestCanvasEventMarqueeWritesSelectedIDs verifies a "marquee" event over two
+// rects writes the comma-joined ids into $surface.event.selectedIDs through the
+// public __gosx_canvas_event entrypoint.
+func TestCanvasEventMarqueeWritesSelectedIDs(t *testing.T) {
+	b := bridge.New()
+	registerRuntime(b)
+
+	// Two rects: world x∈[0,100] and x∈[150,250], y∈[0,100].
+	progJSON := gridBoardJSON(t, [][5]any{
+		{"node-A", 0.0, 0.0, 100.0, 100.0},
+		{"node-B", 150.0, 0.0, 100.0, 100.0},
+	})
+	if ret := js.Global().Get("__gosx_hydrate_canvas").Invoke("cb-mq", "Board", `{}`, progJSON, "json"); !ret.IsNull() {
+		t.Fatalf("hydrate: %v", ret)
+	}
+	// Screen rect covering both rects (cssW=600,cssH=400, pan=0, zoom=1):
+	// world (-20,-20)→(300,120) maps to screen (280,220)→(600,80).
+	ret := js.Global().Get("__gosx_canvas_event").Invoke("cb-mq", int(bridge.CanvasBoardEventMarquee), float64ArrayFromGo([]float64{280, 80, 600, 220, 600, 400}), "")
+	if !ret.IsNull() {
+		t.Fatalf("marquee event returned: %v", ret)
+	}
+	if got := sharedSignalString("$surface.event.selectedIDs"); got != "node-A,node-B" {
+		t.Errorf("selectedIDs = %q, want node-A,node-B", got)
+	}
+	if got := sharedSignalString("$surface.event.selectedID"); got != "node-A" {
+		t.Errorf("primary selectedID = %q, want node-A", got)
+	}
+}
+
+// TestCanvasEventNavMovesSelectedID verifies a "nav" event walks the selection
+// to the spatial neighbor through __gosx_canvas_event.
+func TestCanvasEventNavMovesSelectedID(t *testing.T) {
+	b := bridge.New()
+	registerRuntime(b)
+
+	// C centered on world origin (0,0); R to its right at world center (100,0).
+	progJSON := gridBoardJSON(t, [][5]any{
+		{"C", -10.0, -10.0, 20.0, 20.0},
+		{"R", 90.0, -10.0, 20.0, 20.0},
+	})
+	if ret := js.Global().Get("__gosx_hydrate_canvas").Invoke("cb-nav", "Board", `{}`, progJSON, "json"); !ret.IsNull() {
+		t.Fatalf("hydrate: %v", ret)
+	}
+	// Seed selection on C via a pick at its screen center, then nav right.
+	// cssW=cssH=400, pan=(0,0), zoom=1: C center world (0,0) → screen (200,200).
+	if ret := js.Global().Get("__gosx_canvas_event").Invoke("cb-nav", int(bridge.CanvasBoardEventPick), float64ArrayFromGo([]float64{200, 200, 400, 400}), ""); !ret.IsNull() {
+		t.Fatalf("seed pick returned: %v", ret)
+	}
+	if got := sharedSignalString("$surface.event.selectedID"); got != "C" {
+		t.Fatalf("seed selection = %q, want C", got)
+	}
+	// Nav right → R.
+	ret := js.Global().Get("__gosx_canvas_event").Invoke("cb-nav", int(bridge.CanvasBoardEventNav), float64ArrayFromGo([]float64{float64(bridge.CanvasNavRight)}), "")
+	if !ret.IsNull() {
+		t.Fatalf("nav event returned: %v", ret)
+	}
+	if got := sharedSignalString("$surface.event.selectedID"); got != "R" {
+		t.Errorf("selectedID after nav right = %q, want R", got)
+	}
+}
+
 // TestCanvasEventUnknownBoardErrors verifies an event for an unregistered id
 // returns an error string (not a panic).
 func TestCanvasEventUnknownBoardErrors(t *testing.T) {
