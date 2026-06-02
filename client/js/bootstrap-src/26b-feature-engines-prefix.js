@@ -261,7 +261,16 @@
       if (inst.observer && typeof inst.observer.disconnect === "function") {
         inst.observer.disconnect();
       }
-      const fn = window.__gosx_dispose_engine_surface;
+      // Tear down the matching WASM-side instance. canvas2d boards live in the
+      // CanvasBoardAdapter map (__gosx_dispose_canvas); every other surface
+      // kind (and the bytecode path) lives in the engine-surface map
+      // (__gosx_dispose_engine_surface). Both globals are no-ops for ids they
+      // don't own, so calling the wrong one is harmless — but routing by kind
+      // keeps the teardown precise.
+      const disposeName = inst.kind === "canvas2d"
+        ? "__gosx_dispose_canvas"
+        : "__gosx_dispose_engine_surface";
+      const fn = window[disposeName];
       if (typeof fn === "function") {
         try { fn(id); } catch (e) { /* swallow */ }
       }
@@ -395,6 +404,72 @@
       // surface-kind path light up automatically once the canvas2d reconciler
       // exposes its own tick/dispatch/dispose entries.
       _bridgeEngineSurfaceEvents(id, canvas, instance);
+
+      // canvas2d boards paint through the bundle-driven render loop below
+      // (tick → render → paintCanvasBundle on the 2D context). Other surface
+      // kinds — and the bytecode/GPU engine-surface path — are untouched: they
+      // own their own draw loop (the GPU renderer in engine_surface_full.go).
+      if (surfaceKind === "canvas2d") {
+        instance.kind = "canvas2d";
+        _startCanvasSurfaceRAF(id, canvas, instance);
+      }
+    }
+
+    // _startCanvasSurfaceRAF drives the canvas2d paint loop for a hydrated
+    // gosx.CanvasBoard. Each frame it (cheaply) reconciles the board via
+    // __gosx_tick_canvas, fetches the RenderBundle JSON via __gosx_render_canvas
+    // at the canvas's CSS size, parses it, and replays it onto the 2D context
+    // through the shared painter (window.__gosx_paint_canvas_bundle, installed
+    // by bootstrap-src/26b1-canvas2d-painter.js). The backing store is sized
+    // for the device pixel ratio (via _ensureSurfaceCanvas / the ResizeObserver),
+    // and the context is pre-scaled by dpr so the painter can work in CSS pixels.
+    function _startCanvasSurfaceRAF(id, canvas, instance) {
+      const renderFn = window.__gosx_render_canvas;
+      const paintFn = window.__gosx_paint_canvas_bundle;
+      if (typeof renderFn !== "function" || typeof paintFn !== "function") {
+        // Shared WASM or painter not present — leave the placeholder as-is.
+        return;
+      }
+      const tickFn = window.__gosx_tick_canvas;
+      let ctx = null;
+      try {
+        ctx = canvas.getContext("2d");
+      } catch (e) {
+        ctx = null;
+      }
+      if (!ctx) return;
+
+      function frame() {
+        if (instance.disposed) return;
+        const dpr = window.devicePixelRatio || 1;
+        // CSS (logical) size the OrthoCamera2D transform centers on. Fall back
+        // to the backing-store size divided by dpr when layout is unavailable.
+        const cssW = Math.max(1, canvas.clientWidth || Math.floor(canvas.width / dpr) || 1);
+        const cssH = Math.max(1, canvas.clientHeight || Math.floor(canvas.height / dpr) || 1);
+        try {
+          if (typeof tickFn === "function") {
+            tickFn(id);
+          }
+          const json = renderFn(id, cssW, cssH, frame._t || 0);
+          frame._t = (frame._t || 0) + 1 / 60;
+          if (typeof json === "string" && json !== "" && json[0] !== "e") {
+            const bundle = JSON.parse(json);
+            // Pre-scale the context so the painter draws in CSS pixels onto a
+            // dpr-sized backing store. setTransform resets any prior scale.
+            if (typeof ctx.setTransform === "function") {
+              ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
+            paintFn(ctx, bundle, cssW, cssH, dpr);
+          }
+        } catch (e) {
+          // A buggy board shouldn't break the rest of the page — log once a
+          // frame and keep going. (The render-loop owns its errors, mirroring
+          // _startEngineSurfaceRAF.)
+          console.error("[gosx] canvas2d paint loop threw for " + id + ":", e);
+        }
+        instance.raf = requestAnimationFrame(frame);
+      }
+      instance.raf = requestAnimationFrame(frame);
     }
 
     // mountAllSurfaceKinds finds every server-rendered surface primitive that

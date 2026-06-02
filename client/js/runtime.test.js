@@ -15247,3 +15247,242 @@ test("bootstrap engines feature runs canvas2d surface-kind mount on runtime read
   assert.match(suffix, /mountAllEngineSurfaces\(\)/);
   assert.match(suffix, /mountAllSurfaceKinds\(\)/);
 });
+
+test("bootstrap starts a canvas2d paint loop (tick + render + paint) only for the canvas2d surface kind", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.js"),
+    "utf8",
+  );
+
+  // The canvas2d branch starts a dedicated RAF render loop after a successful
+  // hydrate, gated on surfaceKind === "canvas2d" so the bytecode/GPU
+  // engine-surface path is untouched.
+  assert.match(source, /surfaceKind === "canvas2d"/);
+  assert.match(source, /function _startCanvasSurfaceRAF\(/);
+
+  // The loop drives the three canvas WASM globals (dispose is routed by kind
+  // through window[disposeName], so it appears as a bare global name).
+  assert.match(source, /window\.__gosx_tick_canvas/);
+  assert.match(source, /window\.__gosx_render_canvas/);
+  assert.match(source, /__gosx_dispose_canvas/);
+
+  // It paints through the shared painter on the canvas's 2D context.
+  assert.match(source, /window\.__gosx_paint_canvas_bundle/);
+  assert.match(source, /getContext\("2d"\)/);
+});
+
+// -----------------------------------------------------------------------------
+// Canvas2D painter — paintCanvasBundle(ctx, bundle, cssWidth, cssHeight, dpr)
+//
+// The painter is the JS half of the canvas2d paint loop: it takes a
+// RenderBundle (as emitted by __gosx_render_canvas), computes the screen
+// transform from the OrthoCamera2D contract (mode "ortho2d"; camera.x = panX,
+// camera.y = panY, camera.z = zoom), and replays the bundle's objects/lines/
+// labels onto a 2D context. The transform it must replicate is:
+//
+//     screenX = (worldX - panX) * zoom + cssWidth / 2
+//     screenY = (cssHeight / 2) - (worldY - panY) * zoom   (NDC +Y up → canvas +Y down)
+//
+// These tests feed a hand-built bundle to a FAKE 2D context that records every
+// draw call and assert the resulting screen coordinates.
+// -----------------------------------------------------------------------------
+
+// loadCanvasPainter evaluates the standalone painter fragment in an isolated
+// sandbox and returns the exposed window.__gosx_paint_canvas_bundle function.
+function loadCanvasPainter() {
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b1-canvas2d-painter.js"),
+    "utf8",
+  );
+  const sandbox = {};
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox, { filename: "26b1-canvas2d-painter.js" });
+  const fn = sandbox.window.__gosx_paint_canvas_bundle;
+  assert.equal(typeof fn, "function", "painter must expose window.__gosx_paint_canvas_bundle");
+  return fn;
+}
+
+// makeFakeContext2D returns a CanvasRenderingContext2D-like recorder. It tracks
+// fillStyle/strokeStyle/lineWidth/font assignments and records each draw call
+// (with the style in effect at call time) into a flat `calls` array.
+function makeFakeContext2D() {
+  const ctx = {
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
+    font: "",
+    textBaseline: "",
+    textAlign: "",
+    calls: [],
+  };
+  ctx.clearRect = (x, y, w, h) => ctx.calls.push({ op: "clearRect", x, y, w, h });
+  ctx.fillRect = (x, y, w, h) =>
+    ctx.calls.push({ op: "fillRect", x, y, w, h, fillStyle: ctx.fillStyle });
+  ctx.beginPath = () => ctx.calls.push({ op: "beginPath" });
+  ctx.moveTo = (x, y) => ctx.calls.push({ op: "moveTo", x, y });
+  ctx.lineTo = (x, y) => ctx.calls.push({ op: "lineTo", x, y });
+  ctx.stroke = () =>
+    ctx.calls.push({ op: "stroke", strokeStyle: ctx.strokeStyle, lineWidth: ctx.lineWidth });
+  ctx.fillText = (text, x, y) =>
+    ctx.calls.push({ op: "fillText", text, x, y, fillStyle: ctx.fillStyle, font: ctx.font });
+  ctx.save = () => ctx.calls.push({ op: "save" });
+  ctx.restore = () => ctx.calls.push({ op: "restore" });
+  ctx.setTransform = (a, b, c, d, e, f) =>
+    ctx.calls.push({ op: "setTransform", a, b, c, d, e, f });
+  ctx.scale = (x, y) => ctx.calls.push({ op: "scale", x, y });
+  return ctx;
+}
+
+function callsOfType(ctx, op) {
+  return ctx.calls.filter((c) => c.op === op);
+}
+
+// nodeFillRects returns fillRect calls that are NOT the full-viewport background
+// fill (which the painter emits at the origin in CSS-logical pixels; the caller
+// pre-scales the context for the device pixel ratio, so dpr does not change the
+// logical fill region).
+function nodeFillRects(ctx, cssWidth, cssHeight) {
+  return callsOfType(ctx, "fillRect").filter(
+    (c) => !(c.x === 0 && c.y === 0 && c.w === cssWidth && c.h === cssHeight),
+  );
+}
+
+test("paintCanvasBundle clears with the bundle background then paints a rect at the OrthoCamera2D origin (zoom 1, pan 0)", () => {
+  const paint = loadCanvasPainter();
+  const ctx = makeFakeContext2D();
+
+  const bundle = {
+    background: "#0f1720",
+    camera: { mode: "ortho2d", x: 0, y: 0, z: 1 },
+    materials: [{ color: "#ff8866" }],
+    objects: [
+      {
+        kind: "rect",
+        materialIndex: 0,
+        bounds: { minX: -22, maxX: 22, minY: -16, maxY: 16 },
+      },
+    ],
+    lines: [],
+    labels: [],
+  };
+
+  paint(ctx, bundle, 800, 600, 1);
+
+  // Background clear/fill happens.
+  const clears = callsOfType(ctx, "clearRect");
+  const fills = nodeFillRects(ctx, 800, 600);
+  assert.ok(clears.length >= 1, "expected a clearRect for the frame");
+  assert.equal(fills.length, 1, "expected exactly one node fillRect for the rect node");
+
+  // World rect (-22..22, -16..16) at zoom 1, pan 0, viewport 800x600 maps to
+  // screen x in [378, 422] and (Y flipped) screen y in [284, 316].
+  // top-left screen corner = (minX→378, maxY→284); width=44, height=32.
+  const rect = fills[0];
+  assert.equal(rect.fillStyle, "#ff8866", "rect must use its material color");
+  assert.ok(Math.abs(rect.x - 378) < 1e-6, `rect x = ${rect.x}, want 378`);
+  assert.ok(Math.abs(rect.y - 284) < 1e-6, `rect y = ${rect.y}, want 284`);
+  assert.ok(Math.abs(rect.w - 44) < 1e-6, `rect w = ${rect.w}, want 44`);
+  assert.ok(Math.abs(rect.h - 32) < 1e-6, `rect h = ${rect.h}, want 32`);
+});
+
+test("paintCanvasBundle strokes a line and fills a label at OrthoCamera2D screen coords (zoom 1, pan 0)", () => {
+  const paint = loadCanvasPainter();
+  const ctx = makeFakeContext2D();
+
+  const bundle = {
+    background: "#000",
+    camera: { mode: "ortho2d", x: 0, y: 0, z: 1 },
+    objects: [],
+    lines: [
+      {
+        from: { x: 0, y: 0 },
+        to: { x: 100, y: 0 },
+        color: "#88ddff",
+        lineWidth: 3,
+      },
+    ],
+    labels: [
+      {
+        text: "hello",
+        color: "#ffffff",
+        font: "14px system-ui, sans-serif",
+        position: { x: 0, y: 0 },
+      },
+    ],
+  };
+
+  paint(ctx, bundle, 800, 600, 1);
+
+  // Line endpoints: (0,0) → screen (400, 300); (100,0) → screen (500, 300).
+  const moves = callsOfType(ctx, "moveTo");
+  const linesTo = callsOfType(ctx, "lineTo");
+  const strokes = callsOfType(ctx, "stroke");
+  assert.equal(moves.length, 1, "expected one moveTo");
+  assert.equal(linesTo.length, 1, "expected one lineTo");
+  assert.equal(strokes.length, 1, "expected one stroke");
+  assert.ok(Math.abs(moves[0].x - 400) < 1e-6, `moveTo x = ${moves[0].x}, want 400`);
+  assert.ok(Math.abs(moves[0].y - 300) < 1e-6, `moveTo y = ${moves[0].y}, want 300`);
+  assert.ok(Math.abs(linesTo[0].x - 500) < 1e-6, `lineTo x = ${linesTo[0].x}, want 500`);
+  assert.ok(Math.abs(linesTo[0].y - 300) < 1e-6, `lineTo y = ${linesTo[0].y}, want 300`);
+  assert.equal(strokes[0].strokeStyle, "#88ddff", "line must use its color");
+  assert.equal(strokes[0].lineWidth, 3, "line must use its lineWidth");
+
+  // Label at world (0,0) → screen (400, 300).
+  const texts = callsOfType(ctx, "fillText");
+  assert.equal(texts.length, 1, "expected one fillText");
+  assert.equal(texts[0].text, "hello");
+  assert.equal(texts[0].fillStyle, "#ffffff", "label must use its color");
+  assert.ok(Math.abs(texts[0].x - 400) < 1e-6, `label x = ${texts[0].x}, want 400`);
+  assert.ok(Math.abs(texts[0].y - 300) < 1e-6, `label y = ${texts[0].y}, want 300`);
+});
+
+test("paintCanvasBundle applies zoom and pan from the OrthoCamera2D camera", () => {
+  const paint = loadCanvasPainter();
+  const ctx = makeFakeContext2D();
+
+  // zoom=2, pan=(10,20). World point (10,20) must land at the viewport center.
+  // World rect top-left corner (minX=10, maxY=20):
+  //   screenX = (10 - 10) * 2 + 400 = 400
+  //   screenY = 300 - (20 - 20) * 2 = 300
+  // width = (maxX-minX)*zoom = (30-10)*2 = 40; height = (maxY-minY)*zoom = (20-0)*2 = 40
+  const bundle = {
+    background: "#101010",
+    camera: { mode: "ortho2d", x: 10, y: 20, z: 2 },
+    materials: [{ color: "#a0ff88" }],
+    objects: [
+      {
+        kind: "rect",
+        materialIndex: 0,
+        bounds: { minX: 10, maxX: 30, minY: 0, maxY: 20 },
+      },
+    ],
+    lines: [],
+    labels: [],
+  };
+
+  paint(ctx, bundle, 800, 600, 1);
+
+  const fills = nodeFillRects(ctx, 800, 600);
+  assert.equal(fills.length, 1, "expected one node fillRect");
+  const rect = fills[0];
+  assert.ok(Math.abs(rect.x - 400) < 1e-6, `rect x = ${rect.x}, want 400`);
+  assert.ok(Math.abs(rect.y - 300) < 1e-6, `rect y = ${rect.y}, want 300`);
+  assert.ok(Math.abs(rect.w - 40) < 1e-6, `rect w = ${rect.w}, want 40 (20 world * 2 zoom)`);
+  assert.ok(Math.abs(rect.h - 40) < 1e-6, `rect h = ${rect.h}, want 40 (20 world * 2 zoom)`);
+});
+
+test("paintCanvasBundle tolerates missing/empty arrays and absent background", () => {
+  const paint = loadCanvasPainter();
+  const ctx = makeFakeContext2D();
+
+  // No objects/lines/labels keys at all, no background — must not throw and
+  // must still clear the frame.
+  assert.doesNotThrow(() => {
+    paint(ctx, { camera: { mode: "ortho2d", x: 0, y: 0, z: 1 } }, 320, 240, 1);
+  });
+  assert.ok(callsOfType(ctx, "clearRect").length >= 1, "frame must still be cleared");
+  assert.equal(callsOfType(ctx, "fillRect").length, 0, "no rects to fill");
+  assert.equal(callsOfType(ctx, "stroke").length, 0, "no lines to stroke");
+  assert.equal(callsOfType(ctx, "fillText").length, 0, "no labels to fill");
+});

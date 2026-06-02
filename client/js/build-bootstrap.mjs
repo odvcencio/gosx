@@ -148,6 +148,11 @@ const outputs = [
     path: path.join(__dirname, "bootstrap-feature-engines.js"),
     sources: [
       sourceFile("bootstrap-src/26b-feature-engines-prefix.js"),
+      // 26b1 installs window.__gosx_paint_canvas_bundle — the standalone 2D
+      // painter the canvas2d surface-kind render loop (in 26b-prefix's
+      // _startCanvasSurfaceRAF) calls each frame. Self-contained IIFE; load
+      // order is immaterial since the loop resolves the global at rAF time.
+      sourceFile("bootstrap-src/26b1-canvas2d-painter.js"),
       // 28 installs window.__gosx_video_sync_js_create, the pure-JS drift
       // engine the video factory uses when the WASM brain is absent. The
       // engines feature carries the video factory, so it must carry the

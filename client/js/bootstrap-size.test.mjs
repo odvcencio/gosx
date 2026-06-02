@@ -21,7 +21,11 @@ const budgets = [
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.js (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
-  { file: "bootstrap-feature-engines.js", raw: 58_000, gzip: 18_500, brotli: 16_500 },
+  //
+  // Bumped again for the canvas2d paint loop (26b1-canvas2d-painter.js + the
+  // _startCanvasSurfaceRAF render loop in 26b-feature-engines-prefix.js):
+  // raw 58_000 -> 62_000, gzip 18_500 -> 20_000, brotli 16_500 -> 18_000.
+  { file: "bootstrap-feature-engines.js", raw: 62_000, gzip: 20_000, brotli: 18_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -31,9 +35,10 @@ const routeBudgets = [
     name: "video selective runtime",
     files: ["bootstrap-runtime.js", "bootstrap-feature-engines.js"],
     // raw bumped 160_000 -> 164_000 for 28-video-sync-fallback.js folded into
-    // the engines surface; gzip/brotli headroom unchanged.
-    raw: 164_000,
-    gzip: 46_000,
+    // the engines surface. Bumped again 164_000 -> 167_000 (gzip 46_000 ->
+    // 48_000) for the canvas2d paint loop folded into the engines surface.
+    raw: 167_000,
+    gzip: 48_000,
     brotli: 42_000,
   },
 ];
