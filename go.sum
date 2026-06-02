@@ -51,8 +51,8 @@ github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80 h1:6Yzfa6GP0rIo/kUL
 github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80/go.mod h1:imJHygn/1yfhB7XSJJKlFZKl/J+dCPAknuiaGOshXAs=
 github.com/odvcencio/corkscrewdb v0.2.0 h1:D4M0z1ieIqWLlhsnQbI5aU0Ed1EiV1P0WZt6JsjTP/8=
 github.com/odvcencio/corkscrewdb v0.2.0/go.mod h1:vFCTXziHnHyS3ewGW6rnw9KwTUtWtNHyIDFLK29hn7Q=
-github.com/odvcencio/gotreesitter v0.15.3 h1:bcSIEMyRrDaFIZw2zwM8cNR03VX6y8CbXFxVzfFSGX0=
-github.com/odvcencio/gotreesitter v0.15.3/go.mod h1:ccYZsDUmAJQAtliLsNHT33F3X4AN7f/Z6JGiPNZoEzY=
+github.com/odvcencio/gotreesitter v0.19.1 h1:OYp/gOvm/uQnmR1ZlBcp6bDOdN8HtRBS74cVrI3C/oc=
+github.com/odvcencio/gotreesitter v0.19.1/go.mod h1:hBVkghd0paaYAVwd2087vfwdeU984bQbMo9LvpE0moo=
 github.com/odvcencio/manta v0.0.13 h1:PSsetEqUo89IY2KGI2ABAHU8ohBhpH5Qw7Lep+FgeXs=
 github.com/odvcencio/manta v0.0.13/go.mod h1:ILwMlhkZpqAKYLzrqvX58oRLX1o2CCGokgafaLuQk/U=
 github.com/odvcencio/mdpp v0.2.5 h1:/fv6sWB4Xv4i1AgjYKxc3R/THvv4pd0z2hFVuBobv+c=
