@@ -71,3 +71,48 @@ func TestHydrateReconcilerCanvas2DRejectsMalformedProgram(t *testing.T) {
 		t.Fatalf("expected decode error for malformed program")
 	}
 }
+
+// TestDecodeCanvasBoardProgramEmpty verifies a static CanvasBoard (a no-code
+// primitive that ships zero program data) decodes into a usable empty program
+// rather than failing on json.Unmarshal's "unexpected end of JSON input". The
+// browser bootstrap passes "{}" for canvas2d placeholders, but nil/empty must
+// also be tolerated so direct callers and future wire shapes never crash. The
+// result must still be tagged SurfaceCanvas2D and carry no engine nodes.
+func TestDecodeCanvasBoardProgramEmpty(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{"empty-object", []byte("{}")},
+		{"nil", []byte(nil)},
+		{"empty-string", []byte("")},
+		{"whitespace", []byte("   ")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := DecodeCanvasBoardProgram(tc.data, "json")
+			if err != nil {
+				t.Fatalf("DecodeCanvasBoardProgram(%q) returned error: %v", tc.name, err)
+			}
+			if prog == nil {
+				t.Fatalf("DecodeCanvasBoardProgram(%q) returned nil program", tc.name)
+			}
+			if prog.Surface != islandprogram.SurfaceCanvas2D {
+				t.Errorf("Surface = %v, want SurfaceCanvas2D", prog.Surface)
+			}
+			if len(prog.EngineNodes) != 0 {
+				t.Errorf("expected empty EngineNodes, got %d", len(prog.EngineNodes))
+			}
+			// An empty program must be usable: a real adapter constructs and
+			// renders without panicking on the empty board.
+			b := New()
+			if err := b.HydrateReconciler(SurfaceKindCanvas2D, "empty-board", "CanvasBoard", `{}`, tc.data, "json"); err != nil {
+				t.Fatalf("HydrateReconciler with empty program failed: %v", err)
+			}
+			if _, err := b.RenderCanvasBoard("empty-board", 800, 600, 0); err != nil {
+				t.Fatalf("RenderCanvasBoard on empty board failed: %v", err)
+			}
+			b.DisposeCanvasBoard("empty-board")
+		})
+	}
+}

@@ -3,6 +3,7 @@
 package bridge
 
 import (
+	"bytes"
 	"fmt"
 
 	"m31labs.dev/gosx/client/vm"
@@ -99,9 +100,19 @@ func (b *Bridge) DisposeCanvasBoard(id string) {
 // DecodeCanvasBoardProgram decodes a wire-format Canvas2D program. Mirrors
 // DecodeEngineProgram but tags the result as SurfaceCanvas2D so downstream
 // code can route correctly even on minimal programs.
+//
+// A static CanvasBoard is a no-code primitive: gosx.CanvasBoard emits no
+// program data, and the browser bootstrap passes a valid-empty "{}" for
+// canvas2d placeholders. To keep that path crash-free, an empty (nil, "", or
+// whitespace-only) payload is treated as the empty object "{}" rather than
+// surfaced as json.Unmarshal's "unexpected end of JSON input". Genuinely
+// malformed JSON still errors.
 func DecodeCanvasBoardProgram(data []byte, format string) (*rootengine.Program, error) {
 	switch format {
 	case "", "json":
+		if len(bytes.TrimSpace(data)) == 0 {
+			data = []byte("{}")
+		}
 		prog, err := rootengine.DecodeProgramJSON(data)
 		if err != nil {
 			return nil, err
