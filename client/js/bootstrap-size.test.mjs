@@ -30,7 +30,12 @@ const budgets = [
   // (_bridgeCanvasBoardEvents in 26b-feature-engines-prefix.js: drag-to-pan,
   // wheel-to-zoom, click-to-pick dispatching to __gosx_canvas_event). Compressed
   // headroom unchanged — gzip/brotli stay well under their budgets.
-  { file: "bootstrap-feature-engines.js", raw: 64_000, gzip: 20_000, brotli: 18_000 },
+  //
+  // Bumped raw 64_000 -> 66_000 (gzip 20_000 -> 21_000, brotli 18_000 -> 19_000)
+  // for the canvas2d MARQUEE + KEYBOARD-NAV loop (shift-drag marquee overlay +
+  // CANVAS_EVENT_MARQUEE, arrow-key CANVAS_EVENT_NAV, Escape-to-clear in
+  // _bridgeCanvasBoardEvents) — interaction parity with the DOM site-map board.
+  { file: "bootstrap-feature-engines.js", raw: 66_000, gzip: 21_000, brotli: 19_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -44,8 +49,10 @@ const routeBudgets = [
     // 48_000) for the canvas2d paint loop folded into the engines surface.
     // Bumped raw 167_000 -> 169_000 (brotli 42_000 -> 43_000) for the canvas2d
     // interaction loop (_bridgeCanvasBoardEvents); gzip headroom unchanged.
-    raw: 169_000,
-    gzip: 48_000,
+    // Bumped raw 169_000 -> 171_000 (gzip 48_000 -> 49_000) for the canvas2d
+    // marquee + keyboard-nav loop (shift-drag marquee, arrow-key nav, Escape).
+    raw: 171_000,
+    gzip: 49_000,
     brotli: 43_000,
   },
 ];

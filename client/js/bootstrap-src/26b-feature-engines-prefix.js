@@ -255,6 +255,15 @@
       for (const [evtName, handler] of inst.listeners) {
         inst.canvas.removeEventListener(evtName, handler);
       }
+      // Run any extra teardown a surface registered (e.g. the canvas2d marquee
+      // path's in-flight document pointer listeners + the overlay element), so a
+      // board torn down mid-drag leaves nothing dangling on document.
+      if (Array.isArray(inst.extraCleanup)) {
+        for (const cleanup of inst.extraCleanup) {
+          try { cleanup(); } catch (e) { /* swallow */ }
+        }
+        inst.extraCleanup.length = 0;
+      }
       if (inst.resizeObserver && typeof inst.resizeObserver.disconnect === "function") {
         inst.resizeObserver.disconnect();
       }
@@ -484,6 +493,16 @@
     const CANVAS_EVENT_PAN = 1;
     const CANVAS_EVENT_ZOOM = 2;
     const CANVAS_EVENT_PICK = 3;
+    const CANVAS_EVENT_MARQUEE = 4;
+    const CANVAS_EVENT_NAV = 5;
+
+    // Arrow-key direction codes — must match bridge.CanvasNavDirection
+    // (client/bridge/bridge_canvasboard_event_full.go). Sent as the single float
+    // in a CANVAS_EVENT_NAV payload.
+    const CANVAS_NAV_UP = 0;
+    const CANVAS_NAV_DOWN = 1;
+    const CANVAS_NAV_LEFT = 2;
+    const CANVAS_NAV_RIGHT = 3;
 
     // Sub-threshold pointer travel (CSS px) below which a press→release counts
     // as a click (→ pick) rather than a drag (→ pan). Matches the Figma-style
@@ -525,10 +544,57 @@
       let pressX = 0;
       let pressY = 0;
       let dragged = false;
+      // Marquee state: when a shift+left-drag begins on the canvas, marqueeing is
+      // true and pointer travel grows a screen-space overlay rect instead of
+      // panning. On release the rect is sent as a CANVAS_EVENT_MARQUEE. Matches
+      // the DOM board's startMarquee (sitemapruntime/island_runtime.js): plain
+      // left-drag pans, shift+left-drag marquee-selects.
+      let marqueeing = false;
+      let marqueeOverlay = null;
 
       function localPoint(e) {
         const rect = canvas.getBoundingClientRect();
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      }
+
+      // ensureMarqueeOverlay lazily creates the absolutely-positioned selection
+      // rectangle inside the canvas's offset parent (mirrors the DOM board's
+      // [data-studio-site-map-marquee] overlay). pointer-events:none so it never
+      // intercepts the drag. Hidden until the first move.
+      function ensureMarqueeOverlay() {
+        if (marqueeOverlay && marqueeOverlay.parentNode) return marqueeOverlay;
+        const parent = canvas.parentNode || document.body;
+        const overlay = document.createElement("div");
+        overlay.setAttribute("data-gosx-canvas-marquee", "true");
+        overlay.style.cssText = "position:absolute;pointer-events:none;display:none;z-index:2;border:1px solid rgba(120,170,255,0.9);background:rgba(120,170,255,0.15)";
+        try { parent.appendChild(overlay); } catch (e) { /* tolerate */ }
+        marqueeOverlay = overlay;
+        return overlay;
+      }
+
+      function clearMarqueeOverlay() {
+        if (marqueeOverlay) {
+          if (marqueeOverlay.parentNode) {
+            try { marqueeOverlay.parentNode.removeChild(marqueeOverlay); } catch (e) { /* tolerate */ }
+          }
+          marqueeOverlay = null;
+        }
+      }
+      // The overlay is created inside the board, but a board torn down mid-drag
+      // must not leave it behind — register a cleanup on the surface instance.
+      if (!Array.isArray(instance.extraCleanup)) instance.extraCleanup = [];
+      instance.extraCleanup.push(clearMarqueeOverlay);
+
+      // Draw the overlay from the press origin to the current local point,
+      // positioned relative to the canvas's offset within its positioned parent.
+      function drawMarquee(curX, curY) {
+        const o = ensureMarqueeOverlay();
+        const s = o.style;
+        s.display = "block";
+        s.left = (canvas.offsetLeft + Math.min(pressX, curX)) + "px";
+        s.top = (canvas.offsetTop + Math.min(pressY, curY)) + "px";
+        s.width = Math.abs(curX - pressX) + "px";
+        s.height = Math.abs(curY - pressY) + "px";
       }
 
       const onPointerDown = function(e) {
@@ -541,9 +607,16 @@
         pressX = p.x;
         pressY = p.y;
         dragged = false;
+        // Shift+left-drag = marquee multi-select; plain left-drag = pan. (The
+        // DOM board uses the same shift gate.)
+        marqueeing = !!e.shiftKey;
+        // Focus the canvas so arrow-key navigation (keydown below) applies to the
+        // board surface, matching a click-to-focus affordance.
+        try { if (typeof canvas.focus === "function") canvas.focus({ preventScroll: true }); } catch (err) { /* tolerate */ }
         if (typeof canvas.setPointerCapture === "function" && e.pointerId !== undefined) {
           try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* tolerate */ }
         }
+        if (marqueeing && e.preventDefault) e.preventDefault();
       };
 
       const onPointerMove = function(e) {
@@ -558,6 +631,11 @@
         }
         lastX = p.x;
         lastY = p.y;
+        if (marqueeing) {
+          // Grow the overlay; do NOT pan while marqueeing.
+          drawMarquee(p.x, p.y);
+          return;
+        }
         // pan payload: [dxScreen, dyScreen, _, _]
         emit(CANVAS_EVENT_PAN, [dx, dy, 0, 0]);
       };
@@ -567,9 +645,25 @@
         if (e.pointerId !== undefined && e.pointerId !== activePointer) return;
         const p = localPoint(e);
         const wasDrag = dragged;
+        const wasMarquee = marqueeing;
         activePointer = null;
+        marqueeing = false;
         if (typeof canvas.releasePointerCapture === "function" && e.pointerId !== undefined) {
           try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* tolerate */ }
+        }
+        if (wasMarquee) {
+          // End the marquee: send the screen rect (press origin → release point)
+          // as [x0, y0, x1, y1, cssW, cssH]. A sub-slop shift-click (no real
+          // travel) is treated as an empty marquee — the bridge clears the
+          // multi-selection, matching the DOM board's "moved" gate.
+          clearMarqueeOverlay();
+          const sz = cssSize();
+          if (wasDrag) {
+            emit(CANVAS_EVENT_MARQUEE, [pressX, pressY, p.x, p.y, sz.w, sz.h]);
+          } else {
+            emit(CANVAS_EVENT_MARQUEE, [0, 0, 0, 0, sz.w, sz.h]);
+          }
+          return;
         }
         // Sub-slop press+release = a click → pick. A real drag already panned.
         if (!wasDrag) {
@@ -582,6 +676,8 @@
         if (e.pointerId !== undefined && e.pointerId !== activePointer) return;
         activePointer = null;
         dragged = false;
+        marqueeing = false;
+        clearMarqueeOverlay();
       };
 
       const onWheel = function(e) {
@@ -598,12 +694,48 @@
         emit(CANVAS_EVENT_ZOOM, [factor, p.x, p.y, sz.w, sz.h]);
       };
 
+      // navCodeForKey maps an arrow KeyboardEvent.key to the wire direction code,
+      // or -1 when the key is not an arrow. Mirrors the DOM board's isArrowKey +
+      // navigateNodes (sitemapruntime/island_runtime.js).
+      function navCodeForKey(key) {
+        switch (key) {
+          case "ArrowUp": return CANVAS_NAV_UP;
+          case "ArrowDown": return CANVAS_NAV_DOWN;
+          case "ArrowLeft": return CANVAS_NAV_LEFT;
+          case "ArrowRight": return CANVAS_NAV_RIGHT;
+          default: return -1;
+        }
+      }
+
+      // onKeydown handles spatial arrow-key navigation and Escape-to-clear when
+      // the canvas board has focus. Arrow keys send a CANVAS_EVENT_NAV (the
+      // bridge walks the selection to the spatial neighbor); Escape sends an
+      // empty CANVAS_EVENT_MARQUEE (clears the multi-selection). Both apply only
+      // to the board surface — a focused form field is never hijacked.
+      const onKeydown = function(e) {
+        const target = e.target;
+        if (target && typeof target.matches === "function" && target.matches("input, textarea, select")) return;
+        const navCode = navCodeForKey(e.key);
+        if (navCode >= 0) {
+          if (e.preventDefault) e.preventDefault();
+          emit(CANVAS_EVENT_NAV, [navCode]);
+          return;
+        }
+        if (e.key === "Escape") {
+          if (e.preventDefault) e.preventDefault();
+          const sz = cssSize();
+          // Zero-area marquee = clear the multi-selection.
+          emit(CANVAS_EVENT_MARQUEE, [0, 0, 0, 0, sz.w, sz.h]);
+        }
+      };
+
       const handlers = [
         ["pointerdown", onPointerDown],
         ["pointermove", onPointerMove],
         ["pointerup", onPointerUp],
         ["pointercancel", onPointerCancel],
         ["wheel", onWheel],
+        ["keydown", onKeydown],
       ];
       for (const [evtName, handler] of handlers) {
         canvas.addEventListener(evtName, handler, evtName === "wheel" ? { passive: false } : undefined);
@@ -612,6 +744,14 @@
       // touch-action:none lets pointer events drive pan/zoom without the
       // browser hijacking the gesture for native scroll/zoom.
       try { canvas.style.touchAction = "none"; } catch (e) { /* tolerate */ }
+      // Make the canvas keyboard-focusable so arrow-key navigation reaches it
+      // (a non-focusable <canvas> never receives keydown). tabindex=0 puts it in
+      // the natural tab order; the DOM board's keydown lives on its root, so the
+      // two boards never both consume the same key (only the focused one does).
+      try {
+        if (!canvas.hasAttribute("tabindex")) canvas.setAttribute("tabindex", "0");
+        canvas.style.outline = "none"; // selection feedback is the painted highlight, not a focus ring
+      } catch (e) { /* tolerate */ }
 
       // Resize + teardown observers — identical contract to the engine-surface
       // path so _disposeEngineSurface cleans canvas2d boards up the same way.
