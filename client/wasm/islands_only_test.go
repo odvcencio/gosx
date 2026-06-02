@@ -169,6 +169,7 @@ func TestIslandsOnlyRuntimeOmitsFullRuntimeExports(t *testing.T) {
 		"__gosx_crdt_apply",
 		"__gosx_render_canvas",
 		"__gosx_tick_canvas",
+		"__gosx_canvas_event",
 		"__gosx_dispose_canvas",
 	} {
 		if got := js.Global().Get(name); got.Type() != js.TypeUndefined {

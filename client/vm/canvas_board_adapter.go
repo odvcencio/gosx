@@ -191,7 +191,7 @@ func (rt *CanvasBoardAdapter) SetCamera(panX, panY, zoom float64) {
 	}
 	rt.cameraPanX = panX
 	rt.cameraPanY = panY
-	rt.cameraZoom = clampCanvasBoardZoom(zoom)
+	rt.cameraZoom = ClampCanvasBoardZoom(zoom)
 	rt.cameraSet = true
 }
 
@@ -278,10 +278,12 @@ func canvasBoardNodePickable(node resolvedNode) bool {
 	return true
 }
 
-// clampCanvasBoardZoom constrains zoom to the sane runtime range. A
-// non-positive zoom (which would invert or zero the projection) collapses to
-// the minimum.
-func clampCanvasBoardZoom(zoom float64) float64 {
+// ClampCanvasBoardZoom constrains zoom to the sane runtime range
+// [CanvasBoardMinZoom, CanvasBoardMaxZoom]. A non-positive zoom (which would
+// invert or zero the projection) collapses to the minimum. Exported so the
+// bridge's zoom-toward-cursor math applies the same clamp before re-pinning
+// the camera.
+func ClampCanvasBoardZoom(zoom float64) float64 {
 	if zoom <= 0 {
 		return CanvasBoardMinZoom
 	}

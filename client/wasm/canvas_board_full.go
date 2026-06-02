@@ -37,7 +37,44 @@ import (
 func registerCanvasBoardRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_tick_canvas", tickCanvasFunc(b))
 	setRuntimeFunc("__gosx_render_canvas", renderCanvasFunc(b))
+	setRuntimeFunc("__gosx_canvas_event", canvasEventFunc(b))
 	setRuntimeFunc("__gosx_dispose_canvas", disposeCanvasFunc(b))
+}
+
+// canvasEventFunc routes a single board interaction event (pan / zoom / pick)
+// into the named board's adapter via Bridge.CanvasBoardEvent. Pan and zoom
+// mutate the adapter's runtime camera so the next __gosx_render_canvas frame
+// paints the new view; pick hit-tests through the camera and writes the result
+// into $surface.event.* (ADR 0007). Mirrors __gosx_dispatch_engine_surface_event
+// for the canvas2d surface — same (id, kind, floats, payloadStr) shape — so the
+// JS bootstrap's canvas2d branch wires its DOM listeners the same way the
+// engine-surface branch does.
+//
+// Call shape:
+//
+//	__gosx_canvas_event(id, kind, floats, payloadStr)
+//
+// kind is the integer CanvasBoardEventKind (1=pan, 2=zoom, 3=pick). floats is a
+// Float64Array carrying the kind-specific numeric payload; payloadStr is
+// reserved (pass ""). Returns null on success, an error string on failure
+// (including unknown id) — cheap to call from a high-frequency pointermove.
+func canvasEventFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 3 {
+			return jsErrorf("need 3+ args (id, kind, floats, [payloadStr])")
+		}
+		id := args[0].String()
+		kind := bridge.CanvasBoardEventKind(args[1].Int())
+		floats := decodeFloat64Array(args[2])
+		payloadStr := ""
+		if len(args) >= 4 && args[3].Type() == js.TypeString {
+			payloadStr = args[3].String()
+		}
+		if err := b.CanvasBoardEvent(id, kind, floats, payloadStr); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
 }
 
 // tickCanvasFunc reconciles a board adapter so its resolved-node snapshot
