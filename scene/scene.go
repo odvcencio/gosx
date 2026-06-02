@@ -927,6 +927,7 @@ type MatteMaterial MaterialStyle
 // StandardMaterial is a PBR material using the roughness/metalness workflow.
 type StandardMaterial struct {
 	Color        string
+	Texture      string
 	Roughness    float64
 	Metalness    float64
 	Clearcoat    float64
@@ -3175,6 +3176,7 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 	case StandardMaterial:
 		record.MaterialKind = "standard"
 		record.Color = strings.TrimSpace(m.Color)
+		record.Texture = strings.TrimSpace(m.Texture)
 		record.Roughness = m.Roughness
 		record.Metalness = m.Metalness
 		record.Clearcoat = m.Clearcoat
@@ -3214,6 +3216,7 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 	case CustomMaterial:
 		record.MaterialKind = "custom"
 		record.Color = strings.TrimSpace(m.Color)
+		record.Texture = strings.TrimSpace(m.Texture)
 		record.Roughness = m.Roughness
 		record.Metalness = m.Metalness
 		record.Clearcoat = m.Clearcoat
@@ -3298,6 +3301,7 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	out := map[string]any{}
 	setString(out, "materialKind", "standard")
 	setString(out, "color", m.Color)
+	setString(out, "texture", m.Texture)
 	setNumeric(out, "roughness", m.Roughness)
 	setNumeric(out, "metalness", m.Metalness)
 	setNumeric(out, "clearcoat", m.Clearcoat)

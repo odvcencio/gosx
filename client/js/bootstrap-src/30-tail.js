@@ -1532,7 +1532,14 @@
       if (cacheWaiting || syncPhase === "prepare" || syncPhase === "waiting") {
         return true;
       }
-      return !followState || !sceneBool(followState.playing, false);
+      // Do NOT block when followState is null (no server heartbeat yet). The
+      // 'play' handler pauses on a blocked autoplay, which consumes the
+      // browser's one-shot autoplay grant; the later programmatic safePlay()
+      // resume is then autoplay-blocked, leaving the video parked black. Until
+      // the first heartbeat arrives, let local autoplay proceed and rely on
+      // applyFollowState to sync once the server state is known. Only honor an
+      // actual server "paused" (followState present AND playing=false).
+      return Boolean(followState) && !sceneBool(followState.playing, false);
     }
 
     function clampVideoPercent(value) {
@@ -2735,23 +2742,11 @@
           video.load();
         }
       } else if (videoNeedsHLS(nextSource) && !videoSupportsNativeHLS(video)) {
-        // Stop the browser's native load of the HLS src BEFORE hls.js attaches.
-        // The SSR <video src=...m3u8> makes the browser try to load the playlist
-        // natively; while we await the (async) hls.js library, Firefox fails that
-        // attempt with MediaLoadInvalidURI and leaves the element in an error
-        // state hls.js can't recover from (Chrome fails it silently). Clearing
-        // src + load() + clearError resets the element so hls.js attaches clean.
-        if (typeof video.removeAttribute === "function") {
-          video.removeAttribute("src");
-        }
-        try {
-          video.src = "";
-        } catch (_error) {
-        }
-        if (typeof video.load === "function") {
-          video.load();
-        }
-        clearError();
+        // The server no longer emits a native src= for HLS playlists (see
+        // server/video.go videoBaselineSrc), so the <video> has no source for
+        // the browser to load natively — hls.js owns it. Do NOT set
+        // video.src = "" here: in Firefox an empty src resolves to the page URL
+        // and triggers MediaLoadInvalidURI.
         const HlsCtor = await ensureVideoHLSLibrary();
         if (!HlsCtor) {
           setError("HLS.js unavailable");
