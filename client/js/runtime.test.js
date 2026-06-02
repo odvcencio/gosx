@@ -15193,3 +15193,57 @@ test("video sync JS fallback engine matches the Go golden parity vector", () => 
     );
   }
 });
+
+// -----------------------------------------------------------------------------
+// Canvas2D surface-kind discovery + dispatch (gosx.CanvasBoard hydration)
+//
+// The FakeDocument harness drives island/engine hydration through the manifest
+// rather than DOM querySelectorAll, so DOM-discovery code paths (both the
+// bytecode mountAllEngineSurfaces and the new mountAllSurfaceKinds) are guarded
+// at the source level — mirroring the existing bootstrap-src/*.js source
+// assertions. These lock the wiring contract: surface-kind placeholders are
+// discovered separately from the bytecode path and dispatched through the
+// unified Phase 1d __gosx_hydrate with a valid-empty program.
+// -----------------------------------------------------------------------------
+
+test("bootstrap discovers canvas2d surface-kind placeholders without touching the bytecode path", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.js"),
+    "utf8",
+  );
+
+  // The surface-kind discovery query must exclude the bytecode path so the two
+  // never double-mount the same element.
+  assert.match(
+    source,
+    /querySelectorAll\("\[data-gosx-surface-kind\]:not\(\[data-gosx-engine-bytecode\]\)"\)/,
+  );
+
+  // Dispatch goes through the unified 6-arg __gosx_hydrate(surfaceKind, id,
+  // componentName, propsJSON, programData, format) with a valid-empty program.
+  assert.match(source, /window\.__gosx_hydrate;/);
+  assert.match(
+    source,
+    /hydrateFn\(surfaceKind,\s*id,\s*component,\s*propsJSON,\s*"\{\}",\s*"json"\)/,
+  );
+
+  // Raw-JSON-first, base64-fallback props decoding (gosx.CanvasBoard emits raw
+  // HTML-escaped JSON; the engine/surface renderer base64-encodes).
+  assert.match(source, /function decodeSurfaceProps\(/);
+
+  // The bytecode discovery query stays byte-for-byte unchanged.
+  assert.match(source, /querySelectorAll\("\[data-gosx-engine-bytecode\]"\)/);
+});
+
+test("bootstrap engines feature runs canvas2d surface-kind mount on runtime ready", () => {
+  const suffix = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-suffix.js"),
+    "utf8",
+  );
+
+  // runtimeReady must fan out to the surface-kind mount alongside the existing
+  // engine + engine-surface mounts.
+  assert.match(suffix, /mountAllEngines\(manifest\)/);
+  assert.match(suffix, /mountAllEngineSurfaces\(\)/);
+  assert.match(suffix, /mountAllSurfaceKinds\(\)/);
+});

@@ -76,15 +76,7 @@
       }
 
       // Replace placeholder with an actual <canvas> if it isn't one.
-      let canvas = placeholder;
-      if (canvas.tagName.toLowerCase() !== "canvas") {
-        canvas = document.createElement("canvas");
-        for (const attr of Array.from(placeholder.attributes)) {
-          canvas.setAttribute(attr.name, attr.value);
-        }
-        placeholder.parentNode.replaceChild(canvas, placeholder);
-      }
-      _initEngineSurfaceCanvasSize(canvas);
+      const canvas = _ensureSurfaceCanvas(placeholder);
 
       const id = nextSurfaceID();
       const instance = { canvas: canvas, listeners: [], observer: null, resizeObserver: null, raf: 0, disposed: false };
@@ -235,6 +227,23 @@
       if (canvas.height !== h * dpr) canvas.height = h * dpr;
     }
 
+    // _ensureSurfaceCanvas returns the placeholder as a <canvas>, swapping a
+    // non-canvas placeholder for a real canvas that carries the same
+    // attributes, then sizes it for the device pixel ratio. Shared by the
+    // bytecode and surface-kind mount paths.
+    function _ensureSurfaceCanvas(placeholder) {
+      let canvas = placeholder;
+      if (canvas.tagName.toLowerCase() !== "canvas") {
+        canvas = document.createElement("canvas");
+        for (const attr of Array.from(placeholder.attributes)) {
+          canvas.setAttribute(attr.name, attr.value);
+        }
+        placeholder.parentNode.replaceChild(canvas, placeholder);
+      }
+      _initEngineSurfaceCanvasSize(canvas);
+      return canvas;
+    }
+
     function _disposeEngineSurface(id) {
       const inst = surfaceInstances.get(id);
       if (!inst || inst.disposed) return;
@@ -287,6 +296,116 @@
       const promises = Array.from(placeholders).map(function(el) {
         return mountEngineSurface(el).catch(function(e) {
           console.error("[gosx] unexpected error mounting engine surface:", e);
+        });
+      });
+      await Promise.all(promises);
+    }
+
+    // -------------------------------------------------------------------------
+    // Surface-kind hydration (gosx.CanvasBoard and other no-code primitives)
+    //
+    // Server-rendered surface primitives that carry data-gosx-surface-kind but
+    // NO data-gosx-engine-bytecode ship a self-describing canvas with their
+    // state inlined in data-gosx-engine-props — there is no separate program
+    // artifact to fetch (a static CanvasBoard is a no-code primitive). They are
+    // dispatched through the UNIFIED Phase 1d entry __gosx_hydrate(surfaceKind,
+    // id, componentName, propsJSON, programData, format) instead of the
+    // bytecode-specific __gosx_hydrate_engine_surface. The discovery query
+    // explicitly excludes [data-gosx-engine-bytecode] so the two paths never
+    // double-mount the same element.
+    // -------------------------------------------------------------------------
+
+    // decodeSurfaceProps resolves the data-gosx-engine-props attribute to a JSON
+    // string. gosx.CanvasBoard emits raw (HTML-escaped) JSON, which the browser
+    // un-escapes when read via getAttribute, so the attribute value parses as
+    // JSON directly. The engine/surface Renderer.Mount path base64-encodes the
+    // same attribute (see engine/surface/surface.go encodeProps); to stay
+    // tolerant of both encodings we try the value as JSON first, then fall back
+    // to base64-decode. Anything unparseable degrades to "{}".
+    function decodeSurfaceProps(raw, component) {
+      if (!raw) return "{}";
+      try {
+        JSON.parse(raw);
+        return raw;
+      } catch (e) {
+        // not raw JSON — try base64.
+      }
+      try {
+        const decoded = atob(raw);
+        JSON.parse(decoded);
+        return decoded;
+      } catch (e) {
+        console.warn("[gosx] failed to decode props for surface " + (component || "") + ":", e);
+        return "{}";
+      }
+    }
+
+    // mountSurfaceKind hydrates a single data-gosx-surface-kind placeholder via
+    // the unified __gosx_hydrate dispatcher. It reuses the same canvas
+    // preparation, event bridging, and teardown observers as the bytecode path
+    // (mountEngineSurface) — only the discovery and the hydrate-call arguments
+    // differ. A static board carries no program, so a valid-empty "{}" program
+    // (format "json") is passed; the canvas2d bridge tolerates empty programs
+    // (see client/bridge/bridge_canvasboard_full.go DecodeCanvasBoardProgram).
+    async function mountSurfaceKind(placeholder) {
+      const surfaceKind = placeholder.getAttribute("data-gosx-surface-kind") || "";
+      const component = placeholder.getAttribute("data-gosx-engine-component") || "";
+      const status = placeholder.getAttribute("data-gosx-engine-status") || "";
+      if (!surfaceKind || status === "missing") {
+        paintEngineSurfaceMissing(placeholder, component);
+        return;
+      }
+      const hydrateFn = window.__gosx_hydrate;
+      if (typeof hydrateFn !== "function") {
+        console.error("[gosx] __gosx_hydrate not available — shared WASM not loaded");
+        paintEngineSurfaceMissing(placeholder, component);
+        return;
+      }
+
+      // Replace placeholder with an actual <canvas> if it isn't one (mirrors
+      // mountEngineSurface so the shared sizing/event helpers apply uniformly).
+      const canvas = _ensureSurfaceCanvas(placeholder);
+
+      const id = nextSurfaceID();
+      const instance = { canvas: canvas, listeners: [], observer: null, resizeObserver: null, raf: 0, disposed: false };
+      surfaceInstances.set(id, instance);
+
+      const propsJSON = decodeSurfaceProps(placeholder.getAttribute("data-gosx-engine-props") || "", component);
+
+      // No-code primitives ship no program artifact; pass a valid-empty program.
+      try {
+        const result = hydrateFn(surfaceKind, id, component, propsJSON, "{}", "json");
+        if (typeof result === "string" && result !== "") {
+          console.error("[gosx] hydrate surface " + component + " (" + surfaceKind + ") failed: " + result);
+          surfaceInstances.delete(id);
+          paintEngineSurfaceMissing(canvas, component);
+          return;
+        }
+      } catch (e) {
+        console.error("[gosx] hydrate surface " + component + " (" + surfaceKind + ") threw:", e);
+        surfaceInstances.delete(id);
+        paintEngineSurfaceMissing(canvas, component);
+        return;
+      }
+
+      // Reuse the bytecode path's DOM event bridging + resize/teardown
+      // observers. The dispatch/tick globals these install are no-ops for ids
+      // the engine-surface map does not own (their contract — see
+      // engine_surface_full.go), so wiring them now is harmless and lets the
+      // surface-kind path light up automatically once the canvas2d reconciler
+      // exposes its own tick/dispatch/dispose entries.
+      _bridgeEngineSurfaceEvents(id, canvas, instance);
+    }
+
+    // mountAllSurfaceKinds finds every server-rendered surface primitive that
+    // carries data-gosx-surface-kind but NOT data-gosx-engine-bytecode (the
+    // latter has its own mount path) and hydrates each one.
+    async function mountAllSurfaceKinds() {
+      const placeholders = document.querySelectorAll("[data-gosx-surface-kind]:not([data-gosx-engine-bytecode])");
+      if (!placeholders.length) return;
+      const promises = Array.from(placeholders).map(function(el) {
+        return mountSurfaceKind(el).catch(function(e) {
+          console.error("[gosx] unexpected error mounting surface-kind placeholder:", e);
         });
       });
       await Promise.all(promises);

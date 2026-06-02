@@ -4,6 +4,7 @@
         return Promise.all([
           mountAllEngines(manifest),
           mountAllEngineSurfaces(),
+          mountAllSurfaceKinds(),
         ]);
       },
       disposePage() {
