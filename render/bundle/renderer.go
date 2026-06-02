@@ -889,6 +889,16 @@ func (r *Renderer) instanceDrawSource(key string) (instances, drawArgs gpu.Buffe
 	return nil, nil, false
 }
 
+// InstancedMeshKey is the bus key under which the instanced mesh im — at draw
+// slot idx in the bundle — resolves its draw-source resources. An external
+// compute pass (e.g. an Elio-generated cull) that publishes "<key>.instances"
+// and "<key>.drawArgs" drives that mesh's draw in place of the built-in cull
+// (see instanceDrawSource). Exposed so external pass authors can target a
+// specific mesh's draw without replicating the key construction.
+func InstancedMeshKey(idx int, im engine.RenderInstancedMesh) string {
+	return instancedMeshKey(idx, im)
+}
+
 // instancedMeshKey returns the cull/skin-cache key for one InstancedMesh slot.
 // Combines the bundle index with the full primitive key so entries with the
 // same Kind but different authored geometry parameters do not share stale
