@@ -397,21 +397,21 @@
         return;
       }
 
-      // Reuse the bytecode path's DOM event bridging + resize/teardown
-      // observers. The dispatch/tick globals these install are no-ops for ids
-      // the engine-surface map does not own (their contract — see
-      // engine_surface_full.go), so wiring them now is harmless and lets the
-      // surface-kind path light up automatically once the canvas2d reconciler
-      // exposes its own tick/dispatch/dispose entries.
-      _bridgeEngineSurfaceEvents(id, canvas, instance);
-
-      // canvas2d boards paint through the bundle-driven render loop below
-      // (tick → render → paintCanvasBundle on the 2D context). Other surface
-      // kinds — and the bytecode/GPU engine-surface path — are untouched: they
-      // own their own draw loop (the GPU renderer in engine_surface_full.go).
+      // canvas2d boards own a distinct input + paint path: their pointer/
+      // wheel/click events route through __gosx_canvas_event (camera pan/zoom
+      // + pick), NOT the engine-surface dispatcher, and they paint through the
+      // bundle-driven render loop below (tick → render → paintCanvasBundle on
+      // the 2D context). Every OTHER surface kind — and the bytecode/GPU
+      // engine-surface path — keeps the engine-surface DOM bridging (its
+      // dispatch/tick globals are no-ops for ids the engine-surface map does
+      // not own, so the wiring is harmless there) and owns its own GPU draw
+      // loop (engine_surface_full.go).
       if (surfaceKind === "canvas2d") {
         instance.kind = "canvas2d";
+        _bridgeCanvasBoardEvents(id, canvas, instance);
         _startCanvasSurfaceRAF(id, canvas, instance);
+      } else {
+        _bridgeEngineSurfaceEvents(id, canvas, instance);
       }
     }
 
@@ -470,6 +470,162 @@
         instance.raf = requestAnimationFrame(frame);
       }
       instance.raf = requestAnimationFrame(frame);
+    }
+
+    // Canvas2D interaction event kinds — must match bridge.CanvasBoardEventKind
+    // (client/bridge/bridge_canvasboard_event_full.go). The integers cross the
+    // JS↔WASM boundary as __gosx_canvas_event's second argument.
+    const CANVAS_EVENT_PAN = 1;
+    const CANVAS_EVENT_ZOOM = 2;
+    const CANVAS_EVENT_PICK = 3;
+
+    // Sub-threshold pointer travel (CSS px) below which a press→release counts
+    // as a click (→ pick) rather than a drag (→ pan). Matches the Figma-style
+    // "a tiny wobble during a click is still a click" affordance.
+    const CANVAS_CLICK_SLOP = 4;
+
+    // _bridgeCanvasBoardEvents wires a canvas2d board's pointer/wheel input into
+    // the WASM camera + pick path via window.__gosx_canvas_event(id, kind, …):
+    // drag-to-pan, wheel-to-zoom (toward cursor), click-to-pick (press+release
+    // under the slop). It also installs the SAME resize + MutationObserver
+    // teardown observers the engine-surface path uses, so _disposeEngineSurface
+    // cleans a canvas2d board up identically. Coordinates are CSS-logical pixels
+    // (clientX/Y minus the canvas rect), matching the OrthoCamera2D transform.
+    function _bridgeCanvasBoardEvents(id, canvas, instance) {
+      function emit(kind, floats) {
+        if (instance.disposed) return;
+        const fn = window.__gosx_canvas_event;
+        if (typeof fn !== "function") return;
+        try {
+          fn(id, kind, new Float64Array(floats), "");
+        } catch (e) {
+          console.error("[gosx] __gosx_canvas_event threw for " + id + ":", e);
+        }
+      }
+
+      function cssSize() {
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.max(1, canvas.clientWidth || Math.floor(canvas.width / dpr) || 1);
+        const h = Math.max(1, canvas.clientHeight || Math.floor(canvas.height / dpr) || 1);
+        return { w: w, h: h };
+      }
+
+      // Drag state: active pointer, last point we panned from (delta source),
+      // press origin, and whether travel crossed the slop (a drag suppresses
+      // the click→pick on release).
+      let activePointer = null;
+      let lastX = 0;
+      let lastY = 0;
+      let pressX = 0;
+      let pressY = 0;
+      let dragged = false;
+
+      function localPoint(e) {
+        const rect = canvas.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      }
+
+      const onPointerDown = function(e) {
+        // Primary button / touch / pen only — let middle/right pass through.
+        if (e.button !== undefined && e.button !== 0) return;
+        const p = localPoint(e);
+        activePointer = e.pointerId !== undefined ? e.pointerId : 0;
+        lastX = p.x;
+        lastY = p.y;
+        pressX = p.x;
+        pressY = p.y;
+        dragged = false;
+        if (typeof canvas.setPointerCapture === "function" && e.pointerId !== undefined) {
+          try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* tolerate */ }
+        }
+      };
+
+      const onPointerMove = function(e) {
+        if (activePointer === null) return;
+        if (e.pointerId !== undefined && e.pointerId !== activePointer) return;
+        const p = localPoint(e);
+        const dx = p.x - lastX;
+        const dy = p.y - lastY;
+        if (dx === 0 && dy === 0) return;
+        if (Math.abs(p.x - pressX) > CANVAS_CLICK_SLOP || Math.abs(p.y - pressY) > CANVAS_CLICK_SLOP) {
+          dragged = true;
+        }
+        lastX = p.x;
+        lastY = p.y;
+        // pan payload: [dxScreen, dyScreen, _, _]
+        emit(CANVAS_EVENT_PAN, [dx, dy, 0, 0]);
+      };
+
+      const onPointerUp = function(e) {
+        if (activePointer === null) return;
+        if (e.pointerId !== undefined && e.pointerId !== activePointer) return;
+        const p = localPoint(e);
+        const wasDrag = dragged;
+        activePointer = null;
+        if (typeof canvas.releasePointerCapture === "function" && e.pointerId !== undefined) {
+          try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* tolerate */ }
+        }
+        // Sub-slop press+release = a click → pick. A real drag already panned.
+        if (!wasDrag) {
+          const sz = cssSize();
+          emit(CANVAS_EVENT_PICK, [p.x, p.y, sz.w, sz.h]);
+        }
+      };
+
+      const onPointerCancel = function(e) {
+        if (e.pointerId !== undefined && e.pointerId !== activePointer) return;
+        activePointer = null;
+        dragged = false;
+      };
+
+      const onWheel = function(e) {
+        e.preventDefault();
+        const p = localPoint(e);
+        const sz = cssSize();
+        // deltaY < 0 (wheel up) zooms IN. A multiplicative factor keeps zoom
+        // uniform across scales; the small exponent stops a notch over-shooting.
+        let dy = e.deltaY;
+        if (e.deltaMode === 1) dy *= 16; // lines
+        else if (e.deltaMode === 2) dy *= sz.h; // pages
+        const factor = Math.exp(-dy * 0.0015);
+        // zoom payload: [factor, cursorX, cursorY, cssW, cssH]
+        emit(CANVAS_EVENT_ZOOM, [factor, p.x, p.y, sz.w, sz.h]);
+      };
+
+      const handlers = [
+        ["pointerdown", onPointerDown],
+        ["pointermove", onPointerMove],
+        ["pointerup", onPointerUp],
+        ["pointercancel", onPointerCancel],
+        ["wheel", onWheel],
+      ];
+      for (const [evtName, handler] of handlers) {
+        canvas.addEventListener(evtName, handler, evtName === "wheel" ? { passive: false } : undefined);
+        instance.listeners.push([evtName, handler]);
+      }
+      // touch-action:none lets pointer events drive pan/zoom without the
+      // browser hijacking the gesture for native scroll/zoom.
+      try { canvas.style.touchAction = "none"; } catch (e) { /* tolerate */ }
+
+      // Resize + teardown observers — identical contract to the engine-surface
+      // path so _disposeEngineSurface cleans canvas2d boards up the same way.
+      if (typeof ResizeObserver === "function") {
+        const ro = new ResizeObserver(function() {
+          if (instance.disposed) return;
+          _initEngineSurfaceCanvasSize(canvas);
+        });
+        ro.observe(canvas);
+        instance.resizeObserver = ro;
+      }
+      if (typeof MutationObserver === "function" && canvas.parentNode) {
+        const mo = new MutationObserver(function() {
+          if (!document.contains(canvas)) {
+            _disposeEngineSurface(id);
+          }
+        });
+        mo.observe(canvas.parentNode, { childList: true, subtree: false });
+        instance.observer = mo;
+      }
     }
 
     // mountAllSurfaceKinds finds every server-rendered surface primitive that
