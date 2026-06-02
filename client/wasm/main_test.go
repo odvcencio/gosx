@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"html"
 	"strings"
 	"syscall/js"
 	"testing"
@@ -892,6 +893,108 @@ func TestRuntimeRenderCanvasReturnsBundleJSON(t *testing.T) {
 	if got := afterDispose.String(); !strings.Contains(got, "error") {
 		t.Fatalf("expected error rendering disposed board, got %q", got)
 	}
+}
+
+// TestRuntimeRenderCanvasRendersStaticPropsNodes is the static-CanvasBoard
+// end-to-end paint regression. A Go-constructed gosx.CanvasBoard(props) (what
+// gosx-studio.RenderSiteMapCanvasEngine emits) ships no compiled program: the
+// browser bootstrap hydrates it with an EMPTY {} program and carries the board
+// content in the runtime props JSON under props.nodes. Before the fix,
+// __gosx_render_canvas returned only {background,camera} with zero objects, so
+// the board painted nothing but the background. This test hydrates exactly that
+// path — empty {} program + the real props.nodes wire shape — and asserts the
+// marshaled bundle now contains the rect Object (with a color material), the
+// Line, and the Label the JS painter draws.
+func TestRuntimeRenderCanvasRendersStaticPropsNodes(t *testing.T) {
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	// Derive the exact props JSON gosx.CanvasBoard marshals into
+	// data-gosx-engine-props, so the test exercises the real static-board wire
+	// shape rather than a hand-rolled approximation.
+	node := gosx.CanvasBoard(gosx.CanvasBoardProps{
+		ID:         "static-0",
+		Width:      800,
+		Height:     600,
+		Background: "#0f1720",
+		Nodes: []gosx.CanvasBoardNode{
+			{ID: "r1", Kind: "rect", X: 10, Y: 20, Width: 120, Height: 80, Color: "#8de1ff"},
+			{Kind: "line", X1: 0, Y1: 0, X2: 50, Y2: 60, Color: "#ff5599"},
+			{Kind: "label", X: 5, Y: 7, Text: "hello", Color: "#ffffff"},
+		},
+	})
+	propsJSON := canvasBoardEngineProps(t, node)
+
+	// Hydrate via the unified dispatcher's canvas2d branch with an EMPTY {}
+	// program — exactly what the bootstrap passes for a static no-code board.
+	if ret := js.Global().Get("__gosx_hydrate").Invoke(
+		"canvas2d", "static-0", "CanvasBoard", propsJSON, "{}", "json",
+	); !ret.IsNull() {
+		t.Fatalf("hydrate static canvas2d: %q", ret.String())
+	}
+
+	renderRet := js.Global().Get("__gosx_render_canvas").Invoke("static-0", 800, 600, 0.0)
+	if renderRet.Type() != js.TypeString {
+		t.Fatalf("expected JSON string from __gosx_render_canvas, got %v", renderRet.Type())
+	}
+	var bundle rootengine.RenderBundle
+	if err := json.Unmarshal([]byte(renderRet.String()), &bundle); err != nil {
+		t.Fatalf("unmarshal render bundle %q: %v", renderRet.String(), err)
+	}
+
+	if bundle.Camera.Mode != "ortho2d" {
+		t.Errorf("camera mode = %q, want ortho2d", bundle.Camera.Mode)
+	}
+	if bundle.Background != "#0f1720" {
+		t.Errorf("background = %q, want #0f1720", bundle.Background)
+	}
+	// The whole point of the fix: a static board now paints its props.nodes.
+	if len(bundle.Objects) != 1 {
+		t.Fatalf("expected one rect object from props.nodes, got %d (%#v)", len(bundle.Objects), bundle.Objects)
+	}
+	obj := bundle.Objects[0]
+	if obj.Kind != "rect" || obj.ID != "r1" {
+		t.Errorf("object = {kind:%q id:%q}, want {rect r1}", obj.Kind, obj.ID)
+	}
+	if obj.Bounds.MinX != 10 || obj.Bounds.MaxX != 130 || obj.Bounds.MinY != 20 || obj.Bounds.MaxY != 100 {
+		t.Errorf("bounds = (%v,%v)-(%v,%v), want (10,20)-(130,100)",
+			obj.Bounds.MinX, obj.Bounds.MinY, obj.Bounds.MaxX, obj.Bounds.MaxY)
+	}
+	if obj.MaterialIndex < 0 || obj.MaterialIndex >= len(bundle.Materials) {
+		t.Fatalf("MaterialIndex %d out of range for %d materials", obj.MaterialIndex, len(bundle.Materials))
+	}
+	if got := bundle.Materials[obj.MaterialIndex].Color; got != "#8de1ff" {
+		t.Errorf("rect material color = %q, want #8de1ff", got)
+	}
+	if len(bundle.Lines) != 1 || bundle.Lines[0].Color != "#ff5599" {
+		t.Fatalf("expected one #ff5599 line from props.nodes, got %#v", bundle.Lines)
+	}
+	if len(bundle.Labels) != 1 || bundle.Labels[0].Text != "hello" {
+		t.Fatalf("expected one 'hello' label from props.nodes, got %#v", bundle.Labels)
+	}
+}
+
+// canvasBoardEngineProps extracts the data-gosx-engine-props JSON payload from
+// a node returned by gosx.CanvasBoard, so tests can feed the runtime the exact
+// props wire shape the SSR pipeline emits. node.go escapes the attribute value
+// with html.EscapeString, so html.UnescapeString recovers the raw JSON.
+func canvasBoardEngineProps(t *testing.T, node gosx.Node) string {
+	t.Helper()
+	markup := gosx.RenderHTML(node)
+	const marker = `data-gosx-engine-props="`
+	i := strings.Index(markup, marker)
+	if i < 0 {
+		t.Fatalf("data-gosx-engine-props not found in %q", markup)
+	}
+	rest := markup[i+len(marker):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		t.Fatalf("unterminated data-gosx-engine-props in %q", markup)
+	}
+	return html.UnescapeString(rest[:j])
 }
 
 // TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind covers an unknown

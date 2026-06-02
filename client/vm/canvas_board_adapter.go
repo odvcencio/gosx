@@ -142,7 +142,57 @@ func (rt *CanvasBoardAdapter) Dispose() {
 // (board origin centered) and zoom=1 (1 world unit = 1 pixel).
 func (rt *CanvasBoardAdapter) RenderBundle(width, height int, timeSeconds float64) rootengine.RenderBundle {
 	nodes := rt.snapshot()
+	// Static-CanvasBoard fallback: a Go-constructed gosx.CanvasBoard(props) is a
+	// no-code primitive — it ships no compiled program, so the bridge hydrates it
+	// with an empty {} program and prog.EngineNodes is nil (snapshot() returns
+	// nil here). Such a board carries its content in the runtime props JSON under
+	// props.nodes (the gosx.CanvasBoardNode shape). When there are no compiled
+	// EngineNodes, project those props.nodes into the same internal resolvedNode
+	// representation buildCanvasBoardRenderBundle consumes so rects/lines/labels/
+	// sprites paint with their colors. Precedence is strict: if EngineNodes IS
+	// present (the compiled-.gsx path) snapshot() is non-empty and this fallback
+	// never fires — props.nodes is ignored and today's behavior is unchanged.
+	if len(nodes) == 0 {
+		nodes = canvasBoardNodesFromProps(rt.props)
+	}
 	return buildCanvasBoardRenderBundle(rt.props, nodes, width, height, timeSeconds)
+}
+
+// canvasBoardNodesFromProps parses the runtime-props "nodes" array a static
+// gosx.CanvasBoard emits (a []CanvasBoardNode marshaled to JSON, decoded here
+// as []any of map[string]any) into the resolvedNode representation the render
+// path consumes. The JSON keys mirror canvasboard.go's CanvasBoardNode tags
+// exactly — "kind", "id", "x", "y", "width", "height", "x1", "y1", "x2", "y2",
+// "color", "text", "src" — so the existing canvasBoard{Rect,Line,Label,Sprite}
+// helpers (which read those same prop keys) light up unchanged. Returns nil
+// when props carries no usable nodes array.
+func canvasBoardNodesFromProps(props map[string]any) []resolvedNode {
+	raw, ok := props["nodes"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make([]resolvedNode, 0, len(raw))
+	for _, entry := range raw {
+		node, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := node["kind"].(string)
+		if strings.TrimSpace(kind) == "" {
+			continue
+		}
+		// Copy the node's JSON fields straight into Props. buildCanvasBoardRenderBundle
+		// and its helpers read Kind plus the same x/y/width/height/x1..y2/color/text/
+		// src/id keys, and numericProp already coerces the float64s json.Unmarshal
+		// produces. The full map is forwarded so future CanvasBoardNode fields flow
+		// through without touching this seam.
+		resolved := resolvedNode{
+			Kind:  kind,
+			Props: node,
+		}
+		out = append(out, resolved)
+	}
+	return out
 }
 
 func (rt *CanvasBoardAdapter) resolveAll() []resolvedNode {

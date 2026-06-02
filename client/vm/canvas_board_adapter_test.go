@@ -250,6 +250,142 @@ func TestCanvasBoardAdapterRenderBundleCarriesRectColorViaMaterials(t *testing.T
 	}
 }
 
+// TestCanvasBoardAdapterRenderBundleRendersStaticPropsNodes is the
+// static-CanvasBoard regression: a Go-constructed gosx.CanvasBoard(props)
+// carries its nodes in the runtime props JSON under props.nodes (the
+// CanvasBoardNode shape) and hydrates with an EMPTY {} program (no compiled
+// EngineNodes). Before this fix, RenderBundle painted only the background +
+// camera because buildCanvasBoardRenderBundle was fed only the resolved
+// EngineNodes snapshot (nil here) and never read props.nodes. The adapter
+// must now project props.nodes through the same rect/line/label/sprite path,
+// emitting Objects (with a color-carrying material), Lines, and Labels.
+func TestCanvasBoardAdapterRenderBundleRendersStaticPropsNodes(t *testing.T) {
+	// Exactly the wire shape gosx.CanvasBoard marshals: a "board" key with
+	// pan/zoom, a top-level "nodes" array of CanvasBoardNode JSON, and a
+	// background. The program is the empty {} static-board hydration path.
+	propsJSON := `{
+		"board": {"pan": {"x": 0, "y": 0}, "zoom": 1},
+		"background": "#0f1720",
+		"nodes": [
+			{"id": "r1", "kind": "rect", "x": 10, "y": 20, "width": 120, "height": 80, "color": "#8de1ff"},
+			{"kind": "line", "x1": 0, "y1": 0, "x2": 50, "y2": 60, "color": "#ff5599"},
+			{"kind": "label", "x": 5, "y": 7, "text": "hello", "color": "#ffffff"},
+			{"kind": "image", "x": 200, "y": 100, "width": 64, "height": 64, "src": "/logo.png"}
+		]
+	}`
+
+	rt := NewCanvasBoardAdapter(&rootengine.Program{Name: "StaticBoard"}, propsJSON)
+	b := rt.RenderBundle(800, 600, 0)
+
+	if b.Background != "#0f1720" {
+		t.Errorf("background = %q, want #0f1720", b.Background)
+	}
+	if len(b.Objects) != 1 {
+		t.Fatalf("expected one rect object from props.nodes, got %d (%#v)", len(b.Objects), b.Objects)
+	}
+	obj := b.Objects[0]
+	if obj.Kind != "rect" {
+		t.Errorf("object kind = %q, want rect", obj.Kind)
+	}
+	if obj.ID != "r1" {
+		t.Errorf("object ID = %q, want r1", obj.ID)
+	}
+	if obj.Bounds.MinX != 10 || obj.Bounds.MaxX != 130 || obj.Bounds.MinY != 20 || obj.Bounds.MaxY != 100 {
+		t.Errorf("bounds = (%v,%v)-(%v,%v), want (10,20)-(130,100)",
+			obj.Bounds.MinX, obj.Bounds.MinY, obj.Bounds.MaxX, obj.Bounds.MaxY)
+	}
+	// Color must flow through Materials[obj.MaterialIndex].Color so the painter draws it.
+	if obj.MaterialIndex < 0 || obj.MaterialIndex >= len(b.Materials) {
+		t.Fatalf("MaterialIndex %d out of range for %d materials", obj.MaterialIndex, len(b.Materials))
+	}
+	if got := b.Materials[obj.MaterialIndex].Color; got != "#8de1ff" {
+		t.Errorf("rect material color = %q, want #8de1ff", got)
+	}
+	if !b.Materials[obj.MaterialIndex].Unlit {
+		t.Errorf("board material should be unlit")
+	}
+
+	if len(b.Lines) != 1 {
+		t.Fatalf("expected one line from props.nodes, got %#v", b.Lines)
+	}
+	ln := b.Lines[0]
+	if ln.From.X != 0 || ln.From.Y != 0 || ln.To.X != 50 || ln.To.Y != 60 {
+		t.Errorf("line endpoints = %v→%v, want (0,0)→(50,60)", ln.From, ln.To)
+	}
+	if ln.Color != "#ff5599" {
+		t.Errorf("line color = %q, want #ff5599", ln.Color)
+	}
+
+	if len(b.Labels) != 1 {
+		t.Fatalf("expected one label from props.nodes, got %#v", b.Labels)
+	}
+	if b.Labels[0].Text != "hello" {
+		t.Errorf("label text = %q, want hello", b.Labels[0].Text)
+	}
+	if b.Labels[0].Color != "#ffffff" {
+		t.Errorf("label color = %q, want #ffffff", b.Labels[0].Color)
+	}
+
+	if len(b.Sprites) != 1 {
+		t.Fatalf("expected one sprite from props.nodes, got %#v", b.Sprites)
+	}
+	if b.Sprites[0].Src != "/logo.png" {
+		t.Errorf("sprite src = %q, want /logo.png", b.Sprites[0].Src)
+	}
+}
+
+// TestCanvasBoardAdapterRenderBundleIgnoresPropsNodesWhenEngineNodesPresent
+// proves the compiled-.gsx path is unchanged: when prog.EngineNodes is
+// populated, the adapter renders those nodes through the resolved-snapshot
+// path and IGNORES props.nodes entirely — no double-counting, no precedence
+// flip. The props.nodes fallback only fires when EngineNodes is empty.
+func TestCanvasBoardAdapterRenderBundleIgnoresPropsNodesWhenEngineNodesPresent(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "CompiledWins",
+		EngineNodes: []rootengine.Node{
+			{Kind: "rect", Props: map[string]islandprogram.ExprID{"x": 0, "y": 1, "width": 2, "height": 3, "color": 4}},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "10", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "20", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "120", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "80", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#8de1ff", Type: islandprogram.TypeString},
+		},
+	}
+	// props.nodes carries DECOY content that must never appear in the bundle
+	// while EngineNodes is present: extra rects, lines, labels.
+	propsJSON := `{
+		"nodes": [
+			{"kind": "rect", "x": 999, "y": 999, "width": 1, "height": 1, "color": "#000000"},
+			{"kind": "rect", "x": 888, "y": 888, "width": 1, "height": 1, "color": "#111111"},
+			{"kind": "line", "x1": 1, "y1": 2, "x2": 3, "y2": 4, "color": "#222222"},
+			{"kind": "label", "x": 0, "y": 0, "text": "decoy"}
+		]
+	}`
+
+	rt := NewCanvasBoardAdapter(prog, propsJSON)
+	b := rt.RenderBundle(800, 600, 0)
+
+	// Exactly one object — the single compiled EngineNode — not 1+2 decoys.
+	if len(b.Objects) != 1 {
+		t.Fatalf("expected one object from EngineNodes (props.nodes must be ignored), got %d (%#v)", len(b.Objects), b.Objects)
+	}
+	if b.Objects[0].Bounds.MinX != 10 || b.Objects[0].Bounds.MaxX != 130 {
+		t.Errorf("rendered the wrong rect: bounds X = (%v,%v), want (10,130) from EngineNodes",
+			b.Objects[0].Bounds.MinX, b.Objects[0].Bounds.MaxX)
+	}
+	if len(b.Lines) != 0 {
+		t.Errorf("props.nodes line leaked while EngineNodes present: %#v", b.Lines)
+	}
+	if len(b.Labels) != 0 {
+		t.Errorf("props.nodes label leaked while EngineNodes present: %#v", b.Labels)
+	}
+	if got := b.Materials[b.Objects[0].MaterialIndex].Color; got != "#8de1ff" {
+		t.Errorf("material color = %q, want #8de1ff from EngineNodes", got)
+	}
+}
+
 // TestCanvasBoardAdapterRenderBundleStripsLightingAndPostFX is the
 // integration check that Configure2DBundle runs on the adapter output. A 2D
 // bundle should NEVER carry lights, post-FX, or environment data — even if
