@@ -245,21 +245,213 @@ func (rt *CanvasBoardAdapter) PickWorld(worldX, worldY float64) (string, bool) {
 		if !canvasBoardNodePickable(node) {
 			continue
 		}
-		x, _ := numericProp(node.Props, "x")
-		y, _ := numericProp(node.Props, "y")
-		w, _ := numericProp(node.Props, "width")
-		h, _ := numericProp(node.Props, "height")
-		if w == 0 {
-			w = 1
-		}
-		if h == 0 {
-			h = 1
-		}
+		x, y, w, h := canvasBoardNodeBounds(node)
 		if worldX >= x && worldX <= x+w && worldY >= y && worldY <= y+h {
 			return canvasBoardNodeID(node, i), true
 		}
 	}
 	return "", false
+}
+
+// PickWorldRect returns the ids of every PICKABLE rect node whose world-space
+// bounds intersect the given world rectangle, in painter (back-to-front, slice)
+// order. It is the marquee analog of PickWorld: where PickWorld returns the one
+// topmost rect under a point, PickWorldRect returns the whole set a drag-box
+// covers. Like PickWorld it consumes the same resolved-node snapshot RenderBundle
+// renders — including the static props.nodes path the Muddy site-map board uses
+// — so what the author sees is exactly what the marquee selects.
+//
+// Corners are normalized (min/max are sorted) so a marquee dragged up-left works
+// the same as one dragged down-right. An axis-aligned bounds intersection test
+// (the standard separating-axis check on each axis) decides membership, so a
+// rect partially clipped by the marquee edge is still included — matching the
+// DOM board's rectsIntersect. Returns nil when nothing intersects (a drag in
+// empty space clears the multi-selection).
+func (rt *CanvasBoardAdapter) PickWorldRect(minX, minY, maxX, maxY float64) []string {
+	if rt == nil {
+		return nil
+	}
+	// Normalize so callers can pass either corner order.
+	if maxX < minX {
+		minX, maxX = maxX, minX
+	}
+	if maxY < minY {
+		minY, maxY = maxY, minY
+	}
+	nodes := rt.snapshot()
+	if len(nodes) == 0 {
+		nodes = canvasBoardNodesFromProps(rt.props)
+	}
+	var ids []string
+	// Front (slice) order: the returned list is back-to-front so the caller's
+	// "first id = primary" rule stays consistent with paint order.
+	for i := range nodes {
+		node := nodes[i]
+		if !canvasBoardNodeIsRect(node) || !canvasBoardNodePickable(node) {
+			continue
+		}
+		nx, ny, nw, nh := canvasBoardNodeBounds(node)
+		// Axis-aligned intersection: overlap on BOTH axes.
+		if nx <= maxX && nx+nw >= minX && ny <= maxY && ny+nh >= minY {
+			ids = append(ids, canvasBoardNodeID(node, i))
+		}
+	}
+	return ids
+}
+
+// NavFrom returns the id of the pickable rect node spatially nearest to
+// currentID in direction dir ("up" | "down" | "left" | "right"), mirroring the
+// DOM board's nearestNodeKey (sitemapruntime/island_runtime.js): the cost of a
+// candidate is its primary-axis distance plus 2× its perpendicular-axis
+// distance, and candidates strictly behind the pressed direction are filtered
+// out (the half-plane gate). The lowest-cost candidate wins.
+//
+// Orientation note: the canvas paints with world +Y UP (the OrthoCamera2D Y
+// flip the JS painter applies), so "up" on screen is +Y in world. The direction
+// mapping below accounts for that flip so arrow-key nav lands on the node the
+// user visually sees in the pressed direction — the same felt behavior as the
+// DOM board, whose getBoundingClientRect coordinates have +Y DOWN.
+//
+// When currentID is empty (nothing selected yet), NavFrom returns the
+// topmost-leftmost node — largest world-Y, then smallest world-X — exactly the
+// DOM board's firstNodeKey, again accounting for the Y flip. When currentID
+// matches no node, or no candidate lies in the pressed direction, it returns ""
+// (the caller leaves the selection unchanged).
+func (rt *CanvasBoardAdapter) NavFrom(currentID, dir string) string {
+	if rt == nil {
+		return ""
+	}
+	nodes := rt.snapshot()
+	if len(nodes) == 0 {
+		nodes = canvasBoardNodesFromProps(rt.props)
+	}
+	if strings.TrimSpace(currentID) == "" {
+		return canvasBoardTopmostLeftmost(nodes)
+	}
+	originX, originY, ok := canvasBoardNodeCenterByID(nodes, currentID)
+	if !ok {
+		return ""
+	}
+	dir = strings.ToLower(strings.TrimSpace(dir))
+	best := ""
+	bestCost := -1.0
+	for i := range nodes {
+		node := nodes[i]
+		if !canvasBoardNodeIsRect(node) || !canvasBoardNodePickable(node) {
+			continue
+		}
+		id := canvasBoardNodeID(node, i)
+		if id == currentID {
+			continue
+		}
+		cx, cy := canvasBoardNodeCenter(node)
+		dx := cx - originX
+		dy := cy - originY
+		var primary, perpendicular float64
+		switch dir {
+		case "left":
+			if dx >= 0 {
+				continue
+			}
+			primary, perpendicular = -dx, abs64(dy)
+		case "right":
+			if dx <= 0 {
+				continue
+			}
+			primary, perpendicular = dx, abs64(dy)
+		case "up":
+			// Screen-up = larger world-Y (Y flip).
+			if dy <= 0 {
+				continue
+			}
+			primary, perpendicular = dy, abs64(dx)
+		case "down":
+			// Screen-down = smaller world-Y.
+			if dy >= 0 {
+				continue
+			}
+			primary, perpendicular = -dy, abs64(dx)
+		default:
+			return ""
+		}
+		cost := primary + perpendicular*2
+		if bestCost < 0 || cost < bestCost {
+			bestCost = cost
+			best = id
+		}
+	}
+	return best
+}
+
+// canvasBoardTopmostLeftmost returns the id of the topmost-leftmost pickable
+// rect: largest world-Y (the screen-Y flip makes that the visually-highest),
+// ties broken by smallest world-X. Mirrors the DOM board's firstNodeKey. Returns
+// "" when there are no pickable rects.
+func canvasBoardTopmostLeftmost(nodes []resolvedNode) string {
+	best := ""
+	var bestY, bestX float64
+	have := false
+	for i := range nodes {
+		node := nodes[i]
+		if !canvasBoardNodeIsRect(node) || !canvasBoardNodePickable(node) {
+			continue
+		}
+		cx, cy := canvasBoardNodeCenter(node)
+		// Higher on screen = larger world-Y; tie → smaller world-X.
+		if !have || cy > bestY+0.5 || (abs64(cy-bestY) <= 0.5 && cx < bestX) {
+			best = canvasBoardNodeID(node, i)
+			bestY, bestX = cy, cx
+			have = true
+		}
+	}
+	return best
+}
+
+// canvasBoardNodeCenterByID finds the center of the pickable rect with the given
+// id, returning ok=false when no such node exists.
+func canvasBoardNodeCenterByID(nodes []resolvedNode, id string) (cx, cy float64, ok bool) {
+	for i := range nodes {
+		node := nodes[i]
+		if !canvasBoardNodeIsRect(node) {
+			continue
+		}
+		if canvasBoardNodeID(node, i) != id {
+			continue
+		}
+		x, y := canvasBoardNodeCenter(node)
+		return x, y, true
+	}
+	return 0, 0, false
+}
+
+// canvasBoardNodeCenter returns the world-space center of a rect node.
+func canvasBoardNodeCenter(node resolvedNode) (cx, cy float64) {
+	x, y, w, h := canvasBoardNodeBounds(node)
+	return x + w/2, y + h/2
+}
+
+// canvasBoardNodeBounds reads a rect node's world bounds, applying the same
+// zero-extent → unit-extent fallback PickWorld and canvasBoardRectObject use so
+// a degenerate rect is still hit-testable.
+func canvasBoardNodeBounds(node resolvedNode) (x, y, w, h float64) {
+	x, _ = numericProp(node.Props, "x")
+	y, _ = numericProp(node.Props, "y")
+	w, _ = numericProp(node.Props, "width")
+	h, _ = numericProp(node.Props, "height")
+	if w == 0 {
+		w = 1
+	}
+	if h == 0 {
+		h = 1
+	}
+	return x, y, w, h
+}
+
+func abs64(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // canvasBoardNodeIsRect reports whether node is a pickable rect kind. Only
