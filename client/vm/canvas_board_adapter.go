@@ -34,7 +34,27 @@ type CanvasBoardAdapter struct {
 	dirty      []bool
 	signalDeps map[string][]int
 	unsubs     map[string]func()
+
+	// camera holds the runtime-mutable camera override installed by SetCamera
+	// (drag-pan / wheel-zoom). When cameraSet is false the camera is derived
+	// from props (canvasBoardCameraFromProps) exactly as before — so a board
+	// that never receives an interaction event renders at its authored camera.
+	// Once an event lands, the override takes strict precedence and every
+	// subsequent RenderBundle uses it.
+	cameraPanX float64
+	cameraPanY float64
+	cameraZoom float64
+	cameraSet  bool
 }
+
+// CanvasBoardMinZoom and CanvasBoardMaxZoom clamp the runtime zoom so a runaway
+// wheel gesture can neither invert the orthographic projection (zoom ≤ 0) nor
+// blow the world scale up past anything a board author would want. The range
+// mirrors the Figma/Miro convention of ~10% to ~1000% effective scale.
+const (
+	CanvasBoardMinZoom = 0.1
+	CanvasBoardMaxZoom = 10.0
+)
 
 // NewCanvasBoardAdapter constructs the live runtime for a Canvas2D program.
 // It is the structural analog of NewSceneAdapter; callers in the WASM bridge
@@ -155,7 +175,123 @@ func (rt *CanvasBoardAdapter) RenderBundle(width, height int, timeSeconds float6
 	if len(nodes) == 0 {
 		nodes = canvasBoardNodesFromProps(rt.props)
 	}
-	return buildCanvasBoardRenderBundle(rt.props, nodes, width, height, timeSeconds)
+	zoom, panX, panY := rt.cameraOrProps()
+	return buildCanvasBoardRenderBundleWithCamera(rt.props, nodes, zoom, panX, panY, width, height, timeSeconds)
+}
+
+// SetCamera installs a runtime camera override (drag-pan / wheel-zoom) that the
+// next RenderBundle uses in place of the props-derived camera. zoom is clamped
+// to [CanvasBoardMinZoom, CanvasBoardMaxZoom]; a non-positive zoom collapses to
+// the minimum (never inverts the projection). This is the mutable half of the
+// otherwise-declarative board: the input loop calls SetCamera, the RAF
+// re-renders, and the new view paints.
+func (rt *CanvasBoardAdapter) SetCamera(panX, panY, zoom float64) {
+	if rt == nil {
+		return
+	}
+	rt.cameraPanX = panX
+	rt.cameraPanY = panY
+	rt.cameraZoom = clampCanvasBoardZoom(zoom)
+	rt.cameraSet = true
+}
+
+// Camera returns the current live camera (pan in world units, zoom as
+// world→screen scale). When no override has been installed it reflects the
+// props-derived camera, so the first pan/zoom delta accumulates from where the
+// board actually sits rather than from the origin. The bridge reads this to
+// turn screen-space deltas into world-space camera updates.
+func (rt *CanvasBoardAdapter) Camera() (panX, panY, zoom float64) {
+	if rt == nil {
+		return 0, 0, 1
+	}
+	zoom, panX, panY = rt.cameraOrProps()
+	return panX, panY, zoom
+}
+
+// cameraOrProps returns the override camera when set, else the props-derived
+// camera. Centralizes the precedence rule (override beats props) shared by
+// RenderBundle, Camera, and PickWorld so screen↔world math stays consistent.
+func (rt *CanvasBoardAdapter) cameraOrProps() (zoom, panX, panY float64) {
+	if rt.cameraSet {
+		return rt.cameraZoom, rt.cameraPanX, rt.cameraPanY
+	}
+	return canvasBoardCameraFromProps(rt.props)
+}
+
+// PickWorld hit-tests a world-space point against the board's pickable objects
+// and returns the id of the TOPMOST object whose bounds contain the point.
+// "Topmost" follows painter's order: later nodes paint on top, so the last
+// matching node wins (matching the JS canvas2d paint order). Objects with
+// pickable={false} are transparent to picking. Returns ("", false) on a miss.
+//
+// PickWorld consumes the same resolved-node snapshot RenderBundle renders, so
+// what the author sees is exactly what picks — including the static
+// props.nodes path the Muddy site-map board uses (no compiled EngineNodes).
+func (rt *CanvasBoardAdapter) PickWorld(worldX, worldY float64) (string, bool) {
+	if rt == nil {
+		return "", false
+	}
+	nodes := rt.snapshot()
+	if len(nodes) == 0 {
+		nodes = canvasBoardNodesFromProps(rt.props)
+	}
+	// Walk back-to-front: the last-painted (topmost) pickable rect under the
+	// cursor wins.
+	for i := len(nodes) - 1; i >= 0; i-- {
+		node := nodes[i]
+		if !canvasBoardNodeIsRect(node) {
+			continue
+		}
+		if !canvasBoardNodePickable(node) {
+			continue
+		}
+		x, _ := numericProp(node.Props, "x")
+		y, _ := numericProp(node.Props, "y")
+		w, _ := numericProp(node.Props, "width")
+		h, _ := numericProp(node.Props, "height")
+		if w == 0 {
+			w = 1
+		}
+		if h == 0 {
+			h = 1
+		}
+		if worldX >= x && worldX <= x+w && worldY >= y && worldY <= y+h {
+			return canvasBoardNodeID(node, i), true
+		}
+	}
+	return "", false
+}
+
+// canvasBoardNodeIsRect reports whether node is a pickable rect kind. Only
+// rects carry axis-aligned world bounds the simple containment test uses;
+// lines/labels/sprites are not pick targets in this slice.
+func canvasBoardNodeIsRect(node resolvedNode) bool {
+	return strings.EqualFold(strings.TrimSpace(node.Kind), "rect")
+}
+
+// canvasBoardNodePickable mirrors canvasBoardRectObject's pickable default:
+// board nodes are pickable unless the author set pickable={false}.
+func canvasBoardNodePickable(node resolvedNode) bool {
+	if explicit, ok := node.Props["pickable"].(bool); ok {
+		return explicit
+	}
+	return true
+}
+
+// clampCanvasBoardZoom constrains zoom to the sane runtime range. A
+// non-positive zoom (which would invert or zero the projection) collapses to
+// the minimum.
+func clampCanvasBoardZoom(zoom float64) float64 {
+	if zoom <= 0 {
+		return CanvasBoardMinZoom
+	}
+	if zoom < CanvasBoardMinZoom {
+		return CanvasBoardMinZoom
+	}
+	if zoom > CanvasBoardMaxZoom {
+		return CanvasBoardMaxZoom
+	}
+	return zoom
 }
 
 // canvasBoardNodesFromProps parses the runtime-props "nodes" array a static
@@ -322,13 +458,23 @@ func canvasBoardDiffNode(index int, prev, next resolvedNode) []rootengine.Comman
 // Any other kind is silently dropped (forward-compat: future kinds can land
 // without breaking older runtimes).
 func buildCanvasBoardRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64) rootengine.RenderBundle {
+	zoom, panX, panY := canvasBoardCameraFromProps(props)
+	return buildCanvasBoardRenderBundleWithCamera(props, nodes, zoom, panX, panY, width, height, timeSeconds)
+}
+
+// buildCanvasBoardRenderBundleWithCamera is buildCanvasBoardRenderBundle with
+// the camera supplied by the caller rather than derived from props. The adapter
+// uses it to inject the runtime camera override (SetCamera) so drag-pan /
+// wheel-zoom show up in the very next painted frame, while the props-derived
+// path (buildCanvasBoardRenderBundle above) stays the default for boards that
+// never receive an interaction event.
+func buildCanvasBoardRenderBundleWithCamera(props map[string]any, nodes []resolvedNode, zoom, panX, panY float64, width, height int, timeSeconds float64) rootengine.RenderBundle {
 	if width <= 0 {
 		width = 1280
 	}
 	if height <= 0 {
 		height = 720
 	}
-	zoom, panX, panY := canvasBoardCameraFromProps(props)
 	cam := bundle.OrthoCamera2D(zoom, panX, panY, width, height)
 
 	b := rootengine.RenderBundle{
