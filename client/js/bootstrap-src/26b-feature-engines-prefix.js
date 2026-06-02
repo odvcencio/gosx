@@ -408,6 +408,12 @@
       // loop (engine_surface_full.go).
       if (surfaceKind === "canvas2d") {
         instance.kind = "canvas2d";
+        // Expose the WASM-side board id on the element so external callers
+        // (tooling, e2e harnesses) can address this board's __gosx_render_canvas
+        // / __gosx_canvas_event without reaching into the closure-scoped
+        // surfaceInstances map. Read-only handle; nothing in the runtime keys
+        // off it.
+        try { canvas.setAttribute("data-gosx-surface-id", id); } catch (e) { /* tolerate */ }
         _bridgeCanvasBoardEvents(id, canvas, instance);
         _startCanvasSurfaceRAF(id, canvas, instance);
       } else {
