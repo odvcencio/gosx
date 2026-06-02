@@ -851,8 +851,13 @@
     if (!video || typeof video.canPlayType !== "function") {
       return false;
     }
-    const result = String(video.canPlayType("application/vnd.apple.mpegurl") || "");
-    return result !== "" && result !== "no";
+    const result = String(video.canPlayType("application/vnd.apple.mpegurl") || "").trim().toLowerCase();
+    // Only "probably" indicates reliable native HLS (Safari / iOS). Chrome and
+    // Chromium-Edge return the speculative "maybe" but cannot actually decode
+    // an .m3u8 playlist natively — they must use hls.js (MSE). Treating "maybe"
+    // as native support black-screens Chrome: it sets video.src=playlist,
+    // decodes a few frames, then stalls. Anything but "probably" → use hls.js.
+    return result === "probably";
   }
 
   function videoBytesFromRaw(raw) {
@@ -2730,6 +2735,23 @@
           video.load();
         }
       } else if (videoNeedsHLS(nextSource) && !videoSupportsNativeHLS(video)) {
+        // Stop the browser's native load of the HLS src BEFORE hls.js attaches.
+        // The SSR <video src=...m3u8> makes the browser try to load the playlist
+        // natively; while we await the (async) hls.js library, Firefox fails that
+        // attempt with MediaLoadInvalidURI and leaves the element in an error
+        // state hls.js can't recover from (Chrome fails it silently). Clearing
+        // src + load() + clearError resets the element so hls.js attaches clean.
+        if (typeof video.removeAttribute === "function") {
+          video.removeAttribute("src");
+        }
+        try {
+          video.src = "";
+        } catch (_error) {
+        }
+        if (typeof video.load === "function") {
+          video.load();
+        }
+        clearError();
         const HlsCtor = await ensureVideoHLSLibrary();
         if (!HlsCtor) {
           setError("HLS.js unavailable");

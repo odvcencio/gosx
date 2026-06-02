@@ -275,7 +275,26 @@ func videoBaselineSrc(props VideoProps) string {
 	if props.Src == "" {
 		return ""
 	}
+	// Never emit a native src= for an HLS playlist. No browser decodes an .m3u8
+	// natively except Safari, yet every browser tries to load a native src on
+	// HTML parse — Firefox/Edge fail with MediaLoadInvalidURI and black-screen
+	// before the engine + hls.js can attach (a JS-side clear runs too late). The
+	// engine still receives the src via the marshalled props and attaches
+	// hls.js/MSE (or native, on Safari) client-side.
+	if videoSrcNeedsHLS(props.Src) {
+		return ""
+	}
 	return AssetURL(props.Src)
+}
+
+// videoSrcNeedsHLS reports whether src points at an HLS playlist (.m3u8),
+// ignoring any query string or fragment.
+func videoSrcNeedsHLS(src string) bool {
+	s := strings.ToLower(strings.TrimSpace(src))
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.HasSuffix(s, ".m3u8")
 }
 
 func videoTrackSource(track VideoTrack, subtitleBase string) string {
