@@ -100,6 +100,27 @@ func NewIsland(prog *program.Program, propsJSON string) *Island {
 	return island
 }
 
+// SwapProgram hot-swaps the island's running program in place. It is the
+// Island-level wrapper around VM.SwapProgram for `gosx dev`: the VM merges
+// signal state by name (preserving live values where SignalDef.Name still
+// matches; clean-reinit for renamed/removed signals), then the Island rebuilds
+// its handler map against the new program and reconciles so the previous tree
+// — and any patches pushed to JS — reflect the new bytecode.
+//
+// Reconcile diffs the freshly-evaluated tree against island.prev using the new
+// program's StaticMask (Reconcile reads island.program), so callers that wired
+// a PatchCallback receive the minimal patch set to bring the DOM current
+// without a page reload. Returns the patch ops so the bridge can forward them.
+func (island *Island) SwapProgram(prog *program.Program) []PatchOp {
+	if island == nil || prog == nil {
+		return nil
+	}
+	island.vm.SwapProgram(prog)
+	island.program = prog
+	island.handlers = handlerMap(prog)
+	return island.Reconcile()
+}
+
 // ResolveInitialTree evaluates a program with its initial props and signal
 // state, returning the tree the browser VM will see before any events fire.
 func ResolveInitialTree(prog *program.Program, propsJSON string) *ResolvedTree {

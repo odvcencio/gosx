@@ -86,6 +86,71 @@ func (vm *VM) SetSignal(name string, sig *signal.Signal[Value]) {
 	vm.signals[name] = sig
 }
 
+// SwapProgram replaces the VM's running program in place, preserving signal
+// state by name. This is the VM-level seam for program hot-swap (`gosx dev`):
+// the compiled bytecode changes but the live reactive state is carried across
+// where the signal names still match.
+//
+// Teardown: the DOM VM holds no persistent effects or subscriptions of its
+// own — signals are read on demand during EvalTree, and handler bodies are
+// plain Expr data the Island looks up by name (see island.go handlerMap).
+// So there is nothing to dispose here beyond dropping references to the old
+// program: re-pointing program/exprs and rebuilding the funcDef registry
+// (mirrors NewVM:70-80) atomically swaps in the new bytecode. The
+// scene/canvas adapters that DO subscribe (scene_adapter.go,
+// canvas_board_adapter.go) own their own teardown and are out of scope here.
+//
+// Signal merge-by-name (the reason signals are name-keyed at vm.signals):
+// for each SignalDef in the new program, if a signal with the same Name is
+// already live, its current Value is KEPT and the new init expr is ignored.
+// Signal names that are new init fresh from their init expr (mirrors
+// initSignals in island.go). Signals present in the old program but absent
+// from the new one are dropped — a renamed or removed signal gets a clean
+// slate rather than leaking a stale value under a name nothing references.
+//
+// SwapProgram does NOT reconcile the DOM; reconciliation belongs to the
+// Island, which owns the previous tree and the patch callback. Island.
+// SwapProgram wraps this method and performs the reconcile.
+func (vm *VM) SwapProgram(p *program.Program) {
+	if p == nil {
+		vm.recordDiagnostic(Diagnostic{
+			Severity: DiagnosticError,
+			Code:     "nil_program",
+			Message:  "SwapProgram called with a nil program",
+		})
+		return
+	}
+
+	// Install the new bytecode. Point at the new exprs and rebuild the
+	// funcDef lookup exactly as NewVM does, so OpIndirectCall resolves
+	// against the new program's helpers (and a program that drops all of
+	// its funcs releases the old map).
+	vm.program = p
+	vm.exprs = p.Exprs
+	vm.funcs = nil
+	if len(p.Funcs) > 0 {
+		vm.funcs = make(map[string]*program.FuncDef, len(p.Funcs))
+		for i := range p.Funcs {
+			vm.funcs[p.Funcs[i].Name] = &p.Funcs[i]
+		}
+	}
+
+	// Re-run signal init, merging by name. Build the next signal set from
+	// the new program's SignalDefs so that removed/renamed signals are not
+	// carried over; for each retained name, keep the live signal instance
+	// (and thus its current value), and for each new name, evaluate the
+	// init expr against the freshly-installed exprs.
+	merged := make(map[string]*signal.Signal[Value], len(p.Signals))
+	for _, def := range p.Signals {
+		if existing, ok := vm.signals[def.Name]; ok {
+			merged[def.Name] = existing
+			continue
+		}
+		merged[def.Name] = signal.New(vm.Eval(def.Init))
+	}
+	vm.signals = merged
+}
+
 // SetProp installs a value under name in the VM's prop map. Use this
 // when an out-of-band caller (engine-surface event dispatcher, host
 // bridge, …) needs to feed values to a handler that reads them via
