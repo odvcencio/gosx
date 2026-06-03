@@ -997,6 +997,94 @@ func canvasBoardEngineProps(t *testing.T, node gosx.Node) string {
 	return html.UnescapeString(rest[:j])
 }
 
+// reloadCounterProgram builds a Counter-shaped island whose increment handler
+// adds step to the shared "$count" signal. The shared signal lets the test
+// read the live value back through the bridge store after a reload.
+func reloadCounterProgram(step string) *program.Program {
+	return &program.Program{
+		Name: "ReloadCounter",
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: "$count", Type: program.TypeInt},
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},
+			{Op: program.OpLitInt, Value: step, Type: program.TypeInt},
+			{Op: program.OpAdd, Operands: []program.ExprID{0, 2}, Type: program.TypeInt},
+			{Op: program.OpSignalSet, Operands: []program.ExprID{3}, Value: "$count", Type: program.TypeInt},
+		},
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}},
+			{Kind: program.NodeExpr, Expr: program.ExprID(0)},
+		},
+		Root: 0,
+		Signals: []program.SignalDef{
+			{Name: "$count", Type: program.TypeInt, Init: program.ExprID(1)},
+		},
+		Handlers: []program.Handler{
+			{Name: "increment", Body: []program.ExprID{4}},
+		},
+		StaticMask: []bool{false, false},
+	}
+}
+
+// TestRuntimeReloadProgramExport covers the __gosx_reload_program WASM export:
+// hydrate program A (+1), drive the count, reload program B (+10) under the
+// same id (both JSON string and Uint8Array binary forms), and confirm the
+// live state survives the swap while the new handler is the active one. An
+// unknown island id must come back as a string error.
+func TestRuntimeReloadProgramExport(t *testing.T) {
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	b := bridge.New()
+	registerRuntime(b)
+
+	dataA, err := program.EncodeJSON(reloadCounterProgram("1"))
+	if err != nil {
+		t.Fatalf("encode A: %v", err)
+	}
+	if ret := js.Global().Get("__gosx_hydrate").Invoke("rc-0", "ReloadCounter", `{}`, string(dataA), "json"); !ret.IsNull() {
+		t.Fatalf("hydrate: %q", ret.String())
+	}
+	// count 0 -> 1 -> 2 under A.
+	js.Global().Get("__gosx_action").Invoke("rc-0", "increment", `{}`)
+	js.Global().Get("__gosx_action").Invoke("rc-0", "increment", `{}`)
+
+	// Reload program B (+10) as a JSON string payload.
+	dataB, err := program.EncodeJSON(reloadCounterProgram("10"))
+	if err != nil {
+		t.Fatalf("encode B: %v", err)
+	}
+	if ret := js.Global().Get("__gosx_reload_program").Invoke("rc-0", string(dataB), "json"); !ret.IsNull() {
+		t.Fatalf("reload (json) returned %q, want null", ret.String())
+	}
+	if b.IslandCount() != 1 {
+		t.Fatalf("island count after reload = %d, want 1 (in-place)", b.IslandCount())
+	}
+	// State preserved (2), new +10 handler active: 2 -> 12.
+	js.Global().Get("__gosx_action").Invoke("rc-0", "increment", `{}`)
+	if got, _ := b.GetStore().Get("$count"); got.Num != 12 {
+		t.Fatalf("$count after json reload+bump = %v, want 12", got.Num)
+	}
+
+	// Reload again via a Uint8Array binary payload (+5 this time): 12 -> 17.
+	dataC, err := program.EncodeBinary(reloadCounterProgram("5"))
+	if err != nil {
+		t.Fatalf("encode C: %v", err)
+	}
+	if ret := js.Global().Get("__gosx_reload_program").Invoke("rc-0", uint8ArrayFromBytes(dataC), "bin"); !ret.IsNull() {
+		t.Fatalf("reload (bin) returned %q, want null", ret.String())
+	}
+	js.Global().Get("__gosx_action").Invoke("rc-0", "increment", `{}`)
+	if got, _ := b.GetStore().Get("$count"); got.Num != 17 {
+		t.Fatalf("$count after binary reload+bump = %v, want 17", got.Num)
+	}
+
+	// Unknown island id surfaces a string error.
+	ret := js.Global().Get("__gosx_reload_program").Invoke("ghost", string(dataB), "json")
+	if got := ret.String(); !strings.Contains(got, "not found") {
+		t.Fatalf("expected not-found error for unknown id, got %q", got)
+	}
+}
+
 // TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind covers an unknown
 // surfaceKind returning a stable error.
 func TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind(t *testing.T) {

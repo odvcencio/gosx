@@ -24,6 +24,7 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_hydrate_canvas", hydrateCanvasRuntimeFunc(b))
 	setRuntimeFunc("__gosx_hydrate_compute", hydrateComputeRuntimeFunc(b))
 	setRuntimeFunc("__gosx_action", actionRuntimeFunc(b))
+	setRuntimeFunc("__gosx_reload_program", reloadProgramRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
 	registerEngineRuntime(b)
 	registerEngineSurfaceRuntime(b)
@@ -140,6 +141,33 @@ func actionRuntimeFunc(b *bridge.Bridge) js.Func {
 			return jsError(err)
 		}
 		return applyPatchedResult(args[0].String(), patches)
+	})
+}
+
+// reloadProgramRuntimeFunc returns the __gosx_reload_program export — the
+// thin WASM wrapper over Bridge.ReloadProgram that powers `gosx dev` program
+// hot-swap. It decodes its args and delegates exactly like actionRuntimeFunc
+// delegates to DispatchAction:
+//
+//	__gosx_reload_program(islandID, programData, format)
+//
+// programData is a string (JSON) or Uint8Array/ArrayBuffer (binary), decoded
+// via the same decodeProgramData path the hydrate calls use. An unknown
+// islandID or a decode failure comes back as a string error from the bridge.
+func reloadProgramRuntimeFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 3 {
+			return jsErrorf("need 3 args (islandID, programData, format)")
+		}
+		programData, err := decodeProgramData(args[1])
+		if err != nil {
+			return jsError(err)
+		}
+		if err := b.ReloadProgram(args[0].String(), programData, args[2].String()); err != nil {
+			logRuntimeError("reload error", err)
+			return jsError(err)
+		}
+		return js.Null()
 	})
 }
 
