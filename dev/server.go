@@ -326,7 +326,7 @@ func injectReloadScript(body string) string {
 	if strings.Contains(body, "data-gosx-dev-reload") {
 		return body
 	}
-	snippet := `<script data-gosx-dev-reload="true">(function(){if(window.__gosxDevReload){return;}window.__gosxDevReload=true;var source=new EventSource("/gosx/dev/events");source.addEventListener("reload",function(){window.location.reload();});source.addEventListener("build-error",function(event){try{var payload=JSON.parse(event.data||"{}");console.error("[gosx dev] build failed:",payload.error||payload);}catch(_){console.error("[gosx dev] build failed");}});source.onerror=function(){console.warn("[gosx dev] reload connection lost");};})();</script>`
+	snippet := `<script data-gosx-dev-reload="true">(function(){if(window.__gosxDevReload){return;}window.__gosxDevReload=true;var source=new EventSource("/gosx/dev/events");source.addEventListener("reload",function(){window.location.reload();});source.addEventListener("program",function(event){var payload;try{payload=JSON.parse(event.data||"{}");}catch(_){console.error("[gosx dev] bad program payload");return;}var swap=window.__gosx_reload_program;if(typeof swap!=="function"){window.location.reload();return;}var registry=window.__gosx&&window.__gosx.islands;if(!registry||typeof registry.forEach!=="function"){return;}var fmt=payload.format||"json";var matched=0;registry.forEach(function(entry,islandID){if(!entry||entry.component!==payload.component){return;}matched++;try{var res=swap(islandID,payload.program,fmt);if(typeof res==="string"&&res!==""){console.error("[gosx dev] hot-swap failed for "+islandID+": "+res);}}catch(err){console.error("[gosx dev] hot-swap error for "+islandID+":",err);}});if(matched===0&&console.debug){console.debug("[gosx dev] no live island for component "+payload.component);}});source.addEventListener("patch",function(event){var payload;try{payload=JSON.parse(event.data||"{}");}catch(_){return;}var apply=window.__gosx_apply_patches;if(typeof apply==="function"&&payload.islandID){apply(payload.islandID,payload.patch||"[]");}});source.addEventListener("build-error",function(event){try{var payload=JSON.parse(event.data||"{}");console.error("[gosx dev] build failed:",payload.error||payload);}catch(_){console.error("[gosx dev] build failed");}});source.onerror=function(){console.warn("[gosx dev] reload connection lost");};})();</script>`
 	return injectDevScriptSnippet(body, snippet)
 }
 
@@ -387,12 +387,13 @@ func (s *Server) watchWithPolling(stop <-chan struct{}) {
 				s.logf("snapshot failed: %v", err)
 				continue
 			}
-			if !snapshotChanged(snapshot, next) {
+			changed := changedPaths(s.Dir, snapshot, next)
+			if len(changed) == 0 {
 				continue
 			}
 			snapshot = next
 
-			s.handleProjectChange("file_change")
+			s.handleProjectChange(changed)
 		}
 	}
 }
@@ -411,7 +412,7 @@ func (s *Server) watchWithFSNotify(stop <-chan struct{}) error {
 	var (
 		timer   *time.Timer
 		timerC  <-chan time.Time
-		pending bool
+		pending = make(map[string]struct{})
 	)
 	stopTimer := func() {
 		if timer == nil {
@@ -452,16 +453,20 @@ func (s *Server) watchWithFSNotify(stop <-chan struct{}) error {
 			if !isProjectWatchEvent(s.Dir, event) {
 				continue
 			}
-			pending = true
+			pending[event.Name] = struct{}{}
 			resetTimer()
 		case <-timerC:
 			timer = nil
 			timerC = nil
-			if !pending {
+			if len(pending) == 0 {
 				continue
 			}
-			pending = false
-			s.handleProjectChange("file_change")
+			paths := make([]string, 0, len(pending))
+			for path := range pending {
+				paths = append(paths, path)
+			}
+			pending = make(map[string]struct{})
+			s.handleProjectChange(paths)
 		}
 	}
 }
@@ -476,28 +481,12 @@ func (s *Server) watchCreatedDirs(path string, add func(string) error) {
 	}
 }
 
-func (s *Server) handleProjectChange(reason string) {
-	if err := s.OnChange(); err != nil {
-		s.mu.Lock()
-		s.lastError = err.Error()
-		s.mu.Unlock()
-		s.logf("change handling failed: %v", err)
-		s.broadcast("build-error", map[string]any{
-			"error": err.Error(),
-			"time":  time.Now().Format(time.RFC3339Nano),
-		})
-		return
-	}
-
-	s.mu.Lock()
-	s.lastBuild = time.Now()
-	s.lastError = ""
-	s.mu.Unlock()
-	s.logf("change detected, reloading clients")
-	s.broadcast("reload", map[string]any{
-		"reason": reason,
-		"time":   time.Now().Format(time.RFC3339Nano),
-	})
+// handleProjectChange routes a batch of changed source paths through the
+// dev-socket delivery seam. emitChange classifies the batch: an island-only
+// .gsx edit hot-swaps the live island's bytecode (no rebuild, no reload), while
+// any server/route/Go/CSS/JS change runs OnChange and triggers a full reload.
+func (s *Server) handleProjectChange(paths []string) {
+	s.emitChange(paths)
 }
 
 func (s *Server) broadcast(name string, payload any) {
@@ -625,6 +614,30 @@ func snapshotChanged(prev map[string]snapshotEntry, next map[string]snapshotEntr
 		}
 	}
 	return false
+}
+
+// changedPaths diffs two project snapshots and returns the absolute paths of
+// added, modified, or removed watched files. The dev-socket delivery seam uses
+// these to classify a change (island .gsx hot-swap vs. full reload), so the
+// returned paths are absolute to match the fsnotify watcher.
+func changedPaths(root string, prev map[string]snapshotEntry, next map[string]snapshotEntry) []string {
+	changed := make(map[string]struct{})
+	for rel, prevEntry := range prev {
+		nextEntry, ok := next[rel]
+		if !ok || !prevEntry.ModTime.Equal(nextEntry.ModTime) || prevEntry.Size != nextEntry.Size {
+			changed[rel] = struct{}{}
+		}
+	}
+	for rel := range next {
+		if _, ok := prev[rel]; !ok {
+			changed[rel] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(changed))
+	for rel := range changed {
+		paths = append(paths, filepath.Join(root, filepath.FromSlash(rel)))
+	}
+	return paths
 }
 
 func shouldWatchProjectFile(path string) bool {
