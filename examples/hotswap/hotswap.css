@@ -1,0 +1,67 @@
+:root {
+	color-scheme: light dark;
+	font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+	margin: 0;
+	min-height: 100vh;
+	display: grid;
+	place-items: center;
+	background: #0f172a;
+	color: #e2e8f0;
+}
+
+.page-shell {
+	width: min(32rem, 92vw);
+}
+
+.panel {
+	background: #1e293b;
+	border: 1px solid #334155;
+	border-radius: 1rem;
+	padding: 2rem;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.panel h1 {
+	margin: 0 0 0.5rem;
+	font-size: 1.5rem;
+}
+
+.hint {
+	margin: 0 0 1.5rem;
+	color: #94a3b8;
+	font-size: 0.9rem;
+	line-height: 1.5;
+}
+
+.counter {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 1rem;
+}
+
+.counter-btn {
+	width: 2.75rem;
+	height: 2.75rem;
+	border-radius: 0.75rem;
+	border: 1px solid #475569;
+	background: #334155;
+	color: #f8fafc;
+	font-size: 1.5rem;
+	cursor: pointer;
+	transition: background 0.15s ease;
+}
+
+.counter-btn:hover {
+	background: #475569;
+}
+
+.counter-label {
+	min-width: 8rem;
+	text-align: center;
+	font-size: 1.25rem;
+	font-variant-numeric: tabular-nums;
+}

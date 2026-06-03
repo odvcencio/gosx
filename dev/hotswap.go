@@ -78,6 +78,11 @@ func (s *Server) emitChange(paths []string) {
 	// Island-only change: hot-swap in place, no rebuild/restart, no reload.
 	s.markBuilt()
 	for _, prog := range programs {
+		// Refresh the staged asset so a later hard refresh (or a freshly
+		// mounted island) fetches the same fresh bytecode the live page just
+		// hot-swapped to. Cheap (one file write) and keeps disk in step with
+		// the socket without paying for a full rebuild/restart.
+		s.restageIslandProgram(prog)
 		s.logf("island %s changed, hot-swapping program (%d bytes)", prog.Component, len(prog.ProgramJSON))
 		s.broadcast("program", map[string]any{
 			"component": prog.Component,
@@ -85,6 +90,26 @@ func (s *Server) emitChange(paths []string) {
 			"program":   string(prog.ProgramJSON),
 			"time":      time.Now().Format(time.RFC3339Nano),
 		})
+	}
+}
+
+// restageIslandProgram rewrites the staged build/islands/<Component>.json so the
+// on-disk dev asset matches the bytecode just pushed over the socket. It is a
+// no-op when no BuildDir is configured (e.g. unit tests) or when the write
+// fails — a stale-on-disk asset only affects a manual hard refresh, never the
+// live hot-swap, so a write error is logged rather than surfaced as a reload.
+func (s *Server) restageIslandProgram(prog islandProgram) {
+	if strings.TrimSpace(s.BuildDir) == "" {
+		return
+	}
+	islandDir := filepath.Join(s.BuildDir, "islands")
+	if err := os.MkdirAll(islandDir, 0o755); err != nil {
+		s.logf("restage island %s: %v", prog.Component, err)
+		return
+	}
+	path := filepath.Join(islandDir, prog.Component+".json")
+	if err := os.WriteFile(path, prog.ProgramJSON, 0o644); err != nil {
+		s.logf("restage island %s: %v", prog.Component, err)
 	}
 }
 
