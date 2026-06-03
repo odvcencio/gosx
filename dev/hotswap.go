@@ -142,6 +142,15 @@ func (s *Server) broadcastReload(reason string) {
 	})
 }
 
+// TriggerReload broadcasts a full-page reload to every connected dev client,
+// through the same SSE pipeline the built-in file watcher uses. It is the
+// public entry point for callers that watch sources the watcher ignores — e.g.
+// a deck server watching deck.md, which shouldWatchProjectFile does not match —
+// and need to drive a reload without faking a watched-file change.
+func (s *Server) TriggerReload(reason string) {
+	s.broadcastReload(reason)
+}
+
 // classifyChange inspects the changed paths and returns the island programs to
 // hot-swap, whether a full reload is required instead, and any compile error.
 //
