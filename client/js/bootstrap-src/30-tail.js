@@ -1130,6 +1130,9 @@
     }
     if (!hasSourceChildren) {
       for (const source of videoSourcesFromProps(props)) {
+        if (videoNeedsHLS(source && source.src) && !videoSupportsNativeHLS(video)) {
+          continue;
+        }
         const sourceNode = document.createElement("source");
         sourceNode.setAttribute("src", source.src);
         if (source.type) {
@@ -1414,6 +1417,7 @@
     let cacheStatus = "";
     let videoViewport = null;
     let nativeSubtitleTrack = null;
+    let sourceSignalInitialized = false;
     const videoOutputPayloads = new Map();
     const videoOutputPrimitiveValues = new Map();
 
@@ -2813,10 +2817,6 @@
     videoApplyElementProps(video, props);
     videoEnsureAuthoredChildren(video, props);
     syncNativeSubtitleTrackMode();
-    videoClearChildren(mount);
-    mount.appendChild(video);
-    mount.appendChild(ensureSubtitleOverlay());
-    mount.appendChild(ensureSyncOverlay());
     subtitleState.status = subtitleState.tracks.length > 0 ? "ready" : "idle";
     readInitialVideoCacheState();
     updateSubtitleOutputs();
@@ -2921,6 +2921,12 @@
     }
 
     unsubscribers.push(subscribeVideoSignal("src", function(value) {
+      if (!sourceSignalInitialized) {
+        sourceSignalInitialized = true;
+        if (value == null) {
+          return;
+        }
+      }
       applySource(value);
     }));
     unsubscribers.push(subscribeVideoSignal("seek", function(value) {
@@ -2989,6 +2995,12 @@
 
     const initialSource = readVideoSignal("src", videoPropValue(props, ["src", "Src"], ""));
     await applySource(initialSource);
+    videoClearChildren(mount);
+    mount.appendChild(video);
+    mount.appendChild(ensureSubtitleOverlay());
+    mount.appendChild(ensureSyncOverlay());
+    refreshVideoViewportOutput();
+    updateVideoOutputs();
 
     return {
       video,

@@ -14371,6 +14371,10 @@ window.Hls.Events = {};`,
   const mounted = env.context.__gosx.engines.get("gosx-engine-0");
   assert.ok(mounted);
   assert.equal(mounted.handle.video.tagName, "VIDEO");
+  assert.equal(
+    mounted.handle.video.children.some((child) => child.tagName === "SOURCE" && String(child.getAttribute("src") || "").endsWith(".m3u8")),
+    false,
+  );
 });
 
 test("bootstrap decompresses compressedPositions for Scene3D points", async () => {
@@ -14658,6 +14662,12 @@ window.Hls.Events = {};`,
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/hls.min.js"), true);
   assert.deepEqual(Array.from(env.context.__hlsLoads || []), ["/media/promo.m3u8"]);
   assert.equal(env.context.__gosx.engines.size, 1);
+  const mounted = env.context.__gosx.engines.get("gosx-engine-video-hls");
+  assert.ok(mounted);
+  assert.equal(
+    mounted.handle.video.children.some((child) => child.tagName === "SOURCE" && String(child.getAttribute("src") || "").endsWith(".m3u8")),
+    false,
+  );
   assert.equal(
     env.consoleLogs.error.some((entry) => entry.includes("failed to mount engine gosx-engine-video-hls")),
     false,
