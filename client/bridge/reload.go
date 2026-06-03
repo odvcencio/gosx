@@ -20,6 +20,14 @@ import "fmt"
 // existing shared *signal instance* for any name the new program still
 // declares), this preserves cross-island shared state across a reload while
 // honoring any signals the new program adds or drops.
+//
+// Concurrency: like DispatchAction, ReloadProgram must run to completion on the
+// runtime's single thread. The unsubscribe-before-swap / resubscribe-after
+// sequence below is not individually atomic; its safety relies on no store Set
+// (and therefore no subscription-driven reconcile) interleaving mid-swap. That
+// holds because the WASM runtime is single-threaded and event-loop driven. A
+// future caller that drives reloads from a background goroutine must add its
+// own synchronization.
 func (b *Bridge) ReloadProgram(islandID string, data []byte, format string) error {
 	prog, err := DecodeProgram(data, format)
 	if err != nil {

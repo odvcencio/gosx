@@ -144,6 +144,73 @@ func TestBridgeReloadProgramUnknownIDErrors(t *testing.T) {
 	}
 }
 
+// sharedDisplay returns a program that renders the value of a single shared
+// ($-prefixed) signal, so a change to that signal produces an observable patch.
+func sharedDisplay(name string) *program.Program {
+	return &program.Program{
+		Name: "Display",
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: name, Type: program.TypeInt}, // 0
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},     // 1 init
+		},
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}}, // 0
+			{Kind: program.NodeExpr, Expr: program.ExprID(0)},                       // 1
+		},
+		Root: 0,
+		Signals: []program.SignalDef{
+			{Name: name, Type: program.TypeInt, Init: program.ExprID(1)},
+		},
+		StaticMask: []bool{false, false},
+	}
+}
+
+// TestBridgeReloadProgramRewiresSharedSignals reloads an island onto a program
+// with a DIFFERENT shared-signal set ($a dropped, $b added). The newly-added
+// signal must be connected and drive a reconcile; the dropped signal's
+// subscription must be gone (a change to it no longer reconciles this island).
+// Locks the connectSharedSignals / subscribeSharedSignals re-wire ReloadProgram
+// performs across a signal-set change.
+func TestBridgeReloadProgramRewiresSharedSignals(t *testing.T) {
+	b := New()
+	var patchCount int
+	b.SetPatchCallback(func(islandID, patchJSON string) { patchCount++ })
+
+	dataA, err := program.EncodeJSON(sharedDisplay("$a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.HydrateIsland("island-0", "Display", `{}`, dataA, "json"); err != nil {
+		t.Fatal(err)
+	}
+
+	dataB, err := program.EncodeJSON(sharedDisplay("$b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.ReloadProgram("island-0", dataB, "json"); err != nil {
+		t.Fatalf("ReloadProgram: %v", err)
+	}
+
+	// Added signal drives a reconcile: changing $b must push a patch.
+	patchCount = 0
+	if err := b.SetSharedSignalJSON("$b", "7"); err != nil {
+		t.Fatalf("set $b: %v", err)
+	}
+	if patchCount == 0 {
+		t.Fatal("changing newly-added shared signal $b did not reconcile the island")
+	}
+
+	// Dropped signal is unwired: changing $a must NOT reconcile this island.
+	patchCount = 0
+	if err := b.SetSharedSignalJSON("$a", "99"); err != nil {
+		t.Fatalf("set $a: %v", err)
+	}
+	if patchCount != 0 {
+		t.Fatalf("changing dropped shared signal $a reconciled the island %d time(s); subscription should be gone", patchCount)
+	}
+}
+
 // TestBridgeReloadProgramBadDataErrors asserts a decode failure surfaces as an
 // error and does not mutate the live island.
 func TestBridgeReloadProgramBadDataErrors(t *testing.T) {
