@@ -130,6 +130,40 @@ func (r *PageRuntime) TextBlock(props TextBlockProps, args ...any) gosx.Node {
 	return TextBlock(props, args...)
 }
 
+// SetProgramDir tells the page runtime where island programs are served from,
+// so each registered island's manifest entry carries a fetchable programRef
+// (e.g. "/gosx/islands" -> "/gosx/islands/<Name>.json"). Without this (or
+// SetProgramAsset), Island()-registered programs have an empty programRef and the
+// client bootstrap has no program to fetch, so they never hydrate. It mirrors
+// island.Renderer.SetProgramDir and must be called before Island().
+func (r *PageRuntime) SetProgramDir(dir string) {
+	if r == nil || r.renderer == nil {
+		return
+	}
+	r.renderer.SetProgramDir(dir)
+}
+
+// SetProgramFormat sets the program asset format ("json" or "bin") used when a
+// programRef is inferred from SetProgramDir. It mirrors
+// island.Renderer.SetProgramFormat.
+func (r *PageRuntime) SetProgramFormat(format string) {
+	if r == nil || r.renderer == nil {
+		return
+	}
+	r.renderer.SetProgramFormat(format)
+}
+
+// SetProgramAsset registers an exact program asset path for a component, used
+// when the build output is content-hashed and cannot be inferred from the name.
+// It mirrors island.Renderer.SetProgramAsset and overrides any SetProgramDir
+// inference for that component. Call before Island().
+func (r *PageRuntime) SetProgramAsset(componentName, path, format, hash string) {
+	if r == nil || r.renderer == nil {
+		return
+	}
+	r.renderer.SetProgramAsset(componentName, path, format, hash)
+}
+
 // AddHead appends managed head nodes that should render after the shared
 // runtime bootstrap assets.
 func (r *PageRuntime) AddHead(nodes ...gosx.Node) {
