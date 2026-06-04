@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.25.1
+
+CSRF protection now accepts the token from `multipart/form-data` submissions.
+
+The `session.Protect` middleware previously read the synchronizer token only from
+the `X-CSRF-Token` header or — for non-JSON requests — from `r.Form` after
+`r.ParseForm()`, which does not parse multipart bodies. Client runtimes that
+submit a form via `fetch` with a `FormData` body (e.g. the gosx-cms studio
+workbench's state runtime) therefore had their `csrf_token` field ignored and
+were rejected with 403, breaking in-browser Publish/Save/Discard actions. The
+guard now reads the fallback token via `r.FormValue`, which parses multipart as
+well as url-encoded bodies — a strict superset of the prior behavior (header and
+JSON-skip paths unchanged; missing/invalid tokens still rejected).
+
 ## v0.25.0
 
 Video playback: selectable audio tracks, bitmap subtitle cues, and resilient HLS.
