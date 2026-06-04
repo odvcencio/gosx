@@ -1,8 +1,8 @@
 package version
 
 // Current is the canonical GoSX release tag.
-const Current = "v0.25.1"
+const Current = "v0.25.2"
 
 // Number is Current without the leading tag prefix. Keep this constant in sync
 // with Current so packages that historically expose bare semver remain stable.
-const Number = "0.25.1"
+const Number = "0.25.2"

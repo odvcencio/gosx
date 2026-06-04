@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v0.25.1
+## v0.25.2
 
 CSRF protection now accepts the token from `multipart/form-data` submissions.
 
@@ -15,6 +15,12 @@ were rejected with 403, breaking in-browser Publish/Save/Discard actions. The
 guard now reads the fallback token via `r.FormValue`, which parses multipart as
 well as url-encoded bodies — a strict superset of the prior behavior (header and
 JSON-skip paths unchanged; missing/invalid tokens still rejected).
+
+## v0.25.1
+
+Dependency migration: the build's `manta` tool anchor was replaced with `eos`
+(tagged at the corresponding `go.mod`/`tools.go` update; no library behavior
+change).
 
 ## v0.25.0
 
