@@ -1054,7 +1054,7 @@
     const title = String(videoPropValue(source, ["title", "label", "name"], language || ("Track " + (index + 1))) || "").trim();
     const id = String(videoPropValue(source, ["id", "trackID", "trackId"], language || title || ("track-" + index)) || "").trim();
     const kind = String(videoPropValue(source, ["kind"], "subtitles") || "subtitles").trim().toLowerCase() || "subtitles";
-    return {
+    const normalized = {
       id: id || ("track-" + index),
       language: language,
       srclang: srcLang || language,
@@ -1063,8 +1063,11 @@
       src: src,
       default: sceneBool(videoPropValue(source, ["default"], false), false),
       forced: sceneBool(videoPropValue(source, ["forced"], false), false),
-      bitmap: sceneBool(videoPropValue(source, ["bitmap"], false), false),
     };
+    if (sceneBool(videoPropValue(source, ["bitmap"], false), false)) {
+      normalized.bitmap = true;
+    }
+    return normalized;
   }
 
   function videoTracksFromProps(props) {
