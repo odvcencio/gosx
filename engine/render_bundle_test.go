@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 )
@@ -89,5 +90,37 @@ func TestRenderBundleDiagnosticsRoundTrip(t *testing.T) {
 	}
 	if decoded.Diagnostics[0].Code != "native-postfx-unsupported" || decoded.Diagnostics[0].Target != "dof" {
 		t.Fatalf("diagnostic = %#v", decoded.Diagnostics[0])
+	}
+}
+
+func TestRenderBundleHTMLRoundTrip(t *testing.T) {
+	source := RenderBundle{
+		HTML: []RenderHTML{{
+			ID:            "page",
+			Markup:        "<b>x</b>",
+			X:             0,
+			Y:             0,
+			Width:         1280,
+			Height:        720,
+			PointerEvents: "auto",
+		}},
+	}
+	payload, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"html"`)) {
+		t.Fatalf("marshaled JSON missing key %q: %s", "html", payload)
+	}
+	var decoded RenderBundle
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(decoded.HTML) != 1 {
+		t.Fatalf("HTML length = %d, want 1", len(decoded.HTML))
+	}
+	h := decoded.HTML[0]
+	if h.ID != "page" || h.Markup != "<b>x</b>" || h.Width != 1280 || h.Height != 720 || h.PointerEvents != "auto" {
+		t.Fatalf("HTML[0] = %#v", h)
 	}
 }

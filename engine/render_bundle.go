@@ -59,6 +59,19 @@ type RenderSprite struct {
 	Fit       string      `json:"fit,omitempty"`
 }
 
+// RenderHTML is a dom-mode HTML surface placed in world space on the canvas
+// board. X/Y are world units (the client projects them via the ortho camera);
+// Width/Height are page pixels. Markup is trusted host-authored HTML.
+type RenderHTML struct {
+	ID            string  `json:"id"`
+	Markup        string  `json:"markup"`
+	X             float64 `json:"x"`
+	Y             float64 `json:"y"`
+	Width         float64 `json:"width"`
+	Height        float64 `json:"height"`
+	PointerEvents string  `json:"pointerEvents,omitempty"`
+}
+
 // RenderCamera describes the camera used for world-space rendering.
 //
 // Mode selects the projection pipeline. The empty string is the default
@@ -367,6 +380,7 @@ type RenderBundle struct {
 	Lines            []RenderLine             `json:"lines,omitempty"`
 	Labels           []RenderLabel            `json:"labels,omitempty"`
 	Sprites          []RenderSprite           `json:"sprites,omitempty"`
+	HTML             []RenderHTML             `json:"html,omitempty"`
 	Positions        []float64                `json:"positions,omitempty"`
 	Colors           []float64                `json:"colors,omitempty"`
 	VertexCount      int                      `json:"vertexCount,omitempty"`
