@@ -32,6 +32,20 @@ type VideoTrack struct {
 	Forced   bool   `json:"forced,omitempty"`
 }
 
+// VideoAudioTrack describes one available audio track for video playback.
+type VideoAudioTrack struct {
+	ID          string `json:"id,omitempty"`
+	StreamIndex int    `json:"stream_index,omitempty"`
+	Language    string `json:"language,omitempty"`
+	Codec       string `json:"codec,omitempty"`
+	Channels    int    `json:"channels,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+	Selected    bool   `json:"selected,omitempty"`
+}
+
 // SyncTuning holds optional overrides for the follow-mode drift engine.
 // nil ⇒ proven defaults. All fields optional (zero ⇒ default for that field).
 type SyncTuning struct {
@@ -78,12 +92,14 @@ type VideoProps struct {
 	SyncStrategy string `json:"syncStrategy,omitempty"`
 	// SyncTuning carries optional overrides for the follow-mode drift engine.
 	// nil means the JS factory uses proven defaults for every field.
-	SyncTuning     *SyncTuning    `json:"syncTuning,omitempty"`
-	HLS            map[string]any `json:"hls,omitempty"`
-	HLSConfig      map[string]any `json:"hlsConfig,omitempty"`
-	SubtitleBase   string         `json:"subtitleBase,omitempty"`
-	SubtitleTrack  string         `json:"subtitleTrack,omitempty"`
-	SubtitleTracks []VideoTrack   `json:"subtitleTracks,omitempty"`
+	SyncTuning     *SyncTuning       `json:"syncTuning,omitempty"`
+	HLS            map[string]any    `json:"hls,omitempty"`
+	HLSConfig      map[string]any    `json:"hlsConfig,omitempty"`
+	AudioTrack     string            `json:"audioTrack,omitempty"`
+	AudioTracks    []VideoAudioTrack `json:"audioTracks,omitempty"`
+	SubtitleBase   string            `json:"subtitleBase,omitempty"`
+	SubtitleTrack  string            `json:"subtitleTrack,omitempty"`
+	SubtitleTracks []VideoTrack      `json:"subtitleTracks,omitempty"`
 }
 
 // Video renders a server-side <video> baseline with optional <source> and
@@ -239,6 +255,7 @@ func normalizeVideoProps(props VideoProps) VideoProps {
 	props.Sync = AssetURL(props.Sync)
 	props.SyncMode = strings.TrimSpace(props.SyncMode)
 	props.SyncStrategy = strings.TrimSpace(props.SyncStrategy)
+	props.AudioTrack = strings.TrimSpace(props.AudioTrack)
 	props.SubtitleBase = AssetURL(props.SubtitleBase)
 	props.SubtitleTrack = strings.TrimSpace(props.SubtitleTrack)
 	normalizedSources := make([]VideoSource, 0, len(props.Sources))
@@ -252,6 +269,17 @@ func normalizeVideoProps(props VideoProps) VideoProps {
 		normalizedSources = append(normalizedSources, source)
 	}
 	props.Sources = normalizedSources
+	normalizedAudioTracks := make([]VideoAudioTrack, 0, len(props.AudioTracks))
+	for _, track := range props.AudioTracks {
+		track.ID = strings.TrimSpace(track.ID)
+		track.Language = strings.TrimSpace(track.Language)
+		track.Codec = strings.TrimSpace(track.Codec)
+		track.Label = strings.TrimSpace(track.Label)
+		track.Title = strings.TrimSpace(track.Title)
+		track.Name = strings.TrimSpace(track.Name)
+		normalizedAudioTracks = append(normalizedAudioTracks, track)
+	}
+	props.AudioTracks = normalizedAudioTracks
 	normalizedTracks := make([]VideoTrack, 0, len(props.SubtitleTracks))
 	for _, track := range props.SubtitleTracks {
 		track.ID = strings.TrimSpace(track.ID)

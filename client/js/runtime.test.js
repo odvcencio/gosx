@@ -13729,6 +13729,83 @@ test("bootstrap video engines retry warming subtitle tracks with Retry-After", a
   assert.equal(overlay.children[1].innerHTML, "Hello after warmup");
 });
 
+test("bootstrap video engines render bitmap WebVTT cues as positioned images", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-bitmap-subtitle-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/bitmap.vtt": {
+        text: "WEBVTT\n\n00:00:02.000 --> 00:00:05.000\n/subs/frame-001.png#xywh=100,720,1720,220&canvas=1920,1080",
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "BitmapVideo",
+          kind: "video",
+          mountId: "video-bitmap-subtitle-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            subtitleTrack: "pgs",
+            subtitleTracks: [
+              { id: "pgs", language: "eng", title: "English PGS", kind: "metadata", src: "/subs/bitmap.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-subtitles") === "true");
+  assert.ok(overlay, "expected managed subtitle overlay");
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "ready");
+
+  video.currentTime = 2.5;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.deepEqual(sharedSignalValue(env, "$video.activeCues"), [
+    {
+      text: "/subs/frame-001.png#xywh=100,720,1720,220&amp;canvas=1920,1080",
+      image: {
+        src: "/subs/frame-001.png",
+        x: 100,
+        y: 720,
+        w: 1720,
+        h: 220,
+        canvasW: 1920,
+        canvasH: 1080,
+      },
+    },
+  ]);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.equal(overlay.children.length, 1);
+  assert.equal(overlay.children[0].tagName, "IMG");
+  assert.equal(overlay.children[0].getAttribute("class"), "subtitle-image");
+  assert.equal(overlay.children[0].getAttribute("src"), "/subs/frame-001.png");
+  assert.equal(overlay.children[0].style.left, "5.208333333333334%");
+  assert.equal(overlay.children[0].style.top, "66.66666666666666%");
+  assert.equal(overlay.children[0].style.width, "89.58333333333334%");
+});
+
 // Memoryless legacy nudge: 0.92 behind / 1.08 ahead, snap past 5s drift. This
 // behavior now lives behind syncStrategy "nudge-legacy"; the default "nudge"
 // path routes through the parity-locked JS/WASM drift engine.
@@ -14013,6 +14090,89 @@ test("bootstrap video follow sync honors prepare countdown before server play", 
   assert.equal(video.playCalls.length, 1);
   assert.equal(video.paused, false);
   assert.equal(overlay.hasAttribute("hidden"), true);
+});
+
+test("bootstrap video follow sync falls back to muted autoplay", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-muted-autoplay-root";
+  let socket = null;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-muted-autoplay-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge-legacy",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  let firstPlay = true;
+  video.play = function() {
+    this.playCalls.push([]);
+    if (firstPlay) {
+      firstPlay = false;
+      this.paused = true;
+      return Promise.reject(new Error("autoplay blocked"));
+    }
+    this.paused = false;
+    return Promise.resolve();
+  };
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync_play", position: 14, rate: 1, sentAtMS: 0 }) });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(video.playCalls.length, 2);
+  assert.equal(video.muted, true);
+  assert.equal(video.getAttribute("muted"), "true");
+  assert.equal(video.paused, false);
+  assert.equal(sharedSignalValue(env, "$video.muted"), true);
+  assert.equal(sharedSignalValue(env, "$video.error"), "");
 });
 
 test("bootstrap video follow sync shows cache progress and blocks local play", async () => {
@@ -14375,6 +14535,116 @@ window.Hls.Events = {};`,
     mounted.handle.video.children.some((child) => child.tagName === "SOURCE" && String(child.getAttribute("src") || "").endsWith(".m3u8")),
     false,
   );
+});
+
+test("bootstrap video engines recover fatal HLS network and media errors", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hls-recovery-root";
+  mount.width = 1280;
+  mount.height = 720;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/runtime/vendor/hls.min.js": {
+        text: `window.__hlsInstances = [];
+window.Hls = function FakeHls() {
+  this.handlers = {};
+  this.startLoadCalls = 0;
+  this.recoverMediaErrorCalls = 0;
+  this.attachMedia = function(video) { this.video = video; };
+  this.loadSource = function(src) { this.src = src; };
+  this.on = function(event, handler) { this.handlers[event] = handler; };
+  this.startLoad = function() { this.startLoadCalls += 1; };
+  this.recoverMediaError = function() { this.recoverMediaErrorCalls += 1; };
+  this.destroy = function() {};
+  window.__hlsInstances.push(this);
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = { ERROR: "hlsError" };
+window.Hls.ErrorTypes = { NETWORK_ERROR: "networkError", MEDIA_ERROR: "mediaError" };`,
+      },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-hls-recovery-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.m3u8",
+          },
+        },
+      ],
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-video",
+      pattern: "GET /video",
+      path: "/video",
+      title: "Video",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: true,
+      navigation: false,
+    },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      runtimePath: "/runtime.wasm",
+      wasmExecPath: "/wasm_exec.js",
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const hls = env.context.__hlsInstances[0];
+  assert.ok(hls, "expected fake hls instance");
+  assert.equal(typeof hls.handlers.hlsError, "function");
+
+  hls.handlers.hlsError(null, { fatal: true, type: "networkError", details: "manifestLoadError" });
+  await flushAsyncWork();
+  assert.equal(hls.startLoadCalls, 1);
+  assert.equal(hls.recoverMediaErrorCalls, 0);
+  assert.equal(sharedSignalValue(env, "$video.error"), "manifestLoadError");
+
+  hls.handlers.hlsError(null, { fatal: true, type: "mediaError", details: "bufferAppendError" });
+  await flushAsyncWork();
+  assert.equal(hls.startLoadCalls, 1);
+  assert.equal(hls.recoverMediaErrorCalls, 1);
+  assert.equal(sharedSignalValue(env, "$video.error"), "bufferAppendError");
+
+  hls.handlers.hlsError(null, { fatal: true, type: "otherError", details: "levelLoadError" });
+  await flushAsyncWork();
+  assert.equal(hls.startLoadCalls, 1);
+  assert.equal(hls.recoverMediaErrorCalls, 1);
+  assert.equal(sharedSignalValue(env, "$video.error"), "levelLoadError");
 });
 
 test("bootstrap decompresses compressedPositions for Scene3D points", async () => {

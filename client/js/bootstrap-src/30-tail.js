@@ -1063,6 +1063,7 @@
       src: src,
       default: sceneBool(videoPropValue(source, ["default"], false), false),
       forced: sceneBool(videoPropValue(source, ["forced"], false), false),
+      bitmap: sceneBool(videoPropValue(source, ["bitmap"], false), false),
     };
   }
 
@@ -1155,6 +1156,40 @@
       .replace(/&lt;(\/?)(b|i|u|s)&gt;/gi, "<$1$2>");
   }
 
+  function videoParseBitmapCue(text) {
+    const firstLine = String(text == null ? "" : text).split(/\n/)[0].trim();
+    if (!/\.png(?:[#?]|$)/i.test(firstLine)) {
+      return null;
+    }
+    const hashIndex = firstLine.indexOf("#");
+    const image = { src: hashIndex >= 0 ? firstLine.slice(0, hashIndex) : firstLine };
+    if (hashIndex < 0) {
+      return image;
+    }
+    for (const part of firstLine.slice(hashIndex + 1).split("&")) {
+      const bits = part.split("=");
+      if (bits.length !== 2) {
+        continue;
+      }
+      if (bits[0] === "xywh") {
+        const xywh = bits[1].split(",").map(Number);
+        if (xywh.length === 4 && xywh.every(Number.isFinite)) {
+          image.x = xywh[0];
+          image.y = xywh[1];
+          image.w = xywh[2];
+          image.h = xywh[3];
+        }
+      } else if (bits[0] === "canvas") {
+        const canvas = bits[1].split(",").map(Number);
+        if (canvas.length === 2 && canvas.every(Number.isFinite)) {
+          image.canvasW = canvas[0];
+          image.canvasH = canvas[1];
+        }
+      }
+    }
+    return image;
+  }
+
   function videoParseTimestamp(value) {
     const text = String(value || "").trim();
     if (!text) {
@@ -1225,10 +1260,12 @@
       if (startMS < 0 || endMS <= startMS) {
         continue;
       }
+      const cueText = textLines.join("\n");
       cues.push({
         startMS,
         endMS,
-        text: videoSanitizeCueHTML(textLines.join("\n")),
+        text: videoSanitizeCueHTML(cueText),
+        image: videoParseBitmapCue(cueText),
       });
     }
 
@@ -1268,7 +1305,11 @@
         break;
       }
       if (currentMS < cue.endMS) {
-        active.push({ text: cue.text });
+        const activeCue = { text: cue.text };
+        if (cue.image) {
+          activeCue.image = cue.image;
+        }
+        active.push(activeCue);
       }
     }
     active.reverse();
@@ -1499,6 +1540,19 @@
       }
       overlay.removeAttribute("hidden");
       for (const cue of active) {
+        if (cue && cue.image && cue.image.src) {
+          const image = cue.image;
+          const img = document.createElement("img");
+          img.setAttribute("class", "subtitle-image");
+          img.setAttribute("src", image.src);
+          if (image.canvasW > 0 && image.canvasH > 0) {
+            img.style.left = (image.x / image.canvasW * 100) + "%";
+            img.style.top = (image.y / image.canvasH * 100) + "%";
+            img.style.width = (image.w / image.canvasW * 100) + "%";
+          }
+          overlay.appendChild(img);
+          continue;
+        }
         const node = document.createElement("div");
         node.setAttribute("class", "gosx-video-subtitle-cue subtitle-cue");
         const lines = String(cue && cue.text || "").split("\n");
@@ -1980,6 +2034,26 @@
       hls = null;
     }
 
+    function recoverHLSFatalError(HlsCtor, data) {
+      if (!hls || !data || !data.fatal) {
+        return false;
+      }
+      const errorTypes = HlsCtor && HlsCtor.ErrorTypes || {};
+      if (data.type === errorTypes.NETWORK_ERROR && typeof hls.startLoad === "function") {
+        setError(data.details || "reopening video transport");
+        hls.startLoad();
+        updateVideoOutputs();
+        return true;
+      }
+      if (data.type === errorTypes.MEDIA_ERROR && typeof hls.recoverMediaError === "function") {
+        setError(data.details || "recovering video transport");
+        hls.recoverMediaError();
+        updateVideoOutputs();
+        return true;
+      }
+      return false;
+    }
+
     function projectedFollowPosition(state) {
       if (!state) {
         return 0;
@@ -2005,18 +2079,51 @@
       updateVideoOutputs();
     }
 
-    function safePlay() {
+    function retryMutedPlay(error) {
+      if (video.muted) {
+        setError(error && error.message ? error.message : "playback failed");
+        updateVideoOutputs();
+        return Promise.resolve();
+      }
+      video.muted = true;
+      if (typeof video.setAttribute === "function") {
+        video.setAttribute("muted", "true");
+      }
+      updateVideoOutputs();
       try {
-        const result = video.play();
-        if (result && typeof result.then === "function") {
-          return result.catch(function(error) {
-            setError(error && error.message ? error.message : "playback failed");
+        const mutedResult = video.play();
+        if (mutedResult && typeof mutedResult.then === "function") {
+          return mutedResult.then(function() {
+            clearError();
+            updateVideoOutputs();
+          }).catch(function(mutedError) {
+            setError(mutedError && mutedError.message ? mutedError.message : "playback failed");
             updateVideoOutputs();
           });
         }
         clearError();
+        updateVideoOutputs();
+      } catch (mutedError) {
+        setError(mutedError && mutedError.message ? mutedError.message : "playback failed");
+        updateVideoOutputs();
+      }
+      return Promise.resolve();
+    }
+
+    function safePlay() {
+      try {
+        const result = video.play();
+        if (result && typeof result.then === "function") {
+          return result.then(function() {
+            clearError();
+            updateVideoOutputs();
+          }).catch(function(error) {
+            return retryMutedPlay(error);
+          });
+        }
+        clearError();
       } catch (error) {
-        setError(error && error.message ? error.message : "playback failed");
+        return retryMutedPlay(error);
       }
       updateVideoOutputs();
       return Promise.resolve();
@@ -2784,6 +2891,9 @@
           if (HlsCtor.Events.SUBTITLE_TRACKS_UPDATED) {
             hls.on(HlsCtor.Events.SUBTITLE_TRACKS_UPDATED, function(_event, data) {
               const tracks = data && Array.isArray(data.subtitleTracks) ? data.subtitleTracks : (Array.isArray(hls.subtitleTracks) ? hls.subtitleTracks : []);
+              if (tracks.length === 0 && subtitleState.tracks.length > 0) {
+                return;
+              }
               subtitleState.tracks = tracks.map(videoNormalizeTrackInfo);
               updateSubtitleOutputs();
             });
@@ -2791,6 +2901,9 @@
           if (HlsCtor.Events.ERROR) {
             hls.on(HlsCtor.Events.ERROR, function(_event, data) {
               if (data && data.fatal) {
+                if (recoverHLSFatalError(HlsCtor, data)) {
+                  return;
+                }
                 setError(data && data.details ? data.details : "video transport failed");
                 updateVideoOutputs();
               }

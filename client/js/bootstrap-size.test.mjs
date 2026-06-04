@@ -35,7 +35,11 @@ const budgets = [
   // for the canvas2d MARQUEE + KEYBOARD-NAV loop (shift-drag marquee overlay +
   // CANVAS_EVENT_MARQUEE, arrow-key CANVAS_EVENT_NAV, Escape-to-clear in
   // _bridgeCanvasBoardEvents) — interaction parity with the DOM site-map board.
-  { file: "bootstrap-feature-engines.js", raw: 66_000, gzip: 21_000, brotli: 19_000 },
+  //
+  // Bumped raw 66_000 -> 66_500 for video engine resilience: bitmap WebVTT cue
+  // placement, muted autoplay fallback, and fatal HLS network/media recovery.
+  // Direct compressed budgets still hold.
+  { file: "bootstrap-feature-engines.js", raw: 66_500, gzip: 21_000, brotli: 19_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -51,9 +55,10 @@ const routeBudgets = [
     // interaction loop (_bridgeCanvasBoardEvents); gzip headroom unchanged.
     // Bumped raw 169_000 -> 171_000 (gzip 48_000 -> 49_000) for the canvas2d
     // marquee + keyboard-nav loop (shift-drag marquee, arrow-key nav, Escape).
+    // Bumped brotli 43_000 -> 43_100 for the video resilience additions above.
     raw: 171_000,
     gzip: 49_000,
-    brotli: 43_000,
+    brotli: 43_100,
   },
 ];
 

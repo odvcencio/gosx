@@ -486,6 +486,8 @@ func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) stri
 		SyncStrategy:  firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "syncStrategy")), stringValue(attrValue(node.Attrs, env, "sync_strategy"))),
 		HLS:           mapStringAnyValue(attrValue(node.Attrs, env, "hls")),
 		HLSConfig:     mapStringAnyValue(attrValue(node.Attrs, env, "hlsConfig", "hls_config")),
+		AudioTrack:    firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "audioTrack")), stringValue(attrValue(node.Attrs, env, "audio_track"))),
+		AudioTracks:   videoAudioTrackListValue(firstNonEmptyValue(attrValue(node.Attrs, env, "audioTracks"), attrValue(node.Attrs, env, "audio_tracks"))),
 		SubtitleBase:  firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "subtitleBase")), stringValue(attrValue(node.Attrs, env, "subtitle_base"))),
 		SubtitleTrack: firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "subtitleTrack")), stringValue(attrValue(node.Attrs, env, "subtitle_track"))),
 		SubtitleTracks: videoTrackListValue(firstNonEmptyValue(
@@ -508,6 +510,8 @@ func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) stri
 		"volume", "rate",
 		"sync", "syncMode", "sync_mode", "syncStrategy", "sync_strategy",
 		"hls", "hlsConfig", "hls_config",
+		"audioTrack", "audio_track",
+		"audioTracks", "audio_tracks",
 		"subtitleBase", "subtitle_base",
 		"subtitleTrack", "subtitle_track",
 		"subtitleTracks", "subtitle_tracks",
@@ -1862,6 +1866,10 @@ func mapStringAnyValue(value any) map[string]any {
 
 func videoSourceListValue(value any) []server.VideoSource {
 	return decodeVideoListValue[server.VideoSource](value)
+}
+
+func videoAudioTrackListValue(value any) []server.VideoAudioTrack {
+	return decodeVideoListValue[server.VideoAudioTrack](value)
 }
 
 func videoTrackListValue(value any) []server.VideoTrack {

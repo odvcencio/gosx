@@ -646,6 +646,8 @@ func Page() Node {
 			controls
 			muted
 			playsInline
+			audioTrack="jpn"
+			audioTracks={data.audioTracks}
 			subtitleTrack="en"
 			sources={data.sources}
 			subtitleTracks={data.tracks}
@@ -667,6 +669,9 @@ func Page() Node {
 			},
 			"tracks": []map[string]any{
 				{"id": "en", "language": "en", "title": "English", "kind": "captions", "src": "subs/en-custom.vtt"},
+			},
+			"audioTracks": []map[string]any{
+				{"id": "jpn", "language": "jpn", "title": "Japanese", "default": true},
 			},
 		},
 	}
@@ -701,6 +706,8 @@ func Page() Node {
 	for _, snippet := range []string{
 		`gosx-manifest`,
 		`bootstrap-runtime.js`,
+		`"audioTrack": "jpn"`,
+		`"audioTracks": [`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in video runtime head %q", snippet, head)

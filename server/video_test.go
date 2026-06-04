@@ -73,7 +73,13 @@ func TestVideoRendersMultiSourceBaselineWithoutRootSrcAttr(t *testing.T) {
 }
 
 func TestVideoEngineConfigUsesManagedVideoDefaults(t *testing.T) {
-	cfg := VideoEngineConfig(VideoProps{Src: "media/promo.mp4"})
+	cfg := VideoEngineConfig(VideoProps{
+		Src:        "media/promo.mp4",
+		AudioTrack: "3",
+		AudioTracks: []VideoAudioTrack{
+			{ID: "3", Language: "jpn", Label: "Japanese", Default: true},
+		},
+	})
 
 	if cfg.Name != defaultVideoEngineName {
 		t.Fatalf("expected default engine name %q, got %q", defaultVideoEngineName, cfg.Name)
@@ -83,6 +89,9 @@ func TestVideoEngineConfigUsesManagedVideoDefaults(t *testing.T) {
 	}
 	if !strings.Contains(string(cfg.Props), `"src":"/media/promo.mp4"`) {
 		t.Fatalf("expected normalized video src in props, got %s", string(cfg.Props))
+	}
+	if !strings.Contains(string(cfg.Props), `"audioTrack":"3"`) || !strings.Contains(string(cfg.Props), `"audioTracks":[`) {
+		t.Fatalf("expected audio track contract in props, got %s", string(cfg.Props))
 	}
 	if got := len(cfg.Capabilities); got != 3 {
 		t.Fatalf("expected three default capabilities, got %d", got)
