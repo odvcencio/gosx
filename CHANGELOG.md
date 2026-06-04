@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.25.0
+
+Video playback: selectable audio tracks, bitmap subtitle cues, and resilient HLS.
+
+`server.Video` gains multi-audio-track support (`VideoAudioTrack`, `AudioTrack` /
+`AudioTracks` props) so a player can enumerate and select among embedded audio
+streams, with the file-router (`route/fileprogram`) wiring the `audioTrack` /
+`audioTracks` attributes through. Subtitle handling adds bitmap (image-based) cue
+parsing alongside text cues. The client video runtime adds HLS fatal-error
+recovery — network errors restart loading, media errors call `recoverMediaError`
+— and a muted-autoplay retry so a blocked autoplay falls back to muted playback
+instead of failing. Also consolidates the client bootstrap/runtime updates
+accumulated since v0.24.0 (tags v0.24.1–v0.24.3, which shipped without changelog
+entries).
+
 ## v0.24.0
 
 Scene3D WebGPU honesty gate.

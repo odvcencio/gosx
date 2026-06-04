@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.24.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.25.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -218,7 +218,7 @@ count    // local to the declaring island
 
 **Text Layout** — `TextBlock` supports both server-measured native rendering with no JavaScript and bootstrap-managed browser refinement. Font, width, line-height, locale, clamping, and ellipsis stay in one framework-level contract.
 
-**Managed Video** — `server.Video`, `ctx.Video`, and the `.gsx` `<Video />` builtin render a real server `<video>` baseline with `<source>` and `<track>` children, then the built-in video engine can layer in HLS fallback, subtitle loading, sync, and shared `$video.*` signals when the page needs them.
+**Managed Video** — `server.Video`, `ctx.Video`, and the `.gsx` `<Video />` builtin render a real server `<video>` baseline with `<source>` and `<track>` children, then the built-in video engine can layer in HLS fallback (with fatal-error recovery and muted-autoplay retry), selectable audio tracks, text and bitmap subtitle cues, sync, and shared `$video.*` signals when the page needs them.
 
 **Managed Motion** — `server.Motion`, `ctx.Motion`, and the `.gsx` `<Motion />` builtin expose server-authored motion presets that run on the shared bootstrap layer. Preset, trigger, duration, delay, easing, reduced-motion policy, and distance all stay in one declarative contract.
 
