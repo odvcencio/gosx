@@ -73,22 +73,24 @@ type CanvasBoardPan struct {
 }
 
 // CanvasBoardNode is a single board element. Kind selects the shape:
-// "rect", "line", "label", or "image". Fields not used by the chosen kind
-// are ignored.
+// "rect", "line", "label", "image", or "html". Fields not used by the chosen
+// kind are ignored.
 type CanvasBoardNode struct {
-	ID     string  `json:"id,omitempty"`
-	Kind   string  `json:"kind"`
-	X      float64 `json:"x,omitempty"`
-	Y      float64 `json:"y,omitempty"`
-	Width  float64 `json:"width,omitempty"`
-	Height float64 `json:"height,omitempty"`
-	X1     float64 `json:"x1,omitempty"`
-	Y1     float64 `json:"y1,omitempty"`
-	X2     float64 `json:"x2,omitempty"`
-	Y2     float64 `json:"y2,omitempty"`
-	Color  string  `json:"color,omitempty"`
-	Text   string  `json:"text,omitempty"`
-	Src    string  `json:"src,omitempty"`
+	ID            string  `json:"id,omitempty"`
+	Kind          string  `json:"kind"`
+	X             float64 `json:"x,omitempty"`
+	Y             float64 `json:"y,omitempty"`
+	Width         float64 `json:"width,omitempty"`
+	Height        float64 `json:"height,omitempty"`
+	X1            float64 `json:"x1,omitempty"`
+	Y1            float64 `json:"y1,omitempty"`
+	X2            float64 `json:"x2,omitempty"`
+	Y2            float64 `json:"y2,omitempty"`
+	Color         string  `json:"color,omitempty"`
+	Text          string  `json:"text,omitempty"`
+	Src           string  `json:"src,omitempty"`
+	Markup        string  `json:"markup,omitempty"`
+	PointerEvents string  `json:"pointerEvents,omitempty"`
 }
 
 // CanvasBoard returns a gosx.Node that renders to a <canvas> placeholder the

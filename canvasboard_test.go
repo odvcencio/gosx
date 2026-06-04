@@ -155,6 +155,45 @@ func extractAttr(html, name string) string {
 	return unescapeAttr(value)
 }
 
+// TestCanvasBoardNodeHTMLFields verifies that CanvasBoardNode carries the
+// Markup and PointerEvents fields required for the "html" kind, and that they
+// round-trip correctly through JSON marshalling.
+func TestCanvasBoardNodeHTMLFields(t *testing.T) {
+	node := CanvasBoardNode{
+		Kind:          "html",
+		Markup:        `<b data-gosx-html-key="k">x</b>`,
+		PointerEvents: "auto",
+		X:             0,
+		Y:             0,
+		Width:         1280,
+		Height:        720,
+	}
+
+	data, err := json.Marshal(node)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	s := string(data)
+
+	if !strings.Contains(s, `"markup"`) {
+		t.Errorf("JSON missing \"markup\" key: %s", s)
+	}
+	if !strings.Contains(s, `"pointerEvents"`) {
+		t.Errorf("JSON missing \"pointerEvents\" key: %s", s)
+	}
+
+	var got CanvasBoardNode
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if got.Markup != node.Markup {
+		t.Errorf("Markup = %q, want %q", got.Markup, node.Markup)
+	}
+	if got.PointerEvents != node.PointerEvents {
+		t.Errorf("PointerEvents = %q, want %q", got.PointerEvents, node.PointerEvents)
+	}
+}
+
 // unescapeAttr inverts the HTML attribute escaping that node.go applies in
 // renderAttrHTML. Handles both named entities and the decimal numeric
 // entities (&#34;) the gosx renderer emits for quote characters.
