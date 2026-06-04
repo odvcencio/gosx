@@ -679,6 +679,7 @@ func buildCanvasBoardRenderBundleWithCamera(props map[string]any, nodes []resolv
 		Labels:     []rootengine.RenderLabel{},
 		Sprites:    []rootengine.RenderSprite{},
 		Lines:      []rootengine.RenderLine{},
+		HTML:       []rootengine.RenderHTML{},
 	}
 
 	for index, node := range nodes {
@@ -698,6 +699,8 @@ func buildCanvasBoardRenderBundleWithCamera(props map[string]any, nodes []resolv
 			b.Labels = append(b.Labels, canvasBoardLabel(index, node))
 		case "image", "sprite":
 			b.Sprites = append(b.Sprites, canvasBoardSprite(index, node))
+		case "html":
+			b.HTML = append(b.HTML, canvasBoardHTML(index, node))
 		}
 	}
 	b.ObjectCount = len(b.Objects)
@@ -864,6 +867,27 @@ func canvasBoardSprite(index int, node resolvedNode) rootengine.RenderSprite {
 		Position: rootengine.RenderPoint{X: x, Y: y},
 		Width:    w,
 		Height:   h,
+	}
+}
+
+func canvasBoardHTML(index int, node resolvedNode) rootengine.RenderHTML {
+	x, _ := numericProp(node.Props, "x")
+	y, _ := numericProp(node.Props, "y")
+	w, _ := numericProp(node.Props, "width")
+	h, _ := numericProp(node.Props, "height")
+	markup, _ := node.Props["markup"].(string)
+	pointerEvents, _ := node.Props["pointerEvents"].(string)
+	if pointerEvents == "" {
+		pointerEvents = "auto"
+	}
+	return rootengine.RenderHTML{
+		ID:            canvasBoardNodeID(node, index),
+		Markup:        markup,
+		X:             x,
+		Y:             y,
+		Width:         w,
+		Height:        h,
+		PointerEvents: pointerEvents,
 	}
 }
 
