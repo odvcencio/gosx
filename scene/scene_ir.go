@@ -120,6 +120,8 @@ type ObjectIR struct {
 	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
 	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
 	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
+	ShaderBackend      string         `json:"shaderBackend,omitempty"`
+	ShaderLayout       map[string]any `json:"shaderLayout,omitempty"`
 	Pickable           *bool          `json:"pickable,omitempty"`
 	Selected           bool           `json:"selected,omitempty"`
 	OutlineColor       string         `json:"outlineColor,omitempty"`
@@ -867,6 +869,10 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setString(record, "customFragmentWGSL", item.CustomFragmentWGSL)
 	if len(item.CustomUniforms) > 0 {
 		record["customUniforms"] = cloneSceneAnyMap(item.CustomUniforms)
+	}
+	setString(record, "shaderBackend", item.ShaderBackend)
+	if len(item.ShaderLayout) > 0 {
+		record["shaderLayout"] = cloneSceneAnyMap(item.ShaderLayout)
 	}
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable

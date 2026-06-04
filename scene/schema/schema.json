@@ -228,6 +228,8 @@
         "customVertexWGSL": { "type": "string" },
         "customFragmentWGSL": { "type": "string" },
         "customUniforms": { "$ref": "#/$defs/stateRecord" },
+        "shaderBackend": { "type": "string" },
+        "shaderLayout": { "$ref": "#/$defs/stateRecord" },
         "depthWrite": { "type": "boolean" },
         "roughness": { "type": "number" },
         "metalness": { "type": "number" },

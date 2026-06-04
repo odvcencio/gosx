@@ -11,7 +11,9 @@ const budgets = [
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.js
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.
-  { file: "bootstrap.js", raw: 812_000, gzip: 222_000, brotli: 182_000 },
+  // Bumped raw 812_000 -> 814_000 and gzip 222_000 -> 223_000 for Scene3D's
+  // Selena shader descriptor transport (`shaderBackend` + `shaderLayout`).
+  { file: "bootstrap.js", raw: 814_000, gzip: 223_000, brotli: 182_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   { file: "bootstrap-feature-scene3d.js", raw: 510_000, gzip: 140_000, brotli: 116_000 },

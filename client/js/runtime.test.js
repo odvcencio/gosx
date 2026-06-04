@@ -7660,6 +7660,8 @@ test("bootstrap preserves named Scene3D custom WGSL materials through object bun
           color: "#f5c76b",
           customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
           customUniforms: { pulse: 0.75 },
+          shaderBackend: "selena",
+          shaderLayout: { schemaVersion: "selena.descriptor.v1", material: "ShaderCard" },
           variants: {
             constrained: {
               color: "#94a3b8",
@@ -7678,6 +7680,8 @@ test("bootstrap preserves named Scene3D custom WGSL materials through object bun
   assert.equal(objects[0].color, "#94a3b8");
   assert.equal(objects[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(1.0); }");
   assert.equal(objects[0].customUniforms.pulse, 0.75);
+  assert.equal(objects[0].shaderBackend, "selena");
+  assert.equal(objects[0].shaderLayout.material, "ShaderCard");
 
   const bundle = api.createSceneRenderBundle(
     320,
@@ -7702,6 +7706,8 @@ test("bootstrap preserves named Scene3D custom WGSL materials through object bun
   assert.equal(bundle.materials[0].color, "#94a3b8");
   assert.equal(bundle.materials[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(1.0); }");
   assert.equal(bundle.materials[0].customUniforms.pulse, 0.75);
+  assert.equal(bundle.materials[0].shaderBackend, "selena");
+  assert.equal(bundle.materials[0].shaderLayout.schemaVersion, "selena.descriptor.v1");
 });
 
 test("bootstrap applies named Scene3D materials to instanced mesh bundles", async () => {

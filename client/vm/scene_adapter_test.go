@@ -769,6 +769,28 @@ func TestSceneAdapterRenderBundlePreservesCustomWGSLMaterial(t *testing.T) {
 	}
 }
 
+func TestResolveRenderMaterialPreservesShaderDescriptor(t *testing.T) {
+	material := resolveRenderMaterial(sceneObject{
+		Material:           "custom",
+		CustomVertexWGSL:   "@vertex fn vertexMain() -> @builtin(position) vec4f { return vec4f(0.0); }",
+		CustomFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(1.0); }",
+		ShaderBackend:      "selena",
+		ShaderLayout: map[string]any{
+			"schemaVersion": "selena.descriptor.v1",
+			"material":      "Defaults",
+		},
+	})
+	if material.ShaderBackend != "selena" {
+		t.Fatalf("ShaderBackend = %q, want selena", material.ShaderBackend)
+	}
+	if material.ShaderLayout["material"] != "Defaults" {
+		t.Fatalf("ShaderLayout = %#v", material.ShaderLayout)
+	}
+	if !strings.Contains(material.Key, "selena.descriptor.v1") {
+		t.Fatalf("material key should include shader layout, got %q", material.Key)
+	}
+}
+
 func TestSceneAdapterRenderBundlePreservesPBRMaterialFields(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "PBRMaterial",

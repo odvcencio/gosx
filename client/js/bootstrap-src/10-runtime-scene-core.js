@@ -1575,6 +1575,8 @@
       customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
       customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
       customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
@@ -2556,6 +2558,8 @@
       customVertexWGSL: typeof sceneObjectMaterialValue(item, "customVertexWGSL") === "string" ? sceneObjectMaterialValue(item, "customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
       customFragmentWGSL: typeof sceneObjectMaterialValue(item, "customFragmentWGSL") === "string" ? sceneObjectMaterialValue(item, "customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
       customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
       transforms,
       colors,
       attributes,
@@ -2710,6 +2714,8 @@
       customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
       customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
       customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend.trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderLayout: sceneIsPlainObject(item.shaderLayout) ? sceneCloneData(item.shaderLayout) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       variantKey: typeof item._variantKey === "string" ? item._variantKey : (typeof current.variantKey === "string" ? current.variantKey : ""),
       _colorSpecified: colorSpecified || current._colorSpecified === true,
@@ -3078,6 +3084,8 @@
       customVertexWGSL: typeof material.customVertexWGSL === "string" ? material.customVertexWGSL : object.customVertexWGSL,
       customFragmentWGSL: typeof material.customFragmentWGSL === "string" ? material.customFragmentWGSL : object.customFragmentWGSL,
       customUniforms: sceneIsPlainObject(material.customUniforms) ? Object.assign({}, material.customUniforms) : object.customUniforms,
+      shaderBackend: typeof material.shaderBackend === "string" ? material.shaderBackend : object.shaderBackend,
+      shaderLayout: sceneIsPlainObject(material.shaderLayout) ? sceneCloneData(material.shaderLayout) : object.shaderLayout,
       variantKey: material.variantKey || object.variantKey,
     });
   }

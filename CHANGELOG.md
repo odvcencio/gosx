@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.25.3
+
+Scene3D now has Selena as its native shader authoring backend.
+
+`scene.CompileSelenaMaterial` compiles `.sel` source into a Scene3D
+`CustomMaterial`, emitting GLSL for WebGL, WGSL for WebGPU, descriptor-backed
+uniform defaults, and the Selena binding layout. The shader backend/layout
+metadata now travels through SceneIR, named material profiles, RenderBundle, and
+the browser runtime material normalizer so the full Scene3D path preserves the
+descriptor needed by WebGPU/WebGL shader execution.
+
+GoSX now consumes the published GPU triad releases directly:
+`m31labs.dev/selena v0.1.1`, `m31labs.dev/prism v0.1.2`, and
+`m31labs.dev/eos v0.1.4`. The render/gpu and render/compute comments now name
+the current triad ownership explicitly: Selena for presentation shaders, Elio
+for render-coupled compute, and Eos for inference on the shared GoSX GPU device
+and resource bus.
+
 ## v0.25.2
 
 CSRF protection now accepts the token from `multipart/form-data` submissions.

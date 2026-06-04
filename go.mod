@@ -23,10 +23,12 @@ require (
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.42.0
+	m31labs.dev/selena v0.1.1
 )
 
 require (
 	m31labs.dev/mll v0.1.0 // indirect
+	m31labs.dev/prism v0.1.2 // indirect
 	m31labs.dev/turboquant v0.2.0 // indirect
 )
 
@@ -48,5 +50,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
-	m31labs.dev/eos v0.1.1
+	m31labs.dev/eos v0.1.4
 )

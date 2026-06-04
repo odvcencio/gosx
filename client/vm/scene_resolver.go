@@ -70,6 +70,8 @@ type sceneObject struct {
 	CustomVertexWGSL   string
 	CustomFragmentWGSL string
 	CustomUniforms     map[string]any
+	ShaderBackend      string
+	ShaderLayout       map[string]any
 	Pickable           *bool
 	HasTexture         bool
 	HasOpacity         bool
@@ -934,6 +936,8 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		CustomVertexWGSL:   strings.TrimSpace(stringFromAny(propValue(node.Props, "customVertexWGSL"), "")),
 		CustomFragmentWGSL: strings.TrimSpace(stringFromAny(propValue(node.Props, "customFragmentWGSL"), "")),
 		CustomUniforms:     cloneAnyMap(propValue(node.Props, "customUniforms")),
+		ShaderBackend:      strings.TrimSpace(stringFromAny(propValue(node.Props, "shaderBackend"), "")),
+		ShaderLayout:       cloneAnyMap(propValue(node.Props, "shaderLayout")),
 		Pickable:           boolPtrFromAny(rawPickable),
 		HasTexture:         rawTexture != nil,
 		HasOpacity:         rawOpacity != nil,

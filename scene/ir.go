@@ -153,6 +153,8 @@ type IRMaterial struct {
 	CustomVertexWGSL   string                       `json:"customVertexWGSL,omitempty"`
 	CustomFragmentWGSL string                       `json:"customFragmentWGSL,omitempty"`
 	CustomUniforms     map[string]any               `json:"customUniforms,omitempty"`
+	ShaderBackend      string                       `json:"shaderBackend,omitempty"`
+	ShaderLayout       map[string]any               `json:"shaderLayout,omitempty"`
 	Variants           map[string]IRMaterialVariant `json:"variants,omitempty"`
 }
 
@@ -188,6 +190,8 @@ type IRMaterialVariant struct {
 	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
 	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
 	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
+	ShaderBackend      string         `json:"shaderBackend,omitempty"`
+	ShaderLayout       map[string]any `json:"shaderLayout,omitempty"`
 }
 
 // IRNode is a discriminated union over Kind. Exactly one payload should be set
@@ -886,6 +890,8 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		CustomVertexWGSL:   object.CustomVertexWGSL,
 		CustomFragmentWGSL: object.CustomFragmentWGSL,
 		CustomUniforms:     cloneSceneAnyMap(object.CustomUniforms),
+		ShaderBackend:      object.ShaderBackend,
+		ShaderLayout:       cloneSceneAnyMap(object.ShaderLayout),
 	}
 }
 

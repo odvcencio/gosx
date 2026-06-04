@@ -86,9 +86,9 @@ func (d *Device) Queue() gpu.Queue { return d.queue }
 func (d *Device) PreferredSurfaceFormat() gpu.TextureFormat { return d.format }
 
 // NativeDevice returns the underlying WebGPU GPUDevice as a syscall/js value, so
-// an external system (a Manta inference runtime or an Elio compute pass) can
+// an external system (an Eos inference runtime or an Elio compute pass) can
 // record onto the same device this renderer draws on. One half of the
-// device-sharing seam for the Manta↔Elio↔Selena triad.
+// device-sharing seam for the Eos↔Elio↔Selena triad.
 func (d *Device) NativeDevice() js.Value { return d.dev }
 
 // WrapDevice adopts an externally-created GPUDevice — one already shared with an

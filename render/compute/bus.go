@@ -1,13 +1,13 @@
 // Package compute is the render-coupled-compute extension surface for the GoSX
 // renderer: the GPU Resource Bus (a typed descriptor over render/gpu buffer and
 // texture handles) plus the ExternalComputePass hook (see pass.go) that lets
-// out-of-tree systems — Elio-generated kernels today, in-frame Manta inference
+// out-of-tree systems — Elio-generated kernels today, in-frame Eos inference
 // later — record compute passes onto the frame's command encoder and publish
 // their outputs as render inputs.
 //
 // The Bus is the shared data-plane contract spoken by the renderer, Elio
 // (render-coupled compute), Selena (presentation, via its binding layout), and
-// Manta (inference). It deliberately wraps the existing render/gpu types rather
+// Eos (inference). It deliberately wraps the existing render/gpu types rather
 // than introducing a second GPU abstraction: gpu is the device of record.
 package compute
 
@@ -67,7 +67,7 @@ func (l ElementLayout) VertexBufferLayout(step gpu.VertexStepMode) gpu.VertexBuf
 }
 
 // GPUResource is one handle on the bus: a typed buffer with a role and element
-// layout that the producer (Elio kernel, Manta) and the consumer (renderer
+// layout that the producer (Elio kernel, Eos) and the consumer (renderer
 // draw, Selena material) both understand.
 type GPUResource struct {
 	Name    string

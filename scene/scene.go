@@ -861,11 +861,13 @@ type LineDashedMaterial struct {
 // WebGL custom shaders use GLSL ES snippets; WebGPU custom shaders use WGSL.
 type CustomMaterial struct {
 	StandardMaterial
-	VertexGLSL   string
-	FragmentGLSL string
-	VertexWGSL   string
-	FragmentWGSL string
-	Uniforms     map[string]any
+	ShaderBackend string
+	ShaderLayout  map[string]any
+	VertexGLSL    string
+	FragmentGLSL  string
+	VertexWGSL    string
+	FragmentWGSL  string
+	Uniforms      map[string]any
 }
 
 type CubeGeometry struct {
@@ -2894,6 +2896,12 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if uniforms, ok := props["customUniforms"].(map[string]any); ok {
 		record.CustomUniforms = cloneSceneAnyMap(uniforms)
 	}
+	if shaderBackend, ok := mapStringValue(props["shaderBackend"]); ok {
+		record.ShaderBackend = shaderBackend
+	}
+	if shaderLayout, ok := props["shaderLayout"].(map[string]any); ok {
+		record.ShaderLayout = cloneSceneAnyMap(shaderLayout)
+	}
 	record.Roughness = mapFloat64(props["roughness"])
 	record.Metalness = mapFloat64(props["metalness"])
 	record.Clearcoat = mapFloat64(props["clearcoat"])
@@ -3245,6 +3253,8 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
 		record.CustomFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
 		record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
+		record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
+		record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
 	default:
 		// Fallback for any Material implementation not enumerated above —
 		// use the legacy map round-trip so correctness is preserved.
@@ -3359,6 +3369,10 @@ func (m CustomMaterial) legacyMaterial() map[string]any {
 	setString(out, "customFragmentWGSL", m.FragmentWGSL)
 	if len(m.Uniforms) > 0 {
 		out["customUniforms"] = cloneSceneAnyMap(m.Uniforms)
+	}
+	setString(out, "shaderBackend", m.ShaderBackend)
+	if len(m.ShaderLayout) > 0 {
+		out["shaderLayout"] = cloneSceneAnyMap(m.ShaderLayout)
 	}
 	return out
 }

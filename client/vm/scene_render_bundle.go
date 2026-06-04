@@ -429,7 +429,9 @@ func renderMaterialEqual(left, right rootengine.RenderMaterial) bool {
 		left.CustomFragment != right.CustomFragment ||
 		left.CustomVertexWGSL != right.CustomVertexWGSL ||
 		left.CustomFragmentWGSL != right.CustomFragmentWGSL ||
-		!reflect.DeepEqual(left.CustomUniforms, right.CustomUniforms) {
+		left.ShaderBackend != right.ShaderBackend ||
+		!reflect.DeepEqual(left.CustomUniforms, right.CustomUniforms) ||
+		!reflect.DeepEqual(left.ShaderLayout, right.ShaderLayout) {
 		return false
 	}
 	if len(left.ShaderData) != len(right.ShaderData) {
@@ -460,6 +462,8 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	profile.CustomVertexWGSL = object.CustomVertexWGSL
 	profile.CustomFragmentWGSL = object.CustomFragmentWGSL
 	profile.CustomUniforms = cloneAnyMap(object.CustomUniforms)
+	profile.ShaderBackend = object.ShaderBackend
+	profile.ShaderLayout = cloneAnyMap(object.ShaderLayout)
 
 	kindKey := strings.ToLower(strings.TrimSpace(profile.Kind))
 	customProfile, hasCustomProfile := materialProfileForKind(kindKey)
@@ -673,6 +677,12 @@ func renderMaterialKey(profile rootengine.RenderMaterial) string {
 	if len(profile.CustomUniforms) > 0 {
 		b.WriteByte('|')
 		b.WriteString(renderMaterialCustomUniformKey(profile.CustomUniforms))
+	}
+	b.WriteByte('|')
+	b.WriteString(strings.TrimSpace(profile.ShaderBackend))
+	if len(profile.ShaderLayout) > 0 {
+		b.WriteByte('|')
+		b.WriteString(renderMaterialCustomUniformKey(profile.ShaderLayout))
 	}
 	return b.String()
 }

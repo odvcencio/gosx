@@ -38,8 +38,8 @@ type PassContext struct {
 }
 
 // ExternalComputePass is a render-coupled compute pass contributed from outside
-// the renderer — the integration point for Elio-generated kernels (and, later,
-// in-frame Manta inference). The renderer calls Phase() to place it and
+// the renderer — the integration point for Elio-generated kernels and in-frame
+// Eos inference. The renderer calls Phase() to place it and
 // Record() to let it dispatch.
 //
 // Record must open and close its own compute pass on ctx.Encoder
