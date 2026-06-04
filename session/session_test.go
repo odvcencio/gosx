@@ -1,10 +1,12 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -144,6 +146,74 @@ func TestProtectRejectsMissingOrInvalidToken(t *testing.T) {
 	}
 	if got := jsonMissingRes.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
 		t.Fatalf("expected json csrf failure, got content-type %q", got)
+	}
+}
+
+// TestProtectAcceptsMultipartFormToken proves the CSRF guard reads the
+// csrf_token carried in a multipart/form-data body (e.g. the studio
+// workbench's fetch() with a FormData payload and no X-CSRF-Token header).
+func TestProtectAcceptsMultipartFormToken(t *testing.T) {
+	manager := MustNew("csrf-test-secret-value", Options{})
+	handler := manager.Middleware(manager.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, Token(r))
+			return
+		}
+		// Read a downstream field too, to confirm the cached multipart form
+		// is still usable by the handler after the middleware parsed it.
+		_ = r.FormValue("name")
+		w.WriteHeader(http.StatusNoContent)
+	})))
+
+	getReq := httptest.NewRequest(http.MethodGet, "/form", nil)
+	getRes := httptest.NewRecorder()
+	handler.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", getRes.Code)
+	}
+	token := strings.TrimSpace(getRes.Body.String())
+	if token == "" {
+		t.Fatal("expected csrf token")
+	}
+	cookie := getRes.Result().Cookies()[0]
+
+	// Multipart POST carrying the valid token in the body and NO header.
+	multipartBody := func(withToken bool) (*bytes.Buffer, string) {
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		if err := writer.WriteField("name", "Ada"); err != nil {
+			t.Fatalf("write name field: %v", err)
+		}
+		if withToken {
+			if err := writer.WriteField(defaultCSRFField, token); err != nil {
+				t.Fatalf("write token field: %v", err)
+			}
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("close multipart writer: %v", err)
+		}
+		return &buf, writer.FormDataContentType()
+	}
+
+	body, contentType := multipartBody(true)
+	validReq := httptest.NewRequest(http.MethodPost, "/form", body)
+	validReq.Header.Set("Content-Type", contentType)
+	validReq.AddCookie(cookie)
+	validRes := httptest.NewRecorder()
+	handler.ServeHTTP(validRes, validReq)
+	if validRes.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for multipart csrf token, got %d", validRes.Code)
+	}
+
+	// Multipart POST WITHOUT the token and no header must still be rejected.
+	missingBody, missingContentType := multipartBody(false)
+	missingReq := httptest.NewRequest(http.MethodPost, "/form", missingBody)
+	missingReq.Header.Set("Content-Type", missingContentType)
+	missingReq.AddCookie(cookie)
+	missingRes := httptest.NewRecorder()
+	handler.ServeHTTP(missingRes, missingReq)
+	if missingRes.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for multipart without csrf token, got %d", missingRes.Code)
 	}
 }
 

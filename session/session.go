@@ -148,8 +148,13 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 		expected := store.ensureCSRFToken()
 		actual := r.Header.Get("X-CSRF-Token")
 		if actual == "" && !requestWantsJSON(r) {
-			_ = r.ParseForm()
-			actual = r.Form.Get(defaultCSRFField)
+			// FormValue parses multipart/form-data (via ParseMultipartForm)
+			// as well as urlencoded bodies and query params, so it reads the
+			// csrf_token whether the form was submitted as multipart (e.g. the
+			// studio workbench's FormData fetch) or urlencoded. The parsed form
+			// is cached on the request, so downstream handlers reusing it are
+			// unaffected.
+			actual = r.FormValue(defaultCSRFField)
 		}
 		if !constantTimeSessionStringEqual(expected, actual) {
 			writeCSRFFailure(w, r)
