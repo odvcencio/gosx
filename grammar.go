@@ -10,6 +10,7 @@ package gosx
 //	<div class="counter">...</div>       -> element tags
 //	<Counter count={n} />                -> component tags (capitalized)
 //	{expression}                         -> expression holes
+//	{cond ? a : b}                       -> ternary conditional (text or attribute)
 //	<>...</>                             -> fragments
 //	<div>{cond && <span>yes</span>}</div> -> conditional via Go expressions
 func GosxGrammar() *Grammar {
@@ -194,5 +195,24 @@ func GosxGrammar() *Grammar {
 			PrecDynamic(5, Sym("jsx_self_closing_element")),
 			PrecDynamic(5, Sym("jsx_fragment")),
 		))
+
+		// Ternary conditional: `cond ? a : b`. Go has no ternary, but the island
+		// expression DSL (ir/exprparse.go) does — and attribute `{...}` values
+		// already accept it because they are raw-captured by the external
+		// scanner. Adding it to _expression lets the same conditional appear in a
+		// text-child `{...}` container (`<span>{c.Get() ? "a" : "b"}</span>`),
+		// which previously errored as invalid Go. Lowering takes the node's raw
+		// text, so the DSL parser evaluates it; no IR change is needed.
+		// PrecRight(0) binds looser than `||` (binary level 1) and is
+		// right-associative, matching C-family ternary.
+		g.Define("gsx_ternary_expression",
+			PrecRight(0, Seq(
+				Field("condition", Sym("_expression")),
+				Str("?"),
+				Field("consequence", Sym("_expression")),
+				Str(":"),
+				Field("alternative", Sym("_expression")),
+			)))
+		AppendChoice(g, "_expression", Sym("gsx_ternary_expression"))
 	})
 }
