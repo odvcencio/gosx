@@ -446,7 +446,10 @@ func (l *lowerer) signalCallKind(funcNode *gotreesitter.Node) signalCall {
 		return signalCallNewShared
 	case "Shared":
 		return signalCallShared
-	case "Derive":
+	case "Derive", "Computed":
+		// Derive and Computed are aliases for the same derived-signal
+		// construct. Computed is the name gosx-docs document; both lower to a
+		// ComputedDef whose body is the func literal's return expression.
 		return signalCallDerive
 	default:
 		return signalCallUnknown

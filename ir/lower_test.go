@@ -244,3 +244,53 @@ func Wrap() string {
 		t.Fatalf("expected nested GSX in func literal to stay out of top-level components, got %d components", len(prog.Components))
 	}
 }
+
+// TestLowerRecognizesSignalComputed proves the frontend extracts a
+// `signal.Computed(func() T { return <expr> })` declaration as a computed
+// (same as signal.Derive), so `name.Get()` resolves in render. signal.Computed
+// is the form gosx-docs document; the IR + VM already support computeds.
+func TestLowerRecognizesSignalComputed(t *testing.T) {
+	source := []byte(`package main
+
+//gosx:island
+func Demo() Node {
+	count := signal.New(0)
+	doubled := signal.Computed(func() int { return count.Get() * 2 })
+	return <div>{doubled.Get()}</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	comp := prog.Components[0]
+	if comp.Scope == nil {
+		t.Fatal("component scope is nil")
+	}
+	found := false
+	for _, c := range comp.Scope.Computeds {
+		if c.Name == "doubled" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("signal.Computed not recognized as a computed; got Computeds=%+v Locals=%+v", comp.Scope.Computeds, comp.Scope.Locals)
+	}
+
+	// End-to-end: LowerIsland must succeed, which requires the render binding
+	// {doubled.Get()} to resolve — it only does because the computed registers
+	// `doubled` as a signal. Before the fix this failed with `unknown method "Get"`.
+	island, err := ir.LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("LowerIsland failed (computed render binding {doubled.Get()} unresolved?): %v", err)
+	}
+	emitted := false
+	for _, c := range island.Computeds {
+		if c.Name == "doubled" {
+			emitted = true
+		}
+	}
+	if !emitted {
+		t.Fatalf("computed not emitted into island program: %+v", island.Computeds)
+	}
+}
