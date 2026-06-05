@@ -339,27 +339,105 @@ func reorderedIndices(indexByKey map[string]int, desired []string) []int {
 	return order
 }
 
+// reconcilePositionalChildren diffs unkeyed children. When every child has a
+// distinct identity (its Key, else its program Source — both unique among
+// siblings) it uses an identity-aware two-pointer walk so an insert or removal
+// ANYWHERE in the list (e.g. a conditional toggling between siblings) patches
+// the right positions instead of cascading mismatches down the tail. `d` tracks
+// the live DOM child index as inserts/removals shift it. When identities repeat
+// (unkeyed/duplicate-keyed list rows that fell through from the keyed differ) it
+// falls back to a plain index-positional diff.
 func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
-	prevLen := len(pn.Children)
-	nextLen := len(nn.Children)
-	common := prevLen
-	if nextLen < common {
-		common = nextLen
+	pc, nc := pn.Children, nn.Children
+	prevHas, prevUnique := childIdentitySet(prev, pc)
+	nextHas, nextUnique := childIdentitySet(next, nc)
+
+	if !prevUnique || !nextUnique {
+		reconcileIndexPositional(ops, prev, next, pc, nc, path, staticMask)
+		return
 	}
 
-	// Reconcile the shared prefix in place.
-	for i := 0; i < common; i++ {
-		reconcileNodePair(ops, prev, next, pn.Children[i], nn.Children[i], childPath(path, i), staticMask)
+	i, j, d := 0, 0, 0
+	for i < len(pc) && j < len(nc) {
+		pid := childIdentity(prev, pc[i])
+		nid := childIdentity(next, nc[j])
+		switch {
+		case pid == nid:
+			reconcileNodePair(ops, prev, next, pc[i], nc[j], childPath(path, d), staticMask)
+			i, j, d = i+1, j+1, d+1
+		case !nextHas[pid]:
+			appendRemoveChild(ops, childPath(path, d)) // prev child gone; successor shifts to d
+			i++
+		case !prevHas[nid]:
+			appendCreateSubtree(ops, next, nc[j], path, d) // next child is new
+			j, d = j+1, d+1
+		default:
+			reconcileNodePair(ops, prev, next, pc[i], nc[j], childPath(path, d), staticMask)
+			i, j, d = i+1, j+1, d+1
+		}
 	}
-	// Remove the prev tail LAST-TO-FIRST so each removal doesn't shift the index
-	// of the next one (the patch applier resolves paths against the live DOM).
-	for i := prevLen - 1; i >= nextLen; i-- {
+	for ; i < len(pc); i++ {
+		appendRemoveChild(ops, childPath(path, d))
+	}
+	for ; j < len(nc); j++ {
+		appendCreateSubtree(ops, next, nc[j], path, d)
+		d++
+	}
+}
+
+// reconcileIndexPositional is the index-by-index fallback used when identities
+// are not unique: reconcile the shared prefix in place, remove the prev tail
+// last-to-first (so removals don't shift later indices), then append the next
+// tail.
+func reconcileIndexPositional(ops *[]PatchOp, prev, next *ResolvedTree, pc, nc []int, path string, staticMask []bool) {
+	common := len(pc)
+	if len(nc) < common {
+		common = len(nc)
+	}
+	for i := 0; i < common; i++ {
+		reconcileNodePair(ops, prev, next, pc[i], nc[i], childPath(path, i), staticMask)
+	}
+	for i := len(pc) - 1; i >= len(nc); i-- {
 		appendRemoveChild(ops, childPath(path, i))
 	}
-	// Append the next tail in order.
-	for i := prevLen; i < nextLen; i++ {
-		appendCreateSubtree(ops, next, nn.Children[i], path, i)
+	for i := len(pc); i < len(nc); i++ {
+		appendCreateSubtree(ops, next, nc[i], path, i)
 	}
+}
+
+func childIdentity(tree *ResolvedTree, idx int) string {
+	n := resolvedNodeAt(tree, idx)
+	if n == nil {
+		return ""
+	}
+	if n.Key != "" {
+		return "k:" + n.Key
+	}
+	if n.HasSource && n.Source >= 0 {
+		return "s:" + strconv.Itoa(n.Source)
+	}
+	return ""
+}
+
+// childIdentitySet returns the set of non-empty child identities and whether
+// every child had a distinct, non-empty identity (the precondition for
+// identity-aware diffing).
+func childIdentitySet(tree *ResolvedTree, indices []int) (map[string]bool, bool) {
+	if len(indices) == 0 {
+		return nil, true
+	}
+	set := make(map[string]bool, len(indices))
+	unique := true
+	for _, idx := range indices {
+		id := childIdentity(tree, idx)
+		if id == "" || set[id] {
+			unique = false
+		}
+		if id != "" {
+			set[id] = true
+		}
+	}
+	return set, unique
 }
 
 func appendReplaceSubtree(ops *[]PatchOp, tree *ResolvedTree, nodeIdx int, path string) {

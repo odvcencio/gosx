@@ -69,3 +69,34 @@ func TestConditionalAtTailMountsUnmounts(t *testing.T) {
 		t.Fatalf("toggle-off did not remove: %+v", off)
 	}
 }
+
+// TestConditionalInMiddleMountsAndUpdatesSibling proves a conditional toggling
+// in the MIDDLE of siblings inserts its node in place AND lets following
+// siblings keep updating — no cascade/full-recreate. This is the identity-aware
+// positional diff (insert anywhere, not just the tail).
+func TestConditionalInMiddleMountsAndUpdatesSibling(t *testing.T) {
+	isl := reactIsland(t, "\topen := signal.New(false)\n\ttog := func() { open.Set(!open.Get()) }\n\t_ = tog\n",
+		"<div><button onClick={tog}>x</button>{open.Get() && <span>S</span>}<b>{open.Get() ? \"Y\" : \"N\"}</b></div>")
+	ps := isl.Dispatch("tog", "{}")
+	createdSpan, setY, removes := false, false, 0
+	for _, p := range ps {
+		if p.Kind == vm.PatchCreateElement && p.Tag == "span" {
+			createdSpan = true
+		}
+		if p.Kind == vm.PatchSetText && p.Text == "Y" {
+			setY = true
+		}
+		if p.Kind == vm.PatchRemoveElement {
+			removes++
+		}
+	}
+	if !createdSpan {
+		t.Fatalf("conditional did not insert span: %+v", ps)
+	}
+	if !setY {
+		t.Fatalf("following sibling <b> did not update to Y: %+v", ps)
+	}
+	if removes != 0 {
+		t.Fatalf("expected no removals (clean middle insert), got %d: %+v", removes, ps)
+	}
+}
