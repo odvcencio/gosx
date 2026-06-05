@@ -3,6 +3,7 @@ package scene
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"m31labs.dev/selena"
@@ -25,6 +26,64 @@ type SelenaCompiledMaterial struct {
 	Name     string
 	Material CustomMaterial
 	Layout   bindings.Layout
+}
+
+// SelenaUniforms converts a tagged Go struct or map into Selena host uniform
+// overrides. Struct fields use `selena:"name"` when present, then `json:"name"`,
+// then a lower-camel version of the exported Go field name. Slices and arrays
+// are converted to cloned slices so vector/color uniforms are safe to reuse.
+func SelenaUniforms(values any) (map[string]any, error) {
+	if values == nil {
+		return nil, nil
+	}
+	v := reflect.ValueOf(values)
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return nil, nil
+		}
+		v = v.Elem()
+	}
+	switch v.Kind() {
+	case reflect.Map:
+		if v.Type().Key().Kind() != reflect.String {
+			return nil, fmt.Errorf("selena uniforms map key must be string, got %s", v.Type().Key())
+		}
+		out := make(map[string]any, v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			name := strings.TrimSpace(iter.Key().String())
+			if name == "" {
+				continue
+			}
+			value, err := selenaUniformReflectValue(iter.Value())
+			if err != nil {
+				return nil, fmt.Errorf("uniform %s: %w", name, err)
+			}
+			out[name] = value
+		}
+		return out, nil
+	case reflect.Struct:
+		out := make(map[string]any, v.NumField())
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			name := selenaUniformFieldName(field)
+			if name == "" {
+				continue
+			}
+			value, err := selenaUniformReflectValue(v.Field(i))
+			if err != nil {
+				return nil, fmt.Errorf("uniform %s: %w", name, err)
+			}
+			out[name] = value
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("selena uniforms must be a struct or map, got %s", v.Kind())
+	}
 }
 
 // CompileSelenaMaterial compiles Selena .sel source into GoSX's native
@@ -165,4 +224,103 @@ func cloneSelenaUniformValue(value any) any {
 	default:
 		return value
 	}
+}
+
+func selenaUniformFieldName(field reflect.StructField) string {
+	if tag, ok := field.Tag.Lookup("selena"); ok {
+		name := strings.TrimSpace(strings.Split(tag, ",")[0])
+		if name == "-" {
+			return ""
+		}
+		if name != "" {
+			return name
+		}
+	}
+	if tag, ok := field.Tag.Lookup("json"); ok {
+		name := strings.TrimSpace(strings.Split(tag, ",")[0])
+		if name == "-" {
+			return ""
+		}
+		if name != "" {
+			return name
+		}
+	}
+	return lowerFirstASCII(field.Name)
+}
+
+func selenaUniformReflectValue(value reflect.Value) (any, error) {
+	if !value.IsValid() {
+		return nil, nil
+	}
+	for value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return nil, nil
+		}
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return value.Interface(), nil
+	case reflect.Slice, reflect.Array:
+		return selenaUniformSequence(value)
+	default:
+		return nil, fmt.Errorf("unsupported uniform value kind %s", value.Kind())
+	}
+}
+
+func selenaUniformSequence(value reflect.Value) (any, error) {
+	if value.Kind() == reflect.Slice && value.IsNil() {
+		return nil, nil
+	}
+	elem := value.Type().Elem()
+	switch elem.Kind() {
+	case reflect.Float32:
+		out := make([]float32, value.Len())
+		for i := range out {
+			out[i] = float32(value.Index(i).Convert(elem).Float())
+		}
+		return out, nil
+	case reflect.Float64:
+		out := make([]float64, value.Len())
+		for i := range out {
+			out[i] = value.Index(i).Convert(elem).Float()
+		}
+		return out, nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		out := make([]int, value.Len())
+		for i := range out {
+			out[i] = int(value.Index(i).Convert(elem).Int())
+		}
+		return out, nil
+	case reflect.String:
+		out := make([]string, value.Len())
+		for i := range out {
+			out[i] = value.Index(i).Convert(elem).String()
+		}
+		return out, nil
+	default:
+		out := make([]any, value.Len())
+		for i := range out {
+			item, err := selenaUniformReflectValue(value.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = item
+		}
+		return out, nil
+	}
+}
+
+func lowerFirstASCII(value string) string {
+	if value == "" {
+		return ""
+	}
+	b := []byte(value)
+	if b[0] >= 'A' && b[0] <= 'Z' {
+		b[0] += 'a' - 'A'
+	}
+	return string(b)
 }

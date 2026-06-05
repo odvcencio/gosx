@@ -109,6 +109,18 @@ func TestCompileSelenaMaterialFeedsScene3D(t *testing.T) {
 }
 
 func TestCompileSelenaBundleCompilesOrderedMaterialSet(t *testing.T) {
+	diskUniforms, err := SelenaUniforms(struct {
+		Phase float32 `selena:"phase"`
+	}{Phase: 0.4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coronaUniforms, err := SelenaUniforms(struct {
+		Phase float32 `selena:"phase"`
+	}{Phase: 0.9})
+	if err != nil {
+		t.Fatal(err)
+	}
 	bundle, err := CompileSelenaBundle([]byte(selenaBundleSource),
 		SelenaMaterialOptions{
 			Material: "GalaxyDisk",
@@ -117,7 +129,7 @@ func TestCompileSelenaBundleCompilesOrderedMaterialSet(t *testing.T) {
 				Emissive:  1.25,
 				BlendMode: BlendAdditive,
 			},
-			Uniforms: map[string]any{"phase": float32(0.4)},
+			Uniforms: diskUniforms,
 		},
 		SelenaMaterialOptions{
 			Material: "GalaxyCorona",
@@ -126,7 +138,7 @@ func TestCompileSelenaBundleCompilesOrderedMaterialSet(t *testing.T) {
 				Emissive:  1.75,
 				BlendMode: BlendAdditive,
 			},
-			Uniforms: map[string]any{"phase": float32(0.9)},
+			Uniforms: coronaUniforms,
 		},
 	)
 	if err != nil {
@@ -169,6 +181,55 @@ func TestCompileSelenaBundleDefaultsToLastMaterial(t *testing.T) {
 	}
 	if len(bundle) != 1 || bundle[0].Name != "GalaxyCorona" {
 		t.Fatalf("default bundle = %+v, want last material GalaxyCorona", bundle)
+	}
+}
+
+func TestSelenaUniformsConvertsTaggedStructsAndClonesSequences(t *testing.T) {
+	type galaxyUniforms struct {
+		Phase     float32    `selena:"phase"`
+		DiskColor [3]float32 `selena:"diskColor"`
+		Gain      float64    `json:"gain,omitempty"`
+		Ignored   string     `selena:"-"`
+	}
+	uniforms, err := SelenaUniforms(galaxyUniforms{
+		Phase:     0.25,
+		DiskColor: [3]float32{0.44, 0.72, 1.0},
+		Gain:      1.5,
+		Ignored:   "nope",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := uniforms["phase"]; got != float32(0.25) {
+		t.Fatalf("phase = %#v, want float32(0.25)", got)
+	}
+	if got, want := uniforms["diskColor"], []float32{0.44, 0.72, 1.0}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("diskColor = %#v, want %#v", got, want)
+	}
+	if got := uniforms["gain"]; got != float64(1.5) {
+		t.Fatalf("gain = %#v, want float64(1.5)", got)
+	}
+	if _, ok := uniforms["Ignored"]; ok {
+		t.Fatalf("ignored field leaked into uniforms: %#v", uniforms)
+	}
+}
+
+func TestSelenaUniformsClonesMapValues(t *testing.T) {
+	color := []float32{1, 0.5, 0.25}
+	uniforms, err := SelenaUniforms(map[string]any{"color": color})
+	if err != nil {
+		t.Fatal(err)
+	}
+	color[0] = 0
+	if got, want := uniforms["color"], []float32{1, 0.5, 0.25}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("color = %#v, want cloned %#v", got, want)
+	}
+}
+
+func TestSelenaUniformsRejectsUnsupportedRoot(t *testing.T) {
+	_, err := SelenaUniforms(42)
+	if err == nil || !strings.Contains(err.Error(), "struct or map") {
+		t.Fatalf("unsupported root error = %v", err)
 	}
 }
 
