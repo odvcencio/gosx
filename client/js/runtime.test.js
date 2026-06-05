@@ -7288,6 +7288,23 @@ test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
   assert.match(webgpu, /custom-wgsl-hooks-unsupported/);
 });
 
+test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgl, /function createSceneSelenaProgram\(gl, material\)/);
+  assert.match(webgl, /ensureSelenaProgram\(mat\)/);
+  assert.match(webgl, /uploadSelenaUniforms\(gl, selenaProgram, mat\)/);
+  assert.match(webgl, /bindSelenaTextures\(gl, selenaProgram, mat\)/);
+  assert.match(webgl, /bindSelenaMeshAttribute\(gl, selenaProgram, "position"/);
+
+  assert.match(webgpu, /function getSelenaPipeline\(material, blendMode, depthWrite\)/);
+  assert.match(webgpu, /entryPoint: "vertexMain"/);
+  assert.match(webgpu, /entryPoint: "fragmentMain"/);
+  assert.match(webgpu, /createSelenaBindGroup\(mat, selenaResource, obj\)/);
+  assert.match(webgpu, /if \(sceneSelenaIsMaterial\(material\)\) \{\n          continue;/);
+});
+
 test("Scene3D instanced meshes are WebGPU-native", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");

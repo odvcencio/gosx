@@ -2492,6 +2492,7 @@
     return Boolean(
       material &&
       normalizeSceneMaterialKind(material.kind) === "custom" &&
+      material.shaderBackend !== "selena" &&
       (
         (typeof material.customVertex === "string" && material.customVertex.trim()) ||
         (typeof material.customFragment === "string" && material.customFragment.trim()) ||
@@ -2534,6 +2535,124 @@
       fragmentShader: fragmentShader,
       attributes: attributes,
       uniforms: uniforms,
+    };
+  }
+
+  function sceneSelenaMaterialLayout(material) {
+    var layout = material && material.shaderLayout;
+    if (!layout || typeof layout !== "object") return null;
+    if (!layout.uniformBlock || typeof layout.uniformBlock !== "object") return null;
+    if (!Array.isArray(layout.uniformBlock.fields)) return null;
+    return layout;
+  }
+
+  function sceneSelenaIsMaterial(material) {
+    return Boolean(
+      material &&
+      material.shaderBackend === "selena" &&
+      sceneSelenaMaterialLayout(material) &&
+      typeof material.customVertex === "string" &&
+      material.customVertex.trim() &&
+      typeof material.customFragment === "string" &&
+      material.customFragment.trim()
+    );
+  }
+
+  function sceneSelenaFloatCount(type) {
+    switch (String(type || "")) {
+    case "float": return 1;
+    case "vec2": return 2;
+    case "vec3": return 3;
+    case "vec4": return 4;
+    case "mat3": return 9;
+    case "mat4": return 16;
+    default: return 1;
+    }
+  }
+
+  function sceneSelenaAttributeComponents(type) {
+    switch (String(type || "")) {
+    case "vec2": return 2;
+    case "vec4": return 4;
+    case "vec3":
+    default:
+      return 3;
+    }
+  }
+
+  function sceneSelenaUniformDefault(layout, name) {
+    var defaults = layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.defaults)
+      ? layout.uniformBlock.defaults
+      : [];
+    for (var i = 0; i < defaults.length; i++) {
+      if (defaults[i] && defaults[i].name === name) {
+        return defaults[i].values;
+      }
+    }
+    return undefined;
+  }
+
+  function sceneSelenaTextureURL(material, texture, index) {
+    var name = texture && texture.name;
+    var values = material && material.customUniforms;
+    if (values && typeof values === "object" && name && typeof values[name] === "string" && values[name].trim()) {
+      return values[name].trim();
+    }
+    if (material && name && typeof material[name] === "string" && material[name].trim()) {
+      return material[name].trim();
+    }
+    if (index === 0 && material && typeof material.texture === "string" && material.texture.trim()) {
+      return material.texture.trim();
+    }
+    return "";
+  }
+
+  function sceneSelenaTextureDescriptors(layout) {
+    return layout && Array.isArray(layout.textures) ? layout.textures : [];
+  }
+
+  function sceneSelenaUniformLocations(gl, program, layout) {
+    var fields = layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.fields)
+      ? layout.uniformBlock.fields
+      : [];
+    var uniforms = {};
+    for (var i = 0; i < fields.length; i++) {
+      var field = fields[i];
+      if (!field || typeof field.name !== "string") continue;
+      uniforms[field.name] = gl.getUniformLocation(program, field.name);
+    }
+    return uniforms;
+  }
+
+  function createSceneSelenaProgram(gl, material) {
+    var layout = sceneSelenaMaterialLayout(material);
+    if (!layout) return null;
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, material.customVertex);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, material.customFragment);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Selena shader");
+    if (!program) return null;
+    var attrs = {};
+    var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
+    for (var i = 0; i < layoutAttrs.length; i++) {
+      var attr = layoutAttrs[i] || {};
+      if (typeof attr.name !== "string") continue;
+      attrs[attr.name] = {
+        loc: gl.getAttribLocation(program, attr.name),
+        size: sceneSelenaAttributeComponents(attr.type),
+      };
+    }
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: attrs,
+      uniforms: sceneSelenaUniformLocations(gl, program, layout),
+      layout: layout,
     };
   }
 
@@ -3603,6 +3722,7 @@
 	    var skinnedProgram = null;
 	    var skinnedProgramFailed = false;
     var customProgramCache = new Map();
+    var selenaProgramCache = new Map();
 
     // Shadow program (depth-only shader for shadow pass).
     const shadowProgram = createSceneShadowProgram(gl);
@@ -3626,6 +3746,13 @@
     const tangentBuffer = gl.createBuffer();
     const jointsBuffer = gl.createBuffer();
     const weightsBuffer = gl.createBuffer();
+    const selenaPlaceholderTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, selenaPlaceholderTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     // Points program — compiled lazily on first points entry.
     var pointsProgram = null;
@@ -3824,6 +3951,7 @@
 	    // Pre-allocated scratch buffers for view/projection matrices (Fix 8).
 	    var scratchViewMatrix = new Float32Array(16);
 	    var scratchProjMatrix = new Float32Array(16);
+	    var scratchSelenaViewProjection = new Float32Array(16);
 	    var identityModelMatrix = new Float32Array([
 	      1, 0, 0, 0,
 	      0, 1, 0, 0,
@@ -4101,6 +4229,7 @@
       const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
       const viewMatrix = scenePBRViewMatrix(cam, scratchViewMatrix);
       const projMatrix = scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
+      sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
 
       // --- Shadow Pass ---
       // Identify shadow-casting directional lights (max 2) and render per-
@@ -4327,6 +4456,131 @@
       return customProgram;
     }
 
+    function ensureSelenaProgram(material) {
+      if (!sceneSelenaIsMaterial(material)) {
+        return null;
+      }
+      const key = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      const cached = selenaProgramCache.get(key);
+      if (cached) {
+        return cached.failed ? null : cached.program;
+      }
+      const selenaProgram = createSceneSelenaProgram(gl, material);
+      selenaProgramCache.set(key, selenaProgram ? { program: selenaProgram } : { failed: true });
+      if (!selenaProgram) {
+        console.warn("[gosx] Selena shader compilation failed; object will use the standard PBR shader.");
+      }
+      return selenaProgram;
+    }
+
+    function selenaUniformValue(material, layout, field) {
+      var name = field && field.name;
+      if (name === "mvp") return scratchSelenaViewProjection;
+      if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      var values = material && material.customUniforms;
+      if (values && typeof values === "object" && Object.prototype.hasOwnProperty.call(values, name)) {
+        return values[name];
+      }
+      var def = sceneSelenaUniformDefault(layout, name);
+      if (def !== undefined) return def;
+      var count = sceneSelenaFloatCount(field && field.type);
+      if (count === 16) return identityModelMatrix;
+      if (count === 9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      return 0;
+    }
+
+    function selenaScalar(value) {
+      if (Array.isArray(value) || (value && typeof value.length === "number")) {
+        return sceneNumber(value[0], 0);
+      }
+      return sceneNumber(value, 0);
+    }
+
+    function uploadSelenaUniforms(gl, info, material) {
+      var layout = info && info.layout;
+      var fields = layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.fields)
+        ? layout.uniformBlock.fields
+        : [];
+      for (var i = 0; i < fields.length; i++) {
+        var field = fields[i] || {};
+        var loc = info.uniforms && info.uniforms[field.name];
+        if (!loc) continue;
+        var value = selenaUniformValue(material, layout, field);
+        switch (String(field.type || "")) {
+        case "mat4":
+          gl.uniformMatrix4fv(loc, false, value);
+          break;
+        case "mat3":
+          gl.uniformMatrix3fv(loc, false, value);
+          break;
+        case "vec4":
+          gl.uniform4f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0), sceneNumber(value && value[2], 0), sceneNumber(value && value[3], 0));
+          break;
+        case "vec3":
+          gl.uniform3f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0), sceneNumber(value && value[2], 0));
+          break;
+        case "vec2":
+          gl.uniform2f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0));
+          break;
+        default:
+          gl.uniform1f(loc, selenaScalar(value));
+          break;
+        }
+      }
+    }
+
+    function bindSelenaTextures(gl, info, material) {
+      var textures = sceneSelenaTextureDescriptors(info && info.layout);
+      for (var i = 0; i < textures.length; i++) {
+        var tex = textures[i] || {};
+        var glBinding = tex.gl || {};
+        var loc = gl.getUniformLocation(info.program, glBinding.uniform || tex.name);
+        if (!loc) continue;
+        var unit = Math.max(0, Math.floor(sceneNumber(glBinding.unit, i)));
+        var url = sceneSelenaTextureURL(material, tex, i);
+        var record = url ? scenePBRLoadTexture(gl, url, textureCache) : null;
+        scenePBRBindTexture(gl, unit, record && record.texture ? record.texture : selenaPlaceholderTexture);
+        gl.uniform1i(loc, unit);
+      }
+    }
+
+    function bindSelenaMeshAttribute(gl, info, name, obj, bundle, offset, count, directVertices) {
+      var attr = info && info.attributes && info.attributes[name];
+      if (!attr || attr.loc < 0) return;
+      var directKey = name === "position" ? "positions" : name === "normal" ? "normals" : name === "uv" ? "uvs" : "";
+      var direct = directVertices ? scenePBRDirectAttribute(obj.vertices, directKey, count, attr.size) : null;
+      if (bindScenePBRDirectAttribute(obj.vertices, directKey, attr.loc, attr.size, direct)) {
+        return;
+      }
+      if (name === "position") {
+        var positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(attr.loc);
+        gl.vertexAttribPointer(attr.loc, 3, gl.FLOAT, false, 0, 0);
+        return;
+      }
+      if (name === "normal") {
+        var normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
+        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(attr.loc);
+        gl.vertexAttribPointer(attr.loc, 3, gl.FLOAT, false, 0, 0);
+        return;
+      }
+      if (name === "uv" && bundle.worldMeshUVs && !directVertices) {
+        var uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
+        gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(attr.loc);
+        gl.vertexAttribPointer(attr.loc, 2, gl.FLOAT, false, 0, 0);
+        return;
+      }
+      gl.disableVertexAttribArray(attr.loc);
+      if (name === "uv") gl.vertexAttrib2f(attr.loc, 0, 0);
+      else gl.vertexAttrib3f(attr.loc, 0, 0, name === "normal" ? 1 : 0);
+    }
+
 	    function scenePBRDirectAttribute(vertices, key, count, tupleSize) {
 	      const data = vertices && vertices[key];
 	      const required = Math.max(0, Math.floor(sceneNumber(count, 0))) * tupleSize;
@@ -4411,6 +4665,39 @@
         const matIndex = sceneNumber(obj.materialIndex, 0);
         const mat = materials[matIndex] || null;
         var isSkinned = objectIsSkinned(obj);
+        var selenaProgram = !isSkinned ? ensureSelenaProgram(mat) : null;
+        if (selenaProgram) {
+          if (currentProgram !== selenaProgram.program) {
+            gl.useProgram(selenaProgram.program);
+            currentProgram = selenaProgram.program;
+            currentAttribs = selenaProgram.attributes;
+            currentUniforms = selenaProgram.uniforms;
+            lastMaterialIndex = -1;
+          }
+
+          var selenaDepthWriteOverride = obj.depthWrite !== undefined && obj.depthWrite !== null;
+          if (selenaDepthWriteOverride) {
+            gl.depthMask(obj.depthWrite !== false);
+          }
+
+          uploadSelenaUniforms(gl, selenaProgram, mat);
+          bindSelenaTextures(gl, selenaProgram, mat);
+
+          const selenaOffset = obj.vertexOffset;
+          const selenaCount = obj.vertexCount;
+          const selenaDirectVertices = Boolean(obj.directVertices && obj.vertices);
+          bindSelenaMeshAttribute(gl, selenaProgram, "position", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
+          bindSelenaMeshAttribute(gl, selenaProgram, "normal", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
+          bindSelenaMeshAttribute(gl, selenaProgram, "uv", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
+          gl.drawArrays(gl.TRIANGLES, 0, selenaCount);
+
+          if (selenaDepthWriteOverride) {
+            var selenaPass = scenePBRObjectRenderPass(obj, mat);
+            gl.depthMask(selenaPass === "opaque");
+          }
+          continue;
+        }
+
         var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
 
         // Switch to skinned program if this object has skin data.
@@ -5154,6 +5441,7 @@
       gl.deleteBuffer(tangentBuffer);
       gl.deleteBuffer(jointsBuffer);
       gl.deleteBuffer(weightsBuffer);
+      gl.deleteTexture(selenaPlaceholderTexture);
       // Free all per-entry points / mesh VBOs allocated by the lazy
       // cache (static + dynamic paths both register here). WeakMap
       // entries for the static caches get GC'd alongside their typed
@@ -5233,6 +5521,16 @@
         }
       }
       customProgramCache.clear();
+
+      for (const record of selenaProgramCache.values()) {
+        const sp = record && record.program;
+        if (sp) {
+          gl.deleteShader(sp.vertexShader);
+          gl.deleteShader(sp.fragmentShader);
+          gl.deleteProgram(sp.program);
+        }
+      }
+      selenaProgramCache.clear();
 
       if (lineProgram && lineResources) {
         disposeSceneWebGLRenderer(gl, lineProgram, lineResources);

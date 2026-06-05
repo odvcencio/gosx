@@ -2293,6 +2293,7 @@
     var pbrPipelineLayout = null;
     var pointsPipelineLayout = null;
     var pointsVertexPipelineLayout = null;
+    var selenaPipelineCache = new Map();
 
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
@@ -2396,6 +2397,7 @@
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
     var scratchProjMatrix = new Float32Array(16);
+    var scratchSelenaViewProjection = new Float32Array(16);
     var pointsIdentityMatrix = new Float32Array([
       1, 0, 0, 0,
       0, 1, 0, 0,
@@ -2795,6 +2797,282 @@
       return pipeline;
     }
 
+    function sceneSelenaMaterialLayout(material) {
+      var layout = material && material.shaderLayout;
+      if (!layout || typeof layout !== "object") return null;
+      if (!layout.uniformBlock || typeof layout.uniformBlock !== "object") return null;
+      if (!Array.isArray(layout.uniformBlock.fields)) return null;
+      return layout;
+    }
+
+    function sceneSelenaIsMaterial(material) {
+      return Boolean(
+        material &&
+        material.shaderBackend === "selena" &&
+        sceneSelenaMaterialLayout(material) &&
+        (
+          (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
+          (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())
+        )
+      );
+    }
+
+    function sceneSelenaWGSLSource(material) {
+      var src = typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()
+        ? material.customVertexWGSL
+        : material.customFragmentWGSL;
+      return String(src || "").trim();
+    }
+
+    function sceneSelenaFloatCount(type) {
+      switch (String(type || "")) {
+      case "float": return 1;
+      case "vec2": return 2;
+      case "vec3": return 3;
+      case "vec4": return 4;
+      case "mat3": return 9;
+      case "mat4": return 16;
+      default: return 1;
+      }
+    }
+
+    function sceneSelenaAttributeComponents(type) {
+      switch (String(type || "")) {
+      case "vec2": return 2;
+      case "vec4": return 4;
+      case "vec3":
+      default:
+        return 3;
+      }
+    }
+
+    function sceneSelenaWGPUFormat(type) {
+      switch (sceneSelenaAttributeComponents(type)) {
+      case 2: return "float32x2";
+      case 4: return "float32x4";
+      default: return "float32x3";
+      }
+    }
+
+    function sceneSelenaUniformDefault(layout, name) {
+      var defaults = layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.defaults)
+        ? layout.uniformBlock.defaults
+        : [];
+      for (var i = 0; i < defaults.length; i++) {
+        if (defaults[i] && defaults[i].name === name) {
+          return defaults[i].values;
+        }
+      }
+      return undefined;
+    }
+
+    function sceneSelenaUniformValue(material, layout, field) {
+      var name = field && field.name;
+      if (name === "mvp") return scratchSelenaViewProjection;
+      if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      var values = material && material.customUniforms;
+      if (values && typeof values === "object" && Object.prototype.hasOwnProperty.call(values, name)) {
+        return values[name];
+      }
+      var def = sceneSelenaUniformDefault(layout, name);
+      if (def !== undefined) return def;
+      var count = sceneSelenaFloatCount(field && field.type);
+      if (count === 16) return pointsIdentityMatrix;
+      if (count === 9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      return 0;
+    }
+
+    function sceneSelenaScalar(value) {
+      if (Array.isArray(value) || (value && typeof value.length === "number")) {
+        return sceneNumber(value[0], 0);
+      }
+      return sceneNumber(value, 0);
+    }
+
+    function sceneSelenaWriteUniformField(f32, base, type, value) {
+      var count = sceneSelenaFloatCount(type);
+      if (type === "float") {
+        f32[base] = sceneSelenaScalar(value);
+        return;
+      }
+      if (type === "mat3") {
+        for (var c = 0; c < 3; c++) {
+          f32[base + c * 4] = sceneNumber(value && value[c * 3], c === 0 ? 1 : 0);
+          f32[base + c * 4 + 1] = sceneNumber(value && value[c * 3 + 1], c === 1 ? 1 : 0);
+          f32[base + c * 4 + 2] = sceneNumber(value && value[c * 3 + 2], c === 2 ? 1 : 0);
+        }
+        return;
+      }
+      for (var i = 0; i < count; i++) {
+        f32[base + i] = sceneNumber(value && value[i], 0);
+      }
+    }
+
+    function sceneSelenaUniformData(material) {
+      var layout = sceneSelenaMaterialLayout(material);
+      if (!layout) return null;
+      var size = Math.max(16, Math.floor(sceneNumber(layout.uniformBlock.size, 16)));
+      var f32 = new Float32Array(Math.ceil(size / 4));
+      var fields = layout.uniformBlock.fields;
+      for (var i = 0; i < fields.length; i++) {
+        var field = fields[i];
+        if (!field || typeof field.name !== "string") continue;
+        sceneSelenaWriteUniformField(
+          f32,
+          Math.floor(sceneNumber(field.offset, 0) / 4),
+          String(field.type || "float"),
+          sceneSelenaUniformValue(material, layout, field)
+        );
+      }
+      return f32;
+    }
+
+    function sceneSelenaTextureURL(material, texture, index) {
+      var name = texture && texture.name;
+      var values = material && material.customUniforms;
+      if (values && typeof values === "object" && name && typeof values[name] === "string" && values[name].trim()) {
+        return values[name].trim();
+      }
+      if (material && name && typeof material[name] === "string" && material[name].trim()) {
+        return material[name].trim();
+      }
+      if (index === 0 && material && typeof material.texture === "string" && material.texture.trim()) {
+        return material.texture.trim();
+      }
+      return "";
+    }
+
+    function sceneSelenaTextureDescriptors(layout) {
+      return layout && Array.isArray(layout.textures) ? layout.textures : [];
+    }
+
+    function sceneSelenaBindGroupLayout(device, layout) {
+      var visibility = typeof GPUShaderStage !== "undefined"
+        ? (GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT)
+        : 3;
+      var entries = [{
+        binding: sceneNumber(layout && layout.wgsl && layout.wgsl.binding, 0),
+        visibility: visibility,
+        buffer: { type: "uniform", minBindingSize: Math.max(16, Math.floor(sceneNumber(layout && layout.uniformBlock && layout.uniformBlock.size, 16))) },
+      }];
+      var textures = sceneSelenaTextureDescriptors(layout);
+      for (var i = 0; i < textures.length; i++) {
+        var wgsl = textures[i] && textures[i].wgsl || {};
+        entries.push({
+          binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
+          visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          texture: { sampleType: "float", viewDimension: "2d" },
+        });
+        entries.push({
+          binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
+          visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          sampler: { type: "filtering" },
+        });
+      }
+      return device.createBindGroupLayout({ label: "gosx-selena-material", entries: entries });
+    }
+
+    function sceneSelenaAttributeSource(name) {
+      switch (name) {
+      case "position": return "positions";
+      case "normal": return "normals";
+      case "uv": return "uvs";
+      default: return "";
+      }
+    }
+
+    function sceneSelenaPipelineAttributes(layout) {
+      var attrs = Array.isArray(layout && layout.attributes) ? layout.attributes : [];
+      var out = [];
+      for (var i = 0; i < attrs.length; i++) {
+        var attr = attrs[i] || {};
+        var source = sceneSelenaAttributeSource(attr.name);
+        if (!source) continue;
+        out.push({
+          name: attr.name,
+          source: source,
+          slot: out.length,
+          components: sceneSelenaAttributeComponents(attr.type),
+          shaderLocation: Math.max(0, Math.floor(sceneNumber(attr.location, out.length))),
+          format: sceneSelenaWGPUFormat(attr.type),
+        });
+      }
+      return out;
+    }
+
+    function getSelenaPipeline(material, blendMode, depthWrite) {
+      if (!sceneSelenaIsMaterial(material)) return null;
+      var layout = sceneSelenaMaterialLayout(material);
+      var shader = sceneSelenaWGSLSource(material);
+      var key = [
+        "selena",
+        material.key || sceneMaterialProfileKey(material),
+        blendMode,
+        depthWrite ? "1" : "0",
+        targetFormat,
+        activeSampleCount,
+      ].join("|");
+      var cached = selenaPipelineCache.get(key);
+      if (cached) return cached.failed ? null : cached;
+      try {
+        var bindGroupLayout = sceneSelenaBindGroupLayout(device, layout);
+        var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+        var module = device.createShaderModule({ label: "selena-material", code: shader });
+        var attrs = sceneSelenaPipelineAttributes(layout);
+        var buffers = attrs.map(function(attr) {
+          return {
+            arrayStride: attr.components * 4,
+            stepMode: "vertex",
+            attributes: [{ format: attr.format, offset: 0, shaderLocation: attr.shaderLocation }],
+          };
+        });
+        var pipeline = device.createRenderPipeline({
+          label: "gosx-selena-" + (layout.material || "material") + "-" + blendMode,
+          layout: pipelineLayout,
+          vertex: { module: module, entryPoint: "vertexMain", buffers: buffers },
+          fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
+          primitive: { topology: "triangle-list", cullMode: "back" },
+          multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
+          depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
+        });
+        cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout, attrs: attrs };
+        selenaPipelineCache.set(key, cached);
+        return cached;
+      } catch (err) {
+        console.warn("[gosx] Selena WebGPU shader pipeline failed; falling back to PBR material.", err);
+        selenaPipelineCache.set(key, { failed: true });
+        return null;
+      }
+    }
+
+    function createSelenaBindGroup(material, resource, cacheOwner) {
+      var uniformData = sceneSelenaUniformData(material);
+      if (!uniformData || !resource) return null;
+      var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
+      var uniformBuffer = wgpuCachedTrackedBuffer(
+        owner,
+        "_gosxWGPUSelenaUniform",
+        uniformData,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        true
+      );
+      var entries = [{
+        binding: sceneNumber(resource.layout && resource.layout.wgsl && resource.layout.wgsl.binding, 0),
+        resource: { buffer: uniformBuffer },
+      }];
+      var textures = sceneSelenaTextureDescriptors(resource.layout);
+      for (var i = 0; i < textures.length; i++) {
+        var tex = textures[i] || {};
+        var url = sceneSelenaTextureURL(material, tex, i);
+        var record = url ? wgpuLoadTexture(device, url, textureCache) : null;
+        var view = record && record.view ? record.view : placeholderView;
+        var wgsl = tex.wgsl || {};
+        entries.push({ binding: sceneNumber(wgsl.textureBinding, 1 + i * 2), resource: view });
+        entries.push({ binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2), resource: linearSampler });
+      }
+      return device.createBindGroup({ layout: resource.bindGroupLayout, entries: entries });
+    }
+
     function getThickLinePipeline(blendMode, depthWrite) {
       var key = wgpuPipelineKey("thick-line", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
@@ -2923,6 +3201,7 @@
       scratchProjMatrix[6]  = 0.5 * (scratchProjMatrix[6]  + scratchProjMatrix[7]);
       scratchProjMatrix[10] = 0.5 * (scratchProjMatrix[10] + scratchProjMatrix[11]);
       scratchProjMatrix[14] = 0.5 * (scratchProjMatrix[14] + scratchProjMatrix[15]);
+      sceneMat4MultiplyInto(scratchSelenaViewProjection, scratchProjMatrix, scratchViewMatrix);
 
       // FrameUniforms layout (std140):
       // mat4x4f viewMatrix:  0  (64 bytes)
@@ -3261,15 +3540,73 @@
     // PBR object drawing
     // -----------------------------------------------------------------------
 
-    function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup) {
+    function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup, blendMode, depthWrite) {
       var lastMaterialIndex = -1;
       var lastReceiveShadow = null;
+      var currentPipelineKind = "";
+
+      function bindMeshAttribute(attr, obj, offset, count) {
+        var data = null;
+        if (attr.source === "positions") {
+          data = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
+          positionBuffer = wgpuEnsureBufferData(device, positionBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, data);
+          pass.setVertexBuffer(attr.slot, positionBuffer);
+          return;
+        }
+        if (attr.source === "normals") {
+          data = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
+          normalBuffer = wgpuEnsureBufferData(device, normalBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, data);
+          pass.setVertexBuffer(attr.slot, normalBuffer);
+          return;
+        }
+        if (attr.source === "uvs") {
+          if (bundle.worldMeshUVs) {
+            data = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
+          } else {
+            var zeroUVs = ensureScratch("uvs", count * 2);
+            for (var ui = 0; ui < count * 2; ui++) zeroUVs[ui] = 0;
+            data = zeroUVs.subarray(0, count * 2);
+          }
+          uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, data);
+          pass.setVertexBuffer(attr.slot, uvBuffer);
+        }
+      }
+
+      function bindPBRPipeline() {
+        if (currentPipelineKind === "pbr") return;
+        pass.setPipeline(getPBRPipeline(blendMode, depthWrite));
+        pass.setBindGroup(0, frameBindGroup);
+        currentPipelineKind = "pbr";
+        lastMaterialIndex = -1;
+        lastReceiveShadow = null;
+      }
 
       for (var i = 0; i < objectList.length; i++) {
         var obj = objectList[i];
         var matIndex = sceneNumber(obj.materialIndex, 0);
         var mat = materials[matIndex] || null;
         var receiveShadow = !!obj.receiveShadow;
+        var offset = obj.vertexOffset;
+        var count = obj.vertexCount;
+        var selenaResource = getSelenaPipeline(mat, blendMode, depthWrite);
+        if (selenaResource) {
+          var selenaKey = "selena:" + (mat && mat.key || matIndex);
+          if (currentPipelineKind !== selenaKey) {
+            pass.setPipeline(selenaResource.pipeline);
+            currentPipelineKind = selenaKey;
+          }
+          var selenaBG = createSelenaBindGroup(mat, selenaResource, obj);
+          if (selenaBG) {
+            pass.setBindGroup(0, selenaBG);
+            for (var ai = 0; ai < selenaResource.attrs.length; ai++) {
+              bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count);
+            }
+            pass.draw(count);
+            continue;
+          }
+        }
+
+        bindPBRPipeline();
 
         // Recreate material bind group when material or receiveShadow changes.
         if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
@@ -3278,9 +3615,6 @@
           lastMaterialIndex = matIndex;
           lastReceiveShadow = receiveShadow;
         }
-
-        var offset = obj.vertexOffset;
-        var count = obj.vertexCount;
 
         // Positions.
         var positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
@@ -4270,6 +4604,9 @@
       var source = Array.isArray(materials) ? materials : [];
       for (var i = 0; i < source.length; i++) {
         var material = source[i] || {};
+        if (sceneSelenaIsMaterial(material)) {
+          continue;
+        }
         var hasWGSL = (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
           (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim());
         var hasCustomUniforms = material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0;
@@ -4613,7 +4950,7 @@
           var opaquePipeline = getPBRPipeline("opaque", true);
           mainPass.setPipeline(opaquePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup);
+          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true);
         }
         if (instancedDrawList.opaque.length > 0) {
           var opaqueInstancedPipeline = getPBRInstancedPipeline("opaque", true);
@@ -4635,7 +4972,7 @@
           var alphaPipeline = getPBRPipeline("alpha", false);
           mainPass.setPipeline(alphaPipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup);
+          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false);
         }
         if (instancedDrawList.alpha.length > 0) {
           var alphaInstancedPipeline = getPBRInstancedPipeline("alpha", false);
@@ -4657,7 +4994,7 @@
           var additivePipeline = getPBRPipeline("additive", false);
           mainPass.setPipeline(additivePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup);
+          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false);
         }
         if (instancedDrawList.additive.length > 0) {
           var additiveInstancedPipeline = getPBRInstancedPipeline("additive", false);
@@ -4746,6 +5083,7 @@
         if (record && record.texture) record.texture.destroy();
       }
       textureCache.clear();
+      selenaPipelineCache.clear();
 
       if (postProcessor) {
         postProcessor.dispose();
