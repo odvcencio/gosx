@@ -1170,10 +1170,85 @@ func (l *lowerer) lowerExprContainer(n *gotreesitter.Node) NodeID {
 		return l.lowerGSXNode(exprNode)
 	}
 
+	// Conditional rendering with JSX operands embedded in the expression:
+	//   {cond && <jsx>}     -> render <jsx> when cond is truthy
+	//   {cond ? <a> : <b>}  -> render <a> when cond, else <b>
+	// The JSX branches must become real child subtrees (reusing the <If>
+	// conditional path) rather than raw text handed to the island expression
+	// DSL, which has no JSX. A plain ternary with no JSX branch falls through to
+	// the expression-hole path below, where the DSL evaluates it directly.
+	if id, ok := l.lowerConditionalExprContainer(exprNode); ok {
+		return id
+	}
+
 	return l.prog.AddNode(Node{
 		Kind: NodeExpr,
 		Text: l.text(exprNode),
 		Span: l.span(n),
+	})
+}
+
+// lowerConditionalExprContainer lowers `{cond && <jsx>}` and
+// `{cond ? <a> : <b>}` into conditional subtrees when at least one branch is
+// JSX. It returns (id, true) when it handled the expression; (0, false) leaves
+// the caller to treat the container as a plain expression hole.
+func (l *lowerer) lowerConditionalExprContainer(n *gotreesitter.Node) (NodeID, bool) {
+	switch l.nodeType(n) {
+	case "binary_expression":
+		op := l.childByField(n, "operator")
+		left := l.childByField(n, "left")
+		right := l.childByField(n, "right")
+		if op == nil || left == nil || right == nil || l.text(op) != "&&" || !l.isGSXNode(right) {
+			return 0, false
+		}
+		thenID := l.lowerGSXNode(right)
+		return l.buildIfComponent(l.text(left), []NodeID{thenID}, "", l.span(n)), true
+
+	case "gsx_ternary_expression":
+		cond := l.childByField(n, "condition")
+		cons := l.childByField(n, "consequence")
+		alt := l.childByField(n, "alternative")
+		if cond == nil || cons == nil || alt == nil {
+			return 0, false
+		}
+		consGSX := l.isGSXNode(cons)
+		altGSX := l.isGSXNode(alt)
+		if !consGSX && !altGSX {
+			return 0, false // plain value ternary — the DSL handles it as a hole
+		}
+		condText := l.text(cond)
+		span := l.span(n)
+		switch {
+		case consGSX && altGSX:
+			// Fragment of two conditionals so each subtree renders structurally.
+			ifThen := l.buildIfComponent(condText, []NodeID{l.lowerGSXNode(cons)}, "", span)
+			ifElse := l.buildIfComponent("!("+condText+")", []NodeID{l.lowerGSXNode(alt)}, "", span)
+			return l.prog.AddNode(Node{Kind: NodeFragment, Children: []NodeID{ifThen, ifElse}, Span: span}), true
+		case consGSX:
+			// JSX consequence, expression alternative -> conditional fallback expr.
+			return l.buildIfComponent(condText, []NodeID{l.lowerGSXNode(cons)}, l.text(alt), span), true
+		default:
+			// Expression consequence, JSX alternative -> negate and swap.
+			return l.buildIfComponent("!("+condText+")", []NodeID{l.lowerGSXNode(alt)}, l.text(cons), span), true
+		}
+	}
+	return 0, false
+}
+
+// buildIfComponent synthesizes an `<If when={whenExpr}>children</If>` component
+// node (optionally with a fallback expression), which LowerIsland turns into a
+// program.NodeConditional. Reused by the conditional-rendering desugaring above.
+func (l *lowerer) buildIfComponent(whenExpr string, children []NodeID, fallbackExpr string, span Span) NodeID {
+	attrs := []Attr{{Kind: AttrExpr, Name: "when", Expr: whenExpr}}
+	if fallbackExpr != "" {
+		attrs = append(attrs, Attr{Kind: AttrExpr, Name: "fallback", Expr: fallbackExpr})
+	}
+	return l.prog.AddNode(Node{
+		Kind:     NodeComponent,
+		Tag:      "If",
+		Attrs:    attrs,
+		Children: children,
+		Span:     span,
 	})
 }
 
