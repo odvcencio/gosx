@@ -1150,7 +1150,60 @@ func (vm *VM) resolveChildren(tree *ResolvedTree, children []program.NodeID) []i
 	for _, childID := range children {
 		resolved = vm.appendNodeRefs(tree, resolved, childID)
 	}
-	return resolved
+	return vm.mergeAdjacentText(tree, resolved)
+}
+
+// mergeAdjacentText collapses runs of consecutive resolved text nodes into a
+// single text node, mirroring how a browser parses the server's contiguous
+// HTML string: `text` + `{expr}` siblings, or the two whitespace runs left
+// around an empty conditional, all become ONE DOM text node. Without this the
+// client VDOM has more child nodes than the hydrated DOM, so reconcile patch
+// paths drift (the bug behind conditional/list reactivity and the "count is 34"
+// SetText append). Dropped members are left orphaned in tree.Nodes.
+//
+// Static identity matters: a static text node ("count is ") merged with a
+// dynamic expr ("{n.Get()}") must be reconciled on every change, so the merged
+// node adopts a DYNAMIC source whenever any absorbed member is dynamic —
+// otherwise staticMask would skip it and the text would never update.
+func (vm *VM) mergeAdjacentText(tree *ResolvedTree, indices []int) []int {
+	if len(indices) < 2 {
+		return indices
+	}
+	merged := make([]int, 0, len(indices))
+	for _, idx := range indices {
+		if len(merged) > 0 {
+			prev := &tree.Nodes[merged[len(merged)-1]]
+			cur := &tree.Nodes[idx]
+			if isResolvedTextNode(prev) && isResolvedTextNode(cur) {
+				prev.Text += cur.Text
+				if vm.isDynamicSource(cur) && !vm.isDynamicSource(prev) {
+					prev.Source = cur.Source
+					prev.HasSource = cur.HasSource
+				}
+				continue
+			}
+		}
+		merged = append(merged, idx)
+	}
+	return merged
+}
+
+// isDynamicSource reports whether a resolved node would be reconciled (not
+// skipped by staticMask). A node with no source, or whose program source is not
+// flagged static, is dynamic.
+func (vm *VM) isDynamicSource(n *ResolvedNode) bool {
+	if !n.HasSource || n.Source < 0 {
+		return true
+	}
+	sm := vm.program.StaticMask
+	return !(n.Source < len(sm) && sm[n.Source])
+}
+
+// isResolvedTextNode reports whether a resolved node is a text node (no tag, no
+// children) — i.e. the resolution of a NodeText or NodeExpr. Element nodes carry
+// a Tag; fragments/conditionals/forEach expand inline and never produce a node.
+func isResolvedTextNode(n *ResolvedNode) bool {
+	return n.Tag == "" && len(n.Children) == 0
 }
 
 func (vm *VM) resolveElementNode(rn *ResolvedNode, source int, node program.Node) {

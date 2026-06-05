@@ -342,21 +342,23 @@ func reorderedIndices(indexByKey map[string]int, desired []string) []int {
 func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
 	prevLen := len(pn.Children)
 	nextLen := len(nn.Children)
-	maxLen := prevLen
-	if nextLen > maxLen {
-		maxLen = nextLen
+	common := prevLen
+	if nextLen < common {
+		common = nextLen
 	}
 
-	for i := 0; i < maxLen; i++ {
-		cp := childPath(path, i)
-		switch {
-		case i >= nextLen:
-			appendRemoveChild(ops, cp)
-		case i >= prevLen:
-			appendCreateSubtree(ops, next, nn.Children[i], path, i)
-		default:
-			reconcileNodePair(ops, prev, next, pn.Children[i], nn.Children[i], cp, staticMask)
-		}
+	// Reconcile the shared prefix in place.
+	for i := 0; i < common; i++ {
+		reconcileNodePair(ops, prev, next, pn.Children[i], nn.Children[i], childPath(path, i), staticMask)
+	}
+	// Remove the prev tail LAST-TO-FIRST so each removal doesn't shift the index
+	// of the next one (the patch applier resolves paths against the live DOM).
+	for i := prevLen - 1; i >= nextLen; i-- {
+		appendRemoveChild(ops, childPath(path, i))
+	}
+	// Append the next tail in order.
+	for i := prevLen; i < nextLen; i++ {
+		appendCreateSubtree(ops, next, nn.Children[i], path, i)
 	}
 }
 
