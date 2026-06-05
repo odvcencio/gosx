@@ -18,6 +18,24 @@ material Defaults {
 }
 `
 
+const selenaBundleSource = `
+material GalaxyDisk {
+    param phase : float = 0.25
+    param diskColor : color = rgb(0.44, 0.72, 1.0)
+    surface(geo) -> color {
+        return diskColor * phase
+    }
+}
+
+material GalaxyCorona {
+    param phase : float = 0.75
+    param coronaColor : color = rgb(1.0, 0.58, 0.28)
+    surface(geo) -> color {
+        return coronaColor * phase
+    }
+}
+`
+
 func TestCompileSelenaMaterialFeedsScene3D(t *testing.T) {
 	material, layout, err := CompileSelenaMaterial([]byte(selenaDefaultsSource), SelenaMaterialOptions{
 		Standard: StandardMaterial{Color: "#ffffff", Roughness: 0.35},
@@ -87,6 +105,70 @@ func TestCompileSelenaMaterialFeedsScene3D(t *testing.T) {
 		if !capable[backend] {
 			t.Fatalf("backend %q excluded by selena material, caps=%+v", backend, ir.BackendCaps)
 		}
+	}
+}
+
+func TestCompileSelenaBundleCompilesOrderedMaterialSet(t *testing.T) {
+	bundle, err := CompileSelenaBundle([]byte(selenaBundleSource),
+		SelenaMaterialOptions{
+			Material: "GalaxyDisk",
+			Standard: StandardMaterial{
+				Color:     "#ffffff",
+				Emissive:  1.25,
+				BlendMode: BlendAdditive,
+			},
+			Uniforms: map[string]any{"phase": float32(0.4)},
+		},
+		SelenaMaterialOptions{
+			Material: "GalaxyCorona",
+			Standard: StandardMaterial{
+				Color:     "#ffffff",
+				Emissive:  1.75,
+				BlendMode: BlendAdditive,
+			},
+			Uniforms: map[string]any{"phase": float32(0.9)},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle) != 2 {
+		t.Fatalf("bundle materials = %d, want 2", len(bundle))
+	}
+	for i, want := range []string{"GalaxyDisk", "GalaxyCorona"} {
+		got := bundle[i]
+		if got.Name != want || got.Layout.Material != want {
+			t.Fatalf("bundle[%d] = name %q layout %q, want %q", i, got.Name, got.Layout.Material, want)
+		}
+		if got.Material.ShaderBackend != "selena" {
+			t.Fatalf("%s shader backend = %q, want selena", want, got.Material.ShaderBackend)
+		}
+		if got.Material.ShaderLayout["material"] != want {
+			t.Fatalf("%s shader layout = %#v", want, got.Material.ShaderLayout)
+		}
+		if strings.TrimSpace(got.Material.VertexGLSL) == "" || strings.TrimSpace(got.Material.FragmentGLSL) == "" ||
+			strings.TrimSpace(got.Material.VertexWGSL) == "" || strings.TrimSpace(got.Material.FragmentWGSL) == "" {
+			t.Fatalf("%s missing emitted shader sources", want)
+		}
+	}
+	if got := bundle[0].Material.Uniforms["phase"]; got != float32(0.4) {
+		t.Fatalf("disk phase = %#v, want float32(0.4)", got)
+	}
+	if got := bundle[1].Material.Uniforms["phase"]; got != float32(0.9) {
+		t.Fatalf("corona phase = %#v, want float32(0.9)", got)
+	}
+	if got := bundle[1].Material.Uniforms["coronaColor"]; !reflect.DeepEqual(got, []float32{1.0, 0.58, 0.28}) {
+		t.Fatalf("corona color default = %#v", got)
+	}
+}
+
+func TestCompileSelenaBundleDefaultsToLastMaterial(t *testing.T) {
+	bundle, err := CompileSelenaBundle([]byte(selenaBundleSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle) != 1 || bundle[0].Name != "GalaxyCorona" {
+		t.Fatalf("default bundle = %+v, want last material GalaxyCorona", bundle)
 	}
 }
 

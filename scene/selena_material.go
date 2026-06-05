@@ -7,6 +7,7 @@ import (
 
 	"m31labs.dev/selena"
 	"m31labs.dev/selena/bindings"
+	"m31labs.dev/selena/parse"
 )
 
 // SelenaMaterialOptions controls how .sel source is compiled into a Scene3D
@@ -16,6 +17,14 @@ type SelenaMaterialOptions struct {
 	Material string
 	Standard StandardMaterial
 	Uniforms map[string]any
+}
+
+// SelenaCompiledMaterial is one Scene3D material produced from a Selena source
+// bundle, with its host binding layout kept next to the custom shader payload.
+type SelenaCompiledMaterial struct {
+	Name     string
+	Material CustomMaterial
+	Layout   bindings.Layout
 }
 
 // CompileSelenaMaterial compiles Selena .sel source into GoSX's native
@@ -30,14 +39,60 @@ func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMat
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
+	material, err := selenaCustomMaterial(result, opts)
+	if err != nil {
+		return CustomMaterial{}, bindings.Layout{}, err
+	}
+	return material, result.Layout, nil
+}
 
+// CompileSelenaBundle compiles one .sel source into an ordered set of Scene3D
+// custom materials. It parses the source once, then compiles each requested
+// material name with its own standard material and host uniform overrides.
+// Passing no material options compiles Selena's default material.
+func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]SelenaCompiledMaterial, error) {
+	program, err := parse.Program(source)
+	if err != nil {
+		return nil, err
+	}
+	if len(materials) == 0 {
+		materials = []SelenaMaterialOptions{{}}
+	}
+
+	out := make([]SelenaCompiledMaterial, 0, len(materials))
+	for _, opts := range materials {
+		result, err := selena.CompileProgram(program, selena.CompileOptions{
+			Material: opts.Material,
+			Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+		})
+		if err != nil {
+			label := opts.Material
+			if strings.TrimSpace(label) == "" {
+				label = "<default>"
+			}
+			return nil, fmt.Errorf("selena material %s: %w", label, err)
+		}
+		material, err := selenaCustomMaterial(result, opts)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, SelenaCompiledMaterial{
+			Name:     result.Material.Name,
+			Material: material,
+			Layout:   result.Layout,
+		})
+	}
+	return out, nil
+}
+
+func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (CustomMaterial, error) {
 	wgsl, ok := result.Artifact(selena.TargetWGSL)
 	if !ok || strings.TrimSpace(wgsl.Source) == "" {
-		return CustomMaterial{}, bindings.Layout{}, fmt.Errorf("selena material %q did not emit WGSL", result.Material.Name)
+		return CustomMaterial{}, fmt.Errorf("selena material %q did not emit WGSL", result.Material.Name)
 	}
 	glsl, ok := result.Artifact(selena.TargetGLSL)
 	if !ok || strings.TrimSpace(glsl.Vertex) == "" || strings.TrimSpace(glsl.Fragment) == "" {
-		return CustomMaterial{}, bindings.Layout{}, fmt.Errorf("selena material %q did not emit GLSL vertex/fragment shaders", result.Material.Name)
+		return CustomMaterial{}, fmt.Errorf("selena material %q did not emit GLSL vertex/fragment shaders", result.Material.Name)
 	}
 
 	material := CustomMaterial{
@@ -50,7 +105,7 @@ func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMat
 		FragmentWGSL:     wgsl.Source,
 		Uniforms:         selenaUniforms(result.Layout, opts.Uniforms),
 	}
-	return material, result.Layout, nil
+	return material, nil
 }
 
 func selenaLayoutMap(layout bindings.Layout) map[string]any {
