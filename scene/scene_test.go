@@ -2197,6 +2197,7 @@ func TestPropsSceneIRLowersInstancedMeshPrimitiveParameters(t *testing.T) {
 				ID:       "rings",
 				Count:    1,
 				Geometry: TorusGeometry{Radius: 1.25, Tube: 0.18, RadialSegments: 40, TubularSegments: 12},
+				Material: GlowMaterial{Color: "#f0b35b", Texture: "/atlas.png", Opacity: Float(0.42), Emissive: Float(0.34), BlendMode: BlendAdditive, RenderPass: RenderAdditive},
 				Positions: []Vector3{
 					Vec3(2, 0, 0),
 				},
@@ -2222,6 +2223,9 @@ func TestPropsSceneIRLowersInstancedMeshPrimitiveParameters(t *testing.T) {
 	if tor.Radius != 1.25 || tor.Tube != 0.18 || tor.RadialSegments != 40 || tor.TubularSegments != 12 {
 		t.Fatalf("torus parameters were not preserved: %#v", tor)
 	}
+	if tor.MaterialKind != "glow" || tor.Texture != "/atlas.png" || tor.Opacity == nil || *tor.Opacity != 0.42 || tor.Emissive == nil || *tor.Emissive != 0.34 || tor.BlendMode != "additive" || tor.RenderPass != "additive" {
+		t.Fatalf("torus material parameters were not preserved: %#v", tor)
+	}
 
 	legacy := props.LegacyProps()
 	sceneValue, ok := legacy["scene"].(map[string]any)
@@ -2240,6 +2244,15 @@ func TestPropsSceneIRLowersInstancedMeshPrimitiveParameters(t *testing.T) {
 	}
 	if got := instancedMeshes[1]["radialSegments"]; got != 40 {
 		t.Fatalf("expected radialSegments in legacy props, got %#v", got)
+	}
+	if got := instancedMeshes[1]["opacity"]; got != 0.42 {
+		t.Fatalf("expected opacity in legacy props, got %#v", got)
+	}
+	if got := instancedMeshes[1]["emissive"]; got != 0.34 {
+		t.Fatalf("expected emissive in legacy props, got %#v", got)
+	}
+	if got := instancedMeshes[1]["blendMode"]; got != "additive" {
+		t.Fatalf("expected additive blendMode in legacy props, got %#v", got)
 	}
 }
 

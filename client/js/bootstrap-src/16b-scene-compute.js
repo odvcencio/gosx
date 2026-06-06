@@ -591,13 +591,7 @@
       bindGroupLayouts: [bindGroupLayout],
     });
 
-    device.createComputePipelineAsync({
-      layout: pipelineLayout,
-      compute: {
-        module: shaderModule,
-        entryPoint: "simulate",
-      },
-    }).then(function(pipeline) {
+    function markComputePipelineReady(pipeline) {
       computePipeline = pipeline;
       bindGroup = device.createBindGroup({
         layout: bindGroupLayout,
@@ -609,9 +603,22 @@
         ],
       });
       ready = true;
-    }).catch(function(err) {
-      console.warn("[gosx] Compute particle pipeline creation failed:", err);
-    });
+    }
+
+    var pipelineDescriptor = {
+      layout: pipelineLayout,
+      compute: {
+        module: shaderModule,
+        entryPoint: "simulate",
+      },
+    };
+    try {
+      markComputePipelineReady(device.createComputePipeline(pipelineDescriptor));
+    } catch (syncErr) {
+      device.createComputePipelineAsync(pipelineDescriptor).then(markComputePipelineReady).catch(function(err) {
+        console.warn("[gosx] Compute particle pipeline creation failed:", err);
+      });
+    }
 
     return {
       count: count,

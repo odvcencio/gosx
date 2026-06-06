@@ -2170,8 +2170,43 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if c, ok := materialProps["color"].(string); ok {
 			record.Color = strings.TrimSpace(c)
 		}
+		if texture, ok := mapStringValue(materialProps["texture"]); ok {
+			record.Texture = texture
+		}
+		if opacity, ok := mapFloat64OK(materialProps["opacity"]); ok {
+			record.Opacity = Float(opacity)
+		}
+		if emissive, ok := mapFloat64OK(materialProps["emissive"]); ok {
+			record.Emissive = Float(emissive)
+		}
+		if blendMode, ok := mapStringValue(materialProps["blendMode"]); ok {
+			record.BlendMode = blendMode
+		}
+		if renderPass, ok := mapStringValue(materialProps["renderPass"]); ok {
+			record.RenderPass = renderPass
+		}
+		if wireframe, ok := mapBool(materialProps["wireframe"]); ok {
+			record.Wireframe = Bool(wireframe)
+		}
 		record.Roughness = mapFloat64(materialProps["roughness"])
 		record.Metalness = mapFloat64(materialProps["metalness"])
+		record.Clearcoat = mapFloat64(materialProps["clearcoat"])
+		record.Sheen = mapFloat64(materialProps["sheen"])
+		record.Transmission = mapFloat64(materialProps["transmission"])
+		record.Iridescence = mapFloat64(materialProps["iridescence"])
+		record.Anisotropy = mapFloat64(materialProps["anisotropy"])
+		if normalMap, ok := mapStringValue(materialProps["normalMap"]); ok {
+			record.NormalMap = normalMap
+		}
+		if roughnessMap, ok := mapStringValue(materialProps["roughnessMap"]); ok {
+			record.RoughnessMap = roughnessMap
+		}
+		if metalnessMap, ok := mapStringValue(materialProps["metalnessMap"]); ok {
+			record.MetalnessMap = metalnessMap
+		}
+		if emissiveMap, ok := mapStringValue(materialProps["emissiveMap"]); ok {
+			record.EmissiveMap = emissiveMap
+		}
 	}
 
 	// Pre-compute per-instance column-major 4x4 transforms.

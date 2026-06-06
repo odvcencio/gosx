@@ -441,8 +441,24 @@ type InstancedMeshIR struct {
 	TubularSegments      int                  `json:"tubularSegments,omitempty"`
 	MaterialKind         string               `json:"materialKind,omitempty"`
 	Color                string               `json:"color,omitempty"`
+	Texture              string               `json:"texture,omitempty"`
+	Opacity              *float64             `json:"opacity,omitempty"`
+	Emissive             *float64             `json:"emissive,omitempty"`
+	BlendMode            string               `json:"blendMode,omitempty"`
+	RenderPass           string               `json:"renderPass,omitempty"`
+	Wireframe            *bool                `json:"wireframe,omitempty"`
+	DepthWrite           *bool                `json:"depthWrite,omitempty"`
 	Roughness            float64              `json:"roughness,omitempty"`
 	Metalness            float64              `json:"metalness,omitempty"`
+	Clearcoat            float64              `json:"clearcoat,omitempty"`
+	Sheen                float64              `json:"sheen,omitempty"`
+	Transmission         float64              `json:"transmission,omitempty"`
+	Iridescence          float64              `json:"iridescence,omitempty"`
+	Anisotropy           float64              `json:"anisotropy,omitempty"`
+	NormalMap            string               `json:"normalMap,omitempty"`
+	RoughnessMap         string               `json:"roughnessMap,omitempty"`
+	MetalnessMap         string               `json:"metalnessMap,omitempty"`
+	EmissiveMap          string               `json:"emissiveMap,omitempty"`
 	Transforms           []float64            `json:"transforms"`
 	Colors               []string             `json:"colors,omitempty"`
 	Attributes           map[string][]float64 `json:"attributes,omitempty"`
@@ -1108,8 +1124,24 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setInt(record, "tubularSegments", item.TubularSegments)
 	setString(record, "materialKind", item.MaterialKind)
 	setString(record, "color", item.Color)
+	setString(record, "texture", item.Texture)
+	setNumericPtr(record, "opacity", item.Opacity)
+	setNumericPtr(record, "emissive", item.Emissive)
+	setString(record, "blendMode", item.BlendMode)
+	setString(record, "renderPass", item.RenderPass)
+	setBool(record, "wireframe", item.Wireframe)
+	setBool(record, "depthWrite", item.DepthWrite)
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)
+	setNumeric(record, "clearcoat", item.Clearcoat)
+	setNumeric(record, "sheen", item.Sheen)
+	setNumeric(record, "transmission", item.Transmission)
+	setNumeric(record, "iridescence", item.Iridescence)
+	setNumeric(record, "anisotropy", item.Anisotropy)
+	setString(record, "normalMap", item.NormalMap)
+	setString(record, "roughnessMap", item.RoughnessMap)
+	setString(record, "metalnessMap", item.MetalnessMap)
+	setString(record, "emissiveMap", item.EmissiveMap)
 	if len(item.CompressedTransforms) > 0 {
 		record["compressedTransforms"] = item.CompressedTransforms
 	} else if len(item.Transforms) > 0 {

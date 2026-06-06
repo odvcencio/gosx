@@ -1,5 +1,5 @@
 {
-  "skinning": false,
+  "skinning": true,
   "ibl": false,
   "gpu-picking": false,
   "line-dashed": false,

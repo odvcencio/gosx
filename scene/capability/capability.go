@@ -29,7 +29,7 @@ const (
 // feature; the drift guard (later task) ties this to renderer manifests.
 // custom-shader is per-material (resolved via ShaderResolver), not a flat cell.
 var Matrix = map[Feature]map[Backend]bool{
-	FeatureSkinning:     {BackendWebGPU: false, BackendWebGL: true},
+	FeatureSkinning:     {BackendWebGPU: true, BackendWebGL: true},
 	FeatureIBL:          {BackendWebGPU: false, BackendWebGL: true},
 	FeatureGPUPicking:   {BackendWebGPU: false, BackendWebGL: true},
 	FeatureLineDashed:   {BackendWebGPU: false, BackendWebGL: true},

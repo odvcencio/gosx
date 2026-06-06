@@ -132,6 +132,106 @@
     "}",
   ].join("\n");
 
+  // Emitted by m31labs.dev/elio/emit/wgsl from stdlib.Skin().
+  // The runtime pads dispatch buffers to the 64-wide workgroup size, so the
+  // generated kernel can stay byte-for-byte aligned with Elio's current output.
+  var SCENE_ELIO_SKIN_LBS_SOURCE = [
+    "struct SkinVertex {",
+    "  px : f32,",
+    "  py : f32,",
+    "  pz : f32,",
+    "  w0 : f32,",
+    "  w1 : f32,",
+    "  w2 : f32,",
+    "  w3 : f32,",
+    "  b0 : u32,",
+    "  b1 : u32,",
+    "  b2 : u32,",
+    "  b3 : u32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<storage, read> bones : array<mat4x4<f32>>;",
+    "@group(0) @binding(1) var<storage, read> verts : array<SkinVertex>;",
+    "@group(0) @binding(2) var<storage, read_write> out : array<f32>;",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn skin(@builtin(global_invocation_id) gid : vec3<u32>) {",
+    "  let i = gid.x;",
+    "  let v = verts[i];",
+    "  let skinned = ((((((((bones[v.b0][0u] * v.px) + (bones[v.b0][1u] * v.py)) + (bones[v.b0][2u] * v.pz)) + bones[v.b0][3u]) * v.w0) + (((((bones[v.b1][0u] * v.px) + (bones[v.b1][1u] * v.py)) + (bones[v.b1][2u] * v.pz)) + bones[v.b1][3u]) * v.w1)) + (((((bones[v.b2][0u] * v.px) + (bones[v.b2][1u] * v.py)) + (bones[v.b2][2u] * v.pz)) + bones[v.b2][3u]) * v.w2)) + (((((bones[v.b3][0u] * v.px) + (bones[v.b3][1u] * v.py)) + (bones[v.b3][2u] * v.pz)) + bones[v.b3][3u]) * v.w3));",
+    "  out[((i * 3u) + 0u)] = skinned.x;",
+    "  out[((i * 3u) + 1u)] = skinned.y;",
+    "  out[((i * 3u) + 2u)] = skinned.z;",
+    "}",
+  ].join("\n");
+
+  var SCENE_COMPUTED_MORPH_SOURCE = [
+    "struct MorphUniforms {",
+    "  model : mat4x4<f32>,",
+    "  alpha : f32,",
+    "  count : f32,",
+    "  _pad0 : f32,",
+    "  _pad1 : f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<storage, read> sourcePacked : array<f32>;",
+    "@group(0) @binding(1) var<storage, read> targetPacked : array<f32>;",
+    "@group(0) @binding(2) var<storage, read_write> outPositions : array<f32>;",
+    "@group(0) @binding(3) var<storage, read_write> outNormals : array<f32>;",
+    "@group(0) @binding(4) var<storage, read_write> outTangents : array<f32>;",
+    "@group(0) @binding(5) var<uniform> morph : MorphUniforms;",
+    "",
+    "fn safeNormalize(v : vec3<f32>, fallback : vec3<f32>) -> vec3<f32> {",
+    "  let len = length(v);",
+    "  if (len > 0.000001) {",
+    "    return v / len;",
+    "  }",
+    "  return fallback;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn morphPose(@builtin(global_invocation_id) gid : vec3<u32>) {",
+    "  let i = gid.x;",
+    "  if (f32(i) >= morph.count) {",
+    "    return;",
+    "  }",
+    "  let p = i * 3u;",
+    "  let t = i * 4u;",
+    "  let packed = i * 10u;",
+    "  let a = clamp(morph.alpha, 0.0, 1.0);",
+    "  let localPosition = mix(",
+    "    vec3<f32>(sourcePacked[packed], sourcePacked[packed + 1u], sourcePacked[packed + 2u]),",
+    "    vec3<f32>(targetPacked[packed], targetPacked[packed + 1u], targetPacked[packed + 2u]),",
+    "    a",
+    "  );",
+    "  let worldPosition = morph.model * vec4<f32>(localPosition, 1.0);",
+    "  outPositions[p] = worldPosition.x;",
+    "  outPositions[p + 1u] = worldPosition.y;",
+    "  outPositions[p + 2u] = worldPosition.z;",
+    "",
+    "  let localNormal = mix(",
+    "    vec3<f32>(sourcePacked[packed + 3u], sourcePacked[packed + 4u], sourcePacked[packed + 5u]),",
+    "    vec3<f32>(targetPacked[packed + 3u], targetPacked[packed + 4u], targetPacked[packed + 5u]),",
+    "    a",
+    "  );",
+    "  let worldNormal = safeNormalize((morph.model * vec4<f32>(localNormal, 0.0)).xyz, vec3<f32>(0.0, 0.0, 1.0));",
+    "  outNormals[p] = worldNormal.x;",
+    "  outNormals[p + 1u] = worldNormal.y;",
+    "  outNormals[p + 2u] = worldNormal.z;",
+    "",
+    "  let localTangent = mix(",
+    "    vec3<f32>(sourcePacked[packed + 6u], sourcePacked[packed + 7u], sourcePacked[packed + 8u]),",
+    "    vec3<f32>(targetPacked[packed + 6u], targetPacked[packed + 7u], targetPacked[packed + 8u]),",
+    "    a",
+    "  );",
+    "  let worldTangent = safeNormalize((morph.model * vec4<f32>(localTangent, 0.0)).xyz, vec3<f32>(1.0, 0.0, 0.0));",
+    "  outTangents[t] = worldTangent.x;",
+    "  outTangents[t + 1u] = worldTangent.y;",
+    "  outTangents[t + 2u] = worldTangent.z;",
+    "  outTangents[t + 3u] = select(sourcePacked[packed + 9u], targetPacked[packed + 9u], a >= 0.5);",
+    "}",
+  ].join("\n");
+
   var WGSL_PBR_INSTANCED_VERTEX = [
     WGSL_FRAME_STRUCTS,
     "",
@@ -1584,7 +1684,7 @@
           blend: wgpuBlendState(blendMode),
         }],
       },
-      primitive: { topology: "triangle-list", cullMode: "back" },
+      primitive: { topology: "triangle-list", cullMode: "none" },
       multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
         format: "depth24plus",
@@ -1611,7 +1711,7 @@
           blend: wgpuBlendState(blendMode),
         }],
       },
-      primitive: { topology: "triangle-list", cullMode: "back" },
+      primitive: { topology: "triangle-list", cullMode: "none" },
       multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
         format: "depth24plus",
@@ -2198,8 +2298,30 @@
   // -----------------------------------------------------------------------
 
   function createSceneWebGPURenderer(canvas, options) {
-    if (typeof navigator === "undefined" || !navigator.gpu) return null;
-    if (typeof canvas.getContext !== "function") return null;
+    function sceneWebGPUFactoryFailure(reason) {
+      var text = String(reason || "unknown");
+      try {
+        if (typeof window !== "undefined") {
+          var rect = canvas && typeof canvas.getBoundingClientRect === "function" ? canvas.getBoundingClientRect() : null;
+          window.__gosx_scene3d_webgpu_factory_error = text;
+          window.__gosx_scene3d_webgpu_factory_context = {
+            reason: text,
+            canvasChildren: canvas && canvas.childNodes ? canvas.childNodes.length : -1,
+            canvasParent: canvas && canvas.parentNode && canvas.parentNode.tagName ? canvas.parentNode.tagName : "",
+            canvasWidth: canvas && Number(canvas.width) || 0,
+            canvasHeight: canvas && Number(canvas.height) || 0,
+            canvasConnected: !!(canvas && canvas.isConnected),
+            canvasRectWidth: rect ? Number(rect.width) || 0 : 0,
+            canvasRectHeight: rect ? Number(rect.height) || 0 : 0,
+          };
+        }
+      } catch (_err) {}
+      console.warn("[gosx] WebGPU factory unavailable:", text);
+      return null;
+    }
+
+    if (typeof navigator === "undefined" || !navigator.gpu) return sceneWebGPUFactoryFailure("navigator-gpu-unavailable");
+    if (!canvas || typeof canvas.getContext !== "function") return sceneWebGPUFactoryFailure("canvas-context-unavailable");
 
     // Device + adapter come from the main-bundle probe (16z). The
     // probe has already verified BOTH requestAdapter AND requestDevice
@@ -2208,7 +2330,10 @@
     // failure mode where requestAdapter works twice but requestDevice
     // fails on the second call (seen on some mobile GPUs).
     var probe = _externalProbe();
-    if (!probe || !probe.ready || !probe.adapter || !probe.device) return null;
+    if (!probe || !probe.ready || !probe.adapter || !probe.device) {
+      var probeError = probe && probe.error ? ": " + probe.error : "";
+      return sceneWebGPUFactoryFailure("probe-not-ready" + probeError);
+    }
     var adapter = probe.adapter;
     var device = probe.device;
     var rendererOptions = options && typeof options === "object" ? options : {};
@@ -2217,13 +2342,14 @@
     // checks above failed we never reached this line, so the canvas
     // stays clean and the mount code can fall through to WebGL.
     var gpuCtx = canvas.getContext("webgpu");
-    if (!gpuCtx) return null;
+    if (!gpuCtx) return sceneWebGPUFactoryFailure("canvas-webgpu-context-unavailable");
 
     // initFailed remains for runtime device-loss recovery; startInit is
     // effectively a no-op now that we have the device up front, but we
     // keep the name for backwards compatibility with the existing render
     // loop structure.
     var initFailed = false;
+    var initError = "";
     var initStarted = true;
     var targetFormat = navigator.gpu.getPreferredCanvasFormat();
     var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
@@ -2287,10 +2413,14 @@
     // GPU resources (initialized after device is ready).
     var frameBindGroupLayout = null;
     var materialBindGroupLayout = null;
+    var elioSkinBindGroupLayout = null;
+    var computedMorphBindGroupLayout = null;
     var pointsBindGroupLayout = null;
     var pointsUniformBindGroupLayout = null;
     var shadowBindGroupLayout = null;
     var pbrPipelineLayout = null;
+    var elioSkinPipelineLayout = null;
+    var computedMorphPipelineLayout = null;
     var pointsPipelineLayout = null;
     var pointsVertexPipelineLayout = null;
     var selenaPipelineCache = new Map();
@@ -2298,6 +2428,10 @@
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
     var pbrFragmentModule = null;
+    var elioSkinShaderModule = null;
+    var elioSkinPipeline = null;
+    var computedMorphShaderModule = null;
+    var computedMorphPipeline = null;
     var shadowVertexModule = null;
     var shadowInstancedVertexModule = null;
     var shadowFragmentModule = null;
@@ -2615,6 +2749,25 @@
         // Create bind group layouts.
         frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(device);
         materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device);
+        elioSkinBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-elio-skin-lbs",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+          ],
+        });
+        computedMorphBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-computed-morph",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+          ],
+        });
         pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(device);
         pointsUniformBindGroupLayout = wgpuCreatePointsUniformBindGroupLayout(device);
         shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
@@ -2622,6 +2775,12 @@
         // Pipeline layouts.
         pbrPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout],
+        });
+        elioSkinPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [elioSkinBindGroupLayout],
+        });
+        computedMorphPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [computedMorphBindGroupLayout],
         });
         pointsPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout, pointsBindGroupLayout],
@@ -2634,6 +2793,18 @@
         pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
         pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
+        elioSkinShaderModule = device.createShaderModule({ label: "elio-skin-lbs", code: SCENE_ELIO_SKIN_LBS_SOURCE });
+        elioSkinPipeline = device.createComputePipeline({
+          label: "gosx-elio-skin-lbs",
+          layout: elioSkinPipelineLayout,
+          compute: { module: elioSkinShaderModule, entryPoint: "skin" },
+        });
+        computedMorphShaderModule = device.createShaderModule({ label: "computed-morph", code: SCENE_COMPUTED_MORPH_SOURCE });
+        computedMorphPipeline = device.createComputePipeline({
+          label: "gosx-computed-morph",
+          layout: computedMorphPipelineLayout,
+          compute: { module: computedMorphShaderModule, entryPoint: "morphPose" },
+        });
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
         shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
         shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
@@ -2714,6 +2885,7 @@
         // already called getContext("webgpu") above), so the mount
         // code can't fall back to WebGL — but at least we log loudly
         // and stop doing broken work.
+        initError = String(err && (err.message || err) || "unknown error");
         console.warn("[gosx] WebGPU synchronous init failed:", err);
         initFailed = true;
       }
@@ -3455,6 +3627,631 @@
       });
     }
 
+    function webGPUObjectVertexCount(obj) {
+      return Math.max(0, Math.floor(sceneNumber(obj && obj.vertexCount, obj && obj.vertices && obj.vertices.count || 0)));
+    }
+
+    function webGPUDirectAttribute(obj, key, count, tupleSize) {
+      var vertices = obj && obj.vertices;
+      var data = vertices && vertices[key];
+      var required = Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, tupleSize);
+      if (!vertices || required <= 0 || !data || typeof data.length !== "number" || data.length < required) {
+        return null;
+      }
+      if (!(data instanceof Float32Array)) {
+        data = new Float32Array(data);
+        vertices[key] = data;
+      }
+      if (data.length === required) {
+        return data;
+      }
+      var views = vertices._wgpuAttributeViews;
+      if (!views) {
+        views = Object.create(null);
+        vertices._wgpuAttributeViews = views;
+      }
+      var viewKey = key + ":" + required;
+      var record = views[viewKey];
+      if (!record || record.source !== data) {
+        record = {
+          source: data,
+          view: data.subarray(0, required),
+        };
+        views[viewKey] = record;
+      }
+      return record.view;
+    }
+
+    function webGPUDefaultAttributeData(obj, key, count, tupleSize, defaults) {
+      var direct = webGPUDirectAttribute(obj, key, count, tupleSize);
+      if (direct) return direct;
+      var stride = Math.max(1, tupleSize);
+      var data = ensureScratch(key, Math.max(0, count * stride));
+      for (var i = 0; i < count; i++) {
+        for (var c = 0; c < stride; c++) {
+          data[i * stride + c] = sceneNumber(defaults && defaults[c], 0);
+        }
+      }
+      return data.subarray(0, count * stride);
+    }
+
+    function webGPUObjectIsSkinned(obj) {
+      var count = webGPUObjectVertexCount(obj);
+      var vertices = obj && obj.vertices;
+      var skin = obj && obj.skin;
+      var jointMatrices = skin && skin.jointMatrices;
+      return Boolean(
+        count > 0 &&
+        vertices &&
+        skin &&
+        jointMatrices &&
+        typeof jointMatrices.length === "number" &&
+        jointMatrices.length >= 16 &&
+        webGPUDirectAttribute(obj, "positions", count, 3) &&
+        webGPUDirectAttribute(obj, "joints", count, 4) &&
+        webGPUDirectAttribute(obj, "weights", count, 4)
+      );
+    }
+
+    function webGPUObjectModelMatrix(obj) {
+      var matrix = obj && obj.modelMatrix;
+      return matrix && typeof matrix.length === "number" && matrix.length >= 16
+        ? matrix
+        : pointsIdentityMatrix;
+    }
+
+    function webGPUMat4MultiplyInto(out, outOffset, a, b, bOffset) {
+      for (var col = 0; col < 4; col++) {
+        var bi = bOffset + col * 4;
+        var b0 = sceneNumber(b[bi], col === 0 ? 1 : 0);
+        var b1 = sceneNumber(b[bi + 1], col === 1 ? 1 : 0);
+        var b2 = sceneNumber(b[bi + 2], col === 2 ? 1 : 0);
+        var b3 = sceneNumber(b[bi + 3], col === 3 ? 1 : 0);
+        out[outOffset + col * 4] = sceneNumber(a[0], 1) * b0 + sceneNumber(a[4], 0) * b1 + sceneNumber(a[8], 0) * b2 + sceneNumber(a[12], 0) * b3;
+        out[outOffset + col * 4 + 1] = sceneNumber(a[1], 0) * b0 + sceneNumber(a[5], 1) * b1 + sceneNumber(a[9], 0) * b2 + sceneNumber(a[13], 0) * b3;
+        out[outOffset + col * 4 + 2] = sceneNumber(a[2], 0) * b0 + sceneNumber(a[6], 0) * b1 + sceneNumber(a[10], 1) * b2 + sceneNumber(a[14], 0) * b3;
+        out[outOffset + col * 4 + 3] = sceneNumber(a[3], 0) * b0 + sceneNumber(a[7], 0) * b1 + sceneNumber(a[11], 0) * b2 + sceneNumber(a[15], 1) * b3;
+      }
+    }
+
+    function webGPUElioBoneData(obj, jointCount) {
+      var skin = obj && obj.skin;
+      var jointMatrices = skin && skin.jointMatrices;
+      if (!skin || !jointMatrices || typeof jointMatrices.length !== "number" || jointCount <= 0) return null;
+      var data = skin._gosxWGPUElioBoneData;
+      if (!data || data.length !== jointCount * 16) {
+        data = new Float32Array(jointCount * 16);
+        skin._gosxWGPUElioBoneData = data;
+      }
+      var model = webGPUObjectModelMatrix(obj);
+      for (var i = 0; i < jointCount; i++) {
+        webGPUMat4MultiplyInto(data, i * 16, model, jointMatrices, i * 16);
+      }
+      return data;
+    }
+
+    function webGPUElioSkinVertexData(obj, count, paddedCount, jointCount) {
+      var vertices = obj && obj.vertices;
+      var positions = webGPUDirectAttribute(obj, "positions", count, 3);
+      var joints = webGPUDirectAttribute(obj, "joints", count, 4);
+      var weights = webGPUDirectAttribute(obj, "weights", count, 4);
+      if (!vertices || !positions || !joints || !weights || count <= 0 || paddedCount <= 0) return null;
+      var cache = vertices._gosxWGPUElioSkinVertexData;
+      if (
+        cache &&
+        cache.positions === positions &&
+        cache.joints === joints &&
+        cache.weights === weights &&
+        cache.count === count &&
+        cache.paddedCount === paddedCount &&
+        cache.jointCount === jointCount
+      ) {
+        return cache.data;
+      }
+
+      var stride = 44;
+      var bytes = new Uint8Array(paddedCount * stride);
+      var view = new DataView(bytes.buffer);
+      var maxJoint = Math.max(0, jointCount - 1);
+      for (var i = 0; i < paddedCount; i++) {
+        var off = i * stride;
+        if (i < count) {
+          var p = i * 3;
+          var q = i * 4;
+          view.setFloat32(off, sceneNumber(positions[p], 0), true);
+          view.setFloat32(off + 4, sceneNumber(positions[p + 1], 0), true);
+          view.setFloat32(off + 8, sceneNumber(positions[p + 2], 0), true);
+          var w0 = Math.max(0, sceneNumber(weights[q], 0));
+          var w1 = Math.max(0, sceneNumber(weights[q + 1], 0));
+          var w2 = Math.max(0, sceneNumber(weights[q + 2], 0));
+          var w3 = Math.max(0, sceneNumber(weights[q + 3], 0));
+          var sum = w0 + w1 + w2 + w3;
+          if (sum <= 0.000001) {
+            w0 = 1; w1 = 0; w2 = 0; w3 = 0;
+          } else {
+            w0 /= sum; w1 /= sum; w2 /= sum; w3 /= sum;
+          }
+          view.setFloat32(off + 12, w0, true);
+          view.setFloat32(off + 16, w1, true);
+          view.setFloat32(off + 20, w2, true);
+          view.setFloat32(off + 24, w3, true);
+          view.setUint32(off + 28, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q], 0)))), true);
+          view.setUint32(off + 32, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 1], 0)))), true);
+          view.setUint32(off + 36, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 2], 0)))), true);
+          view.setUint32(off + 40, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 3], 0)))), true);
+        } else {
+          view.setFloat32(off + 12, 1, true);
+        }
+      }
+
+      cache = {
+        positions: positions,
+        joints: joints,
+        weights: weights,
+        count: count,
+        paddedCount: paddedCount,
+        jointCount: jointCount,
+        data: bytes,
+      };
+      vertices._gosxWGPUElioSkinVertexData = cache;
+      return bytes;
+    }
+
+    function webGPUElioEnsureOutputBuffer(record, paddedCount) {
+      var bytes = Math.max(4, paddedCount * 3 * 4);
+      if (record.outputBuffer && wgpuTrackedBufferSize(record.outputBuffer) >= bytes) return record.outputBuffer;
+      if (record.outputBuffer && typeof record.outputBuffer.destroy === "function") {
+        pointsEntryGPUBuffers.delete(record.outputBuffer);
+        record.outputBuffer.destroy();
+      }
+      record.outputBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, bytes);
+      return record.outputBuffer;
+    }
+
+    function webGPUElioSkinRecord(obj) {
+      if (!webGPUObjectIsSkinned(obj) || !elioSkinPipeline || !elioSkinBindGroupLayout) return null;
+      var count = webGPUObjectVertexCount(obj);
+      var skin = obj.skin;
+      var jointCount = Math.floor(sceneNumber(skin && skin.jointMatrices && skin.jointMatrices.length, 0) / 16);
+      if (count <= 0 || jointCount <= 0) return null;
+      var paddedCount = Math.max(64, Math.ceil(count / 64) * 64);
+      var vertexData = webGPUElioSkinVertexData(obj, count, paddedCount, jointCount);
+      var boneData = webGPUElioBoneData(obj, jointCount);
+      if (!vertexData || !boneData) return null;
+
+      var record = obj._gosxWGPUElioSkinRecord;
+      if (!record) {
+        record = {};
+        obj._gosxWGPUElioSkinRecord = record;
+      }
+
+      var boneBuffer = wgpuCachedTrackedBuffer(
+        skin,
+        "_gosxWGPUElioSkinBoneBuffer",
+        boneData,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        true
+      );
+      var vertexBuffer = wgpuCachedTrackedBuffer(
+        obj.vertices,
+        "_gosxWGPUElioSkinVertexBuffer",
+        vertexData,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        false
+      );
+      var outputBuffer = webGPUElioEnsureOutputBuffer(record, paddedCount);
+      if (!boneBuffer || !vertexBuffer || !outputBuffer) return null;
+
+      if (
+        !record.bindGroup ||
+        record.boneBuffer !== boneBuffer ||
+        record.vertexBuffer !== vertexBuffer ||
+        record.outputBuffer !== outputBuffer
+      ) {
+        record.bindGroup = device.createBindGroup({
+          layout: elioSkinBindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: boneBuffer } },
+            { binding: 1, resource: { buffer: vertexBuffer } },
+            { binding: 2, resource: { buffer: outputBuffer } },
+          ],
+        });
+        record.boneBuffer = boneBuffer;
+        record.vertexBuffer = vertexBuffer;
+        record.outputBuffer = outputBuffer;
+      }
+      record.count = count;
+      record.paddedCount = paddedCount;
+      record.workgroups = Math.ceil(paddedCount / 64);
+      obj._gosxWGPUElioSkinOutputBuffer = outputBuffer;
+      return record;
+    }
+
+    function updateElioSkinnedMeshes(bundle, encoder) {
+      var stats = {
+        elioSkinningDispatches: 0,
+        elioSkinningVertices: 0,
+        elioSkinningKernel: "m31labs.dev/elio/stdlib.Skin",
+      };
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var pass = null;
+      for (var i = 0; i < objects.length; i++) {
+        var obj = objects[i];
+        if (!obj || obj.viewCulled || !webGPUObjectIsSkinned(obj)) continue;
+        var record = webGPUElioSkinRecord(obj);
+        if (!record) continue;
+        if (!pass) {
+          pass = encoder.beginComputePass({ label: "gosx-elio-skin-lbs" });
+          pass.setPipeline(elioSkinPipeline);
+        }
+        pass.setBindGroup(0, record.bindGroup);
+        pass.dispatchWorkgroups(record.workgroups);
+        stats.elioSkinningDispatches += 1;
+        stats.elioSkinningVertices += record.count;
+      }
+      if (pass) pass.end();
+      return stats;
+    }
+
+    function webGPUComputedMorphArray(morph, key, count, components) {
+      var required = Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, Math.floor(sceneNumber(components, 1)));
+      var source = morph && morph[key];
+      if (!source || required <= 0 || typeof source.length !== "number" || source.length < required) return null;
+      var typed = source instanceof Float32Array ? source : toSceneFloat32Array(source);
+      if (typed !== source && morph) morph[key] = typed;
+      return typed.length === required ? typed : typed.subarray(0, required);
+    }
+
+    function webGPUComputedMorphDefaultArray(morph, key, count, components, defaults) {
+      var required = Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, Math.floor(sceneNumber(components, 1)));
+      if (required <= 0) return null;
+      var data = morph && morph[key];
+      if (!data || data.length !== required) {
+        data = new Float32Array(required);
+        var width = Math.max(1, Math.floor(sceneNumber(components, 1)));
+        for (var i = 0; i < count; i++) {
+          for (var c = 0; c < width; c++) {
+            data[i * width + c] = sceneNumber(defaults && defaults[c], 0);
+          }
+        }
+        if (morph) morph[key] = data;
+      }
+      return data;
+    }
+
+    function webGPUComputedMorphData(obj) {
+      var morph = obj && obj.computedMorph;
+      if (!morph || !computedMorphPipeline || !computedMorphBindGroupLayout) return null;
+      var requested = Math.max(0, Math.floor(sceneNumber(morph.count, sceneNumber(obj && obj.vertexCount, 0))));
+      var objCount = Math.max(0, Math.floor(sceneNumber(obj && obj.vertexCount, requested)));
+      var count = Math.min(requested, objCount);
+      var sourcePositions = webGPUComputedMorphArray(morph, "sourcePositions", count, 3);
+      var targetPositions = webGPUComputedMorphArray(morph, "targetPositions", count, 3);
+      if (!sourcePositions || !targetPositions || count <= 0) return null;
+      var sourceNormals = webGPUComputedMorphArray(morph, "sourceNormals", count, 3) ||
+        webGPUComputedMorphDefaultArray(morph, "_defaultSourceNormals", count, 3, [0, 0, 1]);
+      var targetNormals = webGPUComputedMorphArray(morph, "targetNormals", count, 3) || sourceNormals;
+      var sourceTangents = webGPUComputedMorphArray(morph, "sourceTangents", count, 4) ||
+        webGPUComputedMorphDefaultArray(morph, "_defaultSourceTangents", count, 4, [1, 0, 0, 1]);
+      var targetTangents = webGPUComputedMorphArray(morph, "targetTangents", count, 4) || sourceTangents;
+      if (!sourceNormals || !targetNormals || !sourceTangents || !targetTangents) return null;
+      return {
+        morph: morph,
+        count: count,
+        sourcePositions: sourcePositions,
+        targetPositions: targetPositions,
+        sourceNormals: sourceNormals,
+        targetNormals: targetNormals,
+        sourceTangents: sourceTangents,
+        targetTangents: targetTangents,
+      };
+    }
+
+    function webGPUComputedMorphUniformData(obj, morph, count) {
+      var data = morph && morph._gosxWGPUComputedMorphUniformData;
+      if (!data || data.length !== 20) {
+        data = new Float32Array(20);
+        if (morph) morph._gosxWGPUComputedMorphUniformData = data;
+      }
+      var matrix = morph && morph.modelMatrix || webGPUObjectModelMatrix(obj);
+      for (var i = 0; i < 16; i++) {
+        data[i] = sceneNumber(matrix && matrix[i], i % 5 === 0 ? 1 : 0);
+      }
+      data[16] = Math.max(0, Math.min(1, sceneNumber(morph && morph.alpha, 0.45)));
+      data[17] = Math.max(0, Math.floor(sceneNumber(count, 0)));
+      data[18] = 0;
+      data[19] = 0;
+      return data;
+    }
+
+    function webGPUComputedMorphPackedData(morph, slot, count, positions, normals, tangents) {
+      if (!morph || !positions || !normals || !tangents) return null;
+      var cache = morph[slot];
+      if (
+        cache &&
+        cache.count === count &&
+        cache.positions === positions &&
+        cache.normals === normals &&
+        cache.tangents === tangents
+      ) {
+        return cache.data;
+      }
+      var data = new Float32Array(Math.max(0, count) * 10);
+      for (var i = 0; i < count; i++) {
+        var p = i * 3;
+        var t = i * 4;
+        var out = i * 10;
+        data[out] = sceneNumber(positions[p], 0);
+        data[out + 1] = sceneNumber(positions[p + 1], 0);
+        data[out + 2] = sceneNumber(positions[p + 2], 0);
+        data[out + 3] = sceneNumber(normals[p], 0);
+        data[out + 4] = sceneNumber(normals[p + 1], 0);
+        data[out + 5] = sceneNumber(normals[p + 2], 1);
+        data[out + 6] = sceneNumber(tangents[t], 1);
+        data[out + 7] = sceneNumber(tangents[t + 1], 0);
+        data[out + 8] = sceneNumber(tangents[t + 2], 0);
+        data[out + 9] = sceneNumber(tangents[t + 3], 1);
+      }
+      morph[slot] = {
+        count: count,
+        positions: positions,
+        normals: normals,
+        tangents: tangents,
+        data: data,
+      };
+      return data;
+    }
+
+    function webGPUComputedMorphEnsureOutputBuffer(record, slot, count, components) {
+      var bytes = Math.max(4, Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, components) * 4);
+      var buffer = record && record[slot];
+      if (buffer && wgpuTrackedBufferSize(buffer) >= bytes) return buffer;
+      if (buffer && typeof buffer.destroy === "function") {
+        pointsEntryGPUBuffers.delete(buffer);
+        buffer.destroy();
+      }
+      buffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, bytes);
+      record[slot] = buffer;
+      return buffer;
+    }
+
+    function webGPUComputedMorphRecord(obj) {
+      var data = webGPUComputedMorphData(obj);
+      if (!data) return null;
+      var morph = data.morph;
+      var record = morph._gosxWGPUComputedMorphRecord;
+      if (!record) {
+        record = {};
+        morph._gosxWGPUComputedMorphRecord = record;
+      }
+      var count = data.count;
+      var sourcePacked = webGPUComputedMorphPackedData(morph, "_gosxWGPUComputedMorphSourcePackedData", count, data.sourcePositions, data.sourceNormals, data.sourceTangents);
+      var targetPacked = webGPUComputedMorphPackedData(morph, "_gosxWGPUComputedMorphTargetPackedData", count, data.targetPositions, data.targetNormals, data.targetTangents);
+      var sourcePackedBuffer = wgpuCachedTrackedBuffer(morph, "_gosxWGPUComputedMorphSourcePacked", sourcePacked, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, false);
+      var targetPackedBuffer = wgpuCachedTrackedBuffer(morph, "_gosxWGPUComputedMorphTargetPacked", targetPacked, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, false);
+      var uniformData = webGPUComputedMorphUniformData(obj, morph, count);
+      var uniformBuffer = wgpuCachedTrackedBuffer(morph, "_gosxWGPUComputedMorphUniform", uniformData, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true);
+      var positionBuffer = webGPUComputedMorphEnsureOutputBuffer(record, "positionBuffer", count, 3);
+      var normalBuffer = webGPUComputedMorphEnsureOutputBuffer(record, "normalBuffer", count, 3);
+      var tangentBuffer = webGPUComputedMorphEnsureOutputBuffer(record, "tangentBuffer", count, 4);
+      if (
+        !sourcePackedBuffer || !targetPackedBuffer ||
+        !uniformBuffer || !positionBuffer || !normalBuffer || !tangentBuffer
+      ) {
+        return null;
+      }
+      if (
+        !record.bindGroup ||
+        record.sourcePackedBuffer !== sourcePackedBuffer ||
+        record.targetPackedBuffer !== targetPackedBuffer ||
+        record.positionBuffer !== positionBuffer ||
+        record.normalBuffer !== normalBuffer ||
+        record.tangentBuffer !== tangentBuffer ||
+        record.uniformBuffer !== uniformBuffer
+      ) {
+        record.bindGroup = device.createBindGroup({
+          layout: computedMorphBindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: sourcePackedBuffer } },
+            { binding: 1, resource: { buffer: targetPackedBuffer } },
+            { binding: 2, resource: { buffer: positionBuffer } },
+            { binding: 3, resource: { buffer: normalBuffer } },
+            { binding: 4, resource: { buffer: tangentBuffer } },
+            { binding: 5, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        record.sourcePackedBuffer = sourcePackedBuffer;
+        record.targetPackedBuffer = targetPackedBuffer;
+        record.positionBuffer = positionBuffer;
+        record.normalBuffer = normalBuffer;
+        record.tangentBuffer = tangentBuffer;
+        record.uniformBuffer = uniformBuffer;
+      }
+      record.count = count;
+      record.workgroups = Math.ceil(Math.max(64, count) / 64);
+      obj._gosxWGPUComputedMorphRecord = record;
+      return record;
+    }
+
+    function updateComputedMorphMeshes(bundle, encoder) {
+      var stats = {
+        computedMorphDispatches: 0,
+        computedMorphVertices: 0,
+        computedMorphKernel: "m31labs.dev/gosx/scene3d.ComputedMorph",
+      };
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var pass = null;
+      for (var i = 0; i < objects.length; i++) {
+        var obj = objects[i];
+        if (!obj || obj.viewCulled || webGPUObjectIsSkinned(obj)) continue;
+        var record = webGPUComputedMorphRecord(obj);
+        if (!record) continue;
+        if (!pass) {
+          pass = encoder.beginComputePass({ label: "gosx-computed-morph" });
+          pass.setPipeline(computedMorphPipeline);
+        }
+        pass.setBindGroup(0, record.bindGroup);
+        pass.dispatchWorkgroups(record.workgroups);
+        stats.computedMorphDispatches += 1;
+        stats.computedMorphVertices += record.count;
+      }
+      if (pass) pass.end();
+      return stats;
+    }
+
+    function webGPUObjectComputedMorphDrawRecord(obj) {
+      var record = obj && obj._gosxWGPUComputedMorphRecord;
+      return record && record.positionBuffer && record.normalBuffer && record.tangentBuffer ? record : null;
+    }
+
+    function webGPUBindComputedMorphBuffer(pass, slot, buffer, count, components) {
+      if (!buffer) return false;
+      var byteSize = Math.max(4, Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, components) * 4);
+      pass.setVertexBuffer(slot, buffer, 0, byteSize);
+      return true;
+    }
+
+    function webGPUTransformVec3Attribute(obj, key, count, defaults, scratchName) {
+      var source = webGPUDefaultAttributeData(obj, key, count, 3, defaults);
+      var out = ensureScratch(scratchName, count * 3);
+      var m = webGPUObjectModelMatrix(obj);
+      for (var i = 0; i < count; i++) {
+        var off = i * 3;
+        var x = sceneNumber(source[off], defaults && defaults[0] || 0);
+        var y = sceneNumber(source[off + 1], defaults && defaults[1] || 0);
+        var z = sceneNumber(source[off + 2], defaults && defaults[2] || 0);
+        var tx = sceneNumber(m[0], 1) * x + sceneNumber(m[4], 0) * y + sceneNumber(m[8], 0) * z;
+        var ty = sceneNumber(m[1], 0) * x + sceneNumber(m[5], 1) * y + sceneNumber(m[9], 0) * z;
+        var tz = sceneNumber(m[2], 0) * x + sceneNumber(m[6], 0) * y + sceneNumber(m[10], 1) * z;
+        var len = Math.hypot(tx, ty, tz);
+        if (len > 0.000001) {
+          tx /= len; ty /= len; tz /= len;
+        }
+        out[off] = tx;
+        out[off + 1] = ty;
+        out[off + 2] = tz;
+      }
+      return out.subarray(0, count * 3);
+    }
+
+    function webGPUTransformTangentAttribute(obj, count) {
+      var source = webGPUDefaultAttributeData(obj, "tangents", count, 4, [1, 0, 0, 1]);
+      var out = ensureScratch("tangents", count * 4);
+      var m = webGPUObjectModelMatrix(obj);
+      for (var i = 0; i < count; i++) {
+        var off = i * 4;
+        var x = sceneNumber(source[off], 1);
+        var y = sceneNumber(source[off + 1], 0);
+        var z = sceneNumber(source[off + 2], 0);
+        var tx = sceneNumber(m[0], 1) * x + sceneNumber(m[4], 0) * y + sceneNumber(m[8], 0) * z;
+        var ty = sceneNumber(m[1], 0) * x + sceneNumber(m[5], 1) * y + sceneNumber(m[9], 0) * z;
+        var tz = sceneNumber(m[2], 0) * x + sceneNumber(m[6], 0) * y + sceneNumber(m[10], 1) * z;
+        var len = Math.hypot(tx, ty, tz);
+        if (len > 0.000001) {
+          tx /= len; ty /= len; tz /= len;
+        }
+        out[off] = tx;
+        out[off + 1] = ty;
+        out[off + 2] = tz;
+        out[off + 3] = sceneNumber(source[off + 3], 1);
+      }
+      return out.subarray(0, count * 4);
+    }
+
+    function webGPUBindElioSkinnedBuffers(pass, obj, count) {
+      var outputBuffer = obj && obj._gosxWGPUElioSkinOutputBuffer;
+      if (!outputBuffer) return false;
+      var normals = webGPUTransformVec3Attribute(obj, "normals", count, [0, 0, 1], "normals");
+      var uvs = webGPUDefaultAttributeData(obj, "uvs", count, 2, [0, 0]);
+      var tangents = webGPUTransformTangentAttribute(obj, count);
+      pass.setVertexBuffer(0, outputBuffer);
+      pass.setVertexBuffer(1, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedNormals", normals, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      pass.setVertexBuffer(2, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      pass.setVertexBuffer(3, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedTangents", tangents, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      return true;
+    }
+
+    function webGPUCountSkinnedMeshes(bundle) {
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var count = 0;
+      for (var i = 0; i < objects.length; i++) {
+        if (webGPUObjectIsSkinned(objects[i])) count++;
+      }
+      return count;
+    }
+
+    function webGPUSceneMeshVertexCount(bundle) {
+      var count = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0)));
+      var positions = bundle && bundle.worldMeshPositions;
+      if (positions && typeof positions.length === "number") {
+        count = Math.max(count, Math.floor(positions.length / 3));
+      }
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      for (var i = 0; i < objects.length; i++) {
+        var obj = objects[i];
+        if (!obj) continue;
+        count = Math.max(count, Math.floor(sceneNumber(obj.vertexOffset, 0)) + Math.floor(sceneNumber(obj.vertexCount, 0)));
+      }
+      return count;
+    }
+
+    function webGPUSceneMeshAttributeData(bundle, key, components, defaults, vertexCount) {
+      var required = Math.max(0, Math.floor(vertexCount || 0)) * Math.max(1, components);
+      var source = bundle && bundle[key];
+      if (source && typeof source.length === "number" && source.length >= required) {
+        var typed = toSceneFloat32Array(source);
+        if (typed !== source && bundle) bundle[key] = typed;
+        return typed.length === required ? typed : typed.subarray(0, required);
+      }
+
+      var cacheKey = "_gosxWGPUDefault" + key;
+      var cacheCountKey = cacheKey + "VertexCount";
+      var data = bundle && bundle[cacheKey];
+      if (!data || data.length !== required || bundle[cacheCountKey] !== vertexCount) {
+        data = new Float32Array(required);
+        var stride = Math.max(1, components);
+        for (var i = 0; i < vertexCount; i++) {
+          for (var c = 0; c < stride; c++) {
+            data[i * stride + c] = sceneNumber(defaults && defaults[c], 0);
+          }
+        }
+        if (bundle) {
+          bundle[cacheKey] = data;
+          bundle[cacheCountKey] = vertexCount;
+        }
+      }
+      return data;
+    }
+
+    function ensurePBRSceneAttributeBuffers(bundle) {
+      if (!bundle) return null;
+      var vertexCount = webGPUSceneMeshVertexCount(bundle);
+      if (vertexCount <= 0) return null;
+      var usage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
+      var positions = webGPUSceneMeshAttributeData(bundle, "worldMeshPositions", 3, [0, 0, 0], vertexCount);
+      var normals = webGPUSceneMeshAttributeData(bundle, "worldMeshNormals", 3, [0, 0, 1], vertexCount);
+      var uvs = webGPUSceneMeshAttributeData(bundle, "worldMeshUVs", 2, [0, 0], vertexCount);
+      var tangents = webGPUSceneMeshAttributeData(bundle, "worldMeshTangents", 4, [1, 0, 0, 1], vertexCount);
+      return {
+        positions: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRPositions", positions, usage, true), components: 3 },
+        normals: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRNormals", normals, usage, true), components: 3 },
+        uvs: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRUVs", uvs, usage, true), components: 2 },
+        tangents: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRTangents", tangents, usage, true), components: 4 },
+        vertexCount: vertexCount,
+      };
+    }
+
+    function webGPUBindSceneMeshVertexBuffer(pass, slot, record, vertexOffset, vertexCount) {
+      if (!record || !record.buffer) return false;
+      var components = Math.max(1, Math.floor(sceneNumber(record.components, 1)));
+      var offset = Math.max(0, Math.floor(sceneNumber(vertexOffset, 0)));
+      var count = Math.max(0, Math.floor(sceneNumber(vertexCount, 0)));
+      var byteOffset = offset * components * 4;
+      var byteSize = Math.max(4, count * components * 4);
+      pass.setVertexBuffer(slot, record.buffer, byteOffset, byteSize);
+      return true;
+    }
+
     // -----------------------------------------------------------------------
     // Draw list construction
     // -----------------------------------------------------------------------
@@ -3487,7 +4284,7 @@
     // Shadow pass
     // -----------------------------------------------------------------------
 
-    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource) {
+    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
@@ -3511,8 +4308,8 @@
         },
       });
 
-      pass.setPipeline(sp);
       pass.setBindGroup(0, shadowBG);
+      var currentShadowPipeline = "";
 
       var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
@@ -3521,14 +4318,38 @@
         if (!obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
 
-        var positions = sliceToFloat32(bundle.worldMeshPositions, obj.vertexOffset, obj.vertexCount, 3, "positions");
-        shadowPositionBuffer = wgpuEnsureBufferData(
-          device, shadowPositionBuffer,
-          GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-          positions
-        );
+        if (webGPUObjectIsSkinned(obj)) {
+          var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
+          if (!skinnedPositionBuffer) continue;
+          if (currentShadowPipeline !== "static") {
+            pass.setPipeline(sp);
+            pass.setBindGroup(0, shadowBG);
+            currentShadowPipeline = "static";
+          }
+          pass.setVertexBuffer(0, skinnedPositionBuffer);
+          pass.draw(obj.vertexCount);
+          continue;
+        }
 
-        pass.setVertexBuffer(0, shadowPositionBuffer);
+        var computedMorphRecord = webGPUObjectComputedMorphDrawRecord(obj);
+        if (computedMorphRecord) {
+          if (currentShadowPipeline !== "static") {
+            pass.setPipeline(sp);
+            pass.setBindGroup(0, shadowBG);
+            currentShadowPipeline = "static";
+          }
+          if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
+          pass.draw(obj.vertexCount);
+          continue;
+        }
+
+        if (currentShadowPipeline !== "static") {
+          pass.setPipeline(sp);
+          pass.setBindGroup(0, shadowBG);
+          currentShadowPipeline = "static";
+        }
+
+        if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
         pass.draw(obj.vertexCount);
       }
 
@@ -3540,35 +4361,30 @@
     // PBR object drawing
     // -----------------------------------------------------------------------
 
-    function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup, blendMode, depthWrite) {
+    function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup, blendMode, depthWrite, pbrBuffers) {
       var lastMaterialIndex = -1;
       var lastReceiveShadow = null;
       var currentPipelineKind = "";
 
       function bindMeshAttribute(attr, obj, offset, count) {
-        var data = null;
+        var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
         if (attr.source === "positions") {
-          data = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
-          positionBuffer = wgpuEnsureBufferData(device, positionBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, data);
-          pass.setVertexBuffer(attr.slot, positionBuffer);
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return;
+          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.positions, offset, count);
           return;
         }
         if (attr.source === "normals") {
-          data = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
-          normalBuffer = wgpuEnsureBufferData(device, normalBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, data);
-          pass.setVertexBuffer(attr.slot, normalBuffer);
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.normalBuffer, count, 3)) return;
+          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.normals, offset, count);
           return;
         }
         if (attr.source === "uvs") {
-          if (bundle.worldMeshUVs) {
-            data = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
-          } else {
-            var zeroUVs = ensureScratch("uvs", count * 2);
-            for (var ui = 0; ui < count * 2; ui++) zeroUVs[ui] = 0;
-            data = zeroUVs.subarray(0, count * 2);
-          }
-          uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, data);
-          pass.setVertexBuffer(attr.slot, uvBuffer);
+          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.uvs, offset, count);
+          return;
+        }
+        if (attr.source === "tangents") {
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return;
+          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
         }
       }
 
@@ -3588,7 +4404,9 @@
         var receiveShadow = !!obj.receiveShadow;
         var offset = obj.vertexOffset;
         var count = obj.vertexCount;
-        var selenaResource = getSelenaPipeline(mat, blendMode, depthWrite);
+        var isSkinned = webGPUObjectIsSkinned(obj);
+        var computedMorphRecord = !isSkinned ? webGPUObjectComputedMorphDrawRecord(obj) : null;
+        var selenaResource = !isSkinned ? getSelenaPipeline(mat, blendMode, depthWrite) : null;
         if (selenaResource) {
           var selenaKey = "selena:" + (mat && mat.key || matIndex);
           if (currentPipelineKind !== selenaKey) {
@@ -3606,6 +4424,20 @@
           }
         }
 
+        if (isSkinned) {
+          bindPBRPipeline();
+          if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
+            var skinnedMatBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
+            pass.setBindGroup(1, skinnedMatBG);
+            lastMaterialIndex = matIndex;
+            lastReceiveShadow = receiveShadow;
+          }
+          if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
+            pass.draw(count);
+          }
+          continue;
+        }
+
         bindPBRPipeline();
 
         // Recreate material bind group when material or receiveShadow changes.
@@ -3616,43 +4448,19 @@
           lastReceiveShadow = receiveShadow;
         }
 
-        // Positions.
-        var positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
-        positionBuffer = wgpuEnsureBufferData(device, positionBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, positions);
-        pass.setVertexBuffer(0, positionBuffer);
-
-        // Normals.
-        var normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
-        normalBuffer = wgpuEnsureBufferData(device, normalBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, normals);
-        pass.setVertexBuffer(1, normalBuffer);
-
-        // UVs.
-        if (bundle.worldMeshUVs) {
-          var uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
-          uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, uvs);
-        } else {
-          var zeroUVs = ensureScratch("uvs", count * 2);
-          for (var ui = 0; ui < count * 2; ui++) zeroUVs[ui] = 0;
-          uvBuffer = wgpuEnsureBufferData(device, uvBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, zeroUVs.subarray(0, count * 2));
+        if (computedMorphRecord) {
+          if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, count, 3)) continue;
+          if (!webGPUBindComputedMorphBuffer(pass, 1, computedMorphRecord.normalBuffer, count, 3)) continue;
+          if (!webGPUBindSceneMeshVertexBuffer(pass, 2, pbrBuffers && pbrBuffers.uvs, offset, count)) continue;
+          if (!webGPUBindComputedMorphBuffer(pass, 3, computedMorphRecord.tangentBuffer, count, 4)) continue;
+          pass.draw(count);
+          continue;
         }
-        pass.setVertexBuffer(2, uvBuffer);
 
-        // Tangents.
-        if (bundle.worldMeshTangents) {
-          var tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
-          tangentBuffer = wgpuEnsureBufferData(device, tangentBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, tangents);
-        } else {
-          // Default tangent: (1, 0, 0, 1).
-          var defTangents = ensureScratch("tangents", count * 4);
-          for (var ti = 0; ti < count; ti++) {
-            defTangents[ti * 4] = 1;
-            defTangents[ti * 4 + 1] = 0;
-            defTangents[ti * 4 + 2] = 0;
-            defTangents[ti * 4 + 3] = 1;
-          }
-          tangentBuffer = wgpuEnsureBufferData(device, tangentBuffer, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, defTangents.subarray(0, count * 4));
-        }
-        pass.setVertexBuffer(3, tangentBuffer);
+        if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, offset, count)) continue;
+        if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.normals, offset, count)) continue;
+        if (!webGPUBindSceneMeshVertexBuffer(pass, 2, pbrBuffers && pbrBuffers.uvs, offset, count)) continue;
+        if (!webGPUBindSceneMeshVertexBuffer(pass, 3, pbrBuffers && pbrBuffers.tangents, offset, count)) continue;
 
         pass.draw(count);
       }
@@ -4652,6 +5460,13 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-empty", String(published.computeParticleSkippedEmpty || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-not-ready", String(published.computeParticleSkippedNotReady || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-mesh-objects", String(published.meshObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-computed-morph-vertices", String(published.computedMorphVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-computed-morph-kernel", String(published.computedMorphKernel || ""));
+      mount.setAttribute("data-gosx-scene3d-webgpu-elio-skinning-dispatches", String(published.elioSkinningDispatches || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-elio-skinning-vertices", String(published.elioSkinningVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-elio-skinning-kernel", String(published.elioSkinningKernel || ""));
       mount.setAttribute("data-gosx-scene3d-webgpu-instanced-meshes", String(published.instancedMeshes || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-instanced-instances", String(published.instancedInstances || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-line-entries", String(published.lineEntries || 0));
@@ -4672,6 +5487,11 @@
       } else {
         mount.removeAttribute("data-gosx-scene3d-webgpu-last-error");
       }
+    }
+
+    function isWebGPUErrorScopeLifecycleMessage(message) {
+      var text = String(message || "").toLowerCase();
+      return text.indexOf("instance dropped") >= 0 && text.indexOf("poperrorscope") >= 0;
     }
 
     function reportWebGPUFrameError(message) {
@@ -4720,10 +5540,14 @@
             publishWebGPUFrameStats(clean);
           }
         }).catch(function(error) {
-          reportWebGPUFrameError(error && error.message ? error.message : String(error));
+          var message = error && error.message ? error.message : String(error);
+          if (isWebGPUErrorScopeLifecycleMessage(message)) return;
+          reportWebGPUFrameError(message);
         });
       } catch (error) {
-        reportWebGPUFrameError(error && error.message ? error.message : String(error));
+        var message = error && error.message ? error.message : String(error);
+        if (isWebGPUErrorScopeLifecycleMessage(message)) return;
+        reportWebGPUFrameError(message);
       }
     }
 
@@ -4823,6 +5647,9 @@
       var scopedFrameErrors = beginWebGPUErrorScope();
       var frameTimeSeconds = performance.now() / 1000;
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
+      var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
+      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
+      var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
@@ -4850,7 +5677,7 @@
         shadowLightMatrices[slot] = lightMatrix;
         shadowLightIndices[slot] = li;
 
-        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot]);
+        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers);
         activeShadowCount++;
       }
 
@@ -4934,6 +5761,13 @@
         computeParticleEntries: pointStats.computeParticleEntries,
         computeParticleInstances: pointStats.computeParticleInstances,
         meshObjects: Array.isArray(bundle.meshObjects) ? bundle.meshObjects.length : 0,
+        skinnedMeshObjects: webGPUCountSkinnedMeshes(bundle),
+        computedMorphDispatches: computedMorphStats.computedMorphDispatches,
+        computedMorphVertices: computedMorphStats.computedMorphVertices,
+        computedMorphKernel: computedMorphStats.computedMorphKernel,
+        elioSkinningDispatches: elioSkinStats.elioSkinningDispatches,
+        elioSkinningVertices: elioSkinStats.elioSkinningVertices,
+        elioSkinningKernel: elioSkinStats.elioSkinningKernel,
         instancedMeshes: Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0,
         instancedInstances: webGPUPlannedInstanceCount(bundle.instancedMeshes),
         lineEntries: thickLineRecord ? 1 : worldLineEntries.length,
@@ -4950,7 +5784,7 @@
           var opaquePipeline = getPBRPipeline("opaque", true);
           mainPass.setPipeline(opaquePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true);
+          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers);
         }
         if (instancedDrawList.opaque.length > 0) {
           var opaqueInstancedPipeline = getPBRInstancedPipeline("opaque", true);
@@ -4972,7 +5806,7 @@
           var alphaPipeline = getPBRPipeline("alpha", false);
           mainPass.setPipeline(alphaPipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false);
+          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers);
         }
         if (instancedDrawList.alpha.length > 0) {
           var alphaInstancedPipeline = getPBRInstancedPipeline("alpha", false);
@@ -4994,7 +5828,7 @@
           var additivePipeline = getPBRPipeline("additive", false);
           mainPass.setPipeline(additivePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false);
+          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers);
         }
         if (instancedDrawList.additive.length > 0) {
           var additiveInstancedPipeline = getPBRInstancedPipeline("additive", false);
@@ -5102,7 +5936,7 @@
     // The probe in 16z is what prevents us from ever reaching this
     // state on broken backends — it verifies device creation works
     // before we're allowed to construct a renderer at all.
-    if (initFailed) return null;
+    if (initFailed) return sceneWebGPUFactoryFailure("init-failed: " + initError);
 
     function supportsBundle(bundle) {
       if (webGPUUnsupportedLineStyles(bundle)) {
@@ -5134,6 +5968,13 @@
       out.postProcessing = !!postProcessor;
       out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
       out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
+      out.skinnedMeshObjects = lastWebGPUFrameStats && lastWebGPUFrameStats.skinnedMeshObjects || 0;
+      out.computedMorphDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphDispatches || 0;
+      out.computedMorphVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphVertices || 0;
+      out.computedMorphKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.computedMorphKernel || "";
+      out.elioSkinningDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningDispatches || 0;
+      out.elioSkinningVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningVertices || 0;
+      out.elioSkinningKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningKernel || "";
       return out;
     }
 

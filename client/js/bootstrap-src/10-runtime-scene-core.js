@@ -4873,18 +4873,38 @@
     return 2;
   }
 
+  function sceneMeshObjectEffectivelyInvisible(object, material) {
+    if (!object || object.selected) {
+      return false;
+    }
+    if (object._modelHidden) {
+      return true;
+    }
+    if (material && sceneNumber(material.opacity, 1) <= 0.0001) {
+      return true;
+    }
+    const scaleX = Math.abs(sceneNumber(object.scaleX, sceneNumber(object.scale, 1)));
+    const scaleY = Math.abs(sceneNumber(object.scaleY, sceneNumber(object.scale, 1)));
+    const scaleZ = Math.abs(sceneNumber(object.scaleZ, sceneNumber(object.scale, 1)));
+    return Math.max(scaleX, scaleY, scaleZ) <= 0.0015;
+  }
+
   function appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
     const vertices = object && object.vertices;
     if (!vertices || !vertices.positions || !vertices.count) {
       return;
     }
     const material = sceneObjectMaterialProfile(object);
+    if (sceneMeshObjectEffectivelyInvisible(object, material)) {
+      return;
+    }
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
     const outlineColor = object && object.selected ? (object.outlineColor || "#facc15") : "";
     const outlineWidth = object && object.selected ? Math.max(2, sceneNumber(object.outlineWidth, 3)) : 0;
     const outlineLighting = outlineColor ? sceneColorRGBA(outlineColor, [1, 0.8, 0.15, 1]) : null;
     const objectPassString = sceneWorldObjectRenderPass(object, material);
     const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
+    const emitWireSegments = Boolean(material && material.wireframe || outlineWidth > 0);
     if (object.skin && vertices.joints && vertices.weights) {
       const bounds = vertices._skinnedLocalBounds || object.bounds || { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
       bundle.meshObjects.push({
@@ -4972,12 +4992,14 @@
         meshVertexCount += 1;
       }
 
-      const line0 = outlineLighting || lighting[0];
-      const line1 = outlineLighting || lighting[1];
-      const line2 = outlineLighting || lighting[2];
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], line0, line1, outlineWidth, objectPassIndex);
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], line1, line2, outlineWidth, objectPassIndex);
-      wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], line2, line0, outlineWidth, objectPassIndex);
+      if (emitWireSegments) {
+        const line0 = outlineLighting || lighting[0];
+        const line1 = outlineLighting || lighting[1];
+        const line2 = outlineLighting || lighting[2];
+        wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[0], points[1], line0, line1, outlineWidth, objectPassIndex);
+        wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[1], points[2], line1, line2, outlineWidth, objectPassIndex);
+        wireVertexCount += appendSceneMeshWireSegment(bundle, camera, width, height, points[2], points[0], line2, line0, outlineWidth, objectPassIndex);
+      }
     }
 
     if (!bounds || meshVertexCount <= 0) {
@@ -5002,11 +5024,14 @@
       doubleSided: Boolean(object.doubleSided),
       skin: object.skin,
       vertices: vertices,
+      computedMorph: object.computedMorph || null,
     };
-    bundle.objects.push(Object.assign({}, shared, {
-      vertexOffset: wireVertexOffset,
-      vertexCount: wireVertexCount,
-    }));
+    if (wireVertexCount > 0) {
+      bundle.objects.push(Object.assign({}, shared, {
+        vertexOffset: wireVertexOffset,
+        vertexCount: wireVertexCount,
+      }));
+    }
     bundle.meshObjects.push(Object.assign({}, shared, {
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,

@@ -284,6 +284,208 @@
     };
   }
 
+  function sceneDebugRoundedNumber(value) {
+    const number = sceneNumber(value, 0);
+    return Math.round(number * 1000) / 1000;
+  }
+
+  function sceneDebugBounds(bounds) {
+    if (!bounds || typeof bounds !== "object") {
+      return null;
+    }
+    return {
+      minX: sceneDebugRoundedNumber(bounds.minX),
+      minY: sceneDebugRoundedNumber(bounds.minY),
+      minZ: sceneDebugRoundedNumber(bounds.minZ),
+      maxX: sceneDebugRoundedNumber(bounds.maxX),
+      maxY: sceneDebugRoundedNumber(bounds.maxY),
+      maxZ: sceneDebugRoundedNumber(bounds.maxZ),
+    };
+  }
+
+  function sceneDebugMaterialSample(bundle, materialIndex) {
+    const index = Math.floor(sceneNumber(materialIndex, -1));
+    const materials = Array.isArray(bundle && bundle.materials) ? bundle.materials : [];
+    if (index < 0 || index >= materials.length) {
+      return null;
+    }
+    const material = materials[index] || {};
+    return {
+      kind: typeof material.kind === "string" ? material.kind : "",
+      color: typeof material.color === "string" ? material.color : "",
+      texture: typeof material.texture === "string" ? material.texture : "",
+      opacity: sceneDebugRoundedNumber(material.opacity == null ? 1 : material.opacity),
+      emissive: sceneDebugRoundedNumber(material.emissive),
+      roughness: sceneDebugRoundedNumber(material.roughness),
+      metalness: sceneDebugRoundedNumber(material.metalness),
+      wireframe: Boolean(material.wireframe),
+      key: typeof material.key === "string" ? material.key : "",
+    };
+  }
+
+  function sceneDebugFighterRenderEntries(bundle, limit) {
+    const max = Math.max(0, Math.floor(sceneNumber(limit, 24)));
+    if (!max) {
+      return [];
+    }
+    const entries = []
+      .concat(Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [])
+      .concat(Array.isArray(bundle && bundle.objects) ? bundle.objects : []);
+    const samples = [];
+    for (let index = 0; index < entries.length && samples.length < max; index += 1) {
+      const entry = entries[index];
+      const id = String(entry && entry.id || "");
+      if (id.indexOf("fighter-") < 0) {
+        continue;
+      }
+      samples.push({
+        id,
+        kind: String(entry && entry.kind || ""),
+        materialIndex: Math.floor(sceneNumber(entry && entry.materialIndex, -1)),
+        material: sceneDebugMaterialSample(bundle, entry && entry.materialIndex),
+        renderPass: String(entry && entry.renderPass || ""),
+        vertexOffset: Math.max(0, Math.floor(sceneNumber(entry && entry.vertexOffset, 0))),
+        vertexCount: Math.max(0, Math.floor(sceneNumber(entry && entry.vertexCount, 0))),
+        bounds: sceneDebugBounds(entry && entry.bounds),
+        viewCulled: Boolean(entry && entry.viewCulled),
+        depthCenter: sceneDebugRoundedNumber(entry && entry.depthCenter),
+        doubleSided: Boolean(entry && entry.doubleSided),
+        static: Boolean(entry && entry.static),
+      });
+    }
+    return samples;
+  }
+
+  function sceneDebugFighterVisibleRenderEntries(bundle, limit) {
+    const max = Math.max(0, Math.floor(sceneNumber(limit, 24)));
+    if (!max) {
+      return [];
+    }
+    const entries = []
+      .concat(Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [])
+      .concat(Array.isArray(bundle && bundle.objects) ? bundle.objects : []);
+    const samples = [];
+    for (let index = 0; index < entries.length && samples.length < max; index += 1) {
+      const entry = entries[index];
+      const id = String(entry && entry.id || "");
+      if (id.indexOf("fighter-") < 0) {
+        continue;
+      }
+      const bounds = entry && entry.bounds;
+      const size = bounds && typeof bounds === "object"
+        ? Math.max(
+          Math.abs(sceneNumber(bounds.maxX, 0) - sceneNumber(bounds.minX, 0)),
+          Math.abs(sceneNumber(bounds.maxY, 0) - sceneNumber(bounds.minY, 0)),
+          Math.abs(sceneNumber(bounds.maxZ, 0) - sceneNumber(bounds.minZ, 0)),
+        )
+        : 0;
+      if (size <= 0.05) {
+        continue;
+      }
+      samples.push({
+        id,
+        kind: String(entry && entry.kind || ""),
+        materialIndex: Math.floor(sceneNumber(entry && entry.materialIndex, -1)),
+        material: sceneDebugMaterialSample(bundle, entry && entry.materialIndex),
+        renderPass: String(entry && entry.renderPass || ""),
+        vertexOffset: Math.max(0, Math.floor(sceneNumber(entry && entry.vertexOffset, 0))),
+        vertexCount: Math.max(0, Math.floor(sceneNumber(entry && entry.vertexCount, 0))),
+        bounds: sceneDebugBounds(bounds),
+        viewCulled: Boolean(entry && entry.viewCulled),
+        depthCenter: sceneDebugRoundedNumber(entry && entry.depthCenter),
+        doubleSided: Boolean(entry && entry.doubleSided),
+        static: Boolean(entry && entry.static),
+      });
+    }
+    return samples;
+  }
+
+  function sceneDebugModelTransformSample(model) {
+    const source = model && typeof model === "object" ? model : {};
+    return {
+      x: sceneDebugRoundedNumber(source.x),
+      y: sceneDebugRoundedNumber(source.y),
+      z: sceneDebugRoundedNumber(source.z),
+      rotationX: sceneDebugRoundedNumber(source.rotationX),
+      rotationY: sceneDebugRoundedNumber(source.rotationY),
+      rotationZ: sceneDebugRoundedNumber(source.rotationZ),
+      scaleX: sceneDebugRoundedNumber(source.scaleX == null ? 1 : source.scaleX),
+      scaleY: sceneDebugRoundedNumber(source.scaleY == null ? 1 : source.scaleY),
+      scaleZ: sceneDebugRoundedNumber(source.scaleZ == null ? 1 : source.scaleZ),
+      opacity: sceneDebugRoundedNumber(source.opacity == null ? 1 : source.opacity),
+    };
+  }
+
+  function sceneDebugModelObjectSamples(state, objectIDs, limit) {
+    const max = Math.max(0, Math.floor(sceneNumber(limit, 4)));
+    if (!state || !state.objects || typeof state.objects.get !== "function" || !Array.isArray(objectIDs) || !max) {
+      return [];
+    }
+    const samples = [];
+    for (let index = 0; index < objectIDs.length && samples.length < max; index += 1) {
+      const id = objectIDs[index];
+      const object = state.objects.get(id);
+      if (!object) {
+        continue;
+      }
+      samples.push({
+        id: String(object.id || id || ""),
+        kind: String(object.kind || ""),
+        vertexCount: Math.max(0, Math.floor(sceneNumber(object.vertices && object.vertices.count, 0))),
+        color: typeof object.color === "string" ? object.color : "",
+        texture: typeof object.texture === "string" ? object.texture : "",
+        opacity: sceneDebugRoundedNumber(object.opacity == null ? 1 : object.opacity),
+        renderPass: String(object.renderPass || ""),
+        blendMode: String(object.blendMode || ""),
+        static: Boolean(object.static),
+        hasLocalVertices: Boolean(object._modelLocalVertices && object._modelLocalVertices.positions),
+      });
+    }
+    return samples;
+  }
+
+  function sceneDebugFighterModelRecords(state, limit) {
+    const records = Array.isArray(state && state._modelSkins) ? state._modelSkins : [];
+    const max = Math.max(0, Math.floor(sceneNumber(limit, 32)));
+    if (!max) {
+      return [];
+    }
+    const samples = [];
+    for (let index = 0; index < records.length && samples.length < max; index += 1) {
+      const record = records[index];
+      const id = String(record && record.id || "");
+      if (id.indexOf("fighter-") < 0) {
+        continue;
+      }
+      const objectIDs = Array.isArray(record.objectIDs) ? record.objectIDs : [];
+      samples.push({
+        id,
+        live: Array.isArray(record.live) ? record.live.slice() : [],
+        staticModel: Boolean(record.staticModel),
+        animation: String(record.animation || ""),
+        poseDirty: Boolean(record.poseDirty),
+        computedPose: String(record.computedPose || ""),
+        computedPoseTarget: String(record.computedPoseTargetID || ""),
+        computedPoseAlpha: sceneDebugRoundedNumber(record.computedPoseAlpha == null ? 0 : record.computedPoseAlpha),
+        computedMorphObjects: Math.max(0, Math.floor(sceneNumber(record.computedMorphObjects, 0))),
+        computedMorphVertices: Math.max(0, Math.floor(sceneNumber(record.computedMorphVertices, 0))),
+        objectCount: objectIDs.length,
+        model: sceneDebugModelTransformSample(record.model),
+        objectIDs: objectIDs.slice(0, 4),
+        objects: sceneDebugModelObjectSamples(state, objectIDs, 4),
+      });
+    }
+    return samples;
+  }
+
+  function sceneDebugFighterSamples(bundle, state) {
+    return {
+      renderEntries: sceneDebugFighterRenderEntries(bundle, 32),
+      visibleRenderEntries: sceneDebugFighterVisibleRenderEntries(bundle, 32),
+      modelRecords: sceneDebugFighterModelRecords(state, 32),
+    };
+  }
+
   function sceneDebugFeatureMatrix(bundle, state, rendererKind) {
     const features = {};
     sceneDebugAddFeature(features, sceneDebugKindFeature("backend", rendererKind, ""), 1);
@@ -797,7 +999,28 @@
       if (!entry || typeof entry.create !== "function") {
         continue;
       }
+      try {
+        if (typeof window !== "undefined") {
+          window.__gosx_scene3d_backend_attempts = window.__gosx_scene3d_backend_attempts || [];
+          window.__gosx_scene3d_backend_attempts.push({
+            kind: String(entry.kind || ""),
+            webgpuAvailable: webgpuAvail,
+            preferWebGPU: preferWebGPU,
+            webglPreference: webglPreference,
+            webgpuFactoryErrorBefore: String(window.__gosx_scene3d_webgpu_factory_error || ""),
+          });
+        }
+      } catch (_err) {}
       const renderer = entry.create(canvas, props, capability);
+      try {
+        if (typeof window !== "undefined" && Array.isArray(window.__gosx_scene3d_backend_attempts)) {
+          const last = window.__gosx_scene3d_backend_attempts[window.__gosx_scene3d_backend_attempts.length - 1];
+          if (last) {
+            last.result = renderer ? String(renderer.kind || renderer.type || "renderer") : "";
+            last.webgpuFactoryErrorAfter = String(window.__gosx_scene3d_webgpu_factory_error || "");
+          }
+        }
+      } catch (_err) {}
       if (renderer) {
         const isCanvas = entry.kind === "canvas2d" || renderer.kind === "canvas";
         let fallbackReason = isCanvas
@@ -888,6 +1111,20 @@
       Math.abs(sceneNumber(model && model.scaleY, 1)),
       Math.abs(sceneNumber(model && model.scaleZ, 1)),
     );
+  }
+
+  function sceneModelEffectivelyHidden(model) {
+    return sceneModelMaxScale(model) <= 0.0015 || sceneNumber(model && model.opacity, 1) <= 0.0001;
+  }
+
+  function sceneApplyModelObjectHiddenState(object, model) {
+    if (!object) {
+      return;
+    }
+    object._modelHidden = sceneModelEffectivelyHidden(model);
+    if (object._modelHidden) {
+      object.opacity = 0;
+    }
   }
 
   function sceneModelRotateDirection(point, model) {
@@ -1313,6 +1550,10 @@
     if (model && model.static !== null) {
       instanced.static = Boolean(model.static);
     }
+    if (model && Array.isArray(model._live) && model._live.length > 0) {
+      instanced.static = false;
+    }
+    sceneApplyModelObjectHiddenState(instanced, model);
     if (hasSkin && model && model.animation) {
       instanced.static = false;
     }
@@ -1320,7 +1561,17 @@
       instanced.pickable = model.pickable;
     }
     sceneApplyModelLOD(instanced, model);
-    return normalizeSceneObject(instanced, prefix);
+    const normalized = normalizeSceneObject(instanced, prefix);
+    if (!hasSkin && normalized && normalized.vertices) {
+      normalized._modelLocalVertices = {
+        positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
+        normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+      };
+    }
+    return normalized;
   }
 
   function sceneSkinnedModelLocalBounds(vertices) {
@@ -1574,6 +1825,23 @@
     });
     window.__gosx_scene3d_webgpu_feature_promise = sceneWebGPUFeaturePromise;
     return sceneWebGPUFeaturePromise;
+  }
+
+  function sceneNextFrame() {
+    return new Promise(function(resolve) {
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(function() { resolve(); });
+        return;
+      }
+      setTimeout(resolve, 0);
+    });
+  }
+
+  async function settlePreferredWebGPUBackend(props, capability) {
+    await ensurePreferredWebGPUBackend(props, capability);
+    if (typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable()) {
+      await sceneNextFrame();
+    }
   }
 
   async function ensurePreferredWebGPUBackend(props, capability) {
@@ -1834,6 +2102,31 @@
     }
   }
 
+  function sceneRegisterStaticModelLiveRecord(state, model, objectIDs) {
+    if (!state || !model || !Array.isArray(model._live) || model._live.length === 0 || !Array.isArray(objectIDs) || objectIDs.length === 0) {
+      return;
+    }
+    const modelCopy = Object.assign({}, model || {});
+    if (sceneModelEffectivelyHidden(modelCopy)) {
+      modelCopy.opacity = 0;
+    }
+    const record = {
+      id: typeof modelCopy.id === "string" ? modelCopy.id : "",
+      model: modelCopy,
+      live: modelCopy._live.slice(),
+      objectIDs: objectIDs.slice(),
+      rootTransform: sceneModelTransformMatrix(modelCopy),
+      animation: "",
+      animationSeq: "",
+      poseDirty: false,
+      staticModel: true,
+    };
+    if (!Array.isArray(state._modelSkins)) {
+      state._modelSkins = [];
+    }
+    state._modelSkins.push(record);
+  }
+
   async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs) {
     if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
@@ -1956,11 +2249,283 @@
     return changed;
   }
 
+  function sceneApplyStaticModelObjectTransform(state, record) {
+    if (!state || !record || !record.staticModel || !Array.isArray(record.objectIDs)) {
+      return false;
+    }
+    let changed = false;
+    for (let index = 0; index < record.objectIDs.length; index += 1) {
+      const object = state.objects && state.objects.get ? state.objects.get(record.objectIDs[index]) : null;
+      const local = object && object._modelLocalVertices;
+      if (!object || !object.vertices || !local || !local.positions) {
+        continue;
+      }
+      object.vertices.positions = sceneModelTransformMeshFloats(local.positions, 3, function(x, y, z) {
+        return sceneModelTransformPoint({ x: x, y: y, z: z }, record.model);
+      });
+      if (local.normals && local.normals.length) {
+        object.vertices.normals = sceneModelTransformMeshFloats(local.normals, 3, function(x, y, z) {
+          return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, record.model));
+        });
+      }
+      if (local.tangents && local.tangents.length) {
+        object.vertices.tangents = sceneModelTransformMeshFloats(local.tangents, 4, function(x, y, z, w) {
+          const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, record.model));
+          return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
+        });
+      }
+      object.vertices.uvs = local.uvs;
+      object.vertices.count = local.count;
+      object.static = false;
+      sceneApplyModelObjectHiddenState(object, record.model);
+      changed = true;
+    }
+    return changed;
+  }
+
+  function sceneComputedPoseName(value) {
+    const pose = String(value == null ? "" : value).trim();
+    switch (pose) {
+      case "guard":
+      case "strike":
+      case "kick":
+      case "hit":
+      case "down":
+      case "surge":
+      case "start":
+        return pose;
+      case "idle":
+      default:
+        return "idle";
+    }
+  }
+
+  function sceneComputedPoseBaseID(id) {
+    let base = String(id || "").trim();
+    const suffixes = ["-guard", "-strike", "-kick", "-hit", "-down", "-surge", "-start"];
+    for (let index = 0; index < suffixes.length; index += 1) {
+      const suffix = suffixes[index];
+      if (base.length > suffix.length && base.slice(base.length - suffix.length) === suffix) {
+        base = base.slice(0, base.length - suffix.length);
+        break;
+      }
+    }
+    return base;
+  }
+
+  function sceneComputedPoseTargetID(recordID, pose) {
+    const base = sceneComputedPoseBaseID(recordID);
+    const normalized = sceneComputedPoseName(pose);
+    if (!base || normalized === "idle") {
+      return base;
+    }
+    return base + "-" + normalized;
+  }
+
+  function sceneComputedPoseRecordByID(state, id) {
+    const want = String(id || "").trim();
+    if (!want) {
+      return null;
+    }
+    const records = Array.isArray(state && state._modelSkins) ? state._modelSkins : [];
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (record && String(record.id || "") === want) {
+        return record;
+      }
+    }
+    return null;
+  }
+
+  function sceneComputedPoseObject(state, id) {
+    return state && state.objects && typeof state.objects.get === "function"
+      ? state.objects.get(id)
+      : null;
+  }
+
+  function sceneComputedPoseLocalVertices(object) {
+    const local = object && object._modelLocalVertices;
+    if (!local || !local.positions || typeof local.positions.length !== "number") {
+      return null;
+    }
+    const count = Math.max(0, Math.floor(sceneNumber(local.count, 0)));
+    if (count <= 0 || local.positions.length < count * 3) {
+      return null;
+    }
+    return local;
+  }
+
+  function sceneComputedPoseFloat32Array(value) {
+    if (!value || typeof value.length !== "number") {
+      return null;
+    }
+    return value instanceof Float32Array ? value : new Float32Array(value);
+  }
+
+  function sceneComputedPoseBlendArray(object, cacheKey, source, target, tupleSize, alpha, normalizeVec3) {
+    const sourceArray = sceneComputedPoseFloat32Array(source);
+    const targetArray = sceneComputedPoseFloat32Array(target || source);
+    const width = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
+    if (!sourceArray || !targetArray || sourceArray.length < width || targetArray.length < width) {
+      return null;
+    }
+    const limit = Math.min(sourceArray.length, targetArray.length);
+    let current = object && object[cacheKey];
+    if (!current || current.length !== sourceArray.length) {
+      current = new Float32Array(sourceArray);
+      if (object) {
+        object[cacheKey] = current;
+      }
+    }
+    const t = Math.max(0, Math.min(1, sceneNumber(alpha, 0.45)));
+    for (let index = 0; index + width - 1 < limit; index += width) {
+      for (let component = 0; component < width; component += 1) {
+        current[index + component] += (targetArray[index + component] - current[index + component]) * t;
+      }
+      if (normalizeVec3 && width >= 3) {
+        const x = current[index];
+        const y = current[index + 1];
+        const z = current[index + 2];
+        const length = Math.hypot(x, y, z);
+        if (length > 0.000001) {
+          current[index] = x / length;
+          current[index + 1] = y / length;
+          current[index + 2] = z / length;
+        }
+      }
+    }
+    return current;
+  }
+
+  function sceneComputedPoseApplyObjectMorph(object, sourceLocal, targetLocal, model, alpha) {
+    if (!object || !object.vertices || !sourceLocal || !targetLocal) {
+      return 0;
+    }
+    const sourceCount = Math.max(0, Math.floor(sceneNumber(sourceLocal.count, 0)));
+    const targetCount = Math.max(0, Math.floor(sceneNumber(targetLocal.count, 0)));
+    const count = Math.min(sourceCount, targetCount);
+    if (count <= 0 || sourceLocal.positions.length < count * 3 || targetLocal.positions.length < count * 3) {
+      return 0;
+    }
+    const sourcePositions = sourceLocal.positions.length === count * 3
+      ? sourceLocal.positions
+      : sourceLocal.positions.subarray(0, count * 3);
+    const targetPositions = targetLocal.positions.length === count * 3
+      ? targetLocal.positions
+      : targetLocal.positions.subarray(0, count * 3);
+    const morphedPositions = sceneComputedPoseBlendArray(object, "_computedPoseLocalPositions", sourcePositions, targetPositions, 3, alpha, false);
+    if (!morphedPositions) {
+      return 0;
+    }
+
+    object.computedMorph = {
+      sourcePositions,
+      targetPositions,
+      sourceNormals: sourceLocal.normals && sourceLocal.normals.length >= count * 3
+        ? (sourceLocal.normals.subarray ? sourceLocal.normals.subarray(0, count * 3) : sourceLocal.normals)
+        : null,
+      targetNormals: targetLocal.normals && targetLocal.normals.length >= count * 3
+        ? (targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals)
+        : null,
+      sourceTangents: sourceLocal.tangents && sourceLocal.tangents.length >= count * 4
+        ? (sourceLocal.tangents.subarray ? sourceLocal.tangents.subarray(0, count * 4) : sourceLocal.tangents)
+        : null,
+      targetTangents: targetLocal.tangents && targetLocal.tangents.length >= count * 4
+        ? (targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents)
+        : null,
+      uvs: sourceLocal.uvs,
+      count,
+      alpha: Math.max(0, Math.min(1, sceneNumber(alpha, 0.45))),
+      modelMatrix: sceneModelTransformMatrix(model),
+    };
+
+    object.vertices.positions = sceneModelTransformMeshFloats(morphedPositions, 3, function(x, y, z) {
+      return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
+    });
+
+    const sourceNormals = sourceLocal.normals && sourceLocal.normals.length >= count * 3
+      ? sourceLocal.normals.subarray ? sourceLocal.normals.subarray(0, count * 3) : sourceLocal.normals
+      : null;
+    const targetNormals = targetLocal.normals && targetLocal.normals.length >= count * 3
+      ? targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals
+      : null;
+    const morphedNormals = sourceNormals
+      ? sceneComputedPoseBlendArray(object, "_computedPoseLocalNormals", sourceNormals, targetNormals || sourceNormals, 3, alpha, true)
+      : null;
+    if (morphedNormals) {
+      object.vertices.normals = sceneModelTransformMeshFloats(morphedNormals, 3, function(x, y, z) {
+        return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+      });
+    }
+
+    const sourceTangents = sourceLocal.tangents && sourceLocal.tangents.length >= count * 4
+      ? sourceLocal.tangents.subarray ? sourceLocal.tangents.subarray(0, count * 4) : sourceLocal.tangents
+      : null;
+    const targetTangents = targetLocal.tangents && targetLocal.tangents.length >= count * 4
+      ? targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents
+      : null;
+    const morphedTangents = sourceTangents
+      ? sceneComputedPoseBlendArray(object, "_computedPoseLocalTangents", sourceTangents, targetTangents || sourceTangents, 4, alpha, true)
+      : null;
+    if (morphedTangents) {
+      object.vertices.tangents = sceneModelTransformMeshFloats(morphedTangents, 4, function(x, y, z, w) {
+        const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
+        return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
+      });
+    }
+
+    object.vertices.uvs = sourceLocal.uvs;
+    object.vertices.count = count;
+    object.static = false;
+    sceneApplyModelObjectHiddenState(object, model);
+    return count;
+  }
+
+  function sceneApplyModelComputedPose(state, record, patch) {
+    if (!state || !record || !record.staticModel || !sceneOwns(patch, "computedPose")) {
+      return false;
+    }
+    const pose = sceneComputedPoseName(patch.computedPose);
+    const alpha = Math.max(0, Math.min(1, sceneNumber(patch.computedPoseAlpha, pose === "idle" ? 0.32 : 0.52)));
+    const targetID = sceneComputedPoseTargetID(record.id, pose);
+    const targetRecord = targetID === record.id ? record : sceneComputedPoseRecordByID(state, targetID);
+    record.computedPose = pose;
+    record.computedPoseAlpha = alpha;
+    record.computedPoseTargetID = targetID;
+    record.computedMorphObjects = 0;
+    record.computedMorphVertices = 0;
+    if (!targetRecord || !Array.isArray(record.objectIDs) || !Array.isArray(targetRecord.objectIDs)) {
+      return false;
+    }
+
+    const count = Math.min(record.objectIDs.length, targetRecord.objectIDs.length);
+    let changed = false;
+    let morphObjects = 0;
+    let morphVertices = 0;
+    for (let index = 0; index < count; index += 1) {
+      const object = sceneComputedPoseObject(state, record.objectIDs[index]);
+      const targetObject = sceneComputedPoseObject(state, targetRecord.objectIDs[index]);
+      const sourceLocal = sceneComputedPoseLocalVertices(object);
+      const targetLocal = sceneComputedPoseLocalVertices(targetObject) || sourceLocal;
+      const vertices = sceneComputedPoseApplyObjectMorph(object, sourceLocal, targetLocal, record.model, alpha);
+      if (vertices <= 0) {
+        continue;
+      }
+      changed = true;
+      morphObjects += 1;
+      morphVertices += vertices;
+    }
+    record.computedMorphObjects = morphObjects;
+    record.computedMorphVertices = morphVertices;
+    return changed;
+  }
+
   function sceneApplyModelLivePatch(state, record, patch) {
     if (!record || !record.model || !sceneIsPlainObject(patch)) {
       return false;
     }
     const keys = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ"];
+    const hasComputedPose = sceneOwns(patch, "computedPose");
     let changed = sceneApplyModelLiveOpacity(state, record, patch);
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
@@ -1974,10 +2539,21 @@
       record.model[key] = next;
       changed = true;
     }
-    if (!changed) {
+    if (!changed && !hasComputedPose) {
       return false;
     }
     record.rootTransform = sceneModelTransformMatrix(record.model);
+    let computedPoseChanged = false;
+    if (hasComputedPose) {
+      computedPoseChanged = sceneApplyModelComputedPose(state, record, patch);
+    }
+    if (record.staticModel && !computedPoseChanged) {
+      sceneApplyStaticModelObjectTransform(state, record);
+    }
+    changed = changed || computedPoseChanged;
+    if (!changed) {
+      return false;
+    }
     record.poseDirty = true;
     return true;
   }
@@ -2178,7 +2754,11 @@
         hydrated.lights.push(light.id);
         lightCount += 1;
       }
-      await scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs);
+      if (sceneModelHasSkins(skinInstances)) {
+        await scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs);
+      } else {
+        sceneRegisterStaticModelLiveRecord(state, model, objectIDs);
+      }
     }));
     state._hydratedModelRecords = hydrated;
     return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, html: htmlCount, lights: lightCount };
@@ -5097,7 +5677,6 @@
     sentinelLayer.style.height = "0";
     sentinelLayer.style.overflow = "visible";
     sentinelLayer.style.pointerEvents = "none";
-    canvas.appendChild(sentinelLayer);
 
     const sceneNodeSentinels = new Map();
     ctx.mount.__gosxScene3DSentinels = sceneNodeSentinels;
@@ -5106,10 +5685,11 @@
     ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
     applyScenePostFXState(ctx.mount, sceneState);
 
+    await settlePreferredWebGPUBackend(props, capability);
+
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
     scenePrimeAdaptiveQuality(adaptiveQuality, viewport, ctx.mount);
 
-    await ensurePreferredWebGPUBackend(props, capability);
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
@@ -5125,7 +5705,7 @@
       if (statsOverlay) {
         statsOverlay.dispose();
       }
-      if (sentinelLayer.parentNode === ctx.mount) {
+      if (sentinelLayer.parentNode) {
         sentinelLayer.parentNode.removeChild(sentinelLayer);
       }
       delete ctx.mount.__gosxScene3DSentinels;
@@ -5143,6 +5723,9 @@
           }
         },
       };
+    }
+    if (!sentinelLayer.parentNode) {
+      canvas.appendChild(sentinelLayer);
     }
     let renderer = initialRenderer.renderer;
     applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
@@ -5456,14 +6039,6 @@
       let feature = "";
       if (typeof renderer.supportsBundle === "function" && renderer.supportsBundle(bundle) === false) {
         feature = "backend-declared";
-      }
-      // Skinning backstop: log a clear warning when a skinned GLB is loaded on
-      // webgpu (which cannot skin). Full re-mount fallback is a TODO — it needs
-      // async wiring into the model-load callback path.
-      if (!feature && renderer.kind === "webgpu" && Array.isArray(bundle.objects) &&
-          bundle.objects.some(function(o) { return o && o.skin && typeof o.skin === "object"; })) {
-        console.warn("[gosx] skinned GLB on webgpu (no skinning). Use requireWebGL=true. TODO: auto re-mount.");
-        gosxSceneEmit("warn", "webgpu-skinned-bundle", { rendererKind: "webgpu", feature: "skinning" });
       }
       if (!feature) {
         return true;
@@ -5975,6 +6550,7 @@
         snapshot.gpuResources = sceneDebugGPUResources(ctx.mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
         snapshot.webgpuStats = sceneDebugClone(ctx.mount && ctx.mount.__gosxScene3DWebGPUStats, 3);
         snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
+        snapshot.fighterSamples = sceneDebugFighterSamples(latestBundle, sceneState);
       }
       return snapshot;
     }
@@ -6533,8 +7109,8 @@
         if (inspectorOverlay) {
           inspectorOverlay.dispose();
         }
-        if (sentinelLayer.parentNode === ctx.mount) {
-          ctx.mount.removeChild(sentinelLayer);
+        if (sentinelLayer.parentNode) {
+          sentinelLayer.parentNode.removeChild(sentinelLayer);
         }
         delete ctx.mount.__gosxScene3DSentinels;
         delete ctx.mount.__gosxScene3DCSSDynamic;

@@ -18,14 +18,26 @@ const budgets = [
   // 184_000 for Scene3D's Selena shader executor: WebGL full-GLSL program
   // routing plus WebGPU descriptor-packed WGSL pipelines. This turns the prior
   // descriptor transport into executable shader backend support.
-  { file: "bootstrap.js", raw: 827_000, gzip: 226_000, brotli: 184_000 },
+  //
+  // Bumped raw 827_000 -> 835_000, gzip 226_000 -> 229_000, brotli 184_000 ->
+  // 186_000 for WebGPU skeletal skinning: Elio stdlib.Skin compute kernel,
+  // storage-buffer packing, per-frame bone palette upload, and computed vertex
+  // buffer routing through PBR/shadow draws.
+  //
+  // Bumped raw 835_000 -> 837_000 for static GLB live model records and
+  // transform reprojection, used by baked computed meshes without skinning.
+  { file: "bootstrap.js", raw: 837_000, gzip: 229_000, brotli: 186_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
-  // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor.
-  { file: "bootstrap-feature-scene3d.js", raw: 512_000, gzip: 140_000, brotli: 116_000 },
+  // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
+  // 140_000 -> 140_500 for static GLB live model records and transform
+  // reprojection used by baked computed meshes.
+  { file: "bootstrap-feature-scene3d.js", raw: 512_000, gzip: 140_500, brotli: 116_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
-  // 29_000 for the WebGPU Selena executor.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 135_000, gzip: 33_500, brotli: 29_000 },
+  // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
+  // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
+  // and GPU-deformed PBR vertex buffers.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 143_000, gzip: 36_000, brotli: 31_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

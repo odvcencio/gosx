@@ -14,13 +14,14 @@ func TestVerdict(t *testing.T) {
 	}{
 		{"plain scene", nil,
 			[]Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D}, nil},
-		{"skinning forces webgl", []Feature{FeatureSkinning},
-			[]Backend{BackendWebGL}, nil},
+		{"skinning supports webgpu and webgl", []Feature{FeatureSkinning},
+			[]Backend{BackendWebGPU, BackendWebGL}, nil},
 		{"ibl droppable: webgpu+canvas2d stay, ibl degraded", []Feature{FeatureIBL},
 			[]Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D},
 			map[Backend][]Feature{BackendWebGPU: {FeatureIBL}, BackendCanvas2D: {FeatureIBL}}},
-		{"skinning+ibl: webgl (skinning required wins)", []Feature{FeatureSkinning, FeatureIBL},
-			[]Backend{BackendWebGL}, nil},
+		{"skinning+ibl: webgpu degraded by ibl, webgl full", []Feature{FeatureSkinning, FeatureIBL},
+			[]Backend{BackendWebGPU, BackendWebGL},
+			map[Backend][]Feature{BackendWebGPU: {FeatureIBL}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

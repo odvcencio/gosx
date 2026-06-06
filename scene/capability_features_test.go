@@ -114,7 +114,7 @@ func TestCollectFeatures(t *testing.T) {
 func TestSkinLookupDetectsSkinning(t *testing.T) {
 	const skinnedURL = "/models/soldier.glb"
 
-	t.Run("with lookup: Model src skinned → FeatureSkinning + webgl-only", func(t *testing.T) {
+	t.Run("with lookup: Model src skinned → FeatureSkinning + webgpu/webgl", func(t *testing.T) {
 		lookup := &mockSkinLookup{skinned: map[string]bool{skinnedURL: true}}
 		SetSkinLookup(lookup)
 		t.Cleanup(func() { SetSkinLookup(nil) })
@@ -134,12 +134,21 @@ func TestSkinLookupDetectsSkinning(t *testing.T) {
 			t.Error("expected FeatureSkinning; not present")
 		}
 
-		// BackendCaps: skinning is required → only webgl in Capable.
+		// BackendCaps: skinning is required, and both WebGPU and WebGL can render it.
 		if ir.BackendCaps == nil {
 			t.Fatal("BackendCaps is nil")
 		}
-		if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGL {
-			t.Errorf("expected Capable=[webgl]; got %v", ir.BackendCaps.Capable)
+		wantCapable := map[capability.Backend]bool{
+			capability.BackendWebGPU: true,
+			capability.BackendWebGL:  true,
+		}
+		if len(ir.BackendCaps.Capable) != len(wantCapable) {
+			t.Fatalf("expected Capable=[webgpu webgl]; got %v", ir.BackendCaps.Capable)
+		}
+		for _, backend := range ir.BackendCaps.Capable {
+			if !wantCapable[backend] {
+				t.Errorf("unexpected capable backend %q; got %v", backend, ir.BackendCaps.Capable)
+			}
 		}
 	})
 

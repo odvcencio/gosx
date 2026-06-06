@@ -6235,6 +6235,146 @@ test("bootstrap emits ready HTML texture surfaces into render bundles", async ()
   assert.equal(pending.html[0].fallbackReason, "html-texture-memory-cap");
 });
 
+test("bootstrap keeps solid mesh bundles off the legacy wire-line path", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const camera = { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 };
+  const baseMesh = {
+    id: "solid-gltf",
+    kind: "gltf-mesh",
+    materialKind: "standard",
+    color: "#d8b4fe",
+    wireframe: false,
+    vertices: {
+      positions: new Float32Array([
+        -0.6, 0, 0,
+        0.6, 0, 0,
+        0, 1, 0,
+      ]),
+      normals: new Float32Array([
+        0, 0, 1,
+        0, 0, 1,
+        0, 0, 1,
+      ]),
+      uvs: new Float32Array([0, 0, 1, 0, 0.5, 1]),
+      tangents: new Float32Array([
+        1, 0, 0, 1,
+        1, 0, 0, 1,
+        1, 0, 0, 1,
+      ]),
+      count: 3,
+    },
+  };
+
+  const solidBundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [baseMesh],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(solidBundle.meshObjects.length, 1);
+  assert.equal(solidBundle.objects.length, 0);
+  assert.equal(solidBundle.worldVertexCount, 0);
+  assert.equal(solidBundle.worldPositions.length, 0);
+  assert.equal(solidBundle.worldMeshVertexCount, 3);
+
+  const wireBundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [Object.assign({}, baseMesh, { id: "wire-gltf", wireframe: true })],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(wireBundle.meshObjects.length, 1);
+  assert.equal(wireBundle.objects.length, 1);
+  assert.equal(wireBundle.worldVertexCount, 6);
+  assert.equal(wireBundle.worldLineWidths[0], 0);
+});
+
+test("bootstrap skips invisible Scene3D mesh objects before packing render bundles", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const camera = { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 };
+  const vertices = {
+    positions: new Float32Array([
+      -0.6, 0, 0,
+      0.6, 0, 0,
+      0, 1, 0,
+    ]),
+    normals: new Float32Array([
+      0, 0, 1,
+      0, 0, 1,
+      0, 0, 1,
+    ]),
+    uvs: new Float32Array([0, 0, 1, 0, 0.5, 1]),
+    tangents: new Float32Array([
+      1, 0, 0, 1,
+      1, 0, 0, 1,
+      1, 0, 0, 1,
+    ]),
+    count: 3,
+  };
+
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [
+      { id: "visible", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", wireframe: false, vertices },
+      { id: "opacity-hidden", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", opacity: 0, wireframe: false, vertices },
+      { id: "scale-hidden", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", scaleX: 0.001, scaleY: 0.001, scaleZ: 0.001, wireframe: false, vertices },
+    ],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(bundle.meshObjects.length, 1);
+  assert.equal(bundle.meshObjects[0].id, "visible");
+  assert.equal(bundle.worldMeshVertexCount, 3);
+  assert.equal(bundle.worldMeshPositions.length, 9);
+});
+
 test("bootstrap emits declarative Scene3D pick signals without authored JS", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-pick-root";
@@ -7044,6 +7184,42 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
   assert.doesNotMatch(source, /device\.queue\.writeBuffer\(pointsUniformBuffer,\s*0/);
 });
 
+test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buffers", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const sceneBuffers = source.slice(source.indexOf("function ensurePBRSceneAttributeBuffers"), source.indexOf("function webGPUBindSceneMeshVertexBuffer"));
+  const bindSceneBuffer = source.slice(source.indexOf("function webGPUBindSceneMeshVertexBuffer"), source.indexOf("// -----------------------------------------------------------------------\n    // Draw list construction"));
+  const shadowPass = source.slice(source.indexOf("function renderShadowPass"), source.indexOf("// -----------------------------------------------------------------------\n    // PBR object drawing"));
+  const drawPBR = source.slice(source.indexOf("function drawPBRObjects"), source.indexOf("function instancedMeshCount"));
+  const skinnedBind = source.slice(source.indexOf("function webGPUBindElioSkinnedBuffers"), source.indexOf("// -----------------------------------------------------------------------\n    // Shadow Pass"));
+
+  assert.match(sceneBuffers, /"_gosxWGPUScenePBRPositions"/);
+  assert.match(sceneBuffers, /"_gosxWGPUScenePBRNormals"/);
+  assert.match(sceneBuffers, /"_gosxWGPUScenePBRUVs"/);
+  assert.match(sceneBuffers, /"_gosxWGPUScenePBRTangents"/);
+  assert.match(bindSceneBuffer, /byteOffset = offset \* components \* 4/);
+  assert.match(bindSceneBuffer, /pass\.setVertexBuffer\(slot,\s*record\.buffer,\s*byteOffset,\s*byteSize\)/);
+
+  assert.match(shadowPass, /webGPUBindSceneMeshVertexBuffer\(pass,\s*0,\s*pbrBuffers && pbrBuffers\.positions/);
+  assert.doesNotMatch(shadowPass, /shadowPositionBuffer\s*=\s*wgpuEnsureBufferData/);
+  assert.doesNotMatch(shadowPass, /sliceToFloat32/);
+
+  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*0,\s*pbrBuffers && pbrBuffers\.positions/);
+  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*1,\s*pbrBuffers && pbrBuffers\.normals/);
+  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*2,\s*pbrBuffers && pbrBuffers\.uvs/);
+  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*3,\s*pbrBuffers && pbrBuffers\.tangents/);
+  assert.doesNotMatch(drawPBR, /sliceToFloat32/);
+  assert.doesNotMatch(drawPBR, /positionBuffer\s*=\s*wgpuEnsureBufferData/);
+  assert.doesNotMatch(drawPBR, /normalBuffer\s*=\s*wgpuEnsureBufferData/);
+  assert.doesNotMatch(drawPBR, /uvBuffer\s*=\s*wgpuEnsureBufferData/);
+  assert.doesNotMatch(drawPBR, /tangentBuffer\s*=\s*wgpuEnsureBufferData/);
+
+  assert.match(skinnedBind, /pass\.setVertexBuffer\(0,\s*outputBuffer\)/);
+  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedNormals"/);
+  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedUVs"/);
+  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedTangents"/);
+  assert.doesNotMatch(skinnedBind, /wgpuEnsureBufferData/);
+});
+
 test("bootstrap renders WebGPU Scene3D static points from instanced vertex buffers", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
@@ -7179,6 +7355,43 @@ test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
   assert.match(source, /data-gosx-scene3d-webgpu-point-draw-instances/);
   assert.match(source, /data-gosx-scene3d-webgpu-mesh-objects/);
   assert.match(source, /data-gosx-scene3d-webgpu-instanced-instances/);
+});
+
+test("Scene3D WebGPU ignores popErrorScope lifecycle drops", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(source, /function isWebGPUErrorScopeLifecycleMessage\(message\)/);
+  assert.match(source, /indexOf\("instance dropped"\) >= 0/);
+  assert.match(source, /indexOf\("poperrorscope"\) >= 0/);
+  assert.match(source, /\.catch\(function\(error\) \{[\s\S]*if \(isWebGPUErrorScopeLifecycleMessage\(message\)\) return;[\s\S]*reportWebGPUFrameError\(message\);[\s\S]*\}\);/);
+});
+
+test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(source, /SCENE_ELIO_SKIN_LBS_SOURCE/);
+  assert.match(source, /Emitted by m31labs\.dev\/elio\/emit\/wgsl from stdlib\.Skin\(\)/);
+  assert.match(source, /@compute @workgroup_size\(64\)/);
+  assert.match(source, /device\.createComputePipeline\(\{[\s\S]*label: "gosx-elio-skin-lbs"/);
+  assert.match(source, /updateElioSkinnedMeshes\(bundle, encoder\)/);
+  assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
+  assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
+  assert.match(source, /webGPUBindElioSkinnedBuffers\(pass, obj, count\)/);
+  assert.match(source, /pass\.setVertexBuffer\(0, outputBuffer\)/);
+  assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-dispatches/);
+  assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-kernel/);
+});
+
+test("Scene3D static GLB models can receive live motion patches", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(source, /function sceneRegisterStaticModelLiveRecord\(state, model, objectIDs\)/);
+  assert.match(source, /staticModel: true/);
+  assert.match(source, /_modelLocalVertices/);
+  assert.match(source, /function sceneApplyStaticModelObjectTransform\(state, record\)/);
+  assert.match(source, /object\.vertices\.positions = sceneModelTransformMeshFloats\(local\.positions/);
+  assert.match(source, /if \(sceneModelHasSkins\(skinInstances\)\) \{/);
+  assert.match(source, /sceneRegisterStaticModelLiveRecord\(state, model, objectIDs\)/);
 });
 
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
@@ -7322,6 +7535,17 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.doesNotMatch(mount, /instanced-meshes/);
 });
 
+test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /function wgpuCreatePBRPipeline/);
+  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
+  assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
+  assert.match(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
+  assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+  assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+});
+
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
@@ -7450,6 +7674,7 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
           ],
           props: {
             webgpuPowerPreference: "high-performance",
+            webgpuOptionalFeatures: true,
           },
         },
       ],
@@ -7498,6 +7723,149 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:limit:maxComputeWorkgroupSizeX>=128"), true);
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:limit:maxComputeWorkgroupSizeX>128"), false);
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:missing-feature"), false);
+});
+
+test("Scene3D WebGPU probe keeps optional features opt-in for headless devices", async () => {
+  let requestedDescriptor = null;
+  const adapter = {
+    features: new Set([
+      "timestamp-query",
+      "indirect-first-instance",
+      "texture-compression-bc",
+      "subgroups",
+    ]),
+    limits: {
+      maxTextureDimension2D: 8192,
+      maxComputeWorkgroupSizeX: 256,
+    },
+    requestDevice: async (descriptor) => {
+      requestedDescriptor = descriptor;
+      const requiredFeatures = descriptor && descriptor.requiredFeatures || [];
+      return {
+        lost: new Promise(() => {}),
+        features: new Set(requiredFeatures),
+        limits: {
+          maxTextureDimension2D: 8192,
+          maxComputeWorkgroupSizeX: 256,
+        },
+      };
+    },
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => adapter,
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-lean-probe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(requestedDescriptor, undefined);
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, true);
+  assert.ok(diagnostics.supportedFeatures.includes("timestamp-query"));
+  assert.equal(diagnostics.requestedFeatures.length, 0);
+  assert.equal(diagnostics.deviceFeatures.length, 0);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), false);
+});
+
+test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter", async () => {
+  let adapterRequests = 0;
+  let deviceRequests = 0;
+  const failingAdapter = {
+    features: new Set(["timestamp-query"]),
+    limits: {
+      maxTextureDimension2D: 8192,
+    },
+    requestDevice: async (descriptor) => {
+      deviceRequests++;
+      assert.equal(descriptor, undefined);
+      throw new Error("A valid external Instance reference no longer exists.");
+    },
+  };
+  const retryAdapter = {
+    features: new Set(["timestamp-query"]),
+    limits: {
+      maxTextureDimension2D: 8192,
+    },
+    info: {
+      vendor: "retry-vendor",
+    },
+    requestDevice: async (descriptor) => {
+      deviceRequests++;
+      assert.equal(descriptor, undefined);
+      return {
+        lost: new Promise(() => {}),
+        features: new Set(),
+        limits: {
+          maxTextureDimension2D: 8192,
+        },
+      };
+    },
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests++;
+        return adapterRequests === 1 ? failingAdapter : retryAdapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-retry-probe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(adapterRequests, 2);
+  assert.equal(deviceRequests, 2);
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, true);
+  assert.equal(diagnostics.retryCount, 1);
+  assert.match(diagnostics.warnings[0], /external Instance/);
+  assert.equal(diagnostics.adapterInfo.vendor, "retry-vendor");
+  assert.equal(diagnostics.requestedFeatures.length, 0);
+  assert.equal(diagnostics.deviceFeatures.length, 0);
 });
 
 test("bootstrap normalizes orthographic Scene3D cameras, LOD, lights, and custom line materials", async () => {

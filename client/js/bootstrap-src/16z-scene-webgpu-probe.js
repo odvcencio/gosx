@@ -41,6 +41,8 @@
   var _webgpuProbeError = "";
   var _webgpuDeviceLostInfo = null;
   var _webgpuProbeOptions = {};
+  var _webgpuProbeRetryCount = 0;
+  var _webgpuProbeWarnings = [];
 
   var WEBGPU_OPTIONAL_FEATURES = [
     "timestamp-query",
@@ -126,6 +128,9 @@
   }
 
   function sceneWebGPURequestedFeatureList(adapter) {
+    if (!sceneWebGPUOptionalFeaturesRequestedFromManifest()) {
+      return [];
+    }
     var out = [];
     for (var i = 0; i < WEBGPU_OPTIONAL_FEATURES.length; i++) {
       var feature = WEBGPU_OPTIONAL_FEATURES[i];
@@ -136,6 +141,31 @@
       out.push(feature);
     }
     return out;
+  }
+
+  function sceneWebGPUOptionalFeaturesRequestedFromManifest() {
+    var manifest = sceneWebGPUManifest();
+    var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
+    for (var i = 0; i < engines.length; i++) {
+      var entry = engines[i];
+      if (!entry || entry.component !== "GoSXScene3D") {
+        continue;
+      }
+      var props = entry.props && typeof entry.props === "object" ? entry.props : {};
+      if (sceneWebGPUTruthy(props.webgpuOptionalFeatures) || sceneWebGPUTruthy(props.webGPUOptionalFeatures)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function sceneWebGPUTruthy(value) {
+    if (value === true) return true;
+    if (typeof value === "string") {
+      var normalized = value.trim().toLowerCase();
+      return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+    }
+    return false;
   }
 
   function sceneWebGPUMergeFeatureLists() {
@@ -204,6 +234,8 @@
       error: _webgpuProbeError,
       lost: _webgpuDeviceLostInfo,
       probeOptions: Object.assign({}, _webgpuProbeOptions),
+      retryCount: _webgpuProbeRetryCount,
+      warnings: _webgpuProbeWarnings.slice(),
     };
   }
 
@@ -246,6 +278,8 @@
         error: _webgpuProbeError,
         lost: _webgpuDeviceLostInfo,
         probeOptions: Object.assign({}, _webgpuProbeOptions),
+        retryCount: _webgpuProbeRetryCount,
+        warnings: _webgpuProbeWarnings.slice(),
       };
     };
     window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
@@ -452,6 +486,53 @@
     return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
+  function sceneWebGPURememberAdapter(adapter) {
+    _webgpuAdapterProbe = adapter;
+    _webgpuSupportedFeatures = sceneWebGPUFeatureList(adapter.features);
+    _webgpuRequiredFeatures = sceneWebGPURequiredFeaturesFromManifest(adapter);
+    _webgpuRequestedFeatures = sceneWebGPUMergeFeatureLists(sceneWebGPURequestedFeatureList(adapter), _webgpuRequiredFeatures);
+    _webgpuRequiredLimits = sceneWebGPURequiredLimitsFromManifest();
+    _webgpuAdapterLimits = sceneWebGPULimitsSnapshot(adapter.limits);
+    _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);
+  }
+
+  function sceneWebGPUDeviceDescriptor() {
+    var descriptor = null;
+    if (_webgpuRequestedFeatures.length > 0) {
+      descriptor = descriptor || {};
+      descriptor.requiredFeatures = _webgpuRequestedFeatures;
+    }
+    if (Object.keys(_webgpuRequiredLimits).length > 0) {
+      descriptor = descriptor || {};
+      descriptor.requiredLimits = Object.assign({}, _webgpuRequiredLimits);
+    }
+    return descriptor;
+  }
+
+  function sceneWebGPURequestDevice(adapter, descriptor) {
+    return descriptor ? adapter.requestDevice(descriptor) : adapter.requestDevice();
+  }
+
+  function sceneWebGPUProbeDevice(adapter, adapterRequest, retried) {
+    sceneWebGPURememberAdapter(adapter);
+    var descriptor = sceneWebGPUDeviceDescriptor();
+    return sceneWebGPURequestDevice(adapter, descriptor).catch(function(err) {
+      if (descriptor || retried || !navigator.gpu || typeof navigator.gpu.requestAdapter !== "function") {
+        throw err;
+      }
+      var message = String(err && (err.message || err) || "unknown error");
+      _webgpuProbeRetryCount++;
+      _webgpuProbeWarnings.push("requestDevice retry after: " + message);
+      console.warn("[gosx] WebGPU probe requestDevice failed; retrying with a fresh adapter:", message);
+      return navigator.gpu.requestAdapter(adapterRequest).then(function(retryAdapter) {
+        if (!retryAdapter) {
+          throw err;
+        }
+        return sceneWebGPUProbeDevice(retryAdapter, adapterRequest, true);
+      });
+    });
+  }
+
   if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
     // The default stays unbounded because some backends (SwiftShader in
     // headless Chrome, certain Linux Mesa/ANGLE builds) return null when
@@ -468,25 +549,12 @@
         _webgpuDeviceProbe = false;
         return false;
       }
-      _webgpuAdapterProbe = adapter;
-      _webgpuSupportedFeatures = sceneWebGPUFeatureList(adapter.features);
-      _webgpuRequiredFeatures = sceneWebGPURequiredFeaturesFromManifest(adapter);
-      _webgpuRequestedFeatures = sceneWebGPUMergeFeatureLists(sceneWebGPURequestedFeatureList(adapter), _webgpuRequiredFeatures);
-      _webgpuRequiredLimits = sceneWebGPURequiredLimitsFromManifest();
-      _webgpuAdapterLimits = sceneWebGPULimitsSnapshot(adapter.limits);
-      _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);
-      // Verify device creation actually succeeds — this is where
-      // partial implementations (SwiftShader WebGPU, constrained
-      // mobile GPUs, broken ANGLE backends) fail. We don't mark
-      // WebGPU "ready" until the device itself is in hand.
-      var descriptor = {};
-      if (_webgpuRequestedFeatures.length > 0) {
-        descriptor.requiredFeatures = _webgpuRequestedFeatures;
-      }
-      if (Object.keys(_webgpuRequiredLimits).length > 0) {
-        descriptor.requiredLimits = Object.assign({}, _webgpuRequiredLimits);
-      }
-      return adapter.requestDevice(descriptor);
+      // Verify device creation actually succeeds — this is where partial
+      // implementations fail. Some headless Chrome/SwiftShader builds can
+      // fail the first empty requestDevice() after page startup while a fresh
+      // adapter succeeds immediately after, so empty descriptors get one
+      // adapter reacquire retry. Required features/limits remain strict.
+      return sceneWebGPUProbeDevice(adapter, adapterRequest, false);
     }).then(function(device) {
       if (device === false) {
         return;
