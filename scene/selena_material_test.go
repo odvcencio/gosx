@@ -239,3 +239,51 @@ func TestCompileSelenaMaterialReportsMissingMaterial(t *testing.T) {
 		t.Fatalf("missing material error = %v", err)
 	}
 }
+
+func TestSelenaMaterialOnSkinnedModelFeedsSceneIR(t *testing.T) {
+	material, _, err := CompileSelenaMaterial([]byte(selenaDefaultsSource), SelenaMaterialOptions{
+		Standard: StandardMaterial{Color: "#ffffff", Roughness: 0.35},
+		Uniforms: map[string]any{"gain": float32(2)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const skinnedSrc = "/assets/fighters/test-rig.glb"
+	SetSkinLookup(&mockSkinLookup{skinned: map[string]bool{skinnedSrc: true}})
+	t.Cleanup(func() { SetSkinLookup(nil) })
+
+	props := Props{
+		Graph: NewGraph(Model{
+			ID:       "selena-rig",
+			Src:      skinnedSrc,
+			Material: material,
+		}),
+	}
+	ir := props.SceneIR()
+
+	// (a) skinning detected via the package-global SkinLookup.
+	features := featureSet(collectFeatures(ir))
+	if !features[capability.FeatureSkinning] {
+		t.Fatalf("FeatureSkinning not detected; features=%v", features)
+	}
+
+	// (b) Selena custom-shader fields survive onto the lowered Model node.
+	m := findModelIR(ir, "selena-rig")
+	if m == nil {
+		t.Fatalf("model selena-rig not found in ir.Models (len=%d)", len(ir.Models))
+	}
+	if m.MaterialKind != "custom" || m.CustomVertexWGSL == "" || m.CustomFragmentWGSL == "" || m.ShaderBackend != "selena" {
+		t.Fatalf("selena custom-shader fields lost on skinned model: %+v", m)
+	}
+}
+
+// findModelIR returns a pointer to the ModelIR with the given ID, or nil.
+func findModelIR(ir SceneIR, id string) *ModelIR {
+	for i := range ir.Models {
+		if ir.Models[i].ID == id {
+			return &ir.Models[i]
+		}
+	}
+	return nil
+}
