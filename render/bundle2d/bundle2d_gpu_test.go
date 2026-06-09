@@ -2,6 +2,7 @@ package bundle2d
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -120,19 +121,17 @@ func TestComputeCanvasGPUBundle_AttachesBoardFillSelena(t *testing.T) {
 	}
 
 	// Idempotent: re-attaching (hosts may chain AttachBoardGPUGeometry on an
-	// already-GPU bundle) must not change the materials.
-	before := make([]string, len(b.Materials))
-	for i, m := range b.Materials {
-		before[i] = m.CustomFragmentWGSL
-	}
+	// already-GPU bundle) must not change the materials. Snapshot the whole
+	// slice before re-attach (attach mutates the backing array in place) so a
+	// re-attach clobbering CustomUniforms or ShaderLayout — not just the
+	// fragment WGSL — fails the comparison.
+	before := slices.Clone(b.Materials)
 	b2 := AttachBoardGPUGeometry(b)
-	for i, m := range b2.Materials {
-		if m.CustomFragmentWGSL != before[i] {
-			t.Errorf("material %d changed on second attach", i)
-		}
-		if len(b2.Diagnostics) != 0 {
-			t.Errorf("re-attach must not add diagnostics, got %v", b2.Diagnostics)
-		}
+	if len(b2.Diagnostics) != 0 {
+		t.Errorf("re-attach must not add diagnostics, got %v", b2.Diagnostics)
+	}
+	if !reflect.DeepEqual(b2.Materials, before) {
+		t.Errorf("materials changed on second attach:\nbefore: %+v\nafter:  %+v", before, b2.Materials)
 	}
 }
 
