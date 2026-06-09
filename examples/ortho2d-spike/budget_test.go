@@ -27,10 +27,74 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx"
+	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/render/bundle"
 	"m31labs.dev/gosx/render/bundle2d"
 	"m31labs.dev/gosx/render/gpu/headless"
 )
+
+// TestOrtho2DObjectQuadRenders is the M1 slice-1 de-risk: prove the EXISTING
+// native object renderer (drawObjectMeshes) draws a board quad when the board's
+// Objects reference real WorldPositions — i.e. the DRY fix is "emit
+// WorldPositions+normals for the board's existing objects", reusing the object
+// draw path on both native + 16a (no new pipeline). One orange quad at board
+// XY [-50,50]^2, OrthoCamera2D, Unlit material.
+func TestOrtho2DObjectQuadRenders(t *testing.T) {
+	if os.Getenv("GOSX_ORTHO2D_BUDGET") == "" {
+		t.Skip("throwaway M1 spike; set GOSX_ORTHO2D_BUDGET=1 to run (hits the GPU)")
+	}
+	const w, h = 200, 200
+	quad := []float64{
+		-50, -50, 0, 50, -50, 0, 50, 50, 0, // tri 1
+		-50, -50, 0, 50, 50, 0, -50, 50, 0, // tri 2
+	}
+	nrm := make([]float64, 0, 18)
+	uv := make([]float64, 0, 12)
+	for i := 0; i < 6; i++ {
+		nrm = append(nrm, 0, 0, 1)
+		uv = append(uv, 0, 0)
+	}
+	rb := rootengine.RenderBundle{
+		Background:     "#101018",
+		Camera:         bundle.OrthoCamera2D(1, 0, 0, w, h),
+		Materials:      []rootengine.RenderMaterial{{Kind: "flat", Color: "#ff8800", Unlit: true}},
+		Objects:        []rootengine.RenderObject{{ID: "q", Kind: "rect", VertexOffset: 0, VertexCount: 6, MaterialIndex: 0}},
+		WorldPositions: quad,
+		WorldNormals:   nrm,
+		WorldUVs:       uv,
+	}
+
+	d, surface := headless.New(w, h)
+	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
+	if err != nil {
+		t.Fatalf("bundle.New: %v", err)
+	}
+	if err := r.Frame(rb, w, h, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	img := d.Framebuffer()
+	r.Destroy()
+
+	ctr := img.RGBAAt(w/2, h/2)
+	cor := img.RGBAAt(8, 8)
+	t.Logf("center(100,100)=R%d G%d B%d  corner(8,8)=R%d G%d B%d", ctr.R, ctr.G, ctr.B, cor.R, cor.G, cor.B)
+	// PROVEN: the object path draws the board quad under ortho-2D — center is the
+	// orange material (R>G>B hue, far brighter than the background corner).
+	if !(ctr.R > 60 && ctr.R > cor.R+40 && ctr.R > ctr.G && ctr.G >= ctr.B) {
+		t.Errorf("board quad did not render via the object path: center R%d G%d B%d vs corner R%d G%d B%d", ctr.R, ctr.G, ctr.B, cor.R, cor.G, cor.B)
+	}
+	if cor.R > 80 || cor.G > 80 {
+		t.Errorf("corner is not background: R%d G%d B%d", cor.R, cor.G, cor.B)
+	}
+	// FOLLOW-UP (not blocking): #ff8800 rendered ~1/3 brightness (R85 not 255) —
+	// drawObjectMeshes uses the lit pipeline and applies ambient even for Unlit
+	// materials. The 2D/ortho board path must output the flat color at full
+	// brightness (honored in the 16a port; RenderMaterial.CustomFragmentWGSL is
+	// the Selena hook for the fill shader).
+	if ctr.R < 200 {
+		t.Logf("FOLLOW-UP: flat color dimmed to R%d (expected ~255) — unlit-in-2D not yet honored", ctr.R)
+	}
+}
 
 // TestCanvas2DBundleHasNoGPUGeometry_M1Gap documents the M1 gap: the bundle2d
 // canvas board carries its geometry in "objects" (the 26b1 painter format) with
