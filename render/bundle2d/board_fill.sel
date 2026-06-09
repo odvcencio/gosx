@@ -1,0 +1,15 @@
+// Board card fill — the themed flat fill for canvas-board rects in the WebGPU
+// canvas re-platform. Authored in Selena so one source emits WGSL (WebGPU/16a),
+// GLSL, and Metal, and so the fill can grow (border, rounded corners via SDF,
+// hover state) without hand-writing four shader dialects.
+//
+// The per-rect color is supplied through the baseColor uniform; the 2D board
+// runs unlit (OrthoCamera2D / ADR 0004), so the surface returns the fill color
+// directly with no lighting term.
+material BoardFill {
+    param baseColor : color = rgb(0.13, 0.14, 0.18)
+
+    surface(geo) -> color {
+        return baseColor
+    }
+}
