@@ -16157,3 +16157,174 @@ test("paintCanvasBundle tolerates missing/empty arrays and absent background", (
   assert.equal(callsOfType(ctx, "stroke").length, 0, "no lines to stroke");
   assert.equal(callsOfType(ctx, "fillText").length, 0, "no labels to fill");
 });
+
+// -----------------------------------------------------------------------------
+// Ortho-2D WebGPU camera math — sceneMat4Ortho2DView/Proj/ViewProj
+// (bootstrap-src/11-scene-math.js, exported through window.__gosx_scene3d_api).
+//
+// sceneMat4Ortho2DViewProj is the JS half of the pinned cross-language golden
+// contract with the native 2D board camera: render/bundle/math.go
+// computeOrthoCamera2DMVP, guarded by TestComputeOrthoCamera2DMVP_Golden
+// (render/bundle/ortho_camera_2d_golden_test.go). The values asserted below are
+// copied verbatim from that Go test — if either side drifts, both suites fail.
+//
+// The helpers read the RAW engine.RenderCamera wire fields (mode, x/y = pan,
+// z = zoom, near/far) and are deliberately NOT routed through sceneRenderCamera,
+// whose 3D defaults (z→6, near→0.05, far→128) would silently mangle them.
+// -----------------------------------------------------------------------------
+
+// loadScene3DApiContext boots the full monolithic bundle in a fake DOM and
+// returns window.__gosx_scene3d_api — the same object the chunked
+// bootstrap-feature-scene3d-webgpu.js prefix destructures at load time.
+async function loadScene3DApiContext() {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+  assert.ok(api, "bootstrap must publish window.__gosx_scene3d_api");
+  return api;
+}
+
+function assertMat4Approx(out, expectations, label) {
+  for (const [index, want] of expectations) {
+    const got = out[index];
+    assert.ok(
+      Math.abs(got - want) <= 1e-5,
+      `${label} m[${index}] = ${got}, want ${want}`,
+    );
+  }
+}
+
+test("bootstrap Scene3D ortho-2D viewProj matches the native computeOrthoCamera2DMVP golden", async () => {
+  const api = await loadScene3DApiContext();
+  const viewProj = api.sceneMat4Ortho2DViewProj;
+  assert.equal(
+    typeof viewProj,
+    "function",
+    "sceneMat4Ortho2DViewProj must be exported on __gosx_scene3d_api",
+  );
+
+  const out = new Float32Array(16);
+
+  // zoom=1, pan=0, 200x100 → ortho scale 2/200, 2/100; identity translation.
+  viewProj({ mode: "ortho2d", x: 0, y: 0, z: 1, near: -1, far: 1 }, 200, 100, out);
+  assertMat4Approx(out, [
+    [0, 0.01],
+    [5, 0.02],
+    [10, -1],
+    [15, 1],
+    [12, 0],
+    [13, 0],
+    [14, 0],
+  ], "golden case 1");
+
+  // pan=(10,20) → MVP translation = proj-scaled (-panX, -panY).
+  viewProj({ mode: "ortho2d", x: 10, y: 20, z: 1, near: -1, far: 1 }, 200, 100, out);
+  assertMat4Approx(out, [
+    [0, 0.01],
+    [5, 0.02],
+    [12, -0.1],
+    [13, -0.4],
+  ], "golden case 2");
+
+  // zoom=2 → half-extents halve → ortho scale doubles.
+  viewProj({ mode: "ortho2d", x: 0, y: 0, z: 2, near: -1, far: 1 }, 200, 100, out);
+  assertMat4Approx(out, [
+    [0, 0.02],
+    [5, 0.04],
+  ], "golden case 3");
+});
+
+test("bootstrap Scene3D ortho-2D helpers apply the native defaults (zoom<=0→1, near/far 0→-1/1)", async () => {
+  const api = await loadScene3DApiContext();
+  const viewProj = api.sceneMat4Ortho2DViewProj;
+  const view = api.sceneMat4Ortho2DView;
+  const proj = api.sceneMat4Ortho2DProj;
+  assert.equal(typeof viewProj, "function", "sceneMat4Ortho2DViewProj must be exported");
+  assert.equal(typeof view, "function", "sceneMat4Ortho2DView must be exported");
+  assert.equal(typeof proj, "function", "sceneMat4Ortho2DProj must be exported");
+
+  const out = new Float32Array(16);
+
+  // zoom 0 (and missing near/far) → zoom 1, near -1, far 1: identical to
+  // golden case 1 (mirrors the native guards in computeOrthoCamera2DMVP).
+  viewProj({ mode: "ortho2d", x: 0, y: 0, z: 0, near: 0, far: 0 }, 200, 100, out);
+  assertMat4Approx(out, [
+    [0, 0.01],
+    [5, 0.02],
+    [10, -1],
+    [14, 0],
+    [15, 1],
+  ], "defaults");
+
+  // View is a pure translation by (-panX, -panY, 0) — zoom never leaks in.
+  view({ mode: "ortho2d", x: 7, y: -3, z: 5, near: -1, far: 1 }, out);
+  assertMat4Approx(out, [
+    [0, 1],
+    [5, 1],
+    [10, 1],
+    [12, -7],
+    [13, 3],
+    [14, 0],
+    [15, 1],
+  ], "view");
+
+  // Proj emits the WebGL depth convention (NDC z in [-1,1]) to match the
+  // native golden — the WebGPU [0,1] remap happens in uploadFrameUniforms.
+  proj({ mode: "ortho2d", x: 10, y: 20, z: 1, near: -1, far: 1 }, 200, 100, out);
+  assertMat4Approx(out, [
+    [0, 0.01],
+    [5, 0.02],
+    [10, -1],
+    [12, 0],
+    [13, 0],
+    [14, 0],
+    [15, 1],
+  ], "proj");
+});
+
+test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D camera normalizer", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"),
+    "utf8",
+  );
+  const start = source.indexOf("function uploadFrameUniforms(");
+  const end = source.indexOf("function uploadLights(");
+  assert.notEqual(start, -1, "uploadFrameUniforms must exist in 16a");
+  assert.notEqual(end, -1, "uploadLights anchor must exist in 16a");
+  const body = source.slice(start, end);
+
+  const orthoGate = body.indexOf('camera.mode === "ortho2d"');
+  const normalizer = body.indexOf("sceneRenderCamera(camera)");
+  const depthRemap = body.indexOf("scratchProjMatrix[2]");
+  assert.notEqual(orthoGate, -1, "uploadFrameUniforms must gate on camera.mode === \"ortho2d\"");
+  assert.notEqual(normalizer, -1, "the 3D path must still normalize through sceneRenderCamera");
+  assert.ok(
+    orthoGate < normalizer,
+    "the ortho-2D branch must precede sceneRenderCamera — the normalizer strips mode and applies 3D defaults (z→6, near→0.05, far→128), silently mangling 2D cameras",
+  );
+  assert.match(body, /sceneMat4Ortho2DView\(camera,\s*scratchViewMatrix\)/);
+  assert.match(body, /sceneMat4Ortho2DProj\(camera,\s*width,\s*height,\s*scratchProjMatrix\)/);
+  // The ortho proj is emitted in WebGL convention (z in [-1,1], matching the
+  // native golden) and must still flow through the WebGPU depth remap.
+  assert.notEqual(depthRemap, -1, "WebGL→WebGPU depth remap must remain");
+  assert.ok(depthRemap > orthoGate, "depth remap must stay downstream of the ortho-2D branch");
+
+  // The sceneApi bridge: the chunked build's 26e prefix must import the
+  // helpers, and 10-runtime-scene-core.js must export them.
+  const prefix = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.js"),
+    "utf8",
+  );
+  assert.match(prefix, /var sceneMat4Ortho2DView = sceneApi\.sceneMat4Ortho2DView;/);
+  assert.match(prefix, /var sceneMat4Ortho2DProj = sceneApi\.sceneMat4Ortho2DProj;/);
+  assert.match(prefix, /var sceneMat4Ortho2DViewProj = sceneApi\.sceneMat4Ortho2DViewProj;/);
+
+  const core = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"),
+    "utf8",
+  );
+  assert.match(core, /sceneMat4Ortho2DView:/);
+  assert.match(core, /sceneMat4Ortho2DProj:/);
+  assert.match(core, /sceneMat4Ortho2DViewProj:/);
+});

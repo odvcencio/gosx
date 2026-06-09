@@ -3399,22 +3399,54 @@
     // -----------------------------------------------------------------------
 
     function uploadFrameUniforms(camera, width, height, toneMap) {
-      var cam = sceneRenderCamera(camera);
-      var aspect = Math.max(0.0001, width / Math.max(1, height));
-      scenePBRViewMatrix(cam, scratchViewMatrix);
-      if (typeof scenePBRProjectionMatrixForCamera === "function") {
-        scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
+      var cam;
+      var camPosZ;
+      if (camera && camera.mode === "ortho2d") {
+        // 2D board path — mirrors the Mode branch at the top of the native
+        // computeMVP (render/bundle/math.go). The RAW RenderCamera wire
+        // fields are read directly: x/y carry the pan, z carries the zoom,
+        // near/far are -1/1. This MUST run before sceneRenderCamera — the
+        // normalizer strips `mode`, applies 3D defaults (z→6, near→0.05,
+        // far→128), and treats z as a position, which would silently
+        // mangle the 2D camera.
+        sceneMat4Ortho2DView(camera, scratchViewMatrix);
+        sceneMat4Ortho2DProj(camera, width, height, scratchProjMatrix);
+        // Returned cam: render()'s only downstream consumer of the return
+        // value is drawPointsEntries, which never reads its cam parameter
+        // (and 2D bundles carry no points — Configure2DBundle strips
+        // lights/env/postFX and the board adapter emits only
+        // meshObjects/materials/background). z is 0 because camera.z
+        // carries the zoom, not a position — the cameraPos uniform below
+        // must not inherit it; with no lights in 2D bundles cameraPos is
+        // inert anyway.
+        cam = {
+          mode: "ortho2d",
+          x: sceneNumber(camera.x, 0),
+          y: sceneNumber(camera.y, 0),
+          z: 0,
+        };
+        camPosZ = 0;
       } else {
-        scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+        cam = sceneRenderCamera(camera);
+        var aspect = Math.max(0.0001, width / Math.max(1, height));
+        scenePBRViewMatrix(cam, scratchViewMatrix);
+        if (typeof scenePBRProjectionMatrixForCamera === "function") {
+          scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
+        } else {
+          scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+        }
+        camPosZ = -cam.z; // cameraPos.z (negated per convention)
       }
 
-      // scenePBRProjectionMatrix produces a WebGL-convention matrix whose
-      // clip-z range is [-w, w]. WebGPU's clip volume keeps z in [0, w],
-      // so without this remap every primitive in the front half of the
-      // frustum is silently clipped. Pre-multiplying by the depth-remap
-      // matrix R (row 2 = 0.5 * (row 2 + row 3)) converts to WebGPU clip
-      // space. Affects every WebGPU pipeline that consumes frame.projMatrix
-      // (PBR meshes, world lines, surfaces, points, compute particles).
+      // scenePBRProjectionMatrix and sceneMat4Ortho2DProj produce a
+      // WebGL-convention matrix whose clip-z range is [-w, w]. WebGPU's
+      // clip volume keeps z in [0, w], so without this remap every
+      // primitive in the front half of the frustum is silently clipped.
+      // Pre-multiplying by the depth-remap matrix R (row 2 = 0.5 *
+      // (row 2 + row 3)) converts to WebGPU clip space. Affects every
+      // WebGPU pipeline that consumes frame.projMatrix (PBR meshes, world
+      // lines, surfaces, points, compute particles). For the ortho-2D
+      // board (near=-1, far=1) the board plane z=0 lands at clip z=0.5.
       scratchProjMatrix[2]  = 0.5 * (scratchProjMatrix[2]  + scratchProjMatrix[3]);
       scratchProjMatrix[6]  = 0.5 * (scratchProjMatrix[6]  + scratchProjMatrix[7]);
       scratchProjMatrix[10] = 0.5 * (scratchProjMatrix[10] + scratchProjMatrix[11]);
@@ -3437,7 +3469,7 @@
       f.set(scratchProjMatrix, 16);         // offset 64
       f[32] = cam.x;                         // cameraPos.x
       f[33] = cam.y;                         // cameraPos.y
-      f[34] = -cam.z;                        // cameraPos.z (negated per convention)
+      f[34] = camPosZ;                       // cameraPos.z (3D: -z; ortho2d: 0 — z carries zoom)
       // lightCount set below in uploadLights
       f[36] = width;                          // viewportWidth
       f[37] = height;                         // viewportHeight

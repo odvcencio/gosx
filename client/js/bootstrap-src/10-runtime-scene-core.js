@@ -7125,4 +7125,11 @@
     // Color helper from 11-scene-math.js (already visible, re-exported
     // explicitly so the webgpu chunk has a stable lookup path).
     sceneColorRGBA: typeof sceneColorRGBA === "function" ? sceneColorRGBA : undefined,
+
+    // Ortho-2D board camera helpers from 11-scene-math.js — the JS half of
+    // the native computeOrthoCamera2DMVP golden contract, consumed by the
+    // webgpu chunk's uploadFrameUniforms ortho2d branch.
+    sceneMat4Ortho2DView: typeof sceneMat4Ortho2DView === "function" ? sceneMat4Ortho2DView : undefined,
+    sceneMat4Ortho2DProj: typeof sceneMat4Ortho2DProj === "function" ? sceneMat4Ortho2DProj : undefined,
+    sceneMat4Ortho2DViewProj: typeof sceneMat4Ortho2DViewProj === "function" ? sceneMat4Ortho2DViewProj : undefined,
   };

@@ -449,6 +449,91 @@
     return out;
   }
 
+  // ---------------------------------------------------------------------------
+  // Ortho-2D board camera (camera.mode === "ortho2d")
+  // ---------------------------------------------------------------------------
+  //
+  // JS half of the pinned cross-language contract with the native 2D board
+  // camera math: computeOrthoCamera2DMVP in render/bundle/math.go, guarded by
+  // TestComputeOrthoCamera2DMVP_Golden (render/bundle/ortho_camera_2d_golden_test.go).
+  // For identical inputs, sceneMat4Ortho2DViewProj must reproduce the native
+  // MVP exactly (column-major, WebGL depth convention: NDC z in [-1, 1]).
+  //
+  // These helpers read the RAW engine.RenderCamera wire fields — mode, x/y
+  // (pan), z (zoom), near/far. Do NOT route the camera through
+  // sceneRenderCamera first: the normalizer strips `mode`, applies 3D defaults
+  // (z→6, near→0.05, far→128), and treats z as a position rather than a zoom,
+  // which would silently mangle the 2D camera.
+
+  // Private scratch for sceneMat4Ortho2DViewProj — kept separate from the
+  // exported _sceneMat4ScratchA/B so callers holding those can't alias `out`.
+  var _sceneOrtho2DProjScratch = new Float32Array(16);
+  var _sceneOrtho2DViewScratch = new Float32Array(16);
+
+  // sceneMat4Ortho2DView writes the 2D board view matrix into `out`
+  // (column-major Float32Array(16)): a pure translation by (-panX, -panY, 0).
+  // Rotation and depth are ignored in 2D mode per ADR 0004.
+  function sceneMat4Ortho2DView(camera, out) {
+    out[0] = 1; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = 1; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = 1; out[11] = 0;
+    out[12] = -sceneNumber(camera && camera.x, 0);
+    out[13] = -sceneNumber(camera && camera.y, 0);
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+  }
+
+  // sceneMat4Ortho2DProj writes the 2D board projection into `out`: an
+  // asymmetric orthographic projection over the framebuffer half-extents
+  // divided by zoom (carried in camera.z). Output uses the WebGL convention
+  // (NDC z in [-1, 1]) to match the native golden; the WebGPU renderer
+  // applies its [0, 1] depth remap downstream (see uploadFrameUniforms).
+  // Y is intentionally NOT flipped — renderer NDC has +Y up, so board-space
+  // "up" matches screen "up"; pointer-input handlers compensate elsewhere.
+  function sceneMat4Ortho2DProj(camera, width, height, out) {
+    var zoom = sceneNumber(camera && camera.z, 0);
+    if (zoom <= 0) zoom = 1;
+    var w = sceneNumber(width, 0);
+    if (w <= 0) w = 1;
+    var h = sceneNumber(height, 0);
+    if (h <= 0) h = 1;
+    var halfW = w / (2 * zoom);
+    var halfH = h / (2 * zoom);
+    var near = sceneNumber(camera && camera.near, 0);
+    if (near === 0) near = -1;
+    var far = sceneNumber(camera && camera.far, 0);
+    if (far === 0) far = 1;
+    var left = -halfW;
+    var right = halfW;
+    var bottom = -halfH;
+    var top = halfH;
+    var rl = right - left;
+    var tb = top - bottom;
+    var fn = far - near;
+    if (rl === 0) rl = 1;
+    if (tb === 0) tb = 1;
+    if (fn === 0) fn = 1;
+    out[0] = 2 / rl; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = 2 / tb; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = -2 / fn; out[11] = 0;
+    out[12] = -(right + left) / rl;
+    out[13] = -(top + bottom) / tb;
+    out[14] = -(far + near) / fn;
+    out[15] = 1;
+    return out;
+  }
+
+  // sceneMat4Ortho2DViewProj writes proj*view into `out` — the combined 2D
+  // board MVP. THIS is the golden-contract helper named by the native test
+  // TestComputeOrthoCamera2DMVP_Golden; keep it bit-compatible with
+  // computeOrthoCamera2DMVP. `out` must not alias the module scratch buffers.
+  function sceneMat4Ortho2DViewProj(camera, width, height, out) {
+    sceneMat4Ortho2DProj(camera, width, height, _sceneOrtho2DProjScratch);
+    sceneMat4Ortho2DView(camera, _sceneOrtho2DViewScratch);
+    return sceneMat4MultiplyInto(out, _sceneOrtho2DProjScratch, _sceneOrtho2DViewScratch);
+  }
+
   // Scratch arrays for animation interpolation — avoids .slice() allocations.
   var _animScratch3 = [0, 0, 0];
   var _animScratch4 = [0, 0, 0, 0];
