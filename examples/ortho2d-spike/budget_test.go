@@ -100,6 +100,61 @@ func TestOrtho2DObjectQuadRenders(t *testing.T) {
 // canvas board carries its geometry in "objects" (the 26b1 painter format) with
 // the GPU geometry fields empty, so the WebGPU scene renderer draws nothing but
 // the cleared background.
+// TestCanvasGPUBundleRendersBoard is the M1 slice-1 end-to-end proof: board
+// nodes → bundle2d.ComputeCanvasGPUBundle → the existing object renderer draws
+// the rects at the right screen positions (the DRY fix, full pipeline). Colors
+// are dim (lit-pipeline ambient on Unlit — the unlit-in-2D follow-up) but hue +
+// placement are correct.
+func TestCanvasGPUBundleRendersBoard(t *testing.T) {
+	if os.Getenv("GOSX_ORTHO2D_BUDGET") == "" {
+		t.Skip("throwaway M1 spike; set GOSX_ORTHO2D_BUDGET=1 to run (hits the GPU)")
+	}
+	const w, h = 360, 180
+	nodes := []gosx.CanvasBoardNode{
+		{ID: "r", Kind: "rect", X: -140, Y: -25, Width: 50, Height: 50, Color: "#ff0000"},
+		{ID: "g", Kind: "rect", X: -25, Y: -25, Width: 50, Height: 50, Color: "#00ff00"},
+		{ID: "b", Kind: "rect", X: 90, Y: -25, Width: 50, Height: 50, Color: "#0000ff"},
+	}
+	rb := bundle2d.ComputeCanvasGPUBundleWithBackground(nodes, "#101018", w, h, 1, 0, 0)
+
+	d, surface := headless.New(w, h)
+	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
+	if err != nil {
+		t.Fatalf("bundle.New: %v", err)
+	}
+	if err := r.Frame(rb, w, h, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	img := d.Framebuffer()
+	r.Destroy()
+
+	var red, grn, blu [3]int // dominant-hue pixel counts per [left,center,right] third
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			c := img.RGBAAt(x, y)
+			third := x * 3 / w
+			switch {
+			case c.R > 35 && c.R > c.G+20 && c.R > c.B+20:
+				red[third]++
+			case c.G > 35 && c.G > c.R+20 && c.G > c.B+20:
+				grn[third]++
+			case c.B > 45 && c.B > c.R+20 && c.B > c.G+10:
+				blu[third]++
+			}
+		}
+	}
+	t.Logf("dominant-hue buckets [left,center,right]: red=%v green=%v blue=%v", red, grn, blu)
+	if !(red[0] > red[1] && red[0] > red[2] && red[0] > 150) {
+		t.Errorf("red rect not dominant in LEFT third: %v", red)
+	}
+	if !(grn[1] > grn[0] && grn[1] > grn[2] && grn[1] > 150) {
+		t.Errorf("green rect not dominant in CENTER third: %v", grn)
+	}
+	if !(blu[2] > blu[0] && blu[2] > blu[1] && blu[2] > 150) {
+		t.Errorf("blue rect not dominant in RIGHT third: %v", blu)
+	}
+}
+
 func TestCanvas2DBundleHasNoGPUGeometry_M1Gap(t *testing.T) {
 	if os.Getenv("GOSX_ORTHO2D_BUDGET") == "" {
 		t.Skip("throwaway M1 spike; set GOSX_ORTHO2D_BUDGET=1 to run (hits the GPU)")
