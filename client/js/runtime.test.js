@@ -16343,28 +16343,39 @@ test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D 
 // (bootstrap-feature-scene3d.js + bootstrap-feature-scene3d-webgpu.js) against
 // a fake GPUDevice and assert observable draw behavior, not source shape.
 //
-// Fixtures are Go-marshaled JSON captured verbatim from
-// bundle2d.MarshalCanvasBundle(bundle2d.ComputeCanvasGPUBundleWithBackground(
-// nodes, "#102030", 640, 480, 0.5, 0, 0)) — see the node lists in each test.
+// Fixtures are the SHARED Go↔JS goldens in render/bundle2d/testdata/ —
+// bundle2d's TestBoardGPUBundleGolden asserts
+// MarshalCanvasBundle(ComputeCanvasGPUBundleWithBackground(nodes, "#102030",
+// 640, 480, 0.5, 0, 0)) equals these bytes byte-for-byte (the node lists live
+// next to that test), so what renders here is EXACTLY what Go emits.
+// Regenerate with GOSX_UPDATE_BOARD_FIXTURES=1 go test ./render/bundle2d/.
 // Zoom 0.5 is deliberate: at zoom < 1 the board objects are NOT bounds-culled
 // by sceneBoundsViewCulled, so the fixtures also pin the regression where
 // scene-core's buildSceneWorldDrawPlan misread native board objects (which
 // have worldPositions but no worldColors) as world-line records and threw.
 // -----------------------------------------------------------------------------
 
-// Verbatim Go output (tmp generator over render/bundle2d; nodes:
-// {ID:"card-a",Kind:"rect",X:16,Y:24,Width:200,Height:120,Color:"#3a86ff"},
-// {ID:"card-b",Kind:"rect",X:280,Y:60,Width:160,Height:90,Color:"#ffbe0b"}).
-// NOTE: the first object's vertexOffset/materialIndex are ABSENT — Go's
-// `omitempty` elides zero values on the wire. The seam must restore them.
-const goBoardBundleRectsJSON = '{"background":"#102030","camera":{"mode":"ortho2d","z":0.5,"near":-1,"far":1},"environment":{},"materials":[{"kind":"flat","color":"#3a86ff","unlit":true},{"kind":"flat","color":"#ffbe0b","unlit":true}],"objects":[{"id":"card-a","kind":"rect","pickable":true,"vertexCount":6,"bounds":{"minX":16,"minY":24,"maxX":216,"maxY":144}},{"id":"card-b","kind":"rect","pickable":true,"materialIndex":1,"vertexOffset":6,"vertexCount":6,"bounds":{"minX":280,"minY":60,"maxX":440,"maxY":150}}],"worldPositions":[16,24,0,216,24,0,216,144,0,16,24,0,216,144,0,16,144,0,280,60,0,440,60,0,440,150,0,280,60,0,440,150,0,280,150,0],"worldNormals":[0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1],"worldUVs":[0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,0,1,1,0,0,1,1,0,1],"objectCount":2}';
+function readBoardFixture(name) {
+  return fs.readFileSync(
+    path.join(__dirname, "..", "..", "render", "bundle2d", "testdata", name),
+    "utf8",
+  );
+}
 
-// Verbatim Go output for a mixed board (1 rect + 2 lines + 1 label + 1
-// sprite). lines/labels/sprites carry the engine.RenderLine/Label/Sprite
-// wire shapes ({from:{x,y},to:{x,y},color,lineWidth} etc.) whose RENDERING is
-// M1 slice 2 — this fixture pins the deferral guarantee: the rect path must
-// draw and the extra arrays must be ignored without throwing.
-const goBoardBundleMixedJSON = '{"background":"#102030","camera":{"mode":"ortho2d","z":0.5,"near":-1,"far":1},"environment":{},"materials":[{"kind":"flat","color":"#3a86ff","unlit":true}],"objects":[{"id":"card-a","kind":"rect","pickable":true,"vertexCount":6,"bounds":{"minX":16,"minY":24,"maxX":216,"maxY":144}}],"lines":[{"from":{"x":216,"y":84},"to":{"x":280,"y":105},"color":"#8d99ae","lineWidth":1},{"from":{"x":0,"y":0},"to":{"x":50,"y":50},"color":"#ef233c","lineWidth":1}],"labels":[{"id":"title","text":"Board","position":{"x":20,"y":20},"font":"14px system-ui, sans-serif","color":"#edf2f4"}],"sprites":[{"id":"logo","src":"/logo.png","position":{"x":30,"y":40},"width":32,"height":32}],"worldPositions":[16,24,0,216,24,0,216,144,0,16,24,0,216,144,0,16,144,0],"worldNormals":[0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1],"worldUVs":[0,0,1,0,1,1,0,0,1,1,0,1],"objectCount":1}';
+// Two-rect board ({ID:"card-a",Kind:"rect",X:16,Y:24,Width:200,Height:120,
+// Color:"#3a86ff"}, {ID:"card-b",Kind:"rect",X:280,Y:60,Width:160,Height:90,
+// Color:"#ffbe0b"}). NOTE: the first object's vertexOffset/materialIndex are
+// ABSENT — Go's `omitempty` elides zero values on the wire; the seam restores
+// both. Materials carry the Selena BoardFill attach (customVertexWGSL/
+// customFragmentWGSL/shaderBackend/shaderLayout + customUniforms.baseColor).
+const goBoardBundleRectsJSON = readBoardFixture("board_fixture_rects.json");
+
+// Mixed board (1 rect + 2 lines + 1 label + 1 sprite). lines/labels/sprites
+// carry the engine.RenderLine/Label/Sprite wire shapes
+// ({from:{x,y},to:{x,y},color,lineWidth} etc.) whose RENDERING is M1 slice 2 —
+// this fixture pins the deferral guarantee: the rect path must draw and the
+// extra arrays must be ignored without throwing.
+const goBoardBundleMixedJSON = readBoardFixture("board_fixture_mixed.json");
 
 // makeFakeGPUDevice builds a recording GPUDevice double that satisfies every
 // device call 16a's synchronous init + render() issue on the board path:
@@ -16378,6 +16389,7 @@ function makeFakeGPUDevice() {
     renderPasses: [],
     computePasses: [],
     renderPipelines: [],
+    shaderModules: [],
   };
   function makePass(descriptor, kind) {
     const pass = {
@@ -16401,6 +16413,9 @@ function makeFakeGPUDevice() {
         pass.draws.push({
           vertexCount,
           instanceCount: instanceCount == null ? 1 : instanceCount,
+          // The pipeline bound when the draw was issued — lets tests assert
+          // WHICH path drew without coupling to setPipeline call ordering.
+          pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
         });
       },
       dispatchWorkgroups() {},
@@ -16434,7 +16449,9 @@ function makeFakeGPUDevice() {
       return { __kind: "pipelineLayout", desc };
     },
     createShaderModule(desc) {
-      return { __kind: "shaderModule", label: desc && desc.label };
+      const module = { __kind: "shaderModule", label: desc && desc.label, code: desc && desc.code };
+      state.shaderModules.push(module);
+      return module;
     },
     createComputePipeline(desc) {
       return { __kind: "computePipeline", label: desc && desc.label };
@@ -16586,8 +16603,10 @@ test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rec
 
   // (a) Zero-copy aliasing: meshObjects IS the Go objects array (identity).
   assert.equal(bundle.meshObjects, objectsRef, "meshObjects must alias bundle.objects by identity");
-  // The native-vocabulary fields stay untouched for other consumers (26b1
-  // painter, re-marshal) — exact same references.
+  // The native-vocabulary FIELDS keep their references, so the 26b1 painter's
+  // reads (objects/worldPositions/materials[i].color) see unchanged data.
+  // (Re-marshaling an adapted bundle is NOT protected — the seam adds
+  // meshObjects/worldMesh* aliases and materializes elided zeros in place.)
   assert.equal(bundle.objects, objectsRef);
   assert.equal(bundle.worldPositions, worldPositionsRef);
   assert.equal(bundle.worldNormals, worldNormalsRef);
@@ -16741,4 +16760,72 @@ test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D 
   };
   harness.renderer.render(empty, {});
   assert.equal(empty.meshObjects, undefined, "empty board bundles gain no aliases");
+});
+
+test("16a board rects draw through the Selena BoardFill pipeline: custom WGSL module, one pipeline for N materials, baseColor uniforms", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const bundle = JSON.parse(goBoardBundleRectsJSON);
+
+  // Fixture contract: the Go attach (bundle2d.AttachBoardGPUGeometry →
+  // attachBoardFillMaterials) flowed the Selena fields through the wire in
+  // exactly the names sceneSelenaIsMaterial reads.
+  assert.equal(bundle.materials.length, 2);
+  for (const material of bundle.materials) {
+    assert.equal(material.shaderBackend, "selena");
+    assert.match(material.customVertexWGSL, /vertexMain/);
+    assert.match(material.customFragmentWGSL, /baseColor/);
+    assert.ok(material.shaderLayout && Array.isArray(material.shaderLayout.uniformBlock.fields));
+    assert.equal(material.customUniforms.baseColor.length, 3);
+  }
+
+  harness.renderer.render(bundle, {});
+
+  // (1) The BoardFill WGSL reached createShaderModule verbatim.
+  const fillModules = harness.fake.state.shaderModules.filter(
+    (module) => typeof module.code === "string" && module.code.includes("baseColor") && module.code.includes("fragmentMain"),
+  );
+  assert.equal(fillModules.length, 1, "the BoardFill WGSL must compile into exactly one shader module");
+
+  // (2) Pipeline sharing: the two materials carry IDENTICAL WGSL/layout and
+  // differ only in customUniforms.baseColor, so getSelenaPipeline's
+  // content-based cache must create exactly ONE selena pipeline (the values
+  // ride per-object bind groups instead).
+  const selenaPipelines = harness.fake.state.renderPipelines.filter(
+    (pipeline) => pipeline.desc && typeof pipeline.desc.label === "string" && pipeline.desc.label.startsWith("gosx-selena-BoardFill"),
+  );
+  assert.equal(selenaPipelines.length, 1, "N same-WGSL materials must share one selena pipeline");
+
+  // (3) Both rect draws were issued with the selena pipeline bound — the
+  // default PBR pipeline never draws. (The engine pre-binds the PBR pipeline
+  // at the top of the opaque block before drawPBRObjects switches per object;
+  // that bind carries no draw, so assert at the draw level, not bind order.)
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1);
+  const main = mains[0];
+  assert.deepEqual(main.draws.map((draw) => draw.vertexCount), [6, 6], "both rects draw their quads");
+  for (const draw of main.draws) {
+    assert.equal(draw.pipeline, selenaPipelines[0], "every rect draw must go through the shared selena pipeline");
+  }
+
+  // (4) The theme colors reached the GPU as baseColor uniform bytes: the
+  // 128-byte selena uniform block (32 floats; baseColor vec3 at offset 112 →
+  // floats 28..30) is written once per rect, on distinct per-object buffers.
+  const uniformWrites = harness.fake.state.writeBufferCalls.filter(
+    (call) => call.data && call.data.length === 32,
+  );
+  assert.equal(uniformWrites.length, 2, "one selena uniform write per rect material");
+  assert.notEqual(uniformWrites[0].buffer, uniformWrites[1].buffer, "each object owns its uniform buffer (N bind groups)");
+  const approx = (got, want, label) => assert.ok(Math.abs(got - want) < 1e-6, label + ": " + got + " vs " + want);
+  // #3a86ff → (58, 134, 255)/255
+  approx(uniformWrites[0].data[28], 58 / 255, "card-a baseColor.r");
+  approx(uniformWrites[0].data[29], 134 / 255, "card-a baseColor.g");
+  approx(uniformWrites[0].data[30], 255 / 255, "card-a baseColor.b");
+  // #ffbe0b → (255, 190, 11)/255
+  approx(uniformWrites[1].data[28], 255 / 255, "card-b baseColor.r");
+  approx(uniformWrites[1].data[29], 190 / 255, "card-b baseColor.g");
+  approx(uniformWrites[1].data[30], 11 / 255, "card-b baseColor.b");
+  // The MVP (floats 0..15) rides the same block — the ortho-2D viewProjection
+  // must be present (non-zero diagonal), proving the 2D camera reached the
+  // selena uniform path.
+  assert.notEqual(uniformWrites[0].data[0], 0, "selena mvp must carry the ortho-2D projection");
 });

@@ -1,6 +1,8 @@
 package bundle2d
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
@@ -59,5 +61,90 @@ func TestAttachBoardGPUGeometry_NoObjectsIsNoop(t *testing.T) {
 	b := ComputeCanvasGPUBundle(nil, 360, 180, 1, 0, 0)
 	if len(b.WorldPositions) != 0 {
 		t.Errorf("empty board should emit no WorldPositions, got %d", len(b.WorldPositions))
+	}
+}
+
+// TestComputeCanvasGPUBundle_AttachesBoardFillSelena proves the GPU bundle's
+// rect materials carry the compiled BoardFill Selena material in exactly the
+// fields the 16a WebGPU renderer reads (16a-scene-webgpu.js
+// sceneSelenaIsMaterial / sceneSelenaUniformValue): shaderBackend "selena",
+// the binding layout with a baseColor uniform field, the WGSL in
+// CustomVertexWGSL/CustomFragmentWGSL, and the theme color as the
+// customUniforms.baseColor value.
+func TestComputeCanvasGPUBundle_AttachesBoardFillSelena(t *testing.T) {
+	nodes := []gosx.CanvasBoardNode{
+		{ID: "a", Kind: "rect", X: 0, Y: 0, Width: 10, Height: 10, Color: "#3a86ff"},
+		{ID: "b", Kind: "rect", X: 20, Y: 0, Width: 10, Height: 10, Color: "#ffbe0b"},
+		{ID: "c", Kind: "rect", X: 40, Y: 0, Width: 10, Height: 10}, // colorless → layout default
+	}
+	b := ComputeCanvasGPUBundle(nodes, 360, 180, 1, 0, 0)
+	if len(b.Materials) != 3 {
+		t.Fatalf("want 3 materials (two colors + default slot), got %d", len(b.Materials))
+	}
+
+	wantBaseColor := map[string][]float32{
+		"#3a86ff": {58.0 / 255, 134.0 / 255, 255.0 / 255},
+		"#ffbe0b": {255.0 / 255, 190.0 / 255, 11.0 / 255},
+	}
+	for i, m := range b.Materials {
+		if m.ShaderBackend != "selena" {
+			t.Errorf("material %d ShaderBackend = %q, want selena", i, m.ShaderBackend)
+		}
+		if strings.TrimSpace(m.CustomVertexWGSL) == "" || strings.TrimSpace(m.CustomFragmentWGSL) == "" {
+			t.Fatalf("material %d missing custom WGSL (vertex %d bytes, fragment %d bytes)",
+				i, len(m.CustomVertexWGSL), len(m.CustomFragmentWGSL))
+		}
+		if !strings.Contains(m.CustomFragmentWGSL, "baseColor") {
+			t.Errorf("material %d fragment WGSL does not reference baseColor", i)
+		}
+		if m.ShaderLayout == nil {
+			t.Fatalf("material %d ShaderLayout is nil — 16a sceneSelenaMaterialLayout requires uniformBlock.fields", i)
+		}
+		if _, ok := m.ShaderLayout["uniformBlock"]; !ok {
+			t.Errorf("material %d ShaderLayout missing uniformBlock", i)
+		}
+		// The painter/native color stays alongside the shader fields.
+		if m.Kind != "flat" || !m.Unlit {
+			t.Errorf("material %d kind/unlit = %q/%v, want flat/true", i, m.Kind, m.Unlit)
+		}
+		if want, ok := wantBaseColor[m.Color]; ok {
+			got, _ := m.CustomUniforms["baseColor"].([]float32)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("material %d (%s) customUniforms.baseColor = %v, want %v", i, m.Color, got, want)
+			}
+		} else if m.CustomUniforms != nil {
+			// Colorless slot: no override — the JS side falls back to the
+			// layout default (board_fill.sel's themed rgb(0.13,0.14,0.18)).
+			t.Errorf("material %d (color %q) should carry no customUniforms, got %v", i, m.Color, m.CustomUniforms)
+		}
+	}
+
+	// Idempotent: re-attaching (hosts may chain AttachBoardGPUGeometry on an
+	// already-GPU bundle) must not change the materials.
+	before := make([]string, len(b.Materials))
+	for i, m := range b.Materials {
+		before[i] = m.CustomFragmentWGSL
+	}
+	b2 := AttachBoardGPUGeometry(b)
+	for i, m := range b2.Materials {
+		if m.CustomFragmentWGSL != before[i] {
+			t.Errorf("material %d changed on second attach", i)
+		}
+		if len(b2.Diagnostics) != 0 {
+			t.Errorf("re-attach must not add diagnostics, got %v", b2.Diagnostics)
+		}
+	}
+}
+
+// TestBoardFillBaseColor pins the #rrggbb→vec3 conversion and the fallback
+// contract (anything else → no override, layout default rides).
+func TestBoardFillBaseColor(t *testing.T) {
+	if rgb, ok := boardFillBaseColor("#ff8800"); !ok || !reflect.DeepEqual(rgb, []float32{1, 136.0 / 255, 0}) {
+		t.Errorf("#ff8800 = %v/%v, want [1 0.53333336 0]/true", rgb, ok)
+	}
+	for _, bad := range []string{"", "red", "#fff", "#12345", "#gggggg", "rgb(1,2,3)"} {
+		if _, ok := boardFillBaseColor(bad); ok {
+			t.Errorf("boardFillBaseColor(%q) ok=true, want false", bad)
+		}
 	}
 }

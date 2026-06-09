@@ -1,9 +1,106 @@
 package bundle2d
 
 import (
+	"fmt"
+	"sync"
+
 	"m31labs.dev/gosx"
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/scene"
 )
+
+// boardFill* memoize the one-time compile of BoardFillSelenaSource. The source
+// is embedded and immutable, so the WGSL is identical for every bundle; a
+// compile failure must never panic a render path — boardFillCompiled returns
+// the error and attachBoardFillMaterials degrades to no-attach, surfacing the
+// failure on the bundle's Diagnostics (the renderer then falls back to its
+// default material path, i.e. the pre-Selena dim-lit fill).
+var (
+	boardFillOnce sync.Once
+	boardFillMat  scene.CustomMaterial
+	boardFillErr  error
+)
+
+func boardFillCompiled() (scene.CustomMaterial, error) {
+	boardFillOnce.Do(func() {
+		boardFillMat, _, boardFillErr = scene.CompileSelenaMaterial(
+			[]byte(BoardFillSelenaSource),
+			scene.SelenaMaterialOptions{Material: "BoardFill"},
+		)
+	})
+	return boardFillMat, boardFillErr
+}
+
+// boardFillBaseColor parses a #rrggbb fill color into the normalized RGB
+// triplet the BoardFill baseColor uniform consumes (float32 components,
+// matching the Selena layout's own defaults). Empty or non-#rrggbb colors
+// return ok=false: the material then carries no customUniforms override and
+// the renderer falls back to the layout default — the authored themed fill
+// rgb(0.13, 0.14, 0.18) in board_fill.sel. Mirrors render/bundle's
+// tryParseCSSColor; kept local so this package does not grow a native-renderer
+// dependency for an 8-line parse.
+func boardFillBaseColor(color string) ([]float32, bool) {
+	if len(color) != 7 || color[0] != '#' {
+		return nil, false
+	}
+	var r, g, b byte
+	if _, err := fmt.Sscanf(color, "#%02x%02x%02x", &r, &g, &b); err != nil {
+		return nil, false
+	}
+	return []float32{float32(r) / 255, float32(g) / 255, float32(b) / 255}, true
+}
+
+// attachBoardFillMaterials attaches the compiled BoardFill Selena material to
+// every board material so the 16a WebGPU renderer draws rect fills unlit at
+// full color through its custom-WGSL path (sceneSelenaIsMaterial reads
+// shaderBackend/shaderLayout/customVertexWGSL/customFragmentWGSL; the per-rect
+// color rides customUniforms.baseColor). Board bundles only ever carry rect
+// fill materials — lines/labels/sprites hold their colors inline — so the
+// attach applies to all of b.Materials. Materials that already carry custom
+// WGSL are left untouched, which makes the attach idempotent.
+//
+// The native Go renderer ignores these fields (fixed pipeline, oracle-only
+// dim-lit board), and the 26b1 canvas2d painter reads only Color — the attach
+// stays additive and safe for any board bundle, like the geometry attach.
+func attachBoardFillMaterials(b rootengine.RenderBundle) rootengine.RenderBundle {
+	if len(b.Materials) == 0 {
+		return b
+	}
+	fill, err := boardFillCompiled()
+	if err != nil {
+		for _, d := range b.Diagnostics {
+			if d.Code == "board-fill-selena-compile-failed" {
+				return b
+			}
+		}
+		b.Diagnostics = append(b.Diagnostics, rootengine.RenderDiagnostic{
+			Severity: "warning",
+			Code:     "board-fill-selena-compile-failed",
+			Backend:  "webgpu",
+			Target:   "BoardFill",
+			Message:  fmt.Sprintf("board fill Selena material failed to compile; rect fills fall back to the renderer's default material path: %v", err),
+		})
+		return b
+	}
+	for i := range b.Materials {
+		m := &b.Materials[i]
+		if m.CustomVertexWGSL != "" || m.CustomFragmentWGSL != "" {
+			continue
+		}
+		m.CustomVertexWGSL = fill.VertexWGSL
+		m.CustomFragmentWGSL = fill.FragmentWGSL
+		m.ShaderBackend = fill.ShaderBackend
+		// One immutable layout map shared by every board material (and every
+		// bundle) — it describes the shader, not the instance, and nothing
+		// downstream mutates it: the marshal path only reads, and the JS scene
+		// path clones on ingest (13-scene-material.js sceneCloneData).
+		m.ShaderLayout = fill.ShaderLayout
+		if rgb, ok := boardFillBaseColor(m.Color); ok {
+			m.CustomUniforms = map[string]any{"baseColor": rgb}
+		}
+	}
+	return b
+}
 
 // AttachBoardGPUGeometry makes a Canvas2D board bundle GPU-renderable without a
 // new pipeline. The board's rects live in bundle.Objects as a 2D-painter display
@@ -17,8 +114,10 @@ import (
 // DRY: the rect geometry has ONE source — the object's existing Bounds (already
 // computed by package vm). The 26b1 2D-context painter ignores World*, so this is
 // additive and safe to apply to any board bundle. Lighting/depth stay off via the
-// bundle's OrthoCamera2D camera (ADR 0004); a flat/Unlit fill material (and the
-// Selena fill shader on RenderMaterial.CustomFragmentWGSL) controls color.
+// bundle's OrthoCamera2D camera (ADR 0004); color comes from the Selena BoardFill
+// shader this also attaches to the rect materials (attachBoardFillMaterials) —
+// custom WGSL the 16a WebGPU renderer draws unlit at full brightness, with the
+// flat/Unlit Color kept alongside for the painter and the native oracle.
 //
 // Mutates and returns b for chained use.
 func AttachBoardGPUGeometry(b rootengine.RenderBundle) rootengine.RenderBundle {
@@ -47,7 +146,7 @@ func AttachBoardGPUGeometry(b rootengine.RenderBundle) rootengine.RenderBundle {
 	b.WorldPositions = pos
 	b.WorldNormals = nrm
 	b.WorldUVs = uv
-	return b
+	return attachBoardFillMaterials(b)
 }
 
 // ComputeCanvasGPUBundle is ComputeCanvasBundle plus AttachBoardGPUGeometry: a

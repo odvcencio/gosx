@@ -3179,9 +3179,16 @@
       if (!sceneSelenaIsMaterial(material)) return null;
       var layout = sceneSelenaMaterialLayout(material);
       var shader = sceneSelenaWGSLSource(material);
+      // Cache key = the pipeline's actual inputs (shader source + binding
+      // layout + blend/depth/format/samples) — NOT the material identity.
+      // Uniform VALUES live in per-object bind groups (createSelenaBindGroup),
+      // so N materials sharing one shader (e.g. N board fills differing only
+      // in customUniforms.baseColor) share ONE pipeline with N bind groups
+      // instead of compiling N identical pipelines.
       var key = [
         "selena",
-        material.key || sceneMaterialProfileKey(material),
+        shader,
+        JSON.stringify(layout),
         blendMode,
         depthWrite ? "1" : "0",
         targetFormat,
@@ -3230,9 +3237,11 @@
       if (!sceneSelenaIsMaterial(material)) return null;
       var layout = sceneSelenaMaterialLayout(material);
       var shader = sceneSelenaWGSLSource(material);
+      // Content-based key, mirroring getSelenaPipeline (see note there).
       var key = [
         "selena-skinned",
-        material.key || sceneMaterialProfileKey(material),
+        shader,
+        JSON.stringify(layout),
         blendMode,
         depthWrite ? "1" : "0",
         targetFormat,
@@ -5658,9 +5667,12 @@
     // canonicalizes worldMesh* fields to typed arrays in place — re-aliasing
     // would clobber that cache).
     //
-    // The only per-record touch-up is materializing vertexOffset zeros that
-    // Go's `omitempty` elides from the wire (the first object marshals
-    // without vertexOffset); 16a's draw gates require Number.isFinite.
+    // The only per-record touch-ups are materializing the vertexOffset and
+    // materialIndex zeros that Go's `omitempty` elides from the wire (the
+    // first object marshals without either): 16a's draw gates require
+    // Number.isFinite(vertexOffset), and buildDrawList's pass classification
+    // reads materials[obj.materialIndex] directly — an elided zero would
+    // mis-default the first rect's material to null.
     //
     // Board bundles can also carry `lines`/`labels`/`sprites` (engine
     // RenderLine {from,to,color,lineWidth} / RenderLabel / RenderSprite).
@@ -5695,6 +5707,7 @@
       for (var i = 0; i < bundle.objects.length; i++) {
         var obj = bundle.objects[i];
         if (obj && !Number.isFinite(obj.vertexOffset)) obj.vertexOffset = 0;
+        if (obj && !Number.isFinite(obj.materialIndex)) obj.materialIndex = 0;
       }
       bundle.meshObjects = bundle.objects;
       bundle.worldMeshPositions = bundle.worldPositions;
