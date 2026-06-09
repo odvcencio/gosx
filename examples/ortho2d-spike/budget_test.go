@@ -22,6 +22,7 @@
 package ortho2dspike
 
 import (
+	"image/png"
 	"os"
 	"strings"
 	"testing"
@@ -32,6 +33,61 @@ import (
 	"m31labs.dev/gosx/render/bundle2d"
 	"m31labs.dev/gosx/render/gpu/headless"
 )
+
+// TestRenderBoardToPNG is the "headless render anyway" path: Chrome can't bring
+// up WebGPU on this WSL2/Dozen box (headless OR non-headless), but the NATIVE
+// render/bundle WebGPU renderer can — so we render the canvas board to a real
+// PNG entirely headless, no browser. Output path is logged; open it to see the
+// board. (Colors are ~1/3 brightness via the lit object pipeline — the
+// unlit-in-2D follow-up; geometry/placement are exact.)
+func TestRenderBoardToPNG(t *testing.T) {
+	if os.Getenv("GOSX_ORTHO2D_BUDGET") == "" {
+		t.Skip("throwaway M1 spike; set GOSX_ORTHO2D_BUDGET=1 to run (hits the GPU)")
+	}
+	const w, h = 640, 400
+	nodes := make([]gosx.CanvasBoardNode, 0)
+	palette := []string{"#ff5a5f", "#3ddc97", "#4d9de0", "#ffd166", "#c77dff", "#06d6a0"}
+	cols, rows := 6, 4
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			nodes = append(nodes, gosx.CanvasBoardNode{
+				ID: "card", Kind: "rect",
+				X: float64(c-cols/2) * 95, Y: float64(r-rows/2) * 85,
+				Width: 80, Height: 64, Color: palette[(r*cols+c)%len(palette)],
+			})
+		}
+	}
+	rb := bundle2d.ComputeCanvasGPUBundleWithBackground(nodes, "#0f1320", w, h, 1, 0, 0)
+	// NOTE: colors render ~1/3 brightness — the native lit object pipeline has no
+	// unlit path (emissive desaturates rather than fixing it). Hue + placement are
+	// exact; full flat color is the unlit-in-2D follow-up (16a uses the Selena
+	// unlit fragment shader; native needs an unlit object pipeline).
+
+	d, surface := headless.New(w, h)
+	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
+	if err != nil {
+		t.Fatalf("bundle.New: %v", err)
+	}
+	if err := r.Frame(rb, w, h, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	img := d.Framebuffer()
+	r.Destroy()
+
+	outPath := os.Getenv("GOSX_BOARD_PNG")
+	if outPath == "" {
+		outPath = "/tmp/gosx_board_render.png"
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		t.Fatalf("create png: %v", err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	t.Logf("HEADLESS WebGPU board render → %s (%dx%d, %d cards). Open it to view.", outPath, w, h, len(nodes))
+}
 
 // TestOrtho2DObjectQuadRenders is the M1 slice-1 de-risk: prove the EXISTING
 // native object renderer (drawObjectMeshes) draws a board quad when the board's
