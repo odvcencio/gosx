@@ -1,6 +1,18 @@
   // Scene draw plan — construction of per-pass draw plans for the WebGL renderer.
 
   function buildSceneWorldDrawPlan(bundle, scratch) {
+    // Ortho-2D board bundles (ADR 0004; camera.mode "ortho2d") reuse the
+    // NATIVE renderer vocabulary: `objects` are mesh records (rect quads
+    // sliced into worldPositions, aliased to meshObjects by the 16a board
+    // adapter) and carry no scene-core world-line data — worldColors is
+    // absent, so slicing their quads as line-lists would index it and throw
+    // (or, with bounds not view-culled at zoom < 1, emit garbage line
+    // geometry). There is no world-line plan to build for them.
+    // TODO(M1 slice 2): line/label/sprite primitive parity revisits this
+    // gate when board lines get a real draw path.
+    if (bundle && bundle.camera && bundle.camera.mode === "ortho2d") {
+      return null;
+    }
     const objects = Array.isArray(bundle.objects) ? bundle.objects : [];
     const materials = Array.isArray(bundle.materials) ? bundle.materials : [];
     if (!objects.length || !materials.length) {

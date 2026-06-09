@@ -28,8 +28,9 @@ const OrthoCamera2DMode = "ortho2d"
 // Returned RenderCamera fields:
 //
 //   - Mode     = OrthoCamera2DMode (signals 2D pipeline)
-//   - X, Y     = panX, panY (re-used as 2D translation; Z is fixed at 0)
-//   - Z        = 0 (the board sits on the z=0 plane)
+//   - X, Y     = panX, panY (re-used as 2D translation)
+//   - Z        = zoom (Z carries the zoom factor; math.go's
+//     computeOrthoCamera2DMVP reads it as zoom, not as a position)
 //   - FOV      = 0 (unused in 2D mode; computeMVP ignores it)
 //   - Near, Far = -1, 1 (symmetric depth range; nothing clips in 2D)
 //

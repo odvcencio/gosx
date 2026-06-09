@@ -11,6 +11,7 @@ const bootstrapFeatureIslandsSource = fs.readFileSync(path.join(__dirname, "boot
 const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-engines.js"), "utf8");
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
+const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
@@ -16327,4 +16328,417 @@ test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D 
   assert.match(core, /sceneMat4Ortho2DView:/);
   assert.match(core, /sceneMat4Ortho2DProj:/);
   assert.match(core, /sceneMat4Ortho2DViewProj:/);
+});
+
+// -----------------------------------------------------------------------------
+// Ortho-2D board bundle → 16a WebGPU renderer (adaptOrtho2DBoardBundle seam)
+//
+// The Go board pipeline (render/bundle2d.ComputeCanvasGPUBundle) marshals an
+// engine.RenderBundle in the NATIVE renderer vocabulary: rect quads live in
+// bundle.objects (vertexOffset/vertexCount/materialIndex) sliced into
+// bundle.worldPositions/worldNormals/worldUVs. 16a draws from the JS
+// scene-core vocabulary instead (meshObjects + worldMeshPositions/...). The
+// adaptOrtho2DBoardBundle seam at the top of 16a's render() bridges the two by
+// ZERO-COPY aliasing — these tests drive the REAL chunked renderer
+// (bootstrap-feature-scene3d.js + bootstrap-feature-scene3d-webgpu.js) against
+// a fake GPUDevice and assert observable draw behavior, not source shape.
+//
+// Fixtures are Go-marshaled JSON captured verbatim from
+// bundle2d.MarshalCanvasBundle(bundle2d.ComputeCanvasGPUBundleWithBackground(
+// nodes, "#102030", 640, 480, 0.5, 0, 0)) — see the node lists in each test.
+// Zoom 0.5 is deliberate: at zoom < 1 the board objects are NOT bounds-culled
+// by sceneBoundsViewCulled, so the fixtures also pin the regression where
+// scene-core's buildSceneWorldDrawPlan misread native board objects (which
+// have worldPositions but no worldColors) as world-line records and threw.
+// -----------------------------------------------------------------------------
+
+// Verbatim Go output (tmp generator over render/bundle2d; nodes:
+// {ID:"card-a",Kind:"rect",X:16,Y:24,Width:200,Height:120,Color:"#3a86ff"},
+// {ID:"card-b",Kind:"rect",X:280,Y:60,Width:160,Height:90,Color:"#ffbe0b"}).
+// NOTE: the first object's vertexOffset/materialIndex are ABSENT — Go's
+// `omitempty` elides zero values on the wire. The seam must restore them.
+const goBoardBundleRectsJSON = '{"background":"#102030","camera":{"mode":"ortho2d","z":0.5,"near":-1,"far":1},"environment":{},"materials":[{"kind":"flat","color":"#3a86ff","unlit":true},{"kind":"flat","color":"#ffbe0b","unlit":true}],"objects":[{"id":"card-a","kind":"rect","pickable":true,"vertexCount":6,"bounds":{"minX":16,"minY":24,"maxX":216,"maxY":144}},{"id":"card-b","kind":"rect","pickable":true,"materialIndex":1,"vertexOffset":6,"vertexCount":6,"bounds":{"minX":280,"minY":60,"maxX":440,"maxY":150}}],"worldPositions":[16,24,0,216,24,0,216,144,0,16,24,0,216,144,0,16,144,0,280,60,0,440,60,0,440,150,0,280,60,0,440,150,0,280,150,0],"worldNormals":[0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1],"worldUVs":[0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,0,1,1,0,0,1,1,0,1],"objectCount":2}';
+
+// Verbatim Go output for a mixed board (1 rect + 2 lines + 1 label + 1
+// sprite). lines/labels/sprites carry the engine.RenderLine/Label/Sprite
+// wire shapes ({from:{x,y},to:{x,y},color,lineWidth} etc.) whose RENDERING is
+// M1 slice 2 — this fixture pins the deferral guarantee: the rect path must
+// draw and the extra arrays must be ignored without throwing.
+const goBoardBundleMixedJSON = '{"background":"#102030","camera":{"mode":"ortho2d","z":0.5,"near":-1,"far":1},"environment":{},"materials":[{"kind":"flat","color":"#3a86ff","unlit":true}],"objects":[{"id":"card-a","kind":"rect","pickable":true,"vertexCount":6,"bounds":{"minX":16,"minY":24,"maxX":216,"maxY":144}}],"lines":[{"from":{"x":216,"y":84},"to":{"x":280,"y":105},"color":"#8d99ae","lineWidth":1},{"from":{"x":0,"y":0},"to":{"x":50,"y":50},"color":"#ef233c","lineWidth":1}],"labels":[{"id":"title","text":"Board","position":{"x":20,"y":20},"font":"14px system-ui, sans-serif","color":"#edf2f4"}],"sprites":[{"id":"logo","src":"/logo.png","position":{"x":30,"y":40},"width":32,"height":32}],"worldPositions":[16,24,0,216,24,0,216,144,0,16,24,0,216,144,0,16,144,0],"worldNormals":[0,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,1],"worldUVs":[0,0,1,0,1,1,0,0,1,1,0,1],"objectCount":1}';
+
+// makeFakeGPUDevice builds a recording GPUDevice double that satisfies every
+// device call 16a's synchronous init + render() issue on the board path:
+// buffers (incl. mappedAtCreation), textures/views, samplers, bind groups,
+// pipelines, shader modules, command encoders with render/compute passes, the
+// queue, and validation error scopes.
+function makeFakeGPUDevice() {
+  const state = {
+    writeBufferCalls: [],
+    submitCount: 0,
+    renderPasses: [],
+    computePasses: [],
+    renderPipelines: [],
+  };
+  function makePass(descriptor, kind) {
+    const pass = {
+      kind,
+      descriptor,
+      draws: [],
+      pipelines: [],
+      bindGroups: [],
+      vertexBuffers: [],
+      ended: false,
+      setPipeline(pipeline) {
+        pass.pipelines.push(pipeline);
+      },
+      setBindGroup(slot, group) {
+        pass.bindGroups.push({ slot, group });
+      },
+      setVertexBuffer(slot, buffer, offset, size) {
+        pass.vertexBuffers.push({ slot, buffer, offset, size });
+      },
+      draw(vertexCount, instanceCount) {
+        pass.draws.push({
+          vertexCount,
+          instanceCount: instanceCount == null ? 1 : instanceCount,
+        });
+      },
+      dispatchWorkgroups() {},
+      end() {
+        pass.ended = true;
+      },
+    };
+    return pass;
+  }
+  const device = {
+    lost: new Promise(() => {}),
+    features: new Set(),
+    limits: {},
+    queue: {
+      writeBuffer(buffer, offset, data) {
+        state.writeBufferCalls.push({
+          buffer,
+          offset,
+          data: data && typeof data.slice === "function" ? data.slice(0) : data,
+        });
+      },
+      writeTexture() {},
+      submit() {
+        state.submitCount += 1;
+      },
+    },
+    createBindGroupLayout(desc) {
+      return { __kind: "bindGroupLayout", desc };
+    },
+    createPipelineLayout(desc) {
+      return { __kind: "pipelineLayout", desc };
+    },
+    createShaderModule(desc) {
+      return { __kind: "shaderModule", label: desc && desc.label };
+    },
+    createComputePipeline(desc) {
+      return { __kind: "computePipeline", label: desc && desc.label };
+    },
+    createRenderPipeline(desc) {
+      const pipeline = { __kind: "renderPipeline", desc };
+      state.renderPipelines.push(pipeline);
+      return pipeline;
+    },
+    createBindGroup(desc) {
+      return { __kind: "bindGroup", desc };
+    },
+    createSampler(desc) {
+      return { __kind: "sampler", desc };
+    },
+    createTexture(desc) {
+      return {
+        __kind: "texture",
+        desc,
+        createView() {
+          return { __kind: "textureView" };
+        },
+        destroy() {},
+      };
+    },
+    createBuffer(desc) {
+      const buffer = {
+        __kind: "buffer",
+        size: desc && desc.size || 0,
+        usage: desc && desc.usage,
+        destroy() {},
+      };
+      if (desc && desc.mappedAtCreation) {
+        const backing = new ArrayBuffer(buffer.size);
+        buffer.getMappedRange = () => backing;
+        buffer.unmap = () => {};
+      }
+      return buffer;
+    },
+    createCommandEncoder() {
+      return {
+        beginRenderPass(descriptor) {
+          const pass = makePass(descriptor, "render");
+          state.renderPasses.push(pass);
+          return pass;
+        },
+        beginComputePass(descriptor) {
+          const pass = makePass(descriptor, "compute");
+          state.computePasses.push(pass);
+          return pass;
+        },
+        finish() {
+          return { __kind: "commandBuffer" };
+        },
+      };
+    },
+    pushErrorScope() {},
+    popErrorScope() {
+      return Promise.resolve(null);
+    },
+  };
+  return { device, state };
+}
+
+// createBoardWebGPUHarness boots the runtime + scene3d + scene3d-webgpu chunks
+// (the production load order for 16a), points the 16z probe bridge at a ready
+// fake device, and constructs the REAL createSceneWebGPURenderer over a fake
+// canvas. Returns the renderer plus the recording device state and mount.
+async function createBoardWebGPUHarness() {
+  const env = createContext({ enableWebGPU: true });
+  // WebGPU usage-flag globals the renderer reads when creating resources.
+  env.context.GPUBufferUsage = {
+    MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
+    INDEX: 0x10, VERTEX: 0x20, UNIFORM: 0x40, STORAGE: 0x80,
+    INDIRECT: 0x100, QUERY_RESOLVE: 0x200,
+  };
+  env.context.GPUTextureUsage = {
+    COPY_SRC: 0x1, COPY_DST: 0x2, TEXTURE_BINDING: 0x4,
+    STORAGE_BINDING: 0x8, RENDER_ATTACHMENT: 0x10,
+  };
+  env.context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  assert.ok(env.context.__gosx_scene3d_api, "scene3d chunk must publish __gosx_scene3d_api");
+
+  const fake = makeFakeGPUDevice();
+  // The 16a factory consumes the probed adapter+device through the 16z
+  // bridge global — point it at the fake before loading the webgpu chunk.
+  env.context.__gosx_scene3d_webgpu_probe = function() {
+    return { adapter: { __kind: "adapter" }, device: fake.device, ready: true };
+  };
+
+  runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  const api = env.context.__gosx_scene3d_webgpu_api;
+  assert.ok(api && typeof api.createRenderer === "function", "webgpu chunk must publish createRenderer");
+
+  const mount = new FakeElement("div", null);
+  const configureCalls = [];
+  const gpuCtx = {
+    configure(config) {
+      configureCalls.push(config);
+    },
+    getCurrentTexture() {
+      return {
+        createView() {
+          return { __kind: "canvasTextureView" };
+        },
+      };
+    },
+  };
+  const canvas = {
+    width: 640,
+    height: 480,
+    isConnected: true,
+    childNodes: [],
+    parentNode: mount,
+    getBoundingClientRect() {
+      return { width: 640, height: 480 };
+    },
+    getContext(kind) {
+      return kind === "webgpu" ? gpuCtx : null;
+    },
+  };
+
+  const renderer = api.createRenderer(canvas, {});
+  assert.ok(renderer, "createRenderer must succeed against the fake device (got factory failure: " + String(env.context.__gosx_scene3d_webgpu_factory_error || "") + ")");
+  return { env, renderer, fake, mount, canvas, configureCalls };
+}
+
+// mainRenderPasses filters out the init-time dummy-shadow clear pass (which
+// has no color attachments) leaving the frame's main passes.
+function mainRenderPasses(fake) {
+  return fake.state.renderPasses.filter(
+    (pass) => pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) && pass.descriptor.colorAttachments.length > 0,
+  );
+}
+
+test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rect quads (zero-copy seam)", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const bundle = JSON.parse(goBoardBundleRectsJSON);
+  const objectsRef = bundle.objects;
+  const worldPositionsRef = bundle.worldPositions;
+  const worldNormalsRef = bundle.worldNormals;
+  const worldUVsRef = bundle.worldUVs;
+
+  harness.renderer.render(bundle, {});
+
+  // (a) Zero-copy aliasing: meshObjects IS the Go objects array (identity).
+  assert.equal(bundle.meshObjects, objectsRef, "meshObjects must alias bundle.objects by identity");
+  // The native-vocabulary fields stay untouched for other consumers (26b1
+  // painter, re-marshal) — exact same references.
+  assert.equal(bundle.objects, objectsRef);
+  assert.equal(bundle.worldPositions, worldPositionsRef);
+  assert.equal(bundle.worldNormals, worldNormalsRef);
+  assert.equal(bundle.worldUVs, worldUVsRef);
+  // worldMesh* aliases hold the same geometry. 16a's attribute getter is
+  // allowed to canonicalize the FIELD to a typed array in place (its normal
+  // caching for any scene bundle), so assert data, not constructor identity.
+  assert.equal(bundle.worldMeshPositions.length, 36, "positions alias must expose all 12 vertices");
+  assert.equal(bundle.worldMeshPositions[0], 16);
+  assert.equal(bundle.worldMeshPositions[1], 24);
+  assert.equal(bundle.worldMeshPositions[2], 0);
+  assert.equal(bundle.worldMeshPositions[33], 280);
+  assert.equal(bundle.worldMeshPositions[34], 150);
+  assert.equal(bundle.worldMeshPositions[35], 0);
+  assert.equal(bundle.worldMeshNormals.length, 36);
+  assert.equal(bundle.worldMeshNormals[2], 1, "board normals are +Z");
+  assert.equal(bundle.worldMeshUVs.length, 24);
+
+  // (b) The draw reached the PBR object path: the main pass recorded one
+  // 6-vertex draw per rect — INCLUDING card-a, whose vertexOffset:0 and
+  // materialIndex:0 were elided by Go's omitempty and must be restored by
+  // the seam (16a gates objects on Number.isFinite(vertexOffset)).
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1, "exactly one main render pass");
+  const main = mains[0];
+  assert.deepEqual(
+    main.draws.map((draw) => draw.vertexCount),
+    [6, 6],
+    "both rects must draw 6 vertices each",
+  );
+  assert.ok(main.ended, "main pass must end");
+  assert.ok(harness.fake.state.submitCount >= 1, "frame must submit");
+
+  // Vertex data upload: the packed positions buffer write carries the Go quad
+  // vertices (12 verts * 3 floats).
+  const positionsWrite = harness.fake.state.writeBufferCalls.find(
+    (call) => call.data && call.data.length === 36 && call.data[0] === 16 && call.data[1] === 24 && call.data[33] === 280,
+  );
+  assert.ok(positionsWrite, "positions upload must carry the Go worldPositions quads");
+
+  // (3) background: the generic clear-color path reads bundle.background.
+  // "#102030" → rgba(16/255, 32/255, 48/255, 1).
+  const clear = main.descriptor.colorAttachments[0].clearValue;
+  assert.ok(Math.abs(clear.r - 16 / 255) < 1e-6, "clear r from bundle.background");
+  assert.ok(Math.abs(clear.g - 32 / 255) < 1e-6, "clear g from bundle.background");
+  assert.ok(Math.abs(clear.b - 48 / 255) < 1e-6, "clear b from bundle.background");
+  assert.equal(clear.a, 1);
+
+  // Published frame stats observe the adapted meshObjects.
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-objects"), "2");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-line-entries"), "0");
+
+  // Idempotency: the host re-renders the same bundle object every frame. The
+  // !bundle.meshObjects re-entry guard must keep the aliases (and 16a's
+  // typed-array canonicalization) stable instead of re-clobbering them.
+  const typedPositionsAfterFirstFrame = bundle.worldMeshPositions;
+  harness.renderer.render(bundle, {});
+  assert.equal(bundle.meshObjects, objectsRef, "meshObjects identity must survive re-render");
+  assert.equal(
+    bundle.worldMeshPositions,
+    typedPositionsAfterFirstFrame,
+    "re-render must not re-alias worldMeshPositions over the canonicalized typed array",
+  );
+  const mainsAfterSecond = mainRenderPasses(harness.fake);
+  assert.equal(mainsAfterSecond.length, 2, "second frame must draw again");
+  assert.deepEqual(mainsAfterSecond[1].draws.map((draw) => draw.vertexCount), [6, 6]);
+});
+
+test("16a render() draws the board rect path when Go lines/labels/sprites arrays are present (M1 slice 2 deferral)", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const bundle = JSON.parse(goBoardBundleMixedJSON);
+  const linesRef = bundle.lines;
+  const labelsRef = bundle.labels;
+  const spritesRef = bundle.sprites;
+
+  // The Go wire shape (lineWidth 1 from the typed CanvasBoardNode path) must
+  // remain inside 16a's supported envelope at mount-selection time too.
+  assert.equal(harness.renderer.supportsBundle(bundle), true, "board wire bundle must stay WebGPU-supported");
+
+  // The deferral guarantee: rendering must not throw and must still draw the
+  // rect, with the line/label/sprite records ignored (no line draw entries).
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1);
+  assert.deepEqual(mains[0].draws.map((draw) => draw.vertexCount), [6], "the rect still draws its quad");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-objects"), "1");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-line-entries"), "0", "Go line records must not reach a line draw path");
+
+  // The slice-2 payloads are left exactly as marshaled for the future path.
+  assert.equal(bundle.lines, linesRef);
+  assert.equal(bundle.labels, labelsRef);
+  assert.equal(bundle.sprites, spritesRef);
+  assert.equal(bundle.lines.length, 2);
+  assert.equal(bundle.lines[0].from.x, 216);
+  assert.equal(bundle.lines[0].lineWidth, 1);
+});
+
+test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D board bundles", async () => {
+  const harness = await createBoardWebGPUHarness();
+
+  // (1) Exact-identity aliasing, observed before any draw: a board bundle
+  // with positions but WITHOUT normals fails 16a's hasPBRData gate and
+  // returns before the typed-array canonicalization — the aliases must be
+  // the very same array objects.
+  const partial = {
+    camera: { mode: "ortho2d", z: 1, near: -1, far: 1 },
+    materials: [{ kind: "flat", color: "#fff", unlit: true }],
+    objects: [{ id: "r", kind: "rect", vertexCount: 6, bounds: { maxX: 10, maxY: 10 } }],
+    worldPositions: [0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 0, 0, 10, 10, 0, 0, 10, 0],
+  };
+  harness.renderer.render(partial, {});
+  assert.equal(partial.meshObjects, partial.objects, "meshObjects must alias objects by identity");
+  assert.equal(partial.worldMeshPositions, partial.worldPositions, "worldMeshPositions must alias worldPositions by identity (zero-copy)");
+  assert.equal(partial.worldMeshNormals, undefined, "absent worldNormals alias to undefined");
+  assert.equal(mainRenderPasses(harness.fake).length, 0, "no PBR data → no main pass");
+
+  // (2) Non-ortho2d bundles are untouched even when they carry native-shaped
+  // objects/worldPositions.
+  const perspective = {
+    camera: { x: 0, y: 0, z: 6 },
+    materials: [{ kind: "flat", color: "#fff" }],
+    objects: [{ id: "r", kind: "rect", vertexOffset: 0, vertexCount: 6 }],
+    worldPositions: [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0],
+    worldNormals: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+  };
+  harness.renderer.render(perspective, {});
+  assert.equal(perspective.meshObjects, undefined, "non-ortho2d bundles must not gain meshObjects");
+  assert.equal(perspective.worldMeshPositions, undefined, "non-ortho2d bundles must not gain worldMesh aliases");
+
+  // (3) Bundles that already carry meshObjects (scene-core vocabulary) keep
+  // them — the adapter must not re-alias over an existing draw source.
+  const presetMeshObjects = [{ id: "pre", vertexOffset: 0, vertexCount: 3 }];
+  const presetPositions = [0, 0, 0, 1, 0, 0, 0, 1, 0];
+  const already = {
+    camera: { mode: "ortho2d", z: 1, near: -1, far: 1 },
+    materials: [],
+    objects: [{ id: "ignored", vertexOffset: 0, vertexCount: 6 }],
+    meshObjects: presetMeshObjects,
+    worldMeshPositions: presetPositions,
+    worldPositions: [9, 9, 9],
+  };
+  harness.renderer.render(already, {});
+  assert.equal(already.meshObjects, presetMeshObjects, "existing meshObjects must keep identity");
+  assert.equal(already.worldMeshPositions, presetPositions, "existing worldMeshPositions must keep identity");
+
+  // (4) ortho2d with no objects → nothing to alias.
+  const empty = {
+    camera: { mode: "ortho2d", z: 1, near: -1, far: 1 },
+    objects: [],
+  };
+  harness.renderer.render(empty, {});
+  assert.equal(empty.meshObjects, undefined, "empty board bundles gain no aliases");
 });

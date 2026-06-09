@@ -5643,7 +5643,68 @@
     // Main render function
     // -----------------------------------------------------------------------
 
+    // adaptOrtho2DBoardBundle is the Go-wire ↔ 16a seam for the 2D board path.
+    //
+    // The Go board pipeline (render/bundle2d/bundle2d_gpu.go documents the Go
+    // half) marshals engine.RenderBundle JSON in the NATIVE renderer
+    // vocabulary: rect quads live in `objects` (vertexOffset/vertexCount/
+    // materialIndex) slicing `worldPositions`/`worldNormals`/`worldUVs`. 16a
+    // draws the same geometry from the JS scene-core vocabulary (`meshObjects`
+    // + `worldMesh*`) — native drawObjectMeshes and 16a drawPBRObjects are the
+    // two consumers of one buffer layout, so the bridge is pure ZERO-COPY
+    // aliasing: no records are copied or transformed. Idempotent by
+    // construction via the !bundle.meshObjects re-entry guard (hosts re-render
+    // the same bundle object every frame, and 16a's attribute getter
+    // canonicalizes worldMesh* fields to typed arrays in place — re-aliasing
+    // would clobber that cache).
+    //
+    // The only per-record touch-up is materializing vertexOffset zeros that
+    // Go's `omitempty` elides from the wire (the first object marshals
+    // without vertexOffset); 16a's draw gates require Number.isFinite.
+    //
+    // Board bundles can also carry `lines`/`labels`/`sprites` (engine
+    // RenderLine {from,to,color,lineWidth} / RenderLabel / RenderSprite).
+    // Audited against this renderer: they are inert here, so they are left
+    // untouched rather than guarded —
+    //   - the world/screen line draw paths key off worldColors+
+    //     worldVertexCount / positions+colors+vertexCount, none of which the
+    //     board bundle sets, so hasWorldLineData/hasScreenLineData stay false;
+    //   - `lines` records are only read by webGPUUnsupportedLineStyles (Go
+    //     lines have no lineDash/material → false) and
+    //     webGPUHasThickWorldLines (lineWidth > 1 would flip supportsBundle
+    //     false at backend selection; the typed CanvasBoardNode wire always
+    //     emits lineWidth 1 today);
+    //   - `labels`/`sprites` are not read by 16a at all.
+    // TODO(M1 slice 2): line/label/sprite primitive parity gives these
+    // payloads a real draw path (and revisits the ortho2d gate in
+    // buildSceneWorldDrawPlan).
+    //
+    // `background` needs no bridging: the main-pass clear color already reads
+    // bundle.background (same JSON name on Scene3D and board bundles).
+    function adaptOrtho2DBoardBundle(bundle) {
+      if (
+        !bundle ||
+        !bundle.camera ||
+        bundle.camera.mode !== "ortho2d" ||
+        !Array.isArray(bundle.objects) ||
+        !bundle.objects.length ||
+        bundle.meshObjects
+      ) {
+        return bundle;
+      }
+      for (var i = 0; i < bundle.objects.length; i++) {
+        var obj = bundle.objects[i];
+        if (obj && !Number.isFinite(obj.vertexOffset)) obj.vertexOffset = 0;
+      }
+      bundle.meshObjects = bundle.objects;
+      bundle.worldMeshPositions = bundle.worldPositions;
+      bundle.worldMeshNormals = bundle.worldNormals;
+      bundle.worldMeshUVs = bundle.worldUVs;
+      return bundle;
+    }
+
     function render(bundle, viewport) {
+      adaptOrtho2DBoardBundle(bundle);
       if (!device) {
         startInit();
         return;
