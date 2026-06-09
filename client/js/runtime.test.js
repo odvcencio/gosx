@@ -16370,11 +16370,16 @@ function readBoardFixture(name) {
 // customFragmentWGSL/shaderBackend/shaderLayout + customUniforms.baseColor).
 const goBoardBundleRectsJSON = readBoardFixture("board_fixture_rects.json");
 
-// Mixed board (1 rect + 2 lines + 1 label + 1 sprite). lines/labels/sprites
-// carry the engine.RenderLine/Label/Sprite wire shapes
-// ({from:{x,y},to:{x,y},color,lineWidth} etc.) whose RENDERING is M1 slice 2 —
-// this fixture pins the deferral guarantee: the rect path must draw and the
-// extra arrays must be ignored without throwing.
+// Mixed board (1 rect + 2 lines + 1 label + 1 sprite). Since M1 slice 2A the
+// Go attach (AttachBoardGPUGeometry) expands lines and sprites into z=0
+// quads appended to objects/worldPositions in painter z-order (rect → lines
+// → sprite), so the fixture carries FOUR drawable objects: the rect and the
+// two lines on flat+Selena BoardFill materials, the sprite on a bare
+// {kind:"sprite", texture, unlit} material (its board_sprite.sel attach is
+// slice 2B; today it draws through the default PBR pipeline). The
+// lines/labels/sprites wire arrays still ride unchanged
+// ({from:{x,y},to:{x,y},color,lineWidth} etc.); labels stay undrawn here
+// (slice 2C renders them as a DOM overlay).
 const goBoardBundleMixedJSON = readBoardFixture("board_fixture_mixed.json");
 
 // makeFakeGPUDevice builds a recording GPUDevice double that satisfies every
@@ -16675,28 +16680,54 @@ test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rec
   assert.deepEqual(mainsAfterSecond[1].draws.map((draw) => draw.vertexCount), [6, 6]);
 });
 
-test("16a render() draws the board rect path when Go lines/labels/sprites arrays are present (M1 slice 2 deferral)", async () => {
+test("16a render() draws board rect+line+sprite quads from the Go GPU bundle (M1 slice 2A)", async () => {
   const harness = await createBoardWebGPUHarness();
   const bundle = JSON.parse(goBoardBundleMixedJSON);
   const linesRef = bundle.lines;
   const labelsRef = bundle.labels;
   const spritesRef = bundle.sprites;
 
+  // Fixture contract: the Go attach appended the line/sprite quads in
+  // painter z-order with per-primitive materials.
+  assert.equal(bundle.objects.length, 4, "rect + 2 line quads + sprite quad");
+  assert.deepEqual(
+    bundle.objects.map((obj) => obj.kind),
+    ["rect", "line", "line", "sprite"],
+    "objects ride in painter z-order (rects, lines, sprites)",
+  );
+  assert.equal(bundle.materials.length, 4);
+  const spriteMaterial = bundle.materials[bundle.objects[3].materialIndex];
+  assert.equal(spriteMaterial.kind, "sprite");
+  assert.equal(spriteMaterial.texture, "/logo.png", "sprite material carries Texture=Src (the 2B wire contract)");
+  assert.equal(spriteMaterial.shaderBackend, undefined, "sprite material has NO Selena fields until 2B attaches board_sprite.sel");
+
   // The Go wire shape (lineWidth 1 from the typed CanvasBoardNode path) must
   // remain inside 16a's supported envelope at mount-selection time too.
   assert.equal(harness.renderer.supportsBundle(bundle), true, "board wire bundle must stay WebGPU-supported");
 
-  // The deferral guarantee: rendering must not throw and must still draw the
-  // rect, with the line/label/sprite records ignored (no line draw entries).
   harness.renderer.render(bundle, {});
 
+  // All four quads draw 6 vertices each through the meshObjects path, in
+  // array order — GPU z-order parity with the 26b1 painter.
   const mains = mainRenderPasses(harness.fake);
   assert.equal(mains.length, 1);
-  assert.deepEqual(mains[0].draws.map((draw) => draw.vertexCount), [6], "the rect still draws its quad");
-  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-objects"), "1");
-  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-line-entries"), "0", "Go line records must not reach a line draw path");
+  assert.deepEqual(mains[0].draws.map((draw) => draw.vertexCount), [6, 6, 6, 6], "rect, both lines, and the sprite each draw their quad");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-objects"), "4");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-line-entries"), "0", "line quads draw as mesh objects, not via a line pipeline");
 
-  // The slice-2 payloads are left exactly as marshaled for the future path.
+  // Rect + line draws share the one Selena BoardFill pipeline; the sprite
+  // draw goes through the default PBR pipeline (its Selena attach is 2B).
+  const selenaPipelines = harness.fake.state.renderPipelines.filter(
+    (pipeline) => pipeline.desc && typeof pipeline.desc.label === "string" && pipeline.desc.label.startsWith("gosx-selena-BoardFill"),
+  );
+  assert.equal(selenaPipelines.length, 1, "flat rect/line materials share one BoardFill pipeline");
+  for (const draw of mains[0].draws.slice(0, 3)) {
+    assert.equal(draw.pipeline, selenaPipelines[0], "rect/line quads draw through the BoardFill pipeline");
+  }
+  assert.notEqual(mains[0].draws[3].pipeline, selenaPipelines[0], "the sprite quad draws through the default (PBR) pipeline until 2B");
+
+  // The wire payloads are left exactly as marshaled (labels draw in 2C; the
+  // lines/sprites records stay for the painter path and diagnostics).
   assert.equal(bundle.lines, linesRef);
   assert.equal(bundle.labels, labelsRef);
   assert.equal(bundle.sprites, spritesRef);
