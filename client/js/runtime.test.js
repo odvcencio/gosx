@@ -17469,6 +17469,47 @@ test("routed canvas2d skip-frame: an identical render JSON second frame does zer
   assert.ok(mainRenderPasses(h.fake).length > mainsAfter1, "a changed JSON frame renders again (pan/zoom → full frame)");
 });
 
+test("routed canvas2d resize-frame: same JSON but new viewport always re-renders (camera JSON carries no viewport)", async () => {
+  // The OrthoCamera2D serialisation intentionally drops width/height (see
+  // render/bundle/ortho_camera_2d.go:44-45: `_ = width; _ = height`).  A pure
+  // container resize therefore produces IDENTICAL bundle JSON — the skip-key
+  // must include the viewport (cssW, cssH, dpr) so a resize still re-renders,
+  // re-runs _initEngineSurfaceCanvasSize (swapchain resync), and re-syncs labels.
+  const h = await createCanvasBoardRoutingHarness();
+  await h.mount();
+
+  // Frame 1: a full render (prevJSON was null).
+  h.raf.flush(16);
+  await flushAsyncWork();
+  const mainsAfter1 = mainRenderPasses(h.fake).length;
+  assert.ok(mainsAfter1 >= 1, "frame 1 must render");
+
+  // Resize the canvas between frames: same JSON string, new CSS dimensions.
+  h.canvas.clientWidth  = 800;
+  h.canvas.clientHeight = 600;
+
+  // Frame 2: JSON is byte-identical but viewport changed → must NOT skip.
+  h.raf.flush(16);
+  await flushAsyncWork();
+  assert.ok(
+    mainRenderPasses(h.fake).length > mainsAfter1,
+    "resize frame must add a render pass even when JSON is identical (viewport changed)",
+  );
+  // The label overlay must also have been re-synced for the new viewport.
+  const layer = h.labelLayer();
+  assert.ok(layer && layer.childNodes.length >= 1, "labels sync ran for the new viewport");
+
+  // Frame 3: JSON identical AND viewport unchanged → skip (existing contract preserved).
+  const mainsAfter2 = mainRenderPasses(h.fake).length;
+  h.raf.flush(16);
+  await flushAsyncWork();
+  assert.equal(
+    mainRenderPasses(h.fake).length,
+    mainsAfter2,
+    "identical JSON + identical viewport must still skip (no regression on the idle-board fast path)",
+  );
+});
+
 test("canvas2d WITHOUT the webgpu flag stays on the 26b1 painter (regression pin for the default path)", async () => {
   const h = await createCanvasBoardRoutingHarness({ flag: false });
   await h.mount();

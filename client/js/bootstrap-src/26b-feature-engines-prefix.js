@@ -680,12 +680,19 @@
       instance.webgpuRenderer = renderer;
       instance.webgpuHost = host;
 
-      // Skip-frame contract: an idle board does ZERO work. We keep the previous
-      // frame's render JSON; when this frame's JSON is byte-identical we skip the
-      // parse AND the render entirely (no GPU submit, no label reflow). A pan/zoom
-      // mutates the camera → the JSON differs → a full frame runs. This is the GPU
-      // path's analog of "the board only repaints when something changed".
+      // Skip-frame contract: identical JSON AND identical viewport → skip.
+      // A pan/zoom/edit mutates the camera → the JSON differs → a full frame
+      // runs. A pure resize does NOT change the JSON: OrthoCamera2D serialises
+      // only {mode,x,y,z,near,far} — width/height are intentionally discarded
+      // (render/bundle/ortho_camera_2d.go:44-45: `_ = width; _ = height`), and
+      // the resize event (kind 10) is not an adapter mutation. So the skip key
+      // must include the viewport (cssW, cssH, dpr); resize must re-render so
+      // _initEngineSurfaceCanvasSize (swapchain resync), renderer.render, and
+      // label sync all run for the new dimensions.
       var prevJSON = null;
+      var prevW = 0;
+      var prevH = 0;
+      var prevDpr = 0;
       var t = 0;
       function frame() {
         if (instance.disposed) return;
@@ -699,11 +706,16 @@
           var json = renderFn(id, cssW, cssH, t);
           t += 1 / 60;
           if (typeof json === "string" && json !== "" && json[0] !== "e") {
-            // Idle-board fast path: identical JSON → no parse, no render, no
-            // label sync. (json[0] !== "e" filters the bridge's "error: …"
-            // strings, matching the painter loop's guard.)
-            if (json !== prevJSON) {
+            // Idle-board fast path: identical JSON AND identical viewport →
+            // no parse, no render, no label sync. (json[0] !== "e" filters
+            // the bridge's "error: …" strings, matching the painter loop's
+            // guard.) Viewport is part of the skip key because the camera
+            // JSON carries no width/height (see contract above).
+            if (json !== prevJSON || cssW !== prevW || cssH !== prevH || dpr !== prevDpr) {
               prevJSON = json;
+              prevW = cssW;
+              prevH = cssH;
+              prevDpr = dpr;
               var bundle = JSON.parse(json);
               // 16a sizes from the canvas backing store; the viewport carries the
               // CSS-px logical size for the OrthoCamera2D screen transform. Keep
