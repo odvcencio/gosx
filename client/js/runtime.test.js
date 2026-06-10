@@ -16991,3 +16991,274 @@ test("16a board rects draw through the Selena BoardFill pipeline: custom WGSL mo
   // selena uniform path.
   assert.notEqual(uniformWrites[0].data[0], 0, "selena mvp must carry the ortho-2D projection");
 });
+
+// -----------------------------------------------------------------------------
+// DOM label overlay — __gosx_canvas_board_labels_sync / _dispose
+//
+// 26b2-canvas-board-labels.js positions real HTML <span> elements over the
+// canvas board so text renders in the DOM rather than via GPU fillText. The
+// tests below exercise the OrthoCamera2D transform parity, index-keyed
+// reconciliation, culling, defaults, dispose, and layer invariants.
+//
+// The module runs in an isolated VM sandbox with a minimal FakeDocument so
+// createElement / appendChild work without a real browser. The offscreen-canvas
+// probe finds no canvas support in this environment and falls back to the
+// 0.8 * fontSize ascent approximation, which is what the assertions target.
+// -----------------------------------------------------------------------------
+
+// loadBoardLabels evaluates 26b2 in an isolated sandbox and returns the two
+// exposed globals. The sandbox wires a FakeDocument for createElement so the
+// layer div and span elements can be created.
+function loadBoardLabels() {
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.js"),
+    "utf8",
+  );
+  const fakeDoc = new FakeDocument();
+  const sandbox = {
+    document: fakeDoc,
+  };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox, { filename: "26b2-canvas-board-labels.js" });
+  assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_sync, "function",
+    "26b2 must expose __gosx_canvas_board_labels_sync");
+  assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_dispose, "function",
+    "26b2 must expose __gosx_canvas_board_labels_dispose");
+  return {
+    sync: sandbox.window.__gosx_canvas_board_labels_sync,
+    dispose: sandbox.window.__gosx_canvas_board_labels_dispose,
+    doc: fakeDoc,
+  };
+}
+
+// makeBoardHost creates a FakeElement to serve as the canvas's parent (host).
+function makeBoardHost() {
+  const doc = new FakeDocument();
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  return host;
+}
+
+test("boardLabels transform parity: zoom 1 pan 0 maps world origin to viewport center", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cssWidth = 800;
+  const cssHeight = 600;
+  const camera = { mode: "ortho2d", x: 0, y: 0, z: 1 };
+
+  sync(host, [{ position: { x: 0, y: 0 }, text: "O", font: "20px monospace", color: "#fff" }],
+    camera, cssWidth, cssHeight);
+
+  const layer = host.__gosxBoardLabelLayer;
+  assert.ok(layer, "layer created");
+  assert.equal(layer.childNodes.length, 1, "one span");
+  const span = layer.childNodes[0];
+  // At world (0,0) with zoom 1, pan 0: screenX = 400, screenY = 300.
+  // Font "20px monospace" → parseFontSizePx = 20, ascent fallback = 0.8 * 20 = 16.
+  // Expected transform: translate(400px,284px)
+  assert.match(span.style.transform, /translate\(400px,284px\)/, "origin maps to center minus ascent");
+});
+
+test("boardLabels transform parity: zoom 1 pan (10, 20) shifts labels left/down", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cssWidth = 800;
+  const cssHeight = 600;
+  const camera = { mode: "ortho2d", x: 10, y: 20, z: 1 };
+  const font = "10px sans-serif";
+  // ascent fallback = 0.8 * 10 = 8
+
+  sync(host, [{ position: { x: 10, y: 20 }, text: "P", font, color: "#fff" }],
+    camera, cssWidth, cssHeight);
+
+  const span = host.__gosxBoardLabelLayer.childNodes[0];
+  // world (10, 20) with pan (10, 20) zoom 1:
+  //   screenX = (10 - 10) * 1 + 400 = 400
+  //   screenY = 300 - (20 - 20) * 1 = 300
+  // translate(400px, 292px) after ascent subtraction (300 - 8 = 292)
+  assert.match(span.style.transform, /translate\(400px,292px\)/, "pan-aligned world point maps to center");
+});
+
+test("boardLabels transform parity: zoom 2 scales screen coordinates", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cssWidth = 800;
+  const cssHeight = 600;
+  const camera = { mode: "ortho2d", x: 0, y: 0, z: 2 };
+  const font = "10px sans-serif";
+  // ascent fallback = 0.8 * 10 = 8
+
+  sync(host, [{ position: { x: 50, y: 50 }, text: "Z", font, color: "#fff" }],
+    camera, cssWidth, cssHeight);
+
+  const span = host.__gosxBoardLabelLayer.childNodes[0];
+  // screenX = (50 - 0) * 2 + 400 = 500
+  // screenY = 300 - (50 - 0) * 2 = 200
+  // translate(500px, 192px) after ascent (200 - 8 = 192)
+  assert.match(span.style.transform, /translate\(500px,192px\)/, "zoom 2 scales position correctly");
+});
+
+test("boardLabels ascent fallback: 0.8 * parsedFontSizePx for a known font size", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  // Use a large distinctive font size so the ascent is unambiguous.
+  const font = "40px serif";
+  // ascent fallback = 0.8 * 40 = 32
+  sync(host, [{ position: { x: 0, y: 0 }, text: "A", font, color: "#fff" }],
+    { mode: "ortho2d", x: 0, y: 0, z: 1 }, 800, 600);
+
+  const span = host.__gosxBoardLabelLayer.childNodes[0];
+  // screenY = 300 - 0 = 300; ascent = 32; translateY = 300 - 32 = 268
+  assert.match(span.style.transform, /translate\(400px,268px\)/, "40px ascent fallback = 32");
+});
+
+test("boardLabels reconciliation: 3 labels produce 3 spans; shrink to 2 removes 1", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cam = { mode: "ortho2d", x: 0, y: 0, z: 1 };
+  const mk = (t) => ({ position: { x: 0, y: 0 }, text: t, font: "12px sans-serif", color: "#fff" });
+
+  sync(host, [mk("A"), mk("B"), mk("C")], cam, 400, 300);
+  const layer = host.__gosxBoardLabelLayer;
+  assert.equal(layer.childNodes.length, 3, "3 labels → 3 spans");
+
+  sync(host, [mk("A"), mk("B")], cam, 400, 300);
+  assert.equal(layer.childNodes.length, 2, "shrink to 2 removes last span");
+});
+
+test("boardLabels reconciliation: text/font/color changes propagate on re-sync", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cam = { mode: "ortho2d", x: 0, y: 0, z: 1 };
+
+  sync(host, [{ position: { x: 0, y: 0 }, text: "hello", font: "12px sans-serif", color: "#aaa" }],
+    cam, 400, 300);
+
+  const span = host.__gosxBoardLabelLayer.childNodes[0];
+  assert.equal(span._gosxText, "hello");
+  assert.equal(span._gosxColor, "#aaa");
+  assert.equal(span._gosxFont, "12px sans-serif");
+
+  sync(host, [{ position: { x: 0, y: 0 }, text: "world", font: "16px serif", color: "#bbb" }],
+    cam, 400, 300);
+
+  assert.equal(span._gosxText, "world", "text updated");
+  assert.equal(span._gosxColor, "#bbb", "color updated");
+  assert.equal(span._gosxFont, "16px serif", "font updated");
+});
+
+test("boardLabels reconciliation: unchanged re-sync does not mutate span properties", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cam = { mode: "ortho2d", x: 0, y: 0, z: 1 };
+  const label = { position: { x: 0, y: 0 }, text: "stable", font: "12px sans-serif", color: "#fff" };
+
+  sync(host, [label], cam, 400, 300);
+  const span = host.__gosxBoardLabelLayer.childNodes[0];
+
+  // Capture all tracked values after the first sync.
+  const afterFirst = {
+    text: span._gosxText,
+    color: span._gosxColor,
+    font: span._gosxFont,
+    transform: span._gosxTransform,
+    styleTransform: span.style.transform,
+    styleColor: span.style.color,
+    styleFont: span.style.font,
+  };
+
+  // Instrument textContent setter to detect spurious writes.
+  let textContentWrites = 0;
+  Object.defineProperty(span, "textContent", {
+    get() { return span._gosxText; },
+    set(v) {
+      textContentWrites++;
+      span._gosxText = String(v);
+    },
+    configurable: true,
+  });
+
+  sync(host, [label], cam, 400, 300);
+
+  assert.equal(textContentWrites, 0, "no textContent write on unchanged label");
+  assert.equal(span._gosxTransform, afterFirst.transform, "transform unchanged");
+  assert.equal(span.style.transform, afterFirst.styleTransform, "style.transform unchanged");
+});
+
+test("boardLabels culling: far-off label gets display:none; back in view becomes visible", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cam = { mode: "ortho2d", x: 0, y: 0, z: 1 };
+  const cssWidth = 800;
+  const cssHeight = 600;
+
+  // Label at world (10000, 0) with zoom 1 → screenX = 10000 + 400 = 10400, well outside.
+  sync(host, [{ position: { x: 10000, y: 0 }, text: "far", font: "12px sans-serif", color: "#fff" }],
+    cam, cssWidth, cssHeight);
+
+  const span = host.__gosxBoardLabelLayer.childNodes[0];
+  assert.equal(span.style.display, "none", "culled label is display:none");
+
+  // Move the camera to bring the label into view: pan to (10000, 0).
+  sync(host, [{ position: { x: 10000, y: 0 }, text: "far", font: "12px sans-serif", color: "#fff" }],
+    { mode: "ortho2d", x: 10000, y: 0, z: 1 }, cssWidth, cssHeight);
+
+  assert.notEqual(span.style.display, "none", "label visible again after camera pans to it");
+  assert.equal(layer_childCount(host), 1, "still exactly 1 span (no re-creation)");
+});
+
+function layer_childCount(host) {
+  return host.__gosxBoardLabelLayer ? host.__gosxBoardLabelLayer.childNodes.length : 0;
+}
+
+test("boardLabels defaults: missing font uses 14px system-ui; missing color uses #e6edf3", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+
+  sync(host, [{ position: { x: 0, y: 0 }, text: "default" }],
+    { mode: "ortho2d", x: 0, y: 0, z: 1 }, 400, 300);
+
+  const span = host.__gosxBoardLabelLayer.childNodes[0];
+  assert.equal(span._gosxFont, "14px system-ui, sans-serif", "default font");
+  assert.equal(span._gosxColor, "#e6edf3", "default color — parity with 26b1 label fallback");
+});
+
+test("boardLabels dispose: removes the layer div and clears host cache", () => {
+  const { sync, dispose } = loadBoardLabels();
+  const host = makeBoardHost();
+
+  sync(host, [{ position: { x: 0, y: 0 }, text: "x" }],
+    { mode: "ortho2d", x: 0, y: 0, z: 1 }, 400, 300);
+
+  const layer = host.__gosxBoardLabelLayer;
+  assert.ok(layer, "layer exists before dispose");
+  assert.equal(layer.parentNode, host, "layer is child of host");
+
+  dispose(host);
+
+  assert.equal(layer.parentNode, null, "layer detached after dispose");
+  assert.equal(host.__gosxBoardLabelLayer, undefined, "host cache cleared");
+});
+
+test("boardLabels layer invariants: pointer-events:none, overflow:hidden, single layer reused", () => {
+  const { sync } = loadBoardLabels();
+  const host = makeBoardHost();
+  const cam = { mode: "ortho2d", x: 0, y: 0, z: 1 };
+  const label = { position: { x: 0, y: 0 }, text: "t" };
+
+  sync(host, [label], cam, 400, 300);
+  const layer = host.__gosxBoardLabelLayer;
+
+  assert.ok(layer, "layer created on first sync");
+  assert.match(String(layer.style.cssText || ""), /pointer-events:none/, "layer has pointer-events:none");
+  assert.match(String(layer.style.cssText || ""), /overflow:hidden/, "layer has overflow:hidden");
+
+  // Second sync must reuse the same layer, not append another.
+  sync(host, [label], cam, 400, 300);
+  assert.equal(host.__gosxBoardLabelLayer, layer, "same layer instance reused across frames");
+
+  // Host children should contain exactly one layer div.
+  const layerCount = host.childNodes.filter((c) => c === layer).length;
+  assert.equal(layerCount, 1, "only one label layer appended to host");
+});

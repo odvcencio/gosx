@@ -153,6 +153,11 @@ const outputs = [
       // _startCanvasSurfaceRAF) calls each frame. Self-contained IIFE; load
       // order is immaterial since the loop resolves the global at rAF time.
       sourceFile("bootstrap-src/26b1-canvas2d-painter.js"),
+      // 26b2 installs window.__gosx_canvas_board_labels_sync — the DOM label
+      // overlay that positions real HTML <span> elements over the WebGPU/canvas
+      // board so text stays in the DOM (subpixel rendering, future editability).
+      // Self-contained IIFE; the slice-4 RAF loop calls sync each frame.
+      sourceFile("bootstrap-src/26b2-canvas-board-labels.js"),
       // 28 installs window.__gosx_video_sync_js_create, the pure-JS drift
       // engine the video factory uses when the WASM brain is absent. The
       // engines feature carries the video factory, so it must carry the

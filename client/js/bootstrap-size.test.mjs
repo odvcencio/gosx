@@ -85,7 +85,12 @@ const budgets = [
   // Bumped raw 66_000 -> 66_500 for video engine resilience: bitmap WebVTT cue
   // placement, muted autoplay fallback, and fatal HLS network/media recovery.
   // Direct compressed budgets still hold.
-  { file: "bootstrap-feature-engines.js", raw: 66_500, gzip: 21_000, brotli: 19_000 },
+  //
+  // Bumped raw 66_500 -> 70_000, gzip 21_000 -> 22_000, brotli 19_000 -> 19_700
+  // for the DOM label overlay (26b2-canvas-board-labels.js): __gosx_canvas_board_labels_sync
+  // and __gosx_canvas_board_labels_dispose. Measured: 69_141 / 21_901 / 19_540,
+  // plus sub-1% rounding headroom.
+  { file: "bootstrap-feature-engines.js", raw: 70_000, gzip: 22_000, brotli: 19_700 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -102,9 +107,12 @@ const routeBudgets = [
     // Bumped raw 169_000 -> 171_000 (gzip 48_000 -> 49_000) for the canvas2d
     // marquee + keyboard-nav loop (shift-drag marquee, arrow-key nav, Escape).
     // Bumped brotli 43_000 -> 43_100 for the video resilience additions above.
-    raw: 171_000,
-    gzip: 49_000,
-    brotli: 43_100,
+    // Bumped raw 171_000 -> 175_000, gzip 49_000 -> 50_000, brotli 43_100 -> 44_100
+    // for the DOM label overlay (26b2-canvas-board-labels.js). Measured:
+    // 173_758 / 49_610 / 43_879, plus sub-1% rounding headroom.
+    raw: 175_000,
+    gzip: 50_000,
+    brotli: 44_100,
   },
 ];
 
