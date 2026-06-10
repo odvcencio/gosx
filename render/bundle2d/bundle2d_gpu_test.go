@@ -138,18 +138,11 @@ func TestComputeCanvasGPUBundle_AttachesBoardFillSelena(t *testing.T) {
 	}
 }
 
-// TestBoardFillBaseColor pins the #rrggbb→vec3 conversion and the fallback
-// contract (anything else → no override, layout default rides).
-func TestBoardFillBaseColor(t *testing.T) {
-	if rgb, ok := boardFillBaseColor("#ff8800"); !ok || !reflect.DeepEqual(rgb, []float32{1, 136.0 / 255, 0}) {
-		t.Errorf("#ff8800 = %v/%v, want [1 0.53333336 0]/true", rgb, ok)
-	}
-	for _, bad := range []string{"", "red", "#fff", "#12345", "#gggggg", "rgb(1,2,3)"} {
-		if _, ok := boardFillBaseColor(bad); ok {
-			t.Errorf("boardFillBaseColor(%q) ok=true, want false", bad)
-		}
-	}
-}
+// TestBoardFillBaseColor (the #rrggbb→vec3 conversion + fallback contract) now
+// lives in render/boardgpu where boardFillBaseColor is defined (the helper moved
+// to the leaf package so client/vm can route to AttachBoardGPUGeometry without an
+// import cycle). The bundle2d-level material attach is still covered by
+// TestComputeCanvasGPUBundle_AttachesBoardFillSelena above and the golden test.
 
 // ---------------------------------------------------------------------------
 // M1 slice 2A: board LINE and SPRITE quads on the GPU bundle.

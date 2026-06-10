@@ -6,6 +6,7 @@ import (
 
 	rootengine "m31labs.dev/gosx/engine"
 	islandprogram "m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/render/boardgpu"
 	"m31labs.dev/gosx/render/bundle"
 	"m31labs.dev/gosx/signal"
 )
@@ -45,7 +46,23 @@ type CanvasBoardAdapter struct {
 	cameraPanY float64
 	cameraZoom float64
 	cameraSet  bool
+
+	// renderBackend selects the per-frame bundle shape RenderBundle emits.
+	// Empty (the default) → the painter bundle the 26b1 2D-context painter
+	// consumes, byte-identical to before this field existed. "webgpu" → the
+	// same bundle with boardgpu.AttachBoardGPUGeometry applied so the 16a JS
+	// WebGPU renderer can draw it (M1 slice 4). The JS surface sets this via
+	// the bridge (Bridge.SetCanvasBoardBackend → __gosx_canvas_set_backend)
+	// only when the canvas2d surface opted into WebGPU; the painter remains the
+	// default and the automatic fallback, so an unset backend never changes the
+	// existing wire bytes.
+	renderBackend string
 }
+
+// CanvasBoardBackendWebGPU is the renderBackend value that routes RenderBundle
+// through boardgpu.AttachBoardGPUGeometry. Any other value (including the empty
+// default) keeps the painter bundle.
+const CanvasBoardBackendWebGPU = "webgpu"
 
 // CanvasBoardMinZoom and CanvasBoardMaxZoom clamp the runtime zoom so a runaway
 // wheel gesture can neither invert the orthographic projection (zoom ≤ 0) nor
@@ -176,7 +193,17 @@ func (rt *CanvasBoardAdapter) RenderBundle(width, height int, timeSeconds float6
 		nodes = canvasBoardNodesFromProps(rt.props)
 	}
 	zoom, panX, panY := rt.cameraOrProps()
-	return buildCanvasBoardRenderBundleWithCamera(rt.props, nodes, zoom, panX, panY, width, height, timeSeconds)
+	b := buildCanvasBoardRenderBundleWithCamera(rt.props, nodes, zoom, panX, panY, width, height, timeSeconds)
+	// WebGPU backend (M1 slice 4): expand the painter display list into GPU
+	// geometry the 16a JS WebGPU renderer draws. Applied LAST so the painter
+	// bundle is fully assembled (rects → Objects, lines → Lines, sprites →
+	// Sprites, materials deduped) before the quad expansion + BoardFill Selena
+	// attach run on top. The default (unset) backend returns b unchanged —
+	// byte-identical to the pre-slice-4 wire bytes the parity/golden tests pin.
+	if rt.renderBackend == CanvasBoardBackendWebGPU {
+		b = boardgpu.AttachBoardGPUGeometry(b)
+	}
+	return b
 }
 
 // SetCamera installs a runtime camera override (drag-pan / wheel-zoom) that the
@@ -193,6 +220,33 @@ func (rt *CanvasBoardAdapter) SetCamera(panX, panY, zoom float64) {
 	rt.cameraPanY = panY
 	rt.cameraZoom = ClampCanvasBoardZoom(zoom)
 	rt.cameraSet = true
+}
+
+// SetRenderBackend selects which bundle shape RenderBundle emits. Passing
+// CanvasBoardBackendWebGPU routes every subsequent RenderBundle through
+// boardgpu.AttachBoardGPUGeometry (rect/line/sprite quads in the World* streams
+// + the BoardFill Selena material) so the 16a JS WebGPU renderer can draw the
+// board. Any other value — including "" (the default) — leaves the painter
+// bundle untouched, so the 26b1 2D-context painter path is byte-for-byte
+// unchanged. The JS surface calls this (via the bridge) only when its canvas2d
+// element opted into WebGPU and the GPU path is actually available; a failed
+// probe leaves the backend unset and the painter runs. Mirrors SetCamera's
+// setter style — a mutable knob on the otherwise-declarative board.
+func (rt *CanvasBoardAdapter) SetRenderBackend(backend string) {
+	if rt == nil {
+		return
+	}
+	rt.renderBackend = backend
+}
+
+// RenderBackend reports the current render backend ("" for the default painter
+// bundle, "webgpu" for the GPU bundle). Exposed for the bridge/tests to confirm
+// the routing decision without re-deriving it.
+func (rt *CanvasBoardAdapter) RenderBackend() string {
+	if rt == nil {
+		return ""
+	}
+	return rt.renderBackend
 }
 
 // Camera returns the current live camera (pan in world units, zoom as

@@ -88,6 +88,26 @@ func (b *Bridge) RenderCanvasBoard(id string, width, height int, timeSeconds flo
 	return adapter.RenderBundle(width, height, timeSeconds), nil
 }
 
+// SetCanvasBoardBackend routes the named board's per-frame RenderBundle to a
+// render backend. "webgpu" makes every subsequent RenderCanvasBoard carry GPU
+// geometry (boardgpu.AttachBoardGPUGeometry) for the 16a JS WebGPU renderer;
+// any other value (including "") keeps the painter bundle the 26b1 2D-context
+// painter consumes — byte-for-byte unchanged. The JS surface calls this through
+// __gosx_canvas_set_backend AFTER hydration, only when its canvas2d element
+// opted into WebGPU and the GPU path is genuinely available (probe + factory
+// present); a failed probe leaves the painter default in place. Mirrors
+// CanvasBoardEvent's per-board, post-hydrate mutation shape — the established
+// channel for the JS side to configure an already-hydrated board (NOT a new
+// hydrate arg). Returns an error for an unknown board id.
+func (b *Bridge) SetCanvasBoardBackend(id, backend string) error {
+	adapter, err := b.canvasBoardAdapter(id)
+	if err != nil {
+		return err
+	}
+	adapter.SetRenderBackend(backend)
+	return nil
+}
+
 // DisposeCanvasBoard tears down a canvas2d adapter. Idempotent.
 func (b *Bridge) DisposeCanvasBoard(id string) {
 	if adapter, ok := b.boards[id]; ok {

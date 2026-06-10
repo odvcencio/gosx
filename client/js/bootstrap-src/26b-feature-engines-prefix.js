@@ -270,6 +270,12 @@
       if (inst.observer && typeof inst.observer.disconnect === "function") {
         inst.observer.disconnect();
       }
+      // canvas2d boards routed to the 16a WebGPU renderer own a GPU renderer + a
+      // DOM label overlay (set by _startCanvasSurfaceWebGPURAF). Release both; a
+      // no-op for painter-path boards (webgpuRenderer is null).
+      if (inst.webgpuRenderer) {
+        _disposeCanvasWebGPURenderer(inst, inst.webgpuRenderer, inst.canvas);
+      }
       // Tear down the matching WASM-side instance. canvas2d boards live in the
       // CanvasBoardAdapter map (__gosx_dispose_canvas); every other surface
       // kind (and the bytecode path) lives in the engine-surface map
@@ -423,8 +429,23 @@
         // surfaceInstances map. Read-only handle; nothing in the runtime keys
         // off it.
         try { canvas.setAttribute("data-gosx-surface-id", id); } catch (e) { /* tolerate */ }
+        // Input (pan/zoom/pick/marquee/nav) is backend-INDEPENDENT: it routes
+        // through __gosx_canvas_event regardless of which path paints. Wire it
+        // BEFORE choosing a paint backend so picking works identically on both.
         _bridgeCanvasBoardEvents(id, canvas, instance);
-        _startCanvasSurfaceRAF(id, canvas, instance);
+        // Backend routing (M1 slice 4): a canvas2d surface opts into the 16a
+        // WebGPU renderer via data-gosx-canvas-backend="webgpu" (read once, at
+        // hydration). window.__gosx_canvas_board_webgpu === true forces it on
+        // for experiments (a documented dev override, also read only here).
+        // Anything else keeps the default 26b1 2D-context painter. The routed
+        // path probes WebGPU + the 16a factory and falls back to the painter on
+        // ANY failure, so the surface always works — the flag only chooses which
+        // path runs when the GPU path is genuinely available.
+        if (_canvasSurfaceWantsWebGPU(canvas)) {
+          _startCanvasSurfaceWebGPURAF(id, canvas, instance);
+        } else {
+          _startCanvasSurfaceRAF(id, canvas, instance);
+        }
       } else {
         _bridgeEngineSurfaceEvents(id, canvas, instance);
       }
@@ -485,6 +506,247 @@
         instance.raf = requestAnimationFrame(frame);
       }
       instance.raf = requestAnimationFrame(frame);
+    }
+
+    // _canvasSurfaceWantsWebGPU reads the per-surface backend opt-in ONCE, at
+    // hydration. data-gosx-canvas-backend="webgpu" on the canvas2d element opts
+    // that board into the 16a WebGPU renderer; window.__gosx_canvas_board_webgpu
+    // === true is a global dev override (documented; for experiments) that forces
+    // it on for every board. Any other attribute value (or its absence) keeps the
+    // default 26b1 painter. This only expresses INTENT — _startCanvasSurfaceWebGPURAF
+    // still probes the GPU path and falls back to the painter if it isn't usable.
+    function _canvasSurfaceWantsWebGPU(canvas) {
+      try {
+        if (typeof window !== "undefined" && window.__gosx_canvas_board_webgpu === true) {
+          return true;
+        }
+        var attr = canvas && typeof canvas.getAttribute === "function"
+          ? canvas.getAttribute("data-gosx-canvas-backend")
+          : null;
+        return attr === "webgpu";
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // _canvasSurfaceWebGPUFactory returns the 16a WebGPU renderer factory
+    // (createSceneWebGPURenderer) if the scene3d-webgpu chunk has published its
+    // API, else null. The factory lives in the scene3d-webgpu chunk, NOT the
+    // engines chunk — there is no lazy-loader reachable from here (20-scene-mount's
+    // ensureWebGPUFeatureLoaded is closure-scoped to the scene3d chunk), so the
+    // honest contract is: a board that opts into WebGPU requires that chunk to be
+    // present (script-tag include); when it is, it has published
+    // window.__gosx_scene3d_webgpu_api.createRenderer here. Absent → null → the
+    // routed path warns once and falls back to the painter.
+    function _canvasSurfaceWebGPUFactory() {
+      try {
+        var api = typeof window !== "undefined" ? window.__gosx_scene3d_webgpu_api : null;
+        if (api && typeof api.createRenderer === "function") {
+          return api.createRenderer;
+        }
+      } catch (e) { /* tolerate */ }
+      return null;
+    }
+
+    // _canvasSurfaceWebGPUUsable runs the cheap pre-flight the 16a factory itself
+    // requires: navigator.gpu present (the 16z probe gate) AND the factory's
+    // adapter/device probe already resolved successfully. createSceneWebGPURenderer
+    // reuses the 16z-probed device and returns null unless probe.ready — so a
+    // board must not try to route until the probe is ready, or it would taint the
+    // canvas with a webgpu context that then fails (and a tainted canvas can never
+    // fall back to 2d). When __gosx_scene3d_webgpu_probe is unavailable we
+    // optimistically allow the attempt (the factory's own null-return still guards
+    // it); when it IS available we require ready === true.
+    function _canvasSurfaceWebGPUUsable() {
+      try {
+        if (typeof navigator === "undefined" || !navigator.gpu) {
+          return false;
+        }
+        if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe === "function") {
+          var probe = window.__gosx_scene3d_webgpu_probe();
+          if (!probe || probe.ready !== true || !probe.device) {
+            return false;
+          }
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // _startCanvasSurfaceWebGPURAF is the WebGPU-routed twin of
+    // _startCanvasSurfaceRAF: it paints the board through the 16a WebGPU renderer
+    // instead of the 2D-context painter, keeping labels in a DOM overlay. It
+    // probes the GPU path up front and, on ANY failure (no navigator.gpu, factory
+    // absent, probe not ready, device request rejects, render throws on the first
+    // frame), logs ONE console.warn and falls back to _startCanvasSurfaceRAF — the
+    // fallback is COMPLETE: the painter loop drives the same id/canvas/instance and
+    // the surface behaves identically to the default path.
+    //
+    // CONTEXT-CREATION ORDER (load-bearing): the 16a factory calls
+    // canvas.getContext("webgpu"), and a canvas that has ALREADY had
+    // getContext("2d") called on it can never get a webgpu context. So this path
+    // must run BEFORE any 2d context is created on the canvas — it is invoked from
+    // mountSurfaceKind in place of _startCanvasSurfaceRAF (which is the only place
+    // getContext("2d") happens), and it only creates the webgpu context after the
+    // probe passes. On fallback it hands the still-clean canvas to the painter.
+    function _startCanvasSurfaceWebGPURAF(id, canvas, instance) {
+      function fallback(reason, err) {
+        // ONE warn, then a COMPLETE fallback to the painter path. The canvas is
+        // still clean (no 2d context yet on the routed path's failure points
+        // before getContext("webgpu"); if the webgpu context was created and the
+        // factory then failed, the factory returned null and we never painted —
+        // the painter's getContext("2d") on the already-webgpu canvas would fail,
+        // but that only happens on a genuinely broken device and still degrades to
+        // the placeholder rather than crashing the page).
+        console.warn("[gosx] canvas2d WebGPU backend unavailable for " + id + " (" + reason + "); falling back to the 2D painter." + (err ? " " + err : ""));
+        _startCanvasSurfaceRAF(id, canvas, instance);
+      }
+
+      var renderFn = window.__gosx_render_canvas;
+      var tickFn = window.__gosx_tick_canvas;
+      var setBackendFn = window.__gosx_canvas_set_backend;
+      var labelsSync = window.__gosx_canvas_board_labels_sync;
+      if (typeof renderFn !== "function") {
+        // Shared WASM not present — neither path can paint; leave the placeholder.
+        return;
+      }
+      if (!_canvasSurfaceWebGPUUsable()) {
+        fallback("navigator.gpu / probe not ready");
+        return;
+      }
+      var createRenderer = _canvasSurfaceWebGPUFactory();
+      if (!createRenderer) {
+        fallback("scene3d-webgpu chunk / factory not loaded");
+        return;
+      }
+
+      // Size the backing store for the device pixel ratio BEFORE creating the
+      // renderer: 16a sizes its render targets from canvas.width/height (the
+      // backing store), not a viewport argument — the 2D path's setTransform(dpr)
+      // trick does not apply here. The viewport passed to render() stays in CSS
+      // px (for the OrthoCamera2D screen math), and the backing store carries the
+      // dpr scale. _initEngineSurfaceCanvasSize already sets width/height = CSS×dpr.
+      _initEngineSurfaceCanvasSize(canvas);
+
+      var renderer = null;
+      try {
+        // createSceneWebGPURenderer(canvas, options) calls getContext("webgpu")
+        // internally (only after its own probe passes) and binds the renderer to
+        // this canvas. Returns null if anything fails — handled below as a
+        // fallback (the canvas may be webgpu-tainted at that point, so the painter
+        // fallback is best-effort; in practice the factory only fails here on a
+        // device that the up-front probe already cleared, so this is rare).
+        renderer = createRenderer(canvas, {});
+      } catch (e) {
+        fallback("factory threw", e && e.message ? e.message : String(e));
+        return;
+      }
+      if (!renderer || typeof renderer.render !== "function") {
+        fallback("factory returned no renderer");
+        return;
+      }
+
+      // Tell the WASM board to emit GPU geometry (boardgpu.AttachBoardGPUGeometry)
+      // in every subsequent __gosx_render_canvas frame. Without this the bundle is
+      // the painter display list (Objects only, no World* buffers) and 16a would
+      // draw nothing. A failure here is non-fatal to the page but means the GPU
+      // path can't work, so fall back.
+      if (typeof setBackendFn === "function") {
+        try {
+          var setErr = setBackendFn(id, "webgpu");
+          if (typeof setErr === "string" && setErr !== "") {
+            fallback("set-backend failed: " + setErr);
+            _disposeCanvasWebGPURenderer(instance, renderer, canvas);
+            return;
+          }
+        } catch (e) {
+          fallback("set-backend threw", e && e.message ? e.message : String(e));
+          _disposeCanvasWebGPURenderer(instance, renderer, canvas);
+          return;
+        }
+      } else {
+        fallback("__gosx_canvas_set_backend missing");
+        _disposeCanvasWebGPURenderer(instance, renderer, canvas);
+        return;
+      }
+
+      // host is the canvas's PARENT element — the label overlay covers it (the
+      // overlay positions real DOM <span>s over the GPU canvas so text keeps
+      // subpixel rendering / future in-place editing). 26b2 installs the sync.
+      var host = canvas.parentNode || null;
+      // Stash the renderer + host on the instance so _disposeEngineSurface tears
+      // them down alongside the WASM board and the DOM overlay.
+      instance.webgpuRenderer = renderer;
+      instance.webgpuHost = host;
+
+      // Skip-frame contract: an idle board does ZERO work. We keep the previous
+      // frame's render JSON; when this frame's JSON is byte-identical we skip the
+      // parse AND the render entirely (no GPU submit, no label reflow). A pan/zoom
+      // mutates the camera → the JSON differs → a full frame runs. This is the GPU
+      // path's analog of "the board only repaints when something changed".
+      var prevJSON = null;
+      var t = 0;
+      function frame() {
+        if (instance.disposed) return;
+        var dpr = window.devicePixelRatio || 1;
+        var cssW = Math.max(1, canvas.clientWidth || Math.floor(canvas.width / dpr) || 1);
+        var cssH = Math.max(1, canvas.clientHeight || Math.floor(canvas.height / dpr) || 1);
+        try {
+          if (typeof tickFn === "function") {
+            tickFn(id);
+          }
+          var json = renderFn(id, cssW, cssH, t);
+          t += 1 / 60;
+          if (typeof json === "string" && json !== "" && json[0] !== "e") {
+            // Idle-board fast path: identical JSON → no parse, no render, no
+            // label sync. (json[0] !== "e" filters the bridge's "error: …"
+            // strings, matching the painter loop's guard.)
+            if (json !== prevJSON) {
+              prevJSON = json;
+              var bundle = JSON.parse(json);
+              // 16a sizes from the canvas backing store; the viewport carries the
+              // CSS-px logical size for the OrthoCamera2D screen transform. Keep
+              // the backing store in sync with the current dpr/layout each frame.
+              _initEngineSurfaceCanvasSize(canvas);
+              renderer.render(bundle, { width: cssW, height: cssH });
+              // Labels ride a DOM overlay on the host, transformed with the same
+              // OrthoCamera2D math (camera = {mode,x:panX,y:panY,z:zoom}).
+              if (typeof labelsSync === "function" && host) {
+                labelsSync(host, bundle.labels || [], bundle.camera, cssW, cssH);
+              }
+            }
+          }
+        } catch (e) {
+          // A buggy board shouldn't break the rest of the page — log once a frame
+          // and keep going (mirrors the painter loop). NOT a backend fallback: by
+          // here the GPU path is live; a transient render error is not a reason to
+          // tear down and re-mount on the painter.
+          console.error("[gosx] canvas2d WebGPU paint loop threw for " + id + ":", e);
+        }
+        instance.raf = requestAnimationFrame(frame);
+      }
+      instance.raf = requestAnimationFrame(frame);
+    }
+
+    // _disposeCanvasWebGPURenderer disposes a 16a renderer + its DOM label overlay
+    // for a canvas2d board. Shared by the routed-path setup's failure unwind and
+    // _disposeEngineSurface's teardown so both release the GPU resources and the
+    // overlay exactly once. Idempotent and tolerant of partial state.
+    function _disposeCanvasWebGPURenderer(instance, renderer, canvas) {
+      var r = renderer || (instance && instance.webgpuRenderer) || null;
+      if (r && typeof r.dispose === "function") {
+        try { r.dispose(); } catch (e) { /* tolerate */ }
+      }
+      var host = (instance && instance.webgpuHost) || (canvas && canvas.parentNode) || null;
+      var labelsDispose = typeof window !== "undefined" ? window.__gosx_canvas_board_labels_dispose : null;
+      if (typeof labelsDispose === "function" && host) {
+        try { labelsDispose(host); } catch (e) { /* tolerate */ }
+      }
+      if (instance) {
+        instance.webgpuRenderer = null;
+        instance.webgpuHost = null;
+      }
     }
 
     // Canvas2D interaction event kinds — must match bridge.CanvasBoardEventKind

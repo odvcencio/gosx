@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -536,5 +537,180 @@ func TestCanvasBoardAdapterCommandsAreJSONSerializable(t *testing.T) {
 	}
 	if commands[0].Data == nil || !strings.Contains(string(commands[0].Data), `"color"`) {
 		t.Fatalf("expected color in serialized command data, got %s", commands[0].Data)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// M1 slice 4: render backend routing (painter default / webgpu opt-in).
+//
+// SetRenderBackend("webgpu") makes RenderBundle apply
+// boardgpu.AttachBoardGPUGeometry so the 16a JS WebGPU renderer can draw the
+// board; the default (unset) backend must leave the bundle byte-identical to
+// the pre-slice-4 painter bundle. These pin both halves of that contract.
+// -----------------------------------------------------------------------------
+
+// backendFixtureProgram builds a board with a rect, a line, and a sprite so the
+// GPU attach has all three primitive kinds to expand. Shared by the backend
+// routing tests.
+func backendFixtureProgram() *rootengine.Program {
+	return &rootengine.Program{
+		Name: "BackendBoard",
+		EngineNodes: []rootengine.Node{
+			{Kind: "rect", Props: map[string]islandprogram.ExprID{"x": 0, "y": 1, "width": 2, "height": 3, "color": 4}},
+			{Kind: "line", Props: map[string]islandprogram.ExprID{"x1": 0, "y1": 1, "x2": 2, "y2": 3, "color": 5}},
+			{Kind: "image", Props: map[string]islandprogram.ExprID{"x": 0, "y": 1, "width": 2, "height": 3, "src": 6}},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "40", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "30", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "#3a86ff", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "#8d99ae", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitString, Value: "/logo.png", Type: islandprogram.TypeString},
+		},
+	}
+}
+
+// TestCanvasBoardAdapterDefaultBackendIsPainterBundle pins the regression
+// guard: the default (unset) backend emits the painter bundle with NO GPU
+// vertex buffers and NO Selena material attach — exactly the wire shape the
+// 26b1 painter + the parity/golden tests expect.
+func TestCanvasBoardAdapterDefaultBackendIsPainterBundle(t *testing.T) {
+	rt := NewCanvasBoardAdapter(backendFixtureProgram(), `{}`)
+	if rt.RenderBackend() != "" {
+		t.Fatalf("fresh adapter RenderBackend = %q, want empty (painter default)", rt.RenderBackend())
+	}
+	b := rt.RenderBundle(640, 480, 0)
+	if len(b.WorldPositions) != 0 || len(b.WorldNormals) != 0 || len(b.WorldUVs) != 0 {
+		t.Errorf("painter bundle must carry no GPU vertex buffers: pos=%d nrm=%d uv=%d",
+			len(b.WorldPositions), len(b.WorldNormals), len(b.WorldUVs))
+	}
+	// Rect lives in Objects; line/sprite stay on the wire arrays (painter draws
+	// them from b.Lines/b.Sprites, not Objects).
+	if len(b.Objects) != 1 || b.Objects[0].Kind != "rect" {
+		t.Errorf("painter bundle Objects = %+v, want the single rect", b.Objects)
+	}
+	if len(b.Lines) != 1 || len(b.Sprites) != 1 {
+		t.Errorf("painter bundle lines/sprites = %d/%d, want 1/1", len(b.Lines), len(b.Sprites))
+	}
+	for i, m := range b.Materials {
+		if m.CustomVertexWGSL != "" || m.CustomFragmentWGSL != "" || m.ShaderBackend != "" {
+			t.Errorf("painter material %d carries a Selena attach it should not: %+v", i, m)
+		}
+	}
+}
+
+// TestCanvasBoardAdapterWebGPUBackendCarriesGPUGeometry pins the routed path:
+// after SetRenderBackend("webgpu"), RenderBundle expands rects/lines/sprites
+// into the World* vertex streams and attaches the BoardFill Selena material to
+// the flat fills — the bundle the 16a JS WebGPU renderer draws.
+func TestCanvasBoardAdapterWebGPUBackendCarriesGPUGeometry(t *testing.T) {
+	rt := NewCanvasBoardAdapter(backendFixtureProgram(), `{}`)
+	rt.SetRenderBackend(CanvasBoardBackendWebGPU)
+	if rt.RenderBackend() != CanvasBoardBackendWebGPU {
+		t.Fatalf("RenderBackend = %q, want webgpu", rt.RenderBackend())
+	}
+	b := rt.RenderBundle(640, 480, 0)
+
+	// rect + line + sprite → three GPU objects, each a 6-vertex quad.
+	if len(b.Objects) != 3 {
+		t.Fatalf("webgpu bundle Objects = %d, want 3 (rect+line+sprite)", len(b.Objects))
+	}
+	if got, want := len(b.WorldPositions), 3*18; got != want {
+		t.Errorf("WorldPositions len = %d, want %d", got, want)
+	}
+	if got, want := len(b.WorldNormals), 3*18; got != want {
+		t.Errorf("WorldNormals len = %d, want %d", got, want)
+	}
+	if got, want := len(b.WorldUVs), 3*12; got != want {
+		t.Errorf("WorldUVs len = %d, want %d", got, want)
+	}
+	if b.ObjectCount != 3 {
+		t.Errorf("ObjectCount = %d, want 3 (kept in sync)", b.ObjectCount)
+	}
+	// The flat rect/line fills carry the BoardFill Selena attach; the sprite
+	// material stays bare (default PBR object path).
+	var sawSelenaFlat, sawBareSprite bool
+	for _, m := range b.Materials {
+		switch m.Kind {
+		case "flat":
+			if m.ShaderBackend == "selena" && m.CustomFragmentWGSL != "" {
+				sawSelenaFlat = true
+			}
+		case "sprite":
+			if m.ShaderBackend == "" && m.CustomFragmentWGSL == "" {
+				sawBareSprite = true
+			}
+		}
+	}
+	if !sawSelenaFlat {
+		t.Errorf("webgpu bundle has no flat material with the BoardFill Selena attach: %+v", b.Materials)
+	}
+	if !sawBareSprite {
+		t.Errorf("webgpu bundle sprite material must stay bare (no Selena): %+v", b.Materials)
+	}
+}
+
+// TestCanvasBoardAdapterUnsetBackendByteIdenticalToBaseline is the parity pin:
+// the marshaled JSON of an unset-backend bundle must equal the JSON of a bundle
+// built straight through buildCanvasBoardRenderBundleWithCamera (the exact
+// pre-slice-4 path), proving the routing flag added zero bytes on the default
+// path. (bridge.MarshalEngineRenderBundle is json.Marshal of the same struct;
+// the bridge↔vm import cycle keeps that helper out of reach here, so we marshal
+// the engine.RenderBundle directly with the same encoder.)
+func TestCanvasBoardAdapterUnsetBackendByteIdenticalToBaseline(t *testing.T) {
+	prog := backendFixtureProgram()
+
+	rt := NewCanvasBoardAdapter(prog, `{}`)
+	// Default backend: no SetRenderBackend call.
+	routed := rt.RenderBundle(640, 480, 0)
+	routedJSON, err := json.Marshal(routed)
+	if err != nil {
+		t.Fatalf("marshal routed bundle: %v", err)
+	}
+
+	// Baseline: resolve the same nodes and build the bundle with the identical
+	// camera, bypassing the adapter's backend branch entirely.
+	baseRT := NewCanvasBoardAdapter(prog, `{}`)
+	nodes := baseRT.snapshot()
+	zoom, panX, panY := baseRT.cameraOrProps()
+	baseline := buildCanvasBoardRenderBundleWithCamera(baseRT.props, nodes, zoom, panX, panY, 640, 480, 0)
+	baselineJSON, err := json.Marshal(baseline)
+	if err != nil {
+		t.Fatalf("marshal baseline bundle: %v", err)
+	}
+
+	if string(routedJSON) != string(baselineJSON) {
+		t.Errorf("unset-backend bundle diverged from baseline:\nrouted:   %s\nbaseline: %s", routedJSON, baselineJSON)
+	}
+}
+
+// TestCanvasBoardAdapterBackendRoutesStaticPropsBoard guards the static
+// gosx.CanvasBoard path (no compiled EngineNodes; content in props.nodes — the
+// Muddy site-map shape): SetRenderBackend must route that board to GPU geometry
+// too, since RenderBundle's props.nodes fallback feeds the same builder.
+func TestCanvasBoardAdapterBackendRoutesStaticPropsBoard(t *testing.T) {
+	props := `{"nodes":[{"kind":"rect","id":"card","x":0,"y":0,"width":20,"height":20,"color":"#3a86ff"}]}`
+	rt := NewCanvasBoardAdapter(&rootengine.Program{}, props)
+	rt.SetRenderBackend(CanvasBoardBackendWebGPU)
+	b := rt.RenderBundle(640, 480, 0)
+	if len(b.WorldPositions) != 18 {
+		t.Fatalf("static-props webgpu board WorldPositions = %d, want 18 (one rect quad)", len(b.WorldPositions))
+	}
+	if len(b.Materials) != 1 || b.Materials[0].ShaderBackend != "selena" {
+		t.Errorf("static-props rect material must carry the BoardFill Selena attach: %+v", b.Materials)
+	}
+}
+
+// TestCanvasBoardAdapterUnknownBackendStaysPainter pins the precedence rule: any
+// backend value other than "webgpu" (a typo, a future name) keeps the painter
+// bundle rather than silently routing or erroring.
+func TestCanvasBoardAdapterUnknownBackendStaysPainter(t *testing.T) {
+	rt := NewCanvasBoardAdapter(backendFixtureProgram(), `{}`)
+	rt.SetRenderBackend("vulkan-someday")
+	b := rt.RenderBundle(640, 480, 0)
+	if len(b.WorldPositions) != 0 {
+		t.Errorf("unknown backend must not expand GPU geometry: WorldPositions=%d", len(b.WorldPositions))
 	}
 }

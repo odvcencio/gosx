@@ -3177,6 +3177,28 @@
     // any substantive change here must be mirrored there.
     function getSelenaPipeline(material, blendMode, depthWrite) {
       if (!sceneSelenaIsMaterial(material)) return null;
+      // Per-material memo (perf): getSelenaPipeline is called once PER OBJECT
+      // PER FRAME, and the content key below stringifies the whole shader (~1.2KB)
+      // + JSON.stringify(layout) on every call. Board frames are fresh-parsed,
+      // so a material object lives one frame but is shared by every object that
+      // references it (N rects → one BoardFill material). Stamping the resolved
+      // key+resource on the material collapses that to ONE key-build per MATERIAL
+      // per frame (a handful) instead of per object (hundreds). The stamp is a
+      // memo IN FRONT of selenaPipelineCache, not a replacement: the content-keyed
+      // Map still backs it so materials across bundles that share a shader share
+      // one pipeline. We revalidate the pass-variant inputs (blend/depth/format/
+      // samples) cheaply so a material drawn in two passes still resolves
+      // correctly; only when they differ do we fall through to the key build.
+      var memo = material._gosxWGPUSelenaResource;
+      if (
+        memo &&
+        memo.blendMode === blendMode &&
+        memo.depthWrite === depthWrite &&
+        memo.targetFormat === targetFormat &&
+        memo.sampleCount === activeSampleCount
+      ) {
+        return memo.failed ? null : memo.resource;
+      }
       var layout = sceneSelenaMaterialLayout(material);
       var shader = sceneSelenaWGSLSource(material);
       // Cache key = the pipeline's actual inputs (shader source + binding
@@ -3195,7 +3217,19 @@
         activeSampleCount,
       ].join("|");
       var cached = selenaPipelineCache.get(key);
-      if (cached) return cached.failed ? null : cached;
+      if (cached) {
+        // Memoize the resolved (key-derived) result on the material so the next
+        // object referencing it this frame skips the key build entirely.
+        material._gosxWGPUSelenaResource = {
+          blendMode: blendMode,
+          depthWrite: depthWrite,
+          targetFormat: targetFormat,
+          sampleCount: activeSampleCount,
+          resource: cached.failed ? null : cached,
+          failed: !!cached.failed,
+        };
+        return cached.failed ? null : cached;
+      }
       try {
         var bindGroupLayout = sceneSelenaBindGroupLayout(device, layout);
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
@@ -3219,10 +3253,28 @@
         });
         cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout, attrs: attrs };
         selenaPipelineCache.set(key, cached);
+        material._gosxWGPUSelenaResource = {
+          blendMode: blendMode,
+          depthWrite: depthWrite,
+          targetFormat: targetFormat,
+          sampleCount: activeSampleCount,
+          resource: cached,
+          failed: false,
+        };
         return cached;
       } catch (err) {
         console.warn("[gosx] Selena WebGPU shader pipeline failed; falling back to PBR material.", err);
         selenaPipelineCache.set(key, { failed: true });
+        // Memoize the failure too — a broken shader must not re-attempt (and
+        // re-warn) once per object per frame.
+        material._gosxWGPUSelenaResource = {
+          blendMode: blendMode,
+          depthWrite: depthWrite,
+          targetFormat: targetFormat,
+          sampleCount: activeSampleCount,
+          resource: null,
+          failed: true,
+        };
         return null;
       }
     }
@@ -3235,6 +3287,20 @@
     // deliberately does NOT expose an attrs field (avoids double-binding).
     function getSelenaSkinnedPipeline(material, blendMode, depthWrite) {
       if (!sceneSelenaIsMaterial(material)) return null;
+      // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
+      // (_gosxWGPUSelenaSkinnedResource) so a material drawn both skinned and
+      // unskinned never aliases the wrong pipeline — the skinned key uses the
+      // "selena-skinned" prefix + WGPU_PBR_VERTEX_LAYOUT, a different pipeline.
+      var memo = material._gosxWGPUSelenaSkinnedResource;
+      if (
+        memo &&
+        memo.blendMode === blendMode &&
+        memo.depthWrite === depthWrite &&
+        memo.targetFormat === targetFormat &&
+        memo.sampleCount === activeSampleCount
+      ) {
+        return memo.failed ? null : memo.resource;
+      }
       var layout = sceneSelenaMaterialLayout(material);
       var shader = sceneSelenaWGSLSource(material);
       // Content-based key, mirroring getSelenaPipeline (see note there).
@@ -3247,8 +3313,21 @@
         targetFormat,
         activeSampleCount,
       ].join("|");
+      function stampSkinned(resource, failed) {
+        material._gosxWGPUSelenaSkinnedResource = {
+          blendMode: blendMode,
+          depthWrite: depthWrite,
+          targetFormat: targetFormat,
+          sampleCount: activeSampleCount,
+          resource: resource,
+          failed: failed,
+        };
+      }
       var cached = selenaPipelineCache.get(key);
-      if (cached) return cached.failed ? null : cached;
+      if (cached) {
+        stampSkinned(cached.failed ? null : cached, !!cached.failed);
+        return cached.failed ? null : cached;
+      }
       try {
         var bindGroupLayout = sceneSelenaBindGroupLayout(device, layout);
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
@@ -3264,10 +3343,12 @@
         });
         cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout };
         selenaPipelineCache.set(key, cached);
+        stampSkinned(cached, false);
         return cached;
       } catch (err) {
         console.warn("[gosx] Selena skinned WebGPU pipeline failed; falling back to PBR material.", err);
         selenaPipelineCache.set(key, { failed: true });
+        stampSkinned(null, true);
         return null;
       }
     }

@@ -17262,3 +17262,329 @@ test("boardLabels layer invariants: pointer-events:none, overflow:hidden, single
   const layerCount = host.childNodes.filter((c) => c === layer).length;
   assert.equal(layerCount, 1, "only one label layer appended to host");
 });
+
+// -----------------------------------------------------------------------------
+// M1 slice 4: canvas2d surface → 16a WebGPU renderer routing (behind the flag).
+//
+// These drive the REAL routed-mount flow in the engines feature: a canvas2d
+// surface-kind placeholder carrying data-gosx-canvas-backend="webgpu", with the
+// scene3d-webgpu chunk loaded (16a factory live against the fake GPU device) and
+// the WASM canvas globals faked, mounts through mountAllSurfaceKinds →
+// mountSurfaceKind → _startCanvasSurfaceWebGPURAF. The RAF loop then drives
+// 16a's render() (recorded draws) + the DOM label overlay. They also pin the
+// skip-frame contract, the painter default (flag absent), and the complete
+// fallback (flag on but no navigator.gpu → painter path + one warn).
+// -----------------------------------------------------------------------------
+
+// createCanvasBoardRoutingHarness loads runtime + scene3d + scene3d-webgpu +
+// engines into one context, wires a fake GPU device + 16z probe so the 16a
+// factory is live, fakes the four WASM canvas globals, installs manual RAF, and
+// returns handles to mount a canvas2d board and pump frames. The WASM
+// __gosx_render_canvas double returns a caller-supplied bundle JSON (so a test
+// controls the skip-frame string), records every call, and the set-backend
+// double records (id, backend) so a test asserts the routing handshake.
+async function createCanvasBoardRoutingHarness(options = {}) {
+  const env = createContext({ enableWebGPU: true });
+  env.context.GPUBufferUsage = {
+    MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
+    INDEX: 0x10, VERTEX: 0x20, UNIFORM: 0x40, STORAGE: 0x80,
+    INDIRECT: 0x100, QUERY_RESOLVE: 0x200,
+  };
+  env.context.GPUTextureUsage = {
+    COPY_SRC: 0x1, COPY_DST: 0x2, TEXTURE_BINDING: 0x4,
+    STORAGE_BINDING: 0x8, RENDER_ATTACHMENT: 0x10,
+  };
+  env.context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
+  env.context.createImageBitmap = function(image) {
+    return Promise.resolve({ __kind: "imageBitmap", width: image && image.width || 1, height: image && image.height || 1, close() {} });
+  };
+
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  const fake = makeFakeGPUDevice();
+  // Point the 16z probe bridge at the fake device UNLESS the test wants the
+  // GPU path to be unavailable (the no-navigator.gpu fallback case).
+  if (options.webgpuUnavailable) {
+    // Simulate "no navigator.gpu": the routed path's _canvasSurfaceWebGPUUsable
+    // returns false and must fall back to the painter.
+    env.context.navigator.gpu = undefined;
+  } else {
+    env.context.__gosx_scene3d_webgpu_probe = function() {
+      return { adapter: { __kind: "adapter" }, device: fake.device, ready: true };
+    };
+    runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+    assert.ok(
+      env.context.__gosx_scene3d_webgpu_api && typeof env.context.__gosx_scene3d_webgpu_api.createRenderer === "function",
+      "webgpu chunk must publish createRenderer",
+    );
+  }
+
+  // Register the engines feature factory (it calls __gosx_register_bootstrap_feature).
+  runScript(bootstrapFeatureEnginesSource, env.context, "bootstrap-feature-engines.js");
+  const enginesFactory = env.context.__gosx_bootstrap_features && env.context.__gosx_bootstrap_features.engines;
+  assert.equal(typeof enginesFactory, "function", "engines feature factory must be registered");
+
+  // The canvas2d/webgpu path uses none of the engine-mount api.* helpers, so a
+  // minimal stub API suffices to construct the feature (mountEngineSurface etc.
+  // are never reached in this flow). engineFactories is the one field read at
+  // construction time (assigned to a local), so provide an empty object.
+  const feature = enginesFactory({
+    engineFactories: {},
+    sceneNumber: (v, d) => (typeof v === "number" ? v : d),
+    sceneBool: (v, d) => (typeof v === "boolean" ? v : d),
+  });
+  assert.ok(feature && typeof feature.runtimeReady === "function", "engines feature must expose runtimeReady");
+
+  // Fake the four WASM canvas globals. render returns the controllable bundle
+  // JSON; tick/set_backend/dispose record calls.
+  const renderCalls = [];
+  const setBackendCalls = [];
+  const tickCalls = [];
+  const disposeCalls = [];
+  let renderJSONProvider = options.renderJSON || (() => goBoardBundleMixedJSON);
+  env.context.__gosx_render_canvas = function(id, w, h, t) {
+    renderCalls.push({ id, w, h, t });
+    return typeof renderJSONProvider === "function" ? renderJSONProvider({ id, w, h, t }) : renderJSONProvider;
+  };
+  env.context.__gosx_tick_canvas = function(id) { tickCalls.push(id); return null; };
+  env.context.__gosx_canvas_set_backend = function(id, backend) { setBackendCalls.push({ id, backend }); return null; };
+  env.context.__gosx_dispose_canvas = function(id) { disposeCalls.push(id); return null; };
+  // The WASM hydrate global the surface-kind mount calls before the paint loop —
+  // a board with no program; return "" (success).
+  env.context.__gosx_hydrate = function() { return ""; };
+
+  // A canvas2d surface-kind placeholder (already a <canvas>) carrying the
+  // backend opt-in. getContext("webgpu") returns a configurable context double;
+  // getContext("2d") returns a painter context double (used only on fallback).
+  const mountParent = new FakeElement("div", env.context.document);
+  const ctx2dCalls = [];
+  const ctx2d = makeFakeContext2D();
+  const gpuCtx = {
+    configure() {},
+    getCurrentTexture() {
+      return { createView() { return { __kind: "canvasTextureView" }; } };
+    },
+  };
+  const canvas = new FakeElement("canvas", env.context.document);
+  canvas.setAttribute("data-gosx-surface-kind", "canvas2d");
+  if (options.flag !== false) {
+    canvas.setAttribute("data-gosx-canvas-backend", "webgpu");
+  }
+  canvas.width = 640;
+  canvas.height = 480;
+  canvas.clientWidth = 640;
+  canvas.clientHeight = 480;
+  canvas.isConnected = true;
+  canvas.getBoundingClientRect = () => ({ width: 640, height: 480, left: 0, top: 0 });
+  canvas.getContext = (kind) => {
+    if (kind === "webgpu") return gpuCtx;
+    if (kind === "2d") { ctx2dCalls.push("2d"); return ctx2d; }
+    return null;
+  };
+  canvas.focus = () => {};
+  mountParent.appendChild(canvas);
+  env.context.document.body.appendChild(mountParent);
+
+  // mountAllSurfaceKinds discovers placeholders via document.querySelectorAll.
+  // FakeDocument has none; install a one-off matcher on THIS document instance
+  // (zero risk to other tests) that returns our canvas for the surface-kind
+  // query and nothing for the bytecode query.
+  env.context.document.querySelectorAll = function(selector) {
+    if (selector === "[data-gosx-surface-kind]:not([data-gosx-engine-bytecode])") {
+      return canvas.hasAttribute("data-gosx-engine-bytecode") ? [] : [canvas];
+    }
+    return [];
+  };
+
+  return {
+    env, fake, feature, raf, canvas, mountParent, ctx2d, ctx2dCalls,
+    renderCalls, setBackendCalls, tickCalls, disposeCalls,
+    setRenderJSON(fn) { renderJSONProvider = fn; },
+    async mount() {
+      await feature.runtimeReady({});
+      await flushAsyncWork();
+    },
+    labelLayer() {
+      return mountParent.__gosxBoardLabelLayer || null;
+    },
+  };
+}
+
+test("canvas2d surface with the webgpu flag mounts through 16a: RAF drives render + populates the label overlay", async () => {
+  const h = await createCanvasBoardRoutingHarness();
+  await h.mount();
+
+  // The routed setup told the WASM board to emit GPU geometry.
+  assert.deepEqual(h.setBackendCalls, [{ id: h.canvas.getAttribute("data-gosx-surface-id"), backend: "webgpu" }], "must call __gosx_canvas_set_backend(id, webgpu) exactly once at setup");
+  // The canvas2d path must NOT have created a 2D context (WebGPU owns the canvas).
+  assert.deepEqual(h.ctx2dCalls, [], "routed canvas must never get a 2d context (would taint it against webgpu)");
+
+  // Pump one RAF frame → tick + render + 16a draw + labels.
+  h.raf.flush(16);
+  await flushAsyncWork();
+
+  assert.ok(h.renderCalls.length >= 1, "render loop must call __gosx_render_canvas");
+  assert.ok(h.tickCalls.length >= 1, "render loop must tick the board");
+
+  // 16a recorded the four board quads (rect + 2 lines + sprite from the mixed
+  // fixture) as 6-vertex draws on the main pass.
+  const mains = mainRenderPasses(h.fake);
+  assert.ok(mains.length >= 1, "16a must run a main render pass");
+  assert.deepEqual(mains[mains.length - 1].draws.map((d) => d.vertexCount), [6, 6, 6, 6], "all four board quads draw through 16a");
+
+  // The DOM label overlay was populated with the fixture's single label ("Board").
+  const layer = h.labelLayer();
+  assert.ok(layer, "label overlay layer must be created on the host");
+  assert.equal(layer.childNodes.length, 1, "one label span for the fixture's one label");
+  assert.equal(layer.childNodes[0].textContent, "Board", "label text comes from bundle.labels");
+});
+
+test("routed canvas2d skip-frame: an identical render JSON second frame does zero render work", async () => {
+  const h = await createCanvasBoardRoutingHarness();
+  await h.mount();
+
+  // Frame 1: a full render (string differs from the null previous).
+  h.raf.flush(16);
+  await flushAsyncWork();
+  const mainsAfter1 = mainRenderPasses(h.fake).length;
+  const renderCallsAfter1 = h.renderCalls.length;
+  assert.ok(mainsAfter1 >= 1, "frame 1 must render");
+
+  // Frame 2: __gosx_render_canvas returns the SAME JSON string → the loop must
+  // skip parse + 16a render entirely (the idle-board contract). tick + the
+  // render-string fetch still happen (cheap); the GPU submit does not.
+  h.raf.flush(16);
+  await flushAsyncWork();
+  assert.ok(h.renderCalls.length > renderCallsAfter1, "the loop still fetches the render string each frame (to detect change)");
+  assert.equal(mainRenderPasses(h.fake).length, mainsAfter1, "identical-JSON frame must add NO render pass (zero GPU work)");
+
+  // Frame 3: change the JSON (simulate a pan) → a full render runs again.
+  h.setRenderJSON(() => goBoardBundleRectsJSON);
+  h.raf.flush(16);
+  await flushAsyncWork();
+  assert.ok(mainRenderPasses(h.fake).length > mainsAfter1, "a changed JSON frame renders again (pan/zoom → full frame)");
+});
+
+test("canvas2d WITHOUT the webgpu flag stays on the 26b1 painter (regression pin for the default path)", async () => {
+  const h = await createCanvasBoardRoutingHarness({ flag: false });
+  await h.mount();
+
+  h.raf.flush(16);
+  await flushAsyncWork();
+
+  // Default path: the 2D context IS created and painted; 16a never runs; the
+  // WASM board is never switched to the webgpu backend.
+  assert.deepEqual(h.setBackendCalls, [], "painter path must never call __gosx_canvas_set_backend");
+  assert.ok(h.ctx2dCalls.length >= 1, "painter path must create a 2d context");
+  assert.equal(mainRenderPasses(h.fake).length, 0, "painter path must not run a 16a render pass");
+  assert.ok(h.renderCalls.length >= 1, "painter path still drives __gosx_render_canvas");
+});
+
+test("canvas2d webgpu flag but no navigator.gpu → falls back to the painter with exactly one warn", async () => {
+  const h = await createCanvasBoardRoutingHarness({ webgpuUnavailable: true });
+  await h.mount();
+
+  h.raf.flush(16);
+  await flushAsyncWork();
+
+  // Complete fallback: the painter runs (2d context created + render loop),
+  // 16a never runs, the backend switch never happens.
+  assert.deepEqual(h.setBackendCalls, [], "fallback must not switch the WASM backend");
+  assert.ok(h.ctx2dCalls.length >= 1, "fallback must create a 2d context (painter path)");
+  assert.equal(mainRenderPasses(h.fake).length, 0, "fallback must not run a 16a render pass");
+  assert.ok(h.renderCalls.length >= 1, "fallback painter still drives __gosx_render_canvas");
+
+  // Exactly one warn about the unavailable backend (the fallback's single
+  // console.warn — not a per-frame log).
+  const warns = h.env.consoleLogs.warn || [];
+  const backendWarns = warns.filter((w) => /WebGPU backend unavailable/.test(String(w)));
+  assert.equal(backendWarns.length, 1, "exactly one console.warn on fallback, got: " + JSON.stringify(warns));
+});
+
+// -----------------------------------------------------------------------------
+// M1 slice 4 perf: getSelenaPipeline memoizes the resolved pipeline+key on the
+// material (_gosxWGPUSelenaResource), so the ~1.2KB content key is built ONCE
+// PER MATERIAL per frame instead of once per OBJECT. Board frames are
+// fresh-parsed (a material object lives one frame) but a material is shared by
+// every object that references it, so this is the difference between a handful
+// of key-builds and hundreds.
+// -----------------------------------------------------------------------------
+
+// boardBundleManyObjectsOneMaterial builds a GPU board bundle where N rect
+// objects all reference materials[0] (one BoardFill Selena material) — the
+// shape AttachBoardGPUGeometry produces when N same-color rects dedupe onto one
+// material. Each object points at its own 6-vertex quad in the shared World*
+// streams. Mirrors the fixture wire shape (camera ortho2d, flat+Selena material).
+function boardBundleManyObjectsOneMaterial(n) {
+  const selena = JSON.parse(goBoardBundleRectsJSON).materials[0]; // a real BoardFill Selena material (WGSL + layout)
+  const objects = [];
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  for (let i = 0; i < n; i++) {
+    const x0 = i * 12, y0 = 0, x1 = x0 + 10, y1 = 10;
+    objects.push({ kind: "rect", materialIndex: 0, vertexOffset: i * 6, vertexCount: 6, bounds: { minX: x0, minY: y0, maxX: x1, maxY: y1 } });
+    positions.push(x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y0, 0, x1, y1, 0, x0, y1, 0);
+    normals.push(0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1);
+    uvs.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+  }
+  return {
+    camera: { mode: "ortho2d", x: 0, y: 0, z: 1, near: -1, far: 1 },
+    background: "#102030",
+    objects,
+    objectCount: n,
+    materials: [selena],
+    worldPositions: positions,
+    worldNormals: normals,
+    worldUVs: uvs,
+  };
+}
+
+test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const N = 8;
+  const bundle = boardBundleManyObjectsOneMaterial(N);
+
+  // Instrument JSON.stringify on the sandbox: the key build calls
+  // JSON.stringify(layout) exactly once per key construction. Counting calls
+  // that carry a Selena layout (a uniformBlock) isolates getSelenaPipeline's
+  // key builds from any other stringify in the frame.
+  const sandboxJSON = harness.env.context.JSON;
+  const realStringify = sandboxJSON.stringify;
+  let layoutStringifyCount = 0;
+  sandboxJSON.stringify = function(value) {
+    if (value && typeof value === "object" && value.uniformBlock) {
+      layoutStringifyCount++;
+    }
+    return realStringify.apply(this, arguments);
+  };
+  try {
+    // Frame 1: the memo is cold → exactly ONE key build for the one shared
+    // material, NOT one per object.
+    harness.renderer.render(bundle, {});
+    assert.equal(layoutStringifyCount, 1, "frame 1 must build the Selena key once for the shared material (got " + layoutStringifyCount + " for " + N + " objects)");
+
+    // All N objects drew through the one shared pipeline.
+    const mains = mainRenderPasses(harness.fake);
+    assert.equal(mains[mains.length - 1].draws.length, N, "all N objects must draw");
+
+    // The memo stamp is present on the material and carries the resolved pipeline.
+    const memo = bundle.materials[0]._gosxWGPUSelenaResource;
+    assert.ok(memo, "the material must carry the _gosxWGPUSelenaResource memo after render");
+    assert.ok(memo.resource && memo.resource.pipeline, "the memo must hold the resolved pipeline");
+    assert.equal(memo.failed, false);
+
+    // Frame 2 (same bundle object — the material's memo persists): the per-pass
+    // variant inputs are unchanged, so the memo short-circuits with ZERO new key
+    // builds for the shared material.
+    const beforeFrame2 = layoutStringifyCount;
+    harness.renderer.render(bundle, {});
+    assert.equal(layoutStringifyCount, beforeFrame2, "frame 2 must reuse the material memo and build NO new key");
+  } finally {
+    sandboxJSON.stringify = realStringify;
+  }
+});

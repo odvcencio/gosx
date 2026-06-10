@@ -38,7 +38,33 @@ func registerCanvasBoardRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_tick_canvas", tickCanvasFunc(b))
 	setRuntimeFunc("__gosx_render_canvas", renderCanvasFunc(b))
 	setRuntimeFunc("__gosx_canvas_event", canvasEventFunc(b))
+	setRuntimeFunc("__gosx_canvas_set_backend", canvasSetBackendFunc(b))
 	setRuntimeFunc("__gosx_dispose_canvas", disposeCanvasFunc(b))
+}
+
+// canvasSetBackendFunc routes the named board's per-frame RenderBundle to a
+// render backend (M1 slice 4). The JS surface calls this once, right after
+// hydration, only when its canvas2d element opted into WebGPU AND the GPU path
+// is genuinely available (navigator.gpu + the 16a factory present) — so the
+// __gosx_render_canvas frames that follow carry GPU geometry the 16a WebGPU
+// renderer draws. Absent this call (the default), or on any probe/chunk/device
+// failure where JS never calls it, the board keeps emitting the painter bundle
+// and the 26b1 2D-context path runs unchanged. Mirrors __gosx_canvas_event's
+// per-board, post-hydrate shape rather than threading a hydrate arg.
+//
+// Call shape: __gosx_canvas_set_backend(id, backend)  // backend e.g. "webgpu"
+//
+// Returns null on success, an error string on failure (including unknown id).
+func canvasSetBackendFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return jsErrorf("need 2 args (id, backend)")
+		}
+		if err := b.SetCanvasBoardBackend(args[0].String(), args[1].String()); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
 }
 
 // canvasEventFunc routes a single board interaction event (pan / zoom / pick)
