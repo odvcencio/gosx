@@ -27,8 +27,21 @@
    * @property {object[]} [meshObjects]
    * @property {object[]} [points]
    * @property {object[]} [instancedMeshes]
-   * @property {object[]} [computeParticles]
+   * @property {SceneComputeParticles[]} [computeParticles]
    * @property {object[]} [html]
+   */
+
+  /**
+   * @typedef {object} SceneComputeParticles
+   * @property {string} id
+   * @property {number} count
+   * @property {object} emitter
+   * @property {object[]} [forces]
+   * @property {object} material
+   * @property {number} [bounds]
+   * @property {string} [computeWGSL] - Optional Elio/custom kernel override WGSL source.
+   * @property {string} [computeEntry] - Entry point for computeWGSL (default "simulate").
+   * @property {string} [computeBackend] - Kernel authoring back-end name (e.g. "elio").
    */
 
   /**

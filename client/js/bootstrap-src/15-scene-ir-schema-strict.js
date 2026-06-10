@@ -233,6 +233,15 @@
       (Array.isArray(particles.forces) ? particles.forces : []).forEach(function(force, index) {
         validateSceneStrictFiniteScalars(diagnostics, force || {}, path + ".forces[" + index + "]", ["strength", "x", "y", "z", "frequency"], "scene.particles.non_finite", "Compute particle force scalar must be finite", particles.id);
       });
+      if (particles.computeWGSL != null && typeof particles.computeWGSL !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.particles.invalid_compute_wgsl", "Compute particle computeWGSL must be a string when present", path + ".computeWGSL", particles.id, { value: particles.computeWGSL });
+      }
+      if (particles.computeEntry != null && typeof particles.computeEntry !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.particles.invalid_compute_entry", "Compute particle computeEntry must be a string when present", path + ".computeEntry", particles.id, { value: particles.computeEntry });
+      }
+      if (particles.computeBackend != null && typeof particles.computeBackend !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.particles.invalid_compute_backend", "Compute particle computeBackend must be a string when present", path + ".computeBackend", particles.id, { value: particles.computeBackend });
+      }
       validateSceneStrictLiveFields(diagnostics, particles.live, path, particles.id);
     }
 

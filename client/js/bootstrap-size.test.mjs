@@ -37,7 +37,11 @@ const budgets = [
   // board-bundle adapter, Selena BoardFill attach). New budgets = current
   // measured size (858_908 / 233_921 / 189_980) plus the customary sub-1%
   // rounding headroom; the Makefile glob now includes *.test.mjs.
-  { file: "bootstrap.js", raw: 861_000, gzip: 235_000, brotli: 191_000 },
+  //
+  // Bumped raw 861_000 -> 862_000, brotli 191_000 -> 191_500: M4 galaxy
+  // compute-particle payload kernel seam (16b-scene-compute.js payload path +
+  // schema typedef updates). Measured: 861_059 / 234_524 / 190_508.
+  { file: "bootstrap.js", raw: 862_000, gzip: 235_000, brotli: 191_500 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -49,7 +53,12 @@ const budgets = [
   // this chunk at raw 522_576, over the 512_000 budget it set, while make
   // test-js skipped this file; the M1 ortho-2D board work adds ~0.9KB on top
   // (measured now: 523_496 / 143_391 / 118_066, plus rounding headroom).
-  { file: "bootstrap-feature-scene3d.js", raw: 525_000, gzip: 144_000, brotli: 119_000 },
+  //
+  // Bumped raw 525_000 -> 526_000: async WebGPU validation for compute particle
+  // payload kernels (pushErrorScope/popErrorScope + createComputePipelineAsync
+  // replacing the old synchronous try/catch path in 16b-scene-compute.js).
+  // Measured: 525_173 / 143_759 / 118_429, plus rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 526_000, gzip: 144_000, brotli: 119_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -61,7 +70,10 @@ const budgets = [
   // materials on skinned meshes) added ~1KB more unbumped; and the M1 ortho-2D
   // board work (camera branch + board adapter + BoardFill attach) adds ~0.6KB
   // (measured now: 153_827 / 38_175 / 33_084, plus rounding headroom).
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 155_000, gzip: 38_500, brotli: 33_500 },
+  //
+  // Bumped raw 155_000 -> 156_000, gzip 38_500 -> 39_000: M4 galaxy payload
+  // kernel seam in 16b-scene-compute.js. Measured: 155_313 / 38_593 / 33_405.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 156_000, gzip: 39_000, brotli: 33_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

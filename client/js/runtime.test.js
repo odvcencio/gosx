@@ -16481,6 +16481,9 @@ function makeFakeGPUDevice() {
     createComputePipeline(desc) {
       return { __kind: "computePipeline", label: desc && desc.label };
     },
+    createComputePipelineAsync(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
     createRenderPipeline(desc) {
       const pipeline = { __kind: "renderPipeline", desc };
       state.renderPipelines.push(pipeline);
@@ -17584,6 +17587,253 @@ function boardBundleManyObjectsOneMaterial(n) {
     worldUVs: uvs,
   };
 }
+
+// makeFakeGPUDeviceForCompute extends the board fake with controllable async
+// pipeline behaviour and error-scope control, needed for the payload-kernel
+// validation tests.  pipelineAsyncBehavior is a function called with the
+// pipeline descriptor on createComputePipelineAsync; it should return either
+// a resolved or rejected Promise.  errorScopeBehavior is a function called on
+// popErrorScope; it should return a Promise that resolves to null (clean) or a
+// GPUValidationError-like object (error).
+function makeFakeGPUDeviceForCompute(options) {
+  const base = makeFakeGPUDevice();
+  const device = base.device;
+  const opts = options || {};
+  const pendingScopes = [];
+  const computePipelineAsyncCalls = [];
+  device.pushErrorScope = function(filter) {
+    pendingScopes.push(filter);
+  };
+  device.popErrorScope = function() {
+    pendingScopes.pop();
+    if (typeof opts.errorScopeBehavior === "function") {
+      return opts.errorScopeBehavior();
+    }
+    return Promise.resolve(null);
+  };
+  device.createComputePipelineAsync = function(desc) {
+    computePipelineAsyncCalls.push(desc);
+    if (typeof opts.pipelineAsyncBehavior === "function") {
+      return opts.pipelineAsyncBehavior(desc);
+    }
+    return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+  };
+  return { device, state: base.state, computePipelineAsyncCalls };
+}
+
+// createComputeParticleHarness boots the same chunk stack as
+// createBoardWebGPUHarness but injects a caller-supplied fake device instead
+// of the default makeFakeGPUDevice(), enabling per-test async pipeline control.
+async function createComputeParticleHarness(fakeDevice) {
+  const env = createContext({ enableWebGPU: true });
+  env.context.GPUBufferUsage = {
+    MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
+    INDEX: 0x10, VERTEX: 0x20, UNIFORM: 0x40, STORAGE: 0x80,
+    INDIRECT: 0x100, QUERY_RESOLVE: 0x200,
+  };
+  env.context.GPUTextureUsage = {
+    COPY_SRC: 0x1, COPY_DST: 0x2, TEXTURE_BINDING: 0x4,
+    STORAGE_BINDING: 0x8, RENDER_ATTACHMENT: 0x10,
+  };
+  env.context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
+  env.context.createImageBitmap = function(image) {
+    return Promise.resolve({ __kind: "imageBitmap", width: image && image.width || 1, height: image && image.height || 1, close() {} });
+  };
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_scene3d_webgpu_probe = function() {
+    return { adapter: { __kind: "adapter" }, device: fakeDevice, ready: true };
+  };
+  runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+
+  const api = env.context.__gosx_scene3d_webgpu_api;
+  const mount = new FakeElement("div", null);
+  const gpuCtx = {
+    configure() {},
+    getCurrentTexture() {
+      return { createView() { return { __kind: "canvasTextureView" }; } };
+    },
+  };
+  const canvas = {
+    width: 640, height: 480, isConnected: true, childNodes: [],
+    parentNode: mount,
+    getBoundingClientRect() { return { width: 640, height: 480 }; },
+    getContext(kind) { return kind === "webgpu" ? gpuCtx : null; },
+  };
+
+  // Capture console.warn calls for assertion.
+  const warnLog = [];
+  const origWarn = env.context.console.warn;
+  env.context.console.warn = function() {
+    warnLog.push(Array.from(arguments).join(" "));
+    if (typeof origWarn === "function") origWarn.apply(env.context.console, arguments);
+  };
+
+  const renderer = api.createRenderer(canvas, {});
+  return { env, renderer, warnLog };
+}
+
+// Minimal valid Scene3D bundle with one compute particle entry.
+function makeComputeParticleBundle(particleEntry) {
+  return {
+    camera: { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [], instancedMeshes: [], objects: [], meshObjects: [],
+    materials: [], labels: [], sprites: [], lights: [], postEffects: [],
+    computeParticles: [particleEntry],
+    positions: new Float32Array(0), colors: new Float32Array(0),
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0), worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0), worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0, worldVertexCount: 0,
+  };
+}
+
+test("compute particle payload kernel: invalid WGSL (async rejection) falls back to builtin, caches failure, warns once", async () => {
+  // Simulate the real browser failure mode: createComputePipelineAsync REJECTS
+  // for the payload WGSL (Tint validation error), then resolves for the builtin.
+  let callCount = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      callCount++;
+      // First call = payload kernel: reject (validation failure).
+      // Second call = builtin fallback: resolve.
+      if (callCount === 1) {
+        return Promise.reject(new Error("fake WGSL validation error"));
+      }
+      return Promise.resolve({ __kind: "computePipeline", label: "builtin" });
+    },
+  });
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  // Frame 1: render triggers createSceneParticleSystem which kicks off async
+  // pipeline validation — NOT yet resolved.
+  harness.renderer.render(makeComputeParticleBundle({
+    id: "test-invalid", count: 4,
+    computeWGSL: "@group(0) @binding(0) var<storage, read_write> bad : array<u32>;",
+    emitter: { kind: "point" }, material: { color: "#fff" },
+  }), viewport);
+
+  // System is not-ready: no compute passes dispatched yet.
+  assert.equal(fake.state.computePasses.filter(p => p.ended).length, 0,
+    "no compute pass should run before async validation resolves");
+
+  // Drain microtask / promise queue so the rejection + fallback chain settles.
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // (a) Warn fired exactly once with the system id.
+  const payloadWarns = harness.warnLog.filter(m => m.includes("test-invalid") && m.includes("falling back"));
+  assert.equal(payloadWarns.length, 1, "exactly one payload-failure warn must fire");
+
+  // (b) Failure is cached: re-render with the SAME entry — async call must NOT
+  // run again (callCount stays at 2 = payload attempt + builtin attempt).
+  // This requires the system to flip to the builtin pipeline, so subsequent
+  // frames run the builtin without another payload attempt.
+  // A second render should find the system already ready (builtin pipeline).
+  harness.renderer.render(makeComputeParticleBundle({
+    id: "test-invalid", count: 4,
+    computeWGSL: "@group(0) @binding(0) var<storage, read_write> bad : array<u32>;",
+    emitter: { kind: "point" }, material: { color: "#fff" },
+  }), viewport);
+  await flushAsyncWork();
+
+  // No additional warn: the payload failure is cached on the system.
+  const payloadWarns2 = harness.warnLog.filter(m => m.includes("test-invalid") && m.includes("falling back"));
+  assert.equal(payloadWarns2.length, 1, "warn must fire only once (failure cached, not re-attempted)");
+
+  // (c) The builtin pipeline eventually ran: at least one compute pass dispatched
+  // after the builtin resolved.
+  const computeEnded = fake.state.computePasses.filter(p => p.ended);
+  assert.ok(computeEnded.length >= 1, "at least one compute pass must dispatch once the builtin pipeline is ready");
+});
+
+test("compute particle payload kernel: valid WGSL uses the payload pipeline, not the builtin", async () => {
+  // The first createComputePipelineAsync call resolves cleanly; popErrorScope
+  // returns null (no error).
+  let pipelineAsyncCallCount = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      pipelineAsyncCallCount++;
+      return Promise.resolve({ __kind: "computePipeline", label: "payload-" + pipelineAsyncCallCount });
+    },
+    errorScopeBehavior() {
+      return Promise.resolve(null);
+    },
+  });
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const entry = {
+    id: "test-valid", count: 4,
+    computeWGSL: "fn simulate() {}",
+    computeEntry: "simulate",
+    emitter: { kind: "point" }, material: { color: "#fff" },
+  };
+  harness.renderer.render(makeComputeParticleBundle(entry), viewport);
+
+  // Drain so async validation resolves.
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // No warnings: valid payload should not warn.
+  const payloadWarns = harness.warnLog.filter(m => m.includes("falling back") || m.includes("failed"));
+  assert.equal(payloadWarns.length, 0, "valid payload must not emit any fallback warning");
+
+  // Exactly one createComputePipelineAsync call: the payload path, not two
+  // (payload + builtin). The first call is for the payload kernel.
+  assert.equal(pipelineAsyncCallCount, 1, "exactly one createComputePipelineAsync call for valid payload");
+
+  // After resolution the system is ready: the next render dispatches a compute pass.
+  harness.renderer.render(makeComputeParticleBundle(entry), viewport);
+  const computeEnded = fake.state.computePasses.filter(p => p.ended);
+  assert.ok(computeEnded.length >= 1, "compute pass must run after valid payload pipeline is ready");
+});
+
+test("compute particle payload kernel: absent computeWGSL goes straight to builtin path without payload attempt", async () => {
+  let pipelineAsyncCallCount = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      pipelineAsyncCallCount++;
+      return Promise.resolve({ __kind: "computePipeline", label: "builtin-only" });
+    },
+  });
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  // Entry WITHOUT computeWGSL: must take the builtin path directly.
+  harness.renderer.render(makeComputeParticleBundle({
+    id: "test-builtin-only", count: 4,
+    emitter: { kind: "point" }, material: { color: "#fff" },
+  }), viewport);
+
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // No payload warnings.
+  assert.equal(harness.warnLog.filter(m => m.includes("payload") && m.includes("falling back")).length, 0,
+    "no payload warning for entry without computeWGSL");
+
+  // Exactly one async pipeline call (the builtin path).
+  assert.equal(pipelineAsyncCallCount, 1, "exactly one createComputePipelineAsync call for the builtin path");
+
+  // System becomes ready and dispatches a compute pass.
+  harness.renderer.render(makeComputeParticleBundle({
+    id: "test-builtin-only", count: 4,
+    emitter: { kind: "point" }, material: { color: "#fff" },
+  }), viewport);
+  const computeEnded = fake.state.computePasses.filter(p => p.ended);
+  assert.ok(computeEnded.length >= 1, "compute pass must dispatch once builtin pipeline is ready");
+});
 
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
   const harness = await createBoardWebGPUHarness();

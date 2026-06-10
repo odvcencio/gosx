@@ -388,6 +388,21 @@ type ComputeParticles struct {
 	InState    *ComputeParticlesProps
 	OutState   *ComputeParticlesProps
 	Live       []string
+
+	// ComputeWGSL is an optional override WGSL kernel for this particle system.
+	// When non-empty it is forwarded through the IR/JSON payload to the browser
+	// backend, which compiles and uses it instead of the built-in compute shader.
+	// The kernel must satisfy the same 4-binding contract as the built-in:
+	// @binding(0) particles (storage rw), @binding(1) renderData (storage rw),
+	// @binding(2) params (uniform), @binding(3) forces (read-only storage).
+	ComputeWGSL string
+	// ComputeEntry is the entry-point name for ComputeWGSL.
+	// Ignored when ComputeWGSL is empty. Defaults to "simulate" in the browser
+	// when ComputeWGSL is set but this field is left empty.
+	ComputeEntry string
+	// ComputeBackend names the kernel authoring back-end (e.g. "elio").
+	// Informational only; the browser backend does not gate on this value.
+	ComputeBackend string
 }
 
 type ParticleEmitter struct {
@@ -2290,11 +2305,14 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 			BlendMode:   strings.TrimSpace(string(cp.Material.BlendMode)),
 			Attenuation: cp.Material.Attenuation,
 		},
-		Bounds:     cp.Bounds,
-		Transition: lowerTransition(cp.Transition),
-		InState:    cp.InState.legacyProps(),
-		OutState:   cp.OutState.legacyProps(),
-		Live:       normalizeLive(cp.Live),
+		Bounds:         cp.Bounds,
+		Transition:     lowerTransition(cp.Transition),
+		InState:        cp.InState.legacyProps(),
+		OutState:       cp.OutState.legacyProps(),
+		Live:           normalizeLive(cp.Live),
+		ComputeWGSL:    cp.ComputeWGSL,
+		ComputeEntry:   strings.TrimSpace(cp.ComputeEntry),
+		ComputeBackend: strings.TrimSpace(cp.ComputeBackend),
 	}
 	l.computeParticles = append(l.computeParticles, record)
 }

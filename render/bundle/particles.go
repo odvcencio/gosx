@@ -331,9 +331,23 @@ type particleResources struct {
 
 // buildParticlePipelines constructs the compute (state integration) and
 // render (billboarded quad) pipelines used for compute particles.
+//
+// When r.particleOverrideWGSL is non-empty the override source is compiled
+// instead of the built-in particleUpdateWGSL. The pipeline label is always
+// "bundle.particles.update" regardless of which source is active: the
+// headless CPU device dispatches Go reimplementations keyed by that label,
+// so changing it would silently break CPU captures / golden tests.
 func (r *Renderer) buildParticlePipelines() error {
+	updateSrc := particleUpdateWGSL
+	updateEntry := "main"
+	if r.particleOverrideWGSL != "" {
+		updateSrc = r.particleOverrideWGSL
+		if r.particleOverrideEntryPoint != "" {
+			updateEntry = r.particleOverrideEntryPoint
+		}
+	}
 	compShader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
-		SourceWGSL: particleUpdateWGSL,
+		SourceWGSL: updateSrc,
 		Label:      "bundle.particles.update",
 	})
 	if err != nil {
@@ -341,7 +355,7 @@ func (r *Renderer) buildParticlePipelines() error {
 	}
 	comp, err := r.device.CreateComputePipeline(gpu.ComputePipelineDesc{
 		Module:     compShader,
-		EntryPoint: "main",
+		EntryPoint: updateEntry,
 		AutoLayout: true,
 		Label:      "bundle.particles.update",
 	})

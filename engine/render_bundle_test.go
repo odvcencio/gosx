@@ -93,6 +93,72 @@ func TestRenderBundleDiagnosticsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRenderComputeParticlesKernelFieldsRoundTrip verifies that the three
+// Elio/custom kernel override fields on RenderComputeParticles survive a
+// JSON marshal→unmarshal cycle (the path used by the WASM bridge).
+func TestRenderComputeParticlesKernelFieldsRoundTrip(t *testing.T) {
+	const wgsl = "@compute @workgroup_size(64) fn update() {}"
+	source := RenderBundle{
+		ComputeParticles: []RenderComputeParticles{
+			{
+				ID:             "galaxy",
+				Count:          1000,
+				ComputeWGSL:    wgsl,
+				ComputeEntry:   "update",
+				ComputeBackend: "elio",
+			},
+		},
+	}
+	payload, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded RenderBundle
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(decoded.ComputeParticles) != 1 {
+		t.Fatalf("ComputeParticles length = %d, want 1", len(decoded.ComputeParticles))
+	}
+	cp := decoded.ComputeParticles[0]
+	if cp.ComputeWGSL != wgsl {
+		t.Errorf("ComputeWGSL = %q, want %q", cp.ComputeWGSL, wgsl)
+	}
+	if cp.ComputeEntry != "update" {
+		t.Errorf("ComputeEntry = %q, want 'update'", cp.ComputeEntry)
+	}
+	if cp.ComputeBackend != "elio" {
+		t.Errorf("ComputeBackend = %q, want 'elio'", cp.ComputeBackend)
+	}
+	// Zero-value path: absent fields must not be present when not set.
+	if !bytes.Contains(payload, []byte(`"computeWGSL"`)) {
+		t.Errorf("expected computeWGSL in JSON payload")
+	}
+}
+
+// TestRenderComputeParticlesKernelFieldsAbsentWhenEmpty confirms omitempty:
+// when the kernel fields are zero-valued they are not written to JSON.
+func TestRenderComputeParticlesKernelFieldsAbsentWhenEmpty(t *testing.T) {
+	source := RenderBundle{
+		ComputeParticles: []RenderComputeParticles{
+			{ID: "plain", Count: 10},
+		},
+	}
+	payload, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if bytes.Contains(payload, []byte("computeWGSL")) {
+		t.Errorf("computeWGSL must be absent when empty; payload: %s", payload)
+	}
+	if bytes.Contains(payload, []byte("computeEntry")) {
+		t.Errorf("computeEntry must be absent when empty; payload: %s", payload)
+	}
+	if bytes.Contains(payload, []byte("computeBackend")) {
+		t.Errorf("computeBackend must be absent when empty; payload: %s", payload)
+	}
+}
+
 func TestRenderBundleHTMLRoundTrip(t *testing.T) {
 	source := RenderBundle{
 		HTML: []RenderHTML{{

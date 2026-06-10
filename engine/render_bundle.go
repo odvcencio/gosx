@@ -363,6 +363,11 @@ type RenderComputeParticles struct {
 	Forces   []RenderParticleForce  `json:"forces,omitempty"`
 	Material RenderParticleMaterial `json:"material"`
 	Bounds   float64                `json:"bounds,omitempty"`
+
+	// Optional Elio/custom kernel override forwarded from scene ComputeParticles.
+	ComputeWGSL    string `json:"computeWGSL,omitempty"`
+	ComputeEntry   string `json:"computeEntry,omitempty"`
+	ComputeBackend string `json:"computeBackend,omitempty"`
 }
 
 // RenderBundle is the renderer-facing scene payload emitted by the shared

@@ -484,6 +484,11 @@ type ComputeParticlesIR struct {
 	InState    map[string]any     `json:"inState,omitempty"`
 	OutState   map[string]any     `json:"outState,omitempty"`
 	Live       []string           `json:"live,omitempty"`
+
+	// Optional Elio/custom kernel override carried through the scene payload.
+	ComputeWGSL    string `json:"computeWGSL,omitempty"`
+	ComputeEntry   string `json:"computeEntry,omitempty"`
+	ComputeBackend string `json:"computeBackend,omitempty"`
 }
 
 // ParticleEmitterIR describes the emitter configuration for a GPU particle system.
@@ -1288,6 +1293,12 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 	}
 	record["material"] = material
 	setNumeric(record, "bounds", item.Bounds)
+	// computeWGSL is stored verbatim: do not TrimSpace (callers own the source).
+	if item.ComputeWGSL != "" {
+		record["computeWGSL"] = item.ComputeWGSL
+	}
+	setString(record, "computeEntry", item.ComputeEntry)
+	setString(record, "computeBackend", item.ComputeBackend)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }

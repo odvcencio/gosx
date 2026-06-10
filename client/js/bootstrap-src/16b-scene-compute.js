@@ -573,10 +573,8 @@
     var computePipeline = null;
     var bindGroup = null;
     var ready = false;
-
-    var shaderModule = device.createShaderModule({
-      code: SCENE_COMPUTE_PARTICLE_SOURCE,
-    });
+    // Per-system cache: true if the payload kernel failed and we fell back to builtin.
+    var payloadKernelFailed = false;
 
     var bindGroupLayout = device.createBindGroupLayout({
       entries: [
@@ -605,19 +603,75 @@
       ready = true;
     }
 
-    var pipelineDescriptor = {
-      layout: pipelineLayout,
-      compute: {
-        module: shaderModule,
-        entryPoint: "simulate",
-      },
-    };
-    try {
-      markComputePipelineReady(device.createComputePipeline(pipelineDescriptor));
-    } catch (syncErr) {
-      device.createComputePipelineAsync(pipelineDescriptor).then(markComputePipelineReady).catch(function(err) {
-        console.warn("[gosx] Compute particle pipeline creation failed:", err);
+    function buildPipelineFromSource(wgslSource, entryPoint) {
+      var mod = device.createShaderModule({ code: wgslSource });
+      return {
+        layout: pipelineLayout,
+        compute: { module: mod, entryPoint: entryPoint },
+      };
+    }
+
+    // Determine pipeline source: use payload kernel when provided, falling back
+    // to the builtin on async validation failure. IMPORTANT: per the WebGPU
+    // spec, createShaderModule() never throws on invalid WGSL, and
+    // createComputePipeline() does not throw on shader-validation failure either
+    // — errors surface asynchronously via error scopes / getCompilationInfo and
+    // the returned pipeline is internally invalid. We therefore validate with
+    // createComputePipelineAsync (which rejects on failure) and a surrounding
+    // pushErrorScope("validation") / popErrorScope() belt-and-braces check.
+    // The system stays not-ready (isReady() === false) while validation is
+    // pending; frames silently skip the compute pass via the guard at update().
+    var payloadWGSL = (typeof entry.computeWGSL === "string" && entry.computeWGSL.trim()) ? entry.computeWGSL : null;
+    var payloadEntry = (typeof entry.computeEntry === "string" && entry.computeEntry.trim()) ? entry.computeEntry : "simulate";
+    var systemID = (entry && typeof entry.id === "string") ? entry.id : "";
+
+    function buildBuiltinPipeline() {
+      device.pushErrorScope("validation");
+      device.createComputePipelineAsync(buildPipelineFromSource(SCENE_COMPUTE_PARTICLE_SOURCE, "simulate")).then(function(pipeline) {
+        return device.popErrorScope().then(function(scopeErr) {
+          if (scopeErr) {
+            console.warn("[gosx] Compute particle builtin pipeline validation error:", scopeErr);
+          } else {
+            markComputePipelineReady(pipeline);
+          }
+        });
+      }).catch(function(err) {
+        device.popErrorScope().catch(function() {});
+        console.warn("[gosx] Compute particle builtin pipeline creation failed:", err);
       });
+    }
+
+    function tryBuildPayloadPipelineAsync() {
+      device.pushErrorScope("validation");
+      device.createComputePipelineAsync(buildPipelineFromSource(payloadWGSL, payloadEntry)).then(function(pipeline) {
+        return device.popErrorScope().then(function(scopeErr) {
+          if (scopeErr) {
+            // Scope captured a validation error even though the async pipeline
+            // call resolved — treat as failure (belt-and-braces).
+            if (!payloadKernelFailed) {
+              payloadKernelFailed = true;
+              console.warn("[gosx] Compute particle payload kernel failed for system '" + systemID + "'; falling back to builtin.");
+            }
+            buildBuiltinPipeline();
+          } else {
+            markComputePipelineReady(pipeline);
+          }
+        });
+      }).catch(function() {
+        return device.popErrorScope().catch(function() {}).then(function() {
+          if (!payloadKernelFailed) {
+            payloadKernelFailed = true;
+            console.warn("[gosx] Compute particle payload kernel failed for system '" + systemID + "'; falling back to builtin.");
+          }
+          buildBuiltinPipeline();
+        });
+      });
+    }
+
+    if (payloadWGSL) {
+      tryBuildPayloadPipelineAsync();
+    } else {
+      buildBuiltinPipeline();
     }
 
     return {
@@ -1085,6 +1139,9 @@
       },
       forces: Array.isArray(entry && entry.forces) ? entry.forces : [],
       forceRegistryVersion: sceneParticleForceRegistryVersion,
+      // Include payload kernel identity so a changed kernel triggers recreation.
+      computeWGSL: (typeof entry.computeWGSL === "string") ? entry.computeWGSL : "",
+      computeEntry: (typeof entry.computeEntry === "string") ? entry.computeEntry : "",
     });
   }
 

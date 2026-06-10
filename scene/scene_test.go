@@ -2428,6 +2428,126 @@ func approxMapFloat(value any, want float64) bool {
 	return math.Abs(got-want) < 1e-9
 }
 
+// TestComputeParticlesPayloadKernelFieldsRoundTrip verifies the full
+// scene → IR → legacy-JSON round-trip for the three new kernel-override
+// fields (ComputeWGSL, ComputeEntry, ComputeBackend).
+func TestComputeParticlesPayloadKernelFieldsRoundTrip(t *testing.T) {
+	const wgslSource = "@compute @workgroup_size(64) fn update() {}"
+	props := Props{
+		Graph: NewGraph(
+			ComputeParticles{
+				ID:    "elio-galaxy",
+				Count: 1000,
+				Emitter: ParticleEmitter{
+					Kind:     "point",
+					Lifetime: 2.0,
+				},
+				Material: ParticleMaterial{
+					Color:   "#ff8800",
+					Size:    0.2,
+					Opacity: 1.0,
+				},
+				ComputeWGSL:    wgslSource,
+				ComputeEntry:   "update",
+				ComputeBackend: "elio",
+			},
+		),
+	}
+
+	// 1. Scene → IR
+	ir := props.SceneIR()
+	if len(ir.ComputeParticles) != 1 {
+		t.Fatalf("expected 1 compute-particles IR entry, got %d", len(ir.ComputeParticles))
+	}
+	cp := ir.ComputeParticles[0]
+	if cp.ComputeWGSL != wgslSource {
+		t.Errorf("IR.ComputeWGSL: want %q, got %q", wgslSource, cp.ComputeWGSL)
+	}
+	if cp.ComputeEntry != "update" {
+		t.Errorf("IR.ComputeEntry: want 'update', got %q", cp.ComputeEntry)
+	}
+	if cp.ComputeBackend != "elio" {
+		t.Errorf("IR.ComputeBackend: want 'elio', got %q", cp.ComputeBackend)
+	}
+
+	// 2. IR → legacy JSON map (the path the JS browser receives)
+	legacy := props.LegacyProps()
+	sceneMap, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map in legacy props, got %T", legacy["scene"])
+	}
+	particles, ok := sceneMap["computeParticles"].([]map[string]any)
+	if !ok || len(particles) != 1 {
+		t.Fatalf("expected one compute-particles legacy record, got %#v", sceneMap["computeParticles"])
+	}
+	rec := particles[0]
+	if got := rec["computeWGSL"]; got != wgslSource {
+		t.Errorf("legacy computeWGSL: want %q, got %v", wgslSource, got)
+	}
+	if got := rec["computeEntry"]; got != "update" {
+		t.Errorf("legacy computeEntry: want 'update', got %v", got)
+	}
+	if got := rec["computeBackend"]; got != "elio" {
+		t.Errorf("legacy computeBackend: want 'elio', got %v", got)
+	}
+}
+
+// TestComputeParticlesKernelFieldsAbsentWhenEmpty ensures that when the new
+// kernel fields are empty they are omitted from both the IR and legacy JSON
+// (zero-value path unchanged).
+func TestComputeParticlesKernelFieldsAbsentWhenEmpty(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			ComputeParticles{
+				ID:    "plain-galaxy",
+				Count: 100,
+				Emitter: ParticleEmitter{
+					Kind:     "point",
+					Lifetime: 1.0,
+				},
+				Material: ParticleMaterial{Size: 0.1, Opacity: 1.0},
+				// ComputeWGSL, ComputeEntry, ComputeBackend intentionally absent.
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.ComputeParticles) != 1 {
+		t.Fatalf("expected 1 compute-particles IR entry, got %d", len(ir.ComputeParticles))
+	}
+	cp := ir.ComputeParticles[0]
+	if cp.ComputeWGSL != "" {
+		t.Errorf("expected empty ComputeWGSL, got %q", cp.ComputeWGSL)
+	}
+	if cp.ComputeEntry != "" {
+		t.Errorf("expected empty ComputeEntry, got %q", cp.ComputeEntry)
+	}
+	if cp.ComputeBackend != "" {
+		t.Errorf("expected empty ComputeBackend, got %q", cp.ComputeBackend)
+	}
+
+	// Legacy map: keys must be absent (omitempty semantics via setString).
+	legacy := props.LegacyProps()
+	sceneMap, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map")
+	}
+	particles, ok := sceneMap["computeParticles"].([]map[string]any)
+	if !ok || len(particles) != 1 {
+		t.Fatalf("expected one compute-particles legacy record, got %#v", sceneMap["computeParticles"])
+	}
+	rec := particles[0]
+	if _, present := rec["computeWGSL"]; present {
+		t.Errorf("computeWGSL key must be absent when empty")
+	}
+	if _, present := rec["computeEntry"]; present {
+		t.Errorf("computeEntry key must be absent when empty")
+	}
+	if _, present := rec["computeBackend"]; present {
+		t.Errorf("computeBackend key must be absent when empty")
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }

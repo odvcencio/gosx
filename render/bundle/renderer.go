@@ -150,6 +150,11 @@ type Renderer struct {
 	particleRenderPipeline gpu.RenderPipeline
 	particleRenderBGLayout gpu.BindGroupLayout
 
+	// Override kernel config stored from New so buildParticlePipelines can use
+	// it without plumbing cfg through every call site.
+	particleOverrideWGSL       string
+	particleOverrideEntryPoint string
+
 	// Tracks the previous frame's time for particle dt integration.
 	lastFrameTime float64
 
@@ -248,6 +253,17 @@ type Config struct {
 	// declared PassPhase within Frame() and may publish bus resources for the
 	// draw to consume.
 	ExternalComputePasses []compute.ExternalComputePass
+
+	// ParticleUpdateWGSL is an optional replacement for the built-in particle
+	// integrator kernel. When non-empty the renderer compiles and uses it for
+	// all particle-update dispatches. The kernel must expose the same buffer
+	// and uniform binding contract as the built-in (binding 0: uniforms,
+	// binding 1: particle storage). If empty the built-in kernel is used.
+	ParticleUpdateWGSL string
+	// ParticleUpdateEntryPoint is the entry-point name for ParticleUpdateWGSL.
+	// Ignored when ParticleUpdateWGSL is empty. Defaults to "main" when
+	// ParticleUpdateWGSL is set but this field is left empty.
+	ParticleUpdateEntryPoint string
 }
 
 // New constructs a Renderer, building all pipelines, uniform buffers, and the
@@ -282,9 +298,11 @@ func New(cfg Config) (*Renderer, error) {
 		materialCache:          make(map[materialFingerprint]*materialResources),
 		textureCache:           make(map[string]*textureResources),
 		cullCache:              make(map[string]*cullResources),
-		externalPasses:         cfg.ExternalComputePasses,
-		published:              make(map[string]compute.GPUResource),
-		particleCache:          make(map[string]*particleResources),
+		externalPasses:             cfg.ExternalComputePasses,
+		published:                  make(map[string]compute.GPUResource),
+		particleOverrideWGSL:       cfg.ParticleUpdateWGSL,
+		particleOverrideEntryPoint: cfg.ParticleUpdateEntryPoint,
+		particleCache:              make(map[string]*particleResources),
 		skinCache:              make(map[string]*skinResources),
 		bonePalettes:           make(map[string]*BonePalette),
 		pickTargets:            make(map[uint32]PickResult),
