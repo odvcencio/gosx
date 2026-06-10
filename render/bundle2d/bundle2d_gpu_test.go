@@ -367,12 +367,15 @@ func TestAttachBoardGPUSpriteQuad(t *testing.T) {
 	}
 }
 
-// TestAttachBoardGPUSpriteMaterialContract pins the 2A→2B wire contract: each
-// sprite appends its OWN material carrying exactly {Kind:"sprite",
-// Texture:Src, Unlit:true} and NO Selena fields — M1 slice 2B authors
-// board_sprite.sel and attaches texture sampling onto these records, keying
-// off Kind/Texture. Per-sprite (not deduped): two sprites sharing a Src still
-// get two materials.
+// TestAttachBoardGPUSpriteMaterialContract pins the sprite material contract:
+// each sprite appends its OWN material carrying exactly {Kind:"sprite",
+// Texture:Src, Color:"#ffffff", Unlit:true} and NO Selena fields. Sprites
+// render through 16a's default PBR object path (unlit albedo-texture
+// passthrough), not a custom Selena shader, so the material stays bare; the
+// WHITE Color makes the PBR `albedo = material.albedo * texAlbedo.rgb` multiply
+// the identity (an absent Color would dim the texture to 16a's 0.8 grey
+// fallback). Per-sprite (not deduped): two sprites sharing a Src still get two
+// materials.
 func TestAttachBoardGPUSpriteMaterialContract(t *testing.T) {
 	nodes := []gosx.CanvasBoardNode{
 		{ID: "a", Kind: "image", X: 0, Y: 0, Width: 8, Height: 8, Src: "/logo.png"},
@@ -386,11 +389,11 @@ func TestAttachBoardGPUSpriteMaterialContract(t *testing.T) {
 		if m.Kind != "sprite" || m.Texture != "/logo.png" || !m.Unlit {
 			t.Errorf("material %d = %+v, want {Kind:sprite Texture:/logo.png Unlit:true}", i, m)
 		}
-		if m.Color != "" {
-			t.Errorf("material %d color = %q, want empty (image is the source)", i, m.Color)
+		if m.Color != "#ffffff" {
+			t.Errorf("material %d color = %q, want #ffffff (white albedo so the PBR texture multiply is identity)", i, m.Color)
 		}
 		if m.ShaderBackend != "" || m.CustomVertexWGSL != "" || m.CustomFragmentWGSL != "" || m.ShaderLayout != nil || m.CustomUniforms != nil {
-			t.Errorf("material %d must carry NO Selena fields (2B attaches board_sprite.sel): %+v", i, m)
+			t.Errorf("material %d must carry NO Selena fields (sprites use the default PBR path): %+v", i, m)
 		}
 	}
 	if b.Objects[0].MaterialIndex == b.Objects[1].MaterialIndex {

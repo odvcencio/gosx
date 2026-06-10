@@ -33,8 +33,11 @@ func boardFixtureRectsNodes() []gosx.CanvasBoardNode {
 }
 
 // boardFixtureMixedNodes is the mixed board (1 rect + 2 lines + 1 label + 1
-// sprite) behind testdata/board_fixture_mixed.json — it pins the M1 slice-2
-// deferral: line/label/sprite payloads ride the wire but only the rect draws.
+// sprite) behind testdata/board_fixture_mixed.json. Since M1 slice 2A the
+// attach expands the rect, both lines, and the sprite into z=0 quads that all
+// draw (rect+lines on the BoardFill Selena pipeline, the sprite unlit-textured
+// on the default PBR path); only the label stays wire-only (slice 2C renders
+// labels as a DOM overlay).
 func boardFixtureMixedNodes() []gosx.CanvasBoardNode {
 	return []gosx.CanvasBoardNode{
 		{ID: "card-a", Kind: "rect", X: 16, Y: 24, Width: 200, Height: 120, Color: "#3a86ff"},

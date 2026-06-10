@@ -60,9 +60,10 @@ func boardFillBaseColor(color string) ([]float32, bool) {
 // Flat materials are the rect fills built by vm.ensureCanvasBoardMaterial and
 // the line fills appended by AttachBoardGPUGeometry — both Kind "flat".
 // Sprite materials (Kind "sprite", Texture set) are deliberately skipped:
-// BoardFill samples no textures, and M1 slice 2B attaches its own
-// board_sprite.sel onto those records. Materials that already carry custom
-// WGSL are left untouched, which makes the attach idempotent.
+// BoardFill samples no textures, so sprites render through 16a's default PBR
+// object path instead (unlit albedo-texture passthrough — see
+// appendBoardSpriteQuads). Materials that already carry custom WGSL are left
+// untouched, which makes the attach idempotent.
 //
 // The native Go renderer ignores these fields (fixed pipeline, oracle-only
 // dim-lit board), and the 26b1 canvas2d painter reads only Color — the attach
@@ -226,11 +227,17 @@ func appendBoardLineQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 // at the top-left, so V=0-at-top draws the image upright under the +Y-up
 // ortho camera.
 //
-// Each sprite appends its OWN material — the 2A→2B wire contract:
-// {Kind:"sprite", Texture:Src, Unlit:true}, NO Selena fields.
-// TODO(M1 slice 2B): author board_sprite.sel and attach texture sampling onto
-// these records (16a today routes them through its default PBR pipeline,
-// which loads material.texture as albedo once the image resolves).
+// Each sprite appends its OWN material: {Kind:"sprite", Texture:Src,
+// Color:"#ffffff", Unlit:true}. Sprites render through 16a's default PBR
+// object path (no Selena attach) — that path loads material.texture into the
+// albedo texture slot and, because Unlit is set, its fragment WGSL returns the
+// sampled albedo directly (the unlit branch bypasses the BRDF, so a board with
+// no lights still shows the image instead of black). Color is WHITE so the
+// shader's `albedo = material.albedo * texAlbedo.rgb` multiply is the identity
+// 1.0 — an absent Color would default 16a's albedo to its 0.8 grey fallback
+// and dim every sprite to 80%. While the image loads, 16a binds a 1×1 white
+// placeholder (wgpuLoadTexture), so a sprite flashes a white box before the
+// texture resolves — equal to or better than 26b1's grey placeholder.
 func appendBoardSpriteQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 	for _, sprite := range b.Sprites {
 		if sprite.Width <= 0 || sprite.Height <= 0 {
@@ -243,6 +250,7 @@ func appendBoardSpriteQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 		b.Materials = append(b.Materials, rootengine.RenderMaterial{
 			Kind:    "sprite",
 			Texture: sprite.Src,
+			Color:   "#ffffff",
 			Unlit:   true,
 		})
 		b.Objects = append(b.Objects, rootengine.RenderObject{
@@ -280,8 +288,9 @@ func appendBoardSpriteQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 // (attachBoardFillMaterials) — custom WGSL the 16a WebGPU renderer draws unlit
 // at full brightness, with the flat/Unlit Color kept alongside for the native
 // oracle. Line materials are deduped by color into the same flat pool the
-// rects use; sprite materials are per-sprite (Texture=Src) and get no Selena
-// attach until slice 2B.
+// rects use; sprite materials are per-sprite (Texture=Src, white albedo,
+// Unlit) and render unlit-textured through 16a's default PBR object path —
+// they get no Selena attach.
 //
 // NOT 26b1-compatible: once line/sprite quads are appended to Objects, the
 // bundle is GPU-only. The 26b1 painter would skip the appended objects (its

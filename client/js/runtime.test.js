@@ -16375,8 +16375,8 @@ const goBoardBundleRectsJSON = readBoardFixture("board_fixture_rects.json");
 // quads appended to objects/worldPositions in painter z-order (rect → lines
 // → sprite), so the fixture carries FOUR drawable objects: the rect and the
 // two lines on flat+Selena BoardFill materials, the sprite on a bare
-// {kind:"sprite", texture, unlit} material (its board_sprite.sel attach is
-// slice 2B; today it draws through the default PBR pipeline). The
+// {kind:"sprite", color:"#ffffff", texture, unlit} material that draws
+// unlit-textured through 16a's default PBR object path (no Selena attach). The
 // lines/labels/sprites wire arrays still ride unchanged
 // ({from:{x,y},to:{x,y},color,lineWidth} etc.); labels stay undrawn here
 // (slice 2C renders them as a DOM overlay).
@@ -16395,7 +16395,14 @@ function makeFakeGPUDevice() {
     computePasses: [],
     renderPipelines: [],
     shaderModules: [],
+    // Texture lifecycle recording for the sprite path: every createTexture
+    // (placeholder + the post-load upload target), writeTexture (placeholder
+    // pixel), and copyExternalImageToTexture (the resolved image upload).
+    textures: [],
+    writeTextureCalls: [],
+    copyExternalCalls: [],
   };
+  var textureSeq = 0;
   function makePass(descriptor, kind) {
     const pass = {
       kind,
@@ -16442,7 +16449,20 @@ function makeFakeGPUDevice() {
           data: data && typeof data.slice === "function" ? data.slice(0) : data,
         });
       },
-      writeTexture() {},
+      writeTexture(destination, data, layout, size) {
+        state.writeTextureCalls.push({
+          texture: destination && destination.texture,
+          data: data && typeof data.slice === "function" ? data.slice(0) : data,
+          size,
+        });
+      },
+      copyExternalImageToTexture(source, destination, copySize) {
+        state.copyExternalCalls.push({
+          source: source && source.source,
+          texture: destination && destination.texture,
+          copySize,
+        });
+      },
       submit() {
         state.submitCount += 1;
       },
@@ -16473,14 +16493,18 @@ function makeFakeGPUDevice() {
       return { __kind: "sampler", desc };
     },
     createTexture(desc) {
-      return {
+      textureSeq += 1;
+      const texture = {
         __kind: "texture",
+        id: textureSeq,
         desc,
         createView() {
-          return { __kind: "textureView" };
+          return { __kind: "textureView", textureId: textureSeq };
         },
         destroy() {},
       };
+      state.textures.push(texture);
+      return texture;
     },
     createBuffer(desc) {
       const buffer = {
@@ -16538,6 +16562,15 @@ async function createBoardWebGPUHarness() {
     STORAGE_BINDING: 0x8, RENDER_ATTACHMENT: 0x10,
   };
   env.context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
+  // The sprite texture path resolves images via Image.onload (createContext's
+  // FakeImage fires it async) then createImageBitmap →
+  // copyExternalImageToTexture. createContext has no createImageBitmap, so add
+  // a minimal resolver that hands back a bitmap double carrying the source size
+  // (1×1 per FakeImage) — without it wgpuLoadTexture marks the record failed
+  // and never uploads.
+  env.context.createImageBitmap = function(image) {
+    return Promise.resolve({ __kind: "imageBitmap", width: image && image.width || 1, height: image && image.height || 1, close() {} });
+  };
 
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
@@ -16699,7 +16732,7 @@ test("16a render() draws board rect+line+sprite quads from the Go GPU bundle (M1
   const spriteMaterial = bundle.materials[bundle.objects[3].materialIndex];
   assert.equal(spriteMaterial.kind, "sprite");
   assert.equal(spriteMaterial.texture, "/logo.png", "sprite material carries Texture=Src (the 2B wire contract)");
-  assert.equal(spriteMaterial.shaderBackend, undefined, "sprite material has NO Selena fields until 2B attaches board_sprite.sel");
+  assert.equal(spriteMaterial.shaderBackend, undefined, "sprite material has NO Selena fields (it rides the default PBR object path)");
 
   // The Go wire shape (lineWidth 1 from the typed CanvasBoardNode path) must
   // remain inside 16a's supported envelope at mount-selection time too.
@@ -16716,7 +16749,7 @@ test("16a render() draws board rect+line+sprite quads from the Go GPU bundle (M1
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-line-entries"), "0", "line quads draw as mesh objects, not via a line pipeline");
 
   // Rect + line draws share the one Selena BoardFill pipeline; the sprite
-  // draw goes through the default PBR pipeline (its Selena attach is 2B).
+  // draw goes through the default PBR pipeline (sprites use no Selena shader).
   const selenaPipelines = harness.fake.state.renderPipelines.filter(
     (pipeline) => pipeline.desc && typeof pipeline.desc.label === "string" && pipeline.desc.label.startsWith("gosx-selena-BoardFill"),
   );
@@ -16724,7 +16757,7 @@ test("16a render() draws board rect+line+sprite quads from the Go GPU bundle (M1
   for (const draw of mains[0].draws.slice(0, 3)) {
     assert.equal(draw.pipeline, selenaPipelines[0], "rect/line quads draw through the BoardFill pipeline");
   }
-  assert.notEqual(mains[0].draws[3].pipeline, selenaPipelines[0], "the sprite quad draws through the default (PBR) pipeline until 2B");
+  assert.notEqual(mains[0].draws[3].pipeline, selenaPipelines[0], "the sprite quad draws through the default (PBR) pipeline, not the BoardFill selena one");
 
   // The wire payloads are left exactly as marshaled (labels draw in 2C; the
   // lines/sprites records stay for the painter path and diagnostics).
@@ -16734,6 +16767,104 @@ test("16a render() draws board rect+line+sprite quads from the Go GPU bundle (M1
   assert.equal(bundle.lines.length, 2);
   assert.equal(bundle.lines[0].from.x, 216);
   assert.equal(bundle.lines[0].lineWidth, 1);
+});
+
+test("16a board sprite texture lifecycle: placeholder on first frame, image upload after load, per-URL cache", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const bundle = JSON.parse(goBoardBundleMixedJSON);
+
+  // First frame: the sprite's material.texture is "/logo.png". 16a resolves
+  // it through wgpuLoadTexture, which immediately creates a 1×1 white
+  // placeholder texture (so the sprite shows a white box, not garbage, while
+  // the image loads) and kicks off an async Image load.
+  harness.renderer.render(bundle, {});
+  const placeholderWrites = harness.fake.state.writeTextureCalls.filter(
+    (call) => call.data && call.data.length === 4 && call.data[0] === 255 && call.data[1] === 255 && call.data[2] === 255 && call.data[3] === 255,
+  );
+  // Two 1×1 white writes: 16a's init-time global placeholder AND the per-URL
+  // sprite placeholder. The sprite one is what proves the placeholder path ran
+  // for "/logo.png" before the image resolved.
+  assert.ok(placeholderWrites.length >= 2, "the sprite URL must get a 1×1 white placeholder upload before its image loads");
+  assert.ok(harness.env.imageLoads.includes("/logo.png"), "the sprite URL must start an Image load");
+  assert.equal(harness.fake.state.copyExternalCalls.length, 0, "no real image upload yet on the first frame (still loading)");
+
+  // Drain the FakeImage onload (setTimeout(0)) + createImageBitmap microtask:
+  // the resolved image is uploaded via copyExternalImageToTexture into a fresh
+  // texture, replacing the placeholder in the per-URL cache.
+  await flushAsyncWork();
+  assert.equal(harness.fake.state.copyExternalCalls.length, 1, "the loaded image must upload exactly once via copyExternalImageToTexture");
+
+  const imageLoadCountAfterFirst = harness.env.imageLoads.filter((src) => src === "/logo.png").length;
+  const copyCountAfterFirst = harness.fake.state.copyExternalCalls.length;
+
+  // Second frame, same bundle/URL: the textureCache is keyed by URL, so
+  // wgpuLoadTexture must return the cached record without constructing another
+  // Image or issuing another upload.
+  harness.renderer.render(bundle, {});
+  await flushAsyncWork();
+  assert.equal(
+    harness.env.imageLoads.filter((src) => src === "/logo.png").length,
+    imageLoadCountAfterFirst,
+    "re-rendering the same sprite URL must hit the per-URL cache (no second Image load)",
+  );
+  assert.equal(
+    harness.fake.state.copyExternalCalls.length,
+    copyCountAfterFirst,
+    "cached texture must not re-upload on the second frame",
+  );
+});
+
+test("16a board sprite draws on the default PBR pipeline with its albedo texture bound; rects/lines stay on BoardFill", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const bundle = JSON.parse(goBoardBundleMixedJSON);
+
+  // Render once (placeholder), flush the load, render again so the material
+  // bind group is rebuilt with the resolved (non-placeholder) albedo view.
+  harness.renderer.render(bundle, {});
+  await flushAsyncWork();
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  const main = mains[mains.length - 1];
+
+  // Draw order parity with the 26b1 painter: rect, both lines, then the
+  // sprite — four 6-vertex quads.
+  assert.deepEqual(main.draws.map((draw) => draw.vertexCount), [6, 6, 6, 6], "rect, both lines, and the sprite each draw their quad");
+
+  // The flat rect/line materials share the one BoardFill selena pipeline; the
+  // sprite carries no Selena fields, so it falls through to the default PBR
+  // object pipeline (cullMode "none").
+  const selenaPipelines = harness.fake.state.renderPipelines.filter(
+    (pipeline) => pipeline.desc && typeof pipeline.desc.label === "string" && pipeline.desc.label.startsWith("gosx-selena-BoardFill"),
+  );
+  assert.equal(selenaPipelines.length, 1, "rect/line flat materials share one BoardFill pipeline");
+  for (const draw of main.draws.slice(0, 3)) {
+    assert.equal(draw.pipeline, selenaPipelines[0], "rect/line quads draw through the BoardFill pipeline");
+  }
+  const spriteDraw = main.draws[3];
+  assert.notEqual(spriteDraw.pipeline, selenaPipelines[0], "the sprite draws through the default PBR pipeline, not BoardFill");
+  assert.match(spriteDraw.pipeline.desc.label, /gosx-pbr-/, "the sprite pipeline is the PBR object pipeline");
+  assert.equal(spriteDraw.pipeline.desc.primitive.cullMode, "none", "the PBR board pipeline disables culling so the +Z board quad stays visible");
+
+  // The sprite's material bind group (the last PBR material bind group bound
+  // before the sprite draw, slot 1) must carry the resolved albedo texture
+  // view at binding 1 — a recorded copyExternalImageToTexture target, NOT the
+  // init-time placeholder. This proves the texture reached the draw.
+  const copyTargetIds = new Set(
+    harness.fake.state.copyExternalCalls.map((call) => call.texture && call.texture.id).filter((id) => id != null),
+  );
+  assert.equal(copyTargetIds.size, 1, "exactly one uploaded sprite texture");
+  const materialBindGroups = main.bindGroups.filter(
+    (entry) => entry.slot === 1 && entry.group && entry.group.desc && Array.isArray(entry.group.desc.entries),
+  );
+  assert.ok(materialBindGroups.length >= 1, "the sprite draw binds a PBR material bind group at slot 1");
+  const spriteBindGroup = materialBindGroups[materialBindGroups.length - 1].group;
+  const albedoEntry = spriteBindGroup.desc.entries.find((entry) => entry.binding === 1);
+  assert.ok(albedoEntry && albedoEntry.resource && albedoEntry.resource.__kind === "textureView", "binding 1 is the albedo texture view");
+  assert.ok(copyTargetIds.has(albedoEntry.resource.textureId), "the bound albedo view is the uploaded sprite texture, not the placeholder");
+
+  // Sprite quads draw as mesh objects, never via a line pipeline.
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-line-entries"), "0");
 });
 
 test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D board bundles", async () => {
