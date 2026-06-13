@@ -53,7 +53,7 @@ func TestTinyGoBuildArgsUseSlimRuntimeByDefault(t *testing.T) {
 	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
 
 	args := tinyGoBuildArgs("runtime.wasm")
-	if !stringSliceContains(args, "-tags=gosx_tiny_runtime") {
+	if !stringSliceContains(args, "-tags=tinygo gosx_tiny_runtime") {
 		t.Fatalf("expected slim TinyGo runtime tag in args: %v", args)
 	}
 	if !stringSliceContains(args, "-no-debug") {
@@ -68,7 +68,10 @@ func TestTinyGoBuildArgsCanKeepFullRuntime(t *testing.T) {
 	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
 
 	args := tinyGoBuildArgs("runtime.wasm")
-	if stringSliceContains(args, "-tags=gosx_tiny_runtime") {
+	if !stringSliceContains(args, "-tags=tinygo") {
+		t.Fatalf("expected explicit TinyGo build tag in full runtime args: %v", args)
+	}
+	if stringSliceContains(args, "-tags=tinygo gosx_tiny_runtime") {
 		t.Fatalf("did not expect slim TinyGo runtime tag in full runtime args: %v", args)
 	}
 	if !stringSliceContains(args, "-no-debug") {
@@ -83,7 +86,7 @@ func TestTinyGoBuildArgsAppendVariantTags(t *testing.T) {
 	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
 
 	args := tinyGoBuildArgs("runtime.wasm", "gosx_tiny_islands_only")
-	if !stringSliceContains(args, "-tags=gosx_tiny_runtime gosx_tiny_islands_only") {
+	if !stringSliceContains(args, "-tags=tinygo gosx_tiny_runtime gosx_tiny_islands_only") {
 		t.Fatalf("expected combined TinyGo runtime tags in args: %v", args)
 	}
 }
@@ -111,6 +114,25 @@ func TestTinyGoIslandOnlyTagsRelyOnTinyRuntimeDefault(t *testing.T) {
 	}
 	if !stringSliceContains(args, "gosx_tiny_islands_only") {
 		t.Fatalf("expected islands-only tag: %v", args)
+	}
+}
+
+func TestTinyGoWASMDependencyClosurePrunesHostShaderCompiler(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+
+	packages, modules, err := tinyGoWASMDependencyClosure(".", tinyGoWASMTags()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pkg := range packages {
+		if pkg.ImportPath == "m31labs.dev/gosx/scene" {
+			t.Fatalf("TinyGo WASM closure unexpectedly includes host scene package: %+v", pkg)
+		}
+	}
+	for _, module := range modules {
+		if module.Path == "m31labs.dev/selena" {
+			t.Fatalf("TinyGo WASM closure unexpectedly includes Selena: %+v", module)
+		}
 	}
 }
 

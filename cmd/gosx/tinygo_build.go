@@ -57,7 +57,8 @@ func resolveWASMCompiler(opts BuildOptions, lookPath func(string) (string, error
 }
 
 func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
-	scratchDir, cleanup, err := prepareTinyGoWASMModule(projectDir, gosxRoot)
+	tags := tinyGoWASMTags(extraTags...)
+	scratchDir, cleanup, err := prepareTinyGoWASMModule(projectDir, gosxRoot, tags...)
 	if err != nil {
 		return err
 	}
@@ -93,11 +94,7 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 		"build",
 		"-target", "wasm",
 	}
-	tags := make([]string, 0, 1+len(extraTags))
-	if !tinyGoFullRuntimeEnabled() {
-		tags = append(tags, "gosx_tiny_runtime")
-	}
-	tags = append(tags, extraTags...)
+	tags := tinyGoWASMTags(extraTags...)
 	if len(tags) > 0 {
 		args = append(args, "-tags="+strings.Join(tags, " "))
 	}
@@ -108,6 +105,26 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 		gosxModuleImportPath+"/client/wasm",
 	)
 	return args
+}
+
+func tinyGoWASMTags(extraTags ...string) []string {
+	tags := []string{"tinygo"}
+	if !tinyGoFullRuntimeEnabled() {
+		tags = append(tags, "gosx_tiny_runtime")
+	}
+	tags = append(tags, extraTags...)
+
+	out := tags[:0]
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	return out
 }
 
 func writeTinyGoWASMExec(tinygoPath, runtimeDir string) (HashedAsset, error) {
@@ -142,8 +159,8 @@ func tinyGoFullRuntimeEnabled() bool {
 	}
 }
 
-func prepareTinyGoWASMModule(projectDir, gosxRoot string) (string, func(), error) {
-	packages, modules, err := tinyGoWASMDependencyClosure(projectDir)
+func prepareTinyGoWASMModule(projectDir, gosxRoot string, tags ...string) (string, func(), error) {
+	packages, modules, err := tinyGoWASMDependencyClosure(projectDir, tags...)
 	if err != nil {
 		return "", nil, err
 	}
@@ -176,8 +193,13 @@ func prepareTinyGoWASMModule(projectDir, gosxRoot string) (string, func(), error
 	return scratchDir, cleanup, nil
 }
 
-func tinyGoWASMDependencyClosure(projectDir string) ([]tinyGoPackage, []tinyGoExternalModule, error) {
-	cmd := exec.Command("go", "list", "-deps", "-json", gosxModuleImportPath+"/client/wasm")
+func tinyGoWASMDependencyClosure(projectDir string, tags ...string) ([]tinyGoPackage, []tinyGoExternalModule, error) {
+	args := []string{"list", "-deps", "-json"}
+	if len(tags) > 0 {
+		args = append(args, "-tags="+strings.Join(tags, " "))
+	}
+	args = append(args, gosxModuleImportPath+"/client/wasm")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = projectDir
 	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOOS=js", "GOARCH=wasm", "GOWORK=off")
 	out, err := cmd.Output()

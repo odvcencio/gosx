@@ -12,55 +12,21 @@
 // directly. render/bundle2d imports BOTH client/vm and client/bridge (it
 // re-marshals the WASM bundle byte-for-byte), so neither client/vm nor
 // client/bridge can import bundle2d without a cycle. AttachBoardGPUGeometry and
-// its helpers depend only on engine + scene (verified: no client/vm, no
-// client/bridge, no gosx reference), so hoisting them into this dependency-free
-// leaf lets the live adapter route to the GPU bundle while bundle2d keeps
-// delegating to the same implementation (its ComputeCanvasGPUBundle* compose
-// ComputeCanvasBundle + AttachBoardGPUGeometry, and its goldens stay green).
+// its helpers depend only on engine + the embedded/static BoardFill shader
+// payload (verified: no scene, client/vm, client/bridge, or gosx runtime
+// reference), so hoisting them into this dependency-free leaf lets the live
+// adapter route to the GPU bundle while bundle2d keeps delegating to the same
+// implementation (its ComputeCanvasGPUBundle* compose ComputeCanvasBundle +
+// AttachBoardGPUGeometry, and its goldens stay green).
 package boardgpu
 
 import (
-	_ "embed"
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 
 	rootengine "m31labs.dev/gosx/engine"
-	"m31labs.dev/gosx/scene"
 )
-
-// BoardFillSelenaSource is the Selena (.sel) source for the canvas board's rect
-// fill material. It is embedded as a string (no compiler dependency here); the
-// WebGPU board path compiles it via scene.CompileSelenaMaterial and attaches the
-// emitted WGSL to the rect RenderMaterial's CustomVertexWGSL/CustomFragmentWGSL
-// so the 16a JS WebGPU renderer draws the fill unlit at full color (fixing the
-// lit-pipeline ambient dimming). The per-rect color rides the baseColor uniform.
-//
-//go:embed board_fill.sel
-var BoardFillSelenaSource string
-
-// boardFill* memoize the one-time compile of BoardFillSelenaSource. The source
-// is embedded and immutable, so the WGSL is identical for every bundle; a
-// compile failure must never panic a render path — boardFillCompiled returns
-// the error and attachBoardFillMaterials degrades to no-attach, surfacing the
-// failure on the bundle's Diagnostics (the renderer then falls back to its
-// default material path, i.e. the pre-Selena dim-lit fill).
-var (
-	boardFillOnce sync.Once
-	boardFillMat  scene.CustomMaterial
-	boardFillErr  error
-)
-
-func boardFillCompiled() (scene.CustomMaterial, error) {
-	boardFillOnce.Do(func() {
-		boardFillMat, _, boardFillErr = scene.CompileSelenaMaterial(
-			[]byte(BoardFillSelenaSource),
-			scene.SelenaMaterialOptions{Material: "BoardFill"},
-		)
-	})
-	return boardFillMat, boardFillErr
-}
 
 // boardFillBaseColor parses a #rrggbb fill color into the normalized RGB
 // triplet the BoardFill baseColor uniform consumes (float32 components,

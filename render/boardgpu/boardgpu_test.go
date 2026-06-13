@@ -1,6 +1,7 @@
 package boardgpu
 
 import (
+	"encoding/json"
 	"math"
 	"reflect"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/render/bundle"
+	"m31labs.dev/gosx/scene"
 )
 
 // TestBoardFillBaseColor pins the #rrggbb→vec3 conversion and the fallback
@@ -34,6 +36,33 @@ func TestBoardFillSelenaSourceEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(BoardFillSelenaSource, "material BoardFill") {
 		t.Errorf("BoardFillSelenaSource missing the BoardFill material declaration")
+	}
+}
+
+func TestBoardFillStaticMaterialMatchesSelenaCompile(t *testing.T) {
+	material, _, err := scene.CompileSelenaMaterial(
+		[]byte(BoardFillSelenaSource),
+		scene.SelenaMaterialOptions{Material: "BoardFill"},
+	)
+	if err != nil {
+		t.Fatalf("CompileSelenaMaterial(BoardFill): %v", err)
+	}
+	if material.VertexWGSL != boardFillStaticMaterial.VertexWGSL {
+		t.Fatalf("static vertex WGSL drifted from Selena output")
+	}
+	if material.FragmentWGSL != boardFillStaticMaterial.FragmentWGSL {
+		t.Fatalf("static fragment WGSL drifted from Selena output")
+	}
+	got, err := json.Marshal(boardFillStaticMaterial.ShaderLayout)
+	if err != nil {
+		t.Fatalf("marshal static shader layout: %v", err)
+	}
+	want, err := json.Marshal(material.ShaderLayout)
+	if err != nil {
+		t.Fatalf("marshal compiled shader layout: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("static shader layout drifted from Selena output\ngot:  %s\nwant: %s", got, want)
 	}
 }
 
