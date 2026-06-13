@@ -833,6 +833,7 @@ func Page() Node {
 		<PostFX.SSAO radius={3} intensity={0.4} bias={0.02} />
 		<PostFX.DOF focusDistance={7} aperture={0.05} maxBlur={6} />
 		<PostFX.Bloom threshold={0.65} intensity={0.6} radius={8.0} />
+		<PostFX.Custom name="lens" vertexWGSL="vertex wgsl" fragmentWGSL="fragment wgsl" vertexGLSL="vertex glsl" fragmentGLSL="fragment glsl" shaderBackend="selena" />
 		<PostFX.Tonemap mode="aces" exposure={1.0} />
 		<LineBasicMaterial name="guide-line" color="#93c5fd" width={2} />
 		<LineDashedMaterial name="dash-line" color="#facc15" width={2} dashSize={6} gapSize={4} />
@@ -901,6 +902,7 @@ func Page() Node {
 		`<AxesHelper`,
 		`<GridHelper`,
 		`<TransformControls`,
+		`<PostFX.Custom`,
 		`data-gosx-component="Mesh"`,
 		`data-gosx-component="Model"`,
 		`data-gosx-component="Points"`,
@@ -934,6 +936,13 @@ func Page() Node {
 		`"kind": "dof"`,
 		`"focusDistance": 7`,
 		`"kind": "bloom"`,
+		`"kind": "customPost"`,
+		`"name": "lens"`,
+		`"vertexWGSL": "vertex wgsl"`,
+		`"fragmentWGSL": "fragment wgsl"`,
+		`"vertexGLSL": "vertex glsl"`,
+		`"fragmentGLSL": "fragment glsl"`,
+		`"shaderBackend": "selena"`,
 		`"kind": "tonemap"`,
 		`"materials": [`,
 		`"kind": "line-basic"`,
@@ -1381,6 +1390,7 @@ func Page() Node {
 				Height:               360,
 				Label:                "Typed Scene3D",
 				Background:           "#08151f",
+				MaxFrameRate:         48,
 				ProgramRef:           "/api/runtime/scene-program",
 				PickSignalNamespace:  "$scene.demo.pick",
 				EventSignalNamespace: "$scene.demo.event",
@@ -1482,6 +1492,7 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`/api/runtime/scene-program`,
+		`"maxFrameRate": 48`,
 		`"near": 0.15`,
 		`"far": 64`,
 		`"$scene.demo.pick"`,

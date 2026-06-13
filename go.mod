@@ -52,3 +52,7 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 	m31labs.dev/eos v0.1.4
 )
+
+// TODO(release): remove once m31labs.dev/selena v0.2.0 (or later) is published
+// with SurfaceKindPoints + SurfaceKindPost in bindings.
+replace m31labs.dev/selena => ../selena

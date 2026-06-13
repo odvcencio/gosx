@@ -31,6 +31,13 @@ type CompressedArray struct {
 // post-effect type implements json.Marshaler) now has proper json tags,
 // reflection-based json.Marshal(sceneIR) produces the same wire shape
 // directly, and Props.MarshalJSON takes that fast path.
+//
+// ShaderLib carries deduplicated large shader strings hoisted from
+// computeParticles[].computeWGSL and objects[].custom*WGSL/customVertex/
+// customFragment when the same source appears ≥2 times in the scene.
+// The inline field is replaced with a sibling *Ref field (e.g.
+// computeWGSLRef:"sl:..."). The JS hydrate path inflates refs back before
+// downstream renderers see them.
 type SceneIR struct {
 	Schema             string               `json:"schema,omitempty"`
 	Objects            []ObjectIR           `json:"objects,omitempty"`
@@ -52,6 +59,13 @@ type SceneIR struct {
 	// faithfully render this scene, plus per-backend feature degradations. It
 	// is computed once during Props.SceneIR() and ships to the JS runtime.
 	BackendCaps *capability.BackendCaps `json:"backendCaps,omitempty"`
+	// ShaderLib holds deduplicated shader sources hoisted from inline node
+	// fields (computeWGSL, customVertex, customFragment, etc.) when the same
+	// source appears ≥2 times. Keys are "sl:<16hex>" content hashes.
+	// The JS hydrate path inflates refs back to inline fields before any
+	// downstream renderer sees them. Native renderers receive kernels via
+	// Config override and may ignore this field.
+	ShaderLib map[string]string `json:"shaderLib,omitempty"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
@@ -88,81 +102,86 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
-	ID                 string         `json:"id"`
-	Kind               string         `json:"kind"`
-	Size               float64        `json:"size,omitempty"`
-	Width              float64        `json:"width,omitempty"`
-	Height             float64        `json:"height,omitempty"`
-	Depth              float64        `json:"depth,omitempty"`
-	Radius             float64        `json:"radius,omitempty"`
-	Segments           int            `json:"segments,omitempty"`
-	Points             []Vector3      `json:"points,omitempty"`
-	LineSegments       [][2]int       `json:"lineSegments,omitempty"`
-	LineWidth          float64        `json:"lineWidth,omitempty"`
-	RadiusTop          float64        `json:"radiusTop,omitempty"`
-	RadiusBottom       float64        `json:"radiusBottom,omitempty"`
-	Tube               float64        `json:"tube,omitempty"`
-	RadialSegments     int            `json:"radialSegments,omitempty"`
-	TubularSegments    int            `json:"tubularSegments,omitempty"`
-	MaterialKind       string         `json:"materialKind,omitempty"`
-	Color              string         `json:"color,omitempty"`
-	Texture            string         `json:"texture,omitempty"`
-	Opacity            *float64       `json:"opacity,omitempty"`
-	Emissive           *float64       `json:"emissive,omitempty"`
-	BlendMode          string         `json:"blendMode,omitempty"`
-	RenderPass         string         `json:"renderPass,omitempty"`
-	Wireframe          *bool          `json:"wireframe,omitempty"`
-	LineDash           *bool          `json:"lineDash,omitempty"`
-	DashSize           float64        `json:"dashSize,omitempty"`
-	GapSize            float64        `json:"gapSize,omitempty"`
-	CustomVertex       string         `json:"customVertex,omitempty"`
-	CustomFragment     string         `json:"customFragment,omitempty"`
-	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
-	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
-	ShaderBackend      string         `json:"shaderBackend,omitempty"`
-	ShaderLayout       map[string]any `json:"shaderLayout,omitempty"`
-	Pickable           *bool          `json:"pickable,omitempty"`
-	Selected           bool           `json:"selected,omitempty"`
-	OutlineColor       string         `json:"outlineColor,omitempty"`
-	OutlineWidth       float64        `json:"outlineWidth,omitempty"`
-	CastShadow         bool           `json:"castShadow,omitempty"`
-	ReceiveShadow      bool           `json:"receiveShadow,omitempty"`
-	DepthWrite         *bool          `json:"depthWrite,omitempty"`
-	Roughness          float64        `json:"roughness,omitempty"`
-	Metalness          float64        `json:"metalness,omitempty"`
-	Clearcoat          float64        `json:"clearcoat,omitempty"`
-	Sheen              float64        `json:"sheen,omitempty"`
-	Transmission       float64        `json:"transmission,omitempty"`
-	Iridescence        float64        `json:"iridescence,omitempty"`
-	Anisotropy         float64        `json:"anisotropy,omitempty"`
-	NormalMap          string         `json:"normalMap,omitempty"`
-	RoughnessMap       string         `json:"roughnessMap,omitempty"`
-	MetalnessMap       string         `json:"metalnessMap,omitempty"`
-	EmissiveMap        string         `json:"emissiveMap,omitempty"`
-	LODGroup           string         `json:"lodGroup,omitempty"`
-	LODLevel           int            `json:"lodLevel,omitempty"`
-	LODMinDistance     float64        `json:"lodMinDistance,omitempty"`
-	LODMaxDistance     float64        `json:"lodMaxDistance,omitempty"`
-	X                  float64        `json:"x,omitempty"`
-	Y                  float64        `json:"y,omitempty"`
-	Z                  float64        `json:"z,omitempty"`
-	RotationX          float64        `json:"rotationX,omitempty"`
-	RotationY          float64        `json:"rotationY,omitempty"`
-	RotationZ          float64        `json:"rotationZ,omitempty"`
-	SpinX              float64        `json:"spinX,omitempty"`
-	SpinY              float64        `json:"spinY,omitempty"`
-	SpinZ              float64        `json:"spinZ,omitempty"`
-	ShiftX             float64        `json:"shiftX,omitempty"`
-	ShiftY             float64        `json:"shiftY,omitempty"`
-	ShiftZ             float64        `json:"shiftZ,omitempty"`
-	DriftSpeed         float64        `json:"driftSpeed,omitempty"`
-	DriftPhase         float64        `json:"driftPhase,omitempty"`
-	Transition         TransitionIR   `json:"transition,omitzero"`
-	InState            map[string]any `json:"inState,omitempty"`
-	OutState           map[string]any `json:"outState,omitempty"`
-	Live               []string       `json:"live,omitempty"`
-	Vertices           *MeshVertices  `json:"vertices,omitempty"`
+	ID                 string    `json:"id"`
+	Kind               string    `json:"kind"`
+	Size               float64   `json:"size,omitempty"`
+	Width              float64   `json:"width,omitempty"`
+	Height             float64   `json:"height,omitempty"`
+	Depth              float64   `json:"depth,omitempty"`
+	Radius             float64   `json:"radius,omitempty"`
+	Segments           int       `json:"segments,omitempty"`
+	Points             []Vector3 `json:"points,omitempty"`
+	LineSegments       [][2]int  `json:"lineSegments,omitempty"`
+	LineWidth          float64   `json:"lineWidth,omitempty"`
+	RadiusTop          float64   `json:"radiusTop,omitempty"`
+	RadiusBottom       float64   `json:"radiusBottom,omitempty"`
+	Tube               float64   `json:"tube,omitempty"`
+	RadialSegments     int       `json:"radialSegments,omitempty"`
+	TubularSegments    int       `json:"tubularSegments,omitempty"`
+	MaterialKind       string    `json:"materialKind,omitempty"`
+	Color              string    `json:"color,omitempty"`
+	Texture            string    `json:"texture,omitempty"`
+	Opacity            *float64  `json:"opacity,omitempty"`
+	Emissive           *float64  `json:"emissive,omitempty"`
+	BlendMode          string    `json:"blendMode,omitempty"`
+	RenderPass         string    `json:"renderPass,omitempty"`
+	Wireframe          *bool     `json:"wireframe,omitempty"`
+	LineDash           *bool     `json:"lineDash,omitempty"`
+	DashSize           float64   `json:"dashSize,omitempty"`
+	GapSize            float64   `json:"gapSize,omitempty"`
+	CustomVertex       string    `json:"customVertex,omitempty"`
+	CustomFragment     string    `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string    `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string    `json:"customFragmentWGSL,omitempty"`
+	// *Ref fields replace their counterparts when hoisted into SceneIR.ShaderLib.
+	CustomVertexRef       string         `json:"customVertexRef,omitempty"`
+	CustomFragmentRef     string         `json:"customFragmentRef,omitempty"`
+	CustomVertexWGSLRef   string         `json:"customVertexWGSLRef,omitempty"`
+	CustomFragmentWGSLRef string         `json:"customFragmentWGSLRef,omitempty"`
+	CustomUniforms        map[string]any `json:"customUniforms,omitempty"`
+	ShaderBackend         string         `json:"shaderBackend,omitempty"`
+	ShaderLayout          map[string]any `json:"shaderLayout,omitempty"`
+	Pickable              *bool          `json:"pickable,omitempty"`
+	Selected              bool           `json:"selected,omitempty"`
+	OutlineColor          string         `json:"outlineColor,omitempty"`
+	OutlineWidth          float64        `json:"outlineWidth,omitempty"`
+	CastShadow            bool           `json:"castShadow,omitempty"`
+	ReceiveShadow         bool           `json:"receiveShadow,omitempty"`
+	DepthWrite            *bool          `json:"depthWrite,omitempty"`
+	Roughness             float64        `json:"roughness,omitempty"`
+	Metalness             float64        `json:"metalness,omitempty"`
+	Clearcoat             float64        `json:"clearcoat,omitempty"`
+	Sheen                 float64        `json:"sheen,omitempty"`
+	Transmission          float64        `json:"transmission,omitempty"`
+	Iridescence           float64        `json:"iridescence,omitempty"`
+	Anisotropy            float64        `json:"anisotropy,omitempty"`
+	NormalMap             string         `json:"normalMap,omitempty"`
+	RoughnessMap          string         `json:"roughnessMap,omitempty"`
+	MetalnessMap          string         `json:"metalnessMap,omitempty"`
+	EmissiveMap           string         `json:"emissiveMap,omitempty"`
+	LODGroup              string         `json:"lodGroup,omitempty"`
+	LODLevel              int            `json:"lodLevel,omitempty"`
+	LODMinDistance        float64        `json:"lodMinDistance,omitempty"`
+	LODMaxDistance        float64        `json:"lodMaxDistance,omitempty"`
+	X                     float64        `json:"x,omitempty"`
+	Y                     float64        `json:"y,omitempty"`
+	Z                     float64        `json:"z,omitempty"`
+	RotationX             float64        `json:"rotationX,omitempty"`
+	RotationY             float64        `json:"rotationY,omitempty"`
+	RotationZ             float64        `json:"rotationZ,omitempty"`
+	SpinX                 float64        `json:"spinX,omitempty"`
+	SpinY                 float64        `json:"spinY,omitempty"`
+	SpinZ                 float64        `json:"spinZ,omitempty"`
+	ShiftX                float64        `json:"shiftX,omitempty"`
+	ShiftY                float64        `json:"shiftY,omitempty"`
+	ShiftZ                float64        `json:"shiftZ,omitempty"`
+	DriftSpeed            float64        `json:"driftSpeed,omitempty"`
+	DriftPhase            float64        `json:"driftPhase,omitempty"`
+	Transition            TransitionIR   `json:"transition,omitzero"`
+	InState               map[string]any `json:"inState,omitempty"`
+	OutState              map[string]any `json:"outState,omitempty"`
+	Live                  []string       `json:"live,omitempty"`
+	Vertices              *MeshVertices  `json:"vertices,omitempty"`
 }
 
 // MarshalJSON encodes ObjectIR via the standard reflection path but
@@ -417,10 +436,22 @@ type PointsIR struct {
 	PreviewPositions    []CompressedArray `json:"previewPositions,omitempty"`
 	PreviewSizes        []CompressedArray `json:"previewSizes,omitempty"`
 	PositionStride      int               `json:"positionStride,omitempty"`
-	Transition          TransitionIR      `json:"transition,omitzero"`
-	InState             map[string]any    `json:"inState,omitempty"`
-	OutState            map[string]any    `json:"outState,omitempty"`
-	Live                []string          `json:"live,omitempty"`
+	// Authored shader material fields — same envelope as ObjectIR.
+	CustomVertex          string         `json:"customVertex,omitempty"`
+	CustomFragment        string         `json:"customFragment,omitempty"`
+	CustomVertexWGSL      string         `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL    string         `json:"customFragmentWGSL,omitempty"`
+	CustomVertexRef       string         `json:"customVertexRef,omitempty"`
+	CustomFragmentRef     string         `json:"customFragmentRef,omitempty"`
+	CustomVertexWGSLRef   string         `json:"customVertexWGSLRef,omitempty"`
+	CustomFragmentWGSLRef string         `json:"customFragmentWGSLRef,omitempty"`
+	CustomUniforms        map[string]any `json:"customUniforms,omitempty"`
+	ShaderBackend         string         `json:"shaderBackend,omitempty"`
+	ShaderLayout          map[string]any `json:"shaderLayout,omitempty"`
+	Transition            TransitionIR   `json:"transition,omitzero"`
+	InState               map[string]any `json:"inState,omitempty"`
+	OutState              map[string]any `json:"outState,omitempty"`
+	Live                  []string       `json:"live,omitempty"`
 }
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
@@ -489,6 +520,23 @@ type ComputeParticlesIR struct {
 	ComputeWGSL    string `json:"computeWGSL,omitempty"`
 	ComputeEntry   string `json:"computeEntry,omitempty"`
 	ComputeBackend string `json:"computeBackend,omitempty"`
+	// ComputeWGSLRef replaces ComputeWGSL when the kernel source has been
+	// hoisted into SceneIR.ShaderLib. The JS hydrate path inflates this back
+	// to ComputeWGSL before downstream renderers see it.
+	ComputeWGSLRef string `json:"computeWGSLRef,omitempty"`
+
+	// Optional authored render-pass shader override — same envelope as ObjectIR.
+	RenderVertex          string         `json:"renderVertex,omitempty"`
+	RenderFragment        string         `json:"renderFragment,omitempty"`
+	RenderVertexWGSL      string         `json:"renderVertexWGSL,omitempty"`
+	RenderFragmentWGSL    string         `json:"renderFragmentWGSL,omitempty"`
+	RenderVertexRef       string         `json:"renderVertexRef,omitempty"`
+	RenderFragmentRef     string         `json:"renderFragmentRef,omitempty"`
+	RenderVertexWGSLRef   string         `json:"renderVertexWGSLRef,omitempty"`
+	RenderFragmentWGSLRef string         `json:"renderFragmentWGSLRef,omitempty"`
+	RenderUniforms        map[string]any `json:"renderUniforms,omitempty"`
+	RenderShaderBackend   string         `json:"renderShaderBackend,omitempty"`
+	RenderShaderLayout    map[string]any `json:"renderShaderLayout,omitempty"`
 }
 
 // ParticleEmitterIR describes the emitter configuration for a GPU particle system.
@@ -749,6 +797,56 @@ func (g Graph) SceneIR() SceneIR {
 	}
 }
 
+// MarshalJSON serializes SceneIR to its wire JSON form. When any qualifying
+// shader string (computeWGSL, customVertexWGSL, etc.) appears ≥2 times across
+// the scene's nodes, MarshalJSON hoists the duplicates into a top-level
+// "shaderLib" map and replaces the inline fields with "*Ref" fields. This
+// is transparent to all downstream consumers: the JS hydrate path inflates
+// the refs back before renderers see them.
+//
+// Implementation note: we produce the map form via legacyProps() so that the
+// applyShaderLib pass can mutate map values in place — the struct-tag reflection
+// path doesn't give us mutable access to nested object fields at low cost.
+func (ir SceneIR) MarshalJSON() ([]byte, error) {
+	m := ir.legacyProps()
+	if len(m) == 0 {
+		return []byte("{}"), nil
+	}
+	applyShaderLib(m)
+	return json.Marshal(m)
+}
+
+// UnmarshalJSON deserializes SceneIR from its wire JSON form, inflating any
+// shaderLib refs back to inline fields before populating the struct.
+func (ir *SceneIR) UnmarshalJSON(data []byte) error {
+	// Use a type alias to avoid infinite recursion.
+	type sceneIRAlias SceneIR
+	var alias sceneIRAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	// Inflate shaderLib refs on the raw map so that the *Ref struct fields
+	// are populated — then re-unmarshal into the alias. This is a two-pass
+	// approach that handles both the struct Ref fields and the inline fields.
+	//
+	// Simpler path: inflate on the map, re-marshal, re-unmarshal.
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	inflateShaderLib(raw)
+	inflated, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	var final sceneIRAlias
+	if err := json.Unmarshal(inflated, &final); err != nil {
+		return err
+	}
+	*ir = SceneIR(final)
+	return nil
+}
+
 func (ir SceneIR) isZero() bool {
 	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
 }
@@ -818,6 +916,13 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if ir.BackendCaps != nil {
 		out["backendCaps"] = ir.BackendCaps
+	}
+	if len(ir.ShaderLib) > 0 {
+		lib := make(map[string]string, len(ir.ShaderLib))
+		for key, source := range ir.ShaderLib {
+			lib[key] = source
+		}
+		out["shaderLib"] = lib
 	}
 	return out
 }
@@ -1095,6 +1200,22 @@ func (item PointsIR) legacyProps() map[string]any {
 	setNumeric(record, "spinY", item.SpinY)
 	setNumeric(record, "spinZ", item.SpinZ)
 	setInt(record, "positionStride", item.PositionStride)
+	// Authored shader fields (nil → absent → builtin pipeline used).
+	setString(record, "customVertex", item.CustomVertex)
+	setString(record, "customFragment", item.CustomFragment)
+	setString(record, "customVertexWGSL", item.CustomVertexWGSL)
+	setString(record, "customFragmentWGSL", item.CustomFragmentWGSL)
+	setString(record, "customVertexRef", item.CustomVertexRef)
+	setString(record, "customFragmentRef", item.CustomFragmentRef)
+	setString(record, "customVertexWGSLRef", item.CustomVertexWGSLRef)
+	setString(record, "customFragmentWGSLRef", item.CustomFragmentWGSLRef)
+	if len(item.CustomUniforms) > 0 {
+		record["customUniforms"] = item.CustomUniforms
+	}
+	setString(record, "shaderBackend", item.ShaderBackend)
+	if len(item.ShaderLayout) > 0 {
+		record["shaderLayout"] = item.ShaderLayout
+	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }
@@ -1299,6 +1420,22 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 	}
 	setString(record, "computeEntry", item.ComputeEntry)
 	setString(record, "computeBackend", item.ComputeBackend)
+	// Render-pass authored shader fields.
+	setString(record, "renderVertex", item.RenderVertex)
+	setString(record, "renderFragment", item.RenderFragment)
+	setString(record, "renderVertexWGSL", item.RenderVertexWGSL)
+	setString(record, "renderFragmentWGSL", item.RenderFragmentWGSL)
+	setString(record, "renderVertexRef", item.RenderVertexRef)
+	setString(record, "renderFragmentRef", item.RenderFragmentRef)
+	setString(record, "renderVertexWGSLRef", item.RenderVertexWGSLRef)
+	setString(record, "renderFragmentWGSLRef", item.RenderFragmentWGSLRef)
+	if len(item.RenderUniforms) > 0 {
+		record["renderUniforms"] = item.RenderUniforms
+	}
+	setString(record, "renderShaderBackend", item.RenderShaderBackend)
+	if len(item.RenderShaderLayout) > 0 {
+		record["renderShaderLayout"] = item.RenderShaderLayout
+	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }

@@ -115,6 +115,34 @@ func TestCanvasBoardOnPickStoredOnElement(t *testing.T) {
 	}
 }
 
+// TestCanvasBoardBackendDefaultOmitted preserves the existing painter default:
+// a CanvasBoard without an explicit backend must not emit a backend marker.
+func TestCanvasBoardBackendDefaultOmitted(t *testing.T) {
+	html := RenderHTML(CanvasBoard(CanvasBoardProps{}))
+	if strings.Contains(html, "data-gosx-canvas-backend") {
+		t.Errorf("backend attribute leaked by default: %s", html)
+	}
+}
+
+// TestCanvasBoardBackendWebGPUStoredOnElement is the M1 WebGPU opt-in seam:
+// the bootstrap reads this marker once at mount and routes the surface through
+// the existing webgpu backend path.
+func TestCanvasBoardBackendWebGPUStoredOnElement(t *testing.T) {
+	html := RenderHTML(CanvasBoard(CanvasBoardProps{Backend: CanvasBoardBackendWebGPU}))
+	if !strings.Contains(html, `data-gosx-canvas-backend="webgpu"`) {
+		t.Errorf("WebGPU backend marker not present: %s", html)
+	}
+}
+
+// TestCanvasBoardBackendUnknownOmitted keeps the public API conservative:
+// unsupported backend strings are ignored rather than emitted into the DOM.
+func TestCanvasBoardBackendUnknownOmitted(t *testing.T) {
+	html := RenderHTML(CanvasBoard(CanvasBoardProps{Backend: CanvasBoardBackend("painter")}))
+	if strings.Contains(html, "data-gosx-canvas-backend") {
+		t.Errorf("unknown backend attribute should be omitted: %s", html)
+	}
+}
+
 // TestCanvasBoardDefaultsZoom guards the public contract: an unspecified
 // zoom resolves to 1.0 in the wire payload (matches CanvasBoardAdapter's
 // internal default and avoids a divide-by-zero at the renderer).

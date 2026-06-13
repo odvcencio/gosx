@@ -10,6 +10,15 @@ import (
 // CanvasBoardAdapter. Keep stable — it crosses the Go/JS boundary.
 const CanvasBoardSurfaceKind = "canvas2d"
 
+// CanvasBoardBackend selects an optional CanvasBoard render backend marker.
+// Empty (the default) keeps the existing painter path. Unknown values are
+// intentionally ignored by the DOM emitter.
+type CanvasBoardBackend string
+
+// CanvasBoardBackendWebGPU opts a CanvasBoard into the M1 WebGPU renderer
+// path by emitting data-gosx-canvas-backend="webgpu" on the canvas.
+const CanvasBoardBackendWebGPU CanvasBoardBackend = "webgpu"
+
 // CanvasBoardProps configures a Miro/Figma-style 2D editing board. Author a
 // board from a .gsx page with:
 //
@@ -37,6 +46,10 @@ type CanvasBoardProps struct {
 
 	// Background is the canvas CSS background color (e.g. "#0f1720").
 	Background string
+
+	// Backend optionally marks the canvas for a specific render backend. Empty
+	// keeps the default painter path.
+	Backend CanvasBoardBackend
 
 	// Pan is the initial board pan offset in world units. May be wired to a
 	// shared signal at the .gsx authoring layer; this struct just captures
@@ -164,6 +177,9 @@ func CanvasBoard(props CanvasBoardProps) Node {
 	}
 	if props.TabIndex != nil {
 		attrs = append(attrs, Attr("tabindex", strconv.Itoa(*props.TabIndex)))
+	}
+	if props.Backend == CanvasBoardBackendWebGPU {
+		attrs = append(attrs, Attr("data-gosx-canvas-backend", string(CanvasBoardBackendWebGPU)))
 	}
 	if props.OnPick != "" {
 		attrs = append(attrs, Attr("data-gosx-onpick", props.OnPick))

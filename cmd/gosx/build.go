@@ -50,6 +50,10 @@ const (
 	wasmCompilerTinyGo wasmCompiler = "TinyGo"
 )
 
+type hashedWriteOptions struct {
+	CompressedSidecars bool
+}
+
 // contentHash returns the first 8 hex chars of sha256.
 func contentHash(data []byte) string {
 	h := sha256.Sum256(data)
@@ -58,19 +62,44 @@ func contentHash(data []byte) string {
 
 // writeHashed writes data to dir/name.hash.ext and returns the asset info.
 func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
+	return writeHashedWithOptions(dir, name, ext, data, hashedWriteOptions{CompressedSidecars: true})
+}
+
+func writeHashedWithOptions(dir, name, ext string, data []byte, opts hashedWriteOptions) (HashedAsset, error) {
 	hash := contentHash(data)
 	filename := fmt.Sprintf("%s.%s%s", name, hash, ext)
 	path := filepath.Join(dir, filename)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return HashedAsset{}, err
 	}
-	if err := writeCompressedSidecarsIfSmaller(path, data); err != nil {
-		return HashedAsset{}, err
+	if opts.CompressedSidecars {
+		if err := writeCompressedSidecarsIfSmaller(path, data); err != nil {
+			return HashedAsset{}, err
+		}
 	}
 	return HashedAsset{
 		File: filename,
 		Hash: hash,
 		Size: int64(len(data)),
+	}, nil
+}
+
+func writeHashedWithoutCompressedSidecars(dir, name, ext string, data []byte) (HashedAsset, error) {
+	asset, err := writeHashedWithOptions(dir, name, ext, data, hashedWriteOptions{CompressedSidecars: false})
+	if err != nil {
+		return HashedAsset{}, err
+	}
+	path := filepath.Join(dir, asset.File)
+	if err := removeFileIfExists(path + ".gz"); err != nil {
+		return HashedAsset{}, err
+	}
+	if err := removeFileIfExists(path + ".br"); err != nil {
+		return HashedAsset{}, err
+	}
+	return HashedAsset{
+		File: asset.File,
+		Hash: asset.Hash,
+		Size: asset.Size,
 	}, nil
 }
 
@@ -406,7 +435,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			result.err = fmt.Errorf("read compiled WASM: %w", err)
 			return
 		}
-		asset, err := writeHashed(runtimeDir, outputName, ".wasm", data)
+		writeRuntimeWASM := writeHashed
+		if opts.Dev {
+			writeRuntimeWASM = writeHashedWithoutCompressedSidecars
+		}
+		asset, err := writeRuntimeWASM(runtimeDir, outputName, ".wasm", data)
 		if err != nil {
 			result.err = fmt.Errorf("write wasm asset: %w", err)
 			return

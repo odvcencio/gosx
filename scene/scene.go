@@ -125,6 +125,9 @@ type Props struct {
 	ControlMoveSpeed      float64 `json:"controlMoveSpeed,omitempty"`
 	ScrollCameraStart     float64 `json:"scrollCameraStart,omitempty"`
 	ScrollCameraEnd       float64 `json:"scrollCameraEnd,omitempty"`
+	MaxFrameRate          float64 `json:"maxFrameRate,omitempty"`
+	MaxFPS                float64 `json:"maxFPS,omitempty"`
+	FrameIntervalMS       float64 `json:"frameIntervalMS,omitempty"`
 	MaxDevicePixelRatio   float64 `json:"maxDevicePixelRatio,omitempty"`
 	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
 	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
@@ -330,6 +333,19 @@ type Points struct {
 	InState      *PointsProps
 	OutState     *PointsProps
 	Live         []string
+	// Material is an optional authored shader override for this points layer.
+	// When nil the builtin billboard pipeline is used. When non-nil the WGSL/GLSL
+	// sources are compiled into a per-layer pipeline with the SAME vertex buffer
+	// and bind group layout as the builtin instanced path:
+	//   WGSL: @group(0) @binding(0) FrameUniforms,
+	//         @group(1) @binding(0) user uniforms (customUniforms),
+	//         @group(2) @binding(0) PointsUniforms, @group(2) @binding(1) particles storage.
+	//   GLSL: attributes a_position/a_size/a_color; uniforms u_viewMatrix/
+	//         u_projectionMatrix/u_modelMatrix/u_defaultSize/u_defaultColor/
+	//         u_hasPerVertexColor/u_hasPerVertexSize/u_sizeAttenuation/
+	//         u_viewportHeight/u_minPixelSize/u_maxPixelSize/u_hasFog/
+	//         u_fogDensity/u_fogColor/u_opacity plus author-defined uniforms.
+	Material *CustomMaterial
 }
 
 // InstancedMesh renders N copies of one geometry with per-instance transforms.
@@ -403,6 +419,15 @@ type ComputeParticles struct {
 	// ComputeBackend names the kernel authoring back-end (e.g. "elio").
 	// Informational only; the browser backend does not gate on this value.
 	ComputeBackend string
+	// RenderMaterial is an optional authored shader override for the render
+	// (draw) pass of this compute particle system. When nil the builtin
+	// billboard pipeline (particleRenderWGSL) is used. The authored pipeline
+	// must use the SAME bind group layout as the builtin render pass:
+	//   @group(0) @binding(0) ParticleSceneUniforms (uniform),
+	//   @group(0) @binding(1) particles array<Particle> (storage read).
+	// Native render: pipeline label is always "bundle.particles.render";
+	// the headless rasterizer twin dispatches by that label — do not change it.
+	RenderMaterial *CustomMaterial
 }
 
 type ParticleEmitter struct {
@@ -1230,6 +1255,9 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "controlMoveSpeed", p.ControlMoveSpeed)
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
+	setNumeric(out, "maxFrameRate", p.MaxFrameRate)
+	setNumeric(out, "maxFPS", p.MaxFPS)
+	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
 	setNumeric(out, "minDevicePixelRatio", p.MinDevicePixelRatio)
 	setBool(out, "adaptiveQuality", p.AdaptiveQuality)
@@ -2137,6 +2165,9 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 	if len(pts.Colors) > 0 {
 		record.Colors = append([]string(nil), pts.Colors...)
 	}
+	if pts.Material != nil {
+		applyMaterialToPointsIR(&record, *pts.Material)
+	}
 	l.points = append(l.points, record)
 }
 
@@ -2313,6 +2344,9 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 		ComputeWGSL:    cp.ComputeWGSL,
 		ComputeEntry:   strings.TrimSpace(cp.ComputeEntry),
 		ComputeBackend: strings.TrimSpace(cp.ComputeBackend),
+	}
+	if cp.RenderMaterial != nil {
+		applyMaterialToComputeParticlesIR(&record, *cp.RenderMaterial)
 	}
 	l.computeParticles = append(l.computeParticles, record)
 }
@@ -3338,6 +3372,33 @@ func applyMaterialStyleToObjectIR(record *ObjectIR, kind MaterialKind, style Mat
 	if style.Wireframe != nil {
 		record.Wireframe = style.Wireframe
 	}
+}
+
+// applyMaterialToPointsIR copies authored shader fields from a CustomMaterial
+// into a PointsIR record, reusing the identical envelope as ObjectIR custom
+// materials. Only CustomMaterial is accepted (points authored shaders have no
+// standard PBR fields). The caller is responsible for nil-checking.
+func applyMaterialToPointsIR(record *PointsIR, m CustomMaterial) {
+	record.CustomVertex = strings.TrimSpace(m.VertexGLSL)
+	record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
+	record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
+	record.CustomFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
+	record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
+	record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
+	record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
+}
+
+// applyMaterialToComputeParticlesIR copies authored render-pass shader fields
+// from a CustomMaterial into a ComputeParticlesIR record. Uses a distinct field
+// prefix ("render*") so the compute kernel fields remain unambiguous.
+func applyMaterialToComputeParticlesIR(record *ComputeParticlesIR, m CustomMaterial) {
+	record.RenderVertex = strings.TrimSpace(m.VertexGLSL)
+	record.RenderFragment = strings.TrimSpace(m.FragmentGLSL)
+	record.RenderVertexWGSL = strings.TrimSpace(m.VertexWGSL)
+	record.RenderFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
+	record.RenderUniforms = cloneSceneAnyMap(m.Uniforms)
+	record.RenderShaderBackend = strings.TrimSpace(m.ShaderBackend)
+	record.RenderShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
 }
 
 func (m FlatMaterial) legacyMaterial() map[string]any {

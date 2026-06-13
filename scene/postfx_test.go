@@ -1,15 +1,20 @@
 package scene
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestPostEffectInterfaceImplementations(t *testing.T) {
-	// Compile-time assertion that all four effect types satisfy PostEffect.
+	// Compile-time assertion that all effect types satisfy PostEffect.
 	var _ PostEffect = Tonemap{}
 	var _ PostEffect = Bloom{}
 	var _ PostEffect = Vignette{}
 	var _ PostEffect = ColorGrade{}
 	var _ PostEffect = SSAO{}
 	var _ PostEffect = DOF{}
+	var _ PostEffect = CustomPost{}
 }
 
 func TestPostFXZeroValueIsEmpty(t *testing.T) {
@@ -134,6 +139,108 @@ func TestPostFXSceneIR(t *testing.T) {
 	}
 	if _, ok := irs[2].(TonemapIR); !ok {
 		t.Errorf("irs[2] = %T, want TonemapIR", irs[2])
+	}
+}
+
+func TestCustomPostIRLowering(t *testing.T) {
+	mat := &CustomMaterial{
+		ShaderBackend: "selena",
+		ShaderLayout:  map[string]any{"kind": "post"},
+		FragmentWGSL:  "// frag wgsl\nfn fragmentMain() {}",
+		VertexWGSL:    "// vert wgsl\nfn vertexMain() {}",
+		FragmentGLSL:  "// frag glsl",
+		VertexGLSL:    "// vert glsl",
+		Uniforms:      map[string]any{"strength": float32(0.5)},
+	}
+	pfx := PostFX{Effects: []PostEffect{
+		Bloom{Threshold: 0.7},
+		CustomPost{
+			Name:     "GravLens",
+			Material: mat,
+			Stage:    CustomPostBeforeTonemap,
+		},
+		Tonemap{},
+	}}
+	irs := pfx.sceneIR()
+	if len(irs) != 3 {
+		t.Fatalf("got %d IRs, want 3 (bloom, customPost, tonemap)", len(irs))
+	}
+	cp, ok := irs[1].(CustomPostIR)
+	if !ok {
+		t.Fatalf("irs[1] = %T, want CustomPostIR", irs[1])
+	}
+	if cp.Name != "GravLens" {
+		t.Errorf("Name = %q, want GravLens", cp.Name)
+	}
+	if cp.Stage != "beforeTonemap" {
+		t.Errorf("Stage = %q, want beforeTonemap", cp.Stage)
+	}
+	if cp.ShaderBackend != "selena" {
+		t.Errorf("ShaderBackend = %q, want selena", cp.ShaderBackend)
+	}
+	if !strings.Contains(cp.FragmentWGSL, "fragmentMain") {
+		t.Errorf("FragmentWGSL missing fragmentMain")
+	}
+	if got := cp.Uniforms["strength"]; got != float32(0.5) {
+		t.Errorf("strength uniform = %v, want float32(0.5)", got)
+	}
+	// legacyProps must carry kind "customPost"
+	props := cp.legacyProps()
+	if props["kind"] != "customPost" {
+		t.Errorf("legacyProps kind = %v, want customPost", props["kind"])
+	}
+}
+
+func TestCustomPostIRMarshalJSON(t *testing.T) {
+	ir := CustomPostIR{
+		Name:         "Lens",
+		Stage:        "beforeTonemap",
+		FragmentWGSL: "fn fragmentMain() {}",
+		ShaderBackend: "selena",
+	}
+	b, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["kind"] != "customPost" {
+		t.Errorf("kind = %v, want customPost", got["kind"])
+	}
+	if got["name"] != "Lens" {
+		t.Errorf("name = %v, want Lens", got["name"])
+	}
+}
+
+func TestCustomPostNilMaterialIsSkipped(t *testing.T) {
+	pfx := PostFX{Effects: []PostEffect{
+		CustomPost{Name: "NilMat", Material: nil},
+		Tonemap{},
+	}}
+	irs := pfx.sceneIR()
+	if len(irs) != 1 {
+		t.Fatalf("got %d IRs, want 1 (nil material should be skipped)", len(irs))
+	}
+	if _, ok := irs[0].(TonemapIR); !ok {
+		t.Errorf("irs[0] = %T, want TonemapIR", irs[0])
+	}
+}
+
+func TestCustomPostStageDefaultsToBeforeTonemap(t *testing.T) {
+	mat := &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"}
+	pfx := PostFX{Effects: []PostEffect{CustomPost{Name: "X", Material: mat}}}
+	irs := pfx.sceneIR()
+	if len(irs) != 1 {
+		t.Fatalf("got %d IRs, want 1", len(irs))
+	}
+	cp, ok := irs[0].(CustomPostIR)
+	if !ok {
+		t.Fatalf("irs[0] = %T, want CustomPostIR", irs[0])
+	}
+	if cp.Stage != "beforeTonemap" {
+		t.Errorf("Stage = %q, want beforeTonemap (default)", cp.Stage)
 	}
 }
 

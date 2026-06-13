@@ -36,6 +36,15 @@ material GalaxyCorona {
 }
 `
 
+const selenaPointsSource = `
+material GlowPoints kind points {
+    param fogColor : vec3 = rgb(0, 0, 0)
+    surface(pt) -> color {
+        return rgb(pt.color.r, pt.color.g, pt.color.b, pt.alpha)
+    }
+}
+`
+
 func TestCompileSelenaMaterialFeedsScene3D(t *testing.T) {
 	material, layout, err := CompileSelenaMaterial([]byte(selenaDefaultsSource), SelenaMaterialOptions{
 		Standard: StandardMaterial{Color: "#ffffff", Roughness: 0.35},
@@ -76,6 +85,9 @@ func TestCompileSelenaMaterialFeedsScene3D(t *testing.T) {
 	if material.ShaderBackend != "selena" {
 		t.Fatalf("shader backend = %q, want selena", material.ShaderBackend)
 	}
+	if material.Wireframe == nil || *material.Wireframe {
+		t.Fatalf("selena material wireframe = %#v, want explicit false", material.Wireframe)
+	}
 	if got := material.ShaderLayout["schemaVersion"]; got != "selena.descriptor.v1" {
 		t.Fatalf("shader layout schema = %#v", got)
 	}
@@ -98,6 +110,9 @@ func TestCompileSelenaMaterialFeedsScene3D(t *testing.T) {
 	}
 	if object.ShaderBackend != "selena" || object.ShaderLayout["material"] != "Defaults" {
 		t.Fatalf("selena descriptor did not reach SceneIR: backend=%q layout=%#v", object.ShaderBackend, object.ShaderLayout)
+	}
+	if object.Wireframe == nil || *object.Wireframe {
+		t.Fatalf("selena SceneIR wireframe = %#v, want explicit false", object.Wireframe)
 	}
 
 	capable := backendSet(ir.BackendCaps.Capable)
@@ -155,6 +170,9 @@ func TestCompileSelenaBundleCompilesOrderedMaterialSet(t *testing.T) {
 		if got.Material.ShaderBackend != "selena" {
 			t.Fatalf("%s shader backend = %q, want selena", want, got.Material.ShaderBackend)
 		}
+		if got.Material.Wireframe == nil || *got.Material.Wireframe {
+			t.Fatalf("%s wireframe = %#v, want explicit false", want, got.Material.Wireframe)
+		}
 		if got.Material.ShaderLayout["material"] != want {
 			t.Fatalf("%s shader layout = %#v", want, got.Material.ShaderLayout)
 		}
@@ -181,6 +199,44 @@ func TestCompileSelenaBundleDefaultsToLastMaterial(t *testing.T) {
 	}
 	if len(bundle) != 1 || bundle[0].Name != "GalaxyCorona" {
 		t.Fatalf("default bundle = %+v, want last material GalaxyCorona", bundle)
+	}
+}
+
+func TestCompileSelenaMaterialPreservesExplicitWireframe(t *testing.T) {
+	material, _, err := CompileSelenaMaterial([]byte(selenaDefaultsSource), SelenaMaterialOptions{
+		Standard: StandardMaterial{Wireframe: Bool(true)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if material.Wireframe == nil || !*material.Wireframe {
+		t.Fatalf("wireframe = %#v, want explicit true preserved", material.Wireframe)
+	}
+}
+
+func TestCompileSelenaPointsMatchesWebGPUFrameLayout(t *testing.T) {
+	material, layout, err := CompileSelenaPoints([]byte(selenaPointsSource), SelenaMaterialOptions{Material: "GlowPoints"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.Kind != "points" {
+		t.Fatalf("layout kind = %q, want points", layout.Kind)
+	}
+	wgsl := material.VertexWGSL
+	for _, want := range []string{
+		"cameraPos      : vec3<f32>",
+		"lightCount     : u32",
+		"viewportWidth  : f32",
+		"viewportHeight : f32",
+		"toneMap        : u32",
+		"_pad0          : u32",
+	} {
+		if !strings.Contains(wgsl, want) {
+			t.Fatalf("points WGSL missing runtime FrameUniforms field %q:\n%s", want, wgsl)
+		}
+	}
+	if strings.Contains(wgsl, "projMatrix     : mat4x4<f32>,\n  viewportWidth") {
+		t.Fatalf("points WGSL still uses compact Selena FrameUniforms layout:\n%s", wgsl)
 	}
 }
 
@@ -286,4 +342,113 @@ func findModelIR(ir SceneIR, id string) *ModelIR {
 		}
 	}
 	return nil
+}
+
+// minimalPostSource is the simplest valid Selena post material (no params).
+const minimalPostSource = `
+material MinimalPost kind post {
+    surface(post) -> color {
+        return sceneColor(post.uv)
+    }
+}
+`
+
+// gravitationalLensSource is the lens example from selena/examples/.
+const gravitationalLensSource = `
+material GravitationalLens kind post {
+    param lensCenterX : float = 0.5
+    param lensCenterY : float = 0.5
+    param strength    : float = 0.08
+    param softening   : float = 0.02
+    param maxBend     : float = 0.3
+
+    surface(post) -> color {
+        let lensCenter  = vec2f(lensCenterX, lensCenterY)
+        let delta       = post.uv - lensCenter
+        let r2          = dot(delta, delta) + softening * softening
+        let bend        = strength / r2
+        let bendClamped = clamp(bend, 0.0, maxBend)
+        let disp        = delta * bendClamped
+        let dispR       = disp * 1.15
+        let dispB       = disp * 0.85
+        let colorR      = sceneColor(post.uv - dispR)
+        let colorG      = sceneColor(post.uv - disp)
+        let colorB      = sceneColor(post.uv - dispB)
+        let lensed      = rgb(colorR.r, colorG.g, colorB.b, 1.0)
+        let rawColor    = sceneColor(post.uv)
+        let distCenter  = length(delta)
+        let blendEdge   = smoothstep(0.0, softening * 4.0, distCenter)
+        return mix(rawColor, lensed, blendEdge)
+    }
+}
+`
+
+func TestCompileSelenaPostMinimal(t *testing.T) {
+	material, layout, err := CompileSelenaPost([]byte(minimalPostSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.Kind != "post" {
+		t.Fatalf("layout kind = %q, want post", layout.Kind)
+	}
+	if layout.Material != "MinimalPost" {
+		t.Fatalf("layout material = %q, want MinimalPost", layout.Material)
+	}
+	if strings.TrimSpace(material.FragmentWGSL) == "" {
+		t.Fatal("FragmentWGSL is empty")
+	}
+	if strings.TrimSpace(material.FragmentGLSL) == "" {
+		t.Fatal("FragmentGLSL is empty")
+	}
+	if material.ShaderBackend != "selena" {
+		t.Fatalf("ShaderBackend = %q, want selena", material.ShaderBackend)
+	}
+	// WGSL must carry vertexMain/fragmentMain entries.
+	if !strings.Contains(material.VertexWGSL, "vertexMain") {
+		t.Fatalf("WGSL missing vertexMain: %s", material.VertexWGSL)
+	}
+	if !strings.Contains(material.FragmentWGSL, "fragmentMain") {
+		t.Fatalf("WGSL missing fragmentMain: %s", material.FragmentWGSL)
+	}
+}
+
+func TestCompileSelenaPostGravitationalLens(t *testing.T) {
+	material, layout, err := CompileSelenaPost([]byte(gravitationalLensSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.Kind != "post" {
+		t.Fatalf("layout kind = %q, want post", layout.Kind)
+	}
+	if layout.Material != "GravitationalLens" {
+		t.Fatalf("layout material = %q, want GravitationalLens", layout.Material)
+	}
+	// Params must be present.
+	fieldNames := map[string]bool{}
+	for _, f := range layout.UniformBlock.Fields {
+		fieldNames[f.Name] = true
+	}
+	for _, want := range []string{"lensCenterX", "lensCenterY", "strength", "softening", "maxBend"} {
+		if !fieldNames[want] {
+			t.Fatalf("missing uniform field %q; fields=%v", want, layout.UniformBlock.Fields)
+		}
+	}
+	// WGSL group(0) bindings: sceneColor tex/sampler + sceneDepth + UserUniforms.
+	wgsl := material.VertexWGSL
+	for _, want := range []string{"_sceneColorTex", "_sceneColorSamp", "_sceneDepthTex", "_sceneDepthSamp", "UserUniforms"} {
+		if !strings.Contains(wgsl, want) {
+			t.Fatalf("WGSL missing %q binding", want)
+		}
+	}
+	// GLSL must use _sceneColor sampler by name (the WebGL2 contract).
+	if !strings.Contains(material.FragmentGLSL, "_sceneColor") {
+		t.Fatalf("FragmentGLSL missing _sceneColor sampler")
+	}
+}
+
+func TestCompileSelenaPostRejectsNonPostKind(t *testing.T) {
+	_, _, err := CompileSelenaPost([]byte(selenaDefaultsSource), SelenaMaterialOptions{})
+	if err == nil || !strings.Contains(err.Error(), "expected") {
+		t.Fatalf("expected kind error, got: %v", err)
+	}
 }

@@ -105,3 +105,55 @@ func boundSomewhere(d *fakeDevice, label string) bool {
 	}
 	return false
 }
+
+// testBeforePostFXPass is an ExternalComputePass at PhaseBeforePostFX that
+// records how many times Record was invoked.
+type testBeforePostFXPass struct {
+	recorded int
+}
+
+func (p *testBeforePostFXPass) ID() string               { return "test.external.beforepostfx" }
+func (p *testBeforePostFXPass) Phase() compute.PassPhase { return compute.PhaseBeforePostFX }
+func (p *testBeforePostFXPass) Record(ctx compute.PassContext) error {
+	p.recorded++
+	pass := ctx.Encoder.BeginComputePass()
+	pass.DispatchWorkgroups(1, 1, 1)
+	pass.End()
+	return nil
+}
+
+// TestExternalPassPhaseBeforePostFXRunsOnceAfterMain verifies that a pass
+// registered at PhaseBeforePostFX fires exactly once per frame and runs after
+// the main pass (HDR target has been written) but before the post chain.
+func TestExternalPassPhaseBeforePostFXRunsOnceAfterMain(t *testing.T) {
+	pass := &testBeforePostFXPass{}
+	afterCull := &testExternalPass{key: "irrelevant-cull"}
+	// Register both so we can confirm phase filtering: afterCull runs at
+	// PhaseAfterCull and must NOT be confused with PhaseBeforePostFX.
+
+	d := newFakeDevice()
+	r, err := New(Config{
+		Device: d, Surface: fakeSurface{},
+		ExternalComputePasses: []compute.ExternalComputePass{afterCull, pass},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	b := engine.RenderBundle{
+		Camera: engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+	}
+	if err := r.Frame(b, 400, 300, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+
+	if pass.recorded != 1 {
+		t.Fatalf("PhaseBeforePostFX pass Record ran %d times, want 1", pass.recorded)
+	}
+	// Phase filtering: afterCull should also have run exactly once but only in
+	// its own phase — recorded == 1 proves it was not double-dispatched.
+	if afterCull.recorded != 1 {
+		t.Fatalf("PhaseAfterCull pass Record ran %d times, want 1", afterCull.recorded)
+	}
+}

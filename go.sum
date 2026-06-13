@@ -117,7 +117,5 @@ m31labs.dev/mll v0.1.0 h1:NQW/QlIVr0mnOUr0xNH4SHsgAiPH82KyY7XlQNHcABQ=
 m31labs.dev/mll v0.1.0/go.mod h1:7NwSeLhUULCN4Ylcdm9ICzJsAlZWvqH0l0RYkuxTd6w=
 m31labs.dev/prism v0.1.2 h1:KXnlxiYSte0MIj9IEjrCgeTmvXpkRb4qhNHH9cME5ms=
 m31labs.dev/prism v0.1.2/go.mod h1:y3Eg5GDXRB6G0rNIPOOnmFXpmZGjy4eOjyDMORyWHf8=
-m31labs.dev/selena v0.1.1 h1:KGZ8fCQ91TDkTEkv5uzRNZDjxqh08HKWYVOG0vftGss=
-m31labs.dev/selena v0.1.1/go.mod h1:c1aQNqfqxaHVF/GFzWeTZZLFCyMxMOVjuZPX95aQl7w=
 m31labs.dev/turboquant v0.2.0 h1:Ej3pN8mTFlvANNJAHfvamofCSrOkTrP2DhlxZZ5QyOs=
 m31labs.dev/turboquant v0.2.0/go.mod h1:7nkx3Sf/xgz/6V992ePuUpXTN6HyWL+2ueOGCEdlg84=

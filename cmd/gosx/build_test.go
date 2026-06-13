@@ -143,6 +143,34 @@ func TestWriteHashedWritesCompressedSidecarsWhenSmaller(t *testing.T) {
 	}
 }
 
+func TestWriteHashedWithoutCompressedSidecarsSkipsDevRuntimeSidecars(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte(strings.Repeat("runtime island payload ", 64))
+
+	prodAsset, err := writeHashed(dir, "gosx-runtime", ".wasm", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ext := range []string{".gz", ".br"} {
+		if _, err := os.Stat(filepath.Join(dir, prodAsset.File+ext)); err != nil {
+			t.Fatalf("expected initial %s sidecar: %v", ext, err)
+		}
+	}
+
+	devAsset, err := writeHashedWithoutCompressedSidecars(dir, "gosx-runtime", ".wasm", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if devAsset.File != prodAsset.File {
+		t.Fatalf("expected same hashed runtime path, got %q want %q", devAsset.File, prodAsset.File)
+	}
+	for _, ext := range []string{".gz", ".br"} {
+		if _, err := os.Stat(filepath.Join(dir, devAsset.File+ext)); !os.IsNotExist(err) {
+			t.Fatalf("expected no dev runtime %s sidecar, stat err=%v", ext, err)
+		}
+	}
+}
+
 func TestStageOfflineAssetBundleWritesVersionedManifest(t *testing.T) {
 	projectDir := t.TempDir()
 	distDir := filepath.Join(t.TempDir(), "dist")

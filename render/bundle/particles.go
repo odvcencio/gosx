@@ -329,6 +329,28 @@ type particleResources struct {
 	initialized bool
 }
 
+// particleRenderOverride holds a per-system authored render pipeline.
+// Built lazily on first use; on compile failure the builtin is used.
+type particleRenderOverride struct {
+	pipeline gpu.RenderPipeline
+	bgLayout gpu.BindGroupLayout
+}
+
+// particleRenderOverrideKey is the dedup key for authored render pipelines:
+// first 64 bytes of the combined vertex+fragment WGSL source.
+func particleRenderOverrideKey(cp engine.RenderComputeParticles) string {
+	v := strings.TrimSpace(cp.RenderVertexWGSL)
+	f := strings.TrimSpace(cp.RenderFragmentWGSL)
+	if v == "" || f == "" {
+		return ""
+	}
+	src := v + "\n---\n" + f
+	if len(src) > 128 {
+		src = src[:128]
+	}
+	return src
+}
+
 // buildParticlePipelines constructs the compute (state integration) and
 // render (billboarded quad) pipelines used for compute particles.
 //
@@ -612,6 +634,113 @@ func (r *Renderer) recordParticleUpdates(enc gpu.CommandEncoder, b engine.Render
 	return nil
 }
 
+// ensureParticleRenderOverride returns the authored render pipeline for a
+// bundle entry, building it on first call. Returns nil if no authored WGSL is
+// present, on build failure (falls back to builtin, warns once), or when
+// RenderVertexWGSL/RenderFragmentWGSL are both empty.
+//
+// Scope decision: Selena-backed render materials (RenderShaderBackend=="selena")
+// are silently skipped — the native contract (group(0) dual-target vs_main/
+// fs_main) differs intentionally from the Selena post/points contract, the
+// homepage scenes are browser-rendered only, and the headless gate rasterizes
+// via the Go twin regardless.  Using the builtin here keeps native captures
+// stable and meaningful without requiring a separate native Selena pipeline.
+//
+// The pipeline label is always "bundle.particles.render" so the headless
+// CPU rasterizer twin (which dispatches by label) always resolves correctly.
+func (r *Renderer) ensureParticleRenderOverride(cp engine.RenderComputeParticles) *particleRenderOverride {
+	// Skip selena-backed materials — native contract differs from Selena's.
+	// Browser rendering handles the authored pipeline; native falls back to
+	// builtin silently so headless captures remain stable.
+	if strings.EqualFold(strings.TrimSpace(cp.RenderShaderBackend), "selena") {
+		return nil
+	}
+	key := particleRenderOverrideKey(cp)
+	if key == "" {
+		return nil
+	}
+	if r.particleRenderOverrideFailed[key] {
+		return nil
+	}
+	if ov, ok := r.particleRenderOverrideCache[key]; ok {
+		return ov
+	}
+	// Compile synchronously; native GPU compile is synchronous and errors are
+	// returned immediately. On failure: warn once, mark failed, use builtin.
+	vertSrc := strings.TrimSpace(cp.RenderVertexWGSL)
+	fragSrc := strings.TrimSpace(cp.RenderFragmentWGSL)
+	renderShader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
+		SourceWGSL: vertSrc + "\n" + fragSrc,
+		Label:      "bundle.particles.render",
+	})
+	if err != nil {
+		r.particleRenderOverrideFailed[key] = true
+		fmt.Printf("[gosx] bundle: particle authored render shader failed for system %q; falling back to builtin: %v\n", cp.ID, err)
+		return nil
+	}
+	vertEntry := "vs_main"
+	fragEntry := "fs_main"
+	// Authored selena-emitted shaders use vertexMain/fragmentMain.
+	// ComputeParticle render shaders may expose a dual-entry module:
+	//   vertexStorageMain — reads particle state from a storage buffer
+	//   vertexMain        — attribute-variant (fallback for non-storage paths)
+	// Prefer vertexStorageMain when present; fall back to vertexMain.
+	// The native contract (group(0) dual-target vs_main/fs_main) takes
+	// precedence when neither selena entry is found.
+	if strings.Contains(vertSrc, "fn vertexStorageMain(") {
+		vertEntry = "vertexStorageMain"
+	} else if strings.Contains(vertSrc, "fn vertexMain(") {
+		vertEntry = "vertexMain"
+	}
+	if strings.Contains(fragSrc, "fn fragmentMain(") {
+		fragEntry = "fragmentMain"
+	}
+	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
+		Vertex: gpu.VertexStageDesc{
+			Module:     renderShader,
+			EntryPoint: vertEntry,
+		},
+		Fragment: gpu.FragmentStageDesc{
+			Module:     renderShader,
+			EntryPoint: fragEntry,
+			Targets: []gpu.ColorTargetState{
+				{
+					Format:    r.hdrFormat,
+					WriteMask: gpu.ColorWriteAll,
+					Blend: &gpu.BlendState{
+						Color: gpu.BlendComponent{SrcFactor: gpu.BlendOne, DstFactor: gpu.BlendOne, Operation: gpu.BlendOpAdd},
+						Alpha: gpu.BlendComponent{SrcFactor: gpu.BlendOne, DstFactor: gpu.BlendOne, Operation: gpu.BlendOpAdd},
+					},
+				},
+				{Format: gpu.FormatR32Uint, WriteMask: gpu.ColorWriteAll},
+			},
+		},
+		Primitive: gpu.PrimitiveState{
+			Topology:  gpu.TopologyTriangleList,
+			CullMode:  gpu.CullNone,
+			FrontFace: gpu.FrontFaceCCW,
+		},
+		DepthStencil: &gpu.DepthStencilState{
+			Format:            r.depthFormat,
+			DepthWriteEnabled: false,
+			DepthCompare:      gpu.CompareLessEqual,
+		},
+		AutoLayout: true,
+		Label:      "bundle.particles.render",
+	})
+	if err != nil {
+		r.particleRenderOverrideFailed[key] = true
+		fmt.Printf("[gosx] bundle: particle authored render pipeline failed for system %q; falling back to builtin: %v\n", cp.ID, err)
+		return nil
+	}
+	ov := &particleRenderOverride{
+		pipeline: pipeline,
+		bgLayout: pipeline.GetBindGroupLayout(0),
+	}
+	r.particleRenderOverrideCache[key] = ov
+	return ov
+}
+
 // drawParticles is invoked inside the main render pass after lit instanced
 // meshes — particles benefit from additive blending and depth-test-only
 // (not write) so they composite over opaque geometry.
@@ -619,7 +748,6 @@ func (r *Renderer) drawParticles(pass gpu.RenderPassEncoder, b engine.RenderBund
 	if len(b.ComputeParticles) == 0 {
 		return
 	}
-	pass.SetPipeline(r.particleRenderPipeline)
 	for _, cp := range b.ComputeParticles {
 		if cp.Count <= 0 {
 			continue
@@ -628,6 +756,27 @@ func (r *Renderer) drawParticles(pass gpu.RenderPassEncoder, b engine.RenderBund
 		if !ok {
 			continue
 		}
+		// Use authored render pipeline when available; fall back to shared builtin.
+		ov := r.ensureParticleRenderOverride(cp)
+		if ov != nil {
+			// Authored path: rebuild render bind group using the override layout.
+			renderBG, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+				Layout: ov.bgLayout,
+				Entries: []gpu.BindGroupEntry{
+					{Binding: 0, Buffer: res.sceneUniformBuf, Size: particleSceneUniformSize},
+					{Binding: 1, Buffer: res.particleBuf, Size: res.count * particleStride},
+				},
+				Label: "bundle.particles.renderBG.authored:" + cp.ID,
+			})
+			if err == nil {
+				pass.SetPipeline(ov.pipeline)
+				pass.SetBindGroup(0, renderBG)
+				pass.Draw(6, cp.Count, 0, 0)
+				continue
+			}
+		}
+		// Builtin path.
+		pass.SetPipeline(r.particleRenderPipeline)
 		pass.SetBindGroup(0, res.renderBindGrp)
 		// 6 vertices per billboard quad, one instance per particle.
 		pass.Draw(6, cp.Count, 0, 0)

@@ -144,6 +144,14 @@ type RenderPoints struct {
 	BlendMode   string    `json:"blendMode,omitempty"`
 	DepthWrite  *bool     `json:"depthWrite,omitempty"`
 	Attenuation bool      `json:"attenuation,omitempty"`
+	// Optional authored shader fields forwarded from the scene payload.
+	CustomVertex       string         `json:"customVertex,omitempty"`
+	CustomFragment     string         `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
+	ShaderBackend      string         `json:"shaderBackend,omitempty"`
+	ShaderLayout       map[string]any `json:"shaderLayout,omitempty"`
 }
 
 // RenderMaterial is a resolved material profile for a draw bundle.
@@ -278,6 +286,16 @@ type RenderPostEffect struct {
 	Radius    float64            `json:"radius,omitempty"`
 	Scale     float64            `json:"scale,omitempty"`
 	Params    map[string]float64 `json:"params,omitempty"`
+	// Fields used by the "customPost" kind only.
+	Name          string         `json:"name,omitempty"`
+	Stage         string         `json:"stage,omitempty"`
+	FragmentWGSL  string         `json:"fragmentWGSL,omitempty"`
+	VertexWGSL    string         `json:"vertexWGSL,omitempty"`
+	FragmentGLSL  string         `json:"fragmentGLSL,omitempty"`
+	VertexGLSL    string         `json:"vertexGLSL,omitempty"`
+	ShaderBackend string         `json:"shaderBackend,omitempty"`
+	ShaderLayout  map[string]any `json:"shaderLayout,omitempty"`
+	Uniforms      map[string]any `json:"uniforms,omitempty"`
 }
 
 // RenderDiagnostic describes an explicit renderer/backend decision surfaced to
@@ -368,6 +386,14 @@ type RenderComputeParticles struct {
 	ComputeWGSL    string `json:"computeWGSL,omitempty"`
 	ComputeEntry   string `json:"computeEntry,omitempty"`
 	ComputeBackend string `json:"computeBackend,omitempty"`
+	// Optional authored render-pass shader forwarded from scene ComputeParticles.
+	RenderVertex       string         `json:"renderVertex,omitempty"`
+	RenderFragment     string         `json:"renderFragment,omitempty"`
+	RenderVertexWGSL   string         `json:"renderVertexWGSL,omitempty"`
+	RenderFragmentWGSL string         `json:"renderFragmentWGSL,omitempty"`
+	RenderUniforms     map[string]any `json:"renderUniforms,omitempty"`
+	RenderShaderBackend string        `json:"renderShaderBackend,omitempty"`
+	RenderShaderLayout map[string]any `json:"renderShaderLayout,omitempty"`
 }
 
 // RenderBundle is the renderer-facing scene payload emitted by the shared
@@ -402,4 +428,9 @@ type RenderBundle struct {
 	PostEffects      []RenderPostEffect       `json:"postEffects,omitempty"`
 	PostFXMaxPixels  int                      `json:"postFXMaxPixels,omitempty"`
 	Diagnostics      []RenderDiagnostic       `json:"diagnostics,omitempty"`
+	// ShaderLib carries deduplicated shader sources forwarded from the scene IR
+	// payload. The native renderer receives kernels via Config override and may
+	// ignore this field; server-side bundle consumers that read ComputeWGSL
+	// fields should inflate refs (if any) before inspecting compute entries.
+	ShaderLib map[string]string `json:"shaderLib,omitempty"`
 }

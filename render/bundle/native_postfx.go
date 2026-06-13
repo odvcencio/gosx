@@ -15,6 +15,7 @@ const (
 	nativePostFXDOF
 	nativePostFXVignette
 	nativePostFXColorGrade
+	nativePostFXCustom
 )
 
 type nativePostFXEffect struct {
@@ -28,6 +29,20 @@ type nativePostFXEffect struct {
 	exposure   float64
 	contrast   float64
 	saturation float64
+	// Custom post fields (nativePostFXCustom only).
+	customName  string
+	customWGSL  string
+	customLabel string
+}
+
+// nativeCustomPostResources holds per-name GPU resources for custom post passes.
+// Built lazily on first frame that carries a customPost entry; rebuilt when the
+// shader source changes (name+WGSL are the cache key).
+type nativeCustomPostResources struct {
+	name     string
+	wgsl     string
+	pipeline gpu.RenderPipeline
+	bgLayout gpu.BindGroupLayout
 }
 
 type nativePostFXResources struct {
@@ -370,6 +385,66 @@ func (r *Renderer) buildColorGradePipeline() error {
 	return nil
 }
 
+// ensureCustomPostPipeline returns the compiled custom-post pipeline for the
+// given effect, building it on first use. Returns nil if compilation fails
+// (caller should skip this pass — identity passthrough for that frame's slot).
+//
+// Headless behavior: the headless device accepts all CreateRenderPipeline /
+// CreateShaderModule calls but the subsequent Draw call in recordNativePostFXPasses
+// falls through isFullscreenCopyPass → identity copy, so custom passes behave
+// as passthrough on headless. This keeps headless captures stable and
+// meaningful without requiring the native renderer to implement Selena's post
+// contract. The label "bundle.postfx.custom:<name>" is intentionally NOT in
+// isFullscreenCopyPass, so headless skips the draw (no-op rather than copy),
+// which is the right behavior — the custom effect should be invisible in
+// headless captures just like it is a transparent pass.
+func (r *Renderer) ensureCustomPostPipeline(effect nativePostFXEffect) *nativeCustomPostResources {
+	if r.customPostCache == nil {
+		r.customPostCache = make(map[string]*nativeCustomPostResources)
+	}
+	keyLen := 128
+	if len(effect.customWGSL) < keyLen {
+		keyLen = len(effect.customWGSL)
+	}
+	cacheKey := effect.customName + "\x00" + effect.customWGSL[:keyLen]
+	if res, ok := r.customPostCache[cacheKey]; ok {
+		return res // may be nil (previously failed)
+	}
+
+	shader, err := r.device.CreateShaderModule(gpu.ShaderDesc{
+		SourceWGSL: effect.customWGSL,
+		Label:      effect.customLabel,
+	})
+	if err != nil {
+		fmt.Printf("[gosx] bundle: custom post pass %q shader failed: %v\n", effect.customName, err)
+		r.customPostCache[cacheKey] = nil
+		return nil
+	}
+	pipeline, err := r.device.CreateRenderPipeline(gpu.RenderPipelineDesc{
+		Vertex:   gpu.VertexStageDesc{Module: shader, EntryPoint: "vertexMain"},
+		Fragment: gpu.FragmentStageDesc{Module: shader, EntryPoint: "fragmentMain", Targets: []gpu.ColorTargetState{{Format: r.hdrFormat, WriteMask: gpu.ColorWriteAll}}},
+		Primitive: gpu.PrimitiveState{
+			Topology: gpu.TopologyTriangleList,
+			CullMode: gpu.CullNone,
+		},
+		AutoLayout: true,
+		Label:      effect.customLabel,
+	})
+	if err != nil {
+		fmt.Printf("[gosx] bundle: custom post pass %q pipeline failed: %v\n", effect.customName, err)
+		r.customPostCache[cacheKey] = nil
+		return nil
+	}
+	res := &nativeCustomPostResources{
+		name:     effect.customName,
+		wgsl:     effect.customWGSL,
+		pipeline: pipeline,
+		bgLayout: pipeline.GetBindGroupLayout(0),
+	}
+	r.customPostCache[cacheKey] = res
+	return res
+}
+
 func (r *Renderer) ensureNativePostFX(width, height int, depthView gpu.TextureView) (bool, error) {
 	resized := false
 	if r.nativePostFX == nil || r.nativePostFX.width != width || r.nativePostFX.height != height {
@@ -553,6 +628,24 @@ func resolveNativePostFXEffects(b engine.RenderBundle) []nativePostFXEffect {
 				contrast:   postEffectNumber(effect, "contrast", 1),
 				saturation: postEffectNumber(effect, "saturation", 1),
 			})
+		case "custompost":
+			// Custom post passes are inserted in declaration order; duplicates
+			// allowed (different name == different pass).
+			wgsl := strings.TrimSpace(effect.FragmentWGSL)
+			if wgsl == "" {
+				continue // no WGSL → skip on native
+			}
+			name := effect.Name
+			if name == "" {
+				name = "custom"
+			}
+			label := "bundle.postfx.custom:" + name
+			effects = append(effects, nativePostFXEffect{
+				kind:        nativePostFXCustom,
+				customName:  name,
+				customWGSL:  strings.TrimSpace(effect.VertexWGSL) + "\n" + wgsl,
+				customLabel: label,
+			})
 		}
 	}
 	return effects
@@ -672,6 +765,40 @@ func (r *Renderer) recordNativePostFXPasses(enc gpu.CommandEncoder, effects []na
 			} else {
 				bg = r.nativePostFX.colorGradeFromHDR
 			}
+		case nativePostFXCustom:
+			// Custom post pass compiled from Selena-emitted WGSL.
+			// Headless behavior: ensureCustomPostPipeline's pipeline label is
+			// "bundle.postfx.custom:<name>", which is NOT in isFullscreenCopyPass,
+			// so headless Draw() is a no-op (identity passthrough). This keeps
+			// headless captures stable — the custom effect is invisible on headless,
+			// which is correct: native doesn't implement the full Selena post contract.
+			customRes := r.ensureCustomPostPipeline(effect)
+			if customRes == nil {
+				// Shader/pipeline failed; skip this pass (identity for this slot).
+				continue
+			}
+			label = effect.customLabel
+			pipeline = customRes.pipeline
+			// Custom passes use a simple 2-binding BG: sceneColor + sampler.
+			// Depth and user-uniforms are not bound on the native path — the
+			// headless draw is a no-op anyway; live rendering is browser-only.
+			customBG, bgErr := r.device.CreateBindGroup(gpu.BindGroupDesc{
+				Layout: customRes.bgLayout,
+				Entries: []gpu.BindGroupEntry{
+					{Binding: 0, TextureView: func() gpu.TextureView {
+						if sourceScratch {
+							return r.nativePostFX.view
+						}
+						return r.hdrView
+					}()},
+					{Binding: 1, Sampler: r.presentSampler},
+				},
+				Label: label + ".bg",
+			})
+			if bgErr != nil {
+				continue
+			}
+			bg = customBG
 		default:
 			continue
 		}

@@ -143,6 +143,11 @@ type Renderer struct {
 	colorGradePipeline gpu.RenderPipeline
 	colorGradeBGLayout gpu.BindGroupLayout
 	nativePostFX       *nativePostFXResources
+	// Custom post pipelines keyed by "name:wgsl_prefix" (first 128 bytes of
+	// source) for dedup. Built lazily when a customPost entry appears in the
+	// bundle.  On failure the entry is skipped (identity passthrough for that
+	// pass) and an error is printed once.
+	customPostCache map[string]*nativeCustomPostResources
 
 	// Compute-particle pipelines. Per-system resources live in particleCache.
 	particleUpdatePipeline gpu.ComputePipeline
@@ -154,6 +159,12 @@ type Renderer struct {
 	// it without plumbing cfg through every call site.
 	particleOverrideWGSL       string
 	particleOverrideEntryPoint string
+
+	// Per-system authored render pipelines keyed by content hash. Built lazily
+	// when a bundle entry carries RenderVertexWGSL/RenderFragmentWGSL.
+	particleRenderOverrideCache map[string]*particleRenderOverride
+	// Failed authored render keys — avoid re-attempting broken shaders.
+	particleRenderOverrideFailed map[string]bool
 
 	// Tracks the previous frame's time for particle dt integration.
 	lastFrameTime float64
@@ -300,9 +311,11 @@ func New(cfg Config) (*Renderer, error) {
 		cullCache:              make(map[string]*cullResources),
 		externalPasses:             cfg.ExternalComputePasses,
 		published:                  make(map[string]compute.GPUResource),
-		particleOverrideWGSL:       cfg.ParticleUpdateWGSL,
-		particleOverrideEntryPoint: cfg.ParticleUpdateEntryPoint,
-		particleCache:              make(map[string]*particleResources),
+		particleOverrideWGSL:        cfg.ParticleUpdateWGSL,
+		particleOverrideEntryPoint:  cfg.ParticleUpdateEntryPoint,
+		particleCache:               make(map[string]*particleResources),
+		particleRenderOverrideCache: make(map[string]*particleRenderOverride),
+		particleRenderOverrideFailed: make(map[string]bool),
 		skinCache:              make(map[string]*skinResources),
 		bonePalettes:           make(map[string]*BonePalette),
 		pickTargets:            make(map[uint32]PickResult),
@@ -849,6 +862,13 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// between the main pass (which writes the id buffer) and any later
 	// passes that might clobber it.
 	r.recordPickCopy(enc, b, width, height)
+
+	// External render-coupled compute that runs after the main pass resolves
+	// into the HDR target, before the post chain consumes it (e.g. screen-space
+	// effects driven by Elio kernels — lens distortion, custom grading).
+	if err := r.runExternalPasses(enc, compute.PhaseBeforePostFX); err != nil {
+		return err
+	}
 
 	hdrSourceView, hdrSourceScratch := r.recordNativePostFXPasses(enc, nativePostFX)
 	hdrSourceKey := "hdr"

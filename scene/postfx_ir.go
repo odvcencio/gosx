@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -317,6 +318,67 @@ func (ir DOFIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// CustomPostIR lowers CustomPost into the bundle.postEffects[i] shape.
+// The WGSL/GLSL shaders and binding layout are forwarded from the material's
+// CustomMaterial fields so the JS runtime can build pipelines from them
+// without contacting the Go server again.
+//
+// Stage controls insertion point in the browser post chain:
+//   - "" / "beforeTonemap" → after bloom, before tonemap (default)
+//   - "afterTonemap"       → after tonemap, in the LDR region
+type CustomPostIR struct {
+	Name           string         `json:"name"`
+	Stage          string         `json:"stage,omitempty"`
+	FragmentWGSL   string         `json:"fragmentWGSL,omitempty"`
+	VertexWGSL     string         `json:"vertexWGSL,omitempty"`
+	FragmentGLSL   string         `json:"fragmentGLSL,omitempty"`
+	VertexGLSL     string         `json:"vertexGLSL,omitempty"`
+	ShaderBackend  string         `json:"shaderBackend,omitempty"`
+	ShaderLayout   map[string]any `json:"shaderLayout,omitempty"`
+	Uniforms       map[string]any `json:"uniforms,omitempty"`
+}
+
+func (ir CustomPostIR) legacyProps() map[string]any {
+	out := map[string]any{"kind": "customPost", "name": ir.Name}
+	if ir.Stage != "" {
+		out["stage"] = ir.Stage
+	}
+	if ir.FragmentWGSL != "" {
+		out["fragmentWGSL"] = ir.FragmentWGSL
+	}
+	if ir.VertexWGSL != "" {
+		out["vertexWGSL"] = ir.VertexWGSL
+	}
+	if ir.FragmentGLSL != "" {
+		out["fragmentGLSL"] = ir.FragmentGLSL
+	}
+	if ir.VertexGLSL != "" {
+		out["vertexGLSL"] = ir.VertexGLSL
+	}
+	if ir.ShaderBackend != "" {
+		out["shaderBackend"] = ir.ShaderBackend
+	}
+	if len(ir.ShaderLayout) > 0 {
+		out["shaderLayout"] = ir.ShaderLayout
+	}
+	if len(ir.Uniforms) > 0 {
+		out["uniforms"] = ir.Uniforms
+	}
+	return out
+}
+
+// MarshalJSON encodes CustomPostIR directly. Output shape matches legacyProps.
+func (ir CustomPostIR) MarshalJSON() ([]byte, error) {
+	// Use a named struct alias to avoid infinite recursion while still picking
+	// up the json tags from the original struct.
+	type alias CustomPostIR
+	type wrapper struct {
+		Kind string `json:"kind"`
+		alias
+	}
+	return json.Marshal(wrapper{Kind: "customPost", alias: alias(ir)})
+}
+
 // sceneIR converts the typed PostFX into the IR slice consumed by SceneIR.
 func (pfx PostFX) sceneIR() []PostEffectIR {
 	if len(pfx.Effects) == 0 {
@@ -359,9 +421,48 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Aperture:      float64(ev.Aperture),
 				MaxBlur:       float64(ev.MaxBlur),
 			})
+		case CustomPost:
+			ir := lowerCustomPost(ev)
+			if ir != nil {
+				out = append(out, *ir)
+			}
 		}
 	}
 	return out
+}
+
+// lowerCustomPost lowers a CustomPost scene value to a CustomPostIR. Returns
+// nil when the material is absent (nothing to lower) so the caller can skip it.
+func lowerCustomPost(cp CustomPost) *CustomPostIR {
+	if cp.Material == nil {
+		return nil
+	}
+	stage := string(cp.Stage)
+	if stage == "" {
+		stage = string(CustomPostBeforeTonemap)
+	}
+	ir := &CustomPostIR{
+		Name:          cp.Name,
+		Stage:         stage,
+		FragmentWGSL:  cp.Material.FragmentWGSL,
+		VertexWGSL:    cp.Material.VertexWGSL,
+		FragmentGLSL:  cp.Material.FragmentGLSL,
+		VertexGLSL:    cp.Material.VertexGLSL,
+		ShaderBackend: cp.Material.ShaderBackend,
+		ShaderLayout:  cp.Material.ShaderLayout,
+	}
+	// Merge material defaults with per-call overrides. Overrides win.
+	merged := make(map[string]any, len(cp.Material.Uniforms)+len(cp.Uniforms))
+	for k, v := range cp.Material.Uniforms {
+		merged[k] = v
+	}
+	for k, v := range cp.Uniforms {
+		merged[k] = v
+	}
+	if len(merged) > 0 {
+		ir.Uniforms = merged
+	}
+	return ir
 }
 
 func tonemapModeString(m TonemapMode) string {

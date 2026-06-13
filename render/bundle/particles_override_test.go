@@ -213,3 +213,81 @@ func TestParticleBuiltinUsedWhenOverrideEmpty(t *testing.T) {
 	}
 	t.Fatal("no compute pipeline with label 'bundle.particles.update' found")
 }
+
+// dualEntryParticleRenderWGSL is a minimal authored render shader that exposes
+// both vertexMain (attribute path) and vertexStorageMain (storage path).
+// Used to verify entry-point selection in ensureParticleRenderOverride.
+const dualEntryParticleRenderWGSL = `
+struct VSOut { @builtin(position) pos: vec4<f32> };
+@vertex fn vertexMain(@location(0) pos: vec3<f32>) -> VSOut {
+  var o: VSOut; o.pos = vec4f(pos, 1.0); return o;
+}
+@vertex fn vertexStorageMain(@builtin(vertex_index) vi: u32) -> VSOut {
+  var o: VSOut; o.pos = vec4f(0.0, 0.0, 0.0, 1.0); return o;
+}
+@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4f(1.0); }
+`
+
+// TestParticleRenderOverrideUsesStorageEntryWhenPresent verifies that when
+// the WGSL source contains fn vertexStorageMain, the native renderer selects
+// that entry point rather than vertexMain.
+func TestParticleRenderOverrideUsesStorageEntryWhenPresent(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	cp := engine.RenderComputeParticles{
+		ID:    "galaxy",
+		Count: 64,
+		Emitter: engine.RenderParticleEmitter{Lifetime: 2.0, Radius: 1.0},
+		Material: engine.RenderParticleMaterial{Color: "#ffffff", Size: 0.1, Opacity: 1.0},
+		RenderVertexWGSL:   dualEntryParticleRenderWGSL,
+		RenderFragmentWGSL: dualEntryParticleRenderWGSL,
+	}
+	ov := r.ensureParticleRenderOverride(cp)
+	if ov == nil {
+		t.Fatal("ensureParticleRenderOverride returned nil; want a pipeline")
+	}
+	// Find the authored render pipeline (last "bundle.particles.render" in the
+	// device log; the builtin is created first by buildParticlePipelines during
+	// New(), the authored one is appended by ensureParticleRenderOverride).
+	var found *fakePipeline
+	for _, p := range d.pipelines {
+		if p.desc.Label == "bundle.particles.render" {
+			found = p // keep updating — want the last one
+		}
+	}
+	if found == nil {
+		t.Fatal("no render pipeline with label 'bundle.particles.render' found")
+	}
+	if found.desc.Vertex.EntryPoint != "vertexStorageMain" {
+		t.Errorf("entry point: want vertexStorageMain, got %q", found.desc.Vertex.EntryPoint)
+	}
+}
+
+// TestParticleRenderOverrideSkipsSelenaBackend verifies that a ComputeParticles
+// entry with RenderShaderBackend=="selena" causes ensureParticleRenderOverride
+// to return nil (use builtin), preserving headless capture stability.
+func TestParticleRenderOverrideSkipsSelenaBackend(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	cp := engine.RenderComputeParticles{
+		ID:                  "galaxy-selena",
+		Count:               64,
+		RenderVertexWGSL:    "@vertex fn vertexStorageMain() -> @builtin(position) vec4<f32> { return vec4f(0.0); }",
+		RenderFragmentWGSL:  "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4f(1.0); }",
+		RenderShaderBackend: "selena",
+	}
+	ov := r.ensureParticleRenderOverride(cp)
+	if ov != nil {
+		t.Error("ensureParticleRenderOverride: want nil for selena backend, got a pipeline")
+	}
+}

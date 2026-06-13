@@ -2802,6 +2802,8 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "dof"))
 	case "PostFX.Bloom":
 		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "bloom"))
+	case "PostFX.Custom":
+		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "customPost"))
 	case "PostFX.Vignette":
 		appendScene3DSceneRecord(sceneMap, "postEffects", withDefaultKind(attrs, "vignette"))
 	case "PostFX.ColorGrading":
@@ -2818,7 +2820,7 @@ func isScene3DComposableTag(tag string) bool {
 		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight", "RectAreaLight", "LightProbe",
 		"Environment", "Camera", "Material", "LineBasicMaterial", "LineDashedMaterial", "CustomMaterial",
 		"AxesHelper", "GridHelper", "BoxHelper", "BoundingBoxHelper", "SkeletonHelper", "TransformControls",
-		"PostFX.SSAO", "PostFX.DOF", "PostFX.Bloom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
+		"PostFX.SSAO", "PostFX.DOF", "PostFX.Bloom", "PostFX.Custom", "PostFX.Vignette", "PostFX.ColorGrading", "PostFX.Tonemap":
 		return true
 	default:
 		return false

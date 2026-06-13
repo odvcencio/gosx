@@ -1,9 +1,16 @@
-// Example canvasboard-webgpu-verify is a throwaway browser validation harness
+// Example canvasboard-webgpu-verify is a side-by-side visual parity instrument
 // for the M1 WebGPU canvas board re-platform.
 //
-// It serves a CanvasBoard page with data-gosx-canvas-backend="webgpu", full
-// WASM hydration, and all required JS chunks (runtime, scene3d-webgpu). The
-// page self-validates, exercises primitives, and POSTs a JSON report back.
+// It serves ONE page (GET /) showing TWO CanvasBoard instances rendering
+// the IDENTICAL node set side by side:
+//
+//   LEFT  — no backend attribute → 26b1 painter path (the reference).
+//   RIGHT — data-gosx-canvas-backend="webgpu" → the M1 GPU path.
+//
+// Neither board auto-interacts; both sit at the same initial camera so the
+// rendering can be compared directly. A self-validation script on the page
+// waits for both boards to hydrate, probes each board's labels layer, takes
+// per-board screenshots, and POSTs a combined JSON report to /report.
 //
 // # Required chunks (file:line evidence)
 //
@@ -31,9 +38,19 @@
 //   - engines[0].component = "CanvasSurfaceBoot" (not "CanvasBoard") — a stub
 //     entry whose factory is pre-registered in the page's inline script so
 //     mountAllEngines() completes without the "no engine factory registered" warn.
-//     The actual canvas2d board is mounted by mountAllSurfaceKinds() via the
-//     data-gosx-surface-kind="canvas2d" placeholder, independent of this entry.
+//     The actual canvas2d boards are mounted by mountAllSurfaceKinds() via the
+//     data-gosx-surface-kind="canvas2d" placeholders, independent of this entry.
 //   - runtime.path — WASM URL (26-runtime-tail.js:294-308)
+//
+// # Two-board coexistence
+//
+// mountAllSurfaceKinds() uses querySelectorAll("[data-gosx-surface-kind]:not([...])"),
+// which discovers BOTH canvas elements and hydrates each independently.
+// Each call to nextSurfaceID() auto-increments a module-level counter
+// (26b-feature-engines-prefix.js:46-50), so the two boards get distinct ids
+// ("gosx-engine-surface-1" and "gosx-engine-surface-2"). The WASM bridge keys
+// all render/tick/event calls by that id, so the two boards are fully isolated.
+// Both painter and WebGPU RAF loops key off their own closure-captured id.
 //
 // # WASM build
 //
@@ -97,7 +114,7 @@ func main() {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
-	// Serve the board page.
+	// Serve the parity page (two boards side by side).
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -190,7 +207,7 @@ func main() {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 
-	// Receive the self-report from the browser.
+	// Receive the self-report from the browser (parity-v2: per-board fields).
 	mux.HandleFunc("POST /report", func(w http.ResponseWriter, r *http.Request) {
 		var raw json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
@@ -198,7 +215,7 @@ func main() {
 			return
 		}
 
-		// Parse for screenshot extraction.
+		// Parse top-level fields.
 		var parsed map[string]json.RawMessage
 		_ = json.Unmarshal(raw, &parsed)
 
@@ -209,7 +226,28 @@ func main() {
 			log.Printf("write report: %v", err)
 		}
 
-		// Decode screenshot if present.
+		// Decode per-board screenshots if present.
+		for _, key := range []string{"painterScreenshotDataURL", "webgpuScreenshotDataURL"} {
+			if dataURL, ok := parsed[key]; ok {
+				var urlStr string
+				if err := json.Unmarshal(dataURL, &urlStr); err == nil && strings.HasPrefix(urlStr, "data:image/png;base64,") {
+					b64 := strings.TrimPrefix(urlStr, "data:image/png;base64,")
+					imgBytes, err := base64.StdEncoding.DecodeString(b64)
+					if err == nil {
+						name := strings.TrimSuffix(strings.TrimSuffix(key, "DataURL"), "Screenshot") + ".png"
+						imgPath := filepath.Join(reportDir, name)
+						if err := os.WriteFile(imgPath, imgBytes, 0o644); err != nil {
+							log.Printf("write %s: %v", name, err)
+						} else {
+							log.Printf("[report] screenshot saved: %s", imgPath)
+						}
+					} else {
+						log.Printf("[report] screenshot decode error (%s): %v", key, err)
+					}
+				}
+			}
+		}
+		// Legacy single-board screenshot field (backward compat).
 		if dataURL, ok := parsed["screenshotDataURL"]; ok {
 			var urlStr string
 			if err := json.Unmarshal(dataURL, &urlStr); err == nil && strings.HasPrefix(urlStr, "data:image/png;base64,") {
@@ -219,46 +257,68 @@ func main() {
 					imgPath := filepath.Join(reportDir, "board.png")
 					if err := os.WriteFile(imgPath, imgBytes, 0o644); err != nil {
 						log.Printf("write board.png: %v", err)
-					} else {
-						log.Printf("[report] screenshot saved: %s", imgPath)
 					}
-				} else {
-					log.Printf("[report] screenshot decode error: %v", err)
 				}
 			}
 		}
 
 		log.Printf("[report] received: %s", reportPath)
 
-		// Print a one-line summary.
-		if webgpuRoute, ok := parsed["webgpuRoute"]; ok {
-			var route bool
-			_ = json.Unmarshal(webgpuRoute, &route)
-			var painted bool
-			if pp, ok2 := parsed["paintedPixels"]; ok2 {
-				_ = json.Unmarshal(pp, &painted)
-			}
-			var labelsN int
-			if lc, ok2 := parsed["labelsCount"]; ok2 {
-				_ = json.Unmarshal(lc, &labelsN)
-			}
-			if route {
-				log.Printf("[report] PASS — webgpuRoute=true paintedPixels=%v labelsCount=%d", painted, labelsN)
-			} else {
-				log.Printf("[report] FALLBACK — webgpuRoute=false paintedPixels=%v labelsCount=%d (see report for warns)", painted, labelsN)
-			}
-		}
+		// Print a parity summary.
+		printParityReport(parsed)
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 
-	log.Printf("canvasboard-webgpu-verify listening at http://localhost:8765")
-	log.Printf("  board page:   http://localhost:8765/")
+	log.Printf("canvasboard-webgpu-verify (parity-v2) listening at http://localhost:8765")
+	log.Printf("  parity page:  http://localhost:8765/")
 	log.Printf("  healthcheck:  http://localhost:8765/healthz")
 	log.Printf("  report:       %s/report.json", reportDir)
-	log.Printf("  screenshot:   %s/board.png", reportDir)
+	log.Printf("  painter png:  %s/painter.png", reportDir)
+	log.Printf("  webgpu png:   %s/webgpu.png", reportDir)
 	log.Fatal(http.ListenAndServe(listenAddr, mux))
+}
+
+// printParityReport logs a concise parity summary from the parsed report fields.
+func printParityReport(parsed map[string]json.RawMessage) {
+	extract := func(key string) string {
+		if v, ok := parsed[key]; ok {
+			var s string
+			if json.Unmarshal(v, &s) == nil {
+				return s
+			}
+			return string(v)
+		}
+		return "<missing>"
+	}
+	extractBool := func(key string) bool {
+		if v, ok := parsed[key]; ok {
+			var b bool
+			_ = json.Unmarshal(v, &b)
+			return b
+		}
+		return false
+	}
+
+	painterPainted := extractBool("painterPaintedPixels")
+	webgpuPainted := extractBool("webgpuPaintedPixels")
+	webgpuRoute := extractBool("webgpuRoute")
+
+	log.Printf("[report/parity] painterPaintedPixels=%v webgpuPaintedPixels=%v webgpuRoute=%v",
+		painterPainted, webgpuPainted, webgpuRoute)
+
+	// Per-board labels info.
+	if v, ok := parsed["painterBoard"]; ok {
+		log.Printf("[report/painter] %s", string(v))
+	}
+	if v, ok := parsed["webgpuBoard"]; ok {
+		log.Printf("[report/webgpu]  %s", string(v))
+	}
+
+	// Surface IDs.
+	log.Printf("[report] painterSurfaceId=%s webgpuSurfaceId=%s",
+		extract("painterSurfaceId"), extract("webgpuSurfaceId"))
 }
 
 func serveClientJS(w http.ResponseWriter, r *http.Request, path string) {
@@ -291,89 +351,73 @@ func makeTestPNG() image.Image {
 	return img
 }
 
-// boardJSON builds the CanvasBoard props JSON:
+// boardNodes returns the shared node list used by both boards:
 // 100 rects (20×5), 3 line nodes, 2 sprite nodes, 3 label nodes.
-func boardJSON() string {
-	type node struct {
-		ID     string  `json:"id,omitempty"`
-		Kind   string  `json:"kind"`
-		X      float64 `json:"x,omitempty"`
-		Y      float64 `json:"y,omitempty"`
-		Width  float64 `json:"width,omitempty"`
-		Height float64 `json:"height,omitempty"`
-		X1     float64 `json:"x1,omitempty"`
-		Y1     float64 `json:"y1,omitempty"`
-		X2     float64 `json:"x2,omitempty"`
-		Y2     float64 `json:"y2,omitempty"`
-		Color  string  `json:"color,omitempty"`
-		Text   string  `json:"text,omitempty"`
-		Src    string  `json:"src,omitempty"`
-	}
-
+// Factored out so both boards receive an IDENTICAL node set.
+func boardNodes() []map[string]interface{} {
 	palette := []string{"#ff8866", "#88ddff", "#ffd866", "#a0ff88", "#ff88dd"}
-	nodes := make([]node, 0, 110)
+	nodes := make([]map[string]interface{}, 0, 110)
 
 	// 100 rects in a 20×5 grid.
 	for row := 0; row < 5; row++ {
 		for col := 0; col < 20; col++ {
 			x := float64(col-10) * 60
 			y := float64(row-2) * 50
-			nodes = append(nodes, node{
-				ID:     "rect-" + strconv.Itoa(row) + "-" + strconv.Itoa(col),
-				Kind:   "rect",
-				X:      x,
-				Y:      y,
-				Width:  44,
-				Height: 32,
-				Color:  palette[(row+col)%len(palette)],
+			nodes = append(nodes, map[string]interface{}{
+				"id":     "rect-" + strconv.Itoa(row) + "-" + strconv.Itoa(col),
+				"kind":   "rect",
+				"x":      x,
+				"y":      y,
+				"width":  44.0,
+				"height": 32.0,
+				"color":  palette[(row+col)%len(palette)],
 			})
 		}
 	}
 
 	// 3 line nodes.
 	nodes = append(nodes,
-		node{ID: "line-0", Kind: "line", X1: -300, Y1: -150, X2: 300, Y2: 150, Color: "#ff4444"},
-		node{ID: "line-1", Kind: "line", X1: -300, Y1: 150, X2: 300, Y2: -150, Color: "#44ff44"},
-		node{ID: "line-2", Kind: "line", X1: 0, Y1: -200, X2: 0, Y2: 200, Color: "#4444ff"},
+		map[string]interface{}{"id": "line-0", "kind": "line", "x1": -300.0, "y1": -150.0, "x2": 300.0, "y2": 150.0, "color": "#ff4444"},
+		map[string]interface{}{"id": "line-1", "kind": "line", "x1": -300.0, "y1": 150.0, "x2": 300.0, "y2": -150.0, "color": "#44ff44"},
+		map[string]interface{}{"id": "line-2", "kind": "line", "x1": 0.0, "y1": -200.0, "x2": 0.0, "y2": 200.0, "color": "#4444ff"},
 	)
 
 	// 2 sprite nodes pointing at the test PNG.
 	nodes = append(nodes,
-		node{ID: "sprite-0", Kind: "image", X: -380, Y: 80, Width: 64, Height: 64, Src: "/test.png"},
-		node{ID: "sprite-1", Kind: "image", X: 320, Y: -120, Width: 64, Height: 64, Src: "/test.png"},
+		map[string]interface{}{"id": "sprite-0", "kind": "image", "x": -380.0, "y": 80.0, "width": 64.0, "height": 64.0, "src": "/test.png"},
+		map[string]interface{}{"id": "sprite-1", "kind": "image", "x": 320.0, "y": -120.0, "width": 64.0, "height": 64.0, "src": "/test.png"},
 	)
 
 	// 3 label nodes.
 	nodes = append(nodes,
-		node{ID: "label-0", Kind: "label", X: 0, Y: 160, Text: "WebGPU Board"},
-		node{ID: "label-1", Kind: "label", X: -300, Y: -160, Text: "M1 verify"},
-		node{ID: "label-2", Kind: "label", X: 300, Y: -160, Text: "GoSX 16a"},
+		map[string]interface{}{"id": "label-0", "kind": "label", "x": 0.0, "y": 160.0, "text": "GoSX Board"},
+		map[string]interface{}{"id": "label-1", "kind": "label", "x": -300.0, "y": -160.0, "text": "M1 verify"},
+		map[string]interface{}{"id": "label-2", "kind": "label", "x": 300.0, "y": -160.0, "text": "GoSX 16a"},
 	)
 
-	type panXY struct {
-		X float64 `json:"x"`
-		Y float64 `json:"y"`
-	}
-	type props struct {
-		Board struct {
-			Pan  panXY   `json:"pan"`
-			Zoom float64 `json:"zoom"`
-		} `json:"board"`
-		Background string `json:"background"`
-		Nodes      []node `json:"nodes"`
-	}
-	var p props
-	p.Board.Zoom = 1.0
-	p.Background = "#0f1720"
-	p.Nodes = nodes
+	return nodes
+}
 
-	b, _ := json.Marshal(p)
+// boardPropsJSON builds the CanvasBoard props JSON using the shared node list.
+// The camera is identical for both boards: zoom=1, pan=(0,0).
+func boardPropsJSON() string {
+	props := map[string]interface{}{
+		"board": map[string]interface{}{
+			"pan":  map[string]interface{}{"x": 0.0, "y": 0.0},
+			"zoom": 1.0,
+		},
+		"background": "#0f1720",
+		"nodes":      boardNodes(),
+	}
+	b, _ := json.Marshal(props)
 	return string(b)
 }
 
-// buildPage returns the full HTML page for the board.
+// buildPage returns the full HTML page showing two CanvasBoard instances side
+// by side: LEFT = 26b1 painter (reference), RIGHT = WebGPU (M1 GPU path).
+// Neither board auto-interacts; both render their initial camera and sit still.
 func buildPage() string {
-	props := boardJSON()
+	props := boardPropsJSON()
 
 	// Inline gosx-manifest: one sentinel engine entry with runtime:"shared" to trigger:
 	//   1. manifestNeedsSharedEngineRuntime → WASM load
@@ -390,10 +434,12 @@ func buildPage() string {
 	// (30-tail.js:3262). A stub no-op factory for "CanvasSurfaceBoot" is
 	// pre-registered in the inline script below so mountEngine completes cleanly.
 	//
-	// The canvas2d board itself is NOT mounted via this engines entry — it is
-	// mounted by mountAllSurfaceKinds() in the engines feature (bootstrap-feature-
-	// engines.js) which discovers the <canvas data-gosx-surface-kind="canvas2d">
-	// placeholder via querySelectorAll and calls __gosx_hydrate directly.
+	// The canvas2d boards themselves are NOT mounted via this engines entry — they
+	// are mounted by mountAllSurfaceKinds() in the engines feature
+	// (bootstrap-feature-engines.js) which discovers ALL <canvas data-gosx-surface-kind="canvas2d">
+	// placeholders via querySelectorAll and calls __gosx_hydrate for each.
+	// Each board gets a unique id from nextSurfaceID() (auto-increments:
+	// "gosx-engine-surface-1", "gosx-engine-surface-2").
 	manifest := `{
   "version":"1",
   "engines":[{"id":"gosx-canvas-surface-0","component":"CanvasSurfaceBoot","kind":"canvas2d","runtime":"shared","props":{}}],
@@ -408,36 +454,83 @@ func buildPage() string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GoSX WebGPU Board Verify</title>
+<title>GoSX Canvas Parity — 26b1 Painter vs 16a WebGPU</title>
 <style>
-  body { margin:0; background:#0f1720; color:#e6edf3; font-family:system-ui,sans-serif; }
-  #board-host { position:relative; width:1280px; height:720px; margin:0 auto; }
-  #board { display:block; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#1a1f2b; color:#e6edf3; font-family:system-ui,sans-serif; }
+  h1 { text-align:center; font-size:22px; margin:20px 0 8px; letter-spacing:0.02em; }
+  #parity-row {
+    display:flex; flex-direction:row; gap:24px;
+    justify-content:center; align-items:flex-start;
+    padding:0 24px 24px;
+  }
+  .board-col { display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .board-caption {
+    font-size:16px; font-weight:700; letter-spacing:0.03em;
+    padding:6px 18px; border-radius:6px; text-align:center;
+  }
+  .caption-painter { background:#1a3040; color:#88ddff; border:1px solid #3a6080; }
+  .caption-webgpu  { background:#1a2840; color:#ffdd88; border:1px solid #806030; }
+  .board-host {
+    position:relative;
+    width:620px; height:400px;
+    border:2px solid #2a3550; border-radius:4px; overflow:hidden;
+  }
+  .board-canvas { display:block; width:620px; height:400px; }
   #verdict { position:fixed; top:16px; right:16px; padding:12px 20px; border-radius:8px;
-             font-size:20px; font-weight:bold; z-index:9999; opacity:0; transition:opacity 0.3s; }
+             font-size:18px; font-weight:bold; z-index:9999; opacity:0; transition:opacity 0.3s; }
   #verdict.show { opacity:1; }
   #verdict.pass { background:#1a5c1a; color:#4dff4d; border:2px solid #4dff4d; }
-  #verdict.fail { background:#5c1a1a; color:#ff4d4d; border:2px solid #ff4d4d; }
-  #status { position:fixed; bottom:16px; left:16px; font-size:12px; color:#7a8a9a; max-width:600px; }
+  #verdict.info { background:#1a2a5c; color:#4d9dff; border:2px solid #4d9dff; }
+  #status { position:fixed; bottom:16px; left:16px; font-size:12px; color:#7a8a9a; max-width:700px; }
 </style>
 </head>
 <body>
 
-<div id="board-host">
-  <!-- CanvasBoard placeholder: data-gosx-canvas-backend="webgpu" opts into 16a renderer
-       (26b-feature-engines-prefix.js:437, _canvasSurfaceWantsWebGPU).
-       data-gosx-surface-kind="canvas2d" is picked up by mountAllSurfaceKinds()
-       (26b-feature-engines-prefix.js:1054-1055). -->
-  <canvas id="board"
-    width="1280" height="720"
-    data-gosx-surface-kind="canvas2d"
-    data-gosx-engine-component="CanvasBoard"
-    data-gosx-canvas-backend="webgpu"
-    data-gosx-engine-props='` + props + `'
-    data-gosx-engine-caps="canvas,webgpu"
-    data-gosx-canvas2d="1"
-    data-gosx-onpick="handleBoardPick">
-  </canvas>
+<h1>GoSX Canvas Parity — 26b1 Painter (reference) vs 16a WebGPU</h1>
+
+<div id="parity-row">
+
+  <!-- LEFT: painter board (no backend attr → 26b1 painter reference) -->
+  <div class="board-col">
+    <div class="board-caption caption-painter">26b1 painter (reference)</div>
+    <div id="painter-host" class="board-host">
+      <!-- CanvasBoard placeholder WITHOUT backend attr — stays on 26b1 painter.
+           data-gosx-surface-kind="canvas2d" is picked up by mountAllSurfaceKinds()
+           (26b-feature-engines-prefix.js:1054-1063). -->
+      <canvas id="painter-board"
+        class="board-canvas"
+        width="620" height="400"
+        data-gosx-surface-kind="canvas2d"
+        data-gosx-engine-component="CanvasBoard"
+        data-gosx-engine-props='` + props + `'
+        data-gosx-engine-caps="canvas"
+        data-gosx-canvas2d="1">
+      </canvas>
+    </div>
+  </div>
+
+  <!-- RIGHT: WebGPU board (data-gosx-canvas-backend="webgpu" → 16a GPU path) -->
+  <div class="board-col">
+    <div class="board-caption caption-webgpu">16a WebGPU</div>
+    <div id="webgpu-host" class="board-host">
+      <!-- CanvasBoard placeholder WITH data-gosx-canvas-backend="webgpu" opts into
+           the 16a renderer (_canvasSurfaceWantsWebGPU).
+           data-gosx-surface-kind="canvas2d" is picked up by mountAllSurfaceKinds()
+           (26b-feature-engines-prefix.js:437, 1054-1063). -->
+      <canvas id="webgpu-board"
+        class="board-canvas"
+        width="620" height="400"
+        data-gosx-surface-kind="canvas2d"
+        data-gosx-engine-component="CanvasBoard"
+        data-gosx-canvas-backend="webgpu"
+        data-gosx-engine-props='` + props + `'
+        data-gosx-engine-caps="canvas,webgpu"
+        data-gosx-canvas2d="1">
+      </canvas>
+    </div>
+  </div>
+
 </div>
 
 <div id="verdict"></div>
@@ -460,17 +553,12 @@ func buildPage() string {
 <script>
 window.__gosx_scene3d_perf = true;
 
-// Pre-register a stub factory for the sentinel engine entry so mountAllEngines
-// completes silently. The factory immediately returns an empty handle — the
-// canvas2d board is mounted independently by mountAllSurfaceKinds() in the
-// engines feature, not by this engine entry.
+// Pre-register a stub factory for the sentinel engine entry.
 (function() {
   var reg = window.__gosx_register_engine_factory;
   if (typeof reg === 'function') {
     reg('CanvasSurfaceBoot', function() { return {}; });
   } else {
-    // bootstrap.js has not run yet — populate the shared registry directly.
-    // bootstrap.js picks this up at: const engineFactories = window.__gosx_engine_factories || Object.create(null)
     var factories = window.__gosx_engine_factories;
     if (!factories) {
       factories = Object.create(null);
@@ -480,11 +568,7 @@ window.__gosx_scene3d_perf = true;
   }
 })();
 
-// Capture all console.warn and console.error calls before bootstrap loads.
-// The WebGPU fallback emits exactly one warn (bootstrap-feature-engines.js).
-// console.error captures let the self-report expose hydration failures that
-// would otherwise be invisible in the headless run (errors are not visible
-// in report.json without this capture).
+// Capture console.warn / console.error before bootstrap loads.
 var _captured_warns = [];
 var _captured_errors = [];
 var _captured_logs = [];
@@ -507,37 +591,38 @@ console.log = function() {
   _orig_log.apply(console, arguments);
 };
 
-// MutationObserver on the canvas to watch for data-gosx-surface-id.
-var _surfaceIdObserved = null;
-var _canvasEl = document.getElementById('board');
-if (_canvasEl && typeof MutationObserver !== 'undefined') {
-  var _surfaceObs = new MutationObserver(function(muts) {
-    muts.forEach(function(m) {
-      if (m.type === 'attributes' && m.attributeName === 'data-gosx-surface-id') {
-        _surfaceIdObserved = _canvasEl.getAttribute('data-gosx-surface-id');
-        console.log('[verify] data-gosx-surface-id set:', _surfaceIdObserved);
-      }
-    });
-  });
-  _surfaceObs.observe(_canvasEl, { attributes: true, attributeFilter: ['data-gosx-surface-id', 'width', 'height'] });
+// MutationObserver on both canvases to track data-gosx-surface-id assignment.
+var _painterSurfaceId = null;
+var _webgpuSurfaceId = null;
+function watchCanvas(canvasId, setter) {
+  var el = document.getElementById(canvasId);
+  if (el && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(function(muts) {
+      muts.forEach(function(m) {
+        if (m.type === 'attributes' && m.attributeName === 'data-gosx-surface-id') {
+          setter(el.getAttribute('data-gosx-surface-id'));
+        }
+      });
+    }).observe(el, { attributes: true, attributeFilter: ['data-gosx-surface-id'] });
+  }
 }
+watchCanvas('painter-board', function(id) { _painterSurfaceId = id; });
+watchCanvas('webgpu-board',  function(id) { _webgpuSurfaceId = id; });
 
-// Wrap __gosx_hydrate when it becomes available to trace calls.
+// Wrap __gosx_hydrate when available to trace calls.
 var _hydrateCallLog = [];
 var _hydrateWatchInterval = setInterval(function() {
   if (typeof window.__gosx_hydrate === 'function' && !window.__gosx_hydrate._traced) {
     var orig = window.__gosx_hydrate;
     window.__gosx_hydrate = function() {
       var args = Array.from(arguments).map(function(a) {
-        if (typeof a === 'string') return a.length > 80 ? a.slice(0,80)+'...' : a;
-        return String(a);
+        return typeof a === 'string' ? (a.length > 80 ? a.slice(0,80)+'...' : a) : String(a);
       });
       var entry = {args: args, t: Date.now()};
       _hydrateCallLog.push(entry);
-      console.log('[verify] __gosx_hydrate called:', args[0], args[1], args[2]);
+      _orig_log('[verify] __gosx_hydrate called:', args[0], args[1], args[2]);
       var result = orig.apply(this, arguments);
       entry.result = typeof result === 'string' ? result : (result && result.toString ? result.toString() : 'null');
-      console.log('[verify] __gosx_hydrate returned:', entry.result);
       return result;
     };
     window.__gosx_hydrate._traced = true;
@@ -545,43 +630,35 @@ var _hydrateWatchInterval = setInterval(function() {
   }
 }, 50);
 
-// Timestamp for build-fresh verification.
 window.__gosx_verify_start = ` + strconv.FormatInt(ts, 10) + `;
 </script>
 
-<!-- Step 2: wasm_exec.js — must precede bootstrap-runtime.js (bootstrap loads Go
-     WASM via new Go() constructor; 10-runtime-scene-core.js:49-50) -->
+<!-- Step 2: wasm_exec.js — must precede bootstrap-runtime.js -->
 <script defer src="/gosx/wasm_exec.js"></script>
 
 <!-- Step 3: bootstrap-runtime.js — the SELECTIVE bootstrap orchestrator.
      Contains 26-runtime-tail.js: sets window.__gosx_register_bootstrap_feature,
      reads the gosx-manifest, detects feature names via manifestFeatureNames(),
      loads WASM, then dynamically loads /gosx/bootstrap-feature-engines.js whose
-     runtimeReady() calls mountAllSurfaceKinds() for the canvas2d board.
-     The old monolithic bootstrap.js (30-tail.js path) does NOT have
-     mountAllSurfaceKinds() — it calls mountAllEngines + hydrateAllIslands only. -->
+     runtimeReady() calls mountAllSurfaceKinds().
+     mountAllSurfaceKinds() discovers BOTH canvas placeholders via querySelectorAll
+     and hydrates each independently with a unique auto-incremented id. -->
 <script defer src="/gosx/bootstrap-runtime.js"></script>
 
 <!-- Step 4: scene3d + scene3d-webgpu chunks as STATIC defer tags, in order.
-     This is the M1 slice-4 contract verbatim: "the scene3d-webgpu chunk must be
-     script-tag-present" — the routed mount checks window.__gosx_scene3d_webgpu_api
-     synchronously at mount time (26b-feature-engines-prefix.js) and the runtime
-     CLOSES engine-factory registration after init, so dynamically-injected
-     after-DCL chunks both miss the mount-time check AND get their factory
-     registration rejected ("registration is closed after init" — observed).
+     M1 slice-4 contract: the scene3d-webgpu chunk must be script-tag-present
+     at mount time so window.__gosx_scene3d_webgpu_api.createRenderer is available.
      defer scripts execute in document order before DCL: scene3d publishes
-     window.__gosx_scene3d_api (sceneApi), then the webgpu chunk imports from it
-     and publishes __gosx_scene3d_webgpu_api.createRenderer — both present before
-     hydration mounts the surface. On no-GPU environments the chunks parse
-     harmlessly (the 16z probe gates actual device use) and the board falls back
-     to the painter with the documented single warn. -->
+     window.__gosx_scene3d_api, then webgpu chunk publishes __gosx_scene3d_webgpu_api.
+     On no-GPU environments the chunks parse harmlessly and the WebGPU board
+     falls back to the painter with a single console.warn. -->
 <script defer src="/gosx/bootstrap-feature-scene3d.js"></script>
 <script defer src="/gosx/bootstrap-feature-scene3d-webgpu.js"></script>
 
-<!-- Step 5: PerformanceObserver for scene3d render measures.
-     Mark names: "scene3d-render-start", "scene3d-render-end"
-     Measure name: "scene3d-render"
-     (16a-scene-webgpu.js:5857, 5119, 5120) -->
+<!-- Step 5: PerformanceObserver for scene3d render measures per board.
+     We capture all "scene3d-render" measures; they are not split per-board
+     (the PerformanceObserver does not expose which board triggered a measure)
+     but the aggregate count / p95 is still useful as a system-wide signal. -->
 <script>
 var _perf_entries = [];
 if (typeof PerformanceObserver !== 'undefined') {
@@ -594,207 +671,210 @@ if (typeof PerformanceObserver !== 'undefined') {
       });
     });
     _perfObs.observe({ entryTypes: ['measure'] });
-  } catch(e) {
-    // tolerate environments without PerformanceObserver
-  }
+  } catch(e) {}
 }
 </script>
 
-<!-- Step 6: self-validation script — runs after all resources load -->
+<!-- Step 6: self-validation script — runs after all resources load.
+     Waits for BOTH boards to hydrate (both get data-gosx-surface-id), then
+     probes labels layers and screenshots each board, then POSTs a combined
+     parity report. NO auto-interaction: both boards render their initial camera
+     and sit still. -->
 <script>
 (function() {
   'use strict';
 
-  var MAX_WAIT_MS = 15000;
-  var INTERACT_MS = 5000;
-  var statusEl = document.getElementById('status');
+  var MAX_WAIT_MS = 20000;
+  var statusEl  = document.getElementById('status');
   var verdictEl = document.getElementById('verdict');
-  var canvas = document.getElementById('board');
-  var boardHost = document.getElementById('board-host');
 
-  function setStatus(msg) {
-    if (statusEl) statusEl.textContent = msg;
-  }
+  var painterCanvas = document.getElementById('painter-board');
+  var webgpuCanvas  = document.getElementById('webgpu-board');
+  var painterHost   = document.getElementById('painter-host');
+  var webgpuHost    = document.getElementById('webgpu-host');
 
-  function showVerdict(pass, msg) {
+  function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
+
+  function showVerdict(cls, msg) {
     if (!verdictEl) return;
-    verdictEl.className = 'show ' + (pass ? 'pass' : 'fail');
-    verdictEl.textContent = (pass ? 'PASS' : 'FAIL') + ' — ' + msg;
+    verdictEl.className = 'show ' + cls;
+    verdictEl.textContent = msg;
   }
 
-  function wait(ms) {
-    return new Promise(function(r) { setTimeout(r, ms); });
-  }
-
-  // Dispatch realistic pointer events on the canvas to drive frames.
-  function driveInteraction() {
-    if (!canvas) return;
-    var rect = canvas.getBoundingClientRect();
-    var cx = rect.left + rect.width / 2;
-    var cy = rect.top + rect.height / 2;
-
-    function makePointerEvent(type, x, y, buttons) {
-      return new PointerEvent(type, {
-        bubbles: true, cancelable: true,
-        clientX: x, clientY: y,
-        button: 0, buttons: buttons || 0,
-        pointerId: 1, pointerType: 'mouse'
-      });
-    }
-    function makeWheelEvent(dy) {
-      return new WheelEvent('wheel', {
-        bubbles: true, cancelable: true,
-        clientX: cx, clientY: cy,
-        deltaY: dy, deltaMode: 0
-      });
-    }
-
-    // Drag pan: down, move 200px right, move 200px down, up.
-    canvas.dispatchEvent(makePointerEvent('pointerdown', cx, cy, 1));
-    canvas.dispatchEvent(makePointerEvent('pointermove', cx + 50, cy, 1));
-    canvas.dispatchEvent(makePointerEvent('pointermove', cx + 100, cy + 50, 1));
-    canvas.dispatchEvent(makePointerEvent('pointermove', cx + 150, cy + 100, 1));
-    canvas.dispatchEvent(makePointerEvent('pointermove', cx + 200, cy + 200, 1));
-    canvas.dispatchEvent(makePointerEvent('pointerup', cx + 200, cy + 200, 0));
-
-    // Wheel zoom in.
-    canvas.dispatchEvent(makeWheelEvent(-120));
-    canvas.dispatchEvent(makeWheelEvent(-120));
-
-    // Drag pan back.
-    canvas.dispatchEvent(makePointerEvent('pointerdown', cx + 200, cy + 200, 1));
-    canvas.dispatchEvent(makePointerEvent('pointermove', cx, cy, 1));
-    canvas.dispatchEvent(makePointerEvent('pointerup', cx, cy, 0));
-
-    // Wheel zoom out.
-    canvas.dispatchEvent(makeWheelEvent(120));
-  }
-
-  // Poll for WebGPU-route attributes on the canvas element.
-  // The 16a renderer publishes data-gosx-scene3d-webgpu-mesh-objects on the
-  // canvas's PARENT (the host) after the first render frame.
-  // (16a-scene-webgpu.js:5640 sets mount.setAttribute on the mount element,
-  // which is canvas.parentNode in the WebGPU canvas board path — the
-  // _startCanvasSurfaceWebGPURAF stores instance.webgpuHost = canvas.parentNode)
-  function pollForWebGPUAttrs(deadline) {
+  // Wait for a canvas element to receive data-gosx-surface-id.
+  function waitForSurfaceId(canvas, deadlineMs) {
     return new Promise(function(resolve) {
-      var interval = setInterval(function() {
-        var mount = canvas && (boardHost || canvas.parentNode);
-        var meshObj = mount ? mount.getAttribute('data-gosx-scene3d-webgpu-mesh-objects') : null;
-        var surfaceId = canvas ? canvas.getAttribute('data-gosx-surface-id') : null;
-        if ((meshObj !== null && parseInt(meshObj, 10) > 0) || Date.now() > deadline) {
-          clearInterval(interval);
-          resolve({ meshObjects: meshObj, surfaceId: surfaceId });
-        }
-      }, 200);
+      function check() {
+        var id = canvas ? canvas.getAttribute('data-gosx-surface-id') : null;
+        if (id || Date.now() > deadlineMs) { resolve(id); return; }
+        setTimeout(check, 100);
+      }
+      check();
     });
+  }
+
+  // Wait for the WASM runtime ready signal.
+  function waitForRuntime(deadlineMs) {
+    return new Promise(function(resolve) {
+      function check() {
+        if ((window.__gosx && window.__gosx.ready) || Date.now() > deadlineMs) {
+          resolve(); return;
+        }
+        setTimeout(check, 100);
+      }
+      check();
+    });
+  }
+
+  // probeLabelsLayer locates the label overlay div on the given board host and
+  // counts its <span> children.
+  //
+  // The overlay is created by ensureLabelLayer() in 26b2-canvas-board-labels.js:
+  //   layer.style.cssText = "position:absolute;inset:0;overflow:hidden;pointer-events:none;"
+  // (26b2-canvas-board-labels.js:146)
+  //
+  // It is also cached on host.__gosxBoardLabelLayer (line 153), but that private
+  // property is not accessible cross-script. We identify it as the first direct
+  // child DIV of the host whose inline style contains "pointer-events:none"
+  // (the only div the runtime ever adds as a direct child of the board host).
+  //
+  // WSL headless: both boards fall back to the painter path (no GPU) so no label
+  // overlay is ever created; both will return labelsLayerFound:false. The probe
+  // code must handle that honestly without crashing.
+  function probeLabelsLayer(host) {
+    var result = { labelsLayerFound: false, labelSpanCount: 0, sampleLabelTexts: [] };
+    if (!host) return result;
+    try {
+      var children = host.children;
+      for (var i = 0; i < children.length; i++) {
+        var child = children[i];
+        if (child.tagName !== 'DIV') continue;
+        var style = child.style;
+        // Identify layer: pointer-events:none is set only on the label overlay div.
+        // (26b2-canvas-board-labels.js:146: "...pointer-events:none;")
+        if (style && style.pointerEvents === 'none') {
+          result.labelsLayerFound = true;
+          var spans = child.getElementsByTagName('span');
+          result.labelSpanCount = spans.length;
+          var samples = [];
+          for (var j = 0; j < Math.min(3, spans.length); j++) {
+            samples.push(spans[j].textContent || '');
+          }
+          result.sampleLabelTexts = samples;
+          break;
+        }
+      }
+    } catch(e) {
+      result.error = String(e && e.message ? e.message : e);
+    }
+    return result;
+  }
+
+  // takeScreenshot copies the board canvas to an offscreen canvas and returns
+  // { dataURL, paintedPixels }. Also scans for any non-background pixel.
+  function takeScreenshot(canvas) {
+    var result = { dataURL: '', paintedPixels: false };
+    if (!canvas) return result;
+    try {
+      var offscreen = document.createElement('canvas');
+      offscreen.width  = canvas.width  || 620;
+      offscreen.height = canvas.height || 400;
+      var ctx2d = offscreen.getContext('2d');
+      if (ctx2d) {
+        ctx2d.drawImage(canvas, 0, 0);
+        try {
+          result.dataURL = offscreen.toDataURL('image/png');
+        } catch(e) {
+          result.dataURL = 'error:' + String(e && e.message ? e.message : e);
+        }
+        // Scan for any non-background pixel. #0f1720 = rgb(15,23,32).
+        try {
+          var imgData = ctx2d.getImageData(0, 0, offscreen.width, offscreen.height);
+          var bg = [15, 23, 32];
+          var d = imgData.data;
+          for (var pi = 0; pi < d.length; pi += 4 * 8) {
+            if (Math.abs(d[pi]-bg[0]) > 8 || Math.abs(d[pi+1]-bg[1]) > 8 || Math.abs(d[pi+2]-bg[2]) > 8) {
+              result.paintedPixels = true;
+              break;
+            }
+          }
+        } catch(e2) { /* tolerate cross-origin canvas taint */ }
+      }
+    } catch(e) {
+      result.dataURL = 'error:' + String(e && e.message ? e.message : e);
+    }
+    return result;
+  }
+
+  // collectMountAttrs gathers all data-gosx-* attributes from a canvas and its host.
+  function collectMountAttrs(canvas, host) {
+    var attrs = {};
+    [canvas, host].forEach(function(el) {
+      if (!el) return;
+      for (var i = 0; i < el.attributes.length; i++) {
+        var attr = el.attributes[i];
+        if (attr.name.startsWith('data-gosx-')) {
+          attrs[attr.name] = attr.value;
+        }
+      }
+    });
+    return attrs;
   }
 
   async function run() {
     setStatus('Waiting for gosx runtime ready…');
     var deadline = Date.now() + MAX_WAIT_MS;
 
-    // Wait for WASM runtime + feature loading.
-    await new Promise(function(resolve) {
-      function check() {
-        if ((window.__gosx && window.__gosx.ready) || Date.now() > deadline) {
-          resolve();
-          return;
-        }
-        setTimeout(check, 100);
-      }
-      check();
+    await waitForRuntime(deadline);
+    setStatus('Runtime ready. Waiting for both boards to hydrate…');
+
+    // Wait for both boards to receive data-gosx-surface-id (set by mountSurfaceKind
+    // after __gosx_hydrate succeeds — 26b-feature-engines-prefix.js:431).
+    var painterSurfaceId = await waitForSurfaceId(painterCanvas, deadline);
+    var webgpuSurfaceId  = await waitForSurfaceId(webgpuCanvas,  deadline);
+
+    setStatus('Both boards hydrated (or timed out). Waiting two rAF frames before probing…');
+
+    // Wait two rAF cycles to ensure at least one paint frame has completed.
+    await new Promise(function(r) {
+      requestAnimationFrame(function() { requestAnimationFrame(r); });
     });
 
-    setStatus('Runtime ready. Waiting for WebGPU hydration…');
+    setStatus('Collecting parity data…');
 
-    // Wait for canvas2d board hydration (surface-id attribute set by
-    // mountSurfaceKind after __gosx_hydrate succeeds —
-    // bootstrap-feature-engines.js sn() function line: try{o.setAttribute(...)}).
-    // The polling timeout is MAX_WAIT_MS - time already spent waiting for WASM.
-    await new Promise(function(resolve) {
-      function checkHydrated() {
-        var surfaceId = canvas ? canvas.getAttribute('data-gosx-surface-id') : null;
-        if (surfaceId || Date.now() > deadline) { resolve(); return; }
-        setTimeout(checkHydrated, 100);
-      }
-      checkHydrated();
-    });
+    // ---- Per-board probes ----
 
-    // Diagnostic: emit current surface-id and __gosx_ready state.
-    var surfaceIdAtMount = canvas ? canvas.getAttribute('data-gosx-surface-id') : null;
-    var gosxReadyAtMount = window.__gosx && window.__gosx.ready;
+    // Labels layer probe (26b2 overlay; only present on WebGPU-routed boards).
+    var painterLabels = probeLabelsLayer(painterHost);
+    var webgpuLabels  = probeLabelsLayer(webgpuHost);
 
-    // Capture a pixel snapshot BEFORE interaction so the check is not affected
-    // by camera pan/zoom moving content out of frame.
-    var _prePaintedPixels = false;
-    try {
-      // Wait one rAF to ensure at least one paint frame has completed.
-      await new Promise(function(r) { requestAnimationFrame(function() { requestAnimationFrame(r); }); });
-      var preOffscreen = document.createElement('canvas');
-      preOffscreen.width = canvas.width || 1280;
-      preOffscreen.height = canvas.height || 720;
-      var preCtx = preOffscreen.getContext('2d');
-      if (preCtx) {
-        preCtx.drawImage(canvas, 0, 0);
-        try {
-          var preImg = preCtx.getImageData(0, 0, preOffscreen.width, preOffscreen.height);
-          var preBg = [15, 23, 32];
-          var preD = preImg.data;
-          for (var prePi = 0; prePi < preD.length; prePi += 4 * 8) {
-            if (Math.abs(preD[prePi] - preBg[0]) > 8 || Math.abs(preD[prePi+1] - preBg[1]) > 8 || Math.abs(preD[prePi+2] - preBg[2]) > 8) {
-              _prePaintedPixels = true;
-              break;
-            }
-          }
-        } catch(_e) { /* tolerate */ }
-      }
-    } catch(_e) { /* tolerate */ }
+    // Screenshots.
+    var painterShot = takeScreenshot(painterCanvas);
+    var webgpuShot  = takeScreenshot(webgpuCanvas);
 
-    setStatus('Board hydrated. Driving interaction for ' + (INTERACT_MS/1000) + 's…');
+    // Mount attributes.
+    var painterAttrs = collectMountAttrs(painterCanvas, painterHost);
+    var webgpuAttrs  = collectMountAttrs(webgpuCanvas,  webgpuHost);
 
-    // Drive interaction over INTERACT_MS to collect perf measures.
-    var interactEnd = Date.now() + INTERACT_MS;
-    while (Date.now() < interactEnd) {
-      driveInteraction();
-      await wait(200);
-    }
-
-    setStatus('Collecting results…');
-
-    // Poll for WebGPU mesh-object attrs (may appear on canvas's parent).
-    var attrResult = await pollForWebGPUAttrs(Date.now() + 3000);
-
-    // Collect all data-gosx-* attrs from canvas and its parent.
-    var mountAttrs = {};
-    [canvas, boardHost].forEach(function(el) {
-      if (!el) return;
-      for (var i = 0; i < el.attributes.length; i++) {
-        var attr = el.attributes[i];
-        if (attr.name.startsWith('data-gosx-')) {
-          mountAttrs[attr.name] = attr.value;
-        }
-      }
-    });
-
-    // Determine WebGPU route: no fallback warn AND mesh-objects > 0.
+    // WebGPU-route detection for the webgpu board:
+    // a fallback warn ("WebGPU backend unavailable") indicates painter fallback.
     var hasFallbackWarn = _captured_warns.some(function(w) {
       return w.indexOf('WebGPU backend unavailable') !== -1 ||
              w.indexOf('falling back to the 2D painter') !== -1;
     });
-    var meshObjects = attrResult && attrResult.meshObjects !== null
-      ? parseInt(attrResult.meshObjects, 10) : -1;
-    var webgpuRoute = !hasFallbackWarn && meshObjects > 0;
+    var webgpuMeshObjects = -1;
+    var meshAttr = webgpuHost ? webgpuHost.getAttribute('data-gosx-scene3d-webgpu-mesh-objects') : null;
+    if (meshAttr !== null) webgpuMeshObjects = parseInt(meshAttr, 10);
+    var webgpuRoute = !hasFallbackWarn && webgpuMeshObjects > 0;
 
-    // Canvas context probe: on a WebGPU canvas, getContext('2d') returns null
-    // (the context was already taken by 'webgpu').
-    var canvasContextProbe = 'unknown';
+    // Canvas context probe on the WebGPU board (webgpu context taints 2d).
+    var webgpuContextProbe = 'unknown';
     try {
-      var testCtx = canvas.getContext('2d');
-      canvasContextProbe = testCtx === null ? 'webgpu-tainted-2d-null' : '2d-available';
-    } catch(e) {
-      canvasContextProbe = 'error:' + e.message;
-    }
+      if (webgpuCanvas) {
+        var testCtx = webgpuCanvas.getContext('2d');
+        webgpuContextProbe = testCtx === null ? 'webgpu-tainted-2d-null' : '2d-available';
+      }
+    } catch(e) { webgpuContextProbe = 'error:' + e.message; }
 
     // GPU adapter info.
     var adapterInfo = null;
@@ -810,88 +890,73 @@ if (typeof PerformanceObserver !== 'undefined') {
           };
         }
       }
-    } catch(e) {
-      adapterInfo = { error: String(e.message || e) };
-    }
+    } catch(e) { adapterInfo = { error: String(e && e.message ? e.message : e) }; }
 
-    // Perf stats from PerformanceObserver.
+    // Perf stats.
     var perfStats = { count: 0, p50: 0, p95: 0, max: 0 };
     if (_perf_entries.length > 0) {
       var sorted = _perf_entries.slice().sort(function(a,b){return a-b;});
-      perfStats.count = sorted.length;
-      perfStats.p50 = sorted[Math.floor(sorted.length * 0.5)] || 0;
-      perfStats.p95 = sorted[Math.floor(sorted.length * 0.95)] || 0;
-      perfStats.max = sorted[sorted.length - 1] || 0;
+      perfStats.count  = sorted.length;
+      perfStats.p50    = sorted[Math.floor(sorted.length * 0.5)] || 0;
+      perfStats.p95    = sorted[Math.floor(sorted.length * 0.95)] || 0;
+      perfStats.max    = sorted[sorted.length - 1] || 0;
     }
 
-    // Count label spans in the label overlay.
-    var labelsLayer = boardHost ? boardHost.querySelectorAll('[data-gosx-canvas-label]') : [];
-    var labelsCount = labelsLayer.length;
-
-    // Screenshot: draw the board canvas into a 2D offscreen canvas via drawImage.
-    // Also check for painted pixels (any non-background pixel proves the board painted).
-    //
-    // Scanning strategy: sample every 8th pixel across the FULL canvas (strided grid).
-    // A 256×256 crop is NOT enough — after interaction the camera may have panned such
-    // that colored rects only appear in the center or right half of the canvas.
-    var screenshotDataURL = '';
-    var paintedPixels = false;
-    try {
-      var offscreen = document.createElement('canvas');
-      offscreen.width = canvas.width;
-      offscreen.height = canvas.height;
-      var ctx2d = offscreen.getContext('2d');
-      if (ctx2d) {
-        ctx2d.drawImage(canvas, 0, 0);
-        screenshotDataURL = offscreen.toDataURL('image/png');
-        // Strided scan of the full canvas for any non-background pixel.
-        // #0f1720 = rgb(15,23,32). Threshold >8 tolerates subpixel AA bleed.
-        try {
-          var imgData = ctx2d.getImageData(0, 0, offscreen.width, offscreen.height);
-          var bg = [15, 23, 32]; // #0f1720
-          var d = imgData.data;
-          var stride = 8; // sample every 8th pixel for performance
-          for (var pi = 0; pi < d.length; pi += 4 * stride) {
-            if (Math.abs(d[pi] - bg[0]) > 8 || Math.abs(d[pi+1] - bg[1]) > 8 || Math.abs(d[pi+2] - bg[2]) > 8) {
-              paintedPixels = true;
-              break;
-            }
-          }
-        } catch(e2) { /* tolerate cross-origin canvas taint */ }
-      }
-    } catch(e) {
-      screenshotDataURL = 'error:' + String(e.message || e);
-    }
-
+    // ---- Build report ----
     var report = {
+      harnessVersion: 'parity-v2',
+
+      // Per-board summaries.
+      painterBoard: {
+        surfaceId: painterSurfaceId || null,
+        paintedPixels: painterShot.paintedPixels,
+        mountAttrs: painterAttrs,
+        labelsLayerFound: painterLabels.labelsLayerFound,
+        labelSpanCount: painterLabels.labelSpanCount,
+        sampleLabelTexts: painterLabels.sampleLabelTexts
+      },
+      webgpuBoard: {
+        surfaceId: webgpuSurfaceId || null,
+        paintedPixels: webgpuShot.paintedPixels,
+        mountAttrs: webgpuAttrs,
+        webgpuRoute: webgpuRoute,
+        webgpuContextProbe: webgpuContextProbe,
+        meshObjectsAttr: meshAttr,
+        labelsLayerFound: webgpuLabels.labelsLayerFound,
+        labelSpanCount: webgpuLabels.labelSpanCount,
+        sampleLabelTexts: webgpuLabels.sampleLabelTexts
+      },
+
+      // Top-level fields for backward compat / server summary.
       webgpuRoute: webgpuRoute,
+      painterSurfaceId: painterSurfaceId || null,
+      webgpuSurfaceId: webgpuSurfaceId || null,
+      painterPaintedPixels: painterShot.paintedPixels,
+      webgpuPaintedPixels: webgpuShot.paintedPixels,
+
       navigatorGPU: !!navigator.gpu,
       adapterInfo: adapterInfo,
-      canvasContextProbe: canvasContextProbe,
-      mountAttrs: mountAttrs,
       warns: _captured_warns,
       errors: _captured_errors,
       logs: (_captured_logs || []).filter(function(l) { return l.indexOf('[verify]') !== -1; }),
       perf: perfStats,
-      labelsCount: labelsCount,
-      paintedPixels: paintedPixels || _prePaintedPixels,
-      surfaceIdAtMount: surfaceIdAtMount,
-      surfaceIdObserved: typeof _surfaceIdObserved !== 'undefined' ? _surfaceIdObserved : null,
       hydrateCallLog: typeof _hydrateCallLog !== 'undefined' ? _hydrateCallLog : [],
-      gosxReadyAtMount: !!gosxReadyAtMount,
+      gosxReadyAtMount: !!(window.__gosx && window.__gosx.ready),
       gosxHydratePresent: typeof window.__gosx_hydrate === 'function',
-      gosxEngineFactoriesPresent: typeof window.__gosx_engine_factories === 'object' && !!window.__gosx_engine_factories,
       gosxRenderCanvasPresent: typeof window.__gosx_render_canvas === 'function',
       gosxPaintCanvasBundlePresent: typeof window.__gosx_paint_canvas_bundle === 'function',
       gosxRuntimeReadyFnPresent: typeof window.__gosx_runtime_ready === 'function',
       mountAllSurfaceKindsPresent: typeof window.__gosx_mount_all_surface_kinds === 'function',
-      screenshotDataURL: screenshotDataURL,
-      meshObjectsAttr: attrResult ? attrResult.meshObjects : null,
+
+      // Per-board screenshots.
+      painterScreenshotDataURL: painterShot.dataURL,
+      webgpuScreenshotDataURL: webgpuShot.dataURL,
+
       timestamp: Date.now()
     };
 
     // POST report.
-    setStatus('POSTing report…');
+    setStatus('POSTing parity report…');
     try {
       var resp = await fetch('/report', {
         method: 'POST',
@@ -901,20 +966,24 @@ if (typeof PerformanceObserver !== 'undefined') {
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
     } catch(e) {
       setStatus('Report POST failed: ' + e.message);
+      return;
     }
 
-    // Show verdict banner.
-    if (webgpuRoute) {
-      showVerdict(true, 'WebGPU route confirmed (mesh-objects=' + meshObjects + ')');
-      setStatus('PASS — WebGPU board rendered. Report saved to ' + '/tmp/gosx-webgpu-verify/report.json');
+    // Show verdict.
+    var painterOK = painterShot.paintedPixels;
+    var webgpuOK  = webgpuShot.paintedPixels;
+    if (painterOK && webgpuOK) {
+      showVerdict('pass', 'Both boards painted — open Windows Chrome for GPU verdict');
+      setStatus('PASS (painter painted, webgpu painted' + (webgpuRoute ? ', GPU route' : ', painter fallback') + ')');
+    } else if (painterOK) {
+      showVerdict('info', 'Painter OK — WebGPU board not painted (headless / no GPU)');
+      setStatus('painter painted; webgpu board empty (expected in headless). Report: /tmp/gosx-webgpu-verify/report.json');
     } else {
-      var reason = hasFallbackWarn ? 'fallback warn detected' : 'mesh-objects=' + meshObjects;
-      showVerdict(false, 'Fell back to 2D painter (' + reason + ')');
-      setStatus('FALLBACK — ' + reason + '. Report: /tmp/gosx-webgpu-verify/report.json');
+      showVerdict('info', 'Waiting for paint — check server log');
+      setStatus('painter not painted yet — check report.json for details');
     }
   }
 
-  // Start after page load.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', run);
   } else {
@@ -927,6 +996,6 @@ if (typeof PerformanceObserver !== 'undefined') {
 </html>`
 }
 
-// handleBoardPick is referenced in the page's onpick attribute but lives on
-// the client side (WASM bridge). It's named here to document the contract.
+// handleBoardPick is referenced for documentation purposes; the pick callback
+// lives on the client side (WASM bridge).
 var _ = fmt.Sprintf // keep fmt import used

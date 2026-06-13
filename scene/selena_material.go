@@ -102,6 +102,8 @@ func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMat
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
+	material.VertexWGSL = selenaPointsWGSLRuntimeFrameLayout(material.VertexWGSL)
+	material.FragmentWGSL = selenaPointsWGSLRuntimeFrameLayout(material.FragmentWGSL)
 	return material, result.Layout, nil
 }
 
@@ -144,6 +146,84 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 	return out, nil
 }
 
+// CompileSelenaPoints compiles a Selena .sel source whose target material has
+// kind "points". The returned CustomMaterial carries the GLSL vertex/fragment
+// programs and the WGSL module, ready to attach to a Points layer via
+// Points.Material. An error is returned if the compiled material's surface kind
+// is not bindings.SurfaceKindPoints.
+func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
+	result, err := selena.Compile(source, selena.CompileOptions{
+		Material: opts.Material,
+		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+	})
+	if err != nil {
+		return CustomMaterial{}, bindings.Layout{}, err
+	}
+	if result.Layout.Kind != bindings.SurfaceKindPoints {
+		return CustomMaterial{}, bindings.Layout{}, fmt.Errorf(
+			"selena material %q has kind %q, expected %q",
+			result.Material.Name, result.Layout.Kind, bindings.SurfaceKindPoints,
+		)
+	}
+	material, err := selenaCustomMaterial(result, opts)
+	if err != nil {
+		return CustomMaterial{}, bindings.Layout{}, err
+	}
+	material.VertexWGSL = selenaPointsWGSLRuntimeFrameLayout(material.VertexWGSL)
+	material.FragmentWGSL = selenaPointsWGSLRuntimeFrameLayout(material.FragmentWGSL)
+	return material, result.Layout, nil
+}
+
+// CompileSelenaParticleRender compiles a Selena .sel source whose target
+// material has kind "points" for use as the render-pass override on a
+// ComputeParticles system. The returned CustomMaterial carries the authored
+// GLSL and WGSL shaders, ready to attach via ComputeParticles.RenderMaterial.
+//
+// "kind points" covers both Points layers (vertex-buffer path) and
+// ComputeParticle render overrides (storage-buffer path); the binding contract
+// differs at group(2) only — the gosx browser pipeline routes the shader to
+// the correct layout automatically based on the entry type.
+func CompileSelenaParticleRender(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
+	return CompileSelenaPoints(source, opts)
+}
+
+// CompileSelenaPost compiles a Selena .sel source whose target material has
+// kind "post". The returned CustomMaterial carries WGSL and GLSL shaders
+// conforming to the Selena post contract:
+//
+//	WGSL: fullscreen triangle via @builtin(vertex_index) (3 verts, no vertex
+//	  buffers), entries vertexMain/fragmentMain.
+//	  @group(0): binding(0) texture_2d<f32> sceneColor, (1) sampler,
+//	    (2) texture_depth_2d sceneDepth, (3) sampler,
+//	    (4) uniform UserUniforms (present only when params declared).
+//
+//	GLSL (WebGL2): vertex uses attribute vec2 a_position (fullscreen quad),
+//	  v_uv = a_position*0.5+0.5; fragment samples _sceneColor/_sceneDepth
+//	  samplers by name.
+//
+// An error is returned if the compiled material's kind is not
+// bindings.SurfaceKindPost.
+func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
+	result, err := selena.Compile(source, selena.CompileOptions{
+		Material: opts.Material,
+		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+	})
+	if err != nil {
+		return CustomMaterial{}, bindings.Layout{}, err
+	}
+	if result.Layout.Kind != bindings.SurfaceKindPost {
+		return CustomMaterial{}, bindings.Layout{}, fmt.Errorf(
+			"selena material %q has kind %q, expected %q",
+			result.Material.Name, result.Layout.Kind, bindings.SurfaceKindPost,
+		)
+	}
+	material, err := selenaCustomMaterial(result, opts)
+	if err != nil {
+		return CustomMaterial{}, bindings.Layout{}, err
+	}
+	return material, result.Layout, nil
+}
+
 func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (CustomMaterial, error) {
 	wgsl, ok := result.Artifact(selena.TargetWGSL)
 	if !ok || strings.TrimSpace(wgsl.Source) == "" {
@@ -164,7 +244,39 @@ func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (Cus
 		FragmentWGSL:     wgsl.Source,
 		Uniforms:         selenaUniforms(result.Layout, opts.Uniforms),
 	}
+	if material.Wireframe == nil {
+		material.Wireframe = Bool(false)
+	}
 	return material, nil
+}
+
+func selenaPointsWGSLRuntimeFrameLayout(source string) string {
+	const runtimeFrame = `struct FrameUniforms {
+  viewMatrix     : mat4x4<f32>,
+  projMatrix     : mat4x4<f32>,
+  cameraPos      : vec3<f32>,
+  lightCount     : u32,
+  viewportWidth  : f32,
+  viewportHeight : f32,
+  toneMap        : u32,
+  _pad0          : u32,
+};
+`
+	const prefix = "struct FrameUniforms {"
+	start := strings.Index(source, prefix)
+	if start < 0 {
+		return source
+	}
+	afterStart := source[start+len(prefix):]
+	endRel := strings.Index(afterStart, "};")
+	if endRel < 0 {
+		return source
+	}
+	end := start + len(prefix) + endRel + len("};")
+	if end < len(source) && source[end] == '\n' {
+		end++
+	}
+	return source[:start] + runtimeFrame + source[end:]
 }
 
 func selenaLayoutMap(layout bindings.Layout) map[string]any {

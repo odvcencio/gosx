@@ -147,6 +147,44 @@ type DOF struct {
 
 func (DOF) isPostEffect() {}
 
+// CustomPostStage selects where a CustomPost pass executes within the
+// bloom/tonemap chain.
+type CustomPostStage string
+
+const (
+	// CustomPostBeforeTonemap places the pass after bloom, before tonemap.
+	// This is the default when Stage is empty.
+	CustomPostBeforeTonemap CustomPostStage = "beforeTonemap"
+	// CustomPostAfterTonemap places the pass after tonemap, in the LDR region.
+	CustomPostAfterTonemap CustomPostStage = "afterTonemap"
+)
+
+// CustomPost inserts a user-authored Selena post-process pass into the
+// post-effect chain. The Selena post contract (WGSL fullscreen triangle via
+// @builtin(vertex_index), entries vertexMain/fragmentMain, @group(0) bindings
+// 0-4 sceneColor/sceneColorSampler/sceneDepth/sceneDepthSampler/UserUniforms)
+// is emitted by selena materials with kind "post".
+//
+// Ordering: by default (Stage == "" or "beforeTonemap") custom passes run
+// after bloom, before tonemap. Set Stage to "afterTonemap" to run after
+// tonemapping in the LDR region.
+//
+// On failure (shader validation error, unsupported platform) the pass becomes
+// an identity passthrough rather than aborting the frame.
+type CustomPost struct {
+	// Name is a stable identifier for diagnostics and pipeline caching.
+	Name     string
+	Material *CustomMaterial
+	// Uniforms holds per-frame uniform overrides. Merged with the material's
+	// own defaults; keys match the Selena param names.
+	Uniforms map[string]any
+	// Stage controls ordering relative to bloom/tonemap.
+	// Empty string and "beforeTonemap" are equivalent (default).
+	Stage CustomPostStage
+}
+
+func (CustomPost) isPostEffect() {}
+
 // resolveMaxPixels normalizes the field for IR emission. Zero or negative
 // values become the default 1080p cap; positive values pass through.
 func (p PostFX) resolveMaxPixels() int {
