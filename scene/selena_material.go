@@ -150,7 +150,8 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 // kind "points". The returned CustomMaterial carries the GLSL vertex/fragment
 // programs and the WGSL module, ready to attach to a Points layer via
 // Points.Material. An error is returned if the compiled material's surface kind
-// is not bindings.SurfaceKindPoints.
+// is not "points", or if the linked Selena bindings are too old to expose
+// surface-kind metadata.
 func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
@@ -159,11 +160,8 @@ func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMater
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
-	if result.Layout.Kind != bindings.SurfaceKindPoints {
-		return CustomMaterial{}, bindings.Layout{}, fmt.Errorf(
-			"selena material %q has kind %q, expected %q",
-			result.Material.Name, result.Layout.Kind, bindings.SurfaceKindPoints,
-		)
+	if err := validateSelenaSurfaceKind(result, "points"); err != nil {
+		return CustomMaterial{}, bindings.Layout{}, err
 	}
 	material, err := selenaCustomMaterial(result, opts)
 	if err != nil {
@@ -201,8 +199,8 @@ func CompileSelenaParticleRender(source []byte, opts SelenaMaterialOptions) (Cus
 //	  v_uv = a_position*0.5+0.5; fragment samples _sceneColor/_sceneDepth
 //	  samplers by name.
 //
-// An error is returned if the compiled material's kind is not
-// bindings.SurfaceKindPost.
+// An error is returned if the compiled material's kind is not "post", or if the
+// linked Selena bindings are too old to expose surface-kind metadata.
 func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
@@ -211,17 +209,47 @@ func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMateria
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
-	if result.Layout.Kind != bindings.SurfaceKindPost {
-		return CustomMaterial{}, bindings.Layout{}, fmt.Errorf(
-			"selena material %q has kind %q, expected %q",
-			result.Material.Name, result.Layout.Kind, bindings.SurfaceKindPost,
-		)
+	if err := validateSelenaSurfaceKind(result, "post"); err != nil {
+		return CustomMaterial{}, bindings.Layout{}, err
 	}
 	material, err := selenaCustomMaterial(result, opts)
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
 	return material, result.Layout, nil
+}
+
+func validateSelenaSurfaceKind(result selena.Result, want string) error {
+	got, ok := selenaSurfaceKind(result.Layout)
+	if !ok {
+		return fmt.Errorf(
+			"selena material %q cannot be validated as kind %q because the linked m31labs.dev/selena bindings.Layout does not expose surface kind metadata",
+			result.Material.Name, want,
+		)
+	}
+	if got != want {
+		return fmt.Errorf("selena material %q has kind %q, expected %q", result.Material.Name, got, want)
+	}
+	return nil
+}
+
+func selenaSurfaceKind(layout any) (string, bool) {
+	value := reflect.ValueOf(layout)
+	for value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return "", false
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return "", false
+	}
+	field := value.FieldByName("Kind")
+	if !field.IsValid() || field.Kind() != reflect.String {
+		return "", false
+	}
+	kind := strings.TrimSpace(field.String())
+	return kind, kind != ""
 }
 
 func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (CustomMaterial, error) {

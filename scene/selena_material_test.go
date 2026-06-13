@@ -219,8 +219,8 @@ func TestCompileSelenaPointsMatchesWebGPUFrameLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if layout.Kind != "points" {
-		t.Fatalf("layout kind = %q, want points", layout.Kind)
+	if kind, ok := selenaSurfaceKind(layout); !ok || kind != "points" {
+		t.Fatalf("layout kind = %q ok=%v, want points", kind, ok)
 	}
 	wgsl := material.VertexWGSL
 	for _, want := range []string{
@@ -388,8 +388,8 @@ func TestCompileSelenaPostMinimal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if layout.Kind != "post" {
-		t.Fatalf("layout kind = %q, want post", layout.Kind)
+	if kind, ok := selenaSurfaceKind(layout); !ok || kind != "post" {
+		t.Fatalf("layout kind = %q ok=%v, want post", kind, ok)
 	}
 	if layout.Material != "MinimalPost" {
 		t.Fatalf("layout material = %q, want MinimalPost", layout.Material)
@@ -417,8 +417,8 @@ func TestCompileSelenaPostGravitationalLens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if layout.Kind != "post" {
-		t.Fatalf("layout kind = %q, want post", layout.Kind)
+	if kind, ok := selenaSurfaceKind(layout); !ok || kind != "post" {
+		t.Fatalf("layout kind = %q ok=%v, want post", kind, ok)
 	}
 	if layout.Material != "GravitationalLens" {
 		t.Fatalf("layout material = %q, want GravitationalLens", layout.Material)
@@ -450,5 +450,11 @@ func TestCompileSelenaPostRejectsNonPostKind(t *testing.T) {
 	_, _, err := CompileSelenaPost([]byte(selenaDefaultsSource), SelenaMaterialOptions{})
 	if err == nil || !strings.Contains(err.Error(), "expected") {
 		t.Fatalf("expected kind error, got: %v", err)
+	}
+}
+
+func TestSelenaSurfaceKindReportsMissingMetadata(t *testing.T) {
+	if kind, ok := selenaSurfaceKind(struct{ Material string }{Material: "Legacy"}); ok || kind != "" {
+		t.Fatalf("selenaSurfaceKind legacy layout = %q ok=%v, want missing metadata", kind, ok)
 	}
 }
