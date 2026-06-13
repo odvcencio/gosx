@@ -42,6 +42,15 @@
    * @property {string} [computeWGSL] - Optional Elio/custom kernel override WGSL source.
    * @property {string} [computeEntry] - Entry point for computeWGSL (default "simulate").
    * @property {string} [computeBackend] - Kernel authoring back-end name (e.g. "elio").
+   * @property {string} [computeWGSLRef] - shaderLib ref replacing computeWGSL when deduplicated.
+   */
+
+  /**
+   * @typedef {Object.<string,string>} SceneShaderLib
+   * Map of content-hash IDs (e.g. "sl:aabb1122...") to shader source strings.
+   * Present at the scene root when large shader strings are deduplicated. The
+   * JS hydrate path (inflateManifestShaderLibs) expands refs before renderers
+   * see the scene, so downstream code never needs to handle this field.
    */
 
   /**

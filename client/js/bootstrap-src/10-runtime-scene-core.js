@@ -39,6 +39,96 @@
   }
 
   // --------------------------------------------------------------------------
+  // Shader-lib hydrate: inflate shaderLib refs back to inline fields
+  // --------------------------------------------------------------------------
+
+  // Registry of {collection, field} pairs that participate in shader-lib dedup.
+  // Must mirror the Go shaderLibFields registry in scene/shader_lib.go.
+  const SHADER_LIB_FIELDS = [
+    { collection: "computeParticles", field: "computeWGSL" },
+    { collection: "objects",          field: "customVertex" },
+    { collection: "objects",          field: "customFragment" },
+    { collection: "objects",          field: "customVertexWGSL" },
+    { collection: "objects",          field: "customFragmentWGSL" },
+    { collection: "models",           field: "customVertex" },
+    { collection: "models",           field: "customFragment" },
+    { collection: "models",           field: "customVertexWGSL" },
+    { collection: "models",           field: "customFragmentWGSL" },
+    // Points authored-material fields (S2).
+    { collection: "points",           field: "customVertex" },
+    { collection: "points",           field: "customFragment" },
+    { collection: "points",           field: "customVertexWGSL" },
+    { collection: "points",           field: "customFragmentWGSL" },
+    // ComputeParticles render-pass authored-material fields (S3).
+    { collection: "computeParticles", field: "renderVertex" },
+    { collection: "computeParticles", field: "renderFragment" },
+    { collection: "computeParticles", field: "renderVertexWGSL" },
+    { collection: "computeParticles", field: "renderFragmentWGSL" },
+    // Named material profile authored shader fields (S4 — composable <Material>
+    // elements; same envelope as objects/points so one .sel shader can deduplicate
+    // across all ~21 galaxy profiles via a single shaderLib entry after dedup).
+    { collection: "materials",        field: "customVertex" },
+    { collection: "materials",        field: "customFragment" },
+    { collection: "materials",        field: "customVertexWGSL" },
+    { collection: "materials",        field: "customFragmentWGSL" },
+  ];
+
+  // inflateSceneShaderLib walks a parsed scene object (props.scene), replaces
+  // every *Ref field whose id exists in scene.shaderLib with the source string,
+  // and removes the shaderLib key. Defensive: missing lib entry leaves the
+  // base field absent (downstream builtin fallbacks handle absent shaders).
+  // Never throws.
+  function inflateSceneShaderLib(scene) {
+    if (!scene || typeof scene !== "object") return;
+    var lib = scene.shaderLib;
+    if (!lib || typeof lib !== "object") return;
+
+    for (var fi = 0; fi < SHADER_LIB_FIELDS.length; fi++) {
+      var desc = SHADER_LIB_FIELDS[fi];
+      var items = scene[desc.collection];
+      if (!Array.isArray(items)) continue;
+      var refKey = desc.field + "Ref";
+      for (var i = 0; i < items.length; i++) {
+        var node = items[i];
+        if (!node || typeof node !== "object") continue;
+        var id = node[refKey];
+        if (typeof id !== "string") continue;
+        var src = lib[id];
+        if (typeof src === "string") {
+          node[desc.field] = src;
+        }
+        // Always delete the ref key regardless — keep the wire shape clean.
+        delete node[refKey];
+      }
+    }
+    delete scene.shaderLib;
+  }
+
+  // inflateManifestShaderLibs walks all island and computeIsland entries in a
+  // manifest, inflating shaderLib refs in each entry's props.scene. Called once
+  // immediately after loadManifest() returns, before the manifest is stashed as
+  // pendingManifest. Mutates the manifest in-place.
+  function inflateManifestShaderLibs(manifest) {
+    if (!manifest || typeof manifest !== "object") return;
+    var allEntries = [];
+    if (Array.isArray(manifest.islands)) {
+      for (var i = 0; i < manifest.islands.length; i++) allEntries.push(manifest.islands[i]);
+    }
+    if (Array.isArray(manifest.computeIslands)) {
+      for (var i = 0; i < manifest.computeIslands.length; i++) allEntries.push(manifest.computeIslands[i]);
+    }
+    if (Array.isArray(manifest.engines)) {
+      for (var i = 0; i < manifest.engines.length; i++) allEntries.push(manifest.engines[i]);
+    }
+    for (var j = 0; j < allEntries.length; j++) {
+      var entry = allEntries[j];
+      if (entry && entry.props && typeof entry.props === "object") {
+        inflateSceneShaderLib(entry.props.scene);
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
   // Shared WASM runtime loading
   // --------------------------------------------------------------------------
 
@@ -2651,7 +2741,7 @@
     const emitterSource = Object.prototype.hasOwnProperty.call(item, "emitter") ? item.emitter : current.emitter;
     const materialSource = Object.prototype.hasOwnProperty.call(item, "material") ? item.material : current.material;
     const forcesSource = Array.isArray(item.forces) ? item.forces : (Array.isArray(current.forces) ? current.forces : []);
-    return {
+    const normalized = {
       id: item.id || current.id || ("scene-particles-" + index),
       count: Math.max(0, Math.floor(sceneNumber(item.count, sceneNumber(current.count, 0)))),
       emitter: normalizeSceneComputeEmitter(emitterSource, current.emitter),
@@ -2665,6 +2755,21 @@
       _outState: lifecycle.outState,
       _live: lifecycle.live,
     };
+    [
+      "computeWGSL", "computeEntry", "computeBackend", "computeWGSLRef",
+      "renderVertex", "renderFragment", "renderVertexWGSL", "renderFragmentWGSL",
+      "renderVertexRef", "renderFragmentRef", "renderVertexWGSLRef", "renderFragmentWGSLRef",
+      "renderShaderBackend",
+    ].forEach(function(field) {
+      normalized[field] = typeof item[field] === "string" ? item[field] : (typeof current[field] === "string" ? current[field] : "");
+    });
+    normalized.renderUniforms = sceneIsPlainObject(item.renderUniforms)
+      ? sceneCloneData(item.renderUniforms)
+      : (sceneIsPlainObject(current.renderUniforms) ? sceneCloneData(current.renderUniforms) : null);
+    normalized.renderShaderLayout = sceneIsPlainObject(item.renderShaderLayout)
+      ? sceneCloneData(item.renderShaderLayout)
+      : (sceneIsPlainObject(current.renderShaderLayout) ? sceneCloneData(current.renderShaderLayout) : null);
+    return normalized;
   }
 
   function sceneComputeParticles(props) {
@@ -3103,6 +3208,14 @@
       blendMode: material._blendModeSpecified ? material.blendMode : point.blendMode,
       depthWrite: material._depthWriteSpecified ? material.depthWrite : point.depthWrite,
       attenuation: material.attenuation != null ? material.attenuation : point.attenuation,
+      // Authored-shader envelope: profile fields win over point defaults (empty string = not authored).
+      customVertex: typeof material.customVertex === "string" && material.customVertex ? material.customVertex : (point.customVertex || ""),
+      customFragment: typeof material.customFragment === "string" && material.customFragment ? material.customFragment : (point.customFragment || ""),
+      customVertexWGSL: typeof material.customVertexWGSL === "string" && material.customVertexWGSL ? material.customVertexWGSL : (point.customVertexWGSL || ""),
+      customFragmentWGSL: typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL ? material.customFragmentWGSL : (point.customFragmentWGSL || ""),
+      customUniforms: sceneIsPlainObject(material.customUniforms) ? Object.assign({}, material.customUniforms) : (point.customUniforms || null),
+      shaderBackend: typeof material.shaderBackend === "string" && material.shaderBackend ? material.shaderBackend : (point.shaderBackend || ""),
+      shaderLayout: sceneIsPlainObject(material.shaderLayout) ? sceneCloneData(material.shaderLayout) : (point.shaderLayout || null),
     };
     const cache = point._namedMaterialCache;
     if (
@@ -3117,7 +3230,11 @@
       cache.opacity === nextValues.opacity &&
       cache.blendMode === nextValues.blendMode &&
       cache.depthWrite === nextValues.depthWrite &&
-      cache.attenuation === nextValues.attenuation
+      cache.attenuation === nextValues.attenuation &&
+      cache.customVertexWGSL === nextValues.customVertexWGSL &&
+      cache.customFragmentWGSL === nextValues.customFragmentWGSL &&
+      cache.customVertex === nextValues.customVertex &&
+      cache.customFragment === nextValues.customFragment
     ) {
       return cache.value;
     }
@@ -4889,6 +5006,10 @@
     return Math.max(scaleX, scaleY, scaleZ) <= 0.0015;
   }
 
+  function sceneMaterialSuppressesGeneratedWireSegments(material) {
+    return material && material.shaderBackend === "selena";
+  }
+
   function appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
     const vertices = object && object.vertices;
     if (!vertices || !vertices.positions || !vertices.count) {
@@ -4904,7 +5025,7 @@
     const outlineLighting = outlineColor ? sceneColorRGBA(outlineColor, [1, 0.8, 0.15, 1]) : null;
     const objectPassString = sceneWorldObjectRenderPass(object, material);
     const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
-    const emitWireSegments = Boolean(material && material.wireframe || outlineWidth > 0);
+    const emitWireSegments = !sceneMaterialSuppressesGeneratedWireSegments(material) && Boolean(material && material.wireframe || outlineWidth > 0);
     if (object.skin && vertices.joints && vertices.weights) {
       const bounds = vertices._skinnedLocalBounds || object.bounds || { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
       bundle.meshObjects.push({
@@ -7029,6 +7150,7 @@
     SCENE_POST_COLOR_GRADE: "colorGrade",
     SCENE_POST_SSAO: "ssao",
     SCENE_POST_DOF: "dof",
+    SCENE_POST_CUSTOM_POST: "customPost",
     validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
     prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
     scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,
@@ -7103,6 +7225,13 @@
     sceneStateSprites,
     sceneTypedFloatArray,
     translateScenePointInto,
+
+    // Typed-array guard used by 16a-scene-webgpu.js drawPointsEntries to test
+    // whether entry.positions / sizes / colors are typed arrays. Exported here
+    // so the webgpu sub-feature chunk can pull it from the scene3d API rather
+    // than relying on a shared IIFE scope (which the sub-feature chunk doesn't
+    // have when loaded as a separate <script defer>).
+    sceneIsNumericTypedArray,
 
     // PBR + shadow helpers from 16-scene-webgl.js, re-exported for the
     // bootstrap-feature-scene3d-webgpu.js sub-feature chunk. These are

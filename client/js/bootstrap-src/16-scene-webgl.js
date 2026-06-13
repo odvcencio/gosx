@@ -10,6 +10,7 @@
   var SCENE_POST_COLOR_GRADE = "colorGrade";
   var SCENE_POST_SSAO = "ssao";
   var SCENE_POST_DOF = "dof";
+  var SCENE_POST_CUSTOM_POST = "customPost";
 
   // --- PBR Shader Sources ---
 
@@ -1816,6 +1817,21 @@
     return { program: prog, vertexShader: vs, fragmentShader: fs };
   }
 
+  // createSceneCustomPostProgram: links a Selena post program using the
+  // caller-supplied vertex source (Selena emits its own vertex GLSL).
+  function createSceneCustomPostProgram(gl, vertexSource, fragmentSource) {
+    var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
+    if (!vs) return null;
+    var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    if (!fs) {
+      gl.deleteShader(vs);
+      return null;
+    }
+    var prog = scenePBRLinkProgram(gl, vs, fs, "Custom post shader");
+    if (!prog) return null;
+    return { program: prog, vertexShader: vs, fragmentShader: fs };
+  }
+
   // Dispose an FBO and its attachments.
   function disposeScenePostFBO(gl, fboObj) {
     if (!fboObj) return;
@@ -1838,6 +1854,11 @@
 
     // Lazily compiled shader programs, keyed by effect name.
     var programs = {};
+
+    // Custom post program cache: name → program | null (null = failed, skip).
+    var customPostPrograms = {};
+    // Failed custom post names (to warn once only).
+    var customPostFailed = {};
 
     // Get or compile a post-processing program.
     function getProgram(name, fragmentSource) {
@@ -1873,6 +1894,76 @@
     // (or null when rendering to screen).
     function postPass(prog, inputTex, targetFBO, w, h) {
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
+    // applyCustomPost: runs a Selena-emitted GLSL post pass.
+    // Selena post contract (WebGL2 variant):
+    //   vertex: attribute vec2 a_position (Selena-emitted vert); v_uv = a_position*0.5+0.5
+    //   fragment: uniform sampler2D _sceneColor, sampler2D _sceneDepth + user params by name
+    // On compile/link failure: skip once-warned, identity passthrough.
+    function applyCustomPost(inputTex, depthTex, effect, targetFBO, w, h) {
+      var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
+      if (customPostFailed[name]) return inputTex; // already failed → skip
+
+      var vertSrc = (typeof effect.vertexGLSL === "string") ? effect.vertexGLSL.trim() : "";
+      var fragSrc = (typeof effect.fragmentGLSL === "string") ? effect.fragmentGLSL.trim() : "";
+      if (!vertSrc || !fragSrc) return inputTex; // no GLSL → identity
+
+      if (!customPostPrograms.hasOwnProperty(name)) {
+        var prog = createSceneCustomPostProgram(gl, vertSrc, fragSrc);
+        if (!prog) {
+          console.warn("[gosx] custom post pass '" + name + "' (WebGL2) compile/link failed; falling back to identity.");
+          customPostFailed[name] = true;
+          customPostPrograms[name] = null;
+          return inputTex;
+        }
+        customPostPrograms[name] = prog;
+      }
+
+      var p = customPostPrograms[name];
+      if (!p) return inputTex;
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO ? targetFBO.fbo : null);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(p.program);
+
+      // Bind sceneColor to unit 0.
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, inputTex);
+      gl.uniform1i(gl.getUniformLocation(p.program, "_sceneColor"), 0);
+
+      // Bind sceneDepth to unit 1 (if available).
+      if (depthTex) {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, depthTex);
+        gl.uniform1i(gl.getUniformLocation(p.program, "_sceneDepth"), 1);
+      }
+
+      // Upload user uniforms by name from shaderLayout.
+      var uniforms = effect.uniforms || {};
+      var layout = effect.shaderLayout;
+      var fields = (layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.fields))
+        ? layout.uniformBlock.fields : [];
+      for (var fi = 0; fi < fields.length; fi++) {
+        var field = fields[fi];
+        var val = Object.prototype.hasOwnProperty.call(uniforms, field.name) ? uniforms[field.name] : null;
+        if (val === null || val === undefined) continue;
+        var loc = gl.getUniformLocation(p.program, field.name);
+        if (!loc) continue;
+        if (typeof val === "number") {
+          gl.uniform1f(loc, val);
+        } else if (Array.isArray(val) || (val && val.length)) {
+          switch (val.length) {
+            case 2: gl.uniform2fv(loc, val); break;
+            case 3: gl.uniform3fv(loc, val); break;
+            case 4: gl.uniform4fv(loc, val); break;
+            default: gl.uniform1fv(loc, val); break;
+          }
+        }
+      }
+
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -2110,6 +2201,14 @@
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
               break;
+            case SCENE_POST_CUSTOM_POST: {
+              // Selena post contract (WebGL2): use provided GLSL pair.
+              // On failure the pass is skipped (identity passthrough).
+              var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
+              var next = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
+              if (next !== null) currentTexture = next;
+              break;
+            }
             default:
               // Unknown effect — skip.
               break;
@@ -2154,6 +2253,17 @@
           }
         }
         programs = {};
+        // Custom post programs.
+        for (var cpKey in customPostPrograms) {
+          var cpProg = customPostPrograms[cpKey];
+          if (cpProg) {
+            gl.deleteShader(cpProg.vertexShader);
+            gl.deleteShader(cpProg.fragmentShader);
+            gl.deleteProgram(cpProg.program);
+          }
+        }
+        customPostPrograms = {};
+        customPostFailed = {};
         if (blitProg) {
           gl.deleteShader(blitProg.vertexShader);
           gl.deleteShader(blitProg.fragmentShader);
@@ -3756,6 +3866,9 @@
 
     // Points program — compiled lazily on first points entry.
     var pointsProgram = null;
+    // Per-layer authored GLSL program cache: layerID → {program, attrs, uniforms} | {failed:true}
+    var pointsAuthoredGLPrograms = new Map();
+    var pointsAuthoredGLFailed = new Map();
 
     // Per-typed-array VBO cache.
     //
@@ -3798,6 +3911,37 @@
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
     var lastPreparedScene = null;
+    var webglComputeParticleDrawStats = {
+      drawEntries: 0,
+      drawInstances: 0,
+      drawCalls: 0,
+      authoredDrawEntries: 0,
+      authoredDrawInstances: 0,
+      authoredDrawCalls: 0,
+    };
+
+    function resetWebGLComputeParticleDrawStats() {
+      webglComputeParticleDrawStats.drawEntries = 0;
+      webglComputeParticleDrawStats.drawInstances = 0;
+      webglComputeParticleDrawStats.drawCalls = 0;
+      webglComputeParticleDrawStats.authoredDrawEntries = 0;
+      webglComputeParticleDrawStats.authoredDrawInstances = 0;
+      webglComputeParticleDrawStats.authoredDrawCalls = 0;
+    }
+
+    function publishWebGLComputeParticleDrawStats() {
+      var mount = canvas && canvas.parentNode ? canvas.parentNode : null;
+      if (!mount || typeof mount.setAttribute !== "function") {
+        return;
+      }
+      mount.__gosxScene3DWebGLStats = Object.assign({}, webglComputeParticleDrawStats);
+      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-entries", String(webglComputeParticleDrawStats.drawEntries));
+      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-instances", String(webglComputeParticleDrawStats.drawInstances));
+      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-draw-calls", String(webglComputeParticleDrawStats.drawCalls));
+      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-entries", String(webglComputeParticleDrawStats.authoredDrawEntries));
+      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-instances", String(webglComputeParticleDrawStats.authoredDrawInstances));
+      mount.setAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-calls", String(webglComputeParticleDrawStats.authoredDrawCalls));
+    }
 
     function ensureStaticArrayVBO(cache, typedArray) {
       return sceneCachedBuffer(cache, typedArray, function() {
@@ -4188,6 +4332,7 @@
       if (perfEnabled) {
         performance.mark("scene3d-render-start");
       }
+      resetWebGLComputeParticleDrawStats();
 
       // Check that this bundle has PBR-compatible data or points.
       const hasPBRData = Boolean(
@@ -4395,6 +4540,7 @@
       drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
       drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
       releaseInactiveStaticPointBuffers();
+      publishWebGLComputeParticleDrawStats();
 
       // Restore state.
       gl.depthMask(true);
@@ -4891,6 +5037,102 @@
       return pointsProgram;
     }
 
+    // ensurePointsAuthoredGLProgram: compile+link a per-layer GLSL program from
+    // entry.customVertex/customFragment (synchronous API — check compile/link status).
+    // Returns the program record or null (fallback to builtin with one console.warn).
+    function ensurePointsAuthoredGLProgram(entry, layerID) {
+      var cached = pointsAuthoredGLPrograms.get(layerID);
+      if (cached) return cached.failed ? null : cached;
+      var vertSrc = typeof entry.customVertex === "string" ? entry.customVertex.trim() : "";
+      var fragSrc = typeof entry.customFragment === "string" ? entry.customFragment.trim() : "";
+      if (!vertSrc || !fragSrc) return null;
+      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertSrc);
+      if (!vs) {
+        if (!pointsAuthoredGLFailed.get(layerID)) {
+          pointsAuthoredGLFailed.set(layerID, true);
+          console.warn("[gosx] Points authored vertex shader failed for layer '" + layerID + "'; falling back to builtin.");
+        }
+        pointsAuthoredGLPrograms.set(layerID, { failed: true });
+        return null;
+      }
+      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+      if (!fs) {
+        gl.deleteShader(vs);
+        if (!pointsAuthoredGLFailed.get(layerID)) {
+          pointsAuthoredGLFailed.set(layerID, true);
+          console.warn("[gosx] Points authored fragment shader failed for layer '" + layerID + "'; falling back to builtin.");
+        }
+        pointsAuthoredGLPrograms.set(layerID, { failed: true });
+        return null;
+      }
+      var prog = scenePBRLinkProgram(gl, vs, fs, "Points authored '" + layerID + "'");
+      if (!prog) {
+        if (!pointsAuthoredGLFailed.get(layerID)) {
+          pointsAuthoredGLFailed.set(layerID, true);
+          console.warn("[gosx] Points authored program link failed for layer '" + layerID + "'; falling back to builtin.");
+        }
+        pointsAuthoredGLPrograms.set(layerID, { failed: true });
+        return null;
+      }
+      // Cache attribute and uniform locations — same contract as builtin.
+      var attrs = {
+        position: gl.getAttribLocation(prog, "a_position"),
+        size: gl.getAttribLocation(prog, "a_size"),
+        color: gl.getAttribLocation(prog, "a_color"),
+      };
+      var uniforms = {
+        viewMatrix: gl.getUniformLocation(prog, "u_viewMatrix"),
+        projectionMatrix: gl.getUniformLocation(prog, "u_projectionMatrix"),
+        modelMatrix: gl.getUniformLocation(prog, "u_modelMatrix"),
+        defaultSize: gl.getUniformLocation(prog, "u_defaultSize"),
+        defaultColor: gl.getUniformLocation(prog, "u_defaultColor"),
+        hasPerVertexColor: gl.getUniformLocation(prog, "u_hasPerVertexColor"),
+        hasPerVertexSize: gl.getUniformLocation(prog, "u_hasPerVertexSize"),
+        sizeAttenuation: gl.getUniformLocation(prog, "u_sizeAttenuation"),
+        pointStyle: gl.getUniformLocation(prog, "u_pointStyle"),
+        viewportHeight: gl.getUniformLocation(prog, "u_viewportHeight"),
+        minPixelSize: gl.getUniformLocation(prog, "u_minPixelSize"),
+        maxPixelSize: gl.getUniformLocation(prog, "u_maxPixelSize"),
+        opacity: gl.getUniformLocation(prog, "u_opacity"),
+        hasFog: gl.getUniformLocation(prog, "u_hasFog"),
+        fogDensity: gl.getUniformLocation(prog, "u_fogDensity"),
+        fogColor: gl.getUniformLocation(prog, "u_fogColor"),
+      };
+      // Upload author-defined uniforms (customUniforms).
+      var record = { program: prog, vertexShader: vs, fragmentShader: fs, attributes: attrs, uniforms: uniforms };
+      pointsAuthoredGLPrograms.set(layerID, record);
+      return record;
+    }
+
+    // applyPointsAuthoredCustomUniforms: uploads entry.customUniforms to the
+    // authored program. Uses the shaderLayout fields to determine byte count;
+    // simple name → value binding via getUniformLocation.
+    function applyPointsAuthoredCustomUniforms(prog, uniforms) {
+      if (!uniforms || typeof uniforms !== "object") return;
+      var keys = Object.keys(uniforms);
+      for (var k = 0; k < keys.length; k++) {
+        var name = keys[k];
+        var val = uniforms[name];
+        var loc = gl.getUniformLocation(prog.program, name);
+        if (loc == null) continue;
+        if (typeof val === "number") {
+          gl.uniform1f(loc, val);
+        } else if (Array.isArray(val) || (val && val.buffer instanceof ArrayBuffer)) {
+          var arr = Array.isArray(val) ? val : Array.from(val);
+          switch (arr.length) {
+          case 1: gl.uniform1f(loc, arr[0]); break;
+          case 2: gl.uniform2f(loc, arr[0], arr[1]); break;
+          case 3: gl.uniform3f(loc, arr[0], arr[1], arr[2]); break;
+          case 4: gl.uniform4f(loc, arr[0], arr[1], arr[2], arr[3]); break;
+          default:
+            if (arr.length === 9) gl.uniformMatrix3fv(loc, false, new Float32Array(arr));
+            else if (arr.length === 16) gl.uniformMatrix4fv(loc, false, new Float32Array(arr));
+            break;
+          }
+        }
+      }
+    }
+
     function disposeComputeParticleSystemRecord(record) {
       if (record && record.system && typeof record.system.dispose === "function") {
         record.system.dispose();
@@ -4924,11 +5166,13 @@
           record = {
             signature: signature,
             system: createSceneParticleSystem(null, entry),
+            sourceEntry: entry,
             colorBuffer: null,
           };
           computeParticleSystems.set(id, record);
         } else if (record.system) {
           record.system.entry = entry;
+          record.sourceEntry = entry;
         }
         if (record && record.system) {
           records.push(record);
@@ -4984,7 +5228,10 @@
           record.pointsEntry = { _dynamic: true };
         }
         var computeEntry = record.pointsEntry;
-        computeEntry.id = system.entry && system.entry.id ? system.entry.id : ("scene-compute-points-" + i);
+        var sourceEntry = record.sourceEntry && typeof record.sourceEntry === "object"
+          ? record.sourceEntry
+          : (system.entry && typeof system.entry === "object" ? system.entry : {});
+        computeEntry.id = sourceEntry.id ? sourceEntry.id : ("scene-compute-points-" + i);
         computeEntry.count = system.count;
         computeEntry.color = typeof material.color === "string" ? material.color : "#ffffff";
         computeEntry.style = material.style;
@@ -4992,6 +5239,15 @@
         computeEntry.opacity = 1;
         computeEntry.blendMode = material.blendMode;
         computeEntry.attenuation = !!material.attenuation;
+        computeEntry.customVertex = typeof sourceEntry.renderVertex === "string" ? sourceEntry.renderVertex : "";
+        computeEntry.customFragment = typeof sourceEntry.renderFragment === "string" ? sourceEntry.renderFragment : "";
+        computeEntry.customUniforms = sourceEntry.renderUniforms && typeof sourceEntry.renderUniforms === "object"
+          ? sourceEntry.renderUniforms
+          : null;
+        computeEntry.renderShaderLayout = sourceEntry.renderShaderLayout && typeof sourceEntry.renderShaderLayout === "object"
+          ? sourceEntry.renderShaderLayout
+          : null;
+        computeEntry._computeParticlesSynthetic = true;
         // Model-matrix transform from the emitter: position, rotation, spin.
         // Particles are stored in LOCAL space so the renderer's model matrix
         // applies position + rotation + time-based spin uniformly.
@@ -5018,34 +5274,46 @@
         return;
       }
 
-      var pp = ensurePointsProgram();
-      if (!pp) {
+      var builtinPP = ensurePointsProgram();
+      if (!builtinPP) {
         return;
       }
 
-      gl.useProgram(pp.program);
-
-      // Upload view/projection matrices.
-      gl.uniformMatrix4fv(pp.uniforms.viewMatrix, false, viewMatrix);
-      gl.uniformMatrix4fv(pp.uniforms.projectionMatrix, false, projMatrix);
-      gl.uniform1f(pp.uniforms.viewportHeight, renderH);
-
-      // Upload fog uniforms.
+      // Upload fog uniforms once (shared by all entries in this call).
       var env = environment || {};
       var fogDensity = sceneNumber(env.fogDensity, 0);
-      gl.uniform1i(pp.uniforms.hasFog, fogDensity > 0 ? 1 : 0);
-      gl.uniform1f(pp.uniforms.fogDensity, fogDensity);
       var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
-      gl.uniform3f(pp.uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
 
       // Enable point sprite rendering.
       gl.enable(gl.DEPTH_TEST);
       var _pointsModelMat = new Float32Array(16);
       var _pointsTilt = new Float32Array(16);
       var _pointsSpin = new Float32Array(16);
+      var currentProgram = null; // track active program to avoid redundant useProgram calls
 
       for (var i = 0; i < pointsArray.length; i++) {
         var entry = pointsArray[i];
+        // Select program: authored (GLSL) when customVertex/Fragment present, else builtin.
+        var layerID = (typeof entry.id === "string" && entry.id) ? entry.id : ("points-" + i);
+        var hasAuthoredGL = (typeof entry.customVertex === "string" && entry.customVertex.trim()) &&
+                            (typeof entry.customFragment === "string" && entry.customFragment.trim());
+        var pp = hasAuthoredGL ? ensurePointsAuthoredGLProgram(entry, layerID) : null;
+        if (!pp) pp = builtinPP;
+        if (currentProgram !== pp.program) {
+          gl.useProgram(pp.program);
+          currentProgram = pp.program;
+          // Re-upload frame-level uniforms for the new program.
+          gl.uniformMatrix4fv(pp.uniforms.viewMatrix, false, viewMatrix);
+          gl.uniformMatrix4fv(pp.uniforms.projectionMatrix, false, projMatrix);
+          gl.uniform1f(pp.uniforms.viewportHeight, renderH);
+          if (pp.uniforms.hasFog != null) gl.uniform1i(pp.uniforms.hasFog, fogDensity > 0 ? 1 : 0);
+          if (pp.uniforms.fogDensity != null) gl.uniform1f(pp.uniforms.fogDensity, fogDensity);
+          if (pp.uniforms.fogColor != null) gl.uniform3f(pp.uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
+        }
+        // Upload authored custom uniforms if using an authored program.
+        if (hasAuthoredGL && pp !== builtinPP) {
+          applyPointsAuthoredCustomUniforms(pp, entry.customUniforms);
+        }
 
         var px = sceneNumber(entry.x, 0);
         var py = sceneNumber(entry.y, 0);
@@ -5201,6 +5469,16 @@
         }
 
         gl.drawArrays(gl.POINTS, 0, count);
+        if (entry._computeParticlesSynthetic) {
+          webglComputeParticleDrawStats.drawEntries += 1;
+          webglComputeParticleDrawStats.drawInstances += count;
+          webglComputeParticleDrawStats.drawCalls += 1;
+          if (hasAuthoredGL && pp !== builtinPP) {
+            webglComputeParticleDrawStats.authoredDrawEntries += 1;
+            webglComputeParticleDrawStats.authoredDrawInstances += count;
+            webglComputeParticleDrawStats.authoredDrawCalls += 1;
+          }
+        }
       }
 
       // Restore state.

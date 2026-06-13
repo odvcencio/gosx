@@ -22,8 +22,10 @@
 // frame cost allocation-free when the label list is unchanged.
 //
 // This file is standalone (no feature-registry wrapper) so it can be loaded in
-// isolation by unit tests. It installs window.__gosx_canvas_board_labels_sync
-// and window.__gosx_canvas_board_labels_dispose on evaluation.
+// isolation by unit tests. It installs window.__gosx_canvas_board_labels_sync,
+// window.__gosx_canvas_board_labels_dispose,
+// window.__gosx_canvas_board_html_sync, and
+// window.__gosx_canvas_board_html_dispose on evaluation.
 (function() {
   "use strict";
 
@@ -106,30 +108,35 @@
     return match ? parseFloat(match[1]) : 12;
   }
 
-  // ensureLabelLayer lazily creates (and caches on host.__gosxBoardLabelLayer)
-  // a single overlay div covering the host. The overlay is positioned absolutely
-  // with inset:0 so it covers the canvas exactly when the host is positioned.
-  // pointer-events:none ensures the overlay never intercepts board events.
+  // ensureBoardOverlayHost lazily makes the direct canvas parent a positioning
+  // context so overlay layers with inset:0 cover the canvas.
   //
   // Host position: the canvas2d mount path (_ensureSurfaceCanvas in
   // 26b-feature-engines-prefix.js) replaces a placeholder with a <canvas> in
   // the same parent — it does NOT guarantee position:relative on the parent.
   // The marquee overlay uses canvas.offsetLeft/offsetTop relative to the
   // positioned ancestor, which could be any ancestor — not the direct parent.
-  // For the label layer we need the overlay to cover the canvas precisely, so
+  // For board overlay layers we need them to cover the canvas precisely, so
   // we must ensure the direct parent is the positioned container. We guard the
   // set with the same pattern as 10-runtime-scene-core.js line 735:
   //   if (!mount.style.position || mount.style.position === "static") { ... }
-  function ensureLabelLayer(host) {
-    if (host.__gosxBoardLabelLayer) {
-      return host.__gosxBoardLabelLayer;
-    }
-    // Guarantee the host is a positioning context so inset:0 works.
+  function ensureBoardOverlayHost(host) {
     try {
       if (!host.style.position || host.style.position === "static") {
         host.style.position = "relative";
       }
     } catch (e) { /* tolerate read-only style (SSR stubs) */ }
+  }
+
+  // ensureLabelLayer lazily creates (and caches on host.__gosxBoardLabelLayer)
+  // a single overlay div covering the host. The overlay is positioned absolutely
+  // with inset:0 so it covers the canvas exactly when the host is positioned.
+  // pointer-events:none ensures the overlay never intercepts board events.
+  function ensureLabelLayer(host) {
+    if (host.__gosxBoardLabelLayer) {
+      return host.__gosxBoardLabelLayer;
+    }
+    ensureBoardOverlayHost(host);
     var layer = null;
     try {
       if (typeof document !== "undefined" && typeof document.createElement === "function") {
@@ -151,6 +158,75 @@
     }
     host.__gosxBoardLabelLayer = layer;
     return layer;
+  }
+
+  // ensureHTMLLayer creates the keyed HTML overlay layer for CanvasBoard html
+  // nodes. The layer itself is click-through; each entry controls its own
+  // pointer-events so editable DOM can receive input without the empty overlay
+  // plane swallowing board gestures.
+  function ensureHTMLLayer(host) {
+    if (host.__gosxBoardHTMLLayer) {
+      return host.__gosxBoardHTMLLayer;
+    }
+    ensureBoardOverlayHost(host);
+    var layer = null;
+    try {
+      if (typeof document !== "undefined" && typeof document.createElement === "function") {
+        layer = document.createElement("div");
+      } else if (host.ownerDocument && typeof host.ownerDocument.createElement === "function") {
+        layer = host.ownerDocument.createElement("div");
+      }
+    } catch (e) {
+      layer = null;
+    }
+    if (!layer) {
+      return null;
+    }
+    layer.style.cssText = "position:absolute;inset:0;overflow:hidden;pointer-events:none;";
+    layer.__gosxCanvasBoardHTMLByID = new Map();
+    try {
+      host.appendChild(layer);
+    } catch (e) {
+      return null;
+    }
+    host.__gosxBoardHTMLLayer = layer;
+    return layer;
+  }
+
+  function boardNumber(value, fallback) {
+    var n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function boardHTMLID(entry, index) {
+    var id = entry && entry.id != null ? String(entry.id) : "";
+    return id !== "" ? id : "html:" + index;
+  }
+
+  function boardHTMLMarkup(entry) {
+    if (!entry || typeof entry !== "object") return "";
+    if (typeof entry.markup === "string") return entry.markup;
+    if (typeof entry.html === "string") return entry.html;
+    return "";
+  }
+
+  function boardHTMLPointerEvents(entry) {
+    var value = entry && typeof entry.pointerEvents === "string" ? entry.pointerEvents : "";
+    return value !== "" ? value : "auto";
+  }
+
+  function boardHTMLWorldPoint(entry) {
+    var pos = entry && entry.position && typeof entry.position === "object" ? entry.position : {};
+    return {
+      x: boardNumber(entry && Object.prototype.hasOwnProperty.call(entry, "x") ? entry.x : pos.x, 0),
+      y: boardNumber(entry && Object.prototype.hasOwnProperty.call(entry, "y") ? entry.y : pos.y, 0),
+    };
+  }
+
+  function boardContainsActiveElement(element) {
+    if (!element || typeof document === "undefined") return false;
+    var active = document.activeElement || null;
+    return !!(active && active !== document.body && typeof element.contains === "function" && element.contains(active));
   }
 
   // __gosx_canvas_board_labels_sync reconciles the label overlay for one frame.
@@ -280,6 +356,129 @@
     delete host.__gosxBoardLabelLayer;
   }
 
+  // __gosx_canvas_board_html_sync reconciles RenderBundle.HTML entries for one
+  // frame. Entries are keyed by id, positioned with the same OrthoCamera2D math
+  // as labels, and keep their DOM content stable while focused so in-place
+  // editing does not lose user input/caret state.
+  function boardHTMLSync(host, htmlEntries, camera, cssWidth, cssHeight) {
+    if (!host) return;
+    var layer = ensureHTMLLayer(host);
+    if (!layer) return;
+
+    var cam = camera || {};
+    var zoom = typeof cam.z === "number" && cam.z > 0 ? cam.z : 1;
+    var panX = typeof cam.x === "number" ? cam.x : 0;
+    var panY = typeof cam.y === "number" ? cam.y : 0;
+    var w = cssWidth > 0 ? cssWidth : 1;
+    var h = cssHeight > 0 ? cssHeight : 1;
+    var halfW = w / 2;
+    var halfH = h / 2;
+    var list = Array.isArray(htmlEntries) ? htmlEntries : [];
+    var byID = layer.__gosxCanvasBoardHTMLByID;
+    if (!byID || typeof byID.get !== "function") {
+      byID = new Map();
+      layer.__gosxCanvasBoardHTMLByID = byID;
+    }
+    var seen = new Set();
+
+    for (var i = 0; i < list.length; i++) {
+      var entry = list[i] || {};
+      var id = boardHTMLID(entry, i);
+      seen.add(id);
+      var el = byID.get(id);
+      if (!el) {
+        try {
+          var ownerDoc = layer.ownerDocument || (typeof document !== "undefined" ? document : null);
+          if (!ownerDoc) continue;
+          el = ownerDoc.createElement("div");
+          el.style.cssText = "position:absolute;left:0;top:0;box-sizing:border-box;will-change:transform;";
+          el.setAttribute("data-gosx-canvas-html", id);
+          byID.set(id, el);
+          layer.appendChild(el);
+        } catch (e) {
+          continue;
+        }
+      } else if (el.parentNode !== layer) {
+        try { layer.appendChild(el); } catch (e) { /* tolerate */ }
+      }
+
+      var point = boardHTMLWorldPoint(entry);
+      var width = Math.max(0, boardNumber(entry.width, 0) * zoom);
+      var height = Math.max(0, boardNumber(entry.height, 0) * zoom);
+      var screenX = (point.x - panX) * zoom + halfW;
+      var screenY = halfH - (point.y - panY) * zoom;
+      // CanvasBoard HTML entries use x/y as bottom-left world bounds, but DOM
+      // transforms position top-left CSS boxes.
+      var topY = screenY - height;
+      var pointerEvents = boardHTMLPointerEvents(entry);
+      var markup = boardHTMLMarkup(entry);
+
+      var tx = Math.round(screenX * 100) / 100;
+      var ty = Math.round(topY * 100) / 100;
+      var transform = "translate(" + tx + "px," + ty + "px)";
+      if (el._gosxTransform !== transform) {
+        el.style.transform = transform;
+        el._gosxTransform = transform;
+      }
+      var widthCSS = width + "px";
+      if (el._gosxWidth !== widthCSS) {
+        el.style.width = widthCSS;
+        el._gosxWidth = widthCSS;
+      }
+      var heightCSS = height + "px";
+      if (el._gosxHeight !== heightCSS) {
+        el.style.height = heightCSS;
+        el._gosxHeight = heightCSS;
+      }
+      if (el._gosxPointerEvents !== pointerEvents) {
+        el.style.pointerEvents = pointerEvents;
+        el.setAttribute("data-gosx-canvas-html-pointer-events", pointerEvents);
+        el._gosxPointerEvents = pointerEvents;
+      }
+      if (el._gosxMarkup !== markup && !boardContainsActiveElement(el)) {
+        el.innerHTML = markup;
+        el._gosxMarkup = markup;
+      }
+    }
+
+    if (byID && typeof byID.forEach === "function") {
+      var remove = [];
+      byID.forEach(function(el, id) {
+        if (!seen.has(id)) {
+          remove.push(id);
+        }
+      });
+      for (var r = 0; r < remove.length; r++) {
+        var removeID = remove[r];
+        var removeEl = byID.get(removeID);
+        byID.delete(removeID);
+        try {
+          if (removeEl && removeEl.parentNode) {
+            removeEl.parentNode.removeChild(removeEl);
+          }
+        } catch (e) { /* tolerate */ }
+      }
+    }
+  }
+
+  // __gosx_canvas_board_html_dispose removes the HTML overlay layer and clears
+  // the keyed entry cache on the host. Called by the WebGPU board teardown.
+  function boardHTMLDispose(host) {
+    if (!host || !host.__gosxBoardHTMLLayer) return;
+    var layer = host.__gosxBoardHTMLLayer;
+    try {
+      if (layer.parentNode) {
+        layer.parentNode.removeChild(layer);
+      }
+    } catch (e) { /* tolerate */ }
+    if (layer.__gosxCanvasBoardHTMLByID && typeof layer.__gosxCanvasBoardHTMLByID.clear === "function") {
+      layer.__gosxCanvasBoardHTMLByID.clear();
+    }
+    delete host.__gosxBoardHTMLLayer;
+  }
+
   window.__gosx_canvas_board_labels_sync = boardLabelSync;
   window.__gosx_canvas_board_labels_dispose = boardLabelDispose;
+  window.__gosx_canvas_board_html_sync = boardHTMLSync;
+  window.__gosx_canvas_board_html_dispose = boardHTMLDispose;
 })();

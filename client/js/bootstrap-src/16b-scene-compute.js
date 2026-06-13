@@ -530,6 +530,32 @@
 
   // --- GPU Compute Particle System ---
 
+  function sceneComputeIsErrorScopeLifecycleMessage(message) {
+    var text = String(message || "").toLowerCase();
+    return text.indexOf("poperrorscope") >= 0 && text.indexOf("instance dropped") >= 0;
+  }
+
+  function sceneComputePopErrorScope(scopedDevice) {
+    if (!scopedDevice || typeof scopedDevice.popErrorScope !== "function") {
+      return Promise.resolve(null);
+    }
+    try {
+      return scopedDevice.popErrorScope().then(function(scopeErr) {
+        return scopeErr || null;
+      }).catch(function(error) {
+        var message = error && error.message ? error.message : String(error);
+        if (sceneComputeIsErrorScopeLifecycleMessage(message)) return null;
+        return error || new Error(message);
+      });
+    } catch (error) {
+      var message = error && error.message ? error.message : String(error);
+      if (sceneComputeIsErrorScopeLifecycleMessage(message)) {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(error || new Error(message));
+    }
+  }
+
   function createSceneComputeParticleSystem(device, entry) {
     var count = entry.count || 0;
     if (count <= 0) return null;
@@ -573,6 +599,7 @@
     var computePipeline = null;
     var bindGroup = null;
     var ready = false;
+    var disposed = false;
     // Per-system cache: true if the payload kernel failed and we fell back to builtin.
     var payloadKernelFailed = false;
 
@@ -590,6 +617,7 @@
     });
 
     function markComputePipelineReady(pipeline) {
+      if (disposed) return;
       computePipeline = pipeline;
       bindGroup = device.createBindGroup({
         layout: bindGroupLayout,
@@ -626,9 +654,16 @@
     var systemID = (entry && typeof entry.id === "string") ? entry.id : "";
 
     function buildBuiltinPipeline() {
-      device.pushErrorScope("validation");
-      device.createComputePipelineAsync(buildPipelineFromSource(SCENE_COMPUTE_PARTICLE_SOURCE, "simulate")).then(function(pipeline) {
-        return device.popErrorScope().then(function(scopeErr) {
+      if (disposed) return;
+      var scopedDevice = device;
+      try {
+        scopedDevice.pushErrorScope("validation");
+      } catch (_err) {
+        return;
+      }
+      scopedDevice.createComputePipelineAsync(buildPipelineFromSource(SCENE_COMPUTE_PARTICLE_SOURCE, "simulate")).then(function(pipeline) {
+        return sceneComputePopErrorScope(scopedDevice).then(function(scopeErr) {
+          if (disposed) return;
           if (scopeErr) {
             console.warn("[gosx] Compute particle builtin pipeline validation error:", scopeErr);
           } else {
@@ -636,15 +671,25 @@
           }
         });
       }).catch(function(err) {
-        device.popErrorScope().catch(function() {});
-        console.warn("[gosx] Compute particle builtin pipeline creation failed:", err);
+        return sceneComputePopErrorScope(scopedDevice).then(function() {
+          if (disposed) return;
+          console.warn("[gosx] Compute particle builtin pipeline creation failed:", err);
+        });
       });
     }
 
     function tryBuildPayloadPipelineAsync() {
-      device.pushErrorScope("validation");
-      device.createComputePipelineAsync(buildPipelineFromSource(payloadWGSL, payloadEntry)).then(function(pipeline) {
-        return device.popErrorScope().then(function(scopeErr) {
+      if (disposed) return;
+      var scopedDevice = device;
+      try {
+        scopedDevice.pushErrorScope("validation");
+      } catch (_err) {
+        buildBuiltinPipeline();
+        return;
+      }
+      scopedDevice.createComputePipelineAsync(buildPipelineFromSource(payloadWGSL, payloadEntry)).then(function(pipeline) {
+        return sceneComputePopErrorScope(scopedDevice).then(function(scopeErr) {
+          if (disposed) return;
           if (scopeErr) {
             // Scope captured a validation error even though the async pipeline
             // call resolved — treat as failure (belt-and-braces).
@@ -658,7 +703,8 @@
           }
         });
       }).catch(function() {
-        return device.popErrorScope().catch(function() {}).then(function() {
+        return sceneComputePopErrorScope(scopedDevice).then(function() {
+          if (disposed) return;
           if (!payloadKernelFailed) {
             payloadKernelFailed = true;
             console.warn("[gosx] Compute particle payload kernel failed for system '" + systemID + "'; falling back to builtin.");
@@ -695,6 +741,7 @@
       },
 
       dispose: function() {
+        disposed = true;
         particleBuffer.destroy();
         renderBuffer.destroy();
         paramsBuffer.destroy();

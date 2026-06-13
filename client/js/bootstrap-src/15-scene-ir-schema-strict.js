@@ -242,6 +242,16 @@
       if (particles.computeBackend != null && typeof particles.computeBackend !== "string") {
         pushSceneStrictDiagnostic(diagnostics, "warn", "scene.particles.invalid_compute_backend", "Compute particle computeBackend must be a string when present", path + ".computeBackend", particles.id, { value: particles.computeBackend });
       }
+      // computeWGSLRef is set by the shaderLib dedup path; by the time strict
+      // validation runs (after hydrate inflation), refs should already be gone.
+      // Warn if a ref survived inflation — it means inflateManifestShaderLibs
+      // did not run or the lib entry was missing.
+      if (particles.computeWGSLRef != null && typeof particles.computeWGSLRef !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.particles.invalid_compute_wgsl_ref", "Compute particle computeWGSLRef must be a string when present", path + ".computeWGSLRef", particles.id, { value: particles.computeWGSLRef });
+      }
+      if (typeof particles.computeWGSLRef === "string" && !particles.computeWGSL) {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.particles.uninflated_compute_wgsl_ref", "Compute particle has computeWGSLRef but no computeWGSL — shaderLib inflation may not have run", path + ".computeWGSLRef", particles.id, { ref: particles.computeWGSLRef });
+      }
       validateSceneStrictLiveFields(diagnostics, particles.live, path, particles.id);
     }
 
@@ -345,7 +355,8 @@
         colorGrade: true,
         "color-grade": true,
         ssao: true,
-        dof: true
+        dof: true,
+        customPost: true
       };
       if (!normalized) {
         pushSceneStrictDiagnostic(diagnostics, "error", "scene.postfx.kind_missing", "Post effect requires kind", path + ".kind");

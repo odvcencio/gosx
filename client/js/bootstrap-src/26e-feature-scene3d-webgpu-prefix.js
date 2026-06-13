@@ -42,6 +42,7 @@
   var SCENE_POST_COLOR_GRADE = sceneApi.SCENE_POST_COLOR_GRADE || "colorGrade";
   var SCENE_POST_SSAO = sceneApi.SCENE_POST_SSAO || "ssao";
   var SCENE_POST_DOF = sceneApi.SCENE_POST_DOF || "dof";
+  var SCENE_POST_CUSTOM_POST = sceneApi.SCENE_POST_CUSTOM_POST || "customPost";
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var sceneMat4MultiplyInto = sceneApi.sceneMat4MultiplyInto || function(out, a, b) {
     for (var col = 0; col < 4; col++) {
@@ -78,6 +79,19 @@
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
+  // sceneIsNumericTypedArray: typed-array guard used by drawPointsEntries in
+  // 16a to validate entry.positions / sizes / colors before caching them.
+  // Exported from __gosx_scene3d_api by 10-runtime-scene-core.js; fall back
+  // to an ArrayBuffer.isView check if the main bundle is somehow older.
+  var sceneIsNumericTypedArray = sceneApi.sceneIsNumericTypedArray || function(value) {
+    return value != null &&
+      typeof value === "object" &&
+      typeof value.length === "number" &&
+      typeof ArrayBuffer !== "undefined" &&
+      typeof ArrayBuffer.isView === "function" &&
+      ArrayBuffer.isView(value) &&
+      Object.prototype.toString.call(value) !== "[object DataView]";
+  };
   // createSceneParticleSystem + sceneComputeSystemSignature are defined
   // by 16b-scene-compute.js concatenated into this same IIFE below —
   // no bridge needed.

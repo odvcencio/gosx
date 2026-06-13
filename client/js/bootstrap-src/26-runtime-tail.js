@@ -287,6 +287,7 @@
       return;
     }
 
+    inflateManifestShaderLibs(manifest);
     pendingManifest = manifest;
     pendingFeatureLoad = ensureManifestFeatures(manifest);
     window.__gosx.ready = false;

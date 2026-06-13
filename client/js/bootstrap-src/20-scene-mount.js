@@ -710,6 +710,11 @@
     return sceneBool(props && props.requireWebGL, false);
   }
 
+  function sceneForcesWebGL(props) {
+    return sceneBool(props && props.forceWebGL, false) ||
+      (typeof window !== "undefined" && window.__gosx_scene3d_force_webgl === true);
+  }
+
   function scenePrefersWebGPU(props) {
     if (!props) {
       return false;
@@ -916,7 +921,7 @@
     const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
     const prefs = {
       requireWebGL: sceneRequiresWebGL(props),
-      forceWebGL: sceneBool(props && props.forceWebGL, false),
+      forceWebGL: sceneForcesWebGL(props),
       preferCanvas: sceneBool(props && props.preferCanvas, false),
       preferWebGPU: webgpuPreference === "prefer",
     };
@@ -979,7 +984,7 @@
     const backendCaps = sceneBackendCapsOf(props);
     const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
     const verdict = chooseSceneBackend(backendCaps, {
-      requireWebGL, forceWebGL: sceneBool(props && props.forceWebGL, false),
+      requireWebGL, forceWebGL: sceneForcesWebGL(props),
       preferCanvas: sceneBool(props && props.preferCanvas, false), preferWebGPU: webgpuPreference === "prefer",
     }, { webgpu: webgpuAvail, webgl: true });
     const preferWebGPU = verdict ? verdict.backend === "webgpu" : (webgpuPreference === "prefer" && !webgpuFeatureGap);
@@ -2866,7 +2871,7 @@
   }
 
   function sceneCapabilityWebGLPreference(props, capability) {
-    if (sceneRequiresWebGL(props) || sceneBool(props && props.forceWebGL, false)) {
+    if (sceneRequiresWebGL(props) || sceneForcesWebGL(props)) {
       return "force";
     }
     if (!sceneBool(props && props.preferWebGL, true)) {
@@ -2888,7 +2893,7 @@
   }
 
   function sceneCapabilityWebGPUPreference(props, capability) {
-    if (sceneRequiresWebGL(props) || sceneBool(props && props.forceWebGL, false) || sceneBool(props && props.preferCanvas, false)) {
+    if (sceneRequiresWebGL(props) || sceneForcesWebGL(props) || sceneBool(props && props.preferCanvas, false)) {
       return "disabled";
     }
     if (scenePrefersWebGPU(props)) {
@@ -5649,16 +5654,21 @@
     if (!ctx.mount.style.position) {
       ctx.mount.style.position = "relative";
     }
-    const canvas = document.createElement("canvas");
-    canvas.setAttribute("data-gosx-scene3d-canvas", "true");
-    canvas.setAttribute("role", "img");
-    canvas.setAttribute("aria-label", props.label || "Interactive GoSX 3D scene");
-    canvas.style.maxWidth = "100%";
-    canvas.style.borderRadius = "inherit";
-    canvas.width = viewportBase.baseWidth;
-    canvas.height = viewportBase.baseHeight;
-    canvas.setAttribute("width", String(viewportBase.baseWidth));
-    canvas.setAttribute("height", String(viewportBase.baseHeight));
+    function createSceneMountCanvas() {
+      const nextCanvas = document.createElement("canvas");
+      nextCanvas.setAttribute("data-gosx-scene3d-canvas", "true");
+      nextCanvas.setAttribute("role", "img");
+      nextCanvas.setAttribute("aria-label", props.label || "Interactive GoSX 3D scene");
+      nextCanvas.style.maxWidth = "100%";
+      nextCanvas.style.borderRadius = "inherit";
+      nextCanvas.width = viewportBase.baseWidth;
+      nextCanvas.height = viewportBase.baseHeight;
+      nextCanvas.setAttribute("width", String(viewportBase.baseWidth));
+      nextCanvas.setAttribute("height", String(viewportBase.baseHeight));
+      return nextCanvas;
+    }
+
+    let canvas = createSceneMountCanvas();
     ctx.mount.appendChild(canvas);
 
     const labelLayer = document.createElement("div");
@@ -5813,6 +5823,16 @@
     let disposed = false;
     let lastScheduledRenderReason = "";
     let lastRenderLoopReason = "initializing";
+    const SCENE_RENDER_WATCHDOG_INTERVAL_MS = 2000;
+    const SCENE_RENDER_STALL_MS = 6500;
+    const SCENE_RENDER_FALLBACK_STALL_MS = 12000;
+    let renderWatchdogTimer = null;
+    let renderWatchdogLastSeq = -1;
+    let renderWatchdogLastAt = 0;
+    let renderWatchdogLastAdvanceAt = 0;
+    let renderWatchdogRecoveries = 0;
+    let renderWatchdogFallbacks = 0;
+    let renderWatchdogActiveReason = "";
 
     // Do not voluntarily lose WebGL while the page is hidden/offscreen.
     // A canvas that has owned WebGL generally cannot switch to a 2D context,
@@ -5851,6 +5871,142 @@
       setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop-reason", state.reason || "");
       setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop-wants-animation", state.wantsAnimation ? "true" : "false");
       return state;
+    }
+
+    function readSceneWebGPUProgress() {
+      const seq = Number(sceneDebugAttr(ctx.mount, "data-gosx-scene3d-webgpu-frame-seq"));
+      const at = Number(sceneDebugAttr(ctx.mount, "data-gosx-scene3d-webgpu-frame-at"));
+      return {
+        seq: Number.isFinite(seq) ? seq : 0,
+        at: Number.isFinite(at) ? at : 0,
+      };
+    }
+
+    function publishSceneRenderWatchdogState(reason, stalledFor) {
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog", reason ? "recovering" : "ok");
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-reason", reason || "");
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-recoveries", renderWatchdogRecoveries || "");
+      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-fallbacks", renderWatchdogFallbacks || "");
+    }
+
+    function rendererReportsWebGPUFailure(diagnostics) {
+      if (!diagnostics) {
+        return "";
+      }
+      if (diagnostics.deviceLost) {
+        return "webgpu-device-lost";
+      }
+      if (diagnostics.initFailed) {
+        return "webgpu-init-failed";
+      }
+      if (diagnostics.ready === false) {
+        return "webgpu-not-ready";
+      }
+      return "";
+    }
+
+    function recoverSceneWebGPURenderer(reason, stalledFor, forceFallback) {
+      renderWatchdogRecoveries += 1;
+      renderWatchdogActiveReason = reason || "webgpu-stalled";
+      publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
+      gosxSceneEmit("warn", "render-watchdog-recovery", {
+        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        reason: renderWatchdogActiveReason,
+        stalledForMS: Math.round(stalledFor || 0),
+        recoveryCount: renderWatchdogRecoveries,
+        forceFallback: !!forceFallback,
+      });
+      cancelFrame();
+      cancelScheduledRender();
+      viewportDirty = true;
+      if (!forceFallback && renderer && renderer.kind === "webgpu") {
+        const recreated = createSceneRenderer(canvas, props, capability);
+        const nextRenderer = recreated && recreated.renderer;
+        if (nextRenderer && nextRenderer.kind === "webgpu" && nextRenderer !== renderer) {
+          if (swapRenderer(nextRenderer, reason || "webgpu-render-stall")) {
+            renderLatestSceneBundle(reason || "webgpu-render-stall");
+            scheduleRenderWithViewport(reason || "webgpu-render-stall");
+            return true;
+          }
+        } else if (nextRenderer && nextRenderer !== renderer && typeof nextRenderer.dispose === "function") {
+          nextRenderer.dispose();
+        }
+	      }
+	      renderWatchdogFallbacks += 1;
+	      publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
+	      if (fallbackSceneRenderer(reason || "webgpu-render-stall")) {
+        renderLatestSceneBundle(reason || "webgpu-render-stall");
+        scheduleRenderWithViewport(reason || "webgpu-render-stall");
+        return true;
+      }
+      scheduleRenderWithViewport(reason || "webgpu-render-stall");
+      return false;
+    }
+
+    function checkSceneRenderWatchdog() {
+      if (disposed || !ctx.mount || !renderer || renderer.kind !== "webgpu") {
+        return;
+      }
+      const animation = sceneAnimationState();
+      if (!animation.wants || !sceneCanRender()) {
+        renderWatchdogLastSeq = -1;
+        renderWatchdogLastAt = 0;
+        renderWatchdogLastAdvanceAt = 0;
+        publishSceneRenderWatchdogState("", 0);
+        return;
+      }
+      const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      const progress = readSceneWebGPUProgress();
+      const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
+      const failureReason = rendererReportsWebGPUFailure(diagnostics);
+      if (failureReason) {
+        recoverSceneWebGPURenderer(failureReason, 0, true);
+        return;
+      }
+      if (progress.seq > renderWatchdogLastSeq || progress.at > renderWatchdogLastAt) {
+        renderWatchdogLastSeq = progress.seq;
+        renderWatchdogLastAt = progress.at;
+        renderWatchdogLastAdvanceAt = now;
+        renderWatchdogActiveReason = "";
+        publishSceneRenderWatchdogState("", 0);
+        return;
+      }
+      if (renderWatchdogLastAdvanceAt <= 0) {
+        renderWatchdogLastAdvanceAt = now;
+        renderWatchdogLastSeq = progress.seq;
+        renderWatchdogLastAt = progress.at;
+        return;
+      }
+      const stalledFor = now - renderWatchdogLastAdvanceAt;
+      if (stalledFor < SCENE_RENDER_STALL_MS) {
+        return;
+      }
+      const reason = progress.seq > 0 || progress.at > 0 ? "webgpu-render-stall" : "webgpu-render-not-started";
+      const forceFallback = stalledFor >= SCENE_RENDER_FALLBACK_STALL_MS;
+      if (recoverSceneWebGPURenderer(reason, stalledFor, forceFallback)) {
+        renderWatchdogLastAdvanceAt = now;
+      }
+    }
+
+    function startSceneRenderWatchdog() {
+      if (renderWatchdogTimer != null || typeof setInterval !== "function") {
+        return;
+      }
+      const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      const progress = readSceneWebGPUProgress();
+      renderWatchdogLastSeq = progress.seq;
+      renderWatchdogLastAt = progress.at;
+      renderWatchdogLastAdvanceAt = now;
+      publishSceneRenderWatchdogState("", 0);
+      renderWatchdogTimer = setInterval(checkSceneRenderWatchdog, SCENE_RENDER_WATCHDOG_INTERVAL_MS);
+    }
+
+    function stopSceneRenderWatchdog() {
+      if (renderWatchdogTimer != null) {
+        clearInterval(renderWatchdogTimer);
+        renderWatchdogTimer = null;
+      }
     }
 
     function scheduleIdleContextRelease() {
@@ -5956,30 +6112,24 @@
     // also don't care about scroll-time position unless the consumer
     // explicitly schedules a refresh.
     let viewportDirty = true;
+    let lastAnimationFrameAt = 0;
 
-    // Guarded animation-frame scheduler. The animation loop was previously
-    // just `frameHandle = engineFrame(renderFrame)` at the end of every
-    // renderFrame call site — no guard against a second chain starting
-    // in parallel. When scheduleRender fires from a scroll event (or any
-    // other observer) its rAF callback calls renderFrame, which then
-    // scheduled ANOTHER rAF via frameHandle, starting a parallel loop.
-    // Each additional scheduleRender kick started another independent
-    // chain, and they never merged back.
-    //
-    // Firefox exposes this dramatically: under programmatic scroll on a
-    // scene with active data-kinetic reveal animations, scroll events fire
-    // many times per frame, each starting a new chain, and rAF queues
-    // depth grows until the main thread is processing 20+ renderFrames per
-    // display-refresh tick — measured at 956/s during a 2 s scroll, with
-    // the matching rAF gap growing to 51 ms p50 (10-20 fps). Chrome hides
-    // some of this via scroll event coalescing but still doubles up (2
-    // renderFrames per display tick), so Chrome gets a free speedup too.
-    //
-    // Fix: schedule via this guarded helper, null frameHandle inside the
-    // rAF callback so the next call-site can schedule exactly one chain
-    // advance, and have scheduleRender cancel any in-flight frameHandle
-    // before calling renderFrame so the eager refresh path doesn't leak
-    // into a duplicate chain.
+    function sceneAnimationFrameIntervalMS() {
+      var interval = sceneNumber(props && props.frameIntervalMS, 0);
+      if (!(interval > 0)) {
+        var fps = sceneNumber(props && props.maxFrameRate, 0);
+        if (!(fps > 0)) {
+          fps = sceneNumber(props && props.maxFPS, 0);
+        }
+        if (fps > 0) {
+          interval = 1000 / Math.min(240, Math.max(1, fps));
+        }
+      }
+      return interval > 0 ? Math.max(1, interval) : 0;
+    }
+
+    // Guarded animation-chain scheduler. Eager refreshes may still render
+    // promptly; the continuous chain stays single-owner and honors maxFrameRate.
     function scheduleNextAnimationFrame() {
       if (disposed) return;
       if (frameHandle != null) return;
@@ -5990,21 +6140,36 @@
       }
       frameHandle = engineFrame(function(now) {
         frameHandle = null;
+        var interval = sceneAnimationFrameIntervalMS();
+        if (interval > 0 && lastAnimationFrameAt > 0 && typeof now === "number" && now - lastAnimationFrameAt < interval - 0.75) {
+          scheduleNextAnimationFrame();
+          return;
+        }
+        if (typeof now === "number") {
+          lastAnimationFrameAt = now;
+        }
         renderFrame(now);
       });
       applySceneRenderLoopState(animation.reason);
     }
 
-    let sceneRendererRecentlySwapped = false;
-    let sceneRendererLastSwapReason = "";
+	    let sceneRendererRecentlySwapped = false;
+	    let sceneRendererLastSwapReason = "";
+	    let sceneControlHandle = null;
+	    let dragHandle = null;
+	    let pickHandle = null;
+	    let latestScenePickDetail = null;
 
-    function swapRenderer(nextRenderer, fallbackReason) {
-      if (!nextRenderer) {
-        return false;
-      }
+	    function swapRenderer(nextRenderer, fallbackReason) {
+	      if (!nextRenderer) {
+	        return false;
+	      }
       const previous = renderer;
       renderer = nextRenderer;
       applySceneRendererState(ctx.mount, renderer, fallbackReason);
+      renderWatchdogLastSeq = -1;
+      renderWatchdogLastAt = 0;
+      renderWatchdogLastAdvanceAt = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
       }
@@ -6014,23 +6179,143 @@
         from: previous && previous.kind ? previous.kind : "",
         to: nextRenderer.kind || "",
         reason: fallbackReason || "",
-      });
-      return true;
-    }
+	      });
+	      return true;
+	    }
 
-    function fallbackSceneRenderer(reason) {
-      if (sceneRequiresWebGL(props)) {
-        gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
-        applySceneRendererState(ctx.mount, renderer, reason || "webgl-required");
-        return false;
-      }
-      const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
-      if (!ctx2d) {
-        gosxSceneEmit("warn", "renderer-fallback-unavailable", { reason: reason || "" });
-        return false;
-      }
-      return swapRenderer(createSceneCanvasRenderer(ctx2d, canvas), reason || "webgl-unavailable");
-    }
+	    function detachSceneCanvasContextListeners(target) {
+	      if (!target || typeof target.removeEventListener !== "function") {
+	        return;
+	      }
+	      target.removeEventListener("webglcontextlost", onWebGLContextLost);
+	      target.removeEventListener("webglcontextrestored", onWebGLContextRestored);
+	    }
+
+	    function attachSceneCanvasContextListeners(target) {
+	      if (!target || typeof target.addEventListener !== "function") {
+	        return;
+	      }
+	      target.addEventListener("webglcontextlost", onWebGLContextLost);
+	      target.addEventListener("webglcontextrestored", onWebGLContextRestored);
+	    }
+
+	    function prepareSceneReplacementCanvas() {
+	      const nextCanvas = createSceneMountCanvas();
+	      nextCanvas.width = canvas && canvas.width ? canvas.width : viewportBase.baseWidth;
+	      nextCanvas.height = canvas && canvas.height ? canvas.height : viewportBase.baseHeight;
+	      nextCanvas.setAttribute("width", String(nextCanvas.width));
+	      nextCanvas.setAttribute("height", String(nextCanvas.height));
+	      if (canvas && canvas.style) {
+	        nextCanvas.style.width = canvas.style.width || "";
+	        nextCanvas.style.height = canvas.style.height || "";
+	        nextCanvas.style.maxWidth = canvas.style.maxWidth || nextCanvas.style.maxWidth;
+	        nextCanvas.style.borderRadius = canvas.style.borderRadius || nextCanvas.style.borderRadius;
+	      }
+	      return nextCanvas;
+	    }
+
+	    function commitSceneCanvasReplacement(nextCanvas, reason) {
+	      if (!nextCanvas || nextCanvas === canvas || !ctx.mount) {
+	        return false;
+	      }
+	      const previousCanvas = canvas;
+	      detachSceneCanvasContextListeners(previousCanvas);
+	      if (sentinelLayer && sentinelLayer.parentNode === previousCanvas) {
+	        nextCanvas.appendChild(sentinelLayer);
+	      }
+	      if (previousCanvas && previousCanvas.parentNode === ctx.mount) {
+	        ctx.mount.insertBefore(nextCanvas, previousCanvas);
+	        ctx.mount.removeChild(previousCanvas);
+	      } else if (labelLayer && labelLayer.parentNode === ctx.mount) {
+	        ctx.mount.insertBefore(nextCanvas, labelLayer);
+	      } else {
+	        ctx.mount.appendChild(nextCanvas);
+	      }
+	      canvas = nextCanvas;
+	      attachSceneCanvasContextListeners(canvas);
+	      viewportDirty = true;
+	      reinstallSceneCanvasInteractionHandles(reason || "canvas-replaced");
+	      gosxSceneEmit("info", "renderer-canvas-replaced", {
+	        reason: reason || "",
+	      });
+	      return true;
+	    }
+
+	    function sceneFallbackRequiresReplacementCanvas(reason) {
+	      return reason === "webgpu-device-lost";
+	    }
+
+	    function createFallbackSceneWebGLRenderer(reason) {
+	      const useReplacementCanvas = sceneFallbackRequiresReplacementCanvas(reason);
+	      if (!useReplacementCanvas) {
+	        const currentResult = createSceneWebGLResult(canvas, props, capability, reason || "webgl-fallback");
+	        if (currentResult && currentResult.renderer) {
+	          return {
+	            canvas: canvas,
+	            result: currentResult,
+	          };
+	        }
+	      }
+	      const nextCanvas = prepareSceneReplacementCanvas();
+	      const result = createSceneWebGLResult(nextCanvas, props, capability, reason || "webgl-fallback");
+	      if (!result || !result.renderer) {
+	        return null;
+	      }
+	      return {
+	        canvas: nextCanvas,
+	        result: result,
+	      };
+	    }
+
+	    function getFallbackCanvas2D(reason) {
+	      const useReplacementCanvas = sceneFallbackRequiresReplacementCanvas(reason);
+	      if (!useReplacementCanvas) {
+	        const current2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+	        if (current2d) {
+	          return {
+	            canvas: canvas,
+	            ctx2d: current2d,
+	          };
+	        }
+	      }
+	      const nextCanvas = prepareSceneReplacementCanvas();
+	      const ctx2d = typeof nextCanvas.getContext === "function" ? nextCanvas.getContext("2d") : null;
+	      if (!ctx2d) {
+	        gosxSceneEmit("warn", "renderer-fallback-unavailable", { reason: reason || "" });
+	        return null;
+	      }
+	      return {
+	        canvas: nextCanvas,
+	        ctx2d: ctx2d,
+	      };
+	    }
+
+	    function fallbackSceneRenderer(reason) {
+	      const fallbackReason = reason || "webgl-unavailable";
+	      const preferCanvasFallback = fallbackReason === "environment-constrained" || fallbackReason === "webgl-context-lost";
+	      if (!preferCanvasFallback) {
+	        const webglFallback = createFallbackSceneWebGLRenderer(fallbackReason);
+	        if (webglFallback && webglFallback.result && webglFallback.result.renderer) {
+	          if (webglFallback.canvas !== canvas) {
+	            commitSceneCanvasReplacement(webglFallback.canvas, fallbackReason);
+	          }
+	          return swapRenderer(webglFallback.result.renderer, fallbackReason);
+	        }
+	      }
+	      if (sceneRequiresWebGL(props)) {
+	        gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
+	        applySceneRendererState(ctx.mount, renderer, reason || "webgl-required");
+	        return false;
+	      }
+	      const canvas2dFallback = getFallbackCanvas2D(fallbackReason);
+	      if (!canvas2dFallback) {
+	        return false;
+	      }
+	      if (canvas2dFallback.canvas !== canvas) {
+	        commitSceneCanvasReplacement(canvas2dFallback.canvas, fallbackReason);
+	      }
+	      return swapRenderer(createSceneCanvasRenderer(canvas2dFallback.ctx2d, canvas2dFallback.canvas), fallbackReason);
+	    }
 
     function ensureRendererCanCoverBundle(bundle) {
       if (!renderer || !bundle) {
@@ -6175,8 +6460,8 @@
       }
     }
 
-    canvas.addEventListener("webglcontextlost", onWebGLContextLost);
-    canvas.addEventListener("webglcontextrestored", onWebGLContextRestored);
+	    attachSceneCanvasContextListeners(canvas);
+    startSceneRenderWatchdog();
 
     function sceneCanRender() {
       return lifecycle.pageVisible && lifecycle.inViewport;
@@ -6248,17 +6533,9 @@
           applySceneRenderLoopState("");
           return;
         }
-        // Cancel any in-flight animation-chain rAF before calling
-        // renderFrame directly from this eager-refresh path. Without
-        // this, the animation chain's pending rAF from the previous
-        // frame fires alongside this one, starting a parallel chain
-        // every time scheduleRender is hit. On scroll-heavy pages
-        // those parallel chains compound into the duplicate-rAF
-        // storm that was visible on Firefox as 20 renderFrame calls
-        // per display tick. cancelFrame clears frameHandle; the
-        // subsequent renderFrame call ends with scheduleNextAnimationFrame
-        // which schedules exactly one fresh chain advance.
+        // Keep eager refreshes from overlapping an in-flight animation tick.
         cancelFrame();
+        lastAnimationFrameAt = typeof now === "number" ? now : 0;
         renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
       });
       applySceneRenderLoopState(lastScheduledRenderReason);
@@ -6458,18 +6735,63 @@
       return sceneState.camera;
     }
 
-    const sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
-      return viewport;
-    }, readSceneSourceCamera, scheduleRender);
+	    function disposeSceneCanvasInteractionHandles() {
+	      if (dragHandle && typeof dragHandle.dispose === "function") {
+	        dragHandle.dispose();
+	      }
+	      if (pickHandle && typeof pickHandle.dispose === "function") {
+	        pickHandle.dispose();
+	      }
+	      if (sceneControlHandle && typeof sceneControlHandle.dispose === "function") {
+	        sceneControlHandle.dispose();
+	      }
+	      sceneControlHandle = null;
+	      dragHandle = null;
+	      pickHandle = null;
+	    }
 
-    let lastPublishedCamera = null;
+	    function installSceneCanvasInteractionHandles() {
+	      sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
+	        return viewport;
+	      }, readSceneSourceCamera, scheduleRender);
+	      dragHandle = sceneControlHandle.controller
+	        ? { dispose() {} }
+	        : setupSceneDragInteractions(canvas, props, function() {
+	          return viewport;
+	        }, function() {
+	          return latestBundle;
+	        });
+	      pickHandle = setupScenePickInteractions(canvas, props, function() {
+	        return viewport;
+	      }, function() {
+	        return latestBundle;
+	      }, function(detail) {
+	        latestScenePickDetail = detail ? sceneDebugClone(detail, 4) : null;
+	        dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
+	        ctx.emit("scene-interaction", detail);
+	      });
+	    }
 
-    function currentMountedSceneCamera(sourceCamera) {
-      return sceneRenderCamera(sceneCurrentControlCamera(
-        sceneControlHandle.controller,
-        sourceCamera || readSceneSourceCamera(),
-        sceneState._scrollCamera,
-      ));
+	    function reinstallSceneCanvasInteractionHandles(reason) {
+	      disposeSceneCanvasInteractionHandles();
+	      installSceneCanvasInteractionHandles();
+	      if (reason) {
+	        gosxSceneEmit("info", "scene-canvas-interactions-rebound", {
+	          reason: reason || "",
+	        });
+	      }
+	    }
+
+	    installSceneCanvasInteractionHandles();
+
+	    let lastPublishedCamera = null;
+
+	    function currentMountedSceneCamera(sourceCamera) {
+	      return sceneRenderCamera(sceneCurrentControlCamera(
+	        sceneControlHandle && sceneControlHandle.controller,
+	        sourceCamera || readSceneSourceCamera(),
+	        sceneState._scrollCamera,
+	      ));
     }
 
     function publishMountedSceneCamera(camera, reason) {
@@ -6488,35 +6810,17 @@
       if (!sceneIsPlainObject(camera)) {
         return false;
       }
-      const currentCamera = currentMountedSceneCamera();
-      const nextCamera = normalizeSceneCamera(camera, currentCamera);
-      if (sceneCameraEquivalent(currentCamera, nextCamera)) {
-        return false;
-      }
-      sceneState.camera = nextCamera;
-      applySceneControlsCamera(sceneControlHandle.controller, nextCamera);
-      scheduleRender(reason || "camera");
-      publishMountedSceneCamera(nextCamera, reason || "camera");
-      return true;
-    }
-
-    const dragHandle = sceneControlHandle.controller
-      ? { dispose() {} }
-      : setupSceneDragInteractions(canvas, props, function() {
-        return viewport;
-      }, function() {
-        return latestBundle;
-      });
-    const pickHandle = setupScenePickInteractions(canvas, props, function() {
-      return viewport;
-    }, function() {
-      return latestBundle;
-    }, function(detail) {
-      latestScenePickDetail = detail ? sceneDebugClone(detail, 4) : null;
-      dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
-      ctx.emit("scene-interaction", detail);
-    });
-    let latestScenePickDetail = null;
+	      const currentCamera = currentMountedSceneCamera();
+	      const nextCamera = normalizeSceneCamera(camera, currentCamera);
+	      if (sceneCameraEquivalent(currentCamera, nextCamera)) {
+	        return false;
+	      }
+	      sceneState.camera = nextCamera;
+	      applySceneControlsCamera(sceneControlHandle && sceneControlHandle.controller, nextCamera);
+	      scheduleRender(reason || "camera");
+	      publishMountedSceneCamera(nextCamera, reason || "camera");
+	      return true;
+	    }
     function buildSceneDebugSnapshot(mode) {
       const rendererKind = renderer && renderer.kind ? renderer.kind : "";
       const rendererDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
@@ -7066,6 +7370,7 @@
         disposed = true;
         clearIdleContextRelease();
         clearVoluntaryRestoreWatchdog();
+        stopSceneRenderWatchdog();
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
         }
@@ -7073,8 +7378,7 @@
           window.visualViewport.removeEventListener("scroll", visualViewportScrollHandler);
           window.visualViewport.removeEventListener("resize", visualViewportScrollHandler);
         }
-        canvas.removeEventListener("webglcontextlost", onWebGLContextLost);
-        canvas.removeEventListener("webglcontextrestored", onWebGLContextRestored);
+	        detachSceneCanvasContextListeners(canvas);
         document.removeEventListener("gosx:hub:event", sceneHubListener);
         releaseViewportObserver();
         releaseCapabilityObserver();

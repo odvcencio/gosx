@@ -41,7 +41,57 @@ const budgets = [
   // Bumped raw 861_000 -> 862_000, brotli 191_000 -> 191_500: M4 galaxy
   // compute-particle payload kernel seam (16b-scene-compute.js payload path +
   // schema typedef updates). Measured: 861_059 / 234_524 / 190_508.
-  { file: "bootstrap.js", raw: 862_000, gzip: 235_000, brotli: 191_500 },
+  //
+  // Bumped raw 862_000 -> 864_000, gzip 235_000 -> 236_000, brotli 191_500 ->
+  // 192_000: S1 galaxy triad shaderLib dedup — inflateManifestShaderLibs +
+  // inflateSceneShaderLib + SHADER_LIB_FIELDS registry in 10-runtime-scene-core
+  // + inflateManifestShaderLibs call in 30-tail.js. Measured: 863_126 /
+  // 235_185 / 191_669 + rounding headroom.
+  //
+  // Bumped raw 864_000 -> 871_000, brotli 192_000 -> 193_000: S2+S3 galaxy
+  // authored-shader rungs — Points.Material + ComputeParticles.RenderMaterial
+  // plumbing (16a pointsAuthoredVertexPipelineLayout / pointsAuthoredStorage
+  // PipelineLayout + buildAuthoredPoints/ParticleRender async pipelines;
+  // 16-webgl ensurePointsAuthoredGLProgram; 10-scene-core SHADER_LIB_FIELDS
+  // extensions; 30-tail.js inflate updates). Measured: 870_772 / 236_528 /
+  // 192_052 + rounding headroom.
+  //
+  // Bumped raw 871_000 -> 876_000, gzip 237_000 -> 239_000, brotli 193_000 ->
+  // 194_000: custom post-effect end-to-end — Selena kind:"post" payload kind
+  // in 16a (buildCustomPostPipelineAsync, getSelenaPostBGL, getDepthSampler,
+  // ensureCustomPostUniformBuffer, SCENE_POST_CUSTOM_POST case in apply loop)
+  // and in 16-scene-webgl (createSceneCustomPostProgram, applyCustomPost, case
+  // SCENE_POST_CUSTOM_POST in PBR post chain). Measured: 875_599 / 237_894 /
+  // 193_228 + rounding headroom.
+  //
+  // Bumped raw 876_000 -> 877_000: S4 GLB-point authored-profile — extend
+  // sceneApplyNamedMaterialToPoints to propagate customVertexWGSL /
+  // customFragmentWGSL / customVertex / customFragment / customUniforms /
+  // shaderBackend / shaderLayout from named material profile to GLB-derived
+  // point layers; SHADER_LIB_FIELDS registry extended for "materials" collection.
+  // Measured: 876_657 / 238_033 / 193_169 + rounding headroom.
+  //
+  // Bumped raw 877_000 -> 878_000: authored draw ownership diagnostics for
+  // WebGPU points and compute-particle render paths. Measured: 877_796 /
+  // 238_214 / 193_184; compressed budgets still have headroom.
+  //
+  // Bumped raw 878_000 -> 880_000: ComputeParticles normalization now preserves
+  // computeWGSL plus authored render shader fields through createSceneState.
+  // Measured: 879_213 / 238_474 / 193_640; compressed budgets still fit.
+  //
+  // Bumped raw 880_000 -> 881_000: WebGPU async validation lifecycle guards
+  // capture the scoped GPUDevice and ignore stale callbacks after renderer
+  // dispose/device loss. Measured: 880_492 / 238_803 / 193_620.
+  //
+  // Bumped raw 881_000 -> 884_000, gzip 239_000 -> 240_000, brotli 194_000 ->
+  // 195_000: Scene3D foreground frame-cap props and animation-chain throttle.
+  // Measured: 882_542 / 239_397 / 194_102.
+  //
+  // Bumped raw 884_000 -> 888_000, gzip 240_000 -> 242_000, brotli 195_000 ->
+  // 196_500: Scene3D WebGPU device-loss fallback now swaps to a fresh canvas,
+  // rebinds canvas interaction/context listeners, and probes WebGL before 2D.
+  // Measured: 886_997 / 240_771 / 195_495.
+  { file: "bootstrap.js", raw: 888_000, gzip: 242_000, brotli: 196_500 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -58,7 +108,44 @@ const budgets = [
   // payload kernels (pushErrorScope/popErrorScope + createComputePipelineAsync
   // replacing the old synchronous try/catch path in 16b-scene-compute.js).
   // Measured: 525_173 / 143_759 / 118_429, plus rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 526_000, gzip: 144_000, brotli: 119_000 },
+  //
+  // Bumped raw 526_000 -> 528_000: S1 galaxy triad shaderLib dedup —
+  // inflateManifestShaderLibs / inflateSceneShaderLib / SHADER_LIB_FIELDS
+  // included in the scene3d feature chunk. Measured: 526_888 / 143_947 /
+  // 118_583 + rounding headroom.
+  //
+  // Bumped raw 528_000 -> 531_000, gzip 144_500 -> 145_500, brotli 119_500 ->
+  // 120_000: S2+S3 galaxy authored-shader rungs — Points authored GL program
+  // (ensurePointsAuthoredGLProgram, applyPointsAuthoredCustomUniforms in 16-
+  // scene-webgl.js) and SHADER_LIB_FIELDS registry extensions in 10-runtime-
+  // scene-core.js. Measured: 530_221 / 144_963 / 119_289 + rounding headroom.
+  //
+  // Bumped raw 531_000 -> 533_000, gzip 145_500 -> 146_000: custom post-effect
+  // WebGL2 path (createSceneCustomPostProgram, applyCustomPost, SCENE_POST_
+  // CUSTOM_POST = "customPost" constant, case in PBR post chain). Measured:
+  // 532_176 / 145_525 / 119_692 + rounding headroom.
+  //
+  // Bumped raw 533_000 -> 534_000: S4 GLB-point authored-profile — extend
+  // sceneApplyNamedMaterialToPoints to carry authored-shader envelope + extend
+  // SHADER_LIB_FIELDS for "materials" collection. Measured: 533_232 / 145_655 /
+  // 119_826 + rounding headroom.
+  //
+  // Bumped brotli 120_000 -> 120_500: ComputeParticles normalization now keeps
+  // computeWGSL and authored render fields. Measured: 533_791 / 145_799 / 120_081.
+  //
+  // Bumped raw 534_000 -> 535_000: compute-particle async validation lifecycle
+  // guard prevents disposed systems from publishing late pipelines. Measured:
+  // 534_310 / 145_945 / 120_003.
+  //
+  // Bumped raw 535_000 -> 537_000, gzip 146_000 -> 147_000, brotli 120_500 ->
+  // 121_000: Scene3D foreground frame-cap props and animation-chain throttle.
+  // Measured: 536_361 / 146_509 / 120_436.
+  //
+  // Bumped raw 537_000 -> 542_000, gzip 147_000 -> 149_000, brotli 121_000 ->
+  // 122_500: Scene3D WebGPU device-loss fallback now swaps to a fresh canvas,
+  // rebinds canvas interaction/context listeners, and probes WebGL before 2D.
+  // Measured: 540_677 / 147_715 / 121_554.
+  { file: "bootstrap-feature-scene3d.js", raw: 542_000, gzip: 149_000, brotli: 122_500 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -73,7 +160,29 @@ const budgets = [
   //
   // Bumped raw 155_000 -> 156_000, gzip 38_500 -> 39_000: M4 galaxy payload
   // kernel seam in 16b-scene-compute.js. Measured: 155_313 / 38_593 / 33_405.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 156_000, gzip: 39_000, brotli: 33_500 },
+  //
+  // Bumped raw 156_000 -> 160_000, gzip 39_000 -> 40_000, brotli 33_500 ->
+  // 35_000: S2+S3 galaxy authored-shader rungs — pointsAuthoredUserUniformBGL,
+  // pointsAuthoredVertexPipelineLayout, pointsAuthoredStoragePipelineLayout,
+  // buildAuthoredPointsVertexPipelineAsync, buildAuthoredParticleRenderPipeline
+  // Async, ensurePointsAuthoredUserUniformBuffer in 16a-scene-webgpu.js.
+  // Measured: 159_799 / 39_354 / 34_047 + rounding headroom.
+  //
+  // Bumped raw 160_000 -> 164_000, gzip 40_000 -> 41_000: custom post-effect
+  // WebGPU path (buildCustomPostPipelineAsync, getSelenaPostBGL, getDepthSampler,
+  // ensureCustomPostUniformBuffer, SCENE_POST_CUSTOM_POST case in apply loop +
+  // SCENE_POST_CUSTOM_POST constant bridged via 26e prefix). Measured:
+  // 162_911 / 40_201 / 34_738 + rounding headroom.
+  //
+  // Bumped raw 164_000 -> 165_000: authored draw ownership diagnostics for
+  // WebGPU points and compute-particle render paths. Measured: 164_048 /
+  // 40_382 / 34_816; compressed budgets still have headroom.
+  //
+  // Bumped raw 165_000 -> 167_000, gzip 41_000 -> 41_500, brotli 35_000 ->
+  // 35_500: scoped GPUDevice popErrorScope guards for custom post, authored
+  // points, and authored particle render async callbacks. Measured:
+  // 166_165 / 40_940 / 35_214.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 167_000, gzip: 41_500, brotli: 35_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
@@ -109,7 +218,13 @@ const budgets = [
   // that route a canvas2d surface to the 16a WebGPU renderer behind the
   // data-gosx-canvas-backend flag). Measured: 71_680 / 22_600 / 20_186, plus
   // sub-1% rounding headroom.
-  { file: "bootstrap-feature-engines.js", raw: 73_000, gzip: 23_000, brotli: 20_500 },
+  //
+  // Bumped raw 73_000 -> 76_000, gzip 23_000 -> 24_000, brotli 20_500 -> 21_300
+  // for CanvasBoard WebGPU HTML overlays in 26b2-canvas-board-labels.js:
+  // keyed RenderBundle.HTML reconciliation, pointer-event handling, and
+  // focus-preserving editable DOM sync. Measured: 75_180 / 23_446 / 20_888,
+  // plus sub-1% rounding headroom.
+  { file: "bootstrap-feature-engines.js", raw: 76_000, gzip: 24_000, brotli: 21_300 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -133,9 +248,17 @@ const routeBudgets = [
     // for the M1 slice-4 WebGPU backend routing folded into the engines surface
     // (_startCanvasSurfaceWebGPURAF + probe/fallback/dispose). Measured:
     // 176_297 / 50_309 / 44_525, plus sub-1% rounding headroom.
-    raw: 178_000,
-    gzip: 51_000,
-    brotli: 45_000,
+    //
+    // Bumped raw 178_000 -> 179_000: S4 GLB-point authored-profile — bootstrap-
+    // runtime.js carries the SHADER_LIB_FIELDS extension for "materials"
+    // collection. Measured: 178_189 / 50_768 / 44_938, plus rounding headroom.
+    // Bumped raw 179_000 -> 183_000, gzip 51_000 -> 52_200, brotli 45_000 ->
+    // 46_200 for the CanvasBoard WebGPU HTML overlay helper folded into the
+    // engines surface. Measured: 181_639 / 51_556 / 45_591, plus rounding
+    // headroom.
+    raw: 183_000,
+    gzip: 52_200,
+    brotli: 46_200,
   },
 ];
 

@@ -227,6 +227,24 @@ class FakeWebGLContext {
     this.LINK_STATUS = 0x8B82;
     this.VENDOR = 0x1F00;
     this.RENDERER = 0x1F01;
+    // WebGL2 additional constants
+    this.RENDERBUFFER = 0x8D41;
+    this.COLOR_ATTACHMENT0 = 0x8CE0;
+    this.RGBA16F = 0x881A;
+    this.RGBA8 = 0x8058;
+    this.NEAREST = 0x2600;
+    this.TRIANGLE_STRIP = 0x0005;
+    this.RED = 0x1903;
+    this.R32F = 0x822E;
+    this.RGBA32F = 0x8814;
+    this.TEXTURE_CUBE_MAP = 0x8513;
+    this.DEPTH_COMPONENT16 = 0x81A5;
+    this.UNSIGNED_SHORT = 0x1403;
+    this.INT = 0x1404;
+    this.COLOR_ATTACHMENT1 = 0x8CE1;
+    this.DRAW_FRAMEBUFFER = 0x8CA9;
+    this.READ_FRAMEBUFFER = 0x8CA8;
+    this.COLOR = 0x1800;
   }
 
   createShader(type) {
@@ -267,6 +285,16 @@ class FakeWebGLContext {
 
   getProgramParameter(_program, param) {
     return param === this.LINK_STATUS;
+  }
+
+  getProgramInfoLog(_program) {
+    this.ops.push(["getProgramInfoLog"]);
+    return "";
+  }
+
+  getShaderInfoLog(_shader) {
+    this.ops.push(["getShaderInfoLog"]);
+    return "";
   }
 
   createBuffer() {
@@ -503,6 +531,65 @@ class FakeWebGLContext {
       return this._renderer;
     }
     return null;
+  }
+
+  // WebGL2 VAO methods (used by PBR post-processing fullscreen quad setup)
+  createVertexArray() {
+    const vao = { id: "vao-" + this.ops.length };
+    this.ops.push(["createVertexArray", vao.id]);
+    return vao;
+  }
+  bindVertexArray(vao) {
+    this.ops.push(["bindVertexArray", vao && vao.id]);
+  }
+  deleteVertexArray(vao) {
+    this.ops.push(["deleteVertexArray", vao && vao.id]);
+  }
+
+  // WebGL2 renderbuffer methods (used by post-processing FBO setup)
+  createRenderbuffer() {
+    const rb = { id: "rb-" + this.ops.length };
+    this.ops.push(["createRenderbuffer", rb.id]);
+    return rb;
+  }
+  bindRenderbuffer(target, rb) {
+    this.ops.push(["bindRenderbuffer", target, rb && rb.id]);
+  }
+  renderbufferStorage(target, internalFormat, width, height) {
+    this.ops.push(["renderbufferStorage", target, internalFormat, width, height]);
+  }
+  framebufferRenderbuffer(target, attachment, rbTarget, rb) {
+    this.ops.push(["framebufferRenderbuffer", target, attachment, rbTarget, rb && rb.id]);
+  }
+
+  // WebGL2 instancing (used by instanced mesh path)
+  vertexAttribDivisor(location, divisor) {
+    this.ops.push(["vertexAttribDivisor", location, divisor]);
+  }
+  drawArraysInstanced(mode, first, count, instances) {
+    this.ops.push(["drawArraysInstanced", mode, first, count, instances]);
+  }
+  drawElementsInstanced(mode, count, type, offset, instances) {
+    this.ops.push(["drawElementsInstanced", mode, count, type, offset, instances]);
+  }
+
+  // WebGL2 draw buffers
+  drawBuffers(buffers) {
+    this.ops.push(["drawBuffers", buffers && buffers.length]);
+  }
+
+  // WebGL2 additional methods
+  renderbufferStorageMultisample(target, samples, internalFormat, width, height) {
+    this.ops.push(["renderbufferStorageMultisample", target, samples, internalFormat, width, height]);
+  }
+  blitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter) {
+    this.ops.push(["blitFramebuffer", mask]);
+  }
+  vertexAttribIPointer(location, size, type, stride, offset) {
+    this.ops.push(["vertexAttribIPointer", location, size, type, stride, offset]);
+  }
+  texStorage2D(target, levels, internalFormat, width, height) {
+    this.ops.push(["texStorage2D", target, levels, internalFormat, width, height]);
   }
 }
 
@@ -2090,6 +2177,7 @@ function installManualRAF(context) {
 function installManualTimers(context) {
   let nextHandle = 1;
   const timers = new Map();
+  const intervals = new Map();
   context.setTimeout = (callback, delay, ...args) => {
     const handle = nextHandle++;
     timers.set(handle, {
@@ -2102,9 +2190,21 @@ function installManualTimers(context) {
   context.clearTimeout = (handle) => {
     timers.delete(handle);
   };
+  context.setInterval = (callback, delay, ...args) => {
+    const handle = nextHandle++;
+    intervals.set(handle, {
+      callback,
+      delay: Number(delay || 0),
+      args,
+    });
+    return handle;
+  };
+  context.clearInterval = (handle) => {
+    intervals.delete(handle);
+  };
   return {
     count() {
-      return timers.size;
+      return timers.size + intervals.size;
     },
     runDelay(delay) {
       const targetDelay = Number(delay || 0);
@@ -2115,6 +2215,18 @@ function installManualTimers(context) {
           continue;
         }
         timers.delete(handle);
+        timer.callback(...timer.args);
+      }
+      return entries.length;
+    },
+    runInterval(delay) {
+      const targetDelay = Number(delay || 0);
+      const entries = Array.from(intervals.entries())
+        .filter(([, timer]) => timer.delay === targetDelay);
+      for (const [handle, timer] of entries) {
+        if (!intervals.has(handle)) {
+          continue;
+        }
         timer.callback(...timer.args);
       }
       return entries.length;
@@ -6318,6 +6430,34 @@ test("bootstrap keeps solid mesh bundles off the legacy wire-line path", async (
   assert.equal(wireBundle.objects.length, 1);
   assert.equal(wireBundle.worldVertexCount, 6);
   assert.equal(wireBundle.worldLineWidths[0], 0);
+
+  const selenaBundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [Object.assign({}, baseMesh, {
+      id: "selena-gltf",
+      materialKind: "custom",
+      shaderBackend: "selena",
+      wireframe: true,
+    })],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(selenaBundle.meshObjects.length, 1);
+  assert.equal(selenaBundle.objects.length, 0);
+  assert.equal(selenaBundle.worldVertexCount, 0);
 });
 
 test("bootstrap skips invisible Scene3D mesh objects before packing render bundles", async () => {
@@ -6886,6 +7026,52 @@ test("bootstrap applies Scene3D particle and instanced diff commands", async () 
   assert.equal(state.instancedMeshes[0].tube, 0.2);
 });
 
+test("bootstrap preserves ComputeParticles authored render fields through scene normalization", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const renderVertexWGSL = "@vertex fn vertexStorageMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }";
+  const renderFragmentWGSL = "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+  const computeWGSL = "@compute @workgroup_size(1) fn simulate() {}";
+  const state = api.createSceneState({
+    scene: {
+      computeParticles: [{
+        id: "authored-compute",
+        count: 8,
+        emitter: { kind: "point" },
+        material: { color: "#ffffff" },
+        computeWGSL,
+        computeEntry: "simulate",
+        computeBackend: "elio",
+        renderVertexWGSL,
+        renderFragmentWGSL,
+        renderUniforms: { brightness: 1.25 },
+        renderShaderBackend: "selena",
+        renderShaderLayout: {
+          material: "GalaxyParticleRender",
+          entryPoints: { vertexStorage: "vertexStorageMain" },
+        },
+      }],
+    },
+  });
+
+  assert.equal(state.computeParticles.length, 1);
+  const cp = state.computeParticles[0];
+  assert.equal(cp.computeWGSL, computeWGSL, "computeWGSL must survive normalization");
+  assert.equal(cp.computeEntry, "simulate", "computeEntry must survive normalization");
+  assert.equal(cp.computeBackend, "elio", "computeBackend must survive normalization");
+  assert.equal(cp.renderVertexWGSL, renderVertexWGSL, "renderVertexWGSL must survive normalization");
+  assert.equal(cp.renderFragmentWGSL, renderFragmentWGSL, "renderFragmentWGSL must survive normalization");
+  assert.equal(cp.renderShaderBackend, "selena", "renderShaderBackend must survive normalization");
+  assert.ok(cp.renderUniforms && typeof cp.renderUniforms === "object", "renderUniforms must survive normalization");
+  assert.equal(cp.renderUniforms.brightness, 1.25, "renderUniforms value must survive normalization");
+  assert.ok(cp.renderShaderLayout && typeof cp.renderShaderLayout === "object", "renderShaderLayout must survive normalization");
+  assert.equal(cp.renderShaderLayout.material, "GalaxyParticleRender", "renderShaderLayout.material must survive normalization");
+  assert.equal(cp.renderShaderLayout.entryPoints.vertexStorage, "vertexStorageMain", "renderShaderLayout.entryPoints must survive normalization");
+});
+
 test("bootstrap applies Scene3D material diff commands", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -7354,6 +7540,14 @@ test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
   assert.match(source, /data-gosx-scene3d-webgpu-point-entries/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-instances/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-draw-instances/);
+  assert.match(source, /pointAuthoredDrawEntries/);
+  assert.match(source, /data-gosx-scene3d-webgpu-point-authored-draw-entries/);
+  assert.match(source, /data-gosx-scene3d-webgpu-point-authored-draw-instances/);
+  assert.match(source, /data-gosx-scene3d-webgpu-point-authored-draw-calls/);
+  assert.match(source, /computeParticleAuthoredDrawEntries/);
+  assert.match(source, /data-gosx-scene3d-webgpu-compute-particle-authored-draw-entries/);
+  assert.match(source, /data-gosx-scene3d-webgpu-compute-particle-authored-draw-instances/);
+  assert.match(source, /data-gosx-scene3d-webgpu-compute-particle-authored-draw-calls/);
   assert.match(source, /data-gosx-scene3d-webgpu-mesh-objects/);
   assert.match(source, /data-gosx-scene3d-webgpu-instanced-instances/);
 });
@@ -7362,6 +7556,8 @@ test("Scene3D WebGPU ignores popErrorScope lifecycle drops", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
   assert.match(source, /function isWebGPUErrorScopeLifecycleMessage\(message\)/);
+  assert.match(source, /function wgpuPopScopedErrorScope\(scopedDevice\)/);
+  assert.match(source, /rendererDeviceStillActive\(scopedDevice\)/);
   assert.match(source, /indexOf\("instance dropped"\) >= 0/);
   assert.match(source, /indexOf\("poperrorscope"\) >= 0/);
   assert.match(source, /\.catch\(function\(error\) \{[\s\S]*if \(isWebGPUErrorScopeLifecycleMessage\(message\)\) return;[\s\S]*reportWebGPUFrameError\(message\);[\s\S]*\}\);/);
@@ -7517,6 +7713,17 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   assert.match(webgpu, /entryPoint: "fragmentMain"/);
   assert.match(webgpu, /createSelenaBindGroup\(mat, selenaResource, obj\)/);
   assert.match(webgpu, /if \(sceneSelenaIsMaterial\(material\)\) \{\n          continue;/);
+});
+
+test("Scene3D animation loop supports foreground frame caps", () => {
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(mount, /function sceneAnimationFrameIntervalMS\(\)/);
+  assert.match(mount, /props && props\.frameIntervalMS/);
+  assert.match(mount, /props && props\.maxFrameRate/);
+  assert.match(mount, /props && props\.maxFPS/);
+  assert.match(mount, /scheduleNextAnimationFrame\(\);\n\s+return;\n\s+\}/);
+  assert.match(mount, /lastAnimationFrameAt = typeof now === "number" \? now : 0;/);
 });
 
 test("Scene3D instanced meshes are WebGPU-native", () => {
@@ -8940,6 +9147,257 @@ test("selective Scene3D bootstrap prefers WebGPU before first renderer selection
     true,
   );
   assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), false);
+});
+
+test("Scene3D WebGPU render watchdog recreates stalled animated renderer", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-watchdog";
+  let now = 0;
+  let createCount = 0;
+  let disposeCount = 0;
+  let renderCount = 0;
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function() {
+              createCount += 1;
+              return {
+                kind: "webgpu",
+                diagnostics: function() { return { ready: true }; },
+                render: function() { renderCount += 1; },
+                dispose: function() { disposeCount += 1; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-watchdog",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-watchdog",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.createCount = createCount;
+  env.context.disposeCount = disposeCount;
+  env.context.renderCount = renderCount;
+  Object.defineProperty(env.context, "createCount", {
+    configurable: true,
+    get: () => createCount,
+    set: (value) => { createCount = value; },
+  });
+  Object.defineProperty(env.context, "disposeCount", {
+    configurable: true,
+    get: () => disposeCount,
+    set: (value) => { disposeCount = value; },
+  });
+  Object.defineProperty(env.context, "renderCount", {
+    configurable: true,
+    get: () => renderCount,
+    set: (value) => { renderCount = value; },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(createCount, 1);
+  assert.equal(renderCount, 1);
+  assert.equal(raf.count(), 1);
+
+  now = 8000;
+  assert.equal(timers.runInterval(2000), 1);
+  now = 16000;
+  assert.equal(timers.runInterval(2000), 1);
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "recovering");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-reason"), "webgpu-render-not-started");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-recoveries"), "1");
+  assert.equal(createCount, 2);
+  assert.equal(disposeCount, 1);
+});
+
+test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-device-lost";
+  let now = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testWebGPUCreateCount = 0;
+          window.__testWebGPUDisposeCount = 0;
+          window.__testWebGPURenderCount = 0;
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              window.__testWebGPUCreateCount += 1;
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  return {
+                    ready: window.__testWebGPUDeviceLost !== true,
+                    deviceLost: window.__testWebGPUDeviceLost === true
+                  };
+                },
+                render: function() { window.__testWebGPURenderCount += 1; },
+                dispose: function() { window.__testWebGPUDisposeCount += 1; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-device-lost",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-device-lost",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__testWebGPUDeviceLost = false;
+  const originalCreateElement = env.document.createElement.bind(env.document);
+  env.document.createElement = function(tagName) {
+    const element = originalCreateElement(tagName);
+    if (String(tagName || "").toLowerCase() === "canvas") {
+      const originalGetContext = element.getContext.bind(element);
+      element.getContext = function(kind, options) {
+        const contextKind = String(kind || "");
+        if (
+          this.__webgpuClaimed &&
+          (contextKind === "2d" || contextKind === "webgl" || contextKind === "webgl2" || contextKind === "experimental-webgl")
+        ) {
+          this.contextCalls = this.contextCalls || [];
+          this.contextCalls.push({ kind, options: options || null, blockedByWebGPU: true });
+          return null;
+        }
+        return originalGetContext(kind, options);
+      };
+    }
+    return element;
+  };
+
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+
+  const firstCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(firstCanvas.getAttribute("data-gosx-scene3d-canvas"), "true");
+  assert.equal(env.context.__testWebGPUCreateCount, 1);
+  assert.equal(env.context.__testWebGPURenderCount, 1);
+
+  env.context.__testWebGPUDeviceLost = true;
+  now = 4000;
+  assert.equal(timers.runInterval(2000), 1);
+  await flushAsyncWork();
+
+  const replacementCanvas = mount.children[0];
+  assert.notEqual(replacementCanvas, firstCanvas);
+  assert.equal(firstCanvas.parentNode, null);
+  assert.equal(replacementCanvas.getAttribute("data-gosx-scene3d-canvas"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "recovering");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-reason"), "webgpu-device-lost");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-recoveries"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-fallbacks"), "1");
+  assert.equal(env.context.__testWebGPUDisposeCount, 1);
+  assert.equal((firstCanvas.contextCalls || []).some((call) => call.blockedByWebGPU), false);
+  assert.ok((replacementCanvas.contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+  assert.ok(replacementCanvas.children.some((child) => child.getAttribute("data-gosx-scene-node-layer") === "true"));
+  assert.equal(events.some((event) => event.msg === "render-watchdog-recovery" && event.fields.reason === "webgpu-device-lost"), true);
+  assert.equal(events.some((event) => event.msg === "renderer-canvas-replaced"), true);
+  assert.equal(events.some((event) => event.msg === "renderer-swap" && event.fields.to === "webgl"), true);
+  assert.equal(events.some((event) => event.msg === "renderer-fallback-unavailable"), false);
 });
 
 test("selective Scene3D bootstrap honors explicit WebGPU preference when WebGL is disabled", async () => {
@@ -16381,6 +16839,21 @@ const goBoardBundleRectsJSON = readBoardFixture("board_fixture_rects.json");
 // ({from:{x,y},to:{x,y},color,lineWidth} etc.); labels stay undrawn here
 // (slice 2C renders them as a DOM overlay).
 const goBoardBundleMixedJSON = readBoardFixture("board_fixture_mixed.json");
+const goBoardBundleMixedWithHTMLJSON = JSON.stringify(Object.assign(
+  {},
+  JSON.parse(goBoardBundleMixedJSON),
+  {
+    html: [{
+      id: "page:home",
+      markup: '<h1 contenteditable data-studio-field="home.hero.headline">Hi</h1>',
+      x: 20,
+      y: 20,
+      width: 240,
+      height: 80,
+      pointerEvents: "auto",
+    }],
+  },
+));
 
 // makeFakeGPUDevice builds a recording GPUDevice double that satisfies every
 // device call 16a's synchronous init + render() issue on the board path:
@@ -16996,12 +17469,13 @@ test("16a board rects draw through the Selena BoardFill pipeline: custom WGSL mo
 });
 
 // -----------------------------------------------------------------------------
-// DOM label overlay — __gosx_canvas_board_labels_sync / _dispose
+// DOM CanvasBoard overlays — labels/html sync + dispose
 //
 // 26b2-canvas-board-labels.js positions real HTML <span> elements over the
 // canvas board so text renders in the DOM rather than via GPU fillText. The
-// tests below exercise the OrthoCamera2D transform parity, index-keyed
-// reconciliation, culling, defaults, dispose, and layer invariants.
+// tests below exercise the OrthoCamera2D transform parity, index-keyed label
+// reconciliation, keyed HTML reconciliation, culling, defaults, dispose, and
+// layer invariants.
 //
 // The module runs in an isolated VM sandbox with a minimal FakeDocument so
 // createElement / appendChild work without a real browser. The offscreen-canvas
@@ -17009,9 +17483,9 @@ test("16a board rects draw through the Selena BoardFill pipeline: custom WGSL mo
 // 0.8 * fontSize ascent approximation, which is what the assertions target.
 // -----------------------------------------------------------------------------
 
-// loadBoardLabels evaluates 26b2 in an isolated sandbox and returns the two
-// exposed globals. The sandbox wires a FakeDocument for createElement so the
-// layer div and span elements can be created.
+// loadBoardLabels evaluates 26b2 in an isolated sandbox and returns the exposed
+// globals. The sandbox wires a FakeDocument for createElement so overlay
+// elements can be created.
 function loadBoardLabels() {
   const source = fs.readFileSync(
     path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.js"),
@@ -17028,16 +17502,21 @@ function loadBoardLabels() {
     "26b2 must expose __gosx_canvas_board_labels_sync");
   assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_dispose, "function",
     "26b2 must expose __gosx_canvas_board_labels_dispose");
+  assert.equal(typeof sandbox.window.__gosx_canvas_board_html_sync, "function",
+    "26b2 must expose __gosx_canvas_board_html_sync");
+  assert.equal(typeof sandbox.window.__gosx_canvas_board_html_dispose, "function",
+    "26b2 must expose __gosx_canvas_board_html_dispose");
   return {
     sync: sandbox.window.__gosx_canvas_board_labels_sync,
     dispose: sandbox.window.__gosx_canvas_board_labels_dispose,
+    htmlSync: sandbox.window.__gosx_canvas_board_html_sync,
+    htmlDispose: sandbox.window.__gosx_canvas_board_html_dispose,
     doc: fakeDoc,
   };
 }
 
 // makeBoardHost creates a FakeElement to serve as the canvas's parent (host).
-function makeBoardHost() {
-  const doc = new FakeDocument();
+function makeBoardHost(doc = new FakeDocument()) {
   const host = doc.createElement("div");
   doc.body.appendChild(host);
   return host;
@@ -17266,6 +17745,72 @@ test("boardLabels layer invariants: pointer-events:none, overflow:hidden, single
   assert.equal(layerCount, 1, "only one label layer appended to host");
 });
 
+test("boardHTML sync maps CanvasBoard bottom-left bounds to DOM top-left transform", () => {
+  const { htmlSync, doc } = loadBoardLabels();
+  const host = makeBoardHost(doc);
+  const markup = '<h1 contenteditable data-studio-field="home.hero.headline">Hi</h1>';
+
+  htmlSync(host, [{
+    id: "page:home",
+    markup,
+    x: 30,
+    y: 40,
+    width: 120,
+    height: 50,
+    pointerEvents: "auto",
+  }], { mode: "ortho2d", x: 10, y: 20, z: 2 }, 800, 600);
+
+  const layer = host.__gosxBoardHTMLLayer;
+  assert.ok(layer, "HTML layer created");
+  assert.match(String(layer.style.cssText || ""), /pointer-events:none/, "layer does not block the board");
+  assert.equal(layer.childNodes.length, 1, "one HTML overlay");
+
+  const overlay = layer.childNodes[0];
+  assert.equal(overlay.getAttribute("data-gosx-canvas-html"), "page:home");
+  assert.equal(overlay.getAttribute("data-gosx-canvas-html-pointer-events"), "auto");
+  assert.equal(overlay.innerHTML, markup);
+  assert.equal(overlay.textContent, "Hi");
+  assert.equal(overlay.style.pointerEvents, "auto");
+  // CanvasBoard x/y is the bottom-left of bounds. DOM overlays are top-left
+  // positioned, so top subtracts scaled entry height:
+  // left=(30-10)*2+400=440, top=300-(40-20)*2-(50*2)=160.
+  assert.equal(overlay.style.transform, "translate(440px,160px)");
+  assert.equal(overlay.style.width, "240px");
+  assert.equal(overlay.style.height, "100px");
+});
+
+test("boardHTML sync does not clobber a focused editable overlay", () => {
+  const { htmlSync, doc } = loadBoardLabels();
+  const host = makeBoardHost(doc);
+  const markup = '<h1 contenteditable data-studio-field="home.hero.headline">Hi</h1>';
+  const entry = {
+    id: "page:home",
+    markup,
+    position: { x: 0, y: 0 },
+    width: 100,
+    height: 40,
+    pointerEvents: "auto",
+  };
+
+  htmlSync(host, [entry], { mode: "ortho2d", x: 0, y: 0, z: 1 }, 400, 300);
+  const overlay = host.__gosxBoardHTMLLayer.childNodes[0];
+  const focusedHeading = doc.createElement("h1");
+  focusedHeading.setAttribute("contenteditable", "");
+  focusedHeading.textContent = "User edit";
+  overlay.innerHTML = "";
+  overlay.appendChild(focusedHeading);
+  overlay._gosxMarkup = "__stale_cache_for_focus_guard__";
+  focusedHeading.focus();
+
+  htmlSync(host, [entry], { mode: "ortho2d", x: 10, y: 20, z: 2 }, 400, 300);
+
+  assert.equal(doc.activeElement, focusedHeading, "editable child remains focused");
+  assert.equal(overlay.textContent, "User edit", "focused user edit is preserved");
+  assert.equal(overlay.style.transform, "translate(180px,110px)", "transform still updates while focused");
+  assert.equal(overlay.style.width, "200px", "width still updates while focused");
+  assert.equal(overlay.style.height, "80px", "height still updates while focused");
+});
+
 // -----------------------------------------------------------------------------
 // M1 slice 4: canvas2d surface → 16a WebGPU renderer routing (behind the flag).
 //
@@ -17274,7 +17819,7 @@ test("boardLabels layer invariants: pointer-events:none, overflow:hidden, single
 // scene3d-webgpu chunk loaded (16a factory live against the fake GPU device) and
 // the WASM canvas globals faked, mounts through mountAllSurfaceKinds →
 // mountSurfaceKind → _startCanvasSurfaceWebGPURAF. The RAF loop then drives
-// 16a's render() (recorded draws) + the DOM label overlay. They also pin the
+// 16a's render() (recorded draws) + the DOM label/html overlays. They also pin the
 // skip-frame contract, the painter default (flag absent), and the complete
 // fallback (flag on but no navigator.gpu → painter path + one warn).
 // -----------------------------------------------------------------------------
@@ -17348,7 +17893,7 @@ async function createCanvasBoardRoutingHarness(options = {}) {
   const setBackendCalls = [];
   const tickCalls = [];
   const disposeCalls = [];
-  let renderJSONProvider = options.renderJSON || (() => goBoardBundleMixedJSON);
+  let renderJSONProvider = options.renderJSON || (() => goBoardBundleMixedWithHTMLJSON);
   env.context.__gosx_render_canvas = function(id, w, h, t) {
     renderCalls.push({ id, w, h, t });
     return typeof renderJSONProvider === "function" ? renderJSONProvider({ id, w, h, t }) : renderJSONProvider;
@@ -17414,10 +17959,13 @@ async function createCanvasBoardRoutingHarness(options = {}) {
     labelLayer() {
       return mountParent.__gosxBoardLabelLayer || null;
     },
+    htmlLayer() {
+      return mountParent.__gosxBoardHTMLLayer || null;
+    },
   };
 }
 
-test("canvas2d surface with the webgpu flag mounts through 16a: RAF drives render + populates the label overlay", async () => {
+test("canvas2d surface with the webgpu flag mounts through 16a: RAF drives render + populates DOM overlays", async () => {
   const h = await createCanvasBoardRoutingHarness();
   await h.mount();
 
@@ -17426,7 +17974,7 @@ test("canvas2d surface with the webgpu flag mounts through 16a: RAF drives rende
   // The canvas2d path must NOT have created a 2D context (WebGPU owns the canvas).
   assert.deepEqual(h.ctx2dCalls, [], "routed canvas must never get a 2d context (would taint it against webgpu)");
 
-  // Pump one RAF frame → tick + render + 16a draw + labels.
+  // Pump one RAF frame → tick + render + 16a draw + DOM overlays.
   h.raf.flush(16);
   await flushAsyncWork();
 
@@ -17444,6 +17992,17 @@ test("canvas2d surface with the webgpu flag mounts through 16a: RAF drives rende
   assert.ok(layer, "label overlay layer must be created on the host");
   assert.equal(layer.childNodes.length, 1, "one label span for the fixture's one label");
   assert.equal(layer.childNodes[0].textContent, "Board", "label text comes from bundle.labels");
+
+  // The WebGPU RAF path also mounts RenderBundle.HTML entries into the DOM.
+  const htmlLayer = h.htmlLayer();
+  assert.ok(htmlLayer, "HTML overlay layer must be created on the host");
+  assert.equal(htmlLayer.childNodes.length, 1, "one HTML overlay for bundle.html");
+  const html = htmlLayer.childNodes[0];
+  assert.equal(html.getAttribute("data-gosx-canvas-html"), "page:home");
+  assert.equal(html.getAttribute("data-gosx-canvas-html-pointer-events"), "auto");
+  assert.equal(html.style.pointerEvents, "auto");
+  assert.equal(html.innerHTML, '<h1 contenteditable data-studio-field="home.hero.headline">Hi</h1>');
+  assert.equal(html.textContent, "Hi");
 });
 
 test("routed canvas2d skip-frame: an identical render JSON second frame does zero render work", async () => {
@@ -17835,6 +18394,632 @@ test("compute particle payload kernel: absent computeWGSL goes straight to built
   assert.ok(computeEnded.length >= 1, "compute pass must dispatch once builtin pipeline is ready");
 });
 
+// -------------------------------------------------------------------------
+// Points authored shader: WebGPU async pipeline tests (S2 rungs)
+// -------------------------------------------------------------------------
+
+// makeFakeGPUDeviceForPoints extends makeFakeGPUDevice with a controllable
+// createRenderPipelineAsync — needed for points authored-pipeline tests.
+function makeFakeGPUDeviceForPoints(options) {
+  const base = makeFakeGPUDevice();
+  const device = base.device;
+  const opts = options || {};
+  const pendingScopes = [];
+  const renderPipelineAsyncCalls = [];
+  device.pushErrorScope = function(filter) {
+    pendingScopes.push(filter);
+  };
+  device.popErrorScope = function() {
+    pendingScopes.pop();
+    if (typeof opts.errorScopeBehavior === "function") {
+      return opts.errorScopeBehavior();
+    }
+    return Promise.resolve(null);
+  };
+  device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls.push(desc);
+    if (typeof opts.pipelineAsyncBehavior === "function") {
+      return opts.pipelineAsyncBehavior(desc);
+    }
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+  return { device, state: base.state, renderPipelineAsyncCalls };
+}
+
+// Minimal valid bundle with one points entry (no positions — count-only path).
+function makePointsBundle(pointsEntry) {
+  return {
+    camera: { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [pointsEntry],
+    instancedMeshes: [], objects: [], meshObjects: [],
+    materials: [], labels: [], sprites: [], lights: [], postEffects: [],
+    computeParticles: [],
+    positions: new Float32Array(0), colors: new Float32Array(0),
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0), worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0), worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0, worldVertexCount: 0,
+  };
+}
+
+test("points authored WebGPU: absent customVertexWGSL goes straight to builtin without pipeline attempt", async () => {
+  let renderAsyncCalls = 0;
+  const baseCompute = makeFakeGPUDeviceForCompute({});
+  baseCompute.device.createRenderPipelineAsync = function(desc) {
+    renderAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(baseCompute.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  harness.renderer.render(makePointsBundle({
+    id: "plain-layer", count: 4,
+    style: "glow",
+    positions: new Float32Array([0,0,0, 1,0,0, 0,1,0, 0,0,1]),
+  }), viewport);
+
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // No authored pipeline attempt: renderAsync is never called for points
+  // without customVertexWGSL (only builtin render pipelines were pre-built).
+  const authoredAttempts = harness.env.context.console
+    ? harness.warnLog.filter(m => m.includes("points authored") || m.includes("falling back"))
+    : [];
+  assert.equal(authoredAttempts.length, 0, "no authored warning for entry without customVertexWGSL");
+});
+
+test("points authored WebGPU: valid customVertexWGSL+customFragmentWGSL builds authored pipeline", async () => {
+  const baseCompute = makeFakeGPUDeviceForCompute({
+    errorScopeBehavior() {
+      return Promise.resolve(null); // no validation error
+    },
+  });
+  baseCompute.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label, isAuthored: true });
+  };
+
+  const harness = await createComputeParticleHarness(baseCompute.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const entry = {
+    id: "authored-layer",
+    count: 4,
+    // positions required — without them the render loop skips the entry before
+    // reaching the pipeline-selection branch (see _cachedPos guard).
+    positions: new Float32Array([0,0,0, 1,0,0, 0,1,0, 0,0,1]),
+    customVertexWGSL: "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0,0.0,0.0,1.0); }",
+    customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0,1.0,0.0,1.0); }",
+  };
+
+  // Frame 1: async build kicks off but returns null (pending) — builtin used.
+  harness.renderer.render(makePointsBundle(entry), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // No failure warnings on valid shader.
+  const failWarns = harness.warnLog.filter(m => m.includes("falling back") || m.includes("failed"));
+  assert.equal(failWarns.length, 0, "valid authored points pipeline must not emit failure warning");
+
+  // Frame 2: authored pipeline is resolved — the subsequent draw uses it.
+  harness.renderer.render(makePointsBundle(entry), viewport);
+
+  // Just verify the renderer didn't crash and warn count is still zero.
+  const failWarns2 = harness.warnLog.filter(m => m.includes("falling back") || m.includes("failed"));
+  assert.equal(failWarns2.length, 0, "no failure after two frames with valid authored WGSL");
+});
+
+test("points authored WebGPU: invalid customVertexWGSL attempts async pipeline build and then uses builtin", async () => {
+  // Verify the authored shader path by confirming createRenderPipelineAsync is
+  // called exactly once on first render (authored pipeline kicked off), and is
+  // NOT called again on the second render (failure cached, builtin used).
+  //
+  // Points entries require _cachedPos to be set (count*3 floats): without
+  // positions the render loop skips the entry before reaching the pipeline path.
+  let renderAsyncCallCount = 0;
+  const baseCompute = makeFakeGPUDeviceForCompute({});
+  baseCompute.device.createRenderPipelineAsync = function(desc) {
+    renderAsyncCallCount++;
+    return Promise.reject(new Error("fake points WGSL validation error"));
+  };
+
+  const harness = await createComputeParticleHarness(baseCompute.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const entry = {
+    id: "bad-authored-layer",
+    count: 4,
+    // 4 particles × 3 floats each — satisfies the _cachedPos guard so the
+    // entry is not skipped before reaching the authored-pipeline branch.
+    positions: new Float32Array([0,0,0, 1,0,0, 0,1,0, 0,0,1]),
+    customVertexWGSL: "BAD WGSL SOURCE",
+    customFragmentWGSL: "ALSO BAD",
+  };
+
+  // Frame 1: kicks off async build (returns null → builtin used this frame).
+  harness.renderer.render(makePointsBundle(entry), viewport);
+
+  // The authored path must have kicked off exactly one async pipeline build.
+  assert.equal(renderAsyncCallCount, 1, "authored WGSL must trigger exactly one createRenderPipelineAsync call");
+
+  // Settle the async rejection chain.
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // Frame 2: failure is now cached — createRenderPipelineAsync must NOT be called again.
+  const countBefore = renderAsyncCallCount;
+  harness.renderer.render(makePointsBundle(entry), viewport);
+  assert.equal(renderAsyncCallCount, countBefore, "failure must be cached — no re-attempt on second render");
+});
+
+test("points authored WebGPU: async validation resolution after renderer dispose is ignored", async () => {
+  let renderAsyncCallCount = 0;
+  let popScopeCallCount = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    errorScopeBehavior() {
+      popScopeCallCount++;
+      return Promise.resolve(null);
+    },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderAsyncCallCount++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label, isAuthored: true });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const entry = {
+    id: "dispose-authored-layer",
+    count: 4,
+    positions: new Float32Array([0,0,0, 1,0,0, 0,1,0, 0,0,1]),
+    customVertexWGSL: "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0,0.0,0.0,1.0); }",
+    customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0,1.0,0.0,1.0); }",
+  };
+
+  harness.renderer.render(makePointsBundle(entry), viewport);
+  assert.equal(renderAsyncCallCount, 1, "authored pipeline build should start before dispose");
+
+  harness.renderer.dispose();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(popScopeCallCount >= 1, "stale async callback should drain the scoped device error scope");
+  const staleWarns = harness.warnLog.filter(m => m.includes("dispose-authored-layer") || m.includes("falling back") || m.includes("failed"));
+  assert.equal(staleWarns.length, 0, "disposed renderer callback must not publish failure warnings");
+});
+
+// -------------------------------------------------------------------------
+// ComputeParticles authored render: WebGPU async pipeline tests (S3 rungs)
+// -------------------------------------------------------------------------
+
+// Minimal valid bundle with one compute particle entry using an authored render.
+function makeComputeParticleBundleWithRender(particleEntry) {
+  return makeComputeParticleBundle(particleEntry);
+}
+
+test("computeParticles authored render WebGPU: absent renderVertexWGSL goes to builtin render path", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+  });
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  harness.renderer.render(makeComputeParticleBundleWithRender({
+    id: "plain-cp",
+    count: 4,
+    emitter: { kind: "point" },
+    material: { color: "#fff" },
+    // No renderVertexWGSL/renderFragmentWGSL: builtin path.
+  }), viewport);
+
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const authoredWarns = harness.warnLog.filter(m => m.includes("authored render") && m.includes("falling back"));
+  assert.equal(authoredWarns.length, 0, "no authored-render warn for entry without renderVertexWGSL");
+});
+
+test("computeParticles authored render WebGPU: valid renderVertexWGSL+renderFragmentWGSL builds authored pipeline", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() {
+      return Promise.resolve(null);
+    },
+  });
+  // Override createRenderPipelineAsync to succeed for authored render pipeline.
+  fake.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label, isAuthoredRender: true });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const entry = {
+    id: "authored-cp-render",
+    count: 4,
+    emitter: { kind: "point" },
+    material: { color: "#fff" },
+    renderVertexWGSL: "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0,0.0,0.0,1.0); }",
+    renderFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(0.2,0.8,1.0,1.0); }",
+  };
+
+  // Frame 1: async build.
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const failWarns = harness.warnLog.filter(m => m.includes("falling back") || m.includes("failed"));
+  assert.equal(failWarns.length, 0, "valid authored particle render pipeline must not warn");
+
+  // Frame 2: authored pipeline is ready.
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+  const failWarns2 = harness.warnLog.filter(m => m.includes("falling back") || m.includes("failed"));
+  assert.equal(failWarns2.length, 0, "no failure after two frames with valid authored render WGSL");
+});
+
+test("computeParticles authored render WebGPU: invalid renderVertexWGSL attempts async build and uses builtin", async () => {
+  // Verify that an authored render WGSL kicks off a createRenderPipelineAsync
+  // attempt and then caches the failure so no re-attempt occurs on subsequent frames.
+  //
+  // The authored render pipeline is only attempted once the compute system is
+  // "ready" (its compute pipeline has resolved). Frame 1 starts the compute
+  // pipeline asynchronously; after flushing, it resolves and the system is ready.
+  // Frame 2 is then needed to actually trigger buildAuthoredParticleRenderPipelineAsync.
+  let renderAsyncCallCount = 0;
+  const baseCompute = makeFakeGPUDeviceForCompute({
+    // Allow the compute pipeline to resolve (system becomes ready to render).
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+  });
+  // Override createRenderPipelineAsync to reject on the authored render path.
+  baseCompute.device.createRenderPipelineAsync = function(desc) {
+    renderAsyncCallCount++;
+    return Promise.reject(new Error("fake particle render WGSL failure"));
+  };
+
+  const harness = await createComputeParticleHarness(baseCompute.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const entry = {
+    id: "bad-cp-render",
+    count: 4,
+    emitter: { kind: "point" },
+    material: { color: "#fff" },
+    renderVertexWGSL: "BAD RENDER VERT",
+    renderFragmentWGSL: "BAD RENDER FRAG",
+  };
+
+  // Frame 1: compute system creation kicks off. System not yet ready — render
+  // path is skipped this frame (isReady() returns false).
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+
+  // Allow the compute pipeline promise to resolve → system becomes ready.
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // Frame 2: system is now ready. drawComputeParticleEntries reaches the
+  // authored render branch and calls buildAuthoredParticleRenderPipelineAsync,
+  // which fires createRenderPipelineAsync synchronously within the render call.
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+
+  // The authored render path must have kicked off exactly one async attempt
+  // (called synchronously during frame 2's render, before any await).
+  assert.equal(renderAsyncCallCount, 1, "authored renderVertexWGSL must trigger exactly one createRenderPipelineAsync call (got " + renderAsyncCallCount + ")");
+
+  // Settle any remaining promise chains (the rejection + markFailed).
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // Frame 3: failure cached — no new async attempt.
+  const countBefore = renderAsyncCallCount;
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+  assert.equal(renderAsyncCallCount, countBefore, "failure must be cached — no re-attempt on second render");
+});
+
+// -------------------------------------------------------------------------
+// shaderLib hydrate: inflate refs back to inline fields before WASM hydration
+// -------------------------------------------------------------------------
+
+// Build a minimal manifest entry with a shaderLib-deduplicated scene.
+function makeShaderLibManifestEntry(lib, computeParticles) {
+  return {
+    islands: [
+      {
+        id: "gosx-island-shader-test",
+        component: "Galaxy",
+        bundleId: "test-bundle",
+        props: {
+          scene: {
+            computeParticles: computeParticles,
+            shaderLib: lib,
+          },
+        },
+        programRef: "/test.json",
+        programFormat: "json",
+      },
+    ],
+    bundles: { "test-bundle": { path: "/test.wasm" } },
+    runtime: { path: "/test-runtime.wasm" },
+  };
+}
+
+test("shaderLib hydrate: computeWGSLRef is inflated to computeWGSL before WASM hydration", async () => {
+  const kernel = "// synthetic kernel " + "x".repeat(2000);
+  const libID = "sl:aabb001122334455";
+
+  // Create the island root DOM element so islandRoot(entry) finds it.
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-shader-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: makeShaderLibManifestEntry(
+      { [libID]: kernel },
+      [
+        { id: "a", count: 100, emitter: { kind: "point" }, material: { color: "#fff" }, computeWGSLRef: libID },
+        { id: "b", count: 100, emitter: { kind: "point" }, material: { color: "#fff" }, computeWGSLRef: libID },
+      ],
+    ),
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1, "island must be hydrated");
+  const propsJSON = env.hydrateCalls[0][2];
+  const props = JSON.parse(propsJSON);
+  const scene = props && props.scene;
+
+  // shaderLib should be gone from the wire props (inflated in-place).
+  assert.equal(scene.shaderLib, undefined, "shaderLib must be deleted after inflation");
+
+  // Both compute particles must have computeWGSL inflated.
+  assert.ok(Array.isArray(scene.computeParticles), "computeParticles must be an array");
+  assert.equal(scene.computeParticles.length, 2);
+  for (let i = 0; i < 2; i++) {
+    const cp = scene.computeParticles[i];
+    assert.equal(cp.computeWGSL, kernel,
+      `computeParticles[${i}].computeWGSL must be inflated from shaderLib`);
+    assert.equal(cp.computeWGSLRef, undefined,
+      `computeParticles[${i}].computeWGSLRef must be deleted after inflation`);
+  }
+});
+
+test("shaderLib hydrate: missing lib entry leaves field absent, no crash", async () => {
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-shader-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: makeShaderLibManifestEntry(
+      { "sl:realkey": "real kernel" },
+      [
+        { id: "good", count: 1, emitter: { kind: "point" }, material: {}, computeWGSLRef: "sl:realkey" },
+        { id: "bad",  count: 1, emitter: { kind: "point" }, material: {}, computeWGSLRef: "sl:doesnotexist" },
+      ],
+    ),
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1);
+  const props = JSON.parse(env.hydrateCalls[0][2]);
+  const scene = props && props.scene;
+
+  assert.equal(scene.shaderLib, undefined, "shaderLib key must be gone");
+  const good = scene.computeParticles[0];
+  const bad = scene.computeParticles[1];
+
+  assert.equal(good.computeWGSL, "real kernel", "good entry must be inflated");
+  assert.equal(good.computeWGSLRef, undefined, "ref key must be deleted");
+  assert.equal(bad.computeWGSL, undefined, "missing entry: computeWGSL must be absent (not crash)");
+  assert.equal(bad.computeWGSLRef, undefined, "ref key must be deleted even when lib entry missing");
+});
+
+test("shaderLib hydrate: no-op when shaderLib absent (plain scene unaffected)", async () => {
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-plain";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: {
+      islands: [
+        {
+          id: "gosx-island-plain",
+          component: "Plain",
+          props: {
+            scene: {
+              computeParticles: [
+                { id: "x", count: 1, emitter: { kind: "point" }, material: {}, computeWGSL: "fn ok() {}" },
+              ],
+            },
+          },
+          programRef: "/test.json",
+          programFormat: "json",
+        },
+      ],
+      bundles: {},
+      runtime: { path: "/test-runtime.wasm" },
+    },
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1);
+  const props = JSON.parse(env.hydrateCalls[0][2]);
+  const scene = props.scene;
+
+  // Original computeWGSL must be untouched.
+  assert.equal(scene.computeParticles[0].computeWGSL, "fn ok() {}",
+    "inline computeWGSL must be preserved when no shaderLib present");
+});
+
+// -------------------------------------------------------------------------
+// shaderLib hydrate: inflate for Points authored WGSL ref fields (S2 rungs)
+// -------------------------------------------------------------------------
+
+// Build a minimal manifest entry with a shaderLib containing points entries.
+function makeShaderLibManifestEntryForPoints(lib, points) {
+  return {
+    islands: [
+      {
+        id: "gosx-island-points-shader-test",
+        component: "GalaxyPoints",
+        bundleId: "test-bundle",
+        props: {
+          scene: {
+            points: points,
+            shaderLib: lib,
+          },
+        },
+        programRef: "/test.json",
+        programFormat: "json",
+      },
+    ],
+    bundles: { "test-bundle": { path: "/test.wasm" } },
+    runtime: { path: "/test-runtime.wasm" },
+  };
+}
+
+// Build a manifest with computeParticles having renderVertexWGSLRef fields.
+function makeShaderLibManifestEntryForParticleRender(lib, computeParticles) {
+  return {
+    islands: [
+      {
+        id: "gosx-island-cprender-shader-test",
+        component: "GalaxyParticleRender",
+        bundleId: "test-bundle",
+        props: {
+          scene: {
+            computeParticles: computeParticles,
+            shaderLib: lib,
+          },
+        },
+        programRef: "/test.json",
+        programFormat: "json",
+      },
+    ],
+    bundles: { "test-bundle": { path: "/test.wasm" } },
+    runtime: { path: "/test-runtime.wasm" },
+  };
+}
+
+test("shaderLib hydrate: customVertexWGSLRef inflated to customVertexWGSL in points entries", async () => {
+  const shader = "// authored points vertex " + "x".repeat(2000);
+  const fragShader = "// authored points fragment " + "x".repeat(2000);
+  const vertID = "sl:ptvert001122334455";
+  const fragID = "sl:ptfrag001122334455";
+
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-points-shader-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: makeShaderLibManifestEntryForPoints(
+      { [vertID]: shader, [fragID]: fragShader },
+      [
+        { id: "layer-a", count: 10, customVertexWGSLRef: vertID, customFragmentWGSLRef: fragID },
+        { id: "layer-b", count: 10, customVertexWGSLRef: vertID, customFragmentWGSLRef: fragID },
+      ],
+    ),
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1, "island must be hydrated");
+  const props = JSON.parse(env.hydrateCalls[0][2]);
+  const scene = props && props.scene;
+
+  assert.equal(scene.shaderLib, undefined, "shaderLib must be deleted after inflation");
+  assert.ok(Array.isArray(scene.points), "points must be an array");
+  assert.equal(scene.points.length, 2);
+  for (let i = 0; i < 2; i++) {
+    const pt = scene.points[i];
+    assert.equal(pt.customVertexWGSL, shader,
+      `points[${i}].customVertexWGSL must be inflated from shaderLib`);
+    assert.equal(pt.customFragmentWGSL, fragShader,
+      `points[${i}].customFragmentWGSL must be inflated from shaderLib`);
+    assert.equal(pt.customVertexWGSLRef, undefined,
+      `points[${i}].customVertexWGSLRef must be deleted after inflation`);
+    assert.equal(pt.customFragmentWGSLRef, undefined,
+      `points[${i}].customFragmentWGSLRef must be deleted after inflation`);
+  }
+});
+
+test("shaderLib hydrate: renderVertexWGSLRef inflated to renderVertexWGSL in computeParticles entries", async () => {
+  const renderVert = "// authored render vertex " + "x".repeat(2000);
+  const renderFrag = "// authored render fragment " + "x".repeat(2000);
+  const vertID = "sl:rvvert001122334455";
+  const fragID = "sl:rvfrag001122334455";
+
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-cprender-shader-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: makeShaderLibManifestEntryForParticleRender(
+      { [vertID]: renderVert, [fragID]: renderFrag },
+      [
+        { id: "sys-a", count: 50, emitter: { kind: "point" }, material: { color: "#fff" }, renderVertexWGSLRef: vertID, renderFragmentWGSLRef: fragID },
+        { id: "sys-b", count: 50, emitter: { kind: "point" }, material: { color: "#fff" }, renderVertexWGSLRef: vertID, renderFragmentWGSLRef: fragID },
+      ],
+    ),
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1, "island must be hydrated");
+  const props = JSON.parse(env.hydrateCalls[0][2]);
+  const scene = props && props.scene;
+
+  assert.equal(scene.shaderLib, undefined, "shaderLib must be deleted after inflation");
+  assert.ok(Array.isArray(scene.computeParticles), "computeParticles must be an array");
+  assert.equal(scene.computeParticles.length, 2);
+  for (let i = 0; i < 2; i++) {
+    const cp = scene.computeParticles[i];
+    assert.equal(cp.renderVertexWGSL, renderVert,
+      `computeParticles[${i}].renderVertexWGSL must be inflated from shaderLib`);
+    assert.equal(cp.renderFragmentWGSL, renderFrag,
+      `computeParticles[${i}].renderFragmentWGSL must be inflated from shaderLib`);
+    assert.equal(cp.renderVertexWGSLRef, undefined,
+      `computeParticles[${i}].renderVertexWGSLRef must be deleted`);
+    assert.equal(cp.renderFragmentWGSLRef, undefined,
+      `computeParticles[${i}].renderFragmentWGSLRef must be deleted`);
+  }
+});
+
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
   const harness = await createBoardWebGPUHarness();
   const N = 8;
@@ -17878,4 +19063,671 @@ test("getSelenaPipeline memo: N objects sharing one material build the content k
   } finally {
     sandboxJSON.stringify = realStringify;
   }
+});
+
+// -------------------------------------------------------------------------
+// Custom post-effect (Selena kind:"post") — WebGPU path (16a)
+// -------------------------------------------------------------------------
+
+// makeBundleWithCustomPost returns a minimal Scene3D bundle that carries one
+// customPost effect in postEffects. Callers may supply fragmentWGSL/vertexWGSL
+// to exercise the authored WGSL path, or omit them for the absent/no-op path.
+//
+// A minimal compute particle (no authored render WGSL) is included so the
+// WebGPU renderer's early-return guard — which short-circuits when there is no
+// renderable geometry — does not fire before reaching the post-processing code.
+// The particle has no renderVertexWGSL, so it will NOT trigger a second
+// createRenderPipelineAsync call; only the custom post effect triggers one.
+function makeBundleWithCustomPost(options) {
+  const effect = Object.assign({ kind: "customPost", name: "test-lens" }, options || {});
+  return {
+    camera: { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [], instancedMeshes: [], objects: [], meshObjects: [],
+    materials: [], labels: [], sprites: [], lights: [],
+    postEffects: [effect],
+    // Minimal compute particle: bypasses the early-return guard without
+    // supplying renderVertexWGSL, so no authored render pipeline is built.
+    computeParticles: [{ id: "post-test-cp", count: 4, emitter: { kind: "point" }, material: { color: "#fff" } }],
+    positions: new Float32Array(0), colors: new Float32Array(0),
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0), worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0), worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0, worldVertexCount: 0,
+  };
+}
+
+test("custom post WebGPU: absent fragmentWGSL goes straight to identity without pipeline attempt", async () => {
+  // A customPost effect with no fragmentWGSL/vertexWGSL must be a silent no-op
+  // — no createRenderPipelineAsync call, no warn.
+  let renderPipelineAsyncCalls = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  harness.renderer.render(makeBundleWithCustomPost({}), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(renderPipelineAsyncCalls, 0, "absent WGSL must not attempt a pipeline build");
+  const warns = harness.warnLog.filter(m => m.includes("custom post pass"));
+  assert.equal(warns.length, 0, "no warn for absent WGSL");
+});
+
+test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline and uses it on frame 2", async () => {
+  // Frame 1: buildCustomPostPipelineAsync fires and returns null (pending).
+  // Frame 2: the pipeline resolves → createBindGroup + draw.
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  let renderPipelineAsyncCalls = 0;
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({
+      __kind: "renderPipeline",
+      label: desc && desc.label,
+      isCustomPost: true,
+    });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }",
+    vertexWGSL: "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }",
+  });
+
+  // Frame 1: pipeline enqueued.
+  harness.renderer.render(bundle, viewport);
+  assert.equal(renderPipelineAsyncCalls, 1, "frame 1 must trigger exactly one createRenderPipelineAsync");
+
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const failWarns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("failed") || m.includes("passthrough")));
+  assert.equal(failWarns.length, 0, "valid custom post WGSL must not warn");
+});
+
+test("custom post WebGPU: invalid WGSL triggers async validation failure, warns once, identity on subsequent frames", async () => {
+  let renderPipelineAsyncCalls = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    // Error scope reports a validation error.
+    errorScopeBehavior() {
+      return Promise.resolve({ message: "fake validation error" });
+    },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    fragmentWGSL: "BAD WGSL FRAGMENT",
+    vertexWGSL: "BAD WGSL VERTEX",
+  });
+
+  // Frame 1: pipeline attempt fires.
+  harness.renderer.render(bundle, viewport);
+  assert.equal(renderPipelineAsyncCalls, 1, "frame 1 must attempt one createRenderPipelineAsync");
+
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // Warn fired exactly once.
+  const warns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("passthrough") || m.includes("validation")));
+  assert.equal(warns.length, 1, "exactly one failure warn must fire for the invalid custom post WGSL");
+
+  // Frame 2: failure cached — no new pipeline attempt.
+  const callsBefore = renderPipelineAsyncCalls;
+  harness.renderer.render(bundle, viewport);
+  assert.equal(renderPipelineAsyncCalls, callsBefore, "failure must be cached — no re-attempt on frame 2");
+
+  // Still exactly one warn.
+  const warns2 = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("passthrough") || m.includes("validation")));
+  assert.equal(warns2.length, 1, "warn must fire only once (cached failure)");
+});
+
+// -------------------------------------------------------------------------
+// Custom post-effect — WebGL2 path (16)
+// -------------------------------------------------------------------------
+
+// createWebGLRendererForPost: helper that boots the WebGL2 backend (same
+// pattern as other WebGL2 renderer tests in this file).
+function createWebGLRendererForPost() {
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const api = env.context.__gosx_scene3d_api;
+  const registry = api.sceneBackendRegistry;
+  const backend = registry.select({ webgl: true, webgl2: true, webgpu: false, canvas: false, canvas2d: false });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  const warnLog = [];
+  const orig = env.context.console.warn;
+  env.context.console.warn = function() {
+    warnLog.push(Array.from(arguments).join(" "));
+    if (orig) orig.apply(env.context.console, arguments);
+  };
+  return { env, renderer, canvas, warnLog };
+}
+
+function makeWebGLBundleWithCustomPost(overrides) {
+  const effect = Object.assign({ kind: "customPost", name: "gl-lens" }, overrides || {});
+  return {
+    bundleVersion: 1,
+    camera: { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    // A minimal point bypasses the early-return guard in the PBR renderer
+    // (which skips rendering when there is no geometry, never reaching the
+    // post-processing path). The point has no special material requirements.
+    points: [{ id: "gl-post-test-p", count: 1, positions: new Float32Array([0, 0, 0]), color: "#ffffff" }],
+    instancedMeshes: [], computeParticles: [],
+    objects: [], meshObjects: [], materials: [], labels: [], sprites: [], lights: [],
+    postEffects: [effect],
+    positions: new Float32Array(0), colors: new Float32Array(0),
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0), worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0), worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0, worldVertexCount: 0,
+  };
+}
+
+test("custom post WebGL2: absent vertexGLSL/fragmentGLSL goes straight to identity without compile attempt", async () => {
+  const { renderer, canvas, warnLog } = createWebGLRendererForPost();
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  renderer.render(makeWebGLBundleWithCustomPost({}), viewport);
+
+  const gl = canvas.getContext("webgl2");
+  // createShader should only have been called for the standard scene shaders,
+  // NOT for a custom post program (no GLSL supplied).
+  const createShaderCalls = gl.ops.filter(op => op[0] === "createShader").length;
+  // Standard scene init creates shaders for PBR, shadow, etc. The custom post
+  // path (with absent GLSL) must not add any extra createShader calls.
+  // Re-render a second time with NO custom post to measure the baseline.
+  const baselineBundle = Object.assign({}, makeWebGLBundleWithCustomPost({}), { postEffects: [] });
+  const baseGl = canvas.getContext("webgl2");
+  // If no GLSL → no warn from the custom post path.
+  const customPostWarnsBefore = warnLog.filter(m => m.includes("gl-lens") || m.includes("custom post pass")).length;
+  assert.equal(customPostWarnsBefore, 0, "absent GLSL must not warn");
+
+  renderer.dispose();
+});
+
+test("custom post WebGL2: valid vertexGLSL+fragmentGLSL compiles and links the program", async () => {
+  const { renderer, canvas, warnLog } = createWebGLRendererForPost();
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const validVert = "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const validFrag = "precision mediump float; varying vec2 v_uv; uniform sampler2D _sceneColor; void main() { gl_FragColor = texture2D(_sceneColor, v_uv); }";
+
+  renderer.render(makeWebGLBundleWithCustomPost({ vertexGLSL: validVert, fragmentGLSL: validFrag }), viewport);
+
+  const gl = canvas.getContext("webgl2");
+  // FakeWebGLContext returns LINK_STATUS=true always, so a valid GLSL pair
+  // must produce a linkProgram call.
+  const linked = gl.ops.filter(op => op[0] === "linkProgram");
+  assert.ok(linked.length >= 1, "custom post GLSL must trigger at least one linkProgram call");
+
+  const warns = warnLog.filter(m => m.includes("custom post pass") || m.includes("gl-lens"));
+  assert.equal(warns.length, 0, "valid GLSL must not warn");
+
+  renderer.dispose();
+});
+
+test("custom post WebGL2: compile/link failure warns once and falls back to identity on subsequent frames", async () => {
+  // Strategy: boot a renderer normally (initial programs compile/link OK via
+  // the default FakeWebGLContext), then patch the LIVE GL context to fail ONLY
+  // future linkProgram calls. This avoids the broken-init problem that arises
+  // when the failLinkGL object is set before backend.create() runs.
+  const { renderer, canvas, warnLog } = createWebGLRendererForPost();
+  assert.ok(renderer, "renderer must be created successfully with default GL");
+
+  // Retrieve the live GL context from the canvas. FakeElement caches the
+  // context on _webglContext after the first getContext("webgl2") call inside
+  // createScenePBRRendererOrFallback / createSceneWebGLRenderer.
+  const gl = canvas.getContext("webgl2") || canvas._webglContext;
+  assert.ok(gl, "canvas must have a cached GL context after renderer creation");
+
+  // Patch getProgramParameter so ALL future linkProgram calls fail.
+  // The initial scene programs are already compiled; only the custom post
+  // program's link will fail from this point on.
+  const realGetProgramParameter = gl.getProgramParameter.bind(gl);
+  gl.getProgramParameter = function(_program, param) {
+    if (param === this.LINK_STATUS) return false;
+    return realGetProgramParameter(_program, param);
+  };
+
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeWebGLBundleWithCustomPost({
+    vertexGLSL: "attribute vec2 a_position; void main() { gl_Position = vec4(a_position, 0.0, 1.0); }",
+    fragmentGLSL: "precision mediump float; void main() { gl_FragColor = vec4(1.0); }",
+  });
+
+  // Frame 1: link fails → warn once, mark failed.
+  renderer.render(bundle, viewport);
+  const warns1 = warnLog.filter(m => m.includes("custom post pass") || m.includes("gl-lens"));
+  assert.equal(warns1.length, 1, "one warn must fire on first compile/link failure");
+
+  // Frame 2: failure cached → no re-attempt, no new warn.
+  renderer.render(bundle, viewport);
+  const warns2 = warnLog.filter(m => m.includes("custom post pass") || m.includes("gl-lens"));
+  assert.equal(warns2.length, 1, "warn must fire only once after the failure is cached");
+
+  renderer.dispose();
+});
+
+test("computeParticles WebGL: renderVertex/renderFragment use authored points program and expose draw counters", async () => {
+  const { env, renderer, canvas, warnLog } = createWebGLRendererForPost();
+  const mount = env.document.createElement("div");
+  mount.setAttribute("id", "webgl-compute-particles-test");
+  mount.appendChild(canvas);
+  env.document.body.appendChild(mount);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const vertexGLSL = [
+    "attribute vec3 a_position;",
+    "attribute float a_size;",
+    "attribute vec4 a_color;",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_modelMatrix;",
+    "uniform float brightness;",
+    "void main() {",
+    "  gl_Position = u_projectionMatrix * u_viewMatrix * u_modelMatrix * vec4(a_position, 1.0);",
+    "  gl_PointSize = max(1.0, a_size + brightness);",
+    "}",
+  ].join("\n");
+  const fragmentGLSL = [
+    "precision mediump float;",
+    "attribute vec4 unused_attribute;",
+    "uniform float brightness;",
+    "void main() {",
+    "  gl_FragColor = vec4(brightness, 0.25, 0.5, 1.0);",
+    "}",
+  ].join("\n");
+
+  renderer.render(makeComputeParticleBundle({
+    id: "webgl-authored-compute",
+    count: 4,
+    emitter: { kind: "point", lifetime: 10 },
+    material: { color: "#ffffff", size: 2, attenuation: false },
+    renderVertex: vertexGLSL,
+    renderFragment: fragmentGLSL,
+    renderUniforms: { brightness: 1.25 },
+    renderShaderLayout: { material: "TestParticles" },
+  }), viewport);
+
+  const gl = canvas.getContext("webgl2");
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.POINTS && entry[3] === 4),
+    "compute particles must draw as WebGL points");
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "brightness" && entry[2] === 1.25),
+    "renderUniforms must map to authored points customUniforms");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-compute-particle-draw-entries"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-compute-particle-draw-instances"), "4");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-compute-particle-draw-calls"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-entries"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-instances"), "4");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-calls"), "1");
+  assert.equal(warnLog.filter((m) => m.includes("Points authored") && m.includes("falling back")).length, 0);
+
+  renderer.dispose();
+});
+
+// -------------------------------------------------------------------------
+// Reconciliation A — dual-entry vertexStorageMain selection (WebGPU, 16a)
+// -------------------------------------------------------------------------
+
+test("computeParticles authored render WebGPU: dual-entry WGSL prefers vertexStorageMain over vertexMain", async () => {
+  // A WGSL module that exposes both vertexMain (attribute path) and
+  // vertexStorageMain (storage path): the renderer must select vertexStorageMain
+  // as the vertex entry point for the authored particle render pipeline.
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+
+  const capturedDescs = [];
+  fake.device.createRenderPipelineAsync = function(desc) {
+    capturedDescs.push(desc);
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const dualEntryWGSL = [
+    "struct VSOut { @builtin(position) pos: vec4<f32> };",
+    "@vertex fn vertexMain(@location(0) pos: vec3<f32>) -> VSOut {",
+    "  var o: VSOut; o.pos = vec4f(pos, 1.0); return o;",
+    "}",
+    "@vertex fn vertexStorageMain(@builtin(vertex_index) vi: u32) -> VSOut {",
+    "  var o: VSOut; o.pos = vec4f(0.0, 0.0, 0.0, 1.0); return o;",
+    "}",
+    "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4f(1.0); }",
+  ].join("\n");
+
+  const entry = {
+    id: "dual-entry-cp",
+    count: 4,
+    emitter: { kind: "point" },
+    material: { color: "#fff" },
+    renderVertexWGSL: dualEntryWGSL,
+    renderFragmentWGSL: dualEntryWGSL,
+  };
+
+  // Frame 1: kicks off compute + render pipeline async build.
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // Frame 2: system ready, authored render pipeline is built.
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // The authored render pipeline descriptor must use vertexStorageMain.
+  const authoredDesc = capturedDescs.find(d => d && d.vertex && d.vertex.entryPoint === "vertexStorageMain");
+  assert.ok(authoredDesc, "dual-entry WGSL must use vertexStorageMain as the vertex entry point (got: " +
+    capturedDescs.map(d => d && d.vertex && d.vertex.entryPoint).join(", ") + ")");
+
+  const failWarns = harness.warnLog.filter(m => m.includes("falling back") || m.includes("failed"));
+  assert.equal(failWarns.length, 0, "dual-entry authored render pipeline must not warn");
+});
+
+test("computeParticles authored render WebGPU: renderShaderLayout vertexStorage entry point is honored", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+
+  const capturedDescs = [];
+  fake.device.createRenderPipelineAsync = function(desc) {
+    capturedDescs.push(desc);
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const vertexWGSL = [
+    "struct VSOut { @builtin(position) pos: vec4<f32> };",
+    "@vertex fn storageBillboard(@builtin(vertex_index) vi: u32) -> VSOut {",
+    "  var o: VSOut; o.pos = vec4f(0.0, 0.0, 0.0, 1.0); return o;",
+    "}",
+  ].join("\n");
+  const fragmentWGSL = "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4f(1.0); }";
+
+  const entry = {
+    id: "layout-entry-cp",
+    count: 4,
+    emitter: { kind: "point" },
+    material: { color: "#fff" },
+    renderVertexWGSL: vertexWGSL,
+    renderFragmentWGSL: fragmentWGSL,
+    renderShaderLayout: {
+      entryPoints: { vertexStorage: "storageBillboard" },
+    },
+  };
+
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  harness.renderer.render(makeComputeParticleBundleWithRender(entry), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const authoredDesc = capturedDescs.find(d => d && d.vertex && d.vertex.entryPoint === "storageBillboard");
+  assert.ok(authoredDesc, "renderShaderLayout.entryPoints.vertexStorage must select the authored storage entry (got: " +
+    capturedDescs.map(d => d && d.vertex && d.vertex.entryPoint).join(", ") + ")");
+
+  const failWarns = harness.warnLog.filter(m => m.includes("falling back") || m.includes("failed"));
+  assert.equal(failWarns.length, 0, "layout-selected authored render pipeline must not warn");
+});
+
+// -------------------------------------------------------------------------
+// GLB-style point layer with named material authored profile (S4 rungs)
+// -------------------------------------------------------------------------
+
+// makeSceneApiEnv creates a minimal context with bootstrap loaded and returns
+// the __gosx_scene3d_api plus helper for createSceneState.
+async function makeSceneApiEnv() {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  return env.context.__gosx_scene3d_api;
+}
+
+test("GLB-style points authored profile: named material authored fields propagate to point layer", async () => {
+  // Simulates a GLB point layer that carries `material: "stars"` as a string
+  // name (set by gltfApplyScene3DExtras from GLTF node extras), matched against
+  // a composable <Material name="stars" customVertexWGSL=... customFragmentWGSL=...>
+  // profile in scene.materials.
+  const api = await makeSceneApiEnv();
+
+  const vertWGSL = "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }";
+  const fragWGSL = "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "stars",
+          color: "var(--galaxy-star-color)",
+          opacity: "var(--galaxy-star-opacity)",
+          blendMode: "additive",
+          customVertexWGSL: vertWGSL,
+          customFragmentWGSL: fragWGSL,
+          customUniforms: { brightness: 1.5 },
+          shaderBackend: "selena",
+          shaderLayout: { material: "StarPoints" },
+        },
+      ],
+      points: [
+        // GLB-derived point layer: material is a string name reference.
+        {
+          id: "galaxy-stars",
+          count: 100,
+          material: "stars",
+          color: "#ffffff",
+          opacity: 0.1,
+          blendMode: "additive",
+          positions: new Float32Array(300),
+        },
+      ],
+    },
+  });
+
+  const points = api.sceneStatePointsWithMaterials(state);
+  assert.equal(points.length, 1, "one point layer");
+
+  const pt = points[0];
+  assert.equal(pt.customVertexWGSL, vertWGSL, "customVertexWGSL must propagate from named material profile");
+  assert.equal(pt.customFragmentWGSL, fragWGSL, "customFragmentWGSL must propagate from named material profile");
+  assert.equal(pt.shaderBackend, "selena", "shaderBackend must propagate from named material profile");
+  // Use property access for cross-realm object comparison (VM context creates different Object prototypes).
+  assert.ok(pt.shaderLayout && typeof pt.shaderLayout === "object", "shaderLayout must be an object");
+  assert.equal(pt.shaderLayout.material, "StarPoints", "shaderLayout.material must propagate");
+  assert.ok(pt.customUniforms && typeof pt.customUniforms === "object", "customUniforms must be an object");
+  assert.equal(pt.customUniforms.brightness, 1.5, "customUniforms.brightness must propagate per-layer");
+
+  // Color/opacity from the named material must also flow through (existing behavior).
+  assert.equal(pt.color, "var(--galaxy-star-color)", "color from profile");
+  assert.equal(pt.opacity, "var(--galaxy-star-opacity)", "opacity from profile");
+});
+
+test("GLB-style points authored profile: absent authored envelope leaves builtin path unchanged", async () => {
+  // Point layer with a named material that has NO authored shader fields:
+  // existing builtin-path properties (color/opacity) must still resolve,
+  // and no authored shader fields should appear on the resolved entry.
+  const api = await makeSceneApiEnv();
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "dust",
+          color: "var(--galaxy-dust-inner)",
+          opacity: "var(--galaxy-dust-opacity)",
+          blendMode: "additive",
+          // No customVertexWGSL / customFragmentWGSL.
+        },
+      ],
+      points: [
+        {
+          id: "galaxy-dust",
+          count: 50,
+          material: "dust",
+          color: "#ffffff",
+          opacity: 0.05,
+          blendMode: "additive",
+        },
+      ],
+    },
+  });
+
+  const points = api.sceneStatePointsWithMaterials(state);
+  const pt = points[0];
+
+  // Builtin color/opacity flow through.
+  assert.equal(pt.color, "var(--galaxy-dust-inner)", "color from profile");
+  assert.equal(pt.opacity, "var(--galaxy-dust-opacity)", "opacity from profile");
+
+  // Authored shader fields must be empty/null (not from old point values).
+  assert.equal(pt.customVertexWGSL || "", "", "no customVertexWGSL for non-authored profile");
+  assert.equal(pt.customFragmentWGSL || "", "", "no customFragmentWGSL for non-authored profile");
+  assert.equal(pt.shaderBackend || "", "", "no shaderBackend for non-authored profile");
+});
+
+test("GLB-style points authored profile: multiple profiles share authored shader; each gets own customUniforms", async () => {
+  // Verifies per-layer uniform isolation: two profiles share the same WGSL
+  // sources (galaxy dedup scenario) but have distinct customUniforms.
+  // sceneApplyNamedMaterialToPoints creates a new object per layer so
+  // uniform buffers (keyed by `entry`) never clobber each other.
+  const api = await makeSceneApiEnv();
+
+  const sharedWGSL = "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }";
+  const sharedFrag = "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "stars",
+          color: "#aaddff",
+          opacity: 0.8,
+          blendMode: "additive",
+          customVertexWGSL: sharedWGSL,
+          customFragmentWGSL: sharedFrag,
+          customUniforms: { brightness: 2.0 },
+        },
+        {
+          name: "nebula",
+          color: "#ffaaff",
+          opacity: 0.3,
+          blendMode: "additive",
+          customVertexWGSL: sharedWGSL,
+          customFragmentWGSL: sharedFrag,
+          customUniforms: { brightness: 0.5 },
+        },
+      ],
+      points: [
+        { id: "layer-stars",  count: 100, material: "stars",  positions: new Float32Array(300) },
+        { id: "layer-nebula", count: 200, material: "nebula", positions: new Float32Array(600) },
+      ],
+    },
+  });
+
+  const points = api.sceneStatePointsWithMaterials(state);
+  assert.equal(points.length, 2);
+
+  const starsLayer  = points.find(p => p.id === "layer-stars");
+  const nebulaLayer = points.find(p => p.id === "layer-nebula");
+  assert.ok(starsLayer,  "layer-stars missing");
+  assert.ok(nebulaLayer, "layer-nebula missing");
+
+  // Both share the same authored WGSL source.
+  assert.equal(starsLayer.customVertexWGSL,  sharedWGSL, "stars layer WGSL");
+  assert.equal(nebulaLayer.customVertexWGSL, sharedWGSL, "nebula layer WGSL");
+
+  // But per-profile customUniforms are distinct objects — not the same reference.
+  // Use property access for cross-realm object comparison (VM context creates different Object prototypes).
+  assert.ok(starsLayer.customUniforms && typeof starsLayer.customUniforms === "object", "stars uniforms must be an object");
+  assert.equal(starsLayer.customUniforms.brightness, 2.0, "stars uniforms.brightness");
+  assert.ok(nebulaLayer.customUniforms && typeof nebulaLayer.customUniforms === "object", "nebula uniforms must be an object");
+  assert.equal(nebulaLayer.customUniforms.brightness, 0.5, "nebula uniforms.brightness");
+  assert.notStrictEqual(starsLayer.customUniforms, nebulaLayer.customUniforms, "uniforms must be distinct objects");
+
+  // Resolved entries are different objects (each layer gets its own copy).
+  assert.notStrictEqual(starsLayer, nebulaLayer, "resolved entries must be distinct objects");
+});
+
+test("shaderLib hydrate: customVertexWGSL in materials profile reaches point layer (post-inflate shape)", async () => {
+  // Verifies that a materials profile carrying customVertexWGSL (the shape that
+  // inflateSceneShaderLib produces after expanding shaderLib refs) flows correctly
+  // through createSceneState into the point layer.
+  //
+  // inflateSceneShaderLib runs during manifest loading on the production path; the
+  // post-inflate shape (inline WGSL fields, no *Ref keys) is what createSceneState
+  // receives. We supply that shape directly here. Go-side inflate correctness for
+  // "materials" entries is covered by TestMaterialProfileShaderLibInflate.
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const shaderSrc = "@vertex fn v() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }";
+
+  // Post-inflate scene shape: no shaderLib key, no *Ref fields — WGSL inline.
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "stars",
+          color: "#ffffff",
+          opacity: 0.8,
+          blendMode: "additive",
+          customVertexWGSL: shaderSrc,
+          customFragmentWGSL: shaderSrc,
+        },
+      ],
+      points: [
+        { id: "galaxy", count: 4, material: "stars", positions: new Float32Array(12) },
+      ],
+    },
+  });
+
+  const points = api.sceneStatePointsWithMaterials(state);
+  const pt = points[0];
+  assert.ok(pt, "point layer must exist");
+  assert.equal(pt.customVertexWGSL, shaderSrc, "post-inflate customVertexWGSL must flow from materials profile to point layer");
+  assert.equal(pt.customFragmentWGSL, shaderSrc, "post-inflate customFragmentWGSL must flow from materials profile to point layer");
 });

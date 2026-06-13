@@ -576,7 +576,7 @@
 
     // _startCanvasSurfaceWebGPURAF is the WebGPU-routed twin of
     // _startCanvasSurfaceRAF: it paints the board through the 16a WebGPU renderer
-    // instead of the 2D-context painter, keeping labels in a DOM overlay. It
+    // instead of the 2D-context painter, keeping labels/html in DOM overlays. It
     // probes the GPU path up front and, on ANY failure (no navigator.gpu, factory
     // absent, probe not ready, device request rejects, render throws on the first
     // frame), logs ONE console.warn and falls back to _startCanvasSurfaceRAF — the
@@ -607,6 +607,7 @@
       var tickFn = window.__gosx_tick_canvas;
       var setBackendFn = window.__gosx_canvas_set_backend;
       var labelsSync = window.__gosx_canvas_board_labels_sync;
+      var htmlSync = window.__gosx_canvas_board_html_sync;
       if (typeof renderFn !== "function") {
         // Shared WASM not present — neither path can paint; leave the placeholder.
         return;
@@ -671,9 +672,10 @@
         return;
       }
 
-      // host is the canvas's PARENT element — the label overlay covers it (the
-      // overlay positions real DOM <span>s over the GPU canvas so text keeps
-      // subpixel rendering / future in-place editing). 26b2 installs the sync.
+      // host is the canvas's PARENT element — the overlay layers cover it (the
+      // label layer positions real DOM <span>s over the GPU canvas so text keeps
+      // subpixel rendering; the HTML layer mounts editable DOM entries). 26b2
+      // installs the sync helpers.
       var host = canvas.parentNode || null;
       // Stash the renderer + host on the instance so _disposeEngineSurface tears
       // them down alongside the WASM board and the DOM overlay.
@@ -727,6 +729,9 @@
               if (typeof labelsSync === "function" && host) {
                 labelsSync(host, bundle.labels || [], bundle.camera, cssW, cssH);
               }
+              if (typeof htmlSync === "function" && host) {
+                htmlSync(host, bundle.html || [], bundle.camera, cssW, cssH);
+              }
             }
           }
         } catch (e) {
@@ -741,10 +746,10 @@
       instance.raf = requestAnimationFrame(frame);
     }
 
-    // _disposeCanvasWebGPURenderer disposes a 16a renderer + its DOM label overlay
-    // for a canvas2d board. Shared by the routed-path setup's failure unwind and
+    // _disposeCanvasWebGPURenderer disposes a 16a renderer + its DOM overlays for
+    // a canvas2d board. Shared by the routed-path setup's failure unwind and
     // _disposeEngineSurface's teardown so both release the GPU resources and the
-    // overlay exactly once. Idempotent and tolerant of partial state.
+    // overlays exactly once. Idempotent and tolerant of partial state.
     function _disposeCanvasWebGPURenderer(instance, renderer, canvas) {
       var r = renderer || (instance && instance.webgpuRenderer) || null;
       if (r && typeof r.dispose === "function") {
@@ -754,6 +759,10 @@
       var labelsDispose = typeof window !== "undefined" ? window.__gosx_canvas_board_labels_dispose : null;
       if (typeof labelsDispose === "function" && host) {
         try { labelsDispose(host); } catch (e) { /* tolerate */ }
+      }
+      var htmlDispose = typeof window !== "undefined" ? window.__gosx_canvas_board_html_dispose : null;
+      if (typeof htmlDispose === "function" && host) {
+        try { htmlDispose(host); } catch (e) { /* tolerate */ }
       }
       if (instance) {
         instance.webgpuRenderer = null;

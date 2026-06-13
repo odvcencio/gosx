@@ -1911,6 +1911,32 @@
     });
   }
 
+  function wgpuIsErrorScopeLifecycleMessage(message) {
+    var text = String(message || "").toLowerCase();
+    return text.indexOf("poperrorscope") >= 0 && text.indexOf("instance dropped") >= 0;
+  }
+
+  function wgpuPopScopedErrorScope(scopedDevice) {
+    if (!scopedDevice || typeof scopedDevice.popErrorScope !== "function") {
+      return Promise.resolve(null);
+    }
+    try {
+      return scopedDevice.popErrorScope().then(function(scopeErr) {
+        return scopeErr || null;
+      }).catch(function(error) {
+        var message = error && error.message ? error.message : String(error);
+        if (wgpuIsErrorScopeLifecycleMessage(message)) return null;
+        return error || new Error(message);
+      });
+    } catch (error) {
+      var message = error && error.message ? error.message : String(error);
+      if (wgpuIsErrorScopeLifecycleMessage(message)) {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(error || new Error(message));
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Shadow Resources
   // -----------------------------------------------------------------------
@@ -1929,6 +1955,7 @@
   // -----------------------------------------------------------------------
 
   function wgpuCreatePostProcessor(device, targetFormat) {
+    var disposed = false;
     var sceneTex = null;
     var sceneTexView = null;
     var auxTex = null;
@@ -1954,6 +1981,133 @@
     var ssaoLayout = null;
     // Uniform buffers for post params (reused each frame).
     var postParamBuffers = {};
+
+    // ---- Custom post (Selena kind:"post") ----
+    // Per-name async pipeline cache. Keys are "<name>:<wgslPrefix>".
+    // Values: { pending: true } | { pipeline, bgl } | { failed: true }
+    var customPostPipelineCache = new Map();
+    // Per-name failure flag to emit console.warn only once.
+    var customPostFailed = new Set();
+
+    // wgpuCreateSelenaPostBGL: @group(0) for the Selena post contract.
+    //   binding(0) texture_2d<f32> sceneColor
+    //   binding(1) sampler
+    //   binding(2) texture_depth_2d sceneDepth
+    //   binding(3) sampler
+    //   binding(4) uniform UserUniforms  (always present — placeholder 16 bytes when no params)
+    var selenaPostBGL = null;
+    function getSelenaPostBGL() {
+      if (!selenaPostBGL) {
+        selenaPostBGL = device.createBindGroupLayout({
+          label: "gosx-selena-post",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+            { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: {} },
+            { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+            { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+            { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+          ],
+        });
+      }
+      return selenaPostBGL;
+    }
+
+    // depthSampler: non-comparison sampler for sceneDepth (binding 3).
+    var depthSampler = null;
+    function getDepthSampler() {
+      if (!depthSampler) depthSampler = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
+      return depthSampler;
+    }
+
+    // buildCustomPostPipelineAsync: async-validates + caches a Selena post pipeline.
+    function buildCustomPostPipelineAsync(effect) {
+      var wgsl = (typeof effect.fragmentWGSL === "string" ? effect.fragmentWGSL : "") +
+                 "\n" +
+                 (typeof effect.vertexWGSL === "string" ? effect.vertexWGSL : "");
+      wgsl = wgsl.trim();
+      if (!wgsl) return null;
+      var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
+      var cacheKey = name + "\x00" + wgsl.slice(0, 128);
+      var cached = customPostPipelineCache.get(cacheKey);
+      if (cached) return cached.failed ? null : cached;
+
+      var pending = { pending: true };
+      customPostPipelineCache.set(cacheKey, pending);
+
+      var scopedDevice = device;
+      if (!scopedDevice) {
+        customPostPipelineCache.delete(cacheKey);
+        return null;
+      }
+      var module = scopedDevice.createShaderModule({ label: "selena-post-" + name, code: wgsl });
+      var bgl = getSelenaPostBGL();
+      var pipelineLayout = scopedDevice.createPipelineLayout({ bindGroupLayouts: [bgl] });
+
+      try {
+        scopedDevice.pushErrorScope("validation");
+      } catch (_err) {
+        customPostPipelineCache.delete(cacheKey);
+        return null;
+      }
+      scopedDevice.createRenderPipelineAsync({
+        label: "gosx-selena-post-" + name,
+        layout: pipelineLayout,
+        vertex: { module: module, entryPoint: "vertexMain", buffers: [] },
+        fragment: {
+          module: module,
+          entryPoint: "fragmentMain",
+          targets: [{ format: targetFormat }],
+        },
+        primitive: { topology: "triangle-list" },
+      }).then(function(pipeline) {
+        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+          if (disposed) return;
+          if (scopeErr) {
+            if (!customPostFailed.has(name)) {
+              console.warn("[gosx] custom post pass '" + name + "' failed validation; becoming identity passthrough.", scopeErr.message);
+              customPostFailed.add(name);
+            }
+            customPostPipelineCache.set(cacheKey, { failed: true });
+          } else {
+            customPostPipelineCache.set(cacheKey, { pipeline: pipeline, bgl: bgl });
+          }
+        });
+      }).catch(function(err) {
+        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+          if (disposed) return;
+          if (!customPostFailed.has(name)) {
+            console.warn("[gosx] custom post pass '" + name + "' pipeline error; becoming identity passthrough.", String(err));
+            customPostFailed.add(name);
+          }
+          customPostPipelineCache.set(cacheKey, { failed: true });
+        });
+      });
+      return null; // pending this frame
+    }
+
+    // ensureCustomPostUniformBuffer: 16-byte placeholder when no uniforms, or
+    // the Selena-packed uniform block from shaderLayout.
+    var customPostUniformBuffers = new Map(); // name → buffer
+    function ensureCustomPostUniformBuffer(effect) {
+      var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
+      var uniformData = sceneSelenaUniformData({ customUniforms: effect.uniforms, shaderLayout: effect.shaderLayout });
+      if (!uniformData || uniformData.byteLength === 0) {
+        uniformData = new Float32Array(4); // 16-byte placeholder
+      }
+      var existing = customPostUniformBuffers.get(name);
+      if (!existing || existing.size < uniformData.byteLength) {
+        if (existing) existing.destroy();
+        var buf = device.createBuffer({
+          size: Math.max(16, uniformData.byteLength),
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          label: "gosx-selena-post-uniforms-" + name,
+        });
+        customPostUniformBuffers.set(name, buf);
+        existing = buf;
+      }
+      device.queue.writeBuffer(existing, 0, uniformData);
+      return existing;
+    }
 
     function getPostParamsLayout() {
       if (!postParamsLayout) postParamsLayout = wgpuCreatePostWithParamsBindGroupLayout(device);
@@ -2256,6 +2410,31 @@
               currentTexView = outputView;
               break;
             }
+            case SCENE_POST_CUSTOM_POST: {
+              // Selena post contract: WGSL fullscreen triangle, vertexMain/fragmentMain,
+              // @group(0) bindings: 0=sceneColor, 1=sceneColorSampler, 2=sceneDepth,
+              //   3=sceneDepthSampler, 4=UserUniforms (16-byte placeholder when absent).
+              var cpRes = buildCustomPostPipelineAsync(effect);
+              if (!cpRes || cpRes.pending || cpRes.failed) {
+                // Not yet compiled (first frame) or failed → identity passthrough.
+                // currentTexView is unchanged; the output falls through to the blit.
+                break;
+              }
+              var cpUniformBuf = ensureCustomPostUniformBuffer(effect);
+              var cpBG = device.createBindGroup({
+                layout: cpRes.bgl,
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                  { binding: 2, resource: depthTexView },
+                  { binding: 3, resource: getDepthSampler() },
+                  { binding: 4, resource: { buffer: cpUniformBuf } },
+                ],
+              });
+              fullscreenPass(encoder, cpRes.pipeline, cpBG, outputView);
+              currentTexView = outputView;
+              break;
+            }
             default:
               break;
           }
@@ -2276,6 +2455,7 @@
       },
 
       dispose: function() {
+        disposed = true;
         if (sceneTex) sceneTex.destroy();
         if (auxTex) auxTex.destroy();
         if (depthTex) depthTex.destroy();
@@ -2284,6 +2464,12 @@
         for (var key in postParamBuffers) {
           if (postParamBuffers[key]) postParamBuffers[key].destroy();
         }
+        customPostUniformBuffers.forEach(function(buf) { if (buf) buf.destroy(); });
+        customPostUniformBuffers.clear();
+        customPostPipelineCache.clear();
+        customPostFailed.clear();
+        if (selenaPostBGL) { selenaPostBGL = null; }
+        if (depthSampler) { depthSampler = null; }
         sceneTex = auxTex = depthTex = pingPongA = pingPongB = null;
         currentWidth = 0;
         currentHeight = 0;
@@ -2337,6 +2523,10 @@
     var adapter = probe.adapter;
     var device = probe.device;
     var rendererOptions = options && typeof options === "object" ? options : {};
+
+    function rendererDeviceStillActive(scopedDevice) {
+      return !!device && device === scopedDevice;
+    }
 
     // Only NOW taint the canvas with a WebGPU context. If any of the
     // checks above failed we never reached this line, so the canvas
@@ -2417,6 +2607,11 @@
     var computedMorphBindGroupLayout = null;
     var pointsBindGroupLayout = null;
     var pointsUniformBindGroupLayout = null;
+    // For authored Points/ComputeParticles render shaders: a minimal
+    // @group(1) @binding(0) uniform BGL used for user-authored uniforms.
+    var pointsAuthoredUserUniformBGL = null;
+    var pointsAuthoredVertexPipelineLayout = null;   // [frame, userUniform, pointsUniform] for Points layers
+    var pointsAuthoredStoragePipelineLayout = null;  // [frame, userUniform, pointsStorage] for ComputeParticle render
     var shadowBindGroupLayout = null;
     var pbrPipelineLayout = null;
     var elioSkinPipelineLayout = null;
@@ -2424,6 +2619,11 @@
     var pointsPipelineLayout = null;
     var pointsVertexPipelineLayout = null;
     var selenaPipelineCache = new Map();
+    // Per-layer / per-system authored pipeline cache (keyed by "wgsl|blend|depth|format|samples").
+    var pointsAuthoredPipelineCache = new Map();
+    // Per-layer / per-system failure flag: layerID → true means the authored
+    // pipeline failed; fall back to builtin and warn once.
+    var pointsAuthoredLayerFailed = new Map();
 
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
@@ -2770,6 +2970,17 @@
         });
         pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(device);
         pointsUniformBindGroupLayout = wgpuCreatePointsUniformBindGroupLayout(device);
+        // Simple uniform BGL for authored user uniforms at group(1).
+        pointsAuthoredUserUniformBGL = device.createBindGroupLayout({
+          label: "gosx-points-authored-user",
+          entries: [{ binding: 0, visibility: (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT : 3), buffer: { type: "uniform" } }],
+        });
+        pointsAuthoredVertexPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [frameBindGroupLayout, pointsAuthoredUserUniformBGL, pointsUniformBindGroupLayout],
+        });
+        pointsAuthoredStoragePipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [frameBindGroupLayout, pointsAuthoredUserUniformBGL, pointsBindGroupLayout],
+        });
         shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
 
         // Pipeline layouts.
@@ -3419,6 +3630,179 @@
       var pipeline = wgpuCreatePointsVertexPipeline(device, pointsVertexPipelineLayout, pointsInstancedVertexModule, pointsFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
+    }
+
+    // -----------------------------------------------------------------------
+    // Authored Points / ComputeParticle render pipelines
+    // -----------------------------------------------------------------------
+    // Per-layer/system authored pipeline caches. Each cache entry is either a
+    // {pipeline} object or {failed:true} sentinel. Failure is one-shot: once
+    // an authored shader fails validation the layer falls back to builtin for
+    // the rest of the session with a single console.warn.
+    //
+    // Binding contract for authored Points layers (drawPointsEntries):
+    //   @group(0) @binding(0)  FrameUniforms (uniform)
+    //   @group(1) @binding(0)  UserUniforms  (authored uniforms, uniform)
+    //   @group(2) @binding(0)  PointsUniforms (uniform)
+    //   vertex buffer slot 0: per-instance (position:vec3f, size:f32, color:vec4f, stride=32)
+    //
+    // Binding contract for authored ComputeParticle render (drawComputeParticleEntries):
+    //   @group(0) @binding(0)  FrameUniforms (uniform)
+    //   @group(1) @binding(0)  UserUniforms  (authored uniforms, uniform)
+    //   @group(2) @binding(0)  PointsUniforms (uniform)
+    //   @group(2) @binding(1)  particles array<ParticleInstance> (storage read)
+    //   no vertex buffers (instance index reads from storage)
+
+    // buildAuthoredPointsVertexPipeline: for Points layers, uses vertex buffer (instanced path).
+    function buildAuthoredPointsVertexPipelineAsync(entry, blendMode, depthWrite, systemID) {
+      var vertWGSL = (typeof entry.customVertexWGSL === "string") ? entry.customVertexWGSL.trim() : "";
+      var fragWGSL = (typeof entry.customFragmentWGSL === "string") ? entry.customFragmentWGSL.trim() : "";
+      if (!vertWGSL || !fragWGSL) return null; // no authored shader
+      var cacheKey = [vertWGSL, fragWGSL, blendMode, depthWrite ? "1" : "0", targetFormat, activeSampleCount].join("|");
+      var cached = pointsAuthoredPipelineCache.get(cacheKey);
+      if (cached) return cached.failed ? null : cached;
+
+      var pending = { pending: true };
+      pointsAuthoredPipelineCache.set(cacheKey, pending);
+      var scopedDevice = device;
+      if (!scopedDevice) {
+        pointsAuthoredPipelineCache.delete(cacheKey);
+        return null;
+      }
+      var vertMod = scopedDevice.createShaderModule({ label: "points-authored-vert", code: vertWGSL });
+      var fragMod = scopedDevice.createShaderModule({ label: "points-authored-frag", code: fragWGSL });
+
+      function markFailed() {
+        if (!pointsAuthoredLayerFailed.get(systemID)) {
+          pointsAuthoredLayerFailed.set(systemID, true);
+          console.warn("[gosx] Points authored pipeline failed for layer '" + systemID + "'; falling back to builtin.");
+        }
+        pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
+      }
+
+      try {
+        scopedDevice.pushErrorScope("validation");
+      } catch (_err) {
+        pointsAuthoredPipelineCache.delete(cacheKey);
+        return null;
+      }
+      scopedDevice.createRenderPipelineAsync({
+        label: "gosx-points-authored-" + blendMode,
+        layout: pointsAuthoredVertexPipelineLayout,
+        vertex: { module: vertMod, entryPoint: "vertexMain", buffers: WGPU_POINTS_INSTANCE_VERTEX_LAYOUT },
+        fragment: { module: fragMod, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
+        primitive: { topology: "triangle-list" },
+        multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
+        depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
+      }).then(function(pipeline) {
+        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+          if (!rendererDeviceStillActive(scopedDevice)) return;
+          if (scopeErr) {
+            markFailed();
+          } else {
+            pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+          }
+        });
+      }).catch(function() {
+        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+          if (!rendererDeviceStillActive(scopedDevice)) return;
+          markFailed();
+        });
+      });
+      return null; // pending first frame — builtin fallback used
+    }
+
+    // buildAuthoredParticleRenderPipelineAsync: for ComputeParticles render, reads from storage.
+    function buildAuthoredParticleRenderPipelineAsync(entry, blendMode, depthWrite, systemID) {
+      var vertWGSL = (typeof entry.renderVertexWGSL === "string") ? entry.renderVertexWGSL.trim() : "";
+      var fragWGSL = (typeof entry.renderFragmentWGSL === "string") ? entry.renderFragmentWGSL.trim() : "";
+      if (!vertWGSL || !fragWGSL) return null;
+      var cacheKey = ["cr", vertWGSL, fragWGSL, blendMode, depthWrite ? "1" : "0", targetFormat, activeSampleCount].join("|");
+      var cached = pointsAuthoredPipelineCache.get(cacheKey);
+      if (cached) return cached.failed ? null : cached;
+
+      // Selena points modules may expose dual entries:
+      //   vertexStorageMain — reads particle state from a storage buffer (preferred for
+      //                       ComputeParticles render path which has no vertex buffers)
+      //   vertexMain        — attribute variant (fallback)
+      // Check the WGSL source first; also accept shaderLayout.entryPoints.vertexStorage.
+      var vertEntry = "vertexMain";
+      var renderLayout = entry.renderShaderLayout && typeof entry.renderShaderLayout === "object"
+        ? entry.renderShaderLayout
+        : entry.shaderLayout;
+      if (vertWGSL.indexOf("vertexStorageMain") !== -1) {
+        vertEntry = "vertexStorageMain";
+      } else if (renderLayout && renderLayout.entryPoints && renderLayout.entryPoints.vertexStorage) {
+        vertEntry = renderLayout.entryPoints.vertexStorage;
+      }
+
+      var pending = { pending: true };
+      pointsAuthoredPipelineCache.set(cacheKey, pending);
+      var scopedDevice = device;
+      if (!scopedDevice) {
+        pointsAuthoredPipelineCache.delete(cacheKey);
+        return null;
+      }
+      var vertMod = scopedDevice.createShaderModule({ label: "particle-render-authored-vert", code: vertWGSL });
+      var fragMod = scopedDevice.createShaderModule({ label: "particle-render-authored-frag", code: fragWGSL });
+
+      function markFailed() {
+        if (!pointsAuthoredLayerFailed.get(systemID)) {
+          pointsAuthoredLayerFailed.set(systemID, true);
+          console.warn("[gosx] ComputeParticle authored render pipeline failed for system '" + systemID + "'; falling back to builtin.");
+        }
+        pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
+      }
+
+      try {
+        scopedDevice.pushErrorScope("validation");
+      } catch (_err) {
+        pointsAuthoredPipelineCache.delete(cacheKey);
+        return null;
+      }
+      scopedDevice.createRenderPipelineAsync({
+        label: "gosx-particle-render-authored-" + blendMode,
+        layout: pointsAuthoredStoragePipelineLayout,
+        vertex: { module: vertMod, entryPoint: vertEntry, buffers: [] },
+        fragment: { module: fragMod, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
+        primitive: { topology: "triangle-list" },
+        multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
+        depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
+      }).then(function(pipeline) {
+        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+          if (!rendererDeviceStillActive(scopedDevice)) return;
+          if (scopeErr) {
+            markFailed();
+          } else {
+            pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+          }
+        });
+      }).catch(function() {
+        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+          if (!rendererDeviceStillActive(scopedDevice)) return;
+          markFailed();
+        });
+      });
+      return null;
+    }
+
+    // ensurePointsAuthoredUserUniformBuffer: allocates / updates a per-layer
+    // user-uniform buffer from entry.customUniforms and shaderLayout.
+    function ensurePointsAuthoredUserUniformBuffer(entry, ownerKey, uniforms, layout) {
+      var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout });
+      if (!uniformData || uniformData.byteLength === 0) {
+        // No user uniforms — create a minimal 16-byte placeholder so group(1) is always bound.
+        uniformData = new Float32Array(4);
+      }
+      var cacheOwner = entry;
+      var buffer = wgpuCachedTrackedBuffer(
+        cacheOwner,
+        ownerKey,
+        uniformData,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        true
+      );
+      return buffer;
     }
 
     function disposeComputeParticleSystems() {
@@ -5264,6 +5648,9 @@
         pointDrawEntries: 0,
         pointDrawInstances: 0,
         pointDrawCalls: 0,
+        pointAuthoredDrawEntries: 0,
+        pointAuthoredDrawInstances: 0,
+        pointAuthoredDrawCalls: 0,
         pointSkippedEmpty: 0,
         pointSkippedNoPositions: 0,
       };
@@ -5409,26 +5796,58 @@
         var particleData = ensurePointsParticleData(entry, count, hasSizes, hasColors, defaultColorRGBA);
         var pointsParticleBuffer = ensurePointsParticleVertexGPUBuffer(entry, particleData);
 
-        var pointsBG = device.createBindGroup({
-          layout: pointsUniformBindGroupLayout,
-          entries: [
-            { binding: 0, resource: { buffer: pointsUniformBuffer } },
-          ],
-        });
-
-        // Select pipeline based on blend mode.
+        // Select pipeline: authored (async-validated) when shader fields present,
+        // else builtin instanced-vertex pipeline.
         var blendMode = typeof entry.blendMode === "string" ? entry.blendMode.toLowerCase() : "";
         var depthWrite = entry.depthWrite !== false;
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
-        var pipeline = getPointsVertexPipeline(validBlend, depthWrite);
 
-        pass.setPipeline(pipeline);
-        pass.setVertexBuffer(0, pointsParticleBuffer);
-        pass.setBindGroup(2, pointsBG);
+        var hasAuthoredWGSL = (typeof entry.customVertexWGSL === "string" && entry.customVertexWGSL.trim()) &&
+                              (typeof entry.customFragmentWGSL === "string" && entry.customFragmentWGSL.trim());
+        var layerID = entry.id || ("points-" + i);
+        var authoredResource = hasAuthoredWGSL && !pointsAuthoredLayerFailed.get(layerID)
+          ? buildAuthoredPointsVertexPipelineAsync(entry, validBlend, depthWrite, layerID)
+          : null;
+        var useAuthored = authoredResource && !authoredResource.failed && !authoredResource.pending && authoredResource.pipeline;
+
+        var pointsBG, pipeline;
+        if (useAuthored) {
+          // Authored path: bind group 1 = user uniforms, group 2 = PointsUniforms.
+          var userUnifBuf = ensurePointsAuthoredUserUniformBuffer(entry, "_gosxWGPUPointsUserUniform", entry.customUniforms, entry.shaderLayout);
+          var userUnifBG = device.createBindGroup({
+            layout: pointsAuthoredUserUniformBGL,
+            entries: [{ binding: 0, resource: { buffer: userUnifBuf } }],
+          });
+          pointsBG = device.createBindGroup({
+            layout: pointsUniformBindGroupLayout,
+            entries: [{ binding: 0, resource: { buffer: pointsUniformBuffer } }],
+          });
+          pipeline = authoredResource.pipeline;
+          pass.setPipeline(pipeline);
+          pass.setVertexBuffer(0, pointsParticleBuffer);
+          pass.setBindGroup(1, userUnifBG);
+          pass.setBindGroup(2, pointsBG);
+        } else {
+          // Builtin path.
+          pointsBG = device.createBindGroup({
+            layout: pointsUniformBindGroupLayout,
+            entries: [{ binding: 0, resource: { buffer: pointsUniformBuffer } }],
+          });
+          pipeline = getPointsVertexPipeline(validBlend, depthWrite);
+          pass.setPipeline(pipeline);
+          pass.setVertexBuffer(0, pointsParticleBuffer);
+          pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
+          pass.setBindGroup(2, pointsBG);
+        }
         pass.draw(6, count); // 6 vertices per quad, count instances
         stats.pointDrawEntries += 1;
         stats.pointDrawInstances += count;
         stats.pointDrawCalls += 1;
+        if (useAuthored) {
+          stats.pointAuthoredDrawEntries += 1;
+          stats.pointAuthoredDrawInstances += count;
+          stats.pointAuthoredDrawCalls += 1;
+        }
       }
       return stats;
     }
@@ -5438,6 +5857,12 @@
         computeParticleDrawEntries: 0,
         computeParticleDrawInstances: 0,
         computeParticleDrawCalls: 0,
+        computeParticleAuthoredDrawEntries: 0,
+        computeParticleAuthoredDrawInstances: 0,
+        computeParticleAuthoredDrawCalls: 0,
+        computeParticleAuthoredCandidateEntries: 0,
+        computeParticleAuthoredPendingEntries: 0,
+        computeParticleAuthoredFailedEntries: 0,
         computeParticleSkippedNotReady: 0,
         computeParticleSkippedEmpty: 0,
       };
@@ -5533,25 +5958,70 @@
 
         var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
 
-        var pointsBG = device.createBindGroup({
-          layout: pointsBindGroupLayout,
-          entries: [
-            { binding: 0, resource: { buffer: pointsUniformBuffer } },
-            { binding: 1, resource: { buffer: system.renderBuffer } },
-          ],
-        });
-
         var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
         var depthWrite = entry.depthWrite === true || (validBlend === "opaque" && entry.depthWrite !== false);
-        var pipeline = getPointsPipeline(validBlend, depthWrite);
 
-        pass.setPipeline(pipeline);
-        pass.setBindGroup(2, pointsBG);
+        // Authored render path: check for renderVertexWGSL/renderFragmentWGSL on the entry.
+        var hasAuthoredRender = (typeof entry.renderVertexWGSL === "string" && entry.renderVertexWGSL.trim()) &&
+                                (typeof entry.renderFragmentWGSL === "string" && entry.renderFragmentWGSL.trim());
+        var cpSystemID = (entry && typeof entry.id === "string") ? entry.id : ("cp-" + i);
+        if (hasAuthoredRender) {
+          stats.computeParticleAuthoredCandidateEntries += 1;
+        }
+        if (hasAuthoredRender && pointsAuthoredLayerFailed.get(cpSystemID)) {
+          stats.computeParticleAuthoredFailedEntries += 1;
+        }
+        var cpAuthoredResource = hasAuthoredRender && !pointsAuthoredLayerFailed.get(cpSystemID)
+          ? buildAuthoredParticleRenderPipelineAsync(entry, validBlend, depthWrite, cpSystemID)
+          : null;
+        if (cpAuthoredResource && cpAuthoredResource.pending) {
+          stats.computeParticleAuthoredPendingEntries += 1;
+        }
+        var useCPAuthored = cpAuthoredResource && !cpAuthoredResource.failed && !cpAuthoredResource.pending && cpAuthoredResource.pipeline;
+
+        var pipeline, pointsBG;
+        if (useCPAuthored) {
+          // Authored render: group 1 = user uniforms, group 2 = PointsUniforms + particles storage.
+          var cpUserUnifBuf = ensurePointsAuthoredUserUniformBuffer(system, "_gosxWGPUCPRenderUserUniform", entry.renderUniforms, entry.renderShaderLayout);
+          var cpUserUnifBG = device.createBindGroup({
+            layout: pointsAuthoredUserUniformBGL,
+            entries: [{ binding: 0, resource: { buffer: cpUserUnifBuf } }],
+          });
+          pointsBG = device.createBindGroup({
+            layout: pointsBindGroupLayout,
+            entries: [
+              { binding: 0, resource: { buffer: pointsUniformBuffer } },
+              { binding: 1, resource: { buffer: system.renderBuffer } },
+            ],
+          });
+          pipeline = cpAuthoredResource.pipeline;
+          pass.setPipeline(pipeline);
+          pass.setBindGroup(1, cpUserUnifBG);
+          pass.setBindGroup(2, pointsBG);
+        } else {
+          // Builtin render path.
+          pointsBG = device.createBindGroup({
+            layout: pointsBindGroupLayout,
+            entries: [
+              { binding: 0, resource: { buffer: pointsUniformBuffer } },
+              { binding: 1, resource: { buffer: system.renderBuffer } },
+            ],
+          });
+          pipeline = getPointsPipeline(validBlend, depthWrite);
+          pass.setPipeline(pipeline);
+          pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
+          pass.setBindGroup(2, pointsBG);
+        }
         pass.draw(6, system.count);
         stats.computeParticleDrawEntries += 1;
         stats.computeParticleDrawInstances += system.count;
         stats.computeParticleDrawCalls += 1;
+        if (useCPAuthored) {
+          stats.computeParticleAuthoredDrawEntries += 1;
+          stats.computeParticleAuthoredDrawInstances += system.count;
+          stats.computeParticleAuthoredDrawCalls += 1;
+        }
       }
       return stats;
     }
@@ -5628,6 +6098,9 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-point-draw-entries", String(published.pointDrawEntries || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-point-draw-instances", String(published.pointDrawInstances || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-point-draw-calls", String(published.pointDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-authored-draw-entries", String(published.pointAuthoredDrawEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-authored-draw-instances", String(published.pointAuthoredDrawInstances || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-point-authored-draw-calls", String(published.pointAuthoredDrawCalls || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-point-skipped-empty", String(published.pointSkippedEmpty || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-point-skipped-no-positions", String(published.pointSkippedNoPositions || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-entries", String(published.computeParticleEntries || 0));
@@ -5635,6 +6108,12 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-draw-entries", String(published.computeParticleDrawEntries || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-draw-instances", String(published.computeParticleDrawInstances || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-draw-calls", String(published.computeParticleDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-authored-draw-entries", String(published.computeParticleAuthoredDrawEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-authored-draw-instances", String(published.computeParticleAuthoredDrawInstances || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-authored-draw-calls", String(published.computeParticleAuthoredDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-authored-candidate-entries", String(published.computeParticleAuthoredCandidateEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-authored-pending-entries", String(published.computeParticleAuthoredPendingEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-authored-failed-entries", String(published.computeParticleAuthoredFailedEntries || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-empty", String(published.computeParticleSkippedEmpty || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-not-ready", String(published.computeParticleSkippedNotReady || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-mesh-objects", String(published.meshObjects || 0));
@@ -5798,6 +6277,9 @@
     }
 
     function render(bundle, viewport) {
+      if (typeof inflateSceneShaderLib === "function") {
+        inflateSceneShaderLib(bundle);
+      }
       adaptOrtho2DBoardBundle(bundle);
       if (!device) {
         startInit();
@@ -6208,6 +6690,14 @@
       out.presentationColorSpace = activePresentation.colorSpace;
       out.presentationToneMappingMode = activePresentation.toneMappingMode;
       out.powerPreference = activePowerPreference;
+      out.ready = !!device && !initFailed;
+      out.initFailed = !!initFailed;
+      out.initError = initError || "";
+      out.deviceLost = !device || !!(base && base.lost);
+      out.deviceLostInfo = base && base.lost ? base.lost : null;
+      out.frameSeq = webGPUFrameSeq;
+      out.frameAt = lastWebGPUFrameStats && lastWebGPUFrameStats.frameAt || 0;
+      out.lastError = lastWebGPUFrameStats && lastWebGPUFrameStats.lastError || "";
       out.postProcessing = !!postProcessor;
       out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
       out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";

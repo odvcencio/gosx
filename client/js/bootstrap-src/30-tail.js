@@ -5831,6 +5831,10 @@
       refreshGosxDocumentState("ready");
       return;
     }
+    // Inflate shaderLib refs in all entry props.scene objects before the manifest
+    // is stashed or consumed. Downstream consumers (16a/16b/16) see inline fields
+    // exactly as if the scene was never deduplicated.
+    inflateManifestShaderLibs(manifest);
     initializeClientIdentity(manifest.clientIdentity);
 
     // Stash manifest for use when WASM signals readiness.
