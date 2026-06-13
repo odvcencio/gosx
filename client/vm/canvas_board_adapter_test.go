@@ -335,6 +335,31 @@ func TestCanvasBoardAdapterRenderBundleRendersStaticPropsNodes(t *testing.T) {
 	}
 }
 
+func TestCanvasBoardAdapterUpdateHTMLMarkupPatchesStaticPropsNode(t *testing.T) {
+	propsJSON := `{
+		"nodes": [
+			{"id": "page:about", "kind": "html", "x": 0, "y": 0, "width": 320, "height": 180, "markup": "<h1>About</h1>"},
+			{"id": "r1", "kind": "rect", "x": 10, "y": 20, "width": 120, "height": 80, "color": "#8de1ff"}
+		]
+	}`
+
+	rt := NewCanvasBoardAdapter(&rootengine.Program{Name: "StaticHTMLBoard"}, propsJSON)
+	if !rt.UpdateHTMLMarkup("page:about", "<h1>Our Studio</h1>") {
+		t.Fatal("UpdateHTMLMarkup returned false for existing html node")
+	}
+	if rt.UpdateHTMLMarkup("missing", "<h1>Missing</h1>") {
+		t.Fatal("UpdateHTMLMarkup returned true for missing html node")
+	}
+
+	b := rt.RenderBundle(800, 600, 0)
+	if len(b.HTML) != 1 {
+		t.Fatalf("expected one html entry, got %#v", b.HTML)
+	}
+	if b.HTML[0].ID != "page:about" || b.HTML[0].Markup != "<h1>Our Studio</h1>" {
+		t.Fatalf("html entry not patched: %#v", b.HTML[0])
+	}
+}
+
 // TestCanvasBoardAdapterRenderBundleIgnoresPropsNodesWhenEngineNodesPresent
 // proves the compiled-.gsx path is unchanged: when prog.EngineNodes is
 // populated, the adapter renders those nodes through the resolved-snapshot

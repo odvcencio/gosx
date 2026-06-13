@@ -108,6 +108,20 @@ func (b *Bridge) SetCanvasBoardBackend(id, backend string) error {
 	return nil
 }
 
+// UpdateCanvasBoardHTMLMarkup patches one static html node's markup on a live
+// board. It is intentionally scoped to existing CanvasBoard html nodes; callers
+// cannot create new nodes or mutate geometry through this hook.
+func (b *Bridge) UpdateCanvasBoardHTMLMarkup(id, htmlID, markup string) error {
+	adapter, err := b.canvasBoardAdapter(id)
+	if err != nil {
+		return err
+	}
+	if !adapter.UpdateHTMLMarkup(htmlID, markup) {
+		return fmt.Errorf("canvas board %q html node %q not found", id, htmlID)
+	}
+	return nil
+}
+
 // DisposeCanvasBoard tears down a canvas2d adapter. Idempotent.
 func (b *Bridge) DisposeCanvasBoard(id string) {
 	if adapter, ok := b.boards[id]; ok {

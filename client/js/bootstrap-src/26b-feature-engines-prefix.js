@@ -276,6 +276,13 @@
       if (inst.webgpuRenderer) {
         _disposeCanvasWebGPURenderer(inst, inst.webgpuRenderer, inst.canvas);
       }
+      if (inst.canvasHTMLHost) {
+        const htmlDispose = typeof window !== "undefined" ? window.__gosx_canvas_board_html_dispose : null;
+        if (typeof htmlDispose === "function") {
+          try { htmlDispose(inst.canvasHTMLHost); } catch (e) { /* tolerate */ }
+        }
+        inst.canvasHTMLHost = null;
+      }
       // Tear down the matching WASM-side instance. canvas2d boards live in the
       // CanvasBoardAdapter map (__gosx_dispose_canvas); every other surface
       // kind (and the bytecode path) lives in the engine-surface map
@@ -474,6 +481,11 @@
         ctx = null;
       }
       if (!ctx) return;
+      const htmlSync = typeof window !== "undefined" ? window.__gosx_canvas_board_html_sync : null;
+      const host = canvas.parentNode || null;
+      if (host && typeof htmlSync === "function") {
+        instance.canvasHTMLHost = host;
+      }
 
       function frame() {
         if (instance.disposed) return;
@@ -496,6 +508,9 @@
               ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             }
             paintFn(ctx, bundle, cssW, cssH, dpr);
+            if (typeof htmlSync === "function" && host) {
+              htmlSync(host, bundle.html || [], bundle.camera, cssW, cssH);
+            }
           }
         } catch (e) {
           // A buggy board shouldn't break the rest of the page — log once a

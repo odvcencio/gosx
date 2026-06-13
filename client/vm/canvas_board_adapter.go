@@ -249,6 +249,39 @@ func (rt *CanvasBoardAdapter) RenderBackend() string {
 	return rt.renderBackend
 }
 
+// UpdateHTMLMarkup patches a static CanvasBoard html node by id. Host editor
+// overlays use this after a successful inline edit so the next RenderBundle uses
+// the just-saved markup instead of repainting the server's initial props value.
+func (rt *CanvasBoardAdapter) UpdateHTMLMarkup(id, markup string) bool {
+	if rt == nil || id == "" {
+		return false
+	}
+	raw, ok := rt.props["nodes"].([]any)
+	if !ok {
+		return false
+	}
+	for index, entry := range raw {
+		node, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := node["kind"].(string)
+		if strings.TrimSpace(kind) != "html" {
+			continue
+		}
+		nodeID, _ := node["id"].(string)
+		if nodeID == "" {
+			nodeID = canvasBoardIntToString(index)
+		}
+		if nodeID != id {
+			continue
+		}
+		node["markup"] = markup
+		return true
+	}
+	return false
+}
+
 // Camera returns the current live camera (pan in world units, zoom as
 // world→screen scale). When no override has been installed it reflects the
 // props-derived camera, so the first pan/zoom delta accumulates from where the

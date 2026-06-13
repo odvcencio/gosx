@@ -39,6 +39,7 @@ func registerCanvasBoardRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_render_canvas", renderCanvasFunc(b))
 	setRuntimeFunc("__gosx_canvas_event", canvasEventFunc(b))
 	setRuntimeFunc("__gosx_canvas_set_backend", canvasSetBackendFunc(b))
+	setRuntimeFunc("__gosx_canvas_update_html", canvasUpdateHTMLFunc(b))
 	setRuntimeFunc("__gosx_dispose_canvas", disposeCanvasFunc(b))
 }
 
@@ -61,6 +62,23 @@ func canvasSetBackendFunc(b *bridge.Bridge) js.Func {
 			return jsErrorf("need 2 args (id, backend)")
 		}
 		if err := b.SetCanvasBoardBackend(args[0].String(), args[1].String()); err != nil {
+			return jsError(err)
+		}
+		return js.Null()
+	})
+}
+
+// canvasUpdateHTMLFunc patches one static CanvasBoard html node's markup after
+// a host-owned inline edit has saved. This keeps later pan/zoom repaints from
+// rehydrating stale initial markup over the edited DOM.
+//
+// Call shape: __gosx_canvas_update_html(id, htmlID, markup)
+func canvasUpdateHTMLFunc(b *bridge.Bridge) js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 3 {
+			return jsErrorf("need 3 args (id, htmlID, markup)")
+		}
+		if err := b.UpdateCanvasBoardHTMLMarkup(args[0].String(), args[1].String(), args[2].String()); err != nil {
 			return jsError(err)
 		}
 		return js.Null()

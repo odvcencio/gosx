@@ -18085,6 +18085,13 @@ test("canvas2d WITHOUT the webgpu flag stays on the 26b1 painter (regression pin
   assert.ok(h.ctx2dCalls.length >= 1, "painter path must create a 2d context");
   assert.equal(mainRenderPasses(h.fake).length, 0, "painter path must not run a 16a render pass");
   assert.ok(h.renderCalls.length >= 1, "painter path still drives __gosx_render_canvas");
+
+  const htmlLayer = h.htmlLayer();
+  assert.ok(htmlLayer, "painter path must create the CanvasBoard HTML overlay layer");
+  assert.equal(htmlLayer.childNodes.length, 1, "painter path mounts one HTML overlay for bundle.html");
+  const html = htmlLayer.childNodes[0];
+  assert.equal(html.getAttribute("data-gosx-canvas-html"), "page:home");
+  assert.equal(html.innerHTML, '<h1 contenteditable data-studio-field="home.hero.headline">Hi</h1>');
 });
 
 test("canvas2d webgpu flag but no navigator.gpu → falls back to the painter with exactly one warn", async () => {
@@ -18100,6 +18107,11 @@ test("canvas2d webgpu flag but no navigator.gpu → falls back to the painter wi
   assert.ok(h.ctx2dCalls.length >= 1, "fallback must create a 2d context (painter path)");
   assert.equal(mainRenderPasses(h.fake).length, 0, "fallback must not run a 16a render pass");
   assert.ok(h.renderCalls.length >= 1, "fallback painter still drives __gosx_render_canvas");
+  const htmlLayer = h.htmlLayer();
+  assert.ok(htmlLayer, "WebGPU fallback painter path must create the CanvasBoard HTML overlay layer");
+  assert.equal(htmlLayer.childNodes.length, 1, "fallback painter path mounts one HTML overlay for bundle.html");
+  assert.equal(htmlLayer.childNodes[0].getAttribute("data-gosx-canvas-html"), "page:home");
+  assert.equal(htmlLayer.childNodes[0].innerHTML, '<h1 contenteditable data-studio-field="home.hero.headline">Hi</h1>');
 
   // Exactly one warn about the unavailable backend (the fallback's single
   // console.warn — not a per-frame log).
