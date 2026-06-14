@@ -1,0 +1,19 @@
+// Board label text — the glyph material for canvas-board labels in the WebGPU
+// canvas re-platform (M1 GPU-text slice). Authored in Selena so one source emits
+// WGSL (WebGPU/16a), GLSL, and Metal, mirroring BoardFill.
+//
+// The renderer rasterizes the needed glyphs into a coverage atlas (white-on-
+// transparent) and lays out one textured quad per glyph in world units. This
+// material samples the atlas coverage at the quad's uv and emits the per-label
+// textColor with that coverage as alpha, so the glyph antialiases against the
+// board through standard alpha blending. The 2D board runs unlit (OrthoCamera2D
+// / ADR 0004), so there is no lighting term — the text color is returned direct.
+material BoardText {
+    param atlas     : texture2d
+    param textColor : color = rgb(0.902, 0.929, 0.953)
+
+    surface(geo) -> color {
+        let coverage = sample(atlas, geo.uv).a
+        return rgb(textColor.r, textColor.g, textColor.b, coverage)
+    }
+}
