@@ -91,7 +91,14 @@ const budgets = [
   // 196_500: Scene3D WebGPU device-loss fallback now swaps to a fresh canvas,
   // rebinds canvas interaction/context listeners, and probes WebGL before 2D.
   // Measured: 886_997 / 240_771 / 195_495.
-  { file: "bootstrap.js", raw: 888_000, gzip: 242_000, brotli: 196_500 },
+  //
+  // Bumped raw 888_000 -> 894_000, gzip 242_000 -> 243_500, brotli 196_500 ->
+  // 197_500: M1 GPU-text slice 2 — the canvas-board LABEL glyph pass in 16a-
+  // scene-webgpu.js (BoardText Selena material WGSL + layout, per-font coverage
+  // atlas rasterized via OffscreenCanvas, drawBoardLabels per-glyph quad layout,
+  // hasLabelData gate). 16a ships in BOTH this bundle and the webgpu feature
+  // chunk. Measured: 892_436 / 242_881 / 196_941 + rounding headroom.
+  { file: "bootstrap.js", raw: 894_000, gzip: 243_500, brotli: 197_500 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -182,7 +189,14 @@ const budgets = [
   // 35_500: scoped GPUDevice popErrorScope guards for custom post, authored
   // points, and authored particle render async callbacks. Measured:
   // 166_165 / 40_940 / 35_214.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 167_000, gzip: 41_500, brotli: 35_500 },
+  //
+  // Bumped raw 167_000 -> 173_000, gzip 41_500 -> 43_500, brotli 35_500 ->
+  // 37_500: M1 GPU-text slice 2 — the canvas-board LABEL glyph pass (BoardText
+  // Selena material WGSL + layout, per-font coverage atlas via OffscreenCanvas,
+  // drawBoardLabels per-glyph quad layout reusing getSelenaPipeline, hasLabelData
+  // gate) in 16a-scene-webgpu.js. Measured: 171_595 / 43_048 / 36_971 + rounding
+  // headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 173_000, gzip: 43_500, brotli: 37_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

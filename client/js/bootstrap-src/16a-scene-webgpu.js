@@ -6276,6 +6276,315 @@
       return bundle;
     }
 
+    // -----------------------------------------------------------------------
+    // Board labels (M1 GPU-text slice 2): render canvas-board LABEL text as GPU
+    // glyphs through the BoardText Selena material. Canonical material source is
+    // render/boardgpu/board_text.sel → render/boardgpu/board_text.go (host-side
+    // tested). The WGSL + shaderLayout below are copied verbatim from that Go
+    // file's boardTextWGSL / boardTextShaderLayout; do NOT diverge from them (and
+    // do NOT change the RenderBundle Go schema in this slice).
+    // -----------------------------------------------------------------------
+    var BOARD_TEXT_WGSL = "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  textColor : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\n@group(0) @binding(1) var atlas : texture_2d<f32>;\n@group(0) @binding(2) var atlasSampler : sampler;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let coverage = textureSample(atlas, atlasSampler, in.vUv).a;\n  return vec4<f32>(u.textColor.r, u.textColor.g, u.textColor.b, coverage);\n}\n";
+
+    // Only the fields the WebGPU Selena pipeline path reads are kept here
+    // (attributes, uniformBlock, textures[].wgsl, wgsl.binding, material). The gl/
+    // metal/schemaVersion/etc. fields in render/boardgpu/board_text.go's full
+    // boardTextShaderLayout are for the GLSL/Metal backends and are inert in JS.
+    var BOARD_TEXT_LAYOUT = {
+      material: "BoardText",
+      attributes: [
+        { name: "position", type: "vec3", location: 0 },
+        { name: "uv", type: "vec2", location: 1 },
+      ],
+      uniformBlock: {
+        size: 128,
+        fields: [
+          { name: "mvp", type: "mat4", offset: 0, size: 64 },
+          { name: "normalMatrix", type: "mat3", offset: 64, size: 48 },
+          { name: "textColor", type: "vec3", offset: 112, size: 12 },
+        ],
+        defaults: [{ name: "textColor", type: "vec3", values: [0.902, 0.929, 0.953] }],
+      },
+      textures: [{ name: "atlas", wgsl: { group: 0, textureBinding: 1, samplerBinding: 2 } }],
+      wgsl: { group: 0, binding: 0 },
+    };
+
+    // A synthetic Selena "material" object so the BoardText draw reuses the exact
+    // pipeline path (getSelenaPipeline) that BoardFill rects use. textColor is
+    // overwritten per-label before the bind group is built.
+    var boardTextMaterial = {
+      shaderBackend: "selena",
+      customVertexWGSL: BOARD_TEXT_WGSL,
+      customFragmentWGSL: BOARD_TEXT_WGSL,
+      shaderLayout: BOARD_TEXT_LAYOUT,
+      customUniforms: { textColor: [0.902, 0.929, 0.953] },
+    };
+
+    // Per-font glyph atlas cache. Key = CSS font string. Each entry holds the
+    // uploaded GPUTexture/view, atlas pixel dims, font ascent/descent (CSS px),
+    // and a glyph map char → { u0,v0,u1,v1, w (cell width CSS px), advance CSS px }.
+    var boardGlyphAtlases = new Map();
+
+    function parseBoardFontSizePx(font) {
+      var m = String(font || "").match(/(\d+(?:\.\d+)?)px/);
+      return m ? parseFloat(m[1]) : 12;
+    }
+
+    // ensureBoardGlyphAtlas builds (and caches) a coverage atlas for `font`
+    // covering `chars` (a string of needed glyphs). White-on-transparent so the
+    // texture alpha = glyph coverage, matching the BoardText fragment's .a read.
+    // Returns null when canvas rasterization is unavailable (e.g. node tests).
+    function ensureBoardGlyphAtlas(font, chars) {
+      var entry = boardGlyphAtlases.get(font);
+      var needed = "";
+      for (var ci = 0; ci < chars.length; ci++) {
+        var ch = chars[ci];
+        if (entry && entry.glyphs[ch]) continue;
+        if (needed.indexOf(ch) === -1) needed += ch;
+      }
+      if (entry && needed === "") return entry;
+      if (typeof OffscreenCanvas === "undefined" && typeof document === "undefined") return null;
+
+      // Union of previously-cached chars + newly needed ones (rebuild whole atlas).
+      var allChars = needed;
+      if (entry) {
+        for (var k in entry.glyphs) {
+          if (entry.glyphs.hasOwnProperty(k) && allChars.indexOf(k) === -1) allChars += k;
+        }
+      }
+      if (allChars === "") return entry || null;
+
+      var sizePx = parseBoardFontSizePx(font);
+      var pad = 2;
+      var measureCanvas = boardCreateCanvas(8, 8);
+      if (!measureCanvas) return null;
+      var mctx = measureCanvas.getContext("2d");
+      // Need a real text-capable 2D context. The node test harness's fake
+      // context lacks fillText/measureText, so glyph rasterization degrades to
+      // null there (no GPU text) — the documented node-harness behavior; the
+      // DOM-overlay label path still runs unaffected.
+      if (!mctx || typeof mctx.fillText !== "function" || typeof mctx.measureText !== "function") return null;
+      mctx.font = font;
+      mctx.textBaseline = "alphabetic";
+      var mm = mctx.measureText("Mg");
+      var ascent = (mm && mm.actualBoundingBoxAscent > 0) ? mm.actualBoundingBoxAscent : sizePx * 0.8;
+      var descent = (mm && mm.actualBoundingBoxDescent > 0) ? mm.actualBoundingBoxDescent : sizePx * 0.2;
+      var cellH = Math.ceil(ascent + descent) + pad * 2;
+
+      // Lay glyphs left-to-right in a single row.
+      var metrics = [];
+      var totalW = 0;
+      for (var gi = 0; gi < allChars.length; gi++) {
+        var g = allChars[gi];
+        var adv = mctx.measureText(g).width;
+        var cellW = Math.ceil(adv) + pad * 2;
+        metrics.push({ ch: g, advance: adv, x: totalW, w: cellW });
+        totalW += cellW;
+      }
+      var atlasW = Math.max(1, totalW);
+      var atlasH = Math.max(1, cellH);
+
+      var atlasCanvas = boardCreateCanvas(atlasW, atlasH);
+      if (!atlasCanvas) return null;
+      var actx = atlasCanvas.getContext("2d");
+      if (!actx) return null;
+      actx.clearRect(0, 0, atlasW, atlasH);
+      actx.font = font;
+      actx.textBaseline = "alphabetic";
+      actx.fillStyle = "#ffffff";
+      var glyphs = {};
+      for (var mi = 0; mi < metrics.length; mi++) {
+        var me = metrics[mi];
+        actx.fillText(me.ch, me.x + pad, pad + ascent);
+        glyphs[me.ch] = {
+          u0: me.x / atlasW,
+          v0: 0,
+          u1: (me.x + me.w) / atlasW,
+          v1: 1,
+          w: me.w,
+          advance: me.advance,
+        };
+      }
+
+      var texture = device.createTexture({
+        size: [atlasW, atlasH, 1],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      device.queue.copyExternalImageToTexture(
+        { source: atlasCanvas },
+        { texture: texture },
+        [atlasW, atlasH]
+      );
+      if (entry && entry.texture && typeof entry.texture.destroy === "function") {
+        entry.texture.destroy();
+      }
+      var built = {
+        texture: texture,
+        view: texture.createView(),
+        width: atlasW,
+        height: atlasH,
+        ascent: ascent,
+        descent: descent,
+        pad: pad,
+        glyphs: glyphs,
+      };
+      boardGlyphAtlases.set(font, built);
+      return built;
+    }
+
+    function boardCreateCanvas(w, h) {
+      try {
+        if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
+        if (typeof document !== "undefined" && document.createElement) {
+          var c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          return c;
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    // hasLabelData: a labels-ONLY board (no rects/lines/etc.) must still render,
+    // so the render() early-return gate consults this predicate too.
+    function hasLabelData(bundle) {
+      return Boolean(bundle && Array.isArray(bundle.labels) && bundle.labels.length > 0);
+    }
+
+    // drawBoardLabels lays out one position+uv quad per glyph per label and draws
+    // them through the BoardText Selena pipeline. Glyph world size = pixelSize /
+    // zoom (camera.z) so on-screen text stays a constant pixel size regardless of
+    // zoom — mirroring the line-width /zoom trick in render/boardgpu/boardgpu.go.
+    // The frame MVP (scratchSelenaViewProjection, the same ortho2D MVP BoardFill
+    // rects use) is consumed via sceneSelenaUniformData("mvp").
+    function drawBoardLabels(pass, bundle, blendMode, depthWrite) {
+      var labels = Array.isArray(bundle.labels) ? bundle.labels : [];
+      if (!labels.length) return;
+      var resource = getSelenaPipeline(boardTextMaterial, blendMode, depthWrite);
+      if (!resource) return;
+
+      var cam = bundle.camera || {};
+      var zoom = (typeof cam.z === "number" && cam.z > 0) ? cam.z : 1;
+
+      // Group labels by font so each distinct font hits one atlas.
+      var byFont = {};
+      var fontOrder = [];
+      for (var i = 0; i < labels.length; i++) {
+        var lb = labels[i] || {};
+        var fnt = (typeof lb.font === "string" && lb.font !== "") ? lb.font : "14px system-ui, sans-serif";
+        if (!byFont[fnt]) { byFont[fnt] = []; fontOrder.push(fnt); }
+        byFont[fnt].push(lb);
+      }
+
+      var pipelineSet = false;
+      for (var fi = 0; fi < fontOrder.length; fi++) {
+        var font = fontOrder[fi];
+        var group = byFont[font];
+        var chars = "";
+        for (var gi = 0; gi < group.length; gi++) {
+          var t = String(group[gi].text == null ? "" : group[gi].text);
+          for (var ti = 0; ti < t.length; ti++) {
+            if (chars.indexOf(t[ti]) === -1) chars += t[ti];
+          }
+        }
+        if (chars === "") continue;
+        var atlas = ensureBoardGlyphAtlas(font, chars);
+        if (!atlas) continue;
+
+        // World units per CSS px (constant on-screen text → divide by zoom).
+        var wpp = 1 / zoom;
+        var ascentW = atlas.ascent * wpp;
+        var descentW = atlas.descent * wpp;
+        // The glyph ink sits `pad` px inside its atlas cell; shift the cell left
+        // by that so the ink lands at the true pen advance (26b1 fillText parity).
+        var padW = (atlas.pad || 0) * wpp;
+
+        for (var li = 0; li < group.length; li++) {
+          var label = group[li];
+          var text = String(label.text == null ? "" : label.text);
+          if (text === "") continue;
+          var pos = label.position || {};
+          var baseX = (typeof pos.x === "number" ? pos.x : 0);
+          var baseY = (typeof pos.y === "number" ? pos.y : 0);
+
+          var positions = [];
+          var uvs = [];
+          var penX = baseX;
+          for (var c = 0; c < text.length; c++) {
+            var glyph = atlas.glyphs[text[c]];
+            if (!glyph) continue;
+            var cellW = glyph.w * wpp;
+            // Quad spans the glyph cell: vertically [baseline-descent, baseline+ascent].
+            var x0 = penX - padW;
+            var x1 = x0 + cellW;
+            // The cell extends `pad` px beyond the ink ascent/descent (top & bottom),
+            // so the quad must too — otherwise the coverage texels stretch.
+            var yTop = baseY + ascentW + padW;   // +Y is up → above baseline on screen
+            var yBot = baseY - descentW - padW;
+            // CCW winding a→b→c→d (bottom-left, bottom-right, top-right, top-left)
+            // as triangles (a,b,c)(a,c,d) — matching the rect path's appendQuad so
+            // glyphs survive the Selena pipeline's cullMode "back". The atlas row 0
+            // is the glyph top, so v=0 maps to yTop and v=v1 maps to yBot.
+            positions.push(
+              x0, yBot, 0, x1, yBot, 0, x1, yTop, 0,
+              x0, yBot, 0, x1, yTop, 0, x0, yTop, 0
+            );
+            uvs.push(
+              glyph.u0, glyph.v1, glyph.u1, glyph.v1, glyph.u1, glyph.v0,
+              glyph.u0, glyph.v1, glyph.u1, glyph.v0, glyph.u0, glyph.v0
+            );
+            penX += glyph.advance * wpp;
+          }
+          var vertexCount = positions.length / 3;
+          if (vertexCount === 0) continue;
+
+          // textColor uniform (default #e6edf3 → BoardText default), parsed to RGB.
+          var rgba = sceneColorRGBA(
+            (typeof label.color === "string" && label.color !== "") ? label.color : "#e6edf3",
+            [0.902, 0.929, 0.953]
+          );
+          boardTextMaterial.customUniforms.textColor = [rgba[0], rgba[1], rgba[2]];
+
+          // Per-object owner so each label's uniform buffer + vertex buffers are
+          // cached independently across frames.
+          var owner = label;
+          var uniformData = sceneSelenaUniformData(boardTextMaterial);
+          var uniformBuffer = wgpuCachedTrackedBuffer(
+            owner, "_gosxBoardTextUniform", uniformData,
+            GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true
+          );
+          var posBuffer = wgpuCachedTrackedBuffer(
+            owner, "_gosxBoardTextPos", new Float32Array(positions),
+            GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true
+          );
+          var uvBuffer = wgpuCachedTrackedBuffer(
+            owner, "_gosxBoardTextUV", new Float32Array(uvs),
+            GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true
+          );
+          if (!uniformBuffer || !posBuffer || !uvBuffer) continue;
+
+          var bindGroup = device.createBindGroup({
+            layout: resource.bindGroupLayout,
+            entries: [
+              { binding: 0, resource: { buffer: uniformBuffer } },
+              { binding: 1, resource: atlas.view },
+              { binding: 2, resource: linearSampler },
+            ],
+          });
+
+          if (!pipelineSet) {
+            pass.setPipeline(resource.pipeline);
+            pipelineSet = true;
+          }
+          pass.setBindGroup(0, bindGroup);
+          pass.setVertexBuffer(0, posBuffer);
+          pass.setVertexBuffer(1, uvBuffer);
+          pass.draw(vertexCount);
+        }
+      }
+    }
+
     function render(bundle, viewport) {
       if (typeof inflateSceneShaderLib === "function") {
         inflateSceneShaderLib(bundle);
@@ -6299,7 +6608,8 @@
       var hasWorldLines = hasWorldLineData(bundle);
       var hasScreenLines = hasScreenLineData(bundle);
       var hasSurfaces = hasSurfaceData(bundle);
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces) return;
+      var hasLabels = hasLabelData(bundle);
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels) return;
       var preparedScene = typeof prepareScene === "function"
         ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
           mount: canvas && canvas.parentNode || null,
@@ -6324,6 +6634,7 @@
         hasWorldLines = hasWorldLineData(bundle);
         hasScreenLines = hasScreenLineData(bundle);
         hasSurfaces = hasSurfaceData(bundle);
+        hasLabels = hasLabelData(bundle);
       }
 
       var width = canvas.width;
@@ -6569,6 +6880,14 @@
         } else if (worldLineEntries.length > 0) {
           drawWorldLineEntries(mainPass, worldLineEntries, "additive", frameBindGroup);
         }
+      }
+
+      // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
+      // board fills so the alpha-blended glyphs composite over the rects. Lives
+      // outside the (hasPBRData || …) block above so a labels-only board still
+      // paints text. blendMode "alpha", depthWriteEnabled false.
+      if (hasLabels) {
+        drawBoardLabels(mainPass, bundle, "alpha", false);
       }
 
       if (hasScreenLines) {
