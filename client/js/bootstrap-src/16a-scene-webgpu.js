@@ -3458,7 +3458,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: buffers },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: "back" },
+          primitive: { topology: "triangle-list", cullMode: (material && material.cullMode) || "back" },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
@@ -3548,7 +3548,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: "back" },
+          primitive: { topology: "triangle-list", cullMode: (material && material.cullMode) || "back" },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
@@ -6318,6 +6318,9 @@
       customFragmentWGSL: BOARD_TEXT_WGSL,
       shaderLayout: BOARD_TEXT_LAYOUT,
       customUniforms: { textColor: [0.902, 0.929, 0.953] },
+      // 2D glyph quads have no back face; "none" also keeps them visible under
+      // the ortho-2D FlipY winding inversion.
+      cullMode: "none",
     };
 
     // Per-font glyph atlas cache. Key = CSS font string. Each entry holds the
@@ -6466,6 +6469,7 @@
 
       var cam = bundle.camera || {};
       var zoom = (typeof cam.z === "number" && cam.z > 0) ? cam.z : 1;
+      var flipY = cam.flipY === true;
 
       // Group labels by font so each distinct font hits one atlas.
       var byFont = {};
@@ -6520,15 +6524,19 @@
             var x1 = x0 + cellW;
             // The cell extends `pad` px beyond the ink ascent/descent (top & bottom),
             // so the quad must too — otherwise the coverage texels stretch.
-            var yTop = baseY + ascentW + padW;   // +Y is up → above baseline on screen
-            var yBot = baseY - descentW - padW;
-            // CCW winding a→b→c→d (bottom-left, bottom-right, top-right, top-left)
-            // as triangles (a,b,c)(a,c,d) — matching the rect path's appendQuad so
-            // glyphs survive the Selena pipeline's cullMode "back". The atlas row 0
-            // is the glyph top, so v=0 maps to yTop and v=v1 maps to yBot.
+            // Screen-top/bottom world-Y of the glyph cell. Under the board
+            // camera's FlipY the projection negates Y, so screen-up is the
+            // SMALLER world-Y; otherwise screen-up is the larger world-Y. The
+            // atlas row 0 (v=0) is the glyph top, so it always maps to the
+            // screen-top edge — keeping glyphs upright in both conventions.
+            // cullMode "none" (boardTextMaterial) makes the winding moot.
+            var aboveW = ascentW + padW;
+            var belowW = descentW + padW;
+            var yScreenTop = flipY ? (baseY - aboveW) : (baseY + aboveW);
+            var yScreenBot = flipY ? (baseY + belowW) : (baseY - belowW);
             positions.push(
-              x0, yBot, 0, x1, yBot, 0, x1, yTop, 0,
-              x0, yBot, 0, x1, yTop, 0, x0, yTop, 0
+              x0, yScreenBot, 0, x1, yScreenBot, 0, x1, yScreenTop, 0,
+              x0, yScreenBot, 0, x1, yScreenTop, 0, x0, yScreenTop, 0
             );
             uvs.push(
               glyph.u0, glyph.v1, glyph.u1, glyph.v1, glyph.u1, glyph.v0,

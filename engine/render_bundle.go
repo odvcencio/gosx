@@ -90,6 +90,12 @@ type RenderCamera struct {
 	FOV       float64 `json:"fov,omitempty"`
 	Near      float64 `json:"near,omitempty"`
 	Far       float64 `json:"far,omitempty"`
+	// FlipY makes the ortho-2D projection render +Y-down (screen convention:
+	// smaller Y is higher on screen). The canvas board is authored top-down
+	// (row 0 at Y=0, route subtitle "below" the title at a larger Y), so its
+	// camera sets FlipY; the renderer negates the projection Y and the 2D board
+	// materials use CullMode "none" so the resulting winding flip is harmless.
+	FlipY bool `json:"flipY,omitempty"`
 }
 
 // RenderLight is a resolved scene light record.
@@ -185,6 +191,11 @@ type RenderMaterial struct {
 	ShaderBackend      string         `json:"shaderBackend,omitempty"`
 	ShaderLayout       map[string]any `json:"shaderLayout,omitempty"`
 	Unlit              bool           `json:"unlit,omitempty"`
+	// CullMode overrides the renderer's face-culling for this material's
+	// pipeline ("none" | "front" | "back"). Empty means the renderer default
+	// ("back"). The flat 2D board materials set "none" so they survive the
+	// ortho-2D FlipY winding inversion (a 2D quad has no back face to cull).
+	CullMode string `json:"cullMode,omitempty"`
 }
 
 // RenderSurface is a textured world-space quad emitted alongside line geometry.

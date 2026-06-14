@@ -50,6 +50,10 @@ func OrthoCamera2D(zoom, panX, panY float64, width, height int) engine.RenderCam
 		Z:    zoom,
 		Near: -1,
 		Far:  1,
+		// The board is authored top-down (screen convention): row 0 at Y=0, the
+		// route subtitle "below" the title at a larger Y. Render +Y-down so that
+		// layout reads correctly (title above route, rows top-to-bottom).
+		FlipY: true,
 	}
 }
 
