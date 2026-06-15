@@ -521,13 +521,6 @@
     out[13] = -(top + bottom) / tb;
     out[14] = -(far + near) / fn;
     out[15] = 1;
-    // FlipY renders +Y-down (screen convention) for top-down-authored content
-    // (the canvas board). Negate the Y axis of the projection; board materials
-    // use cullMode "none" so the resulting winding inversion is harmless.
-    if (camera && camera.flipY) {
-      out[5] = -out[5];
-      out[13] = -out[13];
-    }
     return out;
   }
 

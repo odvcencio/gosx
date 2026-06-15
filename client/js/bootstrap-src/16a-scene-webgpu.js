@@ -3458,7 +3458,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: buffers },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: (material && material.cullMode) || "back" },
+          primitive: { topology: "triangle-list", cullMode: "back" },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
@@ -3548,7 +3548,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: (material && material.cullMode) || "back" },
+          primitive: { topology: "triangle-list", cullMode: "back" },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
@@ -6342,15 +6342,19 @@
       customFragmentWGSL: BOARD_TEXT_WGSL,
       shaderLayout: BOARD_TEXT_LAYOUT,
       customUniforms: { textColor: [0.902, 0.929, 0.953] },
-      // 2D glyph quads have no back face; "none" also keeps them visible under
-      // the ortho-2D FlipY winding inversion.
-      cullMode: "none",
     };
 
     // Per-font glyph atlas cache. Key = CSS font string. Each entry holds the
     // uploaded GPUTexture/view, atlas pixel dims, font ascent/descent (CSS px),
     // and a glyph map char → { u0,v0,u1,v1, w (cell width CSS px), advance CSS px }.
     var boardGlyphAtlases = new Map();
+
+    // Stable per-label GPU-buffer owners, keyed by the label's id. Board bundles
+    // are re-parsed every dirty frame, so the label objects are fresh each frame;
+    // keying the tracked-buffer cache on a persistent owner (not the per-frame
+    // object) lets wgpuCachedTrackedBuffer REUSE the uniform/pos/uv buffers across
+    // frames instead of reallocating (and leaking) 3×N buffers per pan/zoom frame.
+    var boardTextOwners = new Map();
 
     function parseBoardFontSizePx(font) {
       var m = String(font || "").match(/(\d+(?:\.\d+)?)px/);
@@ -6493,7 +6497,6 @@
 
       var cam = bundle.camera || {};
       var zoom = (typeof cam.z === "number" && cam.z > 0) ? cam.z : 1;
-      var flipY = cam.flipY === true;
 
       // Group labels by font so each distinct font hits one atlas.
       var byFont = {};
@@ -6548,19 +6551,14 @@
             var x1 = x0 + cellW;
             // The cell extends `pad` px beyond the ink ascent/descent (top & bottom),
             // so the quad must too — otherwise the coverage texels stretch.
-            // Screen-top/bottom world-Y of the glyph cell. Under the board
-            // camera's FlipY the projection negates Y, so screen-up is the
-            // SMALLER world-Y; otherwise screen-up is the larger world-Y. The
-            // atlas row 0 (v=0) is the glyph top, so it always maps to the
-            // screen-top edge — keeping glyphs upright in both conventions.
-            // cullMode "none" (boardTextMaterial) makes the winding moot.
-            var aboveW = ascentW + padW;
-            var belowW = descentW + padW;
-            var yScreenTop = flipY ? (baseY - aboveW) : (baseY + aboveW);
-            var yScreenBot = flipY ? (baseY + belowW) : (baseY - belowW);
+            // Quad spans the glyph cell: vertically [baseline-descent, baseline
+            // +ascent] in the board's +Y-up world. The atlas row 0 (v=0) is the
+            // glyph top, so v=0 maps to yTop and v=1 to yBot — glyphs upright.
+            var yTop = baseY + ascentW + padW;
+            var yBot = baseY - descentW - padW;
             positions.push(
-              x0, yScreenBot, 0, x1, yScreenBot, 0, x1, yScreenTop, 0,
-              x0, yScreenBot, 0, x1, yScreenTop, 0, x0, yScreenTop, 0
+              x0, yBot, 0, x1, yBot, 0, x1, yTop, 0,
+              x0, yBot, 0, x1, yTop, 0, x0, yTop, 0
             );
             uvs.push(
               glyph.u0, glyph.v1, glyph.u1, glyph.v1, glyph.u1, glyph.v0,
@@ -6578,9 +6576,11 @@
           );
           boardTextMaterial.customUniforms.textColor = [rgba[0], rgba[1], rgba[2]];
 
-          // Per-object owner so each label's uniform buffer + vertex buffers are
-          // cached independently across frames.
-          var owner = label;
+          // Stable owner keyed by label id so the tracked buffers persist and are
+          // reused across frames (the label object itself is re-parsed per frame).
+          var ownerKey = (typeof label.id === "string" && label.id) ? label.id : ("__bt:" + font + ":" + li);
+          var owner = boardTextOwners.get(ownerKey);
+          if (!owner) { owner = {}; boardTextOwners.set(ownerKey, owner); }
           var uniformData = sceneSelenaUniformData(boardTextMaterial);
           var uniformBuffer = wgpuCachedTrackedBuffer(
             owner, "_gosxBoardTextUniform", uniformData,
@@ -6978,6 +6978,14 @@
         if (buffer && typeof buffer.destroy === "function") buffer.destroy();
       });
       pointsEntryGPUBuffers.clear();
+      // Board glyph atlases are textures (not tracked in pointsEntryGPUBuffers);
+      // destroy them explicitly. The per-label glyph buffers are tracked buffers,
+      // already freed above; just drop the owner map.
+      boardGlyphAtlases.forEach(function(a) {
+        if (a && a.texture && typeof a.texture.destroy === "function") a.texture.destroy();
+      });
+      boardGlyphAtlases.clear();
+      boardTextOwners.clear();
       disposeComputeParticleSystems();
 
       if (mainDepthTexture) mainDepthTexture.destroy();
