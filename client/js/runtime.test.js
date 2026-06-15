@@ -7607,11 +7607,15 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var generateInstancedGeometry = sceneApi\.generateInstancedGeometry/);
   assert.match(prefix, /var normalizeInstancedGeometryKind = sceneApi\.normalizeInstancedGeometryKind/);
   assert.match(prefix, /var buildSceneWorldDrawPlan = sceneApi\.buildSceneWorldDrawPlan/);
+  // extractFrustumPlanesJS lives in 11-scene-math.js (base bundle) but is called
+  // by 16a's instanced GPU cull in the webgpu chunk — must be bridged here.
+  assert.match(prefix, /var extractFrustumPlanesJS = sceneApi\.extractFrustumPlanesJS/);
   assert.match(prefix, /var createSceneWorldDrawScratch = sceneApi\.createSceneWorldDrawScratch/);
   assert.match(prefix, /var createSceneThickLineScratch = sceneApi\.createSceneThickLineScratch/);
   assert.match(prefix, /var expandSceneThickLineIntoScratch = sceneApi\.expandSceneThickLineIntoScratch/);
   assert.match(core, /\n    clamp01,\n/);
   assert.match(core, /buildSceneWorldDrawPlan: typeof buildSceneWorldDrawPlan === "function"/);
+  assert.match(core, /extractFrustumPlanesJS: typeof extractFrustumPlanesJS === "function"/);
   assert.match(core, /createSceneWorldDrawScratch: typeof createSceneWorldDrawScratch === "function"/);
   assert.match(core, /createSceneThickLineScratch: typeof createSceneThickLineScratch === "function"/);
   assert.match(core, /expandSceneThickLineIntoScratch: typeof expandSceneThickLineIntoScratch === "function"/);
@@ -7923,6 +7927,12 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(diagnostics.requiredLimits.maxComputeWorkgroupSizeX, 128);
   assert.equal(diagnostics.requiredLimits.maxTextureDimension2D, 4096);
   assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
+  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.js
+  // (base scene3d bundle) but USED by the separate scene3d-webgpu chunk's
+  // instanced GPU cull. It MUST be exported on __gosx_scene3d_api so the webgpu
+  // chunk's prefix can bridge it; otherwise the webgpu render path throws
+  // "extractFrustumPlanesJS is not defined".
+  assert.equal(typeof env.context.__gosx_scene3d_api.extractFrustumPlanesJS, "function");
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), true);
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu-feature:future-rendering-mode"), true);
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:texture-compression-astc-sliced-3d"), false);

@@ -62,6 +62,10 @@
   var sceneMat4Ortho2DProj = sceneApi.sceneMat4Ortho2DProj;
   var sceneMat4Ortho2DViewProj = sceneApi.sceneMat4Ortho2DViewProj;
   var buildSceneWorldDrawPlan = sceneApi.buildSceneWorldDrawPlan;
+  // Frustum-plane extractor lives in 11-scene-math.js (base scene3d bundle);
+  // 16a's instanced GPU cull (updateInstancedCullSystems) calls it. Bridge it
+  // into this chunk's scope — it is NOT defined in the webgpu chunk itself.
+  var extractFrustumPlanesJS = sceneApi.extractFrustumPlanesJS;
   var createSceneWorldDrawScratch = sceneApi.createSceneWorldDrawScratch;
   var createSceneThickLineScratch = sceneApi.createSceneThickLineScratch;
   var expandSceneThickLineIntoScratch = sceneApi.expandSceneThickLineIntoScratch;
