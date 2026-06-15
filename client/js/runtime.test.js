@@ -20123,16 +20123,28 @@ test("gpu-cull T2e: compute pass is dispatched when system is ready", async () =
 // -------------------------------------------------------------------------
 // Task 3: extractFrustumPlanesJS — golden test vs. native Go vectors
 // -------------------------------------------------------------------------
-test("gpu-cull T3: extractFrustumPlanesJS source exists and produces 6 normalized planes", () => {
+test("gpu-cull T3: extractFrustumPlanesJS source exists in 11-scene-math.js (shared) and produces 6 normalized planes", () => {
+  // extractFrustumPlanesJS was hoisted from 16a to 11-scene-math.js (Slice 3)
+  // so both the WebGPU renderer (16a) and the WebGL2 renderer (16) share one
+  // implementation with no divergence.
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
-  // Source assertions.
-  assert.match(webgpu, /function extractFrustumPlanesJS\(vp\)/,
-    "extractFrustumPlanesJS must exist in 16a");
-  assert.match(webgpu, /near.*R2|R2.*near/,
-    "near plane formula must reference R2 (WebGPU half-depth convention)");
-  assert.match(webgpu, /addRow.*r3.*r0|left.*R3\+R0/,
+  // Function lives in the shared math module.
+  assert.match(math, /function extractFrustumPlanesJS\(vp\)/,
+    "extractFrustumPlanesJS must be defined in 11-scene-math.js (shared)");
+  assert.match(math, /near.*R2|R2.*near/,
+    "near plane formula must reference R2 (Gribb-Hartmann near=R2)");
+  assert.match(math, /addRow.*r3.*r0|left.*R3\+R0/,
     "left plane must be R3+R0 (Gribb-Hartmann)");
+  assert.match(math, /function instancePassesCullTest\(/,
+    "instancePassesCullTest must be defined in 11-scene-math.js");
+
+  // 16a must NOT redefine it (hoisted away) — it only carries the comment pointer.
+  assert.doesNotMatch(webgpu, /function extractFrustumPlanesJS\(vp\)/,
+    "extractFrustumPlanesJS must NOT be redefined in 16a (hoisted to 11)");
+
+  // 16a still has the dispatch hook.
   assert.match(webgpu, /updateInstancedCullSystems\(/,
     "updateInstancedCullSystems dispatch hook must exist in 16a");
 });
@@ -20158,13 +20170,14 @@ test("gpu-cull T3-golden: extractFrustumPlanesJS matches native Go cull.go outpu
   // a no-op.  The native Go extractFrustumPlanes produces identical output.
   // This golden test documents the parity.
   //
+  // Slice 3: extractFrustumPlanesJS was hoisted to 11-scene-math.js.
   // NOTE: built files (bootstrap-feature-scene3d-webgpu.js) are minified by
   // esbuild and function names are mangled, so we extract from the SOURCE file.
-  const webgpuSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mathSrc = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
 
-  const match = webgpuSrc.match(/function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(match, "extractFrustumPlanesJS must be extractable from 16a source (check indentation)");
+  const match = mathSrc.match(/function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(match, "extractFrustumPlanesJS must be extractable from 11-scene-math.js source (check indentation)");
 
   const fnSrc = "function extractFrustumPlanesJS(vp) {" + match[1] + "\n  }";
   const extractFn = new Function("return (" + fnSrc + ")")();
@@ -20347,4 +20360,264 @@ test("gpu-cull T5-capability: gpu-cull is true in WebGPU capabilities and false 
     path.join(__dirname, "bootstrap-src", "16-scene-webgl.capabilities.json"), "utf8"));
   assert.equal(webgpuCaps["gpu-cull"], true, "WebGPU must declare gpu-cull: true");
   assert.equal(webglCaps["gpu-cull"], false, "WebGL2 must declare gpu-cull: false");
+});
+
+// =========================================================================
+// Slice 3: WebGL2 CPU-cull fallback tests
+// =========================================================================
+
+// Helper: extract and compile extractFrustumPlanesJS + instancePassesCullTest
+// from 11-scene-math.js for headless unit testing.
+function loadCullFunctions() {
+  const mathSrc = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+
+  // Extract extractFrustumPlanesJS (indented 2 spaces inside the IIFE).
+  const extractMatch = mathSrc.match(
+    /function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(extractMatch, "extractFrustumPlanesJS must be extractable from 11-scene-math.js");
+  const extractFn = new Function(
+    "return (function extractFrustumPlanesJS(vp) {" + extractMatch[1] + "\n  })")();
+
+  // Extract instancePassesCullTest (indented 2 spaces).
+  const passMatch = mathSrc.match(
+    /function instancePassesCullTest\(transforms, instanceIndex, planes, radius\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(passMatch, "instancePassesCullTest must be extractable from 11-scene-math.js");
+  const passFn = new Function(
+    "return (function instancePassesCullTest(transforms, instanceIndex, planes, radius) {" +
+    passMatch[1] + "\n  })")();
+
+  return { extractFrustumPlanesJS: extractFn, instancePassesCullTest: passFn };
+}
+
+// -------------------------------------------------------------------------
+// S3 T1: instancePassesCullTest — survivor parity vs hand-computed reference
+// -------------------------------------------------------------------------
+// Scenario: identity VP (axis-aligned frustum, all 6 planes as computed by
+// T3-golden).  Place 4 instances:
+//   i0: translation (0,0,0)    — inside (center of frustum)
+//   i1: translation (2,0,0)    — outside (right plane: d = -1*2+1 = -1 < -radius=0)
+//                                Wait — for right plane [−1,0,0,1]: d = −1*2 + 0 + 0 + 1 = −1 < 0
+//                                With radius=0 default (use 2.0): d = −1 < −2.0 → false — inside
+//                                Actually d=−1; −r = −2.0 → d ≥ −r → inside!
+//   We need to move further: translation (5,0,0):
+//     right plane [-1,0,0,1]: d = -1*5 + 1 = -4; -radius = -2 → -4 < -2 → CULLED
+//   i2: translation (-5,0,0):
+//     left plane [1,0,0,1]: d = 1*(-5)+1 = -4 < -2 → CULLED
+//   i3: translation (0,0,5):
+//     far plane [0,0,-1,1]: d = -5+1 = -4 < -2 → CULLED
+//
+// So with identity VP and radius 2.0:
+//   i0 at (0,0,0)   → VISIBLE
+//   i1 at (5,0,0)   → CULLED (right)
+//   i2 at (-5,0,0)  → CULLED (left)
+//   i3 at (0,0,5)   → CULLED (far)
+//   i4 at (0,5,0)   → CULLED (top: [0,-1,0,1]: d = -5+1=-4<-2)
+//   i5 at (0,0,-3)  → near plane [0,0,1,0]: d=0*(-3)+0 = -3 < -2 → CULLED?
+//                     Actually d = plane[0]*cx + plane[1]*cy + plane[2]*cz + plane[3]
+//                               = 0*0 + 0*0 + 1*(-3) + 0 = -3 < -2 → CULLED (behind near)
+// Expected survivors: only i0.
+
+test("cpu-cull S3-T1: instancePassesCullTest survivor parity vs hand-computed reference", () => {
+  const { extractFrustumPlanesJS, instancePassesCullTest } = loadCullFunctions();
+
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  const planes = extractFrustumPlanesJS(identity);
+  assert.ok(planes && planes.length === 6, "must have 6 planes");
+
+  // Build transforms for 6 instances (col-major mat4, 16 floats each).
+  // Translation is at indices 12,13,14 of each 16-float block.
+  function makeTranslationMat4(x, y, z) {
+    return [
+      1, 0, 0, 0,  // col 0
+      0, 1, 0, 0,  // col 1
+      0, 0, 1, 0,  // col 2
+      x, y, z, 1,  // col 3 — translation
+    ];
+  }
+
+  const instances = [
+    makeTranslationMat4(0, 0, 0),   // i0: center — VISIBLE
+    makeTranslationMat4(5, 0, 0),   // i1: far right — CULLED
+    makeTranslationMat4(-5, 0, 0),  // i2: far left  — CULLED
+    makeTranslationMat4(0, 0, 5),   // i3: far back  — CULLED
+    makeTranslationMat4(0, 5, 0),   // i4: far up    — CULLED
+    makeTranslationMat4(0, 0, -3),  // i5: behind near — CULLED
+  ];
+  const transforms = new Float32Array(instances.flat());
+  const radius = 2.0;
+
+  const results = instances.map((_, idx) => instancePassesCullTest(transforms, idx, planes, radius));
+
+  // Verify hand-computed expectations.
+  assert.equal(results[0], true,  "i0 at origin must be VISIBLE");
+  assert.equal(results[1], false, "i1 at (5,0,0) must be CULLED (right plane)");
+  assert.equal(results[2], false, "i2 at (-5,0,0) must be CULLED (left plane)");
+  assert.equal(results[3], false, "i3 at (0,0,5) must be CULLED (far plane)");
+  assert.equal(results[4], false, "i4 at (0,5,0) must be CULLED (top plane)");
+  assert.equal(results[5], false, "i5 at (0,0,-3) must be CULLED (near plane)");
+
+  // Collect survivors.
+  const survivors = instances
+    .map((_, idx) => idx)
+    .filter(idx => instancePassesCullTest(transforms, idx, planes, radius));
+  assert.deepEqual(survivors, [0], "only i0 at origin must survive the cull");
+});
+
+// -------------------------------------------------------------------------
+// S3 T2: instancePassesCullTest — radius sensitivity
+// -------------------------------------------------------------------------
+test("cpu-cull S3-T2: radius controls cull boundary (larger radius keeps more instances)", () => {
+  const { extractFrustumPlanesJS, instancePassesCullTest } = loadCullFunctions();
+  const identity = new Float32Array([
+    1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1,
+  ]);
+  const planes = extractFrustumPlanesJS(identity);
+
+  // Instance at (3,0,0): right plane [-1,0,0,1]: d = -3+1 = -2.
+  // radius=1.5 → -2 < -1.5 → CULLED.
+  // radius=3   → -2 >= -3  → VISIBLE.
+  function makeTf(x, y, z) {
+    const t = new Float32Array(16);
+    t[0]=1; t[5]=1; t[10]=1; t[15]=1; // identity mat
+    t[12]=x; t[13]=y; t[14]=z;
+    return t;
+  }
+  const tf3 = makeTf(3, 0, 0);
+
+  assert.equal(instancePassesCullTest(tf3, 0, planes, 1.5), false,
+    "radius 1.5: instance at (3,0,0) must be CULLED");
+  assert.equal(instancePassesCullTest(tf3, 0, planes, 3.0), true,
+    "radius 3.0: instance at (3,0,0) must be VISIBLE (sphere overlaps right plane)");
+});
+
+// -------------------------------------------------------------------------
+// S3 T3: absent/zero cullRadius defaults to 2.0 (matches compute cull system)
+// -------------------------------------------------------------------------
+test("cpu-cull S3-T3: absent or zero cullRadius defaults to 2.0 (matches GPU-cull system default)", () => {
+  const { extractFrustumPlanesJS, instancePassesCullTest } = loadCullFunctions();
+  const identity = new Float32Array([
+    1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1,
+  ]);
+  const planes = extractFrustumPlanesJS(identity);
+
+  // At (2.5,0,0): right plane d = -2.5+1 = -1.5; -default_radius = -2.0; -1.5 >= -2 → VISIBLE.
+  // At (3.5,0,0): right plane d = -3.5+1 = -2.5; -2.5 < -2.0 → CULLED.
+  function makeTf(x) {
+    const t = new Float32Array(16);
+    t[0]=1; t[5]=1; t[10]=1; t[15]=1;
+    t[12]=x;
+    return t;
+  }
+
+  // undefined radius → default 2.0
+  assert.equal(instancePassesCullTest(makeTf(2.5), 0, planes, undefined), true,
+    "undefined radius → default 2.0 → (2.5,0,0) is VISIBLE");
+  assert.equal(instancePassesCullTest(makeTf(3.5), 0, planes, undefined), false,
+    "undefined radius → default 2.0 → (3.5,0,0) is CULLED");
+  // 0 radius → default 2.0
+  assert.equal(instancePassesCullTest(makeTf(2.5), 0, planes, 0), true,
+    "zero radius → default 2.0 → (2.5,0,0) is VISIBLE");
+  assert.equal(instancePassesCullTest(makeTf(3.5), 0, planes, 0), false,
+    "zero radius → default 2.0 → (3.5,0,0) is CULLED");
+});
+
+// -------------------------------------------------------------------------
+// S3 T4: WebGL2 source — CPU cull path present in 16-scene-webgl.js
+// -------------------------------------------------------------------------
+test("cpu-cull S3-T4: 16-scene-webgl.js contains CPU cull path with correct structure", () => {
+  const webgl = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // The cull config check must be present.
+  assert.match(webgl, /hasCullConfig/,
+    "drawInstancedMeshes must have hasCullConfig gate");
+  assert.match(webgl, /cullKernelWGSL/,
+    "hasCullConfig must check cullKernelWGSL");
+
+  // Must call the shared frustum + test functions.
+  assert.match(webgl, /extractFrustumPlanesJS\(scratchSelenaViewProjection\)/,
+    "CPU cull must call extractFrustumPlanesJS(scratchSelenaViewProjection)");
+  assert.match(webgl, /instancePassesCullTest\(/,
+    "CPU cull must call instancePassesCullTest");
+
+  // Must compact into scratch buffers and upload via bufferData.
+  assert.match(webgl, /_cpuCullScratchTransforms/,
+    "must use _cpuCullScratchTransforms scratch buffer");
+  assert.match(webgl, /gl\.bufferData\(gl\.ARRAY_BUFFER.*DYNAMIC_DRAW/,
+    "must upload compacted data via bufferData with DYNAMIC_DRAW");
+
+  // The draw call must use the compacted survivorCount.
+  assert.match(webgl, /gl\.drawArraysInstanced\(gl\.TRIANGLES,\s*0,\s*geom\.vertexCount,\s*instanceCount\)/,
+    "drawArraysInstanced must use (possibly reduced) instanceCount");
+
+  // No-cull-config path: must still draw all instances (no early return before draw).
+  assert.match(webgl, /var hasCullConfig.*\n.*var instanceColorData/s,
+    "instanceColorData must be fetched before the cull branch (draw-all path)");
+});
+
+// -------------------------------------------------------------------------
+// S3 T5: WebGL2 capability gating — no-cull-config → draw-all (source check)
+// -------------------------------------------------------------------------
+test("cpu-cull S3-T5: no cullKernelWGSL on WebGL2 → draw-all (unchanged instanceCount)", () => {
+  const webgl = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // The hasCullConfig branch is conditional — draw-all when false.
+  assert.match(webgl, /if\s*\(hasCullConfig\)\s*\{/,
+    "CPU cull must be inside if (hasCullConfig) block");
+
+  // instanceColorData must be declared BEFORE the cull branch so the draw-all
+  // path uses the original data directly.
+  const cidPos = webgl.indexOf("var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount)");
+  const cullPos = webgl.indexOf("if (hasCullConfig)");
+  assert.ok(cidPos > 0, "instanceColorData declaration must exist");
+  assert.ok(cullPos > 0, "hasCullConfig branch must exist");
+  assert.ok(cidPos < cullPos, "instanceColorData must be declared BEFORE the hasCullConfig branch");
+});
+
+// -------------------------------------------------------------------------
+// S3 T6: WebGPU path untouched — extractFrustumPlanesJS not redefined in 16a
+// -------------------------------------------------------------------------
+test("cpu-cull S3-T6: WebGPU path (16a) does NOT redefine extractFrustumPlanesJS (uses shared 11)", () => {
+  const webgpu = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // Must not redefine the function (it was hoisted to 11).
+  assert.doesNotMatch(webgpu, /function extractFrustumPlanesJS\(vp\)/,
+    "16a must not redefine extractFrustumPlanesJS (hoisted to 11-scene-math.js)");
+
+  // The GPU cull path must remain intact: updateInstancedCullSystems + drawIndirect.
+  assert.match(webgpu, /updateInstancedCullSystems\(/,
+    "GPU cull dispatch hook must still exist in 16a");
+  assert.match(webgpu, /pass\.drawIndirect\(/,
+    "GPU drawIndirect call must still exist in 16a");
+  assert.match(webgpu, /cullSys\.isReady\(\)/,
+    "GPU cull readiness gate must still exist in 16a");
+});
+
+// -------------------------------------------------------------------------
+// S3 T7: 11-scene-math.js exports both shared cull functions
+// -------------------------------------------------------------------------
+test("cpu-cull S3-T7: 11-scene-math.js defines extractFrustumPlanesJS and instancePassesCullTest", () => {
+  const math = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+
+  assert.match(math, /function extractFrustumPlanesJS\(vp\)/,
+    "extractFrustumPlanesJS must be defined in 11-scene-math.js");
+  assert.match(math, /function instancePassesCullTest\(transforms, instanceIndex, planes, radius\)/,
+    "instancePassesCullTest must be defined in 11-scene-math.js");
+
+  // instancePassesCullTest must match cull.go: cull when d < -radius.
+  assert.match(math, /if\s*\(d\s*<\s*-r\)\s*return false/,
+    "half-space test must cull when d < -r (matches cull.go)");
+
+  // Default radius must be 2.0 (matches 16b-scene-compute.js).
+  assert.match(math, /radius.*>.*0.*\?.*radius.*:.*2\.0|2\.0.*default/,
+    "absent/zero radius must default to 2.0");
 });

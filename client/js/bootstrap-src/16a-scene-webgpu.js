@@ -1440,51 +1440,12 @@
   // -----------------------------------------------------------------------
   // Frustum Plane Extraction (browser-side parity with native cull.go)
   // -----------------------------------------------------------------------
-  // Port of render/bundle/cull.go extractFrustumPlanes (Gribb-Hartmann).
+  // extractFrustumPlanesJS + instancePassesCullTest are defined in
+  // 11-scene-math.js (shared by both this WebGPU renderer and 16-scene-webgl.js).
   //
-  // TASK 0 FINDING: native computeMVP (render/bundle/math.go:mat4Perspective)
-  // produces an OpenGL-convention matrix (z in [-1, +1]). However
-  // extractFrustumPlanes uses "near = R2" (not R3+R2), which is the WebGPU
-  // half-depth variant. This is a known native mismatch.
-  //
-  // In the BROWSER, scratchSelenaViewProjection (16a:3928) is built from the
-  // depth-remapped projection (lines 3924-3927 apply 0.5*(z+w)), putting it in
-  // WebGPU [0, 1] clip convention. We use scratchSelenaViewProjection as input
-  // so the near-plane half-depth formula is correct for what the GPU actually
-  // clips. This is the right plane source for browser-side frustum culling.
-  //
-  // Column-major convention (same as Go cull.go): vp[col*4 + row].
-  // row(r) = [vp[r], vp[4+r], vp[8+r], vp[12+r]] (mat4 column-major).
-  //
-  // Plane layout: [nx, ny, nz, d]. Half-space "inside" = dot(n, p) + d >= 0.
-  // Planes: left(R3+R0), right(R3-R0), bottom(R3+R1), top(R3-R1),
-  //         near(R2), far(R3-R2).  (near=R2 is the WebGPU/half-depth form.)
-
-  function extractFrustumPlanesJS(vp) {
-    // vp is a Float32Array[16] in column-major order.
-    // row(r) = (vp[0*4+r], vp[1*4+r], vp[2*4+r], vp[3*4+r])
-    var r0 = [vp[0], vp[4], vp[8],  vp[12]];
-    var r1 = [vp[1], vp[5], vp[9],  vp[13]];
-    var r2 = [vp[2], vp[6], vp[10], vp[14]];
-    var r3 = [vp[3], vp[7], vp[11], vp[15]];
-
-    function addRow(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2], a[3]+b[3]]; }
-    function subRow(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2], a[3]-b[3]]; }
-    function norm(p) {
-      var l = Math.sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
-      if (l === 0) return p;
-      return [p[0]/l, p[1]/l, p[2]/l, p[3]/l];
-    }
-
-    return [
-      norm(addRow(r3, r0)), // left:   R3+R0
-      norm(subRow(r3, r0)), // right:  R3-R0
-      norm(addRow(r3, r1)), // bottom: R3+R1
-      norm(subRow(r3, r1)), // top:    R3-R1
-      norm(r2),             // near:   R2  (WebGPU half-depth)
-      norm(subRow(r3, r2)), // far:    R3-R2
-    ];
-  }
+  // This renderer passes scratchSelenaViewProjection (post-depth-remap, WebGPU
+  // [0,1] clip convention) so the near=R2 half-depth formula is correct for
+  // what the GPU actually clips.
 
   // -----------------------------------------------------------------------
   // Pipeline Cache

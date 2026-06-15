@@ -112,7 +112,13 @@ const budgets = [
   // updateInstancedCullSystems dispatch hook + indirect-draw branch in
   // drawInstancedMeshes + createSceneInstancedCullSystem in 16b (16a+16b).
   // Measured: 902_343 / 244_995 / 198_759 + rounding headroom.
-  { file: "bootstrap.js", raw: 903_000, gzip: 245_500, brotli: 199_500 },
+  //
+  // Bumped raw 903_000 -> 905_000: Slice 3 WebGL2 CPU-cull fallback —
+  // extractFrustumPlanesJS + instancePassesCullTest hoisted to 11-scene-math.js
+  // (shared); CPU cull path (hasCullConfig gate + survivor compaction +
+  // dynamic VBO upload) added to drawInstancedMeshes in 16-scene-webgl.js.
+  // Measured: 903_824 / 245_457 / 198_989 + rounding headroom.
+  { file: "bootstrap.js", raw: 905_000, gzip: 246_000, brotli: 199_500 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -171,7 +177,12 @@ const budgets = [
   // 123_000: Slice 2 browser-gpu-cull — createSceneInstancedCullSystem + exports
   // in 16b-scene-compute.js (the scene3d feature chunk includes 16b).
   // Measured: 545_325 / 148_714 / 122_349 + rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 546_000, gzip: 149_500, brotli: 123_000 },
+  //
+  // Bumped raw 546_000 -> 548_500: Slice 3 WebGL2 CPU-cull fallback —
+  // instancePassesCullTest in 11-scene-math.js + CPU cull path in
+  // 16-scene-webgl.js (drawInstancedMeshes: hasCullConfig gate, survivor
+  // compaction, dynamic VBO upload). Measured: 547_225 / 149_287 / 122_821.
+  { file: "bootstrap-feature-scene3d.js", raw: 548_500, gzip: 150_000, brotli: 123_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

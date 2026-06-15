@@ -5666,14 +5666,95 @@
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
 
+        // -----------------------------------------------------------------------
+        // CPU frustum cull (WebGL2 path — gpu-cull capability absent).
+        // When a mesh carries a cull kernel (cullKernelWGSL present), run a
+        // per-instance sphere-vs-frustum test using extractFrustumPlanesJS +
+        // instancePassesCullTest (both defined in 11-scene-math.js).
+        // Survivors are compacted into scratch Float32Arrays; instanceCount is
+        // reduced to the survivor count. The compacted data is uploaded to
+        // dedicated dynamic VBOs (_cpuCullTransformVBO/_cpuCullColorVBO) owned
+        // by the mesh entry so bufferSubData runs per-frame without cache
+        // invalidation. When no cull config is present the mesh draws all
+        // instances unchanged via the normal static-VBO path.
+        // -----------------------------------------------------------------------
+        var hasCullConfig = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
+        // Fetch full color buffer (indexed by original instance) before compaction.
         var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
+        // Whether the draw will use the culled VBOs or the cached static VBOs.
+        var useCullVBOs = false;
+        if (hasCullConfig) {
+          var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
+          var planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
+          // Allocate or reuse scratch Float32Arrays.
+          var maxTFloats = instanceCount * 16;
+          if (!mesh._cpuCullScratchTransforms || mesh._cpuCullScratchTransforms.length < maxTFloats) {
+            mesh._cpuCullScratchTransforms = new Float32Array(maxTFloats);
+          }
+          var scratchT = mesh._cpuCullScratchTransforms;
+          var scratchC = null;
+          if (instanceColorData) {
+            var maxCFloats = instanceCount * 4;
+            if (!mesh._cpuCullScratchColors || mesh._cpuCullScratchColors.length < maxCFloats) {
+              mesh._cpuCullScratchColors = new Float32Array(maxCFloats);
+            }
+            scratchC = mesh._cpuCullScratchColors;
+          }
+          var survivorCount = 0;
+          for (var ci = 0; ci < instanceCount; ci++) {
+            if (instancePassesCullTest(transformData, ci, planes, cullRadius)) {
+              var srcT = ci * 16;
+              var dstT = survivorCount * 16;
+              for (var fi = 0; fi < 16; fi++) scratchT[dstT + fi] = transformData[srcT + fi];
+              if (scratchC) {
+                var srcC = ci * 4;
+                var dstC = survivorCount * 4;
+                scratchC[dstC]     = instanceColorData[srcC];
+                scratchC[dstC + 1] = instanceColorData[srcC + 1];
+                scratchC[dstC + 2] = instanceColorData[srcC + 2];
+                scratchC[dstC + 3] = instanceColorData[srcC + 3];
+              }
+              survivorCount++;
+            }
+          }
+          instanceCount = survivorCount;
+          // If nothing survives, skip the draw entirely.
+          if (instanceCount <= 0) continue;
+
+          // Upload compacted data to per-mesh dynamic VBOs. We do NOT use the
+          // static WeakMap cache (ensureStaticArrayVBO) because scratchT/scratchC
+          // are the same object references across frames; the cache would skip
+          // the re-upload. Instead we own dedicated dynamic VBOs here.
+          if (!mesh._cpuCullTransformVBO) {
+            mesh._cpuCullTransformVBO = gl.createBuffer();
+            pointsEntryBuffers.add(mesh._cpuCullTransformVBO);
+          }
+          gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
+          gl.bufferData(gl.ARRAY_BUFFER, scratchT.subarray(0, instanceCount * 16), gl.DYNAMIC_DRAW);
+
+          if (scratchC) {
+            if (!mesh._cpuCullColorVBO) {
+              mesh._cpuCullColorVBO = gl.createBuffer();
+              pointsEntryBuffers.add(mesh._cpuCullColorVBO);
+            }
+            gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullColorVBO);
+            gl.bufferData(gl.ARRAY_BUFFER, scratchC.subarray(0, instanceCount * 4), gl.DYNAMIC_DRAW);
+          }
+          instanceColorData = scratchC;
+          useCullVBOs = true;
+        }
+
         var hasInstanceColor = !!(instanceColorData && ip.attributes.instanceColor >= 0);
         if (ip.uniforms.hasInstanceColor) {
           gl.uniform1i(ip.uniforms.hasInstanceColor, hasInstanceColor ? 1 : 0);
         }
 
-        // Bind cached transforms VBO.
-        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
+        // Bind transforms VBO: dynamic cull VBO or static cached VBO.
+        if (useCullVBOs) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, transformData));
+        }
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
         // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
@@ -5686,7 +5767,11 @@
         }
 
         if (hasInstanceColor) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, instanceColorData));
+          if (useCullVBOs && mesh._cpuCullColorVBO) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullColorVBO);
+          } else {
+            gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, instanceColorData));
+          }
           gl.enableVertexAttribArray(ip.attributes.instanceColor);
           gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
           gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
