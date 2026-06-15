@@ -276,6 +276,57 @@
     "}",
   ].join("\n");
 
+  // Cull-path instanced vertex shader: location 8 = pickData (vec4u) instead
+  // of instanceColor (vec4f). The output struct drops instanceColor — material
+  // color is read from the per-material uniform in the fragment shader, so no
+  // per-instance color interpolation is needed on the cull path. VertexOutput
+  // is identical to the non-cull variant (same locations 0-4) so it is
+  // compatible with WGSL_PBR_FRAGMENT without modification. pickData is read
+  // in vertex but not forwarded to fragment (gpu picking consumes it natively).
+  var WGSL_PBR_INSTANCED_CULL_VERTEX = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct VertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec4f,",
+    "    @location(4) instanceMatrix0: vec4f,",
+    "    @location(5) instanceMatrix1: vec4f,",
+    "    @location(6) instanceMatrix2: vec4f,",
+    "    @location(7) instanceMatrix3: vec4f,",
+    "    @location(8) pickData: vec4u,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "    @builtin(position) clipPos: vec4f,",
+    "    @location(0) worldPos: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec3f,",
+    "    @location(4) bitangent: vec3f,",
+    "    @location(5) instanceColor: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "",
+    "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
+    "    var out: VertexOutput;",
+    "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
+    "    let world = model * vec4f(in.position, 1.0);",
+    "    out.worldPos = world.xyz;",
+    "    out.normal = normalize((model * vec4f(in.normal, 0.0)).xyz);",
+    "    out.uv = in.uv;",
+    "    let T = normalize((model * vec4f(in.tangent.xyz, 0.0)).xyz);",
+    "    let N = out.normal;",
+    "    out.tangent = T;",
+    "    out.bitangent = cross(N, T) * in.tangent.w;",
+    "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
+    "    out.clipPos = frame.projMatrix * frame.viewMatrix * world;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
   // -----------------------------------------------------------------------
   // PBR Fragment Shader (WGSL)
   // -----------------------------------------------------------------------
@@ -1387,6 +1438,55 @@
   }
 
   // -----------------------------------------------------------------------
+  // Frustum Plane Extraction (browser-side parity with native cull.go)
+  // -----------------------------------------------------------------------
+  // Port of render/bundle/cull.go extractFrustumPlanes (Gribb-Hartmann).
+  //
+  // TASK 0 FINDING: native computeMVP (render/bundle/math.go:mat4Perspective)
+  // produces an OpenGL-convention matrix (z in [-1, +1]). However
+  // extractFrustumPlanes uses "near = R2" (not R3+R2), which is the WebGPU
+  // half-depth variant. This is a known native mismatch.
+  //
+  // In the BROWSER, scratchSelenaViewProjection (16a:3928) is built from the
+  // depth-remapped projection (lines 3924-3927 apply 0.5*(z+w)), putting it in
+  // WebGPU [0, 1] clip convention. We use scratchSelenaViewProjection as input
+  // so the near-plane half-depth formula is correct for what the GPU actually
+  // clips. This is the right plane source for browser-side frustum culling.
+  //
+  // Column-major convention (same as Go cull.go): vp[col*4 + row].
+  // row(r) = [vp[r], vp[4+r], vp[8+r], vp[12+r]] (mat4 column-major).
+  //
+  // Plane layout: [nx, ny, nz, d]. Half-space "inside" = dot(n, p) + d >= 0.
+  // Planes: left(R3+R0), right(R3-R0), bottom(R3+R1), top(R3-R1),
+  //         near(R2), far(R3-R2).  (near=R2 is the WebGPU/half-depth form.)
+
+  function extractFrustumPlanesJS(vp) {
+    // vp is a Float32Array[16] in column-major order.
+    // row(r) = (vp[0*4+r], vp[1*4+r], vp[2*4+r], vp[3*4+r])
+    var r0 = [vp[0], vp[4], vp[8],  vp[12]];
+    var r1 = [vp[1], vp[5], vp[9],  vp[13]];
+    var r2 = [vp[2], vp[6], vp[10], vp[14]];
+    var r3 = [vp[3], vp[7], vp[11], vp[15]];
+
+    function addRow(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2], a[3]+b[3]]; }
+    function subRow(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2], a[3]-b[3]]; }
+    function norm(p) {
+      var l = Math.sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
+      if (l === 0) return p;
+      return [p[0]/l, p[1]/l, p[2]/l, p[3]/l];
+    }
+
+    return [
+      norm(addRow(r3, r0)), // left:   R3+R0
+      norm(subRow(r3, r0)), // right:  R3-R0
+      norm(addRow(r3, r1)), // bottom: R3+R1
+      norm(subRow(r3, r1)), // top:    R3-R1
+      norm(r2),             // near:   R2  (WebGPU half-depth)
+      norm(subRow(r3, r2)), // far:    R3-R2
+    ];
+  }
+
+  // -----------------------------------------------------------------------
   // Pipeline Cache
   // -----------------------------------------------------------------------
 
@@ -1600,6 +1700,25 @@
     { arrayStride: 16, stepMode: "instance", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 8 }] },
   ]);
 
+  // Cull-path instanced layout: 80-byte InstanceRecord (mat4 @ 0-63, pickData
+  // uint32x4 @ 64-79). Location 8 carries pickData (vec4u) instead of the
+  // non-cull layout's instanceColor (vec4f). Material color comes from the
+  // per-material uniform — fragment does NOT read per-instance vertex color.
+  // Matches the native render/bundle/cull.go instanceRecordStride = 80.
+  var WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT = WGPU_PBR_VERTEX_LAYOUT.concat([
+    {
+      arrayStride: 80,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x4", offset: 0,  shaderLocation: 4 },
+        { format: "float32x4", offset: 16, shaderLocation: 5 },
+        { format: "float32x4", offset: 32, shaderLocation: 6 },
+        { format: "float32x4", offset: 48, shaderLocation: 7 },
+        { format: "uint32x4",  offset: 64, shaderLocation: 8 },
+      ],
+    },
+  ]);
+
   // Shadow vertex buffer layout (position only).
   var WGPU_SHADOW_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
@@ -1702,6 +1821,37 @@
         module: vertexModule,
         entryPoint: "vertexMain",
         buffers: WGPU_PBR_INSTANCED_VERTEX_LAYOUT,
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: targetFormat,
+          blend: wgpuBlendState(blendMode),
+        }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+      multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: depthWrite,
+        depthCompare: "less-equal",
+      },
+    });
+  }
+
+  // Cull-path pipeline: uses WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT (80-byte
+  // InstanceRecord with pickData uint32x4 at location 8). The same fragment
+  // module is used — no per-instance color from vertex; fragment reads the
+  // per-material uniform. Shadow pipeline is NOT added (shadows stay draw-all).
+  function wgpuCreatePBRInstancedCullPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
+    return device.createRenderPipeline({
+      label: "gosx-pbr-instanced-cull-" + blendMode,
+      layout: pipelineLayout,
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT,
       },
       fragment: {
         module: fragmentModule,
@@ -2627,6 +2777,7 @@
 
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
+    var pbrInstancedCullVertexModule = null;
     var pbrFragmentModule = null;
     var elioSkinShaderModule = null;
     var elioSkinPipeline = null;
@@ -2687,6 +2838,7 @@
     var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
     var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
+    var instancedCullSystems = new Map(); // meshId → { system, signature }
     var lastComputeParticleTimeSeconds = null;
     var lastPreparedScene = null;
     var lastWebGPUFrameStats = null;
@@ -3003,6 +3155,7 @@
         // Compile shader modules.
         pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
         pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
+        pbrInstancedCullVertexModule = device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
         elioSkinShaderModule = device.createShaderModule({ label: "elio-skin-lbs", code: SCENE_ELIO_SKIN_LBS_SOURCE });
         elioSkinPipeline = device.createComputePipeline({
@@ -3157,6 +3310,14 @@
       var key = wgpuPipelineKey("pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
       var pipeline = wgpuCreatePBRInstancedPipeline(device, pbrPipelineLayout, pbrInstancedVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getPBRInstancedCullPipeline(blendMode, depthWrite) {
+      var key = wgpuPipelineKey("pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      if (pipelineCache[key]) return pipelineCache[key];
+      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, pbrPipelineLayout, pbrInstancedCullVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -3866,6 +4027,114 @@
         }
       }
       return records;
+    }
+
+    // updateInstancedCullSystems dispatches GPU frustum-cull compute passes for
+    // all InstancedMeshes that carry a cullKernelWGSL + the gpu-cull capability.
+    // Called once per frame, AFTER uploadFrameUniforms (so scratchSelenaViewProjection
+    // is ready), BEFORE the shadow pass and main render pass. Mirrors
+    // updateComputeParticleSystems shape.
+    //
+    // vp is the current frame's scratchSelenaViewProjection (post-depth-remap,
+    // WebGPU [0,1] clip convention — see extractFrustumPlanesJS comment above).
+    //
+    // Returns a Map: meshId → { system, isReady }.
+    function updateInstancedCullSystems(instancedMeshes, encoder, vp) {
+      if (!Array.isArray(instancedMeshes) || instancedMeshes.length === 0) {
+        return instancedCullSystems;
+      }
+      // Check if gpu-cull capability is active. The webgpu chunk is only loaded
+      // when webgpu is active, so we can check the API's capabilities JSON or
+      // simply gate on the feature we know is set to true in
+      // 16a-scene-webgpu.capabilities.json. We guard on createSceneInstancedCullSystem
+      // being available (exported by 16b into __gosx_scene3d_api).
+      var cullApi = (typeof window !== "undefined" && window.__gosx_scene3d_api)
+        ? window.__gosx_scene3d_api
+        : null;
+      var createCullFn = cullApi && typeof cullApi.createSceneInstancedCullSystem === "function"
+        ? cullApi.createSceneInstancedCullSystem
+        : null;
+      var sigFn = cullApi && typeof cullApi.cullSystemSignature === "function"
+        ? cullApi.cullSystemSignature
+        : null;
+
+      var planes = extractFrustumPlanesJS(vp);
+      var activeIds = new Set();
+
+      for (var i = 0; i < instancedMeshes.length; i++) {
+        var mesh = instancedMeshes[i];
+        if (!mesh) continue;
+        var wgsl = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL.trim() : null;
+        if (!wgsl) continue; // mesh has no cull kernel — draw-all (D3)
+        if (!createCullFn) continue;
+
+        var meshId = (typeof mesh.id === "string" && mesh.id) ? mesh.id : ("mesh-" + i);
+        activeIds.add(meshId);
+
+        // Recreate system when kernel or capacity changes.
+        var sig = sigFn ? sigFn(mesh) : "";
+        var existing = instancedCullSystems.get(meshId);
+        if (!existing || existing.signature !== sig) {
+          if (existing && existing.system && typeof existing.system.dispose === "function") {
+            existing.system.dispose();
+          }
+          var newSystem = createCullFn(device, mesh);
+          instancedCullSystems.set(meshId, { system: newSystem, signature: sig });
+          existing = instancedCullSystems.get(meshId);
+        }
+
+        if (!existing || !existing.system) continue;
+        var sys = existing.system;
+        if (!sys.isReady()) continue;
+
+        // Build instance records for this mesh. The native InstanceRecord is
+        // 80B: mat4 (col-major, 64B) + pickData uint32x4 (16B). For the initial
+        // slice, we pass the mesh's transforms as the mat4 portion with zero
+        // pickData (S6 consumer will supply real pickData).
+        var instanceCount = (typeof mesh.instanceCount === "number") ? mesh.instanceCount : 0;
+        var transforms = mesh.transforms;
+        var recordBytes = null;
+        if (transforms && instanceCount > 0) {
+          var tf = (transforms instanceof Float32Array) ? transforms : new Float32Array(transforms);
+          // Interleave mat4 (16 floats, 64B) + zero pickData (4 uint32, 16B).
+          var recBuf = new ArrayBuffer(instanceCount * 80);
+          var recF = new Float32Array(recBuf);
+          var recU = new Uint32Array(recBuf);
+          for (var j = 0; j < instanceCount; j++) {
+            var src = j * 16;
+            var dst = j * 20; // 80B / 4B = 20 u32 slots per record
+            for (var k = 0; k < 16; k++) recF[dst + k] = (src + k < tf.length) ? tf[src + k] : 0;
+            // pickData at offset 64 in the record = indices 16-19 in the 20-slot block.
+            recU[dst + 16] = 0;
+            recU[dst + 17] = 0;
+            recU[dst + 18] = 0;
+            recU[dst + 19] = 0;
+          }
+          recordBytes = recBuf;
+        }
+
+        // Get geometry vertex count for the drawArgs reset.
+        var geom = getInstancedGeometry(mesh);
+        var vertexCount = (geom && geom.vertexCount > 0) ? geom.vertexCount : 1;
+
+        sys.update(device, encoder, planes, vertexCount,
+          recordBytes ? new Float32Array(recordBytes) : null,
+          instanceCount);
+      }
+
+      // GC: dispose systems for meshes no longer in the bundle.
+      for (var _it = instancedCullSystems.entries(), _entry = _it.next(); !_entry.done; _entry = _it.next()) {
+        var _id   = _entry.value[0];
+        var _rec  = _entry.value[1];
+        if (!activeIds.has(_id)) {
+          if (_rec && _rec.system && typeof _rec.system.dispose === "function") {
+            _rec.system.dispose();
+          }
+          instancedCullSystems.delete(_id);
+        }
+      }
+
+      return instancedCullSystems;
     }
 
     // -----------------------------------------------------------------------
@@ -5180,7 +5449,7 @@
       return { opaque: opaque, alpha: alpha, additive: additive };
     }
 
-    function drawInstancedMeshes(pass, meshList, materials) {
+    function drawInstancedMeshes(pass, meshList, materials, blendMode, depthWrite) {
       for (var i = 0; i < meshList.length; i++) {
         var mesh = meshList[i];
         var instanceCount = instancedMeshCount(mesh);
@@ -5193,13 +5462,35 @@
         var mat = instancedMeshMaterial(mesh, materials);
         pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, mesh));
 
-        pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
-        pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
-        pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
-        pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
-        pass.setVertexBuffer(4, ensureInstancedTransformGPUBuffer(mesh, transformData));
-        pass.setVertexBuffer(5, ensureInstancedColorGPUBuffer(mesh, instancedMeshColorData(mesh, instanceCount)));
-        pass.draw(geom.vertexCount, instanceCount);
+        // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
+        // not-ready / no kernel / capability absent → draw-all).
+        var meshId = (typeof mesh.id === "string" && mesh.id) ? mesh.id : ("mesh-" + i);
+        var hasCullWGSL = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
+        var cullRecord = hasCullWGSL ? instancedCullSystems.get(meshId) : null;
+        var cullSys = cullRecord && cullRecord.system;
+
+        if (cullSys && cullSys.isReady()) {
+          // GPU-culled path: slot 4 = outputBuf (80B InstanceRecord, cull layout).
+          // Use the cull pipeline (loc 8 = pickData vec4u) instead of the
+          // standard pipeline (loc 8 = instanceColor vec4f).
+          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, depthWrite));
+          pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
+          pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
+          pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
+          pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
+          pass.setVertexBuffer(4, cullSys.outputBuf);
+          pass.drawIndirect(cullSys.drawArgsBuf, 0);
+        } else {
+          // Draw-all path (not-ready, no kernel, or capability absent).
+          pass.setPipeline(getPBRInstancedPipeline(blendMode, depthWrite));
+          pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
+          pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
+          pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
+          pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
+          pass.setVertexBuffer(4, ensureInstancedTransformGPUBuffer(mesh, transformData));
+          pass.setVertexBuffer(5, ensureInstancedColorGPUBuffer(mesh, instancedMeshColorData(mesh, instanceCount)));
+          pass.draw(geom.vertexCount, instanceCount);
+        }
       }
     }
 
@@ -6717,6 +7008,12 @@
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
+      // GPU frustum cull: runs AFTER uploadFrameUniforms so scratchSelenaViewProjection
+      // is ready (WebGPU post-depth-remap VP). Runs BEFORE shadow and main passes
+      // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
+      // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
+      // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
+      var instancedCullMap = updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
@@ -6855,10 +7152,8 @@
           drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers);
         }
         if (instancedDrawList.opaque.length > 0) {
-          var opaqueInstancedPipeline = getPBRInstancedPipeline("opaque", true);
-          mainPass.setPipeline(opaqueInstancedPipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawInstancedMeshes(mainPass, instancedDrawList.opaque, materials);
+          drawInstancedMeshes(mainPass, instancedDrawList.opaque, materials, "opaque", true);
         }
         if (hasSurfaces) {
           drawSurfaceEntries(mainPass, bundle, materials, "opaque", frameBindGroup);
@@ -6877,10 +7172,8 @@
           drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers);
         }
         if (instancedDrawList.alpha.length > 0) {
-          var alphaInstancedPipeline = getPBRInstancedPipeline("alpha", false);
-          mainPass.setPipeline(alphaInstancedPipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawInstancedMeshes(mainPass, instancedDrawList.alpha, materials);
+          drawInstancedMeshes(mainPass, instancedDrawList.alpha, materials, "alpha", false);
         }
         if (hasSurfaces) {
           drawSurfaceEntries(mainPass, bundle, materials, "alpha", frameBindGroup);
@@ -6899,10 +7192,8 @@
           drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers);
         }
         if (instancedDrawList.additive.length > 0) {
-          var additiveInstancedPipeline = getPBRInstancedPipeline("additive", false);
-          mainPass.setPipeline(additiveInstancedPipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawInstancedMeshes(mainPass, instancedDrawList.additive, materials);
+          drawInstancedMeshes(mainPass, instancedDrawList.additive, materials, "additive", false);
         }
         if (hasSurfaces) {
           drawSurfaceEntries(mainPass, bundle, materials, "additive", frameBindGroup);

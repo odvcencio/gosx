@@ -1192,9 +1192,225 @@
     });
   }
 
+  // -----------------------------------------------------------------------
+  // GPU Instanced Cull System
+  // -----------------------------------------------------------------------
+  // Creates the per-InstancedMesh GPU buffers, bind group, and compute
+  // pipeline for frustum culling. Mirrors the native render/bundle/cull.go
+  // architecture: inputBuf (80B InstanceRecords) → compute → outputBuf +
+  // drawArgsBuf (indirect draw args). Capacity grows geometrically, never
+  // shrinks.
+  //
+  // CRITICAL (D3): not-ready → DRAW-ALL (the 6-buffer direct pass.draw path),
+  // NOT skip. Skipping produces invisible instances. The caller (draw site in
+  // 16a) checks isReady() before branching — this system's update() is a
+  // no-op when not ready.
+  //
+  // CRITICAL (Risk #1 guard): drawArgsBuf is reset EVERY frame BEFORE the
+  // compute dispatch — writeBuffer([vertexCount,0,0,0]) clears instanceCount
+  // so each frame starts from zero visible. Omitting this causes instanceCount
+  // to accumulate across frames.
+  //
+  // Binding contract (mirrors native cull.go:33-36):
+  //   @group(0) @binding(0) — CullUniforms (uniform, 112B)
+  //   @group(0) @binding(1) — input InstanceRecords (read-only-storage)
+  //   @group(0) @binding(2) — output InstanceRecords (storage, also vertex)
+  //   @group(0) @binding(3) — drawArgs [u32; 4] (storage+indirect)
+
+  var INSTANCED_CULL_RECORD_STRIDE = 80; // mat4(64) + pickData uint32x4(16)
+  var INSTANCED_CULL_UNIFORM_SIZE  = 112; // 6 vec4 planes(96) + vertexCount u32 + radius f32 + 8B pad
+
+  function createSceneInstancedCullSystem(device, mesh) {
+    // Validate and extract cull parameters from the mesh entry.
+    var cullWGSL  = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL : null;
+    var entryPoint = (typeof mesh.cullKernelEntry === "string" && mesh.cullKernelEntry.trim()) ? mesh.cullKernelEntry : "main";
+    // Absent cullRadius (0) → use a conservative 2.0 default rather than 0
+    // (a zero radius would cull everything). Slice 1 caveat.
+    var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
+    // Constrain cullBackend to known values.
+    var cullBackend = (typeof mesh.cullBackend === "string" && mesh.cullBackend.trim()) ? mesh.cullBackend.trim().toLowerCase() : "webgpu";
+    if (cullBackend !== "webgpu") cullBackend = "webgpu";
+
+    if (!cullWGSL) return null;
+
+    var instanceCount = (typeof mesh.instanceCount === "number") ? mesh.instanceCount : 0;
+    if (instanceCount <= 0) instanceCount = 1;
+    var capacity = Math.max(32, instanceCount + Math.floor(instanceCount / 4));
+
+    var disposed = false;
+    var ready = false;
+    var computePipeline = null;
+    var bindGroup = null;
+
+    var bufBytes = capacity * INSTANCED_CULL_RECORD_STRIDE;
+
+    var inputBuf = device.createBuffer({
+      size: bufBytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      label: "gosx.cull.input",
+    });
+    var outputBuf = device.createBuffer({
+      // STORAGE for compute write + VERTEX for the main draw pass.
+      size: bufBytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      label: "gosx.cull.output",
+    });
+    var drawArgsBuf = device.createBuffer({
+      // STORAGE for atomicAdd in the shader + INDIRECT for drawIndirect.
+      size: 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+      label: "gosx.cull.drawArgs",
+    });
+    var cullUniformBuf = device.createBuffer({
+      size: INSTANCED_CULL_UNIFORM_SIZE,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      label: "gosx.cull.uniform",
+    });
+
+    var bindGroupLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform"            } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage"  } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage"            } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage"            } },
+      ],
+    });
+    var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+
+    function markReady(pipeline) {
+      if (disposed) return;
+      computePipeline = pipeline;
+      bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: cullUniformBuf, size: INSTANCED_CULL_UNIFORM_SIZE } },
+          { binding: 1, resource: { buffer: inputBuf,       size: bufBytes                    } },
+          { binding: 2, resource: { buffer: outputBuf,      size: bufBytes                    } },
+          { binding: 3, resource: { buffer: drawArgsBuf,    size: 16                          } },
+        ],
+      });
+      ready = true;
+    }
+
+    // Async-validate-with-fallback: validate payload kernel. On failure, stay
+    // not-ready (caller draws-all, D3). No builtin fallback kernel exists for
+    // the cull path — the kernel is always payload-provided (from the mesh's
+    // cullKernelWGSL; Elio produces this in the native dominance pass).
+    var scopedDevice = device;
+    try {
+      scopedDevice.pushErrorScope("validation");
+    } catch (_err) {
+      // pushErrorScope not supported — proceed without scope guard.
+      scopedDevice.createComputePipelineAsync({
+        layout: pipelineLayout,
+        compute: { module: device.createShaderModule({ code: cullWGSL }), entryPoint: entryPoint },
+      }).then(markReady).catch(function(err) {
+        if (!disposed) console.warn("[gosx] gpu-cull: kernel pipeline creation failed:", err);
+      });
+      scopedDevice = null;
+    }
+    if (scopedDevice) {
+      scopedDevice.createComputePipelineAsync({
+        layout: pipelineLayout,
+        compute: { module: device.createShaderModule({ code: cullWGSL }), entryPoint: entryPoint },
+      }).then(function(pipeline) {
+        return sceneComputePopErrorScope(scopedDevice).then(function(scopeErr) {
+          if (disposed) return;
+          if (scopeErr) {
+            console.warn("[gosx] gpu-cull: kernel validation error for mesh '" + (mesh.id || "?") + "':", scopeErr);
+            // Stay not-ready — caller draws-all.
+          } else {
+            markReady(pipeline);
+          }
+        });
+      }).catch(function(err) {
+        return sceneComputePopErrorScope(scopedDevice).then(function() {
+          if (!disposed) console.warn("[gosx] gpu-cull: kernel pipeline rejected for mesh '" + (mesh.id || "?") + "':", err);
+        });
+      });
+    }
+
+    return {
+      inputBuf: inputBuf,
+      outputBuf: outputBuf,
+      drawArgsBuf: drawArgsBuf,
+      cullUniformBuf: cullUniformBuf,
+      capacity: capacity,
+      cullRadius: cullRadius,
+
+      isReady: function() { return ready; },
+
+      // update() is called once per frame, before the main pass.
+      // planes: [6][4] float array — [nx,ny,nz,d] per plane.
+      // vertexCount: geometry primitive vertex count.
+      // instanceRecords: Float32Array of 80B InstanceRecord data (mat4 + pickData).
+      // instanceCount: number of active instances.
+      update: function(device, encoder, planes, vertexCount, instanceRecords, instanceCount) {
+        if (!ready) return;
+
+        // CRITICAL (Risk #1): reset drawArgs EVERY frame before dispatch.
+        // drawArgs[1] = instanceCount accumulates via atomicAdd in the shader;
+        // if not reset each frame it compounds across frames.
+        var resetData = new Uint32Array([vertexCount, 0, 0, 0]);
+        device.queue.writeBuffer(drawArgsBuf, 0, resetData);
+
+        // Upload instance records.
+        if (instanceRecords && instanceRecords.byteLength > 0) {
+          device.queue.writeBuffer(inputBuf, 0, instanceRecords);
+        }
+
+        // Upload cull uniforms: 6 planes (6*16=96B) + vertexCount u32 + radius f32 + 8B pad.
+        var uniformData = new ArrayBuffer(INSTANCED_CULL_UNIFORM_SIZE);
+        var uf = new Float32Array(uniformData);
+        var uu = new Uint32Array(uniformData);
+        for (var p = 0; p < 6; p++) {
+          uf[p * 4 + 0] = planes[p][0]; // nx
+          uf[p * 4 + 1] = planes[p][1]; // ny
+          uf[p * 4 + 2] = planes[p][2]; // nz
+          uf[p * 4 + 3] = planes[p][3]; // d
+        }
+        uu[24] = vertexCount; // offset 96 = index 24 in u32 view
+        uf[25] = cullRadius;  // offset 100 = index 25 in f32 view
+        // Trailing 8 bytes of pad are already zero.
+        device.queue.writeBuffer(cullUniformBuf, 0, uniformData);
+
+        // Dispatch the cull compute pass.
+        var pass = encoder.beginComputePass();
+        pass.setPipeline(computePipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(Math.max(1, instanceCount) / 64));
+        pass.end();
+      },
+
+      dispose: function() {
+        disposed = true;
+        if (inputBuf)      inputBuf.destroy();
+        if (outputBuf)     outputBuf.destroy();
+        if (drawArgsBuf)   drawArgsBuf.destroy();
+        if (cullUniformBuf) cullUniformBuf.destroy();
+        computePipeline = null;
+        bindGroup = null;
+        ready = false;
+      },
+    };
+  }
+
+  // cullSystemSignature returns a string key for the cull system. The system
+  // is recreated when the kernel WGSL, entry point, radius, or capacity changes.
+  function cullSystemSignature(mesh) {
+    return JSON.stringify({
+      cullKernelWGSL:  (typeof mesh.cullKernelWGSL  === "string") ? mesh.cullKernelWGSL  : "",
+      cullKernelEntry: (typeof mesh.cullKernelEntry  === "string") ? mesh.cullKernelEntry  : "",
+      cullRadius:      (typeof mesh.cullRadius       === "number") ? mesh.cullRadius       : 0,
+      instanceCount:   (typeof mesh.instanceCount    === "number") ? mesh.instanceCount    : 0,
+    });
+  }
+
   if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
     Object.assign(window.__gosx_scene3d_api, {
       createSceneParticleSystem,
+      createSceneInstancedCullSystem,
+      cullSystemSignature,
       listSceneParticleForces,
       registerSceneParticleForce,
       registerSceneParticleForceKind,
