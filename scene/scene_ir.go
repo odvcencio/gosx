@@ -15,8 +15,8 @@ const SceneIRSchema = "gosx.scene3d.ir.v1"
 // The client checks for compressed fields first and falls back to raw arrays.
 type CompressedArray struct {
 	Packed   []byte  `json:"packed"`
-	Norm     float32 `json:"norm"`             // min value (scalar quantization floor)
-	MaxVal   float32 `json:"maxVal,omitempty"` // max value (scalar quantization ceiling)
+	Norm     float32 `json:"norm"`   // min value (scalar quantization floor)
+	MaxVal   float32 `json:"maxVal"` // max value (scalar quantization ceiling); MUST NOT be omitempty — an all-zero lane (e.g. a mat4 off-diagonal lane) has maxVal=0, and omitting it makes the JS dequantizer read undefined → step=NaN → NaN transforms.
 	Dim      int     `json:"dim"`
 	BitWidth int     `json:"bitWidth"`
 	Count    int     `json:"count"` // number of original float64 values

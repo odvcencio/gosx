@@ -793,6 +793,30 @@ func TestCompressInstancedTransformsRoundTrip(t *testing.T) {
 		t.Fatalf("compressedTransforms is not []CompressedArray or is empty, got %T", props["compressedTransforms"])
 	}
 
+	// Wire-JSON guard (the omitempty class): per-lane compression produces
+	// all-zero lanes (mat4 off-diagonal/projective-zero entries) whose chunk has
+	// maxVal=0. If MaxVal is omitempty the JSON drops it and the browser's
+	// dequantizer reads undefined → step=NaN → NaN transforms → nothing renders.
+	// A Go-struct round-trip cannot catch this (Go unmarshal defaults missing→0);
+	// only the wire JSON the browser actually consumes reveals it. So assert
+	// every serialized chunk keeps both norm and maxVal.
+	raw, err := json.Marshal(chunks)
+	if err != nil {
+		t.Fatalf("marshal chunks: %v", err)
+	}
+	var wire []map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal chunks: %v", err)
+	}
+	for i, c := range wire {
+		if _, ok := c["maxVal"]; !ok {
+			t.Errorf("chunk %d missing maxVal in wire JSON (omitempty drops zero-max lanes → NaN transforms in JS)", i)
+		}
+		if _, ok := c["norm"]; !ok {
+			t.Errorf("chunk %d missing norm in wire JSON", i)
+		}
+	}
+
 	decoded := DecompressFloat64Array(chunks)
 	if len(decoded) != count*16 {
 		t.Fatalf("decoded length = %d, want %d", len(decoded), count*16)
