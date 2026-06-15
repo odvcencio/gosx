@@ -94,9 +94,6 @@ func attachBoardFillMaterials(b rootengine.RenderBundle) rootengine.RenderBundle
 		m.CustomVertexWGSL = fill.VertexWGSL
 		m.CustomFragmentWGSL = fill.FragmentWGSL
 		m.ShaderBackend = fill.ShaderBackend
-		// 2D board fills have no back face to cull; "none" also keeps them
-		// visible under the ortho-2D FlipY winding inversion.
-		m.CullMode = "none"
 		// One immutable layout map shared by every board material (and every
 		// bundle) — it describes the shader, not the instance, and nothing
 		// downstream mutates it: the marshal path only reads, and the JS scene
