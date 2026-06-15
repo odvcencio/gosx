@@ -3,5 +3,6 @@
   "ibl": false,
   "gpu-picking": false,
   "line-dashed": false,
-  "compute-particles": true
+  "compute-particles": true,
+  "gpu-cull": true
 }

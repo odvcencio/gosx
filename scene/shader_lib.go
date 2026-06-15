@@ -56,6 +56,9 @@ var shaderLibFields = []shaderLibFieldDesc{
 	{collection: "materials", field: "customFragment"},
 	{collection: "materials", field: "customVertexWGSL"},
 	{collection: "materials", field: "customFragmentWGSL"},
+	// InstancedMesh Elio GPU cull kernel — hoisted when ≥2 meshes share the
+	// same kernel source. Mirror entry exists in JS SHADER_LIB_FIELDS (10-runtime-scene-core.js).
+	{collection: "instancedMeshes", field: "cullKernelWGSL"},
 }
 
 // shaderLibFieldDesc identifies a single hoistable shader field by its

@@ -71,6 +71,9 @@
     { collection: "materials",        field: "customFragment" },
     { collection: "materials",        field: "customVertexWGSL" },
     { collection: "materials",        field: "customFragmentWGSL" },
+    // InstancedMesh Elio GPU cull kernel — hoisted when ≥2 meshes share the
+    // same kernel source. Mirror entry exists in Go shaderLibFields (scene/shader_lib.go).
+    { collection: "instancedMeshes",  field: "cullKernelWGSL" },
   ];
 
   // inflateSceneShaderLib walks a parsed scene object (props.scene), replaces

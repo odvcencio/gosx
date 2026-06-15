@@ -22,6 +22,7 @@ const (
 	FeatureLineDashed   Feature = "line-dashed"
 	FeatureCustomShader Feature = "custom-shader"
 	FeatureComputeParts Feature = "compute-particles"
+	FeatureGPUCull      Feature = "gpu-cull"
 )
 
 // Matrix records which backends implement each feature TODAY. A feature absent
@@ -34,6 +35,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	FeatureGPUPicking:   {BackendWebGPU: false, BackendWebGL: true},
 	FeatureLineDashed:   {BackendWebGPU: false, BackendWebGL: true},
 	FeatureComputeParts: {BackendWebGPU: true, BackendWebGL: false},
+	FeatureGPUCull:      {BackendWebGPU: true, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {

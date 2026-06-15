@@ -365,6 +365,14 @@ type InstancedMesh struct {
 	InState       *InstancedMeshProps
 	OutState      *InstancedMeshProps
 	Live          []string
+
+	// Optional Elio GPU cull kernel. When set, the browser runtime (slice 2)
+	// will run a compute pass to cull instances before drawing. Absent here
+	// ⇒ byte-identical payload (pure additive).
+	CullKernelWGSL  string
+	CullKernelEntry string
+	CullRadius      float64
+	CullBackend     string
 }
 
 // InstancedGLBMesh renders N copies of a GLB model via a single instanced draw
@@ -2182,17 +2190,21 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 	materialProps := legacyMaterial(im.Material)
 
 	record := InstancedMeshIR{
-		ID:            id,
-		Count:         im.Count,
-		Kind:          kind,
-		CastShadow:    im.CastShadow,
-		ReceiveShadow: im.ReceiveShadow,
-		Transition:    lowerTransition(im.Transition),
-		InState:       im.InState.legacyProps(),
-		OutState:      im.OutState.legacyProps(),
-		Live:          normalizeLive(im.Live),
-		Colors:        append([]string(nil), im.Colors...),
-		Attributes:    cloneFloat64Slices(im.Attributes),
+		ID:              id,
+		Count:           im.Count,
+		Kind:            kind,
+		CastShadow:      im.CastShadow,
+		ReceiveShadow:   im.ReceiveShadow,
+		Transition:      lowerTransition(im.Transition),
+		InState:         im.InState.legacyProps(),
+		OutState:        im.OutState.legacyProps(),
+		Live:            normalizeLive(im.Live),
+		Colors:          append([]string(nil), im.Colors...),
+		Attributes:      cloneFloat64Slices(im.Attributes),
+		CullKernelWGSL:  im.CullKernelWGSL,
+		CullKernelEntry: im.CullKernelEntry,
+		CullRadius:      im.CullRadius,
+		CullBackend:     im.CullBackend,
 	}
 	// Apply geometry dimensions.
 	if geometryProps != nil {

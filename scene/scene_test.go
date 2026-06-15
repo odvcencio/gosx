@@ -2548,6 +2548,66 @@ func TestComputeParticlesKernelFieldsAbsentWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestInstancedMeshCullFieldsAbsentWhenEmpty is the Task 6 guard test:
+// an InstancedMesh with NO cull fields must emit a payload with none of the
+// cull keys present. Proves the additive plumbing is invisible when unused.
+func TestInstancedMeshCullFieldsAbsentWhenEmpty(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			InstancedMesh{
+				ID:       "plain-instanced",
+				Count:    1,
+				Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Material: FlatMaterial{Color: "#ff0000"},
+				Positions: []Vector3{Vec3(0, 0, 0)},
+				Scales:    []Vector3{Vec3(1, 1, 1)},
+				// CullKernelWGSL, CullKernelEntry, CullRadius, CullBackend intentionally absent.
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.InstancedMeshes) != 1 {
+		t.Fatalf("expected 1 InstancedMeshIR, got %d", len(ir.InstancedMeshes))
+	}
+	im := ir.InstancedMeshes[0]
+	if im.CullKernelWGSL != "" {
+		t.Errorf("CullKernelWGSL must be empty, got %q", im.CullKernelWGSL)
+	}
+	if im.CullKernelWGSLRef != "" {
+		t.Errorf("CullKernelWGSLRef must be empty, got %q", im.CullKernelWGSLRef)
+	}
+	if im.CullKernelEntry != "" {
+		t.Errorf("CullKernelEntry must be empty, got %q", im.CullKernelEntry)
+	}
+	if im.CullRadius != 0 {
+		t.Errorf("CullRadius must be 0, got %v", im.CullRadius)
+	}
+	if im.CullBackend != "" {
+		t.Errorf("CullBackend must be empty, got %q", im.CullBackend)
+	}
+
+	// Serialize via SceneIR.MarshalJSON and confirm no cull keys appear.
+	data, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	meshes, ok := raw["instancedMeshes"].([]any)
+	if !ok || len(meshes) != 1 {
+		t.Fatalf("instancedMeshes: len=%d", len(meshes))
+	}
+	m := meshes[0].(map[string]any)
+	for _, key := range []string{"cullKernelWGSL", "cullKernelWGSLRef", "cullKernelEntry", "cullRadius", "cullBackend"} {
+		if _, has := m[key]; has {
+			t.Errorf("payload must not contain key %q when cull fields are absent", key)
+		}
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }
@@ -3192,6 +3252,98 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	instances, ok := batchMap["instances"].([]map[string]any)
 	if !ok || len(instances) != 2 {
 		t.Fatalf("expected 2 instance maps, got %#v", batchMap["instances"])
+	}
+}
+
+// TestInstancedMeshCullFieldsLowering verifies that cull fields on scene.InstancedMesh
+// are carried through lowering to InstancedMeshIR, and that a mesh without cull fields
+// lowers to an IR with all cull fields empty (additive contract).
+func TestInstancedMeshCullFieldsLowering(t *testing.T) {
+	positions := []Vector3{Vec3(0, 0, 0)}
+	scales := []Vector3{Vec3(1, 1, 1)}
+
+	props := Props{
+		Graph: NewGraph(
+			InstancedMesh{
+				ID:              "meteor-ring",
+				Count:           1,
+				Geometry:        SphereGeometry{Radius: 0.1},
+				Material:        FlatMaterial{Color: "#aabbcc"},
+				Positions:       positions,
+				Scales:          scales,
+				CullKernelWGSL:  "@compute @workgroup_size(64) fn cull() {}",
+				CullKernelEntry: "cullInstances",
+				CullRadius:      100.0,
+				CullBackend:     "elio",
+			},
+			InstancedMesh{
+				ID:       "plain-mesh",
+				Count:    1,
+				Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Material: FlatMaterial{Color: "#ffffff"},
+				Positions: positions,
+				Scales:    scales,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.InstancedMeshes) != 2 {
+		t.Fatalf("expected 2 InstancedMeshes, got %d", len(ir.InstancedMeshes))
+	}
+
+	// First mesh: cull fields must be carried through.
+	im0 := ir.InstancedMeshes[0]
+	if im0.CullKernelWGSL != "@compute @workgroup_size(64) fn cull() {}" {
+		t.Errorf("CullKernelWGSL not lowered: %q", im0.CullKernelWGSL)
+	}
+	if im0.CullKernelEntry != "cullInstances" {
+		t.Errorf("CullKernelEntry not lowered: %q", im0.CullKernelEntry)
+	}
+	if im0.CullRadius != 100.0 {
+		t.Errorf("CullRadius not lowered: %v", im0.CullRadius)
+	}
+	if im0.CullBackend != "elio" {
+		t.Errorf("CullBackend not lowered: %q", im0.CullBackend)
+	}
+
+	// Second mesh: all cull fields must be zero/empty.
+	im1 := ir.InstancedMeshes[1]
+	if im1.CullKernelWGSL != "" {
+		t.Errorf("plain mesh CullKernelWGSL must be empty, got %q", im1.CullKernelWGSL)
+	}
+	if im1.CullKernelEntry != "" {
+		t.Errorf("plain mesh CullKernelEntry must be empty, got %q", im1.CullKernelEntry)
+	}
+	if im1.CullRadius != 0 {
+		t.Errorf("plain mesh CullRadius must be 0, got %v", im1.CullRadius)
+	}
+	if im1.CullBackend != "" {
+		t.Errorf("plain mesh CullBackend must be empty, got %q", im1.CullBackend)
+	}
+
+	// Verify the payload (legacyProps path) emits cull fields for the first mesh.
+	data, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	meshes, ok := raw["instancedMeshes"].([]any)
+	if !ok || len(meshes) != 2 {
+		t.Fatalf("instancedMeshes in payload: len=%d", len(meshes))
+	}
+	pm0 := meshes[0].(map[string]any)
+	if pm0["cullKernelEntry"] != "cullInstances" {
+		t.Errorf("payload mesh[0] cullKernelEntry: %v", pm0["cullKernelEntry"])
+	}
+	pm1 := meshes[1].(map[string]any)
+	for _, key := range []string{"cullKernelWGSL", "cullKernelWGSLRef", "cullKernelEntry", "cullRadius", "cullBackend"} {
+		if _, has := pm1[key]; has {
+			t.Errorf("payload mesh[1] (plain) must not have %q", key)
+		}
 	}
 }
 

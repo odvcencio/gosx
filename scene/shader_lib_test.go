@@ -353,6 +353,203 @@ func TestShaderLibNoHoistWhenDifferentKernels(t *testing.T) {
 	}
 }
 
+// ------- InstancedMesh cull kernel shaderLib tests (Task 1 + 3) -------
+
+// cullKernelSource returns a synthetic WGSL cull kernel source ≥ shaderLibThreshold bytes.
+func cullKernelSource(n int) string {
+	base := `@group(0) @binding(0) var<storage,read_write> transforms : array<mat4x4<f32>>;
+@group(0) @binding(1) var<storage,read_write> visible : array<u32>;
+struct CullUniforms { frustum : array<vec4<f32>, 6>, count : u32 }
+@group(0) @binding(2) var<uniform> cull : CullUniforms;
+@compute @workgroup_size(64)
+fn cullInstances(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let i = gid.x;
+  if (i >= cull.count) { return; }
+  let pos = transforms[i][3].xyz;
+  var inside : bool = true;
+  for (var p = 0u; p < 6u; p++) {
+    if (dot(cull.frustum[p].xyz, pos) + cull.frustum[p].w < 0.0) {
+      inside = false; break;
+    }
+  }
+  visible[i] = select(0u, 1u, inside);
+}
+`
+	pad := strings.Repeat("// pad ", (shaderLibThreshold/7)+1)
+	return base + pad + strings.Repeat("x", n)
+}
+
+// TestInstancedMeshCullFieldsRoundTrip verifies that cull fields on InstancedMeshIR
+// survive a full SceneIR.MarshalJSON → SceneIR.UnmarshalJSON round-trip, and that
+// an InstancedMesh without cull fields produces a payload with no cull keys at all
+// (the "absent ⇒ byte-identical" additive contract).
+func TestInstancedMeshCullFieldsRoundTrip(t *testing.T) {
+	transforms := make([]float64, 16)
+	transforms[0], transforms[5], transforms[10], transforms[15] = 1, 1, 1, 1 // identity
+
+	ir := SceneIR{
+		InstancedMeshes: []InstancedMeshIR{
+			{
+				ID:              "with-cull",
+				Count:           1,
+				Kind:            "box",
+				Transforms:      transforms,
+				CullKernelWGSL:  "@compute @workgroup_size(64) fn cull() {}",
+				CullKernelEntry: "cullInstances",
+				CullRadius:      50.0,
+				CullBackend:     "elio",
+			},
+			{
+				ID:         "no-cull",
+				Count:      1,
+				Kind:       "box",
+				Transforms: transforms,
+			},
+		},
+	}
+
+	data, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+
+	meshes, ok := raw["instancedMeshes"].([]any)
+	if !ok || len(meshes) != 2 {
+		t.Fatalf("instancedMeshes length = %d, want 2", len(meshes))
+	}
+
+	// First mesh: cull fields must be present.
+	m0 := meshes[0].(map[string]any)
+	if m0["cullKernelWGSL"] != "@compute @workgroup_size(64) fn cull() {}" {
+		t.Errorf("cullKernelWGSL missing or wrong: %v", m0["cullKernelWGSL"])
+	}
+	if m0["cullKernelEntry"] != "cullInstances" {
+		t.Errorf("cullKernelEntry missing or wrong: %v", m0["cullKernelEntry"])
+	}
+	if m0["cullRadius"] != 50.0 {
+		t.Errorf("cullRadius missing or wrong: %v", m0["cullRadius"])
+	}
+	if m0["cullBackend"] != "elio" {
+		t.Errorf("cullBackend missing or wrong: %v", m0["cullBackend"])
+	}
+
+	// Second mesh: NO cull keys at all (omitempty contract).
+	m1 := meshes[1].(map[string]any)
+	for _, key := range []string{"cullKernelWGSL", "cullKernelWGSLRef", "cullKernelEntry", "cullRadius", "cullBackend"} {
+		if _, has := m1[key]; has {
+			t.Errorf("no-cull mesh must not have key %q", key)
+		}
+	}
+
+	// Round-trip unmarshal: cull fields must be restored.
+	var ir2 SceneIR
+	if err := json.Unmarshal(data, &ir2); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if len(ir2.InstancedMeshes) != 2 {
+		t.Fatalf("after unmarshal InstancedMeshes length = %d, want 2", len(ir2.InstancedMeshes))
+	}
+	got := ir2.InstancedMeshes[0]
+	if got.CullKernelWGSL != "@compute @workgroup_size(64) fn cull() {}" {
+		t.Errorf("CullKernelWGSL not restored: %q", got.CullKernelWGSL)
+	}
+	if got.CullKernelEntry != "cullInstances" {
+		t.Errorf("CullKernelEntry not restored: %q", got.CullKernelEntry)
+	}
+	if got.CullRadius != 50.0 {
+		t.Errorf("CullRadius not restored: %v", got.CullRadius)
+	}
+	if got.CullBackend != "elio" {
+		t.Errorf("CullBackend not restored: %q", got.CullBackend)
+	}
+}
+
+// TestInstancedMeshCullShaderLibRoundTrip: 2 instanced meshes sharing the same
+// cull kernel trigger hoisting; after inflate the kernel is restored inline.
+func TestInstancedMeshCullShaderLibRoundTrip(t *testing.T) {
+	const nMeshes = 2
+	kernel := cullKernelSource(5000)
+	transforms := make([]float64, 16)
+	transforms[0], transforms[5], transforms[10], transforms[15] = 1, 1, 1, 1
+
+	meshes := make([]InstancedMeshIR, nMeshes)
+	for i := range meshes {
+		meshes[i] = InstancedMeshIR{
+			ID:             "mesh-" + string(rune('a'+i)),
+			Count:          1,
+			Kind:           "box",
+			Transforms:     transforms,
+			CullKernelWGSL: kernel,
+		}
+	}
+
+	ir := SceneIR{InstancedMeshes: meshes}
+	data, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+
+	// shaderLib must exist with exactly one entry.
+	libRaw, ok := raw["shaderLib"].(map[string]any)
+	if !ok {
+		t.Fatalf("shaderLib missing or wrong type; keys: %v", mapKeys(raw))
+	}
+	if len(libRaw) != 1 {
+		t.Errorf("shaderLib length = %d, want 1; keys: %v", len(libRaw), mapKeys(libRaw))
+	}
+
+	// Each mesh must have cullKernelWGSLRef, no inline cullKernelWGSL.
+	imsRaw, ok := raw["instancedMeshes"].([]any)
+	if !ok || len(imsRaw) != nMeshes {
+		t.Fatalf("instancedMeshes length = %d, want %d", len(imsRaw), nMeshes)
+	}
+	for i, imRaw := range imsRaw {
+		im := imRaw.(map[string]any)
+		if _, hasInline := im["cullKernelWGSL"]; hasInline {
+			t.Errorf("mesh[%d] still has inline cullKernelWGSL after dedup", i)
+		}
+		ref, hasRef := im["cullKernelWGSLRef"].(string)
+		if !hasRef {
+			t.Errorf("mesh[%d] missing cullKernelWGSLRef", i)
+			continue
+		}
+		if !strings.HasPrefix(ref, "sl:") {
+			t.Errorf("mesh[%d] cullKernelWGSLRef = %q, want sl:... prefix", i, ref)
+		}
+	}
+
+	// Inflate round-trip: kernel must be restored inline.
+	var ir2 SceneIR
+	if err := json.Unmarshal(data, &ir2); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if len(ir2.InstancedMeshes) != nMeshes {
+		t.Fatalf("after inflate InstancedMeshes length = %d, want %d", len(ir2.InstancedMeshes), nMeshes)
+	}
+	for i, im := range ir2.InstancedMeshes {
+		if im.CullKernelWGSL != kernel {
+			t.Errorf("mesh[%d] CullKernelWGSL after inflate: got %d bytes, want %d bytes",
+				i, len(im.CullKernelWGSL), len(kernel))
+		}
+		if im.CullKernelWGSLRef != "" {
+			t.Errorf("mesh[%d] CullKernelWGSLRef not cleared after inflate: %q", i, im.CullKernelWGSLRef)
+		}
+	}
+	if len(ir2.ShaderLib) != 0 {
+		t.Errorf("ShaderLib should be empty after inflate, got %v", ir2.ShaderLib)
+	}
+}
+
 // ---- helpers ----
 
 func mapKeys(m map[string]any) []string {

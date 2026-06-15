@@ -196,6 +196,25 @@
       }
       validateSceneStrictInstanceColors(diagnostics, mesh.colors, count, path + ".colors", mesh.id);
       validateSceneStrictAttributeArrays(diagnostics, mesh.attributes, count, path + ".attributes", mesh.id);
+      // GPU cull kernel fields (optional; advisory warn-severity to match computeParticles validators).
+      if (mesh.cullKernelWGSL != null && typeof mesh.cullKernelWGSL !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.instances.invalid_cull_kernel_wgsl", "Instanced mesh cullKernelWGSL must be a string when present", path + ".cullKernelWGSL", mesh.id, { value: mesh.cullKernelWGSL });
+      }
+      if (mesh.cullKernelEntry != null && typeof mesh.cullKernelEntry !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.instances.invalid_cull_kernel_entry", "Instanced mesh cullKernelEntry must be a string when present", path + ".cullKernelEntry", mesh.id, { value: mesh.cullKernelEntry });
+      }
+      if (mesh.cullBackend != null && typeof mesh.cullBackend !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.instances.invalid_cull_backend", "Instanced mesh cullBackend must be a string when present", path + ".cullBackend", mesh.id, { value: mesh.cullBackend });
+      }
+      // cullKernelWGSLRef is set by the shaderLib dedup path; by the time strict
+      // validation runs (after hydrate inflation), refs should already be gone.
+      // Warn if a ref survived inflation.
+      if (mesh.cullKernelWGSLRef != null && typeof mesh.cullKernelWGSLRef !== "string") {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.instances.invalid_cull_kernel_wgsl_ref", "Instanced mesh cullKernelWGSLRef must be a string when present", path + ".cullKernelWGSLRef", mesh.id, { value: mesh.cullKernelWGSLRef });
+      }
+      if (typeof mesh.cullKernelWGSLRef === "string" && !mesh.cullKernelWGSL) {
+        pushSceneStrictDiagnostic(diagnostics, "warn", "scene.instances.uninflated_cull_kernel_wgsl_ref", "Instanced mesh has cullKernelWGSLRef but no cullKernelWGSL — shaderLib inflation may not have run", path + ".cullKernelWGSLRef", mesh.id, { ref: mesh.cullKernelWGSLRef });
+      }
       validateSceneStrictLiveFields(diagnostics, mesh.live, path, mesh.id);
     }
 

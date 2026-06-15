@@ -98,7 +98,13 @@ const budgets = [
   // atlas rasterized via OffscreenCanvas, drawBoardLabels per-glyph quad layout,
   // hasLabelData gate). 16a ships in BOTH this bundle and the webgpu feature
   // chunk. Measured: 892_436 / 242_881 / 196_941 + rounding headroom.
-  { file: "bootstrap.js", raw: 894_000, gzip: 243_500, brotli: 197_500 },
+  //
+  // Bumped raw 894_000 -> 895_000: Slice 1 browser-gpu-cull plumbing —
+  // SHADER_LIB_FIELDS entry for instancedMeshes/cullKernelWGSL in
+  // 10-runtime-scene-core.js; cull-field validators in 15-scene-ir-schema-strict.js;
+  // gpu-cull capability in 16a-scene-webgpu.capabilities.json and
+  // 16-scene-webgl.capabilities.json. Measured: 894_095 / 243_280 / 197_165.
+  { file: "bootstrap.js", raw: 895_000, gzip: 244_000, brotli: 198_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip

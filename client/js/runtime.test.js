@@ -19032,6 +19032,134 @@ test("shaderLib hydrate: renderVertexWGSLRef inflated to renderVertexWGSL in com
   }
 });
 
+// -------------------------------------------------------------------------
+// Task 4: shaderLib hydrate for instancedMeshes/cullKernelWGSL
+// -------------------------------------------------------------------------
+
+// Build a minimal manifest entry with an instancedMeshes scene using a shaderLib.
+function makeShaderLibManifestEntryForInstancedMeshes(lib, instancedMeshes) {
+  return {
+    islands: [
+      {
+        id: "gosx-island-instanced-cull-test",
+        component: "MeteorRing",
+        bundleId: "test-bundle",
+        props: {
+          scene: {
+            instancedMeshes: instancedMeshes,
+            shaderLib: lib,
+          },
+        },
+        programRef: "/test.json",
+        programFormat: "json",
+      },
+    ],
+    bundles: { "test-bundle": { path: "/test.wasm" } },
+    runtime: { path: "/test-runtime.wasm" },
+  };
+}
+
+test("shaderLib hydrate: cullKernelWGSLRef is inflated to cullKernelWGSL in instancedMeshes entries", async () => {
+  const kernel = "// synthetic cull kernel " + "x".repeat(2000);
+  const libID = "sl:cull001122334455";
+  const transforms = new Array(16).fill(0);
+  transforms[0] = transforms[5] = transforms[10] = transforms[15] = 1; // identity
+
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-instanced-cull-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: makeShaderLibManifestEntryForInstancedMeshes(
+      { [libID]: kernel },
+      [
+        { id: "ring-a", count: 1, kind: "box", transforms, cullKernelWGSLRef: libID },
+        { id: "ring-b", count: 1, kind: "box", transforms, cullKernelWGSLRef: libID },
+      ],
+    ),
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1, "island must be hydrated");
+  const propsJSON = env.hydrateCalls[0][2];
+  const props = JSON.parse(propsJSON);
+  const scene = props && props.scene;
+
+  // shaderLib must be gone after inflation.
+  assert.equal(scene.shaderLib, undefined, "shaderLib must be deleted after inflation");
+
+  // Both instancedMeshes must have cullKernelWGSL inflated.
+  assert.ok(Array.isArray(scene.instancedMeshes), "instancedMeshes must be an array");
+  assert.equal(scene.instancedMeshes.length, 2);
+  for (let i = 0; i < 2; i++) {
+    const im = scene.instancedMeshes[i];
+    assert.equal(im.cullKernelWGSL, kernel,
+      `instancedMeshes[${i}].cullKernelWGSL must be inflated from shaderLib`);
+    assert.equal(im.cullKernelWGSLRef, undefined,
+      `instancedMeshes[${i}].cullKernelWGSLRef must be deleted after inflation`);
+  }
+});
+
+test("shaderLib hydrate: missing cullKernelWGSL lib entry leaves field absent, no crash", async () => {
+  const transforms = new Array(16).fill(0);
+  transforms[0] = transforms[5] = transforms[10] = transforms[15] = 1;
+
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-instanced-cull-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: makeShaderLibManifestEntryForInstancedMeshes(
+      { "sl:realcull": "real cull kernel" },
+      [
+        { id: "good", count: 1, kind: "box", transforms, cullKernelWGSLRef: "sl:realcull" },
+        { id: "bad",  count: 1, kind: "box", transforms, cullKernelWGSLRef: "sl:doesnotexist" },
+      ],
+    ),
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1);
+  const props = JSON.parse(env.hydrateCalls[0][2]);
+  const scene = props && props.scene;
+
+  assert.equal(scene.shaderLib, undefined, "shaderLib key must be gone");
+  const good = scene.instancedMeshes[0];
+  const bad = scene.instancedMeshes[1];
+
+  assert.equal(good.cullKernelWGSL, "real cull kernel", "good entry must be inflated");
+  assert.equal(good.cullKernelWGSLRef, undefined, "ref key must be deleted");
+  assert.equal(bad.cullKernelWGSL, undefined, "missing entry: cullKernelWGSL must be absent (not crash)");
+  assert.equal(bad.cullKernelWGSLRef, undefined, "ref key must be deleted even when lib entry missing");
+});
+
+// -------------------------------------------------------------------------
+// Task 5: gpu-cull capability (from Go capability Matrix + JSON manifests)
+// -------------------------------------------------------------------------
+
+test("capability/drift: gpu-cull is present in WebGPU capability JSON and absent/false in WebGL2", () => {
+  // Read the capability JSON files directly from bootstrap-src, same as the Go drift guard.
+  const webgpuCaps = JSON.parse(fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.capabilities.json"), "utf8"
+  ));
+  const webglCaps = JSON.parse(fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16-scene-webgl.capabilities.json"), "utf8"
+  ));
+  assert.equal(webgpuCaps["gpu-cull"], true, "WebGPU capabilities JSON must declare gpu-cull: true");
+  assert.equal(webglCaps["gpu-cull"], false, "WebGL2 capabilities JSON must declare gpu-cull: false (explicit, not absent)");
+  assert.ok("gpu-cull" in webglCaps, "gpu-cull must be an explicit key in WebGL2 capabilities JSON (not absent)");
+});
+
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
   const harness = await createBoardWebGPUHarness();
   const N = 8;

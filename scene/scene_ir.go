@@ -501,6 +501,17 @@ type InstancedMeshIR struct {
 	InState              map[string]any       `json:"inState,omitempty"`
 	OutState             map[string]any       `json:"outState,omitempty"`
 	Live                 []string             `json:"live,omitempty"`
+
+	// Optional Elio GPU cull kernel carried through the scene payload.
+	// CullKernelWGSL is the inline WGSL source; CullKernelWGSLRef replaces it
+	// when the kernel has been hoisted into SceneIR.ShaderLib by applyShaderLib.
+	// The JS hydrate path inflates CullKernelWGSLRef back to CullKernelWGSL
+	// before downstream renderers see it.
+	CullKernelWGSL    string  `json:"cullKernelWGSL,omitempty"`
+	CullKernelWGSLRef string  `json:"cullKernelWGSLRef,omitempty"`
+	CullKernelEntry   string  `json:"cullKernelEntry,omitempty"`
+	CullRadius        float64 `json:"cullRadius,omitempty"`
+	CullBackend       string  `json:"cullBackend,omitempty"`
 }
 
 // ComputeParticlesIR is the typed compatibility record for one GPU particle system.
@@ -1288,6 +1299,16 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	if item.ReceiveShadow {
 		record["receiveShadow"] = true
 	}
+	// GPU cull kernel fields (additive — only emitted when set).
+	if item.CullKernelWGSL != "" {
+		record["cullKernelWGSL"] = item.CullKernelWGSL
+	}
+	if item.CullKernelWGSLRef != "" {
+		record["cullKernelWGSLRef"] = item.CullKernelWGSLRef
+	}
+	setString(record, "cullKernelEntry", item.CullKernelEntry)
+	setNumeric(record, "cullRadius", item.CullRadius)
+	setString(record, "cullBackend", item.CullBackend)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }
