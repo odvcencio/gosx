@@ -6269,7 +6269,31 @@
         if (obj && !Number.isFinite(obj.vertexOffset)) obj.vertexOffset = 0;
         if (obj && !Number.isFinite(obj.materialIndex)) obj.materialIndex = 0;
       }
-      bundle.meshObjects = bundle.objects;
+      // Thumbnail level-of-detail: the board's per-page thumbnail sprites are a
+      // MEDIUM-zoom tier — they read as a faithful preview only while zoomed out
+      // (CANVAS_LOD_THUMB_ZOOM <= z < CANVAS_LOD_SURFACE_ZOOM); below that the
+      // cards alone are the overview and at/above it the live surface owns the
+      // page, so a full-card thumbnail just smears over the card fill + labels.
+      // Mirror the 2D painter's gate (muddy canvas2d_painter.js) by dropping
+      // sprite meshObjects outside the medium band. Geometry stays in the shared
+      // buffers (just unreferenced); rects/lines/labels are unaffected.
+      var BOARD_LOD_THUMB_ZOOM = 0.3;
+      var BOARD_LOD_SURFACE_ZOOM = 0.8;
+      var lodZoom = (typeof bundle.camera.z === "number" && bundle.camera.z > 0) ? bundle.camera.z : 1;
+      var showThumbs = lodZoom >= BOARD_LOD_THUMB_ZOOM && lodZoom < BOARD_LOD_SURFACE_ZOOM;
+      var lodMats = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var isThumbSprite = function (o) {
+        var m = o && lodMats[o.materialIndex || 0];
+        return !!(m && m.kind === "sprite");
+      };
+      // Only break the zero-copy alias when we actually drop sprites (outside the
+      // medium band AND sprites are present); otherwise meshObjects aliases
+      // objects by identity (rects/lines/labels and the no-sprite case unchanged).
+      if (!showThumbs && bundle.objects.some(isThumbSprite)) {
+        bundle.meshObjects = bundle.objects.filter(function (o) { return !isThumbSprite(o); });
+      } else {
+        bundle.meshObjects = bundle.objects;
+      }
       bundle.worldMeshPositions = bundle.worldPositions;
       bundle.worldMeshNormals = bundle.worldNormals;
       bundle.worldMeshUVs = bundle.worldUVs;
