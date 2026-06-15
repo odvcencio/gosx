@@ -182,7 +182,13 @@ const budgets = [
   // instancePassesCullTest in 11-scene-math.js + CPU cull path in
   // 16-scene-webgl.js (drawInstancedMeshes: hasCullConfig gate, survivor
   // compaction, dynamic VBO upload). Measured: 547_225 / 149_287 / 122_821.
-  { file: "bootstrap-feature-scene3d.js", raw: 548_500, gzip: 150_000, brotli: 123_000 },
+  //
+  // Bumped brotli 123_000 -> 123_500: per-lane transform reinterleave in
+  // 11a-scene-decompress.js (sceneReinterleaveMaybe applied to compressed/
+  // preview/lod instanced transforms) — the fix for deinterleaved
+  // compressedTransforms (transformStride) that stops projective-shear "light
+  // ray" rendering of instanced meshes. Measured: 547_2xx / 149_3xx / 123_012.
+  { file: "bootstrap-feature-scene3d.js", raw: 548_500, gzip: 150_000, brotli: 123_500 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

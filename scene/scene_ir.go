@@ -497,6 +497,7 @@ type InstancedMeshIR struct {
 	ReceiveShadow        bool                 `json:"receiveShadow,omitempty"`
 	CompressedTransforms []CompressedArray    `json:"compressedTransforms,omitempty"`
 	PreviewTransforms    []CompressedArray    `json:"previewTransforms,omitempty"`
+	TransformStride      int                  `json:"transformStride,omitempty"`
 	Transition           TransitionIR         `json:"transition,omitzero"`
 	InState              map[string]any       `json:"inState,omitempty"`
 	OutState             map[string]any       `json:"outState,omitempty"`
@@ -1293,6 +1294,7 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	if len(item.PreviewTransforms) > 0 {
 		record["previewTransforms"] = item.PreviewTransforms
 	}
+	setInt(record, "transformStride", item.TransformStride)
 	if item.CastShadow {
 		record["castShadow"] = true
 	}

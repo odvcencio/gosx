@@ -747,14 +747,18 @@ func TestCompressAnimationEmptyClipSkipped(t *testing.T) {
 // the returned map must have compressedTransforms (not transforms), and
 // DecompressFloat64Array must reproduce positions within 12-bit error tolerance.
 func TestCompressInstancedTransformsRoundTrip(t *testing.T) {
-	const count = 100
+	// Mirror the galaxy meteor ring: wide-range translation (world-space ±800),
+	// small per-axis scale, NO rotation. Column-major mat4 per instance is then
+	// diag(sx,sy,sz) on lanes 0/5/10, translation on lanes 12/13/14, zeros on
+	// the projective lanes 3/7/11, and 1.0 on lane 15.
+	const count = 256 // > a single 4096-float interleaved chunk's worth of mat4s
 	positions := make([]Vector3, count)
 	scales := make([]Vector3, count)
 	for i := 0; i < count; i++ {
 		angle := float64(i) / float64(count) * 6.283185307
-		r := 120.0 + float64(i)*0.5
-		positions[i] = Vector3{X: math.Cos(angle) * r, Y: float64(i) * 0.1, Z: math.Sin(angle) * r}
-		scales[i] = Vector3{X: 1.0, Y: 0.8, Z: 1.0}
+		r := 300.0 + float64(i)*1.9 // spans well past ±700
+		positions[i] = Vector3{X: math.Cos(angle) * r, Y: float64(i)*0.2 - 25, Z: math.Sin(angle) * r}
+		scales[i] = Vector3{X: 0.6 + float64(i%7)*0.18, Y: 0.4 + float64(i%5)*0.12, Z: 0.7 + float64(i%3)*0.3}
 	}
 	im := InstancedMesh{
 		ID:        "meteor-ring",
@@ -776,35 +780,66 @@ func TestCompressInstancedTransformsRoundTrip(t *testing.T) {
 		t.Fatal("raw transforms must not be present when compressed")
 	}
 
+	// The transforms must be emitted deinterleaved with a stride of 16 so the
+	// browser reinterleaves them — this is what gives each mat4 lane its own
+	// quantization range (the fix for the projective-shear "light rays" bug).
+	stride, _ := props["transformStride"].(int)
+	if stride != 16 {
+		t.Fatalf("transformStride = %d, want 16 (transforms must be deinterleaved per lane)", stride)
+	}
+
 	chunks, ok := props["compressedTransforms"].([]CompressedArray)
 	if !ok || len(chunks) == 0 {
 		t.Fatalf("compressedTransforms is not []CompressedArray or is empty, got %T", props["compressedTransforms"])
 	}
 
-	// Decode and verify the translation column (index 12 in each mat4) is close to original.
 	decoded := DecompressFloat64Array(chunks)
 	if len(decoded) != count*16 {
 		t.Fatalf("decoded length = %d, want %d", len(decoded), count*16)
 	}
+	// Decompression yields deinterleaved lane order; reinterleave to mat4 stream
+	// exactly as the JS sceneReinterleave does before the renderer sees it.
+	decoded = reinterleaveFloat64(decoded, stride)
 
-	// 12-bit max error over the transform range is ~0.07 world units.
-	// We check the translation column (col 3: indices 12..14 in each mat4).
-	maxErr := 0.0
+	var (
+		transErr float64 // lanes 12,13,14 — tolerant (wide range)
+		scaleErr float64 // lanes 0,5,10 — must stay tight
+		projErr  float64 // lanes 3,7,11 (==0) and 15 (==1) — must be exact
+	)
+	upd := func(dst *float64, got, want float64) {
+		if e := math.Abs(got - want); e > *dst {
+			*dst = e
+		}
+	}
 	for i := 0; i < count; i++ {
-		tx := decoded[i*16+12]
-		tz := decoded[i*16+14]
-		ex := math.Abs(tx - positions[i].X)
-		ez := math.Abs(tz - positions[i].Z)
-		if ex > maxErr {
-			maxErr = ex
-		}
-		if ez > maxErr {
-			maxErr = ez
-		}
+		m := decoded[i*16 : i*16+16]
+		upd(&scaleErr, m[0], scales[i].X)
+		upd(&scaleErr, m[5], scales[i].Y)
+		upd(&scaleErr, m[10], scales[i].Z)
+		upd(&transErr, m[12], positions[i].X)
+		upd(&transErr, m[13], positions[i].Y)
+		upd(&transErr, m[14], positions[i].Z)
+		upd(&projErr, m[3], 0)
+		upd(&projErr, m[7], 0)
+		upd(&projErr, m[11], 0)
+		upd(&projErr, m[15], 1)
 	}
-	const maxAllowed = 0.5 // generous: 12-bit over ~240u range gives ~0.06u error
-	if maxErr > maxAllowed {
-		t.Errorf("12-bit translation error = %.4f, want <= %.4f", maxErr, maxAllowed)
+	t.Logf("CompressInstancedTransforms(12): %d instances — transErr=%.4f scaleErr=%.5f projErr=%.6g",
+		count, transErr, scaleErr, projErr)
+
+	// Translation spans ~±800; 12-bit per-lane gives ~0.4u worst case.
+	if transErr > 0.6 {
+		t.Errorf("translation error = %.4f, want <= 0.6", transErr)
 	}
-	t.Logf("CompressInstancedTransforms(12): %d instances, max position error = %.4f", count, maxErr)
+	// Scale lanes live in ~[0.4,2.2]; per-lane 12-bit keeps them to ~0.001.
+	// The pre-fix interleaved path crushed these to ~0.4 (the bug).
+	if scaleErr > 0.02 {
+		t.Errorf("scale-lane error = %.5f, want <= 0.02 (interleaved compression crushes scale lanes)", scaleErr)
+	}
+	// Constant projective lanes MUST be exact — any drift here shears the matrix
+	// and projects vertices to streaks ("light rays"). Per-lane ranges collapse
+	// these to a single value, so the error is ~0.
+	if projErr > 1e-6 {
+		t.Errorf("projective-lane error = %.6g, want ~0 (drift here causes projective shear / light-ray rendering)", projErr)
+	}
 }

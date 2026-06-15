@@ -108,6 +108,12 @@
     return out;
   }
 
+  // Reinterleave when a per-lane stride is set (compressed transforms /
+  // strided positions), else pass through. Returns the (possibly new) array.
+  function sceneReinterleaveMaybe(arr, stride) {
+    return arr && stride > 1 ? sceneReinterleave(arr, stride) : arr;
+  }
+
   function sceneDecompressPointsEntry(entry) {
     if (entry.compressedPositions && !entry.positions) {
       entry.positions = sceneDecompressArray(entry.compressedPositions);
@@ -126,10 +132,13 @@
     }
   }
 
-  // Decompress an instanced mesh entry in place.
+  // Decompress an instanced mesh entry in place. Transforms compressed
+  // deinterleaved by mat4 lane (transformStride) are reinterleaved to the
+  // [m0..m15, ...] stream the renderer expects.
   function sceneDecompressInstancedMeshEntry(entry) {
     if (entry.compressedTransforms && !entry.transforms) {
-      entry.transforms = sceneDecompressArray(entry.compressedTransforms);
+      entry.transforms = sceneReinterleaveMaybe(
+        sceneDecompressArray(entry.compressedTransforms), entry.transformStride);
       if (entry.transforms) {
         delete entry.compressedTransforms;
       }
@@ -214,13 +223,15 @@
       var entry = meshes[i];
       if (progressive || lod) {
         if (entry.previewTransforms && !entry.transforms) {
-          entry.transforms = sceneDecompressArray(entry.previewTransforms);
+          entry.transforms = sceneReinterleaveMaybe(
+            sceneDecompressArray(entry.previewTransforms), entry.transformStride);
           entry._pendingTransforms = entry.compressedTransforms;
           entry._previewActive = true;
           delete entry.previewTransforms;
         }
         if (lod && entry._pendingTransforms) {
-          entry._fullTransforms = sceneDecompressArray(entry._pendingTransforms);
+          entry._fullTransforms = sceneReinterleaveMaybe(
+            sceneDecompressArray(entry._pendingTransforms), entry.transformStride);
           entry._previewTransforms = entry.transforms;
           entry._lodThreshold = lodThreshold;
         }
