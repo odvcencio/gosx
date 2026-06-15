@@ -5605,9 +5605,12 @@
 
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
-        if (!mesh.transforms || mesh.instanceCount <= 0) continue;
+        if (!mesh.transforms) continue;
 
-        var instanceCount = sceneNumber(mesh.instanceCount, 0);
+        // Count is serialized as `count` (legacyProps); `instanceCount` is often
+        // absent. Resolve instanceCount→count→0 or the WebGL2 ring renders zero
+        // instances.
+        var instanceCount = sceneNumber(mesh.instanceCount, sceneNumber(mesh.count, 0));
         if (instanceCount <= 0) continue;
 
         // Generate or retrieve cached geometry for this mesh kind.

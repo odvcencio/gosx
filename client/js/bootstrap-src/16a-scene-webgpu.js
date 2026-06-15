@@ -4057,7 +4057,12 @@
         // GC churn → frame hitches) for a static instanced ring. After the first
         // upload we pass null so sys.update skips the input-buffer write and only
         // refreshes the frustum-plane uniform + dispatches.
-        var instanceCount = (typeof mesh.instanceCount === "number") ? mesh.instanceCount : 0;
+        // Instanced meshes serialize their count under `count` (legacyProps);
+        // `instanceCount` is often absent. instancedMeshCount() resolves
+        // instanceCount→count→0, so the cull operates on the REAL count instead
+        // of 0 (which left the input buffer unpopulated → drawIndirect rendered
+        // only degenerate zero-matrix instances → an invisible ring).
+        var instanceCount = instancedMeshCount(mesh);
         var transforms = mesh.transforms;
         var records = null;
         if (transforms && instanceCount > 0 && existing.uploadedTransforms !== transforms) {

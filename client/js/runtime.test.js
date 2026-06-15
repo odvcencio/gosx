@@ -19981,6 +19981,24 @@ test("gpu-cull T1: WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT and cull pipeline acces
 // -------------------------------------------------------------------------
 // Task 2: createSceneInstancedCullSystem — buffer sizes and usage flags
 // -------------------------------------------------------------------------
+test("gpu-cull T2a-count: cull sizes buffers from `count` when `instanceCount` is absent", async () => {
+  const { device } = makeFakeGPUDevice();
+  const harness = await createCullSystemHarness(device);
+  const api = harness.api;
+  // Regression guard: real instanced meshes (e.g. the galaxy meteor ring)
+  // serialize the count under `count` (legacyProps), NOT `instanceCount`. The
+  // cull MUST resolve count→ or it sizes for 1 (capacity 32) and drawIndirect
+  // renders only ~32 degenerate zero-matrix instances → an invisible ring.
+  const mesh = { id: "meteors", count: 100, cullKernelWGSL: MINIMAL_CULL_WGSL };
+  const sys = api.createSceneInstancedCullSystem(device, mesh);
+  // capacity = max(32, 100 + floor(100/4)) = 125 → buffers 125*80 bytes.
+  const expectedBufBytes = 125 * 80;
+  assert.equal(sys.inputBuf.size, expectedBufBytes,
+    "inputBuf must be sized from `count` (125*80=10000), not the instanceCount-missing fallback (32*80=2560)");
+  assert.equal(sys.outputBuf.size, expectedBufBytes,
+    "outputBuf must be sized from `count`");
+});
+
 test("gpu-cull T2a: createSceneInstancedCullSystem creates buffers with correct sizes and usage flags", async () => {
   const { device, state } = makeFakeGPUDevice();
   const harness = await createCullSystemHarness(device);

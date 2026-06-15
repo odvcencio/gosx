@@ -1233,7 +1233,10 @@
 
     if (!cullWGSL) return null;
 
-    var instanceCount = (typeof mesh.instanceCount === "number") ? mesh.instanceCount : 0;
+    // Instanced count is serialized as `count` (legacyProps); `instanceCount`
+    // is often absent. Resolve instanceCount→count→0 so the cull buffer is
+    // sized for the real instance count, not 1.
+    var instanceCount = sceneNumber(mesh.instanceCount, sceneNumber(mesh.count, 0));
     if (instanceCount <= 0) instanceCount = 1;
     var capacity = Math.max(32, instanceCount + Math.floor(instanceCount / 4));
 
@@ -1402,7 +1405,7 @@
       cullKernelWGSL:  (typeof mesh.cullKernelWGSL  === "string") ? mesh.cullKernelWGSL  : "",
       cullKernelEntry: (typeof mesh.cullKernelEntry  === "string") ? mesh.cullKernelEntry  : "",
       cullRadius:      (typeof mesh.cullRadius       === "number") ? mesh.cullRadius       : 0,
-      instanceCount:   (typeof mesh.instanceCount    === "number") ? mesh.instanceCount    : 0,
+      instanceCount:   sceneNumber(mesh.instanceCount, sceneNumber(mesh.count, 0)),
     });
   }
 
