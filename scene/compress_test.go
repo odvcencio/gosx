@@ -742,3 +742,69 @@ func TestCompressAnimationEmptyClipSkipped(t *testing.T) {
 		t.Fatalf("expected 0 animations (empty name and empty channels should be skipped), got %d", len(ir.Animations))
 	}
 }
+
+// TestCompressInstancedTransformsRoundTrip tests CompressInstancedTransforms:
+// the returned map must have compressedTransforms (not transforms), and
+// DecompressFloat64Array must reproduce positions within 12-bit error tolerance.
+func TestCompressInstancedTransformsRoundTrip(t *testing.T) {
+	const count = 100
+	positions := make([]Vector3, count)
+	scales := make([]Vector3, count)
+	for i := 0; i < count; i++ {
+		angle := float64(i) / float64(count) * 6.283185307
+		r := 120.0 + float64(i)*0.5
+		positions[i] = Vector3{X: math.Cos(angle) * r, Y: float64(i) * 0.1, Z: math.Sin(angle) * r}
+		scales[i] = Vector3{X: 1.0, Y: 0.8, Z: 1.0}
+	}
+	im := InstancedMesh{
+		ID:        "meteor-ring",
+		Count:     count,
+		Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+		Material:  FlatMaterial{Color: "#ff8000"},
+		Positions: positions,
+		Scales:    scales,
+	}
+
+	props := CompressInstancedTransforms(im, 12)
+	if props == nil {
+		t.Fatal("CompressInstancedTransforms returned nil")
+	}
+	if _, ok := props["compressedTransforms"]; !ok {
+		t.Fatal("expected compressedTransforms key in result")
+	}
+	if _, ok := props["transforms"]; ok {
+		t.Fatal("raw transforms must not be present when compressed")
+	}
+
+	chunks, ok := props["compressedTransforms"].([]CompressedArray)
+	if !ok || len(chunks) == 0 {
+		t.Fatalf("compressedTransforms is not []CompressedArray or is empty, got %T", props["compressedTransforms"])
+	}
+
+	// Decode and verify the translation column (index 12 in each mat4) is close to original.
+	decoded := DecompressFloat64Array(chunks)
+	if len(decoded) != count*16 {
+		t.Fatalf("decoded length = %d, want %d", len(decoded), count*16)
+	}
+
+	// 12-bit max error over the transform range is ~0.07 world units.
+	// We check the translation column (col 3: indices 12..14 in each mat4).
+	maxErr := 0.0
+	for i := 0; i < count; i++ {
+		tx := decoded[i*16+12]
+		tz := decoded[i*16+14]
+		ex := math.Abs(tx - positions[i].X)
+		ez := math.Abs(tz - positions[i].Z)
+		if ex > maxErr {
+			maxErr = ex
+		}
+		if ez > maxErr {
+			maxErr = ez
+		}
+	}
+	const maxAllowed = 0.5 // generous: 12-bit over ~240u range gives ~0.06u error
+	if maxErr > maxAllowed {
+		t.Errorf("12-bit translation error = %.4f, want <= %.4f", maxErr, maxAllowed)
+	}
+	t.Logf("CompressInstancedTransforms(12): %d instances, max position error = %.4f", count, maxErr)
+}

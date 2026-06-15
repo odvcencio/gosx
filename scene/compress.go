@@ -8,6 +8,36 @@ import (
 // sceneChunkSize is the max float count per compression chunk.
 const sceneChunkSize = 4096
 
+// CompressInstancedTransforms lowers im into an InstancedMeshIR, compresses
+// its transform array at the given bit-width, and returns the result as a
+// legacyProps map (the same map that SpreadProps returns, but with
+// compressedTransforms instead of transforms). Use bits=12 for the recommended
+// 0.069-world-unit error budget; 8-bit risks visible drift on transforms that
+// span a wide world-space range.
+//
+// The returned map's "compressedTransforms" key is consumed by the browser
+// 11a-scene-decompress.js hydration pass (both the scene.instancedMeshes and
+// props.instancedMeshes paths) before the renderer sees the data — so the ring
+// renders identically to the raw-transform path in the browser.
+//
+// Returns nil when the mesh produces no IR (e.g. zero instances) or compression
+// produces no output. Callers should fall back to SpreadProps in that case.
+func CompressInstancedTransforms(im InstancedMesh, bits int) map[string]any {
+	l := &graphLowerer{anchors: make(map[string]worldTransform)}
+	l.lowerInstancedMesh(im, identityTransform())
+	if len(l.instancedMeshes) == 0 {
+		return nil
+	}
+	ir := l.instancedMeshes[0]
+	compressed := compressFloat64Array(ir.Transforms, bits)
+	if len(compressed) == 0 {
+		return nil
+	}
+	ir.CompressedTransforms = compressed
+	ir.Transforms = nil
+	return ir.legacyProps()
+}
+
 // compressSceneIR walks the IR and compresses eligible float arrays in place.
 // When previewBitWidth > 0, a lower-quality preview is also emitted for
 // progressive loading and LOD.
