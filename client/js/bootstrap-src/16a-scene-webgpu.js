@@ -4049,38 +4049,34 @@
         if (!sys.isReady()) continue;
 
         // Build instance records for this mesh. The native InstanceRecord is
-        // 80B: mat4 (col-major, 64B) + pickData uint32x4 (16B). For the initial
-        // slice, we pass the mesh's transforms as the mat4 portion with zero
-        // pickData (S6 consumer will supply real pickData).
+        // 80B: mat4 (col-major, 64B) + pickData uint32x4 (16B), zero pickData
+        // for now (S6 consumer will supply real pickData). The records depend
+        // ONLY on the (static) transforms, so build + upload them ONCE per
+        // system + transforms array — rebuilding the 80B buffer and re-uploading
+        // it to the GPU every frame is pure waste (≈450KB/frame of allocations →
+        // GC churn → frame hitches) for a static instanced ring. After the first
+        // upload we pass null so sys.update skips the input-buffer write and only
+        // refreshes the frustum-plane uniform + dispatches.
         var instanceCount = (typeof mesh.instanceCount === "number") ? mesh.instanceCount : 0;
         var transforms = mesh.transforms;
-        var recordBytes = null;
-        if (transforms && instanceCount > 0) {
+        var records = null;
+        if (transforms && instanceCount > 0 && existing.uploadedTransforms !== transforms) {
           var tf = (transforms instanceof Float32Array) ? transforms : new Float32Array(transforms);
-          // Interleave mat4 (16 floats, 64B) + zero pickData (4 uint32, 16B).
-          var recBuf = new ArrayBuffer(instanceCount * 80);
-          var recF = new Float32Array(recBuf);
-          var recU = new Uint32Array(recBuf);
+          var recF = new Float32Array(instanceCount * 20); // 20 f32 slots = 80B per record; zero-init covers pickData
           for (var j = 0; j < instanceCount; j++) {
             var src = j * 16;
-            var dst = j * 20; // 80B / 4B = 20 u32 slots per record
+            var dst = j * 20;
             for (var k = 0; k < 16; k++) recF[dst + k] = (src + k < tf.length) ? tf[src + k] : 0;
-            // pickData at offset 64 in the record = indices 16-19 in the 20-slot block.
-            recU[dst + 16] = 0;
-            recU[dst + 17] = 0;
-            recU[dst + 18] = 0;
-            recU[dst + 19] = 0;
           }
-          recordBytes = recBuf;
+          records = recF;
+          existing.uploadedTransforms = transforms;
         }
 
         // Get geometry vertex count for the drawArgs reset.
         var geom = getInstancedGeometry(mesh);
         var vertexCount = (geom && geom.vertexCount > 0) ? geom.vertexCount : 1;
 
-        sys.update(device, encoder, planes, vertexCount,
-          recordBytes ? new Float32Array(recordBytes) : null,
-          instanceCount);
+        sys.update(device, encoder, planes, vertexCount, records, instanceCount);
       }
 
       // GC: dispose systems for meshes no longer in the bundle.
