@@ -3347,6 +3347,75 @@ func TestInstancedMeshCullFieldsLowering(t *testing.T) {
 	}
 }
 
+// TestInstancedMeshSpreadProps verifies that InstancedMesh.SpreadProps returns
+// a map carrying all cull fields and the instance count, mirroring the
+// legacyProps path used by the full scene IR. This is the Task 1 guard.
+func TestInstancedMeshSpreadProps(t *testing.T) {
+	im := InstancedMesh{
+		ID:              "meteor-ring",
+		Count:           3,
+		Geometry:        BoxGeometry{Width: 0.5, Height: 0.3, Depth: 0.4},
+		Material:        FlatMaterial{Color: "#e0b0ff"},
+		Positions:       []Vector3{Vec3(10, 0, 0), Vec3(-10, 0, 0), Vec3(0, 0, 10)},
+		Scales:          []Vector3{Vec3(1, 1, 1), Vec3(1, 1, 1), Vec3(1, 1, 1)},
+		CullKernelWGSL:  "@compute @workgroup_size(64) fn main() {}",
+		CullKernelEntry: "main",
+		CullRadius:      150.0,
+		CullBackend:     "elio",
+	}
+
+	props := im.SpreadProps()
+	if props == nil {
+		t.Fatal("SpreadProps returned nil")
+	}
+
+	// Count.
+	if got := props["count"]; got != 3 {
+		t.Errorf("count = %v, want 3", got)
+	}
+	// Cull fields.
+	if got, _ := props["cullKernelWGSL"].(string); got != "@compute @workgroup_size(64) fn main() {}" {
+		t.Errorf("cullKernelWGSL = %q", got)
+	}
+	if got, _ := props["cullKernelEntry"].(string); got != "main" {
+		t.Errorf("cullKernelEntry = %q", got)
+	}
+	if got, _ := props["cullRadius"].(float64); got != 150.0 {
+		t.Errorf("cullRadius = %v, want 150", got)
+	}
+	if got, _ := props["cullBackend"].(string); got != "elio" {
+		t.Errorf("cullBackend = %q, want elio", got)
+	}
+	// Transforms must be present (count*16 float64).
+	transforms, ok := props["transforms"].([]float64)
+	if !ok || len(transforms) != 3*16 {
+		t.Errorf("transforms len = %d, want 48", len(transforms))
+	}
+}
+
+// TestInstancedMeshSpreadPropsNoCullFields verifies that an InstancedMesh with
+// no cull fields produces a map with no cull keys (additive baseline contract).
+func TestInstancedMeshSpreadPropsNoCullFields(t *testing.T) {
+	im := InstancedMesh{
+		ID:       "plain",
+		Count:    1,
+		Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
+		Material: FlatMaterial{Color: "#ffffff"},
+		Positions: []Vector3{Vec3(0, 0, 0)},
+		Scales:    []Vector3{Vec3(1, 1, 1)},
+	}
+
+	props := im.SpreadProps()
+	if props == nil {
+		t.Fatal("SpreadProps returned nil")
+	}
+	for _, key := range []string{"cullKernelWGSL", "cullKernelWGSLRef", "cullKernelEntry", "cullRadius", "cullBackend"} {
+		if _, has := props[key]; has {
+			t.Errorf("plain mesh must not have cull key %q in SpreadProps output", key)
+		}
+	}
+}
+
 func TestInstancedGLBMeshAutoID(t *testing.T) {
 	props := Props{
 		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
