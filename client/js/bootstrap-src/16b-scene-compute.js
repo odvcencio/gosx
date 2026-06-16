@@ -1259,11 +1259,21 @@
       label: "gosx.cull.output",
     });
     var drawArgsBuf = device.createBuffer({
-      // STORAGE for atomicAdd in the shader + INDIRECT for drawIndirect.
+      // STORAGE for atomicAdd in the shader + INDIRECT for drawIndirect +
+      // COPY_SRC so we can blit to the staging buffer for survivor readback.
       size: 16,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       label: "gosx.cull.drawArgs",
     });
+
+    // Staging buffer for CPU-side survivor readback (telemetry only).
+    // 16 bytes = [vertexCount, instanceCount, firstVertex, firstInstance].
+    var stagingBuf = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      label: "gosx.cull.staging",
+    });
+    var stagingMapping = false; // guard against overlapping mapAsync calls
     var cullUniformBuf = device.createBuffer({
       size: INSTANCED_CULL_UNIFORM_SIZE,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -1340,8 +1350,42 @@
       cullUniformBuf: cullUniformBuf,
       capacity: capacity,
       cullRadius: cullRadius,
+      instanceCount: instanceCount,
+      lastSurvivors: 0,
+      lastVertexCount: 0,
 
       isReady: function() { return ready; },
+
+      // requestSurvivorReadback copies drawArgsBuf into the staging buffer so
+      // pollSurvivors() can read it back on the CPU. Call once per encoder,
+      // AFTER the compute dispatch (i.e. after update()). Zero overhead when
+      // not called — the copy is only inserted when this method is invoked.
+      requestSurvivorReadback: function(encoder) {
+        if (!ready || disposed) return;
+        encoder.copyBufferToBuffer(drawArgsBuf, 0, stagingBuf, 0, 16);
+      },
+
+      // pollSurvivors() asynchronously maps the staging buffer and stores the
+      // survivor count. A mapping flag prevents overlapping mapAsync calls.
+      // Returns without error if a map is already in flight.
+      pollSurvivors: function() {
+        var self = this;
+        if (!ready || disposed || stagingMapping) return;
+        stagingMapping = true;
+        stagingBuf.mapAsync(GPUMapMode.READ).then(function() {
+          if (disposed) { stagingMapping = false; return; }
+          try {
+            var arr = new Uint32Array(stagingBuf.getMappedRange(0, 16));
+            self.lastVertexCount = arr[0];
+            self.lastSurvivors   = arr[1];
+          } finally {
+            stagingBuf.unmap();
+            stagingMapping = false;
+          }
+        }).catch(function() {
+          stagingMapping = false;
+        });
+      },
 
       // update() is called once per frame, before the main pass.
       // planes: [6][4] float array — [nx,ny,nz,d] per plane.
@@ -1391,6 +1435,7 @@
         if (outputBuf)     outputBuf.destroy();
         if (drawArgsBuf)   drawArgsBuf.destroy();
         if (cullUniformBuf) cullUniformBuf.destroy();
+        if (stagingBuf)    stagingBuf.destroy();
         computePipeline = null;
         bindGroup = null;
         ready = false;

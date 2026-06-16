@@ -20649,3 +20649,165 @@ test("cpu-cull S3-T7: 11-scene-math.js defines extractFrustumPlanesJS and instan
   assert.match(math, /radius.*>.*0.*\?.*radius.*:.*2\.0|2\.0.*default/,
     "absent/zero radius must default to 2.0");
 });
+
+// -------------------------------------------------------------------------
+// Telemetry T1: __gosx_scene3d_telemetry aggregates mount data attributes
+// -------------------------------------------------------------------------
+test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attributes", () => {
+  // Build a minimal fake DOM element that exposes getAttribute/setAttribute.
+  const attrs = {};
+  const mount = {
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
+    setAttribute(name, value) { attrs[name] = String(value); },
+    removeAttribute(name) { delete attrs[name]; },
+  };
+
+  // Set the data attributes that telemetry reads.
+  mount.setAttribute("data-gosx-scene3d-backend", "webgpu");
+  mount.setAttribute("data-gosx-scene3d-ready", "true");
+  mount.setAttribute("data-gosx-scene3d-mounted", "true");
+  mount.setAttribute("data-gosx-scene3d-in-viewport", "true");
+  mount.setAttribute("data-gosx-scene3d-capability-tier", "high");
+  mount.setAttribute("data-gosx-scene3d-pixel-ratio", "2");
+  mount.setAttribute("data-gosx-scene3d-quality-frame-ms", "16.7");
+  mount.setAttribute("data-gosx-scene3d-quality-dpr-cap", "1.5");
+  mount.setAttribute("data-gosx-scene3d-quality-postfx-suppressed", "false");
+  mount.setAttribute("data-gosx-scene3d-adaptive-quality", "ok");
+  mount.setAttribute("data-gosx-scene3d-render-loop-reason", "requestAnimationFrame");
+  mount.setAttribute("data-gosx-scene3d-dropped", "0");
+  mount.setAttribute("data-gosx-scene3d-device-memory", "8");
+  mount.setAttribute("data-gosx-scene3d-hardware-concurrency", "12");
+  mount.setAttribute("data-gosx-scene3d-cull-survivors",
+    JSON.stringify({"cull-lab-left-culled": {"instanceCount": 108, "survivors": 72}}));
+
+  // Run the telemetry function extracted from 20-scene-mount.js source in an
+  // isolated vm context. We extract the function body and wrap it so it assigns
+  // window.__gosx_scene3d_telemetry on a minimal window-like context.
+  const mountSrc = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  // Extract the function definition from the source text.
+  const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
+  assert.ok(fnStart >= 0, "could not find __gosx_scene3d_telemetry in 20-scene-mount.js");
+  const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
+  assert.ok(fnEnd >= 0, "could not find end of telemetry function");
+  const fnSource = mountSrc.slice(fnStart, fnEnd);
+
+  const ctx = vm.createContext({
+    window: {},
+    document: {
+      querySelector(sel) { if (sel === "[data-gosx-scene3d-mounted]") return mount; return null; },
+    },
+    JSON,
+    parseFloat,
+  });
+  // Wire window.__gosx_scene3d_webgpu_diagnostics to undefined (not available).
+  vm.runInContext(fnSource + "\n", ctx);
+
+  const snap = ctx.window.__gosx_scene3d_telemetry(mount);
+  assert.ok(snap !== null, "telemetry snapshot must not be null");
+  assert.equal(snap.backend, "webgpu", "backend must be webgpu");
+  assert.equal(snap.ready, true, "ready must be true");
+  assert.equal(snap.mounted, true, "mounted must be true");
+  assert.equal(snap.inViewport, true, "inViewport must be true");
+  assert.equal(snap.capabilityTier, "high", "capabilityTier must be high");
+  assert.equal(snap.pixelRatio, 2, "pixelRatio must be 2");
+  assert.ok(Math.abs(snap.qualityFrameMs - 16.7) < 0.01, "qualityFrameMs must be ~16.7");
+  assert.equal(snap.qualityDprCap, 1.5, "qualityDprCap must be 1.5");
+  assert.equal(snap.qualityPostfxSuppressed, false, "qualityPostfxSuppressed must be false");
+  assert.equal(snap.adaptiveQuality, "ok", "adaptiveQuality must be ok");
+  assert.equal(snap.dropped, "0", "dropped must be '0'");
+  assert.equal(snap.deviceMemory, 8, "deviceMemory must be 8");
+  assert.equal(snap.hardwareConcurrency, 12, "hardwareConcurrency must be 12");
+  // cull-survivors JSON should be parsed into an object.
+  assert.ok(snap.cullSurvivors !== null, "cullSurvivors must not be null");
+  assert.ok(typeof snap.cullSurvivors === "object", "cullSurvivors must be an object");
+  assert.equal(snap.cullSurvivors["cull-lab-left-culled"].instanceCount, 108);
+  assert.equal(snap.cullSurvivors["cull-lab-left-culled"].survivors, 72);
+  // webgpu diagnostics: absent (no diagnostics fn registered in this env).
+  assert.equal(snap.webgpu, null, "webgpu diagnostics must be null when unavailable");
+});
+
+// -------------------------------------------------------------------------
+// Telemetry T2: __gosx_scene3d_telemetry with null arg auto-finds mounted scene
+// -------------------------------------------------------------------------
+test("telemetry T2: __gosx_scene3d_telemetry(null) returns null when no mounted scene", () => {
+  const mountSrc = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
+  const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
+  const fnSource = mountSrc.slice(fnStart, fnEnd);
+
+  const ctx = vm.createContext({
+    window: {},
+    document: {
+      querySelector() { return null; },
+    },
+    JSON,
+    parseFloat,
+  });
+  vm.runInContext(fnSource + "\n", ctx);
+
+  const snap = ctx.window.__gosx_scene3d_telemetry(null);
+  assert.equal(snap, null, "must return null when no mounted scene found");
+});
+
+// -------------------------------------------------------------------------
+// Telemetry T3: cull readback wiring — 16b exposes requestSurvivorReadback + pollSurvivors
+// -------------------------------------------------------------------------
+test("telemetry T3: 16b-scene-compute.js exposes requestSurvivorReadback and pollSurvivors on cull system", () => {
+  const compute = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16b-scene-compute.js"), "utf8");
+
+  assert.match(compute, /requestSurvivorReadback/,
+    "cull system must expose requestSurvivorReadback");
+  assert.match(compute, /pollSurvivors/,
+    "cull system must expose pollSurvivors");
+  assert.match(compute, /COPY_SRC/,
+    "drawArgsBuf must include COPY_SRC usage flag");
+  assert.match(compute, /stagingBuf/,
+    "must create a staging buffer for readback");
+  assert.match(compute, /stagingMapping/,
+    "must guard overlapping mapAsync calls with a mapping flag");
+  assert.match(compute, /lastSurvivors/,
+    "cull system must store lastSurvivors");
+  assert.match(compute, /copyBufferToBuffer/,
+    "requestSurvivorReadback must call copyBufferToBuffer");
+});
+
+// -------------------------------------------------------------------------
+// Telemetry T4: cull telemetry gate — 16a gates readback on cull_telemetry flag
+// -------------------------------------------------------------------------
+test("telemetry T4: 16a-scene-webgpu.js gates survivor readback on __gosx_scene3d_cull_telemetry", () => {
+  const webgpu = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /__gosx_scene3d_cull_telemetry/,
+    "16a must reference __gosx_scene3d_cull_telemetry gate");
+  assert.match(webgpu, /requestSurvivorReadback/,
+    "16a must call requestSurvivorReadback on cull systems");
+  assert.match(webgpu, /pollSurvivors/,
+    "16a must call pollSurvivors on cull systems");
+  assert.match(webgpu, /data-gosx-scene3d-cull-survivors/,
+    "16a must write data-gosx-scene3d-cull-survivors attribute");
+  assert.match(webgpu, /cullTelemetryFrameCount/,
+    "16a must throttle readback with a frame counter");
+  assert.match(webgpu, /lastCullSurvivors/,
+    "16a must store lastCullSurvivors for publishWebGPUFrameStats");
+});
+
+// -------------------------------------------------------------------------
+// Telemetry T5: __gosx_scene3d_telemetry exposed in 20-scene-mount.js source
+// -------------------------------------------------------------------------
+test("telemetry T5: 20-scene-mount.js defines __gosx_scene3d_telemetry", () => {
+  const mount = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(mount, /__gosx_scene3d_telemetry/,
+    "20-scene-mount must define window.__gosx_scene3d_telemetry");
+  assert.match(mount, /cull-survivors/,
+    "telemetry function must reference cull-survivors attribute");
+  assert.match(mount, /cullSurvivors/,
+    "telemetry snapshot must include cullSurvivors field");
+  assert.match(mount, /data-gosx-scene3d-backend/,
+    "telemetry must read backend attribute");
+});

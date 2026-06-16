@@ -118,7 +118,13 @@ const budgets = [
   // (shared); CPU cull path (hasCullConfig gate + survivor compaction +
   // dynamic VBO upload) added to drawInstancedMeshes in 16-scene-webgl.js.
   // Measured: 903_824 / 245_457 / 198_989 + rounding headroom.
-  { file: "bootstrap.js", raw: 905_000, gzip: 246_000, brotli: 199_500 },
+  //
+  // Bumped raw 905_000 -> 907_000, gzip 246_000 -> 247_000, brotli 199_500 ->
+  // 200_000: GPU-cull telemetry — cull survivor readback (16b: stagingBuf +
+  // requestSurvivorReadback + pollSurvivors; 16a: throttled readback dispatch +
+  // cull-survivors attribute; 20-scene-mount: __gosx_scene3d_telemetry snapshot
+  // API). Measured: 906_387 / 246_361 / 199_604 + rounding headroom.
+  { file: "bootstrap.js", raw: 907_000, gzip: 247_000, brotli: 200_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -188,7 +194,12 @@ const budgets = [
   // preview/lod instanced transforms) — the fix for deinterleaved
   // compressedTransforms (transformStride) that stops projective-shear "light
   // ray" rendering of instanced meshes. Measured: 547_2xx / 149_3xx / 123_012.
-  { file: "bootstrap-feature-scene3d.js", raw: 548_500, gzip: 150_000, brotli: 123_500 },
+  //
+  // Bumped raw 548_500 -> 550_000, brotli 123_500 -> 124_000: GPU-cull telemetry
+  // — __gosx_scene3d_telemetry in 20-scene-mount.js (reads data attributes +
+  // cull-survivors JSON + compact webgpu diag slice). Measured: 549_171 /
+  // 149_967 / 123_638 + rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 550_000, gzip: 150_500, brotli: 124_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

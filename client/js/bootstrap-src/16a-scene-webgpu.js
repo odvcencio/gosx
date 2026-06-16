@@ -2804,6 +2804,10 @@
     var lastPreparedScene = null;
     var lastWebGPUFrameStats = null;
     var webGPUFrameSeq = 0;
+    // Cull telemetry: frame counter for throttling readback (~every 30 frames)
+    // and the last aggregated survivor snapshot written to the mount attribute.
+    var cullTelemetryFrameCount = 0;
+    var lastCullSurvivors = null; // null | string (JSON)
     var pendingWebGPUErrorScope = false;
     var webGPUErrorReportCount = 0;
 
@@ -4094,6 +4098,41 @@
           }
           instancedCullSystems.delete(_id);
         }
+      }
+
+      // Cull telemetry readback — gated on window.__gosx_scene3d_cull_telemetry === true.
+      // Throttled to ~every 30 frames to avoid GPU readback stalls every frame.
+      var cullTelemetryOn = (typeof window !== "undefined" && window.__gosx_scene3d_cull_telemetry === true);
+      if (cullTelemetryOn) {
+        cullTelemetryFrameCount += 1;
+        if (cullTelemetryFrameCount >= 30) {
+          cullTelemetryFrameCount = 0;
+          // Request readback for all ready systems this frame.
+          for (var _ti = instancedCullSystems.entries(), _te = _ti.next(); !_te.done; _te = _ti.next()) {
+            var _tRec = _te.value[1];
+            if (_tRec && _tRec.system && _tRec.system.isReady() && typeof _tRec.system.requestSurvivorReadback === "function") {
+              _tRec.system.requestSurvivorReadback(encoder);
+            }
+          }
+        }
+        // Kick pollSurvivors every frame (non-blocking; mapping flag guards overlaps).
+        var survivorSnapshot = {};
+        for (var _pi = instancedCullSystems.entries(), _pe = _pi.next(); !_pe.done; _pe = _pi.next()) {
+          var _pId  = _pe.value[0];
+          var _pRec = _pe.value[1];
+          if (_pRec && _pRec.system && _pRec.system.isReady()) {
+            if (typeof _pRec.system.pollSurvivors === "function") {
+              _pRec.system.pollSurvivors();
+            }
+            survivorSnapshot[_pId] = {
+              instanceCount: _pRec.system.instanceCount || 0,
+              survivors: _pRec.system.lastSurvivors || 0,
+            };
+          }
+        }
+        lastCullSurvivors = JSON.stringify(survivorSnapshot);
+      } else {
+        lastCullSurvivors = null;
       }
 
       return instancedCullSystems;
@@ -6396,6 +6435,13 @@
         mount.setAttribute("data-gosx-scene3d-webgpu-last-error", String(published.lastError));
       } else {
         mount.removeAttribute("data-gosx-scene3d-webgpu-last-error");
+      }
+      // Cull survivor telemetry: written when __gosx_scene3d_cull_telemetry is
+      // enabled; removed otherwise so the attribute is absent in production.
+      if (lastCullSurvivors !== null) {
+        mount.setAttribute("data-gosx-scene3d-cull-survivors", lastCullSurvivors);
+      } else {
+        mount.removeAttribute("data-gosx-scene3d-cull-survivors");
       }
     }
 
