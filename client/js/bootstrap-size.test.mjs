@@ -250,7 +250,10 @@ const budgets = [
   // getPBRInstancedCullPipeline + createSceneInstancedCullSystem in 16b +
   // updateInstancedCullSystems + extractFrustumPlanesJS + indirect-draw branch
   // in drawInstancedMeshes. Measured: 180_246 / 44_932 / 38_599 + rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 181_000, gzip: 45_500, brotli: 39_000 },
+  // Bumped raw 181_000 -> 181_200: cull telemetry poll/readback reorder (Bug 1) +
+  // unlit derivation from kind/materialKind in materialUniformData (Bug 2).
+  // Measured: 181_038 + headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 181_200, gzip: 45_500, brotli: 39_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

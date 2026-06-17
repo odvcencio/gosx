@@ -1351,7 +1351,7 @@
       capacity: capacity,
       cullRadius: cullRadius,
       instanceCount: instanceCount,
-      lastSurvivors: 0,
+      lastSurvivors: null,  // null until first successful poll; then a number
       lastVertexCount: 0,
 
       isReady: function() { return ready; },

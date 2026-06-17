@@ -20811,3 +20811,70 @@ test("telemetry T5: 20-scene-mount.js defines __gosx_scene3d_telemetry", () => {
   assert.match(mount, /data-gosx-scene3d-backend/,
     "telemetry must read backend attribute");
 });
+
+// -------------------------------------------------------------------------
+// Telemetry T6: poll/readback order — pollSurvivors must come BEFORE
+// requestSurvivorReadback in the telemetry block so mapAsync reads data from
+// the prior frame's submitted copy, not a not-yet-submitted copy.
+// -------------------------------------------------------------------------
+test("telemetry T6: 16a pollSurvivors is called BEFORE requestSurvivorReadback in telemetry block", () => {
+  const webgpu = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // Use the LAST occurrence of "return instancedCullSystems;" as the block boundary
+  // (there is an earlier early-return for the empty-meshes case that must be excluded).
+  const gcEnd = webgpu.lastIndexOf("return instancedCullSystems;");
+  assert.ok(gcEnd > 0, "must find return instancedCullSystems");
+  const telemetryRegion = webgpu.slice(0, gcEnd);
+
+  // Use lastIndexOf so we find the occurrences inside the telemetry block (not
+  // earlier occurrences in comments or unrelated code blocks).
+  const pollIdx = telemetryRegion.lastIndexOf("pollSurvivors");
+  const readbackIdx = telemetryRegion.lastIndexOf("requestSurvivorReadback");
+  assert.ok(pollIdx > 0, "pollSurvivors must appear in telemetry region");
+  assert.ok(readbackIdx > 0, "requestSurvivorReadback must appear in telemetry region");
+  assert.ok(
+    pollIdx < readbackIdx,
+    "pollSurvivors must be called BEFORE requestSurvivorReadback in the telemetry block " +
+    "(polling reads data from prior submitted copy; readback encodes copy for current frame)"
+  );
+});
+
+// -------------------------------------------------------------------------
+// Telemetry T7: lastSurvivors null init — 16b initialises lastSurvivors to null
+// so the snapshot can distinguish "never polled" (null) from "0 survivors" (0).
+// -------------------------------------------------------------------------
+test("telemetry T7: 16b initialises lastSurvivors to null (not 0)", () => {
+  const compute = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16b-scene-compute.js"), "utf8");
+
+  assert.match(compute, /lastSurvivors:\s*null/,
+    "lastSurvivors must initialise to null so the HUD can distinguish pending from 0 survivors");
+});
+
+// -------------------------------------------------------------------------
+// Bug-2 / Color T1: materialUniformData derives unlit from kind:"flat" /
+// materialKind:"flat" — FlatMaterial must render unlit even when the material
+// object comes from bundle.materials[] (which carries kind but never sets unlit).
+// -------------------------------------------------------------------------
+test("color T1: 16a materialUniformData sets unlit=1 for kind:flat and materialKind:flat", () => {
+  const webgpu = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // The unlit uniform slot must be derived from mat.kind OR mat.materialKind,
+  // not only from mat.unlit.  Regression guard: before the fix u[12] was set
+  // only from mat.unlit, which is absent on normalizeSceneMaterialRecord objects
+  // (they carry kind:"flat" but never set unlit:true) — causing FlatMaterial
+  // instanced meshes to render via the PBR lighting path with no ambient, giving
+  // near-black output.
+  assert.match(
+    webgpu,
+    /u\[12\].*mat\.kind\s*===\s*["']flat["']/,
+    "u[12] (unlit uniform) must be derived from mat.kind === 'flat'"
+  );
+  assert.match(
+    webgpu,
+    /u\[12\].*mat\.materialKind\s*===\s*["']flat["']/,
+    "u[12] (unlit uniform) must be derived from mat.materialKind === 'flat'"
+  );
+});

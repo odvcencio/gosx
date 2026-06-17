@@ -4102,20 +4102,14 @@
 
       // Cull telemetry readback — gated on window.__gosx_scene3d_cull_telemetry === true.
       // Throttled to ~every 30 frames to avoid GPU readback stalls every frame.
+      // Poll BEFORE requesting the next readback: mapAsync reads data from the
+      // PREVIOUS cycle's copy (already submitted); calling requestSurvivorReadback
+      // first would encode a new copy into the still-open encoder, causing mapAsync
+      // to race against an unsubmitted write and read stale zeros.
       var cullTelemetryOn = (typeof window !== "undefined" && window.__gosx_scene3d_cull_telemetry === true);
       if (cullTelemetryOn) {
         cullTelemetryFrameCount += 1;
-        if (cullTelemetryFrameCount >= 30) {
-          cullTelemetryFrameCount = 0;
-          // Request readback for all ready systems this frame.
-          for (var _ti = instancedCullSystems.entries(), _te = _ti.next(); !_te.done; _te = _ti.next()) {
-            var _tRec = _te.value[1];
-            if (_tRec && _tRec.system && _tRec.system.isReady() && typeof _tRec.system.requestSurvivorReadback === "function") {
-              _tRec.system.requestSurvivorReadback(encoder);
-            }
-          }
-        }
-        // Kick pollSurvivors every frame (non-blocking; mapping flag guards overlaps).
+        // Step 1: poll — reads survivor count from previous cycle's submitted copy.
         var survivorSnapshot = {};
         for (var _pi = instancedCullSystems.entries(), _pe = _pi.next(); !_pe.done; _pe = _pi.next()) {
           var _pId  = _pe.value[0];
@@ -4126,11 +4120,21 @@
             }
             survivorSnapshot[_pId] = {
               instanceCount: _pRec.system.instanceCount || 0,
-              survivors: _pRec.system.lastSurvivors || 0,
+              survivors: _pRec.system.lastSurvivors,
             };
           }
         }
         lastCullSurvivors = JSON.stringify(survivorSnapshot);
+        // Step 2: request next readback after polling (copy encoded into current encoder).
+        if (cullTelemetryFrameCount >= 30) {
+          cullTelemetryFrameCount = 0;
+          for (var _ti = instancedCullSystems.entries(), _te = _ti.next(); !_te.done; _te = _ti.next()) {
+            var _tRec = _te.value[1];
+            if (_tRec && _tRec.system && _tRec.system.isReady() && typeof _tRec.system.requestSurvivorReadback === "function") {
+              _tRec.system.requestSurvivorReadback(encoder);
+            }
+          }
+        }
       } else {
         lastCullSurvivors = null;
       }
@@ -4372,7 +4376,7 @@
       f[9] = clamp01(sceneNumber(mat.transmission, 0));
       f[10] = clamp01(sceneNumber(mat.iridescence, 0));
       f[11] = Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0)));
-      u[12] = mat.unlit ? 1 : 0;
+      u[12] = (mat.unlit || mat.kind === "flat" || mat.materialKind === "flat") ? 1 : 0;
 
       u[18] = receiveShadow ? 1 : 0;
       u[19] = 0;
