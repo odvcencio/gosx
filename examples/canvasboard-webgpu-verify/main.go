@@ -833,11 +833,30 @@ if (typeof PerformanceObserver !== 'undefined') {
     var painterSurfaceId = await waitForSurfaceId(painterCanvas, deadline);
     var webgpuSurfaceId  = await waitForSurfaceId(webgpuCanvas,  deadline);
 
-    setStatus('Both boards hydrated (or timed out). Waiting two rAF frames before probing…');
+    setStatus('Both boards hydrated. Waiting for the WebGPU board to settle (async probe-await re-entry)…');
 
-    // Wait two rAF cycles to ensure at least one paint frame has completed.
-    await new Promise(function(r) {
-      requestAnimationFrame(function() { requestAnimationFrame(r); });
+    // The WebGPU-routed board renders only AFTER an async probe-await re-entry
+    // (26b-feature-engines-prefix.js: await __gosx_scene3d_webgpu_probe_ready()),
+    // which lands several frames after data-gosx-surface-id is set at hydration.
+    // A fixed 2-rAF wait samples mid-init — render() early-returns before the
+    // bundle carries worldMesh* (16a-scene-webgpu.js), so mesh-objects/perf are
+    // absent. Poll until the WebGPU board publishes its first frame's mesh-objects
+    // attr, OR it falls back to the painter, OR the global deadline elapses.
+    await new Promise(function(resolve) {
+      function settled() {
+        if (Date.now() >= deadline) return true;
+        var warned = _captured_warns.some(function(w) {
+          return w.indexOf('WebGPU backend unavailable') !== -1 ||
+                 w.indexOf('falling back to the 2D painter') !== -1;
+        });
+        if (warned) return true;
+        var mesh = webgpuHost ? webgpuHost.getAttribute('data-gosx-scene3d-webgpu-mesh-objects') : null;
+        return mesh !== null;
+      }
+      (function poll() {
+        if (settled()) { requestAnimationFrame(function() { requestAnimationFrame(resolve); }); return; }
+        setTimeout(poll, 50);
+      })();
     });
 
     setStatus('Collecting parity data…');
