@@ -628,6 +628,26 @@
         return;
       }
       if (!_canvasSurfaceWebGPUUsable()) {
+        // The WebGPU probe (async requestAdapter -> requestDevice) resolves a few
+        // ticks AFTER WASM-ready synchronously drives mountSurfaceKind into this
+        // function, so a one-shot sync check permanently falls back to the painter
+        // even on a fully capable GPU. Mirror the Scene3D mount path
+        // (20-scene-mount.js: await window.__gosx_scene3d_webgpu_probe_ready())
+        // and await the probe ONCE before giving up. Guard with a canvas expando
+        // so we re-enter at most once (terminates: a resolved-not-ready probe
+        // re-enters, fails _canvasSurfaceWebGPUUsable, and falls back cleanly).
+        if (typeof navigator !== "undefined" && navigator.gpu &&
+            !canvas.__gosxWebgpuProbeAwaited &&
+            typeof window !== "undefined" &&
+            typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
+          canvas.__gosxWebgpuProbeAwaited = true;
+          Promise.resolve(window.__gosx_scene3d_webgpu_probe_ready()).then(function() {
+            _startCanvasSurfaceWebGPURAF(id, canvas, instance);
+          }, function() {
+            fallback("navigator.gpu / probe not ready");
+          });
+          return;
+        }
         fallback("navigator.gpu / probe not ready");
         return;
       }
