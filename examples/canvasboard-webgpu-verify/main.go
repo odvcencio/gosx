@@ -859,6 +859,47 @@ if (typeof PerformanceObserver !== 'undefined') {
       })();
     });
 
+    // ---- Sustained perf collection window ----
+    // After the WebGPU board settles we keep the page alive until we have at
+    // least 30 'scene3d-render' measure entries OR 2.5 s elapse, whichever
+    // comes first — but never past the global deadline.
+    //
+    // The 16a WebGPU RAF loop is frame-gated: it halts after the first frame on
+    // a static scene and only re-fires when the board is dirtied.  We force
+    // repeated re-renders by dispatching synthetic WheelEvent (deltaY=0) on the
+    // WebGPU canvas — WASM processes the event, marks the camera dirty, and the
+    // RAF loop fires another frame.  Zero-delta ensures no visible pan/zoom.
+    setStatus('Sustained perf collection (≥30 frames or 2.5 s)…');
+    await new Promise(function(resolve) {
+      var sustainEnd = Math.min(Date.now() + 2500, deadline);
+      var canvas = document.getElementById('webgpu-board');
+      function tick() {
+        if (_perf_entries.length >= 30 || Date.now() >= sustainEnd) {
+          resolve();
+          return;
+        }
+        // Dispatch a minimal wheel event to dirty the camera and force a re-render.
+        // deltaY=0.5 causes an imperceptible zoom change that makes the scene string
+        // differ from the previous tick, bypassing the f!==N guard in the RAF loop
+        // (bootstrap-feature-engines.js: "if(f!==N||ae!==J||W!==H||X!==te)").
+        // This is the only way to accumulate scene3d-render measures in a static
+        // headless scene — the 16a loop skips v.render() when scene data is unchanged.
+        if (canvas) {
+          try {
+            var rect = canvas.getBoundingClientRect();
+            canvas.dispatchEvent(new WheelEvent('wheel', {
+              bubbles: true, cancelable: true,
+              clientX: rect.left + rect.width / 2,
+              clientY: rect.top  + rect.height / 2,
+              deltaX: 0, deltaY: 0.5, deltaMode: 0
+            }));
+          } catch(e) {}
+        }
+        requestAnimationFrame(tick);
+      }
+      tick();
+    });
+
     setStatus('Collecting parity data…');
 
     // ---- Per-board probes ----
