@@ -9,15 +9,29 @@ import (
 	"m31labs.dev/gosx/render/gpu"
 )
 
+// ComputeExecutor is the interface for a CPU-side implementation of a named
+// compute pipeline. RegisterComputeExecutor associates a ComputeExecutor with a
+// pipeline label so that DispatchWorkgroups/DispatchWorkgroupsIndirect can
+// invoke real compute logic for that label in headless tests.
+//
+// Exec receives the full bind-group map (slot → BindGroup) and the workgroup
+// dispatch dimensions. For DispatchWorkgroupsIndirect the dimensions are (0,0,0)
+// — the executor is expected to derive its own count from the bound buffers
+// (e.g. from the input buffer's lastWriteSize).
+type ComputeExecutor interface {
+	Exec(bindGroups map[int]*BindGroup, x, y, z int)
+}
+
 // Device is a pure-Go gpu.Device whose "swap chain" is a CPU-backed RGBA
 // image. Use New to construct one; the returned Surface represents the
 // framebuffer and should be passed into render/bundle.Config.Surface.
 type Device struct {
-	framebuffer *image.RGBA
-	width       int
-	height      int
-	queue       *Queue
-	surface     *Surface
+	framebuffer      *image.RGBA
+	width            int
+	height           int
+	queue            *Queue
+	surface          *Surface
+	computeExecutors map[string]ComputeExecutor
 }
 
 // New creates a headless device targeting a width×height RGBA framebuffer.
@@ -38,6 +52,16 @@ func New(width, height int) (*Device, *Surface) {
 	d.queue = &Queue{device: d}
 	d.surface = &Surface{device: d}
 	return d, d.surface
+}
+
+// RegisterComputeExecutor registers exec as the CPU implementation for pipelines
+// whose Label matches label. Additive: unregistered labels keep today's
+// no-op/built-in behaviour; existing headless tests are unaffected.
+func (d *Device) RegisterComputeExecutor(label string, exec ComputeExecutor) {
+	if d.computeExecutors == nil {
+		d.computeExecutors = make(map[string]ComputeExecutor)
+	}
+	d.computeExecutors[label] = exec
 }
 
 // Framebuffer returns the backing RGBA image. Callers should copy bytes
@@ -246,6 +270,16 @@ func (b *Buffer) ReadAsync(size int) ([]byte, error) {
 	return out, nil
 }
 
+// Data returns a direct (mutable) view of the buffer's backing bytes.
+// Executors registered via Device.RegisterComputeExecutor use this to
+// read input data and write output data without a copy.
+func (b *Buffer) Data() []byte { return b.data }
+
+// LastWriteSize returns the byte count of the last Queue.WriteBuffer call.
+// Executors use this to determine how many instances were actually written
+// when the buffer was allocated larger than needed.
+func (b *Buffer) LastWriteSize() int { return b.lastWriteSize }
+
 type Texture struct {
 	width, height     int
 	layers            int
@@ -346,6 +380,10 @@ type BindGroup struct {
 
 func (b *BindGroup) Destroy() {}
 
+// Desc returns the BindGroupDesc used to create this bind group. Executors
+// registered via RegisterComputeExecutor use this to resolve bound buffers.
+func (b *BindGroup) Desc() gpu.BindGroupDesc { return b.desc }
+
 type BindGroupLayout struct{}
 
 // CommandEncoder ---------------------------------------------------------
@@ -379,7 +417,7 @@ func (e *CommandEncoder) BeginRenderPass(desc gpu.RenderPassDesc) gpu.RenderPass
 }
 
 func (e *CommandEncoder) BeginComputePass() gpu.ComputePassEncoder {
-	return &ComputePassEncoder{}
+	return &ComputePassEncoder{device: e.device}
 }
 
 func (e *CommandEncoder) CopyTextureToBuffer(
@@ -513,6 +551,7 @@ func isFullscreenCopyPass(label string) bool {
 }
 
 type ComputePassEncoder struct {
+	device     *Device
 	pipeline   *ComputePipeline
 	bindGroups map[int]*BindGroup
 }
@@ -530,7 +569,7 @@ func (c *ComputePassEncoder) SetBindGroup(slot int, bg gpu.BindGroup) {
 		c.bindGroups[slot] = group
 	}
 }
-func (c *ComputePassEncoder) DispatchWorkgroups(x, _, _ int) {
+func (c *ComputePassEncoder) DispatchWorkgroups(x, y, z int) {
 	if c.pipeline == nil {
 		return
 	}
@@ -546,12 +585,21 @@ func (c *ComputePassEncoder) DispatchWorkgroups(x, _, _ int) {
 		// to the same logical invocation count the recorded dispatch asked
 		// for; oversize buffers keep their untouched tail deterministic.
 		runParticleUpdate(bg, max(0, x)*64)
+	default:
+		// Invoke a registered ComputeExecutor for this pipeline label, if any.
+		if c.device != nil {
+			if exec, ok := c.device.computeExecutors[c.pipeline.desc.Label]; ok {
+				exec.Exec(c.bindGroups, x, y, z)
+			}
+		}
 	}
 }
 
 // DispatchWorkgroupsIndirect approximates indirect dispatch in the CPU
 // backend: the workgroup count lives in a GPU buffer the headless backend does
 // not introspect, so only count-independent passthroughs (cull) run.
+// Registered ComputeExecutors receive (0, 0, 0) for the workgroup dims —
+// they are expected to derive their own invocation count from the bound buffers.
 func (c *ComputePassEncoder) DispatchWorkgroupsIndirect(_ gpu.Buffer, _ int) {
 	if c.pipeline == nil {
 		return
@@ -560,8 +608,17 @@ func (c *ComputePassEncoder) DispatchWorkgroupsIndirect(_ gpu.Buffer, _ int) {
 	if bg == nil {
 		return
 	}
-	if c.pipeline.desc.Label == "bundle.cull" {
+	switch c.pipeline.desc.Label {
+	case "bundle.cull":
 		runCullPassThrough(bg)
+	default:
+		// Invoke a registered ComputeExecutor for this pipeline label, if any.
+		// Pass (0,0,0) dims; the executor must use buffer state for its count.
+		if c.device != nil {
+			if exec, ok := c.device.computeExecutors[c.pipeline.desc.Label]; ok {
+				exec.Exec(c.bindGroups, 0, 0, 0)
+			}
+		}
 	}
 }
 func (c *ComputePassEncoder) End() {}
@@ -801,8 +858,12 @@ func runCullPassThrough(bg *BindGroup) {
 		return
 	}
 	instanceBytes = min(instanceBytes, len(input.data), len(output.data))
-	instanceBytes -= instanceBytes % 64
-	instanceCount := instanceBytes / 64
+	// InstanceRecordStride is 80 B (mat4f32=64 + vec4u32=16); the old 64-byte
+	// stride was a latent bug that caused runCullPassThrough to under-count
+	// survivors by discarding the pickData tail of each record.
+	const instanceRecordStride = 80
+	instanceBytes -= instanceBytes % instanceRecordStride
+	instanceCount := instanceBytes / instanceRecordStride
 	copy(output.data[:instanceBytes], input.data[:instanceBytes])
 	output.lastWriteOffset = 0
 	output.lastWriteSize = instanceBytes

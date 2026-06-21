@@ -742,3 +742,128 @@ func TestCompressAnimationEmptyClipSkipped(t *testing.T) {
 		t.Fatalf("expected 0 animations (empty name and empty channels should be skipped), got %d", len(ir.Animations))
 	}
 }
+
+// TestCompressInstancedTransformsRoundTrip tests CompressInstancedTransforms:
+// the returned map must have compressedTransforms (not transforms), and
+// DecompressFloat64Array must reproduce positions within 12-bit error tolerance.
+func TestCompressInstancedTransformsRoundTrip(t *testing.T) {
+	// Mirror the galaxy meteor ring: wide-range translation (world-space ±800),
+	// small per-axis scale, NO rotation. Column-major mat4 per instance is then
+	// diag(sx,sy,sz) on lanes 0/5/10, translation on lanes 12/13/14, zeros on
+	// the projective lanes 3/7/11, and 1.0 on lane 15.
+	const count = 256 // > a single 4096-float interleaved chunk's worth of mat4s
+	positions := make([]Vector3, count)
+	scales := make([]Vector3, count)
+	for i := 0; i < count; i++ {
+		angle := float64(i) / float64(count) * 6.283185307
+		r := 300.0 + float64(i)*1.9 // spans well past ±700
+		positions[i] = Vector3{X: math.Cos(angle) * r, Y: float64(i)*0.2 - 25, Z: math.Sin(angle) * r}
+		scales[i] = Vector3{X: 0.6 + float64(i%7)*0.18, Y: 0.4 + float64(i%5)*0.12, Z: 0.7 + float64(i%3)*0.3}
+	}
+	im := InstancedMesh{
+		ID:        "meteor-ring",
+		Count:     count,
+		Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+		Material:  FlatMaterial{Color: "#ff8000"},
+		Positions: positions,
+		Scales:    scales,
+	}
+
+	props := CompressInstancedTransforms(im, 12)
+	if props == nil {
+		t.Fatal("CompressInstancedTransforms returned nil")
+	}
+	if _, ok := props["compressedTransforms"]; !ok {
+		t.Fatal("expected compressedTransforms key in result")
+	}
+	if _, ok := props["transforms"]; ok {
+		t.Fatal("raw transforms must not be present when compressed")
+	}
+
+	// The transforms must be emitted deinterleaved with a stride of 16 so the
+	// browser reinterleaves them — this is what gives each mat4 lane its own
+	// quantization range (the fix for the projective-shear "light rays" bug).
+	stride, _ := props["transformStride"].(int)
+	if stride != 16 {
+		t.Fatalf("transformStride = %d, want 16 (transforms must be deinterleaved per lane)", stride)
+	}
+
+	chunks, ok := props["compressedTransforms"].([]CompressedArray)
+	if !ok || len(chunks) == 0 {
+		t.Fatalf("compressedTransforms is not []CompressedArray or is empty, got %T", props["compressedTransforms"])
+	}
+
+	// Wire-JSON guard (the omitempty class): per-lane compression produces
+	// all-zero lanes (mat4 off-diagonal/projective-zero entries) whose chunk has
+	// maxVal=0. If MaxVal is omitempty the JSON drops it and the browser's
+	// dequantizer reads undefined → step=NaN → NaN transforms → nothing renders.
+	// A Go-struct round-trip cannot catch this (Go unmarshal defaults missing→0);
+	// only the wire JSON the browser actually consumes reveals it. So assert
+	// every serialized chunk keeps both norm and maxVal.
+	raw, err := json.Marshal(chunks)
+	if err != nil {
+		t.Fatalf("marshal chunks: %v", err)
+	}
+	var wire []map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal chunks: %v", err)
+	}
+	for i, c := range wire {
+		if _, ok := c["maxVal"]; !ok {
+			t.Errorf("chunk %d missing maxVal in wire JSON (omitempty drops zero-max lanes → NaN transforms in JS)", i)
+		}
+		if _, ok := c["norm"]; !ok {
+			t.Errorf("chunk %d missing norm in wire JSON", i)
+		}
+	}
+
+	decoded := DecompressFloat64Array(chunks)
+	if len(decoded) != count*16 {
+		t.Fatalf("decoded length = %d, want %d", len(decoded), count*16)
+	}
+	// Decompression yields deinterleaved lane order; reinterleave to mat4 stream
+	// exactly as the JS sceneReinterleave does before the renderer sees it.
+	decoded = reinterleaveFloat64(decoded, stride)
+
+	var (
+		transErr float64 // lanes 12,13,14 — tolerant (wide range)
+		scaleErr float64 // lanes 0,5,10 — must stay tight
+		projErr  float64 // lanes 3,7,11 (==0) and 15 (==1) — must be exact
+	)
+	upd := func(dst *float64, got, want float64) {
+		if e := math.Abs(got - want); e > *dst {
+			*dst = e
+		}
+	}
+	for i := 0; i < count; i++ {
+		m := decoded[i*16 : i*16+16]
+		upd(&scaleErr, m[0], scales[i].X)
+		upd(&scaleErr, m[5], scales[i].Y)
+		upd(&scaleErr, m[10], scales[i].Z)
+		upd(&transErr, m[12], positions[i].X)
+		upd(&transErr, m[13], positions[i].Y)
+		upd(&transErr, m[14], positions[i].Z)
+		upd(&projErr, m[3], 0)
+		upd(&projErr, m[7], 0)
+		upd(&projErr, m[11], 0)
+		upd(&projErr, m[15], 1)
+	}
+	t.Logf("CompressInstancedTransforms(12): %d instances — transErr=%.4f scaleErr=%.5f projErr=%.6g",
+		count, transErr, scaleErr, projErr)
+
+	// Translation spans ~±800; 12-bit per-lane gives ~0.4u worst case.
+	if transErr > 0.6 {
+		t.Errorf("translation error = %.4f, want <= 0.6", transErr)
+	}
+	// Scale lanes live in ~[0.4,2.2]; per-lane 12-bit keeps them to ~0.001.
+	// The pre-fix interleaved path crushed these to ~0.4 (the bug).
+	if scaleErr > 0.02 {
+		t.Errorf("scale-lane error = %.5f, want <= 0.02 (interleaved compression crushes scale lanes)", scaleErr)
+	}
+	// Constant projective lanes MUST be exact — any drift here shears the matrix
+	// and projects vertices to streaks ("light rays"). Per-lane ranges collapse
+	// these to a single value, so the error is ~0.
+	if projErr > 1e-6 {
+		t.Errorf("projective-lane error = %.6g, want ~0 (drift here causes projective shear / light-ray rendering)", projErr)
+	}
+}

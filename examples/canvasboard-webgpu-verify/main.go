@@ -833,11 +833,71 @@ if (typeof PerformanceObserver !== 'undefined') {
     var painterSurfaceId = await waitForSurfaceId(painterCanvas, deadline);
     var webgpuSurfaceId  = await waitForSurfaceId(webgpuCanvas,  deadline);
 
-    setStatus('Both boards hydrated (or timed out). Waiting two rAF frames before probing…');
+    setStatus('Both boards hydrated. Waiting for the WebGPU board to settle (async probe-await re-entry)…');
 
-    // Wait two rAF cycles to ensure at least one paint frame has completed.
-    await new Promise(function(r) {
-      requestAnimationFrame(function() { requestAnimationFrame(r); });
+    // The WebGPU-routed board renders only AFTER an async probe-await re-entry
+    // (26b-feature-engines-prefix.js: await __gosx_scene3d_webgpu_probe_ready()),
+    // which lands several frames after data-gosx-surface-id is set at hydration.
+    // A fixed 2-rAF wait samples mid-init — render() early-returns before the
+    // bundle carries worldMesh* (16a-scene-webgpu.js), so mesh-objects/perf are
+    // absent. Poll until the WebGPU board publishes its first frame's mesh-objects
+    // attr, OR it falls back to the painter, OR the global deadline elapses.
+    await new Promise(function(resolve) {
+      function settled() {
+        if (Date.now() >= deadline) return true;
+        var warned = _captured_warns.some(function(w) {
+          return w.indexOf('WebGPU backend unavailable') !== -1 ||
+                 w.indexOf('falling back to the 2D painter') !== -1;
+        });
+        if (warned) return true;
+        var mesh = webgpuHost ? webgpuHost.getAttribute('data-gosx-scene3d-webgpu-mesh-objects') : null;
+        return mesh !== null;
+      }
+      (function poll() {
+        if (settled()) { requestAnimationFrame(function() { requestAnimationFrame(resolve); }); return; }
+        setTimeout(poll, 50);
+      })();
+    });
+
+    // ---- Sustained perf collection window ----
+    // After the WebGPU board settles we keep the page alive until we have at
+    // least 30 'scene3d-render' measure entries OR 2.5 s elapse, whichever
+    // comes first — but never past the global deadline.
+    //
+    // The 16a WebGPU RAF loop is frame-gated: it halts after the first frame on
+    // a static scene and only re-fires when the board is dirtied.  We force
+    // repeated re-renders by dispatching synthetic WheelEvent (deltaY=0) on the
+    // WebGPU canvas — WASM processes the event, marks the camera dirty, and the
+    // RAF loop fires another frame.  Zero-delta ensures no visible pan/zoom.
+    setStatus('Sustained perf collection (≥30 frames or 2.5 s)…');
+    await new Promise(function(resolve) {
+      var sustainEnd = Math.min(Date.now() + 2500, deadline);
+      var canvas = document.getElementById('webgpu-board');
+      function tick() {
+        if (_perf_entries.length >= 30 || Date.now() >= sustainEnd) {
+          resolve();
+          return;
+        }
+        // Dispatch a minimal wheel event to dirty the camera and force a re-render.
+        // deltaY=0.5 causes an imperceptible zoom change that makes the scene string
+        // differ from the previous tick, bypassing the f!==N guard in the RAF loop
+        // (bootstrap-feature-engines.js: "if(f!==N||ae!==J||W!==H||X!==te)").
+        // This is the only way to accumulate scene3d-render measures in a static
+        // headless scene — the 16a loop skips v.render() when scene data is unchanged.
+        if (canvas) {
+          try {
+            var rect = canvas.getBoundingClientRect();
+            canvas.dispatchEvent(new WheelEvent('wheel', {
+              bubbles: true, cancelable: true,
+              clientX: rect.left + rect.width / 2,
+              clientY: rect.top  + rect.height / 2,
+              deltaX: 0, deltaY: 0.5, deltaMode: 0
+            }));
+          } catch(e) {}
+        }
+        requestAnimationFrame(tick);
+      }
+      tick();
     });
 
     setStatus('Collecting parity data…');

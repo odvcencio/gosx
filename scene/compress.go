@@ -8,6 +8,37 @@ import (
 // sceneChunkSize is the max float count per compression chunk.
 const sceneChunkSize = 4096
 
+// CompressInstancedTransforms lowers im into an InstancedMeshIR, compresses
+// its transform array at the given bit-width, and returns the result as a
+// legacyProps map (the same map that SpreadProps returns, but with
+// compressedTransforms instead of transforms). Use bits=12 for the recommended
+// 0.069-world-unit error budget; 8-bit risks visible drift on transforms that
+// span a wide world-space range.
+//
+// The returned map's "compressedTransforms" key is consumed by the browser
+// 11a-scene-decompress.js hydration pass (both the scene.instancedMeshes and
+// props.instancedMeshes paths) before the renderer sees the data — so the ring
+// renders identically to the raw-transform path in the browser.
+//
+// Returns nil when the mesh produces no IR (e.g. zero instances) or compression
+// produces no output. Callers should fall back to SpreadProps in that case.
+func CompressInstancedTransforms(im InstancedMesh, bits int) map[string]any {
+	l := &graphLowerer{anchors: make(map[string]worldTransform)}
+	l.lowerInstancedMesh(im, identityTransform())
+	if len(l.instancedMeshes) == 0 {
+		return nil
+	}
+	ir := l.instancedMeshes[0]
+	compressed := compressDeinterleavedTransforms(ir.Transforms, bits)
+	if len(compressed) == 0 {
+		return nil
+	}
+	ir.CompressedTransforms = compressed
+	ir.TransformStride = 16
+	ir.Transforms = nil
+	return ir.legacyProps()
+}
+
 // compressSceneIR walks the IR and compresses eligible float arrays in place.
 // When previewBitWidth > 0, a lower-quality preview is also emitted for
 // progressive loading and LOD.
@@ -45,13 +76,14 @@ func compressSceneIR(ir *SceneIR, bitWidth, previewBitWidth int) {
 	for i := range ir.InstancedMeshes {
 		if len(ir.InstancedMeshes[i].Transforms) >= 2 {
 			if previewBitWidth > 0 && previewBitWidth < bitWidth {
-				ir.InstancedMeshes[i].PreviewTransforms = compressFloat64Array(
+				ir.InstancedMeshes[i].PreviewTransforms = compressDeinterleavedTransforms(
 					ir.InstancedMeshes[i].Transforms, previewBitWidth,
 				)
 			}
-			ir.InstancedMeshes[i].CompressedTransforms = compressFloat64Array(
+			ir.InstancedMeshes[i].CompressedTransforms = compressDeinterleavedTransforms(
 				ir.InstancedMeshes[i].Transforms, bitWidth,
 			)
+			ir.InstancedMeshes[i].TransformStride = 16
 			ir.InstancedMeshes[i].Transforms = nil
 		}
 	}
@@ -229,6 +261,53 @@ func deinterleaveFloat64(data []float64, stride int) []float64 {
 		}
 	}
 	return out
+}
+
+// reinterleaveFloat64 is the inverse of deinterleaveFloat64: it rearranges
+// [a0,a1,...,b0,b1,...,c0,c1,...] back into [a0,b0,c0,a1,b1,c1,...]. It mirrors
+// the JS sceneReinterleave in 11a-scene-decompress.js so the Go round-trip
+// matches what the browser reconstructs.
+func reinterleaveFloat64(data []float64, stride int) []float64 {
+	n := len(data) / stride
+	out := make([]float64, len(data))
+	for c := 0; c < stride; c++ {
+		for i := 0; i < n; i++ {
+			out[i*stride+c] = data[c*n+i]
+		}
+	}
+	return out
+}
+
+// compressDeinterleavedTransforms compresses an instanced-mesh mat4 stream
+// (16 floats per instance, column-major) by first deinterleaving it into its
+// 16 lanes and compressing each lane independently. This is critical for
+// transforms: a single min/max over the interleaved stream is dominated by the
+// large translation lanes (cols 12-14, world-space ~±hundreds), which crushes
+// the precision of the small scale/rotation lanes (~[-2,2]) and the constant
+// projective lanes (cols 3,7,11 = 0 and col 15 = 1). With per-lane ranges the
+// translation lanes keep their range, the scale lanes get fine steps, and the
+// constant lanes collapse to an exact value — eliminating the projective shear
+// that otherwise smears instances into streaks. The caller MUST set
+// TransformStride=16 so the decompressor reinterleaves before render.
+//
+// Compressing each lane separately (rather than the whole deinterleaved array
+// at once) guarantees chunk boundaries never straddle two lanes, so no lane is
+// ever quantized against a neighbouring lane's range — true regardless of
+// instance count.
+func compressDeinterleavedTransforms(transforms []float64, bitWidth int) []CompressedArray {
+	const mat4Lanes = 16
+	if len(transforms) < 2*mat4Lanes || len(transforms)%mat4Lanes != 0 {
+		// Not a clean mat4 stream — fall back to plain whole-array compression.
+		return compressFloat64Array(transforms, bitWidth)
+	}
+	n := len(transforms) / mat4Lanes
+	deint := deinterleaveFloat64(transforms, mat4Lanes)
+	var chunks []CompressedArray
+	for lane := 0; lane < mat4Lanes; lane++ {
+		laneData := deint[lane*n : (lane+1)*n]
+		chunks = append(chunks, compressFloat64Array(laneData, bitWidth)...)
+	}
+	return chunks
 }
 
 // unpackIndicesScene unpacks b-bit indices from bytes.

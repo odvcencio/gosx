@@ -375,6 +375,22 @@ type InstancedMesh struct {
 	CullBackend     string
 }
 
+// SpreadProps serializes an InstancedMesh into the attribute map that the
+// composable <InstancedMesh {...props} /> element accepts. This lets typed
+// InstancedMesh values generated in Go flow into gsx templates via <Each>
+// without round-tripping through the full scene IR. Cull fields
+// (CullKernelWGSL, CullKernelEntry, CullRadius, CullBackend) are included
+// when set, keeping the method additive — absent fields produce a
+// byte-identical payload to today's baseline.
+func (im InstancedMesh) SpreadProps() map[string]any {
+	l := &graphLowerer{anchors: make(map[string]worldTransform)}
+	l.lowerInstancedMesh(im, identityTransform())
+	if len(l.instancedMeshes) == 0 {
+		return nil
+	}
+	return l.instancedMeshes[0].legacyProps()
+}
+
 // InstancedGLBMesh renders N copies of a GLB model via a single instanced draw
 // call. Each instance has its own position, scale, and rotation; all instances
 // share the same GLB source and optional material override.

@@ -104,7 +104,27 @@ const budgets = [
   // 10-runtime-scene-core.js; cull-field validators in 15-scene-ir-schema-strict.js;
   // gpu-cull capability in 16a-scene-webgpu.capabilities.json and
   // 16-scene-webgl.capabilities.json. Measured: 894_095 / 243_280 / 197_165.
-  { file: "bootstrap.js", raw: 895_000, gzip: 244_000, brotli: 198_000 },
+  //
+  // Bumped raw 895_000 -> 903_000, gzip 244_000 -> 245_500, brotli 198_000 ->
+  // 199_500: Slice 2 browser-gpu-cull framework — WGSL_PBR_INSTANCED_CULL_VERTEX
+  // shader + WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT + wgpuCreatePBRInstancedCull
+  // Pipeline + getPBRInstancedCullPipeline + extractFrustumPlanesJS +
+  // updateInstancedCullSystems dispatch hook + indirect-draw branch in
+  // drawInstancedMeshes + createSceneInstancedCullSystem in 16b (16a+16b).
+  // Measured: 902_343 / 244_995 / 198_759 + rounding headroom.
+  //
+  // Bumped raw 903_000 -> 905_000: Slice 3 WebGL2 CPU-cull fallback —
+  // extractFrustumPlanesJS + instancePassesCullTest hoisted to 11-scene-math.js
+  // (shared); CPU cull path (hasCullConfig gate + survivor compaction +
+  // dynamic VBO upload) added to drawInstancedMeshes in 16-scene-webgl.js.
+  // Measured: 903_824 / 245_457 / 198_989 + rounding headroom.
+  //
+  // Bumped raw 905_000 -> 907_000, gzip 246_000 -> 247_000, brotli 199_500 ->
+  // 200_000: GPU-cull telemetry — cull survivor readback (16b: stagingBuf +
+  // requestSurvivorReadback + pollSurvivors; 16a: throttled readback dispatch +
+  // cull-survivors attribute; 20-scene-mount: __gosx_scene3d_telemetry snapshot
+  // API). Measured: 906_387 / 246_361 / 199_604 + rounding headroom.
+  { file: "bootstrap.js", raw: 907_000, gzip: 247_000, brotli: 200_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -158,7 +178,28 @@ const budgets = [
   // 122_500: Scene3D WebGPU device-loss fallback now swaps to a fresh canvas,
   // rebinds canvas interaction/context listeners, and probes WebGL before 2D.
   // Measured: 540_677 / 147_715 / 121_554.
-  { file: "bootstrap-feature-scene3d.js", raw: 542_000, gzip: 149_000, brotli: 122_500 },
+  //
+  // Bumped raw 542_000 -> 546_000, gzip 149_000 -> 149_500, brotli 122_500 ->
+  // 123_000: Slice 2 browser-gpu-cull — createSceneInstancedCullSystem + exports
+  // in 16b-scene-compute.js (the scene3d feature chunk includes 16b).
+  // Measured: 545_325 / 148_714 / 122_349 + rounding headroom.
+  //
+  // Bumped raw 546_000 -> 548_500: Slice 3 WebGL2 CPU-cull fallback —
+  // instancePassesCullTest in 11-scene-math.js + CPU cull path in
+  // 16-scene-webgl.js (drawInstancedMeshes: hasCullConfig gate, survivor
+  // compaction, dynamic VBO upload). Measured: 547_225 / 149_287 / 122_821.
+  //
+  // Bumped brotli 123_000 -> 123_500: per-lane transform reinterleave in
+  // 11a-scene-decompress.js (sceneReinterleaveMaybe applied to compressed/
+  // preview/lod instanced transforms) — the fix for deinterleaved
+  // compressedTransforms (transformStride) that stops projective-shear "light
+  // ray" rendering of instanced meshes. Measured: 547_2xx / 149_3xx / 123_012.
+  //
+  // Bumped raw 548_500 -> 550_000, brotli 123_500 -> 124_000: GPU-cull telemetry
+  // — __gosx_scene3d_telemetry in 20-scene-mount.js (reads data attributes +
+  // cull-survivors JSON + compact webgpu diag slice). Measured: 549_171 /
+  // 149_967 / 123_638 + rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 550_000, gzip: 150_500, brotli: 124_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -202,7 +243,17 @@ const budgets = [
   // drawBoardLabels per-glyph quad layout reusing getSelenaPipeline, hasLabelData
   // gate) in 16a-scene-webgpu.js. Measured: 171_595 / 43_048 / 36_971 + rounding
   // headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 173_000, gzip: 43_500, brotli: 37_500 },
+  //
+  // Bumped raw 173_000 -> 181_000, gzip 43_500 -> 45_500, brotli 37_500 ->
+  // 39_000: Slice 2 browser-gpu-cull — WGSL_PBR_INSTANCED_CULL_VERTEX +
+  // WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT + wgpuCreatePBRInstancedCullPipeline +
+  // getPBRInstancedCullPipeline + createSceneInstancedCullSystem in 16b +
+  // updateInstancedCullSystems + extractFrustumPlanesJS + indirect-draw branch
+  // in drawInstancedMeshes. Measured: 180_246 / 44_932 / 38_599 + rounding headroom.
+  // Bumped raw 181_000 -> 181_200: cull telemetry poll/readback reorder (Bug 1) +
+  // unlit derivation from kind/materialKind in materialUniformData (Bug 2).
+  // Measured: 181_038 + headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 181_200, gzip: 45_500, brotli: 39_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

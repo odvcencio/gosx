@@ -609,3 +609,73 @@
       dir: { x: dirWorld.x / len, y: dirWorld.y / len, z: dirWorld.z / len },
     };
   }
+
+  // -----------------------------------------------------------------------
+  // Frustum Plane Extraction — shared by WebGPU (16a) and WebGL2 (16) renderers.
+  // -----------------------------------------------------------------------
+  // Port of render/bundle/cull.go extractFrustumPlanes (Gribb-Hartmann).
+  //
+  // Column-major convention (same as Go cull.go): vp[col*4 + row].
+  // row(r) = [vp[r], vp[4+r], vp[8+r], vp[12+r]] (mat4 column-major).
+  //
+  // Plane layout: [nx, ny, nz, d]. Half-space "inside" = dot(n, p) + d >= 0.
+  // Planes: left(R3+R0), right(R3-R0), bottom(R3+R1), top(R3-R1),
+  //         near(R2), far(R3-R2).
+  //
+  // The WebGPU renderer passes a depth-remapped VP (WebGPU [0,1] clip space)
+  // so near=R2 is the correct half-depth form. The WebGL2 renderer passes the
+  // standard GL VP; the near-plane formula is slightly conservative there but
+  // the four side planes and far plane are exact. Both paths share this function.
+
+  function extractFrustumPlanesJS(vp) {
+    // vp is a Float32Array[16] in column-major order.
+    // row(r) = (vp[0*4+r], vp[1*4+r], vp[2*4+r], vp[3*4+r])
+    var r0 = [vp[0], vp[4], vp[8],  vp[12]];
+    var r1 = [vp[1], vp[5], vp[9],  vp[13]];
+    var r2 = [vp[2], vp[6], vp[10], vp[14]];
+    var r3 = [vp[3], vp[7], vp[11], vp[15]];
+
+    function addRow(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2], a[3]+b[3]]; }
+    function subRow(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2], a[3]-b[3]]; }
+    function norm(p) {
+      var l = Math.sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
+      if (l === 0) return p;
+      return [p[0]/l, p[1]/l, p[2]/l, p[3]/l];
+    }
+
+    return [
+      norm(addRow(r3, r0)), // left:   R3+R0
+      norm(subRow(r3, r0)), // right:  R3-R0
+      norm(addRow(r3, r1)), // bottom: R3+R1
+      norm(subRow(r3, r1)), // top:    R3-R1
+      norm(r2),             // near:   R2  (WebGPU half-depth; conservative on GL VP)
+      norm(subRow(r3, r2)), // far:    R3-R2
+    ];
+  }
+
+  // instancePassesCullTest tests a single instance's bounding sphere against
+  // the six frustum planes. Matches the WGSL kernel in render/bundle/cull.go:
+  //   let d = dot(plane.xyz, center) + plane.w;
+  //   if (d < -radius) { inside = false; }
+  //
+  // transforms is a Float32Array of all instance transforms (column-major mat4,
+  // 16 floats per instance). instanceIndex is the zero-based instance index.
+  // planes is the array[6] from extractFrustumPlanesJS. radius is the cull
+  // radius (absent/0 → defaults to 2.0, matching the compute cull system).
+  //
+  // Returns true if the instance is VISIBLE (passes all 6 planes).
+
+  function instancePassesCullTest(transforms, instanceIndex, planes, radius) {
+    var base = instanceIndex * 16;
+    // Translation is column 3 of a column-major mat4: indices 12, 13, 14.
+    var cx = transforms[base + 12];
+    var cy = transforms[base + 13];
+    var cz = transforms[base + 14];
+    var r  = (typeof radius === "number" && radius > 0) ? radius : 2.0;
+    for (var p = 0; p < 6; p++) {
+      var pl = planes[p];
+      var d  = pl[0] * cx + pl[1] * cy + pl[2] * cz + pl[3];
+      if (d < -r) return false;
+    }
+    return true;
+  }

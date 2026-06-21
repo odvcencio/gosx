@@ -7195,6 +7195,12 @@
     sceneBool,
     sceneBoundsDepthMetrics,
     sceneBoundsViewCulled,
+    // Frustum-plane extractor — hoisted to 11-scene-math.js (base scene3d
+    // bundle) by the WebGL2 cull slice. It MUST be exported here so the
+    // separate scene3d-webgpu chunk (16a instanced GPU cull) can reach it;
+    // without the bridge the webgpu render path throws
+    // "extractFrustumPlanesJS is not defined".
+    extractFrustumPlanesJS: typeof extractFrustumPlanesJS === "function" ? extractFrustumPlanesJS : undefined,
     buildSceneWorldDrawPlan: typeof buildSceneWorldDrawPlan === "function" ? buildSceneWorldDrawPlan : undefined,
     createSceneWorldDrawScratch: typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch : undefined,
     createSceneThickLineScratch: typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch : undefined,
