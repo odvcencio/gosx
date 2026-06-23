@@ -61,3 +61,63 @@ func TestStrictGateRejectsPrimitiveWebGPUGap(t *testing.T) {
 		t.Fatalf("expected torus WebGPU failure, got %+v", failures)
 	}
 }
+
+func TestAllDimensionsContainsMotion(t *testing.T) {
+	found := false
+	for _, d := range AllDimensions {
+		if d == Motion {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("AllDimensions must contain Motion dimension")
+	}
+}
+
+func TestMotionStatusOnAnimationFeatures(t *testing.T) {
+	// The features that carry animation data must carry a non-unsupported
+	// Motion status now that the Phase 1 evaluator contract is proven.
+	animationFeatures := []string{"skinned mesh", "GLB model", "GLB", "glTF"}
+	entries := Matrix()
+	byFeature := make(map[string]Entry, len(entries))
+	for _, e := range entries {
+		byFeature[e.Feature] = e
+	}
+	for _, name := range animationFeatures {
+		entry, ok := byFeature[name]
+		if !ok {
+			t.Errorf("animation feature %q not found in matrix", name)
+			continue
+		}
+		status := entry.Dimensions[Motion]
+		if status == Unsupported || status == "" {
+			t.Errorf("feature %q has Motion=%q; want partial or complete", name, status)
+		}
+	}
+}
+
+func TestStrictGateRejectsSkinnedMeshMotionUnsupported(t *testing.T) {
+	entries := Matrix()
+	for i := range entries {
+		if entries[i].Feature == "skinned mesh" {
+			entries[i].Dimensions[Motion] = Unsupported
+			entries[i].Reasons[Motion] = "forced unsupported for test"
+			entries[i].NextActions[Motion] = "n/a"
+			break
+		}
+	}
+	failures := StrictFailures(entries)
+	if len(failures) == 0 {
+		t.Fatal("expected strict failure when skinned mesh Motion is unsupported")
+	}
+	found := false
+	for _, f := range failures {
+		if f.Feature == "skinned mesh" && f.Dimension == Motion && f.Status == Unsupported {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected skinned mesh Motion=unsupported failure, got %+v", failures)
+	}
+}
