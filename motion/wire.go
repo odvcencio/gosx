@@ -42,6 +42,8 @@ func putU32(b []byte, v uint32) []byte {
 }
 
 // putI32 appends an int32 (from int) little-endian.
+// Track.TargetID, PropID, and Loop are serialized as int32; sequential interner
+// IDs are far below the int32 ceiling (~2 billion), so truncation never occurs.
 func putI32(b []byte, v int) []byte {
 	return putU32(b, uint32(int32(v)))
 }
@@ -166,7 +168,13 @@ func putPositioned(b []byte, p Positioned) []byte {
 		return putTimeline(b, p.Sub)
 	}
 	b = putU8(b, 0)
-	return putTrack(b, p.Track)
+	// Guard: if Track is nil (neither Track nor Sub set), encode a zero-value
+	// Track{} so encode/decode stays symmetric and never panics.
+	tr := p.Track
+	if tr == nil {
+		tr = &Track{}
+	}
+	return putTrack(b, tr)
 }
 
 func putTimeline(b []byte, tl *Timeline) []byte {

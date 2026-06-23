@@ -42,8 +42,8 @@ func (ir SceneIR) SpinMotionTimeline() *motion.Timeline {
 		}
 	}
 	return &motion.Timeline{
-		Children:  children,
-		Loop:      -1, // infinite
-		Autoplay:  true,
+		Children: children,
+		Loop:     -1, // infinite
+		Autoplay: true,
 	}
 }

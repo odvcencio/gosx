@@ -1064,7 +1064,7 @@ type graphLowerer struct {
 	nextParticlesID    int
 	// spinTracks accumulates one GenSpin MotionIR Track per spinning node;
 	// surfaced via SceneIR.SpinTracks (json:"-") as an in-memory facade.
-	spinTracks         []motion.Track
+	spinTracks []motion.Track
 }
 
 func (Group) sceneNode()             {}

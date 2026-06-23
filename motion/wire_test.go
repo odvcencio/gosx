@@ -352,3 +352,36 @@ func TestWireEmptyTimeline(t *testing.T) {
 		t.Fatalf("empty timeline round-trip mismatch:\n orig=%+v\n  got=%+v", tl, got)
 	}
 }
+
+func TestWireNilPositionedNoPanic(t *testing.T) {
+	// A Positioned with neither Track nor Sub set must not panic in EncodeProgram,
+	// and DecodeProgram must round-trip to a Positioned with a non-nil zero Track.
+	tl := &Timeline{
+		Children: []Positioned{
+			{At: Position{Kind: PosAbs}},
+		},
+	}
+	var blob []byte
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("EncodeProgram panicked on nil Track+Sub Positioned: %v", r)
+			}
+		}()
+		blob = EncodeProgram(tl, nil, nil)
+	}()
+
+	got, _, _, err := DecodeProgram(blob)
+	if err != nil {
+		t.Fatalf("DecodeProgram error: %v", err)
+	}
+	if len(got.Children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(got.Children))
+	}
+	if got.Children[0].Track == nil {
+		t.Fatal("expected decoded Positioned to have non-nil (zero) Track")
+	}
+	if got.Children[0].Sub != nil {
+		t.Fatal("expected decoded Positioned to have nil Sub")
+	}
+}
