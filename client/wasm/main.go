@@ -27,6 +27,7 @@ func registerRuntime(b *bridge.Bridge) {
 	setRuntimeFunc("__gosx_reload_program", reloadProgramRuntimeFunc(b))
 	setRuntimeFunc("__gosx_dispose", disposeRuntimeFunc(b))
 	registerEngineRuntime(b)
+	registerMotionExports()
 	registerEngineSurfaceRuntime(b)
 	registerCanvasBoardRuntime(b)
 	registerVideoSyncRuntime(b)
