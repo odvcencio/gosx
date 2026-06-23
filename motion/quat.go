@@ -15,6 +15,8 @@ type Quat struct {
 // is returned to avoid a divide-by-zero NaN.
 func (q Quat) Normalize() Quat {
 	m2 := q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W
+	// NOTE: guards squared-magnitude < 1e-30 (i.e. |q| < 1e-15); the JS reference
+	// (19a-scene-animation.js:125) guards length < 1e-10 — a less strict threshold.
 	if m2 < 1e-30 {
 		return Quat{0, 0, 0, 1}
 	}

@@ -39,3 +39,18 @@ func TestSlerpEndpoints(t *testing.T) {
 		t.Fatalf("t=1 got %+v want %+v", g, b)
 	}
 }
+
+func TestSlerpNlerpFastPath(t *testing.T) {
+	// Two nearly-parallel unit quats: dot > 0.9995 forces the nlerp fast-path.
+	a := Quat{0, 0, 0, 1}
+	b := Quat{0.001, 0, 0, 0.9999995} // dot ≈ 0.9999995, well above the 0.9995 threshold
+	got := Slerp(a, b, 0.5)
+	// Result must be unit-length (fast path normalizes) and roughly the midpoint in X.
+	mag := math.Sqrt(got.X*got.X + got.Y*got.Y + got.Z*got.Z + got.W*got.W)
+	if math.Abs(mag-1) > 1e-9 {
+		t.Fatalf("fast-path result not unit length: |q|=%v (%+v)", mag, got)
+	}
+	if got.X < 0.0004 || got.X > 0.0006 {
+		t.Fatalf("fast-path X not ~midpoint: %+v", got)
+	}
+}
