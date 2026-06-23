@@ -24,6 +24,30 @@ func (q Quat) Normalize() Quat {
 	return Quat{q.X * inv, q.Y * inv, q.Z * inv, q.W * inv}
 }
 
+// quatMul returns the Hamilton product of two quaternions a * b.
+// Result represents the combined rotation: first apply b, then a.
+func quatMul(a, b Quat) Quat {
+	return Quat{
+		X: a.W*b.X + a.X*b.W + a.Y*b.Z - a.Z*b.Y,
+		Y: a.W*b.Y - a.X*b.Z + a.Y*b.W + a.Z*b.X,
+		Z: a.W*b.Z + a.X*b.Y - a.Y*b.X + a.Z*b.W,
+		W: a.W*b.W - a.X*b.X - a.Y*b.Y - a.Z*b.Z,
+	}
+}
+
+// QuatFromEuler constructs a unit quaternion from intrinsic XYZ Euler angles
+// (in radians). Composition order is qx * qy * qz.
+// For a single axis, the result equals the axis-angle quaternion for that axis:
+//
+//	QuatFromEuler(0, y, 0) == {0, sin(y/2), 0, cos(y/2)}
+func QuatFromEuler(x, y, z float64) Quat {
+	hx, hy, hz := x*0.5, y*0.5, z*0.5
+	qx := Quat{X: math.Sin(hx), W: math.Cos(hx)}
+	qy := Quat{Y: math.Sin(hy), W: math.Cos(hy)}
+	qz := Quat{Z: math.Sin(hz), W: math.Cos(hz)}
+	return quatMul(quatMul(qx, qy), qz)
+}
+
 // Slerp performs spherical linear interpolation between unit quaternions a and b
 // by parameter t in [0, 1].
 //

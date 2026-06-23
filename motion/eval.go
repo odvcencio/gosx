@@ -1,5 +1,7 @@
 package motion
 
+import "math"
+
 // Eval samples the timeline at time t (seconds) and appends packed writes to out.
 // Pure function of t — no mutable cross-call state. Zero heap allocation on the hot
 // path (stack [4]float64 scratch; max value width is 4).
@@ -33,10 +35,48 @@ func evalTimeline(tl *Timeline, t, baseOffset float64, out *WriteBuf) {
 	}
 }
 
+// evalGenerator samples a procedural generator track at time t (localT already applied
+// via start, but generators use global t directly as their time argument).
+// Uses a stack [4]float64 scratch — zero alloc.
+func evalGenerator(track *Track, t float64, out *WriteBuf) {
+	gen := track.Gen
+	var scratch [4]float64
+
+	switch gen.Kind {
+	case GenSpin:
+		q := QuatFromEuler(gen.Spin[0]*t, gen.Spin[1]*t, gen.Spin[2]*t)
+		scratch[0] = q.X
+		scratch[1] = q.Y
+		scratch[2] = q.Z
+		scratch[3] = q.W
+		out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch[:4]})
+
+	case GenDrift:
+		for a := 0; a < 3; a++ {
+			scratch[a] = gen.Base.F[a] + gen.Drift[a]*math.Sin(t*gen.DriftSpeed[a]+gen.DriftPhase[a])
+		}
+		out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch[:3]})
+
+	case GenSpring:
+		v := gen.Spring.Value(gen.Base.F[0], gen.Base.F[1], t)
+		scratch[0] = v
+		out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch[:1]})
+
+	default:
+		// GenNone or unknown — emit nothing.
+	}
+}
+
 // evalTrack samples a single track at global time t given its start offset.
 func evalTrack(track *Track, t, start float64, out *WriteBuf) {
-	// Skip generator tracks (1.6c) and tracks with no keys.
-	if track.Gen != nil || len(track.Keys) == 0 {
+	// Generator tracks: dispatch to procedural evaluation (1.6c).
+	if track.Gen != nil {
+		evalGenerator(track, t, out)
+		return
+	}
+
+	// Skip tracks with no keys.
+	if len(track.Keys) == 0 {
 		return
 	}
 

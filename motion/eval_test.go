@@ -1,6 +1,7 @@
 package motion
 
 import (
+	"math"
 	"testing"
 )
 
@@ -177,8 +178,155 @@ func TestEvalPosAbsOffset(t *testing.T) {
 	}
 }
 
-// TestEvalSkipsGenerator: tracks with Gen != nil are skipped.
-func TestEvalSkipsGenerator(t *testing.T) {
+// --- Generator tests (Task 1.6c) ---
+
+// TestEvalGenSpinQuat: GenSpin track emits ArityQuat for t=1.0.
+// Spin=[0,1.2,0] → QuatFromEuler(0, 1.2*1.0, 0) = {0, sin(0.6), 0, cos(0.6)}.
+func TestEvalGenSpinQuat(t *testing.T) {
+	const eps = 1e-9
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 7,
+					PropID:   3,
+					Gen: &Generator{
+						Kind: GenSpin,
+						Spin: [3]float64{0, 1.2, 0},
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+	Eval(tl, 1.0, Policy{}, out)
+	got := out.Writes()
+	// packed: [targetID=7, propID=3, arity=ArityQuat(4), X, Y, Z, W]
+	want := []float64{7, 3, float64(ArityQuat), 0, math.Sin(0.6), 0, math.Cos(0.6)}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if math.Abs(got[i]-v) > eps {
+			t.Errorf("index %d: got %v, want %v (full: %v)", i, got[i], v, got)
+		}
+	}
+}
+
+// TestEvalGenDriftVec3: GenDrift track emits ArityVec3 at t=pi/2.
+// Drift=[0,0.5,0], DriftSpeed=[0,1,0] → y=2+0.5*sin(pi/2)=2.5; x=1, z=3.
+func TestEvalGenDriftVec3(t *testing.T) {
+	const eps = 1e-9
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 8,
+					PropID:   1,
+					Gen: &Generator{
+						Kind:       GenDrift,
+						Base:       Value{Arity: ArityVec3, F: []float64{1, 2, 3}},
+						Drift:      [3]float64{0, 0.5, 0},
+						DriftSpeed: [3]float64{0, 1, 0},
+						DriftPhase: [3]float64{0, 0, 0},
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+	Eval(tl, math.Pi/2, Policy{}, out)
+	got := out.Writes()
+	// packed: [targetID=8, propID=1, arity=ArityVec3(2), x, y, z]
+	want := []float64{8, 1, float64(ArityVec3), 1, 2.5, 3}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if math.Abs(got[i]-v) > eps {
+			t.Errorf("index %d: got %v, want %v (full: %v)", i, got[i], v, got)
+		}
+	}
+}
+
+// TestEvalGenSpringScalar: GenSpring track emits ArityScalar.
+// Base=[0,1] (from=0, to=1). At t=0 → 0; at t=2.0 → settled within 0.05 of 1.0.
+func TestEvalGenSpringScalar(t *testing.T) {
+	sp := Spring{Mass: 1, Stiffness: 100, Damping: 10}
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 9,
+					PropID:   0,
+					Gen: &Generator{
+						Kind:   GenSpring,
+						Base:   Value{Arity: ArityVec2, F: []float64{0, 1}},
+						Spring: sp,
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+
+	// t=0 → from value exactly
+	Eval(tl, 0, Policy{}, out)
+	got0 := out.Writes()
+	if len(got0) < 4 {
+		t.Fatalf("t=0: expected 4 floats, got %v", got0)
+	}
+	if got0[3] != 0 {
+		t.Errorf("t=0: got %v, want 0", got0[3])
+	}
+
+	// t=2.0 → settled near 1.0
+	out.Reset()
+	Eval(tl, 2.0, Policy{}, out)
+	got2 := out.Writes()
+	if len(got2) < 4 {
+		t.Fatalf("t=2: expected 4 floats, got %v", got2)
+	}
+	if math.Abs(got2[3]-1.0) > 0.05 {
+		t.Errorf("t=2: got %v, want within 0.05 of 1.0", got2[3])
+	}
+}
+
+// TestEvalGenSpinZeroAlloc: generator (spin) eval must not allocate.
+func TestEvalGenSpinZeroAlloc(t *testing.T) {
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 10,
+					PropID:   0,
+					Gen: &Generator{
+						Kind: GenSpin,
+						Spin: [3]float64{1, 0, 0},
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+	allocs := testing.AllocsPerRun(1000, func() {
+		out.Reset()
+		Eval(tl, 0.5, Policy{}, out)
+	})
+	if allocs != 0 {
+		t.Errorf("expected 0 allocs per run (spin generator), got %v", allocs)
+	}
+}
+
+// TestEvalSkipsGenerator: tracks with Gen != nil are skipped (pre-1.6c behavior removed;
+// now generators emit values — this test is superseded but kept as sanity check that
+// a GenNone generator emits nothing if it falls through).
+// Actually: post-1.6c GenSpin/Drift/Spring all emit. GenNone should emit nothing.
+func TestEvalGenNoneSkips(t *testing.T) {
 	tl := &Timeline{
 		Children: []Positioned{
 			{
@@ -186,7 +334,7 @@ func TestEvalSkipsGenerator(t *testing.T) {
 				Track: &Track{
 					TargetID: 7,
 					PropID:   3,
-					Gen:      &Generator{Kind: GenSpin},
+					Gen:      &Generator{Kind: GenNone},
 				},
 			},
 		},
@@ -194,9 +342,10 @@ func TestEvalSkipsGenerator(t *testing.T) {
 	out := NewWriteBuf(64)
 	Eval(tl, 0.5, Policy{}, out)
 	if len(out.Writes()) != 0 {
-		t.Errorf("expected no writes for generator track, got %v", out.Writes())
+		t.Errorf("expected no writes for GenNone generator track, got %v", out.Writes())
 	}
 }
+
 
 // TestEvalSkipsEmptyKeys: tracks with no keys are skipped.
 func TestEvalSkipsEmptyKeys(t *testing.T) {

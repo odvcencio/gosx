@@ -54,3 +54,23 @@ func TestSlerpNlerpFastPath(t *testing.T) {
 		t.Fatalf("fast-path X not ~midpoint: %+v", got)
 	}
 }
+
+// TestQuatFromEulerIdentity: zero angles → identity quaternion {0,0,0,1}.
+func TestQuatFromEulerIdentity(t *testing.T) {
+	got := QuatFromEuler(0, 0, 0)
+	want := Quat{0, 0, 0, 1}
+	if !quatClose(got, want, 1e-9) {
+		t.Fatalf("identity: got %+v want %+v", got, want)
+	}
+}
+
+// TestQuatFromEulerYOnly: single Y-axis rotation must equal axis-angle about Y.
+// QuatFromEuler(0, 1.2, 0) == {0, sin(0.6), 0, cos(0.6)}.
+func TestQuatFromEulerYOnly(t *testing.T) {
+	const angle = 1.2
+	got := QuatFromEuler(0, angle, 0)
+	want := Quat{0, math.Sin(angle / 2), 0, math.Cos(angle / 2)}
+	if !quatClose(got, want, 1e-9) {
+		t.Fatalf("Y-only: got %+v want %+v", got, want)
+	}
+}
