@@ -75,7 +75,13 @@ func evalTrack(track *Track, t, start float64, out *WriteBuf) {
 			StepInto(scratch[:w], ka.Value)
 		} else {
 			// InterpLinear (and unrecognised modes fall through to linear for 1.6a).
-			LerpValueInto(scratch[:w], ka.Value, kb.Value, alpha)
+			// Per-key ease overrides track-level ease; EaseLinear (zero value) is identity.
+			ease := track.Ease
+			if ka.Ease != nil {
+				ease = *ka.Ease
+			}
+			easedAlpha := ease.Apply(alpha)
+			LerpValueInto(scratch[:w], ka.Value, kb.Value, easedAlpha)
 		}
 		out.Push(track.TargetID, track.PropID, Value{Arity: arity, F: scratch[:w]})
 	}
