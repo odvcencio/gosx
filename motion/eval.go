@@ -58,12 +58,18 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 			out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch[:4]})
 		case GenDrift:
 			// Base value — no oscillation.
+			if len(gen.Base.F) < 3 {
+				return
+			}
 			for a := 0; a < 3; a++ {
 				scratch[a] = gen.Base.F[a]
 			}
 			out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch[:3]})
 		case GenSpring:
 			// Settled "to" target: Base.F[1].
+			if len(gen.Base.F) < 2 {
+				return
+			}
 			scratch[0] = gen.Base.F[1]
 			out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch[:1]})
 		default:
@@ -82,12 +88,18 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 		out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch[:4]})
 
 	case GenDrift:
+		if len(gen.Base.F) < 3 {
+			return
+		}
 		for a := 0; a < 3; a++ {
 			scratch[a] = gen.Base.F[a] + gen.Drift[a]*math.Sin(t*gen.DriftSpeed[a]+gen.DriftPhase[a])
 		}
 		out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch[:3]})
 
 	case GenSpring:
+		if len(gen.Base.F) < 2 {
+			return
+		}
 		v := gen.Spring.Value(gen.Base.F[0], gen.Base.F[1], t)
 		scratch[0] = v
 		out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch[:1]})

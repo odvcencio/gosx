@@ -26,7 +26,7 @@ func (s Spring) defaults() Spring {
 	if s.Stiffness <= 0 {
 		s.Stiffness = 100
 	}
-	if s.Damping < 0 {
+	if s.Damping <= 0 {
 		s.Damping = 10
 	}
 	return s

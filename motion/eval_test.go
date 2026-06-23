@@ -347,6 +347,51 @@ func TestEvalGenNoneSkips(t *testing.T) {
 }
 
 
+// TestEvalGenShortBaseNoPanic: short Base.F slices must not panic and must emit nothing.
+func TestEvalGenShortBaseNoPanic(t *testing.T) {
+	// GenSpring with only 1 element in Base.F (needs 2).
+	// GenDrift with only 2 elements in Base.F (needs 3).
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 11,
+					PropID:   0,
+					Gen: &Generator{
+						Kind:   GenSpring,
+						Base:   Value{Arity: ArityScalar, F: []float64{0}}, // only 1 element
+						Spring: Spring{Mass: 1, Stiffness: 100, Damping: 10},
+					},
+				},
+			},
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 12,
+					PropID:   1,
+					Gen: &Generator{
+						Kind: GenDrift,
+						Base: Value{Arity: ArityVec2, F: []float64{0, 0}}, // only 2 elements
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+	// Must not panic; must emit no writes.
+	Eval(tl, 0.5, Policy{}, out)
+	if out.Len() != 0 {
+		t.Errorf("expected no writes for short Base.F generators, got %d floats: %v", out.Len(), out.Writes())
+	}
+	// Also test reduced-motion path.
+	out.Reset()
+	Eval(tl, 0.5, Policy{ReducedMotion: true}, out)
+	if out.Len() != 0 {
+		t.Errorf("reduced-motion: expected no writes for short Base.F generators, got %d floats: %v", out.Len(), out.Writes())
+	}
+}
+
 // TestEvalSkipsEmptyKeys: tracks with no keys are skipped.
 func TestEvalSkipsEmptyKeys(t *testing.T) {
 	tl := &Timeline{

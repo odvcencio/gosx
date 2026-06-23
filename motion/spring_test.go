@@ -90,8 +90,22 @@ func applySpringDefaults(s Spring) Spring {
 	if s.Stiffness <= 0 {
 		s.Stiffness = 100
 	}
-	if s.Damping < 0 {
+	if s.Damping <= 0 {
 		s.Damping = 10
 	}
 	return s
+}
+
+// TestSpringZeroValueDamped verifies that a zero-value Spring{} actually settles
+// (i.e. Damping=0 is treated as "use default 10", not "undamped").
+func TestSpringZeroValueDamped(t *testing.T) {
+	var s Spring
+	dur := s.Duration(0, 1)
+	if dur >= 10 {
+		t.Errorf("Duration(0,1) = %v; want < 10 (should settle, not hit cap)", dur)
+	}
+	got := s.Value(0, 1, dur)
+	if math.Abs(got-1.0) > 0.02 {
+		t.Errorf("Value(0,1,Duration) = %v; want within 0.02 of 1.0", got)
+	}
 }
