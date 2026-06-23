@@ -74,12 +74,14 @@ type Generator struct {
 
 // Track is one animation channel: either a keyframe sequence or a procedural generator.
 type Track struct {
-	Target Target
-	Prop   string
-	Keys   []Key      // keyframe track; OR
-	Gen    *Generator // generator track (if non-nil, Keys ignored)
-	Interp Interp
-	Ease   Ease // track-level default ease
+	Target   Target
+	Prop     string
+	Keys     []Key      // keyframe track; OR
+	Gen      *Generator // generator track (if non-nil, Keys ignored)
+	Interp   Interp
+	Ease     Ease // track-level default ease
+	TargetID int  // resolved numeric target id (set by string interning, Task 1.12a)
+	PropID   int  // resolved numeric prop id (set by string interning, Task 1.12a)
 }
 
 // PositionKind selects how a Positioned child's start time is resolved.
