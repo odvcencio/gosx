@@ -884,7 +884,14 @@
     const deviceMemory = Math.max(0, gosxNumber(navigatorRef && navigatorRef.deviceMemory, 0));
     const hardwareConcurrency = Math.max(0, Math.floor(gosxNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0)));
     const maxTouchPoints = Math.max(0, Math.floor(gosxNumber(navigatorRef && navigatorRef.maxTouchPoints, 0)));
-    const lowPower = reducedData || (coarsePointer && ((deviceMemory > 0 && deviceMemory <= 4) || (hardwareConcurrency > 0 && hardwareConcurrency <= 4)));
+    // A coarse pointer alone (any touch device) used to drop to the low-power
+    // GPU path as soon as EITHER deviceMemory<=4 OR hardwareConcurrency<=4 was
+    // true. But mobile Chrome reports deviceMemory=4 on most phones (privacy
+    // rounding), so that OR throttled capable flagships too. Require BOTH signals
+    // (genuinely low memory AND few cores) before pre-gating; runtime
+    // AdaptiveQuality still protects devices that turn out slower than this
+    // heuristic predicts. Save-Data / reduced-data is always honored.
+    const lowPower = reducedData || (coarsePointer && (deviceMemory > 0 && deviceMemory <= 4) && (hardwareConcurrency > 0 && hardwareConcurrency <= 4));
     const viewportWidth = Math.max(0, gosxNumber(window.innerWidth, document && document.documentElement && document.documentElement.clientWidth || 0));
     const viewportHeight = Math.max(0, gosxNumber(window.innerHeight, document && document.documentElement && document.documentElement.clientHeight || 0));
 
