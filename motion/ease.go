@@ -88,7 +88,7 @@ func (e Ease) Apply(t float64) float64 {
 			return 0.5 * (c3*tt*tt*tt - s2*tt*tt)
 		}
 		tt := 2*t - 2
-		return 0.5 * (c3*tt*tt*tt + s2*tt*tt) + 1
+		return 0.5*(c3*tt*tt*tt+s2*tt*tt) + 1
 
 	default:
 		return t

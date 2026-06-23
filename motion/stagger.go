@@ -15,7 +15,7 @@ const (
 // StaggerSpec configures how delays are distributed across N targets.
 type StaggerSpec struct {
 	From    Origin
-	FromIdx int    // used when From == FromIndex
+	FromIdx int     // used when From == FromIndex
 	Delay   float64 // per-unit-distance delay (seconds)
 	Grid    [2]int  // [cols, rows]; if cols>0 && rows>0 → 2D grid stagger, else linear
 }

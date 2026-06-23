@@ -346,7 +346,6 @@ func TestEvalGenNoneSkips(t *testing.T) {
 	}
 }
 
-
 // TestEvalGenShortBaseNoPanic: short Base.F slices must not panic and must emit nothing.
 func TestEvalGenShortBaseNoPanic(t *testing.T) {
 	// GenSpring with only 1 element in Base.F (needs 2).

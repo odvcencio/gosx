@@ -81,8 +81,8 @@ func TestWriteBufGrowth(t *testing.T) {
 
 	want := []float64{
 		1, 1, 2, 10, 20, 30, // vec3
-		2, 3, 1, 4, 5,       // vec2
-		9, 7, 0, 99,         // scalar
+		2, 3, 1, 4, 5, // vec2
+		9, 7, 0, 99, // scalar
 	}
 	got := w.Writes()
 	if len(got) != len(want) {

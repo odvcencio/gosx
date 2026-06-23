@@ -89,10 +89,10 @@ type Track struct {
 type PositionKind uint8
 
 const (
-	PosAbs      PositionKind = iota // absolute time offset
-	PosRel                          // relative to previous sibling end
-	PosLabel                        // named label anchor
-	PosPrevRel                      // relative to previous sibling start
+	PosAbs     PositionKind = iota // absolute time offset
+	PosRel                         // relative to previous sibling end
+	PosLabel                       // named label anchor
+	PosPrevRel                     // relative to previous sibling start
 )
 
 // Position is a resolved or symbolic start-time anchor.
