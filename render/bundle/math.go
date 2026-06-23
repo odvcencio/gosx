@@ -10,9 +10,10 @@ import (
 // mat4 is a column-major 4x4 float32 matrix. m[0..3] = column 0, etc.
 type mat4 [16]float32
 
-// mat4FromQuat builds a column-major rotation matrix from a quaternion. The
-// quaternion is normalized first to guard against drift. The convention is
-// pinned (by TestMat4FromQuatMatchesOldEulerCompose) to exactly match the
+// mat4FromQuat builds a column-major rotation matrix from a quaternion.
+// Callers are expected to pass a unit quaternion; normalization is applied
+// as a cheap guard against accumulated floating-point drift. The convention
+// is pinned (by TestMat4FromQuatMatchesOldEulerCompose) to exactly match the
 // RotX·RotY·RotZ Euler compose this path used before slerp, so endpoints are
 // unchanged. Layout: m[col*4+row].
 func mat4FromQuat(q motion.Quat) mat4 {

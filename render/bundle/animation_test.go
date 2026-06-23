@@ -211,6 +211,9 @@ func TestNativeRotationEndpointsMatchOldEulerCompose(t *testing.T) {
 // TestNativeRotationFallsBackToEulerOnMismatchedTimes proves the safety branch:
 // when the rotation axes do NOT share an identical Times array, the path falls
 // back to per-axis Euler scalar lerp (no slerp), preserving legacy behavior.
+//
+// Sampled at t=0.25 — off every rotationY keyframe — so the expected value is
+// unambiguously the per-axis Euler lerp and cannot be confused with slerp.
 func TestNativeRotationFallsBackToEulerOnMismatchedTimes(t *testing.T) {
 	anim := engine.RenderAnimation{
 		Name:     "spin",
@@ -233,11 +236,85 @@ func TestNativeRotationFallsBackToEulerOnMismatchedTimes(t *testing.T) {
 			},
 		},
 	}
-	m := readbackInstanceMatrix(t, anim, 0.5)
-	// Per-axis Euler at t=0.5: rotX lerps 0→π/2 = π/4; rotY hits its π/4 keyframe.
-	want := oldEulerRotationMatrix(float32(math.Pi/4), float32(math.Pi/4), 0)
+	// t=0.25: rotX lerps 0→π/2 over [0,1] → π/8.
+	// rotY lerps 0→π/4 over [0,0.5] at t=0.25 → halfway = π/8.
+	// A slerp over the mismatched axes would give a different orientation, so
+	// the assertion discriminates the Euler fallback from slerp.
+	m := readbackInstanceMatrix(t, anim, 0.25)
+	want := oldEulerRotationMatrix(float32(math.Pi/8), float32(math.Pi/8), 0)
 	if d := maxMat4Diff(m, want); d > 1e-5 {
 		t.Fatalf("mismatched-Times rotation did not fall back to Euler (diff %g)\n got=%v\n want=%v", d, m, want)
+	}
+}
+
+// TestNativeRotationSTEPHoldsLowKeyframe verifies that STEP interpolation holds
+// the low keyframe's orientation across the full interval before the next key.
+// Distinct non-zero keyframe values ensure "holds low" is unambiguous.
+func TestNativeRotationSTEPHoldsLowKeyframe(t *testing.T) {
+	// Low keyframe: (0.3, -0.7, 1.1); high keyframe: (1.2, 0.4, -0.9).
+	// Sampled at t=0.5 (mid-interval) — STEP must hold the low keyframe.
+	anim := engine.RenderAnimation{
+		Name:     "step-spin",
+		Duration: 1,
+		Channels: []engine.RenderAnimationChannel{
+			{
+				TargetID:      "hero",
+				Property:      "rotationX",
+				Times:         []float64{0, 1},
+				Values:        []float64{0.3, 1.2},
+				Interpolation: "STEP",
+			},
+			{
+				TargetID:      "hero",
+				Property:      "rotationY",
+				Times:         []float64{0, 1},
+				Values:        []float64{-0.7, 0.4},
+				Interpolation: "STEP",
+			},
+			{
+				TargetID:      "hero",
+				Property:      "rotationZ",
+				Times:         []float64{0, 1},
+				Values:        []float64{1.1, -0.9},
+				Interpolation: "STEP",
+			},
+		},
+	}
+	m := readbackInstanceMatrix(t, anim, 0.5)
+	// STEP holds the low keyframe orientation at t=0.5 (exactly between keys).
+	want := mat4FromQuat(motion.QuatFromEuler(0.3, -0.7, 1.1))
+	if d := maxMat4Diff(m, want); d > 1e-5 {
+		t.Fatalf("STEP interpolation did not hold low keyframe (diff %g)\n got=%v\n want=%v", d, m, want)
+	}
+	// Sanity: high keyframe would give a different orientation.
+	hi := mat4FromQuat(motion.QuatFromEuler(1.2, 0.4, -0.9))
+	if maxMat4Diff(m, hi) < 1e-5 {
+		t.Fatalf("STEP result matched HIGH keyframe instead of low: %v", m)
+	}
+}
+
+// TestNativeRotationSingleAxisZ verifies that a clip with only a rotationZ
+// channel (absent X/Y treated as Euler-0) produces a pure RotZ result.
+func TestNativeRotationSingleAxisZ(t *testing.T) {
+	// rotationZ: 0 → π/2 LINEAR; sampled at t=0.5 → π/4.
+	anim := engine.RenderAnimation{
+		Name:     "z-spin",
+		Duration: 1,
+		Channels: []engine.RenderAnimationChannel{
+			{
+				TargetID:      "hero",
+				Property:      "rotationZ",
+				Times:         []float64{0, 1},
+				Values:        []float64{0, math.Pi / 2},
+				Interpolation: "LINEAR",
+			},
+		},
+	}
+	m := readbackInstanceMatrix(t, anim, 0.5)
+	// Absent X/Y are treated as 0; result must equal QuatFromEuler(0, 0, π/4).
+	want := mat4FromQuat(motion.QuatFromEuler(0, 0, math.Pi/4))
+	if d := maxMat4Diff(m, want); d > 1e-5 {
+		t.Fatalf("single-axis rotationZ diverges from pure RotZ(π/4) by %g\n got=%v\n want=%v", d, m, want)
 	}
 }
 
