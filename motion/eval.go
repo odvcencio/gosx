@@ -55,23 +55,23 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 			scratch[1] = 0
 			scratch[2] = 0
 			scratch[3] = 1
-			out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch[:4]})
+			out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch})
 		case GenDrift:
 			// Base value — no oscillation.
-			if len(gen.Base.F) < 3 {
+			if gen.Base.Arity.Width() < 3 {
 				return
 			}
 			for a := 0; a < 3; a++ {
 				scratch[a] = gen.Base.F[a]
 			}
-			out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch[:3]})
+			out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch})
 		case GenSpring:
 			// Settled "to" target: Base.F[1].
-			if len(gen.Base.F) < 2 {
+			if gen.Base.Arity.Width() < 2 {
 				return
 			}
 			scratch[0] = gen.Base.F[1]
-			out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch[:1]})
+			out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch})
 		default:
 			// GenNone or unknown — emit nothing.
 		}
@@ -85,24 +85,24 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 		scratch[1] = q.Y
 		scratch[2] = q.Z
 		scratch[3] = q.W
-		out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch[:4]})
+		out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch})
 
 	case GenDrift:
-		if len(gen.Base.F) < 3 {
+		if gen.Base.Arity.Width() < 3 {
 			return
 		}
 		for a := 0; a < 3; a++ {
 			scratch[a] = gen.Base.F[a] + gen.Drift[a]*math.Sin(t*gen.DriftSpeed[a]+gen.DriftPhase[a])
 		}
-		out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch[:3]})
+		out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch})
 
 	case GenSpring:
-		if len(gen.Base.F) < 2 {
+		if gen.Base.Arity.Width() < 2 {
 			return
 		}
 		v := gen.Spring.Value(gen.Base.F[0], gen.Base.F[1], t)
 		scratch[0] = v
-		out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch[:1]})
+		out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch})
 
 	default:
 		// GenNone or unknown — emit nothing.
@@ -128,7 +128,7 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 		var scratch [4]float64
 		w := last.Value.Arity.Width()
 		StepInto(scratch[:w], last.Value)
-		out.Push(track.TargetID, track.PropID, Value{Arity: last.Value.Arity, F: scratch[:w]})
+		out.Push(track.TargetID, track.PropID, Value{Arity: last.Value.Arity, F: scratch})
 		return
 	}
 
@@ -142,14 +142,14 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 		// Clamp to first key.
 		w := keys[0].Value.Arity.Width()
 		StepInto(scratch[:w], keys[0].Value)
-		out.Push(track.TargetID, track.PropID, Value{Arity: keys[0].Value.Arity, F: scratch[:w]})
+		out.Push(track.TargetID, track.PropID, Value{Arity: keys[0].Value.Arity, F: scratch})
 
 	case localT >= keys[len(keys)-1].T:
 		// Clamp to last key.
 		last := keys[len(keys)-1]
 		w := last.Value.Arity.Width()
 		StepInto(scratch[:w], last.Value)
-		out.Push(track.TargetID, track.PropID, Value{Arity: last.Value.Arity, F: scratch[:w]})
+		out.Push(track.TargetID, track.PropID, Value{Arity: last.Value.Arity, F: scratch})
 
 	default:
 		// Find surrounding pair by linear scan.
@@ -175,6 +175,6 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 			easedAlpha := ease.Apply(alpha)
 			LerpValueInto(scratch[:w], ka.Value, kb.Value, easedAlpha)
 		}
-		out.Push(track.TargetID, track.PropID, Value{Arity: arity, F: scratch[:w]})
+		out.Push(track.TargetID, track.PropID, Value{Arity: arity, F: scratch})
 	}
 }

@@ -9,8 +9,8 @@ func makeTemplateTrack() Track {
 	return Track{
 		Prop: "opacity",
 		Keys: []Key{
-			{T: 0.0, Value: Value{Arity: ArityScalar, F: []float64{0.0}}},
-			{T: 1.0, Value: Value{Arity: ArityScalar, F: []float64{1.0}}},
+			{T: 0.0, Value: ScalarV(0.0)},
+			{T: 1.0, Value: ScalarV(1.0)},
 		},
 		Interp: InterpLinear,
 	}

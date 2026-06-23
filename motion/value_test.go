@@ -27,8 +27,8 @@ func TestWidthArity(t *testing.T) {
 
 // TestLerpValueVec3 verifies component-wise lerp for a Vec3.
 func TestLerpValueVec3(t *testing.T) {
-	a := Value{ArityVec3, []float64{0, 0, 0}}
-	b := Value{ArityVec3, []float64{2, 4, 6}}
+	a := Vec3V(0, 0, 0)
+	b := Vec3V(2, 4, 6)
 	got := LerpValue(a, b, 0.5)
 	want := []float64{1, 2, 3}
 	for i, w := range want {
@@ -44,8 +44,8 @@ func TestLerpValueVec3(t *testing.T) {
 // TestLerpValueQuat verifies that Quat arity routes through Slerp, not component lerp.
 func TestLerpValueQuat(t *testing.T) {
 	// a = identity, b = 90-degree rotation about Z (approx)
-	a := Value{ArityQuat, []float64{0, 0, 0, 1}}
-	b := Value{ArityQuat, []float64{0, 0, 0.7071068, 0.7071068}}
+	a := Value{ArityQuat, [4]float64{0, 0, 0, 1}}
+	b := Value{ArityQuat, [4]float64{0, 0, 0.7071068, 0.7071068}}
 	got := LerpValue(a, b, 0.5)
 
 	// Expected: Slerp of the same quaternions at t=0.5 ≈ [0, 0, 0.3826834, 0.9238795]
@@ -67,8 +67,8 @@ func TestLerpValueQuat(t *testing.T) {
 
 // TestLerpValueIntoNoAlloc verifies that LerpValueInto produces correct values and zero allocs.
 func TestLerpValueIntoNoAlloc(t *testing.T) {
-	a := Value{ArityVec3, []float64{0, 0, 0}}
-	b := Value{ArityVec3, []float64{2, 4, 6}}
+	a := Vec3V(0, 0, 0)
+	b := Vec3V(2, 4, 6)
 	dst := make([]float64, 3)
 
 	allocs := testing.AllocsPerRun(100, func() {
@@ -88,7 +88,7 @@ func TestLerpValueIntoNoAlloc(t *testing.T) {
 
 // TestStepInto verifies StepInto copies a's components into dst.
 func TestStepInto(t *testing.T) {
-	a := Value{ArityVec3, []float64{7, 8, 9}}
+	a := Vec3V(7, 8, 9)
 	dst := make([]float64, 3)
 	StepInto(dst, a)
 	want := []float64{7, 8, 9}
@@ -101,7 +101,7 @@ func TestStepInto(t *testing.T) {
 
 // TestStepIntoNoAlloc verifies StepInto allocates nothing.
 func TestStepIntoNoAlloc(t *testing.T) {
-	a := Value{ArityVec3, []float64{1, 2, 3}}
+	a := Vec3V(1, 2, 3)
 	dst := make([]float64, 3)
 	allocs := testing.AllocsPerRun(100, func() {
 		StepInto(dst, a)

@@ -23,7 +23,8 @@ func (w *WriteBuf) Reset() {
 // Grows the backing buffer (one allocation) ONLY when capacity is insufficient;
 // otherwise zero alloc.
 func (w *WriteBuf) Push(targetID, propID int, v Value) {
-	need := 3 + len(v.F)
+	width := v.Arity.Width()
+	need := 3 + width
 	if w.n+need > len(w.F) {
 		// Grow: double the current length (or use n+need if that's larger).
 		newLen := len(w.F) * 2
@@ -37,7 +38,7 @@ func (w *WriteBuf) Push(targetID, propID int, v Value) {
 	w.F[w.n] = float64(targetID)
 	w.F[w.n+1] = float64(propID)
 	w.F[w.n+2] = float64(v.Arity)
-	copy(w.F[w.n+3:], v.F)
+	copy(w.F[w.n+3:], v.F[:width])
 	w.n += need
 }
 

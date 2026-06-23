@@ -12,11 +12,12 @@ const (
 	ArityColor                    // 4 floats (r,g,b,a)
 )
 
-// Value is a typed flat-float value.
+// Value is a typed flat-float value (plain-old-data; zero heap alloc).
+// Only F[:Arity.Width()] is meaningful; unused trailing components are 0.
 // Width: scalar=1, vec2=2, vec3=3, vec4/quat/color=4.
 type Value struct {
 	Arity ValueArity
-	F     []float64
+	F     [4]float64
 }
 
 // Interp selects the keyframe interpolation mode for a Track.

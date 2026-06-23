@@ -8,11 +8,11 @@ import (
 // helpers to build test values
 
 func vec3(x, y, z float64) Value {
-	return Value{Arity: ArityVec3, F: []float64{x, y, z}}
+	return Vec3V(x, y, z)
 }
 
 func scalar(v float64) Value {
-	return Value{Arity: ArityScalar, F: []float64{v}}
+	return ScalarV(v)
 }
 
 // TestEvalLinearMidpoint: single linear track, sample at midpoint.
@@ -227,7 +227,7 @@ func TestEvalGenDriftVec3(t *testing.T) {
 					PropID:   1,
 					Gen: &Generator{
 						Kind:       GenDrift,
-						Base:       Value{Arity: ArityVec3, F: []float64{1, 2, 3}},
+						Base:       Vec3V(1, 2, 3),
 						Drift:      [3]float64{0, 0.5, 0},
 						DriftSpeed: [3]float64{0, 1, 0},
 						DriftPhase: [3]float64{0, 0, 0},
@@ -264,7 +264,7 @@ func TestEvalGenSpringScalar(t *testing.T) {
 					PropID:   0,
 					Gen: &Generator{
 						Kind:   GenSpring,
-						Base:   Value{Arity: ArityVec2, F: []float64{0, 1}},
+						Base:   Vec2V(0, 1),
 						Spring: sp,
 					},
 				},
@@ -360,7 +360,7 @@ func TestEvalGenShortBaseNoPanic(t *testing.T) {
 					PropID:   0,
 					Gen: &Generator{
 						Kind:   GenSpring,
-						Base:   Value{Arity: ArityScalar, F: []float64{0}}, // only 1 element
+						Base:   ScalarV(0), // ArityScalar width=1, needs 2 → guard fires
 						Spring: Spring{Mass: 1, Stiffness: 100, Damping: 10},
 					},
 				},
@@ -372,7 +372,7 @@ func TestEvalGenShortBaseNoPanic(t *testing.T) {
 					PropID:   1,
 					Gen: &Generator{
 						Kind: GenDrift,
-						Base: Value{Arity: ArityVec2, F: []float64{0, 0}}, // only 2 elements
+						Base: Vec2V(0, 0), // ArityVec2 width=2, needs 3 → guard fires
 					},
 				},
 			},

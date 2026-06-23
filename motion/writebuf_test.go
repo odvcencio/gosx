@@ -8,8 +8,8 @@ import (
 func TestWriteBufPacking(t *testing.T) {
 	w := NewWriteBuf(64)
 	w.Reset()
-	w.Push(5, 2, Value{Arity: ArityVec3, F: []float64{1, 2, 3}})
-	w.Push(7, 0, Value{Arity: ArityScalar, F: []float64{9}})
+	w.Push(5, 2, Vec3V(1, 2, 3))
+	w.Push(7, 0, ScalarV(9))
 
 	want := []float64{5, 2, 2, 1, 2, 3, 7, 0, 0, 9}
 	got := w.Writes()
@@ -27,7 +27,7 @@ func TestWriteBufPacking(t *testing.T) {
 // TestWriteBufResetReuse confirms Reset rewinds the cursor without freeing.
 func TestWriteBufResetReuse(t *testing.T) {
 	w := NewWriteBuf(64)
-	w.Push(1, 1, Value{Arity: ArityScalar, F: []float64{42}})
+	w.Push(1, 1, ScalarV(42))
 	if w.Len() == 0 {
 		t.Fatal("expected Len > 0 after first Push")
 	}
@@ -38,7 +38,7 @@ func TestWriteBufResetReuse(t *testing.T) {
 	}
 
 	// Subsequent push should start at index 0.
-	w.Push(3, 4, Value{Arity: ArityScalar, F: []float64{7}})
+	w.Push(3, 4, ScalarV(7))
 	got := w.Writes()
 	want := []float64{3, 4, 0, 7}
 	if len(got) != len(want) {
@@ -53,9 +53,9 @@ func TestWriteBufResetReuse(t *testing.T) {
 
 // TestWriteBufZeroAlloc verifies the hot path does not allocate when capacity suffices.
 func TestWriteBufZeroAlloc(t *testing.T) {
-	// Allocate Value slices OUTSIDE the closure so they are not re-created per iteration.
-	vec3val := Value{Arity: ArityVec3, F: []float64{1, 2, 3}}
-	scalarval := Value{Arity: ArityScalar, F: []float64{9}}
+	// Values are now POD — no slice alloc inside Value.
+	vec3val := Vec3V(1, 2, 3)
+	scalarval := ScalarV(9)
 
 	w := NewWriteBuf(64)
 
@@ -75,9 +75,9 @@ func TestWriteBufGrowth(t *testing.T) {
 	// Capacity of 2 is too small for any single push (need at least 3 header + values).
 	w := NewWriteBuf(2)
 
-	w.Push(1, 1, Value{Arity: ArityVec3, F: []float64{10, 20, 30}})
-	w.Push(2, 3, Value{Arity: ArityVec2, F: []float64{4, 5}})
-	w.Push(9, 7, Value{Arity: ArityScalar, F: []float64{99}})
+	w.Push(1, 1, Vec3V(10, 20, 30))
+	w.Push(2, 3, Vec2V(4, 5))
+	w.Push(9, 7, ScalarV(99))
 
 	want := []float64{
 		1, 1, 2, 10, 20, 30, // vec3
@@ -102,12 +102,12 @@ func TestWriteBufLen(t *testing.T) {
 		t.Fatalf("initial Len = %d, want 0", w.Len())
 	}
 	// Push a scalar: 3 header + 1 value = 4 floats.
-	w.Push(0, 0, Value{Arity: ArityScalar, F: []float64{1}})
+	w.Push(0, 0, ScalarV(1))
 	if w.Len() != 4 {
 		t.Fatalf("Len after scalar push = %d, want 4", w.Len())
 	}
 	// Push a vec4: 3 header + 4 values = 7 more floats → total 11.
-	w.Push(0, 0, Value{Arity: ArityVec4, F: []float64{1, 2, 3, 4}})
+	w.Push(0, 0, Vec4V(1, 2, 3, 4))
 	if w.Len() != 11 {
 		t.Fatalf("Len after vec4 push = %d, want 11", w.Len())
 	}
@@ -116,7 +116,7 @@ func TestWriteBufLen(t *testing.T) {
 // TestWritesIsView ensures Writes() returns a slice view, not a copy.
 func TestWritesIsView(t *testing.T) {
 	w := NewWriteBuf(64)
-	w.Push(1, 2, Value{Arity: ArityScalar, F: []float64{3}})
+	w.Push(1, 2, ScalarV(3))
 	got := w.Writes()
 	// Mutate through the view and verify the backing buffer reflects the change.
 	got[0] = 999

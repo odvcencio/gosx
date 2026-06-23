@@ -16,6 +16,32 @@ func (a ValueArity) Width() int {
 	}
 }
 
+// Constructors — keep call sites clean and guard unused trailing components at zero.
+
+func ScalarV(x float64) Value {
+	return Value{ArityScalar, [4]float64{x}}
+}
+
+func Vec2V(x, y float64) Value {
+	return Value{ArityVec2, [4]float64{x, y}}
+}
+
+func Vec3V(x, y, z float64) Value {
+	return Value{ArityVec3, [4]float64{x, y, z}}
+}
+
+func Vec4V(x, y, z, w float64) Value {
+	return Value{ArityVec4, [4]float64{x, y, z, w}}
+}
+
+func QuatV(q Quat) Value {
+	return Value{ArityQuat, [4]float64{q.X, q.Y, q.Z, q.W}}
+}
+
+func ColorV(r, g, b, a float64) Value {
+	return Value{ArityColor, [4]float64{r, g, b, a}}
+}
+
 // LerpValueInto writes the interpolation of a→b at t into dst.
 // dst must have length >= a.Arity.Width().
 // Quat arity routes through Slerp; all others use component-wise linear lerp.
@@ -46,11 +72,11 @@ func StepInto(dst []float64, a Value) {
 	}
 }
 
-// LerpValue is an allocating convenience wrapper for tests and non-hot paths.
+// LerpValue is a convenience wrapper for tests and non-hot paths.
+// Returns a Value by value — zero heap allocation (POD array copy).
 // Do NOT use on the per-frame interpolation hot path; use LerpValueInto instead.
 func LerpValue(a, b Value, t float64) Value {
-	n := a.Arity.Width()
-	f := make([]float64, n)
-	LerpValueInto(f, a, b, t)
-	return Value{Arity: a.Arity, F: f}
+	var scratch [4]float64
+	LerpValueInto(scratch[:], a, b, t)
+	return Value{Arity: a.Arity, F: scratch}
 }

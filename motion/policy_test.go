@@ -51,7 +51,7 @@ func TestReducedMotionDriftCollapse(t *testing.T) {
 					PropID:   1,
 					Gen: &Generator{
 						Kind:       GenDrift,
-						Base:       Value{Arity: ArityVec3, F: []float64{1, 2, 3}},
+						Base:       Vec3V(1, 2, 3),
 						Drift:      [3]float64{0, 0.5, 0},
 						DriftSpeed: [3]float64{0, 1, 0},
 						DriftPhase: [3]float64{0, 0, 0},
@@ -121,7 +121,7 @@ func TestReducedMotionSpringCollapse(t *testing.T) {
 					PropID:   0,
 					Gen: &Generator{
 						Kind:   GenSpring,
-						Base:   Value{Arity: ArityVec2, F: []float64{0, 1}},
+						Base:   Vec2V(0, 1),
 						Spring: sp,
 					},
 				},
@@ -179,7 +179,7 @@ func TestReducedMotionRegression(t *testing.T) {
 					PropID:   1,
 					Gen: &Generator{
 						Kind:       GenDrift,
-						Base:       Value{Arity: ArityVec3, F: []float64{1, 2, 3}},
+						Base:       Vec3V(1, 2, 3),
 						Drift:      [3]float64{0, 0.5, 0},
 						DriftSpeed: [3]float64{0, 1, 0},
 						DriftPhase: [3]float64{0, 0, 0},

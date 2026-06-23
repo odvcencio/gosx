@@ -170,8 +170,8 @@ func corpusCases() []goldenCase {
 						TargetID: 1,
 						PropID:   0,
 						Keys: []Key{
-							{T: 0, Value: Value{Arity: ArityVec3, F: []float64{0, 0, 0}}},
-							{T: 1, Value: Value{Arity: ArityVec3, F: []float64{10, 20, 30}}},
+							{T: 0, Value: Vec3V(0, 0, 0)},
+							{T: 1, Value: Vec3V(10, 20, 30)},
 						},
 						Interp: InterpLinear,
 					},
@@ -201,8 +201,8 @@ func corpusCases() []goldenCase {
 						TargetID: 1,
 						PropID:   1,
 						Keys: []Key{
-							{T: 0, Value: Value{Arity: ArityQuat, F: []float64{0, 0, 0, 1}}},
-							{T: 1, Value: Value{Arity: ArityQuat, F: []float64{0, 0, 0.7071068, 0.7071068}}},
+							{T: 0, Value: Value{ArityQuat, [4]float64{0, 0, 0, 1}}},
+							{T: 1, Value: Value{ArityQuat, [4]float64{0, 0, 0.7071068, 0.7071068}}},
 						},
 						Interp: InterpLinear,
 					},
@@ -213,8 +213,8 @@ func corpusCases() []goldenCase {
 						TargetID: 2,
 						PropID:   1,
 						Keys: []Key{
-							{T: 0, Value: Value{Arity: ArityQuat, F: []float64{0, 0, 0, 1}}},
-							{T: 1, Value: Value{Arity: ArityQuat, F: []float64{0, 0, 0, -1}}},
+							{T: 0, Value: Value{ArityQuat, [4]float64{0, 0, 0, 1}}},
+							{T: 1, Value: Value{ArityQuat, [4]float64{0, 0, 0, -1}}},
 						},
 						Interp: InterpLinear,
 					},
@@ -242,7 +242,7 @@ func corpusCases() []goldenCase {
 						PropID:   2,
 						Gen: &Generator{
 							Kind:   GenSpring,
-							Base:   Value{Arity: ArityVec2, F: []float64{0, 1}},
+							Base:   Vec2V(0, 1),
 							Spring: Spring{Mass: 1, Stiffness: 100, Damping: 10},
 						},
 					},
@@ -269,8 +269,8 @@ func corpusCases() []goldenCase {
 						TargetID: 1,
 						PropID:   0,
 						Keys: []Key{
-							{T: 0, Value: Value{Arity: ArityVec3, F: []float64{0, 0, 0}}},
-							{T: 1, Value: Value{Arity: ArityVec3, F: []float64{10, 20, 30}}},
+							{T: 0, Value: Vec3V(0, 0, 0)},
+							{T: 1, Value: Vec3V(10, 20, 30)},
 						},
 						Interp: InterpLinear,
 					},
@@ -281,8 +281,8 @@ func corpusCases() []goldenCase {
 						TargetID: 2,
 						PropID:   0,
 						Keys: []Key{
-							{T: 0, Value: Value{Arity: ArityScalar, F: []float64{0}}},
-							{T: 1, Value: Value{Arity: ArityScalar, F: []float64{100}}},
+							{T: 0, Value: ScalarV(0)},
+							{T: 1, Value: ScalarV(100)},
 						},
 						Interp: InterpLinear,
 					},
@@ -309,8 +309,8 @@ func corpusCases() []goldenCase {
 			Prop:   "opacity",
 			PropID: 3,
 			Keys: []Key{
-				{T: 0, Value: Value{Arity: ArityScalar, F: []float64{0}}},
-				{T: 1, Value: Value{Arity: ArityScalar, F: []float64{10}}},
+				{T: 0, Value: ScalarV(0)},
+				{T: 1, Value: ScalarV(10)},
 			},
 			Interp: InterpLinear,
 		}
@@ -440,8 +440,8 @@ func TestStaggerGoldenDelays(t *testing.T) {
 	spec := StaggerSpec{From: FromCenter, Delay: 0.1}
 	template := Track{
 		Keys: []Key{
-			{T: 0, Value: Value{Arity: ArityScalar, F: []float64{0}}},
-			{T: 1, Value: Value{Arity: ArityScalar, F: []float64{10}}},
+			{T: 0, Value: ScalarV(0)},
+			{T: 1, Value: ScalarV(10)},
 		},
 		Interp: InterpLinear,
 	}
