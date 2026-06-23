@@ -23,7 +23,7 @@ require (
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.42.0
-	m31labs.dev/selena v0.1.1
+	m31labs.dev/selena v0.2.0
 )
 
 require (
@@ -52,7 +52,3 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 	m31labs.dev/eos v0.1.4
 )
-
-// TODO(release): remove once m31labs.dev/selena v0.2.0 (or later) is published
-// with SurfaceKindPoints + SurfaceKindPost in bindings.
-replace m31labs.dev/selena => ../selena
