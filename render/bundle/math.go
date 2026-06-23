@@ -4,10 +4,38 @@ import (
 	"math"
 
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
 // mat4 is a column-major 4x4 float32 matrix. m[0..3] = column 0, etc.
 type mat4 [16]float32
+
+// mat4FromQuat builds a column-major rotation matrix from a quaternion. The
+// quaternion is normalized first to guard against drift. The convention is
+// pinned (by TestMat4FromQuatMatchesOldEulerCompose) to exactly match the
+// RotX·RotY·RotZ Euler compose this path used before slerp, so endpoints are
+// unchanged. Layout: m[col*4+row].
+func mat4FromQuat(q motion.Quat) mat4 {
+	qn := q.Normalize()
+	x, y, z, w := qn.X, qn.Y, qn.Z, qn.W
+	xx, yy, zz := x*x, y*y, z*z
+	xy, xz, yz := x*y, x*z, y*z
+	wx, wy, wz := w*x, w*y, w*z
+	m := mat4Identity()
+	// Column 0.
+	m[0] = float32(1 - 2*(yy+zz))
+	m[1] = float32(2 * (xy + wz))
+	m[2] = float32(2 * (xz - wy))
+	// Column 1.
+	m[4] = float32(2 * (xy - wz))
+	m[5] = float32(1 - 2*(xx+zz))
+	m[6] = float32(2 * (yz + wx))
+	// Column 2.
+	m[8] = float32(2 * (xz + wy))
+	m[9] = float32(2 * (yz - wx))
+	m[10] = float32(1 - 2*(xx+yy))
+	return m
+}
 
 func mat4Identity() mat4 {
 	var m mat4
