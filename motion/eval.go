@@ -6,15 +6,14 @@ import "math"
 // Pure function of t — no mutable cross-call state. Zero heap allocation on the hot
 // path (stack [4]float64 scratch; max value width is 4).
 //
-// 1.6a scope: handles PosAbs offsets and InterpLinear/InterpStep only.
-// Generators (1.6c), per-key easing (1.6b), reduced-motion (1.6d), and
-// relative/label positioning are deferred to later tasks.
-func Eval(tl *Timeline, t float64, _ Policy, out *WriteBuf) {
-	evalTimeline(tl, t, 0, out)
+// When policy.ReducedMotion is true, each track immediately emits its rest/final
+// state instead of animating (1.6d).
+func Eval(tl *Timeline, t float64, policy Policy, out *WriteBuf) {
+	evalTimeline(tl, t, 0, policy, out)
 }
 
 // evalTimeline recurses into a timeline with a base offset applied to t.
-func evalTimeline(tl *Timeline, t, baseOffset float64, out *WriteBuf) {
+func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *WriteBuf) {
 	for i := range tl.Children {
 		child := &tl.Children[i]
 
@@ -25,12 +24,12 @@ func evalTimeline(tl *Timeline, t, baseOffset float64, out *WriteBuf) {
 		}
 
 		if child.Track != nil {
-			evalTrack(child.Track, t, start, out)
+			evalTrack(child.Track, t, start, policy, out)
 		}
 
 		if child.Sub != nil {
 			// TODO(1.6): nested timeline positioning (PosRel, PosLabel, PosPrevRel)
-			evalTimeline(child.Sub, t, start, out)
+			evalTimeline(child.Sub, t, start, policy, out)
 		}
 	}
 }
@@ -38,9 +37,40 @@ func evalTimeline(tl *Timeline, t, baseOffset float64, out *WriteBuf) {
 // evalGenerator samples a procedural generator track at time t (localT already applied
 // via start, but generators use global t directly as their time argument).
 // Uses a stack [4]float64 scratch — zero alloc.
-func evalGenerator(track *Track, t float64, out *WriteBuf) {
+//
+// When policy.ReducedMotion is true, the rest state is emitted immediately:
+//   - GenSpin → identity quaternion {0,0,0,1}
+//   - GenDrift → Base (no oscillation)
+//   - GenSpring → Base.F[1] (the settled "to" value)
+func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 	gen := track.Gen
 	var scratch [4]float64
+
+	// Reduced-motion: emit the rest/settled state for each generator kind.
+	if policy.ReducedMotion {
+		switch gen.Kind {
+		case GenSpin:
+			// Identity quaternion — rotation stopped at rest.
+			scratch[0] = 0
+			scratch[1] = 0
+			scratch[2] = 0
+			scratch[3] = 1
+			out.Push(track.TargetID, track.PropID, Value{Arity: ArityQuat, F: scratch[:4]})
+		case GenDrift:
+			// Base value — no oscillation.
+			for a := 0; a < 3; a++ {
+				scratch[a] = gen.Base.F[a]
+			}
+			out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch[:3]})
+		case GenSpring:
+			// Settled "to" target: Base.F[1].
+			scratch[0] = gen.Base.F[1]
+			out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch[:1]})
+		default:
+			// GenNone or unknown — emit nothing.
+		}
+		return
+	}
 
 	switch gen.Kind {
 	case GenSpin:
@@ -68,15 +98,25 @@ func evalGenerator(track *Track, t float64, out *WriteBuf) {
 }
 
 // evalTrack samples a single track at global time t given its start offset.
-func evalTrack(track *Track, t, start float64, out *WriteBuf) {
-	// Generator tracks: dispatch to procedural evaluation (1.6c).
+func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
+	// Generator tracks: dispatch to procedural evaluation (1.6c / 1.6d).
 	if track.Gen != nil {
-		evalGenerator(track, t, out)
+		evalGenerator(track, t, policy, out)
 		return
 	}
 
 	// Skip tracks with no keys.
 	if len(track.Keys) == 0 {
+		return
+	}
+
+	// Reduced-motion: emit the last key's value immediately (end/rest state).
+	if policy.ReducedMotion {
+		last := track.Keys[len(track.Keys)-1]
+		var scratch [4]float64
+		w := last.Value.Arity.Width()
+		StepInto(scratch[:w], last.Value)
+		out.Push(track.TargetID, track.PropID, Value{Arity: last.Value.Arity, F: scratch[:w]})
 		return
 	}
 
