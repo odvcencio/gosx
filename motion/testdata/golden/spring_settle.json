@@ -1,0 +1,110 @@
+{
+  "name": "spring_settle",
+  "tol": 0.000001,
+  "timeline": {
+    "ID": "",
+    "Children": [
+      {
+        "At": {
+          "Kind": 0,
+          "Val": 0,
+          "Label": ""
+        },
+        "Track": {
+          "Target": {
+            "Kind": 0,
+            "Ref": ""
+          },
+          "Prop": "",
+          "Keys": null,
+          "Gen": {
+            "Kind": 2,
+            "Base": {
+              "Arity": 1,
+              "F": [
+                0,
+                1
+              ]
+            },
+            "Spin": [
+              0,
+              0,
+              0
+            ],
+            "Spring": {
+              "Mass": 1,
+              "Stiffness": 100,
+              "Damping": 10,
+              "Velocity": 0
+            },
+            "Drift": [
+              0,
+              0,
+              0
+            ],
+            "DriftSpeed": [
+              0,
+              0,
+              0
+            ],
+            "DriftPhase": [
+              0,
+              0,
+              0
+            ]
+          },
+          "Interp": 0,
+          "Ease": {
+            "Kind": 0,
+            "Args": null
+          },
+          "TargetID": 1,
+          "PropID": 2
+        },
+        "Sub": null
+      }
+    ],
+    "Loop": 0,
+    "Alternate": false,
+    "Speed": 0,
+    "Autoplay": false
+  },
+  "samples": [
+    {
+      "t": 0,
+      "writes": [
+        1,
+        2,
+        0,
+        0
+      ]
+    },
+    {
+      "t": 0.1,
+      "writes": [
+        1,
+        2,
+        0,
+        0.3561532825979259
+      ]
+    },
+    {
+      "t": 0.5,
+      "writes": [
+        1,
+        2,
+        0,
+        1.0677797968943343
+      ]
+    },
+    {
+      "t": 2,
+      "writes": [
+        1,
+        2,
+        0,
+        1
+      ]
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "name": "multi_track",
+  "tol": 1e-9,
+  "timeline": {
+    "ID": "",
+    "Children": [
+      {
+        "At": {
+          "Kind": 0,
+          "Val": 0,
+          "Label": ""
+        },
+        "Track": {
+          "Target": {
+            "Kind": 0,
+            "Ref": ""
+          },
+          "Prop": "",
+          "Keys": [
+            {
+              "T": 0,
+              "Value": {
+                "Arity": 2,
+                "F": [
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null
+            },
+            {
+              "T": 1,
+              "Value": {
+                "Arity": 2,
+                "F": [
+                  10,
+                  20,
+                  30
+                ]
+              },
+              "Ease": null
+            }
+          ],
+          "Gen": null,
+          "Interp": 0,
+          "Ease": {
+            "Kind": 0,
+            "Args": null
+          },
+          "TargetID": 1,
+          "PropID": 0
+        },
+        "Sub": null
+      },
+      {
+        "At": {
+          "Kind": 0,
+          "Val": 0.5,
+          "Label": ""
+        },
+        "Track": {
+          "Target": {
+            "Kind": 0,
+            "Ref": ""
+          },
+          "Prop": "",
+          "Keys": [
+            {
+              "T": 0,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  0
+                ]
+              },
+              "Ease": null
+            },
+            {
+              "T": 1,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  100
+                ]
+              },
+              "Ease": null
+            }
+          ],
+          "Gen": null,
+          "Interp": 0,
+          "Ease": {
+            "Kind": 0,
+            "Args": null
+          },
+          "TargetID": 2,
+          "PropID": 0
+        },
+        "Sub": null
+      }
+    ],
+    "Loop": 0,
+    "Alternate": false,
+    "Speed": 0,
+    "Autoplay": false
+  },
+  "samples": [
+    {
+      "t": 0.25,
+      "writes": [
+        1,
+        0,
+        2,
+        2.5,
+        5,
+        7.5,
+        2,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "t": 0.75,
+      "writes": [
+        1,
+        0,
+        2,
+        7.5,
+        15,
+        22.5,
+        2,
+        0,
+        0,
+        25
+      ]
+    },
+    {
+      "t": 1.25,
+      "writes": [
+        1,
+        0,
+        2,
+        10,
+        20,
+        30,
+        2,
+        0,
+        0,
+        75
+      ]
+    }
+  ]
+}
