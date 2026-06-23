@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
 // Joint describes one skeleton joint in palette order.
@@ -165,7 +166,12 @@ func sampleChannel(ch engine.RenderAnimationChannel, stride int, timeSeconds flo
 	if normalizeProperty(ch.Property) == "rotation" && stride == 4 {
 		q0 := frameQuat(ch.Values, lo)
 		q1 := frameQuat(ch.Values, hi)
-		q := nlerpQuat(q0, q1, float32(alpha))
+		mq := motion.Slerp(
+			motion.Quat{X: float64(q0[0]), Y: float64(q0[1]), Z: float64(q0[2]), W: float64(q0[3])},
+			motion.Quat{X: float64(q1[0]), Y: float64(q1[1]), Z: float64(q1[2]), W: float64(q1[3])},
+			alpha,
+		).Normalize()
+		q := [4]float32{float32(mq.X), float32(mq.Y), float32(mq.Z), float32(mq.W)}
 		copy(out, q[:])
 		return out
 	}
@@ -287,20 +293,4 @@ func normalizeQuat(q [4]float32) [4]float32 {
 		return [4]float32{0, 0, 0, 1}
 	}
 	return [4]float32{q[0] / l, q[1] / l, q[2] / l, q[3] / l}
-}
-
-func nlerpQuat(a, b [4]float32, t float32) [4]float32 {
-	if dotQuat(a, b) < 0 {
-		b = [4]float32{-b[0], -b[1], -b[2], -b[3]}
-	}
-	return normalizeQuat([4]float32{
-		a[0] + (b[0]-a[0])*t,
-		a[1] + (b[1]-a[1])*t,
-		a[2] + (b[2]-a[2])*t,
-		a[3] + (b[3]-a[3])*t,
-	})
-}
-
-func dotQuat(a, b [4]float32) float32 {
-	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
 }
