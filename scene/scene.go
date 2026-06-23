@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
 const DefaultEngineName = "GoSXScene3D"
@@ -1061,6 +1062,9 @@ type graphLowerer struct {
 	nextInstancedID    int
 	nextInstancedGLBID int
 	nextParticlesID    int
+	// spinTracks accumulates one GenSpin MotionIR Track per spinning node;
+	// surfaced via SceneIR.SpinTracks (json:"-") as an in-memory facade.
+	spinTracks         []motion.Track
 }
 
 func (Group) sceneNode()             {}
@@ -2118,6 +2122,10 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.SpinX = mesh.Spin.X
 	record.SpinY = mesh.Spin.Y
 	record.SpinZ = mesh.Spin.Z
+	// Facade: also accumulate a GenSpin MotionIR Track for non-zero spins.
+	if mesh.Spin.X != 0 || mesh.Spin.Y != 0 || mesh.Spin.Z != 0 {
+		l.spinTracks = append(l.spinTracks, spinMotionTrack(mesh.Spin, id))
+	}
 	record.Pickable = mesh.Pickable
 	record.Selected = mesh.Selected
 	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
@@ -2175,6 +2183,10 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 	record.SpinX = pts.Spin.X
 	record.SpinY = pts.Spin.Y
 	record.SpinZ = pts.Spin.Z
+	// Facade: also accumulate a GenSpin MotionIR Track for non-zero spins.
+	if pts.Spin.X != 0 || pts.Spin.Y != 0 || pts.Spin.Z != 0 {
+		l.spinTracks = append(l.spinTracks, spinMotionTrack(pts.Spin, id))
+	}
 	// Flatten positions to [x,y,z, x,y,z, ...].
 	if len(pts.Positions) > 0 {
 		flat := make([]float64, 0, len(pts.Positions)*3)

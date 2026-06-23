@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"m31labs.dev/gosx/motion"
 	"m31labs.dev/gosx/scene/capability"
 )
 
@@ -66,6 +67,11 @@ type SceneIR struct {
 	// downstream renderer sees them. Native renderers receive kernels via
 	// Config override and may ignore this field.
 	ShaderLib map[string]string `json:"shaderLib,omitempty"`
+	// SpinTracks holds one GenSpin MotionIR Track for every mesh/points node
+	// that has a non-zero Spin. This field is populated at lowering time as an
+	// in-memory facade over motion core; it is NOT serialised to the wire (JSON
+	// serialisation of MotionIR tracks is deferred to Task 1.15+).
+	SpinTracks []motion.Track `json:"-"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
@@ -805,6 +811,7 @@ func (g Graph) SceneIR() SceneIR {
 		Sprites:            lowerer.resolveSprites(),
 		HTML:               lowerer.resolveHTML(),
 		Lights:             lowerer.lights,
+		SpinTracks:         lowerer.spinTracks,
 	}
 }
 
