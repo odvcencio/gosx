@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	rootengine "m31labs.dev/gosx/engine"
 )
@@ -89,9 +90,12 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	// Pre-resolve all light and environment colors once per frame so
 	// sceneLitColorRGBAResolved can skip the string→RGBA parse on every vertex.
 	litCtx := buildLightingContext(lights, environment)
+	// materialIndexByKey deduplicates materials by their identity Key so the
+	// per-object lookup is O(1) instead of an O(materials) DeepEqual scan.
+	materialIndexByKey := make(map[string]int, len(objects))
 	for _, object := range objects {
 		vertexOffset := len(bundle.WorldPositions) / 3
-		materialIndex := ensureRenderMaterial(&bundle, object)
+		materialIndex := ensureRenderMaterial(&bundle, materialIndexByKey, object)
 		material := bundle.Materials[materialIndex]
 		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds, camTrig, litCtx)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
@@ -227,7 +231,7 @@ func scenePlaneSurfaceCorners(object sceneObject, timeSeconds float64) []point3 
 }
 
 func scenePlaneSurfaceCornersTrig(object sceneObject, timeSeconds float64, objTrig rotTrig) []point3 {
-	vertices := boxVertices(object.Width, 0, object.Depth)
+	vertices := cachedBoxVertices(object.Width, 0, object.Depth)
 	if len(vertices) < 4 {
 		return nil
 	}
@@ -409,15 +413,36 @@ func projectedSceneSpriteSize(camera sceneCamera, width, height int, sprite scen
 	return math.Max(1, (worldWidth*scale*focal)/depth), math.Max(1, (worldHeight*scale*focal)/depth)
 }
 
-func ensureRenderMaterial(bundle *rootengine.RenderBundle, object sceneObject) int {
+// ensureRenderMaterial returns the index of a deduplicated material, appending a
+// new one when needed. It keys on the material's identity Key (which already
+// encodes every distinguishing field except the derived ShaderData) to avoid the
+// per-object O(materials) reflect.DeepEqual scan the linear path used to run.
+//
+// renderMaterialEqual is retained as a tie-breaker: ShaderData is a pure function
+// of fields the Key already encodes (Kind + Emissive, or the kind's registered
+// profile), so a Key match implies a full match in practice — but verifying on the
+// (rare) key hit and re-scanning on the (theoretical) key collision keeps the
+// dedup result bit-identical to the previous linear scan.
+func ensureRenderMaterial(bundle *rootengine.RenderBundle, indexByKey map[string]int, object sceneObject) int {
 	profile := resolveRenderMaterial(object)
-	for index, existing := range bundle.Materials {
-		if renderMaterialEqual(existing, profile) {
-			return index
+	if idx, ok := indexByKey[profile.Key]; ok {
+		if renderMaterialEqual(bundle.Materials[idx], profile) {
+			return idx
+		}
+		// Key collision with a non-equal material (not expected): fall back to a
+		// full scan so the result still matches the old linear behavior exactly.
+		for index, existing := range bundle.Materials {
+			if renderMaterialEqual(existing, profile) {
+				return index
+			}
 		}
 	}
 	bundle.Materials = append(bundle.Materials, profile)
-	return len(bundle.Materials) - 1
+	index := len(bundle.Materials) - 1
+	if _, ok := indexByKey[profile.Key]; !ok {
+		indexByKey[profile.Key] = index
+	}
+	return index
 }
 
 func renderMaterialEqual(left, right rootengine.RenderMaterial) bool {
@@ -1277,21 +1302,103 @@ func sceneClipPoint(point rootengine.RenderPoint, width, height int) (float64, f
 	return (point.X/float64(width))*2 - 1, 1 - (point.Y/float64(height))*2
 }
 
+// geometryCacheKey identifies a local-space geometry result. Local geometry is a
+// pure function of (kind, dims, segments): it does NOT depend on the object's
+// position, rotation, spin, color, or any per-instance state (the bake loop reads
+// it and builds NEW transformed point3s — it never mutates the returned slices).
+// So two objects of the same kind+dims share one immutable geometry result.
+//
+// The float dims are exact authored values (never NaN), so they are safe direct
+// map keys. "box"/"cube"/default all bake identical box geometry, so they
+// normalize to a single "box" key in sceneObjectSegments.
+type geometryCacheKey struct {
+	kind     string
+	width    float64
+	height   float64
+	depth    float64
+	radius   float64
+	segments int
+}
+
+// segmentGeometryCache and boxVertexCache memoize immutable local-space geometry.
+// sync.Map is used because buildRenderBundle runs single-threaded in WASM but may
+// run concurrently across requests in the native/SSR path; the stored values are
+// read-only slices shared by all callers (callers only ever read them).
+var (
+	segmentGeometryCache sync.Map // geometryCacheKey -> [][2]point3 (read-only)
+	boxVertexCache       sync.Map // geometryCacheKey -> []point3 (read-only)
+)
+
 func sceneObjectSegments(object sceneObject) [][2]point3 {
 	switch object.Kind {
 	case "box", "cube":
-		return boxSegments(object)
+		return cachedBoxSegments(object)
 	case "lines":
+		// Custom line geometry depends on per-object Points/LineSegments, which
+		// are arbitrary per instance, so it is not memoized.
 		return customLineSegments(object)
 	case "plane":
-		return planeSegments(object)
+		return cachedPlaneSegments(object)
 	case "pyramid":
-		return pyramidSegments(object)
+		return cachedPyramidSegments(object)
 	case "sphere":
-		return sphereSegments(object)
+		return cachedSphereSegments(object)
 	default:
-		return boxSegments(object)
+		return cachedBoxSegments(object)
 	}
+}
+
+func cachedBoxSegments(object sceneObject) [][2]point3 {
+	key := geometryCacheKey{kind: "box", width: object.Width, height: object.Height, depth: object.Depth}
+	if v, ok := segmentGeometryCache.Load(key); ok {
+		return v.([][2]point3)
+	}
+	out := boxSegments(object)
+	actual, _ := segmentGeometryCache.LoadOrStore(key, out)
+	return actual.([][2]point3)
+}
+
+func cachedPlaneSegments(object sceneObject) [][2]point3 {
+	key := geometryCacheKey{kind: "plane", width: object.Width, depth: object.Depth}
+	if v, ok := segmentGeometryCache.Load(key); ok {
+		return v.([][2]point3)
+	}
+	out := planeSegments(object)
+	actual, _ := segmentGeometryCache.LoadOrStore(key, out)
+	return actual.([][2]point3)
+}
+
+func cachedPyramidSegments(object sceneObject) [][2]point3 {
+	key := geometryCacheKey{kind: "pyramid", width: object.Width, height: object.Height, depth: object.Depth}
+	if v, ok := segmentGeometryCache.Load(key); ok {
+		return v.([][2]point3)
+	}
+	out := pyramidSegments(object)
+	actual, _ := segmentGeometryCache.LoadOrStore(key, out)
+	return actual.([][2]point3)
+}
+
+func cachedSphereSegments(object sceneObject) [][2]point3 {
+	key := geometryCacheKey{kind: "sphere", radius: object.Radius, segments: object.Segments}
+	if v, ok := segmentGeometryCache.Load(key); ok {
+		return v.([][2]point3)
+	}
+	out := sphereSegments(object)
+	actual, _ := segmentGeometryCache.LoadOrStore(key, out)
+	return actual.([][2]point3)
+}
+
+// cachedBoxVertices memoizes boxVertices. Callers (scenePlaneSurfaceCornersTrig,
+// planeSegments) only read the returned slice and build new point3s, so the
+// shared immutable slice is safe.
+func cachedBoxVertices(width, height, depth float64) []point3 {
+	key := geometryCacheKey{kind: "boxv", width: width, height: height, depth: depth}
+	if v, ok := boxVertexCache.Load(key); ok {
+		return v.([]point3)
+	}
+	out := boxVertices(width, height, depth)
+	actual, _ := boxVertexCache.LoadOrStore(key, out)
+	return actual.([]point3)
 }
 
 func customLineSegments(object sceneObject) [][2]point3 {
@@ -1314,7 +1421,7 @@ func boxSegments(object sceneObject) [][2]point3 {
 }
 
 func planeSegments(object sceneObject) [][2]point3 {
-	vertices := boxVertices(object.Width, 0, object.Depth)
+	vertices := cachedBoxVertices(object.Width, 0, object.Depth)
 	return indexSegments(vertices[:4], [][2]int{
 		{0, 1}, {1, 2}, {2, 3}, {3, 0},
 	})

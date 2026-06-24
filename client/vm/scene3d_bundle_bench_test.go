@@ -67,6 +67,73 @@ func benchScene3D(b *testing.B, n, sphereEvery, segments int) {
 	}
 }
 
+// scene3DMultiMaterialBenchProgram builds n boxes spread across distinctMaterials
+// distinct material kinds (varying color/roughness/metalness so each yields a
+// unique renderMaterialKey). This is the Win B target: the old dedup ran an
+// O(distinctMaterials) reflect.DeepEqual scan per object; the keyed map makes it
+// O(1) per object.
+func scene3DMultiMaterialBenchProgram(n, distinctMaterials int) *rootengine.Program {
+	prog := &rootengine.Program{Name: "Scene3DMultiMaterialBench"}
+	exprs := make([]islandprogram.Expr, 0, n*14)
+	nodes := make([]rootengine.Node, 0, n)
+	addFloat := func(v string) islandprogram.ExprID {
+		id := islandprogram.ExprID(len(exprs))
+		exprs = append(exprs, islandprogram.Expr{Op: islandprogram.OpLitFloat, Type: islandprogram.TypeFloat, Value: v})
+		return id
+	}
+	addStr := func(v string) islandprogram.ExprID {
+		id := islandprogram.ExprID(len(exprs))
+		exprs = append(exprs, islandprogram.Expr{Op: islandprogram.OpLitString, Type: islandprogram.TypeString, Value: v})
+		return id
+	}
+	palette := []string{
+		"#8de1ff", "#ff8de1", "#e1ff8d", "#8dffe1", "#e18dff", "#ffe18d",
+		"#ff5555", "#55ff55", "#5555ff", "#ffaa00", "#00ffaa", "#aa00ff",
+	}
+	for i := 0; i < n; i++ {
+		m := i % distinctMaterials
+		color := palette[m%len(palette)]
+		props := map[string]islandprogram.ExprID{
+			"kind":      addStr("box"),
+			"x":         addFloat(strconv.Itoa((i%16)*2 - 16)),
+			"y":         addFloat(strconv.Itoa((i/16)%16 - 8)),
+			"z":         addFloat(strconv.Itoa(-(i / 256) - 5)),
+			"width":     addFloat("1.0"),
+			"height":    addFloat("1.0"),
+			"depth":     addFloat("1.0"),
+			"color":     addStr(color),
+			"roughness": addFloat(strconv.FormatFloat(0.1+float64(m)*0.05, 'f', 3, 64)),
+			"metalness": addFloat(strconv.FormatFloat(float64(m)*0.03, 'f', 3, 64)),
+			"rotationX": addFloat("0.3"),
+			"rotationY": addFloat("0.6"),
+			"rotationZ": addFloat("0.1"),
+			"spinY":     addFloat("0.5"),
+		}
+		nodes = append(nodes, rootengine.Node{Kind: "mesh", Geometry: "box", Props: props})
+	}
+	prog.Exprs = exprs
+	prog.EngineNodes = nodes
+	return prog
+}
+
+func benchScene3DMultiMaterial(b *testing.B, n, distinctMaterials int) {
+	prog := scene3DMultiMaterialBenchProgram(n, distinctMaterials)
+	rt := NewSceneAdapter(prog, `{}`)
+	rt.Reconcile()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = rt.RenderBundle(1280, 720, float64(i)/60)
+	}
+}
+
+// BenchmarkScene3D_1000BoxesMultiMaterial is the Win B target: 1000 boxes across
+// 10 distinct materials. The old O(materials) DeepEqual dedup scan dominated; the
+// keyed map removes reflect.DeepEqual from the per-object hot path.
+func BenchmarkScene3D_1000BoxesMultiMaterial(b *testing.B) {
+	benchScene3DMultiMaterial(b, 1000, 10)
+}
+
 // BenchmarkScene3D_1000Boxes baking 1000 spinning boxes at 1280x720; this is
 // the primary CPU target (per-vertex world position + normal + camera projection).
 func BenchmarkScene3D_1000Boxes(b *testing.B) { benchScene3D(b, 1000, 0, 0) }
