@@ -83,18 +83,21 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		bundle.Lights = renderSceneLights(lights)
 	}
 	appendSceneGrid(&bundle, width, height)
+	// Camera rotation is constant for every vertex/corner in the frame; hoist
+	// its inverse-rotation trig once and thread it through the per-object loops.
+	camTrig := cameraInverseRotTrig(camera)
 	for _, object := range objects {
 		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, object)
 		material := bundle.Materials[materialIndex]
-		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds)
+		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds, camTrig)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
 			bounds := appendResult.Bounds
 			if !appendResult.HasBounds && vertexCount > 0 {
 				bounds = renderObjectBounds(bundle.WorldPositions, vertexOffset, vertexCount)
 			}
-			depthNear, depthFar, depthCenter := renderBoundsDepthMetrics(bounds, camera)
+			depthNear, depthFar, depthCenter := renderBoundsDepthMetricsTrig(bounds, camera, camTrig)
 			bundle.Objects = append(bundle.Objects, rootengine.RenderObject{
 				ID:            object.ID,
 				Kind:          object.Kind,
@@ -110,7 +113,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 				DepthCenter:   depthCenter,
 				ViewCulled:    appendResult.ViewCulled,
 			})
-			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, timeSeconds)
+			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, timeSeconds, camTrig)
 		}
 	}
 	for _, label := range labels {
@@ -135,34 +138,37 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	}
 }
 
-func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64) sceneAppendResult {
+func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64, camTrig rotTrig) sceneAppendResult {
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
 	result := sceneAppendResult{}
+	// Object rotation (rotation + spin*time) is constant for every vertex of
+	// this object at this frame; hoist its trig once out of the segment loop.
+	objTrig := sceneObjectRotTrig(object, timeSeconds)
 	if !sceneObjectUsesLineGeometry(object, material) && sceneObjectHasTexturedSurface(object, material) {
-		for _, corner := range scenePlaneSurfaceCorners(object, timeSeconds) {
+		for _, corner := range scenePlaneSurfaceCornersTrig(object, timeSeconds, objTrig) {
 			result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, corner)
 		}
 		if result.HasBounds {
-			result.ViewCulled = renderBoundsOutsideFrustum(result.Bounds, camera, width, height)
+			result.ViewCulled = renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
 		}
 		return result
 	}
 	for _, segment := range sceneObjectSegments(object) {
-		worldFrom := translatePoint(segment[0], object, timeSeconds)
-		worldTo := translatePoint(segment[1], object, timeSeconds)
-		fromNormal := sceneObjectWorldNormal(object, segment[0], timeSeconds)
-		toNormal := sceneObjectWorldNormal(object, segment[1], timeSeconds)
+		worldFrom := translatePointTrig(segment[0], object, timeSeconds, objTrig)
+		worldTo := translatePointTrig(segment[1], object, timeSeconds, objTrig)
+		fromNormal := sceneObjectWorldNormalTrig(object, segment[0], objTrig)
+		toNormal := sceneObjectWorldNormalTrig(object, segment[1], objTrig)
 		fromRGBA := sceneLitColorRGBA(material, worldFrom, fromNormal, lights, environment)
 		toRGBA := sceneLitColorRGBA(material, worldTo, toNormal, lights, environment)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldTo)
-		clippedFrom, clippedTo, ok := clipWorldSegmentForCamera(worldFrom, worldTo, camera, aspect)
+		clippedFrom, clippedTo, ok := clipWorldSegmentForCameraTrig(worldFrom, worldTo, camera, aspect, camTrig)
 		if !ok {
 			continue
 		}
 		appendWorldSceneLine(bundle, clippedFrom, clippedTo, fromRGBA, toRGBA)
-		from := projectPoint(clippedFrom, camera, width, height)
-		to := projectPoint(clippedTo, camera, width, height)
+		from := projectPointTrig(clippedFrom, camera, width, height, camTrig)
+		to := projectPointTrig(clippedTo, camera, width, height, camTrig)
 		if from == nil || to == nil {
 			continue
 		}
@@ -171,7 +177,7 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 		appendSceneLine(bundle, width, height, *from, *to, sceneRGBAString(stroke), 1.8)
 	}
 	if result.HasBounds {
-		result.ViewCulled = renderBoundsOutsideFrustum(result.Bounds, camera, width, height)
+		result.ViewCulled = renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
 	}
 	return result
 }
@@ -180,15 +186,15 @@ func sceneObjectUsesLineGeometry(object sceneObject, material rootengine.RenderM
 	return !(sceneObjectHasTexturedSurface(object, material) && !material.Wireframe)
 }
 
-func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, timeSeconds float64) {
+func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, timeSeconds float64, camTrig rotTrig) {
 	if !sceneObjectHasTexturedSurface(object, material) {
 		return
 	}
-	corners := scenePlaneSurfaceCorners(object, timeSeconds)
+	corners := scenePlaneSurfaceCornersTrig(object, timeSeconds, sceneObjectRotTrig(object, timeSeconds))
 	if len(corners) != 4 {
 		return
 	}
-	depthNear, depthFar, depthCenter := renderBoundsDepthMetrics(bounds, camera)
+	depthNear, depthFar, depthCenter := renderBoundsDepthMetricsTrig(bounds, camera, camTrig)
 	bundle.Surfaces = append(bundle.Surfaces, rootengine.RenderSurface{
 		ID:            object.ID,
 		Kind:          object.Kind,
@@ -211,15 +217,19 @@ func sceneObjectHasTexturedSurface(object sceneObject, material rootengine.Rende
 }
 
 func scenePlaneSurfaceCorners(object sceneObject, timeSeconds float64) []point3 {
+	return scenePlaneSurfaceCornersTrig(object, timeSeconds, sceneObjectRotTrig(object, timeSeconds))
+}
+
+func scenePlaneSurfaceCornersTrig(object sceneObject, timeSeconds float64, objTrig rotTrig) []point3 {
 	vertices := boxVertices(object.Width, 0, object.Depth)
 	if len(vertices) < 4 {
 		return nil
 	}
 	return []point3{
-		translatePoint(vertices[0], object, timeSeconds),
-		translatePoint(vertices[1], object, timeSeconds),
-		translatePoint(vertices[2], object, timeSeconds),
-		translatePoint(vertices[3], object, timeSeconds),
+		translatePointTrig(vertices[0], object, timeSeconds, objTrig),
+		translatePointTrig(vertices[1], object, timeSeconds, objTrig),
+		translatePointTrig(vertices[2], object, timeSeconds, objTrig),
+		translatePointTrig(vertices[3], object, timeSeconds, objTrig),
 	}
 }
 
@@ -1056,12 +1066,14 @@ func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool
 }
 
 func sceneObjectWorldNormal(object sceneObject, point point3, timeSeconds float64) point3 {
+	return sceneObjectWorldNormalTrig(object, point, sceneObjectRotTrig(object, timeSeconds))
+}
+
+// sceneObjectWorldNormalTrig is sceneObjectWorldNormal with the object's
+// rotation trig supplied by the caller (hoisted once per object/frame).
+func sceneObjectWorldNormalTrig(object sceneObject, point point3, objTrig rotTrig) point3 {
 	normal := sceneObjectLocalNormal(object, point)
-	return normalizePoint3(rotatePoint(normal,
-		object.RotationX+object.SpinX*timeSeconds,
-		object.RotationY+object.SpinY*timeSeconds,
-		object.RotationZ+object.SpinZ*timeSeconds,
-	))
+	return normalizePoint3(rotatePointTrig(normal, objTrig))
 }
 
 func sceneObjectLocalNormal(object sceneObject, point point3) point3 {
@@ -1274,12 +1286,26 @@ func circlePoint(radius float64, axis string, angle float64) point3 {
 	}
 }
 
-func translatePoint(point point3, object sceneObject, timeSeconds float64) point3 {
-	rotated := rotatePoint(point,
+// sceneObjectRotTrig computes the object's combined (rotation + spin*time)
+// rotation trig once. The combined angle is constant across every vertex of the
+// object at this frame, so this is hoisted out of the per-vertex loop.
+func sceneObjectRotTrig(object sceneObject, timeSeconds float64) rotTrig {
+	return newRotTrig(
 		object.RotationX+object.SpinX*timeSeconds,
 		object.RotationY+object.SpinY*timeSeconds,
 		object.RotationZ+object.SpinZ*timeSeconds,
 	)
+}
+
+func translatePoint(point point3, object sceneObject, timeSeconds float64) point3 {
+	return translatePointTrig(point, object, timeSeconds, sceneObjectRotTrig(object, timeSeconds))
+}
+
+// translatePointTrig is translatePoint with the object's rotation trig supplied
+// by the caller (hoisted once per object/frame). Rotation then offset/origin
+// addition happen in the same order, so results are bit-identical.
+func translatePointTrig(point point3, object sceneObject, timeSeconds float64, objTrig rotTrig) point3 {
+	rotated := rotatePointTrig(point, objTrig)
 	offset := sceneMotionOffset(object, timeSeconds)
 	return point3{
 		X: rotated.X + object.X + offset.X,
@@ -1300,22 +1326,55 @@ func sceneMotionOffset(object sceneObject, timeSeconds float64) point3 {
 	}
 }
 
+// rotTrig caches the sin/cos of a rotation's three Euler angles so callers can
+// hoist the 6 transcendental calls out of per-vertex loops. The sinX..cosZ
+// fields are the EXACT values that rotatePoint/inverseRotatePoint would compute
+// inline, so the downstream arithmetic is bit-identical.
+type rotTrig struct {
+	sinX, cosX float64
+	sinY, cosY float64
+	sinZ, cosZ float64
+}
+
+// newRotTrig computes the forward-rotation trig for angles (x, y, z) once.
+func newRotTrig(rotationX, rotationY, rotationZ float64) rotTrig {
+	sinX, cosX := math.Sin(rotationX), math.Cos(rotationX)
+	sinY, cosY := math.Sin(rotationY), math.Cos(rotationY)
+	sinZ, cosZ := math.Sin(rotationZ), math.Cos(rotationZ)
+	return rotTrig{sinX: sinX, cosX: cosX, sinY: sinY, cosY: cosY, sinZ: sinZ, cosZ: cosZ}
+}
+
+// newInverseRotTrig computes the inverse-rotation trig (negated angles) once.
+func newInverseRotTrig(rotationX, rotationY, rotationZ float64) rotTrig {
+	sinZ, cosZ := math.Sin(-rotationZ), math.Cos(-rotationZ)
+	sinY, cosY := math.Sin(-rotationY), math.Cos(-rotationY)
+	sinX, cosX := math.Sin(-rotationX), math.Cos(-rotationX)
+	return rotTrig{sinX: sinX, cosX: cosX, sinY: sinY, cosY: cosY, sinZ: sinZ, cosZ: cosZ}
+}
+
 func rotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
+	return rotatePointTrig(point, newRotTrig(rotationX, rotationY, rotationZ))
+}
+
+// rotatePointTrig performs the same arithmetic as rotatePoint but with
+// precomputed trig. The product/sum ordering is identical to rotatePoint so the
+// float results are bit-for-bit equal.
+func rotatePointTrig(point point3, t rotTrig) point3 {
 	x := point.X
 	y := point.Y
 	z := point.Z
 
-	sinX, cosX := math.Sin(rotationX), math.Cos(rotationX)
+	sinX, cosX := t.sinX, t.cosX
 	nextY := y*cosX - z*sinX
 	nextZ := y*sinX + z*cosX
 	y, z = nextY, nextZ
 
-	sinY, cosY := math.Sin(rotationY), math.Cos(rotationY)
+	sinY, cosY := t.sinY, t.cosY
 	nextX := x*cosY + z*sinY
 	nextZ = -x*sinY + z*cosY
 	x, z = nextX, nextZ
 
-	sinZ, cosZ := math.Sin(rotationZ), math.Cos(rotationZ)
+	sinZ, cosZ := t.sinZ, t.cosZ
 	nextX = x*cosZ - y*sinZ
 	nextY = x*sinZ + y*cosZ
 
@@ -1323,7 +1382,11 @@ func rotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
 }
 
 func projectPoint(point point3, camera sceneCamera, width, height int) *rootengine.RenderPoint {
-	local := cameraLocalPoint(point, camera)
+	return projectPointTrig(point, camera, width, height, cameraInverseRotTrig(camera))
+}
+
+func projectPointTrig(point point3, camera sceneCamera, width, height int, camTrig rotTrig) *rootengine.RenderPoint {
+	local := cameraLocalPointTrig(point, camera, camTrig)
 	depth := local.Z
 	if depth <= camera.Near || depth >= camera.Far {
 		return nil
@@ -1336,8 +1399,12 @@ func projectPoint(point point3, camera sceneCamera, width, height int) *rootengi
 }
 
 func clipWorldSegmentForCamera(from, to point3, camera sceneCamera, aspect float64) (point3, point3, bool) {
-	localFrom := cameraLocalPoint(from, camera)
-	localTo := cameraLocalPoint(to, camera)
+	return clipWorldSegmentForCameraTrig(from, to, camera, aspect, cameraInverseRotTrig(camera))
+}
+
+func clipWorldSegmentForCameraTrig(from, to point3, camera sceneCamera, aspect float64, camTrig rotTrig) (point3, point3, bool) {
+	localFrom := cameraLocalPointTrig(from, camera, camTrig)
+	localTo := cameraLocalPointTrig(to, camera, camTrig)
 	depthFrom := localFrom.Z
 	depthTo := localTo.Z
 	if depthFrom <= camera.Near && depthTo <= camera.Near {
@@ -1353,9 +1420,9 @@ func clipWorldSegmentForCamera(from, to point3, camera sceneCamera, aspect float
 			clippedTo = lerpPoint3(from, to, t)
 		}
 	}
-	depthFrom = cameraLocalPoint(clippedFrom, camera).Z
-	depthTo = cameraLocalPoint(clippedTo, camera).Z
-	if worldSegmentOutsideFrustum(clippedFrom, depthFrom, clippedTo, depthTo, camera, aspect) {
+	depthFrom = cameraLocalPointTrig(clippedFrom, camera, camTrig).Z
+	depthTo = cameraLocalPointTrig(clippedTo, camera, camTrig).Z
+	if worldSegmentOutsideFrustumTrig(clippedFrom, depthFrom, clippedTo, depthTo, camera, aspect, camTrig) {
 		return point3{}, point3{}, false
 	}
 	return clippedFrom, clippedTo, true
@@ -1389,15 +1456,19 @@ func renderObjectBounds(worldPositions []float64, vertexOffset, vertexCount int)
 }
 
 func renderBoundsOutsideFrustum(bounds rootengine.RenderBounds, camera sceneCamera, width, height int) bool {
+	return renderBoundsOutsideFrustumTrig(bounds, camera, width, height, cameraInverseRotTrig(camera))
+}
+
+func renderBoundsOutsideFrustumTrig(bounds rootengine.RenderBounds, camera sceneCamera, width, height int, camTrig rotTrig) bool {
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
 	corners := renderBoundsCorners(bounds)
 	allLeft, allRight, allBottom, allTop := true, true, true, true
 	allNear, allFar := true, true
 	for _, corner := range corners {
-		local := cameraLocalPoint(corner, camera)
+		local := cameraLocalPointTrig(corner, camera, camTrig)
 		allNear = allNear && local.Z <= camera.Near
 		allFar = allFar && local.Z >= camera.Far
-		clipX, clipY := projectWorldClipPoint(corner, camera, aspect)
+		clipX, clipY := projectWorldClipPointTrig(corner, camera, aspect, camTrig)
 		allLeft = allLeft && clipX < -1
 		allRight = allRight && clipX > 1
 		allBottom = allBottom && clipY < -1
@@ -1410,15 +1481,19 @@ func renderBoundsOutsideFrustum(bounds rootengine.RenderBounds, camera sceneCame
 }
 
 func renderBoundsDepthMetrics(bounds rootengine.RenderBounds, camera sceneCamera) (near, far, center float64) {
+	return renderBoundsDepthMetricsTrig(bounds, camera, cameraInverseRotTrig(camera))
+}
+
+func renderBoundsDepthMetricsTrig(bounds rootengine.RenderBounds, camera sceneCamera, camTrig rotTrig) (near, far, center float64) {
 	corners := renderBoundsCorners(bounds)
 	if len(corners) == 0 {
-		depth := cameraLocalPoint(point3{}, camera).Z
+		depth := cameraLocalPointTrig(point3{}, camera, camTrig).Z
 		return depth, depth, depth
 	}
-	near = cameraLocalPoint(corners[0], camera).Z
+	near = cameraLocalPointTrig(corners[0], camera, camTrig).Z
 	far = near
 	for _, corner := range corners[1:] {
-		depth := cameraLocalPoint(corner, camera).Z
+		depth := cameraLocalPointTrig(corner, camera, camTrig).Z
 		near = math.Min(near, depth)
 		far = math.Max(far, depth)
 	}
@@ -1460,7 +1535,11 @@ func renderBoundsCorners(bounds rootengine.RenderBounds) []point3 {
 }
 
 func projectWorldClipPoint(point point3, camera sceneCamera, aspect float64) (float64, float64) {
-	local := cameraLocalPoint(point, camera)
+	return projectWorldClipPointTrig(point, camera, aspect, cameraInverseRotTrig(camera))
+}
+
+func projectWorldClipPointTrig(point point3, camera sceneCamera, aspect float64, camTrig rotTrig) (float64, float64) {
+	local := cameraLocalPointTrig(point, camera, camTrig)
 	depth := local.Z
 	focal := 1 / math.Max(0.0001, math.Tan((camera.FOV*math.Pi)/360))
 	x := (local.X * focal / math.Max(depth, 0.0001)) / math.Max(aspect, 0.0001)
@@ -1469,42 +1548,67 @@ func projectWorldClipPoint(point point3, camera sceneCamera, aspect float64) (fl
 }
 
 func worldSegmentOutsideFrustum(from point3, depthFrom float64, to point3, depthTo float64, camera sceneCamera, aspect float64) bool {
+	return worldSegmentOutsideFrustumTrig(from, depthFrom, to, depthTo, camera, aspect, cameraInverseRotTrig(camera))
+}
+
+func worldSegmentOutsideFrustumTrig(from point3, depthFrom float64, to point3, depthTo float64, camera sceneCamera, aspect float64, camTrig rotTrig) bool {
 	if depthFrom >= camera.Far && depthTo >= camera.Far {
 		return true
 	}
-	clipFromX, clipFromY := projectWorldClipPoint(from, camera, aspect)
-	clipToX, clipToY := projectWorldClipPoint(to, camera, aspect)
+	clipFromX, clipFromY := projectWorldClipPointTrig(from, camera, aspect, camTrig)
+	clipToX, clipToY := projectWorldClipPointTrig(to, camera, aspect, camTrig)
 	return (clipFromX < -1 && clipToX < -1) ||
 		(clipFromX > 1 && clipToX > 1) ||
 		(clipFromY < -1 && clipToY < -1) ||
 		(clipFromY > 1 && clipToY > 1)
 }
 
+// cameraInverseRotTrig caches the camera's inverse-rotation trig for an entire
+// frame; every cameraLocalPoint call in the frame shares the same angles.
+func cameraInverseRotTrig(camera sceneCamera) rotTrig {
+	return newInverseRotTrig(camera.RotationX, camera.RotationY, camera.RotationZ)
+}
+
 func cameraLocalPoint(point point3, camera sceneCamera) point3 {
+	return cameraLocalPointTrig(point, camera, cameraInverseRotTrig(camera))
+}
+
+// cameraLocalPointTrig is cameraLocalPoint with the camera inverse-rotation trig
+// supplied by the caller (hoisted once per frame). Translation then inverse
+// rotation is performed in the identical order, so results are bit-identical.
+func cameraLocalPointTrig(point point3, camera sceneCamera, camTrig rotTrig) point3 {
 	translated := point3{
 		X: point.X - camera.X,
 		Y: point.Y - camera.Y,
 		Z: point.Z + camera.Z,
 	}
-	return inverseRotatePoint(translated, camera.RotationX, camera.RotationY, camera.RotationZ)
+	return inverseRotatePointTrig(translated, camTrig)
 }
 
 func inverseRotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
+	return inverseRotatePointTrig(point, newInverseRotTrig(rotationX, rotationY, rotationZ))
+}
+
+// inverseRotatePointTrig performs the same arithmetic as inverseRotatePoint but
+// with precomputed (already-negated) trig. The trig fields hold sin/cos of the
+// NEGATED angles, matching inverseRotatePoint's inline computation exactly, so
+// the float results are bit-for-bit equal.
+func inverseRotatePointTrig(point point3, t rotTrig) point3 {
 	x := point.X
 	y := point.Y
 	z := point.Z
 
-	sinZ, cosZ := math.Sin(-rotationZ), math.Cos(-rotationZ)
+	sinZ, cosZ := t.sinZ, t.cosZ
 	nextX := x*cosZ - y*sinZ
 	nextY := x*sinZ + y*cosZ
 	x, y = nextX, nextY
 
-	sinY, cosY := math.Sin(-rotationY), math.Cos(-rotationY)
+	sinY, cosY := t.sinY, t.cosY
 	nextX = x*cosY + z*sinY
 	nextZ := -x*sinY + z*cosY
 	x, z = nextX, nextZ
 
-	sinX, cosX := math.Sin(-rotationX), math.Cos(-rotationX)
+	sinX, cosX := t.sinX, t.cosX
 	nextY = y*cosX - z*sinX
 	nextZ = y*sinX + z*cosX
 	return point3{X: x, Y: nextY, Z: nextZ}
