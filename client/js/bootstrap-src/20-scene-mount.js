@@ -2006,7 +2006,41 @@
     return roots;
   }
 
-  function sceneApplyModelSkinPose(record, deltaTime) {
+  // True when the WASM motion mixer is active for this record (P4-M3, opt-in).
+  function sceneModelWasmMixerActive(record) {
+    return Boolean(
+      record && record.wasmMixer &&
+      typeof window !== "undefined" && window.__gosx_motion_wasm &&
+      typeof window.__gosx_motion_mixer_update === "function"
+    );
+  }
+
+  // Drive one WASM-mixer frame: tick the mixer into a reused out buffer
+  // (grow-and-retick when the write count exceeds capacity) and decode the
+  // packed writes into animatedTransforms via the published animation API.
+  function sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms) {
+    const api = record.animationApi;
+    if (!api || typeof api.wasmDecodePose !== "function") {
+      return;
+    }
+    if (!record._wasmMixerF64 || !record._wasmMixerU8) {
+      record._wasmMixerF64 = new Float64Array(256);
+      record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
+    }
+    const reducedFlag = reduced === true;
+    let count = window.__gosx_motion_mixer_update(record.wasmMixer, deltaTime, reducedFlag, record._wasmMixerU8);
+    if (count > record._wasmMixerF64.length) {
+      record._wasmMixerF64 = new Float64Array(count);
+      record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
+      count = window.__gosx_motion_mixer_update(record.wasmMixer, deltaTime, reducedFlag, record._wasmMixerU8);
+      if (count > record._wasmMixerF64.length) {
+        count = record._wasmMixerF64.length;
+      }
+    }
+    api.wasmDecodePose(record._wasmMixerF64, count, animatedTransforms);
+  }
+
+  function sceneApplyModelSkinPose(record, deltaTime, reduced) {
     if (!record || !record.animationApi || !record.nodes || !record.skins) {
       return;
     }
@@ -2014,7 +2048,9 @@
     if (animatedTransforms && typeof animatedTransforms.clear === "function") {
       animatedTransforms.clear();
     }
-    if (record.mixer) {
+    if (sceneModelWasmMixerActive(record)) {
+      sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms);
+    } else if (record.mixer) {
       record.mixer.update(deltaTime, function(targetNode, property, value) {
         let entry = animatedTransforms.get(targetNode);
         if (!entry) {
@@ -2096,7 +2132,7 @@
   }
 
   function sceneRegisterModelAnimationRecord(state, record) {
-    if (!state || !record || !record.mixer) {
+    if (!state || !record || (!record.mixer && !record.wasmMixerActive)) {
       return;
     }
     if (!Array.isArray(state._modelAnimations)) {
@@ -2169,8 +2205,33 @@
     }
     state._modelSkins.push(record);
 
-    if (typeof animationApi.createMixer === "function") {
-      const clips = sceneCloneModelAnimations(asset.animations);
+    const clips = sceneCloneModelAnimations(asset.animations);
+    const wantWasmMixer = clips.length > 0
+      && typeof window !== "undefined"
+      && window.__gosx_motion_wasm
+      && typeof window.__gosx_motion_mixer_create === "function"
+      && typeof animationApi.wasmClipJSON === "function";
+    if (wantWasmMixer) {
+      // P4-M3: route glTF clip playback through the Go WASM motion mixer.
+      const handle = window.__gosx_motion_mixer_create();
+      if (handle >= 1) {
+        record.wasmMixer = handle;
+        record.wasmMixerActive = true;
+        for (let index = 0; index < clips.length; index += 1) {
+          const clip = clips[index];
+          window.__gosx_motion_mixer_add_clip(handle, clip.name, animationApi.wasmClipJSON(clip));
+        }
+        sceneRegisterModelAnimationRecord(state, record);
+        const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
+        if (requestedAnimation) {
+          sceneModelRecordPlay(record, requestedAnimation, sceneModelAnimationPlayOptions(model, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+          if (sceneModelRecordIsPlaying({ animation: requestedAnimation, wasmMixerActive: true, wasmMixer: handle })) {
+            record.animation = requestedAnimation;
+            record.animationSeq = typeof model.animationSeq === "string" ? model.animationSeq : "";
+          }
+        }
+      }
+    } else if (typeof animationApi.createMixer === "function") {
       if (clips.length) {
         const mixer = animationApi.createMixer();
         for (let index = 0; index < clips.length; index += 1) {
@@ -2190,29 +2251,88 @@
       }
     }
 
-    sceneApplyModelSkinPose(record, 0);
+    sceneApplyModelSkinPose(record, 0, false);
+  }
+
+  // Route a clip play through the active mixer. opts is the JS-mixer options
+  // shape ({loop, speed, weight, fadeIn}); the WASM mixer takes the same values
+  // as positional arguments.
+  function sceneModelRecordPlay(record, name, opts) {
+    const options = opts || {};
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_play === "function") {
+        window.__gosx_motion_mixer_play(
+          record.wasmMixer,
+          name,
+          options.fadeIn !== undefined ? options.fadeIn : 0,
+          options.loop !== undefined ? options.loop !== false : true,
+          options.speed !== undefined ? options.speed : 1,
+          options.weight !== undefined ? options.weight : 1
+        );
+      }
+      return;
+    }
+    if (record && record.mixer) {
+      record.mixer.play(name, options);
+    }
+  }
+
+  // Route a clip stop through the active mixer. opts is the JS-mixer options
+  // shape ({fadeOut}); the WASM mixer takes fadeOut positionally.
+  function sceneModelRecordStop(record, name, opts) {
+    const options = opts || {};
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_stop === "function") {
+        window.__gosx_motion_mixer_stop(record.wasmMixer, name, options.fadeOut !== undefined ? options.fadeOut : 0);
+      }
+      return;
+    }
+    if (record && record.mixer) {
+      record.mixer.stop(name, options);
+    }
+  }
+
+  // Whether a named clip is playing on the record's active mixer, routed to the
+  // WASM mixer when active (P4-M3) and the JS mixer otherwise.
+  function sceneModelRecordWasPlaying(record, name) {
+    if (!record || !name) {
+      return false;
+    }
+    if (record.wasmMixerActive) {
+      return Boolean(
+        typeof window !== "undefined" &&
+        typeof window.__gosx_motion_mixer_is_playing === "function" &&
+        window.__gosx_motion_mixer_is_playing(record.wasmMixer, name)
+      );
+    }
+    return Boolean(record.mixer && record.mixer.isPlaying(name));
+  }
+
+  // Whether a record's currently-selected animation is playing.
+  function sceneModelRecordIsPlaying(record) {
+    return record ? sceneModelRecordWasPlaying(record, record.animation) : false;
   }
 
   function sceneHasActiveModelAnimations(state) {
     const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
     return records.some(function(record) {
-      return Boolean(record && record.mixer && record.animation && record.mixer.isPlaying(record.animation));
+      return sceneModelRecordIsPlaying(record);
     });
   }
 
-  function sceneAdvanceModelAnimations(state, deltaTime) {
+  function sceneAdvanceModelAnimations(state, deltaTime, reduced) {
     const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
       if (!record) {
         continue;
       }
-      const playing = Boolean(record && record.mixer && record.animation && record.mixer.isPlaying(record.animation));
+      const playing = sceneModelRecordIsPlaying(record);
       if (!playing && !record.poseDirty) {
         continue;
       }
       record.poseDirty = false;
-      sceneApplyModelSkinPose(record, deltaTime);
+      sceneApplyModelSkinPose(record, deltaTime, reduced);
     }
   }
 
@@ -2564,7 +2684,7 @@
   }
 
   function sceneApplyModelLiveAnimation(record, patch) {
-    if (!record || !record.mixer || !sceneIsPlainObject(patch)) {
+    if (!record || (!record.mixer && !record.wasmMixerActive) || !sceneIsPlainObject(patch)) {
       return false;
     }
     const hasAnimation = sceneOwns(patch, "animation");
@@ -2584,9 +2704,9 @@
     const replay = Boolean(hasSeq && animationSeq && record.animation === animation && record.animationSeq !== animationSeq);
     sceneApplyModelAnimationControls(record, patch);
     if (!animation) {
-      if (record.animation && record.mixer.isPlaying(record.animation)) {
+      if (record.animation && sceneModelRecordIsPlaying(record)) {
         const stopOptions = sceneModelAnimationStopOptions(record.model, patch, { fadeOut: 0.05 });
-        record.mixer.stop(record.animation, stopOptions);
+        sceneModelRecordStop(record, record.animation, stopOptions);
         if (stopOptions.fadeOut <= 0) {
           record.animation = "";
         }
@@ -2595,19 +2715,19 @@
       record.poseDirty = true;
       return true;
     }
-    if (record.animation === animation && record.mixer.isPlaying(animation) && !replay) {
+    if (record.animation === animation && sceneModelRecordIsPlaying(record) && !replay) {
       if (hasControls) {
-        record.mixer.play(animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+        sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
         record.poseDirty = true;
         return true;
       }
       return false;
     }
-    if (record.animation && record.mixer.isPlaying(record.animation)) {
-      record.mixer.stop(record.animation, sceneModelAnimationStopOptions(record.model, patch, { fadeOut: replay ? 0 : 0.05 }));
+    if (record.animation && sceneModelRecordIsPlaying(record)) {
+      sceneModelRecordStop(record, record.animation, sceneModelAnimationStopOptions(record.model, patch, { fadeOut: replay ? 0 : 0.05 }));
     }
-    record.mixer.play(animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: replay ? 0 : 0.04 }));
-    if (!record.mixer.isPlaying(animation)) {
+    sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: replay ? 0 : 0.04 }));
+    if (!sceneModelRecordWasPlaying(record, animation)) {
       return false;
     }
     record.animation = animation;
@@ -2684,8 +2804,25 @@
     state._hydratedModelRecords = null;
   }
 
+  // P4-M3: free WASM motion mixers attached to model records before they are
+  // dropped (re-hydration or teardown). No-op when the flag is off / no mixers.
+  function sceneDestroyModelWasmMixers(records) {
+    if (!Array.isArray(records) || typeof window === "undefined" || typeof window.__gosx_motion_mixer_destroy !== "function") {
+      return;
+    }
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (record && record.wasmMixer) {
+        window.__gosx_motion_mixer_destroy(record.wasmMixer);
+        record.wasmMixer = 0;
+        record.wasmMixerActive = false;
+      }
+    }
+  }
+
   async function hydrateSceneStateModels(state, props) {
     const models = sceneHydrationModels(state, props);
+    sceneDestroyModelWasmMixers(state && state._modelSkins);
     state._modelAnimations = [];
     state._modelSkins = [];
     sceneClearHydratedModelRecords(state);
@@ -7099,7 +7236,7 @@
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
       if (perfEnabled) performance.mark("scene3d-model-animations-start");
-      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
+      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta, motion.reducedMotion === true);
       if (perfEnabled) {
         performance.mark("scene3d-model-animations-end");
         performance.measure("scene3d-model-animations", "scene3d-model-animations-start", "scene3d-model-animations-end");
@@ -7477,6 +7614,8 @@
         }
         wasmMotionState = -1;
         wasmMotionHandle = 0;
+        // P4-M3: free any per-model WASM motion mixers created behind the flag.
+        sceneDestroyModelWasmMixers(sceneState && sceneState._modelSkins);
         cancelFrame();
         cancelScheduledRender();
         if (pendingMotionHandle != null) {

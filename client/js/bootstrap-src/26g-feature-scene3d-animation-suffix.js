@@ -8,6 +8,8 @@
     createMixer: createSceneAnimationMixer,
     buildNodeTransforms: sceneAnimBuildNodeTransforms,
     computeJointMatrices: sceneAnimComputeJointMatrices,
+    wasmClipJSON: sceneAnimWasmClipJSON,
+    wasmDecodePose: sceneAnimWasmDecodePose,
   };
 
   // Mark chunk loaded for dev tooling / coverage inspection.

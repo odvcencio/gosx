@@ -126,7 +126,19 @@ const budgets = [
   // SET_TRANSFORM commands via applySceneCommands) plus sceneQuatToEulerXYZ in
   // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm (inert when unset).
   // Measured: 905_554 / 246_098 / 199_456 + rounding headroom.
-  { file: "bootstrap.js", raw: 906_500, gzip: 246_500, brotli: 199_500 },
+  //
+  // Bumped raw 906_500 -> 911_000, gzip 246_500 -> 247_500, brotli 199_500 ->
+  // 201_000: P4-M3 unified-motion WASM mixer bridge for glTF MODEL animation —
+  // sceneAnimWasmClipJSON + sceneAnimWasmDecodePose in 19a-scene-animation.js
+  // (clip→JSON serialization + packed-pose [targetID,propID,arity,comps] decode
+  // into animatedTransforms) and the 20-scene-mount.js routers
+  // (sceneModelWasmMixerActive / sceneAdvanceWasmModelMixer grow-and-retick out
+  // buffer / sceneModelRecordPlay|Stop|WasPlaying / wasmMixer create+add_clip in
+  // scenePrepareModelSkinPlayback / sceneDestroyModelWasmMixers on teardown).
+  // Skinning (buildNodeTransforms / computeJointMatrices) is unchanged. Flag-
+  // gated on window.__gosx_motion_wasm (JS mixer default; inert when unset).
+  // Measured: 908_723 / 246_935 / 200_138 + rounding headroom.
+  { file: "bootstrap.js", raw: 911_000, gzip: 247_500, brotli: 201_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -199,7 +211,16 @@ const budgets = [
   // applySceneCommands) in 20-scene-mount.js + sceneQuatToEulerXYZ in
   // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm; inert when unset.
   // Measured: 548_880 / 149_960 / 123_499 + rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 550_000, gzip: 150_500, brotli: 124_000 },
+  //
+  // Bumped raw 550_000 -> 552_500: P4-M3 unified-motion WASM mixer bridge for
+  // glTF MODEL animation — 20-scene-mount.js routers (sceneModelWasmMixerActive,
+  // sceneAdvanceWasmModelMixer grow-and-retick out buffer, sceneModelRecordPlay|
+  // Stop|WasPlaying, wasmMixer create+add_clip in scenePrepareModelSkinPlayback,
+  // sceneDestroyModelWasmMixers on teardown) calling sceneAnimWasmClipJSON /
+  // sceneAnimWasmDecodePose from the animation chunk. Skinning unchanged. Flag-
+  // gated on window.__gosx_motion_wasm; inert when unset. gzip/brotli still fit.
+  // Measured: 551_222 / 150_493 / 123_833 + rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 552_500, gzip: 150_500, brotli: 124_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

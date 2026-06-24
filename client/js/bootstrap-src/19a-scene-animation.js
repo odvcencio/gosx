@@ -292,6 +292,75 @@
   }
 
   // ---------------------------------------------------------------------------
+  // WASM motion-mixer bridge (P4-M3) — opt-in via window.__gosx_motion_wasm.
+  //
+  // These helpers translate between the JS-side glTF clip/pose representation
+  // and the Go WASM motion mixer. They are pure functions with no side effects
+  // on the WASM runtime, so they unit-test in isolation. Mount code (in
+  // 20-scene-mount.js) wires them to the actual __gosx_motion_mixer_* exports
+  // behind the flag; when the flag is off none of this runs.
+  // ---------------------------------------------------------------------------
+
+  // Build the JSON payload for __gosx_motion_mixer_add_clip from a parsed glTF
+  // clip (as produced by gltfExtractAnimations / sceneCloneModelAnimations).
+  // Each channel carries a node index (targetID/targetNode), a property string
+  // ("translation"|"rotation"|"scale"), an interpolation string, and typed
+  // times/values arrays which are flattened to plain number arrays.
+  function sceneAnimWasmClipJSON(clip) {
+    var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
+    var out = { duration: clip && typeof clip.duration === "number" ? clip.duration : 0, channels: [] };
+    for (var i = 0; i < channels.length; i++) {
+      var ch = channels[i];
+      if (!ch) continue;
+      var node = ch.targetID != null ? ch.targetID : ch.targetNode;
+      out.channels.push({
+        node: node,
+        property: typeof ch.property === "string" ? ch.property : "translation",
+        interpolation: typeof ch.interpolation === "string" && ch.interpolation ? ch.interpolation : "LINEAR",
+        times: Array.from(ch.times || []),
+        values: Array.from(ch.values || []),
+      });
+    }
+    return JSON.stringify(out);
+  }
+
+  // Map a packed propID (0/1/2) to the TRS property name written by the mixer.
+  var _SCENE_ANIM_WASM_PROPS = ["translation", "rotation", "scale"];
+
+  // Decode the packed LE-float64 buffer written by __gosx_motion_mixer_update
+  // into the animatedTransforms Map (Map<nodeIndex, {translation,rotation,scale}>).
+  // Layout per write: [targetID, propID, arity, comps...] where targetID is the
+  // glTF node index, propID is 0(translation)/1(rotation)/2(scale), and arity is
+  // 3 (vec3) or 4 (quat). Writes merge into the existing per-node entry so a node
+  // touched by only one property keeps its other defaults.
+  // `f` is a Float64Array view; `count` is the valid float length to walk.
+  function sceneAnimWasmDecodePose(f, count, animatedTransforms) {
+    if (!f || !animatedTransforms || count < 3) return 0;
+    var writes = 0;
+    for (var i = 0; i + 3 <= count;) {
+      var targetID = f[i];
+      var propID = f[i + 1];
+      var arity = f[i + 2];
+      var width = arity === 4 ? 4 : 3;
+      var c = i + 3;
+      if (c + width > count) break;
+      i = c + width;
+      var prop = _SCENE_ANIM_WASM_PROPS[propID];
+      if (prop == null) continue;
+      var entry = animatedTransforms.get(targetID);
+      if (!entry) {
+        entry = {};
+        animatedTransforms.set(targetID, entry);
+      }
+      var value = new Array(width);
+      for (var k = 0; k < width; k++) value[k] = f[c + k];
+      entry[prop] = value;
+      writes += 1;
+    }
+    return writes;
+  }
+
+  // ---------------------------------------------------------------------------
   // AnimationMixer factory
   // ---------------------------------------------------------------------------
 
@@ -505,6 +574,8 @@
       createMixer: createSceneAnimationMixer,
       buildNodeTransforms: sceneAnimBuildNodeTransforms,
       computeJointMatrices: sceneAnimComputeJointMatrices,
+      wasmClipJSON: sceneAnimWasmClipJSON,
+      wasmDecodePose: sceneAnimWasmDecodePose,
     };
     window.__gosx_scene3d_animation_loaded = true;
   }
