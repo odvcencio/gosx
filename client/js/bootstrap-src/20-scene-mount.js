@@ -5591,6 +5591,15 @@
     const motion = initialSceneMotionState(props);
     let sceneCSSAnimationUntil = 0;
     let lastModelAnimationTimeSeconds = null;
+    // WASM motion seam (P2.4b). Opt-in via window.__gosx_motion_wasm; all state
+    // stays inert when the flag is unset. wasmMotionState: 0=unloaded, 1=loaded,
+    // -1=disabled (load failed or no program, never retried).
+    let wasmMotionState = 0;
+    let wasmMotionHandle = 0;
+    let wasmMotionTargetRefs = null;
+    let wasmMotionPropRefs = null;
+    let wasmMotionF64 = null;
+    let wasmMotionU8 = null;
 
     function sceneAnimationState() {
       if (motion.reducedMotion) {
@@ -6995,6 +7004,66 @@
       }
     }
 
+    // WASM motion seam (P2.4b): lazy-load the scene's motion program once, then
+    // each frame tick + decode packed transform writes into SET_TRANSFORM
+    // commands routed through applySceneCommands (so state re-normalizes). Inert
+    // unless window.__gosx_motion_wasm is set and the exports are present.
+    function applyWasmMotionFrame(timeSeconds) {
+      if (wasmMotionState < 0) return;
+      if (typeof window === "undefined" || !window.__gosx_motion_wasm
+          || typeof window.__gosx_motion_load !== "function") {
+        return;
+      }
+      if (wasmMotionState === 0) {
+        // The scene IR (carrying motionProgram as base64) rides under
+        // props.scene; some callers pass the scene object as props directly.
+        const sceneIR = props && typeof props.scene === "object" && props.scene ? props.scene : props;
+        const b64 = sceneIR && typeof sceneIR.motionProgram === "string" ? sceneIR.motionProgram : "";
+        const handle = b64 ? window.__gosx_motion_load(sceneBase64Decode(b64)) : 0;
+        const refs = handle >= 1 && typeof window.__gosx_motion_refs === "function"
+          ? window.__gosx_motion_refs(handle) : null;
+        if (!refs) { wasmMotionState = -1; return; }
+        wasmMotionHandle = handle;
+        wasmMotionTargetRefs = refs.target || [];
+        wasmMotionPropRefs = refs.prop || [];
+        wasmMotionF64 = new Float64Array(256);
+        wasmMotionU8 = new Uint8Array(wasmMotionF64.buffer);
+        wasmMotionState = 1;
+      }
+      const reduced = motion.reducedMotion === true;
+      let count = window.__gosx_motion_tick(wasmMotionHandle, timeSeconds, reduced, wasmMotionU8);
+      if (count > wasmMotionF64.length) {
+        wasmMotionF64 = new Float64Array(count);
+        wasmMotionU8 = new Uint8Array(wasmMotionF64.buffer);
+        count = window.__gosx_motion_tick(wasmMotionHandle, timeSeconds, reduced, wasmMotionU8);
+        if (count > wasmMotionF64.length) count = wasmMotionF64.length;
+      }
+      const f = wasmMotionF64;
+      const cmds = [];
+      for (let i = 0; i + 3 <= count;) {
+        const arity = f[i + 2];
+        // motion.ValueArity width: 0 scalar=1,1 vec2=2,2 vec3=3,3+ (vec4/quat/color)=4.
+        const width = arity === 0 ? 1 : (arity >= 3 ? 4 : arity + 1);
+        const ref = wasmMotionTargetRefs[f[i]];
+        const prop = wasmMotionPropRefs[f[i + 1]];
+        const c = i + 3;
+        if (c + width > count) break;
+        i = c + width;
+        if (ref == null || prop == null) continue;
+        let data = null;
+        if (prop === "position" && width >= 3) {
+          data = { x: f[c], y: f[c + 1], z: f[c + 2] };
+        } else if (prop === "scale" && width >= 3) {
+          data = { scaleX: f[c], scaleY: f[c + 1], scaleZ: f[c + 2] };
+        } else if (prop === "rotation" && arity === 4) {
+          const e = sceneQuatToEulerXYZ(f[c], f[c + 1], f[c + 2], f[c + 3]);
+          data = { rotationX: e.x, rotationY: e.y, rotationZ: e.z };
+        }
+        if (data) cmds.push({ kind: SCENE_CMD_SET_TRANSFORM, objectId: ref, data });
+      }
+      if (cmds.length > 0) applySceneCommands(sceneState, cmds);
+    }
+
     function renderFrame(now, reason) {
       if (disposed) return;
       const frameStart = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -7067,6 +7136,7 @@
           });
         }
       }
+      applyWasmMotionFrame(timeSeconds);
       sceneAdvanceTransitions(sceneState, now);
       // LOD: swap vertex data based on camera distance before building render bundle.
       if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
@@ -7392,6 +7462,12 @@
         sceneControlHandle.dispose();
         renderer.dispose();
         disposeSceneHTMLTextureState(htmlTextureState);
+        if (wasmMotionState === 1 && typeof window !== "undefined"
+            && typeof window.__gosx_motion_unload === "function") {
+          window.__gosx_motion_unload(wasmMotionHandle);
+        }
+        wasmMotionState = -1;
+        wasmMotionHandle = 0;
         cancelFrame();
         cancelScheduledRender();
         if (pendingMotionHandle != null) {

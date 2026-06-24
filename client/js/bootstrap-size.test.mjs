@@ -118,7 +118,15 @@ const budgets = [
   // (shared); CPU cull path (hasCullConfig gate + survivor compaction +
   // dynamic VBO upload) added to drawInstancedMeshes in 16-scene-webgl.js.
   // Measured: 903_824 / 245_457 / 198_989 + rounding headroom.
-  { file: "bootstrap.js", raw: 905_000, gzip: 246_000, brotli: 199_500 },
+  //
+  // Bumped raw 905_000 -> 906_500, gzip 246_000 -> 246_500: P2.4b unified-motion
+  // WASM apply seam — applyWasmMotionFrame in 20-scene-mount.js (lazy
+  // __gosx_motion_load/refs once, per-frame __gosx_motion_tick + grow/re-tick,
+  // packed-float decode loop mapping position/scale/quat-rotation to
+  // SET_TRANSFORM commands via applySceneCommands) plus sceneQuatToEulerXYZ in
+  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm (inert when unset).
+  // Measured: 905_554 / 246_098 / 199_456 + rounding headroom.
+  { file: "bootstrap.js", raw: 906_500, gzip: 246_500, brotli: 199_500 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -182,7 +190,16 @@ const budgets = [
   // instancePassesCullTest in 11-scene-math.js + CPU cull path in
   // 16-scene-webgl.js (drawInstancedMeshes: hasCullConfig gate, survivor
   // compaction, dynamic VBO upload). Measured: 547_225 / 149_287 / 122_821.
-  { file: "bootstrap-feature-scene3d.js", raw: 548_500, gzip: 150_000, brotli: 123_000 },
+  //
+  // Bumped raw 548_500 -> 550_000, brotli 123_000 -> 124_000: P2.4b unified-motion
+  // WASM apply seam — applyWasmMotionFrame (lazy motionProgram base64 load via
+  // sceneBase64Decode + __gosx_motion_load/refs, per-frame __gosx_motion_tick with
+  // grow-and-re-tick on truncation, packed LE-float64 decode loop mapping
+  // position/scale/quat-rotation to SET_TRANSFORM commands through
+  // applySceneCommands) in 20-scene-mount.js + sceneQuatToEulerXYZ in
+  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm; inert when unset.
+  // Measured: 548_880 / 149_960 / 123_499 + rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 550_000, gzip: 150_500, brotli: 124_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

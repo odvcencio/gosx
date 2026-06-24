@@ -4185,6 +4185,203 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
 });
 
+// Mounts a shared-runtime Scene3D whose program creates a long box ("cube") and
+// drives one frame. The scene IR carries a motionProgram so the P2.4b WASM
+// motion seam (applyWasmMotionFrame) can lazy-load + tick + decode. Returns the
+// FakeWebGLContext so the caller can read uploaded world-mesh positions.
+async function mountMotionSeamScene(motionFlag, tickFn) {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-motion-seam-root";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-motion.json": { text: '{"name":"MotionSeam"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-motion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-motion-seam-root",
+          runtime: "shared",
+          programRef: "/scene-motion.json",
+          // The scene IR rides under props.scene and carries motionProgram as
+          // base64; the load stub ignores the bytes, so any non-empty string works.
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            scene: { motionProgram: "AAEC" },
+          },
+        },
+      ],
+    },
+    // Camera + a single long box keyed "cube" (width 3, depth 0.4) so a 90°
+    // rotation about Y swaps the X/Z extents — a deterministic, camera-
+    // independent world-space signal.
+    onHydrateEngine: () => JSON.stringify([
+      { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
+      {
+        kind: 0,
+        objectId: "cube",
+        data: {
+          kind: "box",
+          geometry: "box",
+          material: "flat",
+          props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+        },
+      },
+    ]),
+    // Empty render bundle forces renderFrame to fall through to the tick branch
+    // (where the motion seam runs).
+    onRenderEngine: () => "",
+  });
+
+  if (motionFlag) {
+    env.context.__gosx_motion_wasm = true;
+    env.context.__gosx_motion_load = () => 1;
+    env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+    env.context.__gosx_motion_tick = tickFn;
+    env.context.__gosx_motion_unload = () => {};
+  }
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  const gl = mount.children[0] && typeof mount.children[0].getContext === "function"
+    ? mount.children[0].getContext("webgl")
+    : null;
+  return { env, mount, gl };
+}
+
+// Locates the box position buffer among all uploads and returns its world-space
+// |x| / |z| extents. The box (width 3, height/depth 0.4) is the only mesh whose
+// vertices are exactly the 8 corners at {±1.5, ±0.2, ±0.2}: every triple's
+// components fall in {0.2, 1.5} (up to rotation, which only permutes the axes),
+// and the peak extent is 1.5. That signature uniquely identifies the position
+// buffer and excludes normals (unit), colors (0..1), and the lit-mesh buffer
+// (which carries view-space / non-axis-aligned values).
+function motionMeshExtents(gl) {
+  let best = null;
+  if (!gl || !gl.bufferUploads) return { maxAbsX: 0, maxAbsZ: 0 };
+  for (const data of gl.bufferUploads.values()) {
+    if (!Array.isArray(data) || data.length < 9 || data.length % 3 !== 0) continue;
+    let maxAbsX = 0, maxAbsZ = 0, isBox = true;
+    for (let i = 0; i + 2 < data.length && isBox; i += 3) {
+      const comps = [Math.abs(data[i]), Math.abs(data[i + 1]), Math.abs(data[i + 2])];
+      for (const c of comps) {
+        // Box corner magnitudes are 0.2 or 1.5 (within fp tolerance).
+        if (Math.abs(c - 0.2) > 0.02 && Math.abs(c - 1.5) > 0.02) { isBox = false; break; }
+      }
+      if (comps[0] > maxAbsX) maxAbsX = comps[0];
+      if (comps[2] > maxAbsZ) maxAbsZ = comps[2];
+    }
+    if (isBox && Math.max(maxAbsX, maxAbsZ) > 1.4) {
+      best = { maxAbsX, maxAbsZ };
+      break;
+    }
+  }
+  return best || { maxAbsX: 0, maxAbsZ: 0 };
+}
+
+test("Scene3D WASM motion seam applies a quaternion rotation through SET_TRANSFORM", async () => {
+  // Quaternion for +90° about Y: (0, sin45, 0, cos45). Decoded → rotationY = π/2
+  // → world-space X/Z extents swap (the box's 1.5 half-width moves to Z).
+  const s = Math.SQRT1_2;
+  const tick = (handle, t, reduced, outU8) => {
+    const f = new Float64Array(outU8.buffer, outU8.byteOffset, outU8.byteLength / 8);
+    // packed: [targetID, propID, arity(quat=4), qx, qy, qz, qw]
+    f[0] = 0; f[1] = 0; f[2] = 4; f[3] = 0; f[4] = s; f[5] = 0; f[6] = s;
+    return 7;
+  };
+  const { gl } = await mountMotionSeamScene(true, tick);
+  assert.ok(gl, "expected a WebGL context");
+
+  const ext = motionMeshExtents(gl);
+  // Pre-rotation the box reaches |x|≈1.5, |z|≈0.2. After a 90° Y rotation the
+  // position extents swap, proving decode → quat → Euler → applySceneCommands
+  // mutated the stored object's rotationY and the renderer consumed it.
+  assert.ok(ext.maxAbsZ > 1.0, `expected rotated z-extent > 1.0, got ${ext.maxAbsZ}`);
+  assert.ok(ext.maxAbsX < 1.0, `expected collapsed x-extent < 1.0, got ${ext.maxAbsX}`);
+});
+
+test("Scene3D WASM motion seam stays inert when the flag is unset", async () => {
+  let tickCalls = 0;
+  const tick = () => { tickCalls += 1; return 7; };
+  // motionFlag=false: window.__gosx_motion_wasm is never set, so even though the
+  // exports could be present, applyWasmMotionFrame returns before any motion
+  // work. mountMotionSeamScene still installs the tick stub through tickFn so we
+  // can prove it is never invoked.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-motion-inert-root";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-motion.json": { text: '{"name":"MotionSeam"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-motion-inert",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-motion-inert-root",
+          runtime: "shared",
+          programRef: "/scene-motion.json",
+          props: { width: 640, height: 360, background: "#08151f", scene: { motionProgram: "AAEC" } },
+        },
+      ],
+    },
+    onHydrateEngine: () => JSON.stringify([
+      { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
+      {
+        kind: 0,
+        objectId: "cube",
+        data: {
+          kind: "box",
+          geometry: "box",
+          material: "flat",
+          props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+        },
+      },
+    ]),
+    onRenderEngine: () => "",
+  });
+  // Exports present but the opt-in flag is deliberately NOT set.
+  env.context.__gosx_motion_load = () => 1;
+  env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+  env.context.__gosx_motion_tick = tick;
+  env.context.__gosx_motion_unload = () => {};
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  const ext = motionMeshExtents(gl);
+  assert.equal(tickCalls, 0, "motion tick must not run when the flag is unset");
+  assert.ok(ext.maxAbsX > 1.0, `expected unrotated x-extent > 1.0, got ${ext.maxAbsX}`);
+  assert.ok(ext.maxAbsZ < 1.0, `expected unrotated z-extent < 1.0, got ${ext.maxAbsZ}`);
+});
+
 test("Scene3D drag only starts when the pointer lands on a shape in shared runtime mode", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-fallback-root";
