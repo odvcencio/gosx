@@ -23,11 +23,14 @@ var (
 	motionByteScratch  []byte
 )
 
-// registerMotionExports installs the motion load/tick functions on the JS global.
-// Called from the same registration path as the engine exports (registerRuntime).
+// registerMotionExports installs the motion load/tick/refs/unload functions on
+// the JS global. Called from the same registration path as the engine exports
+// (registerRuntime).
 func registerMotionExports() {
 	setRuntimeFunc("__gosx_motion_load", motionLoadFunc())
 	setRuntimeFunc("__gosx_motion_tick", motionTickFunc())
+	setRuntimeFunc("__gosx_motion_refs", motionRefsFunc())
+	setRuntimeFunc("__gosx_motion_unload", motionUnloadFunc())
 }
 
 // motionLoadFunc returns the __gosx_motion_load(uint8Array) export.
@@ -131,4 +134,69 @@ func motionTick(args []js.Value) int {
 
 	// Return the FULL count so JS knows whether to grow and re-tick.
 	return n
+}
+
+// motionRefsFunc returns the __gosx_motion_refs(handle) export.
+//
+// Returns a JS object {target: [...strings], prop: [...strings]} where each
+// array index maps a numeric id to its string ref (target object-id or property
+// name). Returns js.Null() when the handle is unknown.
+func motionRefsFunc() js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		return motionRefs(args)
+	})
+}
+
+// motionRefs is the refs handler, split out so tests can invoke it directly
+// with a faked []js.Value.
+func motionRefs(args []js.Value) js.Value {
+	if len(args) < 1 {
+		return js.Null()
+	}
+	handle := args[0].Int()
+
+	targets, ok := motionRT.TargetRefs(handle)
+	if !ok {
+		return js.Null()
+	}
+	props, ok := motionRT.PropRefs(handle)
+	if !ok {
+		return js.Null()
+	}
+
+	// Build JS arrays from the Go slices.
+	targetArr := js.Global().Get("Array").New(len(targets))
+	for i, s := range targets {
+		targetArr.SetIndex(i, js.ValueOf(s))
+	}
+	propArr := js.Global().Get("Array").New(len(props))
+	for i, s := range props {
+		propArr.SetIndex(i, js.ValueOf(s))
+	}
+
+	obj := js.Global().Get("Object").New()
+	obj.Set("target", targetArr)
+	obj.Set("prop", propArr)
+	return obj
+}
+
+// motionUnloadFunc returns the __gosx_motion_unload(handle) export.
+//
+// Frees the handle from the runtime. Safe on unknown handle (no panic).
+// Returns js.Undefined().
+func motionUnloadFunc() js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) any {
+		motionUnload(args)
+		return js.Undefined()
+	})
+}
+
+// motionUnload is the unload handler, split out so tests can invoke it directly
+// with a faked []js.Value.
+func motionUnload(args []js.Value) {
+	if len(args) < 1 {
+		return
+	}
+	handle := args[0].Int()
+	motionRT.Unload(handle)
 }

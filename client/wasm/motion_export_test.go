@@ -223,3 +223,139 @@ func TestMotionExportTickUnknownHandle(t *testing.T) {
 		t.Fatalf("motionTick(unknown handle) = %d, want 0", n)
 	}
 }
+
+// buildMotionTestProgramMultiRef builds a program with two target refs and one
+// prop ref so we can verify the refs round-trip.
+func buildMotionTestProgramMultiRef() (blob []byte) {
+	tl := &motion.Timeline{
+		ID: "motion-refs-test",
+		Children: []motion.Positioned{
+			{
+				At: motion.Position{Kind: motion.PosAbs, Val: 0},
+				Track: &motion.Track{
+					TargetID: 0,
+					PropID:   0,
+					Keys: []motion.Key{
+						{T: 0, Value: motion.Vec3V(0, 0, 0)},
+						{T: 1, Value: motion.Vec3V(1, 0, 0)},
+					},
+					Interp: motion.InterpLinear,
+				},
+			},
+		},
+	}
+	return motion.EncodeProgram(tl, []string{"meshA", "meshB"}, []string{"rotation"})
+}
+
+// TestMotionExportRefsRoundTrip loads a program with known target/prop ref
+// strings and asserts motionRefs returns a JS object whose arrays match.
+func TestMotionExportRefsRoundTrip(t *testing.T) {
+	blob := buildMotionTestProgramMultiRef()
+	handle := motionLoad([]js.Value{jsUint8ArrayFromGo(blob)})
+	if handle < 1 {
+		t.Fatalf("load handle=%d, want >= 1", handle)
+	}
+
+	result := motionRefs([]js.Value{js.ValueOf(handle)})
+	if result.IsNull() {
+		t.Fatal("motionRefs returned null for valid handle")
+	}
+
+	targetArr := result.Get("target")
+	propArr := result.Get("prop")
+
+	if targetArr.Length() != 2 {
+		t.Fatalf("target array length = %d, want 2", targetArr.Length())
+	}
+	if got := targetArr.Index(0).String(); got != "meshA" {
+		t.Errorf("target[0] = %q, want %q", got, "meshA")
+	}
+	if got := targetArr.Index(1).String(); got != "meshB" {
+		t.Errorf("target[1] = %q, want %q", got, "meshB")
+	}
+
+	if propArr.Length() != 1 {
+		t.Fatalf("prop array length = %d, want 1", propArr.Length())
+	}
+	if got := propArr.Index(0).String(); got != "rotation" {
+		t.Errorf("prop[0] = %q, want %q", got, "rotation")
+	}
+}
+
+// TestMotionExportRefsUnknownHandle asserts motionRefs returns js.Null() for
+// an unknown handle without panicking.
+func TestMotionExportRefsUnknownHandle(t *testing.T) {
+	result := motionRefs([]js.Value{js.ValueOf(999999)})
+	if !result.IsNull() {
+		t.Fatalf("motionRefs(unknown) type=%v, want null", result.Type())
+	}
+}
+
+// TestMotionExportUnloadSafety loads a program, unloads it, then verifies that
+// a subsequent tick returns 0 and refs returns null — and nothing panics.
+func TestMotionExportUnloadSafety(t *testing.T) {
+	blob := buildMotionTestProgramMultiRef()
+	handle := motionLoad([]js.Value{jsUint8ArrayFromGo(blob)})
+	if handle < 1 {
+		t.Fatalf("load handle=%d, want >= 1", handle)
+	}
+
+	motionUnload([]js.Value{js.ValueOf(handle)})
+
+	// Tick after unload must return 0, no panic.
+	f64 := js.Global().Get("Float64Array").New(64)
+	out := js.Global().Get("Uint8Array").New(f64.Get("buffer"))
+	n := motionTick([]js.Value{
+		js.ValueOf(handle),
+		js.ValueOf(0.5),
+		js.ValueOf(false),
+		out,
+	})
+	if n != 0 {
+		t.Errorf("motionTick after unload = %d, want 0", n)
+	}
+
+	// Refs after unload must return null, no panic.
+	result := motionRefs([]js.Value{js.ValueOf(handle)})
+	if !result.IsNull() {
+		t.Errorf("motionRefs after unload type=%v, want null", result.Type())
+	}
+}
+
+// TestMotionExportRefsRegisteredOnGlobal verifies that __gosx_motion_refs and
+// __gosx_motion_unload are callable functions after registerMotionExports.
+func TestMotionExportRefsRegisteredOnGlobal(t *testing.T) {
+	registerMotionExports()
+
+	refsFn := js.Global().Get("__gosx_motion_refs")
+	unloadFn := js.Global().Get("__gosx_motion_unload")
+	if refsFn.Type() != js.TypeFunction {
+		t.Fatalf("__gosx_motion_refs not registered (type=%v)", refsFn.Type())
+	}
+	if unloadFn.Type() != js.TypeFunction {
+		t.Fatalf("__gosx_motion_unload not registered (type=%v)", unloadFn.Type())
+	}
+
+	blob := buildMotionTestProgramMultiRef()
+	jsBytes := jsUint8ArrayFromGo(blob)
+	handle := js.Global().Call("__gosx_motion_load", jsBytes).Int()
+	if handle < 1 {
+		t.Fatalf("__gosx_motion_load returned %d, want >= 1", handle)
+	}
+
+	// Call refs via the global and verify shape.
+	refsObj := js.Global().Call("__gosx_motion_refs", js.ValueOf(handle))
+	if refsObj.IsNull() {
+		t.Fatal("__gosx_motion_refs returned null for valid handle")
+	}
+	if got := refsObj.Get("target").Index(0).String(); got != "meshA" {
+		t.Errorf("global refs target[0] = %q, want meshA", got)
+	}
+
+	// Unload via the global, then refs must return null.
+	js.Global().Call("__gosx_motion_unload", js.ValueOf(handle))
+	after := js.Global().Call("__gosx_motion_refs", js.ValueOf(handle))
+	if !after.IsNull() {
+		t.Errorf("__gosx_motion_refs after unload type=%v, want null", after.Type())
+	}
+}
