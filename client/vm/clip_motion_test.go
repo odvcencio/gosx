@@ -293,6 +293,72 @@ func TestNoMatch(t *testing.T) {
 	}
 }
 
+// TestDurationZeroHoldsAtLastKey verifies that a clip with anim.Duration==0
+// (author intent: clamp-and-hold) does NOT loop. Evaluating well past the last
+// keyframe must return the last keyframe value, not wrap back to t=0.
+// This matches native render/bundle behavior (animation.go:70-77): looping only
+// engages when clip.Duration > 0.
+func TestDurationZeroHoldsAtLastKey(t *testing.T) {
+	anims := []rootengine.RenderAnimation{{
+		Name:     "hold",
+		Duration: 0, // author says hold-at-end, not loop
+		Channels: []rootengine.RenderAnimationChannel{{
+			TargetID:      "3",
+			Property:      "translation",
+			Times:         []float64{0, 1},
+			Values:        []float64{0, 0, 0, 10, 20, 30},
+			Interpolation: "LINEAR",
+		}},
+	}}
+	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	if tl == nil {
+		t.Fatal("expected a timeline for matching translation channel")
+	}
+	if dur != 0 {
+		t.Fatalf("authored duration=0 must round-trip as 0, got %v", dur)
+	}
+	buf := motion.NewWriteBuf(16)
+	// t=5 is well past the last key at t=1. With duration==0 (hold-at-end) the
+	// result must be the last keyframe value {10,20,30}, NOT wrapped back to t=0.
+	trs := evalClipTRS(tl, dur, 5, buf)
+	if !trs.HasT {
+		t.Fatal("expected HasT")
+	}
+	want := [3]float64{10, 20, 30}
+	for i := range want {
+		if !approx(trs.T[i], want[i], 1e-9) {
+			t.Fatalf("hold-at-end: T=%v want %v (got loop instead of clamp)", trs.T, want)
+		}
+	}
+}
+
+// TestDurationNonzeroStillLoops verifies that an authored Duration>0 still wraps
+// t into [0,duration) — preserving the existing looping behaviour.
+func TestDurationNonzeroStillLoops(t *testing.T) {
+	anims := []rootengine.RenderAnimation{translationAnim("3")} // Duration:1
+	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	if tl == nil {
+		t.Fatal("expected timeline")
+	}
+	if dur != 1 {
+		t.Fatalf("duration=%v want 1", dur)
+	}
+	buf := motion.NewWriteBuf(16)
+	// t=0.5 → halfway between {0,0,0} and {10,20,30} → {5,10,15}
+	at05 := evalClipTRS(tl, dur, 0.5, buf)
+	// t=1.5 wraps to 0.5 → same result
+	at15 := evalClipTRS(tl, dur, 1.5, buf)
+	want := [3]float64{5, 10, 15}
+	for i := range want {
+		if !approx(at05.T[i], want[i], 1e-9) {
+			t.Fatalf("at t=0.5: T=%v want %v", at05.T, want)
+		}
+		if !approx(at15.T[i], want[i], 1e-9) {
+			t.Fatalf("at t=1.5 (should wrap to 0.5): T=%v want %v", at15.T, want)
+		}
+	}
+}
+
 func TestMultiChannelObject(t *testing.T) {
 	// One object with translation + scale + rotationY channels across two clips.
 	anims := []rootengine.RenderAnimation{

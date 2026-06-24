@@ -102,6 +102,11 @@ func clipInterp(s string) motion.Interp {
 // contribute 0. Documented limitation: per-axis STEP semantics are approximated
 // as linear across the union of times.
 //
+// The returned duration is the AUTHORED clip duration (the maximum anim.Duration
+// across all matching clips), NOT synthesized from keyframe times. A duration of
+// 0 means "clamp-and-hold" (no looping), matching the native render/bundle path
+// (animation.go:70-77). Non-zero authored duration means the clip loops.
+//
 // Returns (tl, duration) or (nil, 0) if no channels target this object.
 func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string, objectIndex int) (*motion.Timeline, float64) {
 	ref := objectID
@@ -109,16 +114,55 @@ func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string
 		ref = strconv.Itoa(objectIndex)
 	}
 
+	// Cheap pre-pass: check whether ANY channel in any clip targets this object.
+	// When none match, return (nil,0) immediately — zero alloc, no map, no scan.
+	// This is the common case for objects not targeted by any animation channel;
+	// cost is a cheap match-scan (no alloc) when animations exist but none target
+	// this object.
+	anyMatch := false
+	for _, anim := range anims {
+		for _, ch := range anim.Channels {
+			if objectMatchesTarget(ch.TargetID, objectID, objectIndex) {
+				anyMatch = true
+				break
+			}
+		}
+		if anyMatch {
+			break
+		}
+	}
+	if !anyMatch {
+		return nil, 0
+	}
+
 	var (
-		duration   float64
-		children   []motion.Positioned
-		rotAxes    = map[string]rootengine.RenderAnimationChannel{}
+		// authoredDuration tracks the maximum authored clip duration across clips
+		// that have at least one channel targeting this object. It stays 0 when all
+		// matching clips omit a duration — meaning clamp-and-hold, not looping.
+		authoredDuration float64
+		children         []motion.Positioned
+		// rotAxes is lazily allocated only when a matching per-axis rotation channel
+		// is first encountered (avoids alloc for objects that use only T/S/quaternion).
+		rotAxes    map[string]rootengine.RenderAnimationChannel
 		hasRotAxes bool
 	)
 
 	for _, anim := range anims {
-		if anim.Duration > duration {
-			duration = anim.Duration
+		hasMatchInClip := false
+		for _, ch := range anim.Channels {
+			if objectMatchesTarget(ch.TargetID, objectID, objectIndex) {
+				hasMatchInClip = true
+				break
+			}
+		}
+		if !hasMatchInClip {
+			continue
+		}
+		// Carry the AUTHORED duration from clips that target this object. A clip
+		// with Duration==0 contributes 0 (hold-at-end, no loop), mirroring the
+		// native sampleNativeAnimationClip path (animation.go:72).
+		if anim.Duration > authoredDuration {
+			authoredDuration = anim.Duration
 		}
 		for _, ch := range anim.Channels {
 			if !objectMatchesTarget(ch.TargetID, objectID, objectIndex) {
@@ -131,26 +175,26 @@ func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string
 			case "translation":
 				if track := vec3Track(ch, ref, clipPropTranslation, 3); track != nil {
 					children = append(children, positioned(track))
-					duration = math.Max(duration, lastTime(ch.Times))
 				}
 			case "scale":
 				if track := scaleTrack(ch, ref); track != nil {
 					children = append(children, positioned(track))
-					duration = math.Max(duration, lastTime(ch.Times))
 				}
 			case "rotation":
 				// Combined quaternion (width-4) form — Phase-1 / glTF style.
 				if track := quatTrack(ch, ref); track != nil {
 					children = append(children, positioned(track))
-					duration = math.Max(duration, lastTime(ch.Times))
 				}
 			case "rotationx", "rotationy", "rotationz":
 				// Per-axis Euler — accumulate and reconstruct after the loop.
 				// Last channel per axis wins (matches eulerAt's per-axis read).
+				// rotAxes is lazily allocated here (first matching axis encountered).
+				if rotAxes == nil {
+					rotAxes = make(map[string]rootengine.RenderAnimationChannel)
+				}
 				axis := clipChannelProperty(ch.Property)
 				rotAxes[axis] = ch
 				hasRotAxes = true
-				duration = math.Max(duration, lastTime(ch.Times))
 			default:
 				// Unknown / unsupported (e.g. matrix) — skip; the renderer wiring
 				// handles matrix separately if ever needed.
@@ -170,7 +214,7 @@ func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string
 
 	tl := &motion.Timeline{Children: children}
 	motion.PrepareTracks(tl, motion.NewInterner(), motion.NewInterner())
-	return tl, duration
+	return tl, authoredDuration
 }
 
 func positioned(track *motion.Track) motion.Positioned {
@@ -389,10 +433,19 @@ func frameCount(ch rootengine.RenderAnimationChannel, stride int) int {
 	return n
 }
 
-// evalClipTRS evaluates the object's clip timeline at time t, wrapping t into
-// [0,duration) when duration>0 (matching the native looping in render/bundle).
-// It uses the provided reusable WriteBuf and returns the decoded TRS. A nil
-// timeline yields a zero clipTRS (all Has* false) without panicking.
+// evalClipTRS evaluates the object's clip timeline at time t and returns the
+// decoded TRS. It uses the provided reusable WriteBuf. A nil timeline yields a
+// zero clipTRS (all Has* false) without panicking.
+//
+// Looping semantics (mirrors render/bundle animation.go:70-77):
+//   - When the AUTHORED duration > 0, t is wrapped into [0,duration) via
+//     math.Mod, enabling looping. A negative wrapped value is corrected to
+//     stay in range (matching the native path's sampleTime < 0 correction).
+//   - When duration == 0 (author set duration:0 → clamp-and-hold), t is passed
+//     raw to motion.Eval. The keyframe evaluator already clamps at the last key,
+//     so the clip holds its final value past the last keyframe — no wrap, no
+//     loop. Negative t is clamped to 0 (matches native animation.go:74-76
+//     behavior where sampleTime becomes 0 when duration==0 and t<0).
 //
 // Tracks are routed by their resolved PropID. Because buildObjectClipTimeline
 // interns the canonical Prop strings (clipPropTranslation / clipPropRotation /
@@ -404,11 +457,20 @@ func evalClipTRS(tl *motion.Timeline, duration, t float64, buf *motion.WriteBuf)
 		return out
 	}
 
-	wrapped := t
+	var wrapped float64
 	if duration > 0 {
+		// Authored loop: wrap t into [0, duration).
 		wrapped = math.Mod(t, duration)
 		if wrapped < 0 {
 			wrapped += duration
+		}
+	} else {
+		// Clamp-and-hold: pass raw t; the keyframe path holds at the last key.
+		// Match native behavior: clamp negative t to 0 (no backwards playback
+		// when duration is unset).
+		wrapped = t
+		if wrapped < 0 {
+			wrapped = 0
 		}
 	}
 

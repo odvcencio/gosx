@@ -150,9 +150,11 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 	spinQ := spinQuatWithScratch(object, timeSeconds, spinSc)
 	result.SpinQ = spinQ
 	// Clip TRS is likewise identical for every vertex: build the per-object
-	// timeline ONCE (nil when no channel targets this object — the common case,
-	// zero further cost) and evaluate once into the reusable clip WriteBuf. The
+	// timeline ONCE and evaluate once into the reusable clip WriteBuf. The
 	// resulting clipTRS is stored in result so appendSceneSurface reuses it.
+	// Cost profile: zero cost when no animations exist; a cheap match-scan (no
+	// alloc) when animations exist but none target this object; full build+eval
+	// only for objects that a clip actually targets.
 	clip := objectClipTRS(object, objIndex, animations, timeSeconds, spinSc)
 	result.ClipTRS = clip
 	if !sceneObjectUsesLineGeometry(object, material) && sceneObjectHasTexturedSurface(object, material) {
@@ -1299,6 +1301,10 @@ func circlePoint(radius float64, axis string, angle float64) point3 {
 	}
 }
 
+// NOTE: The clip composition here (base→clipR→spin, translation in world space)
+// intentionally differs from the native render/bundle instanced-mesh matrix path
+// (T*R*S left-multiply on the raw transform). These are different renderer/bundle
+// structures — not a parity pair — so the divergence is by design.
 func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) point3 {
 	// Composition order (local vertex -> world position):
 	//   1. clip scale (local, pre-rotation): multiply the LOCAL vertex by clip.S.

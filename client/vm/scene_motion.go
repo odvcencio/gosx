@@ -57,10 +57,11 @@ func newSpinScratch() *spinScratch {
 }
 
 // objectClipTRS builds the per-object clip timeline (across all clips) and
-// evaluates it at time t, returning the decoded TRS. When no animation channel
-// targets the object — the overwhelmingly common case — buildObjectClipTimeline
-// returns nil and this returns the zero clipTRS (all Has* false) with no Eval
-// call, so the render path stays byte-identical to the pre-clip behaviour.
+// evaluates it at time t, returning the decoded TRS. Cost profile:
+//   - Zero cost when len(anims)==0 (the overwhelmingly common case).
+//   - A cheap match-scan (no alloc) when animations exist but none target this
+//     object — buildObjectClipTimeline returns (nil,0) before allocating any map.
+//   - Full build+eval only for objects that a clip actually targets.
 //
 // The reusable clip WriteBuf on the scratch is used (or a standalone buffer when
 // sc is nil — the test/standalone path), so the warm path is per-frame alloc-free
