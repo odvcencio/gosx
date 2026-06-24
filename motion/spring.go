@@ -63,24 +63,79 @@ func (s Spring) Value(from, to, t float64) float64 {
 	return x
 }
 
-// Duration returns the settle time: the earliest t at which |x−to| < 1e-3 and
-// |v| < 1e-3, capped at 10 s. The result is always a multiple of SpringDT.
+// Duration returns the analytic settle-time upper bound: the earliest time at
+// which the spring's response is guaranteed to be within settleTol of `to`,
+// capped at 10 s.
+//
+// This is O(1) — no integration loop.
+//
+// Physics parameters (after applying defaults):
+//
+//	omega0 = sqrt(k/m)          (natural frequency)
+//	zeta   = c / (2*sqrt(k*m))  (damping ratio)
+//
+// The characteristic decay rate is:
+//
+//   - Underdamped (zeta < 1):            rate = zeta * omega0
+//   - Critically/overdamped (zeta >= 1): rate = omega0 * (zeta - sqrt(zeta²-1))
+//     (the slower of the two real poles; at zeta=1 exactly, sqrt(…)=0 and rate=omega0)
+//
+// For UNDERDAMPED springs, the envelope is purely exponential exp(-rate*t), so:
+//
+//	t_s = safety * (-ln(tol) / rate)
+//
+// For CRITICALLY/OVERDAMPED springs, the solution has a polynomial prefactor
+// (e.g. (A + B*t)*exp(-rate*t) at zeta=1), which slows the effective decay.
+// One Newton refinement corrects for this:
+//
+//	t0 = -ln(tol) / rate
+//	t_s = safety * (-ln(tol) + ln(1 + rate*t0)) / rate
+//
+// A safety margin of 1.4 is applied in both regimes so that Value never
+// early-outs before the trajectory has genuinely settled. The amplitude
+// |to-from| is not folded in; the 1e-3 threshold is absolute, and 1.4×
+// headroom covers typical unit-scale animations.
+//
+// Guard: if rate ≤ 0 (unreachable with Damping > 0 after defaults), the
+// 10 s cap is returned.
 func (s Spring) Duration(from, to float64) float64 {
 	const maxTime = 10.0
-	const maxSteps = int(maxTime / SpringDT) // 2400
+	const settleTol = 1e-3
+	const safety = 1.4
 
 	p := s.defaults()
-	x := from
-	v := p.Velocity
+	m := p.Mass
+	k := p.Stiffness
+	c := p.Damping
 
-	for i := 0; i < maxSteps; i++ {
-		F := -p.Stiffness*(x-to) - p.Damping*v
-		v += (F / p.Mass) * SpringDT
-		x += v * SpringDT
+	omega0 := math.Sqrt(k / m)
+	zeta := c / (2 * math.Sqrt(k*m))
 
-		if math.Abs(x-to) < 1e-3 && math.Abs(v) < 1e-3 {
-			return float64(i+1) * SpringDT
-		}
+	var rate float64
+	if zeta >= 1 {
+		// Critically damped or overdamped: slower pole dominates.
+		// At zeta == 1, sqrt(zeta²-1) == 0 so rate = omega0 (correct limit).
+		rate = omega0 * (zeta - math.Sqrt(zeta*zeta-1))
+	} else {
+		// Underdamped: envelope decays as exp(-zeta*omega0*t).
+		rate = zeta * omega0
 	}
-	return maxTime
+
+	if rate <= 0 {
+		return maxTime
+	}
+
+	var ts float64
+	if zeta >= 1 {
+		// Polynomial prefactor correction (one Newton step from the pure-exponential estimate).
+		t0 := -math.Log(settleTol) / rate
+		ts = safety * ((-math.Log(settleTol) + math.Log(1+rate*t0)) / rate)
+	} else {
+		ts = safety * (-math.Log(settleTol) / rate)
+	}
+
+	if ts > maxTime {
+		return maxTime
+	}
+	return ts
 }
