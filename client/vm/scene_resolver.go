@@ -308,6 +308,10 @@ type sceneAppendResult struct {
 	HasBounds  bool
 	ViewCulled bool
 	SpinQ      motion.Quat
+	// ClipTRS is the per-object clip transform evaluated once per frame (zero
+	// value when no animation channel targets the object). Threaded to
+	// appendSceneSurface alongside SpinQ so textured planes reuse it.
+	ClipTRS clipTRS
 }
 
 func sceneBackground(props map[string]any) string {

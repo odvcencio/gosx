@@ -1,6 +1,9 @@
 package vm
 
-import "m31labs.dev/gosx/motion"
+import (
+	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
+)
 
 // spinScratch holds the reusable structures for zero-alloc spin evaluation.
 // One instance is allocated per SceneAdapter (lazily, on first spinning object)
@@ -10,6 +13,24 @@ type spinScratch struct {
 	gen *motion.Generator
 	tl  *motion.Timeline
 	buf *motion.WriteBuf
+	// clipBuf is the reusable WriteBuf for per-object clip TRS evaluation. Clips
+	// are rare, so it is lazily allocated on the first clipped object and reused
+	// across all objects and frames thereafter (zero per-frame alloc once warm).
+	clipBuf *motion.WriteBuf
+}
+
+// clipWriteBuf returns the lazily-allocated, reusable clip WriteBuf on the
+// scratch. A nil scratch yields a fresh standalone buffer (the test/standalone
+// path). The buffer grows on demand inside motion.Eval; it is sized generously
+// here to cover the common T+R+S write packet without reallocation.
+func (sc *spinScratch) clipWriteBuf() *motion.WriteBuf {
+	if sc == nil {
+		return motion.NewWriteBuf(21)
+	}
+	if sc.clipBuf == nil {
+		sc.clipBuf = motion.NewWriteBuf(21) // 3 writes * [tid,pid,arity] + up to 4 floats
+	}
+	return sc.clipBuf
 }
 
 // newSpinScratch builds the shared skeleton once. TargetID 0 is used as a
@@ -33,6 +54,27 @@ func newSpinScratch() *spinScratch {
 	}
 	buf := motion.NewWriteBuf(7) // exactly [targetID, propID, arity, x, y, z, w]
 	return &spinScratch{gen: gen, tl: tl, buf: buf}
+}
+
+// objectClipTRS builds the per-object clip timeline (across all clips) and
+// evaluates it at time t, returning the decoded TRS. When no animation channel
+// targets the object — the overwhelmingly common case — buildObjectClipTimeline
+// returns nil and this returns the zero clipTRS (all Has* false) with no Eval
+// call, so the render path stays byte-identical to the pre-clip behaviour.
+//
+// The reusable clip WriteBuf on the scratch is used (or a standalone buffer when
+// sc is nil — the test/standalone path), so the warm path is per-frame alloc-free
+// apart from the timeline build itself (clips are rare; building one short-lived
+// timeline per animated object per frame is acceptable).
+func objectClipTRS(o sceneObject, objIndex int, anims []rootengine.RenderAnimation, t float64, sc *spinScratch) clipTRS {
+	if len(anims) == 0 {
+		return clipTRS{}
+	}
+	tl, duration := buildObjectClipTimeline(anims, o.ID, objIndex)
+	if tl == nil {
+		return clipTRS{}
+	}
+	return evalClipTRS(tl, duration, t, sc.clipWriteBuf())
 }
 
 // spinQuatForObject computes the spin orientation for a scene object at time t
