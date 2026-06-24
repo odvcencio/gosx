@@ -97,6 +97,24 @@ func TestMotionStatusOnAnimationFeatures(t *testing.T) {
 	}
 }
 
+func TestCustomWGSLMaterialMotionIsPartial(t *testing.T) {
+	// custom WGSL now supports motion-driven uniforms via MaterialAnims →
+	// materialMotionTracks → MaterialMotionProgram → JS customUniforms apply seam.
+	// Pixel-render verification and native bundle path are still pending, so the
+	// status must be partial (not notApplicable or complete).
+	entries := Matrix()
+	for _, e := range entries {
+		if e.Feature == "custom WGSL" {
+			status := e.Dimensions[Motion]
+			if status != Partial {
+				t.Fatalf("custom WGSL Motion = %q, want %q", status, Partial)
+			}
+			return
+		}
+	}
+	t.Fatal("custom WGSL feature not found in matrix")
+}
+
 func TestStrictGateRejectsSkinnedMeshMotionUnsupported(t *testing.T) {
 	entries := Matrix()
 	for i := range entries {

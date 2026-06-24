@@ -492,7 +492,11 @@ var seeds = []seed{
 	{feature: "line basic", category: "materials", profile: "material"},
 	{feature: "line dashed", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial)},
 	{feature: "custom GLSL", category: "materials", profile: "material", overrides: overrides(WebGPU, NotApplicable, WebGL, Partial, Docs, Partial)},
-	{feature: "custom WGSL", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial, WebGL, NotApplicable, Docs, Partial, Tests, Partial)},
+	// Motion=partial: TargetMaterial authoring (MaterialAnims), lowering
+	// (materialMotionTracks → MaterialMotionProgram), and the JS customUniforms
+	// apply seam (window.__gosx_motion_wasm) exist. Animated-uniform pixel render
+	// is browser-unverified; native/bundle material path is still static-cached.
+	{feature: "custom WGSL", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial, WebGL, NotApplicable, Docs, Partial, Tests, Partial, Motion, Partial)},
 	{feature: "named materials", category: "materials", profile: "material"},
 	{feature: "CSS variable material fields", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial, WebGL, Partial, Tests, Partial)},
 	{feature: "texture maps", category: "materials", profile: "material", overrides: overrides(Assets, Complete, Tests, Complete)},

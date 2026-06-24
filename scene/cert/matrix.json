@@ -2501,7 +2501,7 @@
         "docs": "partial",
         "gsxAuthoring": "complete",
         "headless": "partial",
-        "motion": "notApplicable",
+        "motion": "partial",
         "perfBudget": "partial",
         "picking": "notApplicable",
         "renderBundle": "complete",
@@ -2518,7 +2518,7 @@
         "canvasFallback": "feature has an explicit fallback path for this dimension instead of equivalent native behavior",
         "docs": "implemented in the current contract but not yet fully certified across examples, diagnostics, budgets, and backend parity",
         "headless": "implemented in the current contract but not yet fully certified across examples, diagnostics, budgets, and backend parity",
-        "motion": "dimension does not apply to this feature",
+        "motion": "implemented in the current contract but not yet fully certified across examples, diagnostics, budgets, and backend parity",
         "perfBudget": "implemented in the current contract but not yet fully certified across examples, diagnostics, budgets, and backend parity",
         "picking": "dimension does not apply to this feature",
         "signals": "implemented in the current contract but not yet fully certified across examples, diagnostics, budgets, and backend parity",
@@ -2532,7 +2532,7 @@
         "canvasFallback": "keep fallback visible in diagnostics and promote to native behavior when practical",
         "docs": "publish production-shape documentation and link a canonical proof app",
         "headless": "finish backend parity, diagnostics, and certification tests for this dimension",
-        "motion": "no action required while the feature contract remains unchanged",
+        "motion": "finish backend parity, diagnostics, and certification tests for this dimension",
         "perfBudget": "connect the feature to scene budget accounting and inspector telemetry",
         "picking": "no action required while the feature contract remains unchanged",
         "signals": "finish backend parity, diagnostics, and certification tests for this dimension",
@@ -4258,8 +4258,8 @@
     "statusCounts": {
       "complete": 613,
       "fallback": 91,
-      "notApplicable": 266,
-      "partial": 543
+      "notApplicable": 265,
+      "partial": 544
     },
     "byDimension": {
       "a11yFallback": {
@@ -4294,8 +4294,8 @@
         "partial": 76
       },
       "motion": {
-        "notApplicable": 85,
-        "partial": 4
+        "notApplicable": 84,
+        "partial": 5
       },
       "perfBudget": {
         "complete": 2,

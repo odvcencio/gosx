@@ -49,6 +49,10 @@ func uniformIsColor(uniform string) bool {
 // becomes one Track with Target{Kind: TargetMaterial, Ref: ref}, Prop = the
 // uniform name, and keys chunked from Times/Values by the resolved arity width.
 //
+// NOTE: writing an animated uniform on a SHARED named material mutates the
+// customUniforms bag for all meshes referencing it; per-mesh isolation would
+// require cloning the material instance before applying the frame value.
+//
 // Malformed entries are silently skipped (no panic):
 //   - unknown arity (not 1/3/4),
 //   - empty Uniform or empty Times,
