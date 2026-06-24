@@ -220,7 +220,18 @@ const budgets = [
   // sceneAnimWasmDecodePose from the animation chunk. Skinning unchanged. Flag-
   // gated on window.__gosx_motion_wasm; inert when unset. gzip/brotli still fit.
   // Measured: 551_222 / 150_493 / 123_833 + rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 552_500, gzip: 150_500, brotli: 124_000 },
+  //
+  // Bumped raw 552_500 -> 553_500, gzip 150_500 -> 151_500: C3 unified-motion
+  // WASM MATERIAL-UNIFORM apply seam — applyWasmMaterialMotionFrame (lazy
+  // materialMotionProgram base64 load via sceneBase64Decode +
+  // __gosx_motion_load/refs, per-frame __gosx_motion_tick with grow-and-retick,
+  // packed LE-float64 decode mapping arity-enum width to material customUniforms
+  // writes via sceneResolveMaterialUniforms) in 20-scene-mount.js +
+  // sceneResolveMaterialUniforms in 10-runtime-scene-core.js + a live
+  // __gosxScene3DState mount handle. Flag-gated on window.__gosx_motion_wasm;
+  // inert when unset. brotli still fits. Measured: 552_885 / 150_875 / 123_944
+  // + rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 553_500, gzip: 151_500, brotli: 124_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

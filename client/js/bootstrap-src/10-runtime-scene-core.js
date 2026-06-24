@@ -3162,6 +3162,30 @@
     return materialName ? lookup.get(materialName) || null : null;
   }
 
+  // C3: resolve the live customUniforms bag that sceneStateObjectsWithMaterials
+  // reads each frame for the object keyed `meshId`. If the object references a
+  // named material (state.materials), that material's customUniforms is the
+  // source the per-frame Object.assign clones — so we return it (creating it if
+  // absent). Otherwise the object carries customUniforms inline and we return
+  // that. Returns null when no object exists. The returned object is mutated in
+  // place by the caller, and the change is observed on the NEXT bundle build.
+  function sceneResolveMaterialUniforms(state, meshId) {
+    if (!state || !state.objects || typeof state.objects.get !== "function") {
+      return null;
+    }
+    const record = state.objects.get(String(meshId));
+    if (!record) {
+      return null;
+    }
+    const lookup = sceneMaterialLookup(state);
+    const material = lookup.size ? sceneNamedMaterialForRecord(lookup, record) : null;
+    const target = material || record;
+    if (!sceneIsPlainObject(target.customUniforms)) {
+      target.customUniforms = {};
+    }
+    return target.customUniforms;
+  }
+
   function sceneApplyNamedMaterialToObject(object, material) {
     return Object.assign({}, object, {
       materialKind: material.kind || object.materialKind,
@@ -7166,6 +7190,7 @@
     sceneStateObjectsWithMaterials,
     sceneStatePointsWithMaterials,
     sceneStateInstancedMeshesWithMaterials,
+    sceneResolveMaterialUniforms,
     createSceneWebGLRenderer,
     engineFrame,
     normalizeSceneEnvironment,

@@ -5739,6 +5739,16 @@
     let wasmMotionPropRefs = null;
     let wasmMotionF64 = null;
     let wasmMotionU8 = null;
+    // C3: material-uniform motion seam. Mirrors wasmMotion* but loads
+    // props.scene.materialMotionProgram and writes evaluated values into each
+    // mesh's customUniforms so selena re-packs them every frame. Same opt-in
+    // flag + state lifecycle (0=unloaded, 1=loaded, -1=disabled).
+    let wasmMatMotionState = 0;
+    let wasmMatMotionHandle = 0;
+    let wasmMatMotionTargetRefs = null;
+    let wasmMatMotionPropRefs = null;
+    let wasmMatMotionF64 = null;
+    let wasmMatMotionU8 = null;
 
     function sceneAnimationState() {
       if (motion.reducedMotion) {
@@ -5838,6 +5848,11 @@
 
     const sceneNodeSentinels = new Map();
     ctx.mount.__gosxScene3DSentinels = sceneNodeSentinels;
+    // Live sceneState handle for inspection (debug/test): lets callers read the
+    // mutable object/material state — e.g. customUniforms written by the C3
+    // material-motion seam — without going through the depth-clamped debug
+    // snapshot.
+    ctx.mount.__gosxScene3DState = sceneState;
     ctx.mount.__gosxScene3DCSSDynamic = false;
     ctx.mount.__gosxScene3DCSSRevision = 1;
     ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
@@ -7212,6 +7227,69 @@
       if (cmds.length > 0) applySceneCommands(sceneState, cmds);
     }
 
+    // C3: motion-evaluated MATERIAL UNIFORM animation. Mirrors
+    // applyWasmMotionFrame but loads props.scene.materialMotionProgram (whose
+    // tracks target material uniforms: targetRef=mesh id, prop=uniform name).
+    // Each frame it ticks at absolute time t, decodes packed
+    // [targetID, propID, arity, comps...] records, and writes the evaluated
+    // value into the mesh's customUniforms bag (the same bag selena re-packs
+    // per frame via sceneSelenaUniformData). MUST run BEFORE the per-frame
+    // bundle build so the next createSceneRenderBundle clones the new value.
+    // Stateless single-program tick at absolute t, so a grow-and-retick at the
+    // same t is safe (no clock-advance concern like the model mixer).
+    function applyWasmMaterialMotionFrame(timeSeconds) {
+      if (wasmMatMotionState < 0) return;
+      if (typeof window === "undefined" || !window.__gosx_motion_wasm
+          || typeof window.__gosx_motion_load !== "function") {
+        return;
+      }
+      if (wasmMatMotionState === 0) {
+        const sceneIR = props && typeof props.scene === "object" && props.scene ? props.scene : props;
+        const b64 = sceneIR && typeof sceneIR.materialMotionProgram === "string" ? sceneIR.materialMotionProgram : "";
+        const handle = b64 ? window.__gosx_motion_load(sceneBase64Decode(b64)) : 0;
+        if (handle < 1) { wasmMatMotionState = -1; return; }
+        const refs = typeof window.__gosx_motion_refs === "function"
+          ? window.__gosx_motion_refs(handle) : null;
+        if (!refs) { wasmMatMotionState = -1; return; }
+        wasmMatMotionHandle = handle;
+        wasmMatMotionTargetRefs = refs.target || [];
+        wasmMatMotionPropRefs = refs.prop || [];
+        wasmMatMotionF64 = new Float64Array(256);
+        wasmMatMotionU8 = new Uint8Array(wasmMatMotionF64.buffer);
+        wasmMatMotionState = 1;
+      }
+      const reduced = motion.reducedMotion === true;
+      let count = window.__gosx_motion_tick(wasmMatMotionHandle, timeSeconds, reduced, wasmMatMotionU8);
+      if (count > wasmMatMotionF64.length) {
+        wasmMatMotionF64 = new Float64Array(count);
+        wasmMatMotionU8 = new Uint8Array(wasmMatMotionF64.buffer);
+        count = window.__gosx_motion_tick(wasmMatMotionHandle, timeSeconds, reduced, wasmMatMotionU8);
+        if (count > wasmMatMotionF64.length) count = wasmMatMotionF64.length;
+      }
+      const f = wasmMatMotionF64;
+      for (let i = 0; i + 3 <= count;) {
+        const arity = f[i + 2];
+        // arity ENUM ordinal → component width: Scalar=0→1, Vec2=1→2, Vec3=2→3,
+        // Vec4=3→4, Quat=4→4, Color=5→4.
+        const width = arity <= 0 ? 1 : (arity >= 3 ? 4 : arity + 1);
+        const meshId = wasmMatMotionTargetRefs[f[i]];
+        const uniformName = wasmMatMotionPropRefs[f[i + 1]];
+        const c = i + 3;
+        if (c + width > count) break;
+        i = c + width;
+        if (meshId == null || uniformName == null) continue;
+        const uniforms = sceneResolveMaterialUniforms(sceneState, meshId);
+        if (!uniforms) continue;
+        if (width === 1) {
+          uniforms[uniformName] = f[c];
+        } else {
+          const arr = new Array(width);
+          for (let k = 0; k < width; k++) arr[k] = f[c + k];
+          uniforms[uniformName] = arr;
+        }
+      }
+    }
+
     function renderFrame(now, reason) {
       if (disposed) return;
       const frameStart = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -7285,6 +7363,10 @@
         }
       }
       applyWasmMotionFrame(timeSeconds);
+      // C3: write motion-evaluated material uniforms into customUniforms BEFORE
+      // the bundle build below, so the next createSceneRenderBundle (and the
+      // selena per-frame re-pack) observes them.
+      applyWasmMaterialMotionFrame(timeSeconds);
       sceneAdvanceTransitions(sceneState, now);
       // LOD: swap vertex data based on camera distance before building render bundle.
       if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
@@ -7616,6 +7698,13 @@
         }
         wasmMotionState = -1;
         wasmMotionHandle = 0;
+        // C3: free the material-uniform motion program handle.
+        if (wasmMatMotionState === 1 && typeof window !== "undefined"
+            && typeof window.__gosx_motion_unload === "function") {
+          window.__gosx_motion_unload(wasmMatMotionHandle);
+        }
+        wasmMatMotionState = -1;
+        wasmMatMotionHandle = 0;
         // P4-M3: free any per-model WASM motion mixers created behind the flag.
         sceneDestroyModelWasmMixers(sceneState && sceneState._modelSkins);
         cancelFrame();
@@ -7643,6 +7732,7 @@
           sentinelLayer.parentNode.removeChild(sentinelLayer);
         }
         delete ctx.mount.__gosxScene3DSentinels;
+        delete ctx.mount.__gosxScene3DState;
         delete ctx.mount.__gosxScene3DCSSDynamic;
         delete ctx.mount.__gosxScene3DCSSRevision;
         delete ctx.mount.__gosxScene3DCSSAnimationUntil;

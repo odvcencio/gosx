@@ -4389,6 +4389,129 @@ test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fa
   assert.ok(ext.maxAbsZ < 1.0, `expected unrotated z-extent < 1.0, got ${ext.maxAbsZ}`);
 });
 
+// C3: mounts a JS-sceneState scene whose IR carries
+// props.scene.materialMotionProgram (base64). A stubbed motion handle reports a
+// single TargetMaterial track (mesh "glow-cube", uniform "emissive"); the tick
+// stub writes one packed Color record. The seam must decode it and write the
+// color into the mesh's customUniforms so selena's per-frame re-pack sees it.
+// motionFlag toggles whether window.__gosx_motion_wasm is set, proving the
+// seam is fully inert (tick never called, customUniforms untouched) when off.
+async function mountMaterialMotionScene(motionFlag) {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-material-motion-root";
+  let tickCalls = 0;
+  // The decoded color the stub emits (r,g,b,a). arity 5 (Color) → width 4.
+  const color = [0.2, 0.6, 0.9, 1.0];
+  const tick = (handle, t, reduced, outU8) => {
+    tickCalls += 1;
+    const f = new Float64Array(outU8.buffer, outU8.byteOffset, outU8.byteLength / 8);
+    // packed: [targetID 0, propID 0, arity 5 (Color), r, g, b, a]
+    f[0] = 0; f[1] = 0; f[2] = 5;
+    f[3] = color[0]; f[4] = color[1]; f[5] = color[2]; f[6] = color[3];
+    return 7;
+  };
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-mat-motion.json": { text: '{"name":"MatMotion"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-mat-motion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-material-motion-root",
+          runtime: "shared",
+          programRef: "/scene-mat-motion.json",
+          // materialMotionProgram rides under props.scene as base64; the load
+          // stub ignores the bytes, so any non-empty string works.
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            scene: { materialMotionProgram: "AAEC" },
+          },
+        },
+      ],
+    },
+    // A selena/custom box keyed "glow-cube" carrying an inline customUniforms
+    // bag — so the resolved write target is the object record itself (no named
+    // material lookup), which the seam mutates in place.
+    onHydrateEngine: () => JSON.stringify([
+      { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
+      {
+        kind: 0,
+        objectId: "glow-cube",
+        data: {
+          kind: "box",
+          geometry: "box",
+          props: {
+            x: 0, y: 0, z: 0, size: 1, color: "#8de1ff",
+            materialKind: "custom",
+            shaderBackend: "selena",
+            customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
+            customUniforms: { emissive: [0, 0, 0, 0] },
+          },
+        },
+      },
+    ]),
+    onRenderEngine: () => "",
+  });
+
+  if (motionFlag) {
+    env.context.__gosx_motion_wasm = true;
+    env.context.__gosx_motion_load = () => 1;
+    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_tick = tick;
+    env.context.__gosx_motion_unload = () => {};
+  } else {
+    // Exports present but the opt-in flag deliberately unset.
+    env.context.__gosx_motion_load = () => 1;
+    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_tick = tick;
+    env.context.__gosx_motion_unload = () => {};
+  }
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  const state = mount.__gosxScene3DState;
+  return { env, mount, state, color, tickCalls: () => tickCalls };
+}
+
+test("Scene3D WASM material-motion seam writes evaluated color into customUniforms (sceneState fall-through path)", async () => {
+  const { state, color } = await mountMaterialMotionScene(true);
+  assert.ok(state && state.objects && typeof state.objects.get === "function", "expected a live sceneState handle on the mount");
+  const obj = state.objects.get("glow-cube");
+  assert.ok(obj, "expected the glow-cube object in sceneState");
+  assert.ok(obj.customUniforms && typeof obj.customUniforms === "object", "expected customUniforms on glow-cube");
+  // Decode → customUniforms write: the Color record (arity 5 → width 4) lands
+  // as a 4-element array under the uniform name "emissive".
+  assert.deepEqual(obj.customUniforms.emissive, color,
+    "motion-evaluated color must be written into customUniforms.emissive");
+});
+
+test("Scene3D WASM material-motion seam stays inert when the flag is unset (sceneState fall-through path)", async () => {
+  const { state, tickCalls } = await mountMaterialMotionScene(false);
+  assert.equal(tickCalls(), 0, "material-motion tick must not run when the flag is unset");
+  const obj = state.objects.get("glow-cube");
+  assert.ok(obj, "expected the glow-cube object in sceneState");
+  // customUniforms.emissive stays at its hydrated default — proving non-breaking
+  // inert behavior with the exports present but the opt-in flag absent.
+  assert.deepEqual(obj.customUniforms.emissive, [0, 0, 0, 0],
+    "customUniforms must be untouched when the motion flag is unset");
+});
+
 test("Scene3D drag only starts when the pointer lands on a shape in shared runtime mode", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-fallback-root";
