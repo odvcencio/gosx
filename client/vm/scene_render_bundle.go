@@ -929,8 +929,10 @@ func renderPassBucketName(object rootengine.RenderObject) string {
 
 func renderStaticPassKey(bundle rootengine.RenderBundle) string {
 	hasher := fnv.New64a()
+	scratch := make([]byte, 0, 32)
 	writeStaticPassFloat := func(value float64) {
-		_, _ = hasher.Write([]byte(strconv.FormatFloat(value, 'f', 3, 64)))
+		scratch = strconv.AppendFloat(scratch[:0], value, 'f', 3, 64)
+		_, _ = hasher.Write(scratch)
 		_, _ = hasher.Write([]byte{'|'})
 	}
 	writeStaticPassString := func(value string) {
