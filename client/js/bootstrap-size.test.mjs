@@ -365,3 +365,33 @@ test("selective runtime route surfaces stay within first-load budgets", () => {
     assert.ok(raw < monolithRaw * 0.25, `${budget.name} should stay below 25% of legacy monolith raw size`);
   }
 });
+
+// Regression guard for the mobile-GPU throttle bug (spore
+// spore.2026-06-24.claude-opus.verify-artifact-and-all-copies): the device-
+// capability predicate must stay a single source of truth (gosxLowEndHardware)
+// and require BOTH low memory AND few cores. It previously lived inline in two
+// files joined by OR; since mobile Chrome reports deviceMemory<=4 near-
+// universally, that OR throttled capable phones to the low-power GPU.
+test("device-capability gate stays DRY (gosxLowEndHardware, AND-form, no inlined OR drift)", () => {
+  const srcDir = path.join(__dirname, "bootstrap-src");
+  const files = fs.readdirSync(srcDir).filter((f) => f.endsWith(".js"));
+  let definitions = 0;
+  let references = 0;
+  for (const f of files) {
+    const body = fs.readFileSync(path.join(srcDir, f), "utf8");
+    assert.ok(
+      !/deviceMemory\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*hardwareConcurrency/.test(body) &&
+        !/hardwareConcurrency\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*deviceMemory/.test(body),
+      `inlined OR-form device-capability predicate found in ${f}; derive it from gosxLowEndHardware instead`,
+    );
+    definitions += (body.match(/function\s+gosxLowEndHardware\s*\(/g) || []).length;
+    references += (body.match(/gosxLowEndHardware\s*\(/g) || []).length;
+  }
+  assert.equal(definitions, 1, "gosxLowEndHardware must be defined exactly once (single source of truth)");
+  assert.ok(references >= 3, "gosxLowEndHardware should back both lowPower and constrainedHardware");
+  const env = fs.readFileSync(path.join(srcDir, "05-document-env.js"), "utf8");
+  assert.ok(
+    /function\s+gosxLowEndHardware[\s\S]{0,200}<=\s*4\s*\)\s*&&\s*\(/.test(env),
+    "gosxLowEndHardware must AND the memory and core checks (not OR)",
+  );
+});

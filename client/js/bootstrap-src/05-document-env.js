@@ -872,6 +872,15 @@
     return "no-preference";
   }
 
+  // Single source of truth for the device-capability gate. "Low-end" means
+  // genuinely low memory AND few cores — deviceMemory<=4 alone is meaningless
+  // (mobile Chrome reports 4 near-universally), so it must not gate by itself.
+  // Both lowPower (here) and constrainedHardware (20-scene-mount) call this so
+  // the predicate cannot drift across bundles again.
+  function gosxLowEndHardware(deviceMemory, hardwareConcurrency) {
+    return (deviceMemory > 0 && deviceMemory <= 4) && (hardwareConcurrency > 0 && hardwareConcurrency <= 4);
+  }
+
   function gosxEnvironmentSnapshot() {
     const navigatorRef = window && window.navigator ? window.navigator : {};
     const connection = gosxNavigatorConnection();
@@ -884,14 +893,11 @@
     const deviceMemory = Math.max(0, gosxNumber(navigatorRef && navigatorRef.deviceMemory, 0));
     const hardwareConcurrency = Math.max(0, Math.floor(gosxNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0)));
     const maxTouchPoints = Math.max(0, Math.floor(gosxNumber(navigatorRef && navigatorRef.maxTouchPoints, 0)));
-    // A coarse pointer alone (any touch device) used to drop to the low-power
-    // GPU path as soon as EITHER deviceMemory<=4 OR hardwareConcurrency<=4 was
-    // true. But mobile Chrome reports deviceMemory=4 on most phones (privacy
-    // rounding), so that OR throttled capable flagships too. Require BOTH signals
-    // (genuinely low memory AND few cores) before pre-gating; runtime
-    // AdaptiveQuality still protects devices that turn out slower than this
-    // heuristic predicts. Save-Data / reduced-data is always honored.
-    const lowPower = reducedData || (coarsePointer && (deviceMemory > 0 && deviceMemory <= 4) && (hardwareConcurrency > 0 && hardwareConcurrency <= 4));
+    // Save-Data is always honored; otherwise pre-gate only genuinely low-end
+    // touch devices (see gosxLowEndHardware). AdaptiveQuality is the runtime
+    // backstop for devices slower than this heuristic predicts.
+    const lowEndHardware = gosxLowEndHardware(deviceMemory, hardwareConcurrency);
+    const lowPower = reducedData || (coarsePointer && lowEndHardware);
     const viewportWidth = Math.max(0, gosxNumber(window.innerWidth, document && document.documentElement && document.documentElement.clientWidth || 0));
     const viewportHeight = Math.max(0, gosxNumber(window.innerHeight, document && document.documentElement && document.documentElement.clientHeight || 0));
 
@@ -916,6 +922,7 @@
       deviceMemory,
       hardwareConcurrency,
       maxTouchPoints,
+      lowEndHardware,
       lowPower,
     };
   }
