@@ -86,11 +86,14 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	// Camera rotation is constant for every vertex/corner in the frame; hoist
 	// its inverse-rotation trig once and thread it through the per-object loops.
 	camTrig := cameraInverseRotTrig(camera)
+	// Pre-resolve all light and environment colors once per frame so
+	// sceneLitColorRGBAResolved can skip the string→RGBA parse on every vertex.
+	litCtx := buildLightingContext(lights, environment)
 	for _, object := range objects {
 		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, object)
 		material := bundle.Materials[materialIndex]
-		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds, camTrig)
+		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds, camTrig, litCtx)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
 			bounds := appendResult.Bounds
@@ -138,7 +141,7 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	}
 }
 
-func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64, camTrig rotTrig) sceneAppendResult {
+func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64, camTrig rotTrig, litCtx lightingContext) sceneAppendResult {
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
 	result := sceneAppendResult{}
 	// Object rotation (rotation + spin*time) is constant for every vertex of
@@ -153,13 +156,16 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 		}
 		return result
 	}
+	// Pre-resolve this object's material base color once (same string for every
+	// vertex); the per-vertex call only needs the resolved [4]float64.
+	baseRGBA := sceneColorRGBA(material.Color, [4]float64{0.55, 0.88, 1, 1})
 	for _, segment := range sceneObjectSegments(object) {
 		worldFrom := translatePointTrig(segment[0], object, timeSeconds, objTrig)
 		worldTo := translatePointTrig(segment[1], object, timeSeconds, objTrig)
 		fromNormal := sceneObjectWorldNormalTrig(object, segment[0], objTrig)
 		toNormal := sceneObjectWorldNormalTrig(object, segment[1], objTrig)
-		fromRGBA := sceneLitColorRGBA(material, worldFrom, fromNormal, lights, environment)
-		toRGBA := sceneLitColorRGBA(material, worldTo, toNormal, lights, environment)
+		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
+		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldTo)
 		clippedFrom, clippedTo, ok := clipWorldSegmentForCameraTrig(worldFrom, worldTo, camera, aspect, camTrig)
@@ -1065,6 +1071,108 @@ func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool
 		environment.GroundIntensity > 0
 }
 
+// lightingContext holds all light and environment colors pre-resolved from
+// string→RGBA once per frame. This lets sceneLitColorRGBAResolved skip the
+// string parse on every vertex and only do the lighting math.
+type lightingContext struct {
+	active       bool
+	ambientColor point3
+	skyColor     point3
+	groundColor  point3
+	exposure     float64
+	ambientInt   float64
+	skyInt       float64
+	groundInt    float64
+	lightColors  []point3 // parallel to the lights slice
+}
+
+// buildLightingContext pre-resolves all color strings in lights and environment
+// once per frame. When lighting is inactive it short-circuits immediately.
+func buildLightingContext(lights []sceneLight, env sceneEnvironment) lightingContext {
+	if !sceneLightingActive(lights, env) {
+		return lightingContext{}
+	}
+	ctx := lightingContext{
+		active:       true,
+		ambientColor: sceneColorPoint(env.AmbientColor, point3{X: 1, Y: 1, Z: 1}),
+		skyColor:     sceneColorPoint(env.SkyColor, point3{X: 0.88, Y: 0.94, Z: 1}),
+		groundColor:  sceneColorPoint(env.GroundColor, point3{X: 0.12, Y: 0.16, Z: 0.22}),
+		exposure:     env.Exposure,
+		ambientInt:   env.AmbientIntensity,
+		skyInt:       env.SkyIntensity,
+		groundInt:    env.GroundIntensity,
+	}
+	if len(lights) > 0 {
+		ctx.lightColors = make([]point3, len(lights))
+		for i, light := range lights {
+			ctx.lightColors[i] = sceneColorPoint(light.Color, point3{X: 1, Y: 1, Z: 1})
+		}
+	}
+	return ctx
+}
+
+// sceneLitColorRGBAResolved is sceneLitColorRGBA with the base material RGBA
+// and all light/environment colors already resolved (no string parse per vertex).
+// The lighting math is IDENTICAL to sceneLitColorRGBA; only the parse is moved.
+func sceneLitColorRGBAResolved(base [4]float64, material rootengine.RenderMaterial, worldPoint, normal point3, lights []sceneLight, ctx lightingContext) [4]float64 {
+	if !ctx.active {
+		return base
+	}
+
+	normal = normalizePoint3(normal)
+	if normal == (point3{}) {
+		normal = point3{Y: 1}
+	}
+	baseColor := point3{X: base[0], Y: base[1], Z: base[2]}
+	emissive := clamp(material.Emissive, 0, 1)
+	lighting := point3{}
+	if ctx.ambientInt > 0 {
+		lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(ctx.ambientColor, ctx.ambientInt)))
+	}
+	if ctx.skyInt > 0 || ctx.groundInt > 0 {
+		hemi := clamp((normal.Y*0.5)+0.5, 0, 1)
+		sky := scalePoint3(ctx.skyColor, ctx.skyInt*hemi)
+		ground := scalePoint3(ctx.groundColor, ctx.groundInt*(1-hemi))
+		lighting = addPoint3(lighting, multiplyPoint3(baseColor, addPoint3(sky, ground)))
+	}
+	for i, light := range lights {
+		lightColor := ctx.lightColors[i]
+		switch light.Kind {
+		case "ambient":
+			lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(lightColor, light.Intensity)))
+		case "directional":
+			direction := normalizePoint3(point3{X: -light.DirectionX, Y: -light.DirectionY, Z: -light.DirectionZ})
+			diffuse := clamp(dotPoint3(normal, direction), 0, 1)
+			if diffuse > 0 {
+				lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(lightColor, light.Intensity*diffuse)))
+			}
+		case "point":
+			offset := point3{X: light.X - worldPoint.X, Y: light.Y - worldPoint.Y, Z: light.Z - worldPoint.Z}
+			distance := point3Length(offset)
+			if distance == 0 {
+				distance = 0.0001
+			}
+			diffuse := clamp(dotPoint3(normal, scalePoint3(offset, 1/distance)), 0, 1)
+			if diffuse <= 0 {
+				continue
+			}
+			attenuation := scenePointLightAttenuation(light, distance)
+			if attenuation <= 0 {
+				continue
+			}
+			lighting = addPoint3(lighting, multiplyPoint3(baseColor, scalePoint3(lightColor, light.Intensity*diffuse*attenuation)))
+		}
+	}
+	lit := addPoint3(scalePoint3(baseColor, emissive), scalePoint3(lighting, ctx.exposure))
+	lit = addPoint3(lit, scalePoint3(baseColor, 0.06))
+	return [4]float64{
+		clamp(lit.X, 0, 1),
+		clamp(lit.Y, 0, 1),
+		clamp(lit.Z, 0, 1),
+		base[3],
+	}
+}
+
 func sceneObjectWorldNormal(object sceneObject, point point3, timeSeconds float64) point3 {
 	return sceneObjectWorldNormalTrig(object, point, sceneObjectRotTrig(object, timeSeconds))
 }
@@ -1486,14 +1594,10 @@ func renderBoundsDepthMetrics(bounds rootengine.RenderBounds, camera sceneCamera
 
 func renderBoundsDepthMetricsTrig(bounds rootengine.RenderBounds, camera sceneCamera, camTrig rotTrig) (near, far, center float64) {
 	corners := renderBoundsCorners(bounds)
-	if len(corners) == 0 {
-		depth := cameraLocalPointTrig(point3{}, camera, camTrig).Z
-		return depth, depth, depth
-	}
 	near = cameraLocalPointTrig(corners[0], camera, camTrig).Z
 	far = near
-	for _, corner := range corners[1:] {
-		depth := cameraLocalPointTrig(corner, camera, camTrig).Z
+	for i := 1; i < len(corners); i++ {
+		depth := cameraLocalPointTrig(corners[i], camera, camTrig).Z
 		near = math.Min(near, depth)
 		far = math.Max(far, depth)
 	}
@@ -1521,8 +1625,10 @@ func expandRenderBounds(bounds rootengine.RenderBounds, hasBounds bool, point po
 	return bounds, true
 }
 
-func renderBoundsCorners(bounds rootengine.RenderBounds) []point3 {
-	return []point3{
+// renderBoundsCorners returns all 8 corners of the axis-aligned bounding box as
+// a value array (stack-allocated, does not escape to heap).
+func renderBoundsCorners(bounds rootengine.RenderBounds) [8]point3 {
+	return [8]point3{
 		{X: bounds.MinX, Y: bounds.MinY, Z: bounds.MinZ},
 		{X: bounds.MinX, Y: bounds.MinY, Z: bounds.MaxZ},
 		{X: bounds.MinX, Y: bounds.MaxY, Z: bounds.MinZ},
