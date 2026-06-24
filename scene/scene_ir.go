@@ -72,6 +72,12 @@ type SceneIR struct {
 	// in-memory facade over motion core; it is NOT serialised to the wire (JSON
 	// serialisation of MotionIR tracks is deferred to Task 1.15+).
 	SpinTracks []motion.Track `json:"-"`
+	// MotionProgram carries the binary-encoded motion.Timeline for all spin
+	// tracks in the scene. It is produced by Graph.SceneIR() from SpinTracks and
+	// serialised as base64 in JSON (Go []byte → base64 automatically). Omitted
+	// when there is no motion. The JS runtime can call motionLoad() with this
+	// payload to drive object rotations.
+	MotionProgram []byte `json:"motionProgram,omitempty"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
@@ -799,7 +805,7 @@ func (g Graph) SceneIR() SceneIR {
 	for _, node := range g.Nodes {
 		lowerer.lowerNode(node, identityTransform())
 	}
-	return SceneIR{
+	ir := SceneIR{
 		Objects:            lowerer.objects,
 		Models:             lowerer.models,
 		Points:             lowerer.points,
@@ -813,6 +819,19 @@ func (g Graph) SceneIR() SceneIR {
 		Lights:             lowerer.lights,
 		SpinTracks:         lowerer.spinTracks,
 	}
+
+	// Serialize spin tracks into MotionProgram so the browser can motionLoad()
+	// them. Build a scene-level Timeline from SpinTracks, intern target/prop
+	// refs, then encode to a flat binary blob (base64 on the wire).
+	if len(ir.SpinTracks) > 0 {
+		tl := ir.SpinMotionTimeline()
+		targetIn := motion.NewInterner()
+		propIn := motion.NewInterner()
+		motion.PrepareTracks(tl, targetIn, propIn)
+		ir.MotionProgram = motion.EncodeProgram(tl, targetIn.Refs(), propIn.Refs())
+	}
+
+	return ir
 }
 
 // MarshalJSON serializes SceneIR to its wire JSON form. When any qualifying
@@ -941,6 +960,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 			lib[key] = source
 		}
 		out["shaderLib"] = lib
+	}
+	if len(ir.MotionProgram) > 0 {
+		out["motionProgram"] = ir.MotionProgram
 	}
 	return out
 }
