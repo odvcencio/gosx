@@ -14,6 +14,81 @@ import (
 )
 
 func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64) rootengine.RenderBundle {
+	return buildRenderBundleCached(props, nodes, width, height, timeSeconds, nil)
+}
+
+// bakedSegment is the camera-INDEPENDENT result of transforming one local-space
+// edge into WORLD space: world endpoints, world normals, and the lit RGBA at each
+// endpoint. None of these depend on the camera (the camera is applied later in the
+// clip/project step), so for a static object whose props + lighting are unchanged
+// they are identical frame-to-frame and can be served from the world-bake cache.
+type bakedSegment struct {
+	worldFrom point3
+	worldTo   point3
+	fromRGBA  [4]float64
+	toRGBA    [4]float64
+}
+
+// objectWorldBake is a per-node cache entry holding the fully baked WORLD geometry
+// for a static object. It is reused across frames (including across an orbiting
+// camera) until the node's reconcile generation or the lighting/material signature
+// changes. The segments slice and bounds are treated as READ-ONLY by every reader
+// (the emit step only reads them to clip/project + append copies into the bundle),
+// so sharing the cached slice across frames is safe.
+type objectWorldBake struct {
+	generation uint64
+	litSig     uint64
+	segments   []bakedSegment
+	bounds     rootengine.RenderBounds
+	hasBounds  bool
+}
+
+// worldBakeStore threads the SceneAdapter's per-node world-bake cache into
+// buildRenderBundle without coupling the bundle builder to the adapter type. It
+// holds the node-index keyed cache, the per-node generation slice (the
+// invalidation signal), and hit/miss counters for test assertions.
+type worldBakeStore struct {
+	cache  map[int]*objectWorldBake
+	gen    []uint64
+	hits   *uint64
+	misses *uint64
+}
+
+func (s *worldBakeStore) generationFor(nodeIndex int) (uint64, bool) {
+	if s == nil || nodeIndex < 0 || nodeIndex >= len(s.gen) {
+		return 0, false
+	}
+	return s.gen[nodeIndex], true
+}
+
+func (s *worldBakeStore) load(nodeIndex int) (*objectWorldBake, bool) {
+	if s == nil || s.cache == nil {
+		return nil, false
+	}
+	entry, ok := s.cache[nodeIndex]
+	return entry, ok
+}
+
+func (s *worldBakeStore) store(nodeIndex int, entry *objectWorldBake) {
+	if s == nil || s.cache == nil {
+		return
+	}
+	s.cache[nodeIndex] = entry
+}
+
+func (s *worldBakeStore) recordHit() {
+	if s != nil && s.hits != nil {
+		*s.hits++
+	}
+}
+
+func (s *worldBakeStore) recordMiss() {
+	if s != nil && s.misses != nil {
+		*s.misses++
+	}
+}
+
+func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64, bakeStore *worldBakeStore) rootengine.RenderBundle {
 	if width <= 0 {
 		width = 720
 	}
@@ -46,6 +121,11 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	lights := sceneLightsFromProps(props)
 	sprites := sceneSpritesFromProps(props)
 	objects := make([]sceneObject, 0, len(nodes))
+	// objectNodeIndex[k] is the stable program-node index of objects[k]; it keys
+	// the per-node world-bake cache. Kept parallel (instead of wrapping each large
+	// sceneObject in a struct) so the per-object loop copies the sceneObject exactly
+	// once, matching the pre-cache hot path's copy cost.
+	objectNodeIndex := make([]int, 0, len(nodes))
 	labels := make([]sceneLabel, 0, len(nodes))
 	for index, node := range nodes {
 		switch strings.TrimSpace(strings.ToLower(node.Kind)) {
@@ -57,6 +137,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 			}
 		case "mesh":
 			objects = append(objects, sceneObjectFromResolvedNode(index, node))
+			objectNodeIndex = append(objectNodeIndex, index)
 		case "label":
 			if label, ok := sceneLabelFromResolvedNode(index, node); ok {
 				labels = append(labels, label)
@@ -90,14 +171,19 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 	// Pre-resolve all light and environment colors once per frame so
 	// sceneLitColorRGBAResolved can skip the string→RGBA parse on every vertex.
 	litCtx := buildLightingContext(lights, environment)
+	// litSig fingerprints the lighting inputs (lights + environment). The cached
+	// lit colors are a function of these, so a change must invalidate the bake even
+	// when the object's own props are unchanged. The camera is NOT part of this.
+	litSig := lightingSignature(litCtx, lights)
 	// materialIndexByKey deduplicates materials by their identity Key so the
 	// per-object lookup is O(1) instead of an O(materials) DeepEqual scan.
 	materialIndexByKey := make(map[string]int, len(objects))
-	for _, object := range objects {
+	for objectIdx := range objects {
+		object := objects[objectIdx]
 		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, materialIndexByKey, object)
 		material := bundle.Materials[materialIndex]
-		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds, camTrig, litCtx)
+		appendResult := appendSceneObjectCached(&bundle, camera, width, height, &object, material, lights, environment, timeSeconds, camTrig, litCtx, bakeStore, objectNodeIndex[objectIdx], litSig)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
 			bounds := appendResult.Bounds
@@ -146,13 +232,27 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 }
 
 func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64, camTrig rotTrig, litCtx lightingContext) sceneAppendResult {
-	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
-	result := sceneAppendResult{}
-	// Object rotation (rotation + spin*time) is constant for every vertex of
-	// this object at this frame; hoist its trig once out of the segment loop.
-	objTrig := sceneObjectRotTrig(object, timeSeconds)
-	if !sceneObjectUsesLineGeometry(object, material) && sceneObjectHasTexturedSurface(object, material) {
-		for _, corner := range scenePlaneSurfaceCornersTrig(object, timeSeconds, objTrig) {
+	return appendSceneObjectCached(bundle, camera, width, height, &object, material, lights, environment, timeSeconds, camTrig, litCtx, nil, -1, 0)
+}
+
+// appendSceneObjectCached bakes (or reuses a cached bake of) the object's WORLD
+// geometry, then emits the camera-dependent clip/project for the current frame.
+// The bake is camera-INDEPENDENT; when the object is cache-eligible and unchanged
+// (same node generation + lighting signature) the bake step is skipped entirely
+// and the emit step replays the cached segments. The emitted WorldPositions/
+// WorldColors/bounds are bit-identical to a fresh bake — the cache only removes
+// the transcendental rotation/normal/lighting math, never alters its result.
+//
+// object is passed by pointer to avoid copying the large sceneObject struct on the
+// per-object hot path; it is treated as READ-ONLY (only deref-copied into the leaf
+// transform helpers, exactly as the pre-cache path did).
+func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object *sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64, camTrig rotTrig, litCtx lightingContext, bakeStore *worldBakeStore, nodeIndex int, litSig uint64) sceneAppendResult {
+	// Textured plane surfaces emit no world line segments; bake/cache only applies
+	// to the line-geometry path, so handle the textured case exactly as before.
+	if !sceneObjectUsesLineGeometry(*object, material) && sceneObjectHasTexturedSurface(*object, material) {
+		result := sceneAppendResult{}
+		objTrig := sceneObjectRotTrig(*object, timeSeconds)
+		for _, corner := range scenePlaneSurfaceCornersTrig(*object, timeSeconds, objTrig) {
 			result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, corner)
 		}
 		if result.HasBounds {
@@ -160,14 +260,46 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 		}
 		return result
 	}
-	// Pre-resolve this object's material base color once (same string for every
-	// vertex); the per-vertex call only needs the resolved [4]float64.
+
+	// Cache-eligible (static, unchanged) objects materialize a reusable bake and
+	// replay it across frames. Everything else streams straight into the bundle
+	// with NO intermediate allocation — identical to the pre-cache hot path — so
+	// the dynamic/animated path keeps its original alloc profile.
+	if bakeStore != nil && nodeIndex >= 0 && sceneObjectBakeEligible(object) {
+		if gen, ok := bakeStore.generationFor(nodeIndex); ok {
+			if entry, found := bakeStore.load(nodeIndex); found && entry.generation == gen && entry.litSig == litSig {
+				bakeStore.recordHit()
+				return emitBakedSceneObject(bundle, camera, width, height, material, entry, camTrig)
+			}
+			entry := bakeSceneObjectWorld(object, material, lights, timeSeconds, litCtx)
+			entry.generation = gen
+			entry.litSig = litSig
+			bakeStore.store(nodeIndex, entry)
+			bakeStore.recordMiss()
+			return emitBakedSceneObject(bundle, camera, width, height, material, entry, camTrig)
+		}
+	}
+	// Not eligible (animated/changing) or no store: bake and emit in one streaming
+	// pass so a spinning/drifting object is never served stale and we avoid the
+	// per-object bake buffer allocation entirely.
+	return bakeAndEmitSceneObject(bundle, camera, width, height, object, material, lights, timeSeconds, camTrig, litCtx)
+}
+
+// bakeAndEmitSceneObject is the original per-object hot path: it bakes each world
+// segment and immediately clips/projects/appends it, with no intermediate buffer.
+// Used for objects that are not cache-eligible (spin/drift) so the dynamic path
+// keeps its pre-cache allocation profile and stays bit-identical.
+func bakeAndEmitSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object *sceneObject, material rootengine.RenderMaterial, lights []sceneLight, timeSeconds float64, camTrig rotTrig, litCtx lightingContext) sceneAppendResult {
+	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
+	result := sceneAppendResult{}
+	obj := *object
+	objTrig := sceneObjectRotTrig(obj, timeSeconds)
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{0.55, 0.88, 1, 1})
-	for _, segment := range sceneObjectSegments(object) {
-		worldFrom := translatePointTrig(segment[0], object, timeSeconds, objTrig)
-		worldTo := translatePointTrig(segment[1], object, timeSeconds, objTrig)
-		fromNormal := sceneObjectWorldNormalTrig(object, segment[0], objTrig)
-		toNormal := sceneObjectWorldNormalTrig(object, segment[1], objTrig)
+	for _, segment := range sceneObjectSegments(obj) {
+		worldFrom := translatePointTrig(segment[0], obj, timeSeconds, objTrig)
+		worldTo := translatePointTrig(segment[1], obj, timeSeconds, objTrig)
+		fromNormal := sceneObjectWorldNormalTrig(obj, segment[0], objTrig)
+		toNormal := sceneObjectWorldNormalTrig(obj, segment[1], objTrig)
 		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
 		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
@@ -190,6 +322,138 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 		result.ViewCulled = renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
 	}
 	return result
+}
+
+// sceneObjectBakeEligible reports whether the object's WORLD geometry is constant
+// across frames: no spin (rotation*time) and no drift (sinusoidal offset*time).
+// Only such objects have camera-independent AND time-independent world positions,
+// so only they are safe to cache across frames. Any object that gains spin or
+// drift fails this check and is rebaked every frame.
+func sceneObjectBakeEligible(object *sceneObject) bool {
+	return object.SpinX == 0 && object.SpinY == 0 && object.SpinZ == 0 &&
+		object.ShiftX == 0 && object.ShiftY == 0 && object.ShiftZ == 0
+}
+
+// bakeSceneObjectWorld computes the camera-INDEPENDENT world geometry for the
+// object: per-segment world endpoints, lit RGBA, and the accumulated bounds. This
+// is exactly the work the old per-frame loop did before the camera-dependent
+// clip/project; the math (and its float ordering) is unchanged, so a cached bake
+// reproduced here is bit-identical to a fresh one.
+func bakeSceneObjectWorld(object *sceneObject, material rootengine.RenderMaterial, lights []sceneLight, timeSeconds float64, litCtx lightingContext) *objectWorldBake {
+	obj := *object
+	objTrig := sceneObjectRotTrig(obj, timeSeconds)
+	baseRGBA := sceneColorRGBA(material.Color, [4]float64{0.55, 0.88, 1, 1})
+	segments := sceneObjectSegments(obj)
+	bake := &objectWorldBake{segments: make([]bakedSegment, 0, len(segments))}
+	for _, segment := range segments {
+		worldFrom := translatePointTrig(segment[0], obj, timeSeconds, objTrig)
+		worldTo := translatePointTrig(segment[1], obj, timeSeconds, objTrig)
+		fromNormal := sceneObjectWorldNormalTrig(obj, segment[0], objTrig)
+		toNormal := sceneObjectWorldNormalTrig(obj, segment[1], objTrig)
+		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
+		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
+		bake.bounds, bake.hasBounds = expandRenderBounds(bake.bounds, bake.hasBounds, worldFrom)
+		bake.bounds, bake.hasBounds = expandRenderBounds(bake.bounds, bake.hasBounds, worldTo)
+		bake.segments = append(bake.segments, bakedSegment{
+			worldFrom: worldFrom,
+			worldTo:   worldTo,
+			fromRGBA:  fromRGBA,
+			toRGBA:    toRGBA,
+		})
+	}
+	return bake
+}
+
+// emitBakedSceneObject applies the camera-dependent clip/project to each baked
+// segment and appends the result into the bundle. The arithmetic per segment is
+// identical to the original loop's tail, so the emitted bundle is bit-identical.
+func emitBakedSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, material rootengine.RenderMaterial, bake *objectWorldBake, camTrig rotTrig) sceneAppendResult {
+	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
+	result := sceneAppendResult{Bounds: bake.bounds, HasBounds: bake.hasBounds}
+	for i := range bake.segments {
+		seg := &bake.segments[i]
+		clippedFrom, clippedTo, ok := clipWorldSegmentForCameraTrig(seg.worldFrom, seg.worldTo, camera, aspect, camTrig)
+		if !ok {
+			continue
+		}
+		appendWorldSceneLine(bundle, clippedFrom, clippedTo, seg.fromRGBA, seg.toRGBA)
+		from := projectPointTrig(clippedFrom, camera, width, height, camTrig)
+		to := projectPointTrig(clippedTo, camera, width, height, camTrig)
+		if from == nil || to == nil {
+			continue
+		}
+		stroke := mixRGBA(seg.fromRGBA, seg.toRGBA)
+		stroke[3] = clamp(stroke[3]*material.Opacity, 0, 1)
+		appendSceneLine(bundle, width, height, *from, *to, sceneRGBAString(stroke), 1.8)
+	}
+	if result.HasBounds {
+		result.ViewCulled = renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
+	}
+	return result
+}
+
+// lightingSignature fingerprints the per-frame lighting inputs that the baked lit
+// colors depend on. If it changes, a cached bake's colors are stale and must be
+// recomputed. The camera is deliberately excluded — world bakes are camera-free.
+//
+// It hashes inline with FNV-1a over a stack-local accumulator (no heap hasher) so
+// it adds no per-frame allocation to either the static or the dynamic path.
+func lightingSignature(ctx lightingContext, lights []sceneLight) uint64 {
+	const (
+		fnvOffset uint64 = 14695981039346656037
+		fnvPrime  uint64 = 1099511628211
+	)
+	h := fnvOffset
+	writeByte := func(b byte) {
+		h ^= uint64(b)
+		h *= fnvPrime
+	}
+	writeF := func(v float64) {
+		bits := math.Float64bits(v)
+		for i := 0; i < 8; i++ {
+			writeByte(byte(bits >> (8 * i)))
+		}
+	}
+	writeStr := func(s string) {
+		for i := 0; i < len(s); i++ {
+			writeByte(s[i])
+		}
+	}
+	if !ctx.active {
+		writeF(math.NaN()) // distinct, stable signature for "lighting inactive"
+		return h
+	}
+	writeF(1)
+	writeF(ctx.ambientColor.X)
+	writeF(ctx.ambientColor.Y)
+	writeF(ctx.ambientColor.Z)
+	writeF(ctx.skyColor.X)
+	writeF(ctx.skyColor.Y)
+	writeF(ctx.skyColor.Z)
+	writeF(ctx.groundColor.X)
+	writeF(ctx.groundColor.Y)
+	writeF(ctx.groundColor.Z)
+	writeF(ctx.exposure)
+	writeF(ctx.ambientInt)
+	writeF(ctx.skyInt)
+	writeF(ctx.groundInt)
+	for i, light := range lights {
+		writeStr(light.Kind)
+		writeF(light.Intensity)
+		writeF(light.X)
+		writeF(light.Y)
+		writeF(light.Z)
+		writeF(light.DirectionX)
+		writeF(light.DirectionY)
+		writeF(light.DirectionZ)
+		writeF(light.Range)
+		writeF(light.Decay)
+		c := ctx.lightColors[i]
+		writeF(c.X)
+		writeF(c.Y)
+		writeF(c.Z)
+	}
+	return h
 }
 
 func sceneObjectUsesLineGeometry(object sceneObject, material rootengine.RenderMaterial) bool {

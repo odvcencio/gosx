@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"math"
 	"strconv"
 	"testing"
 
@@ -220,3 +221,71 @@ func BenchmarkScene3D_1000BoxesLit(b *testing.B) { benchScene3DLit(b, 1000) }
 
 // BenchmarkScene3D_100BoxesLit is a smaller lit scene for quick iteration.
 func BenchmarkScene3D_100BoxesLit(b *testing.B) { benchScene3DLit(b, 100) }
+
+// scene3DStaticBenchProgram builds n STATIC boxes (Spin=0, no drift) so the baked
+// WORLD positions/normals are camera-independent and identical frame-to-frame.
+// This is the target of the per-object world-bake cache: with the camera orbiting
+// over static geometry, the world bake is pure waste without the cache.
+func scene3DStaticBenchProgram(n int) *rootengine.Program {
+	prog := &rootengine.Program{Name: "Scene3DStaticBench"}
+	exprs := make([]islandprogram.Expr, 0, n*12)
+	nodes := make([]rootengine.Node, 0, n)
+	addFloat := func(v string) islandprogram.ExprID {
+		id := islandprogram.ExprID(len(exprs))
+		exprs = append(exprs, islandprogram.Expr{Op: islandprogram.OpLitFloat, Type: islandprogram.TypeFloat, Value: v})
+		return id
+	}
+	addStr := func(v string) islandprogram.ExprID {
+		id := islandprogram.ExprID(len(exprs))
+		exprs = append(exprs, islandprogram.Expr{Op: islandprogram.OpLitString, Type: islandprogram.TypeString, Value: v})
+		return id
+	}
+	for i := 0; i < n; i++ {
+		props := map[string]islandprogram.ExprID{
+			"kind":      addStr("box"),
+			"x":         addFloat(strconv.Itoa((i%16)*2 - 16)),
+			"y":         addFloat(strconv.Itoa((i/16)%16 - 8)),
+			"z":         addFloat(strconv.Itoa(-(i / 256) - 5)),
+			"width":     addFloat("1.0"),
+			"height":    addFloat("1.0"),
+			"depth":     addFloat("1.0"),
+			"color":     addStr("#8de1ff"),
+			"rotationX": addFloat("0.3"),
+			"rotationY": addFloat("0.6"),
+			"rotationZ": addFloat("0.1"),
+			// No spinY/drift: geometry is static across frames.
+		}
+		nodes = append(nodes, rootengine.Node{Kind: "mesh", Geometry: "box", Props: props})
+	}
+	prog.Exprs = exprs
+	prog.EngineNodes = nodes
+	return prog
+}
+
+// BenchmarkScene3D_1000StaticOrbit bakes 1000 STATIC boxes while orbiting ONLY the
+// camera between iterations. The world positions/normals are camera-independent, so
+// the per-object world-bake cache serves them unchanged and only the camera-dependent
+// clip/project runs per frame. The cache lives on the SceneAdapter and persists
+// across RenderBundle calls (the same adapter is reused for every iteration).
+func BenchmarkScene3D_1000StaticOrbit(b *testing.B) {
+	prog := scene3DStaticBenchProgram(1000)
+	rt := NewSceneAdapter(prog, `{}`)
+	rt.Reconcile()
+	// Prime: first call bakes + populates the cache.
+	_ = rt.RenderBundle(1280, 720, 0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Orbit ONLY the camera; geometry is unchanged so the cache stays hot.
+		// The camera stays pulled back and sweeps a small angle so geometry remains
+		// in front of the near plane (stable clip survival), isolating the cache's
+		// bake-skip from near-plane clip-count variance.
+		angle := float64(i%64) * 0.01
+		rt.props["camera"] = map[string]any{
+			"x":         math.Sin(angle) * 2,
+			"z":         18.0,
+			"rotationY": angle,
+		}
+		_ = rt.RenderBundle(1280, 720, 0)
+	}
+}
