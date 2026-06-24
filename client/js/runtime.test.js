@@ -4294,7 +4294,11 @@ function motionMeshExtents(gl) {
   return best || { maxAbsX: 0, maxAbsZ: 0 };
 }
 
-test("Scene3D WASM motion seam applies a quaternion rotation through SET_TRANSFORM", async () => {
+// Forces the JS-sceneState fall-through path via onRenderEngine: () => "" (so
+// ctx.runtime.renderFrame returns "" and the runtime-bundle early-return is
+// skipped). applyWasmMotionFrame only runs on this path, not for production
+// shared-runtime scenes whose Go bundle is returned by ctx.runtime.renderFrame.
+test("Scene3D WASM motion seam applies a quaternion rotation through SET_TRANSFORM (sceneState fall-through path)", async () => {
   // Quaternion for +90° about Y: (0, sin45, 0, cos45). Decoded → rotationY = π/2
   // → world-space X/Z extents swap (the box's 1.5 half-width moves to Z).
   const s = Math.SQRT1_2;
@@ -4315,7 +4319,10 @@ test("Scene3D WASM motion seam applies a quaternion rotation through SET_TRANSFO
   assert.ok(ext.maxAbsX < 1.0, `expected collapsed x-extent < 1.0, got ${ext.maxAbsX}`);
 });
 
-test("Scene3D WASM motion seam stays inert when the flag is unset", async () => {
+// Forces the JS-sceneState fall-through path via onRenderEngine: () => "" (same
+// as above). Verifies that applyWasmMotionFrame exits immediately when the
+// opt-in flag is absent, even on this fall-through path.
+test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fall-through path)", async () => {
   let tickCalls = 0;
   const tick = () => { tickCalls += 1; return 7; };
   // motionFlag=false: window.__gosx_motion_wasm is never set, so even though the

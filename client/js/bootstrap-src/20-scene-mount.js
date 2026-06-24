@@ -7008,6 +7008,15 @@
     // each frame tick + decode packed transform writes into SET_TRANSFORM
     // commands routed through applySceneCommands (so state re-normalizes). Inert
     // unless window.__gosx_motion_wasm is set and the exports are present.
+    //
+    // SCOPE: this seam runs ONLY on the JS-sceneState render path — i.e. the
+    // createSceneRenderBundle fall-through (onRenderEngine returns ""), and
+    // declarative SceneIR scenes that ship motionProgram but render via JS rather
+    // than the Go runtime bundle. Production shared-runtime Scene3D scenes call
+    // ctx.runtime.renderFrame(), receive a non-empty runtimeBundle, and return at
+    // line ~7128 BEFORE reaching this call — so this seam does NOT drive them.
+    // Motion for those scenes is computed by motion.Eval inside
+    // client/vm/scene_render_bundle.go and is baked into the Go-produced bundle.
     function applyWasmMotionFrame(timeSeconds) {
       if (wasmMotionState < 0) return;
       if (typeof window === "undefined" || !window.__gosx_motion_wasm
