@@ -42,6 +42,7 @@ func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *Write
 //   - GenSpin → identity quaternion {0,0,0,1}
 //   - GenDrift → Base (no oscillation)
 //   - GenSpring → Base.F[1] (the settled "to" value)
+//   - GenOscillator → OscBase (rest, no oscillation)
 func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 	gen := track.Gen
 	var scratch [4]float64
@@ -72,6 +73,13 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 			}
 			scratch[0] = gen.Base.F[1]
 			out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch})
+		case GenOscillator:
+			// Rest value — no oscillation: emit OscBase at OscArity.
+			w := gen.OscArity.Width()
+			for a := 0; a < w; a++ {
+				scratch[a] = gen.OscBase[a]
+			}
+			out.Push(track.TargetID, track.PropID, Value{Arity: gen.OscArity, F: scratch})
 		default:
 			// GenNone or unknown — emit nothing.
 		}
@@ -103,6 +111,14 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 		v := gen.Spring.Value(gen.Base.F[0], gen.Base.F[1], t)
 		scratch[0] = v
 		out.Push(track.TargetID, track.PropID, Value{Arity: ArityScalar, F: scratch})
+
+	case GenOscillator:
+		// Per-component sinusoidal pulse at the output arity (zero-alloc).
+		w := gen.OscArity.Width()
+		for a := 0; a < w; a++ {
+			scratch[a] = gen.OscBase[a] + gen.OscAmp[a]*math.Sin(t*gen.OscFreq[a]*2*math.Pi+gen.OscPhase[a])
+		}
+		out.Push(track.TargetID, track.PropID, Value{Arity: gen.OscArity, F: scratch})
 
 	default:
 		// GenNone or unknown — emit nothing.

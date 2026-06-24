@@ -406,6 +406,128 @@ func TestEvalGenSpringScalar(t *testing.T) {
 	}
 }
 
+// TestEvalGenOscillatorColor: GenOscillator at ArityColor.
+// Base=[0,0,0,1], Amp=[1,1,1,0], Freq=[1,1,1,0], Phase=[0,0,0,0].
+//   - at t=0    → sin(0)=0 → emits base [0,0,0,1]
+//   - at t=0.25 (quarter period for freq=1Hz) → sin(π/2)=1 → base+amp [1,1,1,1]
+func TestEvalGenOscillatorColor(t *testing.T) {
+	const eps = 1e-9
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 14,
+					PropID:   2,
+					Gen: &Generator{
+						Kind:     GenOscillator,
+						OscArity: ArityColor,
+						OscBase:  [4]float64{0, 0, 0, 1},
+						OscAmp:   [4]float64{1, 1, 1, 0},
+						OscFreq:  [4]float64{1, 1, 1, 0},
+						OscPhase: [4]float64{0, 0, 0, 0},
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+
+	// t=0 → base exactly.
+	Eval(tl, 0, Policy{}, out)
+	got0 := out.Writes()
+	want0 := []float64{14, 2, float64(ArityColor), 0, 0, 0, 1}
+	if len(got0) != len(want0) {
+		t.Fatalf("t=0 len mismatch: got %v, want %v", got0, want0)
+	}
+	for i, v := range want0 {
+		if math.Abs(got0[i]-v) > eps {
+			t.Errorf("t=0 index %d: got %v, want %v (full: %v)", i, got0[i], v, got0)
+		}
+	}
+
+	// t=0.25 (quarter period) → base+amp.
+	out.Reset()
+	Eval(tl, 0.25, Policy{}, out)
+	got25 := out.Writes()
+	want25 := []float64{14, 2, float64(ArityColor), 1, 1, 1, 1}
+	if len(got25) != len(want25) {
+		t.Fatalf("t=0.25 len mismatch: got %v, want %v", got25, want25)
+	}
+	for i, v := range want25 {
+		if math.Abs(got25[i]-v) > eps {
+			t.Errorf("t=0.25 index %d: got %v, want %v (full: %v)", i, got25[i], v, got25)
+		}
+	}
+}
+
+// TestEvalGenOscillatorReducedMotion: reduced-motion collapses the oscillator to
+// its rest value (OscBase).
+func TestEvalGenOscillatorReducedMotion(t *testing.T) {
+	const eps = 1e-12
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 15,
+					PropID:   0,
+					Gen: &Generator{
+						Kind:     GenOscillator,
+						OscArity: ArityScalar,
+						OscBase:  [4]float64{0.3, 0, 0, 0},
+						OscAmp:   [4]float64{1, 0, 0, 0},
+						OscFreq:  [4]float64{2, 0, 0, 0},
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(16)
+	// Even at a non-zero phase, reduced-motion emits OscBase.
+	Eval(tl, 0.123, Policy{ReducedMotion: true}, out)
+	got := out.Writes()
+	want := []float64{15, 0, float64(ArityScalar), 0.3}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if math.Abs(got[i]-v) > eps {
+			t.Errorf("index %d: got %v, want %v (full: %v)", i, got[i], v, got)
+		}
+	}
+}
+
+// TestEvalGenOscillatorZeroAlloc: oscillator eval must not allocate.
+func TestEvalGenOscillatorZeroAlloc(t *testing.T) {
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 16,
+					PropID:   0,
+					Gen: &Generator{
+						Kind:     GenOscillator,
+						OscArity: ArityColor,
+						OscBase:  [4]float64{0, 0, 0, 1},
+						OscAmp:   [4]float64{1, 1, 1, 0},
+						OscFreq:  [4]float64{1, 1, 1, 0},
+					},
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+	allocs := testing.AllocsPerRun(1000, func() {
+		out.Reset()
+		Eval(tl, 0.137, Policy{}, out)
+	})
+	if allocs != 0 {
+		t.Errorf("expected 0 allocs per run (oscillator generator), got %v", allocs)
+	}
+}
+
 // TestEvalGenSpinZeroAlloc: generator (spin) eval must not allocate.
 func TestEvalGenSpinZeroAlloc(t *testing.T) {
 	tl := &Timeline{

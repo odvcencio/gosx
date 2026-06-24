@@ -160,6 +160,9 @@ func generatorsEqual(a, b *Generator) bool {
 	if a.Spin != b.Spin || a.Drift != b.Drift || a.DriftSpeed != b.DriftSpeed || a.DriftPhase != b.DriftPhase {
 		return false
 	}
+	if a.OscArity != b.OscArity || a.OscBase != b.OscBase || a.OscAmp != b.OscAmp || a.OscFreq != b.OscFreq || a.OscPhase != b.OscPhase {
+		return false
+	}
 	return a.Spring == b.Spring
 }
 
@@ -394,9 +397,9 @@ func TestWireCubicSplineRoundTrip(t *testing.T) {
 	}
 
 	blob := EncodeProgram(tl, nil, nil)
-	// Verify it really used the MOT2 magic.
-	if string(blob[:4]) != "MOT2" {
-		t.Fatalf("expected MOT2 magic, got %q", string(blob[:4]))
+	// Verify it really used the current wire magic (MOT3).
+	if string(blob[:4]) != "MOT3" {
+		t.Fatalf("expected MOT3 magic, got %q", string(blob[:4]))
 	}
 
 	got, _, _, err := DecodeProgram(blob)

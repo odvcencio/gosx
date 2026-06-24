@@ -69,6 +69,22 @@ func materialMotionTracks(anims []MaterialUniformAnim, ref string) []motion.Trac
 		if uniform == "" {
 			continue
 		}
+
+		// Generator paths REPLACE the keyframe path. Spring takes precedence if
+		// both are set. Malformed generator specs are skipped (no panic).
+		if a.Spring != nil {
+			if tr, ok := materialSpringTrack(a, uniform, ref); ok {
+				out = append(out, tr)
+			}
+			continue
+		}
+		if a.Oscillator != nil {
+			if tr, ok := materialOscillatorTrack(a, uniform, ref); ok {
+				out = append(out, tr)
+			}
+			continue
+		}
+
 		arity, w := materialArity(a.Arity, uniform)
 		if w == 0 {
 			continue
@@ -109,6 +125,93 @@ func materialMotionTracks(anims []MaterialUniformAnim, ref string) []motion.Trac
 		return nil
 	}
 	return out
+}
+
+// materialSpringTrack lowers a MaterialUniformAnim with a Spring spec into a
+// GenSpring generator Track on a SCALAR uniform. The generator emits ArityScalar
+// (Spring.Value(from, to, t)); Base.F = [from, to]. Zero spring constants fall
+// back to motion.Spring defaults at eval time. Returns ok=false if the spec is
+// nil (caller-guarded) — there is nothing else to validate, a scalar spring is
+// always well-formed.
+func materialSpringTrack(a MaterialUniformAnim, uniform, ref string) (motion.Track, bool) {
+	s := a.Spring
+	if s == nil {
+		return motion.Track{}, false
+	}
+	return motion.Track{
+		Target: motion.Target{
+			Kind: motion.TargetMaterial,
+			Ref:  ref,
+		},
+		Prop: uniform,
+		Gen: &motion.Generator{
+			Kind: motion.GenSpring,
+			// Base.F = [from, to, ...] — width-2 (ArityVec2) satisfies the
+			// evaluator guard (needs >= 2); the generator emits ArityScalar.
+			Base: motion.Value{
+				Arity: motion.ArityVec2,
+				F:     [4]float64{s.From, s.To, 0, 0},
+			},
+			Spring: motion.Spring{
+				Mass:      s.Mass,
+				Stiffness: s.Stiffness,
+				Damping:   s.Damping,
+				Velocity:  s.Velocity,
+			},
+		},
+	}, true
+}
+
+// materialOscillatorTrack lowers a MaterialUniformAnim with an Oscillator spec
+// into a GenOscillator generator Track at the uniform's arity. Per-component
+// arrays are copied into fixed [4]float64 slots (missing components default to
+// 0). Returns ok=false for a malformed arity (not 1/3/4) so the entry is skipped.
+func materialOscillatorTrack(a MaterialUniformAnim, uniform, ref string) (motion.Track, bool) {
+	o := a.Oscillator
+	if o == nil {
+		return motion.Track{}, false
+	}
+	arity, w := materialArity(a.Arity, uniform)
+	if w == 0 {
+		return motion.Track{}, false
+	}
+
+	var base, amp, freq, phase [4]float64
+	copyComponents(&base, o.Base, w)
+	copyComponents(&amp, o.Amplitude, w)
+	copyComponents(&freq, o.Freq, w)
+	copyComponents(&phase, o.Phase, w)
+
+	return motion.Track{
+		Target: motion.Target{
+			Kind: motion.TargetMaterial,
+			Ref:  ref,
+		},
+		Prop: uniform,
+		Gen: &motion.Generator{
+			Kind:     motion.GenOscillator,
+			OscArity: arity,
+			OscBase:  base,
+			OscAmp:   amp,
+			OscFreq:  freq,
+			OscPhase: phase,
+		},
+	}, true
+}
+
+// copyComponents copies up to w (and up to 4) leading values from src into dst.
+// Missing/extra source entries are ignored (dst stays zero past len(src)).
+func copyComponents(dst *[4]float64, src []float64, w int) {
+	n := w
+	if n > 4 {
+		n = 4
+	}
+	if n > len(src) {
+		n = len(src)
+	}
+	for i := 0; i < n; i++ {
+		dst[i] = src[i]
+	}
 }
 
 // MaterialMotionTimeline returns a scene-level motion.Timeline wrapping every

@@ -302,6 +302,39 @@ type MaterialUniformAnim struct {
 	Interp   string    // "LINEAR" (default) or "STEP"
 	Loop     bool      // advisory: whether the runtime should loop this animation
 	Duration float64   // advisory: total clip duration (seconds)
+
+	// Spring and Oscillator are optional procedural generators that REPLACE the
+	// keyframe (Times/Values) path when set. They lower to a motion.Generator
+	// Track (GenSpring / GenOscillator) targeting the same material uniform, so a
+	// .sel glow can spring to a value or pulse continuously without keyframes.
+	// When both are nil, the keyframe path is used. Spring takes precedence if
+	// both are set (a uniform cannot be two generators at once).
+	Spring     *MaterialSpringAnim     // scalar: springs From → To
+	Oscillator *MaterialOscillatorAnim // per-component sinusoidal pulse
+}
+
+// MaterialSpringAnim drives a SCALAR material uniform from From to To via a
+// critically/under-damped spring. Lowers to motion.GenSpring (ArityScalar).
+// Mass/Stiffness/Damping/Velocity feed motion.Spring; zero Mass defaults to 1.
+type MaterialSpringAnim struct {
+	From      float64
+	To        float64
+	Mass      float64
+	Stiffness float64
+	Damping   float64
+	Velocity  float64
+}
+
+// MaterialOscillatorAnim drives a per-component sinusoidal pulse on a material
+// uniform: value[i] = Base[i] + Amplitude[i]*sin(t*Freq[i]*2π + Phase[i]).
+// Each slice is indexed per component; length should equal the uniform arity
+// (1/3/4). Missing components default to 0. Lowers to motion.GenOscillator at
+// the uniform's arity.
+type MaterialOscillatorAnim struct {
+	Base      []float64 // per-component rest value
+	Amplitude []float64 // per-component amplitude
+	Freq      []float64 // per-component frequency (Hz)
+	Phase     []float64 // per-component phase offset (radians)
 }
 
 // LODLevel describes one level inside a discrete LODGroup. Distance is the

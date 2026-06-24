@@ -65,13 +65,19 @@ type Key struct {
 type GeneratorKind uint8
 
 const (
-	GenNone   GeneratorKind = iota // no generator
-	GenSpin                        // constant rotation about axes
-	GenSpring                      // spring-driven toward Base
-	GenDrift                       // sinusoidal drift
+	GenNone       GeneratorKind = iota // no generator
+	GenSpin                            // constant rotation about axes
+	GenSpring                          // spring-driven toward Base
+	GenDrift                           // sinusoidal drift
+	GenOscillator                      // arity-aware per-component sinusoidal pulse
 )
 
 // Generator is a procedural animation source that continuously perturbs a base value.
+//
+// GenOscillator is arity-agnostic: it emits OscArity components where each
+// component i is value[i] = OscBase[i] + OscAmp[i]*sin(t*OscFreq[i]*2π + OscPhase[i]).
+// Freq is in Hz (cycles/sec). This drives scalar/vec3/vec4/color material uniforms
+// (e.g. a pulsing .sel glow) without keyframes.
 type Generator struct {
 	Kind       GeneratorKind
 	Base       Value      // base value the generator perturbs
@@ -80,6 +86,14 @@ type Generator struct {
 	Drift      [3]float64 // amplitude per axis (GenDrift)
 	DriftSpeed [3]float64
 	DriftPhase [3]float64
+
+	// GenOscillator: per-component pulse (up to 4 components). OscArity is the
+	// output arity; only the first OscArity.Width() components are used.
+	OscArity ValueArity
+	OscBase  [4]float64 // per-component rest value
+	OscAmp   [4]float64 // per-component amplitude
+	OscFreq  [4]float64 // per-component frequency (Hz)
+	OscPhase [4]float64 // per-component phase offset (radians)
 }
 
 // Track is one animation channel: either a keyframe sequence or a procedural generator.

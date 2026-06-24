@@ -16,10 +16,14 @@ import (
 	"math"
 )
 
-// wireMagic prefixes every encoded program. The current version is "MOT2"
-// (adds optional per-key cubicspline tangents). "MOT1" (no tangents) is still
-// accepted on decode for backward compatibility.
-var wireMagic = [4]byte{'M', 'O', 'T', '2'}
+// wireMagic prefixes every encoded program. The current version is "MOT3"
+// (adds GenOscillator generator fields). "MOT2" (cubicspline tangents) and
+// "MOT1" (no tangents) are still accepted on decode for backward compatibility.
+var wireMagic = [4]byte{'M', 'O', 'T', '3'}
+
+// wireMagicV2 is the magic that introduced per-key cubicspline tangents but no
+// oscillator generator fields.
+var wireMagicV2 = [4]byte{'M', 'O', 'T', '2'}
 
 // wireMagicV1 is the legacy magic with no per-key tangent fields.
 var wireMagicV1 = [4]byte{'M', 'O', 'T', '1'}
@@ -91,6 +95,14 @@ func putFixed3(b []byte, fs [3]float64) []byte {
 	return putF64(b, fs[2])
 }
 
+// putFixed4 appends exactly 4 float64 (no count).
+func putFixed4(b []byte, fs [4]float64) []byte {
+	b = putF64(b, fs[0])
+	b = putF64(b, fs[1])
+	b = putF64(b, fs[2])
+	return putF64(b, fs[3])
+}
+
 // putValue appends uint8 arity + 4 float64 (always 4, trailing zeros included).
 func putValue(b []byte, v Value) []byte {
 	b = putU8(b, uint8(v.Arity))
@@ -160,7 +172,13 @@ func putGenerator(b []byte, g *Generator) []byte {
 	b = putSpring(b, g.Spring)
 	b = putFixed3(b, g.Drift)
 	b = putFixed3(b, g.DriftSpeed)
-	return putFixed3(b, g.DriftPhase)
+	b = putFixed3(b, g.DriftPhase)
+	// MOT3: GenOscillator fields (arity + 4 per-component arrays).
+	b = putU8(b, uint8(g.OscArity))
+	b = putFixed4(b, g.OscBase)
+	b = putFixed4(b, g.OscAmp)
+	b = putFixed4(b, g.OscFreq)
+	return putFixed4(b, g.OscPhase)
 }
 
 func putTrack(b []byte, tr *Track) []byte {
@@ -236,7 +254,8 @@ type reader struct {
 	off int
 	err error
 	// version is the wire version derived from the magic: 1 for "MOT1" (no
-	// per-key tangents), 2 for "MOT2" (cubicspline tangents present).
+	// per-key tangents), 2 for "MOT2" (cubicspline tangents present), 3 for
+	// "MOT3" (GenOscillator generator fields present).
 	version int
 }
 
@@ -362,6 +381,15 @@ func (r *reader) fixed3(what string) [3]float64 {
 	return a
 }
 
+func (r *reader) fixed4(what string) [4]float64 {
+	var a [4]float64
+	a[0] = r.f64(what)
+	a[1] = r.f64(what)
+	a[2] = r.f64(what)
+	a[3] = r.f64(what)
+	return a
+}
+
 func (r *reader) value(what string) Value {
 	var v Value
 	v.Arity = ValueArity(r.u8(what))
@@ -439,6 +467,14 @@ func (r *reader) generator() *Generator {
 	g.Drift = r.fixed3("gen.drift")
 	g.DriftSpeed = r.fixed3("gen.driftspeed")
 	g.DriftPhase = r.fixed3("gen.driftphase")
+	// MOT3: GenOscillator fields. Absent in MOT1/MOT2 (zero value → no oscillation).
+	if r.version >= 3 {
+		g.OscArity = ValueArity(r.u8("gen.oscarity"))
+		g.OscBase = r.fixed4("gen.oscbase")
+		g.OscAmp = r.fixed4("gen.oscamp")
+		g.OscFreq = r.fixed4("gen.oscfreq")
+		g.OscPhase = r.fixed4("gen.oscphase")
+	}
 	return g
 }
 
@@ -532,6 +568,8 @@ func DecodeProgram(b []byte) (tl *Timeline, targetRefs, propRefs []string, err e
 	var version int
 	switch {
 	case b[0] == wireMagic[0] && b[1] == wireMagic[1] && b[2] == wireMagic[2] && b[3] == wireMagic[3]:
+		version = 3
+	case b[0] == wireMagicV2[0] && b[1] == wireMagicV2[1] && b[2] == wireMagicV2[2] && b[3] == wireMagicV2[3]:
 		version = 2
 	case b[0] == wireMagicV1[0] && b[1] == wireMagicV1[1] && b[2] == wireMagicV1[2] && b[3] == wireMagicV1[3]:
 		version = 1
