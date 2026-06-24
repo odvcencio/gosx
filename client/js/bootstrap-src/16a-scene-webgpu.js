@@ -2849,6 +2849,9 @@
     var scratchViewMatrix = new Float32Array(16);
     var scratchProjMatrix = new Float32Array(16);
     var scratchSelenaViewProjection = new Float32Array(16);
+    // Per-frame clock (seconds) fed to selena materials that declare `param time : float`.
+    // Set once per frame before any selena draw; explicit customUniforms.time still overrides.
+    var sceneSelenaFrameTime = 0;
     var pointsIdentityMatrix = new Float32Array([
       1, 0, 0, 0,
       0, 1, 0, 0,
@@ -3404,6 +3407,10 @@
       var name = field && field.name;
       if (name === "mvp") return scratchSelenaViewProjection;
       if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
+      // customUniforms so a declared `param time` — whose compiled default ships
+      // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
+      if (name === "time") return sceneSelenaFrameTime;
       var values = material && material.customUniforms;
       if (values && typeof values === "object" && Object.prototype.hasOwnProperty.call(values, name)) {
         return values[name];
@@ -7044,6 +7051,7 @@
       var encoder = device.createCommandEncoder({ label: "gosx-frame" });
       var scopedFrameErrors = beginWebGPUErrorScope();
       var frameTimeSeconds = performance.now() / 1000;
+      sceneSelenaFrameTime = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);

@@ -8046,6 +8046,52 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   assert.match(webgpu, /if \(sceneSelenaIsMaterial\(material\)\) \{\n          continue;/);
 });
 
+test("Scene3D selena time auto-uniform: both backends declare the clock var and assign it before draws", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // Both backends declare the per-frame clock variable in the closure scope.
+  assert.match(webgl, /var sceneSelenaFrameTime = 0;/);
+  assert.match(webgpu, /var sceneSelenaFrameTime = 0;/);
+
+  // time is a forced reserved auto-uniform: both resolvers return the clock for
+  // name === "time" BEFORE the customUniforms check, so a declared `param time`
+  // whose compiled default ships in customUniforms cannot shadow the clock.
+  assert.match(webgl, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,200}hasOwnProperty\.call\(values, name\)/);
+  assert.match(webgpu, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,200}hasOwnProperty\.call\(values, name\)/);
+
+  // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
+  // before any render-pass encoder draw commands.
+  assert.match(webgpu, /var frameTimeSeconds = performance\.now\(\) \/ 1000;\s*\n\s*sceneSelenaFrameTime = frameTimeSeconds;/);
+
+  // WebGL: clock is set right after scratchSelenaViewProjection is populated
+  // (sceneMat4MultiplyInto), before the shadow pass and before drawPBRObjectList.
+  assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000;/);
+});
+
+test("Scene3D selena time auto-uniform: time is forced before customUniforms (reserved name)", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // The time branch must appear BEFORE the customUniforms early-return in both
+  // resolvers (mirrors mvp/normalMatrix), so a compiled `param time` default
+  // shipped in customUniforms cannot shadow the per-frame clock.
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,800}/)[0];
+  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,800}/)[0];
+
+  const webglCustomIdx = webglResolver.indexOf('return values[name]');
+  const webglTimeIdx = webglResolver.indexOf('if (name === "time")');
+  assert.ok(webglTimeIdx !== -1, 'WebGL resolver must have time branch');
+  assert.ok(webglCustomIdx !== -1, 'WebGL resolver must have customUniforms return');
+  assert.ok(webglTimeIdx < webglCustomIdx, 'WebGL time must be forced before customUniforms');
+
+  const webgpuCustomIdx = webgpuResolver.indexOf('return values[name]');
+  const webgpuTimeIdx = webgpuResolver.indexOf('if (name === "time")');
+  assert.ok(webgpuTimeIdx !== -1, 'WebGPU resolver must have time branch');
+  assert.ok(webgpuCustomIdx !== -1, 'WebGPU resolver must have customUniforms return');
+  assert.ok(webgpuTimeIdx < webgpuCustomIdx, 'WebGPU time must be forced before customUniforms');
+});
+
 test("Scene3D animation loop supports foreground frame caps", () => {
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
 
