@@ -13,7 +13,7 @@ import (
 	"m31labs.dev/gosx/motion"
 )
 
-func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64) rootengine.RenderBundle {
+func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64, spinSc *spinScratch) rootengine.RenderBundle {
 	if width <= 0 {
 		width = 720
 	}
@@ -88,7 +88,7 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, object)
 		material := bundle.Materials[materialIndex]
-		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds)
+		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds, spinSc)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
 			bounds := appendResult.Bounds
@@ -111,7 +111,8 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 				DepthCenter:   depthCenter,
 				ViewCulled:    appendResult.ViewCulled,
 			})
-			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, timeSeconds)
+			// Pass the spinQ already computed in appendSceneObject — no second evaluation.
+			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, appendResult.SpinQ, timeSeconds)
 		}
 	}
 	for _, label := range labels {
@@ -136,12 +137,15 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	}
 }
 
-func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64) sceneAppendResult {
+func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64, spinSc *spinScratch) sceneAppendResult {
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
 	result := sceneAppendResult{}
 	// Spin orientation is identical for every vertex of the object: compute it
 	// once here (per object per frame) via the canonical motion evaluator.
-	spinQ := spinQuatForObject(object, timeSeconds)
+	// The computed spinQ is stored in result so the caller can pass it to
+	// appendSceneSurface — eliminating the double-compute for textured planes.
+	spinQ := spinQuatWithScratch(object, timeSeconds, spinSc)
+	result.SpinQ = spinQ
 	if !sceneObjectUsesLineGeometry(object, material) && sceneObjectHasTexturedSurface(object, material) {
 		for _, corner := range scenePlaneSurfaceCorners(object, spinQ, timeSeconds) {
 			result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, corner)
@@ -184,11 +188,11 @@ func sceneObjectUsesLineGeometry(object sceneObject, material rootengine.RenderM
 	return !(sceneObjectHasTexturedSurface(object, material) && !material.Wireframe)
 }
 
-func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, timeSeconds float64) {
+func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, spinQ motion.Quat, timeSeconds float64) {
 	if !sceneObjectHasTexturedSurface(object, material) {
 		return
 	}
-	spinQ := spinQuatForObject(object, timeSeconds)
+	// spinQ was already computed in appendSceneObject and threaded here — no second evaluation.
 	corners := scenePlaneSurfaceCorners(object, spinQ, timeSeconds)
 	if len(corners) != 4 {
 		return

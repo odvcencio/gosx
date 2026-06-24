@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
 type sceneCamera struct {
@@ -306,6 +307,7 @@ type sceneAppendResult struct {
 	Bounds     rootengine.RenderBounds
 	HasBounds  bool
 	ViewCulled bool
+	SpinQ      motion.Quat
 }
 
 func sceneBackground(props map[string]any) string {

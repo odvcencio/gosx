@@ -1443,3 +1443,125 @@ func TestClipWorldSegmentForCameraCullsOffscreenSegment(t *testing.T) {
 		t.Fatal("expected fully offscreen segment to be culled")
 	}
 }
+
+// TestSpinQuatSingleAxisAllAxesMatchOldEulerPath extends TestSpinQuatSingleAxisMatchesOldEulerPath
+// to cover X-only, Y-only, AND Z-only spin (the property holds for all single axes).
+func TestSpinQuatSingleAxisAllAxesMatchOldEulerPath(t *testing.T) {
+	const ts = 0.37
+	const r = 0.9
+	p := point3{X: 0.3, Y: -0.4, Z: 0.6} // off-axis so all axes are exercised
+
+	cases := []struct {
+		name string
+		obj  sceneObject
+	}{
+		{
+			name: "SpinX-only",
+			obj: sceneObject{
+				ID: "sx", Kind: "box",
+				Width: 1.4, Height: 0.8, Depth: 1.1,
+				X: 0.5, Y: -0.25, Z: 0.75,
+				SpinX: r,
+			},
+		},
+		{
+			name: "SpinY-only",
+			obj: sceneObject{
+				ID: "sy", Kind: "box",
+				Width: 1.4, Height: 0.8, Depth: 1.1,
+				X: 0.5, Y: -0.25, Z: 0.75,
+				SpinY: r,
+			},
+		},
+		{
+			name: "SpinZ-only",
+			obj: sceneObject{
+				ID: "sz", Kind: "box",
+				Width: 1.4, Height: 0.8, Depth: 1.1,
+				X: 0.5, Y: -0.25, Z: 0.75,
+				SpinZ: r,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spinQ := spinQuatForObject(tc.obj, ts)
+			got := translatePoint(p, tc.obj, spinQ, ts)
+			oldRot := oldRotatePointEulerSpin(p, tc.obj, ts)
+			want := point3{
+				X: oldRot.X + tc.obj.X,
+				Y: oldRot.Y + tc.obj.Y,
+				Z: oldRot.Z + tc.obj.Z,
+			}
+			if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+				t.Fatalf("%s: diverged from old Euler path: p=%v got=%v want=%v", tc.name, p, got, want)
+			}
+		})
+	}
+}
+
+// TestSpinQuatNormalSingleAxisAllAxesMatchOld extends TestSpinQuatNormalSingleAxisMatchesOld
+// to cover X-only, Y-only, AND Z-only spin for world normals.
+func TestSpinQuatNormalSingleAxisAllAxesMatchOld(t *testing.T) {
+	const ts = 0.37
+	const r = 1.1
+	p := point3{X: 0.7, Y: 0.1, Z: -0.2} // off-axis so a definite face normal is produced
+
+	cases := []struct {
+		name string
+		obj  sceneObject
+	}{
+		{
+			name: "SpinX-only",
+			obj:  sceneObject{ID: "nx", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinX: r},
+		},
+		{
+			name: "SpinY-only",
+			obj:  sceneObject{ID: "ny", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinY: r},
+		},
+		{
+			name: "SpinZ-only",
+			obj:  sceneObject{ID: "nz", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinZ: r},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spinQ := spinQuatForObject(tc.obj, ts)
+			got := sceneObjectWorldNormal(tc.obj, p, spinQ)
+			local := sceneObjectLocalNormal(tc.obj, p)
+			want := normalizePoint3(oldRotatePointEulerSpin(local, tc.obj, ts))
+			if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+				t.Fatalf("%s: world normal diverged: got=%v want=%v", tc.name, got, want)
+			}
+		})
+	}
+}
+
+// TestSpinQuatZeroAllocForStaticObject verifies the zero-spin early-return path
+// allocates nothing (no Eval, no WriteBuf push).
+func TestSpinQuatZeroAllocForStaticObject(t *testing.T) {
+	staticObj := sceneObject{ID: "static", Kind: "box", Width: 1, Height: 1, Depth: 1}
+	allocs := testing.AllocsPerRun(100, func() {
+		spinQuatForObject(staticObj, 0.5)
+	})
+	if allocs != 0 {
+		t.Fatalf("expected 0 allocs for zero-spin object, got %v", allocs)
+	}
+}
+
+// TestSpinQuatZeroAllocWithCachedScratch verifies the spinning path reuses the
+// cached scratch (zero per-call alloc once the scratch is initialised).
+func TestSpinQuatZeroAllocWithCachedScratch(t *testing.T) {
+	sc := newSpinScratch()
+	obj := sceneObject{ID: "spinner", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinY: 0.9}
+	// Warm up — first call may touch any one-time setup inside WriteBuf.
+	spinQuatWithScratch(obj, 0.1, sc)
+	allocs := testing.AllocsPerRun(100, func() {
+		spinQuatWithScratch(obj, 0.5, sc)
+	})
+	if allocs != 0 {
+		t.Fatalf("expected 0 allocs when reusing cached scratch for spinning object, got %v", allocs)
+	}
+}
