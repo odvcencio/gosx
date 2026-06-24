@@ -28,7 +28,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             },
             {
               "T": 1,
@@ -41,7 +43,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             }
           ],
           "Gen": null,

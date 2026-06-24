@@ -163,10 +163,20 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 		arity := ka.Value.Arity
 		w := arity.Width()
 
-		if track.Interp == InterpStep {
+		switch {
+		case track.Interp == InterpStep:
 			StepInto(scratch[:w], ka.Value)
-		} else {
-			// InterpLinear (and unrecognised modes fall through to linear for 1.6a).
+
+		case track.Interp == InterpCubicSpline && ka.OutTangent != nil && kb.InTangent != nil:
+			// glTF CUBICSPLINE Hermite: out-tangent b_k of the left key and
+			// in-tangent a_{k+1} of the right key. alpha is already the local
+			// parameter s ∈ [0,1]; delta is the segment duration.
+			delta := kb.T - ka.T
+			CubicHermiteInto(scratch[:w], ka.Value, *ka.OutTangent, kb.Value, *kb.InTangent, delta, alpha)
+
+		default:
+			// InterpLinear, plus defensive fallbacks: a cubicspline track whose
+			// keys lack tangents (nil), and any unrecognised mode, lerp linearly.
 			// Per-key ease overrides track-level ease; EaseLinear (zero value) is identity.
 			ease := track.Ease
 			if ka.Ease != nil {

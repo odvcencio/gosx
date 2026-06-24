@@ -344,6 +344,36 @@ func corpusCases() []goldenCase {
 		})
 	}
 
+	// -----------------------------------------------------------------------
+	// 6. cubic_spline: vec3 glTF CUBICSPLINE track with in/out tangents
+	// -----------------------------------------------------------------------
+	{
+		out0 := Vec3V(4, 0, -2) // left key out-tangent
+		in1 := Vec3V(-1, 3, 5)  // right key in-tangent
+		tl := Timeline{
+			Children: []Positioned{
+				{
+					At: Position{Kind: PosAbs, Val: 0},
+					Track: &Track{
+						TargetID: 1,
+						PropID:   0,
+						Keys: []Key{
+							{T: 0, Value: Vec3V(0, 0, 0), OutTangent: &out0},
+							{T: 1, Value: Vec3V(10, 20, 30), InTangent: &in1},
+						},
+						Interp: InterpCubicSpline,
+					},
+				},
+			},
+		}
+		cases = append(cases, goldenCase{
+			Name:     "cubic_spline",
+			Tol:      1e-9,
+			Timeline: tl,
+			Samples:  sampleTimeline(&tl, []float64{0, 0.25, 0.5, 0.75, 1.0}),
+		})
+	}
+
 	return cases
 }
 

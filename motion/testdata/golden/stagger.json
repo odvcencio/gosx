@@ -28,7 +28,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             },
             {
               "T": 1.1,
@@ -41,7 +43,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             }
           ],
           "Gen": null,
@@ -79,7 +83,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             },
             {
               "T": 1,
@@ -92,7 +98,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             }
           ],
           "Gen": null,
@@ -130,7 +138,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             },
             {
               "T": 1.1,
@@ -143,7 +153,9 @@
                   0
                 ]
               },
-              "Ease": null
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
             }
           ],
           "Gen": null,

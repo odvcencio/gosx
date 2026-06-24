@@ -48,6 +48,117 @@ func TestEvalLinearMidpoint(t *testing.T) {
 	}
 }
 
+// cubicTL builds a single 2-key cubicspline scalar track with the given
+// out-tangent (left key) and in-tangent (right key).
+func cubicTL(vK, bK, vK1, aK1 float64) *Timeline {
+	in := ScalarV(aK1)
+	out := ScalarV(bK)
+	return &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 5,
+					PropID:   2,
+					Keys: []Key{
+						{T: 0, Value: ScalarV(vK), OutTangent: &out},
+						{T: 1, Value: ScalarV(vK1), InTangent: &in},
+					},
+					Interp: InterpCubicSpline,
+				},
+			},
+		},
+	}
+}
+
+// TestEvalCubicSplineMidSegment: a 2-key cubicspline track evaluated mid-segment
+// must match the Hermite oracle and differ from a plain linear lerp.
+func TestEvalCubicSplineMidSegment(t *testing.T) {
+	// vK=0, out-tangent bK=4, vK1=10, in-tangent aK1=2, delta=1 (t in [0,1]).
+	tl := cubicTL(0, 4, 10, 2)
+	out := NewWriteBuf(64)
+	Eval(tl, 0.5, Policy{}, out)
+	got := out.Writes()
+	// layout: [targetID=5, propID=2, arity=ArityScalar(0), value]
+	if len(got) != 4 {
+		t.Fatalf("len mismatch: got %v, want 4 floats", got)
+	}
+	gotVal := got[3]
+
+	s := 0.5
+	s2 := s * s
+	s3 := s2 * s
+	wantHermite := (2*s3-3*s2+1)*0 + 1.0*(s3-2*s2+s)*4 + (-2*s3+3*s2)*10 + 1.0*(s3-s2)*2
+	if math.Abs(gotVal-wantHermite) > 1e-12 {
+		t.Errorf("cubicspline mid value = %v, want Hermite %v", gotVal, wantHermite)
+	}
+
+	// And it must differ from linear (which would be 5.0).
+	if math.Abs(gotVal-5.0) < 1e-9 {
+		t.Errorf("cubicspline value %v matches linear 5.0 — tangents ignored", gotVal)
+	}
+}
+
+// TestEvalCubicSplineEndpoints: endpoints clamp to the key values.
+func TestEvalCubicSplineEndpoints(t *testing.T) {
+	tl := cubicTL(3, 9, 17, -4)
+	out := NewWriteBuf(64)
+
+	// At t=0 → clamp to first key (value 3).
+	out.Reset()
+	Eval(tl, 0, Policy{}, out)
+	if g := out.Writes(); len(g) != 4 || math.Abs(g[3]-3) > 1e-12 {
+		t.Errorf("t=0 → %v, want value 3", g)
+	}
+
+	// At t=1 → clamp to last key (value 17).
+	out.Reset()
+	Eval(tl, 1, Policy{}, out)
+	if g := out.Writes(); len(g) != 4 || math.Abs(g[3]-17) > 1e-12 {
+		t.Errorf("t=1 → %v, want value 17", g)
+	}
+}
+
+// TestEvalCubicSplineFallbackNoTangents: a cubicspline track whose keys lack
+// tangents falls back to linear interpolation (defensive).
+func TestEvalCubicSplineFallbackNoTangents(t *testing.T) {
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					TargetID: 5,
+					PropID:   2,
+					Keys: []Key{
+						{T: 0, Value: ScalarV(0)},
+						{T: 1, Value: ScalarV(10)},
+					},
+					Interp: InterpCubicSpline, // but no tangents → linear
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+	Eval(tl, 0.5, Policy{}, out)
+	g := out.Writes()
+	if len(g) != 4 || math.Abs(g[3]-5.0) > 1e-12 {
+		t.Errorf("no-tangent cubicspline at t=0.5 → %v, want linear 5.0", g)
+	}
+}
+
+// TestEvalCubicSplineZeroAlloc: cubicspline eval must preserve zero allocation.
+func TestEvalCubicSplineZeroAlloc(t *testing.T) {
+	tl := cubicTL(0, 4, 10, 2)
+	out := NewWriteBuf(64)
+	allocs := testing.AllocsPerRun(1000, func() {
+		out.Reset()
+		Eval(tl, 0.5, Policy{}, out)
+	})
+	if allocs != 0 {
+		t.Errorf("expected 0 allocs per run, got %v", allocs)
+	}
+}
+
 // TestEvalClampStart: sample before first key clamps to first key.
 func TestEvalClampStart(t *testing.T) {
 	tl := &Timeline{

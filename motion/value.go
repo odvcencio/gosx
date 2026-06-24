@@ -72,6 +72,39 @@ func StepInto(dst []float64, a Value) {
 	}
 }
 
+// CubicHermiteInto writes the glTF CUBICSPLINE Hermite interpolation into dst.
+//
+// For a segment between key k (value vK, out-tangent bK) and key k+1 (value
+// vK1, in-tangent aK1), with segment duration delta and local parameter
+// s = (t - t_k)/delta ∈ [0,1], the per-component spline is:
+//
+//	p(s) = (2s³-3s²+1)·vK + delta·(s³-2s²+s)·bK
+//	     + (-2s³+3s²)·vK1 + delta·(s³-s²)·aK1
+//
+// dst must have length >= vK.Arity.Width(). For ArityQuat the four components
+// are interpolated independently then normalized (per the glTF spec). NO heap
+// allocation — all scalars are stack locals.
+func CubicHermiteInto(dst []float64, vK, bK, vK1, aK1 Value, delta, s float64) {
+	s2 := s * s
+	s3 := s2 * s
+	// Hermite basis coefficients.
+	h00 := 2*s3 - 3*s2 + 1 // for vK
+	h10 := s3 - 2*s2 + s   // for delta·bK
+	h01 := -2*s3 + 3*s2    // for vK1
+	h11 := s3 - s2         // for delta·aK1
+	n := vK.Arity.Width()
+	for i := 0; i < n; i++ {
+		dst[i] = h00*vK.F[i] + delta*h10*bK.F[i] + h01*vK1.F[i] + delta*h11*aK1.F[i]
+	}
+	if vK.Arity == ArityQuat {
+		q := Quat{X: dst[0], Y: dst[1], Z: dst[2], W: dst[3]}.Normalize()
+		dst[0] = q.X
+		dst[1] = q.Y
+		dst[2] = q.Z
+		dst[3] = q.W
+	}
+}
+
 // LerpValue is a convenience wrapper for tests and non-hot paths.
 // Returns a Value by value — zero heap allocation (POD array copy).
 // Do NOT use on the per-frame interpolation hot path; use LerpValueInto instead.

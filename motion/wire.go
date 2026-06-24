@@ -16,8 +16,13 @@ import (
 	"math"
 )
 
-// wireMagic prefixes every encoded program ("MOT1").
-var wireMagic = [4]byte{'M', 'O', 'T', '1'}
+// wireMagic prefixes every encoded program. The current version is "MOT2"
+// (adds optional per-key cubicspline tangents). "MOT1" (no tangents) is still
+// accepted on decode for backward compatibility.
+var wireMagic = [4]byte{'M', 'O', 'T', '2'}
+
+// wireMagicV1 is the legacy magic with no per-key tangent fields.
+var wireMagicV1 = [4]byte{'M', 'O', 'T', '1'}
 
 // ---------------------------------------------------------------------------
 // Encoder primitives
@@ -118,15 +123,29 @@ func putPosition(b []byte, p Position) []byte {
 	return putString(b, p.Label)
 }
 
+// putOptValue appends a presence byte and, when present, the Value.
+func putOptValue(b []byte, v *Value) []byte {
+	if v == nil {
+		return putBool(b, false)
+	}
+	b = putBool(b, true)
+	return putValue(b, *v)
+}
+
 func putKey(b []byte, k Key) []byte {
 	b = putF64(b, k.T)
 	b = putValue(b, k.Value)
 	// optional Ease: presence byte
 	if k.Ease == nil {
-		return putBool(b, false)
+		b = putBool(b, false)
+	} else {
+		b = putBool(b, true)
+		b = putEase(b, *k.Ease)
 	}
-	b = putBool(b, true)
-	return putEase(b, *k.Ease)
+	// optional cubicspline tangents (MOT2): in-tangent then out-tangent, each
+	// with its own presence byte.
+	b = putOptValue(b, k.InTangent)
+	return putOptValue(b, k.OutTangent)
 }
 
 func putGenerator(b []byte, g *Generator) []byte {
@@ -216,6 +235,9 @@ type reader struct {
 	b   []byte
 	off int
 	err error
+	// version is the wire version derived from the magic: 1 for "MOT1" (no
+	// per-key tangents), 2 for "MOT2" (cubicspline tangents present).
+	version int
 }
 
 func (r *reader) fail(what string) {
@@ -380,6 +402,15 @@ func (r *reader) position() Position {
 	return p
 }
 
+// optValue reads a presence byte and, when set, a Value.
+func (r *reader) optValue(what string) *Value {
+	if !r.boolean(what + ".present") {
+		return nil
+	}
+	v := r.value(what)
+	return &v
+}
+
 func (r *reader) key() Key {
 	var k Key
 	k.T = r.f64("key.t")
@@ -387,6 +418,11 @@ func (r *reader) key() Key {
 	if r.boolean("key.ease.present") {
 		e := r.ease("key.ease")
 		k.Ease = &e
+	}
+	// Cubicspline tangents exist only in MOT2+; MOT1 keys have none.
+	if r.version >= 2 {
+		k.InTangent = r.optValue("key.intangent")
+		k.OutTangent = r.optValue("key.outtangent")
 	}
 	return k
 }
@@ -414,8 +450,13 @@ func (r *reader) track() *Track {
 	if r.err != nil {
 		return tr
 	}
-	// each key is at least: 8 (T) + 1+32 (Value) + 1 (ease presence) bytes.
-	if int(n) > (len(r.b)-r.off)/42 {
+	// each key is at least: 8 (T) + 1+32 (Value) + 1 (ease presence) = 42 bytes;
+	// MOT2 adds 2 tangent presence bytes → 44.
+	minKey := 42
+	if r.version >= 2 {
+		minKey = 44
+	}
+	if int(n) > (len(r.b)-r.off)/minKey {
 		r.fail("track.keys count")
 		return tr
 	}
@@ -488,10 +529,16 @@ func DecodeProgram(b []byte) (tl *Timeline, targetRefs, propRefs []string, err e
 	if len(b) < 4 {
 		return nil, nil, nil, fmt.Errorf("motion wire: too short for magic (len=%d)", len(b))
 	}
-	if b[0] != wireMagic[0] || b[1] != wireMagic[1] || b[2] != wireMagic[2] || b[3] != wireMagic[3] {
+	var version int
+	switch {
+	case b[0] == wireMagic[0] && b[1] == wireMagic[1] && b[2] == wireMagic[2] && b[3] == wireMagic[3]:
+		version = 2
+	case b[0] == wireMagicV1[0] && b[1] == wireMagicV1[1] && b[2] == wireMagicV1[2] && b[3] == wireMagicV1[3]:
+		version = 1
+	default:
 		return nil, nil, nil, fmt.Errorf("motion wire: bad magic %q", string(b[:4]))
 	}
-	r := &reader{b: b, off: 4}
+	r := &reader{b: b, off: 4, version: version}
 	targetRefs = r.stringList("targetRefs")
 	propRefs = r.stringList("propRefs")
 	tl = r.timeline()

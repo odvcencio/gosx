@@ -46,10 +46,18 @@ type Target struct {
 }
 
 // Key is a single keyframe: a time, value snapshot, and optional per-key ease.
+//
+// InTangent / OutTangent carry the glTF CUBICSPLINE tangents (in-tangent a,
+// out-tangent b — see the spec note on the evaluator). They are required ONLY
+// for tracks with Interp == InterpCubicSpline; for every other interpolation
+// mode they stay nil, so non-cubic keys carry zero pointer overhead. A
+// cubicspline track whose keys lack tangents falls back to linear.
 type Key struct {
-	T     float64
-	Value Value
-	Ease  *Ease // nil → use track-level ease
+	T          float64
+	Value      Value
+	Ease       *Ease  // nil → use track-level ease
+	InTangent  *Value // cubicspline in-tangent (a); nil for non-cubic keys
+	OutTangent *Value // cubicspline out-tangent (b); nil for non-cubic keys
 }
 
 // GeneratorKind selects the procedural generator algorithm.

@@ -124,6 +124,16 @@ func easesEqual(a, b Ease) bool {
 	return a.Kind == b.Kind && floatsEqual(a.Args, b.Args)
 }
 
+func valuePtrEqual(a, b *Value) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == nil {
+		return true
+	}
+	return valuesEqual(*a, *b)
+}
+
 func easePtrEqual(a, b *Ease) bool {
 	if (a == nil) != (b == nil) {
 		return false
@@ -172,6 +182,9 @@ func tracksEqual(a, b *Track) bool {
 	for i := range a.Keys {
 		ka, kb := a.Keys[i], b.Keys[i]
 		if ka.T != kb.T || !valuesEqual(ka.Value, kb.Value) || !easePtrEqual(ka.Ease, kb.Ease) {
+			return false
+		}
+		if !valuePtrEqual(ka.InTangent, kb.InTangent) || !valuePtrEqual(ka.OutTangent, kb.OutTangent) {
 			return false
 		}
 	}
@@ -350,6 +363,103 @@ func TestWireEmptyTimeline(t *testing.T) {
 	}
 	if !timelinesEqual(tl, got) {
 		t.Fatalf("empty timeline round-trip mismatch:\n orig=%+v\n  got=%+v", tl, got)
+	}
+}
+
+// TestWireCubicSplineRoundTrip: a cubicspline track with in/out tangents must
+// survive an encode/decode round-trip (MOT2).
+func TestWireCubicSplineRoundTrip(t *testing.T) {
+	in0 := Value{Arity: ArityVec3, F: [4]float64{0.1, 0.2, 0.3, 0}}
+	out0 := Value{Arity: ArityVec3, F: [4]float64{0.4, 0.5, 0.6, 0}}
+	in1 := Value{Arity: ArityVec3, F: [4]float64{-1, -2, -3, 0}}
+	out1 := Value{Arity: ArityVec3, F: [4]float64{7, 8, 9, 0}}
+
+	tl := &Timeline{
+		ID: "cubic",
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					Target: Target{Kind: TargetSceneNode, Ref: "n"},
+					Prop:   "position",
+					Keys: []Key{
+						{T: 0, Value: Vec3V(0, 0, 0), OutTangent: &out0, InTangent: &in0},
+						{T: 1, Value: Vec3V(10, 20, 30), OutTangent: &out1, InTangent: &in1},
+					},
+					Interp: InterpCubicSpline,
+				},
+			},
+		},
+		Speed: 1,
+	}
+
+	blob := EncodeProgram(tl, nil, nil)
+	// Verify it really used the MOT2 magic.
+	if string(blob[:4]) != "MOT2" {
+		t.Fatalf("expected MOT2 magic, got %q", string(blob[:4]))
+	}
+
+	got, _, _, err := DecodeProgram(blob)
+	if err != nil {
+		t.Fatalf("DecodeProgram error: %v", err)
+	}
+	if !timelinesEqual(tl, got) {
+		t.Fatalf("cubicspline round-trip mismatch:\n orig=%+v\n  got=%+v", tl, got)
+	}
+	gk := got.Children[0].Track.Keys[0]
+	if gk.InTangent == nil || gk.OutTangent == nil {
+		t.Fatal("tangents lost on round-trip")
+	}
+}
+
+// TestWireMOT1BackCompat: a legacy "MOT1" blob (no tangent fields) must still
+// decode, yielding keys with nil tangents.
+func TestWireMOT1BackCompat(t *testing.T) {
+	// Build a MOT1 blob by hand using the legacy per-key layout: the encoder
+	// here mirrors putKey WITHOUT the two trailing tangent presence bytes.
+	b := make([]byte, 0, 128)
+	b = append(b, 'M', 'O', 'T', '1')
+	b = putStringList(b, nil) // targetRefs
+	b = putStringList(b, nil) // propRefs
+	// timeline:
+	b = putString(b, "legacy") // ID
+	b = putU32(b, 1)           // 1 child
+	// positioned:
+	b = putPosition(b, Position{Kind: PosAbs, Val: 0})
+	b = putU8(b, 0) // disc = Track
+	// track:
+	b = putTarget(b, Target{Kind: TargetSceneNode, Ref: "n"})
+	b = putString(b, "x") // prop
+	b = putU32(b, 1)      // 1 key
+	// legacy key (MOT1: T, Value, ease-presence only — NO tangent bytes):
+	b = putF64(b, 0)
+	b = putValue(b, ScalarV(42))
+	b = putBool(b, false) // ease absent
+	// end key
+	b = putGenerator(b, nil)
+	b = putU8(b, uint8(InterpLinear))
+	b = putEase(b, Ease{Kind: EaseLinear})
+	b = putI32(b, 0) // targetID
+	b = putI32(b, 0) // propID
+	// timeline tail:
+	b = putI32(b, 0)      // loop
+	b = putBool(b, false) // alternate
+	b = putF64(b, 1)      // speed
+	b = putBool(b, false) // autoplay
+
+	got, _, _, err := DecodeProgram(b)
+	if err != nil {
+		t.Fatalf("MOT1 decode error: %v", err)
+	}
+	if got.ID != "legacy" || len(got.Children) != 1 {
+		t.Fatalf("MOT1 decode shape wrong: %+v", got)
+	}
+	k := got.Children[0].Track.Keys[0]
+	if !valuesEqual(k.Value, ScalarV(42)) {
+		t.Errorf("MOT1 key value = %+v, want ScalarV(42)", k.Value)
+	}
+	if k.InTangent != nil || k.OutTangent != nil {
+		t.Errorf("MOT1 key should have nil tangents, got in=%v out=%v", k.InTangent, k.OutTangent)
 	}
 }
 
