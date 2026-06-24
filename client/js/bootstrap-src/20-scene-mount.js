@@ -2024,7 +2024,7 @@
       return;
     }
     if (!record._wasmMixerF64 || !record._wasmMixerU8) {
-      record._wasmMixerF64 = new Float64Array(256);
+      record._wasmMixerF64 = new Float64Array(2048);
       record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
     }
     const reducedFlag = reduced === true;
@@ -2032,7 +2032,9 @@
     if (count > record._wasmMixerF64.length) {
       record._wasmMixerF64 = new Float64Array(count);
       record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
-      count = window.__gosx_motion_mixer_update(record.wasmMixer, deltaTime, reducedFlag, record._wasmMixerU8);
+      // Pass dt=0: the clip clock already advanced on the first call above.
+      // Re-emitting at the current time with dt=0 avoids a double clock step.
+      count = window.__gosx_motion_mixer_update(record.wasmMixer, 0, reducedFlag, record._wasmMixerU8);
       if (count > record._wasmMixerF64.length) {
         count = record._wasmMixerF64.length;
       }

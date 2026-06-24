@@ -331,8 +331,10 @@
   // into the animatedTransforms Map (Map<nodeIndex, {translation,rotation,scale}>).
   // Layout per write: [targetID, propID, arity, comps...] where targetID is the
   // glTF node index, propID is 0(translation)/1(rotation)/2(scale), and arity is
-  // 3 (vec3) or 4 (quat). Writes merge into the existing per-node entry so a node
-  // touched by only one property keeps its other defaults.
+  // the motion enum ordinal (ArityVec3=2, ArityQuat=4) — NOT the component count.
+  // Width is derived from propID: rotation(1) → 4 components, else → 3.
+  // Writes merge into the existing per-node entry so a node touched by only one
+  // property keeps its other defaults.
   // `f` is a Float64Array view; `count` is the valid float length to walk.
   function sceneAnimWasmDecodePose(f, count, animatedTransforms) {
     if (!f || !animatedTransforms || count < 3) return 0;
@@ -340,8 +342,10 @@
     for (var i = 0; i + 3 <= count;) {
       var targetID = f[i];
       var propID = f[i + 1];
-      var arity = f[i + 2];
-      var width = arity === 4 ? 4 : 3;
+      // arity carries the enum ordinal; derive component width from propID (the
+      // semantic truth for TRS): rotation(1) is a quaternion (4 floats), all
+      // others (translation=0, scale=2) are vec3 (3 floats).
+      var width = propID === 1 ? 4 : 3;
       var c = i + 3;
       if (c + width > count) break;
       i = c + width;

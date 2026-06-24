@@ -21150,3 +21150,76 @@ test("P4-M3 motion mixer: stays inert when window.__gosx_motion_wasm is unset (J
   assert.equal(calls.update, 0, "WASM mixer update must never run when the flag is off");
   assert.equal(env.consoleLogs.error.length, 0);
 });
+
+test("P4-M3 motion mixer: grow-and-retick passes dt=0 to avoid double clock advance", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-wasm-mixer-retick-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: { "/models/rig.glb": { bytes: buildSkinnedGLBBytes() } },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-wasm-mixer-retick",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-wasm-mixer-retick-root",
+          props: {
+            width: 640, height: 360, autoRotate: false,
+            models: [{ id: "rig", src: "/models/rig.glb", animation: "bend", loop: true }],
+          },
+        },
+      ],
+    },
+  });
+
+  const s = Math.SQRT1_2;
+  // overflowOnNext: when true the next update call triggers the grow path.
+  let overflowOnNext = false;
+  // dtForOverflowCall / dtForRetickCall record the dt values around the
+  // specific grow/re-tick pair we're interested in.
+  let dtForOverflowCall = undefined;
+  let dtForRetickCall = undefined;
+  let overflowSeen = false;
+
+  env.context.__gosx_motion_wasm = true;
+  env.context.__gosx_motion_mixer_create = () => 1;
+  env.context.__gosx_motion_mixer_add_clip = () => true;
+  env.context.__gosx_motion_mixer_play = () => {};
+  env.context.__gosx_motion_mixer_stop = () => {};
+  env.context.__gosx_motion_mixer_is_playing = () => true;
+  env.context.__gosx_motion_mixer_update = (handle, dt, reduced, outU8) => {
+    const f = new Float64Array(outU8.buffer, outU8.byteOffset, Math.floor(outU8.byteLength / 8));
+    if (overflowOnNext && !overflowSeen) {
+      overflowSeen = true;
+      dtForOverflowCall = dt;
+      // Return a count larger than the current buffer to force a grow + re-tick.
+      return f.length + 10;
+    }
+    if (overflowSeen && dtForRetickCall === undefined) {
+      // This is the re-tick immediately after the overflow call.
+      dtForRetickCall = dt;
+    }
+    // Normal: write a minimal valid rotation pose.
+    f[0] = 2; f[1] = 1; f[2] = 4; f[3] = 0; f[4] = s; f[5] = 0; f[6] = s;
+    return 7;
+  };
+  env.context.__gosx_motion_mixer_destroy = () => {};
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  // First frame: dt=0 (lastModelAnimationTimeSeconds is null on the initial tick).
+  raf.flush(16);
+  await flushAsyncWork();
+  // Second frame: dt > 0. Arm the overflow so the grow path fires with a real dt.
+  overflowOnNext = true;
+  raf.flush(32);
+  await flushAsyncWork();
+
+  assert.ok(overflowSeen, "overflow/grow path must have been triggered");
+  assert.ok(dtForOverflowCall > 0, "the overflow call must carry a positive deltaTime");
+  assert.equal(dtForRetickCall, 0, "re-tick after grow must pass dt=0 to avoid double clock advance");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
