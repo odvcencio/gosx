@@ -31,6 +31,7 @@ func registerMotionExports() {
 	setRuntimeFunc("__gosx_motion_tick", motionTickFunc())
 	setRuntimeFunc("__gosx_motion_refs", motionRefsFunc())
 	setRuntimeFunc("__gosx_motion_unload", motionUnloadFunc())
+	registerMotionMixerExports()
 }
 
 // motionLoadFunc returns the __gosx_motion_load(uint8Array) export.
