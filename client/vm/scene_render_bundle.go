@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
 func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64) rootengine.RenderBundle {
@@ -138,8 +139,11 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64) sceneAppendResult {
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
 	result := sceneAppendResult{}
+	// Spin orientation is identical for every vertex of the object: compute it
+	// once here (per object per frame) via the canonical motion evaluator.
+	spinQ := spinQuatForObject(object, timeSeconds)
 	if !sceneObjectUsesLineGeometry(object, material) && sceneObjectHasTexturedSurface(object, material) {
-		for _, corner := range scenePlaneSurfaceCorners(object, timeSeconds) {
+		for _, corner := range scenePlaneSurfaceCorners(object, spinQ, timeSeconds) {
 			result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, corner)
 		}
 		if result.HasBounds {
@@ -148,10 +152,10 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 		return result
 	}
 	for _, segment := range sceneObjectSegments(object) {
-		worldFrom := translatePoint(segment[0], object, timeSeconds)
-		worldTo := translatePoint(segment[1], object, timeSeconds)
-		fromNormal := sceneObjectWorldNormal(object, segment[0], timeSeconds)
-		toNormal := sceneObjectWorldNormal(object, segment[1], timeSeconds)
+		worldFrom := translatePoint(segment[0], object, spinQ, timeSeconds)
+		worldTo := translatePoint(segment[1], object, spinQ, timeSeconds)
+		fromNormal := sceneObjectWorldNormal(object, segment[0], spinQ)
+		toNormal := sceneObjectWorldNormal(object, segment[1], spinQ)
 		fromRGBA := sceneLitColorRGBA(material, worldFrom, fromNormal, lights, environment)
 		toRGBA := sceneLitColorRGBA(material, worldTo, toNormal, lights, environment)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
@@ -184,7 +188,8 @@ func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, wid
 	if !sceneObjectHasTexturedSurface(object, material) {
 		return
 	}
-	corners := scenePlaneSurfaceCorners(object, timeSeconds)
+	spinQ := spinQuatForObject(object, timeSeconds)
+	corners := scenePlaneSurfaceCorners(object, spinQ, timeSeconds)
 	if len(corners) != 4 {
 		return
 	}
@@ -210,16 +215,16 @@ func sceneObjectHasTexturedSurface(object sceneObject, material rootengine.Rende
 	return object.Kind == "plane" && strings.TrimSpace(material.Texture) != ""
 }
 
-func scenePlaneSurfaceCorners(object sceneObject, timeSeconds float64) []point3 {
+func scenePlaneSurfaceCorners(object sceneObject, spinQ motion.Quat, timeSeconds float64) []point3 {
 	vertices := boxVertices(object.Width, 0, object.Depth)
 	if len(vertices) < 4 {
 		return nil
 	}
 	return []point3{
-		translatePoint(vertices[0], object, timeSeconds),
-		translatePoint(vertices[1], object, timeSeconds),
-		translatePoint(vertices[2], object, timeSeconds),
-		translatePoint(vertices[3], object, timeSeconds),
+		translatePoint(vertices[0], object, spinQ, timeSeconds),
+		translatePoint(vertices[1], object, spinQ, timeSeconds),
+		translatePoint(vertices[2], object, spinQ, timeSeconds),
+		translatePoint(vertices[3], object, spinQ, timeSeconds),
 	}
 }
 
@@ -1055,13 +1060,13 @@ func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool
 		environment.GroundIntensity > 0
 }
 
-func sceneObjectWorldNormal(object sceneObject, point point3, timeSeconds float64) point3 {
+func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat) point3 {
 	normal := sceneObjectLocalNormal(object, point)
-	return normalizePoint3(rotatePoint(normal,
-		object.RotationX+object.SpinX*timeSeconds,
-		object.RotationY+object.SpinY*timeSeconds,
-		object.RotationZ+object.SpinZ*timeSeconds,
-	))
+	// Base orientation, then spin quaternion. Normals are directions: no
+	// translation or drift offset is applied.
+	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
+	nx, ny, nz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
+	return normalizePoint3(point3{X: nx, Y: ny, Z: nz})
 }
 
 func sceneObjectLocalNormal(object sceneObject, point point3) point3 {
@@ -1274,17 +1279,18 @@ func circlePoint(radius float64, axis string, angle float64) point3 {
 	}
 }
 
-func translatePoint(point point3, object sceneObject, timeSeconds float64) point3 {
-	rotated := rotatePoint(point,
-		object.RotationX+object.SpinX*timeSeconds,
-		object.RotationY+object.SpinY*timeSeconds,
-		object.RotationZ+object.SpinZ*timeSeconds,
-	)
+func translatePoint(point point3, object sceneObject, spinQ motion.Quat, timeSeconds float64) point3 {
+	// Base orientation via the existing intrinsic Euler rotation.
+	rotated := rotatePoint(point, object.RotationX, object.RotationY, object.RotationZ)
+	// Spin orientation sourced from the canonical motion evaluator (GenSpin),
+	// applied as a quaternion. For single-axis spin this is identical to the
+	// previous Euler-add path; multi-axis spin now follows canonical qx*qy*qz order.
+	sx, sy, sz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
 	offset := sceneMotionOffset(object, timeSeconds)
 	return point3{
-		X: rotated.X + object.X + offset.X,
-		Y: rotated.Y + object.Y + offset.Y,
-		Z: rotated.Z + object.Z + offset.Z,
+		X: sx + object.X + offset.X,
+		Y: sy + object.Y + offset.Y,
+		Z: sz + object.Z + offset.Z,
 	}
 }
 

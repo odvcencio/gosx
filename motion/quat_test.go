@@ -64,6 +64,36 @@ func TestQuatFromEulerIdentity(t *testing.T) {
 	}
 }
 
+// TestRotateVec3IdentityNoOp: the identity quaternion leaves the vector unchanged.
+func TestRotateVec3Identity(t *testing.T) {
+	q := Quat{0, 0, 0, 1}
+	x, y, z := RotateVec3(q, 1, 2, 3)
+	if math.Abs(x-1) > 1e-12 || math.Abs(y-2) > 1e-12 || math.Abs(z-3) > 1e-12 {
+		t.Fatalf("identity rotation changed vector: got (%v,%v,%v) want (1,2,3)", x, y, z)
+	}
+}
+
+// TestRotateVec3YawNinety: 90° about Y maps +X → -Z.
+// With QuatFromEuler(0, pi/2, 0) the +X axis rotates onto -Z.
+func TestRotateVec3YawNinety(t *testing.T) {
+	q := QuatFromEuler(0, math.Pi/2, 0)
+	x, y, z := RotateVec3(q, 1, 0, 0)
+	if math.Abs(x-0) > 1e-9 || math.Abs(y-0) > 1e-9 || math.Abs(z-(-1)) > 1e-9 {
+		t.Fatalf("90° about Y: got (%v,%v,%v) want (0,0,-1)", x, y, z)
+	}
+}
+
+// TestRotateVec3PreservesLength: rotation by a unit quat preserves vector length.
+func TestRotateVec3PreservesLength(t *testing.T) {
+	q := QuatFromEuler(0.3, -0.7, 1.1)
+	x, y, z := RotateVec3(q, 1.5, -2.0, 0.5)
+	gotLen := math.Sqrt(x*x + y*y + z*z)
+	wantLen := math.Sqrt(1.5*1.5 + 2.0*2.0 + 0.5*0.5)
+	if math.Abs(gotLen-wantLen) > 1e-9 {
+		t.Fatalf("length not preserved: got %v want %v", gotLen, wantLen)
+	}
+}
+
 // TestQuatFromEulerYOnly: single Y-axis rotation must equal axis-angle about Y.
 // QuatFromEuler(0, 1.2, 0) == {0, sin(0.6), 0, cos(0.6)}.
 func TestQuatFromEulerYOnly(t *testing.T) {

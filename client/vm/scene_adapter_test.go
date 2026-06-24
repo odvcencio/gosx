@@ -7,6 +7,7 @@ import (
 
 	rootengine "m31labs.dev/gosx/engine"
 	islandprogram "m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/motion"
 	"m31labs.dev/gosx/signal"
 )
 
@@ -303,6 +304,230 @@ func TestSceneAdapterRenderBundleAppliesSceneMotionOffsets(t *testing.T) {
 	}
 	if math.Abs(startCenterZ-laterCenterZ) < 0.001 {
 		t.Fatalf("expected Z center to drift, got start=%f later=%f", startCenterZ, laterCenterZ)
+	}
+}
+
+// oldRotatePointEulerSpin replicates the PRE-unification spin path: base Euler
+// rotation plus per-axis spin folded into the same intrinsic Euler rotation.
+// Used purely as the regression oracle inside this test file.
+func oldRotatePointEulerSpin(p point3, o sceneObject, t float64) point3 {
+	return rotatePoint(p,
+		o.RotationX+o.SpinX*t,
+		o.RotationY+o.SpinY*t,
+		o.RotationZ+o.SpinZ*t,
+	)
+}
+
+// TestSpinQuatSingleAxisMatchesOldEulerPath is the REGRESSION ANCHOR.
+// For single-axis spin the new motion.Eval-sourced quaternion path must produce
+// vertex world positions byte-or-1e-9 identical to the old Euler-add path.
+func TestSpinQuatSingleAxisMatchesOldEulerPath(t *testing.T) {
+	const ts = 0.37
+	const spinY = 0.9
+	obj := sceneObject{
+		ID:     "spinner",
+		Kind:   "box",
+		Width:  1.4,
+		Height: 0.8,
+		Depth:  1.1,
+		X:      0.5,
+		Y:      -0.25,
+		Z:      0.75,
+		SpinY:  spinY,
+	}
+	spinQ := spinQuatForObject(obj, ts)
+
+	pts := []point3{
+		{X: -0.7, Y: -0.4, Z: -0.55},
+		{X: 0.7, Y: 0.4, Z: 0.55},
+		{X: 0.3, Y: -0.2, Z: 0.5},
+		{X: 0, Y: 0, Z: 0},
+	}
+	for _, p := range pts {
+		got := translatePoint(p, obj, spinQ, ts)
+		// Old path: base+spin Euler rotation, then translation, plus drift (none here).
+		oldRot := oldRotatePointEulerSpin(p, obj, ts)
+		want := point3{X: oldRot.X + obj.X, Y: oldRot.Y + obj.Y, Z: oldRot.Z + obj.Z}
+		if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+			t.Fatalf("single-axis spin diverged from old Euler path: p=%v got=%v want=%v", p, got, want)
+		}
+	}
+}
+
+// TestSpinQuatSourcedFromMotionEval asserts the spin quaternion the bundle uses
+// is precisely the one the canonical motion evaluator (GenSpin) produces, and
+// that applying it equals QuatFromEuler(0, spinY*t, 0) rotation of a vertex.
+func TestSpinQuatSourcedFromMotionEval(t *testing.T) {
+	const ts = 0.37
+	const spinY = 0.9
+	obj := sceneObject{ID: "spinner", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinY: spinY}
+
+	spinQ := spinQuatForObject(obj, ts)
+	wantQ := motion.QuatFromEuler(0, spinY*ts, 0)
+	if math.Abs(spinQ.X-wantQ.X) > 1e-12 || math.Abs(spinQ.Y-wantQ.Y) > 1e-12 ||
+		math.Abs(spinQ.Z-wantQ.Z) > 1e-12 || math.Abs(spinQ.W-wantQ.W) > 1e-12 {
+		t.Fatalf("spin quat not sourced from motion.Eval GenSpin: got %+v want %+v", spinQ, wantQ)
+	}
+
+	p := point3{X: 0.5, Y: 0.25, Z: -0.5}
+	gx, gy, gz := motion.RotateVec3(spinQ, p.X, p.Y, p.Z)
+	ex, ey, ez := motion.RotateVec3(motion.QuatFromEuler(0, spinY*ts, 0), p.X, p.Y, p.Z)
+	if math.Abs(gx-ex) > 1e-12 || math.Abs(gy-ey) > 1e-12 || math.Abs(gz-ez) > 1e-12 {
+		t.Fatalf("applied spin not from canonical evaluator: got (%v,%v,%v) want (%v,%v,%v)", gx, gy, gz, ex, ey, ez)
+	}
+}
+
+// TestSpinQuatZeroTimeIsIdentity: at t=0 the spin quaternion is identity and the
+// output equals base-rotation-only (unchanged endpoint behavior).
+func TestSpinQuatZeroTimeIsIdentity(t *testing.T) {
+	obj := sceneObject{ID: "s", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinX: 1.3, SpinY: -0.7, SpinZ: 2.1, RotationY: 0.4}
+	spinQ := spinQuatForObject(obj, 0)
+	ident := motion.Quat{X: 0, Y: 0, Z: 0, W: 1}
+	if math.Abs(spinQ.X-ident.X) > 1e-12 || math.Abs(spinQ.Y-ident.Y) > 1e-12 ||
+		math.Abs(spinQ.Z-ident.Z) > 1e-12 || math.Abs(spinQ.W-ident.W) > 1e-12 {
+		t.Fatalf("t=0 spin quat not identity: %+v", spinQ)
+	}
+	p := point3{X: 0.5, Y: -0.3, Z: 0.2}
+	got := translatePoint(p, obj, spinQ, 0)
+	base := rotatePoint(p, obj.RotationX, obj.RotationY, obj.RotationZ)
+	want := point3{X: base.X + obj.X, Y: base.Y + obj.Y, Z: base.Z + obj.Z}
+	if math.Abs(got.X-want.X) > 1e-12 || math.Abs(got.Y-want.Y) > 1e-12 || math.Abs(got.Z-want.Z) > 1e-12 {
+		t.Fatalf("t=0 output not base-rotation-only: got=%v want=%v", got, want)
+	}
+}
+
+// TestSpinQuatBaseRotationPreserved: an object with base rotation and no spin
+// produces output identical to the base rotatePoint path (base path untouched).
+func TestSpinQuatBaseRotationPreserved(t *testing.T) {
+	const ts = 1.25
+	obj := sceneObject{ID: "b", Kind: "box", Width: 1, Height: 1, Depth: 1, X: 1, Y: 2, Z: 3, RotationX: 0.3, RotationY: 0.6, RotationZ: -0.4}
+	spinQ := spinQuatForObject(obj, ts) // no spin → identity
+	if spinQ != (motion.Quat{X: 0, Y: 0, Z: 0, W: 1}) {
+		t.Fatalf("no-spin object must yield identity quat, got %+v", spinQ)
+	}
+	p := point3{X: -0.5, Y: 0.5, Z: 0.5}
+	got := translatePoint(p, obj, spinQ, ts)
+	base := rotatePoint(p, obj.RotationX, obj.RotationY, obj.RotationZ)
+	want := point3{X: base.X + obj.X, Y: base.Y + obj.Y, Z: base.Z + obj.Z}
+	if math.Abs(got.X-want.X) > 1e-12 || math.Abs(got.Y-want.Y) > 1e-12 || math.Abs(got.Z-want.Z) > 1e-12 {
+		t.Fatalf("base rotation not preserved: got=%v want=%v", got, want)
+	}
+}
+
+// TestSpinQuatNormalSingleAxisMatchesOld: world normals under single-axis spin
+// must match the old Euler-spin path (normals get base+spin, no translation).
+func TestSpinQuatNormalSingleAxisMatchesOld(t *testing.T) {
+	const ts = 0.37
+	const spinX = 1.1
+	obj := sceneObject{ID: "n", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinX: spinX}
+	spinQ := spinQuatForObject(obj, ts)
+
+	p := point3{X: 0.7, Y: 0.1, Z: -0.2} // off-axis so a definite face normal is picked
+	got := sceneObjectWorldNormal(obj, p, spinQ)
+	// Old path: local normal then base+spin Euler rotation, normalized.
+	local := sceneObjectLocalNormal(obj, p)
+	want := normalizePoint3(oldRotatePointEulerSpin(local, obj, ts))
+	if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+		t.Fatalf("world normal single-axis spin diverged: got=%v want=%v", got, want)
+	}
+}
+
+// TestSpinQuatMultiAxisIsCanonical documents the INTENDED change: multi-axis
+// spin now follows canonical quaternion order (qx*qy*qz), NOT the old Euler-add.
+// Assert equality with the canonical evaluator result (not the old path).
+func TestSpinQuatMultiAxisIsCanonical(t *testing.T) {
+	const ts = 0.37
+	obj := sceneObject{ID: "m", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinX: 0.5, SpinY: 0.9, SpinZ: -0.7}
+	spinQ := spinQuatForObject(obj, ts)
+	canonical := motion.QuatFromEuler(0.5*ts, 0.9*ts, -0.7*ts)
+	if math.Abs(spinQ.X-canonical.X) > 1e-12 || math.Abs(spinQ.Y-canonical.Y) > 1e-12 ||
+		math.Abs(spinQ.Z-canonical.Z) > 1e-12 || math.Abs(spinQ.W-canonical.W) > 1e-12 {
+		t.Fatalf("multi-axis spin quat not canonical qx*qy*qz: got %+v want %+v", spinQ, canonical)
+	}
+
+	p := point3{X: 0.3, Y: -0.4, Z: 0.5}
+	gx, gy, gz := motion.RotateVec3(spinQ, p.X, p.Y, p.Z)
+	wx, wy, wz := motion.RotateVec3(canonical, p.X, p.Y, p.Z)
+	if math.Abs(gx-wx) > 1e-12 || math.Abs(gy-wy) > 1e-12 || math.Abs(gz-wz) > 1e-12 {
+		t.Fatalf("multi-axis applied spin not canonical: got (%v,%v,%v) want (%v,%v,%v)", gx, gy, gz, wx, wy, wz)
+	}
+
+	// And it must DIFFER from the old Euler-add path (this is the intended change).
+	old := oldRotatePointEulerSpin(p, obj, ts)
+	if math.Abs(gx-old.X) < 1e-6 && math.Abs(gy-old.Y) < 1e-6 && math.Abs(gz-old.Z) < 1e-6 {
+		t.Fatalf("multi-axis spin unexpectedly matched old Euler path; order change not observed")
+	}
+}
+
+// TestSceneAdapterRenderBundleSingleAxisSpinUnchanged exercises the FULL
+// production bundle path: a single-axis spinY object's bundle bounds must equal
+// the bounds computed from the old Euler-spin path applied to box geometry.
+func TestSceneAdapterRenderBundleSingleAxisSpinUnchanged(t *testing.T) {
+	const ts = 0.37
+	const spinY = 0.9
+	prog := &rootengine.Program{
+		Name: "SingleAxisSpin",
+		EngineNodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"x":      0,
+					"y":      1,
+					"z":      2,
+					"width":  3,
+					"height": 4,
+					"depth":  5,
+					"spinY":  6,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "0.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "-0.25", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.75", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.4", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.8", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.9", Type: islandprogram.TypeFloat},
+		},
+	}
+	rt := NewSceneAdapter(prog, `{}`)
+	bundle := rt.RenderBundle(640, 360, ts)
+	if len(bundle.Objects) != 1 {
+		t.Fatalf("expected one render object, got %d", len(bundle.Objects))
+	}
+	gotBounds := bundle.Objects[0].Bounds
+
+	// Compute expected bounds from the OLD Euler-spin path over box segments.
+	obj := sceneObject{ID: bundle.Objects[0].ID, Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, X: 0.5, Y: -0.25, Z: 0.75, SpinY: spinY}
+	first := true
+	var want rootengine.RenderBounds
+	expand := func(p point3) {
+		if first {
+			want = rootengine.RenderBounds{MinX: p.X, MinY: p.Y, MinZ: p.Z, MaxX: p.X, MaxY: p.Y, MaxZ: p.Z}
+			first = false
+			return
+		}
+		want.MinX = math.Min(want.MinX, p.X)
+		want.MinY = math.Min(want.MinY, p.Y)
+		want.MinZ = math.Min(want.MinZ, p.Z)
+		want.MaxX = math.Max(want.MaxX, p.X)
+		want.MaxY = math.Max(want.MaxY, p.Y)
+		want.MaxZ = math.Max(want.MaxZ, p.Z)
+	}
+	for _, seg := range sceneObjectSegments(obj) {
+		for _, v := range seg {
+			rot := oldRotatePointEulerSpin(v, obj, ts)
+			expand(point3{X: rot.X + obj.X, Y: rot.Y + obj.Y, Z: rot.Z + obj.Z})
+		}
+	}
+
+	if math.Abs(gotBounds.MinX-want.MinX) > 1e-9 || math.Abs(gotBounds.MaxX-want.MaxX) > 1e-9 ||
+		math.Abs(gotBounds.MinY-want.MinY) > 1e-9 || math.Abs(gotBounds.MaxY-want.MaxY) > 1e-9 ||
+		math.Abs(gotBounds.MinZ-want.MinZ) > 1e-9 || math.Abs(gotBounds.MaxZ-want.MaxZ) > 1e-9 {
+		t.Fatalf("single-axis spin bundle bounds diverged from old path:\n got=%+v\nwant=%+v", gotBounds, want)
 	}
 }
 

@@ -48,6 +48,25 @@ func QuatFromEuler(x, y, z float64) Quat {
 	return quatMul(quatMul(qx, qy), qz)
 }
 
+// RotateVec3 applies the (assumed unit) quaternion q to the vector (x, y, z)
+// and returns the rotated components. Uses the branch-free form
+//
+//	v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w*v)
+//
+// which avoids constructing a quaternion product. For a non-unit q the result
+// is scaled by |q|^2; callers should pass unit quaternions (QuatFromEuler /
+// Slerp outputs are unit).
+func RotateVec3(q Quat, x, y, z float64) (float64, float64, float64) {
+	// t = cross(q.xyz, v) + q.w*v
+	tx := q.Y*z - q.Z*y + q.W*x
+	ty := q.Z*x - q.X*z + q.W*y
+	tz := q.X*y - q.Y*x + q.W*z
+	// v' = v + 2 * cross(q.xyz, t)
+	return x + 2*(q.Y*tz-q.Z*ty),
+		y + 2*(q.Z*tx-q.X*tz),
+		z + 2*(q.X*ty-q.Y*tx)
+}
+
 // Slerp performs spherical linear interpolation between unit quaternions a and b
 // by parameter t in [0, 1].
 //
