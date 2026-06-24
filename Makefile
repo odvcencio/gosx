@@ -124,7 +124,7 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 test-e2e:
-	$(NODE) --test e2e/gosx_docs_e2e.test.mjs
+	$(NODE) --test e2e/gosx_docs_e2e.test.mjs e2e/motion-spin.test.mjs
 	$(GO) test ./e2e
 
 test-desktop:

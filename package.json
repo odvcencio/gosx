@@ -12,7 +12,7 @@
     "build:bootstrap": "node client/js/build-bootstrap.mjs",
     "test": "npm run test:js",
     "test:js": "node client/js/build-bootstrap.mjs --check && node --test client/js/bootstrap-size.test.mjs client/js/runtime.test.js",
-    "test:e2e": "node --test e2e/gosx_docs_e2e.test.mjs e2e/webgpu_honesty_gate_e2e.test.mjs"
+    "test:e2e": "node --test e2e/gosx_docs_e2e.test.mjs e2e/webgpu_honesty_gate_e2e.test.mjs e2e/motion-spin.test.mjs"
   },
   "repository": {
     "type": "git",

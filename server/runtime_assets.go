@@ -257,6 +257,12 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		return direct, true
 	}
 	if strings.HasPrefix(name, "bootstrap") || name == "patch.js" {
+		// Dev staging copies feature chunks (including the scene3d split
+		// chunks not listed in `candidates`) into the app build dir; serve
+		// them from there first so freshly staged chunks resolve.
+		if buildPath := filepath.Join(buildDir, filepath.FromSlash(name)); isFile(buildPath) {
+			return buildPath, true
+		}
 		clientPath := filepath.Join(root, "client", "js", name)
 		if isFile(clientPath) {
 			return clientPath, true
