@@ -78,6 +78,18 @@ type SceneIR struct {
 	// when there is no motion. The JS runtime can call motionLoad() with this
 	// payload to drive object rotations.
 	MotionProgram []byte `json:"motionProgram,omitempty"`
+	// MaterialTracks holds one keyframe MotionIR Track per mesh material-uniform
+	// animation (Target.Kind == TargetMaterial, Ref == mesh id). Populated at
+	// lowering time as an in-memory facade; NOT serialised to the wire (the
+	// encoded form ships via MaterialMotionProgram).
+	MaterialTracks []motion.Track `json:"-"`
+	// MaterialMotionProgram carries the binary-encoded motion.Timeline for all
+	// material-uniform animation tracks in the scene. It is produced by
+	// Graph.SceneIR() from MaterialTracks and serialised as base64 in JSON.
+	// Omitted when there are no material animations. This is SEPARATE from
+	// MotionProgram (transforms) so material packets route independently in the
+	// JS runtime.
+	MaterialMotionProgram []byte `json:"materialMotionProgram,omitempty"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
@@ -818,6 +830,7 @@ func (g Graph) SceneIR() SceneIR {
 		HTML:               lowerer.resolveHTML(),
 		Lights:             lowerer.lights,
 		SpinTracks:         lowerer.spinTracks,
+		MaterialTracks:     lowerer.materialTracks,
 	}
 
 	// Serialize spin tracks into MotionProgram so the browser can motionLoad()
@@ -829,6 +842,17 @@ func (g Graph) SceneIR() SceneIR {
 		propIn := motion.NewInterner()
 		motion.PrepareTracks(tl, targetIn, propIn)
 		ir.MotionProgram = motion.EncodeProgram(tl, targetIn.Refs(), propIn.Refs())
+	}
+
+	// Serialize material-uniform tracks into a SEPARATE wire program so material
+	// packets route independently of transform motion in the JS runtime. Fresh
+	// interners keep the target/prop ref tables scoped to this program.
+	if len(ir.MaterialTracks) > 0 {
+		tl := ir.MaterialMotionTimeline()
+		targetIn := motion.NewInterner()
+		propIn := motion.NewInterner()
+		motion.PrepareTracks(tl, targetIn, propIn)
+		ir.MaterialMotionProgram = motion.EncodeProgram(tl, targetIn.Refs(), propIn.Refs())
 	}
 
 	return ir
@@ -963,6 +987,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if len(ir.MotionProgram) > 0 {
 		out["motionProgram"] = ir.MotionProgram
+	}
+	if len(ir.MaterialMotionProgram) > 0 {
+		out["materialMotionProgram"] = ir.MaterialMotionProgram
 	}
 	return out
 }

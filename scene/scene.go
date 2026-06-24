@@ -278,6 +278,30 @@ type Mesh struct {
 	OutState   *MeshProps
 	Live       []string
 	Children   []Node
+	// MaterialAnims declares optional per-mesh material-uniform animations
+	// (e.g. animated emissive/roughness/color or custom .sel uniforms). Each
+	// entry is lowered to a MotionIR keyframe Track targeting this mesh's
+	// material (Target.Kind == TargetMaterial, Ref == the mesh's id). The tracks
+	// are serialized into a SEPARATE wire program (SceneIR.MaterialMotionProgram)
+	// so material packets route independently of transform motion in the runtime.
+	MaterialAnims []MaterialUniformAnim
+}
+
+// MaterialUniformAnim is a flat keyframe spec for one animated material uniform,
+// mirroring AnimationChannel. Values is a flat float slice of length
+// len(Times)*Arity (the per-key components laid out contiguously). Arity selects
+// the component width: 1 (scalar, e.g. roughness/metalness), 3 (vec3, e.g. an
+// RGB color), or 4 (vec4/color, e.g. RGBA emissive). Interp is "LINEAR" (default)
+// or "STEP". Loop/Duration are advisory hints for the runtime player; the lowered
+// Track itself is keyframe-driven.
+type MaterialUniformAnim struct {
+	Uniform  string    // material uniform name (e.g. "emissive", "roughness")
+	Arity    int       // component width per key: 1, 3, or 4
+	Times    []float64 // keyframe times (seconds)
+	Values   []float64 // flat keyframe values, len == len(Times)*Arity
+	Interp   string    // "LINEAR" (default) or "STEP"
+	Loop     bool      // advisory: whether the runtime should loop this animation
+	Duration float64   // advisory: total clip duration (seconds)
 }
 
 // LODLevel describes one level inside a discrete LODGroup. Distance is the
@@ -1065,6 +1089,11 @@ type graphLowerer struct {
 	// spinTracks accumulates one GenSpin MotionIR Track per spinning node;
 	// surfaced via SceneIR.SpinTracks (json:"-") as an in-memory facade.
 	spinTracks []motion.Track
+	// materialTracks accumulates one keyframe MotionIR Track per mesh
+	// material-uniform animation (Target.Kind == TargetMaterial). These are
+	// serialized into a SEPARATE wire program (SceneIR.MaterialMotionProgram)
+	// so material packets route independently of transform motion.
+	materialTracks []motion.Track
 }
 
 func (Group) sceneNode()             {}
@@ -2126,6 +2155,9 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	if mesh.Spin.X != 0 || mesh.Spin.Y != 0 || mesh.Spin.Z != 0 {
 		l.spinTracks = append(l.spinTracks, spinMotionTrack(mesh.Spin, id))
 	}
+	// Material-uniform animations lower to TargetMaterial keyframe tracks keyed
+	// by this mesh's id (per-mesh material). Malformed specs are skipped.
+	l.materialTracks = append(l.materialTracks, materialMotionTracks(mesh.MaterialAnims, id)...)
 	record.Pickable = mesh.Pickable
 	record.Selected = mesh.Selected
 	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
