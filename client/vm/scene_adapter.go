@@ -36,6 +36,21 @@ type SceneAdapter struct {
 	// spinSc is the reusable spin-evaluation scratch, lazily initialised on first
 	// spinning object. It is reused every frame across all objects — zero per-frame alloc.
 	spinSc *spinScratch
+
+	// nodeGen[i] increments every time rt.prev[i] is (re)resolved, giving each
+	// node a monotonic per-object change signal tied to the reconcile path. The
+	// world-bake cache keys on (nodeGen) so any prop change that re-resolves a
+	// node invalidates its cached WORLD positions/normals. Camera changes do NOT
+	// re-resolve mesh nodes, so they never bump nodeGen — which is exactly why the
+	// camera-independent world bake can be cached across an orbiting camera.
+	nodeGen []uint64
+	// worldBakeCache memoizes camera-independent baked WORLD geometry per node
+	// across frames. It lives on the adapter so it persists across RenderBundle
+	// calls; RenderBundle runs single-threaded per adapter (one adapter per
+	// request in the native/SSR path), so the cache needs no locking.
+	worldBakeCache map[int]*objectWorldBake
+	bakeHits       uint64
+	bakeMisses     uint64
 }
 
 // New constructs a live engine runtime with props decoded from JSON.
@@ -48,12 +63,14 @@ func NewSceneAdapter(prog *rootengine.Program, propsJSON string) *SceneAdapter {
 		Exprs: prog.Exprs,
 	}
 	rt := &SceneAdapter{
-		program:    prog,
-		props:      rawProps,
-		vm:         NewVM(vmProg, vmProps(rawProps)),
-		dirty:      make([]bool, len(prog.EngineNodes)),
-		signalDeps: buildSignalDeps(prog),
-		unsubs:     make(map[string]func()),
+		program:        prog,
+		props:          rawProps,
+		vm:             NewVM(vmProg, vmProps(rawProps)),
+		dirty:          make([]bool, len(prog.EngineNodes)),
+		signalDeps:     buildSignalDeps(prog),
+		unsubs:         make(map[string]func()),
+		nodeGen:        make([]uint64, len(prog.EngineNodes)),
+		worldBakeCache: make(map[int]*objectWorldBake),
 	}
 	markAllDirty(rt.dirty)
 	initSceneSignals(rt.vm, prog)
@@ -105,7 +122,10 @@ func (rt *SceneAdapter) Dispose() {
 	rt.prev = nil
 }
 
-// RenderBundle builds a renderer-facing frame bundle from the current scene.
+// RenderBundle builds a renderer-facing frame bundle from the current scene. It
+// threads the per-node world-bake cache so static objects' camera-independent
+// WORLD positions/normals are reused across frames (e.g. an orbiting camera over
+// static geometry) instead of rebaked every call.
 func (rt *SceneAdapter) RenderBundle(width, height int, timeSeconds float64) rootengine.RenderBundle {
 	nodes := rt.snapshot()
 	// Lazily initialise the reusable spin-evaluation scratch so it is allocated
@@ -114,7 +134,13 @@ func (rt *SceneAdapter) RenderBundle(width, height int, timeSeconds float64) roo
 	if rt.spinSc == nil {
 		rt.spinSc = newSpinScratch()
 	}
-	return buildRenderBundle(rt.props, nodes, width, height, timeSeconds, rt.spinSc)
+	store := &worldBakeStore{
+		cache:  rt.worldBakeCache,
+		gen:    rt.nodeGen,
+		hits:   &rt.bakeHits,
+		misses: &rt.bakeMisses,
+	}
+	return buildRenderBundleCached(rt.props, nodes, width, height, timeSeconds, rt.spinSc, store)
 }
 
 func parseRawProps(propsJSON string) map[string]any {
@@ -150,8 +176,19 @@ func (rt *SceneAdapter) resolveAll() []resolvedNode {
 	out := make([]resolvedNode, len(rt.program.EngineNodes))
 	for i := range rt.program.EngineNodes {
 		out[i] = rt.resolveNode(i)
+		rt.bumpNodeGen(i)
 	}
 	return out
+}
+
+// bumpNodeGen advances a node's per-object change generation. It is called every
+// time rt.prev[i] is (re)resolved — the single source of truth for "this node's
+// resolved props changed", which is the world-bake cache's invalidation signal.
+func (rt *SceneAdapter) bumpNodeGen(index int) {
+	if index < 0 || index >= len(rt.nodeGen) {
+		return
+	}
+	rt.nodeGen[index]++
 }
 
 func (rt *SceneAdapter) snapshot() []resolvedNode {
@@ -176,6 +213,7 @@ func (rt *SceneAdapter) syncDirty() []rootengine.Command {
 		next := rt.resolveNode(i)
 		commands = append(commands, diffNode(i, rt.prev[i], next)...)
 		rt.prev[i] = next
+		rt.bumpNodeGen(i)
 		rt.dirty[i] = false
 	}
 	return commands
