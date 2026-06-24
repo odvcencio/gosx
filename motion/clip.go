@@ -2,6 +2,30 @@ package motion
 
 import "strconv"
 
+// Fixed glTF property → PropID mapping. These constants are the stable,
+// cross-clip IDs used by BuildClipTimeline so every clip assigns the same
+// PropID to the same property regardless of channel order.
+const (
+	propIDTranslation = 0
+	propIDRotation    = 1
+	propIDScale       = 2
+)
+
+// clipPropID returns the fixed PropID for a glTF transform property, or -1 for
+// unknown properties.
+func clipPropID(property string) int {
+	switch property {
+	case "translation":
+		return propIDTranslation
+	case "rotation":
+		return propIDRotation
+	case "scale":
+		return propIDScale
+	default:
+		return -1
+	}
+}
+
 // ClipChannel is one glTF animation channel targeting a node's transform property.
 //
 //   - Property: "translation" | "rotation" | "scale".
@@ -55,8 +79,16 @@ func clipInterp(s string) Interp {
 //   - "LINEAR" → InterpLinear, "STEP" → InterpStep, "CUBICSPLINE" →
 //     InterpCubicSpline with per-key InTangent/OutTangent populated from the
 //     glTF value triplets; default/unknown → InterpLinear.
-//   - Target.Ref = strconv.Itoa(Node) (matching the native consumer's
-//     index-string keying convention).
+//   - Target.Ref = strconv.Itoa(Node) for debuggability.
+//
+// ID assignment (cross-clip consistent):
+//   - Track.TargetID = channel.Node (the glTF node index — globally unique across clips).
+//   - Track.PropID   = fixed per-property constant: translation→0, rotation→1, scale→2.
+//
+// This guarantees (TargetID, PropID) is identical across ALL clips for the same
+// (node, property), so motion.Mixer blends correctly when mixing clips that share
+// animated nodes. PrepareTracks is NOT called here — the IDs are set directly and
+// must not be overwritten by a per-clip interner.
 //
 // CUBICSPLINE accessor layout: for key i with component width w, the three
 // triplet members live in the flat Values slice at:
@@ -69,10 +101,6 @@ func clipInterp(s string) Interp {
 // the keyframe count and interpolation mode) are silently skipped — never a
 // panic.
 //
-// PrepareTracks is run on the result with fresh interners, so every surviving
-// Track gets a deterministic TargetID/PropID (first-seen order across channels)
-// and the timeline is immediately evaluable.
-//
 // The returned duration is the larger of the maximum last-keyframe time across
 // channels (clips with no usable keys yield 0).
 func BuildClipTimeline(channels []ClipChannel) (*Timeline, float64) {
@@ -83,6 +111,10 @@ func BuildClipTimeline(channels []ClipChannel) (*Timeline, float64) {
 		arity, w := clipArity(ch.Property)
 		if w == 0 {
 			continue // unknown property
+		}
+		propID := clipPropID(ch.Property)
+		if propID < 0 {
+			continue // unknown property (should not happen if clipArity passes, but guard)
 		}
 		nKeys := len(ch.Times)
 		if nKeys == 0 {
@@ -129,10 +161,12 @@ func BuildClipTimeline(channels []ClipChannel) (*Timeline, float64) {
 		}
 
 		track := Track{
-			Target: Target{Kind: TargetSceneNode, Ref: strconv.Itoa(ch.Node)},
-			Prop:   ch.Property,
-			Keys:   keys,
-			Interp: interp,
+			Target:   Target{Kind: TargetSceneNode, Ref: strconv.Itoa(ch.Node)},
+			Prop:     ch.Property,
+			Keys:     keys,
+			Interp:   interp,
+			TargetID: ch.Node, // glTF node index: globally consistent across all clips
+			PropID:   propID,  // fixed per-property constant: translation=0, rotation=1, scale=2
 		}
 		children = append(children, Positioned{
 			At:    Position{Kind: PosAbs, Val: 0},
@@ -141,13 +175,8 @@ func BuildClipTimeline(channels []ClipChannel) (*Timeline, float64) {
 	}
 
 	tl := &Timeline{Children: children}
-
-	// Deterministic TargetID/PropID assignment; refs are discarded (callers that
-	// need the round-trip tables build their own interners).
-	targets := NewInterner()
-	props := NewInterner()
-	PrepareTracks(tl, targets, props)
-
+	// IDs are set directly above — do NOT call PrepareTracks here, which would
+	// overwrite them with per-clip interner-assigned values.
 	return tl, duration
 }
 

@@ -43,8 +43,8 @@ func TestBuildClipTimelineTranslationLinear(t *testing.T) {
 		t.Fatalf("duration = %v, want 1", dur)
 	}
 
-	// TargetID/PropID assigned in first-seen order: node "3" -> 0, "translation" -> 0.
-	arity, v := evalOne(t, tl, 0.5, 0, 0)
+	// TargetID = node index (3); PropID = fixed translation constant (0).
+	arity, v := evalOne(t, tl, 0.5, 3, 0)
 	if arity != ArityVec3 {
 		t.Fatalf("arity = %v, want ArityVec3", arity)
 	}
@@ -73,7 +73,8 @@ func TestBuildClipTimelineRotationQuat(t *testing.T) {
 		t.Fatalf("duration = %v, want 1", dur)
 	}
 
-	arity, v := evalOne(t, tl, 0.5, 0, 0)
+	// TargetID = node index (0); PropID = fixed rotation constant (1).
+	arity, v := evalOne(t, tl, 0.5, 0, 1)
 	if arity != ArityQuat {
 		t.Fatalf("arity = %v, want ArityQuat", arity)
 	}
@@ -116,7 +117,8 @@ func TestBuildClipTimelineCubicSpline(t *testing.T) {
 		t.Fatalf("duration = %v, want 1", dur)
 	}
 
-	arity, got := evalOne(t, tl, 0.5, 0, 0)
+	// TargetID = node index (1); PropID = fixed translation constant (0).
+	arity, got := evalOne(t, tl, 0.5, 1, 0)
 	if arity != ArityVec3 {
 		t.Fatalf("arity = %v, want ArityVec3", arity)
 	}
@@ -194,7 +196,8 @@ func TestBuildClipTimelineUnknownInterpDefaultsLinear(t *testing.T) {
 	if got := tl.Children[0].Track.Interp; got != InterpLinear {
 		t.Fatalf("unknown interp -> %v, want InterpLinear", got)
 	}
-	arity, v := evalOne(t, tl, 0.5, 0, 0)
+	// TargetID = node index (0); PropID = fixed scale constant (2).
+	arity, v := evalOne(t, tl, 0.5, 0, 2)
 	if arity != ArityVec3 {
 		t.Fatalf("arity = %v, want ArityVec3", arity)
 	}
@@ -219,5 +222,65 @@ func TestBuildClipTimelineDurationFromKeys(t *testing.T) {
 	_, dur := BuildClipTimeline([]ClipChannel{ch})
 	if math.Abs(dur-2.5) > 1e-12 {
 		t.Fatalf("duration = %v, want 2.5 (last keyframe)", dur)
+	}
+}
+
+// TestBuildClipTimelineDirectIDs asserts that BuildClipTimeline assigns
+// TargetID = channel.Node and PropID = fixed per-property constant, regardless
+// of channel order or prior interning. This is the regression guard for the
+// cross-clip consistency fix.
+func TestBuildClipTimelineDirectIDs(t *testing.T) {
+	// Node 7, rotation → TargetID=7, PropID=1 (propIDRotation).
+	ch := ClipChannel{
+		Node:     7,
+		Property: "rotation",
+		Interp:   "LINEAR",
+		Times:    []float64{0, 1},
+		Values:   []float64{0, 0, 0, 1, 0, 0, 0, 1}, // identity quat at both keys
+	}
+	tl, _ := BuildClipTimeline([]ClipChannel{ch})
+	if len(tl.Children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(tl.Children))
+	}
+	tr := tl.Children[0].Track
+	if tr.TargetID != 7 {
+		t.Errorf("TargetID = %d, want 7 (node index)", tr.TargetID)
+	}
+	if tr.PropID != propIDRotation {
+		t.Errorf("PropID = %d, want %d (propIDRotation)", tr.PropID, propIDRotation)
+	}
+
+	// translation → PropID=0
+	chTrans := ClipChannel{
+		Node:     3,
+		Property: "translation",
+		Interp:   "LINEAR",
+		Times:    []float64{0, 1},
+		Values:   []float64{0, 0, 0, 1, 0, 0},
+	}
+	tl2, _ := BuildClipTimeline([]ClipChannel{chTrans})
+	tr2 := tl2.Children[0].Track
+	if tr2.TargetID != 3 {
+		t.Errorf("TargetID = %d, want 3", tr2.TargetID)
+	}
+	if tr2.PropID != propIDTranslation {
+		t.Errorf("PropID = %d, want %d (propIDTranslation)", tr2.PropID, propIDTranslation)
+	}
+
+	// scale → PropID=2
+	chScale := ClipChannel{
+		Node:     5,
+		Property: "scale",
+		Interp:   "LINEAR",
+		Times:    []float64{0, 1},
+		Values:   []float64{1, 1, 1, 2, 2, 2},
+	}
+	tl3, _ := BuildClipTimeline([]ClipChannel{chScale})
+	tr3 := tl3.Children[0].Track
+	if tr3.TargetID != 5 {
+		t.Errorf("TargetID = %d, want 5", tr3.TargetID)
+	}
+	if tr3.PropID != propIDScale {
+		t.Errorf("PropID = %d, want %d (propIDScale)", tr3.PropID, propIDScale)
 	}
 }

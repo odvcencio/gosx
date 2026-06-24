@@ -361,3 +361,125 @@ func quatDist(a, b Quat) float64 {
 	dot := a.X*b.X + a.Y*b.Y + a.Z*b.Z + a.W*b.W
 	return 1 - math.Abs(dot)
 }
+
+// TestMixerCrossClipBlend is the regression test for the cross-clip TargetID
+// consistency fix. Before the fix, BuildClipTimeline used a per-clip interner so
+// two clips with different channel order got different TargetIDs for the same glTF
+// node — the mixer then failed to recognise shared nodes and blended incorrectly.
+//
+// Clip A animates rotation on nodes {2, 5} (in that order).
+// Clip B animates rotation on nodes {5, 9} (in that order — different first node,
+// so the old interner WOULD have assigned node 5 TargetID=0 in A and TargetID=0
+// in B too, but node 2 vs 9 differ; more critically, two-node clips with different
+// node sets means the first-seen intern order disagrees for the shared node once
+// combined with a cross-clip scenario where neither is first).
+//
+// With the fix: TargetID == node index unconditionally, PropID fixed by property.
+// The mixer must:
+//   - Blend node 5's rotation (shared): result ≈ slerp(A_rot5, B_rot5, 0.5).
+//   - Pass through node 2's rotation (A-only) = A_rot2.
+//   - Pass through node 9's rotation (B-only) = B_rot9.
+func TestMixerCrossClipBlend(t *testing.T) {
+	// Constant quaternions per node per clip (no time animation needed — just
+	// need distinct, recognisable rotations).
+	rotA2 := QuatFromEuler(0, math.Pi/4, 0) // 45° about Y
+	rotA5 := QuatFromEuler(math.Pi/6, 0, 0) // 30° about X
+	rotB5 := QuatFromEuler(0, 0, math.Pi/3) // 60° about Z
+	rotB9 := QuatFromEuler(0, math.Pi/2, 0) // 90° about Y
+
+	// Build clip A: channels in order [node2-rotation, node5-rotation].
+	clipA, durA := BuildClipTimeline([]ClipChannel{
+		{
+			Node:     2,
+			Property: "rotation",
+			Interp:   "LINEAR",
+			Times:    []float64{0, 1},
+			Values:   []float64{rotA2.X, rotA2.Y, rotA2.Z, rotA2.W, rotA2.X, rotA2.Y, rotA2.Z, rotA2.W},
+		},
+		{
+			Node:     5,
+			Property: "rotation",
+			Interp:   "LINEAR",
+			Times:    []float64{0, 1},
+			Values:   []float64{rotA5.X, rotA5.Y, rotA5.Z, rotA5.W, rotA5.X, rotA5.Y, rotA5.Z, rotA5.W},
+		},
+	})
+
+	// Build clip B: channels in order [node5-rotation, node9-rotation].
+	// Note: node5 appears FIRST in B but SECOND in A — this is the ordering that
+	// would have produced different TargetIDs under the old per-clip interner.
+	clipB, durB := BuildClipTimeline([]ClipChannel{
+		{
+			Node:     5,
+			Property: "rotation",
+			Interp:   "LINEAR",
+			Times:    []float64{0, 1},
+			Values:   []float64{rotB5.X, rotB5.Y, rotB5.Z, rotB5.W, rotB5.X, rotB5.Y, rotB5.Z, rotB5.W},
+		},
+		{
+			Node:     9,
+			Property: "rotation",
+			Interp:   "LINEAR",
+			Times:    []float64{0, 1},
+			Values:   []float64{rotB9.X, rotB9.Y, rotB9.Z, rotB9.W, rotB9.X, rotB9.Y, rotB9.Z, rotB9.W},
+		},
+	})
+
+	m := NewMixer()
+	m.AddClip("A", clipA, durA)
+	m.AddClip("B", clipB, durB)
+	m.Play("A", PlayOptions{}) // weight 1
+	m.Play("B", PlayOptions{}) // weight 1
+
+	out := NewWriteBuf(64)
+	m.Update(0.0, Policy{}, out)
+
+	const rotTol = 1e-6
+
+	// --- Node 2 (only A): should equal rotA2 exactly. ---
+	arity2, v2, ok2 := findWrite(out, 2, propIDRotation)
+	if !ok2 {
+		t.Fatalf("no write for node 2 (A-only)")
+	}
+	if arity2 != ArityQuat {
+		t.Fatalf("node 2 arity = %v, want ArityQuat", arity2)
+	}
+	got2 := Quat{v2[0], v2[1], v2[2], v2[3]}
+	if quatDist(got2, rotA2) > rotTol {
+		t.Errorf("node 2 (A-only): got %v, want %v (rotA2)", got2, rotA2)
+	}
+
+	// --- Node 9 (only B): should equal rotB9 exactly. ---
+	arity9, v9, ok9 := findWrite(out, 9, propIDRotation)
+	if !ok9 {
+		t.Fatalf("no write for node 9 (B-only)")
+	}
+	if arity9 != ArityQuat {
+		t.Fatalf("node 9 arity = %v, want ArityQuat", arity9)
+	}
+	got9 := Quat{v9[0], v9[1], v9[2], v9[3]}
+	if quatDist(got9, rotB9) > rotTol {
+		t.Errorf("node 9 (B-only): got %v, want %v (rotB9)", got9, rotB9)
+	}
+
+	// --- Node 5 (shared): must be slerp(rotA5, rotB5, 0.5) — A blended first
+	// at weight 1, then B blends at t = 1/(1+1) = 0.5. ---
+	arity5, v5, ok5 := findWrite(out, 5, propIDRotation)
+	if !ok5 {
+		t.Fatalf("no write for node 5 (shared) — cross-clip blend FAILED (IDs disagree?)")
+	}
+	if arity5 != ArityQuat {
+		t.Fatalf("node 5 arity = %v, want ArityQuat", arity5)
+	}
+	got5 := Quat{v5[0], v5[1], v5[2], v5[3]}
+	want5 := Slerp(rotA5, rotB5, 0.5)
+	if quatDist(got5, want5) > rotTol {
+		t.Errorf("node 5 (shared blend): got %v, want slerp(rotA5,rotB5,0.5)=%v", got5, want5)
+	}
+
+	// --- Total write count: 3 (nodes 2, 5, 9 — one write each). ---
+	n := countWrites(out)
+	if n != 3 {
+		t.Errorf("expected 3 writes (nodes 2,5,9), got %d", n)
+	}
+}
