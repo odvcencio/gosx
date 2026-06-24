@@ -2844,7 +2844,13 @@
     const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
     const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
     const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
-    const constrainedHardware = lowPower || reducedData || (deviceMemory > 0 && deviceMemory <= 4) || (hardwareConcurrency > 0 && hardwareConcurrency <= 4);
+    // Same correction as lowPower in 05-document-env: a single weak signal
+    // (deviceMemory<=4, which mobile Chrome reports near-universally) must not
+    // mark hardware "constrained" on its own, or capable phones get tier
+    // "constrained" -> low-power GPU via (coarsePointer && constrainedHardware)
+    // below. Require BOTH low memory AND few cores; lowPower/reducedData still
+    // force it. AdaptiveQuality remains the runtime safety net.
+    const constrainedHardware = lowPower || reducedData || ((deviceMemory > 0 && deviceMemory <= 4) && (hardwareConcurrency > 0 && hardwareConcurrency <= 4));
 
     let tier = requestedTier;
     if (!tier) {
