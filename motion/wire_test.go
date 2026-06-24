@@ -495,3 +495,72 @@ func TestWireNilPositionedNoPanic(t *testing.T) {
 		t.Fatal("expected decoded Positioned to have nil Sub")
 	}
 }
+
+// TestWireTargetMaterialRoundTrip: a TargetMaterial track with a Color keyframe
+// survives EncodeProgram/DecodeProgram with Kind preserved.
+func TestWireTargetMaterialRoundTrip(t *testing.T) {
+	matTrack := &Track{
+		Target: Target{Kind: TargetMaterial, Ref: "mat1"},
+		Prop:   "emissive",
+		Keys: []Key{
+			{T: 0, Value: Value{Arity: ArityColor, F: [4]float64{0, 0, 0, 1}}},
+			{T: 1, Value: Value{Arity: ArityColor, F: [4]float64{1, 0.5, 0.25, 1}}},
+		},
+		Interp:   InterpLinear,
+		Ease:     Ease{Kind: EaseLinear},
+		TargetID: 0,
+		PropID:   0,
+	}
+	tl := &Timeline{
+		ID: "mat-tl",
+		Children: []Positioned{
+			{At: Position{Kind: PosAbs, Val: 0}, Track: matTrack},
+		},
+		Speed: 1,
+	}
+	targetRefs := []string{"mat1"}
+	propRefs := []string{"emissive"}
+
+	blob := EncodeProgram(tl, targetRefs, propRefs)
+	gotTL, gotTargetRefs, gotPropRefs, err := DecodeProgram(blob)
+	if err != nil {
+		t.Fatalf("DecodeProgram error: %v", err)
+	}
+
+	// Check ref tables survive.
+	if len(gotTargetRefs) != 1 || gotTargetRefs[0] != "mat1" {
+		t.Errorf("targetRefs: got %v, want [mat1]", gotTargetRefs)
+	}
+	if len(gotPropRefs) != 1 || gotPropRefs[0] != "emissive" {
+		t.Errorf("propRefs: got %v, want [emissive]", gotPropRefs)
+	}
+
+	// Check the track survived.
+	if len(gotTL.Children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(gotTL.Children))
+	}
+	tr := gotTL.Children[0].Track
+	if tr == nil {
+		t.Fatal("decoded track is nil")
+	}
+	// TargetMaterial Kind must survive the round-trip.
+	if tr.Target.Kind != TargetMaterial {
+		t.Errorf("Target.Kind: got %d, want TargetMaterial (%d)", tr.Target.Kind, TargetMaterial)
+	}
+	if tr.Target.Ref != "mat1" {
+		t.Errorf("Target.Ref: got %q, want %q", tr.Target.Ref, "mat1")
+	}
+	if tr.Prop != "emissive" {
+		t.Errorf("Prop: got %q, want %q", tr.Prop, "emissive")
+	}
+	// 2 keyframes with ArityColor preserved.
+	if len(tr.Keys) != 2 {
+		t.Fatalf("Keys len: got %d, want 2", len(tr.Keys))
+	}
+	if tr.Keys[0].Value.Arity != ArityColor {
+		t.Errorf("key[0].Arity: got %v, want ArityColor", tr.Keys[0].Value.Arity)
+	}
+	if tr.Keys[1].Value.Arity != ArityColor {
+		t.Errorf("key[1].Arity: got %v, want ArityColor", tr.Keys[1].Value.Arity)
+	}
+}

@@ -667,6 +667,84 @@ func TestEvalDefaultLinearNoEase(t *testing.T) {
 	}
 }
 
+// --- TargetMaterial tests ---
+
+// TestEvalMaterialColorTrack: a TargetMaterial track with Prop:"emissive" and two
+// Color (ArityColor) keyframes, sampled mid-segment, must emit a linearly-lerped
+// packed write [targetID, propID, ArityColor(=5), r, g, b, a].
+func TestEvalMaterialColorTrack(t *testing.T) {
+	const eps = 1e-12
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					Target:   Target{Kind: TargetMaterial, Ref: "mat1"},
+					TargetID: 10,
+					Prop:     "emissive",
+					PropID:   3,
+					Keys: []Key{
+						{T: 0, Value: Value{Arity: ArityColor, F: [4]float64{0, 0, 0, 1}}},
+						{T: 1, Value: Value{Arity: ArityColor, F: [4]float64{1, 0.5, 0.25, 1}}},
+					},
+					Interp: InterpLinear,
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(64)
+	Eval(tl, 0.5, Policy{}, out)
+	got := out.Writes()
+	// packed: [targetID=10, propID=3, arity=ArityColor(5), r, g, b, a]
+	// lerp at alpha=0.5: r=0.5, g=0.25, b=0.125, a=1.0
+	want := []float64{10, 3, float64(ArityColor), 0.5, 0.25, 0.125, 1.0}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v (len=%d), want %v (len=%d)", got, len(got), want, len(want))
+	}
+	for i, v := range want {
+		if math.Abs(got[i]-v) > eps {
+			t.Errorf("index %d: got %v, want %v (full: %v)", i, got[i], v, got)
+		}
+	}
+}
+
+// TestEvalMaterialScalarTrack: a TargetMaterial track with Prop:"roughness" and two
+// Scalar keyframes, sampled mid-segment, must lerp the scalar value correctly.
+func TestEvalMaterialScalarTrack(t *testing.T) {
+	const eps = 1e-12
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				At: Position{Kind: PosAbs, Val: 0},
+				Track: &Track{
+					Target:   Target{Kind: TargetMaterial, Ref: "mat1"},
+					TargetID: 11,
+					Prop:     "roughness",
+					PropID:   4,
+					Keys: []Key{
+						{T: 0, Value: ScalarV(0.2)},
+						{T: 1, Value: ScalarV(0.8)},
+					},
+					Interp: InterpLinear,
+				},
+			},
+		},
+	}
+	out := NewWriteBuf(32)
+	Eval(tl, 0.5, Policy{}, out)
+	got := out.Writes()
+	// packed: [targetID=11, propID=4, arity=ArityScalar(0), 0.5]
+	want := []float64{11, 4, float64(ArityScalar), 0.5}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if math.Abs(got[i]-v) > eps {
+			t.Errorf("index %d: got %v, want %v (full: %v)", i, got[i], v, got)
+		}
+	}
+}
+
 // TestEvalEasedZeroAlloc: Eval must not allocate even when easing is applied.
 func TestEvalEasedZeroAlloc(t *testing.T) {
 	tl := &Timeline{

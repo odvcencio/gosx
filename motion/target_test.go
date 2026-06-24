@@ -122,6 +122,67 @@ func TestPrepareTracks(t *testing.T) {
 	}
 }
 
+// TestPrepareTracksTargetMaterial verifies that PrepareTracks interns a
+// TargetMaterial track's Ref and Prop exactly like any other target kind.
+func TestPrepareTracksTargetMaterial(t *testing.T) {
+	tl := &Timeline{
+		Children: []Positioned{
+			{
+				Track: &Track{
+					Target: Target{Kind: TargetMaterial, Ref: "mat1"},
+					Prop:   "emissive",
+				},
+			},
+			{
+				Track: &Track{
+					Target: Target{Kind: TargetMaterial, Ref: "mat2"},
+					Prop:   "roughness",
+				},
+			},
+			{
+				Track: &Track{
+					Target: Target{Kind: TargetMaterial, Ref: "mat1"}, // repeat ref
+					Prop:   "emissive",                                // repeat prop
+				},
+			},
+		},
+	}
+
+	targets := NewInterner()
+	props := NewInterner()
+	PrepareTracks(tl, targets, props)
+
+	tr0 := tl.Children[0].Track
+	tr1 := tl.Children[1].Track
+	tr2 := tl.Children[2].Track
+
+	if tr0.TargetID != 0 {
+		t.Errorf("mat1 first: TargetID want 0, got %d", tr0.TargetID)
+	}
+	if tr0.PropID != 0 {
+		t.Errorf("emissive first: PropID want 0, got %d", tr0.PropID)
+	}
+	if tr1.TargetID != 1 {
+		t.Errorf("mat2: TargetID want 1, got %d", tr1.TargetID)
+	}
+	if tr1.PropID != 1 {
+		t.Errorf("roughness: PropID want 1, got %d", tr1.PropID)
+	}
+	// repeat refs must reuse the same IDs
+	if tr2.TargetID != 0 {
+		t.Errorf("mat1 repeat: TargetID want 0, got %d", tr2.TargetID)
+	}
+	if tr2.PropID != 0 {
+		t.Errorf("emissive repeat: PropID want 0, got %d", tr2.PropID)
+	}
+	if targets.Len() != 2 {
+		t.Errorf("targets.Len want 2, got %d", targets.Len())
+	}
+	if props.Len() != 2 {
+		t.Errorf("props.Len want 2, got %d", props.Len())
+	}
+}
+
 // TestPrepareTracksNested verifies pre-order traversal: parent tracks before
 // sub-timeline tracks, and repeated refs reuse the same id.
 func TestPrepareTracksNested(t *testing.T) {

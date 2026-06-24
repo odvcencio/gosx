@@ -37,6 +37,7 @@ const (
 	TargetSceneNode TargetKind = iota // a node in the GoSX scene graph
 	TargetDOM                         // a DOM element (browser only)
 	TargetCSSVar                      // a CSS custom property (browser only)
+	TargetMaterial                    // animates a material uniform; Ref = material stable id, Track.Prop = uniform name
 )
 
 // Target identifies an animatable object by kind and reference string.
