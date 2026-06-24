@@ -2856,6 +2856,31 @@
       0, 0, 0, 1,
     ]);
 
+    // Hoisted uniform staging buffers — reused every frame to eliminate per-frame allocations.
+    // Each scratch is consumed synchronously (filled → writeBuffer → done) before any reuse.
+    var _frameUniformBuf = new ArrayBuffer(160);
+    var _frameUniformF   = new Float32Array(_frameUniformBuf);
+    var _frameUniformU   = new Uint32Array(_frameUniformBuf);
+
+    var _fogUniformBuf = new ArrayBuffer(32);
+    var _fogUniformF   = new Float32Array(_fogUniformBuf);
+    var _fogUniformU   = new Uint32Array(_fogUniformBuf);
+
+    var _shadowUniformBuf = new ArrayBuffer(160);
+    var _shadowUniformF   = new Float32Array(_shadowUniformBuf);
+    var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
+    var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
+
+    var _envUniformF = new Float32Array(12);
+
+    var _lightCountBuf  = new Uint32Array(1);
+    var _lightDataF     = new Float32Array(8 * 16);
+    var _lightColorCache = {};
+
+    var _materialUniformBuf = new ArrayBuffer(80);
+    var _materialUniformF   = new Float32Array(_materialUniformBuf);
+    var _materialUniformU   = new Uint32Array(_materialUniformBuf);
+
     var scratchPositions = null;
     var scratchNormals = null;
     var scratchUVs = null;
@@ -4210,9 +4235,8 @@
       // f32 viewportHeight:  148 (4 bytes)
       // u32 toneMap:         152 (4 bytes)
       // u32 _pad:            156 (4 bytes)
-      var data = new ArrayBuffer(160);
-      var f = new Float32Array(data);
-      var u = new Uint32Array(data);
+      var f = _frameUniformF;
+      var u = _frameUniformU;
       f.set(scratchViewMatrix, 0);          // offset 0
       f.set(scratchProjMatrix, 16);         // offset 64
       f[32] = cam.x;                         // cameraPos.x
@@ -4224,7 +4248,7 @@
       u[38] = toneMap ? 1 : 0;               // toneMap
       u[39] = 0;                              // pad
 
-      device.queue.writeBuffer(frameUniformBuffer, 0, new Float32Array(data));
+      device.queue.writeBuffer(frameUniformBuffer, 0, f);
       return cam;
     }
 
@@ -4233,12 +4257,12 @@
       var count = Math.min(lightArray.length, 8);
 
       // Write lightCount into frame uniform buffer at byte offset 140.
-      var countBuf = new Uint32Array([count]);
-      device.queue.writeBuffer(frameUniformBuffer, 140, countBuf);
+      _lightCountBuf[0] = count;
+      device.queue.writeBuffer(frameUniformBuffer, 140, _lightCountBuf);
 
       // Each light: 4 * vec4f = 64 bytes.
-      var lightData = new Float32Array(8 * 16);
-      var colorCache = {};
+      var lightData = _lightDataF;
+      var colorCache = _lightColorCache;
 
       for (var i = 0; i < count; i++) {
         var light = lightArray[i];
@@ -4288,9 +4312,8 @@
       var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
 
       // FogUniforms: vec3f fogColor(12) + f32 density(4) + u32 hasFog(4) + pad(12) = 32 bytes.
-      var data = new ArrayBuffer(32);
-      var f = new Float32Array(data);
-      var u = new Uint32Array(data);
+      var f = _fogUniformF;
+      var u = _fogUniformU;
       f[0] = fogColorRGBA[0];
       f[1] = fogColorRGBA[1];
       f[2] = fogColorRGBA[2];
@@ -4299,7 +4322,7 @@
       u[5] = 0;
       u[6] = 0;
       u[7] = 0;
-      device.queue.writeBuffer(fogUniformBuffer, 0, new Float32Array(data));
+      device.queue.writeBuffer(fogUniformBuffer, 0, f);
     }
 
     function uploadEnvUniforms(environment) {
@@ -4309,7 +4332,7 @@
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
 
       // EnvUniforms: vec3f + f32 + vec3f + f32 + vec3f + f32 = 48 bytes.
-      var data = new Float32Array(12);
+      var data = _envUniformF;
       data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
       data[3] = sceneNumber(env.ambientIntensity, 0);
       data[4] = skyColorRGBA[0]; data[5] = skyColorRGBA[1]; data[6] = skyColorRGBA[2];
@@ -4322,16 +4345,19 @@
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
       var lightArray = Array.isArray(lights) ? lights : [];
       // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
-      var data = new ArrayBuffer(160);
-      var f = new Float32Array(data);
-      var u = new Uint32Array(data);
-      var i = new Int32Array(data);
+      var f = _shadowUniformF;
+      var u = _shadowUniformU;
+      var i = _shadowUniformI;
 
       if (shadowLightMatrices[0]) {
         f.set(shadowLightMatrices[0], 0);   // lightSpaceMatrix0 @ offset 0
+      } else {
+        f.fill(0, 0, 16);                   // zero out slot 0 (no stale matrix)
       }
       if (shadowLightMatrices[1]) {
         f.set(shadowLightMatrices[1], 16);  // lightSpaceMatrix1 @ offset 64
+      } else {
+        f.fill(0, 16, 32);                  // zero out slot 1 (no stale matrix)
       }
 
       u[32] = shadowLightMatrices[0] ? 1 : 0;  // hasShadow0
@@ -4354,7 +4380,7 @@
       u[38] = 0; // pad
       u[39] = 0; // pad
 
-      device.queue.writeBuffer(shadowUniformBuffer, 0, new Float32Array(data));
+      device.queue.writeBuffer(shadowUniformBuffer, 0, f);
     }
 
     function materialUniformData(material, receiveShadow) {
@@ -4362,9 +4388,9 @@
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
       // MaterialUniforms: vec3f + 9*f32 + 8*u32 = 80 bytes.
-      var data = new ArrayBuffer(80);
-      var f = new Float32Array(data);
-      var u = new Uint32Array(data);
+      // Uses hoisted module-scope scratch; caller consumes synchronously before next call.
+      var f = _materialUniformF;
+      var u = _materialUniformU;
 
       f[0] = albedoRGBA[0]; f[1] = albedoRGBA[1]; f[2] = albedoRGBA[2];
       f[3] = sceneNumber(mat.roughness, 0.5);
@@ -4377,10 +4403,11 @@
       f[10] = clamp01(sceneNumber(mat.iridescence, 0));
       f[11] = Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0)));
       u[12] = (mat.unlit || mat.kind === "flat" || mat.materialKind === "flat") ? 1 : 0;
-
+      // u[13..17] set by caller (texture-loaded flags); zero here for fields not written below
+      u[13] = 0; u[14] = 0; u[15] = 0; u[16] = 0; u[17] = 0;
       u[18] = receiveShadow ? 1 : 0;
       u[19] = 0;
-      return { data: new Float32Array(data), u: u };
+      return { data: f, u: u };
     }
 
     function createMaterialBindGroup(material, receiveShadow, cacheOwner) {
