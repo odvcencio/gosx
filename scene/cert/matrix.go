@@ -34,6 +34,7 @@ const (
 	Docs           Dimension = "docs"
 	Tests          Dimension = "tests"
 	A11yFallback   Dimension = "a11yFallback"
+	Motion         Dimension = "motion"
 )
 
 var AllDimensions = []Dimension{
@@ -53,6 +54,7 @@ var AllDimensions = []Dimension{
 	Docs,
 	Tests,
 	A11yFallback,
+	Motion,
 }
 
 type Entry struct {
@@ -224,6 +226,20 @@ func StrictFailures(entries []Entry) []StrictFailure {
 			failures = append(failures, StrictFailure{Feature: "custom WGSL", Dimension: Docs, Status: entry.Dimensions[Docs], Required: "docs must not imply complete custom WGSL before WebGPU support is complete"})
 		}
 	}
+	// Phase 1 motion floor: the canonical evaluator + native↔WASM parity gate are
+	// proven for skeletal animation. Skinned mesh is the primary feature that exercises
+	// the motion evaluator; it must carry an explicit Motion status — unsupported is
+	// not permitted now that the evaluator contract exists.
+	for _, feature := range []string{"skinned mesh", "GLB model"} {
+		entry, ok := byFeature[feature]
+		if !ok {
+			failures = append(failures, StrictFailure{Feature: feature, Required: "feature must be present in certification matrix"})
+			continue
+		}
+		if entry.Dimensions[Motion] == Unsupported {
+			failures = append(failures, StrictFailure{Feature: feature, Dimension: Motion, Status: Unsupported, Required: "Motion may be partial or complete, but must not be silently unsupported after Phase 1 evaluator delivery"})
+		}
+	}
 	return failures
 }
 
@@ -268,6 +284,7 @@ func profile(name string) map[Dimension]Status {
 		dims[PerfBudget] = Partial
 		dims[Docs] = Partial
 		dims[A11yFallback] = NotApplicable
+		dims[Motion] = NotApplicable
 	case "nativePartial":
 		for _, d := range []Dimension{TypedAuthoring, SceneIR, RenderBundle, WebGL, Diff} {
 			dims[d] = Complete
@@ -276,6 +293,7 @@ func profile(name string) map[Dimension]Status {
 		dims[CanvasFallback] = Fallback
 		dims[Headless] = Partial
 		dims[A11yFallback] = NotApplicable
+		dims[Motion] = NotApplicable
 	case "htmlDOM":
 		for _, d := range []Dimension{TypedAuthoring, GSXAuthoring, SceneIR, RenderBundle, WebGL, CanvasFallback, Diff, Picking, Signals, Docs, Tests, A11yFallback} {
 			dims[d] = Complete
@@ -284,6 +302,8 @@ func profile(name string) map[Dimension]Status {
 		dims[Headless] = Fallback
 		dims[Assets] = NotApplicable
 		dims[PerfBudget] = Partial
+		// DOM motion (CSS transitions, WAAPI) is outside Phase 1 evaluator scope.
+		dims[Motion] = NotApplicable
 	case "htmlTexture":
 		for _, d := range []Dimension{TypedAuthoring, GSXAuthoring, SceneIR, RenderBundle, Diff, Picking, Signals} {
 			dims[d] = Complete
@@ -297,6 +317,7 @@ func profile(name string) map[Dimension]Status {
 		dims[Docs] = Partial
 		dims[Tests] = Partial
 		dims[A11yFallback] = Complete
+		dims[Motion] = NotApplicable
 	case "asset":
 		for _, d := range []Dimension{SceneIR, RenderBundle, Assets} {
 			dims[d] = Complete
@@ -314,6 +335,8 @@ func profile(name string) map[Dimension]Status {
 		dims[Docs] = Partial
 		dims[Tests] = Partial
 		dims[A11yFallback] = NotApplicable
+		// Asset pipeline itself does not exercise the motion evaluator contract.
+		dims[Motion] = NotApplicable
 	case "runtime":
 		for _, d := range []Dimension{TypedAuthoring, GSXAuthoring, SceneIR, RenderBundle, WebGL, Diff, Signals} {
 			dims[d] = Complete
@@ -326,6 +349,7 @@ func profile(name string) map[Dimension]Status {
 		dims[Docs] = Partial
 		dims[Tests] = Partial
 		dims[A11yFallback] = NotApplicable
+		dims[Motion] = NotApplicable
 	case "postfx":
 		for _, d := range []Dimension{TypedAuthoring, GSXAuthoring, SceneIR, RenderBundle, WebGPU, WebGL, Diff} {
 			dims[d] = Complete
@@ -339,6 +363,7 @@ func profile(name string) map[Dimension]Status {
 		dims[Docs] = Partial
 		dims[Tests] = Partial
 		dims[A11yFallback] = NotApplicable
+		dims[Motion] = NotApplicable
 	case "material":
 		for _, d := range []Dimension{TypedAuthoring, GSXAuthoring, SceneIR, RenderBundle, WebGPU, WebGL, Diff} {
 			dims[d] = Complete
@@ -352,6 +377,7 @@ func profile(name string) map[Dimension]Status {
 		dims[Docs] = Partial
 		dims[Tests] = Partial
 		dims[A11yFallback] = NotApplicable
+		dims[Motion] = NotApplicable
 	case "lighting":
 		for _, d := range []Dimension{TypedAuthoring, GSXAuthoring, SceneIR, RenderBundle, WebGPU, WebGL, Diff} {
 			dims[d] = Complete
@@ -365,6 +391,7 @@ func profile(name string) map[Dimension]Status {
 		dims[Docs] = Partial
 		dims[Tests] = Partial
 		dims[A11yFallback] = NotApplicable
+		dims[Motion] = NotApplicable
 	default:
 		for _, d := range AllDimensions {
 			dims[d] = Partial
@@ -446,10 +473,10 @@ var seeds = []seed{
 	{feature: "HTML overlay", category: "geometry", profile: "htmlDOM"},
 	{feature: "HTML portal", category: "geometry", profile: "htmlDOM"},
 	{feature: "HTML texture surface", category: "geometry", profile: "htmlTexture"},
-	{feature: "GLB model", category: "geometry", profile: "asset", overrides: overrides(TypedAuthoring, Complete, GSXAuthoring, Complete, WebGPU, Complete, WebGL, Complete, Picking, Complete, Tests, Complete)},
+	{feature: "GLB model", category: "geometry", profile: "asset", overrides: overrides(TypedAuthoring, Complete, GSXAuthoring, Complete, WebGPU, Complete, WebGL, Complete, Picking, Complete, Tests, Complete, Motion, Partial)},
 	{feature: "instanced mesh", category: "geometry", profile: "primitive", overrides: overrides(Assets, NotApplicable, PerfBudget, Complete)},
 	{feature: "instanced GLB mesh", category: "geometry", profile: "asset", overrides: overrides(WebGPU, Complete, WebGL, Complete, Picking, Complete)},
-	{feature: "skinned mesh", category: "geometry", profile: "asset", overrides: overrides(WebGPU, Complete, WebGL, Complete, Tests, Partial)},
+	{feature: "skinned mesh", category: "geometry", profile: "asset", overrides: overrides(WebGPU, Complete, WebGL, Complete, Tests, Partial, Motion, Partial)},
 	{feature: "helper grid", category: "geometry", profile: "nativePartial"},
 	{feature: "helper axes", category: "geometry", profile: "nativePartial"},
 	{feature: "helper box", category: "geometry", profile: "nativePartial"},
@@ -465,7 +492,11 @@ var seeds = []seed{
 	{feature: "line basic", category: "materials", profile: "material"},
 	{feature: "line dashed", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial)},
 	{feature: "custom GLSL", category: "materials", profile: "material", overrides: overrides(WebGPU, NotApplicable, WebGL, Partial, Docs, Partial)},
-	{feature: "custom WGSL", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial, WebGL, NotApplicable, Docs, Partial, Tests, Partial)},
+	// Motion=partial: TargetMaterial authoring (MaterialAnims), lowering
+	// (materialMotionTracks → MaterialMotionProgram), and the JS customUniforms
+	// apply seam (window.__gosx_motion_wasm) exist. Animated-uniform pixel render
+	// is browser-unverified; native/bundle material path is still static-cached.
+	{feature: "custom WGSL", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial, WebGL, NotApplicable, Docs, Partial, Tests, Partial, Motion, Partial)},
 	{feature: "named materials", category: "materials", profile: "material"},
 	{feature: "CSS variable material fields", category: "materials", profile: "material", overrides: overrides(WebGPU, Partial, WebGL, Partial, Tests, Partial)},
 	{feature: "texture maps", category: "materials", profile: "material", overrides: overrides(Assets, Complete, Tests, Complete)},
@@ -512,8 +543,8 @@ var seeds = []seed{
 	{feature: "vignette", category: "post-fx", profile: "postfx", overrides: overrides(Tests, Partial)},
 	{feature: "color grade", category: "post-fx", profile: "postfx", overrides: overrides(Tests, Partial)},
 
-	{feature: "GLB", category: "asset pipeline", profile: "asset", overrides: overrides(WebGPU, Complete, WebGL, Complete, Tests, Complete)},
-	{feature: "glTF", category: "asset pipeline", profile: "asset"},
+	{feature: "GLB", category: "asset pipeline", profile: "asset", overrides: overrides(WebGPU, Complete, WebGL, Complete, Tests, Complete, Motion, Partial)},
+	{feature: "glTF", category: "asset pipeline", profile: "asset", overrides: overrides(Motion, Partial)},
 	{feature: "raster textures", category: "asset pipeline", profile: "asset", overrides: overrides(WebGPU, Complete, WebGL, Complete, Tests, Complete)},
 	{feature: "KTX2", category: "asset pipeline", profile: "asset", overrides: overrides(WebGPU, Partial, WebGL, Partial)},
 	{feature: "HDR/EXR", category: "asset pipeline", profile: "asset", overrides: overrides(WebGPU, Partial, WebGL, Partial)},

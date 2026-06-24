@@ -1,0 +1,197 @@
+{
+  "name": "stagger",
+  "tol": 1e-9,
+  "timeline": {
+    "ID": "",
+    "Children": [
+      {
+        "At": {
+          "Kind": 0,
+          "Val": 0,
+          "Label": ""
+        },
+        "Track": {
+          "Target": {
+            "Kind": 0,
+            "Ref": ""
+          },
+          "Prop": "opacity",
+          "Keys": [
+            {
+              "T": 0.1,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
+            },
+            {
+              "T": 1.1,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  10,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
+            }
+          ],
+          "Gen": null,
+          "Interp": 0,
+          "Ease": {
+            "Kind": 0,
+            "Args": null
+          },
+          "TargetID": 1,
+          "PropID": 3
+        },
+        "Sub": null
+      },
+      {
+        "At": {
+          "Kind": 0,
+          "Val": 0,
+          "Label": ""
+        },
+        "Track": {
+          "Target": {
+            "Kind": 0,
+            "Ref": ""
+          },
+          "Prop": "opacity",
+          "Keys": [
+            {
+              "T": 0,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
+            },
+            {
+              "T": 1,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  10,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
+            }
+          ],
+          "Gen": null,
+          "Interp": 0,
+          "Ease": {
+            "Kind": 0,
+            "Args": null
+          },
+          "TargetID": 2,
+          "PropID": 3
+        },
+        "Sub": null
+      },
+      {
+        "At": {
+          "Kind": 0,
+          "Val": 0,
+          "Label": ""
+        },
+        "Track": {
+          "Target": {
+            "Kind": 0,
+            "Ref": ""
+          },
+          "Prop": "opacity",
+          "Keys": [
+            {
+              "T": 0.1,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
+            },
+            {
+              "T": 1.1,
+              "Value": {
+                "Arity": 0,
+                "F": [
+                  10,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              "Ease": null,
+              "InTangent": null,
+              "OutTangent": null
+            }
+          ],
+          "Gen": null,
+          "Interp": 0,
+          "Ease": {
+            "Kind": 0,
+            "Args": null
+          },
+          "TargetID": 3,
+          "PropID": 3
+        },
+        "Sub": null
+      }
+    ],
+    "Loop": 0,
+    "Alternate": false,
+    "Speed": 0,
+    "Autoplay": false
+  },
+  "samples": [
+    {
+      "t": 0.5,
+      "writes": [
+        1,
+        3,
+        0,
+        4,
+        2,
+        3,
+        0,
+        5,
+        3,
+        3,
+        0,
+        4
+      ]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
 const DefaultEngineName = "GoSXScene3D"
@@ -277,6 +278,63 @@ type Mesh struct {
 	OutState   *MeshProps
 	Live       []string
 	Children   []Node
+	// MaterialAnims declares optional per-mesh material-uniform animations
+	// (e.g. animated emissive/roughness/color or custom .sel uniforms). Each
+	// entry is lowered to a MotionIR keyframe Track targeting this mesh's
+	// material (Target.Kind == TargetMaterial, Ref == the mesh's id). The tracks
+	// are serialized into a SEPARATE wire program (SceneIR.MaterialMotionProgram)
+	// so material packets route independently of transform motion in the runtime.
+	MaterialAnims []MaterialUniformAnim
+}
+
+// MaterialUniformAnim is a flat keyframe spec for one animated material uniform,
+// mirroring AnimationChannel. Values is a flat float slice of length
+// len(Times)*Arity (the per-key components laid out contiguously). Arity selects
+// the component width: 1 (scalar, e.g. roughness/metalness), 3 (vec3, e.g. an
+// RGB color), or 4 (vec4/color, e.g. RGBA emissive). Interp is "LINEAR" (default)
+// or "STEP". Loop/Duration are advisory hints for the runtime player; the lowered
+// Track itself is keyframe-driven.
+type MaterialUniformAnim struct {
+	Uniform  string    // material uniform name (e.g. "emissive", "roughness")
+	Arity    int       // component width per key: 1, 3, or 4
+	Times    []float64 // keyframe times (seconds)
+	Values   []float64 // flat keyframe values, len == len(Times)*Arity
+	Interp   string    // "LINEAR" (default) or "STEP"
+	Loop     bool      // advisory: whether the runtime should loop this animation
+	Duration float64   // advisory: total clip duration (seconds)
+
+	// Spring and Oscillator are optional procedural generators that REPLACE the
+	// keyframe (Times/Values) path when set. They lower to a motion.Generator
+	// Track (GenSpring / GenOscillator) targeting the same material uniform, so a
+	// .sel glow can spring to a value or pulse continuously without keyframes.
+	// When both are nil, the keyframe path is used. Spring takes precedence if
+	// both are set (a uniform cannot be two generators at once).
+	Spring     *MaterialSpringAnim     // scalar: springs From → To
+	Oscillator *MaterialOscillatorAnim // per-component sinusoidal pulse
+}
+
+// MaterialSpringAnim drives a SCALAR material uniform from From to To via a
+// critically/under-damped spring. Lowers to motion.GenSpring (ArityScalar).
+// Mass/Stiffness/Damping/Velocity feed motion.Spring; zero Mass defaults to 1.
+type MaterialSpringAnim struct {
+	From      float64
+	To        float64
+	Mass      float64
+	Stiffness float64
+	Damping   float64
+	Velocity  float64
+}
+
+// MaterialOscillatorAnim drives a per-component sinusoidal pulse on a material
+// uniform: value[i] = Base[i] + Amplitude[i]*sin(t*Freq[i]*2π + Phase[i]).
+// Each slice is indexed per component; length should equal the uniform arity
+// (1/3/4). Missing components default to 0. Lowers to motion.GenOscillator at
+// the uniform's arity.
+type MaterialOscillatorAnim struct {
+	Base      []float64 // per-component rest value
+	Amplitude []float64 // per-component amplitude
+	Freq      []float64 // per-component frequency (Hz)
+	Phase     []float64 // per-component phase offset (radians)
 }
 
 // LODLevel describes one level inside a discrete LODGroup. Distance is the
@@ -1061,6 +1119,14 @@ type graphLowerer struct {
 	nextInstancedID    int
 	nextInstancedGLBID int
 	nextParticlesID    int
+	// spinTracks accumulates one GenSpin MotionIR Track per spinning node;
+	// surfaced via SceneIR.SpinTracks (json:"-") as an in-memory facade.
+	spinTracks []motion.Track
+	// materialTracks accumulates one keyframe MotionIR Track per mesh
+	// material-uniform animation (Target.Kind == TargetMaterial). These are
+	// serialized into a SEPARATE wire program (SceneIR.MaterialMotionProgram)
+	// so material packets route independently of transform motion.
+	materialTracks []motion.Track
 }
 
 func (Group) sceneNode()             {}
@@ -2118,6 +2184,13 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.SpinX = mesh.Spin.X
 	record.SpinY = mesh.Spin.Y
 	record.SpinZ = mesh.Spin.Z
+	// Facade: also accumulate a GenSpin MotionIR Track for non-zero spins.
+	if mesh.Spin.X != 0 || mesh.Spin.Y != 0 || mesh.Spin.Z != 0 {
+		l.spinTracks = append(l.spinTracks, spinMotionTrack(mesh.Spin, id))
+	}
+	// Material-uniform animations lower to TargetMaterial keyframe tracks keyed
+	// by this mesh's id (per-mesh material). Malformed specs are skipped.
+	l.materialTracks = append(l.materialTracks, materialMotionTracks(mesh.MaterialAnims, id)...)
 	record.Pickable = mesh.Pickable
 	record.Selected = mesh.Selected
 	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
@@ -2175,6 +2248,10 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 	record.SpinX = pts.Spin.X
 	record.SpinY = pts.Spin.Y
 	record.SpinZ = pts.Spin.Z
+	// Facade: also accumulate a GenSpin MotionIR Track for non-zero spins.
+	if pts.Spin.X != 0 || pts.Spin.Y != 0 || pts.Spin.Z != 0 {
+		l.spinTracks = append(l.spinTracks, spinMotionTrack(pts.Spin, id))
+	}
 	// Flatten positions to [x,y,z, x,y,z, ...].
 	if len(pts.Positions) > 0 {
 		flat := make([]float64, 0, len(pts.Positions)*3)

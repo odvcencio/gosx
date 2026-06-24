@@ -7,6 +7,7 @@ import (
 
 	rootengine "m31labs.dev/gosx/engine"
 	islandprogram "m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/motion"
 	"m31labs.dev/gosx/signal"
 )
 
@@ -303,6 +304,230 @@ func TestSceneAdapterRenderBundleAppliesSceneMotionOffsets(t *testing.T) {
 	}
 	if math.Abs(startCenterZ-laterCenterZ) < 0.001 {
 		t.Fatalf("expected Z center to drift, got start=%f later=%f", startCenterZ, laterCenterZ)
+	}
+}
+
+// oldRotatePointEulerSpin replicates the PRE-unification spin path: base Euler
+// rotation plus per-axis spin folded into the same intrinsic Euler rotation.
+// Used purely as the regression oracle inside this test file.
+func oldRotatePointEulerSpin(p point3, o sceneObject, t float64) point3 {
+	return rotatePoint(p,
+		o.RotationX+o.SpinX*t,
+		o.RotationY+o.SpinY*t,
+		o.RotationZ+o.SpinZ*t,
+	)
+}
+
+// TestSpinQuatSingleAxisMatchesOldEulerPath is the REGRESSION ANCHOR.
+// For single-axis spin the new motion.Eval-sourced quaternion path must produce
+// vertex world positions byte-or-1e-9 identical to the old Euler-add path.
+func TestSpinQuatSingleAxisMatchesOldEulerPath(t *testing.T) {
+	const ts = 0.37
+	const spinY = 0.9
+	obj := sceneObject{
+		ID:     "spinner",
+		Kind:   "box",
+		Width:  1.4,
+		Height: 0.8,
+		Depth:  1.1,
+		X:      0.5,
+		Y:      -0.25,
+		Z:      0.75,
+		SpinY:  spinY,
+	}
+	spinQ := spinQuatForObject(obj, ts)
+
+	pts := []point3{
+		{X: -0.7, Y: -0.4, Z: -0.55},
+		{X: 0.7, Y: 0.4, Z: 0.55},
+		{X: 0.3, Y: -0.2, Z: 0.5},
+		{X: 0, Y: 0, Z: 0},
+	}
+	for _, p := range pts {
+		got := translatePoint(p, obj, spinQ, clipTRS{}, ts)
+		// Old path: base+spin Euler rotation, then translation, plus drift (none here).
+		oldRot := oldRotatePointEulerSpin(p, obj, ts)
+		want := point3{X: oldRot.X + obj.X, Y: oldRot.Y + obj.Y, Z: oldRot.Z + obj.Z}
+		if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+			t.Fatalf("single-axis spin diverged from old Euler path: p=%v got=%v want=%v", p, got, want)
+		}
+	}
+}
+
+// TestSpinQuatSourcedFromMotionEval asserts the spin quaternion the bundle uses
+// is precisely the one the canonical motion evaluator (GenSpin) produces, and
+// that applying it equals QuatFromEuler(0, spinY*t, 0) rotation of a vertex.
+func TestSpinQuatSourcedFromMotionEval(t *testing.T) {
+	const ts = 0.37
+	const spinY = 0.9
+	obj := sceneObject{ID: "spinner", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinY: spinY}
+
+	spinQ := spinQuatForObject(obj, ts)
+	wantQ := motion.QuatFromEuler(0, spinY*ts, 0)
+	if math.Abs(spinQ.X-wantQ.X) > 1e-12 || math.Abs(spinQ.Y-wantQ.Y) > 1e-12 ||
+		math.Abs(spinQ.Z-wantQ.Z) > 1e-12 || math.Abs(spinQ.W-wantQ.W) > 1e-12 {
+		t.Fatalf("spin quat not sourced from motion.Eval GenSpin: got %+v want %+v", spinQ, wantQ)
+	}
+
+	p := point3{X: 0.5, Y: 0.25, Z: -0.5}
+	gx, gy, gz := motion.RotateVec3(spinQ, p.X, p.Y, p.Z)
+	ex, ey, ez := motion.RotateVec3(motion.QuatFromEuler(0, spinY*ts, 0), p.X, p.Y, p.Z)
+	if math.Abs(gx-ex) > 1e-12 || math.Abs(gy-ey) > 1e-12 || math.Abs(gz-ez) > 1e-12 {
+		t.Fatalf("applied spin not from canonical evaluator: got (%v,%v,%v) want (%v,%v,%v)", gx, gy, gz, ex, ey, ez)
+	}
+}
+
+// TestSpinQuatZeroTimeIsIdentity: at t=0 the spin quaternion is identity and the
+// output equals base-rotation-only (unchanged endpoint behavior).
+func TestSpinQuatZeroTimeIsIdentity(t *testing.T) {
+	obj := sceneObject{ID: "s", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinX: 1.3, SpinY: -0.7, SpinZ: 2.1, RotationY: 0.4}
+	spinQ := spinQuatForObject(obj, 0)
+	ident := motion.Quat{X: 0, Y: 0, Z: 0, W: 1}
+	if math.Abs(spinQ.X-ident.X) > 1e-12 || math.Abs(spinQ.Y-ident.Y) > 1e-12 ||
+		math.Abs(spinQ.Z-ident.Z) > 1e-12 || math.Abs(spinQ.W-ident.W) > 1e-12 {
+		t.Fatalf("t=0 spin quat not identity: %+v", spinQ)
+	}
+	p := point3{X: 0.5, Y: -0.3, Z: 0.2}
+	got := translatePoint(p, obj, spinQ, clipTRS{}, 0)
+	base := rotatePoint(p, obj.RotationX, obj.RotationY, obj.RotationZ)
+	want := point3{X: base.X + obj.X, Y: base.Y + obj.Y, Z: base.Z + obj.Z}
+	if math.Abs(got.X-want.X) > 1e-12 || math.Abs(got.Y-want.Y) > 1e-12 || math.Abs(got.Z-want.Z) > 1e-12 {
+		t.Fatalf("t=0 output not base-rotation-only: got=%v want=%v", got, want)
+	}
+}
+
+// TestSpinQuatBaseRotationPreserved: an object with base rotation and no spin
+// produces output identical to the base rotatePoint path (base path untouched).
+func TestSpinQuatBaseRotationPreserved(t *testing.T) {
+	const ts = 1.25
+	obj := sceneObject{ID: "b", Kind: "box", Width: 1, Height: 1, Depth: 1, X: 1, Y: 2, Z: 3, RotationX: 0.3, RotationY: 0.6, RotationZ: -0.4}
+	spinQ := spinQuatForObject(obj, ts) // no spin → identity
+	if spinQ != (motion.Quat{X: 0, Y: 0, Z: 0, W: 1}) {
+		t.Fatalf("no-spin object must yield identity quat, got %+v", spinQ)
+	}
+	p := point3{X: -0.5, Y: 0.5, Z: 0.5}
+	got := translatePoint(p, obj, spinQ, clipTRS{}, ts)
+	base := rotatePoint(p, obj.RotationX, obj.RotationY, obj.RotationZ)
+	want := point3{X: base.X + obj.X, Y: base.Y + obj.Y, Z: base.Z + obj.Z}
+	if math.Abs(got.X-want.X) > 1e-12 || math.Abs(got.Y-want.Y) > 1e-12 || math.Abs(got.Z-want.Z) > 1e-12 {
+		t.Fatalf("base rotation not preserved: got=%v want=%v", got, want)
+	}
+}
+
+// TestSpinQuatNormalSingleAxisMatchesOld: world normals under single-axis spin
+// must match the old Euler-spin path (normals get base+spin, no translation).
+func TestSpinQuatNormalSingleAxisMatchesOld(t *testing.T) {
+	const ts = 0.37
+	const spinX = 1.1
+	obj := sceneObject{ID: "n", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinX: spinX}
+	spinQ := spinQuatForObject(obj, ts)
+
+	p := point3{X: 0.7, Y: 0.1, Z: -0.2} // off-axis so a definite face normal is picked
+	got := sceneObjectWorldNormal(obj, p, spinQ, clipTRS{})
+	// Old path: local normal then base+spin Euler rotation, normalized.
+	local := sceneObjectLocalNormal(obj, p)
+	want := normalizePoint3(oldRotatePointEulerSpin(local, obj, ts))
+	if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+		t.Fatalf("world normal single-axis spin diverged: got=%v want=%v", got, want)
+	}
+}
+
+// TestSpinQuatMultiAxisIsCanonical documents the INTENDED change: multi-axis
+// spin now follows canonical quaternion order (qx*qy*qz), NOT the old Euler-add.
+// Assert equality with the canonical evaluator result (not the old path).
+func TestSpinQuatMultiAxisIsCanonical(t *testing.T) {
+	const ts = 0.37
+	obj := sceneObject{ID: "m", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinX: 0.5, SpinY: 0.9, SpinZ: -0.7}
+	spinQ := spinQuatForObject(obj, ts)
+	canonical := motion.QuatFromEuler(0.5*ts, 0.9*ts, -0.7*ts)
+	if math.Abs(spinQ.X-canonical.X) > 1e-12 || math.Abs(spinQ.Y-canonical.Y) > 1e-12 ||
+		math.Abs(spinQ.Z-canonical.Z) > 1e-12 || math.Abs(spinQ.W-canonical.W) > 1e-12 {
+		t.Fatalf("multi-axis spin quat not canonical qx*qy*qz: got %+v want %+v", spinQ, canonical)
+	}
+
+	p := point3{X: 0.3, Y: -0.4, Z: 0.5}
+	gx, gy, gz := motion.RotateVec3(spinQ, p.X, p.Y, p.Z)
+	wx, wy, wz := motion.RotateVec3(canonical, p.X, p.Y, p.Z)
+	if math.Abs(gx-wx) > 1e-12 || math.Abs(gy-wy) > 1e-12 || math.Abs(gz-wz) > 1e-12 {
+		t.Fatalf("multi-axis applied spin not canonical: got (%v,%v,%v) want (%v,%v,%v)", gx, gy, gz, wx, wy, wz)
+	}
+
+	// And it must DIFFER from the old Euler-add path (this is the intended change).
+	old := oldRotatePointEulerSpin(p, obj, ts)
+	if math.Abs(gx-old.X) < 1e-6 && math.Abs(gy-old.Y) < 1e-6 && math.Abs(gz-old.Z) < 1e-6 {
+		t.Fatalf("multi-axis spin unexpectedly matched old Euler path; order change not observed")
+	}
+}
+
+// TestSceneAdapterRenderBundleSingleAxisSpinUnchanged exercises the FULL
+// production bundle path: a single-axis spinY object's bundle bounds must equal
+// the bounds computed from the old Euler-spin path applied to box geometry.
+func TestSceneAdapterRenderBundleSingleAxisSpinUnchanged(t *testing.T) {
+	const ts = 0.37
+	const spinY = 0.9
+	prog := &rootengine.Program{
+		Name: "SingleAxisSpin",
+		EngineNodes: []rootengine.Node{
+			{
+				Kind:     "mesh",
+				Geometry: "box",
+				Material: "flat",
+				Props: map[string]islandprogram.ExprID{
+					"x":      0,
+					"y":      1,
+					"z":      2,
+					"width":  3,
+					"height": 4,
+					"depth":  5,
+					"spinY":  6,
+				},
+			},
+		},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitFloat, Value: "0.5", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "-0.25", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.75", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.4", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.8", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1.1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "0.9", Type: islandprogram.TypeFloat},
+		},
+	}
+	rt := NewSceneAdapter(prog, `{}`)
+	bundle := rt.RenderBundle(640, 360, ts)
+	if len(bundle.Objects) != 1 {
+		t.Fatalf("expected one render object, got %d", len(bundle.Objects))
+	}
+	gotBounds := bundle.Objects[0].Bounds
+
+	// Compute expected bounds from the OLD Euler-spin path over box segments.
+	obj := sceneObject{ID: bundle.Objects[0].ID, Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, X: 0.5, Y: -0.25, Z: 0.75, SpinY: spinY}
+	first := true
+	var want rootengine.RenderBounds
+	expand := func(p point3) {
+		if first {
+			want = rootengine.RenderBounds{MinX: p.X, MinY: p.Y, MinZ: p.Z, MaxX: p.X, MaxY: p.Y, MaxZ: p.Z}
+			first = false
+			return
+		}
+		want.MinX = math.Min(want.MinX, p.X)
+		want.MinY = math.Min(want.MinY, p.Y)
+		want.MinZ = math.Min(want.MinZ, p.Z)
+		want.MaxX = math.Max(want.MaxX, p.X)
+		want.MaxY = math.Max(want.MaxY, p.Y)
+		want.MaxZ = math.Max(want.MaxZ, p.Z)
+	}
+	for _, seg := range sceneObjectSegments(obj) {
+		for _, v := range seg {
+			rot := oldRotatePointEulerSpin(v, obj, ts)
+			expand(point3{X: rot.X + obj.X, Y: rot.Y + obj.Y, Z: rot.Z + obj.Z})
+		}
+	}
+
+	if math.Abs(gotBounds.MinX-want.MinX) > 1e-9 || math.Abs(gotBounds.MaxX-want.MaxX) > 1e-9 ||
+		math.Abs(gotBounds.MinY-want.MinY) > 1e-9 || math.Abs(gotBounds.MaxY-want.MaxY) > 1e-9 ||
+		math.Abs(gotBounds.MinZ-want.MinZ) > 1e-9 || math.Abs(gotBounds.MaxZ-want.MaxZ) > 1e-9 {
+		t.Fatalf("single-axis spin bundle bounds diverged from old path:\n got=%+v\nwant=%+v", gotBounds, want)
 	}
 }
 
@@ -1216,5 +1441,395 @@ func TestClipWorldSegmentForCameraCullsOffscreenSegment(t *testing.T) {
 	)
 	if ok {
 		t.Fatal("expected fully offscreen segment to be culled")
+	}
+}
+
+// TestSpinQuatSingleAxisAllAxesMatchOldEulerPath extends TestSpinQuatSingleAxisMatchesOldEulerPath
+// to cover X-only, Y-only, AND Z-only spin (the property holds for all single axes).
+func TestSpinQuatSingleAxisAllAxesMatchOldEulerPath(t *testing.T) {
+	const ts = 0.37
+	const r = 0.9
+	p := point3{X: 0.3, Y: -0.4, Z: 0.6} // off-axis so all axes are exercised
+
+	cases := []struct {
+		name string
+		obj  sceneObject
+	}{
+		{
+			name: "SpinX-only",
+			obj: sceneObject{
+				ID: "sx", Kind: "box",
+				Width: 1.4, Height: 0.8, Depth: 1.1,
+				X: 0.5, Y: -0.25, Z: 0.75,
+				SpinX: r,
+			},
+		},
+		{
+			name: "SpinY-only",
+			obj: sceneObject{
+				ID: "sy", Kind: "box",
+				Width: 1.4, Height: 0.8, Depth: 1.1,
+				X: 0.5, Y: -0.25, Z: 0.75,
+				SpinY: r,
+			},
+		},
+		{
+			name: "SpinZ-only",
+			obj: sceneObject{
+				ID: "sz", Kind: "box",
+				Width: 1.4, Height: 0.8, Depth: 1.1,
+				X: 0.5, Y: -0.25, Z: 0.75,
+				SpinZ: r,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spinQ := spinQuatForObject(tc.obj, ts)
+			got := translatePoint(p, tc.obj, spinQ, clipTRS{}, ts)
+			oldRot := oldRotatePointEulerSpin(p, tc.obj, ts)
+			want := point3{
+				X: oldRot.X + tc.obj.X,
+				Y: oldRot.Y + tc.obj.Y,
+				Z: oldRot.Z + tc.obj.Z,
+			}
+			if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+				t.Fatalf("%s: diverged from old Euler path: p=%v got=%v want=%v", tc.name, p, got, want)
+			}
+		})
+	}
+}
+
+// TestSpinQuatNormalSingleAxisAllAxesMatchOld extends TestSpinQuatNormalSingleAxisMatchesOld
+// to cover X-only, Y-only, AND Z-only spin for world normals.
+func TestSpinQuatNormalSingleAxisAllAxesMatchOld(t *testing.T) {
+	const ts = 0.37
+	const r = 1.1
+	p := point3{X: 0.7, Y: 0.1, Z: -0.2} // off-axis so a definite face normal is produced
+
+	cases := []struct {
+		name string
+		obj  sceneObject
+	}{
+		{
+			name: "SpinX-only",
+			obj:  sceneObject{ID: "nx", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinX: r},
+		},
+		{
+			name: "SpinY-only",
+			obj:  sceneObject{ID: "ny", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinY: r},
+		},
+		{
+			name: "SpinZ-only",
+			obj:  sceneObject{ID: "nz", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, SpinZ: r},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spinQ := spinQuatForObject(tc.obj, ts)
+			got := sceneObjectWorldNormal(tc.obj, p, spinQ, clipTRS{})
+			local := sceneObjectLocalNormal(tc.obj, p)
+			want := normalizePoint3(oldRotatePointEulerSpin(local, tc.obj, ts))
+			if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+				t.Fatalf("%s: world normal diverged: got=%v want=%v", tc.name, got, want)
+			}
+		})
+	}
+}
+
+// TestSpinQuatZeroAllocForStaticObject verifies the zero-spin early-return path
+// allocates nothing (no Eval, no WriteBuf push).
+func TestSpinQuatZeroAllocForStaticObject(t *testing.T) {
+	staticObj := sceneObject{ID: "static", Kind: "box", Width: 1, Height: 1, Depth: 1}
+	allocs := testing.AllocsPerRun(100, func() {
+		spinQuatForObject(staticObj, 0.5)
+	})
+	if allocs != 0 {
+		t.Fatalf("expected 0 allocs for zero-spin object, got %v", allocs)
+	}
+}
+
+// TestSpinQuatZeroAllocWithCachedScratch verifies the spinning path reuses the
+// cached scratch (zero per-call alloc once the scratch is initialised).
+func TestSpinQuatZeroAllocWithCachedScratch(t *testing.T) {
+	sc := newSpinScratch()
+	obj := sceneObject{ID: "spinner", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinY: 0.9}
+	// Warm up — first call may touch any one-time setup inside WriteBuf.
+	spinQuatWithScratch(obj, 0.1, sc)
+	allocs := testing.AllocsPerRun(100, func() {
+		spinQuatWithScratch(obj, 0.5, sc)
+	})
+	if allocs != 0 {
+		t.Fatalf("expected 0 allocs when reusing cached scratch for spinning object, got %v", allocs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Clip TRS tests (P3.1b): production render bundle applies the per-object clip
+// transform composed with base rotation + spin. These mirror the spin tests.
+// ---------------------------------------------------------------------------
+
+// clipTranslationAnims builds a single-clip animation set whose translation
+// channel targets the object ID and moves it 0 -> [6,0,0] over t in [0,1].
+func clipTranslationAnims(targetID string, duration float64) []rootengine.RenderAnimation {
+	return []rootengine.RenderAnimation{{
+		Name:     "clip",
+		Duration: duration,
+		Channels: []rootengine.RenderAnimationChannel{{
+			TargetID:      targetID,
+			Property:      "translation",
+			Times:         []float64{0, 1},
+			Values:        []float64{0, 0, 0, 6, 0, 0},
+			Interpolation: "LINEAR",
+		}},
+	}}
+}
+
+// TestClipTranslationMovesObject: a translation clip targeting the object shifts
+// its world position by the linearly-interpolated offset (~[3,0,0] at t=0.5).
+func TestClipTranslationMovesObject(t *testing.T) {
+	obj := sceneObject{ID: "mover", Kind: "box", Width: 1, Height: 1, Depth: 1}
+	anims := clipTranslationAnims("mover", 0) // no looping; raw lerp over [0,1]
+	sc := newSpinScratch()
+
+	clip0 := objectClipTRS(obj, 0, anims, 0, sc)
+	if !clip0.HasT {
+		t.Fatalf("expected clip translation present at t=0, got %+v", clip0)
+	}
+	clipHalf := objectClipTRS(obj, 0, anims, 0.5, sc)
+	if math.Abs(clipHalf.T[0]-3) > 1e-9 || math.Abs(clipHalf.T[1]) > 1e-9 || math.Abs(clipHalf.T[2]) > 1e-9 {
+		t.Fatalf("expected clip T ~[3,0,0] at t=0.5, got %v", clipHalf.T)
+	}
+
+	p := point3{X: 0.2, Y: -0.1, Z: 0.3}
+	spinQ := spinQuatForObject(obj, 0.5) // no spin -> identity
+	at0 := translatePoint(p, obj, spinQ, clip0, 0)
+	atHalf := translatePoint(p, obj, spinQ, clipHalf, 0.5)
+	dx := atHalf.X - at0.X
+	dy := atHalf.Y - at0.Y
+	dz := atHalf.Z - at0.Z
+	if math.Abs(dx-3) > 1e-9 || math.Abs(dy) > 1e-9 || math.Abs(dz) > 1e-9 {
+		t.Fatalf("expected world position to shift by ~[3,0,0], got [%v,%v,%v]", dx, dy, dz)
+	}
+}
+
+// TestClipTranslationMovesBoundsViaRenderBundle: end-to-end through RenderBundle
+// — a translation clip authored in props shifts the object's Bounds by ~[3,0,0]
+// from t=0 to t=0.5.
+func TestClipTranslationMovesBoundsViaRenderBundle(t *testing.T) {
+	prog := &rootengine.Program{
+		Name: "ClipTranslation",
+		EngineNodes: []rootengine.Node{{
+			Kind:     "mesh",
+			Geometry: "box",
+			Material: "flat",
+			Props: map[string]islandprogram.ExprID{
+				"id":     0,
+				"width":  1,
+				"height": 2,
+				"depth":  3,
+				"z":      4,
+			},
+		}},
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpLitString, Value: "mover", Type: islandprogram.TypeString},
+			{Op: islandprogram.OpLitFloat, Value: "1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "1", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitFloat, Value: "10", Type: islandprogram.TypeFloat},
+		},
+	}
+	propsJSON := `{
+		"animations": [
+			{"name":"clip","duration":0,"channels":[
+				{"targetID":"mover","property":"translation","times":[0,1],"values":[0,0,0,6,0,0],"interpolation":"LINEAR"}
+			]}
+		]
+	}`
+	rt := NewSceneAdapter(prog, propsJSON)
+	start := rt.RenderBundle(640, 360, 0)
+	later := rt.RenderBundle(640, 360, 0.5)
+	if len(start.Objects) != 1 || len(later.Objects) != 1 {
+		t.Fatalf("expected one object per bundle, got %#v and %#v", start.Objects, later.Objects)
+	}
+	startCX := (start.Objects[0].Bounds.MinX + start.Objects[0].Bounds.MaxX) / 2
+	laterCX := (later.Objects[0].Bounds.MinX + later.Objects[0].Bounds.MaxX) / 2
+	if math.Abs((laterCX-startCX)-3) > 1e-6 {
+		t.Fatalf("expected bounds center X to shift by ~3, got start=%f later=%f delta=%f", startCX, laterCX, laterCX-startCX)
+	}
+}
+
+// TestClipRotationRotatesVertex: a single-axis rotationY clip rotates an off-axis
+// vertex by the evaluated angle; cross-checked against QuatFromEuler/RotateVec3.
+func TestClipRotationRotatesVertex(t *testing.T) {
+	const angle = 1.2 // radians at t=1
+	obj := sceneObject{ID: "rotor", Kind: "box", Width: 1, Height: 1, Depth: 1}
+	anims := []rootengine.RenderAnimation{{
+		Name:     "clip",
+		Duration: 0,
+		Channels: []rootengine.RenderAnimationChannel{{
+			TargetID:      "rotor",
+			Property:      "rotationY",
+			Times:         []float64{0, 1},
+			Values:        []float64{0, angle},
+			Interpolation: "LINEAR",
+		}},
+	}}
+	sc := newSpinScratch()
+	const ts = 0.5
+	clip := objectClipTRS(obj, 0, anims, ts, sc)
+	if !clip.HasR {
+		t.Fatalf("expected clip rotation present, got %+v", clip)
+	}
+
+	p := point3{X: 0.7, Y: 0.0, Z: 0.0} // off the rotation axis
+	spinQ := spinQuatForObject(obj, ts) // identity (no spin)
+	got := translatePoint(p, obj, spinQ, clip, ts)
+	// Expected: base rotation is identity here, so apply QuatFromEuler(0,angle*0.5,0).
+	wantQ := motion.QuatFromEuler(0, angle*ts, 0)
+	wx, wy, wz := motion.RotateVec3(wantQ, p.X, p.Y, p.Z)
+	if math.Abs(got.X-wx) > 1e-9 || math.Abs(got.Y-wy) > 1e-9 || math.Abs(got.Z-wz) > 1e-9 {
+		t.Fatalf("clip rotation diverged: got=%v want=(%v,%v,%v)", got, wx, wy, wz)
+	}
+}
+
+// TestClipScaleScalesExtent: a scale clip scales the local vertex pre-rotation,
+// growing the object's extent. Authored uniform-scale 1 -> 2 over [0,1].
+func TestClipScaleScalesExtent(t *testing.T) {
+	obj := sceneObject{ID: "scaler", Kind: "box", Width: 2, Height: 2, Depth: 2}
+	anims := []rootengine.RenderAnimation{{
+		Name:     "clip",
+		Duration: 0,
+		Channels: []rootengine.RenderAnimationChannel{{
+			TargetID:      "scaler",
+			Property:      "scale",
+			Times:         []float64{0, 1},
+			Values:        []float64{1, 1, 1, 2, 2, 2},
+			Interpolation: "LINEAR",
+		}},
+	}}
+	sc := newSpinScratch()
+	// Sample mid-clip (t=0.5 -> scale 1.5). The build sets duration=lastTime=1, so
+	// evaluating exactly at t=1 would wrap (mod 1) back to scale 1; a mid value
+	// exercises the active scale without hitting the loop boundary.
+	const ts = 0.5
+	const wantScale = 1.5
+	clip := objectClipTRS(obj, 0, anims, ts, sc)
+	if !clip.HasS {
+		t.Fatalf("expected clip scale present, got %+v", clip)
+	}
+	if math.Abs(clip.S[0]-wantScale) > 1e-9 || math.Abs(clip.S[1]-wantScale) > 1e-9 || math.Abs(clip.S[2]-wantScale) > 1e-9 {
+		t.Fatalf("expected scale %vx at t=0.5, got %v", wantScale, clip.S)
+	}
+
+	p := point3{X: 0.5, Y: -0.25, Z: 0.75}
+	spinQ := spinQuatForObject(obj, ts) // identity
+	// No clip -> base transform; with scale -> local vertex scaled before rotate.
+	noClip := translatePoint(p, obj, spinQ, clipTRS{}, ts)
+	scaled := translatePoint(p, obj, spinQ, clip, ts)
+	// Base rotation is identity, so scaled == wantScale*p and noClip == p.
+	if math.Abs(scaled.X-wantScale*noClip.X) > 1e-9 || math.Abs(scaled.Y-wantScale*noClip.Y) > 1e-9 || math.Abs(scaled.Z-wantScale*noClip.Z) > 1e-9 {
+		t.Fatalf("expected scaled vertex to be %vx base, got scaled=%v base=%v", wantScale, scaled, noClip)
+	}
+}
+
+// TestClipRotationComposesWithSpin: an object with BOTH spin and a clip rotation
+// composes as base -> clipR -> spin applied to a vertex.
+func TestClipRotationComposesWithSpin(t *testing.T) {
+	const ts = 0.4
+	const spinY = 0.9
+	const clipAngle = 1.1
+	obj := sceneObject{ID: "both", Kind: "box", Width: 1, Height: 1, Depth: 1, SpinY: spinY, RotationX: 0.3}
+	anims := []rootengine.RenderAnimation{{
+		Name:     "clip",
+		Duration: 0,
+		Channels: []rootengine.RenderAnimationChannel{{
+			TargetID:      "both",
+			Property:      "rotationZ",
+			Times:         []float64{0, 1},
+			Values:        []float64{0, clipAngle},
+			Interpolation: "LINEAR",
+		}},
+	}}
+	sc := newSpinScratch()
+	clip := objectClipTRS(obj, 0, anims, ts, sc)
+	if !clip.HasR {
+		t.Fatalf("expected clip rotation present, got %+v", clip)
+	}
+	spinQ := spinQuatForObject(obj, ts)
+
+	p := point3{X: 0.5, Y: 0.25, Z: -0.5}
+	got := translatePoint(p, obj, spinQ, clip, ts)
+	// Manual composition: base rotate -> clip rotate -> spin rotate -> translate.
+	base := rotatePoint(p, obj.RotationX, obj.RotationY, obj.RotationZ)
+	crx, cry, crz := motion.RotateVec3(clip.R, base.X, base.Y, base.Z)
+	srx, sry, srz := motion.RotateVec3(spinQ, crx, cry, crz)
+	want := point3{X: srx + obj.X, Y: sry + obj.Y, Z: srz + obj.Z}
+	if math.Abs(got.X-want.X) > 1e-9 || math.Abs(got.Y-want.Y) > 1e-9 || math.Abs(got.Z-want.Z) > 1e-9 {
+		t.Fatalf("clip+spin composition diverged: got=%v want=%v", got, want)
+	}
+}
+
+// TestClipNonBreakingForUntargetedObjects: an object with NO clip targeting it
+// (whether spinning or static) is byte-identical to the pre-clip output, proving
+// the zero-cost / zero-effect path. Animations exist but target a different ID.
+func TestClipNonBreakingForUntargetedObjects(t *testing.T) {
+	anims := clipTranslationAnims("someone-else", 0)
+	sc := newSpinScratch()
+
+	// Spinning object, not targeted by any clip channel.
+	const ts = 0.37
+	spinner := sceneObject{ID: "spinner", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, X: 0.5, Y: -0.25, Z: 0.75, SpinY: 0.9}
+	spinClip := objectClipTRS(spinner, 0, anims, ts, sc)
+	if spinClip != (clipTRS{}) {
+		t.Fatalf("untargeted spinning object must yield zero clipTRS, got %+v", spinClip)
+	}
+	spinQ := spinQuatForObject(spinner, ts)
+	p := point3{X: 0.3, Y: -0.2, Z: 0.5}
+	withZeroClip := translatePoint(p, spinner, spinQ, spinClip, ts)
+	withExplicitNoClip := translatePoint(p, spinner, spinQ, clipTRS{}, ts)
+	// And the pre-clip spin oracle.
+	oldRot := oldRotatePointEulerSpin(p, spinner, ts)
+	want := point3{X: oldRot.X + spinner.X, Y: oldRot.Y + spinner.Y, Z: oldRot.Z + spinner.Z}
+	if withZeroClip != withExplicitNoClip {
+		t.Fatalf("zero clipTRS not byte-identical to explicit no-clip: %v vs %v", withZeroClip, withExplicitNoClip)
+	}
+	if math.Abs(withZeroClip.X-want.X) > 1e-9 || math.Abs(withZeroClip.Y-want.Y) > 1e-9 || math.Abs(withZeroClip.Z-want.Z) > 1e-9 {
+		t.Fatalf("untargeted spinning object diverged from old spin path: got=%v want=%v", withZeroClip, want)
+	}
+
+	// Static object, not targeted.
+	static := sceneObject{ID: "static", Kind: "box", Width: 1, Height: 1, Depth: 1, X: 1, Y: 2, Z: 3, RotationY: 0.4}
+	staticClip := objectClipTRS(static, 1, anims, ts, sc)
+	if staticClip != (clipTRS{}) {
+		t.Fatalf("untargeted static object must yield zero clipTRS, got %+v", staticClip)
+	}
+	staticSpin := spinQuatForObject(static, ts)
+	gotStatic := translatePoint(p, static, staticSpin, staticClip, ts)
+	base := rotatePoint(p, static.RotationX, static.RotationY, static.RotationZ)
+	wantStatic := point3{X: base.X + static.X, Y: base.Y + static.Y, Z: base.Z + static.Z}
+	if math.Abs(gotStatic.X-wantStatic.X) > 1e-12 || math.Abs(gotStatic.Y-wantStatic.Y) > 1e-12 || math.Abs(gotStatic.Z-wantStatic.Z) > 1e-12 {
+		t.Fatalf("untargeted static object diverged from base path: got=%v want=%v", gotStatic, wantStatic)
+	}
+}
+
+// TestClipLoopsAtDuration: a clip with duration 1 wraps — evaluating at t=1.5
+// equals t=0.5 (matches the native render/bundle looping).
+func TestClipLoopsAtDuration(t *testing.T) {
+	obj := sceneObject{ID: "looper", Kind: "box", Width: 1, Height: 1, Depth: 1}
+	anims := clipTranslationAnims("looper", 1) // duration 1 -> loops
+	sc := newSpinScratch()
+
+	clipHalf := objectClipTRS(obj, 0, anims, 0.5, sc)
+	clipWrapped := objectClipTRS(obj, 0, anims, 1.5, sc)
+	if math.Abs(clipHalf.T[0]-clipWrapped.T[0]) > 1e-9 ||
+		math.Abs(clipHalf.T[1]-clipWrapped.T[1]) > 1e-9 ||
+		math.Abs(clipHalf.T[2]-clipWrapped.T[2]) > 1e-9 {
+		t.Fatalf("clip did not loop: t=0.5 T=%v t=1.5 T=%v", clipHalf.T, clipWrapped.T)
+	}
+	if math.Abs(clipHalf.T[0]-3) > 1e-9 {
+		t.Fatalf("expected looped translation T[0]~3 at wrapped t=0.5, got %v", clipHalf.T[0])
 	}
 }

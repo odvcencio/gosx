@@ -187,6 +187,16 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-hubs.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js")); err != nil {
 		return fmt.Errorf("stage bootstrap-feature-hubs.js: %w", err)
 	}
+	for _, chunk := range []string{
+		"bootstrap-feature-scene3d.js",
+		"bootstrap-feature-scene3d-webgpu.js",
+		"bootstrap-feature-scene3d-gltf.js",
+		"bootstrap-feature-scene3d-animation.js",
+	} {
+		if err := copyFile(filepath.Join(buildDir, chunk), filepath.Join(gosxRoot, "client", "js", chunk)); err != nil {
+			return fmt.Errorf("stage %s: %w", chunk, err)
+		}
+	}
 	if err := copyFile(filepath.Join(buildDir, "patch.js"), filepath.Join(gosxRoot, "client", "js", "patch.js")); err != nil {
 		return fmt.Errorf("stage patch.js: %w", err)
 	}

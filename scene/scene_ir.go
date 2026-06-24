@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"m31labs.dev/gosx/motion"
 	"m31labs.dev/gosx/scene/capability"
 )
 
@@ -66,6 +67,29 @@ type SceneIR struct {
 	// downstream renderer sees them. Native renderers receive kernels via
 	// Config override and may ignore this field.
 	ShaderLib map[string]string `json:"shaderLib,omitempty"`
+	// SpinTracks holds one GenSpin MotionIR Track for every mesh/points node
+	// that has a non-zero Spin. This field is populated at lowering time as an
+	// in-memory facade over motion core; it is NOT serialised to the wire (JSON
+	// serialisation of MotionIR tracks is deferred to Task 1.15+).
+	SpinTracks []motion.Track `json:"-"`
+	// MotionProgram carries the binary-encoded motion.Timeline for all spin
+	// tracks in the scene. It is produced by Graph.SceneIR() from SpinTracks and
+	// serialised as base64 in JSON (Go []byte → base64 automatically). Omitted
+	// when there is no motion. The JS runtime can call motionLoad() with this
+	// payload to drive object rotations.
+	MotionProgram []byte `json:"motionProgram,omitempty"`
+	// MaterialTracks holds one keyframe MotionIR Track per mesh material-uniform
+	// animation (Target.Kind == TargetMaterial, Ref == mesh id). Populated at
+	// lowering time as an in-memory facade; NOT serialised to the wire (the
+	// encoded form ships via MaterialMotionProgram).
+	MaterialTracks []motion.Track `json:"-"`
+	// MaterialMotionProgram carries the binary-encoded motion.Timeline for all
+	// material-uniform animation tracks in the scene. It is produced by
+	// Graph.SceneIR() from MaterialTracks and serialised as base64 in JSON.
+	// Omitted when there are no material animations. This is SEPARATE from
+	// MotionProgram (transforms) so material packets route independently in the
+	// JS runtime.
+	MaterialMotionProgram []byte `json:"materialMotionProgram,omitempty"`
 }
 
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
@@ -794,7 +818,7 @@ func (g Graph) SceneIR() SceneIR {
 	for _, node := range g.Nodes {
 		lowerer.lowerNode(node, identityTransform())
 	}
-	return SceneIR{
+	ir := SceneIR{
 		Objects:            lowerer.objects,
 		Models:             lowerer.models,
 		Points:             lowerer.points,
@@ -806,7 +830,33 @@ func (g Graph) SceneIR() SceneIR {
 		Sprites:            lowerer.resolveSprites(),
 		HTML:               lowerer.resolveHTML(),
 		Lights:             lowerer.lights,
+		SpinTracks:         lowerer.spinTracks,
+		MaterialTracks:     lowerer.materialTracks,
 	}
+
+	// Serialize spin tracks into MotionProgram so the browser can motionLoad()
+	// them. Build a scene-level Timeline from SpinTracks, intern target/prop
+	// refs, then encode to a flat binary blob (base64 on the wire).
+	if len(ir.SpinTracks) > 0 {
+		tl := ir.SpinMotionTimeline()
+		targetIn := motion.NewInterner()
+		propIn := motion.NewInterner()
+		motion.PrepareTracks(tl, targetIn, propIn)
+		ir.MotionProgram = motion.EncodeProgram(tl, targetIn.Refs(), propIn.Refs())
+	}
+
+	// Serialize material-uniform tracks into a SEPARATE wire program so material
+	// packets route independently of transform motion in the JS runtime. Fresh
+	// interners keep the target/prop ref tables scoped to this program.
+	if len(ir.MaterialTracks) > 0 {
+		tl := ir.MaterialMotionTimeline()
+		targetIn := motion.NewInterner()
+		propIn := motion.NewInterner()
+		motion.PrepareTracks(tl, targetIn, propIn)
+		ir.MaterialMotionProgram = motion.EncodeProgram(tl, targetIn.Refs(), propIn.Refs())
+	}
+
+	return ir
 }
 
 // MarshalJSON serializes SceneIR to its wire JSON form. When any qualifying
@@ -935,6 +985,12 @@ func (ir SceneIR) legacyProps() map[string]any {
 			lib[key] = source
 		}
 		out["shaderLib"] = lib
+	}
+	if len(ir.MotionProgram) > 0 {
+		out["motionProgram"] = ir.MotionProgram
+	}
+	if len(ir.MaterialMotionProgram) > 0 {
+		out["materialMotionProgram"] = ir.MaterialMotionProgram
 	}
 	return out
 }

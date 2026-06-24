@@ -33,6 +33,9 @@ type SceneAdapter struct {
 	dirty      []bool
 	signalDeps map[string][]int
 	unsubs     map[string]func()
+	// spinSc is the reusable spin-evaluation scratch, lazily initialised on first
+	// spinning object. It is reused every frame across all objects — zero per-frame alloc.
+	spinSc *spinScratch
 }
 
 // New constructs a live engine runtime with props decoded from JSON.
@@ -105,7 +108,13 @@ func (rt *SceneAdapter) Dispose() {
 // RenderBundle builds a renderer-facing frame bundle from the current scene.
 func (rt *SceneAdapter) RenderBundle(width, height int, timeSeconds float64) rootengine.RenderBundle {
 	nodes := rt.snapshot()
-	return buildRenderBundle(rt.props, nodes, width, height, timeSeconds)
+	// Lazily initialise the reusable spin-evaluation scratch so it is allocated
+	// once and reused across all objects every frame (zero per-frame alloc for
+	// spinning-path evaluation).
+	if rt.spinSc == nil {
+		rt.spinSc = newSpinScratch()
+	}
+	return buildRenderBundle(rt.props, nodes, width, height, timeSeconds, rt.spinSc)
 }
 
 func parseRawProps(propsJSON string) map[string]any {

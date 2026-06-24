@@ -4185,6 +4185,333 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
 });
 
+// Mounts a shared-runtime Scene3D whose program creates a long box ("cube") and
+// drives one frame. The scene IR carries a motionProgram so the P2.4b WASM
+// motion seam (applyWasmMotionFrame) can lazy-load + tick + decode. Returns the
+// FakeWebGLContext so the caller can read uploaded world-mesh positions.
+async function mountMotionSeamScene(motionFlag, tickFn) {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-motion-seam-root";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-motion.json": { text: '{"name":"MotionSeam"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-motion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-motion-seam-root",
+          runtime: "shared",
+          programRef: "/scene-motion.json",
+          // The scene IR rides under props.scene and carries motionProgram as
+          // base64; the load stub ignores the bytes, so any non-empty string works.
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            scene: { motionProgram: "AAEC" },
+          },
+        },
+      ],
+    },
+    // Camera + a single long box keyed "cube" (width 3, depth 0.4) so a 90°
+    // rotation about Y swaps the X/Z extents — a deterministic, camera-
+    // independent world-space signal.
+    onHydrateEngine: () => JSON.stringify([
+      { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
+      {
+        kind: 0,
+        objectId: "cube",
+        data: {
+          kind: "box",
+          geometry: "box",
+          material: "flat",
+          props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+        },
+      },
+    ]),
+    // Empty render bundle forces renderFrame to fall through to the tick branch
+    // (where the motion seam runs).
+    onRenderEngine: () => "",
+  });
+
+  if (motionFlag) {
+    env.context.__gosx_motion_wasm = true;
+    env.context.__gosx_motion_load = () => 1;
+    env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+    env.context.__gosx_motion_tick = tickFn;
+    env.context.__gosx_motion_unload = () => {};
+  }
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  const gl = mount.children[0] && typeof mount.children[0].getContext === "function"
+    ? mount.children[0].getContext("webgl")
+    : null;
+  return { env, mount, gl };
+}
+
+// Locates the box position buffer among all uploads and returns its world-space
+// |x| / |z| extents. The box (width 3, height/depth 0.4) is the only mesh whose
+// vertices are exactly the 8 corners at {±1.5, ±0.2, ±0.2}: every triple's
+// components fall in {0.2, 1.5} (up to rotation, which only permutes the axes),
+// and the peak extent is 1.5. That signature uniquely identifies the position
+// buffer and excludes normals (unit), colors (0..1), and the lit-mesh buffer
+// (which carries view-space / non-axis-aligned values).
+function motionMeshExtents(gl) {
+  let best = null;
+  if (!gl || !gl.bufferUploads) return { maxAbsX: 0, maxAbsZ: 0 };
+  for (const data of gl.bufferUploads.values()) {
+    if (!Array.isArray(data) || data.length < 9 || data.length % 3 !== 0) continue;
+    let maxAbsX = 0, maxAbsZ = 0, isBox = true;
+    for (let i = 0; i + 2 < data.length && isBox; i += 3) {
+      const comps = [Math.abs(data[i]), Math.abs(data[i + 1]), Math.abs(data[i + 2])];
+      for (const c of comps) {
+        // Box corner magnitudes are 0.2 or 1.5 (within fp tolerance).
+        if (Math.abs(c - 0.2) > 0.02 && Math.abs(c - 1.5) > 0.02) { isBox = false; break; }
+      }
+      if (comps[0] > maxAbsX) maxAbsX = comps[0];
+      if (comps[2] > maxAbsZ) maxAbsZ = comps[2];
+    }
+    if (isBox && Math.max(maxAbsX, maxAbsZ) > 1.4) {
+      best = { maxAbsX, maxAbsZ };
+      break;
+    }
+  }
+  return best || { maxAbsX: 0, maxAbsZ: 0 };
+}
+
+// Forces the JS-sceneState fall-through path via onRenderEngine: () => "" (so
+// ctx.runtime.renderFrame returns "" and the runtime-bundle early-return is
+// skipped). applyWasmMotionFrame only runs on this path, not for production
+// shared-runtime scenes whose Go bundle is returned by ctx.runtime.renderFrame.
+test("Scene3D WASM motion seam applies a quaternion rotation through SET_TRANSFORM (sceneState fall-through path)", async () => {
+  // Quaternion for +90° about Y: (0, sin45, 0, cos45). Decoded → rotationY = π/2
+  // → world-space X/Z extents swap (the box's 1.5 half-width moves to Z).
+  const s = Math.SQRT1_2;
+  const tick = (handle, t, reduced, outU8) => {
+    const f = new Float64Array(outU8.buffer, outU8.byteOffset, outU8.byteLength / 8);
+    // packed: [targetID, propID, arity(quat=4), qx, qy, qz, qw]
+    f[0] = 0; f[1] = 0; f[2] = 4; f[3] = 0; f[4] = s; f[5] = 0; f[6] = s;
+    return 7;
+  };
+  const { gl } = await mountMotionSeamScene(true, tick);
+  assert.ok(gl, "expected a WebGL context");
+
+  const ext = motionMeshExtents(gl);
+  // Pre-rotation the box reaches |x|≈1.5, |z|≈0.2. After a 90° Y rotation the
+  // position extents swap, proving decode → quat → Euler → applySceneCommands
+  // mutated the stored object's rotationY and the renderer consumed it.
+  assert.ok(ext.maxAbsZ > 1.0, `expected rotated z-extent > 1.0, got ${ext.maxAbsZ}`);
+  assert.ok(ext.maxAbsX < 1.0, `expected collapsed x-extent < 1.0, got ${ext.maxAbsX}`);
+});
+
+// Forces the JS-sceneState fall-through path via onRenderEngine: () => "" (same
+// as above). Verifies that applyWasmMotionFrame exits immediately when the
+// opt-in flag is absent, even on this fall-through path.
+test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fall-through path)", async () => {
+  let tickCalls = 0;
+  const tick = () => { tickCalls += 1; return 7; };
+  // motionFlag=false: window.__gosx_motion_wasm is never set, so even though the
+  // exports could be present, applyWasmMotionFrame returns before any motion
+  // work. mountMotionSeamScene still installs the tick stub through tickFn so we
+  // can prove it is never invoked.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-motion-inert-root";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-motion.json": { text: '{"name":"MotionSeam"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-motion-inert",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-motion-inert-root",
+          runtime: "shared",
+          programRef: "/scene-motion.json",
+          props: { width: 640, height: 360, background: "#08151f", scene: { motionProgram: "AAEC" } },
+        },
+      ],
+    },
+    onHydrateEngine: () => JSON.stringify([
+      { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
+      {
+        kind: 0,
+        objectId: "cube",
+        data: {
+          kind: "box",
+          geometry: "box",
+          material: "flat",
+          props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+        },
+      },
+    ]),
+    onRenderEngine: () => "",
+  });
+  // Exports present but the opt-in flag is deliberately NOT set.
+  env.context.__gosx_motion_load = () => 1;
+  env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+  env.context.__gosx_motion_tick = tick;
+  env.context.__gosx_motion_unload = () => {};
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  const ext = motionMeshExtents(gl);
+  assert.equal(tickCalls, 0, "motion tick must not run when the flag is unset");
+  assert.ok(ext.maxAbsX > 1.0, `expected unrotated x-extent > 1.0, got ${ext.maxAbsX}`);
+  assert.ok(ext.maxAbsZ < 1.0, `expected unrotated z-extent < 1.0, got ${ext.maxAbsZ}`);
+});
+
+// C3: mounts a JS-sceneState scene whose IR carries
+// props.scene.materialMotionProgram (base64). A stubbed motion handle reports a
+// single TargetMaterial track (mesh "glow-cube", uniform "emissive"); the tick
+// stub writes one packed Color record. The seam must decode it and write the
+// color into the mesh's customUniforms so selena's per-frame re-pack sees it.
+// motionFlag toggles whether window.__gosx_motion_wasm is set, proving the
+// seam is fully inert (tick never called, customUniforms untouched) when off.
+async function mountMaterialMotionScene(motionFlag) {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-material-motion-root";
+  let tickCalls = 0;
+  // The decoded color the stub emits (r,g,b,a). arity 5 (Color) → width 4.
+  const color = [0.2, 0.6, 0.9, 1.0];
+  const tick = (handle, t, reduced, outU8) => {
+    tickCalls += 1;
+    const f = new Float64Array(outU8.buffer, outU8.byteOffset, outU8.byteLength / 8);
+    // packed: [targetID 0, propID 0, arity 5 (Color), r, g, b, a]
+    f[0] = 0; f[1] = 0; f[2] = 5;
+    f[3] = color[0]; f[4] = color[1]; f[5] = color[2]; f[6] = color[3];
+    return 7;
+  };
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-mat-motion.json": { text: '{"name":"MatMotion"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-mat-motion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-material-motion-root",
+          runtime: "shared",
+          programRef: "/scene-mat-motion.json",
+          // materialMotionProgram rides under props.scene as base64; the load
+          // stub ignores the bytes, so any non-empty string works.
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            scene: { materialMotionProgram: "AAEC" },
+          },
+        },
+      ],
+    },
+    // A selena/custom box keyed "glow-cube" carrying an inline customUniforms
+    // bag — so the resolved write target is the object record itself (no named
+    // material lookup), which the seam mutates in place.
+    onHydrateEngine: () => JSON.stringify([
+      { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
+      {
+        kind: 0,
+        objectId: "glow-cube",
+        data: {
+          kind: "box",
+          geometry: "box",
+          props: {
+            x: 0, y: 0, z: 0, size: 1, color: "#8de1ff",
+            materialKind: "custom",
+            shaderBackend: "selena",
+            customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
+            customUniforms: { emissive: [0, 0, 0, 0] },
+          },
+        },
+      },
+    ]),
+    onRenderEngine: () => "",
+  });
+
+  if (motionFlag) {
+    env.context.__gosx_motion_wasm = true;
+    env.context.__gosx_motion_load = () => 1;
+    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_tick = tick;
+    env.context.__gosx_motion_unload = () => {};
+  } else {
+    // Exports present but the opt-in flag deliberately unset.
+    env.context.__gosx_motion_load = () => 1;
+    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_tick = tick;
+    env.context.__gosx_motion_unload = () => {};
+  }
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  const state = mount.__gosxScene3DState;
+  return { env, mount, state, color, tickCalls: () => tickCalls };
+}
+
+test("Scene3D WASM material-motion seam writes evaluated color into customUniforms (sceneState fall-through path)", async () => {
+  const { state, color } = await mountMaterialMotionScene(true);
+  assert.ok(state && state.objects && typeof state.objects.get === "function", "expected a live sceneState handle on the mount");
+  const obj = state.objects.get("glow-cube");
+  assert.ok(obj, "expected the glow-cube object in sceneState");
+  assert.ok(obj.customUniforms && typeof obj.customUniforms === "object", "expected customUniforms on glow-cube");
+  // Decode → customUniforms write: the Color record (arity 5 → width 4) lands
+  // as a 4-element array under the uniform name "emissive".
+  assert.deepEqual(obj.customUniforms.emissive, color,
+    "motion-evaluated color must be written into customUniforms.emissive");
+});
+
+test("Scene3D WASM material-motion seam stays inert when the flag is unset (sceneState fall-through path)", async () => {
+  const { state, tickCalls } = await mountMaterialMotionScene(false);
+  assert.equal(tickCalls(), 0, "material-motion tick must not run when the flag is unset");
+  const obj = state.objects.get("glow-cube");
+  assert.ok(obj, "expected the glow-cube object in sceneState");
+  // customUniforms.emissive stays at its hydrated default — proving non-breaking
+  // inert behavior with the exports present but the opt-in flag absent.
+  assert.deepEqual(obj.customUniforms.emissive, [0, 0, 0, 0],
+    "customUniforms must be untouched when the motion flag is unset");
+});
+
 test("Scene3D drag only starts when the pointer lands on a shape in shared runtime mode", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-fallback-root";
@@ -20877,4 +21204,400 @@ test("color T1: 16a materialUniformData sets unlit=1 for kind:flat and materialK
     /u\[12\].*mat\.materialKind\s*===\s*["']flat["']/,
     "u[12] (unlit uniform) must be derived from mat.materialKind === 'flat'"
   );
+});
+// P4-M3: route glTF MODEL animation through the WASM motion mixer
+// (behind window.__gosx_motion_wasm; JS mixer stays the default).
+// -------------------------------------------------------------------------
+
+// Installs a deterministic WASM motion-mixer stub onto the sandbox context and
+// records every interaction so a test can assert the bridge wiring. The update
+// stub writes one packed rotation TRS for `rotationNode` so the decode →
+// animatedTransforms → skinning path can be verified through the renderer.
+function installWasmMotionMixerStub(context, rotationNode, quat) {
+  const calls = { create: 0, addClip: [], play: [], stop: [], update: 0, isPlaying: 0, destroy: [] };
+  let nextHandle = 1;
+  context.__gosx_motion_wasm = true;
+  context.__gosx_motion_mixer_create = () => {
+    calls.create += 1;
+    return nextHandle++;
+  };
+  context.__gosx_motion_mixer_add_clip = (handle, name, clipJSON) => {
+    calls.addClip.push({ handle, name, clipJSON });
+    return true;
+  };
+  context.__gosx_motion_mixer_play = (handle, name, fadeIn, loop, speed, weight) => {
+    calls.play.push({ handle, name, fadeIn, loop, speed, weight });
+  };
+  context.__gosx_motion_mixer_stop = (handle, name, fadeOut) => {
+    calls.stop.push({ handle, name, fadeOut });
+  };
+  context.__gosx_motion_mixer_is_playing = () => {
+    calls.isPlaying += 1;
+    return true;
+  };
+  context.__gosx_motion_mixer_update = (handle, dt, reduced, outU8) => {
+    calls.update += 1;
+    // packed: [targetID, propID=1(rotation), arity=4, qx, qy, qz, qw]
+    const f = new Float64Array(outU8.buffer, outU8.byteOffset, Math.floor(outU8.byteLength / 8));
+    f[0] = rotationNode;
+    f[1] = 1;
+    f[2] = 4;
+    f[3] = quat[0];
+    f[4] = quat[1];
+    f[5] = quat[2];
+    f[6] = quat[3];
+    return 7;
+  };
+  context.__gosx_motion_mixer_destroy = (handle) => {
+    calls.destroy.push(handle);
+  };
+  return calls;
+}
+
+test("P4-M3 motion mixer: glTF model routes clip add/play/update/destroy through the WASM mixer when the flag is on", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-wasm-mixer-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/rig.glb": { bytes: buildSkinnedGLBBytes() },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-wasm-mixer",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-wasm-mixer-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [
+              {
+                id: "rig",
+                src: "/models/rig.glb",
+                animation: "bend",
+                animationSpeed: 1.5,
+                animationWeight: 0.75,
+                animationFadeInMS: 120,
+                loop: true,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  // Quaternion +90° about Y; the update stub writes it for node 2 (the
+  // translation channel's target / skin joint 1).
+  const s = Math.SQRT1_2;
+  const calls = installWasmMotionMixerStub(env.context, 2, [0, s, 0, s]);
+
+  // Observe the joint matrices the skinning consumes so we can prove the
+  // decoded rotation reached buildNodeTransforms + computeJointMatrices.
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const animationApi = env.context.__gosx_scene3d_animation_api;
+  const originalCreateMixer = animationApi.createMixer;
+  let jsMixerCreated = 0;
+  animationApi.createMixer = function trackedCreateMixer(...args) {
+    jsMixerCreated += 1;
+    return originalCreateMixer.apply(this, args);
+  };
+  let lastJointMatrices = null;
+  const originalComputeJointMatrices = animationApi.computeJointMatrices;
+  animationApi.computeJointMatrices = function trackedCompute(skin, nodeTransforms) {
+    const result = originalComputeJointMatrices.call(this, skin, nodeTransforms);
+    lastJointMatrices = result;
+    return result;
+  };
+
+  await flushAsyncWork();
+
+  // Mount succeeded and the WASM mixer (not the JS mixer) was created.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(calls.create, 1, "WASM mixer must be created once");
+  assert.equal(jsMixerCreated, 0, "JS mixer must NOT be created when the WASM flag is on");
+
+  // The "bend" clip was added with correctly-shaped JSON (node index, property,
+  // interpolation, and plain number arrays from the typed channel buffers).
+  assert.equal(calls.addClip.length, 1, "exactly one clip added");
+  const added = calls.addClip[0];
+  assert.equal(added.name, "bend");
+  const clip = JSON.parse(added.clipJSON);
+  assert.ok(Array.isArray(clip.channels) && clip.channels.length === 1, "clip JSON has one channel");
+  const ch = clip.channels[0];
+  assert.equal(ch.node, 2, "channel node index preserved");
+  assert.equal(ch.property, "translation", "channel property preserved");
+  assert.equal(ch.interpolation, "LINEAR", "channel interpolation preserved");
+  assert.deepEqual(ch.times, [0, 1], "times flattened to plain numbers");
+  assert.deepEqual(ch.values, [0, 0, 0, 0, 0.5, 0], "values flattened to plain numbers");
+  assert.equal(typeof clip.duration, "number");
+
+  // Play routed to the WASM mixer with the resolved positional options.
+  assert.equal(calls.play.length, 1, "play routed to WASM mixer");
+  assert.deepEqual(calls.play[0], {
+    handle: 1, name: "bend", fadeIn: 0.12, loop: true, speed: 1.5, weight: 0.75,
+  });
+
+  // Drive an animation frame so sceneAdvanceModelAnimations ticks the mixer.
+  const updatesBefore = calls.update;
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+  assert.ok(calls.update > updatesBefore, "per-frame pose must call the WASM mixer update");
+
+  // The decoded rotation reached the skinning stage: the skin has 2 joints
+  // ([1, 2]); joint index 1 = node 2 carries our +90°-about-Y rotation, so its
+  // 16-float block (offset 16) is no longer identity (m[0] flips toward 0).
+  assert.ok(lastJointMatrices && lastJointMatrices.length === 32, "joint matrices computed for the 2-joint skin");
+  assert.ok(Math.abs(lastJointMatrices[16 + 0]) < 0.001,
+    `joint 1 m[0] should be ~0 after a 90° Y rotation, got ${lastJointMatrices[16 + 0]}`);
+  assert.ok(Math.abs(lastJointMatrices[16 + 10]) < 0.001,
+    `joint 1 m[10] should be ~0 after a 90° Y rotation, got ${lastJointMatrices[16 + 10]}`);
+
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("P4-M3 motion mixer: WASM mixer is destroyed on scene dispose", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-wasm-mixer-dispose-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: { "/models/rig.glb": { bytes: buildSkinnedGLBBytes() } },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-wasm-mixer-dispose",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-wasm-mixer-dispose-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [{ id: "rig", src: "/models/rig.glb", animation: "bend", loop: true }],
+          },
+        },
+      ],
+    },
+  });
+  const s = Math.SQRT1_2;
+  const calls = installWasmMotionMixerStub(env.context, 2, [0, s, 0, s]);
+  installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.equal(calls.create, 1, "WASM mixer created");
+
+  // Disposing the engine triggers the scene handle's dispose(), which must free
+  // the per-model WASM mixer.
+  env.context.__gosx_dispose_engine("gosx-engine-model-wasm-mixer-dispose");
+  await flushAsyncWork();
+
+  assert.deepEqual(calls.destroy, [1], "WASM mixer must be destroyed exactly once on dispose");
+});
+
+test("P4-M3 motion mixer: clip JSON + packed-pose decode round-trips through the animation API", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const api = env.context.__gosx_scene3d_animation_api;
+  assert.equal(typeof api.wasmClipJSON, "function", "wasmClipJSON published");
+  assert.equal(typeof api.wasmDecodePose, "function", "wasmDecodePose published");
+
+  // Clip JSON: typed channel buffers flatten to plain number arrays and the
+  // node index / property / interpolation survive.
+  const clip = {
+    name: "bend",
+    duration: 1,
+    channels: [
+      {
+        targetID: 4,
+        targetNode: 4,
+        property: "rotation",
+        interpolation: "STEP",
+        times: new Float32Array([0, 1]),
+        values: new Float32Array([0, 0, 0, 1, 0, 1, 0, 0]),
+      },
+    ],
+  };
+  const json = JSON.parse(api.wasmClipJSON(clip));
+  assert.equal(json.duration, 1);
+  assert.equal(json.channels.length, 1);
+  assert.equal(json.channels[0].node, 4);
+  assert.equal(json.channels[0].property, "rotation");
+  assert.equal(json.channels[0].interpolation, "STEP");
+  assert.deepEqual(json.channels[0].times, [0, 1]);
+  assert.deepEqual(json.channels[0].values, [0, 0, 0, 1, 0, 1, 0, 0]);
+
+  // Packed-pose decode: two writes for node 7 — a rotation (propID 1, arity 4)
+  // and a translation (propID 0, arity 3) — must merge into one entry.
+  const f = new Float64Array(64);
+  let i = 0;
+  // rotation write
+  f[i++] = 7; f[i++] = 1; f[i++] = 4; f[i++] = 0.1; f[i++] = 0.2; f[i++] = 0.3; f[i++] = 0.9272;
+  // translation write
+  f[i++] = 7; f[i++] = 0; f[i++] = 3; f[i++] = 5; f[i++] = 6; f[i++] = 7;
+  // scale write for a different node
+  f[i++] = 9; f[i++] = 2; f[i++] = 3; f[i++] = 2; f[i++] = 2; f[i++] = 2;
+  const count = i;
+
+  const animatedTransforms = new env.context.Map();
+  const writes = api.wasmDecodePose(f, count, animatedTransforms);
+  assert.equal(writes, 3, "three packed writes decoded");
+
+  const node7 = animatedTransforms.get(7);
+  assert.ok(node7, "node 7 entry created");
+  assert.deepEqual(node7.rotation, [0.1, 0.2, 0.3, 0.9272], "rotation (quat, arity 4) decoded");
+  assert.deepEqual(node7.translation, [5, 6, 7], "translation (vec3) merged into same entry");
+  assert.equal(node7.scale, undefined, "untouched property left as default");
+
+  const node9 = animatedTransforms.get(9);
+  assert.ok(node9, "node 9 entry created");
+  assert.deepEqual(node9.scale, [2, 2, 2], "scale (propID 2, vec3) decoded for a separate node");
+
+  // The decoded pose drives the existing (unchanged) skinning path.
+  const nodes = [{ children: [1] }, { children: [] }];
+  // node 7/9 aren't in this hierarchy; build a tiny one targeting node 0.
+  const at2 = new env.context.Map();
+  api.wasmDecodePose(
+    Float64Array.from([0, 1, 4, 0, Math.SQRT1_2, 0, Math.SQRT1_2]),
+    7,
+    at2,
+  );
+  const transforms = api.buildNodeTransforms(nodes, at2, null, [0]);
+  const world0 = transforms.get(0);
+  assert.ok(world0, "buildNodeTransforms consumed the decoded rotation");
+  // +90° about Y → m[0] ~ 0.
+  assert.ok(Math.abs(world0[0]) < 0.001, `m[0] ~ 0 after decoded 90° Y rotation, got ${world0[0]}`);
+});
+
+test("P4-M3 motion mixer: stays inert when window.__gosx_motion_wasm is unset (JS mixer path)", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-wasm-mixer-inert-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: { "/models/rig.glb": { bytes: buildSkinnedGLBBytes() } },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-wasm-mixer-inert",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-wasm-mixer-inert-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [{ id: "rig", src: "/models/rig.glb", animation: "bend", loop: true }],
+          },
+        },
+      ],
+    },
+  });
+
+  // Exports present but the opt-in flag deliberately NOT set.
+  const s = Math.SQRT1_2;
+  const calls = installWasmMotionMixerStub(env.context, 2, [0, s, 0, s]);
+  env.context.__gosx_motion_wasm = false;
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const animationApi = env.context.__gosx_scene3d_animation_api;
+  const originalCreateMixer = animationApi.createMixer;
+  let jsMixerCreated = 0;
+  animationApi.createMixer = function trackedCreateMixer(...args) {
+    jsMixerCreated += 1;
+    return originalCreateMixer.apply(this, args);
+  };
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(jsMixerCreated, 1, "JS mixer must be used when the flag is off");
+  assert.equal(calls.create, 0, "WASM mixer must NOT be created when the flag is off");
+  assert.equal(calls.addClip.length, 0, "no clips routed to the WASM mixer when the flag is off");
+  assert.equal(calls.update, 0, "WASM mixer update must never run when the flag is off");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("P4-M3 motion mixer: grow-and-retick passes dt=0 to avoid double clock advance", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-wasm-mixer-retick-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: { "/models/rig.glb": { bytes: buildSkinnedGLBBytes() } },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-wasm-mixer-retick",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-wasm-mixer-retick-root",
+          props: {
+            width: 640, height: 360, autoRotate: false,
+            models: [{ id: "rig", src: "/models/rig.glb", animation: "bend", loop: true }],
+          },
+        },
+      ],
+    },
+  });
+
+  const s = Math.SQRT1_2;
+  // overflowOnNext: when true the next update call triggers the grow path.
+  let overflowOnNext = false;
+  // dtForOverflowCall / dtForRetickCall record the dt values around the
+  // specific grow/re-tick pair we're interested in.
+  let dtForOverflowCall = undefined;
+  let dtForRetickCall = undefined;
+  let overflowSeen = false;
+
+  env.context.__gosx_motion_wasm = true;
+  env.context.__gosx_motion_mixer_create = () => 1;
+  env.context.__gosx_motion_mixer_add_clip = () => true;
+  env.context.__gosx_motion_mixer_play = () => {};
+  env.context.__gosx_motion_mixer_stop = () => {};
+  env.context.__gosx_motion_mixer_is_playing = () => true;
+  env.context.__gosx_motion_mixer_update = (handle, dt, reduced, outU8) => {
+    const f = new Float64Array(outU8.buffer, outU8.byteOffset, Math.floor(outU8.byteLength / 8));
+    if (overflowOnNext && !overflowSeen) {
+      overflowSeen = true;
+      dtForOverflowCall = dt;
+      // Return a count larger than the current buffer to force a grow + re-tick.
+      return f.length + 10;
+    }
+    if (overflowSeen && dtForRetickCall === undefined) {
+      // This is the re-tick immediately after the overflow call.
+      dtForRetickCall = dt;
+    }
+    // Normal: write a minimal valid rotation pose.
+    f[0] = 2; f[1] = 1; f[2] = 4; f[3] = 0; f[4] = s; f[5] = 0; f[6] = s;
+    return 7;
+  };
+  env.context.__gosx_motion_mixer_destroy = () => {};
+
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  // First frame: dt=0 (lastModelAnimationTimeSeconds is null on the initial tick).
+  raf.flush(16);
+  await flushAsyncWork();
+  // Second frame: dt > 0. Arm the overflow so the grow path fires with a real dt.
+  overflowOnNext = true;
+  raf.flush(32);
+  await flushAsyncWork();
+
+  assert.ok(overflowSeen, "overflow/grow path must have been triggered");
+  assert.ok(dtForOverflowCall > 0, "the overflow call must carry a positive deltaTime");
+  assert.equal(dtForRetickCall, 0, "re-tick after grow must pass dt=0 to avoid double clock advance");
+  assert.equal(env.consoleLogs.error.length, 0);
 });

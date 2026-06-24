@@ -10,9 +10,10 @@ import (
 	"strings"
 
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
-func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64) rootengine.RenderBundle {
+func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64, spinSc *spinScratch) rootengine.RenderBundle {
 	if width <= 0 {
 		width = 720
 	}
@@ -83,11 +84,14 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 		bundle.Lights = renderSceneLights(lights)
 	}
 	appendSceneGrid(&bundle, width, height)
-	for _, object := range objects {
+	for objIndex, object := range objects {
 		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, object)
 		material := bundle.Materials[materialIndex]
-		appendResult := appendSceneObject(&bundle, camera, width, height, object, material, lights, environment, timeSeconds)
+		// objIndex is the mesh ordinal (position in the mesh-only objects slice),
+		// matching the InstancedMeshes index the native render/bundle animation path
+		// uses for the index-based TargetID fallback (animationStateForMesh).
+		appendResult := appendSceneObject(&bundle, camera, width, height, object, objIndex, material, lights, environment, animations, timeSeconds, spinSc)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
 			bounds := appendResult.Bounds
@@ -110,7 +114,8 @@ func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height
 				DepthCenter:   depthCenter,
 				ViewCulled:    appendResult.ViewCulled,
 			})
-			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, timeSeconds)
+			// Pass the spinQ and clip TRS already computed in appendSceneObject — no second evaluation.
+			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, appendResult.SpinQ, appendResult.ClipTRS, timeSeconds)
 		}
 	}
 	for _, label := range labels {
@@ -135,11 +140,25 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 	}
 }
 
-func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, timeSeconds float64) sceneAppendResult {
+func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, objIndex int, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, animations []rootengine.RenderAnimation, timeSeconds float64, spinSc *spinScratch) sceneAppendResult {
 	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
 	result := sceneAppendResult{}
+	// Spin orientation is identical for every vertex of the object: compute it
+	// once here (per object per frame) via the canonical motion evaluator.
+	// The computed spinQ is stored in result so the caller can pass it to
+	// appendSceneSurface — eliminating the double-compute for textured planes.
+	spinQ := spinQuatWithScratch(object, timeSeconds, spinSc)
+	result.SpinQ = spinQ
+	// Clip TRS is likewise identical for every vertex: build the per-object
+	// timeline ONCE and evaluate once into the reusable clip WriteBuf. The
+	// resulting clipTRS is stored in result so appendSceneSurface reuses it.
+	// Cost profile: zero cost when no animations exist; a cheap match-scan (no
+	// alloc) when animations exist but none target this object; full build+eval
+	// only for objects that a clip actually targets.
+	clip := objectClipTRS(object, objIndex, animations, timeSeconds, spinSc)
+	result.ClipTRS = clip
 	if !sceneObjectUsesLineGeometry(object, material) && sceneObjectHasTexturedSurface(object, material) {
-		for _, corner := range scenePlaneSurfaceCorners(object, timeSeconds) {
+		for _, corner := range scenePlaneSurfaceCorners(object, spinQ, clip, timeSeconds) {
 			result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, corner)
 		}
 		if result.HasBounds {
@@ -148,10 +167,10 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 		return result
 	}
 	for _, segment := range sceneObjectSegments(object) {
-		worldFrom := translatePoint(segment[0], object, timeSeconds)
-		worldTo := translatePoint(segment[1], object, timeSeconds)
-		fromNormal := sceneObjectWorldNormal(object, segment[0], timeSeconds)
-		toNormal := sceneObjectWorldNormal(object, segment[1], timeSeconds)
+		worldFrom := translatePoint(segment[0], object, spinQ, clip, timeSeconds)
+		worldTo := translatePoint(segment[1], object, spinQ, clip, timeSeconds)
+		fromNormal := sceneObjectWorldNormal(object, segment[0], spinQ, clip)
+		toNormal := sceneObjectWorldNormal(object, segment[1], spinQ, clip)
 		fromRGBA := sceneLitColorRGBA(material, worldFrom, fromNormal, lights, environment)
 		toRGBA := sceneLitColorRGBA(material, worldTo, toNormal, lights, environment)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
@@ -180,11 +199,13 @@ func sceneObjectUsesLineGeometry(object sceneObject, material rootengine.RenderM
 	return !(sceneObjectHasTexturedSurface(object, material) && !material.Wireframe)
 }
 
-func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, timeSeconds float64) {
+func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, spinQ motion.Quat, clip clipTRS, timeSeconds float64) {
 	if !sceneObjectHasTexturedSurface(object, material) {
 		return
 	}
-	corners := scenePlaneSurfaceCorners(object, timeSeconds)
+	// spinQ and clip TRS were already computed in appendSceneObject and threaded
+	// here — no second evaluation.
+	corners := scenePlaneSurfaceCorners(object, spinQ, clip, timeSeconds)
 	if len(corners) != 4 {
 		return
 	}
@@ -210,16 +231,16 @@ func sceneObjectHasTexturedSurface(object sceneObject, material rootengine.Rende
 	return object.Kind == "plane" && strings.TrimSpace(material.Texture) != ""
 }
 
-func scenePlaneSurfaceCorners(object sceneObject, timeSeconds float64) []point3 {
+func scenePlaneSurfaceCorners(object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) []point3 {
 	vertices := boxVertices(object.Width, 0, object.Depth)
 	if len(vertices) < 4 {
 		return nil
 	}
 	return []point3{
-		translatePoint(vertices[0], object, timeSeconds),
-		translatePoint(vertices[1], object, timeSeconds),
-		translatePoint(vertices[2], object, timeSeconds),
-		translatePoint(vertices[3], object, timeSeconds),
+		translatePoint(vertices[0], object, spinQ, clip, timeSeconds),
+		translatePoint(vertices[1], object, spinQ, clip, timeSeconds),
+		translatePoint(vertices[2], object, spinQ, clip, timeSeconds),
+		translatePoint(vertices[3], object, spinQ, clip, timeSeconds),
 	}
 }
 
@@ -1055,13 +1076,19 @@ func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool
 		environment.GroundIntensity > 0
 }
 
-func sceneObjectWorldNormal(object sceneObject, point point3, timeSeconds float64) point3 {
+func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat, clip clipTRS) point3 {
 	normal := sceneObjectLocalNormal(object, point)
-	return normalizePoint3(rotatePoint(normal,
-		object.RotationX+object.SpinX*timeSeconds,
-		object.RotationY+object.SpinY*timeSeconds,
-		object.RotationZ+object.SpinZ*timeSeconds,
-	))
+	// Base orientation, then clip rotation, then spin quaternion. Normals are
+	// directions: no scale (per the existing simple normal path), no translation,
+	// and no drift offset is applied. Rotation composition mirrors translatePoint
+	// (base -> clipR -> spin) so lit normals stay consistent with vertex positions.
+	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
+	if clip.HasR {
+		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
+		rotated = point3{X: cx, Y: cy, Z: cz}
+	}
+	nx, ny, nz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
+	return normalizePoint3(point3{X: nx, Y: ny, Z: nz})
 }
 
 func sceneObjectLocalNormal(object sceneObject, point point3) point3 {
@@ -1274,17 +1301,43 @@ func circlePoint(radius float64, axis string, angle float64) point3 {
 	}
 }
 
-func translatePoint(point point3, object sceneObject, timeSeconds float64) point3 {
-	rotated := rotatePoint(point,
-		object.RotationX+object.SpinX*timeSeconds,
-		object.RotationY+object.SpinY*timeSeconds,
-		object.RotationZ+object.SpinZ*timeSeconds,
-	)
+// NOTE: The clip composition here (base→clipR→spin, translation in world space)
+// intentionally differs from the native render/bundle instanced-mesh matrix path
+// (T*R*S left-multiply on the raw transform). These are different renderer/bundle
+// structures — not a parity pair — so the divergence is by design.
+func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) point3 {
+	// Composition order (local vertex -> world position):
+	//   1. clip scale (local, pre-rotation): multiply the LOCAL vertex by clip.S.
+	//   2. base orientation: the existing intrinsic Euler rotation.
+	//   3. clip rotation: the evaluated clip quaternion, AFTER base, BEFORE spin.
+	//   4. spin orientation: the GenSpin quaternion (unchanged).
+	//   5. translation: object position + drift offset + clip translation.
+	// When the object has no clip targeting it (the common case) clip is the zero
+	// value (all Has* false) and this path is byte-identical to the pre-clip code.
+	local := point
+	if clip.HasS {
+		local = point3{X: point.X * clip.S[0], Y: point.Y * clip.S[1], Z: point.Z * clip.S[2]}
+	}
+	// Base orientation via the existing intrinsic Euler rotation.
+	rotated := rotatePoint(local, object.RotationX, object.RotationY, object.RotationZ)
+	// Clip rotation: composed AFTER the base orientation and BEFORE spin.
+	if clip.HasR {
+		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
+		rotated = point3{X: cx, Y: cy, Z: cz}
+	}
+	// Spin orientation sourced from the canonical motion evaluator (GenSpin),
+	// applied as a quaternion. For single-axis spin this is identical to the
+	// previous Euler-add path; multi-axis spin now follows canonical qx*qy*qz order.
+	sx, sy, sz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
 	offset := sceneMotionOffset(object, timeSeconds)
+	tx, ty, tz := 0.0, 0.0, 0.0
+	if clip.HasT {
+		tx, ty, tz = clip.T[0], clip.T[1], clip.T[2]
+	}
 	return point3{
-		X: rotated.X + object.X + offset.X,
-		Y: rotated.Y + object.Y + offset.Y,
-		Z: rotated.Z + object.Z + offset.Z,
+		X: sx + object.X + offset.X + tx,
+		Y: sy + object.Y + offset.Y + ty,
+		Z: sz + object.Z + offset.Z + tz,
 	}
 }
 

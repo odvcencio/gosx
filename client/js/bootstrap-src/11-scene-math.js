@@ -433,6 +433,24 @@
     return out;
   }
 
+  // Convert a unit quaternion (x,y,z,w) to the (rotationX, rotationY, rotationZ)
+  // Euler angles (radians) used by normalizeSceneObject. sceneRotatePoint applies
+  // X then Y then Z, so the composed matrix is Rz·Ry·Rx; decompose accordingly.
+  // Returns { x, y, z }.
+  function sceneQuatToEulerXYZ(x, y, z, w) {
+    var m00 = 1 - 2 * (y * y + z * z);
+    var m10 = 2 * (x * y + z * w);
+    var m20 = 2 * (x * z - y * w);
+    var m21 = 2 * (y * z + x * w);
+    var m22 = 1 - 2 * (x * x + y * y);
+    var ey = Math.asin(sceneClamp(-m20, -1, 1));
+    if (Math.abs(m20) < 0.9999999) {
+      return { x: Math.atan2(m21, m22), y: ey, z: Math.atan2(m10, m00) };
+    }
+    // Gimbal lock: pitch is ±90°; fold Z into X.
+    return { x: Math.atan2(-2 * (y * z - x * w), 1 - 2 * (x * x + z * z)), y: ey, z: 0 };
+  }
+
   // Non-allocating TRS: writes result into `out`.
   function sceneTRSToMat4Into(out, t, r, s) {
     var x = r[0], y = r[1], z = r[2], w = r[3];

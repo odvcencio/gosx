@@ -119,12 +119,33 @@ const budgets = [
   // dynamic VBO upload) added to drawInstancedMeshes in 16-scene-webgl.js.
   // Measured: 903_824 / 245_457 / 198_989 + rounding headroom.
   //
-  // Bumped raw 905_000 -> 907_000, gzip 246_000 -> 247_000, brotli 199_500 ->
-  // 200_000: GPU-cull telemetry — cull survivor readback (16b: stagingBuf +
-  // requestSurvivorReadback + pollSurvivors; 16a: throttled readback dispatch +
-  // cull-survivors attribute; 20-scene-mount: __gosx_scene3d_telemetry snapshot
-  // API). Measured: 906_387 / 246_361 / 199_604 + rounding headroom.
-  { file: "bootstrap.js", raw: 907_000, gzip: 247_000, brotli: 200_000 },
+  // Bumped raw 905_000 -> 906_500, gzip 246_000 -> 246_500: P2.4b unified-motion
+  // WASM apply seam — applyWasmMotionFrame in 20-scene-mount.js (lazy
+  // __gosx_motion_load/refs once, per-frame __gosx_motion_tick + grow/re-tick,
+  // packed-float decode loop mapping position/scale/quat-rotation to
+  // SET_TRANSFORM commands via applySceneCommands) plus sceneQuatToEulerXYZ in
+  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm (inert when unset).
+  // Measured: 905_554 / 246_098 / 199_456 + rounding headroom.
+  //
+  // Bumped raw 906_500 -> 911_000, gzip 246_500 -> 247_500, brotli 199_500 ->
+  // 201_000: P4-M3 unified-motion WASM mixer bridge for glTF MODEL animation —
+  // sceneAnimWasmClipJSON + sceneAnimWasmDecodePose in 19a-scene-animation.js
+  // (clip→JSON serialization + packed-pose [targetID,propID,arity,comps] decode
+  // into animatedTransforms) and the 20-scene-mount.js routers
+  // (sceneModelWasmMixerActive / sceneAdvanceWasmModelMixer grow-and-retick out
+  // buffer / sceneModelRecordPlay|Stop|WasPlaying / wasmMixer create+add_clip in
+  // scenePrepareModelSkinPlayback / sceneDestroyModelWasmMixers on teardown).
+  // Skinning (buildNodeTransforms / computeJointMatrices) is unchanged. Flag-
+  // gated on window.__gosx_motion_wasm (JS mixer default; inert when unset).
+  // Measured: 908_723 / 246_935 / 200_138 + rounding headroom.
+  //
+  // Bumped raw 911_000 -> 915_000, gzip 247_500 -> 249_000, brotli 201_000 ->
+  // 202_000: integration merge of perf/scene3d-slices + main's GPU-cull
+  // telemetry seam (16b survivor readback, 16a throttled dispatch, 20-scene-mount
+  // __gosx_scene3d_telemetry) on top of the unified-motion WASM seams above —
+  // the merged bundle carries both. Measured: 913_071 / 248_325 / 201_362 +
+  // rounding headroom.
+  { file: "bootstrap.js", raw: 915_000, gzip: 249_000, brotli: 202_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -189,17 +210,40 @@ const budgets = [
   // 16-scene-webgl.js (drawInstancedMeshes: hasCullConfig gate, survivor
   // compaction, dynamic VBO upload). Measured: 547_225 / 149_287 / 122_821.
   //
-  // Bumped brotli 123_000 -> 123_500: per-lane transform reinterleave in
-  // 11a-scene-decompress.js (sceneReinterleaveMaybe applied to compressed/
-  // preview/lod instanced transforms) — the fix for deinterleaved
-  // compressedTransforms (transformStride) that stops projective-shear "light
-  // ray" rendering of instanced meshes. Measured: 547_2xx / 149_3xx / 123_012.
+  // Bumped raw 548_500 -> 550_000, brotli 123_000 -> 124_000: P2.4b unified-motion
+  // WASM apply seam — applyWasmMotionFrame (lazy motionProgram base64 load via
+  // sceneBase64Decode + __gosx_motion_load/refs, per-frame __gosx_motion_tick with
+  // grow-and-re-tick on truncation, packed LE-float64 decode loop mapping
+  // position/scale/quat-rotation to SET_TRANSFORM commands through
+  // applySceneCommands) in 20-scene-mount.js + sceneQuatToEulerXYZ in
+  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm; inert when unset.
+  // Measured: 548_880 / 149_960 / 123_499 + rounding headroom.
   //
-  // Bumped raw 548_500 -> 550_000, brotli 123_500 -> 124_000: GPU-cull telemetry
-  // — __gosx_scene3d_telemetry in 20-scene-mount.js (reads data attributes +
-  // cull-survivors JSON + compact webgpu diag slice). Measured: 549_171 /
-  // 149_967 / 123_638 + rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 550_000, gzip: 150_500, brotli: 124_000 },
+  // Bumped raw 550_000 -> 552_500: P4-M3 unified-motion WASM mixer bridge for
+  // glTF MODEL animation — 20-scene-mount.js routers (sceneModelWasmMixerActive,
+  // sceneAdvanceWasmModelMixer grow-and-retick out buffer, sceneModelRecordPlay|
+  // Stop|WasPlaying, wasmMixer create+add_clip in scenePrepareModelSkinPlayback,
+  // sceneDestroyModelWasmMixers on teardown) calling sceneAnimWasmClipJSON /
+  // sceneAnimWasmDecodePose from the animation chunk. Skinning unchanged. Flag-
+  // gated on window.__gosx_motion_wasm; inert when unset. gzip/brotli still fit.
+  // Measured: 551_222 / 150_493 / 123_833 + rounding headroom.
+  //
+  // Bumped raw 552_500 -> 553_500, gzip 150_500 -> 151_500: C3 unified-motion
+  // WASM MATERIAL-UNIFORM apply seam — applyWasmMaterialMotionFrame (lazy
+  // materialMotionProgram base64 load via sceneBase64Decode +
+  // __gosx_motion_load/refs, per-frame __gosx_motion_tick with grow-and-retick,
+  // packed LE-float64 decode mapping arity-enum width to material customUniforms
+  // writes via sceneResolveMaterialUniforms) in 20-scene-mount.js +
+  // sceneResolveMaterialUniforms in 10-runtime-scene-core.js + a live
+  // __gosxScene3DState mount handle. Flag-gated on window.__gosx_motion_wasm;
+  // inert when unset. brotli still fits. Measured: 552_885 / 150_875 / 123_944
+  // + rounding headroom.
+  //
+  // Bumped raw 553_500 -> 556_000, gzip 151_500 -> 152_000, brotli 124_000 ->
+  // 125_000: integration merge — main's GPU-cull telemetry seam folded into the
+  // scene3d chunk alongside the unified-motion seams above. Measured: 554_885 /
+  // 151_570 / 124_729 + rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 556_000, gzip: 152_000, brotli: 125_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

@@ -2006,7 +2006,43 @@
     return roots;
   }
 
-  function sceneApplyModelSkinPose(record, deltaTime) {
+  // True when the WASM motion mixer is active for this record (P4-M3, opt-in).
+  function sceneModelWasmMixerActive(record) {
+    return Boolean(
+      record && record.wasmMixer &&
+      typeof window !== "undefined" && window.__gosx_motion_wasm &&
+      typeof window.__gosx_motion_mixer_update === "function"
+    );
+  }
+
+  // Drive one WASM-mixer frame: tick the mixer into a reused out buffer
+  // (grow-and-retick when the write count exceeds capacity) and decode the
+  // packed writes into animatedTransforms via the published animation API.
+  function sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms) {
+    const api = record.animationApi;
+    if (!api || typeof api.wasmDecodePose !== "function") {
+      return;
+    }
+    if (!record._wasmMixerF64 || !record._wasmMixerU8) {
+      record._wasmMixerF64 = new Float64Array(2048);
+      record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
+    }
+    const reducedFlag = reduced === true;
+    let count = window.__gosx_motion_mixer_update(record.wasmMixer, deltaTime, reducedFlag, record._wasmMixerU8);
+    if (count > record._wasmMixerF64.length) {
+      record._wasmMixerF64 = new Float64Array(count);
+      record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
+      // Pass dt=0: the clip clock already advanced on the first call above.
+      // Re-emitting at the current time with dt=0 avoids a double clock step.
+      count = window.__gosx_motion_mixer_update(record.wasmMixer, 0, reducedFlag, record._wasmMixerU8);
+      if (count > record._wasmMixerF64.length) {
+        count = record._wasmMixerF64.length;
+      }
+    }
+    api.wasmDecodePose(record._wasmMixerF64, count, animatedTransforms);
+  }
+
+  function sceneApplyModelSkinPose(record, deltaTime, reduced) {
     if (!record || !record.animationApi || !record.nodes || !record.skins) {
       return;
     }
@@ -2014,7 +2050,9 @@
     if (animatedTransforms && typeof animatedTransforms.clear === "function") {
       animatedTransforms.clear();
     }
-    if (record.mixer) {
+    if (sceneModelWasmMixerActive(record)) {
+      sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms);
+    } else if (record.mixer) {
       record.mixer.update(deltaTime, function(targetNode, property, value) {
         let entry = animatedTransforms.get(targetNode);
         if (!entry) {
@@ -2096,7 +2134,7 @@
   }
 
   function sceneRegisterModelAnimationRecord(state, record) {
-    if (!state || !record || !record.mixer) {
+    if (!state || !record || (!record.mixer && !record.wasmMixerActive)) {
       return;
     }
     if (!Array.isArray(state._modelAnimations)) {
@@ -2169,8 +2207,33 @@
     }
     state._modelSkins.push(record);
 
-    if (typeof animationApi.createMixer === "function") {
-      const clips = sceneCloneModelAnimations(asset.animations);
+    const clips = sceneCloneModelAnimations(asset.animations);
+    const wantWasmMixer = clips.length > 0
+      && typeof window !== "undefined"
+      && window.__gosx_motion_wasm
+      && typeof window.__gosx_motion_mixer_create === "function"
+      && typeof animationApi.wasmClipJSON === "function";
+    if (wantWasmMixer) {
+      // P4-M3: route glTF clip playback through the Go WASM motion mixer.
+      const handle = window.__gosx_motion_mixer_create();
+      if (handle >= 1) {
+        record.wasmMixer = handle;
+        record.wasmMixerActive = true;
+        for (let index = 0; index < clips.length; index += 1) {
+          const clip = clips[index];
+          window.__gosx_motion_mixer_add_clip(handle, clip.name, animationApi.wasmClipJSON(clip));
+        }
+        sceneRegisterModelAnimationRecord(state, record);
+        const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
+        if (requestedAnimation) {
+          sceneModelRecordPlay(record, requestedAnimation, sceneModelAnimationPlayOptions(model, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+          if (sceneModelRecordIsPlaying({ animation: requestedAnimation, wasmMixerActive: true, wasmMixer: handle })) {
+            record.animation = requestedAnimation;
+            record.animationSeq = typeof model.animationSeq === "string" ? model.animationSeq : "";
+          }
+        }
+      }
+    } else if (typeof animationApi.createMixer === "function") {
       if (clips.length) {
         const mixer = animationApi.createMixer();
         for (let index = 0; index < clips.length; index += 1) {
@@ -2190,29 +2253,88 @@
       }
     }
 
-    sceneApplyModelSkinPose(record, 0);
+    sceneApplyModelSkinPose(record, 0, false);
+  }
+
+  // Route a clip play through the active mixer. opts is the JS-mixer options
+  // shape ({loop, speed, weight, fadeIn}); the WASM mixer takes the same values
+  // as positional arguments.
+  function sceneModelRecordPlay(record, name, opts) {
+    const options = opts || {};
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_play === "function") {
+        window.__gosx_motion_mixer_play(
+          record.wasmMixer,
+          name,
+          options.fadeIn !== undefined ? options.fadeIn : 0,
+          options.loop !== undefined ? options.loop !== false : true,
+          options.speed !== undefined ? options.speed : 1,
+          options.weight !== undefined ? options.weight : 1
+        );
+      }
+      return;
+    }
+    if (record && record.mixer) {
+      record.mixer.play(name, options);
+    }
+  }
+
+  // Route a clip stop through the active mixer. opts is the JS-mixer options
+  // shape ({fadeOut}); the WASM mixer takes fadeOut positionally.
+  function sceneModelRecordStop(record, name, opts) {
+    const options = opts || {};
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_stop === "function") {
+        window.__gosx_motion_mixer_stop(record.wasmMixer, name, options.fadeOut !== undefined ? options.fadeOut : 0);
+      }
+      return;
+    }
+    if (record && record.mixer) {
+      record.mixer.stop(name, options);
+    }
+  }
+
+  // Whether a named clip is playing on the record's active mixer, routed to the
+  // WASM mixer when active (P4-M3) and the JS mixer otherwise.
+  function sceneModelRecordWasPlaying(record, name) {
+    if (!record || !name) {
+      return false;
+    }
+    if (record.wasmMixerActive) {
+      return Boolean(
+        typeof window !== "undefined" &&
+        typeof window.__gosx_motion_mixer_is_playing === "function" &&
+        window.__gosx_motion_mixer_is_playing(record.wasmMixer, name)
+      );
+    }
+    return Boolean(record.mixer && record.mixer.isPlaying(name));
+  }
+
+  // Whether a record's currently-selected animation is playing.
+  function sceneModelRecordIsPlaying(record) {
+    return record ? sceneModelRecordWasPlaying(record, record.animation) : false;
   }
 
   function sceneHasActiveModelAnimations(state) {
     const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
     return records.some(function(record) {
-      return Boolean(record && record.mixer && record.animation && record.mixer.isPlaying(record.animation));
+      return sceneModelRecordIsPlaying(record);
     });
   }
 
-  function sceneAdvanceModelAnimations(state, deltaTime) {
+  function sceneAdvanceModelAnimations(state, deltaTime, reduced) {
     const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
       if (!record) {
         continue;
       }
-      const playing = Boolean(record && record.mixer && record.animation && record.mixer.isPlaying(record.animation));
+      const playing = sceneModelRecordIsPlaying(record);
       if (!playing && !record.poseDirty) {
         continue;
       }
       record.poseDirty = false;
-      sceneApplyModelSkinPose(record, deltaTime);
+      sceneApplyModelSkinPose(record, deltaTime, reduced);
     }
   }
 
@@ -2564,7 +2686,7 @@
   }
 
   function sceneApplyModelLiveAnimation(record, patch) {
-    if (!record || !record.mixer || !sceneIsPlainObject(patch)) {
+    if (!record || (!record.mixer && !record.wasmMixerActive) || !sceneIsPlainObject(patch)) {
       return false;
     }
     const hasAnimation = sceneOwns(patch, "animation");
@@ -2584,9 +2706,9 @@
     const replay = Boolean(hasSeq && animationSeq && record.animation === animation && record.animationSeq !== animationSeq);
     sceneApplyModelAnimationControls(record, patch);
     if (!animation) {
-      if (record.animation && record.mixer.isPlaying(record.animation)) {
+      if (record.animation && sceneModelRecordIsPlaying(record)) {
         const stopOptions = sceneModelAnimationStopOptions(record.model, patch, { fadeOut: 0.05 });
-        record.mixer.stop(record.animation, stopOptions);
+        sceneModelRecordStop(record, record.animation, stopOptions);
         if (stopOptions.fadeOut <= 0) {
           record.animation = "";
         }
@@ -2595,19 +2717,19 @@
       record.poseDirty = true;
       return true;
     }
-    if (record.animation === animation && record.mixer.isPlaying(animation) && !replay) {
+    if (record.animation === animation && sceneModelRecordIsPlaying(record) && !replay) {
       if (hasControls) {
-        record.mixer.play(animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+        sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
         record.poseDirty = true;
         return true;
       }
       return false;
     }
-    if (record.animation && record.mixer.isPlaying(record.animation)) {
-      record.mixer.stop(record.animation, sceneModelAnimationStopOptions(record.model, patch, { fadeOut: replay ? 0 : 0.05 }));
+    if (record.animation && sceneModelRecordIsPlaying(record)) {
+      sceneModelRecordStop(record, record.animation, sceneModelAnimationStopOptions(record.model, patch, { fadeOut: replay ? 0 : 0.05 }));
     }
-    record.mixer.play(animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: replay ? 0 : 0.04 }));
-    if (!record.mixer.isPlaying(animation)) {
+    sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: replay ? 0 : 0.04 }));
+    if (!sceneModelRecordWasPlaying(record, animation)) {
       return false;
     }
     record.animation = animation;
@@ -2684,8 +2806,25 @@
     state._hydratedModelRecords = null;
   }
 
+  // P4-M3: free WASM motion mixers attached to model records before they are
+  // dropped (re-hydration or teardown). No-op when the flag is off / no mixers.
+  function sceneDestroyModelWasmMixers(records) {
+    if (!Array.isArray(records) || typeof window === "undefined" || typeof window.__gosx_motion_mixer_destroy !== "function") {
+      return;
+    }
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (record && record.wasmMixer) {
+        window.__gosx_motion_mixer_destroy(record.wasmMixer);
+        record.wasmMixer = 0;
+        record.wasmMixerActive = false;
+      }
+    }
+  }
+
   async function hydrateSceneStateModels(state, props) {
     const models = sceneHydrationModels(state, props);
+    sceneDestroyModelWasmMixers(state && state._modelSkins);
     state._modelAnimations = [];
     state._modelSkins = [];
     sceneClearHydratedModelRecords(state);
@@ -5665,6 +5804,25 @@
     const motion = initialSceneMotionState(props);
     let sceneCSSAnimationUntil = 0;
     let lastModelAnimationTimeSeconds = null;
+    // WASM motion seam (P2.4b). Opt-in via window.__gosx_motion_wasm; all state
+    // stays inert when the flag is unset. wasmMotionState: 0=unloaded, 1=loaded,
+    // -1=disabled (load failed or no program, never retried).
+    let wasmMotionState = 0;
+    let wasmMotionHandle = 0;
+    let wasmMotionTargetRefs = null;
+    let wasmMotionPropRefs = null;
+    let wasmMotionF64 = null;
+    let wasmMotionU8 = null;
+    // C3: material-uniform motion seam. Mirrors wasmMotion* but loads
+    // props.scene.materialMotionProgram and writes evaluated values into each
+    // mesh's customUniforms so selena re-packs them every frame. Same opt-in
+    // flag + state lifecycle (0=unloaded, 1=loaded, -1=disabled).
+    let wasmMatMotionState = 0;
+    let wasmMatMotionHandle = 0;
+    let wasmMatMotionTargetRefs = null;
+    let wasmMatMotionPropRefs = null;
+    let wasmMatMotionF64 = null;
+    let wasmMatMotionU8 = null;
 
     function sceneAnimationState() {
       if (motion.reducedMotion) {
@@ -5764,6 +5922,11 @@
 
     const sceneNodeSentinels = new Map();
     ctx.mount.__gosxScene3DSentinels = sceneNodeSentinels;
+    // Live sceneState handle for inspection (debug/test): lets callers read the
+    // mutable object/material state — e.g. customUniforms written by the C3
+    // material-motion seam — without going through the depth-clamped debug
+    // snapshot.
+    ctx.mount.__gosxScene3DState = sceneState;
     ctx.mount.__gosxScene3DCSSDynamic = false;
     ctx.mount.__gosxScene3DCSSRevision = 1;
     ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
@@ -7069,6 +7232,138 @@
       }
     }
 
+    // WASM motion seam (P2.4b): lazy-load the scene's motion program once, then
+    // each frame tick + decode packed transform writes into SET_TRANSFORM
+    // commands routed through applySceneCommands (so state re-normalizes). Inert
+    // unless window.__gosx_motion_wasm is set and the exports are present.
+    //
+    // SCOPE: this seam runs ONLY on the JS-sceneState render path — i.e. the
+    // createSceneRenderBundle fall-through (onRenderEngine returns ""), and
+    // declarative SceneIR scenes that ship motionProgram but render via JS rather
+    // than the Go runtime bundle. Production shared-runtime Scene3D scenes call
+    // ctx.runtime.renderFrame(), receive a non-empty runtimeBundle, and return at
+    // line ~7128 BEFORE reaching this call — so this seam does NOT drive them.
+    // Motion for those scenes is computed by motion.Eval inside
+    // client/vm/scene_render_bundle.go and is baked into the Go-produced bundle.
+    function applyWasmMotionFrame(timeSeconds) {
+      if (wasmMotionState < 0) return;
+      if (typeof window === "undefined" || !window.__gosx_motion_wasm
+          || typeof window.__gosx_motion_load !== "function") {
+        return;
+      }
+      if (wasmMotionState === 0) {
+        // The scene IR (carrying motionProgram as base64) rides under
+        // props.scene; some callers pass the scene object as props directly.
+        const sceneIR = props && typeof props.scene === "object" && props.scene ? props.scene : props;
+        const b64 = sceneIR && typeof sceneIR.motionProgram === "string" ? sceneIR.motionProgram : "";
+        const handle = b64 ? window.__gosx_motion_load(sceneBase64Decode(b64)) : 0;
+        const refs = handle >= 1 && typeof window.__gosx_motion_refs === "function"
+          ? window.__gosx_motion_refs(handle) : null;
+        if (!refs) { wasmMotionState = -1; return; }
+        wasmMotionHandle = handle;
+        wasmMotionTargetRefs = refs.target || [];
+        wasmMotionPropRefs = refs.prop || [];
+        wasmMotionF64 = new Float64Array(256);
+        wasmMotionU8 = new Uint8Array(wasmMotionF64.buffer);
+        wasmMotionState = 1;
+      }
+      const reduced = motion.reducedMotion === true;
+      let count = window.__gosx_motion_tick(wasmMotionHandle, timeSeconds, reduced, wasmMotionU8);
+      if (count > wasmMotionF64.length) {
+        wasmMotionF64 = new Float64Array(count);
+        wasmMotionU8 = new Uint8Array(wasmMotionF64.buffer);
+        count = window.__gosx_motion_tick(wasmMotionHandle, timeSeconds, reduced, wasmMotionU8);
+        if (count > wasmMotionF64.length) count = wasmMotionF64.length;
+      }
+      const f = wasmMotionF64;
+      const cmds = [];
+      for (let i = 0; i + 3 <= count;) {
+        const arity = f[i + 2];
+        // motion.ValueArity width: 0 scalar=1,1 vec2=2,2 vec3=3,3+ (vec4/quat/color)=4.
+        const width = arity === 0 ? 1 : (arity >= 3 ? 4 : arity + 1);
+        const ref = wasmMotionTargetRefs[f[i]];
+        const prop = wasmMotionPropRefs[f[i + 1]];
+        const c = i + 3;
+        if (c + width > count) break;
+        i = c + width;
+        if (ref == null || prop == null) continue;
+        let data = null;
+        if (prop === "position" && width >= 3) {
+          data = { x: f[c], y: f[c + 1], z: f[c + 2] };
+        } else if (prop === "scale" && width >= 3) {
+          data = { scaleX: f[c], scaleY: f[c + 1], scaleZ: f[c + 2] };
+        } else if (prop === "rotation" && arity === 4) {
+          const e = sceneQuatToEulerXYZ(f[c], f[c + 1], f[c + 2], f[c + 3]);
+          data = { rotationX: e.x, rotationY: e.y, rotationZ: e.z };
+        }
+        if (data) cmds.push({ kind: SCENE_CMD_SET_TRANSFORM, objectId: ref, data });
+      }
+      if (cmds.length > 0) applySceneCommands(sceneState, cmds);
+    }
+
+    // C3: motion-evaluated MATERIAL UNIFORM animation. Mirrors
+    // applyWasmMotionFrame but loads props.scene.materialMotionProgram (whose
+    // tracks target material uniforms: targetRef=mesh id, prop=uniform name).
+    // Each frame it ticks at absolute time t, decodes packed
+    // [targetID, propID, arity, comps...] records, and writes the evaluated
+    // value into the mesh's customUniforms bag (the same bag selena re-packs
+    // per frame via sceneSelenaUniformData). MUST run BEFORE the per-frame
+    // bundle build so the next createSceneRenderBundle clones the new value.
+    // Stateless single-program tick at absolute t, so a grow-and-retick at the
+    // same t is safe (no clock-advance concern like the model mixer).
+    function applyWasmMaterialMotionFrame(timeSeconds) {
+      if (wasmMatMotionState < 0) return;
+      if (typeof window === "undefined" || !window.__gosx_motion_wasm
+          || typeof window.__gosx_motion_load !== "function") {
+        return;
+      }
+      if (wasmMatMotionState === 0) {
+        const sceneIR = props && typeof props.scene === "object" && props.scene ? props.scene : props;
+        const b64 = sceneIR && typeof sceneIR.materialMotionProgram === "string" ? sceneIR.materialMotionProgram : "";
+        const handle = b64 ? window.__gosx_motion_load(sceneBase64Decode(b64)) : 0;
+        if (handle < 1) { wasmMatMotionState = -1; return; }
+        const refs = typeof window.__gosx_motion_refs === "function"
+          ? window.__gosx_motion_refs(handle) : null;
+        if (!refs) { wasmMatMotionState = -1; return; }
+        wasmMatMotionHandle = handle;
+        wasmMatMotionTargetRefs = refs.target || [];
+        wasmMatMotionPropRefs = refs.prop || [];
+        wasmMatMotionF64 = new Float64Array(256);
+        wasmMatMotionU8 = new Uint8Array(wasmMatMotionF64.buffer);
+        wasmMatMotionState = 1;
+      }
+      const reduced = motion.reducedMotion === true;
+      let count = window.__gosx_motion_tick(wasmMatMotionHandle, timeSeconds, reduced, wasmMatMotionU8);
+      if (count > wasmMatMotionF64.length) {
+        wasmMatMotionF64 = new Float64Array(count);
+        wasmMatMotionU8 = new Uint8Array(wasmMatMotionF64.buffer);
+        count = window.__gosx_motion_tick(wasmMatMotionHandle, timeSeconds, reduced, wasmMatMotionU8);
+        if (count > wasmMatMotionF64.length) count = wasmMatMotionF64.length;
+      }
+      const f = wasmMatMotionF64;
+      for (let i = 0; i + 3 <= count;) {
+        const arity = f[i + 2];
+        // arity ENUM ordinal → component width: Scalar=0→1, Vec2=1→2, Vec3=2→3,
+        // Vec4=3→4, Quat=4→4, Color=5→4.
+        const width = arity <= 0 ? 1 : (arity >= 3 ? 4 : arity + 1);
+        const meshId = wasmMatMotionTargetRefs[f[i]];
+        const uniformName = wasmMatMotionPropRefs[f[i + 1]];
+        const c = i + 3;
+        if (c + width > count) break;
+        i = c + width;
+        if (meshId == null || uniformName == null) continue;
+        const uniforms = sceneResolveMaterialUniforms(sceneState, meshId);
+        if (!uniforms) continue;
+        if (width === 1) {
+          uniforms[uniformName] = f[c];
+        } else {
+          const arr = new Array(width);
+          for (let k = 0; k < width; k++) arr[k] = f[c + k];
+          uniforms[uniformName] = arr;
+        }
+      }
+    }
+
     function renderFrame(now, reason) {
       if (disposed) return;
       const frameStart = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -7095,7 +7390,7 @@
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
       if (perfEnabled) performance.mark("scene3d-model-animations-start");
-      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta);
+      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta, motion.reducedMotion === true);
       if (perfEnabled) {
         performance.mark("scene3d-model-animations-end");
         performance.measure("scene3d-model-animations", "scene3d-model-animations-start", "scene3d-model-animations-end");
@@ -7141,6 +7436,11 @@
           });
         }
       }
+      applyWasmMotionFrame(timeSeconds);
+      // C3: write motion-evaluated material uniforms into customUniforms BEFORE
+      // the bundle build below, so the next createSceneRenderBundle (and the
+      // selena per-frame re-pack) observes them.
+      applyWasmMaterialMotionFrame(timeSeconds);
       sceneAdvanceTransitions(sceneState, now);
       // LOD: swap vertex data based on camera distance before building render bundle.
       if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
@@ -7466,6 +7766,21 @@
         sceneControlHandle.dispose();
         renderer.dispose();
         disposeSceneHTMLTextureState(htmlTextureState);
+        if (wasmMotionState === 1 && typeof window !== "undefined"
+            && typeof window.__gosx_motion_unload === "function") {
+          window.__gosx_motion_unload(wasmMotionHandle);
+        }
+        wasmMotionState = -1;
+        wasmMotionHandle = 0;
+        // C3: free the material-uniform motion program handle.
+        if (wasmMatMotionState === 1 && typeof window !== "undefined"
+            && typeof window.__gosx_motion_unload === "function") {
+          window.__gosx_motion_unload(wasmMatMotionHandle);
+        }
+        wasmMatMotionState = -1;
+        wasmMatMotionHandle = 0;
+        // P4-M3: free any per-model WASM motion mixers created behind the flag.
+        sceneDestroyModelWasmMixers(sceneState && sceneState._modelSkins);
         cancelFrame();
         cancelScheduledRender();
         if (pendingMotionHandle != null) {
@@ -7491,6 +7806,7 @@
           sentinelLayer.parentNode.removeChild(sentinelLayer);
         }
         delete ctx.mount.__gosxScene3DSentinels;
+        delete ctx.mount.__gosxScene3DState;
         delete ctx.mount.__gosxScene3DCSSDynamic;
         delete ctx.mount.__gosxScene3DCSSRevision;
         delete ctx.mount.__gosxScene3DCSSAnimationUntil;

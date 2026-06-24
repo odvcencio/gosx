@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/motion"
 )
 
 type sceneCamera struct {
@@ -306,6 +307,11 @@ type sceneAppendResult struct {
 	Bounds     rootengine.RenderBounds
 	HasBounds  bool
 	ViewCulled bool
+	SpinQ      motion.Quat
+	// ClipTRS is the per-object clip transform evaluated once per frame (zero
+	// value when no animation channel targets the object). Threaded to
+	// appendSceneSurface alongside SpinQ so textured planes reuse it.
+	ClipTRS clipTRS
 }
 
 func sceneBackground(props map[string]any) string {

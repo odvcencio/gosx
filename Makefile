@@ -23,7 +23,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -109,6 +109,14 @@ test-wasm:
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
 
+# test-motion-parity: native↔WASM parity gate for the motion evaluator.
+# Runs TestGolden (and the full motion suite) under GOOS=js GOARCH=wasm so that
+# the native-generated golden corpus proves FMA/float parity across targets.
+test-motion-parity:
+	$(GO) test ./motion/
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
+
 # wasm-size-budget builds both client/wasm flavors and asserts they stay within
 # the budget. Override WASM_FULL_BUDGET_KB / WASM_TINY_BUDGET_KB to raise the
 # bar for a planned-growth slice (require an ADR for any >10% bump).
@@ -116,7 +124,7 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 test-e2e:
-	$(NODE) --test e2e/gosx_docs_e2e.test.mjs
+	$(NODE) --test e2e/gosx_docs_e2e.test.mjs e2e/motion-spin.test.mjs
 	$(GO) test ./e2e
 
 test-desktop:
