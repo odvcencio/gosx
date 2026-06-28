@@ -8651,7 +8651,7 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   assert.match(waterPage, /data-gosx-scene3d-help-panel="true"/);
   assert.match(waterPage, /data-gosx-scene3d-rounded-control="true"/);
   assert.match(waterPage, /data-gosx-scene3d-pool-boundary-control="true"/);
-  assert.match(waterPage, /ThreeJS Water/);
+  assert.match(waterPage, /GoSX Water/);
   assert.match(waterPage, /jeantimex\/threejs-water/);
   assert.match(waterPage, /Press SPACEBAR to pause and unpause/);
   assert.match(waterPage, /controlTargetY=\{-0\.5\}/);
