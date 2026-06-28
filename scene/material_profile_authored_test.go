@@ -21,6 +21,8 @@ func TestMaterialProfileEnvelopeRoundTrip(t *testing.T) {
 		CustomFragment:     "void main() { gl_FragColor = vec4(1.0); }",
 		ShaderBackend:      "selena",
 		ShaderLayout:       map[string]any{"material": "StarPoints"},
+		ShaderSource:       "materials/star-points.sel",
+		ShaderSourceFiles:  map[string]string{"customVertexWGSL": "materials/star-points.sel", "customFragmentWGSL": "materials/star-points.sel"},
 		CustomUniforms:     map[string]any{"brightness": float64(1.5)},
 	}
 
@@ -55,6 +57,12 @@ func TestMaterialProfileEnvelopeRoundTrip(t *testing.T) {
 	if got := out.ShaderLayout["material"]; got != "StarPoints" {
 		t.Errorf("ShaderLayout[material] = %v, want StarPoints", got)
 	}
+	if out.ShaderSource != "materials/star-points.sel" {
+		t.Errorf("ShaderSource = %q, want materials/star-points.sel", out.ShaderSource)
+	}
+	if got := out.ShaderSourceFiles["customVertexWGSL"]; got != "materials/star-points.sel" {
+		t.Errorf("ShaderSourceFiles[customVertexWGSL] = %q, want materials/star-points.sel", got)
+	}
 	if got := out.CustomUniforms["brightness"]; got != float64(1.5) {
 		t.Errorf("CustomUniforms[brightness] = %v, want float64(1.5)", got)
 	}
@@ -80,7 +88,7 @@ func TestMaterialProfileAbsentEnvelopeNoExtra(t *testing.T) {
 	for _, key := range []string{
 		"customVertex", "customFragment",
 		"customVertexWGSL", "customFragmentWGSL",
-		"shaderBackend", "shaderLayout", "customUniforms",
+		"shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles", "customUniforms",
 	} {
 		if _, found := raw[key]; found {
 			t.Errorf("absent authored field should not emit JSON key %q", key)

@@ -43,6 +43,15 @@
   var _webgpuProbeOptions = {};
   var _webgpuProbeRetryCount = 0;
   var _webgpuProbeWarnings = [];
+  var _webgpuProbeInFlight = false;
+  var _webgpuLastProbeStartedAt = 0;
+  var WEBGPU_LOST_REPROBE_INTERVAL_MS = 1000;
+  var WEBGPU_LOST_REPROBE_WINDOW_MS = 10000;
+  var WEBGPU_LOST_REPROBE_MAX_PER_WINDOW = 3;
+  var WEBGPU_LOST_REPROBE_BACKOFF_MS = 30000;
+  var _webgpuLostProbeWindowStartedAt = 0;
+  var _webgpuLostProbeCount = 0;
+  var _webgpuLostProbeBackoffUntil = 0;
 
   var WEBGPU_OPTIONAL_FEATURES = [
     "timestamp-query",
@@ -240,7 +249,21 @@
   }
 
   function sceneWebGPUDiagnostics() {
+    sceneWebGPUMaybeRetryUnavailableProbe();
     return sceneWebGPUProbeSnapshot();
+  }
+
+  function sceneWebGPUDispatchProbeReady(recoveredFromLoss) {
+    if (!recoveredFromLoss || typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+      return;
+    }
+    try {
+      var detail = sceneWebGPUProbeSnapshot();
+      var event = typeof CustomEvent === "function"
+        ? new CustomEvent("gosx:scene3d:webgpu-probe-ready", { detail: detail })
+        : { type: "gosx:scene3d:webgpu-probe-ready", detail: detail };
+      window.dispatchEvent(event);
+    } catch (_err) {}
   }
 
   // Shared probe helper. Callers in 16a-scene-webgpu.js use this to read
@@ -280,15 +303,21 @@
         probeOptions: Object.assign({}, _webgpuProbeOptions),
         retryCount: _webgpuProbeRetryCount,
         warnings: _webgpuProbeWarnings.slice(),
+        lostProbeCount: _webgpuLostProbeCount,
+        lostProbeBackoffUntil: _webgpuLostProbeBackoffUntil,
       };
     };
     window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
     window.__gosx_scene3d_webgpu_probe_ready = function() {
+      sceneWebGPUMaybeRetryUnavailableProbe();
       return _webgpuProbePromise.then(function() {
         return _webgpuAdapterReady;
       }).catch(function() {
         return false;
       });
+    };
+    window.__gosx_scene3d_webgpu_probe_invalidate = function(info) {
+      return sceneWebGPUInvalidateProbe(info);
     };
   }
 
@@ -513,6 +542,67 @@
     return descriptor ? adapter.requestDevice(descriptor) : adapter.requestDevice();
   }
 
+  function sceneWebGPUDeviceLostSnapshot(info) {
+    return {
+      reason: info && info.reason || "",
+      message: info && info.message || "",
+    };
+  }
+
+  function sceneWebGPUWatchDeviceLoss(device) {
+    if (!device || !device.lost || typeof device.lost.then !== "function") {
+      return;
+    }
+    device.lost.then(function(info) {
+      if (_webgpuDeviceProbe !== device) {
+        return;
+      }
+      console.warn("[gosx] WebGPU probe device lost:", info && info.message);
+      sceneWebGPUInvalidateProbe(info);
+    }).catch(function() {});
+  }
+
+  function sceneWebGPUProbeNow() {
+    if (typeof performance !== "undefined" && performance && typeof performance.now === "function") {
+      return performance.now();
+    }
+    return Date.now();
+  }
+
+  function sceneWebGPUMaybeRetryUnavailableProbe() {
+    if (!_webgpuDeviceLostInfo || _webgpuAdapterReady || _webgpuProbeInFlight) {
+      return _webgpuProbePromise;
+    }
+    if (_webgpuAdapterProbe !== false && _webgpuDeviceProbe !== false) {
+      return _webgpuProbePromise;
+    }
+    var now = sceneWebGPUProbeNow();
+    if (_webgpuLostProbeBackoffUntil > now) {
+      return _webgpuProbePromise;
+    }
+    if (now - _webgpuLastProbeStartedAt < WEBGPU_LOST_REPROBE_INTERVAL_MS) {
+      return _webgpuProbePromise;
+    }
+    return sceneWebGPUStartProbe();
+  }
+
+  function sceneWebGPURecordProbeLoss() {
+    var now = sceneWebGPUProbeNow();
+    if (_webgpuLostProbeWindowStartedAt <= 0 || now - _webgpuLostProbeWindowStartedAt > WEBGPU_LOST_REPROBE_WINDOW_MS) {
+      _webgpuLostProbeWindowStartedAt = now;
+      _webgpuLostProbeCount = 0;
+    }
+    _webgpuLostProbeCount += 1;
+    if (_webgpuLostProbeCount <= WEBGPU_LOST_REPROBE_MAX_PER_WINDOW) {
+      return true;
+    }
+    _webgpuLostProbeBackoffUntil = now + WEBGPU_LOST_REPROBE_BACKOFF_MS;
+    _webgpuProbeError = "device lost repeatedly; reprobe backed off";
+    _webgpuProbeWarnings.push(_webgpuProbeError);
+    console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+    return false;
+  }
+
   function sceneWebGPUProbeDevice(adapter, adapterRequest, retried) {
     sceneWebGPURememberAdapter(adapter);
     var descriptor = sceneWebGPUDeviceDescriptor();
@@ -533,7 +623,32 @@
     });
   }
 
-  if (typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function") {
+  function sceneWebGPUStartProbe() {
+    var now = sceneWebGPUProbeNow();
+    if (_webgpuLostProbeBackoffUntil > now) {
+      _webgpuAdapterReady = false;
+      _webgpuAdapterProbe = false;
+      _webgpuDeviceProbe = false;
+      _webgpuProbePromise = Promise.resolve(false);
+      return _webgpuProbePromise;
+    }
+    if (_webgpuProbeInFlight) {
+      return _webgpuProbePromise;
+    }
+    _webgpuProbeInFlight = true;
+    _webgpuLastProbeStartedAt = now;
+    _webgpuAdapterReady = false;
+    _webgpuAdapterProbe = null;
+    _webgpuDeviceProbe = null;
+    _webgpuDeviceLimits = {};
+    _webgpuProbeError = "";
+    if (!(typeof navigator !== "undefined" && navigator.gpu && typeof navigator.gpu.requestAdapter === "function")) {
+      _webgpuAdapterProbe = false;
+      _webgpuDeviceProbe = false;
+      _webgpuProbeInFlight = false;
+      _webgpuProbePromise = Promise.resolve(false);
+      return _webgpuProbePromise;
+    }
     // The default stays unbounded because some backends (SwiftShader in
     // headless Chrome, certain Linux Mesa/ANGLE builds) return null when
     // forced to "high-performance". Pages that need an adapter class can
@@ -549,7 +664,7 @@
         _webgpuDeviceProbe = false;
         return false;
       }
-      // Verify device creation actually succeeds — this is where partial
+      // Verify device creation actually succeeds - this is where partial
       // implementations fail. Some headless Chrome/SwiftShader builds can
       // fail the first empty requestDevice() after page startup while a fresh
       // adapter succeeds immediately after, so empty descriptors get one
@@ -557,28 +672,28 @@
       return sceneWebGPUProbeDevice(adapter, adapterRequest, false);
     }).then(function(device) {
       if (device === false) {
-        return;
+        return false;
       }
       if (!device) {
         _webgpuProbeError = "requestDevice returned null";
         console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
         _webgpuDeviceProbe = false;
-        return;
+        return false;
       }
+      var recoveredFromLoss = !!_webgpuDeviceLostInfo;
       _webgpuDeviceProbe = device;
       _webgpuDeviceLimits = sceneWebGPULimitsSnapshot(device.limits);
+      _webgpuDeviceLostInfo = null;
       _webgpuAdapterReady = true;
-      // Invalidate the probe if the device is ever lost post-probe —
-      // consumers re-check sceneWebGPUAvailable() on each mount.
-      device.lost.then(function(info) {
-        _webgpuDeviceLostInfo = {
-          reason: info && info.reason || "",
-          message: info && info.message || "",
-        };
-        console.warn("[gosx] WebGPU probe device lost:", info && info.message);
-        _webgpuAdapterReady = false;
-        _webgpuDeviceProbe = false;
-      }).catch(function() {});
+      if (!recoveredFromLoss || sceneWebGPUProbeNow() - _webgpuLostProbeWindowStartedAt > WEBGPU_LOST_REPROBE_WINDOW_MS) {
+        _webgpuLostProbeWindowStartedAt = 0;
+        _webgpuLostProbeCount = 0;
+        _webgpuLostProbeBackoffUntil = 0;
+      }
+      // Invalidate and restart the probe if the device is ever lost post-probe.
+      // Consumers re-check sceneWebGPUAvailable() on each mount/recovery.
+      sceneWebGPUWatchDeviceLoss(device);
+      sceneWebGPUDispatchProbeReady(recoveredFromLoss);
       return true;
     }).catch(function(err) {
       _webgpuProbeError = String(err && (err.message || err) || "unknown error");
@@ -587,10 +702,37 @@
       _webgpuDeviceProbe = false;
       return false;
     });
-  } else {
-    _webgpuAdapterProbe = false;
-    _webgpuDeviceProbe = false;
+    _webgpuProbePromise = _webgpuProbePromise.then(function(result) {
+      _webgpuProbeInFlight = false;
+      return result;
+    }, function(err) {
+      _webgpuProbeInFlight = false;
+      throw err;
+    });
+    return _webgpuProbePromise;
   }
+
+  function sceneWebGPUInvalidateProbe(info) {
+    _webgpuDeviceLostInfo = sceneWebGPUDeviceLostSnapshot(info);
+    _webgpuAdapterReady = false;
+    if (!sceneWebGPURecordProbeLoss()) {
+      _webgpuAdapterProbe = false;
+      _webgpuDeviceProbe = false;
+      _webgpuDeviceLimits = {};
+      _webgpuProbeInFlight = false;
+      _webgpuProbePromise = Promise.resolve(false);
+      return _webgpuProbePromise;
+    }
+    if (_webgpuAdapterProbe === null && _webgpuDeviceProbe === null) {
+      return _webgpuProbePromise;
+    }
+    _webgpuAdapterProbe = null;
+    _webgpuDeviceProbe = null;
+    _webgpuDeviceLimits = {};
+    return sceneWebGPUStartProbe();
+  }
+
+  sceneWebGPUStartProbe();
   // Share the probe (including the pre-obtained device) with the
   // sub-feature chunk so it doesn't re-probe and can skip its own
   // async device creation entirely. The ready promise lets the mount
@@ -603,6 +745,7 @@
   // and the mount code falls through to the WebGL renderer with a
   // CLEAN canvas (we never called getContext("webgpu") on it).
   function sceneWebGPUAvailable() {
+    sceneWebGPUMaybeRetryUnavailableProbe();
     return _webgpuAdapterReady
       && _webgpuAdapterProbe !== false
       && _webgpuAdapterProbe !== null

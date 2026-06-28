@@ -155,43 +155,47 @@ type IRMaterial struct {
 	CustomUniforms     map[string]any               `json:"customUniforms,omitempty"`
 	ShaderBackend      string                       `json:"shaderBackend,omitempty"`
 	ShaderLayout       map[string]any               `json:"shaderLayout,omitempty"`
+	ShaderSource       string                       `json:"shaderSource,omitempty"`
+	ShaderSourceFiles  map[string]string            `json:"shaderSourceFiles,omitempty"`
 	Variants           map[string]IRMaterialVariant `json:"variants,omitempty"`
 }
 
 // IRMaterialVariant is a partial material override selected by a runtime
 // capability tier such as "full", "balanced", or "constrained".
 type IRMaterialVariant struct {
-	Kind               string         `json:"kind,omitempty"`
-	Color              string         `json:"color,omitempty"`
-	Albedo             []float64      `json:"albedo,omitempty"`
-	Opacity            float64        `json:"opacity,omitempty"`
-	Emissive           float64        `json:"emissive,omitempty"`
-	Roughness          float64        `json:"roughness,omitempty"`
-	Metalness          float64        `json:"metalness,omitempty"`
-	Clearcoat          float64        `json:"clearcoat,omitempty"`
-	Sheen              float64        `json:"sheen,omitempty"`
-	Transmission       float64        `json:"transmission,omitempty"`
-	Iridescence        float64        `json:"iridescence,omitempty"`
-	Anisotropy         float64        `json:"anisotropy,omitempty"`
-	Texture            string         `json:"texture,omitempty"`
-	NormalMap          string         `json:"normalMap,omitempty"`
-	RoughnessMap       string         `json:"roughnessMap,omitempty"`
-	MetalnessMap       string         `json:"metalnessMap,omitempty"`
-	EmissiveMap        string         `json:"emissiveMap,omitempty"`
-	BlendMode          string         `json:"blendMode,omitempty"`
-	RenderPass         string         `json:"renderPass,omitempty"`
-	Wireframe          *bool          `json:"wireframe,omitempty"`
-	DepthWrite         *bool          `json:"depthWrite,omitempty"`
-	LineDash           *bool          `json:"lineDash,omitempty"`
-	DashSize           float64        `json:"dashSize,omitempty"`
-	GapSize            float64        `json:"gapSize,omitempty"`
-	CustomVertex       string         `json:"customVertex,omitempty"`
-	CustomFragment     string         `json:"customFragment,omitempty"`
-	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL string         `json:"customFragmentWGSL,omitempty"`
-	CustomUniforms     map[string]any `json:"customUniforms,omitempty"`
-	ShaderBackend      string         `json:"shaderBackend,omitempty"`
-	ShaderLayout       map[string]any `json:"shaderLayout,omitempty"`
+	Kind               string            `json:"kind,omitempty"`
+	Color              string            `json:"color,omitempty"`
+	Albedo             []float64         `json:"albedo,omitempty"`
+	Opacity            float64           `json:"opacity,omitempty"`
+	Emissive           float64           `json:"emissive,omitempty"`
+	Roughness          float64           `json:"roughness,omitempty"`
+	Metalness          float64           `json:"metalness,omitempty"`
+	Clearcoat          float64           `json:"clearcoat,omitempty"`
+	Sheen              float64           `json:"sheen,omitempty"`
+	Transmission       float64           `json:"transmission,omitempty"`
+	Iridescence        float64           `json:"iridescence,omitempty"`
+	Anisotropy         float64           `json:"anisotropy,omitempty"`
+	Texture            string            `json:"texture,omitempty"`
+	NormalMap          string            `json:"normalMap,omitempty"`
+	RoughnessMap       string            `json:"roughnessMap,omitempty"`
+	MetalnessMap       string            `json:"metalnessMap,omitempty"`
+	EmissiveMap        string            `json:"emissiveMap,omitempty"`
+	BlendMode          string            `json:"blendMode,omitempty"`
+	RenderPass         string            `json:"renderPass,omitempty"`
+	Wireframe          *bool             `json:"wireframe,omitempty"`
+	DepthWrite         *bool             `json:"depthWrite,omitempty"`
+	LineDash           *bool             `json:"lineDash,omitempty"`
+	DashSize           float64           `json:"dashSize,omitempty"`
+	GapSize            float64           `json:"gapSize,omitempty"`
+	CustomVertex       string            `json:"customVertex,omitempty"`
+	CustomFragment     string            `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string            `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string            `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms     map[string]any    `json:"customUniforms,omitempty"`
+	ShaderBackend      string            `json:"shaderBackend,omitempty"`
+	ShaderLayout       map[string]any    `json:"shaderLayout,omitempty"`
+	ShaderSource       string            `json:"shaderSource,omitempty"`
+	ShaderSourceFiles  map[string]string `json:"shaderSourceFiles,omitempty"`
 }
 
 // IRNode is a discriminated union over Kind. Exactly one payload should be set
@@ -232,6 +236,9 @@ type IRTransform struct {
 type IRMeshNode struct {
 	Kind               string      `json:"kind,omitempty"`
 	Src                string      `json:"src,omitempty"`
+	Bounds             float64     `json:"bounds,omitempty"`
+	Fit                string      `json:"fit,omitempty"`
+	FitAlign           string      `json:"fitAlign,omitempty"`
 	Size               float64     `json:"size,omitempty"`
 	Width              float64     `json:"width,omitempty"`
 	Height             float64     `json:"height,omitempty"`
@@ -249,6 +256,7 @@ type IRMeshNode struct {
 	CastShadow         bool        `json:"castShadow,omitempty"`
 	ReceiveShadow      bool        `json:"receiveShadow,omitempty"`
 	Pickable           *bool       `json:"pickable,omitempty"`
+	Visible            *bool       `json:"visible,omitempty"`
 	LODGroup           string      `json:"lodGroup,omitempty"`
 	LODLevel           int         `json:"lodLevel,omitempty"`
 	LODMinDistance     float64     `json:"lodMinDistance,omitempty"`
@@ -892,6 +900,8 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		CustomUniforms:     cloneSceneAnyMap(object.CustomUniforms),
 		ShaderBackend:      object.ShaderBackend,
 		ShaderLayout:       cloneSceneAnyMap(object.ShaderLayout),
+		ShaderSource:       object.ShaderSource,
+		ShaderSourceFiles:  cloneSceneStringMap(object.ShaderSourceFiles),
 	}
 }
 
@@ -929,6 +939,7 @@ func objectToIRNode(object ObjectIR, materialIndex int) IRNode {
 			CastShadow:      object.CastShadow,
 			ReceiveShadow:   object.ReceiveShadow,
 			Pickable:        object.Pickable,
+			Visible:         object.Visible,
 			LODGroup:        object.LODGroup,
 			LODLevel:        object.LODLevel,
 			LODMinDistance:  object.LODMinDistance,
@@ -944,6 +955,9 @@ func modelToIRNode(model ModelIR, materialIndex int) IRNode {
 	node.Transform.ScaleY = model.ScaleY
 	node.Transform.ScaleZ = model.ScaleZ
 	node.Mesh.Src = model.Src
+	node.Mesh.Bounds = model.Bounds
+	node.Mesh.Fit = model.Fit
+	node.Mesh.FitAlign = model.FitAlign
 	node.Mesh.Static = model.Static
 	node.Mesh.Animation = model.Animation
 	node.Mesh.AnimationSeq = model.AnimationSeq

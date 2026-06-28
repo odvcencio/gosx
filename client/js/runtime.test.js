@@ -12,6 +12,7 @@ const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "boot
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
+const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
@@ -593,6 +594,76 @@ class FakeWebGLContext {
   }
 }
 
+function fakeElementMatchesSelector(element, selector) {
+  if (!element || element.nodeType !== ELEMENT_NODE) {
+    return false;
+  }
+  const groups = String(selector || "").split(",").map((part) => part.trim()).filter(Boolean);
+  return groups.some((group) => fakeElementMatchesSelectorGroup(element, group));
+}
+
+function fakeElementMatchesSelectorGroup(element, selector) {
+  let source = String(selector || "").trim();
+  if (!source) {
+    return false;
+  }
+  let rejectedByNot = false;
+  source = source.replace(/:not\(([^()]*)\)/g, (_match, inner) => {
+    if (fakeElementMatchesSelectorGroup(element, inner)) {
+      rejectedByNot = true;
+    }
+    return "";
+  }).trim();
+  if (rejectedByNot || !source) {
+    return false;
+  }
+
+  const tagMatch = source.match(/^[a-zA-Z][a-zA-Z0-9-]*/);
+  if (tagMatch && element.tagName.toLowerCase() !== tagMatch[0].toLowerCase()) {
+    return false;
+  }
+  for (const idMatch of source.matchAll(/#([a-zA-Z0-9_-]+)/g)) {
+    if (element.id !== idMatch[1]) {
+      return false;
+    }
+  }
+  const classAttr = element.getAttribute("class") || "";
+  const classes = classAttr.split(/\s+/).filter(Boolean);
+  for (const classMatch of source.matchAll(/\.([a-zA-Z0-9_-]+)/g)) {
+    if (!classes.includes(classMatch[1])) {
+      return false;
+    }
+  }
+  for (const attrMatch of source.matchAll(/\[\s*([^\]\s=]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\s*\]/g)) {
+    const name = attrMatch[1];
+    const expected = attrMatch[2] ?? attrMatch[3] ?? attrMatch[4];
+    if (!element.hasAttribute(name)) {
+      return false;
+    }
+    if (expected != null && element.getAttribute(name) !== expected) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function fakeElementQuerySelectorAll(root, selector, includeSelf = false) {
+  const matches = [];
+  const visit = (node, includeNode) => {
+    if (!node || node.nodeType !== ELEMENT_NODE) {
+      return;
+    }
+    if (includeNode && fakeElementMatchesSelector(node, selector)) {
+      matches.push(node);
+    }
+    for (const child of node.childNodes || []) {
+      visit(child, true);
+    }
+  };
+  visit(root, includeSelf);
+  return matches;
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -786,6 +857,18 @@ class FakeElement {
 
   hasAttribute(name) {
     return this.attributes.has(name);
+  }
+
+  matches(selector) {
+    return fakeElementMatchesSelector(this, selector);
+  }
+
+  querySelectorAll(selector) {
+    return fakeElementQuerySelectorAll(this, selector, false);
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
   }
 
   removeAttribute(name) {
@@ -1032,6 +1115,14 @@ class FakeDocument {
 
   getElementById(id) {
     return this.byID.get(id) || null;
+  }
+
+  querySelectorAll(selector) {
+    return fakeElementQuerySelectorAll(this.documentElement, selector, true);
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
   }
 
   addEventListener(type, listener) {
@@ -4711,6 +4802,10 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
             autoRotate: false,
             controls: "orbit",
             controlTarget: { x: 0, y: 0.2, z: 0.8 },
+            controlRotateMode: "pixel-degrees",
+            controlMinDistance: 2,
+            controlMaxDistance: 10,
+            controlPitchLimit: Math.PI / 2 - (Math.PI / 180) * 0.001,
             camera: { x: 0, y: 0.2, z: 6, fov: 72, near: 0.05, far: 128 },
           },
         },
@@ -4784,16 +4879,32 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
   await flushAsyncWork();
 
   const canvas = mount.firstElementChild;
-  const gl = canvas.getContext("webgl");
-  const initialRotation = gl.ops.filter((entry) => entry[0] === "uniform3f" && entry[1] === "u_camera_rotation").at(-1);
-  const initialCamera = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera").at(-1);
-  assert.ok(initialRotation);
-  assert.equal(initialRotation[1], "u_camera_rotation");
-  assert.ok(Math.abs(initialRotation[2]) < 0.0001);
-  assert.ok(Math.abs(initialRotation[3]) < 0.0001);
-  assert.ok(Math.abs(initialRotation[4]) < 0.0001);
-  assert.ok(initialCamera);
-  assert.equal(initialCamera[5], 72);
+  assert.ok(canvas);
+  let mounted = env.context.__gosx.engines.get("gosx-engine-orbit");
+  for (let attempt = 0; attempt < 5 && !mounted; attempt += 1) {
+    await flushAsyncWork();
+    mounted = env.context.__gosx.engines.get("gosx-engine-orbit");
+  }
+  assert.ok(
+    mounted,
+    "expected gosx-engine-orbit to mount; keys=" +
+      JSON.stringify(Array.from(env.context.__gosx.engines.keys())) +
+      " attrs=" + JSON.stringify(Object.fromEntries(mount.attributes)) +
+      " warn=" + JSON.stringify(env.consoleLogs.warn) +
+      " error=" + JSON.stringify(env.consoleLogs.error),
+  );
+  assert.equal(typeof mounted.handle.getCamera, "function");
+  assert.equal(typeof mounted.handle.setCamera, "function");
+  const orbitTarget = { x: 0, y: 0.2, z: 0.8 };
+  const cameraDistanceToTarget = (camera) => Math.hypot(
+    camera.x - orbitTarget.x,
+    camera.y - orbitTarget.y,
+    -camera.z - orbitTarget.z,
+  );
+  const initialCamera = mounted.handle.getCamera();
+  assert.equal(Math.round(initialCamera.fov), 72);
+  assert.ok(Math.abs(initialCamera.rotationX) < 0.0001);
+  assert.ok(Math.abs(initialCamera.rotationY) < 0.0001);
 
   canvas.dispatchEvent({
     type: "pointerdown",
@@ -4825,10 +4936,15 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
   });
   await flushAsyncWork();
 
-  const draggedRotation = gl.ops.filter((entry) => entry[0] === "uniform3f" && entry[1] === "u_camera_rotation").at(-1);
-  assert.ok(draggedRotation);
-  assert.ok(Math.abs(draggedRotation[2]) > 0.01 || Math.abs(draggedRotation[3]) > 0.01);
+  const draggedCamera = mounted.handle.getCamera();
+  assert.ok(
+    Math.abs(draggedCamera.rotationX - initialCamera.rotationX) > 0.01 ||
+    Math.abs(draggedCamera.rotationY - initialCamera.rotationY) > 0.01 ||
+    Math.abs(draggedCamera.x - initialCamera.x) > 0.01 ||
+    Math.abs(draggedCamera.z - initialCamera.z) > 0.01,
+  );
 
+  const cameraBeforeZoom = mounted.handle.getCamera();
   canvas.dispatchEvent({
     type: "wheel",
     deltaY: -120,
@@ -4837,15 +4953,27 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
   });
   await flushAsyncWork();
 
-  const zoomedCamera = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera").at(-1);
-  assert.ok(zoomedCamera);
-  assert.equal(zoomedCamera[5], 72);
-  assert.notEqual(zoomedCamera[4], initialCamera[4]);
+  const zoomedCamera = mounted.handle.getCamera();
+  assert.equal(Math.round(zoomedCamera.fov), 72);
+  assert.ok(cameraDistanceToTarget(zoomedCamera) < cameraDistanceToTarget(cameraBeforeZoom));
 
-  const mounted = env.context.__gosx.engines.get("gosx-engine-orbit");
-  assert.equal(typeof mounted.handle.getCamera, "function");
-  assert.equal(typeof mounted.handle.setCamera, "function");
-  assert.equal(Math.round(mounted.handle.getCamera().fov), 72);
+  canvas.dispatchEvent({
+    type: "wheel",
+    deltaY: 10000,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  assert.ok(cameraDistanceToTarget(mounted.handle.getCamera()) <= 10.001);
+
+  canvas.dispatchEvent({
+    type: "wheel",
+    deltaY: -10000,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  assert.ok(cameraDistanceToTarget(mounted.handle.getCamera()) >= 1.999);
 
   const handled = mounted.handle.setCamera({ x: 1, y: 1.5, z: 8, fov: 60, near: 0.1, far: 256 });
   assert.equal(handled, true);
@@ -5126,6 +5254,9 @@ test("bootstrap loads declarative Scene3D model assets without authored JS", asy
                 scaleX: 1.35,
                 scaleY: 1.1,
                 scaleZ: 1.2,
+                bounds: 2,
+                fit: "contain",
+                fitAlign: "center",
                 materialKind: "glow",
                 color: "#ffd48f",
                 opacity: 0.74,
@@ -5290,6 +5421,34 @@ test("bootstrap GLB loader accepts query-stringed GLB model URLs", async () => {
   assert.equal(scene.points[0].id, "sparks");
   assert.equal(scene.objects.length, 1);
   assert.equal(env.fetchCalls.some((call) => call.url === "/models/points-lines.glb?bucket=202604211430"), true);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap glTF loader resolves external buffers from root-relative model URLs", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/models/duck/Duck.gltf": {
+        text: JSON.stringify({
+          asset: { version: "2.0", generator: "runtime-test" },
+          buffers: [{ uri: "Duck0.bin", byteLength: 0 }],
+          scene: 0,
+          scenes: [{ nodes: [] }],
+          nodes: [],
+        }),
+      },
+      "http://localhost:3000/models/duck/Duck0.bin": {
+        bytes: [],
+      },
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const scene = await env.context.__gosx_scene3d_gltf_api.sceneLoadGLTFModel("/models/duck/Duck.gltf");
+
+  assert.equal(scene.objects.length, 0);
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/duck/Duck.gltf"), true);
+  assert.equal(env.fetchCalls.some((call) => call.url === "http://localhost:3000/models/duck/Duck0.bin"), true);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -6414,9 +6573,16 @@ test("bootstrap renders model-relative Scene3D textures without authored JS", as
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
   await flushAsyncWork();
+  for (let attempt = 0; attempt < 8 && !env.imageLoads.includes("http://localhost:3000/models/paper-card.png"); attempt += 1) {
+    await flushAsyncWork();
+  }
 
   assert.equal(env.fetchCalls.some((call) => call.url === "/models/panel.gosx3d.json"), true);
-  assert.equal(env.imageLoads.includes("http://localhost:3000/models/paper-card.png"), true);
+  const modelTextureState = mount.__gosxScene3DState;
+  const modelTextureDebug = modelTextureState && modelTextureState.objects
+    ? Array.from(modelTextureState.objects.values()).map((object) => ({ id: object.id, kind: object.kind, material: object.material, texture: object.texture, materialKind: object.materialKind, wireframe: object.wireframe }))
+    : [];
+  assert.equal(env.imageLoads.includes("http://localhost:3000/models/paper-card.png"), true, "imageLoads=" + JSON.stringify(env.imageLoads) + " state=" + JSON.stringify(modelTextureDebug));
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   const gl = mount.children[0].getContext("webgl");
   assert.ok(gl.ops.some((entry) => entry[0] === "createTexture"));
@@ -6628,6 +6794,7 @@ test("bootstrap emits ready HTML texture surfaces into render bundles", async ()
     [],
     [],
     [],
+    [],
     921600,
   );
 
@@ -6664,6 +6831,7 @@ test("bootstrap emits ready HTML texture surfaces into render bundles", async ()
     [],
     { ambientColor: "#ffffff", ambientIntensity: 0.1 },
     0,
+    [],
     [],
     [],
     [],
@@ -6725,6 +6893,7 @@ test("bootstrap keeps solid mesh bundles off the legacy wire-line path", async (
     [],
     [],
     [],
+    [],
     0,
   );
 
@@ -6746,6 +6915,7 @@ test("bootstrap keeps solid mesh bundles off the legacy wire-line path", async (
     [],
     {},
     0,
+    [],
     [],
     [],
     [],
@@ -6775,6 +6945,7 @@ test("bootstrap keeps solid mesh bundles off the legacy wire-line path", async (
     [],
     {},
     0,
+    [],
     [],
     [],
     [],
@@ -6823,6 +6994,8 @@ test("bootstrap skips invisible Scene3D mesh objects before packing render bundl
       { id: "visible", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", wireframe: false, vertices },
       { id: "opacity-hidden", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", opacity: 0, wireframe: false, vertices },
       { id: "scale-hidden", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", scaleX: 0.001, scaleY: 0.001, scaleZ: 0.001, wireframe: false, vertices },
+      { id: "explicit-hidden", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", visible: false, wireframe: false, vertices },
+      { id: "model-hidden", kind: "gltf-mesh", materialKind: "standard", color: "#d8b4fe", _modelHidden: true, wireframe: false, vertices },
     ],
     [],
     [],
@@ -6834,6 +7007,7 @@ test("bootstrap skips invisible Scene3D mesh objects before packing render bundl
     [],
     [],
     [],
+    [],
     0,
   );
 
@@ -6841,6 +7015,30 @@ test("bootstrap skips invisible Scene3D mesh objects before packing render bundl
   assert.equal(bundle.meshObjects[0].id, "visible");
   assert.equal(bundle.worldMeshVertexCount, 3);
   assert.equal(bundle.worldMeshPositions.length, 9);
+});
+
+test("bootstrap preserves model-hidden Scene3D mesh state through normalization", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const hidden = api.normalizeSceneObject({
+    id: "model-hidden",
+    kind: "cube",
+    _modelHidden: true,
+  }, 0);
+  assert.equal(hidden._modelHidden, true);
+
+  const retained = api.normalizeSceneObject({ id: "model-hidden", kind: "cube" }, 0, hidden);
+  assert.equal(retained._modelHidden, true);
+
+  const cleared = api.normalizeSceneObject({
+    id: "model-hidden",
+    kind: "cube",
+    _modelHidden: false,
+  }, 0, hidden);
+  assert.equal(cleared._modelHidden, false);
 });
 
 test("bootstrap emits declarative Scene3D pick signals without authored JS", async () => {
@@ -7175,6 +7373,7 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
     [],
     [],
     [],
+    [],
     921600,
   );
   assert.equal(bundle.bundleVersion, api.SCENE_RENDER_BUNDLE_VERSION);
@@ -7195,6 +7394,7 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
     [],
     { ambientColor: "#ffffff", ambientIntensity: 0.1 },
     0,
+    [],
     [],
     [],
     [],
@@ -7906,16 +8106,1163 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-kernel/);
 });
 
+test("Scene3D WebGPU water supports compound sphere object displacement", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+
+  assert.match(webgpu, /waterAuthoredComputePipelineCache = new Map/);
+  assert.match(webgpu, /function sceneWaterAuthoredComputeField/);
+  assert.match(webgpu, /return "seedWGSL"/);
+  assert.match(webgpu, /return "dropWGSL"/);
+  assert.match(webgpu, /return "displacementWGSL"/);
+  assert.match(webgpu, /return "simulationWGSL"/);
+  assert.match(webgpu, /return "normalWGSL"/);
+  assert.match(webgpu, /function sceneWaterAuthoredComputePipeline/);
+  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-" \+ stage \+ "-compute"/);
+  assert.match(webgpu, /entryPoint: entryPoint/);
+  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "seed", waterSeedPipeline\)/);
+  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "drop", waterDropPipeline\)/);
+  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "displacement", waterDisplacementPipeline\)/);
+  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "simulation", waterStepPipeline\)/);
+  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "normal", waterNormalPipeline\)/);
+  assert.match(webgpu, /waterAuthoredComputeDispatches/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-compute-systems/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-compute-dispatches/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-compute-fallbacks/);
+  assert.match(webgpu, /struct WaterDisplacementSphere/);
+  assert.match(webgpu, /var<storage, read> objectSpheres/);
+  assert.match(webgpu, /WATER_MAX_DISPLACEMENT_SPHERES = 32/);
+  assert.match(webgpu, /sceneWaterDisplacementSpheres/);
+  assert.match(webgpu, /kind < 2\.5/);
+  assert.match(webgpu, /sphereCount = min\(u32\(params\.objectParams\.z\), 32u\)/);
+  assert.match(webgpu, /previous \+ offset/);
+  assert.match(webgpu, /current \+ offset/);
+  assert.match(webgpu, /waterObjectSpheres/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-spheres/);
+  assert.match(webgpu, /function sceneWaterObjectExplicitPreviousSignature/);
+  assert.match(webgpu, /entry\.objectPreviousSet/);
+  assert.match(webgpu, /function sceneWaterObjectDisplacementEvents/);
+  assert.match(webgpu, /function dispatchWaterObjectDisplacementEvents/);
+  assert.match(webgpu, /transientObject \? null : system/);
+  assert.match(webgpu, /waterObjectEventDispatches/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-event-dispatches/);
+  assert.match(webgpu, /system\.waterObjectExplicitPreviousSignature !== explicitPreviousSignature/);
+  assert.match(webgpu, /interactiveDrop: vec4f/);
+  assert.match(webgpu, /fn addDrop/);
+  assert.match(webgpu, /waterDropPipeline/);
+  assert.match(webgpu, /entryPoint: "addDrop"/);
+  assert.match(webgpu, /let polarity = select\(1\.0, -1\.0, \(j & 1u\) == 0u\);/, "seed drops start negative like upstream");
+  assert.match(webgpu, /seedSalt: f32/, "water uniforms should carry a per-system seed salt");
+  assert.match(webgpu, /seedSalt: Number\.isFinite\(Number\(entry && entry\.seedSalt\)\) \? Number\(entry\.seedSalt\) : Math\.random\(\) \* 4096/, "water systems should randomize initial seed centers per mount like upstream Math.random");
+  assert.match(webgpu, /waterUniformScratchF\[52\] = Math\.max\(0, sceneNumber\(system && system\.seedSalt, 0\)\);/, "seed salt should be uploaded in spare water uniform space");
+  assert.match(webgpu, /let seedSalt = params\.seedSalt;/);
+  assert.match(webgpu, /hash01\(jf \* 12\.9898 \+ seedSalt \+ 0\.173\)/, "seed centers should use the randomized seed salt");
+  assert.match(webgpu, /return \(vec2f\(f32\(x\), f32\(y\)\) \+ vec2f\(0\.5\)\) \/ max\(vec2f\(f32\(res\)\), vec2f\(1\.0\)\);/, "waterCoord should use render-target texel centers like upstream");
+  assert.match(webgpu, /let uv = \(vec2f\(f32\(x\), f32\(y\)\) \+ vec2f\(0\.5\)\) \/ max\(vec2f\(f32\(res\)\), vec2f\(1\.0\)\);/, "seed pass should use render-target texel centers like upstream");
+  assert.doesNotMatch(webgpu, /vec2f\(f32\(x\), f32\(y\)\) \/ max\(vec2f\(f32\(res - 1u\)\), vec2f\(1\.0\)\)/, "water compute passes should not use edge-based UVs");
+  assert.match(webgpu, /dispatchWaterPass\(encoder, system, seedCompute\.pipeline\)/);
+  assert.match(webgpu, /dispatchWaterPass\(encoder, system, dropCompute\.pipeline\)/);
+  assert.match(webgpu, /if \(dropDispatches > 0\) \{\s*system\.lastDropEventID = dropEventID;/s);
+  assert.match(webgpu, /system\.dropDispatchCount = Math\.max/);
+  assert.match(webgpu, /entry\.dropEventID/);
+  assert.match(webgpu, /system\.lastDropEventID !== dropEventID/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-dispatches/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-dispatch-total/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-event/);
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+  assert.match(math, /function sceneRayIntersectYPlane/);
+  assert.match(math, /function sceneRayIntersectPlane/);
+  assert.match(math, /function sceneRayIntersectSphere/);
+  assert.match(math, /function sceneRayIntersectAABB/);
+  assert.match(math, /sceneScreenToRay/);
+  assert.match(math, /sceneRayIntersectYPlane/);
+  assert.match(math, /sceneRayIntersectPlane/);
+  assert.match(core, /objectDisplacementSpheres: normalizeSceneWaterDisplacementSpheres/);
+  assert.match(core, /objectPreviousSet: sceneBool/);
+  assert.match(core, /objectPreviousX: sceneNumber/);
+  assert.match(core, /dropEventID: Math\.max/);
+  assert.match(core, /dropEventRadius: Math\.max/);
+  assert.match(core, /interactionProfile: typeof item\.interactionProfile === "string"/);
+  assert.match(core, /interactionTarget: typeof item\.interactionTarget === "string"/);
+  assert.match(core, /interactionObject: typeof item\.interactionObject === "string"/);
+  assert.match(core, /computeSource: typeof item\.computeSource === "string"/);
+  assert.match(core, /materialSource: typeof item\.materialSource === "string"/);
+  assert.match(core, /SCENE_WATER_SOURCE_FILE_MAP_FIELDS = \["computeSourceFiles", "materialSourceFiles"\]/);
+  assert.match(core, /computeSourceFiles: sceneIsPlainObject\(item\.computeSourceFiles\)/);
+  assert.match(core, /materialSourceFiles: sceneIsPlainObject\(item\.materialSourceFiles\)/);
+  assert.match(core, /const currentWaterByID = new Map\(\)/);
+  assert.match(core, /const SCENE_WATER_SHADER_STRING_FIELDS = \[/);
+  assert.match(core, /function sceneWaterShaderSourceMap/);
+  assert.match(core, /state\._waterShaderSourceByID = sceneWaterShaderSourceMap\(state\.waterSystems\)/);
+  assert.match(core, /const waterShaderSourceByID = state\._waterShaderSourceByID instanceof Map \? state\._waterShaderSourceByID : new Map\(\)/);
+  assert.match(core, /const sourceFallback = waterShaderSourceByID\.get\(id\) \|\| null/);
+  assert.match(core, /Object\.assign\(\{\}, currentFallback \|\| \{\}, sourceFallback\)/);
+  assert.match(core, /const waterShaderString = function\(name\)/);
+  assert.match(core, /typeof item\[name\] === "string" && item\[name\]\.trim\(\)/);
+  assert.match(core, /objectShadowWGSL: waterShaderString\("objectShadowWGSL"\)/);
+  assert.match(core, /objectMeshShadowVertexWGSL: waterShaderString\("objectMeshShadowVertexWGSL"\)/);
+  assert.match(core, /objectMeshShadowFragmentWGSL: waterShaderString\("objectMeshShadowFragmentWGSL"\)/);
+  assert.match(core, /seedWGSLRef: waterShaderString\("seedWGSLRef"\)/);
+  assert.match(core, /dropWGSLRef: waterShaderString\("dropWGSLRef"\)/);
+  assert.match(core, /causticsWGSLRef: waterShaderString\("causticsWGSLRef"\)/);
+  assert.match(core, /surfaceBelowFragmentWGSLRef: waterShaderString\("surfaceBelowFragmentWGSLRef"\)/);
+  assert.match(core, /objectMeshShadowFragmentWGSLRef: waterShaderString\("objectMeshShadowFragmentWGSLRef"\)/);
+});
+
+test("Scene3D WebGPU water clips rounded box surfaces with a shader SDF", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /cornerRadius: f32/);
+  assert.match(webgpu, /poolShape: f32/);
+  assert.match(webgpu, /function sceneWaterPoolShapeRounded/);
+  assert.match(webgpu, /sceneWaterPoolShapeRounded\(entry\)/);
+  assert.match(webgpu, /waterUniformScratchF\[14\] = cornerRadius/);
+  assert.match(webgpu, /waterUniformScratchF\[15\] = rounded \? 1 : 0/);
+  assert.match(webgpu, /fn roundedPoolSDF\(point: vec2f, halfSize: vec2f, radius: f32\)/);
+  assert.match(webgpu, /roundedPoolSDF\(in\.worldPos\.xz, halfSize, params\.cornerRadius\)/);
+  assert.match(webgpu, /if \(shapeAlpha <= 0\.001\) \{ discard; \}/);
+  assert.match(webgpu, /return vec4f\(mix\(refractedColor, reflectedColor, fresnel\), shapeAlpha\)/);
+  assert.match(webgpu, /return vec4f\(mix\(reflectedColor, refractedColor, \(1\.0 - fresnel\) \* length\(refractDir\)\), shapeAlpha\)/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-rounded-systems/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-corner-radius/);
+});
+
+test("Scene3D WebGPU water renders upstream-style above and below surface passes", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /SCENE_WATER_RENDER_FRAGMENT_SOURCE/);
+  assert.match(webgpu, /SCENE_WATER_RENDER_BELOW_FRAGMENT_SOURCE/);
+  assert.match(webgpu, /const WATER_SURFACE_VIEW_BELOW: bool = false/);
+  assert.match(webgpu, /const WATER_SURFACE_VIEW_BELOW: bool = true/);
+  assert.match(webgpu, /if \(WATER_SURFACE_VIEW_BELOW\) \{ n = -n; \}/);
+  assert.match(webgpu, /let fresnelBase = select\(0\.25, 0\.50, WATER_SURFACE_VIEW_BELOW\)/);
+  assert.match(webgpu, /let refractEta = select\(1\.0 \/ 1\.333, 1\.333 \/ 1\.0, WATER_SURFACE_VIEW_BELOW\)/);
+  assert.match(webgpu, /let refractDir = refract\(-viewDir, n, refractEta\)/);
+  assert.match(webgpu, /var reflectedColor = sampleWaterSky\(reflectDir\)/);
+  assert.match(webgpu, /var refractedColor = mix\(params\.deepColor\.rgb, params\.shallowColor\.rgb, depthMix\)/);
+  assert.match(webgpu, /if \(params\.objectParams\.x >= 2\.5 && params\.opticsFlags\.w > 0\.0\)/);
+  assert.match(webgpu, /reflectedColor = mix\(reflectedColor, clippedReflectionTexel\.rgb, clippedReflectionTexel\.a \* reflectionEnabled\)/);
+  assert.match(webgpu, /return vec4f\(mix\(reflectedColor, refractedColor, \(1\.0 - fresnel\) \* length\(refractDir\)\), shapeAlpha\)/);
+  assert.match(webgpu, /return vec4f\(mix\(refractedColor, reflectedColor, fresnel\), shapeAlpha\)/);
+  assert.doesNotMatch(webgpu, /objectOpticalFootprint/);
+  assert.match(webgpu, /waterRenderBelowFragmentModule = device\.createShaderModule/);
+  assert.match(webgpu, /label: "gosx-water-render-below-frag"/);
+  assert.match(webgpu, /function sceneWaterAuthoredMaterialBackend/);
+  assert.match(webgpu, /function sceneWaterObjectSubtype\(entry, kind\)/);
+  assert.match(webgpu, /raw\.indexOf\("torus"\) >= 0 \|\| raw\.indexOf\("knot"\) >= 0/);
+  assert.match(webgpu, /raw\.indexOf\("duck"\) >= 0 \|\| raw\.indexOf\("mesh"\) >= 0/);
+  assert.match(webgpu, /function sceneWaterAuthoredSurfaceFragmentSource/);
+  assert.match(webgpu, /surfaceBelowFragmentWGSL/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "causticsWGSL"\)/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceVertexWGSL"\)/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceFragmentWGSL"\)/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceBelowFragmentWGSL"\)/);
+  assert.match(webgpu, /function sceneWaterSurfaceSourceBytes\(record\)/);
+  assert.match(webgpu, /function sceneWaterResolvedSurfaceSourceBytes\(entry\)/);
+  assert.match(webgpu, /sceneWaterAuthoredSurfaceFragmentSource\(entry, "above"\)\.length/);
+  assert.match(webgpu, /sceneWaterAuthoredSurfaceFragmentSource\(entry, "below"\)\.length/);
+  assert.match(webgpu, /binding: 1, visibility: GPUShaderStage\.VERTEX \| GPUShaderStage\.FRAGMENT, buffer: \{ type: "read-only-storage" \}/);
+  assert.match(webgpu, /binding: 8, visibility: GPUShaderStage\.FRAGMENT, buffer: \{ type: "uniform" \}/);
+  assert.match(webgpu, /binding: 9, visibility: GPUShaderStage\.FRAGMENT, texture: \{ sampleType: "float", viewDimension: "2d" \}/);
+  assert.match(webgpu, /binding: 10, visibility: GPUShaderStage\.FRAGMENT, buffer: \{ type: "read-only-storage" \}/);
+  assert.match(webgpu, /system\.waterSurfaceTileRequested = !!tileURL/);
+  assert.match(webgpu, /system\.waterSurfaceTileLoaded = tileLoaded/);
+  assert.match(webgpu, /system\.waterSurfaceTilePending = tilePending/);
+  assert.match(webgpu, /system\.waterSurfaceTileFailed = tileFailed/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-pending/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-failed/);
+  assert.match(webgpu, /\{ binding: 9, resource: tileLoaded \? tileRecord\.view : placeholderView \}/);
+  assert.match(webgpu, /\{ binding: 10, resource: \{ buffer: system\.objectSphereBuffer \} \}/);
+  assert.match(webgpu, /objectTextureMatrixBuffer/);
+  assert.match(webgpu, /function writeWaterObjectTextureMatrices/);
+  assert.match(webgpu, /objectViewProjectionMatrix/);
+  assert.match(webgpu, /objectReflectionViewProjectionMatrix/);
+  assert.match(webgpu, /system\.objectViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/);
+  assert.match(webgpu, /system\.objectReflectionViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/);
+  assert.match(webgpu, /var viewMatrix = system\.objectViewProjectionReady \? system\.objectViewProjectionMatrix : null/);
+  assert.match(webgpu, /system\.objectReflectionViewProjectionReady = false/);
+  assert.match(webgpu, /function getWaterRenderPipeline\(system, surfaceSide, forceBuiltin\)/);
+  assert.match(webgpu, /var entry = forceBuiltin \? \{\} : \(system && system\.entry \|\| \{\}\)/);
+  assert.match(webgpu, /var vertexSource = forceBuiltin \? "" : sceneWaterAuthoredSurfaceVertexSource\(entry\)/);
+  assert.match(webgpu, /pipelineRecord = getWaterRenderPipeline\(null, side, true\)/);
+  assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin\)/);
+  assert.match(webgpu, /getWaterPoolPipeline\(null, true\)/);
+  assert.match(webgpu, /label: authored[\s\S]*"gosx-water-" \+ backend \+ "-surface-" \+ side/);
+  assert.match(webgpu, /authoredVertex: !!vertexSource/);
+  assert.match(webgpu, /waterAuthoredSurfacePipelineFailures/);
+  assert.match(webgpu, /waterAuthoredSurfacePipelineLastError = ""/);
+  assert.match(webgpu, /var validationDevice = authored \? device : null/);
+  assert.match(webgpu, /validationDevice\.pushErrorScope\("validation"\)/);
+  assert.match(webgpu, /var pipeline = device\.createRenderPipeline\(descriptor\)/);
+  assert.match(webgpu, /pending: false/);
+  assert.match(webgpu, /wgpuPopScopedErrorScope\(validationDevice\)\.then/);
+  assert.match(webgpu, /waterAuthoredSurfacePipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
+  assert.match(webgpu, /cullMode: side === "below" \? "back" : "front"/);
+  assert.match(webgpu, /function drawWaterSurfaceSide/);
+  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "above", stats\)/);
+  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "below", stats\)/);
+  assert.match(webgpu, /waterSurfaceAboveDrawCalls/);
+  assert.match(webgpu, /waterSurfaceBelowDrawCalls/);
+  assert.match(webgpu, /waterAuthoredSurfaceDrawCalls/);
+  assert.match(webgpu, /waterAuthoredSurfaceVertexDrawCalls/);
+  assert.match(webgpu, /waterAuthoredSurfacePendingDrawCalls/);
+  assert.match(webgpu, /stats\.waterAuthoredSurfacePendingDrawCalls \+= 1/);
+  assert.match(webgpu, /waterAuthoredSurfaceSourceBytes/);
+  assert.match(webgpu, /waterEntrySurfaceSourceBytes/);
+  assert.match(webgpu, /waterResolvedSurfaceSourceBytes/);
+  assert.match(webgpu, /waterManifestSurfaceSourceBytes/);
+  assert.match(webgpu, /waterBundleSurfaceSourceBytes/);
+  assert.match(webgpu, /waterAuthoredSurfaceFallbacks/);
+  assert.match(webgpu, /waterAuthoredSurfaceFallbackReason/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-surface-above-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-surface-below-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-surface-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-surface-vertex-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-surface-pending-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-surface-source-bytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-entry-surface-source-bytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-resolved-surface-source-bytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-manifest-surface-source-bytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-bundle-surface-source-bytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-surface-fallbacks/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-surface-fallback-reason/);
+});
+
+test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and tile texture", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /SCENE_WATER_POOL_VERTEX_SOURCE/);
+  assert.match(webgpu, /SCENE_WATER_POOL_FRAGMENT_SOURCE/);
+  assert.match(webgpu, /label: "gosx-water-pool"/);
+  assert.match(webgpu, /waterPoolPipelineLayout = device\.createPipelineLayout/);
+  assert.match(webgpu, /waterPoolVertexModule = device\.createShaderModule/);
+  assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin\)/);
+  assert.match(webgpu, /function createWaterPoolBindGroup\(system\)/);
+  assert.match(webgpu, /function sceneWaterAuthoredPoolVertexSource/);
+  assert.match(webgpu, /function sceneWaterAuthoredPoolFragmentSource/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "poolVertexWGSL"\)/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "poolFragmentWGSL"\)/);
+  assert.match(webgpu, /waterAuthoredPoolPipelineCache = new Map/);
+  assert.match(webgpu, /waterAuthoredPoolPipelineFailures = new Set/);
+  assert.match(webgpu, /label: authored \? "gosx-water-" \+ backend \+ "-pool-pass" : "gosx-water-pool-pass"/);
+  assert.match(webgpu, /const WATER_POOL_ROUNDED_SEGMENTS: u32 = 44u/);
+  assert.match(webgpu, /fn waterPoolRoundedBoundaryPoint/);
+  assert.match(webgpu, /fn waterPoolRoundedBoundaryNormal/);
+  assert.match(webgpu, /fn waterPoolRoundedVertex/);
+  assert.match(webgpu, /roundedPoolVertexCount = 44 \* 9/);
+  assert.match(webgpu, /tileRecord = tileURL \? wgpuLoadTexture\(device, tileURL, textureCache\) : null/);
+  assert.match(webgpu, /textureSample\(tileTexture, poolSampler, in\.tileUV\)/);
+  assert.match(webgpu, /textureSample\(causticTexture, poolSampler, causticUV\)/);
+  assert.match(webgpu, /textureSample\(objectShadowTexture, poolSampler, waterUV\)/);
+  assert.match(webgpu, /var rounded = sceneWaterPoolShapeRounded\(entry\) && sceneNumber\(entry\.cornerRadius, 0\) > 0\.0001/);
+  assert.match(webgpu, /renderPass\.draw\(vertexCount\)/);
+  assert.match(webgpu, /stats\.waterPoolDrawVertices \+= vertexCount/);
+  assert.match(webgpu, /drawWaterPoolEntries\(mainPass, waterUpdateStats\.records, frameBindGroup\)/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-loaded/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-pool-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-pool-vertex-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-pool-fragment-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-pool-fallbacks/);
+});
+
+test("Scene3D managed control forms replace the route water-controls bridge", () => {
+  const build = fs.readFileSync(path.join(__dirname, "build-bootstrap.mjs"), "utf8");
+  const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const waterDir = path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water");
+  const waterPage = fs.readFileSync(path.join(waterDir, "page.gsx"), "utf8");
+  const waterShaderFiles = [];
+  const collectWaterShaderFiles = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        collectWaterShaderFiles(full);
+      } else if (/\.(elio|sel)$/.test(entry.name)) {
+        waterShaderFiles.push(full);
+      }
+    }
+  };
+  collectWaterShaderFiles(path.join(waterDir, "shaders"));
+  waterShaderFiles.sort();
+  const waterProgram = [
+    fs.readFileSync(path.join(waterDir, "program.go"), "utf8"),
+    fs.readFileSync(path.join(waterDir, "shader_sources.go"), "utf8"),
+    ...waterShaderFiles.map((filename) => fs.readFileSync(filename, "utf8")),
+  ].join("\n");
+
+  assert.match(build, /bootstrap-src\/19b-scene-control-forms\.js/);
+  assert.match(controls, /function bindSceneManagedControlForms/);
+  assert.match(controls, /function registerSceneManagedControlProfile/);
+  assert.match(controls, /function publishSceneManagedControlProfiles/);
+  assert.match(controls, /SCENE_MANAGED_CONTROL_PROFILES/);
+  assert.match(controls, /registerSceneManagedControlProfile\("fluid-object"/);
+  assert.doesNotMatch(controls, /registerSceneManagedControlProfile\("water"/);
+  assert.match(controls, /__gosx_scene3d_register_control_profile/);
+  assert.match(controls, /sceneManagedControlProfiles/);
+  assert.match(controls, /data-gosx-scene3d-control-profiles/);
+  assert.match(controls, /function sceneManagedControlData/);
+  assert.match(controls, /function sceneManagedControlScope/);
+  assert.match(controls, /function sceneManagedControlBindDisclosure/);
+  assert.match(controls, /function sceneManagedControlBindPanelToggles/);
+  assert.match(controls, /data-gosx-scene3d-control-toggle/);
+  assert.match(controls, /data-gosx-scene3d-control-open/);
+  assert.match(controls, /data-gosx-scene3d-panel-toggle/);
+  assert.match(controls, /data-gosx-scene3d-panel-open/);
+  assert.match(controls, /data-gosx-scene3d-control-scope/);
+  assert.match(controls, /data-gosx-scene3d-panel-scope/);
+  assert.match(controls, /data-gosx-scene3d-active-panel/);
+  assert.match(controls, /function sceneManagedFluidObjectProfile/);
+  assert.match(controls, /data-gosx-scene3d-control-data/);
+  assert.match(controls, /data-gosx-scene3d-control-data-ref/);
+  assert.match(controls, /SCENE_CMD_SET_MODELS/);
+  assert.match(controls, /SCENE_CMD_SET_PARTICLES/);
+  assert.match(controls, /sceneManagedFluidObjectSystemPayload/);
+  assert.match(controls, /function sceneManagedFluidObjectSetDisabled/);
+  assert.match(controls, /function sceneManagedFluidObjectControlState/);
+  assert.match(controls, /objectDisplacementEvents: \[\]/);
+  assert.match(controls, /function sceneManagedFluidObjectQueueObjectDisplacementEvent/);
+  assert.match(controls, /function sceneManagedFluidObjectObserveSelection/);
+  assert.match(controls, /sceneManagedFluidObjectInactiveY/);
+  assert.match(controls, /function sceneManagedFluidObjectStepPhysics/);
+  assert.match(controls, /function sceneManagedFluidObjectPhysicsSettings/);
+  assert.match(controls, /function sceneManagedFluidObjectInteractionSettings/);
+  assert.match(controls, /minZoomDistance: 2/);
+  assert.match(controls, /maxZoomDistance: 10/);
+  assert.match(controls, /function sceneManagedFluidObjectSceneSystem/);
+  assert.match(controls, /function sceneManagedFluidObjectWaterSystemByID/);
+  assert.match(controls, /const selected = sceneManagedFluidObjectWaterSystemByID\(systems, waterID\)/);
+  assert.match(controls, /function sceneManagedFluidObjectInteractionProfile/);
+  assert.match(controls, /sceneManagedFluidObjectInteractionProfile\(form, sceneState, profile\) !== "water-object-drop-orbit"/);
+  assert.match(controls, /form\.dataset\.gosxScene3dInteractionProfile = interactionProfile/);
+  assert.match(controls, /function sceneManagedFluidObjectQueueDrop/);
+  assert.match(controls, /function sceneManagedControlCamera/);
+  assert.match(controls, /typeof options\.getCamera === "function"/);
+  assert.match(controls, /function sceneManagedControlOrbitState/);
+  assert.match(controls, /typeof options\.getOrbitState === "function"/);
+  assert.match(controls, /function sceneManagedFluidObjectOrbitLightDirection/);
+  assert.match(controls, /function sceneManagedFluidObjectCameraLightDirection/);
+  assert.match(controls, /function sceneManagedFluidObjectSyncLightDirection/);
+  assert.match(controls, /lightCameraKey: ""/);
+  assert.match(controls, /function sceneManagedFluidObjectCameraLightKey/);
+  assert.match(controls, /function sceneManagedFluidObjectLightCameraChanged/);
+  assert.match(controls, /const orbit = sceneManagedControlOrbitState\(sceneState, options\)/);
+  assert.match(controls, /sceneManagedFluidObjectCameraLightDirection\(camera, orbit\)/);
+  assert.match(controls, /let lightFrame = 0/);
+  assert.match(controls, /function scheduleLightSync/);
+  assert.match(controls, /sceneManagedFluidObjectLightCameraChanged\(controlState, sceneState, options\)/);
+  assert.match(controls, /sceneManagedFluidObjectCancelFrame\(lightFrame\)/);
+  assert.match(controls, /controlState\.settingLightDirection = true/);
+  assert.match(controls, /controlState\.settingLightDirection = false/);
+  assert.match(controls, /sceneManagedFluidObjectApply\(form, sceneState, applyCommands, options\)/);
+  assert.match(controls, /next\.lightDirectionX = sceneNumber\(lightDirection\.x, 2\)/);
+  assert.match(controls, /function sceneManagedFluidObjectPointerRay/);
+  assert.match(controls, /function sceneManagedFluidObjectPointerID/);
+  assert.match(controls, /function sceneManagedFluidObjectTouchDistance/);
+  assert.match(controls, /function sceneManagedFluidObjectZoomCameraByScale/);
+  assert.match(controls, /function sceneManagedFluidObjectZoomCameraByWheel/);
+  assert.match(controls, /Math\.exp\(sceneNumber\(event && event\.deltaY, 0\) \* 0\.001\)/);
+  assert.match(controls, /function sceneManagedFluidObjectStopCameraInertia/);
+  assert.match(controls, /sceneManagedFluidObjectStopCameraInertia\(options\)/);
+  assert.match(controls, /const touchPointers = new Map\(\)/);
+  assert.match(controls, /let pinchDistance = null/);
+  assert.match(controls, /pinching = true/);
+  assert.match(controls, /sceneManagedFluidObjectZoomCameraByScale\(sceneState, options, pinchDistance \/ nextDistance, profile\)/);
+  assert.match(controls, /sceneScreenToRay\(sample\.pointerX, sample\.pointerY, sample\.rect\.width, sample\.rect\.height, camera\)/);
+  assert.match(controls, /sceneRayIntersectYPlane\(raySample\.ray, 0\)/);
+  assert.match(controls, /function sceneManagedFluidObjectStartInteraction/);
+  assert.match(controls, /sceneManagedFluidObjectActiveObjectHit/);
+  assert.match(controls, /function sceneManagedFluidObjectAnalyticObjectHit/);
+  assert.match(controls, /sceneRayIntersectSphere\(raySample\.ray/);
+  assert.match(controls, /sceneRayIntersectAABB\(raySample\.ray/);
+  assert.match(controls, /controlState\.pointerMode = "MoveObject"/);
+  assert.match(controls, /controlState\.pointerMode = "AddDrops"/);
+  assert.match(controls, /controlState\.pointerMode = "OrbitCamera"/);
+  assert.match(controls, /function sceneManagedFluidObjectDragObject/);
+  assert.match(controls, /function sceneManagedFluidObjectCameraDragNormal/);
+  assert.match(controls, /typeof sceneRotatePoint === "function"/);
+  assert.match(controls, /\{ x: 0, y: 0, z: 1 \}/);
+  assert.match(controls, /const nz = -sceneNumber\(cam && cam\.z, 0\) - hz/);
+  assert.match(controls, /sceneRayIntersectPlane\(raySample\.ray, drag\.previousHit, drag\.dragPlaneNormal\)/);
+  assert.match(controls, /sceneManagedFluidObjectConsumePointerEvent/);
+  assert.match(controls, /addEventListener\("pointerdown", onPointerDown, true\)/);
+  assert.match(controls, /let suppressMouseUntil = 0/);
+  assert.match(controls, /suppressMouseUntil = sceneManagedFluidObjectNowSeconds\(\) \+ 0\.8/);
+  assert.match(controls, /function onMouseDown\(event\)/);
+  assert.match(controls, /addEventListener\("mousedown", onMouseDown, true\)/);
+  assert.match(controls, /addEventListener\("mousemove", onMouseMove, true\)/);
+  assert.match(controls, /removeEventListener\("mouseup", onMouseEnd, true\)/);
+  assert.match(controls, /function onWheel\(event\)/);
+  assert.match(controls, /sceneManagedFluidObjectZoomCameraByWheel\(sceneState, options, event, profile\)/);
+  assert.match(controls, /addEventListener\("wheel", onWheel, \{ passive: false, capture: true \}\)/);
+  assert.match(controls, /removeEventListener\("wheel", onWheel, true\)/);
+  assert.match(controls, /const SCENE_MANAGED_FLUID_OBJECT_MIN_STRAIGHT_POOL_EDGE = 0\.05/);
+  assert.match(controls, /function sceneManagedFluidObjectMaxCornerRadius/);
+  assert.match(controls, /sceneManagedFluidObjectMaxCornerRadius\(poolWidth, poolLength\)/);
+  assert.match(controls, /function sceneManagedFluidObjectClampCornerRadius/);
+  assert.match(controls, /cornerRadius: sceneManagedFluidObjectClampCornerRadius\(sceneManagedFluidObjectField\(form, "cornerRadius"\)/);
+  assert.match(controls, /function sceneManagedFluidObjectEffectivePoolControls/);
+  assert.match(controls, /function sceneManagedFluidObjectPoolKey/);
+  assert.match(controls, /controlState\.poolKey = poolKey/);
+  assert.match(controls, /const poolWidth = rounded \? sceneManagedFluidObjectClamp\(sceneNumber\(controls && controls\.poolWidth, 1\), 0\.5, 3\) : 1/);
+  assert.match(controls, /cornerRadius: rounded \? sceneManagedFluidObjectClampCornerRadius\(controls && controls\.cornerRadius, poolWidth, poolLength\) : 0/);
+  assert.match(controls, /const maxCornerRadius = sceneManagedFluidObjectMaxCornerRadius\(pool\.poolWidth, pool\.poolLength\)/);
+  assert.match(controls, /cornerField\.max = String\(maxCornerRadius\)/);
+  assert.match(controls, /cornerField\.value = String\(pool\.cornerRadius\)/);
+  assert.match(controls, /form\.dataset\.maxCornerRadius = String\(rounded \? maxCornerRadius : 0\)/);
+  assert.match(controls, /hit\.x \/ Math\.max\(0\.001, pool\.poolWidth\)/);
+  assert.match(controls, /source: "ray-plane"/);
+  assert.match(controls, /dropEventID/);
+  assert.match(controls, /dropEventRadius/);
+  assert.match(controls, /dropEventStrength/);
+  assert.match(controls, /event\.code === "Space"/);
+  assert.match(controls, /event\.code === "KeyG"/);
+  assert.match(controls, /event\.code === "KeyL"/);
+  assert.match(controls, /data-gosx-scene3d-fluid-drop-events/);
+  assert.match(controls, /function sceneManagedFluidObjectObjectStep/);
+  assert.match(controls, /poolChanged/);
+  assert.match(controls, /syncPoolPrevious/);
+  assert.match(controls, /previousSet: syncPoolPrevious \? false : \(moved \|\| !!state\.transitionPending\)/);
+  assert.match(controls, /velocity\.y \+= settings\.gravityY/);
+  assert.match(controls, /next\.objectSubtype = config\.objectSubtype \|\| ""/);
+  assert.match(controls, /objectPreviousSet/);
+  assert.match(controls, /objectDisplacementEvents/);
+  assert.match(controls, /objectPreviousY/);
+  assert.match(controls, /data-gosx-scene3d-controls-ready/);
+  assert.match(controls, /data-gosx-scene3d-fluid-object-controls-ready/);
+  assert.match(controls, /const physicsAvailable = active !== "None"/);
+  assert.match(controls, /sceneManagedFluidObjectSetDisabled\(form, "gravity", !physicsAvailable\)/);
+  assert.match(controls, /sceneManagedFluidObjectSetDisabled\(form, "densityEnabled", !physicsAvailable\)/);
+  assert.match(controls, /sceneManagedFluidObjectSetDisabled\(form, "density", !physicsAvailable \|\| !controls\.densityEnabled\)/);
+  assert.match(controls, /form\.dataset\.physicsAvailable = String\(physicsAvailable\)/);
+  assert.match(controls, /form\.dataset\.densityOpen = String\(physicsAvailable && controls\.densityEnabled\)/);
+  assert.match(controls, /function sceneManagedFluidObjectReflectObjectState/);
+  assert.match(controls, /function sceneManagedFluidObjectReflectPointerMode/);
+  assert.match(controls, /function sceneManagedFluidObjectReflectLightDirection/);
+  assert.match(controls, /data-gosx-scene3d-fluid-object-active/);
+  assert.match(controls, /data-gosx-scene3d-fluid-pointer-mode/);
+  assert.match(controls, /data-gosx-scene3d-fluid-object-x/);
+  assert.match(controls, /data-gosx-scene3d-fluid-object-previous-x/);
+  assert.match(controls, /sceneManagedFluidObjectReflectPointerMode\(form, controlState\)/);
+  assert.match(controls, /data-gosx-scene3d-fluid-light-x/);
+  assert.match(controls, /data-gosx-scene3d-fluid-light-setting/);
+  assert.match(controls, /sceneManagedFluidObjectReflectLightDirection\(form, controlState\)/);
+  assert.match(controls, /if \(field\.disabled\) return false/);
+  for (const field of [
+    "seedWGSL",
+    "dropWGSL",
+    "displacementWGSL",
+    "simulationWGSL",
+    "normalWGSL",
+    "causticsWGSL",
+    "poolVertexWGSL",
+    "poolFragmentWGSL",
+    "surfaceVertexWGSL",
+    "surfaceFragmentWGSL",
+    "surfaceBelowFragmentWGSL",
+    "objectShadowWGSL",
+    "objectMeshShadowVertexWGSL",
+    "objectMeshShadowFragmentWGSL",
+  ]) {
+    assert.match(strictSchema, new RegExp(`"${field}"`));
+  }
+  for (const field of [
+    "seedWGSLRef",
+    "dropWGSLRef",
+    "displacementWGSLRef",
+    "simulationWGSLRef",
+    "normalWGSLRef",
+    "causticsWGSLRef",
+    "poolVertexWGSLRef",
+    "poolFragmentWGSLRef",
+    "surfaceVertexWGSLRef",
+    "surfaceFragmentWGSLRef",
+    "surfaceBelowFragmentWGSLRef",
+    "objectShadowWGSLRef",
+    "objectMeshShadowVertexWGSLRef",
+    "objectMeshShadowFragmentWGSLRef",
+  ]) {
+    assert.match(strictSchema, new RegExp(`"${field}"`));
+  }
+  assert.doesNotMatch(controls, /SCENE_MANAGED_WATER_OBJECTS/);
+  assert.doesNotMatch(controls, /sceneManagedFluidObjectTorusKnotDisplacementSpheres/);
+  assert.doesNotMatch(controls, /sceneManagedFluidObjectDuckDisplacementSpheres/);
+  assert.doesNotMatch(controls, /Duck\.gltf/);
+  assert.doesNotMatch(controls, /objectKind: "compound"/);
+  assert.doesNotMatch(controls, /config\.objectY - 0\.08/);
+  assert.doesNotMatch(controls, /controls\.densityEnabled \? controls\.density/);
+  assert.doesNotMatch(controls, /sceneManagedFluidObjectRoundedFloorVertices/);
+  assert.doesNotMatch(controls, /sceneManagedFluidObjectRoundedWallVertices/);
+  assert.doesNotMatch(controls, /pool-rounded-floor/);
+  assert.doesNotMatch(controls, /pool-rounded-walls/);
+  assert.doesNotMatch(controls, /water-surface/);
+  assert.doesNotMatch(controls, /caustic-floor/);
+  assert.doesNotMatch(controls, /foam-rings/);
+  assert.doesNotMatch(controls, /pool-north-wall/);
+  assert.doesNotMatch(controls, /pool-south-wall/);
+  assert.doesNotMatch(controls, /pool-west-wall/);
+  assert.doesNotMatch(controls, /pool-east-wall/);
+  assert.doesNotMatch(controls, /pool-rim-lines/);
+  assert.doesNotMatch(controls, /controls\.followCamera \? -0\.45 : 2/);
+  assert.doesNotMatch(controls, /sceneManagedFluidObjectSetChecked\(form, "followCamera", true\)/);
+  assert.doesNotMatch(controls, /sceneManagedFluidObjectSetChecked\(form, "followCamera", false\)/);
+  assert.match(controls, /x: -Math\.sin\(yaw\) \* cosPitch/);
+  assert.match(controls, /y: Math\.sin\(pitch\)/);
+  assert.match(controls, /x: Math\.sin\(yaw\) \* cosPitch/);
+  assert.match(controls, /z: -Math\.cos\(yaw\) \* cosPitch/);
+  assert.doesNotMatch(controls, /data-gosx-scene3d-water-controls['"\]]/);
+  assert.doesNotMatch(controls, /data-water-/);
+  assert.doesNotMatch(controls, /sceneManagedWater/);
+  assert.match(mount, /bindSceneManagedControlForms\(ctx\.mount, sceneState/);
+  assert.match(mount, /function publishSceneWaterStateSnapshot/);
+  assert.match(mount, /data-gosx-scene3d-water-state-rounded-systems/);
+  assert.match(mount, /data-gosx-scene3d-water-state-active-object/);
+  assert.match(mount, /publishSceneWaterStateSnapshot\(ctx\.mount, sceneState\)/);
+  assert.match(mount, /const result = applySceneCommands\(sceneState, commands\);\n\s+publishSceneWaterStateSnapshot\(ctx\.mount, sceneState\)/);
+  assert.match(mount, /function currentMountedSceneOrbitState/);
+  assert.match(mount, /getCamera: currentMountedSceneCamera/);
+  assert.match(mount, /getOrbitState: currentMountedSceneOrbitState/);
+  assert.match(mount, /setCamera: function\(camera\)/);
+  assert.match(mount, /applyMountedSceneCamera\(camera, "managed-control-forms-camera"\)/);
+  assert.match(mount, /getControlTarget: function\(\)/);
+  assert.match(mount, /sceneControlsTarget\(props\)/);
+  assert.match(mount, /getBundle: function\(\)/);
+  assert.doesNotMatch(mount, /bindSceneManagedWaterControls/);
+  assert.doesNotMatch(mount, /bindSceneManagedFluidObjectControls/);
+  assert.match(bootstrapFeatureScene3DSource, /registerSceneManagedControlProfile/);
+  assert.match(bootstrapFeatureScene3DSource, /__gosx_scene3d_register_control_profile/);
+  assert.match(bootstrapFeatureScene3DSource, /stopCameraInertia:function\(/);
+  assert.match(bootstrapFeatureScene3DSource, /stopCameraInertia\(\)/);
+  assert.match(bootstrapFeatureScene3DSource, /sceneManagedControlProfiles/);
+  assert.match(bootstrapFeatureScene3DSource, /data-gosx-scene3d-control-profiles/);
+  assert.match(waterPage, /data-gosx-scene3d-control-form="fluid-object"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-open="false"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-scope="true"/);
+  assert.doesNotMatch(waterPage, /data-water-/);
+  assert.match(waterPage, /data-gosx-scene3d-panel-scope="true"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-toggle="true"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-body="true"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-group="Scene"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-group="Object"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-group="Pool"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-group="Lights"/);
+  assert.match(waterPage, /data-gosx-scene3d-panel-toggle="water-demo-help"/);
+  assert.match(waterPage, /data-gosx-scene3d-help-panel="true"/);
+  assert.match(waterPage, /data-gosx-scene3d-rounded-control="true"/);
+  assert.match(waterPage, /data-gosx-scene3d-pool-boundary-control="true"/);
+  assert.match(waterPage, /ThreeJS Water/);
+  assert.match(waterPage, /jeantimex\/threejs-water/);
+  assert.match(waterPage, /Press SPACEBAR to pause and unpause/);
+  assert.match(waterPage, /controlTargetY=\{-0\.5\}/);
+  assert.match(waterPage, /<Camera x=\{1\.2695827068526726\} y=\{1\.1904730469627978\} z=\{3\.395653196065958\} fov=\{45\} near=\{0\.01\} far=\{100\} \/>/);
+  assert.match(waterPage, /interactionProfile="water-object-drop-orbit"/);
+  assert.match(waterPage, /interactionTarget="water-main"/);
+  assert.match(waterPage, /interactionObject="Sphere"/);
+  assert.doesNotMatch(waterPage, /water-demo__overlay/);
+  assert.doesNotMatch(waterPage, /water-demo__readout/);
+  assert.doesNotMatch(waterPage, /Selena Surface/);
+  assert.match(waterPage, /shallowColor="#7ad1eb"/);
+  assert.match(waterPage, /deepColor="#082e57"/);
+  assert.match(waterPage, /displacementWGSL=\{data\.waterDisplacementWGSL\}/);
+  assert.match(waterPage, /simulationWGSL=\{data\.waterSimulationWGSL\}/);
+  assert.match(waterPage, /normalWGSL=\{data\.waterNormalWGSL\}/);
+  assert.match(waterPage, /data-gosx-scene3d-control-subject="water-main"/);
+  assert.match(waterPage, /data-gosx-scene3d-control-data=\{data\.waterControlData\}/);
+  assert.doesNotMatch(waterPage, /water-controls\.js/);
+  assert.doesNotMatch(waterPage, /pool-north-wall|pool-south-wall|pool-west-wall|pool-east-wall|pool-rim-lines/);
+  assert.doesNotMatch(waterPage, /data\.poolRimPoints|data\.poolRimSegments/);
+  assert.match(waterProgram, /waterControlDataJSON/);
+  assert.match(waterProgram, /waterComputeSourceFiles/);
+  assert.match(waterProgram, /"displacementWGSL":\s+"shaders\/jeantimex-water\.elio\/displacement\.elio"/);
+  assert.match(waterProgram, /"simulationWGSL":\s+"shaders\/jeantimex-water\.elio\/simulation\.elio"/);
+  assert.match(waterProgram, /"normalWGSL":\s+"shaders\/jeantimex-water\.elio\/normal\.elio"/);
+  assert.match(waterProgram, /fn displaceObject/);
+  assert.match(waterProgram, /fn stepSimulation/);
+  assert.match(waterProgram, /fn updateNormals/);
+  assert.match(waterProgram, /fn roundedPoolCausticMask/);
+  assert.match(waterProgram, /fn intersectRoundedRectangle2D/);
+  assert.match(waterProgram, /fn intersectRoundedBox/);
+  assert.match(waterProgram, /fn roundedPoolEdgeAttenuation/);
+  assert.match(waterProgram, /1\.0 \/ \(1\.0 \+ exp\(exponent\)\)/);
+  assert.match(waterProgram, /point\.y - refractedLight\.y \* t\.y - 2\.0 \/ 12\.0/);
+  assert.match(waterProgram, /fn projectCausticFloor/);
+  assert.match(waterProgram, /fn intersectCube/);
+  assert.match(waterProgram, /fn cubeOcclusion/);
+  assert.match(waterProgram, /fn sphereSoftShadowOcclusion/);
+  assert.match(waterProgram, /fn cubeSoftShadowOcclusion/);
+  assert.match(waterProgram, /fn meshShadowTextureOcclusion/);
+  assert.match(waterProgram, /let area = cross\(dir, refractedLight\)/);
+  assert.match(waterProgram, /1\.0 \/ \(1\.0 \+ exp\(-shadow\)\)/);
+  assert.match(waterProgram, /let shadowRay = -refractedLight/);
+  assert.match(waterProgram, /for \(var x = -1; x <= 1; x = x \+ 1\)/);
+  assert.match(waterProgram, /return occlusion \/ 9\.0/);
+  assert.match(waterProgram, /let shadowUV = 0\.75 \* \(point\.xz - point\.y \* refractedLight\.xz \/ safeLightY\)/);
+  assert.match(waterProgram, /textureSample\(objectShadowTexture, objectShadowSampler, shadowUV \+ vec2f\(-d, -d\)\)/);
+  assert.match(waterProgram, /return 0\.8 \* occlusion \/ 9\.0/);
+  assert.match(waterProgram, /let analyticSphereShadow = sphereSoftShadowOcclusion\(newPos, flatRay\)/);
+  assert.match(waterProgram, /let analyticCubeShadow = cubeSoftShadowOcclusion\(newPos, flatRay\)/);
+  assert.match(waterProgram, /let meshTextureShadow = meshShadowTextureOcclusion\(newPos, flatRay\)/);
+  assert.match(waterProgram, /let edgeAttenuation = roundedPoolEdgeAttenuation\(newPos, flatRay\)/);
+  assert.match(waterProgram, /if \(poolMask <= 0\.001\)/);
+  assert.match(waterProgram, /let oldArea = max\(length\(dpdx\(oldPos\)\) \* length\(dpdy\(oldPos\)\), 0\.000001\)/);
+  assert.match(waterProgram, /let newArea = max\(length\(dpdx\(newPos\)\) \* length\(dpdy\(newPos\)\), 0\.000001\)/);
+  assert.ok(
+    waterProgram.indexOf("let oldArea = max(length(dpdx(oldPos))") < waterProgram.indexOf("if (poolMask <= 0.001)"),
+    "caustics derivatives must stay before non-uniform poolMask branch",
+  );
+  assert.match(waterProgram, /oldArea \/ newArea \* 0\.2/);
+  assert.match(waterProgram, /intensity = intensity \* poolMask \* edgeAttenuation/);
+  assert.match(waterProgram, /fn objectAmbientOcclusion/);
+  assert.match(waterProgram, /1\.0 - 0\.9 \/ pow\(max\(distanceRatio, 1\.0\), 4\.0\)/);
+  assert.match(waterProgram, /fn intersectSurfaceSphereBounds/);
+  assert.match(waterProgram, /fn sampleObjectRefraction/);
+  assert.match(waterProgram, /fn sampleObjectReflection/);
+  assert.match(waterProgram, /fn objectSubtypeIsTorusKnot\(\) -> bool/);
+  assert.match(waterProgram, /fn objectTextureRadiusWorld\(\) -> f32/);
+  assert.match(waterProgram, /fn objectShadowRadiusWorld\(\) -> f32/);
+  assert.match(waterProgram, /return 0\.13/);
+  assert.match(waterProgram, /let halfSize = surfaceObjectHalfSizeWorld\(\)/);
+  assert.match(waterProgram, /intersectSurfaceSphereBounds\(origin, ray, surfaceObjectCenterWorld\(\), objectTextureRadiusWorld\(\)\)/);
+  assert.doesNotMatch(waterProgram, /intersectSurfaceSphereBounds\(origin, ray, params\.objectCenter\.xyz, objectTextureRadius\(\)\)/);
+  assert.match(waterProgram, /origin \+ ray \* hit/);
+  assert.match(waterProgram, /let inBounds = step\(0\.0, uv\.x\)/);
+  assert.match(waterProgram, /@group\(1\) @binding\(1\) var<storage, read> waterState: array<vec4f>/);
+  assert.match(waterProgram, /@group\(1\) @binding\(10\) var<storage, read> objectSpheres: array<WaterDisplacementSphere>/);
+  assert.match(waterProgram, /fn surfaceObjectCenterWorld\(\) -> vec3f/);
+  assert.match(waterProgram, /params\.objectCenter\.x \* params\.poolWidth/);
+  assert.doesNotMatch(waterProgram, /params\.objectCenter\.x \* params\.poolWidth \* 0\.5/);
+  assert.match(waterProgram, /fn surfaceObjectHalfSizeWorld\(\) -> vec3f/);
+  assert.match(waterProgram, /fn surfaceObjectRadiusWorld\(\) -> f32/);
+  assert.match(waterProgram, /fn surfaceTorusKnotSDF\(point: vec3f\) -> f32/);
+  assert.match(waterProgram, /let segments = 64u/);
+  assert.match(waterProgram, /let rad = 0\.17 \* \(2\.0 \+ cos\(3\.0 \* theta\)\) \* 0\.5/);
+  assert.match(waterProgram, /return \(minDist - 0\.045\) \* radiusScale/);
+  assert.match(waterProgram, /fn intersectSurfaceTorusKnot\(origin: vec3f, ray: vec3f\) -> f32/);
+  assert.match(waterProgram, /for \(var i = 0u; i < 30u; i = i \+ 1u\)/);
+  assert.match(waterProgram, /fn surfaceTorusKnotNormal\(point: vec3f\) -> vec3f/);
+  assert.match(waterProgram, /params\.objectParams\.w > 0\.5 && params\.objectParams\.w < 1\.5/);
+  assert.match(waterProgram, /fn intersectSurfaceSphere\(origin: vec3f, ray: vec3f, center: vec3f, radius: f32\) -> f32/);
+  assert.match(waterProgram, /fn intersectSurfaceBox\(origin: vec3f, ray: vec3f, cubeMin: vec3f, cubeMax: vec3f\) -> vec2f/);
+  assert.match(waterProgram, /fn surfaceWaterHeightAt\(point: vec3f\) -> f32/);
+  assert.match(waterProgram, /return waterState\[cell\.y \* res \+ cell\.x\]\.x/);
+  assert.match(waterProgram, /fn surfaceCompoundObjectHit\(origin: vec3f, ray: vec3f\) -> vec2f/);
+  assert.match(waterProgram, /let sphere = objectSpheres\[i\]\.offsetRadius/);
+  assert.match(waterProgram, /intersectSurfaceSphere\(origin, ray, center, surfaceObjectSphereRadiusWorld\(i\)\)/);
+  assert.match(waterProgram, /fn surfaceCompoundObjectNormal\(point: vec3f\) -> vec3f/);
+  assert.match(waterProgram, /bestNormal = normalize\(toPoint\)/);
+  assert.match(waterProgram, /fn surfaceObjectHitDistance\(origin: vec3f, ray: vec3f\) -> vec2f/);
+  assert.match(waterProgram, /intersectSurfaceSphere\(origin, ray, surfaceObjectCenterWorld\(\), surfaceObjectRadiusWorld\(\)\)/);
+  assert.match(waterProgram, /intersectSurfaceBox\(origin, ray, center - halfSize, center \+ halfSize\)/);
+  assert.match(waterProgram, /let compoundHit = surfaceCompoundObjectHit\(origin, ray\)/);
+  assert.match(waterProgram, /fn surfaceObjectColor\(point: vec3f, hitKind: f32, lightDir: vec3f\) -> vec3f/);
+  assert.match(waterProgram, /normal = surfaceCompoundObjectNormal\(point\)/);
+  assert.match(waterProgram, /let waterHeight = surfaceWaterHeightAt\(point\)/);
+  assert.match(waterProgram, /diffuse = \(diffuse \+ select\(0\.0, 0\.06, hitKind >= 1\.5\)\) \* caustic\.r \* 4\.0/);
+  assert.match(waterProgram, /let objectHit = surfaceObjectHitDistance\(origin, ray\)/);
+  assert.match(waterProgram, /surfaceObjectColor\(origin \+ ray \* objectHit\.x, objectHit\.y, lightDir\)/);
+  assert.match(waterProgram, /@group\(1\) @binding\(9\) var tileTexture: texture_2d<f32>/);
+  assert.match(waterProgram, /fn intersectSurfacePoolBox/);
+  assert.match(waterProgram, /fn intersectSurfaceRoundedRectangle2D/);
+  assert.match(waterProgram, /fn intersectSurfaceRoundedPool/);
+  assert.match(waterProgram, /fn intersectSurfacePool\(origin: vec3f, ray: vec3f\) -> vec2f/);
+  assert.match(waterProgram, /return intersectSurfaceRoundedPool\(origin, ray, params\.cornerRadius\)/);
+  assert.match(waterProgram, /let t = intersectSurfacePool\(origin, ray\)/);
+  assert.match(waterProgram, /struct SurfaceWallSample/);
+  assert.match(waterProgram, /fn surfaceRoundedWallSample\(point: vec3f\) -> SurfaceWallSample/);
+  assert.match(waterProgram, /result\.normal = vec3f\(-cornerNormal\.x, 0\.0, -cornerNormal\.y\)/);
+  assert.match(waterProgram, /radius \* atan2\(cd\.y, cd\.x\)/);
+  assert.match(waterProgram, /result\.uv = vec2f\(point\.y, s\) \* 0\.5 \+ vec2f\(1\.0, 0\.5\)/);
+  assert.match(waterProgram, /fn getWallColor\(point: vec3f, lightDir: vec3f\) -> vec3f/);
+  assert.match(waterProgram, /let wall = surfaceRoundedWallSample\(point\)/);
+  assert.match(waterProgram, /textureSampleLevel\(tileTexture, waterSampler, fract\(wall\.uv\), 0\.0\)/);
+  assert.match(waterProgram, /let refractedLight = -refract\(-lightDir/);
+  assert.match(waterProgram, /scale = scale \+ diffuse \* caustic\.r \* 2\.0 \* caustic\.g/);
+  assert.match(waterProgram, /let exponent = -200\.0 \/ \(1\.0 \+ 10\.0 \* span\)/);
+  assert.match(waterProgram, /fn surfaceObjectWallOcclusion\(point: vec3f\) -> f32/);
+  assert.match(waterProgram, /distanceRatio = length\(point - center\) \/ max\(surfaceObjectRadiusWorld\(\), 0\.001\)/);
+  assert.match(waterProgram, /distanceRatio = length\(\(point - center\) \/ max\(surfaceObjectHalfSizeWorld\(\), vec3f\(0\.001\)\)\)/);
+  assert.match(waterProgram, /distanceRatio = length\(point - center\) \/ max\(objectShadowRadiusWorld\(\), 0\.001\)/);
+  assert.match(waterProgram, /0\.5 \/ max\(length\(point\), 0\.1\) \* surfaceObjectWallOcclusion\(point\)/);
+  assert.match(waterProgram, /@group\(1\) @binding\(5\) var objectClippedReflectionTexture: texture_2d<f32>/);
+  assert.match(waterProgram, /fn surfaceStateAtUV\(uv: vec2f\) -> vec4f/);
+  assert.match(waterProgram, /fn surfaceParallaxState\(uv: vec2f\) -> vec4f/);
+  assert.match(waterProgram, /coord = clamp\(coord \+ info\.zw \* 0\.005/);
+  assert.match(waterProgram, /fn surfaceNormalFromState\(info: vec4f\) -> vec3f/);
+  assert.match(waterProgram, /let surfaceInfo = surfaceParallaxState\(in\.uv\)/);
+  assert.match(waterProgram, /sampleProjectedTexture\(objectClippedReflectionTexture, objectTextureMatrices\.reflectionViewProjectionMatrix, in\.worldPos\)/);
+  assert.match(waterProgram, /return vec4f\(mix\(refractedColor, reflectedColor, fresnel\), shapeAlpha\)/);
+  assert.match(waterProgram, /return vec4f\(mix\(reflectedColor, refractedColor, \(1\.0 - fresnel\) \* length\(refractDir\)\), shapeAlpha\)/);
+  assert.doesNotMatch(waterProgram, /objectOpticalFootprint/);
+  assert.match(waterProgram, /fn getSurfaceRayColor\(origin: vec3f, ray: vec3f, waterColor: vec3f, lightDir: vec3f\) -> vec3f/);
+  assert.match(waterProgram, /color = getWallColor\(hit, lightDir\)/);
+  assert.match(waterProgram, /let refractDir = refract\(-viewDir, n, 1\.0 \/ 1\.333\)/);
+  assert.match(waterProgram, /let refractDir = refract\(-viewDir, n, 1\.333 \/ 1\.0\)/);
+  assert.match(waterProgram, /getSurfaceRayColor\(in\.worldPos, reflectDir, vec3f\(0\.25, 1\.0, 1\.25\), lightDir\)/);
+  assert.match(waterProgram, /getSurfaceRayColor\(in\.worldPos, refractDir, vec3f\(1\.0\), lightDir\) \* vec3f\(0\.8, 1\.0, 1\.1\)/);
+  assert.match(waterProgram, /sampleObjectRefraction\(in\.worldPos, refractDir\)/);
+  assert.match(waterProgram, /sampleObjectReflection\(in\.worldPos, reflectDir\)/);
+  assert.match(waterProgram, /fn waterSunGlint/);
+  assert.match(waterProgram, /pow\(max\(dot\(lightDir, normalize\(ray\)\), 0\.0\), 5000\.0\)/);
+  assert.match(waterProgram, /vec3f\(10\.0, 8\.0, 6\.0\)/);
+  assert.match(waterProgram, /fn objectPoolAmbientOcclusion/);
+  assert.match(waterProgram, /1\.0 - 0\.9 \/ pow\(max\(\(halfSize\.x \+ radius - abs\(point\.x\)\) \/ radius, 1\.0\), 3\.0\)/);
+  assert.match(waterProgram, /"params":\s+\[\]float64\{256, 0\.25, 0, 0\}/);
+  assert.match(waterProgram, /"profile": "water-object-drop-orbit"/);
+  assert.match(waterProgram, /"inactiveY":\s+waterDemoHiddenY/);
+  assert.match(waterProgram, /"physics":\s+map\[string\]any\{"gravityY": -4, "bounce": 0\.7, "defaultBuoyancyScale": 1\.1\}/);
+  assert.match(waterProgram, /"floorClearance"/);
+  assert.match(waterProgram, /"buoyancyRadius"/);
+  assert.match(waterProgram, /torusKnotDisplacementSpheres/);
+  assert.match(waterProgram, /duckDisplacementSpheres/);
+  assert.match(waterProgram, /\/water\/models\/duck\/Duck\.gltf/);
+  assert.doesNotMatch(waterProgram, /poolRimPoints|poolRimSegments/);
+});
+
+test("Scene3D orbit controls keep upstream-style release inertia", () => {
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(mount, /const SCENE_ORBIT_MAX_SPEED = Math\.PI \* 6;/);
+  assert.match(mount, /const SCENE_ORBIT_DAMPING = 6;/);
+  assert.match(mount, /const SCENE_ORBIT_STOP_SPEED = \(Math\.PI \/ 180\) \* 0\.01;/);
+  assert.match(mount, /orbitVelocityYaw: 0/);
+  assert.match(mount, /orbitVelocityPitch: 0/);
+  assert.match(mount, /orbitLastMoveMS: 0/);
+  assert.match(mount, /rotateMode: sceneControlsRotateMode\(props\)/);
+  assert.match(mount, /minDistance,\n\s+maxDistance,\n\s+pitchLimit: sceneControlsPitchLimit\(props\)/);
+  assert.match(mount, /function sceneControlsRotateMode\(props\)/);
+  assert.match(mount, /return "pixel-degrees";/);
+  assert.match(mount, /function sceneControlsMinDistance\(props\)/);
+  assert.match(mount, /function sceneControlsMaxDistance\(props, minDistance\)/);
+  assert.match(mount, /function sceneControlsPitchLimit\(props\)/);
+  assert.match(mount, /controls\.rotateMode === "pixel-degrees"/);
+  assert.match(mount, /sample\.deltaX \* pixelRadians/);
+  assert.match(mount, /sample\.deltaY \* pixelRadians/);
+  assert.match(mount, /SCENE_ORBIT_MAX_PITCH_LIMIT = Math\.PI \/ 2 - \(Math\.PI \/ 180\) \* 0\.001/);
+  assert.match(mount, /function sceneOrbitStopInertia\(controls\)/);
+  assert.match(mount, /function sceneOrbitInertiaActive\(controls\)/);
+  assert.match(mount, /function sceneOrbitApplyInertia\(controls, readSourceCamera, deltaSeconds\)/);
+  assert.match(mount, /const damping = Math\.exp\(-SCENE_ORBIT_DAMPING \* seconds\);/);
+  assert.match(mount, /controls\.orbitVelocityYaw \*= damping;/);
+  assert.match(mount, /controls\.orbitVelocityPitch \*= damping;/);
+  assert.match(mount, /controls\.orbitVelocityYaw = sceneClamp\(deltaYaw \/ seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED\);/);
+  assert.match(mount, /controls\.orbitVelocityPitch = sceneClamp\(deltaPitch \/ seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED\);/);
+  assert.match(mount, /const releaseDamping = Math\.exp\(-SCENE_ORBIT_DAMPING \* releaseDelay\);/);
+  assert.match(mount, /function sceneOrbitFinishDrag\(controls, canvas, detachDocumentListeners, event, scheduleOrbitInertia\)/);
+  assert.match(mount, /if \(typeof scheduleOrbitInertia === "function"\) \{\s*scheduleOrbitInertia\(\);\s*\}/s);
+  assert.match(mount, /function cancelOrbitInertia\(\)/);
+  assert.match(mount, /function scheduleOrbitInertia\(\)/);
+  assert.match(mount, /sceneOrbitApplyInertia\(controls, readSourceCamera, delta\)/);
+  assert.match(mount, /scheduleRender\("controls-inertia"\);/);
+  assert.match(mount, /cancelOrbitInertia\(\);\s*sceneOrbitStartDrag/s);
+  assert.match(mount, /detachDocumentListeners\(\);\s*cancelOrbitInertia\(\);/s);
+  assert.match(mount, /function applySceneControlsCamera\(controls, camera\) \{[\s\S]*sceneOrbitStopInertia\(controls\);/);
+  assert.match(mount, /function sceneOrbitApplyWheel\(controls, readSourceCamera, scheduleRender, event\) \{[\s\S]*sceneOrbitStopInertia\(controls\);/);
+  assert.match(bootstrapFeatureScene3DSource, /controls-inertia/);
+});
+
+test("Scene3D WebGPU water consumes caustic reflection refraction optics flags", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /opticsFlags: vec4f/);
+  assert.match(webgpu, /function sceneWaterOpticsFlags/);
+  assert.match(webgpu, /caustics: sceneBool\(entry && entry\.caustics, true\)/);
+  assert.match(webgpu, /reflection: sceneBool\(entry && entry\.reflection, true\)/);
+  assert.match(webgpu, /refraction: sceneBool\(entry && entry\.refraction, true\)/);
+  assert.match(webgpu, /waterUniformScratchF\[44\] = optics\.caustics \? 1 : 0/);
+  assert.match(webgpu, /waterUniformScratchF\[45\] = optics\.reflection \? 1 : 0/);
+  assert.match(webgpu, /waterUniformScratchF\[46\] = optics\.refraction \? 1 : 0/);
+  assert.match(webgpu, /waterUniformScratchF\[47\] = optics\.object \? 1 : 0/);
+  assert.match(webgpu, /waterUniformScratchF\[43\] = objectState\.subtype \|\| 0/);
+  assert.match(webgpu, /let causticsEnabled = clamp\(params\.opticsFlags\.x, 0\.0, 1\.0\)/);
+  assert.match(webgpu, /let reflectionEnabled = clamp\(params\.opticsFlags\.y, 0\.0, 1\.0\)/);
+  assert.match(webgpu, /let refractionEnabled = clamp\(params\.opticsFlags\.z, 0\.0, 1\.0\)/);
+  assert.doesNotMatch(webgpu, /objectOpticalFootprint/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-caustic-systems/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-reflection-systems/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-refraction-systems/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-optics-systems/);
+});
+
+test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(webgpu, /SCENE_WATER_CAUSTICS_VERTEX_SOURCE/);
+  assert.match(webgpu, /SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE/);
+  assert.match(webgpu, /WATER_CAUSTICS_TEXTURE_FORMAT = "rgba8unorm"/);
+  assert.match(webgpu, /WATER_CAUSTICS_TEXTURE_SIZE = 1024/);
+  assert.match(webgpu, /waterCausticsBindGroupLayout = device\.createBindGroupLayout/);
+  assert.match(webgpu, /waterCausticsPipelineLayout = device\.createPipelineLayout/);
+  assert.match(webgpu, /waterCausticsPipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /label: "gosx-water-caustics-pass"/);
+  assert.match(webgpu, /format: WATER_CAUSTICS_TEXTURE_FORMAT/);
+  assert.match(webgpu, /function sceneWaterCausticsResolution/);
+  assert.match(webgpu, /sceneWaterCausticsResolution\(entry\)/);
+  assert.match(webgpu, /causticsTexture = scopedDevice\.createTexture/);
+  assert.match(webgpu, /GPUTextureUsage\.RENDER_ATTACHMENT \| GPUTextureUsage\.TEXTURE_BINDING \| GPUTextureUsage\.COPY_DST/);
+  assert.match(webgpu, /createWaterCausticsBindGroup/);
+  assert.match(webgpu, /waterAuthoredCausticsPipelineCache = new Map/);
+  assert.match(webgpu, /waterAuthoredCausticsPipelineLastError = ""/);
+  assert.match(webgpu, /waterManifestShaderSourcesByID = null/);
+  assert.match(webgpu, /activeWaterShaderSourcesByID = null/);
+  assert.match(webgpu, /function sceneWaterAuthoredShaderSource/);
+  assert.match(webgpu, /function sceneWaterManifestShaderSources/);
+  assert.match(webgpu, /function sceneWaterShaderSourcesFromEntries/);
+  assert.match(webgpu, /function sceneHydrateWaterEntriesFromSources/);
+  assert.match(webgpu, /function sceneWaterAuthoredCausticsSource/);
+  assert.match(webgpu, /function sceneWaterAuthoredCausticsPipeline/);
+  assert.match(webgpu, /var validationScoped = false/);
+  assert.match(webgpu, /scopedDevice\.pushErrorScope\("validation"\)/);
+  assert.match(webgpu, /scopedDevice\.createRenderPipeline\(descriptor\)/);
+  assert.doesNotMatch(webgpu, /scopedDevice\.createRenderPipelineAsync\(descriptor\)/);
+  assert.match(webgpu, /waterAuthoredCausticsPipelineCache\.set\(key, pending\)/);
+  assert.match(webgpu, /return \{ pipeline: waterCausticsPipeline, authored: false, failed: false, pending: true \}/);
+  assert.match(webgpu, /waterAuthoredCausticsPipelineCache\.set\(key, \{ pipeline: pipeline \}\)/);
+  assert.match(webgpu, /waterAuthoredCausticsPipelineCache\.set\(key, \{ failed: true \}\)/);
+  assert.match(webgpu, /waterAuthoredCausticsPipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "causticsWGSL"\)/);
+  assert.match(webgpu, /incomingWaterShaderSourcesByID/);
+  assert.match(webgpu, /bundle\.waterSystems = sceneHydrateWaterEntriesFromSources\(bundle\.waterSystems, incomingWaterShaderSourcesByID\)/);
+  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-caustics-pass"/);
+  assert.match(webgpu, /function renderWaterCausticsPass/);
+  assert.match(webgpu, /pass\.draw\(3\)/);
+  assert.match(webgpu, /renderWaterCausticsPass\(encoder, system\)/);
+  assert.match(webgpu, /var causticTexture: texture_2d<f32>/);
+  assert.match(webgpu, /textureSample\(causticTexture, causticSampler/);
+  assert.match(webgpu, /var objectShadowTexture: texture_2d<f32>/);
+  assert.match(webgpu, /textureSample\(objectShadowTexture, objectShadowSampler/);
+  assert.match(webgpu, /waterCausticPasses/);
+  assert.match(webgpu, /waterAuthoredCausticPasses/);
+  assert.match(webgpu, /waterAuthoredCausticFallbacks/);
+  assert.match(webgpu, /waterAuthoredCausticFallbackReason/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-caustic-fallback-reason/);
+  assert.match(webgpu, /waterAuthoredCausticSourceBytes/);
+  assert.match(webgpu, /waterAuthoredCausticSourceBytes: waterUpdateStats\.waterAuthoredCausticSourceBytes/);
+  assert.match(webgpu, /waterResolvedCausticSourceBytes: waterUpdateStats\.waterResolvedCausticSourceBytes/);
+  assert.match(webgpu, /waterBundleCausticSourceBytes: waterUpdateStats\.waterBundleCausticSourceBytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-caustic-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-caustic-texture-pixels/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-caustic-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-caustic-fallbacks/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-caustic-source-bytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-resolved-caustic-source-bytes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-bundle-caustic-source-bytes/);
+  assert.match(mount, /function sceneMountedWaterShaderSources/);
+  assert.match(mount, /SCENE_MOUNT_WATER_SOURCE_ID_FIELDS = \["computeSource", "materialSource"\]/);
+  assert.match(mount, /SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS = \["computeSourceFiles", "materialSourceFiles"\]/);
+  assert.match(mount, /record\[name\] = files/);
+  assert.match(mount, /hydrated\[name\] = files/);
+  assert.match(mount, /function sceneHydrateBundleWaterShaderSources/);
+  assert.match(mount, /sceneHydrateBundleWaterShaderSources\(effectiveBundle, effectiveBundle\.waterShaderSourcesByID\)/);
+  assert.match(mount, /data-gosx-scene3d-water-render-entry-caustic-source-bytes/);
+});
+
+test("Scene3D WebGPU water renders upstream-style object texture targets", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
+  const waterPage = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "page.gsx"), "utf8");
+
+  assert.match(webgpu, /SCENE_WATER_OBJECT_TEXTURE_VERTEX_SOURCE/);
+  assert.match(webgpu, /SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE/);
+  assert.match(webgpu, /SCENE_WATER_OBJECT_SHADOW_FRAGMENT_SOURCE/);
+  assert.match(webgpu, /SCENE_WATER_OBJECT_MESH_SHADOW_VERTEX_SOURCE/);
+  assert.match(webgpu, /SCENE_WATER_OBJECT_MESH_SHADOW_FRAGMENT_SOURCE/);
+  assert.match(webgpu, /refract\(-normalize\(shadow\.light\.xyz\), vec3f\(0\.0, 1\.0, 0\.0\), 1\.0 \/ 1\.333\)/);
+  assert.match(webgpu, /worldPosition\.xz - worldPosition\.y \* refractedLight\.xz \/ refractedY/);
+  assert.match(webgpu, /function sceneWaterObjectMeshFragmentSource/);
+  assert.match(webgpu, /let texturePassMode = " \+ mode \+ "u/);
+  assert.match(webgpu, /texturePassMode == 2u && in\.worldPos\.y < 0\.0/);
+  assert.match(webgpu, /struct ObjectTextureOutput/);
+  assert.match(webgpu, /@location\(0\) reflection: vec4f/);
+  assert.match(webgpu, /@location\(1\) clippedReflection: vec4f/);
+  assert.match(webgpu, /@location\(2\) refraction: vec4f/);
+  assert.match(webgpu, /WATER_OBJECT_TEXTURE_FORMAT = "rgba8unorm"/);
+  assert.match(webgpu, /WATER_OBJECT_TEXTURE_SIZE = 512/);
+  assert.match(webgpu, /WATER_OBJECT_SHADOW_TEXTURE_SIZE = 1024/);
+  assert.match(webgpu, /waterObjectTextureBindGroupLayout = device\.createBindGroupLayout/);
+  assert.match(webgpu, /waterObjectMeshShadowBindGroupLayout = device\.createBindGroupLayout/);
+  assert.match(webgpu, /waterObjectTexturePipelineLayout = device\.createPipelineLayout/);
+  assert.match(webgpu, /waterObjectMeshShadowPipelineLayout = device\.createPipelineLayout/);
+  assert.match(webgpu, /waterObjectTexturePipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /waterObjectShadowPipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /waterObjectMeshShadowPipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /waterAuthoredObjectShadowPipelineCache = new Map/);
+  assert.match(webgpu, /waterAuthoredObjectMeshShadowPipelineCache = new Map/);
+  assert.match(webgpu, /function sceneWaterAuthoredObjectShadowPipeline/);
+  assert.match(webgpu, /function sceneWaterAuthoredObjectMeshShadowPipeline/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectShadowWGSL"\)/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowVertexWGSL"\)/);
+  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowFragmentWGSL"\)/);
+  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-object-shadow-pass"/);
+  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-object-mesh-shadow-pass"/);
+  assert.match(webgpu, /waterObjectMeshRefractionFragmentModule = device\.createShaderModule/);
+  assert.match(webgpu, /waterObjectMeshClippedFragmentModule = device\.createShaderModule/);
+  assert.match(webgpu, /waterObjectMeshShadowVertexModule = device\.createShaderModule/);
+  assert.match(webgpu, /waterObjectMeshShadowFragmentModule = device\.createShaderModule/);
+  assert.match(webgpu, /function getWaterObjectMeshPipeline/);
+  assert.match(webgpu, /label: "gosx-water-object-texture-pass"/);
+  assert.match(webgpu, /"gosx-water-object-mesh-refraction-pass"/);
+  assert.match(webgpu, /"gosx-water-object-mesh-reflection-pass"/);
+  assert.match(webgpu, /"gosx-water-object-mesh-clipped-reflection-pass"/);
+  assert.match(webgpu, /"gosx-water-object-mesh-shadow-pass"/);
+  assert.match(webgpu, /label: "gosx-water-object-shadow-pass"/);
+  assert.match(webgpu, /label: "gosx-water-object-reflection-target"/);
+  assert.match(webgpu, /label: "gosx-water-object-clipped-reflection-target"/);
+  assert.match(webgpu, /label: "gosx-water-object-refraction-target"/);
+  assert.match(webgpu, /label: "gosx-water-object-texture-depth"/);
+  assert.match(webgpu, /label: "gosx-water-object-shadow-target"/);
+  assert.match(webgpu, /function sceneWaterObjectTextureResolution/);
+  assert.match(webgpu, /function sceneWaterObjectShadowResolution/);
+  assert.match(webgpu, /function wgpuWaterCubeMapFaceURLs/);
+  assert.match(webgpu, /function wgpuLoadCubeTexture/);
+  assert.match(webgpu, /GPUTextureUsage\.TEXTURE_BINDING \| GPUTextureUsage\.COPY_DST \| GPUTextureUsage\.RENDER_ATTACHMENT/);
+  assert.match(webgpu, /texture_cube<f32>/);
+  assert.match(webgpu, /var waterSkyTexture: texture_cube<f32>/);
+  assert.match(webgpu, /fn sampleWaterSky\(direction: vec3f\) -> vec3f/);
+  assert.match(webgpu, /textureSample\(waterSkyTexture, causticSampler/);
+  assert.match(webgpu, /struct WaterObjectTextureMatrices/);
+  assert.match(webgpu, /viewProjectionMatrix: mat4x4f/);
+  assert.match(webgpu, /reflectionViewProjectionMatrix: mat4x4f/);
+  assert.match(webgpu, /@group\(1\) @binding\(8\) var<uniform> objectTextureMatrices: WaterObjectTextureMatrices/);
+  assert.match(webgpu, /fn sampleProjectedTexture\(tex: texture_2d<f32>, matrix: mat4x4f, worldPos: vec3f\) -> vec4f/);
+  assert.match(webgpu, /textureSampleLevel\(tex, causticSampler, uv, 0\.0\) \* inBounds/);
+  assert.match(webgpu, /fn sampleObjectRefraction\(origin: vec3f, ray: vec3f\) -> vec4f/);
+  assert.match(webgpu, /sampleProjectedTexture\(objectRefractionTexture, objectTextureMatrices\.viewProjectionMatrix, origin \+ ray \* hit\)/);
+  assert.match(webgpu, /fn sampleObjectReflection\(origin: vec3f, ray: vec3f\) -> vec4f/);
+  assert.match(webgpu, /sampleProjectedTexture\(objectReflectionTexture, objectTextureMatrices\.reflectionViewProjectionMatrix, origin \+ ray \* hit\)/);
+  assert.match(webgpu, /sampleProjectedTexture\(objectClippedReflectionTexture, objectTextureMatrices\.reflectionViewProjectionMatrix, in\.worldPos\)/);
+  assert.match(webgpu, /refractionTexel = sampleObjectRefraction\(in\.worldPos, refractDir\)/);
+  assert.doesNotMatch(webgpu, /let sampleUV = clamp\(in\.uv \+ n\.xz \* 0\.018/);
+  assert.match(webgpu, /viewDimension: "cube"/);
+  assert.match(webgpu, /binding: 7, visibility: GPUShaderStage\.FRAGMENT, texture: \{ sampleType: "float", viewDimension: "cube" \}/);
+  assert.match(webgpu, /cubeRecord = entry\.cubeMap \? wgpuLoadCubeTexture/);
+  assert.match(webgpu, /system\.waterSkyCubePending = cubePending/);
+  assert.match(webgpu, /system\.waterSkyCubeFailed = cubeFailed/);
+  assert.match(webgpu, /waterSkyCubeTexturePending: 0/);
+  assert.match(webgpu, /waterSkyCubeTextureFailed: 0/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-pending/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-failed/);
+  assert.match(webgpu, /function sceneWaterLightVector\(entry, fallback\)/);
+  assert.match(webgpu, /entry\.lightDirectionX/);
+  assert.match(webgpu, /waterLightDirX: waterUpdateStats\.waterLightDirX/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-x/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-y/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-z/);
+  assert.match(webgpu, /function sceneWaterObjectTextureTargetSize\(entry, width, height\)/);
+  assert.match(webgpu, /WATER_OBJECT_TEXTURE_MAX_SIZE = 1024/);
+  assert.match(webgpu, /WATER_OBJECT_TEXTURE_TARGET_COUNT = 3/);
+  assert.match(webgpu, /function waterSystemUsesProjectedObjectTextures\(system\)/);
+  assert.match(webgpu, /return kind === 3;/);
+  assert.match(webgpu, /return waterSystemUsesProjectedObjectTextures\(system\);/);
+  assert.match(webgpu, /function sceneWaterObjectTexturePixelBudget\(entry\)/);
+  assert.match(webgpu, /function sceneWaterObjectTextureClampToPixelBudget\(size, pixelBudget\)/);
+  assert.match(webgpu, /Math\.sqrt\(budget \/ totalPixels\)/);
+  assert.match(webgpu, /var objectTextureSize = sceneWaterObjectTextureTargetSize\(entry, width, height\)/);
+  assert.match(webgpu, /size: \[objectTextureWidth, objectTextureHeight, 1\]/);
+  assert.match(webgpu, /objectTexturePixelBudget: objectTextureSize\.pixelBudget/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-width/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-height/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-pixel-budget/);
+  assert.match(webgpu, /var targetWidth = Math\.max\(1, system\.objectTextureWidth \|\| system\.objectTextureResolution \|\| WATER_OBJECT_TEXTURE_SIZE\)/);
+  assert.match(webgpu, /var targetHeight = Math\.max\(1, system\.objectTextureHeight \|\| system\.objectTextureResolution \|\| WATER_OBJECT_TEXTURE_SIZE\)/);
+  assert.match(webgpu, /uploadFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
+  assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
+  assert.doesNotMatch(webgpu, /uploadFrameUniforms\(sceneWaterReflectionCamera\(bundle && bundle\.camera\), targetWidth, targetHeight, false\)/);
+  assert.match(webgpu, /var objectShadowResolution = sceneWaterObjectShadowResolution\(entry\)/);
+  assert.match(webgpu, /resolution,[\s\S]*causticsResolution,[\s\S]*objectTextureSize\.mode,[\s\S]*objectTextureSize\.width,[\s\S]*objectTextureSize\.height,[\s\S]*objectTextureSize\.resolution,[\s\S]*objectTextureSize\.pixelBudget,[\s\S]*objectShadowResolution,[\s\S]*seedDrops/);
+  assert.match(core, /causticsResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.causticsResolution/);
+  assert.match(core, /objectTextureResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.objectTextureResolution/);
+  assert.match(core, /objectTextureResolutionMode: typeof item\.objectTextureResolutionMode === "string"/);
+  assert.match(core, /objectTexturePixelBudget: Math\.max\(0, Math\.floor\(sceneNumber\(item\.objectTexturePixelBudget/);
+  assert.match(core, /objectShadowResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.objectShadowResolution/);
+  assert.match(webgpu, /function sceneWaterActiveObjectID/);
+  assert.match(webgpu, /return "float-sphere"/);
+  assert.match(webgpu, /return "float-cube"/);
+  assert.match(webgpu, /return "float-torus"/);
+  assert.match(webgpu, /return "float-duck"/);
+  assert.match(core, /material: materialName/);
+  assert.match(core, /castShadow: hasCastShadow \? sceneBool\(current\.castShadow, false\) : undefined/);
+  assert.match(core, /receiveShadow: hasReceiveShadow \? sceneBool\(current\.receiveShadow, false\) : undefined/);
+  assert.match(mount, /const keys = \["material", "materialKind"[\s\S]*"customVertexWGSL"[\s\S]*"shaderLayout"[\s\S]*"shaderSourceFiles"\]/);
+  assert.match(mount, /function sceneApplyModelMaterialName/);
+  assert.match(mount, /function sceneApplyModelRenderFlags/);
+  assert.match(mount, /instanced\.castShadow = model\.castShadow/);
+  assert.match(mount, /const namedMaterialOverride = typeof override\.material === "string" && override\.material\.trim\(\)/);
+  assert.match(mount, /if \(material && !namedMaterialOverride\)/);
+  assert.match(webgpu, /function sceneWaterObjectMeshKindMatches/);
+  assert.match(webgpu, /if \(!obj \|\| !obj\.castShadow\) return false/);
+  assert.match(webgpu, /waterKind === 1\) return kind\.indexOf\("sphere"\) >= 0/);
+  assert.match(webgpu, /waterKind === 2\) return kind\.indexOf\("box"\) >= 0 \|\| kind\.indexOf\("cube"\) >= 0/);
+  assert.match(webgpu, /function sceneWaterObjectMeshCandidateProfile/);
+  assert.match(webgpu, /function sceneWaterObjectMeshList/);
+  assert.match(webgpu, /if \(targetID\) \{/);
+  assert.doesNotMatch(webgpu, /var caster = objects\[k\]/);
+  assert.doesNotMatch(webgpu, /!caster\.castShadow/);
+  assert.match(webgpu, /function drawWaterObjectMeshObjects/);
+  assert.match(webgpu, /function bindWaterObjectMeshVertexBuffers/);
+  assert.match(webgpu, /function bindWaterObjectSelenaAttributes/);
+  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, \{\s*targetFormat: WATER_OBJECT_TEXTURE_FORMAT/);
+  assert.match(webgpu, /function sceneWaterObjectTextureSelenaUniforms/);
+  assert.match(webgpu, /system\.waterPoolWidth = poolWidth/);
+  assert.match(webgpu, /system\.waterLightDir = \{ x: light\.x \/ lightLen, y: light\.y \/ lightLen, z: light\.z \/ lightLen \}/);
+  assert.match(webgpu, /system\.waterObjectRadius = active \? Math\.max\(0\.0001, radius\) : 0/);
+  assert.match(webgpu, /sceneNumber\(system && system\.waterPoolWidth, sceneNumber\(entry && entry\.poolWidth, 1\.0\)\)/);
+  assert.match(webgpu, /sceneNumber\(system && system\.waterObjectRadius, sceneNumber\(entry && entry\.objectRadius/);
+  assert.match(webgpu, /sceneWaterLightVector\(entry, \{ x: 0\.3, y: 0\.9, z: 0\.45 \}\)/);
+  assert.match(webgpu, /poolSize: \[poolWidth, poolHeight, poolLength, cornerRadius\]/);
+  assert.match(webgpu, /params: \[resolution, radius, kind, subtype\]/);
+  assert.match(webgpu, /function sceneWaterObjectTextureSelenaContext/);
+  assert.match(webgpu, /uniformSlotSuffix: \["water-object-texture", waterID, target, mode\]\.join\("-"\)/);
+  assert.match(webgpu, /isTexturePass: \[1, 0, 0, 0\]/);
+  assert.match(webgpu, /texturePassMode: \[mode, 0, 0, 0\]/);
+  assert.match(webgpu, /waterObjectTexturePassMode: \[mode, 0, 0, 0\]/);
+  assert.match(webgpu, /uniforms: sceneWaterObjectTextureSelenaUniforms\(system, mode\)/);
+  assert.match(webgpu, /"gosx-water-object-mesh-refraction-pass",\s*"refraction"/);
+  assert.match(webgpu, /"gosx-water-object-mesh-reflection-pass",\s*"reflection"/);
+  assert.match(webgpu, /"gosx-water-object-mesh-clipped-reflection-pass",\s*"clipped-reflection"/);
+  assert.match(webgpu, /record\.system\.id = id/);
+  assert.match(webgpu, /createSelenaBindGroup\(mat, selenaResource, obj, renderContext\)/);
+  assert.doesNotMatch(webgpu, /_gosxWaterObjectTexturePassMode/);
+  assert.match(webgpu, /function drawWaterObjectProjectedShadowObjects/);
+  assert.match(webgpu, /function renderWaterObjectMeshTargetPass/);
+  assert.match(webgpu, /function renderWaterObjectMeshShadowPass/);
+  assert.match(webgpu, /function sceneWaterObjectMeshShadowUniformData/);
+  assert.match(webgpu, /createWaterObjectMeshShadowBindGroup/);
+  assert.match(webgpu, /function sceneWaterNormalizeReflectionDirection/);
+  assert.match(webgpu, /function sceneWaterReflectionCameraForward/);
+  assert.match(webgpu, /var x = 0;[\s\S]*var y = 0;[\s\S]*var z = 1;/);
+  assert.match(webgpu, /return sceneWaterNormalizeReflectionDirection\(\{ x: nextX, y: nextY, z: z \}\)/);
+  assert.match(webgpu, /function sceneWaterCameraWorldPosition/);
+  assert.match(webgpu, /function sceneWaterCameraWorldDirection/);
+  assert.match(webgpu, /return sceneWaterNormalizeReflectionDirection\(\{ x: -forward\.x, y: -forward\.y, z: -forward\.z \}\)/);
+  assert.match(webgpu, /function sceneWaterMirrorWaterPoint/);
+  assert.match(webgpu, /function sceneWaterReflectionCamera/);
+  assert.match(webgpu, /var forward = sceneWaterReflectionCameraForward\(cam\)/);
+  assert.match(webgpu, /y: -forward\.y/);
+  assert.match(webgpu, /var horizontal = Math\.sqrt/);
+  assert.match(webgpu, /rotationX: -Math\.atan2\(reflectedForward\.y, horizontal\)/);
+  assert.match(webgpu, /rotationY: Math\.atan2\(reflectedForward\.x, reflectedForward\.z\)/);
+  assert.match(webgpu, /function sceneWaterReflectionCameraUp/);
+  assert.match(webgpu, /return \{ x: up\.x, y: -up\.y, z: up\.z \}/);
+  assert.match(webgpu, /function sceneWaterLookAtViewMatrix/);
+  assert.match(webgpu, /var position = sceneWaterCameraWorldPosition\(cam\)/);
+  assert.match(webgpu, /var direction = sceneWaterCameraWorldDirection\(cam\)/);
+  assert.match(webgpu, /x: position\.x \+ direction\.x/);
+  assert.match(webgpu, /var eye = sceneWaterMirrorWaterPoint\(position\)/);
+  assert.match(webgpu, /var reflectedTarget = sceneWaterMirrorWaterPoint\(target\)/);
+  assert.match(webgpu, /var reflectedUp = sceneWaterReflectionCameraUp\(camera\)/);
+  assert.match(webgpu, /sceneWaterLookAtViewMatrix\(eye, reflectedTarget, reflectedUp, scratchViewMatrix\)/);
+  assert.match(webgpu, /function uploadWaterReflectionFrameUniforms/);
+  assert.match(webgpu, /f\[33\] = eye\.y/);
+  assert.match(webgpu, /f\[34\] = -eye\.z/);
+  assert.match(webgpu, /function renderWaterObjectSceneTexturePasses/);
+  assert.match(webgpu, /function waterSystemUsesProjectedObjectTextures\(system\)/);
+  assert.match(webgpu, /function waterSystemHasObjectTextureSubject\(system\)/);
+  assert.match(webgpu, /return kind === 3;/);
+  assert.match(webgpu, /return waterSystemUsesProjectedObjectTextures\(system\);/);
+  assert.doesNotMatch(webgpu, /system\.waterObjectActive && \(system\.waterObjectKind \|\| 0\) > 0/);
+  assert.doesNotMatch(webgpu, /renderWaterObjectTexturePass\(encoder, system\);\s*continue;/);
+  assert.match(webgpu, /createWaterObjectTextureBindGroup/);
+  assert.match(webgpu, /function renderWaterObjectTexturePass/);
+  assert.match(webgpu, /function renderWaterObjectShadowPass/);
+  assert.match(webgpu, /objectReflectionTexture: texture_2d<f32>/);
+  assert.match(webgpu, /objectClippedReflectionTexture: texture_2d<f32>/);
+  assert.match(webgpu, /objectRefractionTexture: texture_2d<f32>/);
+  assert.match(webgpu, /sampleObjectReflection\(in\.worldPos, reflectDir\)/);
+  assert.match(webgpu, /sampleObjectRefraction\(in\.worldPos, refractDir\)/);
+  assert.match(webgpu, /renderWaterObjectTexturePass\(encoder, system\)/);
+  assert.match(webgpu, /renderWaterObjectShadowPass\(encoder, system\)/);
+  assert.match(webgpu, /renderWaterObjectMeshShadowPass\(encoder, system, objectList, pbrBuffers\)/);
+  assert.match(webgpu, /renderWaterObjectSceneTexturePasses\(/);
+  assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
+  assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameTimeSeconds, bundle, pbrSceneBuffers, scaledW, scaledH\)/);
+  assert.match(webgpu, /waterObjectTexturePasses/);
+  assert.match(webgpu, /waterObjectTextureTargets/);
+  assert.match(webgpu, /waterObjectTextureMeshPasses/);
+  assert.match(webgpu, /waterObjectTextureMeshDrawCalls/);
+  assert.match(webgpu, /waterObjectTextureFallbackPasses/);
+  assert.match(webgpu, /waterObjectTextureCandidateObjects/);
+  assert.match(webgpu, /waterObjectTextureSelectedObjects/);
+  assert.match(webgpu, /waterObjectTextureFallbackMissingObjects/);
+  assert.match(webgpu, /waterObjectTextureFallbackMissingResources/);
+  assert.match(webgpu, /waterObjectTextureCandidateProfile/);
+  assert.match(webgpu, /waterObjectShadowPasses/);
+  assert.match(webgpu, /waterObjectShadowMeshPasses/);
+  assert.match(webgpu, /waterObjectShadowMeshDrawCalls/);
+  assert.match(webgpu, /waterAuthoredObjectShadowPasses/);
+  assert.match(webgpu, /waterAuthoredObjectMeshShadowPasses/);
+  assert.match(webgpu, /waterObjectShadowFallbackPasses/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-targets/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-pixels/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-mesh-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-selected-objects/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-candidate-profile/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-mesh-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-selena-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-fallback-passes/);
+  assert.match(geometry, /function scenePrimitiveTriangleMesh/);
+  assert.match(geometry, /function sphereTriangleMesh/);
+  assert.match(geometry, /function torusTriangleMesh/);
+  assert.match(core, /torusknot/);
+  assert.match(core, /normalized\.wireframe === false/);
+  assert.match(core, /normalized\.vertices = scenePrimitiveTriangleMesh\(normalized\)/);
+  assert.match(waterPage, /id="float-sphere"[\s\S]*wireframe=\{false\}/);
+  assert.match(waterPage, /id="float-cube"[\s\S]*wireframe=\{false\}/);
+  assert.match(waterPage, /id="float-torus"[\s\S]*wireframe=\{false\}/);
+  assert.match(waterPage, /causticsResolution=\{1024\}/);
+  assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
+  assert.match(waterPage, /objectTexturePixelBudget=\{3145728\}/);
+  assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
+  assert.match(waterPage, /objectShadowResolution=\{1024\}/);
+  assert.match(waterPage, /seedWGSL=\{data\.waterSeedWGSL\}/);
+  assert.match(waterPage, /dropWGSL=\{data\.waterDropWGSL\}/);
+  assert.match(waterPage, /poolVertexWGSL=\{data\.waterPoolVertexWGSL\}/);
+  assert.match(waterPage, /poolFragmentWGSL=\{data\.waterPoolFragmentWGSL\}/);
+  assert.match(waterPage, /surfaceVertexWGSL=\{data\.waterSurfaceVertexWGSL\}/);
+  assert.match(waterPage, /objectShadowWGSL=\{data\.waterObjectShadowWGSL\}/);
+  assert.match(waterPage, /objectMeshShadowVertexWGSL=\{data\.waterObjectMeshShadowVertexWGSL\}/);
+  assert.match(waterPage, /objectMeshShadowFragmentWGSL=\{data\.waterObjectMeshShadowFragmentWGSL\}/);
+  assert.match(waterPage, /cubeMap="\/water\/"/);
+  assert.match(waterPage, /name="water-object-material"[\s\S]*shaderSource=\{data\.waterObjectMaterialSource\}[\s\S]*shaderSourceFiles=\{data\.waterObjectMaterialSourceFiles\}/);
+  assert.match(waterPage, /name="water-duck-material"[\s\S]*shaderSource=\{data\.waterDuckMaterialSource\}[\s\S]*shaderSourceFiles=\{data\.waterDuckMaterialSourceFiles\}[\s\S]*customVertexWGSL=\{data\.waterDuckMaterialWGSL\}/);
+  assert.match(waterPage, /id="float-duck"[\s\S]*material="water-duck-material"/);
+  assert.match(waterPage, /id="float-duck"[\s\S]*castShadow=\{true\}/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-loaded/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-fallbacks/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-shadow-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-shadow-texture-pixels/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-shadow-mesh-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-shadow-mesh-draw-calls/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-object-shadow-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-object-mesh-shadow-passes/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-shadow-fallback-passes/);
+});
+
+test("Scene3D planner hashes inline mesh vertex payloads", () => {
+  const planner = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+
+  assert.match(planner, /function scenePlannerHashFloatArray/);
+  assert.match(planner, /function scenePlannerHashMeshVertices/);
+  assert.match(planner, /scenePlannerHashMeshVertices\(hash, object && object\.vertices\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.positions, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.normals, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.uvs, 0\)/);
+});
+
 test("Scene3D static GLB models can receive live motion patches", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
 
-  assert.match(source, /function sceneRegisterStaticModelLiveRecord\(state, model, objectIDs\)/);
+  assert.match(source, /function sceneRegisterStaticModelLiveRecord\(state, instanceModel, objectIDs\)/);
   assert.match(source, /staticModel: true/);
   assert.match(source, /_modelLocalVertices/);
   assert.match(source, /function sceneApplyStaticModelObjectTransform\(state, record\)/);
   assert.match(source, /object\.vertices\.positions = sceneModelTransformMeshFloats\(local\.positions/);
   assert.match(source, /if \(sceneModelHasSkins\(skinInstances\)\) \{/);
-  assert.match(source, /sceneRegisterStaticModelLiveRecord\(state, model, objectIDs\)/);
+  assert.match(source, /sceneRegisterStaticModelLiveRecord\(state, instanceModel, objectIDs\)/);
 });
 
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
@@ -8035,14 +9382,22 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
 
   assert.match(webgl, /function createSceneSelenaProgram\(gl, material\)/);
   assert.match(webgl, /ensureSelenaProgram\(mat\)/);
-  assert.match(webgl, /uploadSelenaUniforms\(gl, selenaProgram, mat\)/);
+  assert.match(webgl, /uploadSelenaUniforms\(gl, selenaProgram, mat, obj\)/);
   assert.match(webgl, /bindSelenaTextures\(gl, selenaProgram, mat\)/);
   assert.match(webgl, /bindSelenaMeshAttribute\(gl, selenaProgram, "position"/);
+  assert.match(webgl, /function webGLSelenaObjectModelMatrix\(obj\)/);
+  assert.match(webgl, /obj && obj\.directVertices === true[\s\S]{0,120}return obj\.modelMatrix \|\| identityModelMatrix/);
+  assert.match(webgl, /if \(name === "modelMatrix"\) return webGLSelenaObjectModelMatrix\(owner\);/);
 
-  assert.match(webgpu, /function getSelenaPipeline\(material, blendMode, depthWrite\)/);
+  assert.match(webgpu, /function getSelenaPipeline\(material, blendMode, depthWrite, options\)/);
   assert.match(webgpu, /entryPoint: "vertexMain"/);
   assert.match(webgpu, /entryPoint: "fragmentMain"/);
+  assert.match(webgpu, /function createSelenaBindGroup\(material, resource, cacheOwner, renderContext\)/);
   assert.match(webgpu, /createSelenaBindGroup\(mat, selenaResource, obj\)/);
+  assert.match(webgpu, /function sceneSelenaRenderContextUniformValue/);
+  assert.match(webgpu, /function sceneSelenaUniformBufferSlot/);
+  assert.match(webgpu, /var vectorValue = Array\.isArray\(value\) \|\| \(value && typeof value\.length === "number"\)/);
+  assert.match(webgpu, /if \(!vectorValue\) \{[\s\S]{0,180}f32\[base\] = sceneSelenaScalar\(value\)/);
   assert.match(webgpu, /if \(sceneSelenaIsMaterial\(material\)\) \{\n          continue;/);
 });
 
@@ -8055,10 +9410,9 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   assert.match(webgpu, /var sceneSelenaFrameTime = 0;/);
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
-  // name === "time" BEFORE the customUniforms check, so a declared `param time`
-  // whose compiled default ships in customUniforms cannot shadow the clock.
+  // name === "time" before user values can shadow it.
   assert.match(webgl, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,200}hasOwnProperty\.call\(values, name\)/);
-  assert.match(webgpu, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,200}hasOwnProperty\.call\(values, name\)/);
+  assert.match(webgpu, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,240}sceneSelenaMaterialValue\(material, name\)/);
 
   // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
   // before any render-pass encoder draw commands.
@@ -8076,8 +9430,8 @@ test("Scene3D selena time auto-uniform: time is forced before customUniforms (re
   // The time branch must appear BEFORE the customUniforms early-return in both
   // resolvers (mirrors mvp/normalMatrix), so a compiled `param time` default
   // shipped in customUniforms cannot shadow the per-frame clock.
-  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,800}/)[0];
-  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,800}/)[0];
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,1200}/)[0];
+  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,1400}/)[0];
 
   const webglCustomIdx = webglResolver.indexOf('return values[name]');
   const webglTimeIdx = webglResolver.indexOf('if (name === "time")');
@@ -8085,11 +9439,41 @@ test("Scene3D selena time auto-uniform: time is forced before customUniforms (re
   assert.ok(webglCustomIdx !== -1, 'WebGL resolver must have customUniforms return');
   assert.ok(webglTimeIdx < webglCustomIdx, 'WebGL time must be forced before customUniforms');
 
-  const webgpuCustomIdx = webgpuResolver.indexOf('return values[name]');
+  const webgpuCustomIdx = webgpuResolver.indexOf('sceneSelenaMaterialValue(material, name)');
   const webgpuTimeIdx = webgpuResolver.indexOf('if (name === "time")');
   assert.ok(webgpuTimeIdx !== -1, 'WebGPU resolver must have time branch');
-  assert.ok(webgpuCustomIdx !== -1, 'WebGPU resolver must have customUniforms return');
-  assert.ok(webgpuTimeIdx < webgpuCustomIdx, 'WebGPU time must be forced before customUniforms');
+  assert.ok(webgpuCustomIdx !== -1, 'WebGPU resolver must read material values after reserved uniforms');
+  assert.ok(webgpuTimeIdx < webgpuCustomIdx, 'WebGPU time must be forced before material values');
+});
+
+test("Scene3D WebGPU Selena materials can bind live water resources", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /function sceneSelenaResourceRef\(material, descriptor\)/);
+  assert.match(webgpu, /trimmed\.indexOf\("gosx:"\) === 0/);
+  assert.match(webgpu, /function sceneSelenaParseResourceRef\(ref\)/);
+  assert.match(webgpu, /parts\[0\] !== "water"/);
+  assert.match(webgpu, /function sceneSelenaLiveTextureView\(material, texture\)/);
+  assert.match(webgpu, /case "caustics":[\s\S]{0,120}return resolved\.system\.causticsView/);
+  assert.match(webgpu, /case "refraction":[\s\S]{0,160}return resolved\.system\.objectRefractionView/);
+  assert.match(webgpu, /function sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
+  assert.match(webgpu, /case "heightfield":[\s\S]{0,180}resolved\.system\.activeIndex === 0 \? resolved\.system\.bufferA : resolved\.system\.bufferB/);
+  assert.match(webgpu, /function sceneSelenaStorageBufferDescriptors\(layout\)/);
+  assert.match(webgpu, /buffer: \{ type: "read-only-storage" \}/);
+  assert.match(webgpu, /var liveView = sceneSelenaLiveTextureView\(material, tex\)/);
+  assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
+});
+
+test("Scene3D WebGPU Selena materials expose object matrices as auto-uniforms", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const resolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,900}/)[0];
+
+  assert.match(resolver, /if \(name === "viewProjectionMatrix"\) return scratchSelenaViewProjection;/);
+  assert.match(resolver, /if \(name === "modelMatrix"\) return webGPUSelenaObjectModelMatrix\(owner\);/);
+  assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)/);
+  assert.match(webgpu, /obj && obj\.directVertices === true[\s\S]{0,120}return webGPUObjectModelMatrix\(obj\)/);
+  assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)[\s\S]{0,220}return pointsIdentityMatrix;/);
+  assert.match(webgpu, /sceneSelenaUniformData\(material, cacheOwner, renderContext\)/);
 });
 
 test("Scene3D animation loop supports foreground frame caps", () => {
@@ -8183,6 +9567,10 @@ test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   assert.match(probe, /sceneWebGPURequiredLimitsFromManifest/);
   assert.match(probe, /descriptor\.requiredLimits = Object\.assign/);
   assert.match(probe, /requestAdapter\(adapterRequest\)/);
+  assert.match(probe, /WEBGPU_LOST_REPROBE_BACKOFF_MS/);
+  assert.match(probe, /function sceneWebGPURecordProbeLoss/);
+  assert.match(probe, /device lost repeatedly; reprobe backed off/);
+  assert.match(probe, /lostProbeBackoffUntil/);
 });
 
 test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics", async () => {
@@ -8459,6 +9847,213 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
   assert.equal(diagnostics.deviceFeatures.length, 0);
 });
 
+test("Scene3D WebGPU probe invalidates lost device and reacquires a fresh device", async () => {
+  let adapterRequests = 0;
+  let deviceRequests = 0;
+  let resolveFirstLost = null;
+  function makeDevice(name) {
+    let resolveLost = null;
+    const device = {
+      name,
+      lost: new Promise((resolve) => {
+        resolveLost = resolve;
+      }),
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+    };
+    if (name === "first") {
+      resolveFirstLost = resolveLost;
+    }
+    return device;
+  }
+  function makeAdapter(name, vendor) {
+    return {
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+      info: {
+        vendor,
+      },
+      requestDevice: async (descriptor) => {
+        deviceRequests++;
+        assert.equal(descriptor, undefined);
+        return makeDevice(name);
+      },
+    };
+  }
+  const adapters = [
+    makeAdapter("first", "initial-vendor"),
+    makeAdapter("second", "recovered-vendor"),
+  ];
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests++;
+        return adapters[Math.min(adapterRequests - 1, adapters.length - 1)];
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-loss-reprobe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  let probe = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(adapterRequests, 1);
+  assert.equal(deviceRequests, 1);
+  assert.equal(probe.ready, true);
+  assert.equal(probe.device.name, "first");
+
+  resolveFirstLost({ reason: "destroyed", message: "device gone" });
+  await flushAsyncWork();
+
+  const readyAfterLoss = await env.context.__gosx_scene3d_webgpu_probe_ready();
+  probe = env.context.__gosx_scene3d_webgpu_probe();
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(readyAfterLoss, true, "probe should reacquire WebGPU after the cached device is lost");
+  assert.equal(adapterRequests, 2);
+  assert.equal(deviceRequests, 2);
+  assert.equal(probe.ready, true);
+  assert.equal(probe.device.name, "second");
+  assert.equal(probe.lost, null);
+  assert.equal(diagnostics.adapterInfo.vendor, "recovered-vendor");
+});
+
+test("Scene3D WebGPU probe retries null adapter after lost-device reprobe", async () => {
+  let now = 0;
+  let adapterRequests = 0;
+  let deviceRequests = 0;
+  let resolveFirstLost = null;
+  function makeDevice(name) {
+    let resolveLost = null;
+    const device = {
+      name,
+      lost: new Promise((resolve) => {
+        resolveLost = resolve;
+      }),
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+    };
+    if (name === "first") {
+      resolveFirstLost = resolveLost;
+    }
+    return device;
+  }
+  function makeAdapter(name, vendor) {
+    return {
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+      info: {
+        vendor,
+      },
+      requestDevice: async (descriptor) => {
+        deviceRequests++;
+        assert.equal(descriptor, undefined);
+        return makeDevice(name);
+      },
+    };
+  }
+  const firstAdapter = makeAdapter("first", "initial-vendor");
+  const recoveredAdapter = makeAdapter("recovered", "late-vendor");
+  const env = createContext({
+    enableWebGPU: true,
+    performanceNow: () => now,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests++;
+        if (adapterRequests === 1) {
+          return firstAdapter;
+        }
+        if (adapterRequests === 2) {
+          return null;
+        }
+        return recoveredAdapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-late-reprobe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+  let probeReadyEvents = 0;
+  env.context.addEventListener("gosx:scene3d:webgpu-probe-ready", () => {
+    probeReadyEvents++;
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(adapterRequests, 1);
+  assert.equal(deviceRequests, 1);
+
+  resolveFirstLost({ reason: "destroyed", message: "device gone" });
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), false);
+  let diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(adapterRequests, 2);
+  assert.equal(deviceRequests, 1);
+  assert.equal(diagnostics.ready, false);
+  assert.equal(diagnostics.error, "requestAdapter returned null");
+
+  now = 1500;
+  diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, false);
+  assert.equal(adapterRequests, 3);
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  const probe = env.context.__gosx_scene3d_webgpu_probe();
+  diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(deviceRequests, 2);
+  assert.equal(probe.device.name, "recovered");
+  assert.equal(probe.lost, null);
+  assert.equal(diagnostics.adapterInfo.vendor, "late-vendor");
+  assert.equal(probeReadyEvents, 1);
+});
+
 test("bootstrap normalizes orthographic Scene3D cameras, LOD, lights, and custom line materials", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -8530,6 +10125,7 @@ test("bootstrap normalizes orthographic Scene3D cameras, LOD, lights, and custom
     [rectLight, probe],
     {},
     0,
+    [],
     [],
     [],
     [],
@@ -8675,6 +10271,7 @@ test("bootstrap preserves named Scene3D custom WGSL materials through object bun
     [],
     [],
     [],
+    [],
     0,
   );
 
@@ -8749,6 +10346,7 @@ test("bootstrap applies named Scene3D materials to instanced mesh bundles", asyn
     meshes,
     [],
     [],
+    [],
     0,
   );
 
@@ -8798,6 +10396,7 @@ test("bootstrap registers Scene3D material profiles through the shared API", asy
     [],
     {},
     0,
+    [],
     [],
     [],
     [],
@@ -9265,6 +10864,40 @@ test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", as
   assert.equal(hit.instanceIndex, -1);
   assert.ok(Math.abs(hit.uv.x - 0.5) < 1e-6, "expected interpolated hit uv.x, got " + hit.uv.x);
   assert.ok(Math.abs(hit.uv.y - 0.5) < 1e-6, "expected interpolated hit uv.y, got " + hit.uv.y);
+});
+
+test("bootstrap projects Scene3D pointer rays onto horizontal planes", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneScreenToRay, "function");
+  assert.equal(typeof api.sceneRayIntersectYPlane, "function");
+  assert.equal(typeof api.sceneRayIntersectPlane, "function");
+  assert.equal(typeof api.sceneRayIntersectSphere, "function");
+  assert.equal(typeof api.sceneRayIntersectAABB, "function");
+
+  const screenRay = api.sceneScreenToRay(100, 100, 200, 200, { x: 0, y: 2, z: 6, rotationX: -0.4, fov: 90, near: 0.1, far: 100 });
+  assert.ok(screenRay && Number.isFinite(screenRay.origin.x) && Number.isFinite(screenRay.dir.z));
+
+  const ray = { origin: { x: 0, y: 2, z: 6 }, dir: { x: 0.2, y: -1, z: -0.4 } };
+  const hit = api.sceneRayIntersectYPlane(ray, 0);
+  assert.ok(hit, "expected ray-plane hit");
+  assert.ok(hit.distance > 0, "expected positive hit distance");
+  assert.ok(Math.abs(hit.y) < 1e-9, "expected y=0 plane hit, got " + hit.y);
+  assert.ok(Number.isFinite(hit.x));
+  assert.ok(Number.isFinite(hit.z));
+  const tiltedHit = api.sceneRayIntersectPlane(ray, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 1 });
+  assert.ok(tiltedHit, "expected arbitrary ray-plane hit");
+  assert.ok(tiltedHit.distance > 0, "expected positive arbitrary plane hit distance");
+  assert.ok(Number.isFinite(tiltedHit.x));
+  assert.ok(Number.isFinite(tiltedHit.y));
+  assert.ok(Number.isFinite(tiltedHit.z));
+  const sphereHit = api.sceneRayIntersectSphere(ray, { x: 0, y: 0, z: 5.2 }, 1);
+  assert.ok(sphereHit, "expected ray-sphere hit");
+  const boxHit = api.sceneRayIntersectAABB(ray, { x: -1, y: -1, z: 4 }, { x: 1, y: 1, z: 8 });
+  assert.ok(boxHit, "expected ray-AABB hit");
 });
 
 test("bootstrap preserves Scene3D instanced colors and custom attributes", async () => {
@@ -11076,6 +12709,7 @@ test("bootstrap exposes read-only Scene3D debug API for mounted surfaces", async
   assert.equal(report.counts.html, 1);
   assert.equal(report.gpuResources.canvas.width, 480);
   assert.equal(report.gpuResources.canvas.height, 300);
+  assert.deepEqual(JSON.parse(JSON.stringify(report.waterShaderSources)), { sceneState: [], bundle: [] });
   assert.equal(report.diagnostics[0].code, "scene.backend.selected");
   assert.equal(report.renderLoop.active, false);
   assert.equal(report.renderLoop.reason, "static");
@@ -16548,6 +18182,46 @@ test("chooseSceneBackend falls back to webgl when webgpu is capable but unavaila
   assert.equal(result.fallbackReason, "webgpu-unavailable", "fallbackReason should be webgpu-unavailable");
 });
 
+test("chooseSceneBackend does not invent webgl for webgpu-only backendCaps", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgpu"],
+    degraded: {},
+    reasons: [{ feature: "water-simulation", excludes: "webgl" }],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: false, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, null, "backend must stay unavailable when only webgpu is capable");
+  assert.equal(result.fallbackReason, "no-capable-backend", "fallbackReason should report that no capable backend is available");
+});
+
+test("Scene3D renderer recovery respects backendCaps fallbacks", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(source, /function restoreSceneWebGLRenderer\(reason\) \{[\s\S]*sceneBackendCapsAllowsKind\(sceneBackendCapsOf\(props\), "webgl"\)/);
+  assert.match(source, /const allowWebGLFallback = sceneBackendCapsAllowsKind\(backendCaps, "webgl"\)/);
+  assert.match(source, /const allowCanvasFallback = sceneBackendCapsAllowsKind\(backendCaps, "canvas2d"\)/);
+  assert.match(source, /if \(!allowWebGLFallback && !allowCanvasFallback\) \{[\s\S]*renderer-fallback-disallowed/);
+  assert.match(source, /if \(!allowCanvasFallback\) \{[\s\S]*renderer-canvas-fallback-disallowed/);
+});
+
+test("Scene3D WebGPU water debug gates isolate update and draw stages", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  assert.match(source, /new URLSearchParams\(window\.location\.search\)\.get\("gosx-water-debug"\)/);
+  assert.match(source, /function sceneWebGPUWaterDebugSkipsUpdate\(mode\) \{[\s\S]*no-water[\s\S]*no-update/);
+  assert.match(source, /function sceneWebGPUWaterDebugSkipsDraw\(mode\) \{[\s\S]*compute-only[\s\S]*no-draw/);
+  assert.match(source, /sceneWebGPUWaterDebugSkipsUpdate\(waterDebugMode\)[\s\S]*updateWaterSystems\(\[\]/);
+  assert.match(source, /hasWaterData && !sceneWebGPUWaterDebugSkipsDraw\(waterDebugMode\)/);
+});
+
 test("chooseSceneBackend returns null (backward-compat) when backendCaps is absent", () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -19541,7 +21215,7 @@ test("shaderLib hydrate: missing cullKernelWGSL lib entry leaves field absent, n
 // Task 5: gpu-cull capability (from Go capability Matrix + JSON manifests)
 // -------------------------------------------------------------------------
 
-test("capability/drift: gpu-cull is present in WebGPU capability JSON and absent/false in WebGL2", () => {
+test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", () => {
   // Read the capability JSON files directly from bootstrap-src, same as the Go drift guard.
   const webgpuCaps = JSON.parse(fs.readFileSync(
     path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.capabilities.json"), "utf8"
@@ -19552,6 +21226,9 @@ test("capability/drift: gpu-cull is present in WebGPU capability JSON and absent
   assert.equal(webgpuCaps["gpu-cull"], true, "WebGPU capabilities JSON must declare gpu-cull: true");
   assert.equal(webglCaps["gpu-cull"], false, "WebGL2 capabilities JSON must declare gpu-cull: false (explicit, not absent)");
   assert.ok("gpu-cull" in webglCaps, "gpu-cull must be an explicit key in WebGL2 capabilities JSON (not absent)");
+  assert.equal(webgpuCaps["water-object-texture-pass"], true, "WebGPU capabilities JSON must declare water-object-texture-pass: true");
+  assert.equal(webglCaps["water-object-texture-pass"], false, "WebGL2 capabilities JSON must declare water-object-texture-pass: false");
+  assert.ok("water-object-texture-pass" in webglCaps, "water-object-texture-pass must be explicit in WebGL2 capabilities JSON");
 });
 
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
@@ -20083,6 +21760,11 @@ test("GLB-style points authored profile: named material authored fields propagat
           customUniforms: { brightness: 1.5 },
           shaderBackend: "selena",
           shaderLayout: { material: "StarPoints" },
+          shaderSource: "materials/star-points.sel",
+          shaderSourceFiles: {
+            customVertexWGSL: "materials/star-points.sel",
+            customFragmentWGSL: "materials/star-points.sel",
+          },
         },
       ],
       points: [
@@ -20110,6 +21792,9 @@ test("GLB-style points authored profile: named material authored fields propagat
   // Use property access for cross-realm object comparison (VM context creates different Object prototypes).
   assert.ok(pt.shaderLayout && typeof pt.shaderLayout === "object", "shaderLayout must be an object");
   assert.equal(pt.shaderLayout.material, "StarPoints", "shaderLayout.material must propagate");
+  assert.equal(pt.shaderSource, "materials/star-points.sel", "shaderSource must propagate");
+  assert.ok(pt.shaderSourceFiles && typeof pt.shaderSourceFiles === "object", "shaderSourceFiles must be an object");
+  assert.equal(pt.shaderSourceFiles.customFragmentWGSL, "materials/star-points.sel", "shaderSourceFiles.customFragmentWGSL must propagate");
   assert.ok(pt.customUniforms && typeof pt.customUniforms === "object", "customUniforms must be an object");
   assert.equal(pt.customUniforms.brightness, 1.5, "customUniforms.brightness must propagate per-layer");
 
@@ -21646,4 +23331,606 @@ test("P4-M3 motion mixer: grow-and-retick passes dt=0 to avoid double clock adva
   assert.ok(dtForOverflowCall > 0, "the overflow call must carry a positive deltaTime");
   assert.equal(dtForRetickCall, 0, "re-tick after grow must pass dt=0 to avoid double clock advance");
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D WebGPU water retires replaced systems after submitted work drains", () => {
+  assert.match(
+    bootstrapScene3DWebGPUSourceFile,
+    /function retireWaterSystem\(system\) \{/,
+    "water runtime should centralize delayed disposal for replaced systems"
+  );
+  assert.match(
+    bootstrapScene3DWebGPUSourceFile,
+    /device\.queue\.onSubmittedWorkDone\(\)\.then\(function\(\) \{\s*system\.dispose\(\);/s,
+    "replaced water resources should be retired after submitted WebGPU work drains"
+  );
+  assert.match(
+    bootstrapScene3DWebGPUSourceFile,
+    /retireWaterSystem\(record\.system\);/,
+    "syncWaterSystems should not immediately destroy resources for signature changes"
+  );
+  assert.match(
+    bootstrapScene3DWebGPUSourceFile,
+    /if \(system\._gosxDisposed\) return;/,
+    "water resource disposal must be idempotent across deferred and renderer teardown paths"
+  );
+});
+
+test("Scene3D managed fluid controls clamp rounded pool radius like upstream", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const document = {
+    documentElement: { setAttribute() {} },
+    querySelector() { return null; },
+  };
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    window: { document },
+  });
+  vm.runInContext(
+    controlsSource + "\nwindow.__managedFluidObjectTest = { read: sceneManagedFluidObjectReadControls, effective: sceneManagedFluidObjectEffectivePoolControls, reflect: sceneManagedFluidObjectReflectForm, maxCornerRadius: sceneManagedFluidObjectMaxCornerRadius };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+
+  const api = context.window.__managedFluidObjectTest;
+  const cornerRadius = { value: "1", max: "1", disabled: false };
+  const form = {
+    dataset: {},
+    elements: {
+      paused: { checked: false, disabled: false },
+      object: { value: "Sphere", disabled: false },
+      gravity: { checked: false, disabled: false },
+      densityEnabled: { checked: false, disabled: false },
+      density: { value: "0.9", disabled: false },
+      poolShape: { value: "Rounded Box", disabled: false },
+      cornerRadius,
+      poolWidth: { value: "0.5", disabled: false },
+      poolHeight: { value: "1", disabled: false },
+      poolLength: { value: "0.5", disabled: false },
+      followCamera: { checked: false, disabled: false },
+    },
+    getAttribute(name) { return name === "data-gosx-scene3d-control-subject" ? "water-main" : null; },
+    setAttribute() {},
+    querySelector() { return null; },
+    closest() { return null; },
+  };
+
+  assert.equal(api.maxCornerRadius(0.5, 0.5), 0.45);
+  assert.equal(api.maxCornerRadius(2, 2), 1.95);
+  const controls = api.read(form);
+  assert.equal(controls.cornerRadius, 0.45);
+  const effective = api.effective(controls);
+  assert.equal(effective.poolShape, "Rounded Box");
+  assert.equal(effective.poolWidth, 0.5);
+  assert.equal(effective.poolHeight, 1);
+  assert.equal(effective.poolLength, 0.5);
+  assert.equal(effective.cornerRadius, 0.45);
+
+  api.reflect(form, controls, true, { interaction: { profile: "water-object-drop-orbit" } }, { waterSystems: [{ id: "water-main" }] });
+  assert.equal(cornerRadius.max, "0.45");
+  assert.equal(cornerRadius.value, "0.45");
+  assert.equal(form.dataset.cornerRadius, "0.45");
+  assert.equal(form.dataset.maxCornerRadius, "0.45");
+
+  cornerRadius.value = "0.1";
+  api.reflect(form, Object.assign({}, controls, { poolShape: "Box", cornerRadius: 0.45 }), true, { interaction: { profile: "water-object-drop-orbit" } }, { waterSystems: [{ id: "water-main" }] });
+  assert.equal(cornerRadius.value, "0.1");
+  assert.equal(form.dataset.cornerRadius, "0");
+  assert.equal(form.dataset.maxCornerRadius, "0");
+});
+
+
+test("Scene3D managed fluid controls sync previous position on pool resize like upstream", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const document = {
+    documentElement: { setAttribute() {} },
+    getElementById() { return null; },
+    querySelector() { return null; },
+  };
+  let nowMs = 0;
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    SCENE_CMD_SET_TRANSFORM: 2,
+    SCENE_CMD_SET_PARTICLES: 6,
+    SCENE_CMD_SET_MODELS: 10,
+    document,
+    performance: { now: () => nowMs },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    window: { document },
+  });
+  vm.runInContext(
+    controlsSource + "\nwindow.__managedFluidPoolResizeTest = { apply: sceneManagedFluidObjectApply };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+
+  const profile = {
+    objects: {
+      Sphere: {
+        id: "float-sphere",
+        label: "Sphere",
+        objectKind: "sphere",
+        objectSubtype: "sphere",
+        objectX: 0.7,
+        objectY: -0.75,
+        objectZ: 0,
+        objectRadius: 0.25,
+        objectHalfSizeX: 0,
+        objectHalfSizeY: 0,
+        objectHalfSizeZ: 0,
+        buoyancyRadius: 0.25,
+        floorClearance: 0.25,
+        xLimitRadius: 0.25,
+        zLimitRadius: 0.25,
+        meshYOffset: 0,
+        objectDisplacementScale: 1,
+        objectDisplacementSpheres: [],
+      },
+    },
+  };
+  const attrs = {};
+  const form = {
+    dataset: {},
+    elements: {
+      paused: { checked: false, disabled: false },
+      object: { value: "Sphere", disabled: false },
+      gravity: { checked: false, disabled: false },
+      densityEnabled: { checked: false, disabled: false },
+      density: { value: "0.9", disabled: false },
+      poolShape: { value: "Box", disabled: false },
+      cornerRadius: { value: "0.1", max: "1", disabled: false },
+      poolWidth: { value: "1", disabled: false },
+      poolHeight: { value: "1", disabled: false },
+      poolLength: { value: "1", disabled: false },
+      followCamera: { checked: false, disabled: false },
+    },
+    getAttribute(name) {
+      if (name === "data-gosx-scene3d-control-data") return JSON.stringify(profile);
+      if (name === "data-gosx-scene3d-control-subject") return "water-main";
+      return "";
+    },
+    setAttribute(name, value) { attrs[name] = String(value); },
+    querySelector() { return null; },
+    closest() { return null; },
+  };
+  const sceneState = { waterSystems: [{ id: "water-main" }], models: [] };
+  let applied = [];
+  const applyCommands = commands => { applied = commands; };
+  const waterPayload = () => applied.find(command => command.kind === 6).data.waterSystems[0];
+
+  assert.equal(context.window.__managedFluidPoolResizeTest.apply(form, sceneState, applyCommands, {}), true);
+  let water = waterPayload();
+  assert.equal(water.poolShape, "Box");
+  assert.equal(water.objectX, 0.7);
+  assert.equal(water.objectY, -0.75);
+  assert.equal(water.objectPreviousSet, false);
+
+  form.__gosxScene3DFluidObjectState.objects.Sphere.velocity.y = -3;
+  nowMs = 50;
+  form.elements.gravity.checked = true;
+  form.elements.poolShape.value = "Rounded Box";
+  form.elements.poolWidth.value = "0.5";
+  form.elements.poolHeight.value = "0.3";
+  form.elements.poolLength.value = "0.5";
+  form.elements.cornerRadius.value = "0.45";
+
+  assert.equal(context.window.__managedFluidPoolResizeTest.apply(form, sceneState, applyCommands, {}), true);
+  water = waterPayload();
+  assert.equal(water.poolShape, "Rounded Box");
+  assert.equal(water.poolWidth, 0.5);
+  assert.equal(water.poolHeight, 0.3);
+  assert.equal(water.poolLength, 0.5);
+  assert.equal(water.objectX, 0.25);
+  assert.ok(Math.abs(water.objectY - -0.05) < 1e-9);
+  assert.equal(water.objectPreviousSet, false);
+  assert.equal(water.objectPreviousX, 0);
+  assert.equal(water.objectPreviousY, 0);
+  assert.equal(water.objectPreviousZ, 0);
+  assert.equal(form.__gosxScene3DFluidObjectState.objects.Sphere.velocity.y, 0);
+});
+
+
+test("Scene3D managed fluid controls queue outgoing object displacement when selection becomes None", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const document = {
+    documentElement: { setAttribute() {} },
+    getElementById() { return null; },
+    querySelector() { return null; },
+  };
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    SCENE_CMD_SET_TRANSFORM: 2,
+    SCENE_CMD_SET_PARTICLES: 6,
+    SCENE_CMD_SET_MODELS: 10,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    window: { document },
+  });
+  vm.runInContext(
+    controlsSource + "\nwindow.__managedFluidObjectExitTest = { apply: sceneManagedFluidObjectApply };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+
+  const profile = {
+    hiddenY: 10,
+    inactiveY: 10,
+    objects: {
+      Sphere: {
+        id: "float-sphere",
+        label: "Sphere",
+        objectKind: "sphere",
+        objectHitTest: "sphere",
+        objectX: -0.4,
+        objectY: -0.75,
+        objectZ: 0.2,
+        objectRadius: 0.25,
+        objectHalfSizeX: 0,
+        objectHalfSizeY: 0,
+        objectHalfSizeZ: 0,
+        buoyancyRadius: 0.25,
+        floorClearance: 0.25,
+        xLimitRadius: 0.25,
+        zLimitRadius: 0.25,
+        meshYOffset: 0,
+        objectDisplacementScale: 1,
+        objectDisplacementSpheres: [],
+        mesh: { x: -0.4, y: -0.75, z: 0.2, visible: true },
+      },
+    },
+  };
+  const form = {
+    dataset: {},
+    elements: {
+      paused: { checked: true, disabled: false },
+      object: { value: "Sphere", disabled: false },
+      gravity: { checked: false, disabled: false },
+      densityEnabled: { checked: false, disabled: false },
+      density: { value: "0.9", disabled: false },
+      poolShape: { value: "Box", disabled: false },
+      cornerRadius: { value: "0.1", max: "1", disabled: false },
+      poolWidth: { value: "1", disabled: false },
+      poolHeight: { value: "1", disabled: false },
+      poolLength: { value: "1", disabled: false },
+      followCamera: { checked: false, disabled: false },
+    },
+    getAttribute(name) {
+      if (name === "data-gosx-scene3d-control-data") return JSON.stringify(profile);
+      if (name === "data-gosx-scene3d-control-subject") return "water-main";
+      return "";
+    },
+    setAttribute() {},
+    querySelector() { return null; },
+    closest() { return null; },
+  };
+  const sceneState = { waterSystems: [{ id: "water-main" }], models: [] };
+  let applied = [];
+  const applyCommands = commands => { applied = commands; };
+  const waterPayload = () => applied.find(command => command.kind === 6).data.waterSystems[0];
+
+  assert.equal(context.window.__managedFluidObjectExitTest.apply(form, sceneState, applyCommands, {}), true);
+  assert.equal(waterPayload().activeObject, "Sphere");
+  assert.equal(Array.isArray(waterPayload().objectDisplacementEvents), false);
+
+  form.elements.object.value = "None";
+  assert.equal(context.window.__managedFluidObjectExitTest.apply(form, sceneState, applyCommands, {}), true);
+  const water = waterPayload();
+  assert.equal(water.activeObject, "None");
+  assert.equal(water.objectPreviousSet, false);
+  assert.equal(water.objectDisplacementEvents.length, 1);
+  const event = water.objectDisplacementEvents[0];
+  assert.equal(event.id, 1);
+  assert.equal(event.activeObject, "Sphere");
+  assert.equal(event.objectKind, "sphere");
+  assert.equal(event.objectPreviousSet, true);
+  assert.equal(event.objectPreviousX, -0.4);
+  assert.equal(event.objectPreviousY, -0.75);
+  assert.equal(event.objectPreviousZ, 0.2);
+  assert.equal(event.objectX, -0.4);
+  assert.equal(event.objectY, 10);
+  assert.equal(event.objectZ, 0.2);
+  assert.equal(event.objectRadius, 0.25);
+});
+
+
+test("Scene3D managed fluid object hit policy matches upstream water objects", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const document = {
+    documentElement: { setAttribute() {} },
+    querySelector() { return null; },
+  };
+  const calls = { sphere: 0, box: 0, pick: 0 };
+  let pickReturn = { x: 9, y: 8, z: 7 };
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    sceneScreenToRay() {
+      return { origin: { x: 0, y: 0, z: 1 }, direction: { x: 0, y: 0, z: -1 } };
+    },
+    sceneRayIntersectSphere(_ray, center, radius) {
+      calls.sphere++;
+      return { x: center.x, y: center.y, z: center.z + radius, distance: 1 };
+    },
+    sceneRayIntersectAABB(_ray, min) {
+      calls.box++;
+      return { x: min.x, y: min.y, z: min.z, distance: 1 };
+    },
+    sceneRaycastPickGroup(_ray, objects) {
+      calls.pick++;
+      if (!pickReturn) return null;
+      return {
+        object: objects[0],
+        distance: 0.5,
+        point: pickReturn,
+        worldPosition: pickReturn,
+      };
+    },
+    window: { document },
+  });
+  vm.runInContext(
+    controlsSource + "\nwindow.__managedFluidHitTest = { active: sceneManagedFluidObjectActiveObjectHit, mode: sceneManagedFluidObjectHitTestMode };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+  const api = context.window.__managedFluidHitTest;
+  const profile = {
+    objects: {
+      TorusKnot: {
+        id: "float-torus",
+        label: "TorusKnot",
+        objectKind: "compound",
+        objectSubtype: "torusKnot",
+        objectHitTest: "mesh",
+        objectX: -0.4,
+        objectY: -0.87,
+        objectZ: 0.2,
+        objectRadius: 0.31,
+        buoyancyRadius: 0.31,
+        floorClearance: 0.13,
+        xLimitRadius: 0.31,
+        zLimitRadius: 0.31,
+        meshYOffset: 0,
+      },
+      "Rubber Duck": {
+        id: "float-duck",
+        label: "Rubber Duck",
+        objectKind: "compound",
+        objectSubtype: "duck",
+        objectHitTest: "sphere",
+        objectX: 0.4,
+        objectY: -0.735,
+        objectZ: -0.2,
+        objectRadius: 0.25,
+        buoyancyRadius: 0.25,
+        floorClearance: 0.265,
+        xLimitRadius: 0.25,
+        zLimitRadius: 0.25,
+        meshYOffset: 0,
+      },
+    },
+  };
+  const form = {};
+  const canvas = {
+    tagName: "canvas",
+    getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
+  };
+  const sceneState = { camera: { x: 0, y: 0, z: 4, rotationX: 0, rotationY: 0, rotationZ: 0 } };
+  const event = { clientX: 50, clientY: 50 };
+  const bundle = {
+    camera: sceneState.camera,
+    meshObjects: [{ id: "float-torus" }],
+    worldMeshPositions: [0],
+    objects: [{ id: "float-duck" }],
+    worldPositions: [0],
+  };
+
+  assert.equal(api.mode(profile.objects.TorusKnot), "mesh");
+  const torusHit = api.active(form, canvas, sceneState, { object: "TorusKnot" }, profile, event, { getBundle() { return bundle; } });
+  assert.deepEqual(torusHit.point, { x: 9, y: 8, z: 7 });
+  assert.equal(calls.sphere, 0, "torus mesh hit must not be claimed by the bounding sphere fallback");
+  assert.equal(calls.pick, 1);
+
+  pickReturn = null;
+  const torusMiss = api.active(form, canvas, sceneState, { object: "TorusKnot" }, profile, event, { getBundle() { return bundle; } });
+  assert.equal(torusMiss, null);
+  assert.equal(calls.sphere, 0, "torus mesh misses must stay misses like upstream Raycaster misses");
+  assert.equal(calls.pick, 2);
+
+  pickReturn = { x: 9, y: 8, z: 7 };
+  calls.pick = 0;
+  calls.sphere = 0;
+  assert.equal(api.mode(profile.objects["Rubber Duck"]), "sphere");
+  const duckHit = api.active(form, canvas, sceneState, { object: "Rubber Duck" }, profile, event, { getBundle() { return bundle; } });
+  assert.equal(duckHit.point.x, 0.4);
+  assert.equal(duckHit.point.y, -0.735);
+  assert.ok(Math.abs(duckHit.point.z - 0.05) < 0.000001, "duck hit z=" + duckHit.point.z);
+  assert.equal(calls.sphere, 1);
+  assert.equal(calls.pick, 0, "duck uses the upstream bounding-sphere hit test instead of mesh picking");
+});
+
+
+test("Scene3D managed fluid interactions stop camera inertia before consuming water events", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const document = {
+    documentElement: { setAttribute() {} },
+    querySelector() { return null; },
+  };
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    sceneScreenToRay() {
+      return { origin: { x: 0, y: 1, z: 1 }, direction: { x: 0, y: -1, z: -1 } };
+    },
+    sceneRayIntersectYPlane() {
+      return { x: 0, y: 0, z: 0 };
+    },
+    window: { document },
+  });
+  vm.runInContext(
+    controlsSource + "\nwindow.__managedFluidStartTest = { start: sceneManagedFluidObjectStartInteraction };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+  const api = context.window.__managedFluidStartTest;
+  const profile = { interaction: { profile: "water-object-drop-orbit", pointerDrops: true }, objects: {} };
+  const form = {
+    elements: {
+      paused: { checked: false, disabled: false },
+      object: { value: "None", disabled: false },
+      gravity: { checked: false, disabled: false },
+      densityEnabled: { checked: false, disabled: false },
+      density: { value: "0.9", disabled: false },
+      poolShape: { value: "Box", disabled: false },
+      cornerRadius: { value: "0.1", disabled: false },
+      poolWidth: { value: "1", disabled: false },
+      poolHeight: { value: "1", disabled: false },
+      poolLength: { value: "1", disabled: false },
+      followCamera: { checked: false, disabled: false },
+    },
+    getAttribute(name) {
+      return name === "data-gosx-scene3d-control-data" ? JSON.stringify(profile) : null;
+    },
+  };
+  const canvas = {
+    tagName: "canvas",
+    getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
+  };
+  const sceneState = { camera: { x: 0, y: 0, z: 4 }, waterSystems: [{ id: "water-main" }] };
+  let stopCalls = 0;
+  const mode = api.start(
+    form,
+    canvas,
+    sceneState,
+    { clientX: 50, clientY: 50 },
+    { stopCameraInertia() { stopCalls++; return true; } },
+  );
+  assert.equal(mode, "AddDrops");
+  assert.equal(stopCalls, 1);
+  assert.equal(form.__gosxScene3DFluidObjectState.pointerMode, "AddDrops");
+});
+
+
+test("Scene3D managed fluid L key light direction points toward camera like upstream", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const document = { documentElement: { setAttribute() {} }, querySelector() { return null; } };
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) { const num = Number(value); return Number.isFinite(num) ? num : fallback; },
+    sceneRenderCamera(camera) { return camera; },
+    sceneRotatePoint(point, rotationX, rotationY, rotationZ) {
+      let x = point.x;
+      let y = point.y;
+      let z = point.z;
+      const sinX = Math.sin(rotationX);
+      const cosX = Math.cos(rotationX);
+      let nextY = y * cosX - z * sinX;
+      let nextZ = y * sinX + z * cosX;
+      y = nextY;
+      z = nextZ;
+      const sinY = Math.sin(rotationY);
+      const cosY = Math.cos(rotationY);
+      let nextX = x * cosY + z * sinY;
+      nextZ = -x * sinY + z * cosY;
+      x = nextX;
+      z = nextZ;
+      const sinZ = Math.sin(rotationZ);
+      const cosZ = Math.cos(rotationZ);
+      nextX = x * cosZ - y * sinZ;
+      nextY = x * sinZ + y * cosZ;
+      return { x: nextX, y: nextY, z };
+    },
+    window: { document },
+  });
+  vm.runInContext(controlsSource + "\nwindow.__managedFluidLightTest = { light: sceneManagedFluidObjectCameraLightDirection, key: sceneManagedFluidObjectCameraLightKey, changed: sceneManagedFluidObjectLightCameraChanged, dragNormal: sceneManagedFluidObjectCameraDragNormal, zoom: sceneManagedFluidObjectZoomCameraByScale, wheel: sceneManagedFluidObjectZoomCameraByWheel };", context, { filename: "19b-scene-control-forms.js" });
+  const api = context.window.__managedFluidLightTest;
+  const pitched = api.light({ rotationX: Math.PI / 6, rotationY: 0, rotationZ: 0 });
+  assert.ok(Math.abs(pitched.x - 0) < 0.000001, "pitched x=" + pitched.x);
+  assert.ok(Math.abs(pitched.y - 0.5) < 0.000001, "pitched y=" + pitched.y);
+  assert.ok(Math.abs(pitched.z + Math.sqrt(3) / 2) < 0.000001, "pitched z=" + pitched.z);
+  const yawed = api.light({ rotationX: 0, rotationY: Math.PI / 2, rotationZ: 0 });
+  assert.ok(Math.abs(yawed.x + 1) < 0.000001, "yawed x=" + yawed.x);
+  assert.ok(Math.abs(yawed.y - 0) < 0.000001, "yawed y=" + yawed.y);
+  assert.ok(Math.abs(yawed.z - 0) < 0.000001, "yawed z=" + yawed.z);
+  const orbitPitched = api.light(null, { pitch: Math.PI / 6, yaw: 0 });
+  assert.ok(Math.abs(orbitPitched.x - 0) < 0.000001, "orbit pitched x=" + orbitPitched.x);
+  assert.ok(Math.abs(orbitPitched.y - 0.5) < 0.000001, "orbit pitched y=" + orbitPitched.y);
+  assert.ok(Math.abs(orbitPitched.z + Math.sqrt(3) / 2) < 0.000001, "orbit pitched z=" + orbitPitched.z);
+  const orbitYawed = api.light(null, { pitch: 0, yaw: Math.PI / 2 });
+  assert.ok(Math.abs(orbitYawed.x - 1) < 0.000001, "orbit yawed x=" + orbitYawed.x);
+  assert.ok(Math.abs(orbitYawed.y - 0) < 0.000001, "orbit yawed y=" + orbitYawed.y);
+  assert.ok(Math.abs(orbitYawed.z - 0) < 0.000001, "orbit yawed z=" + orbitYawed.z);
+  assert.equal(api.key({ rotationX: Math.PI / 6, rotationY: 0, rotationZ: 0 }), "0.523599|0.000000|0.000000");
+  assert.equal(api.changed({ lightCameraKey: "" }, { camera: { rotationX: 0, rotationY: 0, rotationZ: 0 } }, {}), true);
+  assert.equal(api.changed({ lightCameraKey: "0.000000|0.000000|0.000000" }, { camera: { rotationX: 0, rotationY: 0, rotationZ: 0 } }, {}), false);
+  const normal = api.dragNormal(
+    { x: 10, y: 20, z: 30, rotationX: 0, rotationY: Math.PI / 2, rotationZ: 0 },
+    { x: 9, y: 19, z: 29 },
+  );
+  assert.ok(Math.abs(normal.x - 1) < 0.000001, "drag normal x=" + normal.x);
+  assert.ok(Math.abs(normal.y - 0) < 0.000001, "drag normal y=" + normal.y);
+  assert.ok(Math.abs(normal.z - 0) < 0.000001, "drag normal z=" + normal.z);
+  const fallbackNormal = vm.runInContext(
+    "(function(){ const saved = sceneRotatePoint; sceneRotatePoint = null; try { return window.__managedFluidLightTest.dragNormal({ x: 0, y: 0, z: 4, rotationX: 0, rotationY: 0, rotationZ: 0 }, { x: 0, y: 0, z: 0 }); } finally { sceneRotatePoint = saved; } })()",
+    context,
+  );
+  assert.ok(Math.abs(fallbackNormal.z + 1) < 0.000001, "fallback drag normal z=" + fallbackNormal.z);
+  let nextCamera = null;
+  const zoomed = api.zoom({ camera: { x: 0, y: -0.5, z: 4, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 45 } }, {
+    getCamera() { return { x: 0, y: -0.5, z: 4, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 45 }; },
+    getControlTarget() { return { x: 0, y: -0.5, z: 0 }; },
+    setCamera(camera) { nextCamera = camera; return true; },
+  }, 0.5, {});
+  assert.equal(zoomed, true);
+  assert.ok(Math.abs(nextCamera.z - 2) < 0.000001, "zoomed z=" + nextCamera.z);
+  nextCamera = null;
+  const wheelZoomed = api.wheel({ camera: { x: 0, y: -0.5, z: 4, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 45 } }, {
+    getCamera() { return { x: 0, y: -0.5, z: 4, rotationX: 0, rotationY: 0, rotationZ: 0, fov: 45 }; },
+    getControlTarget() { return { x: 0, y: -0.5, z: 0 }; },
+    setCamera(camera) { nextCamera = camera; return true; },
+  }, { deltaY: Math.log(2) * 1000 }, {});
+  assert.equal(wheelZoomed, true);
+  assert.ok(Math.abs(nextCamera.z - 8) < 0.000001, "wheel zoomed z=" + nextCamera.z);
 });

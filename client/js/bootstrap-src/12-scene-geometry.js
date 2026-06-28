@@ -176,6 +176,166 @@
     return out;
   }
 
+  function scenePushMeshVertex(out, position, normal, uv) {
+    out.positions.push(position.x, position.y, position.z);
+    out.normals.push(normal.x, normal.y, normal.z);
+    out.uvs.push(uv.x, uv.y);
+    out.count += 1;
+  }
+
+  function scenePushMeshTriangle(out, a, b, c, normal, uva, uvb, uvc) {
+    scenePushMeshVertex(out, a, normal, uva || { x: 0, y: 0 });
+    scenePushMeshVertex(out, b, normal, uvb || { x: 1, y: 0 });
+    scenePushMeshVertex(out, c, normal, uvc || { x: 1, y: 1 });
+  }
+
+  function sceneFinalizePrimitiveMesh(out) {
+    if (!out || out.count < 3) return null;
+    return {
+      positions: new Float32Array(out.positions),
+      normals: new Float32Array(out.normals),
+      uvs: new Float32Array(out.uvs),
+      tangents: new Float32Array(0),
+      count: out.count,
+    };
+  }
+
+  function scenePrimitiveMeshBuilder() {
+    return { positions: [], normals: [], uvs: [], count: 0 };
+  }
+
+  function boxTriangleMesh(object) {
+    const vertices = boxVertices(object.width, object.height, object.depth);
+    const out = scenePrimitiveMeshBuilder();
+    const uv0 = { x: 0, y: 0 };
+    const uv1 = { x: 1, y: 0 };
+    const uv2 = { x: 1, y: 1 };
+    const uv3 = { x: 0, y: 1 };
+    const faces = [
+      { normal: { x: 0, y: 0, z: -1 }, indices: [0, 1, 2, 3] },
+      { normal: { x: 0, y: 0, z: 1 }, indices: [5, 4, 7, 6] },
+      { normal: { x: -1, y: 0, z: 0 }, indices: [4, 0, 3, 7] },
+      { normal: { x: 1, y: 0, z: 0 }, indices: [1, 5, 6, 2] },
+      { normal: { x: 0, y: 1, z: 0 }, indices: [3, 2, 6, 7] },
+      { normal: { x: 0, y: -1, z: 0 }, indices: [4, 5, 1, 0] },
+    ];
+    for (let i = 0; i < faces.length; i += 1) {
+      const face = faces[i];
+      const a = vertices[face.indices[0]];
+      const b = vertices[face.indices[1]];
+      const c = vertices[face.indices[2]];
+      const d = vertices[face.indices[3]];
+      scenePushMeshTriangle(out, a, b, c, face.normal, uv0, uv1, uv2);
+      scenePushMeshTriangle(out, a, c, d, face.normal, uv0, uv2, uv3);
+    }
+    return sceneFinalizePrimitiveMesh(out);
+  }
+
+  function planeTriangleMesh(object) {
+    const vertices = boxVertices(object.width, 0, object.depth).slice(0, 4);
+    const out = scenePrimitiveMeshBuilder();
+    const normal = { x: 0, y: 1, z: 0 };
+    scenePushMeshTriangle(out, vertices[0], vertices[1], vertices[2], normal, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 });
+    scenePushMeshTriangle(out, vertices[0], vertices[2], vertices[3], normal, { x: 0, y: 1 }, { x: 1, y: 0 }, { x: 0, y: 0 });
+    return sceneFinalizePrimitiveMesh(out);
+  }
+
+  function sphereTriangleMesh(object) {
+    const radius = scenePositiveNumber(object && object.radius, 0.5);
+    const segments = scenePrimitiveSegmentResolution(object && object.segments, 32, 6, 128);
+    const rings = Math.max(3, Math.floor(segments / 2));
+    const out = scenePrimitiveMeshBuilder();
+    function point(lat, lon) {
+      const theta = Math.PI * lat / rings;
+      const phi = Math.PI * 2 * lon / segments;
+      const sinTheta = Math.sin(theta);
+      const normal = {
+        x: Math.cos(phi) * sinTheta,
+        y: Math.cos(theta),
+        z: Math.sin(phi) * sinTheta,
+      };
+      return {
+        position: { x: normal.x * radius, y: normal.y * radius, z: normal.z * radius },
+        normal,
+        uv: { x: lon / segments, y: lat / rings },
+      };
+    }
+    for (let lat = 0; lat < rings; lat += 1) {
+      for (let lon = 0; lon < segments; lon += 1) {
+        const nextLon = lon + 1;
+        const a = point(lat, lon);
+        const b = point(lat + 1, lon);
+        const c = point(lat + 1, nextLon);
+        const d = point(lat, nextLon);
+        if (lat > 0) {
+          scenePushMeshVertex(out, a.position, a.normal, a.uv);
+          scenePushMeshVertex(out, b.position, b.normal, b.uv);
+          scenePushMeshVertex(out, d.position, d.normal, d.uv);
+        }
+        if (lat < rings - 1) {
+          scenePushMeshVertex(out, d.position, d.normal, d.uv);
+          scenePushMeshVertex(out, b.position, b.normal, b.uv);
+          scenePushMeshVertex(out, c.position, c.normal, c.uv);
+        }
+      }
+    }
+    return sceneFinalizePrimitiveMesh(out);
+  }
+
+  function torusTriangleMesh(object) {
+    const radialSegments = scenePrimitiveSegmentResolution(object && object.radialSegments, 32, 3, 128);
+    const tubularSegments = scenePrimitiveSegmentResolution(object && object.tubularSegments, 16, 3, 64);
+    const radius = scenePositiveNumber(object && object.radius, 0.7);
+    const tube = scenePositiveNumber(object && object.tube, 0.3);
+    const out = scenePrimitiveMeshBuilder();
+    function point(i, j) {
+      const u = Math.PI * 2 * i / radialSegments;
+      const v = Math.PI * 2 * j / tubularSegments;
+      const cu = Math.cos(u);
+      const su = Math.sin(u);
+      const cv = Math.cos(v);
+      const sv = Math.sin(v);
+      const r = radius + tube * cv;
+      const normal = { x: cu * cv, y: sv, z: su * cv };
+      return {
+        position: { x: r * cu, y: tube * sv, z: r * su },
+        normal,
+        uv: { x: i / radialSegments, y: j / tubularSegments },
+      };
+    }
+    for (let i = 0; i < radialSegments; i += 1) {
+      for (let j = 0; j < tubularSegments; j += 1) {
+        const a = point(i, j);
+        const b = point(i + 1, j);
+        const c = point(i + 1, j + 1);
+        const d = point(i, j + 1);
+        scenePushMeshVertex(out, a.position, a.normal, a.uv);
+        scenePushMeshVertex(out, b.position, b.normal, b.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
+        scenePushMeshVertex(out, a.position, a.normal, a.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
+        scenePushMeshVertex(out, d.position, d.normal, d.uv);
+      }
+    }
+    return sceneFinalizePrimitiveMesh(out);
+  }
+
+  function scenePrimitiveTriangleMesh(object) {
+    switch (object && object.kind) {
+      case "box":
+      case "cube":
+        return boxTriangleMesh(object);
+      case "plane":
+        return planeTriangleMesh(object);
+      case "sphere":
+        return sphereTriangleMesh(object);
+      case "torus":
+        return torusTriangleMesh(object);
+      default:
+        return null;
+    }
+  }
+
   function lineSegments(object) {
     const points = Array.isArray(object && object.points) ? object.points : [];
     const segments = Array.isArray(object && object.lineSegments) ? object.lineSegments : [];

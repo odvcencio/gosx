@@ -61,6 +61,7 @@ func main() {
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
 		ctx.AddHead(server.NavigationScript())
+		ctx.AddHead(gosx.RawHTML(`<link rel="icon" href="data:,">`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
@@ -77,7 +78,20 @@ func main() {
 	app.EnableNavigation()
 	app.Use(sessions.Middleware)
 	app.Use(authn.Middleware)
-	app.Use(sessions.Protect)
+	// CSRF-protect unsafe requests, but exempt the telemetry beacon: it is
+	// append-only, rate-limited, and sanitized (no auth-sensitive mutation), and
+	// it POSTs without a CSRF token — so blanket Protect would 403 every client
+	// error/telemetry report (and silently drop WebGPU crash reports).
+	app.Use(func(next http.Handler) http.Handler {
+		protected := sessions.Protect(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == server.ClientEventsRoute {
+				next.ServeHTTP(w, r)
+				return
+			}
+			protected.ServeHTTP(w, r)
+		})
+	})
 	app.SetPublicDir(filepath.Join(root, "public"))
 	app.Mount("/auth/magic-link/request", magicLinks.RequestHandler())
 	app.Mount("/auth/magic-link", magicLinks.CallbackHandler())

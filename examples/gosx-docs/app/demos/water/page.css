@@ -1,0 +1,290 @@
+.water-demo {
+  position: relative;
+  flex: 0 0 calc(100vh - 91px) !important;
+  height: calc(100vh - 91px) !important;
+  min-height: 0;
+  overflow: hidden;
+  background: #061113;
+  color: #eef8f3;
+}
+
+main.water-demo {
+  flex: 0 0 calc(100vh - 91px) !important;
+  height: calc(100vh - 91px) !important;
+}
+
+.water-demo__scene {
+  position: absolute !important;
+  top: 0 !important;
+  right: min(20rem, calc(100vw - 3.5rem)) !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: auto !important;
+  height: 100% !important;
+}
+
+.water-demo__scene canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.water-demo__help {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  width: min(20rem, calc(100vw - 3.5rem));
+  padding: 1.1rem 1.25rem 1.4rem 1rem;
+  overflow: auto;
+  background: rgba(7, 12, 14, 0.78);
+  color: #f4f8f1;
+  backdrop-filter: blur(12px);
+  transform: translateX(0);
+  transition: transform 180ms ease;
+}
+
+.water-demo__help[data-gosx-scene3d-panel-open="true"],
+.water-demo__help[data-gosx-scene3d-panel-open="false"] {
+  transform: translateX(0);
+}
+
+.water-demo__help h1 {
+  margin: 0 0 0.75rem;
+  font: italic 700 1.9rem/1 Georgia, serif;
+  letter-spacing: 0;
+}
+
+.water-demo__help h2 {
+  margin: 1rem 0 0.45rem;
+  font: italic 700 1.05rem/1.1 Georgia, serif;
+  letter-spacing: 0;
+}
+
+.water-demo__help p,
+.water-demo__help li {
+  color: #e3ece8;
+  font-size: 0.82rem;
+  line-height: 1.38;
+}
+
+.water-demo__help p {
+  margin: 0.35rem 0;
+}
+
+.water-demo__help ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.water-demo__help a {
+  color: #9af0d8;
+}
+
+.water-demo__help-toggle {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 5;
+  display: none;
+  place-items: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  border: 1px solid rgba(205, 236, 232, 0.32);
+  border-radius: 6px;
+  background: rgba(5, 13, 16, 0.82);
+  color: #f7fbf3;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.water-demo__help-toggle[aria-expanded="true"] {
+  right: min(20.75rem, calc(100vw - 2.75rem));
+}
+
+.water-demo__controls {
+  position: absolute;
+  top: clamp(1rem, 3vh, 1.6rem);
+  left: clamp(1rem, 2vw, 1.5rem);
+  z-index: 3;
+  display: grid;
+  width: min(17.5rem, calc(100vw - 2rem));
+  padding: 0.5rem;
+  border: 1px solid rgba(205, 236, 232, 0.28);
+  border-radius: 8px;
+  background: rgba(5, 13, 16, 0.72);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(12px);
+}
+
+.water-demo__controls-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #f5f7ef;
+  font-size: 0.83rem;
+  text-transform: uppercase;
+}
+
+.water-demo__controls-toggle {
+  min-height: 1.9rem;
+  padding: 0 0.45rem;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(127, 229, 204, 0.12);
+  color: #f5f7ef;
+  font: inherit;
+  font-weight: 850;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.water-demo__controls-toggle::before {
+  content: "+";
+  display: inline-block;
+  width: 1rem;
+  color: #88ead3;
+}
+
+.water-demo__controls[data-gosx-scene3d-control-open="true"] .water-demo__controls-toggle::before {
+  content: "-";
+}
+
+.water-demo__controls-body {
+  display: grid;
+  gap: 0.62rem;
+  padding-top: 0.62rem;
+}
+
+.water-demo__controls[data-gosx-scene3d-control-open="false"] .water-demo__controls-body {
+  display: none;
+}
+
+.water-demo__control-group {
+  display: grid;
+  gap: 0.62rem;
+  margin: 0;
+  padding: 0.62rem;
+  border: 1px solid rgba(196, 233, 226, 0.18);
+  border-radius: 6px;
+  background: rgba(2, 10, 12, 0.34);
+}
+
+.water-demo__control-group legend {
+  padding: 0 0.28rem;
+  color: #88ead3;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.water-demo__controls output {
+  color: #88ead3;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.water-demo__controls label {
+  display: grid;
+  gap: 0.34rem;
+  color: #d9ebe7;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.water-demo__controls select,
+.water-demo__controls input[type="range"] {
+  width: 100%;
+}
+
+.water-demo__controls select {
+  min-height: 2rem;
+  border: 1px solid rgba(196, 233, 226, 0.26);
+  border-radius: 6px;
+  background: rgba(7, 21, 25, 0.94);
+  color: #f6faf6;
+  font: inherit;
+}
+
+.water-demo__controls input[type="range"] {
+  accent-color: #73e1c7;
+}
+
+.water-demo__controls :disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.water-demo__toggle {
+  display: flex !important;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.5rem !important;
+}
+
+.water-demo__toggle input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #73e1c7;
+}
+
+.water-demo__control-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.water-demo__controls[data-density-open="false"] [data-gosx-scene3d-density-control],
+.water-demo__controls[data-rounded-open="false"] [data-gosx-scene3d-rounded-control],
+.water-demo__controls[data-rounded-open="false"] [data-gosx-scene3d-pool-boundary-control] {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .water-demo__scene {
+    right: 0 !important;
+    width: 100% !important;
+  }
+
+  .water-demo__controls {
+    top: 0.75rem;
+    left: 0.75rem;
+    width: min(15rem, calc(100vw - 1.5rem));
+    max-height: 46vh;
+    overflow: auto;
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+
+  .water-demo[data-gosx-scene3d-active-panel="water-demo-help"] .water-demo__controls {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-0.5rem);
+  }
+
+  .water-demo__help {
+    width: min(16rem, calc(100vw - 3.5rem));
+    transform: translateX(100%);
+  }
+
+  .water-demo__help[data-gosx-scene3d-panel-open="true"] {
+    transform: translateX(0);
+  }
+
+  .water-demo__help[data-gosx-scene3d-panel-open="false"] {
+    transform: translateX(100%);
+  }
+
+  .water-demo__help-toggle {
+    display: grid;
+  }
+
+  .water-demo__help-toggle[aria-expanded="true"] {
+    right: min(16.75rem, calc(100vw - 2.75rem));
+  }
+
+}

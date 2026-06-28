@@ -1170,6 +1170,150 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererAllowsScene3DComposableComputeParticlesByDefault(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D>
+		<ComputeParticles id="spark-field" count={128} />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine-capabilities="canvas webgpu webgl animation"`) {
+		t.Fatalf("expected default Scene3D GPU capabilities in mount shell %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"webgpu"`,
+		`"computeParticles": [`,
+		`"id": "spark-field"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
+		}
+	}
+}
+
+func TestDefaultFileRendererAllowsScene3DComposableWaterSystemByDefault(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D>
+		<WaterSystem id="pool-water" resolution={256} activeObject="Sphere" objectKind="sphere" objectX={-1.28} objectY={0.22} objectZ={0.1} objectRadius={0.44} objectBobAmplitude={0.08} objectBobSpeed={1.55} objectDisplacementScale={1} objectTextureResolution={512} objectTextureResolutionMode="viewport" computeBackend="elio" materialBackend="selena" />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine-capabilities="canvas webgpu webgl animation"`) {
+		t.Fatalf("expected default Scene3D GPU capabilities in mount shell %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"webgpu"`,
+		`"backendCaps": {`,
+		`"capable": [`,
+		`"water-object-texture-pass"`,
+		`"water-simulation"`,
+		`"waterSystems": [`,
+		`"id": "pool-water"`,
+		`"objectKind": "sphere"`,
+		`"objectRadius": 0.44`,
+		`"objectTextureResolution": 512`,
+		`"objectTextureResolutionMode": "viewport"`,
+		`"computeBackend": "elio"`,
+		`"materialBackend": "selena"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
+		}
+	}
+}
+
+func TestDefaultFileRendererAnnotatesScene3DComposableWaterMeshShadowBackendCaps(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D>
+		<WaterSystem id="pool-water" resolution={256} activeObject="Sphere" objectKind="sphere" objectTextureResolutionMode="viewport" objectShadowResolution={1024} objectMeshShadowVertexWGSL="vertex" objectMeshShadowFragmentWGSL="fragment" />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	_, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"water-object-mesh-shadow-pass"`,
+		`"water-object-texture-pass"`,
+		`"water-simulation"`,
+		`"objectMeshShadowVertexWGSL": "vertex"`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
+		}
+	}
+}
+
+func TestDefaultFileRendererRejectsScene3DComposableWaterSystemWithoutWebGPU(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D capabilities="canvas">
+		<WaterSystem id="pool-water" resolution={256} />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := DefaultFileRenderer(&RouteContext{}, FilePage{FilePath: path, Pattern: "/"})
+	if err == nil {
+		t.Fatal("expected Scene3D water capability validation error")
+	}
+	if !strings.Contains(err.Error(), `Scene3D node "pool-water" requires webgpu capability`) {
+		t.Fatalf("expected WaterSystem webgpu capability error, got %v", err)
+	}
+}
+
 func TestDefaultFileRendererAllowsScene3DRequiredWebGPUCapabilities(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")
@@ -1618,7 +1762,11 @@ func Page() Node {
 				ProgramRef:         "/api/runtime/scene-program",
 				Controls:           "orbit",
 				ControlTarget:      scene.Vec3(0, 0.2, 0.8),
+				ControlRotateMode:  "pixel-degrees",
 				ControlRotateSpeed: 1.25,
+				ControlMinDistance: 2,
+				ControlMaxDistance: 10,
+				ControlPitchLimit:  1.5707788735,
 				ControlZoomSpeed:   0.9,
 				Capabilities: []string{
 					"animation",
@@ -1667,8 +1815,12 @@ func Page() Node {
 		`"pointer"`,
 		`"controls": "orbit"`,
 		`"controlTarget": {`,
+		`"controlRotateMode": "pixel-degrees"`,
 		`"controlRotateSpeed": 1.25`,
 		`"controlZoomSpeed": 0.9`,
+		`"controlMinDistance": 2`,
+		`"controlMaxDistance": 10`,
+		`"controlPitchLimit": 1.5707788735`,
 		`"rotationX": 0.18`,
 		`"rotationY": -0.3`,
 		`"near": 0.15`,
@@ -1690,6 +1842,52 @@ func Page() Node {
 	} {
 		if strings.Contains(head, snippet) {
 			t.Fatalf("did not expect transport props to leak into Scene3D payload %q", head)
+		}
+	}
+}
+
+func TestDefaultFileRendererLowersScene3DScalarControlTarget(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" controls="orbit" controlTargetX={0.25} controlTargetY={-0.5} controlTargetZ={1.75}>
+		<Camera x={1} y={2} z={3} fov={45} near={0.01} far={100} />
+	</Scene3D>
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if html := gosx.RenderHTML(node); !strings.Contains(html, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D mount shell in %q", html)
+	}
+
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	for _, snippet := range []string{
+		`"controls": "orbit"`,
+		`"controlTarget": {`,
+		`"x": 0.25`,
+		`"y": -0.5`,
+		`"z": 1.75`,
+		`"fov": 45`,
+		`"near": 0.01`,
+		`"far": 100`,
+	} {
+		if !strings.Contains(head, snippet) {
+			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
+		}
+	}
+	for _, unwanted := range []string{`controlTargetX`, `controlTargetY`, `controlTargetZ`} {
+		if strings.Contains(head, unwanted) {
+			t.Fatalf("did not expect scalar target prop %q in Scene3D runtime head %q", unwanted, head)
 		}
 	}
 }

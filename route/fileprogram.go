@@ -16,6 +16,7 @@ import (
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
 	gosxscene "m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/scene/capability"
 	"m31labs.dev/gosx/server"
 	"m31labs.dev/gosx/textlayout"
 )
@@ -624,6 +625,7 @@ func (r *fileProgramRenderer) renderScene3D(node *ir.Node, env fileRenderEnv) st
 		Name: "GoSXScene3D",
 		Capabilities: []engine.Capability{
 			engine.CapCanvas,
+			engine.CapWebGPU,
 			engine.CapWebGL,
 			engine.CapAnimation,
 		},
@@ -636,6 +638,7 @@ func (r *fileProgramRenderer) renderScene3D(node *ir.Node, env fileRenderEnv) st
 func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRenderEnv, kind engine.Kind, defaults fileEngineDefaults) string {
 	cfg, fallback := r.engineComponentConfig(node, env, kind, defaults)
 	if kind == engine.KindSurface && cfg.Name == "GoSXScene3D" {
+		cfg.Props = normalizeScene3DScalarProps(cfg.Props)
 		cfg.Props = r.applyScene3DComposableChildren(cfg.Props, node, env)
 		cfg.Props = defaultScene3DProps(cfg.Props, cfg.WASMPath)
 		cfg.Props = r.applyScene3DStyles(cfg.Props, node, env)
@@ -645,6 +648,36 @@ func (r *fileProgramRenderer) renderEngineComponent(node *ir.Node, env fileRende
 		}
 	}
 	return gosx.RenderHTML(env.engine(cfg, fallback))
+}
+
+func normalizeScene3DScalarProps(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	props := map[string]any{}
+	if err := json.Unmarshal(raw, &props); err != nil {
+		return raw
+	}
+	if _, exists := props["controlTarget"]; !exists {
+		_, hasX := props["controlTargetX"]
+		_, hasY := props["controlTargetY"]
+		_, hasZ := props["controlTargetZ"]
+		if hasX || hasY || hasZ {
+			props["controlTarget"] = map[string]any{
+				"x": numericValue(props["controlTargetX"]),
+				"y": numericValue(props["controlTargetY"]),
+				"z": numericValue(props["controlTargetZ"]),
+			}
+		}
+	}
+	delete(props, "controlTargetX")
+	delete(props, "controlTargetY")
+	delete(props, "controlTargetZ")
+	encoded, err := json.Marshal(props)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 func (r *fileProgramRenderer) renderError(err error) string {
@@ -2025,6 +2058,7 @@ func scene3DStyleTargets(sceneMap map[string]any) []scene3DStyleTarget {
 		{key: "points", tags: func(map[string]any) []string { return []string{"Points"} }},
 		{key: "instancedMeshes", tags: func(map[string]any) []string { return []string{"InstancedMesh"} }},
 		{key: "computeParticles", tags: func(map[string]any) []string { return []string{"ComputeParticles"} }},
+		{key: "waterSystems", tags: func(map[string]any) []string { return []string{"WaterSystem"} }},
 		{key: "lights", tags: scene3DLightStyleTags},
 		{key: "materials", tags: func(map[string]any) []string { return []string{"Material"} }},
 		{key: "postEffects", tags: scene3DPostEffectStyleTags},
@@ -2631,6 +2665,14 @@ func scene3DCapabilityNodes(values map[string]any) []gosxscene.IRNode {
 			Compute:      &gosxscene.IRComputeNode{},
 		})
 	}
+	for _, record := range scene3DRecordList(values["waterSystems"]) {
+		nodes = append(nodes, gosxscene.IRNode{
+			Kind:         "water-system",
+			ID:           strings.TrimSpace(fmt.Sprint(record["id"])),
+			Capabilities: []string{"webgpu"},
+			Compute:      &gosxscene.IRComputeNode{},
+		})
+	}
 	for _, record := range scene3DRecordList(values["nodes"]) {
 		kind := strings.TrimSpace(fmt.Sprint(record["kind"]))
 		if kind == "compute-particles" {
@@ -2674,9 +2716,90 @@ func (r *fileProgramRenderer) applyScene3DComposableChildren(raw json.RawMessage
 			sceneMap = map[string]any{}
 		}
 		mergeScene3DSceneMap(sceneMap, sceneValue)
+		annotateScene3DComposableBackendCaps(sceneMap)
 		props["scene"] = sceneMap
 	}
 	return marshalEngineProps(props)
+}
+
+func annotateScene3DComposableBackendCaps(sceneMap map[string]any) {
+	if len(sceneMap) == 0 {
+		return
+	}
+	if _, ok := sceneMap["backendCaps"]; ok {
+		return
+	}
+	features := scene3DComposableBackendFeatures(sceneMap)
+	if len(features) == 0 {
+		return
+	}
+	sceneMap["backendCaps"] = capability.Verdict(features, nil, capability.DefaultPolicy())
+}
+
+func scene3DComposableBackendFeatures(sceneMap map[string]any) []capability.Feature {
+	seen := map[capability.Feature]bool{}
+	for _, water := range scene3DRecordList(sceneMap["waterSystems"]) {
+		if scene3DWaterSystemUsesObjectTexturePass(water) {
+			seen[capability.FeatureWaterObjectTexturePass] = true
+		}
+		if scene3DWaterSystemUsesObjectMeshShadowPass(water) {
+			seen[capability.FeatureWaterObjectMeshShadowPass] = true
+		}
+		seen[capability.FeatureWaterSim] = true
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]capability.Feature, 0, len(seen))
+	for feature := range seen {
+		out = append(out, feature)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func scene3DWaterSystemUsesObjectTexturePass(water map[string]any) bool {
+	if numericValue(water["objectTextureResolution"]) > 0 || scene3DNonEmptyString(water["objectTextureResolutionMode"]) || numericValue(water["objectShadowResolution"]) > 0 {
+		return true
+	}
+	if scene3DWaterObjectKindUsesTexturePass(water["objectKind"]) || scene3DWaterObjectKindUsesTexturePass(water["activeObject"]) || scene3DWaterObjectKindUsesTexturePass(water["interactionObject"]) {
+		return true
+	}
+	return len(scene3DRecordList(water["objectDisplacementSpheres"])) > 0
+}
+
+func scene3DWaterSystemUsesObjectMeshShadowPass(water map[string]any) bool {
+	if scene3DNonEmptyString(water["objectMeshShadowVertexWGSL"]) ||
+		scene3DNonEmptyString(water["objectMeshShadowFragmentWGSL"]) ||
+		scene3DNonEmptyString(water["objectMeshShadowVertexWGSLRef"]) ||
+		scene3DNonEmptyString(water["objectMeshShadowFragmentWGSLRef"]) {
+		return true
+	}
+	return scene3DWaterObjectKindUsesMeshProjectedPass(water["objectKind"]) ||
+		scene3DWaterObjectKindUsesMeshProjectedPass(water["activeObject"]) ||
+		scene3DWaterObjectKindUsesMeshProjectedPass(water["interactionObject"])
+}
+
+func scene3DWaterObjectKindUsesTexturePass(value any) bool {
+	return scene3DWaterObjectKindUsesMeshProjectedPass(value)
+}
+
+func scene3DWaterObjectKindUsesMeshProjectedPass(value any) bool {
+	text := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+	if text == "" || text == "none" || text == "off" || text == "disabled" || text == "no_object" || text == "<nil>" {
+		return false
+	}
+	return strings.Contains(text, "compound") ||
+		strings.Contains(text, "mesh") ||
+		strings.Contains(text, "torus") ||
+		strings.Contains(text, "duck") ||
+		strings.Contains(text, "gltf") ||
+		strings.Contains(text, "glb")
+}
+
+func scene3DNonEmptyString(value any) bool {
+	text := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+	return text != "" && text != "none" && text != "off" && text != "disabled" && text != "<nil>"
 }
 
 func (r *fileProgramRenderer) lowerScene3DComposableChildren(children []ir.NodeID, env fileRenderEnv) map[string]any {
@@ -2754,6 +2877,8 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 		appendScene3DSceneRecord(sceneMap, "instancedMeshes", attrs)
 	case "ComputeParticles":
 		appendScene3DSceneRecord(sceneMap, "computeParticles", attrs)
+	case "WaterSystem":
+		appendScene3DSceneRecord(sceneMap, "waterSystems", attrs)
 	case "Html", "HTML":
 		attrs = cloneStringAnyMap(attrs)
 		if _, ok := attrs["html"]; !ok {
@@ -2815,7 +2940,7 @@ func (r *fileProgramRenderer) lowerScene3DComposableNode(child *ir.Node, env fil
 
 func isScene3DComposableTag(tag string) bool {
 	switch tag {
-	case "Mesh", "Decal", "Model", "Points", "InstancedMesh", "ComputeParticles",
+	case "Mesh", "Decal", "Model", "Points", "InstancedMesh", "ComputeParticles", "WaterSystem",
 		"Html", "HTML",
 		"DirectionalLight", "PointLight", "AmbientLight", "SpotLight", "HemisphereLight", "RectAreaLight", "LightProbe",
 		"Environment", "Camera", "Material", "LineBasicMaterial", "LineDashedMaterial", "CustomMaterial",
@@ -3279,7 +3404,7 @@ func appendScene3DSceneRecord(sceneMap map[string]any, key string, record map[st
 func mergeScene3DSceneMap(dst, src map[string]any) {
 	for key, value := range src {
 		switch key {
-		case "objects", "models", "points", "instancedMeshes", "computeParticles", "lights", "materials", "postEffects":
+		case "objects", "models", "points", "instancedMeshes", "computeParticles", "waterSystems", "lights", "materials", "postEffects":
 			for _, item := range scene3DRecordList(value) {
 				appendScene3DSceneRecord(dst, key, item)
 			}

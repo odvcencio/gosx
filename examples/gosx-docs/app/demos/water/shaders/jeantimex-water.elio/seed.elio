@@ -1,0 +1,70 @@
+
+// Authored water seed-drop pass for the GoSX water demo. This module follows
+// the WaterSystem compute binding contract consumed by Scene3D WebGPU and is
+// routed through .gsx as seedWGSL instead of using the builtin seedDrops entry.
+const PI: f32 = 3.141592653589793;
+
+struct WaterUniforms {
+  resolution: u32,
+  cellCount: u32,
+  seedDrops: u32,
+  frameIndex: u32,
+  deltaTime: f32,
+  time: f32,
+  waveSpeed: f32,
+  damping: f32,
+  dropRadius: f32,
+  dropStrength: f32,
+  normalScale: f32,
+  poolWidth: f32,
+  poolHeight: f32,
+  poolLength: f32,
+  cornerRadius: f32,
+  poolShape: f32,
+  lightDir: vec4f,
+  shallowColor: vec4f,
+  deepColor: vec4f,
+  objectCenter: vec4f,
+  objectPreviousCenter: vec4f,
+  objectHalfSizeRadius: vec4f,
+  objectParams: vec4f,
+  opticsFlags: vec4f,
+  interactiveDrop: vec4f,
+  seedSalt: f32,
+};
+
+struct WaterDisplacementSphere {
+  offsetRadius: vec4f,
+};
+
+@group(0) @binding(0) var<uniform> params: WaterUniforms;
+@group(0) @binding(1) var<storage, read> inState: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> outState: array<vec4f>;
+@group(0) @binding(3) var<storage, read> objectSpheres: array<WaterDisplacementSphere>;
+
+fn hash01(n: f32) -> f32 {
+  return fract(sin(n) * 43758.5453123);
+}
+
+@compute @workgroup_size(64)
+fn seedDrops(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.cellCount) { return; }
+  let res = params.resolution;
+  let x = i % res;
+  let y = i / res;
+  let uv = (vec2f(f32(x), f32(y)) + vec2f(0.5)) / max(vec2f(f32(res)), vec2f(1.0));
+  var info = inState[i];
+  let count = min(params.seedDrops, 64u);
+  let seedSalt = params.seedSalt;
+  for (var j = 0u; j < count; j = j + 1u) {
+    let jf = f32(j + 1u);
+    let center = vec2f(hash01(jf * 12.9898 + seedSalt + 0.173), hash01(jf * 78.233 + seedSalt * 1.371 + 0.719));
+    let radius = max(params.dropRadius, 0.0001);
+    var drop = max(0.0, 1.0 - length(center - uv) / radius);
+    drop = 0.5 - cos(drop * PI) * 0.5;
+    let polarity = select(1.0, -1.0, (j & 1u) == 0u);
+    info.x = info.x + drop * params.dropStrength * polarity;
+  }
+  outState[i] = info;
+}

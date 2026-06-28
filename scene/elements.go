@@ -37,6 +37,7 @@ type MeshElementProps struct {
 	CastShadow         bool
 	ReceiveShadow      bool
 	Pickable           *bool
+	Visible            *bool
 	Static             *bool
 	Animation          string
 	AnimationSeq       string
@@ -151,6 +152,7 @@ func LowerMesh(props MeshElementProps) IRNode {
 			CastShadow:         props.CastShadow,
 			ReceiveShadow:      props.ReceiveShadow,
 			Pickable:           props.Pickable,
+			Visible:            props.Visible,
 			Static:             props.Static,
 			Animation:          strings.TrimSpace(props.Animation),
 			AnimationSeq:       strings.TrimSpace(props.AnimationSeq),

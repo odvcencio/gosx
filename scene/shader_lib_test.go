@@ -136,6 +136,111 @@ func TestShaderLibRoundTrip(t *testing.T) {
 	}
 }
 
+func TestShaderLibWaterSystemWGSLRoundTrip(t *testing.T) {
+	kernel := kernelSource(4096)
+	ir := SceneIR{
+		WaterSystems: []WaterSystemIR{
+			{ID: "water-a", Resolution: 256, SeedWGSL: kernel, DropWGSL: kernel, SimulationWGSL: kernel, PoolVertexWGSL: kernel, PoolFragmentWGSL: kernel, SurfaceFragmentWGSL: kernel, ObjectShadowWGSL: kernel, ObjectMeshShadowVertexWGSL: kernel, ObjectMeshShadowFragmentWGSL: kernel},
+			{ID: "water-b", Resolution: 256, SeedWGSL: kernel, DropWGSL: kernel, SimulationWGSL: kernel, PoolVertexWGSL: kernel, PoolFragmentWGSL: kernel, SurfaceFragmentWGSL: kernel, ObjectShadowWGSL: kernel, ObjectMeshShadowVertexWGSL: kernel, ObjectMeshShadowFragmentWGSL: kernel},
+		},
+	}
+
+	data, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	if _, ok := raw["shaderLib"].(map[string]any); !ok {
+		t.Fatalf("shaderLib missing from water system payload: %s", data)
+	}
+	systems := raw["waterSystems"].([]any)
+	for i, systemRaw := range systems {
+		system := systemRaw.(map[string]any)
+		if _, hasInline := system["simulationWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline simulationWGSL after dedup", i)
+		}
+		if ref, ok := system["simulationWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] simulationWGSLRef = %#v", i, system["simulationWGSLRef"])
+		}
+		if _, hasInline := system["seedWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline seedWGSL after dedup", i)
+		}
+		if ref, ok := system["seedWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] seedWGSLRef = %#v", i, system["seedWGSLRef"])
+		}
+		if _, hasInline := system["dropWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline dropWGSL after dedup", i)
+		}
+		if ref, ok := system["dropWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] dropWGSLRef = %#v", i, system["dropWGSLRef"])
+		}
+		if _, hasInline := system["surfaceFragmentWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline surfaceFragmentWGSL after dedup", i)
+		}
+		if ref, ok := system["surfaceFragmentWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] surfaceFragmentWGSLRef = %#v", i, system["surfaceFragmentWGSLRef"])
+		}
+		if _, hasInline := system["poolVertexWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline poolVertexWGSL after dedup", i)
+		}
+		if ref, ok := system["poolVertexWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] poolVertexWGSLRef = %#v", i, system["poolVertexWGSLRef"])
+		}
+		if _, hasInline := system["poolFragmentWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline poolFragmentWGSL after dedup", i)
+		}
+		if ref, ok := system["poolFragmentWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] poolFragmentWGSLRef = %#v", i, system["poolFragmentWGSLRef"])
+		}
+		if _, hasInline := system["objectShadowWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline objectShadowWGSL after dedup", i)
+		}
+		if ref, ok := system["objectShadowWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] objectShadowWGSLRef = %#v", i, system["objectShadowWGSLRef"])
+		}
+		if _, hasInline := system["objectMeshShadowVertexWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline objectMeshShadowVertexWGSL after dedup", i)
+		}
+		if ref, ok := system["objectMeshShadowVertexWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] objectMeshShadowVertexWGSLRef = %#v", i, system["objectMeshShadowVertexWGSLRef"])
+		}
+		if _, hasInline := system["objectMeshShadowFragmentWGSL"]; hasInline {
+			t.Fatalf("waterSystems[%d] still has inline objectMeshShadowFragmentWGSL after dedup", i)
+		}
+		if ref, ok := system["objectMeshShadowFragmentWGSLRef"].(string); !ok || !strings.HasPrefix(ref, "sl:") {
+			t.Fatalf("waterSystems[%d] objectMeshShadowFragmentWGSLRef = %#v", i, system["objectMeshShadowFragmentWGSLRef"])
+		}
+	}
+
+	var roundTrip SceneIR
+	if err := json.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if len(roundTrip.WaterSystems) != 2 {
+		t.Fatalf("WaterSystems length = %d, want 2", len(roundTrip.WaterSystems))
+	}
+	for i, system := range roundTrip.WaterSystems {
+		if system.SimulationWGSL != kernel {
+			t.Fatalf("WaterSystems[%d].SimulationWGSL length = %d, want %d", i, len(system.SimulationWGSL), len(kernel))
+		}
+		if system.SimulationWGSLRef != "" {
+			t.Fatalf("WaterSystems[%d].SimulationWGSLRef not cleared after inflate: %q", i, system.SimulationWGSLRef)
+		}
+		if system.SeedWGSL != kernel || system.DropWGSL != kernel {
+			t.Fatalf("WaterSystems[%d] seed/drop WGSL fields did not inflate", i)
+		}
+		if system.ObjectShadowWGSL != kernel || system.ObjectMeshShadowVertexWGSL != kernel || system.ObjectMeshShadowFragmentWGSL != kernel {
+			t.Fatalf("WaterSystems[%d] object shadow WGSL fields did not inflate", i)
+		}
+		if system.PoolVertexWGSL != kernel || system.PoolFragmentWGSL != kernel {
+			t.Fatalf("WaterSystems[%d] pool WGSL fields did not inflate", i)
+		}
+	}
+}
+
 func TestShaderLibPreservesExistingRenderRefs(t *testing.T) {
 	source := kernelSource(2048)
 	id := shaderLibID(source)

@@ -46,6 +46,20 @@
   // Must mirror the Go shaderLibFields registry in scene/shader_lib.go.
   const SHADER_LIB_FIELDS = [
     { collection: "computeParticles", field: "computeWGSL" },
+    { collection: "waterSystems",     field: "seedWGSL" },
+    { collection: "waterSystems",     field: "dropWGSL" },
+    { collection: "waterSystems",     field: "displacementWGSL" },
+    { collection: "waterSystems",     field: "simulationWGSL" },
+    { collection: "waterSystems",     field: "normalWGSL" },
+    { collection: "waterSystems",     field: "causticsWGSL" },
+    { collection: "waterSystems",     field: "poolVertexWGSL" },
+    { collection: "waterSystems",     field: "poolFragmentWGSL" },
+    { collection: "waterSystems",     field: "surfaceVertexWGSL" },
+    { collection: "waterSystems",     field: "surfaceFragmentWGSL" },
+    { collection: "waterSystems",     field: "surfaceBelowFragmentWGSL" },
+    { collection: "waterSystems",     field: "objectShadowWGSL" },
+    { collection: "waterSystems",     field: "objectMeshShadowVertexWGSL" },
+    { collection: "waterSystems",     field: "objectMeshShadowFragmentWGSL" },
     { collection: "objects",          field: "customVertex" },
     { collection: "objects",          field: "customFragment" },
     { collection: "objects",          field: "customVertexWGSL" },
@@ -129,6 +143,37 @@
         inflateSceneShaderLib(entry.props.scene);
       }
     }
+    publishManifestWaterShaderSources(allEntries);
+  }
+
+  function publishManifestWaterShaderSources(entries) {
+    if (typeof window === "undefined" || !Array.isArray(entries)) return;
+    var fields = [
+      "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+      "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+      "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+    ];
+    var published = window.__gosx_scene3d_water_shader_sources_by_id || {};
+    for (var ei = 0; ei < entries.length; ei += 1) {
+      var scene = entries[ei] && entries[ei].props && entries[ei].props.scene;
+      var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : [];
+      for (var wi = 0; wi < systems.length; wi += 1) {
+        var water = systems[wi];
+        if (!water || typeof water !== "object") continue;
+        var id = typeof water.id === "string" && water.id ? water.id : ("scene-water-" + wi);
+        var record = published[id] || { id: id };
+        var changed = false;
+        for (var fi = 0; fi < fields.length; fi += 1) {
+          var name = fields[fi];
+          if (typeof water[name] === "string" && water[name].trim()) {
+            record[name] = water[name];
+            changed = true;
+          }
+        }
+        if (changed) published[id] = record;
+      }
+    }
+    window.__gosx_scene3d_water_shader_sources_by_id = published;
   }
 
   // --------------------------------------------------------------------------
@@ -1135,6 +1180,7 @@
       "instancedMeshes",
       "instancedGLBMeshes",
       "computeParticles",
+      "waterSystems",
       "lines",
       "surfaces",
       "labels",
@@ -1243,6 +1289,14 @@
       return scene.computeParticles;
     }
     return props && Array.isArray(props.computeParticles) ? props.computeParticles : [];
+  }
+
+  function rawSceneWaterSystems(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.waterSystems)) {
+      return scene.waterSystems;
+    }
+    return props && Array.isArray(props.waterSystems) ? props.waterSystems : [];
   }
 
   function rawSceneMaterials(props) {
@@ -1670,6 +1724,8 @@
       customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
       shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
+      shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
@@ -1682,6 +1738,9 @@
         texture === "",
       ),
       pickable: Object.prototype.hasOwnProperty.call(item, "pickable") ? sceneBool(item.pickable, false) : current.pickable,
+      visible: Object.prototype.hasOwnProperty.call(item, "visible")
+        ? sceneBool(item.visible, true)
+        : (Object.prototype.hasOwnProperty.call(current, "visible") ? sceneBool(current.visible, true) : true),
       rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
       rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
       rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
@@ -1701,6 +1760,9 @@
       // Go side and flow into per-segment width buffers at bundle build time.
       lineWidth: sceneNumber(item.lineWidth, sceneNumber(current.lineWidth, 0)),
       selected: sceneBool(Object.prototype.hasOwnProperty.call(item, "selected") ? item.selected : current.selected, false),
+      _modelHidden: Object.prototype.hasOwnProperty.call(item, "_modelHidden")
+        ? sceneBool(item._modelHidden, false)
+        : sceneBool(current._modelHidden, false),
       outlineColor: typeof item.outlineColor === "string" && item.outlineColor ? item.outlineColor : (typeof current.outlineColor === "string" ? current.outlineColor : ""),
       outlineWidth: sceneNumber(item.outlineWidth, sceneNumber(current.outlineWidth, 0)),
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
@@ -1722,6 +1784,9 @@
       Object.prototype.hasOwnProperty.call(item, "static") ? item.static : current.static,
       !sceneObjectAnimated(normalized),
     );
+    if (!normalized.vertices && normalized.wireframe === false && typeof scenePrimitiveTriangleMesh === "function") {
+      normalized.vertices = scenePrimitiveTriangleMesh(normalized);
+    }
     return normalized;
   }
 
@@ -2077,6 +2142,9 @@
       case "conegeometry":
         return "cone";
       case "torusgeometry":
+      case "torusknot":
+      case "torusknotgeometry":
+      case "torus-knot":
         return "torus";
       case "box":
       case "cube":
@@ -2106,6 +2174,9 @@
     const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
     const hasStatic = Object.prototype.hasOwnProperty.call(current, "static");
     const hasPickable = Object.prototype.hasOwnProperty.call(current, "pickable");
+    const hasVisible = Object.prototype.hasOwnProperty.call(current, "visible");
+    const hasCastShadow = Object.prototype.hasOwnProperty.call(current, "castShadow");
+    const hasReceiveShadow = Object.prototype.hasOwnProperty.call(current, "receiveShadow");
     const hasAnimationSpeed = Object.prototype.hasOwnProperty.call(current, "animationSpeed");
     const hasAnimationWeight = Object.prototype.hasOwnProperty.call(current, "animationWeight");
     const hasAnimationFadeInMS = Object.prototype.hasOwnProperty.call(current, "animationFadeInMS");
@@ -2116,6 +2187,7 @@
     if (materialKind) {
       override.materialKind = normalizeSceneMaterialKind(materialKind);
     }
+    const materialName = typeof current.material === "string" && current.material.trim() ? current.material.trim() : "";
     if (sceneObjectMaterialHasValue(current, "color")) {
       override.color = sceneObjectMaterialValue(current, "color");
     }
@@ -2148,9 +2220,15 @@
     if (sceneObjectMaterialHasValue(current, "wireframe")) {
       override.wireframe = sceneObjectMaterialValue(current, "wireframe");
     }
+    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
+      if (sceneObjectMaterialHasValue(current, key)) {
+        override[key] = sceneObjectMaterialValue(current, key);
+      }
+    }
     const model = {
       id: typeof current.id === "string" && current.id.trim() ? current.id.trim() : ("scene-model-" + index),
       src: typeof current.src === "string" && current.src.trim() ? current.src.trim() : "",
+      material: materialName,
       x: sceneNumber(current.x, 0),
       y: sceneNumber(current.y, 0),
       z: sceneNumber(current.z, 0),
@@ -2160,11 +2238,17 @@
       scaleX: sceneNumber(current.scaleX, sceneNumber(scaleSource ? scaleSource.x : undefined, sceneNumber(current.scale, 1))),
       scaleY: sceneNumber(current.scaleY, sceneNumber(scaleSource ? scaleSource.y : undefined, sceneNumber(current.scale, 1))),
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
+      bounds: Math.max(0, sceneNumber(current.bounds, 0)),
+      fit: typeof current.fit === "string" ? current.fit.trim() : "",
+      fitAlign: typeof current.fitAlign === "string" ? current.fitAlign.trim() : "",
       animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
       animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       pickable: hasPickable ? sceneBool(current.pickable, false) : undefined,
+      visible: hasVisible ? sceneBool(current.visible, true) : true,
       static: hasStatic ? sceneBool(current.static, false) : null,
+      castShadow: hasCastShadow ? sceneBool(current.castShadow, false) : undefined,
+      receiveShadow: hasReceiveShadow ? sceneBool(current.receiveShadow, false) : undefined,
       lodGroup: typeof current.lodGroup === "string" && current.lodGroup ? current.lodGroup : "",
       lodLevel: Math.max(0, Math.floor(sceneNumber(current.lodLevel, 0))),
       lodMinDistance: Math.max(0, sceneNumber(current.lodMinDistance, 0)),
@@ -2233,6 +2317,9 @@
       roughness: sceneObjectMaterialHasValue(raw, "roughness") ? sceneNumberOrCSSVar(sceneObjectMaterialValue(raw, "roughness"), sceneNumber(current.roughness, 0.5)) : current.roughness,
       metalness: sceneObjectMaterialHasValue(raw, "metalness") ? sceneNumberOrCSSVar(sceneObjectMaterialValue(raw, "metalness"), sceneNumber(current.metalness, 0)) : current.metalness,
       pickable: Object.prototype.hasOwnProperty.call(raw, "pickable") ? sceneBool(raw.pickable, false) : current.pickable,
+      visible: Object.prototype.hasOwnProperty.call(raw, "visible")
+        ? sceneBool(raw.visible, true)
+        : (Object.prototype.hasOwnProperty.call(current, "visible") ? sceneBool(current.visible, true) : true),
       static: Object.prototype.hasOwnProperty.call(raw, "static") ? sceneBool(raw.static, false) : current.static,
       instances: rawInstances.map(function(instance, instanceIndex) {
         return normalizeSceneInstancedGLBInstance(instance, instanceIndex);
@@ -2278,7 +2365,7 @@
         scaleY: instance.scaleY,
         scaleZ: instance.scaleZ,
       };
-      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "pickable", "static"]) {
+      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "pickable", "visible", "static"]) {
         if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
           raw[key] = batch[key];
         }
@@ -2653,6 +2740,8 @@
       customUniforms: sceneIsPlainObject(sceneObjectMaterialValue(item, "customUniforms")) ? Object.assign({}, sceneObjectMaterialValue(item, "customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       shaderBackend: typeof sceneObjectMaterialValue(item, "shaderBackend") === "string" ? sceneObjectMaterialValue(item, "shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
       shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
+      shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
       transforms,
       colors,
       attributes,
@@ -2781,6 +2870,212 @@
     });
   }
 
+  const SCENE_WATER_SOURCE_ID_FIELDS = ["computeSource", "materialSource"];
+  const SCENE_WATER_SOURCE_FILE_MAP_FIELDS = ["computeSourceFiles", "materialSourceFiles"];
+
+  const SCENE_WATER_SHADER_STRING_FIELDS = [
+    "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+    "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+    "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+    "seedWGSLRef", "dropWGSLRef", "displacementWGSLRef", "simulationWGSLRef", "normalWGSLRef", "causticsWGSLRef",
+    "poolVertexWGSLRef", "poolFragmentWGSLRef", "surfaceVertexWGSLRef", "surfaceFragmentWGSLRef", "surfaceBelowFragmentWGSLRef",
+    "objectShadowWGSLRef", "objectMeshShadowVertexWGSLRef", "objectMeshShadowFragmentWGSLRef",
+  ];
+
+  function sceneWaterSystemID(entry, index) {
+    return entry && typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + index);
+  }
+
+  function sceneMergeWaterShaderSources(sourceMap, entry, index) {
+    if (!sourceMap || !entry || typeof entry !== "object") return;
+    const id = sceneWaterSystemID(entry, index);
+    const current = sourceMap.get(id) || { id: id };
+    let changed = false;
+    for (let i = 0; i < SCENE_WATER_SOURCE_ID_FIELDS.length; i += 1) {
+      const name = SCENE_WATER_SOURCE_ID_FIELDS[i];
+      if (typeof entry[name] === "string" && entry[name].trim()) {
+        current[name] = entry[name];
+        changed = true;
+      }
+    }
+    for (let i = 0; i < SCENE_WATER_SOURCE_FILE_MAP_FIELDS.length; i += 1) {
+      const name = SCENE_WATER_SOURCE_FILE_MAP_FIELDS[i];
+      if (sceneIsPlainObject(entry[name])) {
+        current[name] = sceneCloneData(entry[name]);
+        changed = true;
+      }
+    }
+    for (let i = 0; i < SCENE_WATER_SHADER_STRING_FIELDS.length; i += 1) {
+      const name = SCENE_WATER_SHADER_STRING_FIELDS[i];
+      if (typeof entry[name] === "string" && entry[name].trim()) {
+        current[name] = entry[name];
+        changed = true;
+      }
+    }
+    if (changed) sourceMap.set(id, current);
+  }
+
+  function sceneWaterShaderSourceMap(entries) {
+    const sourceMap = new Map();
+    const source = Array.isArray(entries) ? entries : [];
+    for (let i = 0; i < source.length; i += 1) {
+      sceneMergeWaterShaderSources(sourceMap, source[i], i);
+    }
+    return sourceMap;
+  }
+
+  function scenePublishWaterShaderSourceMap(sourceMap) {
+    if (typeof window === "undefined" || !sourceMap || typeof sourceMap.forEach !== "function") return;
+    const published = window.__gosx_scene3d_water_shader_sources_by_id || {};
+    sourceMap.forEach(function(record, id) {
+      if (!record || typeof record !== "object") return;
+      published[id] = Object.assign({}, published[id] || {}, record);
+    });
+    window.__gosx_scene3d_water_shader_sources_by_id = published;
+  }
+
+  function normalizeSceneWaterSystemEntry(entry, index, fallback) {
+    const current = sceneIsPlainObject(fallback) ? fallback : {};
+    const item = sceneIsPlainObject(entry) ? entry : {};
+    const waterShaderString = function(name) {
+      return typeof item[name] === "string" && item[name].trim()
+        ? item[name]
+        : (typeof current[name] === "string" ? current[name] : "");
+    };
+    return {
+      id: item.id || current.id || ("scene-water-" + index),
+      interactionProfile: typeof item.interactionProfile === "string" ? item.interactionProfile : (typeof current.interactionProfile === "string" ? current.interactionProfile : ""),
+      interactionTarget: typeof item.interactionTarget === "string" ? item.interactionTarget : (typeof current.interactionTarget === "string" ? current.interactionTarget : ""),
+      interactionObject: typeof item.interactionObject === "string" ? item.interactionObject : (typeof current.interactionObject === "string" ? current.interactionObject : ""),
+      resolution: Math.max(1, Math.floor(sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))),
+      poolShape: typeof item.poolShape === "string" && item.poolShape ? item.poolShape : (typeof current.poolShape === "string" ? current.poolShape : "Box"),
+      poolWidth: Math.max(0.001, sceneNumber(item.poolWidth, sceneNumber(current.poolWidth, 1))),
+      poolHeight: Math.max(0.001, sceneNumber(item.poolHeight, sceneNumber(current.poolHeight, 1))),
+      poolLength: Math.max(0.001, sceneNumber(item.poolLength, sceneNumber(current.poolLength, 1))),
+      cornerRadius: Math.max(0, sceneNumber(item.cornerRadius, sceneNumber(current.cornerRadius, 0))),
+      waveSpeed: sceneNumber(item.waveSpeed, sceneNumber(current.waveSpeed, 0.995)),
+      damping: sceneNumber(item.damping, sceneNumber(current.damping, 0.985)),
+      normalScale: sceneNumber(item.normalScale, sceneNumber(current.normalScale, 1)),
+      seedDrops: Math.max(0, Math.floor(sceneNumber(item.seedDrops, sceneNumber(current.seedDrops, 0)))),
+      dropRadius: Math.max(0, sceneNumber(item.dropRadius, sceneNumber(current.dropRadius, 0.03))),
+      dropStrength: sceneNumber(item.dropStrength, sceneNumber(current.dropStrength, 0.01)),
+      dropEventID: Math.max(0, Math.floor(sceneNumber(item.dropEventID, sceneNumber(current.dropEventID, 0)))),
+      dropX: Math.max(-1, Math.min(1, sceneNumber(item.dropX, sceneNumber(current.dropX, 0)))),
+      dropZ: Math.max(-1, Math.min(1, sceneNumber(item.dropZ, sceneNumber(current.dropZ, 0)))),
+      dropEventRadius: Math.max(0, sceneNumber(item.dropEventRadius, sceneNumber(current.dropEventRadius, sceneNumber(item.dropRadius, sceneNumber(current.dropRadius, 0.03))))),
+      dropEventStrength: sceneNumber(item.dropEventStrength, sceneNumber(current.dropEventStrength, sceneNumber(item.dropStrength, sceneNumber(current.dropStrength, 0.01)))),
+      tileTexture: typeof item.tileTexture === "string" ? item.tileTexture : (typeof current.tileTexture === "string" ? current.tileTexture : ""),
+      cubeMap: typeof item.cubeMap === "string" ? item.cubeMap : (typeof current.cubeMap === "string" ? current.cubeMap : ""),
+      shallowColor: typeof item.shallowColor === "string" ? item.shallowColor : (typeof current.shallowColor === "string" ? current.shallowColor : ""),
+      deepColor: typeof item.deepColor === "string" ? item.deepColor : (typeof current.deepColor === "string" ? current.deepColor : ""),
+      causticsResolution: Math.max(0, Math.floor(sceneNumber(item.causticsResolution, sceneNumber(current.causticsResolution, 0)))),
+      objectTextureResolution: Math.max(0, Math.floor(sceneNumber(item.objectTextureResolution, sceneNumber(current.objectTextureResolution, 0)))),
+      objectTextureResolutionMode: typeof item.objectTextureResolutionMode === "string" ? item.objectTextureResolutionMode : (typeof current.objectTextureResolutionMode === "string" ? current.objectTextureResolutionMode : ""),
+      objectTexturePixelBudget: Math.max(0, Math.floor(sceneNumber(item.objectTexturePixelBudget, sceneNumber(current.objectTexturePixelBudget, 0)))),
+      objectShadowResolution: Math.max(0, Math.floor(sceneNumber(item.objectShadowResolution, sceneNumber(current.objectShadowResolution, 0)))),
+      caustics: sceneBool(Object.prototype.hasOwnProperty.call(item, "caustics") ? item.caustics : current.caustics, true),
+      reflection: sceneBool(Object.prototype.hasOwnProperty.call(item, "reflection") ? item.reflection : current.reflection, true),
+      refraction: sceneBool(Object.prototype.hasOwnProperty.call(item, "refraction") ? item.refraction : current.refraction, true),
+      paused: sceneBool(Object.prototype.hasOwnProperty.call(item, "paused") ? item.paused : current.paused, false),
+      followCamera: sceneBool(Object.prototype.hasOwnProperty.call(item, "followCamera") ? item.followCamera : current.followCamera, false),
+      lightDirectionX: sceneNumber(item.lightDirectionX, sceneNumber(current.lightDirectionX, 2)),
+      lightDirectionY: sceneNumber(item.lightDirectionY, sceneNumber(current.lightDirectionY, 3)),
+      lightDirectionZ: sceneNumber(item.lightDirectionZ, sceneNumber(current.lightDirectionZ, -1)),
+      activeObject: typeof item.activeObject === "string" ? item.activeObject : (typeof current.activeObject === "string" ? current.activeObject : ""),
+      objectKind: typeof item.objectKind === "string" ? item.objectKind : (typeof current.objectKind === "string" ? current.objectKind : ""),
+      objectX: sceneNumber(item.objectX, sceneNumber(current.objectX, 0)),
+      objectY: sceneNumber(item.objectY, sceneNumber(current.objectY, 0)),
+      objectZ: sceneNumber(item.objectZ, sceneNumber(current.objectZ, 0)),
+      objectPreviousSet: sceneBool(Object.prototype.hasOwnProperty.call(item, "objectPreviousSet") ? item.objectPreviousSet : current.objectPreviousSet, false),
+      objectPreviousX: sceneNumber(item.objectPreviousX, sceneNumber(current.objectPreviousX, 0)),
+      objectPreviousY: sceneNumber(item.objectPreviousY, sceneNumber(current.objectPreviousY, 0)),
+      objectPreviousZ: sceneNumber(item.objectPreviousZ, sceneNumber(current.objectPreviousZ, 0)),
+      objectRadius: Math.max(0, sceneNumber(item.objectRadius, sceneNumber(current.objectRadius, 0))),
+      objectHalfSizeX: Math.max(0, sceneNumber(item.objectHalfSizeX, sceneNumber(current.objectHalfSizeX, 0))),
+      objectHalfSizeY: Math.max(0, sceneNumber(item.objectHalfSizeY, sceneNumber(current.objectHalfSizeY, 0))),
+      objectHalfSizeZ: Math.max(0, sceneNumber(item.objectHalfSizeZ, sceneNumber(current.objectHalfSizeZ, 0))),
+      objectDriftX: sceneNumber(item.objectDriftX, sceneNumber(current.objectDriftX, 0)),
+      objectDriftY: sceneNumber(item.objectDriftY, sceneNumber(current.objectDriftY, 0)),
+      objectDriftZ: sceneNumber(item.objectDriftZ, sceneNumber(current.objectDriftZ, 0)),
+      objectBobAmplitude: Math.max(0, sceneNumber(item.objectBobAmplitude, sceneNumber(current.objectBobAmplitude, 0))),
+      objectBobSpeed: Math.max(0, sceneNumber(item.objectBobSpeed, sceneNumber(current.objectBobSpeed, 0))),
+      objectDisplacementScale: Math.max(0, sceneNumber(item.objectDisplacementScale, sceneNumber(current.objectDisplacementScale, 1))),
+      objectDisplacementSpheres: normalizeSceneWaterDisplacementSpheres(item.objectDisplacementSpheres, current.objectDisplacementSpheres),
+      computeBackend: typeof item.computeBackend === "string" && item.computeBackend ? item.computeBackend : (typeof current.computeBackend === "string" ? current.computeBackend : "elio"),
+      materialBackend: typeof item.materialBackend === "string" && item.materialBackend ? item.materialBackend : (typeof current.materialBackend === "string" ? current.materialBackend : "selena"),
+      computeSource: typeof item.computeSource === "string" ? item.computeSource : (typeof current.computeSource === "string" ? current.computeSource : ""),
+      materialSource: typeof item.materialSource === "string" ? item.materialSource : (typeof current.materialSource === "string" ? current.materialSource : ""),
+      computeSourceFiles: sceneIsPlainObject(item.computeSourceFiles) ? sceneCloneData(item.computeSourceFiles) : (sceneIsPlainObject(current.computeSourceFiles) ? sceneCloneData(current.computeSourceFiles) : null),
+      materialSourceFiles: sceneIsPlainObject(item.materialSourceFiles) ? sceneCloneData(item.materialSourceFiles) : (sceneIsPlainObject(current.materialSourceFiles) ? sceneCloneData(current.materialSourceFiles) : null),
+      seedWGSL: waterShaderString("seedWGSL"),
+      dropWGSL: waterShaderString("dropWGSL"),
+      displacementWGSL: waterShaderString("displacementWGSL"),
+      simulationWGSL: waterShaderString("simulationWGSL"),
+      normalWGSL: waterShaderString("normalWGSL"),
+      causticsWGSL: waterShaderString("causticsWGSL"),
+      poolVertexWGSL: waterShaderString("poolVertexWGSL"),
+      poolFragmentWGSL: waterShaderString("poolFragmentWGSL"),
+      surfaceVertexWGSL: waterShaderString("surfaceVertexWGSL"),
+      surfaceFragmentWGSL: waterShaderString("surfaceFragmentWGSL"),
+      surfaceBelowFragmentWGSL: waterShaderString("surfaceBelowFragmentWGSL"),
+      objectShadowWGSL: waterShaderString("objectShadowWGSL"),
+      objectMeshShadowVertexWGSL: waterShaderString("objectMeshShadowVertexWGSL"),
+      objectMeshShadowFragmentWGSL: waterShaderString("objectMeshShadowFragmentWGSL"),
+      seedWGSLRef: waterShaderString("seedWGSLRef"),
+      dropWGSLRef: waterShaderString("dropWGSLRef"),
+      displacementWGSLRef: waterShaderString("displacementWGSLRef"),
+      simulationWGSLRef: waterShaderString("simulationWGSLRef"),
+      normalWGSLRef: waterShaderString("normalWGSLRef"),
+      causticsWGSLRef: waterShaderString("causticsWGSLRef"),
+      poolVertexWGSLRef: waterShaderString("poolVertexWGSLRef"),
+      poolFragmentWGSLRef: waterShaderString("poolFragmentWGSLRef"),
+      surfaceVertexWGSLRef: waterShaderString("surfaceVertexWGSLRef"),
+      surfaceFragmentWGSLRef: waterShaderString("surfaceFragmentWGSLRef"),
+      surfaceBelowFragmentWGSLRef: waterShaderString("surfaceBelowFragmentWGSLRef"),
+      objectShadowWGSLRef: waterShaderString("objectShadowWGSLRef"),
+      objectMeshShadowVertexWGSLRef: waterShaderString("objectMeshShadowVertexWGSLRef"),
+      objectMeshShadowFragmentWGSLRef: waterShaderString("objectMeshShadowFragmentWGSLRef"),
+    };
+  }
+
+  function normalizeSceneWaterDisplacementSpheres(value, fallback) {
+    const source = Array.isArray(value) ? value : (Array.isArray(fallback) ? fallback : []);
+    const out = [];
+    for (let i = 0; i < source.length && out.length < 64; i++) {
+      const raw = source[i];
+      let offsetX = 0;
+      let offsetY = 0;
+      let offsetZ = 0;
+      let radius = 0;
+      if (Array.isArray(raw)) {
+        offsetX = sceneNumber(raw[0], 0);
+        offsetY = sceneNumber(raw[1], 0);
+        offsetZ = sceneNumber(raw[2], 0);
+        radius = sceneNumber(raw[3], 0);
+      } else if (sceneIsPlainObject(raw)) {
+        const offset = sceneIsPlainObject(raw.offset) ? raw.offset : {};
+        offsetX = sceneNumber(Object.prototype.hasOwnProperty.call(raw, "offsetX") ? raw.offsetX : offset.x, 0);
+        offsetY = sceneNumber(Object.prototype.hasOwnProperty.call(raw, "offsetY") ? raw.offsetY : offset.y, 0);
+        offsetZ = sceneNumber(Object.prototype.hasOwnProperty.call(raw, "offsetZ") ? raw.offsetZ : offset.z, 0);
+        radius = sceneNumber(raw.radius, 0);
+      }
+      if (radius <= 0) continue;
+      out.push({
+        offsetX: offsetX,
+        offsetY: offsetY,
+        offsetZ: offsetZ,
+        radius: Math.max(0, radius),
+      });
+    }
+    return out;
+  }
+
+  function sceneWaterSystems(props) {
+    return rawSceneWaterSystems(props).map(function(entry, index) {
+      return normalizeSceneWaterSystemEntry(entry, index, null);
+    });
+  }
+
   function normalizeSceneMaterialRecord(raw, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(raw) ? raw : {};
@@ -2824,6 +3119,8 @@
       customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend.trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
       shaderLayout: sceneIsPlainObject(item.shaderLayout) ? sceneCloneData(item.shaderLayout) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
+      shaderSource: typeof item.shaderSource === "string" ? item.shaderSource.trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles) ? sceneCloneData(item.shaderSourceFiles) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       variantKey: typeof item._variantKey === "string" ? item._variantKey : (typeof current.variantKey === "string" ? current.variantKey : ""),
       _colorSpecified: colorSpecified || current._colorSpecified === true,
@@ -3055,6 +3352,7 @@
       instancedMeshes: sceneInstancedMeshes(props),
       instancedGLBMeshes: sceneInstancedGLBMeshes(props),
       computeParticles: sceneComputeParticles(props),
+      waterSystems: sceneWaterSystems(props),
       animations: sceneAnimations(props),
       materials: sceneMaterials(props, capability),
       _materialSource: rawSceneMaterials(props).map(sceneCloneData),
@@ -3069,6 +3367,8 @@
         : null,
       environment: normalizeSceneEnvironment(rawSceneEnvironment(props), null),
     };
+    state._waterShaderSourceByID = sceneWaterShaderSourceMap(state.waterSystems);
+    scenePublishWaterShaderSourceMap(state._waterShaderSourceByID);
     for (const object of sceneObjects(props)) {
       state.objects.set(object.id, object);
     }
@@ -3218,6 +3518,8 @@
       customUniforms: sceneIsPlainObject(material.customUniforms) ? Object.assign({}, material.customUniforms) : object.customUniforms,
       shaderBackend: typeof material.shaderBackend === "string" ? material.shaderBackend : object.shaderBackend,
       shaderLayout: sceneIsPlainObject(material.shaderLayout) ? sceneCloneData(material.shaderLayout) : object.shaderLayout,
+      shaderSource: typeof material.shaderSource === "string" ? material.shaderSource : object.shaderSource,
+      shaderSourceFiles: sceneIsPlainObject(material.shaderSourceFiles) ? sceneCloneData(material.shaderSourceFiles) : object.shaderSourceFiles,
       variantKey: material.variantKey || object.variantKey,
     });
   }
@@ -3243,6 +3545,8 @@
       customUniforms: sceneIsPlainObject(material.customUniforms) ? Object.assign({}, material.customUniforms) : (point.customUniforms || null),
       shaderBackend: typeof material.shaderBackend === "string" && material.shaderBackend ? material.shaderBackend : (point.shaderBackend || ""),
       shaderLayout: sceneIsPlainObject(material.shaderLayout) ? sceneCloneData(material.shaderLayout) : (point.shaderLayout || null),
+      shaderSource: typeof material.shaderSource === "string" && material.shaderSource ? material.shaderSource : (point.shaderSource || ""),
+      shaderSourceFiles: sceneIsPlainObject(material.shaderSourceFiles) ? sceneCloneData(material.shaderSourceFiles) : (point.shaderSourceFiles || null),
     };
     const cache = point._namedMaterialCache;
     if (
@@ -3261,7 +3565,8 @@
       cache.customVertexWGSL === nextValues.customVertexWGSL &&
       cache.customFragmentWGSL === nextValues.customFragmentWGSL &&
       cache.customVertex === nextValues.customVertex &&
-      cache.customFragment === nextValues.customFragment
+      cache.customFragment === nextValues.customFragment &&
+      cache.shaderSource === nextValues.shaderSource
     ) {
       return cache.value;
     }
@@ -4016,12 +4321,33 @@
       ? data
       : (Array.isArray(payload.points) ? payload.points : []);
     const rawCompute = Array.isArray(payload.computeParticles) ? payload.computeParticles : [];
+    const rawWater = Array.isArray(payload.waterSystems) ? payload.waterSystems : [];
     state.points = rawPoints.map(function(entry, index) {
       return normalizeScenePointsEntry(entry, index, null);
     });
     state.computeParticles = rawCompute.map(function(entry, index) {
       return normalizeSceneComputeParticlesEntry(entry, index, null);
     });
+    const currentWaterByID = new Map();
+    const currentWater = Array.isArray(state.waterSystems) ? state.waterSystems : [];
+    const waterShaderSourceByID = state._waterShaderSourceByID instanceof Map ? state._waterShaderSourceByID : new Map();
+    currentWater.forEach(function(entry, index) {
+      if (!entry || typeof entry !== "object") return;
+      const id = sceneWaterSystemID(entry, index);
+      currentWaterByID.set(id, entry);
+      sceneMergeWaterShaderSources(waterShaderSourceByID, entry, index);
+    });
+    state.waterSystems = rawWater.map(function(entry, index) {
+      const id = sceneWaterSystemID(entry, index);
+      const currentFallback = currentWaterByID.get(id) || currentWater[index] || null;
+      const sourceFallback = waterShaderSourceByID.get(id) || null;
+      const fallback = sourceFallback ? Object.assign({}, currentFallback || {}, sourceFallback) : currentFallback;
+      const normalized = normalizeSceneWaterSystemEntry(entry, index, fallback);
+      sceneMergeWaterShaderSources(waterShaderSourceByID, normalized, index);
+      return normalized;
+    });
+    state._waterShaderSourceByID = waterShaderSourceByID;
+    scenePublishWaterShaderSourceMap(state._waterShaderSourceByID);
   }
 
   function applySceneInstancedMeshesCommand(state, data) {
@@ -4561,7 +4887,7 @@
     return selected;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, postEffects, postFXMaxPixels, showDebugGrid) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid) {
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const renderCamera = sceneRenderCamera(camera);
     const bundle = {
@@ -4582,6 +4908,7 @@
       points: Array.isArray(points) ? points : [],
       instancedMeshes: [],
       computeParticles: Array.isArray(computeParticles) ? computeParticles : [],
+      waterSystems: Array.isArray(waterSystems) ? waterSystems : [],
       positions: [],
       colors: [],
       worldPositions: [],
@@ -5018,7 +5345,13 @@
   }
 
   function sceneMeshObjectEffectivelyInvisible(object, material) {
-    if (!object || object.selected) {
+    if (!object) {
+      return false;
+    }
+    if (object.visible === false) {
+      return true;
+    }
+    if (object.selected) {
       return false;
     }
     if (object._modelHidden) {
@@ -5061,6 +5394,7 @@
         pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
         materialIndex: materialIndex,
         renderPass: sceneWorldObjectRenderPass(object, material),
+        texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
         static: false,
         castShadow: false,
         receiveShadow: Boolean(object.receiveShadow),
@@ -5160,6 +5494,7 @@
       pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
       materialIndex: materialIndex,
       renderPass: sceneWorldObjectRenderPass(object, material),
+      texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
       static: Boolean(object.static),
       castShadow: Boolean(object.castShadow),
       receiveShadow: Boolean(object.receiveShadow),
@@ -5686,9 +6021,10 @@
 
   function sceneWebGLBundleGeometry(bundle) {
     const hasWorldLines = Boolean(bundle && bundle.worldVertexCount > 0 && bundle.worldPositions && bundle.worldColors);
+    const hasWorldMeshes = Boolean(bundle && bundle.worldMeshVertexCount > 0 && bundle.worldMeshPositions && bundle.worldMeshColors);
     const hasSurfaces = Boolean(bundle && Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0);
     const camera = sceneRenderCamera(bundle && bundle.camera);
-    const usePerspective = (hasWorldLines || hasSurfaces) && !(camera.kind === "orthographic" && !hasSurfaces);
+    const usePerspective = hasWorldMeshes || hasSurfaces || (hasWorldLines && camera.kind !== "orthographic");
     return {
       usePerspective,
       positions: usePerspective ? bundle.worldPositions : bundle && bundle.positions,
@@ -5839,13 +6175,13 @@
     gl.useProgram(resources.program);
     applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
     let drew = false;
-    drew = renderSceneWebGLMeshWorldPass(gl, bundle, resources, opaque, "opaque", "opaque") || drew;
-    drew = renderSceneWebGLMeshWorldPass(gl, bundle, resources, alpha, "alpha", "translucent") || drew;
-    drew = renderSceneWebGLMeshWorldPass(gl, bundle, resources, additive, "additive", "translucent") || drew;
+    drew = renderSceneWebGLMeshWorldPass(gl, bundle, canvas, resources, opaque, "opaque", "opaque") || drew;
+    drew = renderSceneWebGLMeshWorldPass(gl, bundle, canvas, resources, alpha, "alpha", "translucent") || drew;
+    drew = renderSceneWebGLMeshWorldPass(gl, bundle, canvas, resources, additive, "additive", "translucent") || drew;
     return drew;
   }
 
-  function renderSceneWebGLMeshWorldPass(gl, bundle, resources, entries, blendMode, depthMode) {
+  function renderSceneWebGLMeshWorldPass(gl, bundle, canvas, resources, entries, blendMode, depthMode) {
     if (!Array.isArray(entries) || !entries.length) {
       return false;
     }
@@ -5856,17 +6192,22 @@
     applySceneWebGLBlend(gl, blendMode, resources.stateCache);
     let drew = false;
     for (const entry of entries) {
-      drew = renderSceneWebGLMeshObject(gl, bundle, resources, entry.object, entry.material) || drew;
+      drew = renderSceneWebGLMeshObject(gl, bundle, canvas, resources, entry.object, entry.material) || drew;
     }
     return drew;
   }
 
-  function renderSceneWebGLMeshObject(gl, bundle, resources, object, material) {
+  function renderSceneWebGLMeshObject(gl, bundle, canvas, resources, object, material) {
     const vertexOffset = Math.max(0, Math.floor(sceneNumber(object && object.vertexOffset, 0)));
     const vertexCount = Math.max(0, Math.floor(sceneNumber(object && object.vertexCount, 0)));
     if (!vertexCount) {
       return false;
     }
+    if (renderSceneWebGLTexturedMeshObject(gl, bundle, canvas, resources, object, material, vertexOffset, vertexCount)) {
+      return true;
+    }
+    gl.useProgram(resources.program);
+    applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
     const positions = sceneSliceFloatArray(bundle.worldMeshPositions, vertexOffset * 3, vertexCount * 3);
     const colors = sceneSliceFloatArray(bundle.worldMeshColors, vertexOffset * 4, vertexCount * 4);
     const materials = sceneMeshMaterialArray(vertexCount, material);
@@ -5895,6 +6236,33 @@
       vertexCount,
       3,
     );
+    return true;
+  }
+
+  function renderSceneWebGLTexturedMeshObject(gl, bundle, canvas, resources, object, material, vertexOffset, vertexCount) {
+    const materialTexture = material && typeof material.texture === "string" ? material.texture.trim() : "";
+    const objectTexture = object && typeof object.texture === "string" ? object.texture.trim() : "";
+    const texture = materialTexture || objectTexture;
+    if (!texture || !resources.surfaceProgram || !bundle || !bundle.worldMeshPositions || !bundle.worldMeshUVs) {
+      return false;
+    }
+    const textureRecord = sceneWebGLTextureRecord(gl, resources, texture);
+    if (!textureRecord || !textureRecord.texture) {
+      return false;
+    }
+    const positions = sceneSliceFloatArray(bundle.worldMeshPositions, vertexOffset * 3, vertexCount * 3);
+    const uv = sceneSliceFloatArray(bundle.worldMeshUVs, vertexOffset * 2, vertexCount * 2);
+    gl.useProgram(resources.surfaceProgram);
+    applySceneWebGLSurfaceUniforms(gl, bundle, canvas, resources);
+    uploadSceneWebGLSurfaceBuffers(gl, resources, {
+      positions,
+      uv,
+    });
+    bindSceneWebGLSurfaceTexture(gl, resources, textureRecord);
+    applySceneWebGLSurfaceMaterial(gl, resources, material);
+    drawSceneWebGLSurface(gl, resources, vertexCount);
+    gl.useProgram(resources.program);
+    applySceneWebGLUniforms(gl, bundle, canvas, true, resources);
     return true;
   }
 

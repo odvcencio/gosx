@@ -169,7 +169,10 @@
     }
 
     // Step 4: perspective divide.
-    const focal = (Math.min(width, height) / 2) / Math.tan((cam.fov * Math.PI) / 360);
+    // Vertical-FOV focal, matching scenePBRProjectionMatrix (m[5] = 1/tan(fovY/2),
+    // m[0] = that / aspect). Referencing height (not min(width,height)) keeps
+    // projection aligned with the renderer in portrait viewports, not just landscape.
+    const focal = (height / 2) / Math.tan((cam.fov * Math.PI) / 360);
     return {
       x: width / 2 + (lx * focal) / lz,
       y: height / 2 - (ly * focal) / lz,
@@ -602,8 +605,11 @@
     // Compute direction in camera-local space, matching the projection focal length.
     var halfFov = (cam.fov * Math.PI) / 360;
     var tanHalf = Math.tan(halfFov);
-    var minDim = Math.min(width, height) / 2;
-    var focal = minDim / tanHalf;
+    // Match scenePBRProjectionMatrix (fovY + aspect): reference height, not
+    // min(width,height), so the picking ray aligns with the rendered image in
+    // portrait viewports as well as landscape (where the two conventions agree).
+    var refDim = height / 2;
+    var focal = refDim / tanHalf;
 
     // Invert the projection: screenX = w/2 + localX*focal/depth, screenY = h/2 - localY*focal/depth.
     // At unit depth (depth=1): localX = (screenX - w/2) / focal, localY = (h/2 - screenY) / focal.
@@ -626,6 +632,89 @@
       origin: origin,
       dir: { x: dirWorld.x / len, y: dirWorld.y / len, z: dirWorld.z / len },
     };
+  }
+
+  function sceneRayIntersectYPlane(ray, planeY) {
+    if (!ray || !ray.origin || !ray.dir) return null;
+    var dy = sceneNumber(ray.dir.y, 0);
+    if (Math.abs(dy) < 1e-9) return null;
+    var distance = (sceneNumber(planeY, 0) - sceneNumber(ray.origin.y, 0)) / dy;
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + sceneNumber(ray.dir.x, 0) * distance,
+      y: sceneNumber(planeY, 0),
+      z: sceneNumber(ray.origin.z, 0) + sceneNumber(ray.dir.z, 0) * distance,
+    };
+  }
+
+  function sceneRayIntersectPlane(ray, point, normal) {
+    if (!ray || !ray.origin || !ray.dir || !point || !normal) return null;
+    var nx = sceneNumber(normal.x, 0);
+    var ny = sceneNumber(normal.y, 0);
+    var nz = sceneNumber(normal.z, 0);
+    var denom = nx * sceneNumber(ray.dir.x, 0) + ny * sceneNumber(ray.dir.y, 0) + nz * sceneNumber(ray.dir.z, 0);
+    if (Math.abs(denom) < 1e-9) return null;
+    var distance = (
+      nx * (sceneNumber(point.x, 0) - sceneNumber(ray.origin.x, 0)) +
+      ny * (sceneNumber(point.y, 0) - sceneNumber(ray.origin.y, 0)) +
+      nz * (sceneNumber(point.z, 0) - sceneNumber(ray.origin.z, 0))
+    ) / denom;
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + sceneNumber(ray.dir.x, 0) * distance,
+      y: sceneNumber(ray.origin.y, 0) + sceneNumber(ray.dir.y, 0) * distance,
+      z: sceneNumber(ray.origin.z, 0) + sceneNumber(ray.dir.z, 0) * distance,
+    };
+  }
+
+  function sceneRayIntersectSphere(ray, center, radius) {
+    if (!ray || !ray.origin || !ray.dir || !center) return null;
+    var r = Math.max(0, sceneNumber(radius, 0));
+    if (r <= 0) return null;
+    var ox = sceneNumber(ray.origin.x, 0) - sceneNumber(center.x, 0);
+    var oy = sceneNumber(ray.origin.y, 0) - sceneNumber(center.y, 0);
+    var oz = sceneNumber(ray.origin.z, 0) - sceneNumber(center.z, 0);
+    var dx = sceneNumber(ray.dir.x, 0);
+    var dy = sceneNumber(ray.dir.y, 0);
+    var dz = sceneNumber(ray.dir.z, 0);
+    var b = ox * dx + oy * dy + oz * dz;
+    var c = ox * ox + oy * oy + oz * oz - r * r;
+    var discriminant = b * b - c;
+    if (discriminant < 0) return null;
+    var root = Math.sqrt(discriminant);
+    var distance = -b - root;
+    if (distance < 0) distance = -b + root;
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + dx * distance,
+      y: sceneNumber(ray.origin.y, 0) + dy * distance,
+      z: sceneNumber(ray.origin.z, 0) + dz * distance,
+    };
+  }
+
+  function sceneRayIntersectAABB(ray, min, max) {
+    if (!ray || !ray.origin || !ray.dir || !min || !max) return null;
+    var distance = sceneRayIntersectsAABB(ray.origin, ray.dir, min, max);
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + sceneNumber(ray.dir.x, 0) * distance,
+      y: sceneNumber(ray.origin.y, 0) + sceneNumber(ray.dir.y, 0) * distance,
+      z: sceneNumber(ray.origin.z, 0) + sceneNumber(ray.dir.z, 0) * distance,
+    };
+  }
+
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    Object.assign(window.__gosx_scene3d_api, {
+      sceneScreenToRay,
+      sceneRayIntersectYPlane,
+      sceneRayIntersectPlane,
+      sceneRayIntersectSphere,
+      sceneRayIntersectAABB,
+    });
   }
 
   // -----------------------------------------------------------------------

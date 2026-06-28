@@ -16,13 +16,16 @@ var allBackends = []Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D}
 type Feature string
 
 const (
-	FeatureSkinning     Feature = "skinning"
-	FeatureIBL          Feature = "ibl"
-	FeatureGPUPicking   Feature = "gpu-picking"
-	FeatureLineDashed   Feature = "line-dashed"
-	FeatureCustomShader Feature = "custom-shader"
-	FeatureComputeParts Feature = "compute-particles"
-	FeatureGPUCull      Feature = "gpu-cull"
+	FeatureSkinning                  Feature = "skinning"
+	FeatureIBL                       Feature = "ibl"
+	FeatureGPUPicking                Feature = "gpu-picking"
+	FeatureLineDashed                Feature = "line-dashed"
+	FeatureCustomShader              Feature = "custom-shader"
+	FeatureComputeParts              Feature = "compute-particles"
+	FeatureGPUCull                   Feature = "gpu-cull"
+	FeatureWaterSim                  Feature = "water-simulation"
+	FeatureWaterObjectTexturePass    Feature = "water-object-texture-pass"
+	FeatureWaterObjectMeshShadowPass Feature = "water-object-mesh-shadow-pass"
 )
 
 // Matrix records which backends implement each feature TODAY. A feature absent
@@ -30,12 +33,15 @@ const (
 // feature; the drift guard (later task) ties this to renderer manifests.
 // custom-shader is per-material (resolved via ShaderResolver), not a flat cell.
 var Matrix = map[Feature]map[Backend]bool{
-	FeatureSkinning:     {BackendWebGPU: true, BackendWebGL: true},
-	FeatureIBL:          {BackendWebGPU: false, BackendWebGL: true},
-	FeatureGPUPicking:   {BackendWebGPU: false, BackendWebGL: true},
-	FeatureLineDashed:   {BackendWebGPU: false, BackendWebGL: true},
-	FeatureComputeParts: {BackendWebGPU: true, BackendWebGL: false},
-	FeatureGPUCull:      {BackendWebGPU: true, BackendWebGL: false},
+	FeatureSkinning:                  {BackendWebGPU: true, BackendWebGL: true},
+	FeatureIBL:                       {BackendWebGPU: false, BackendWebGL: true},
+	FeatureGPUPicking:                {BackendWebGPU: false, BackendWebGL: true},
+	FeatureLineDashed:                {BackendWebGPU: false, BackendWebGL: true},
+	FeatureComputeParts:              {BackendWebGPU: true, BackendWebGL: false},
+	FeatureGPUCull:                   {BackendWebGPU: true, BackendWebGL: false},
+	FeatureWaterSim:                  {BackendWebGPU: true, BackendWebGL: false},
+	FeatureWaterObjectTexturePass:    {BackendWebGPU: true, BackendWebGL: false},
+	FeatureWaterObjectMeshShadowPass: {BackendWebGPU: true, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {
@@ -50,8 +56,11 @@ type Policy struct{ Required map[Feature]bool }
 
 func DefaultPolicy() Policy {
 	return Policy{Required: map[Feature]bool{
-		FeatureSkinning:   true,
-		FeatureGPUPicking: true,
+		FeatureSkinning:                  true,
+		FeatureGPUPicking:                true,
+		FeatureWaterSim:                  true,
+		FeatureWaterObjectTexturePass:    true,
+		FeatureWaterObjectMeshShadowPass: true,
 	}}
 }
 
@@ -77,6 +86,8 @@ func Verdict(features []Feature, required []Backend, pol Policy) BackendCaps {
 	}
 	for _, b := range candidate {
 		excluded := false
+		degraded := []Feature{}
+		degradedReasons := []CapReason{}
 		for _, f := range features {
 			if supports(b, f) {
 				continue
@@ -84,14 +95,19 @@ func Verdict(features []Feature, required []Backend, pol Policy) BackendCaps {
 			if pol.Required[f] {
 				excluded = true
 				caps.Reasons = append(caps.Reasons, CapReason{Feature: f, Excludes: b})
-				break
+				continue
 			}
-			caps.Degraded[b] = append(caps.Degraded[b], f)
-			caps.Reasons = append(caps.Reasons, CapReason{Feature: f, Degrades: b})
+			degraded = append(degraded, f)
+			degradedReasons = append(degradedReasons, CapReason{Feature: f, Degrades: b})
 		}
-		if !excluded {
-			caps.Capable = append(caps.Capable, b)
+		if excluded {
+			continue
 		}
+		if len(degraded) > 0 {
+			caps.Degraded[b] = append(caps.Degraded[b], degraded...)
+			caps.Reasons = append(caps.Reasons, degradedReasons...)
+		}
+		caps.Capable = append(caps.Capable, b)
 	}
 	if len(caps.Degraded) == 0 {
 		caps.Degraded = nil

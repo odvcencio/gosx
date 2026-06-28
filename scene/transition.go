@@ -100,6 +100,7 @@ type MeshProps struct {
 	RenderPass    *MaterialRenderPass
 	Wireframe     *bool
 	Pickable      *bool
+	Visible       *bool
 	CastShadow    *bool
 	ReceiveShadow *bool
 	DepthWrite    *bool
@@ -202,6 +203,9 @@ type ModelProps struct {
 	Position           *Vector3
 	Rotation           *Euler
 	Scale              *Vector3
+	Bounds             *float64
+	Fit                *string
+	FitAlign           *string
 	Color              *string
 	Texture            *string
 	Opacity            *float64
@@ -210,6 +214,7 @@ type ModelProps struct {
 	RenderPass         *MaterialRenderPass
 	Wireframe          *bool
 	Pickable           *bool
+	Visible            *bool
 	Static             *bool
 	Animation          *string
 	AnimationSeq       *string
@@ -273,6 +278,7 @@ func (props *MeshProps) legacyProps() map[string]any {
 	setEnumPtr(record, "renderPass", props.RenderPass)
 	setBoolPtr(record, "wireframe", props.Wireframe)
 	setBoolPtr(record, "pickable", props.Pickable)
+	setBoolPtr(record, "visible", props.Visible)
 	setBoolPtr(record, "castShadow", props.CastShadow)
 	setBoolPtr(record, "receiveShadow", props.ReceiveShadow)
 	setBoolPtr(record, "depthWrite", props.DepthWrite)
@@ -439,6 +445,9 @@ func (props *ModelProps) legacyProps() map[string]any {
 	setVector3Ptr(record, "", props.Position)
 	setEulerPtr(record, "", props.Rotation)
 	setScalePtr(record, props.Scale)
+	setNumericPtr(record, "bounds", props.Bounds)
+	setStringPtr(record, "fit", props.Fit)
+	setStringPtr(record, "fitAlign", props.FitAlign)
 	setStringPtr(record, "color", props.Color)
 	setStringPtr(record, "texture", props.Texture)
 	setNumericPtr(record, "opacity", props.Opacity)
@@ -447,6 +456,7 @@ func (props *ModelProps) legacyProps() map[string]any {
 	setEnumPtr(record, "renderPass", props.RenderPass)
 	setBoolPtr(record, "wireframe", props.Wireframe)
 	setBoolPtr(record, "pickable", props.Pickable)
+	setBoolPtr(record, "visible", props.Visible)
 	setBoolPtr(record, "static", props.Static)
 	setStringPtr(record, "animation", props.Animation)
 	setStringPtr(record, "animationSeq", props.AnimationSeq)

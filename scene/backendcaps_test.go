@@ -62,6 +62,77 @@ func TestSceneIRBackendCapsPickableForcesWebGL(t *testing.T) {
 	}
 }
 
+func TestSceneIRBackendCapsWaterSimulationForcesWebGPU(t *testing.T) {
+	props := Props{Graph: NewGraph(WaterSystem{ID: "pool-water"})}
+	ir := props.SceneIR()
+	if ir.BackendCaps == nil {
+		t.Fatalf("expected BackendCaps to be set on SceneIR")
+	}
+	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGPU {
+		t.Fatalf("expected Capable == [webgpu], got %v", ir.BackendCaps.Capable)
+	}
+}
+
+func TestSceneIRBackendCapsWaterObjectTextureReason(t *testing.T) {
+	props := Props{Graph: NewGraph(WaterSystem{
+		ID:                      "pool-water",
+		ActiveObject:            "float-sphere",
+		ObjectKind:              "Sphere",
+		ObjectTextureResolution: 512,
+	})}
+	ir := props.SceneIR()
+	if ir.BackendCaps == nil {
+		t.Fatalf("expected BackendCaps to be set on SceneIR")
+	}
+	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGPU {
+		t.Fatalf("expected Capable == [webgpu], got %v", ir.BackendCaps.Capable)
+	}
+	for _, reason := range ir.BackendCaps.Reasons {
+		if reason.Feature == capability.FeatureWaterObjectTexturePass && reason.Excludes == capability.BackendWebGL {
+			return
+		}
+	}
+	t.Fatalf("expected webgl exclusion reason for water object texture pass, got %+v", ir.BackendCaps.Reasons)
+}
+
+func TestSceneIRBackendCapsWaterObjectTextureBudgetReason(t *testing.T) {
+	props := Props{Graph: NewGraph(WaterSystem{
+		ID:                       "pool-water",
+		ObjectTexturePixelBudget: 3145728,
+	})}
+	ir := props.SceneIR()
+	if ir.BackendCaps == nil {
+		t.Fatalf("expected BackendCaps to be set on SceneIR")
+	}
+	for _, reason := range ir.BackendCaps.Reasons {
+		if reason.Feature == capability.FeatureWaterObjectTexturePass && reason.Excludes == capability.BackendWebGL {
+			return
+		}
+	}
+	t.Fatalf("expected webgl exclusion reason for water object texture budget, got %+v", ir.BackendCaps.Reasons)
+}
+
+func TestSceneIRBackendCapsWaterObjectMeshShadowReason(t *testing.T) {
+	props := Props{Graph: NewGraph(WaterSystem{
+		ID:           "pool-water",
+		ActiveObject: "TorusKnot",
+		ObjectKind:   "compound",
+	})}
+	ir := props.SceneIR()
+	if ir.BackendCaps == nil {
+		t.Fatalf("expected BackendCaps to be set on SceneIR")
+	}
+	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGPU {
+		t.Fatalf("expected Capable == [webgpu], got %v", ir.BackendCaps.Capable)
+	}
+	for _, reason := range ir.BackendCaps.Reasons {
+		if reason.Feature == capability.FeatureWaterObjectMeshShadowPass && reason.Excludes == capability.BackendWebGL {
+			return
+		}
+	}
+	t.Fatalf("expected webgl exclusion reason for water object mesh shadow pass, got %+v", ir.BackendCaps.Reasons)
+}
+
 // Test 3: backendCaps round-trips through the serialized scene payload.
 func TestSceneIRBackendCapsSerializes(t *testing.T) {
 	props := Props{Environment: Environment{EnvironmentMap: "env.hdr"}}

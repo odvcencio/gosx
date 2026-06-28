@@ -33,6 +33,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/computeParticles" }
     },
+    "waterSystems": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/waterSystem" }
+    },
     "animations": {
       "type": "array",
       "items": { "$ref": "#/$defs/animation" }
@@ -230,6 +234,11 @@
         "customUniforms": { "$ref": "#/$defs/stateRecord" },
         "shaderBackend": { "type": "string" },
         "shaderLayout": { "$ref": "#/$defs/stateRecord" },
+        "shaderSource": { "type": "string" },
+        "shaderSourceFiles": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
         "depthWrite": { "type": "boolean" },
         "roughness": { "type": "number" },
         "metalness": { "type": "number" },
@@ -373,6 +382,12 @@
             "scaleX": { "type": "number" },
             "scaleY": { "type": "number" },
             "scaleZ": { "type": "number" },
+            "bounds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "fit": { "type": "string" },
+            "fitAlign": { "type": "string" },
             "static": { "type": "boolean" },
             "animation": { "type": "string" },
             "animationSeq": { "type": "string" },
@@ -539,6 +554,226 @@
           }
         }
       ]
+    },
+    "waterSystem": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "interactionProfile": { "type": "string" },
+        "interactionTarget": { "type": "string" },
+        "interactionObject": { "type": "string" },
+        "resolution": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "poolShape": { "type": "string" },
+        "poolWidth": {
+          "type": "number",
+          "minimum": 0
+        },
+        "poolHeight": {
+          "type": "number",
+          "minimum": 0
+        },
+        "poolLength": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cornerRadius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "waveSpeed": { "type": "number" },
+        "damping": { "type": "number" },
+        "normalScale": {
+          "type": "number",
+          "minimum": 0
+        },
+        "seedDrops": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropRadius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dropStrength": { "type": "number" },
+        "dropEventID": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropX": { "type": "number" },
+        "dropZ": { "type": "number" },
+        "dropEventRadius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dropEventStrength": { "type": "number" },
+        "tileTexture": { "type": "string" },
+        "cubeMap": { "type": "string" },
+        "shallowColor": { "type": "string" },
+        "deepColor": { "type": "string" },
+        "causticsResolution": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "objectTextureResolution": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "objectTextureResolutionMode": {
+          "type": "string",
+          "enum": ["", "fixed", "viewport", "auto", "upstream"]
+        },
+        "objectShadowResolution": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "caustics": { "type": "boolean" },
+        "reflection": { "type": "boolean" },
+        "refraction": { "type": "boolean" },
+        "paused": { "type": "boolean" },
+        "followCamera": { "type": "boolean" },
+        "lightDirectionX": { "type": "number" },
+        "lightDirectionY": { "type": "number" },
+        "lightDirectionZ": { "type": "number" },
+        "activeObject": { "type": "string" },
+        "objectKind": { "type": "string" },
+        "objectX": { "type": "number" },
+        "objectY": { "type": "number" },
+        "objectZ": { "type": "number" },
+        "objectPreviousSet": { "type": "boolean" },
+        "objectPreviousX": { "type": "number" },
+        "objectPreviousY": { "type": "number" },
+        "objectPreviousZ": { "type": "number" },
+        "objectRadius": {
+          "type": "number",
+          "minimum": 0
+        },
+        "objectHalfSizeX": {
+          "type": "number",
+          "minimum": 0
+        },
+        "objectHalfSizeY": {
+          "type": "number",
+          "minimum": 0
+        },
+        "objectHalfSizeZ": {
+          "type": "number",
+          "minimum": 0
+        },
+        "objectDriftX": { "type": "number" },
+        "objectDriftY": { "type": "number" },
+        "objectDriftZ": { "type": "number" },
+        "objectBobAmplitude": {
+          "type": "number",
+          "minimum": 0
+        },
+        "objectBobSpeed": {
+          "type": "number",
+          "minimum": 0
+        },
+        "objectDisplacementScale": {
+          "type": "number",
+          "minimum": 0
+        },
+        "objectDisplacementSpheres": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "offsetX": { "type": "number" },
+              "offsetY": { "type": "number" },
+              "offsetZ": { "type": "number" },
+              "radius": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "objectDisplacementEvents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "integer", "minimum": 0 },
+              "activeObject": { "type": "string" },
+              "objectKind": { "type": "string" },
+              "objectSubtype": { "type": "string" },
+              "objectX": { "type": "number" },
+              "objectY": { "type": "number" },
+              "objectZ": { "type": "number" },
+              "objectPreviousSet": { "type": "boolean" },
+              "objectPreviousX": { "type": "number" },
+              "objectPreviousY": { "type": "number" },
+              "objectPreviousZ": { "type": "number" },
+              "objectRadius": { "type": "number", "minimum": 0 },
+              "objectHalfSizeX": { "type": "number", "minimum": 0 },
+              "objectHalfSizeY": { "type": "number", "minimum": 0 },
+              "objectHalfSizeZ": { "type": "number", "minimum": 0 },
+              "objectDisplacementScale": { "type": "number", "minimum": 0 },
+              "objectDisplacementSpheres": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offsetX": { "type": "number" },
+                    "offsetY": { "type": "number" },
+                    "offsetZ": { "type": "number" },
+                    "radius": { "type": "number", "minimum": 0 }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "computeBackend": { "type": "string" },
+        "materialBackend": { "type": "string" },
+        "computeSource": { "type": "string" },
+        "materialSource": { "type": "string" },
+        "computeSourceFiles": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "materialSourceFiles": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "seedWGSL": { "type": "string" },
+        "dropWGSL": { "type": "string" },
+        "displacementWGSL": { "type": "string" },
+        "simulationWGSL": { "type": "string" },
+        "normalWGSL": { "type": "string" },
+        "causticsWGSL": { "type": "string" },
+        "poolVertexWGSL": { "type": "string" },
+        "poolFragmentWGSL": { "type": "string" },
+        "surfaceVertexWGSL": { "type": "string" },
+        "surfaceFragmentWGSL": { "type": "string" },
+        "surfaceBelowFragmentWGSL": { "type": "string" },
+        "objectShadowWGSL": { "type": "string" },
+        "objectMeshShadowVertexWGSL": { "type": "string" },
+        "objectMeshShadowFragmentWGSL": { "type": "string" },
+        "seedWGSLRef": { "type": "string" },
+        "dropWGSLRef": { "type": "string" },
+        "displacementWGSLRef": { "type": "string" },
+        "simulationWGSLRef": { "type": "string" },
+        "normalWGSLRef": { "type": "string" },
+        "causticsWGSLRef": { "type": "string" },
+        "poolVertexWGSLRef": { "type": "string" },
+        "poolFragmentWGSLRef": { "type": "string" },
+        "surfaceVertexWGSLRef": { "type": "string" },
+        "surfaceFragmentWGSLRef": { "type": "string" },
+        "surfaceBelowFragmentWGSLRef": { "type": "string" },
+        "objectShadowWGSLRef": { "type": "string" },
+        "objectMeshShadowVertexWGSLRef": { "type": "string" },
+        "objectMeshShadowFragmentWGSLRef": { "type": "string" }
+      }
     },
     "particleEmitter": {
       "allOf": [

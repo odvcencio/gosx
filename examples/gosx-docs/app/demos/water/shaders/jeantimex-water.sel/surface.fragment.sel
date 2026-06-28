@@ -1,0 +1,628 @@
+
+// Authored Selena water surface pass for the GoSX water demo. This module
+// follows the WaterSystem surface material binding contract consumed by Scene3D
+// WebGPU: group(0) binding(0) is FrameUniforms, and group(1) carries the water
+// uniforms plus optional caustic, object optics, and sky textures. It is routed
+// through .gsx as surfaceFragmentWGSL instead of a demo-specific bootstrap file.
+const WATER_SURFACE_VIEW_BELOW: bool = false;
+
+struct FrameUniforms {
+  viewMatrix: mat4x4f,
+  projMatrix: mat4x4f,
+  cameraPos: vec3f,
+  lightCount: u32,
+  viewportWidth: f32,
+  viewportHeight: f32,
+  toneMap: u32,
+  _pad0: u32,
+};
+
+struct WaterUniforms {
+  resolution: u32,
+  cellCount: u32,
+  seedDrops: u32,
+  frameIndex: u32,
+  deltaTime: f32,
+  time: f32,
+  waveSpeed: f32,
+  damping: f32,
+  dropRadius: f32,
+  dropStrength: f32,
+  normalScale: f32,
+  poolWidth: f32,
+  poolHeight: f32,
+  poolLength: f32,
+  cornerRadius: f32,
+  poolShape: f32,
+  lightDir: vec4f,
+  shallowColor: vec4f,
+  deepColor: vec4f,
+  objectCenter: vec4f,
+  objectPreviousCenter: vec4f,
+  objectHalfSizeRadius: vec4f,
+  objectParams: vec4f,
+  opticsFlags: vec4f,
+  interactiveDrop: vec4f,
+  seedSalt: f32,
+};
+
+struct VertexOutput {
+  @builtin(position) clipPos: vec4f,
+  @location(0) worldPos: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) uv: vec2f,
+  @location(3) height: f32,
+};
+
+struct WaterObjectTextureMatrices {
+  viewProjectionMatrix: mat4x4f,
+  reflectionViewProjectionMatrix: mat4x4f,
+};
+
+struct WaterDisplacementSphere {
+  offsetRadius: vec4f,
+};
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(1) @binding(0) var<uniform> params: WaterUniforms;
+@group(1) @binding(1) var<storage, read> waterState: array<vec4f>;
+@group(1) @binding(2) var waterSampler: sampler;
+@group(1) @binding(3) var causticTexture: texture_2d<f32>;
+@group(1) @binding(4) var objectReflectionTexture: texture_2d<f32>;
+@group(1) @binding(5) var objectClippedReflectionTexture: texture_2d<f32>;
+@group(1) @binding(6) var objectRefractionTexture: texture_2d<f32>;
+@group(1) @binding(7) var waterSkyTexture: texture_cube<f32>;
+@group(1) @binding(8) var<uniform> objectTextureMatrices: WaterObjectTextureMatrices;
+@group(1) @binding(9) var tileTexture: texture_2d<f32>;
+@group(1) @binding(10) var<storage, read> objectSpheres: array<WaterDisplacementSphere>;
+
+fn roundedPoolSDF(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {
+  let r = clamp(radius, 0.0, max(0.0, min(halfSize.x, halfSize.y) - 0.001));
+  let q = abs(point) - max(halfSize - vec2f(r), vec2f(0.001));
+  return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+fn sampleProjectedTexture(tex: texture_2d<f32>, matrix: mat4x4f, worldPos: vec3f) -> vec4f {
+  let clip = matrix * vec4f(worldPos, 1.0);
+  let safeW = select(0.0001, clip.w, abs(clip.w) > 0.0001);
+  let ndc = clip.xyz / safeW;
+  let uv = clamp(ndc.xy * vec2f(0.5, -0.5) + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+  let inBounds = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0) * step(0.0, clip.w);
+  return textureSampleLevel(tex, waterSampler, uv, 0.0) * inBounds;
+}
+
+fn intersectSurfaceSphereBounds(origin: vec3f, ray: vec3f, center: vec3f, radius: f32) -> f32 {
+  let toSphere = origin - center;
+  let a = dot(ray, ray);
+  let b = 2.0 * dot(toSphere, ray);
+  let c = dot(toSphere, toSphere) - radius * radius;
+  let discriminant = b * b - 4.0 * a * c;
+  if (discriminant > 0.0 && a > 0.0000001) {
+    let root = sqrt(discriminant);
+    let near = (-b - root) / (2.0 * a);
+    let far = (-b + root) / (2.0 * a);
+    if (near > 0.0) { return near; }
+    if (far > 0.0) { return 0.0; }
+  }
+  return 1000000.0;
+}
+
+fn intersectSurfaceSphere(origin: vec3f, ray: vec3f, center: vec3f, radius: f32) -> f32 {
+  let toSphere = origin - center;
+  let a = dot(ray, ray);
+  let b = 2.0 * dot(toSphere, ray);
+  let c = dot(toSphere, toSphere) - radius * radius;
+  let discriminant = b * b - 4.0 * a * c;
+  if (discriminant > 0.0 && a > 0.0000001) {
+    let t = (-b - sqrt(discriminant)) / (2.0 * a);
+    if (t > 0.0) { return t; }
+  }
+  return 1000000.0;
+}
+
+fn intersectSurfaceBox(origin: vec3f, ray: vec3f, cubeMin: vec3f, cubeMax: vec3f) -> vec2f {
+  let safeRay = select(vec3f(0.0001), ray, abs(ray) > vec3f(0.0001));
+  let invRay = 1.0 / safeRay;
+  let t0 = (cubeMin - origin) * invRay;
+  let t1 = (cubeMax - origin) * invRay;
+  let near3 = min(t0, t1);
+  let far3 = max(t0, t1);
+  return vec2f(max(max(near3.x, near3.y), near3.z), min(min(far3.x, far3.y), far3.z));
+}
+
+fn waterSunGlint(ray: vec3f, lightDir: vec3f) -> vec3f {
+  let sun = pow(max(dot(lightDir, normalize(ray)), 0.0), 5000.0);
+  return vec3f(sun) * vec3f(10.0, 8.0, 6.0);
+}
+fn surfaceStateAtUV(uv: vec2f) -> vec4f {
+  let res = max(params.resolution, 1u);
+  let clamped = clamp(uv, vec2f(0.0), vec2f(1.0));
+  let cell = vec2u(clamp(vec2f(f32(res - 1u)) * clamped, vec2f(0.0), vec2f(f32(res - 1u))));
+  return waterState[cell.y * res + cell.x];
+}
+
+fn surfaceParallaxState(uv: vec2f) -> vec4f {
+  var coord = clamp(uv, vec2f(0.0), vec2f(1.0));
+  var info = surfaceStateAtUV(coord);
+  for (var i = 0u; i < 5u; i = i + 1u) {
+    coord = clamp(coord + info.zw * 0.005, vec2f(0.0), vec2f(1.0));
+    info = surfaceStateAtUV(coord);
+  }
+  return info;
+}
+
+fn surfaceNormalFromState(info: vec4f) -> vec3f {
+  let slope = clamp(info.zw * params.normalScale, vec2f(-0.999), vec2f(0.999));
+  let slopeLengthSq = min(dot(slope, slope), 0.999);
+  return normalize(vec3f(slope.x, sqrt(max(0.001, 1.0 - slopeLengthSq)), slope.y));
+}
+
+fn surfaceWaterHeightAt(point: vec3f) -> f32 {
+  let res = max(params.resolution, 1u);
+  let uv = clamp(point.xz / vec2f(max(params.poolWidth * 2.0, 0.001), max(params.poolLength * 2.0, 0.001)) + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+  let cell = vec2u(clamp(vec2f(f32(res - 1u)) * uv, vec2f(0.0), vec2f(f32(res - 1u))));
+  return waterState[cell.y * res + cell.x].x;
+}
+
+fn surfaceObjectCenterWorld() -> vec3f {
+  return vec3f(params.objectCenter.x * params.poolWidth, params.objectCenter.y, params.objectCenter.z * params.poolLength);
+}
+
+fn surfaceObjectHalfSizeWorld() -> vec3f {
+  return vec3f(params.objectHalfSizeRadius.x * params.poolWidth, params.objectHalfSizeRadius.y, params.objectHalfSizeRadius.z * params.poolLength);
+}
+
+fn surfaceObjectRadiusWorld() -> f32 {
+  return max(params.objectHalfSizeRadius.w * params.poolLength, 0.001);
+}
+
+fn objectSubtypeIsTorusKnot() -> bool {
+  return params.objectParams.w > 0.5 && params.objectParams.w < 1.5;
+}
+
+fn objectTextureRadiusWorld() -> f32 {
+  if (params.objectParams.x < 2.5) {
+    let halfSize = surfaceObjectHalfSizeWorld();
+    return max(max(max(halfSize.x, halfSize.y), halfSize.z), surfaceObjectRadiusWorld());
+  }
+  if (objectSubtypeIsTorusKnot()) {
+    return max(surfaceObjectRadiusWorld(), 0.31);
+  }
+  return surfaceObjectRadiusWorld();
+}
+
+fn objectShadowRadiusWorld() -> f32 {
+  if (params.objectParams.x >= 2.5 && objectSubtypeIsTorusKnot()) {
+    return 0.13;
+  }
+  return objectTextureRadiusWorld();
+}
+
+fn sampleObjectRefraction(origin: vec3f, ray: vec3f) -> vec4f {
+  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return vec4f(0.0); }
+  let hit = intersectSurfaceSphereBounds(origin, ray, surfaceObjectCenterWorld(), objectTextureRadiusWorld());
+  if (hit >= 1000000.0) { return vec4f(0.0); }
+  return sampleProjectedTexture(objectRefractionTexture, objectTextureMatrices.viewProjectionMatrix, origin + ray * hit);
+}
+
+fn sampleObjectReflection(origin: vec3f, ray: vec3f) -> vec4f {
+  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return vec4f(0.0); }
+  let hit = intersectSurfaceSphereBounds(origin, ray, surfaceObjectCenterWorld(), objectTextureRadiusWorld());
+  if (hit >= 1000000.0) { return vec4f(0.0); }
+  return sampleProjectedTexture(objectReflectionTexture, objectTextureMatrices.reflectionViewProjectionMatrix, origin + ray * hit);
+}
+
+fn surfaceObjectSphereCenterWorld(index: u32) -> vec3f {
+  let sphere = objectSpheres[index].offsetRadius;
+  return surfaceObjectCenterWorld() + vec3f(sphere.x * params.poolWidth, sphere.y, sphere.z * params.poolLength);
+}
+
+fn surfaceObjectSphereRadiusWorld(index: u32) -> f32 {
+  return max(objectSpheres[index].offsetRadius.w * params.poolLength, 0.001);
+}
+
+fn surfaceTorusKnotSDF(point: vec3f) -> f32 {
+  let radiusScale = max(surfaceObjectRadiusWorld() / 0.42, 0.25);
+  let pos = (point - surfaceObjectCenterWorld()) / radiusScale;
+  let bound = length(pos) - 0.31;
+  if (bound > 0.08) { return bound * radiusScale; }
+  var minDist = 1000000.0;
+  let segments = 64u;
+  var prevPt = vec3f(0.0);
+  for (var i = 0u; i <= segments; i = i + 1u) {
+    let theta = f32(i) / f32(segments) * 6.283185307179586;
+    let rad = 0.17 * (2.0 + cos(3.0 * theta)) * 0.5;
+    let pt = vec3f(rad * cos(2.0 * theta), -0.17 * sin(3.0 * theta) * 0.5, rad * sin(2.0 * theta));
+    if (i > 0u) {
+      let ba = pt - prevPt;
+      let pa = pos - prevPt;
+      let h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.000001), 0.0, 1.0);
+      minDist = min(minDist, length(pa - ba * h));
+    }
+    prevPt = pt;
+  }
+  return (minDist - 0.045) * radiusScale;
+}
+
+fn intersectSurfaceTorusKnot(origin: vec3f, ray: vec3f) -> f32 {
+  let bound = intersectSurfaceSphereBounds(origin, ray, surfaceObjectCenterWorld(), max(surfaceObjectRadiusWorld(), 0.31));
+  if (bound > 100000.0) { return 1000000.0; }
+  var t = bound;
+  for (var i = 0u; i < 30u; i = i + 1u) {
+    let p = origin + ray * t;
+    let d = surfaceTorusKnotSDF(p);
+    if (d < 0.001) { return t; }
+    t = t + d;
+    if (t > bound + 0.5) { break; }
+  }
+  return 1000000.0;
+}
+
+fn surfaceTorusKnotNormal(point: vec3f) -> vec3f {
+  let eps = 0.001;
+  let n = vec3f(
+    surfaceTorusKnotSDF(point + vec3f(eps, 0.0, 0.0)) - surfaceTorusKnotSDF(point - vec3f(eps, 0.0, 0.0)),
+    surfaceTorusKnotSDF(point + vec3f(0.0, eps, 0.0)) - surfaceTorusKnotSDF(point - vec3f(0.0, eps, 0.0)),
+    surfaceTorusKnotSDF(point + vec3f(0.0, 0.0, eps)) - surfaceTorusKnotSDF(point - vec3f(0.0, 0.0, eps))
+  );
+  return normalize(n);
+}
+
+fn surfaceCompoundObjectHit(origin: vec3f, ray: vec3f) -> vec2f {
+  if (params.objectParams.w > 0.5 && params.objectParams.w < 1.5) {
+    return vec2f(intersectSurfaceTorusKnot(origin, ray), 1.0);
+  }
+  let count = min(u32(params.objectParams.z), 32u);
+  var bestDistance = 1000000.0;
+  var bestIndex = 0.0;
+  for (var i = 0u; i < count; i = i + 1u) {
+    let center = surfaceObjectSphereCenterWorld(i);
+    let distance = intersectSurfaceSphere(origin, ray, center, surfaceObjectSphereRadiusWorld(i));
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = f32(i);
+    }
+  }
+  return vec2f(bestDistance, bestIndex);
+}
+
+fn surfaceCompoundObjectNormal(point: vec3f) -> vec3f {
+  if (params.objectParams.w > 0.5 && params.objectParams.w < 1.5) {
+    return surfaceTorusKnotNormal(point);
+  }
+  let count = min(u32(params.objectParams.z), 32u);
+  var bestScore = 1000000.0;
+  var bestNormal = normalize(point - surfaceObjectCenterWorld());
+  for (var i = 0u; i < count; i = i + 1u) {
+    let center = surfaceObjectSphereCenterWorld(i);
+    let radius = surfaceObjectSphereRadiusWorld(i);
+    let toPoint = point - center;
+    let score = abs(length(toPoint) - radius);
+    if (score < bestScore) {
+      bestScore = score;
+      bestNormal = normalize(toPoint);
+    }
+  }
+  return bestNormal;
+}
+
+fn surfaceObjectHitDistance(origin: vec3f, ray: vec3f) -> vec2f {
+  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return vec2f(1000000.0, 0.0); }
+  let kind = params.objectParams.x;
+  var distance = 1000000.0;
+  var hitKind = 0.0;
+  if (kind < 1.5) {
+    distance = intersectSurfaceSphere(origin, ray, surfaceObjectCenterWorld(), surfaceObjectRadiusWorld());
+    hitKind = 1.0;
+  } else if (kind < 2.5) {
+    let halfSize = max(surfaceObjectHalfSizeWorld(), vec3f(0.001));
+    let center = surfaceObjectCenterWorld();
+    let cubeIntersection = intersectSurfaceBox(origin, ray, center - halfSize, center + halfSize);
+    if (cubeIntersection.x <= cubeIntersection.y && cubeIntersection.y > 0.0) {
+      distance = select(cubeIntersection.y, cubeIntersection.x, cubeIntersection.x > 0.0);
+      hitKind = 2.0;
+    }
+  } else {
+    let compoundHit = surfaceCompoundObjectHit(origin, ray);
+    distance = compoundHit.x;
+    hitKind = 3.0;
+  }
+  return vec2f(distance, hitKind);
+}
+
+fn surfaceObjectColor(point: vec3f, hitKind: f32, lightDir: vec3f) -> vec3f {
+  var normal = normalize(point - surfaceObjectCenterWorld());
+  if (hitKind > 1.5 && hitKind < 2.5) {
+    let local = (point - surfaceObjectCenterWorld()) / max(surfaceObjectHalfSizeWorld(), vec3f(0.001));
+    let axis = abs(local);
+    if (axis.x > axis.y && axis.x > axis.z) {
+      normal = vec3f(sign(local.x), 0.0, 0.0);
+    } else if (axis.y > axis.z) {
+      normal = vec3f(0.0, sign(local.y), 0.0);
+    } else {
+      normal = vec3f(0.0, 0.0, sign(local.z));
+    }
+  } else if (hitKind >= 2.5) {
+    normal = surfaceCompoundObjectNormal(point);
+  }
+  let refractedLight = refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333);
+  var diffuse = max(dot(-refractedLight, normal), 0.0) * 0.5;
+  let waterHeight = surfaceWaterHeightAt(point);
+  if (point.y < waterHeight) {
+    let safeLightY = select(0.0001, refractedLight.y, abs(refractedLight.y) > 0.0001);
+    let causticUV = clamp(0.75 * (point.xz - point.y * refractedLight.xz / safeLightY) / vec2f(max(params.poolWidth * 2.0, 0.001), max(params.poolLength * 2.0, 0.001)) + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+    let caustic = textureSampleLevel(causticTexture, waterSampler, causticUV, 0.0);
+    diffuse = (diffuse + select(0.0, 0.06, hitKind >= 1.5)) * caustic.r * 4.0 * clamp(params.opticsFlags.x, 0.0, 1.0);
+  }
+  return vec3f(0.5) + vec3f(diffuse);
+}
+
+fn intersectSurfacePoolBox(origin: vec3f, ray: vec3f) -> vec2f {
+  let safeRay = select(vec3f(0.0001), ray, abs(ray) > vec3f(0.0001));
+  let invRay = 1.0 / safeRay;
+  let halfSize = vec3f(max(params.poolWidth, 0.001), max(params.poolHeight, 0.001), max(params.poolLength, 0.001));
+  let cubeMin = vec3f(-halfSize.x, -halfSize.y, -halfSize.z);
+  let cubeMax = vec3f(halfSize.x, 2.0, halfSize.z);
+  let t0 = (cubeMin - origin) * invRay;
+  let t1 = (cubeMax - origin) * invRay;
+  let near3 = min(t0, t1);
+  let far3 = max(t0, t1);
+  return vec2f(max(max(near3.x, near3.y), near3.z), min(min(far3.x, far3.y), far3.z));
+}
+
+
+fn intersectSurfaceRoundedRectangle2D(origin: vec2f, ray: vec2f, radius: f32) -> vec2f {
+  let halfSize = vec2f(max(params.poolWidth, 0.001), max(params.poolLength, 0.001));
+  let r = clamp(radius, 0.0, max(0.0, min(halfSize.x, halfSize.y) - 0.001));
+  let rSub = max(halfSize - vec2f(r), vec2f(0.001));
+  let eps = 0.001;
+  var tNear = 1000000.0;
+  var tFar = -1000000.0;
+  var found = false;
+
+  if (abs(ray.x) > 0.0000001) {
+    let tPos = (halfSize.x - origin.x) / ray.x;
+    let zPos = origin.y + tPos * ray.y;
+    if (zPos >= -rSub.y - eps && zPos <= rSub.y + eps) {
+      tNear = min(tNear, tPos);
+      tFar = max(tFar, tPos);
+      found = true;
+    }
+    let tNeg = (-halfSize.x - origin.x) / ray.x;
+    let zNeg = origin.y + tNeg * ray.y;
+    if (zNeg >= -rSub.y - eps && zNeg <= rSub.y + eps) {
+      tNear = min(tNear, tNeg);
+      tFar = max(tFar, tNeg);
+      found = true;
+    }
+  }
+
+  if (abs(ray.y) > 0.0000001) {
+    let tPos = (halfSize.y - origin.y) / ray.y;
+    let xPos = origin.x + tPos * ray.x;
+    if (xPos >= -rSub.x - eps && xPos <= rSub.x + eps) {
+      tNear = min(tNear, tPos);
+      tFar = max(tFar, tPos);
+      found = true;
+    }
+    let tNeg = (-halfSize.y - origin.y) / ray.y;
+    let xNeg = origin.x + tNeg * ray.x;
+    if (xNeg >= -rSub.x - eps && xNeg <= rSub.x + eps) {
+      tNear = min(tNear, tNeg);
+      tFar = max(tFar, tNeg);
+      found = true;
+    }
+  }
+
+  if (r > 0.0) {
+    let corners = array<vec2f, 4>(
+      vec2f(rSub.x, rSub.y),
+      vec2f(-rSub.x, rSub.y),
+      vec2f(-rSub.x, -rSub.y),
+      vec2f(rSub.x, -rSub.y),
+    );
+    for (var i = 0u; i < 4u; i = i + 1u) {
+      let center = corners[i];
+      let signDir = vec2f(select(-1.0, 1.0, center.x >= 0.0), select(-1.0, 1.0, center.y >= 0.0));
+      let toCenter = origin - center;
+      let a = dot(ray, ray);
+      let b = 2.0 * dot(toCenter, ray);
+      let c = dot(toCenter, toCenter) - r * r;
+      let disc = b * b - 4.0 * a * c;
+      if (disc >= 0.0 && a > 0.0000001) {
+        let sqrtDisc = sqrt(disc);
+        let tA = (-b - sqrtDisc) / (2.0 * a);
+        let ptA = origin + tA * ray;
+        if (signDir.x * ptA.x >= rSub.x - eps && signDir.y * ptA.y >= rSub.y - eps) {
+          tNear = min(tNear, tA);
+          tFar = max(tFar, tA);
+          found = true;
+        }
+        let tB = (-b + sqrtDisc) / (2.0 * a);
+        let ptB = origin + tB * ray;
+        if (signDir.x * ptB.x >= rSub.x - eps && signDir.y * ptB.y >= rSub.y - eps) {
+          tNear = min(tNear, tB);
+          tFar = max(tFar, tB);
+          found = true;
+        }
+      }
+    }
+  }
+
+  if (!found) { return vec2f(-1000000.0, 1000000.0); }
+  return vec2f(tNear, tFar);
+}
+
+fn intersectSurfaceRoundedPool(origin: vec3f, ray: vec3f, radius: f32) -> vec2f {
+  var tYNear = -1000000.0;
+  var tYFar = 1000000.0;
+  if (abs(ray.y) > 0.0000001) {
+    let tYMin = (-params.poolHeight - origin.y) / ray.y;
+    let tYMax = (2.0 - origin.y) / ray.y;
+    tYNear = min(tYMin, tYMax);
+    tYFar = max(tYMin, tYMax);
+  }
+  let tXZ = intersectSurfaceRoundedRectangle2D(origin.xz, ray.xz, radius);
+  return vec2f(max(tYNear, tXZ.x), min(tYFar, tXZ.y));
+}
+
+fn intersectSurfacePool(origin: vec3f, ray: vec3f) -> vec2f {
+  if (params.poolShape > 0.5 && params.cornerRadius > 0.0001) {
+    return intersectSurfaceRoundedPool(origin, ray, params.cornerRadius);
+  }
+  return intersectSurfacePoolBox(origin, ray);
+}
+
+struct SurfaceWallSample {
+  normal: vec3f,
+  uv: vec2f,
+};
+
+fn surfaceRoundedWallSample(point: vec3f) -> SurfaceWallSample {
+  var result: SurfaceWallSample;
+  let halfWidth = max(params.poolWidth, 0.001);
+  let halfLength = max(params.poolLength, 0.001);
+  let poolHeight = max(params.poolHeight, 0.001);
+  let radius = clamp(params.cornerRadius, 0.0, max(0.0, min(halfWidth, halfLength) - 0.001));
+  let rSub = max(vec2f(halfWidth, halfLength) - vec2f(radius), vec2f(0.001));
+
+  if (point.y < -poolHeight + 0.001) {
+    result.normal = vec3f(0.0, 1.0, 0.0);
+    result.uv = point.xz * 0.5 + vec2f(0.5);
+    return result;
+  }
+
+  let absP = abs(point.xz);
+  if (params.poolShape > 0.5 && radius > 0.0001 && absP.x > rSub.x && absP.y > rSub.y) {
+    let center = sign(point.xz) * rSub;
+    let d = point.xz - center;
+    let cornerNormal = normalize(d);
+    result.normal = vec3f(-cornerNormal.x, 0.0, -cornerNormal.y);
+
+    var s = 0.0;
+    if (point.x >= rSub.x && point.z >= -rSub.y && point.z <= rSub.y) {
+      s = point.z + rSub.y;
+    } else if (point.x >= rSub.x && point.z > rSub.y) {
+      let cd = point.xz - vec2f(rSub.x, rSub.y);
+      s = 2.0 * rSub.y + radius * atan2(cd.y, cd.x);
+    } else if (point.z >= rSub.y && point.x >= -rSub.x && point.x <= rSub.x) {
+      s = 2.0 * rSub.y + radius * 1.570796326 + (rSub.x - point.x);
+    } else if (point.z >= rSub.y && point.x < -rSub.x) {
+      let cd = point.xz - vec2f(-rSub.x, rSub.y);
+      s = 2.0 * rSub.y + radius * 1.570796326 + 2.0 * rSub.x + radius * (atan2(cd.y, cd.x) - 1.570796326);
+    } else if (point.x <= -rSub.x && point.z >= -rSub.y && point.z <= rSub.y) {
+      s = 2.0 * rSub.y + 2.0 * rSub.x + radius * 3.14159265 + (rSub.y - point.z);
+    } else if (point.x <= -rSub.x && point.z < -rSub.y) {
+      let cd = point.xz - vec2f(-rSub.x, -rSub.y);
+      s = 4.0 * rSub.y + 2.0 * rSub.x + radius * 3.14159265 + radius * (atan2(cd.y, cd.x) + 3.14159265);
+    } else if (point.z <= -rSub.y && point.x >= -rSub.x && point.x <= rSub.x) {
+      s = 4.0 * rSub.y + 2.0 * rSub.x + radius * 4.71238898 + (point.x + rSub.x);
+    } else {
+      let cd = point.xz - vec2f(rSub.x, -rSub.y);
+      s = 4.0 * rSub.y + 4.0 * rSub.x + radius * 4.71238898 + radius * (atan2(cd.y, cd.x) + 1.570796326);
+    }
+    result.uv = vec2f(point.y, s) * 0.5 + vec2f(1.0, 0.5);
+    return result;
+  }
+
+  let normP = absP / vec2f(halfWidth, halfLength);
+  if (normP.x > normP.y) {
+    result.normal = vec3f(-sign(point.x), 0.0, 0.0);
+    result.uv = point.yz * 0.5 + vec2f(1.0, 0.5);
+  } else {
+    result.normal = vec3f(0.0, 0.0, -sign(point.z));
+    result.uv = point.yx * 0.5 + vec2f(1.0, 0.5);
+  }
+  return result;
+}
+
+fn surfaceObjectWallOcclusion(point: vec3f) -> f32 {
+  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return 1.0; }
+  let center = surfaceObjectCenterWorld();
+  var distanceRatio = 1.0;
+  if (params.objectParams.x < 1.5) {
+    distanceRatio = length(point - center) / max(surfaceObjectRadiusWorld(), 0.001);
+  } else if (params.objectParams.x < 2.5) {
+    distanceRatio = length((point - center) / max(surfaceObjectHalfSizeWorld(), vec3f(0.001)));
+  } else {
+    distanceRatio = length(point - center) / max(objectShadowRadiusWorld(), 0.001);
+  }
+  return 1.0 - 0.9 / pow(max(distanceRatio, 1.0), 4.0);
+}
+
+fn getWallColor(point: vec3f, lightDir: vec3f) -> vec3f {
+  let wall = surfaceRoundedWallSample(point);
+  let wallColor = textureSampleLevel(tileTexture, waterSampler, fract(wall.uv), 0.0).rgb;
+  var scale = 0.5 / max(length(point), 0.1) * surfaceObjectWallOcclusion(point);
+  let refractedLight = -refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333);
+  let diffuse = max(dot(refractedLight, wall.normal), 0.0);
+  let waterHeight = surfaceWaterHeightAt(point);
+  if (point.y < waterHeight) {
+    let safeLightY = select(select(-0.0001, 0.0001, refractedLight.y >= 0.0), refractedLight.y, abs(refractedLight.y) > 0.0001);
+    let causticUV = clamp(0.75 * (point.xz - point.y * refractedLight.xz / safeLightY) / vec2f(max(params.poolWidth * 2.0, 0.001), max(params.poolLength * 2.0, 0.001)) + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+    let caustic = textureSampleLevel(causticTexture, waterSampler, causticUV, 0.0);
+    scale = scale + diffuse * caustic.r * 2.0 * caustic.g * clamp(params.opticsFlags.x, 0.0, 1.0);
+  } else {
+    let t = intersectSurfacePool(point, refractedLight);
+    let span = max(t.y - t.x, 0.0001);
+    let exponent = -200.0 / (1.0 + 10.0 * span) * (point.y + refractedLight.y * t.y - 2.0 / 12.0);
+    scale = scale + diffuse * 0.5 / (1.0 + exp(exponent));
+  }
+  return wallColor * scale;
+}
+
+fn getSurfaceRayColor(origin: vec3f, ray: vec3f, waterColor: vec3f, lightDir: vec3f) -> vec3f {
+  let objectHit = surfaceObjectHitDistance(origin, ray);
+  var color = vec3f(0.0);
+  if (objectHit.x < 1000000.0) {
+    color = surfaceObjectColor(origin + ray * objectHit.x, objectHit.y, lightDir);
+  } else {
+    let t = intersectSurfacePool(origin, ray);
+    let hit = origin + ray * max(t.y, 0.0);
+    if (ray.y < 0.0) {
+    color = getWallColor(hit, lightDir);
+    } else if (hit.y < 2.0 / 12.0) {
+      color = getWallColor(hit, lightDir);
+    } else {
+      color = textureSampleLevel(waterSkyTexture, waterSampler, normalize(ray), 0.0).rgb + waterSunGlint(ray, lightDir);
+    }
+  }
+  if (ray.y < 0.0) {
+    color = color * waterColor;
+  }
+  return color;
+}
+
+@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {
+  var shapeAlpha = 1.0;
+  if (params.poolShape > 0.5) {
+    let halfSize = vec2f(max(params.poolWidth, 0.001), max(params.poolLength, 0.001));
+    let sdf = roundedPoolSDF(in.worldPos.xz, halfSize, params.cornerRadius);
+    let edge = max(0.008, min(params.poolWidth, params.poolLength) / max(f32(params.resolution), 1.0));
+    shapeAlpha = smoothstep(edge, -edge, sdf);
+    if (shapeAlpha <= 0.001) { discard; }
+  }
+  let surfaceInfo = surfaceParallaxState(in.uv);
+  let n = surfaceNormalFromState(surfaceInfo);
+  let lightDir = normalize(params.lightDir.xyz);
+  let viewDir = normalize(frame.cameraPos - in.worldPos);
+  let reflectDir = reflect(-viewDir, n);
+  let refractDir = refract(-viewDir, n, 1.0 / 1.333);
+  let fresnel = mix(0.25, 1.0, pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0));
+  var reflectedColor = getSurfaceRayColor(in.worldPos, reflectDir, vec3f(0.25, 1.0, 1.25), lightDir);
+  var refractedColor = getSurfaceRayColor(in.worldPos, refractDir, vec3f(0.25, 1.0, 1.25), lightDir);
+  if (params.objectParams.x >= 2.5 && params.opticsFlags.w > 0.0) {
+    if (params.objectParams.w > 0.5 && params.objectParams.w < 1.5) {
+      let refractedObject = sampleObjectRefraction(in.worldPos, refractDir);
+      refractedColor = mix(refractedColor, refractedObject.rgb, refractedObject.a * clamp(params.opticsFlags.z, 0.0, 1.0));
+      let reflectedObject = sampleObjectReflection(in.worldPos, reflectDir);
+      reflectedColor = mix(reflectedColor, reflectedObject.rgb, reflectedObject.a * clamp(params.opticsFlags.y, 0.0, 1.0));
+    } else {
+      let refractedObject = sampleObjectRefraction(in.worldPos, refractDir);
+      refractedColor = mix(refractedColor, refractedObject.rgb, refractedObject.a * clamp(params.opticsFlags.z, 0.0, 1.0));
+      let reflectedObject = sampleProjectedTexture(objectClippedReflectionTexture, objectTextureMatrices.reflectionViewProjectionMatrix, in.worldPos);
+      reflectedColor = mix(reflectedColor, reflectedObject.rgb, reflectedObject.a * clamp(params.opticsFlags.y, 0.0, 1.0));
+    }
+  }
+  return vec4f(mix(refractedColor, reflectedColor, fresnel), shapeAlpha);
+}

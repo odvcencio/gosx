@@ -1,0 +1,70 @@
+
+// Authored water normal pass for the GoSX water demo. This module follows the
+// WaterSystem compute binding contract consumed by Scene3D WebGPU:
+//   group(0) binding(0): WaterUniforms
+//   group(0) binding(1): input height/velocity/normal state
+//   group(0) binding(2): output height/velocity/normal state
+//   group(0) binding(3): object displacement spheres
+// The source is route-authored and carried through .gsx as normalWGSL so the
+// browser renderer uses the authored Elio/custom pipeline path instead of the
+// builtin normal pass.
+struct WaterUniforms {
+  resolution: u32,
+  cellCount: u32,
+  seedDrops: u32,
+  frameIndex: u32,
+  deltaTime: f32,
+  time: f32,
+  waveSpeed: f32,
+  damping: f32,
+  dropRadius: f32,
+  dropStrength: f32,
+  normalScale: f32,
+  poolWidth: f32,
+  poolHeight: f32,
+  poolLength: f32,
+  cornerRadius: f32,
+  poolShape: f32,
+  lightDir: vec4f,
+  shallowColor: vec4f,
+  deepColor: vec4f,
+  objectCenter: vec4f,
+  objectPreviousCenter: vec4f,
+  objectHalfSizeRadius: vec4f,
+  objectParams: vec4f,
+  opticsFlags: vec4f,
+  interactiveDrop: vec4f,
+  seedSalt: f32,
+};
+
+struct WaterDisplacementSphere {
+  offsetRadius: vec4f,
+};
+
+@group(0) @binding(0) var<uniform> params: WaterUniforms;
+@group(0) @binding(1) var<storage, read> inState: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> outState: array<vec4f>;
+@group(0) @binding(3) var<storage, read> objectSpheres: array<WaterDisplacementSphere>;
+
+fn waterIndex(x: u32, y: u32) -> u32 {
+  return y * params.resolution + x;
+}
+
+@compute @workgroup_size(64)
+fn updateNormals(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.cellCount) { return; }
+  let res = params.resolution;
+  let x = i % res;
+  let y = i / res;
+  let eastX = min(x + 1u, res - 1u);
+  let northY = min(y + 1u, res - 1u);
+  var info = inState[i];
+  let delta = 1.0 / max(f32(res), 1.0);
+  let dx = vec3f(delta, inState[waterIndex(eastX, y)].x - info.x, 0.0);
+  let dz = vec3f(0.0, inState[waterIndex(x, northY)].x - info.x, delta);
+  let normal = normalize(cross(dz, dx));
+  info.z = normal.x;
+  info.w = normal.z;
+  outState[i] = info;
+}

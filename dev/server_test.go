@@ -135,6 +135,30 @@ func TestServerServesBuildAssets(t *testing.T) {
 	}
 }
 
+func TestServerServesBuiltRuntimeAssetFromDistAssets(t *testing.T) {
+	dir := t.TempDir()
+	buildDir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "dist", "assets", "runtime", "bootstrap-feature-scene3d-webgpu.hash.js"), []byte("webgpu"))
+
+	srv := &Server{
+		Dir:      dir,
+		BuildDir: buildDir,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://gosx.test/gosx/assets/runtime/bootstrap-feature-scene3d-webgpu.hash.js", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if got := rec.Body.String(); got != "webgpu" {
+		t.Fatalf("expected runtime asset body, got %q", got)
+	}
+	if cache := rec.Header().Get("Cache-Control"); !strings.Contains(cache, "no-cache") {
+		t.Fatalf("expected no-cache headers, got %q", cache)
+	}
+}
+
 func TestSnapshotChangedDetectsDeletion(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "page.gsx")

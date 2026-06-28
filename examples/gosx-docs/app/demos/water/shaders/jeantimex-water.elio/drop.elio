@@ -1,0 +1,64 @@
+
+// Authored water interactive-drop pass for the GoSX water demo. This module
+// follows the WaterSystem compute binding contract consumed by Scene3D WebGPU
+// and is routed through .gsx as dropWGSL instead of the builtin addDrop entry.
+const PI: f32 = 3.141592653589793;
+
+struct WaterUniforms {
+  resolution: u32,
+  cellCount: u32,
+  seedDrops: u32,
+  frameIndex: u32,
+  deltaTime: f32,
+  time: f32,
+  waveSpeed: f32,
+  damping: f32,
+  dropRadius: f32,
+  dropStrength: f32,
+  normalScale: f32,
+  poolWidth: f32,
+  poolHeight: f32,
+  poolLength: f32,
+  cornerRadius: f32,
+  poolShape: f32,
+  lightDir: vec4f,
+  shallowColor: vec4f,
+  deepColor: vec4f,
+  objectCenter: vec4f,
+  objectPreviousCenter: vec4f,
+  objectHalfSizeRadius: vec4f,
+  objectParams: vec4f,
+  opticsFlags: vec4f,
+  interactiveDrop: vec4f,
+  seedSalt: f32,
+};
+
+struct WaterDisplacementSphere {
+  offsetRadius: vec4f,
+};
+
+@group(0) @binding(0) var<uniform> params: WaterUniforms;
+@group(0) @binding(1) var<storage, read> inState: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> outState: array<vec4f>;
+@group(0) @binding(3) var<storage, read> objectSpheres: array<WaterDisplacementSphere>;
+
+fn waterCoord(i: u32) -> vec2f {
+  let res = params.resolution;
+  let x = i % res;
+  let y = i / res;
+  return (vec2f(f32(x), f32(y)) + vec2f(0.5)) / max(vec2f(f32(res)), vec2f(1.0));
+}
+
+@compute @workgroup_size(64)
+fn addDrop(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.cellCount) { return; }
+  let uv = waterCoord(i);
+  var info = inState[i];
+  let center = params.interactiveDrop.xy * 0.5 + vec2f(0.5);
+  let radius = max(params.interactiveDrop.z, 0.0001);
+  var drop = max(0.0, 1.0 - length(center - uv) / radius);
+  drop = 0.5 - cos(drop * PI) * 0.5;
+  info.x = info.x + drop * params.interactiveDrop.w;
+  outState[i] = info;
+}

@@ -47,6 +47,7 @@ type SceneIR struct {
 	InstancedMeshes    []InstancedMeshIR    `json:"instancedMeshes,omitempty"`
 	InstancedGLBMeshes []InstancedGLBMeshIR `json:"instancedGLBMeshes,omitempty"`
 	ComputeParticles   []ComputeParticlesIR `json:"computeParticles,omitempty"`
+	WaterSystems       []WaterSystemIR      `json:"waterSystems,omitempty"`
 	Animations         []AnimationClipIR    `json:"animations,omitempty"`
 	Labels             []LabelIR            `json:"labels,omitempty"`
 	Sprites            []SpriteIR           `json:"sprites,omitempty"`
@@ -92,6 +93,15 @@ type SceneIR struct {
 	MaterialMotionProgram []byte `json:"materialMotionProgram,omitempty"`
 }
 
+// InteractionProfileIR declares a named client-side Scene3D interaction
+// contract for runtime controls that need to coordinate picking, dragging,
+// camera controls, and scene commands.
+type InteractionProfileIR struct {
+	Profile string `json:"profile,omitempty"`
+	Target  string `json:"target,omitempty"`
+	Object  string `json:"object,omitempty"`
+}
+
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
@@ -107,6 +117,7 @@ type InstancedGLBMeshIR struct {
 	Metalness    float64          `json:"metalness,omitempty"`
 	Instances    []MeshInstanceIR `json:"instances"`
 	Pickable     *bool            `json:"pickable,omitempty"`
+	Visible      *bool            `json:"visible,omitempty"`
 	Static       *bool            `json:"static,omitempty"`
 }
 
@@ -158,54 +169,57 @@ type ObjectIR struct {
 	CustomVertexWGSL   string    `json:"customVertexWGSL,omitempty"`
 	CustomFragmentWGSL string    `json:"customFragmentWGSL,omitempty"`
 	// *Ref fields replace their counterparts when hoisted into SceneIR.ShaderLib.
-	CustomVertexRef       string         `json:"customVertexRef,omitempty"`
-	CustomFragmentRef     string         `json:"customFragmentRef,omitempty"`
-	CustomVertexWGSLRef   string         `json:"customVertexWGSLRef,omitempty"`
-	CustomFragmentWGSLRef string         `json:"customFragmentWGSLRef,omitempty"`
-	CustomUniforms        map[string]any `json:"customUniforms,omitempty"`
-	ShaderBackend         string         `json:"shaderBackend,omitempty"`
-	ShaderLayout          map[string]any `json:"shaderLayout,omitempty"`
-	Pickable              *bool          `json:"pickable,omitempty"`
-	Selected              bool           `json:"selected,omitempty"`
-	OutlineColor          string         `json:"outlineColor,omitempty"`
-	OutlineWidth          float64        `json:"outlineWidth,omitempty"`
-	CastShadow            bool           `json:"castShadow,omitempty"`
-	ReceiveShadow         bool           `json:"receiveShadow,omitempty"`
-	DepthWrite            *bool          `json:"depthWrite,omitempty"`
-	Roughness             float64        `json:"roughness,omitempty"`
-	Metalness             float64        `json:"metalness,omitempty"`
-	Clearcoat             float64        `json:"clearcoat,omitempty"`
-	Sheen                 float64        `json:"sheen,omitempty"`
-	Transmission          float64        `json:"transmission,omitempty"`
-	Iridescence           float64        `json:"iridescence,omitempty"`
-	Anisotropy            float64        `json:"anisotropy,omitempty"`
-	NormalMap             string         `json:"normalMap,omitempty"`
-	RoughnessMap          string         `json:"roughnessMap,omitempty"`
-	MetalnessMap          string         `json:"metalnessMap,omitempty"`
-	EmissiveMap           string         `json:"emissiveMap,omitempty"`
-	LODGroup              string         `json:"lodGroup,omitempty"`
-	LODLevel              int            `json:"lodLevel,omitempty"`
-	LODMinDistance        float64        `json:"lodMinDistance,omitempty"`
-	LODMaxDistance        float64        `json:"lodMaxDistance,omitempty"`
-	X                     float64        `json:"x,omitempty"`
-	Y                     float64        `json:"y,omitempty"`
-	Z                     float64        `json:"z,omitempty"`
-	RotationX             float64        `json:"rotationX,omitempty"`
-	RotationY             float64        `json:"rotationY,omitempty"`
-	RotationZ             float64        `json:"rotationZ,omitempty"`
-	SpinX                 float64        `json:"spinX,omitempty"`
-	SpinY                 float64        `json:"spinY,omitempty"`
-	SpinZ                 float64        `json:"spinZ,omitempty"`
-	ShiftX                float64        `json:"shiftX,omitempty"`
-	ShiftY                float64        `json:"shiftY,omitempty"`
-	ShiftZ                float64        `json:"shiftZ,omitempty"`
-	DriftSpeed            float64        `json:"driftSpeed,omitempty"`
-	DriftPhase            float64        `json:"driftPhase,omitempty"`
-	Transition            TransitionIR   `json:"transition,omitzero"`
-	InState               map[string]any `json:"inState,omitempty"`
-	OutState              map[string]any `json:"outState,omitempty"`
-	Live                  []string       `json:"live,omitempty"`
-	Vertices              *MeshVertices  `json:"vertices,omitempty"`
+	CustomVertexRef       string            `json:"customVertexRef,omitempty"`
+	CustomFragmentRef     string            `json:"customFragmentRef,omitempty"`
+	CustomVertexWGSLRef   string            `json:"customVertexWGSLRef,omitempty"`
+	CustomFragmentWGSLRef string            `json:"customFragmentWGSLRef,omitempty"`
+	CustomUniforms        map[string]any    `json:"customUniforms,omitempty"`
+	ShaderBackend         string            `json:"shaderBackend,omitempty"`
+	ShaderLayout          map[string]any    `json:"shaderLayout,omitempty"`
+	ShaderSource          string            `json:"shaderSource,omitempty"`
+	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
+	Pickable              *bool             `json:"pickable,omitempty"`
+	Visible               *bool             `json:"visible,omitempty"`
+	Selected              bool              `json:"selected,omitempty"`
+	OutlineColor          string            `json:"outlineColor,omitempty"`
+	OutlineWidth          float64           `json:"outlineWidth,omitempty"`
+	CastShadow            bool              `json:"castShadow,omitempty"`
+	ReceiveShadow         bool              `json:"receiveShadow,omitempty"`
+	DepthWrite            *bool             `json:"depthWrite,omitempty"`
+	Roughness             float64           `json:"roughness,omitempty"`
+	Metalness             float64           `json:"metalness,omitempty"`
+	Clearcoat             float64           `json:"clearcoat,omitempty"`
+	Sheen                 float64           `json:"sheen,omitempty"`
+	Transmission          float64           `json:"transmission,omitempty"`
+	Iridescence           float64           `json:"iridescence,omitempty"`
+	Anisotropy            float64           `json:"anisotropy,omitempty"`
+	NormalMap             string            `json:"normalMap,omitempty"`
+	RoughnessMap          string            `json:"roughnessMap,omitempty"`
+	MetalnessMap          string            `json:"metalnessMap,omitempty"`
+	EmissiveMap           string            `json:"emissiveMap,omitempty"`
+	LODGroup              string            `json:"lodGroup,omitempty"`
+	LODLevel              int               `json:"lodLevel,omitempty"`
+	LODMinDistance        float64           `json:"lodMinDistance,omitempty"`
+	LODMaxDistance        float64           `json:"lodMaxDistance,omitempty"`
+	X                     float64           `json:"x,omitempty"`
+	Y                     float64           `json:"y,omitempty"`
+	Z                     float64           `json:"z,omitempty"`
+	RotationX             float64           `json:"rotationX,omitempty"`
+	RotationY             float64           `json:"rotationY,omitempty"`
+	RotationZ             float64           `json:"rotationZ,omitempty"`
+	SpinX                 float64           `json:"spinX,omitempty"`
+	SpinY                 float64           `json:"spinY,omitempty"`
+	SpinZ                 float64           `json:"spinZ,omitempty"`
+	ShiftX                float64           `json:"shiftX,omitempty"`
+	ShiftY                float64           `json:"shiftY,omitempty"`
+	ShiftZ                float64           `json:"shiftZ,omitempty"`
+	DriftSpeed            float64           `json:"driftSpeed,omitempty"`
+	DriftPhase            float64           `json:"driftPhase,omitempty"`
+	Transition            TransitionIR      `json:"transition,omitzero"`
+	InState               map[string]any    `json:"inState,omitempty"`
+	OutState              map[string]any    `json:"outState,omitempty"`
+	Live                  []string          `json:"live,omitempty"`
+	Vertices              *MeshVertices     `json:"vertices,omitempty"`
 }
 
 // MarshalJSON encodes ObjectIR via the standard reflection path but
@@ -238,6 +252,9 @@ type ModelIR struct {
 	ScaleX             float64  `json:"scaleX,omitempty"`
 	ScaleY             float64  `json:"scaleY,omitempty"`
 	ScaleZ             float64  `json:"scaleZ,omitempty"`
+	Bounds             float64  `json:"bounds,omitempty"`
+	Fit                string   `json:"fit,omitempty"`
+	FitAlign           string   `json:"fitAlign,omitempty"`
 	Static             *bool    `json:"static,omitempty"`
 	Animation          string   `json:"animation,omitempty"`
 	AnimationSeq       string   `json:"animationSeq,omitempty"`
@@ -268,6 +285,9 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		ScaleX             float64         `json:"scaleX,omitempty"`
 		ScaleY             float64         `json:"scaleY,omitempty"`
 		ScaleZ             float64         `json:"scaleZ,omitempty"`
+		Bounds             float64         `json:"bounds,omitempty"`
+		Fit                string          `json:"fit,omitempty"`
+		FitAlign           string          `json:"fitAlign,omitempty"`
 		Static             *bool           `json:"static,omitempty"`
 		Animation          string          `json:"animation,omitempty"`
 		AnimationSeq       string          `json:"animationSeq,omitempty"`
@@ -284,6 +304,9 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		ScaleX:             m.ScaleX,
 		ScaleY:             m.ScaleY,
 		ScaleZ:             m.ScaleZ,
+		Bounds:             m.Bounds,
+		Fit:                strings.TrimSpace(m.Fit),
+		FitAlign:           strings.TrimSpace(m.FitAlign),
 		Static:             m.Static,
 		Animation:          m.Animation,
 		AnimationSeq:       m.AnimationSeq,
@@ -461,21 +484,23 @@ type PointsIR struct {
 	PreviewSizes        []CompressedArray `json:"previewSizes,omitempty"`
 	PositionStride      int               `json:"positionStride,omitempty"`
 	// Authored shader material fields — same envelope as ObjectIR.
-	CustomVertex          string         `json:"customVertex,omitempty"`
-	CustomFragment        string         `json:"customFragment,omitempty"`
-	CustomVertexWGSL      string         `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL    string         `json:"customFragmentWGSL,omitempty"`
-	CustomVertexRef       string         `json:"customVertexRef,omitempty"`
-	CustomFragmentRef     string         `json:"customFragmentRef,omitempty"`
-	CustomVertexWGSLRef   string         `json:"customVertexWGSLRef,omitempty"`
-	CustomFragmentWGSLRef string         `json:"customFragmentWGSLRef,omitempty"`
-	CustomUniforms        map[string]any `json:"customUniforms,omitempty"`
-	ShaderBackend         string         `json:"shaderBackend,omitempty"`
-	ShaderLayout          map[string]any `json:"shaderLayout,omitempty"`
-	Transition            TransitionIR   `json:"transition,omitzero"`
-	InState               map[string]any `json:"inState,omitempty"`
-	OutState              map[string]any `json:"outState,omitempty"`
-	Live                  []string       `json:"live,omitempty"`
+	CustomVertex          string            `json:"customVertex,omitempty"`
+	CustomFragment        string            `json:"customFragment,omitempty"`
+	CustomVertexWGSL      string            `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL    string            `json:"customFragmentWGSL,omitempty"`
+	CustomVertexRef       string            `json:"customVertexRef,omitempty"`
+	CustomFragmentRef     string            `json:"customFragmentRef,omitempty"`
+	CustomVertexWGSLRef   string            `json:"customVertexWGSLRef,omitempty"`
+	CustomFragmentWGSLRef string            `json:"customFragmentWGSLRef,omitempty"`
+	CustomUniforms        map[string]any    `json:"customUniforms,omitempty"`
+	ShaderBackend         string            `json:"shaderBackend,omitempty"`
+	ShaderLayout          map[string]any    `json:"shaderLayout,omitempty"`
+	ShaderSource          string            `json:"shaderSource,omitempty"`
+	ShaderSourceFiles     map[string]string `json:"shaderSourceFiles,omitempty"`
+	Transition            TransitionIR      `json:"transition,omitzero"`
+	InState               map[string]any    `json:"inState,omitempty"`
+	OutState              map[string]any    `json:"outState,omitempty"`
+	Live                  []string          `json:"live,omitempty"`
 }
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
@@ -562,17 +587,151 @@ type ComputeParticlesIR struct {
 	ComputeWGSLRef string `json:"computeWGSLRef,omitempty"`
 
 	// Optional authored render-pass shader override — same envelope as ObjectIR.
-	RenderVertex          string         `json:"renderVertex,omitempty"`
-	RenderFragment        string         `json:"renderFragment,omitempty"`
-	RenderVertexWGSL      string         `json:"renderVertexWGSL,omitempty"`
-	RenderFragmentWGSL    string         `json:"renderFragmentWGSL,omitempty"`
-	RenderVertexRef       string         `json:"renderVertexRef,omitempty"`
-	RenderFragmentRef     string         `json:"renderFragmentRef,omitempty"`
-	RenderVertexWGSLRef   string         `json:"renderVertexWGSLRef,omitempty"`
-	RenderFragmentWGSLRef string         `json:"renderFragmentWGSLRef,omitempty"`
-	RenderUniforms        map[string]any `json:"renderUniforms,omitempty"`
-	RenderShaderBackend   string         `json:"renderShaderBackend,omitempty"`
-	RenderShaderLayout    map[string]any `json:"renderShaderLayout,omitempty"`
+	RenderVertex            string            `json:"renderVertex,omitempty"`
+	RenderFragment          string            `json:"renderFragment,omitempty"`
+	RenderVertexWGSL        string            `json:"renderVertexWGSL,omitempty"`
+	RenderFragmentWGSL      string            `json:"renderFragmentWGSL,omitempty"`
+	RenderVertexRef         string            `json:"renderVertexRef,omitempty"`
+	RenderFragmentRef       string            `json:"renderFragmentRef,omitempty"`
+	RenderVertexWGSLRef     string            `json:"renderVertexWGSLRef,omitempty"`
+	RenderFragmentWGSLRef   string            `json:"renderFragmentWGSLRef,omitempty"`
+	RenderUniforms          map[string]any    `json:"renderUniforms,omitempty"`
+	RenderShaderBackend     string            `json:"renderShaderBackend,omitempty"`
+	RenderShaderLayout      map[string]any    `json:"renderShaderLayout,omitempty"`
+	RenderShaderSource      string            `json:"renderShaderSource,omitempty"`
+	RenderShaderSourceFiles map[string]string `json:"renderShaderSourceFiles,omitempty"`
+}
+
+// WaterSystemIR declares a GPU heightfield water simulation and its optical
+// render-pass inputs. It is intentionally shaped after jeantimex/threejs-water:
+// a ping-pong heightmap, seeded drops, dynamic pool bounds, and caustic /
+// reflection / refraction consumers.
+type WaterSystemIR struct {
+	ID                              string                           `json:"id"`
+	InteractionProfile              string                           `json:"interactionProfile,omitempty"`
+	InteractionTarget               string                           `json:"interactionTarget,omitempty"`
+	InteractionObject               string                           `json:"interactionObject,omitempty"`
+	Resolution                      int                              `json:"resolution,omitempty"`
+	PoolShape                       string                           `json:"poolShape,omitempty"`
+	PoolWidth                       float64                          `json:"poolWidth,omitempty"`
+	PoolHeight                      float64                          `json:"poolHeight,omitempty"`
+	PoolLength                      float64                          `json:"poolLength,omitempty"`
+	CornerRadius                    float64                          `json:"cornerRadius,omitempty"`
+	WaveSpeed                       float64                          `json:"waveSpeed,omitempty"`
+	Damping                         float64                          `json:"damping,omitempty"`
+	NormalScale                     float64                          `json:"normalScale,omitempty"`
+	SeedDrops                       int                              `json:"seedDrops,omitempty"`
+	DropRadius                      float64                          `json:"dropRadius,omitempty"`
+	DropStrength                    float64                          `json:"dropStrength,omitempty"`
+	DropEventID                     int                              `json:"dropEventID,omitempty"`
+	DropX                           float64                          `json:"dropX,omitempty"`
+	DropZ                           float64                          `json:"dropZ,omitempty"`
+	DropEventRadius                 float64                          `json:"dropEventRadius,omitempty"`
+	DropEventStrength               float64                          `json:"dropEventStrength,omitempty"`
+	TileTexture                     string                           `json:"tileTexture,omitempty"`
+	CubeMap                         string                           `json:"cubeMap,omitempty"`
+	ShallowColor                    string                           `json:"shallowColor,omitempty"`
+	DeepColor                       string                           `json:"deepColor,omitempty"`
+	CausticsResolution              int                              `json:"causticsResolution,omitempty"`
+	ObjectTextureResolution         int                              `json:"objectTextureResolution,omitempty"`
+	ObjectTextureResolutionMode     string                           `json:"objectTextureResolutionMode,omitempty"`
+	ObjectTexturePixelBudget        int                              `json:"objectTexturePixelBudget,omitempty"`
+	ObjectShadowResolution          int                              `json:"objectShadowResolution,omitempty"`
+	Caustics                        bool                             `json:"caustics,omitempty"`
+	Reflection                      bool                             `json:"reflection,omitempty"`
+	Refraction                      bool                             `json:"refraction,omitempty"`
+	Paused                          bool                             `json:"paused,omitempty"`
+	FollowCamera                    bool                             `json:"followCamera,omitempty"`
+	LightDirectionX                 float64                          `json:"lightDirectionX,omitempty"`
+	LightDirectionY                 float64                          `json:"lightDirectionY,omitempty"`
+	LightDirectionZ                 float64                          `json:"lightDirectionZ,omitempty"`
+	ActiveObject                    string                           `json:"activeObject,omitempty"`
+	ObjectKind                      string                           `json:"objectKind,omitempty"`
+	ObjectX                         float64                          `json:"objectX,omitempty"`
+	ObjectY                         float64                          `json:"objectY,omitempty"`
+	ObjectZ                         float64                          `json:"objectZ,omitempty"`
+	ObjectPreviousSet               bool                             `json:"objectPreviousSet,omitempty"`
+	ObjectPreviousX                 float64                          `json:"objectPreviousX,omitempty"`
+	ObjectPreviousY                 float64                          `json:"objectPreviousY,omitempty"`
+	ObjectPreviousZ                 float64                          `json:"objectPreviousZ,omitempty"`
+	ObjectRadius                    float64                          `json:"objectRadius,omitempty"`
+	ObjectHalfSizeX                 float64                          `json:"objectHalfSizeX,omitempty"`
+	ObjectHalfSizeY                 float64                          `json:"objectHalfSizeY,omitempty"`
+	ObjectHalfSizeZ                 float64                          `json:"objectHalfSizeZ,omitempty"`
+	ObjectDriftX                    float64                          `json:"objectDriftX,omitempty"`
+	ObjectDriftY                    float64                          `json:"objectDriftY,omitempty"`
+	ObjectDriftZ                    float64                          `json:"objectDriftZ,omitempty"`
+	ObjectBobAmplitude              float64                          `json:"objectBobAmplitude,omitempty"`
+	ObjectBobSpeed                  float64                          `json:"objectBobSpeed,omitempty"`
+	ObjectDisplacementScale         float64                          `json:"objectDisplacementScale,omitempty"`
+	ObjectDisplacementSpheres       []WaterDisplacementSphereIR      `json:"objectDisplacementSpheres,omitempty"`
+	ObjectDisplacementEvents        []WaterObjectDisplacementEventIR `json:"objectDisplacementEvents,omitempty"`
+	ComputeBackend                  string                           `json:"computeBackend,omitempty"`
+	MaterialBackend                 string                           `json:"materialBackend,omitempty"`
+	ComputeSource                   string                           `json:"computeSource,omitempty"`
+	MaterialSource                  string                           `json:"materialSource,omitempty"`
+	ComputeSourceFiles              map[string]string                `json:"computeSourceFiles,omitempty"`
+	MaterialSourceFiles             map[string]string                `json:"materialSourceFiles,omitempty"`
+	SeedWGSL                        string                           `json:"seedWGSL,omitempty"`
+	DropWGSL                        string                           `json:"dropWGSL,omitempty"`
+	DisplacementWGSL                string                           `json:"displacementWGSL,omitempty"`
+	SimulationWGSL                  string                           `json:"simulationWGSL,omitempty"`
+	NormalWGSL                      string                           `json:"normalWGSL,omitempty"`
+	CausticsWGSL                    string                           `json:"causticsWGSL,omitempty"`
+	PoolVertexWGSL                  string                           `json:"poolVertexWGSL,omitempty"`
+	PoolFragmentWGSL                string                           `json:"poolFragmentWGSL,omitempty"`
+	SurfaceVertexWGSL               string                           `json:"surfaceVertexWGSL,omitempty"`
+	SurfaceFragmentWGSL             string                           `json:"surfaceFragmentWGSL,omitempty"`
+	SurfaceBelowFragmentWGSL        string                           `json:"surfaceBelowFragmentWGSL,omitempty"`
+	ObjectShadowWGSL                string                           `json:"objectShadowWGSL,omitempty"`
+	ObjectMeshShadowVertexWGSL      string                           `json:"objectMeshShadowVertexWGSL,omitempty"`
+	ObjectMeshShadowFragmentWGSL    string                           `json:"objectMeshShadowFragmentWGSL,omitempty"`
+	DisplacementWGSLRef             string                           `json:"displacementWGSLRef,omitempty"`
+	SeedWGSLRef                     string                           `json:"seedWGSLRef,omitempty"`
+	DropWGSLRef                     string                           `json:"dropWGSLRef,omitempty"`
+	SimulationWGSLRef               string                           `json:"simulationWGSLRef,omitempty"`
+	NormalWGSLRef                   string                           `json:"normalWGSLRef,omitempty"`
+	CausticsWGSLRef                 string                           `json:"causticsWGSLRef,omitempty"`
+	PoolVertexWGSLRef               string                           `json:"poolVertexWGSLRef,omitempty"`
+	PoolFragmentWGSLRef             string                           `json:"poolFragmentWGSLRef,omitempty"`
+	SurfaceVertexWGSLRef            string                           `json:"surfaceVertexWGSLRef,omitempty"`
+	SurfaceFragmentWGSLRef          string                           `json:"surfaceFragmentWGSLRef,omitempty"`
+	SurfaceBelowFragmentWGSLRef     string                           `json:"surfaceBelowFragmentWGSLRef,omitempty"`
+	ObjectShadowWGSLRef             string                           `json:"objectShadowWGSLRef,omitempty"`
+	ObjectMeshShadowVertexWGSLRef   string                           `json:"objectMeshShadowVertexWGSLRef,omitempty"`
+	ObjectMeshShadowFragmentWGSLRef string                           `json:"objectMeshShadowFragmentWGSLRef,omitempty"`
+}
+
+// WaterDisplacementSphereIR is one sphere in a compound water displacement
+// volume. Offsets are relative to the active object center.
+type WaterDisplacementSphereIR struct {
+	OffsetX float64 `json:"offsetX,omitempty"`
+	OffsetY float64 `json:"offsetY,omitempty"`
+	OffsetZ float64 `json:"offsetZ,omitempty"`
+	Radius  float64 `json:"radius,omitempty"`
+}
+
+// WaterObjectDisplacementEventIR describes a one-shot object displacement that
+// should be applied even when the active object is no longer present. It mirrors
+// upstream setEnabled moves such as object removal to inactive Y.
+type WaterObjectDisplacementEventIR struct {
+	ID                        int                         `json:"id,omitempty"`
+	ActiveObject              string                      `json:"activeObject,omitempty"`
+	ObjectKind                string                      `json:"objectKind,omitempty"`
+	ObjectSubtype             string                      `json:"objectSubtype,omitempty"`
+	ObjectX                   float64                     `json:"objectX,omitempty"`
+	ObjectY                   float64                     `json:"objectY,omitempty"`
+	ObjectZ                   float64                     `json:"objectZ,omitempty"`
+	ObjectPreviousSet         bool                        `json:"objectPreviousSet,omitempty"`
+	ObjectPreviousX           float64                     `json:"objectPreviousX,omitempty"`
+	ObjectPreviousY           float64                     `json:"objectPreviousY,omitempty"`
+	ObjectPreviousZ           float64                     `json:"objectPreviousZ,omitempty"`
+	ObjectRadius              float64                     `json:"objectRadius,omitempty"`
+	ObjectHalfSizeX           float64                     `json:"objectHalfSizeX,omitempty"`
+	ObjectHalfSizeY           float64                     `json:"objectHalfSizeY,omitempty"`
+	ObjectHalfSizeZ           float64                     `json:"objectHalfSizeZ,omitempty"`
+	ObjectDisplacementScale   float64                     `json:"objectDisplacementScale,omitempty"`
+	ObjectDisplacementSpheres []WaterDisplacementSphereIR `json:"objectDisplacementSpheres,omitempty"`
 }
 
 // ParticleEmitterIR describes the emitter configuration for a GPU particle system.
@@ -825,6 +984,7 @@ func (g Graph) SceneIR() SceneIR {
 		InstancedMeshes:    lowerer.instancedMeshes,
 		InstancedGLBMeshes: lowerer.instancedGLBMeshes,
 		ComputeParticles:   lowerer.computeParticles,
+		WaterSystems:       lowerer.waterSystems,
 		Animations:         lowerer.animations,
 		Labels:             lowerer.resolveLabels(),
 		Sprites:            lowerer.resolveSprites(),
@@ -910,7 +1070,7 @@ func (ir *SceneIR) UnmarshalJSON(data []byte) error {
 }
 
 func (ir SceneIR) isZero() bool {
-	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
+	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.WaterSystems) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -944,6 +1104,9 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if computeParticles := legacyComputeParticles(ir.ComputeParticles); len(computeParticles) > 0 {
 		out["computeParticles"] = computeParticles
+	}
+	if waterSystems := legacyWaterSystems(ir.WaterSystems); len(waterSystems) > 0 {
+		out["waterSystems"] = waterSystems
 	}
 	if animations := legacyAnimations(ir.Animations); len(animations) > 0 {
 		out["animations"] = animations
@@ -1068,8 +1231,15 @@ func (item ObjectIR) legacyProps() map[string]any {
 	if len(item.ShaderLayout) > 0 {
 		record["shaderLayout"] = cloneSceneAnyMap(item.ShaderLayout)
 	}
+	setString(record, "shaderSource", item.ShaderSource)
+	if len(item.ShaderSourceFiles) > 0 {
+		record["shaderSourceFiles"] = cloneSceneStringMap(item.ShaderSourceFiles)
+	}
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
+	}
+	if item.Visible != nil {
+		record["visible"] = *item.Visible
 	}
 	if item.Selected {
 		record["selected"] = true
@@ -1149,6 +1319,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumeric(record, "scaleX", item.ScaleX)
 	setNumeric(record, "scaleY", item.ScaleY)
 	setNumeric(record, "scaleZ", item.ScaleZ)
+	setNumeric(record, "bounds", item.Bounds)
+	setString(record, "fit", item.Fit)
+	setString(record, "fitAlign", item.FitAlign)
 	if item.Static != nil {
 		record["static"] = *item.Static
 	}
@@ -1192,6 +1365,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	}
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
+	}
+	if item.Visible != nil {
+		record["visible"] = *item.Visible
 	}
 	setString(record, "animation", item.Animation)
 	setString(record, "animationSeq", item.AnimationSeq)
@@ -1283,6 +1459,10 @@ func (item PointsIR) legacyProps() map[string]any {
 	setString(record, "shaderBackend", item.ShaderBackend)
 	if len(item.ShaderLayout) > 0 {
 		record["shaderLayout"] = item.ShaderLayout
+	}
+	setString(record, "shaderSource", item.ShaderSource)
+	if len(item.ShaderSourceFiles) > 0 {
+		record["shaderSourceFiles"] = cloneSceneStringMap(item.ShaderSourceFiles)
 	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
@@ -1402,6 +1582,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}
+	if item.Visible != nil {
+		record["visible"] = *item.Visible
+	}
 	if item.Static != nil {
 		record["static"] = *item.Static
 	}
@@ -1515,7 +1698,187 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 	if len(item.RenderShaderLayout) > 0 {
 		record["renderShaderLayout"] = item.RenderShaderLayout
 	}
+	setString(record, "renderShaderSource", item.RenderShaderSource)
+	if len(item.RenderShaderSourceFiles) > 0 {
+		record["renderShaderSourceFiles"] = cloneSceneStringMap(item.RenderShaderSourceFiles)
+	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	return record
+}
+
+func legacyWaterSystems(items []WaterSystemIR) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.legacyProps())
+	}
+	return out
+}
+
+func (item WaterSystemIR) legacyProps() map[string]any {
+	record := map[string]any{
+		"id": item.ID,
+	}
+	setString(record, "interactionProfile", item.InteractionProfile)
+	setString(record, "interactionTarget", item.InteractionTarget)
+	setString(record, "interactionObject", item.InteractionObject)
+	setInt(record, "resolution", item.Resolution)
+	setString(record, "poolShape", item.PoolShape)
+	setNumeric(record, "poolWidth", item.PoolWidth)
+	setNumeric(record, "poolHeight", item.PoolHeight)
+	setNumeric(record, "poolLength", item.PoolLength)
+	setNumeric(record, "cornerRadius", item.CornerRadius)
+	setNumeric(record, "waveSpeed", item.WaveSpeed)
+	setNumeric(record, "damping", item.Damping)
+	setNumeric(record, "normalScale", item.NormalScale)
+	setInt(record, "seedDrops", item.SeedDrops)
+	setNumeric(record, "dropRadius", item.DropRadius)
+	setNumeric(record, "dropStrength", item.DropStrength)
+	setInt(record, "dropEventID", item.DropEventID)
+	setNumeric(record, "dropX", item.DropX)
+	setNumeric(record, "dropZ", item.DropZ)
+	setNumeric(record, "dropEventRadius", item.DropEventRadius)
+	setNumeric(record, "dropEventStrength", item.DropEventStrength)
+	setString(record, "tileTexture", item.TileTexture)
+	setString(record, "cubeMap", item.CubeMap)
+	setString(record, "shallowColor", item.ShallowColor)
+	setString(record, "deepColor", item.DeepColor)
+	setInt(record, "causticsResolution", item.CausticsResolution)
+	setInt(record, "objectTextureResolution", item.ObjectTextureResolution)
+	setString(record, "objectTextureResolutionMode", item.ObjectTextureResolutionMode)
+	setInt(record, "objectTexturePixelBudget", item.ObjectTexturePixelBudget)
+	setInt(record, "objectShadowResolution", item.ObjectShadowResolution)
+	if item.Caustics {
+		record["caustics"] = true
+	}
+	if item.Reflection {
+		record["reflection"] = true
+	}
+	if item.Refraction {
+		record["refraction"] = true
+	}
+	if item.Paused {
+		record["paused"] = true
+	}
+	if item.FollowCamera {
+		record["followCamera"] = true
+	}
+	setNumeric(record, "lightDirectionX", item.LightDirectionX)
+	setNumeric(record, "lightDirectionY", item.LightDirectionY)
+	setNumeric(record, "lightDirectionZ", item.LightDirectionZ)
+	setString(record, "activeObject", item.ActiveObject)
+	setString(record, "objectKind", item.ObjectKind)
+	setNumeric(record, "objectX", item.ObjectX)
+	setNumeric(record, "objectY", item.ObjectY)
+	setNumeric(record, "objectZ", item.ObjectZ)
+	if item.ObjectPreviousSet {
+		record["objectPreviousSet"] = true
+	}
+	setNumeric(record, "objectPreviousX", item.ObjectPreviousX)
+	setNumeric(record, "objectPreviousY", item.ObjectPreviousY)
+	setNumeric(record, "objectPreviousZ", item.ObjectPreviousZ)
+	setNumeric(record, "objectRadius", item.ObjectRadius)
+	setNumeric(record, "objectHalfSizeX", item.ObjectHalfSizeX)
+	setNumeric(record, "objectHalfSizeY", item.ObjectHalfSizeY)
+	setNumeric(record, "objectHalfSizeZ", item.ObjectHalfSizeZ)
+	setNumeric(record, "objectDriftX", item.ObjectDriftX)
+	setNumeric(record, "objectDriftY", item.ObjectDriftY)
+	setNumeric(record, "objectDriftZ", item.ObjectDriftZ)
+	setNumeric(record, "objectBobAmplitude", item.ObjectBobAmplitude)
+	setNumeric(record, "objectBobSpeed", item.ObjectBobSpeed)
+	setNumeric(record, "objectDisplacementScale", item.ObjectDisplacementScale)
+	if len(item.ObjectDisplacementSpheres) > 0 {
+		spheres := make([]map[string]any, 0, len(item.ObjectDisplacementSpheres))
+		for _, sphere := range item.ObjectDisplacementSpheres {
+			child := make(map[string]any)
+			setNumeric(child, "offsetX", sphere.OffsetX)
+			setNumeric(child, "offsetY", sphere.OffsetY)
+			setNumeric(child, "offsetZ", sphere.OffsetZ)
+			setNumeric(child, "radius", sphere.Radius)
+			spheres = append(spheres, child)
+		}
+		record["objectDisplacementSpheres"] = spheres
+	}
+	if len(item.ObjectDisplacementEvents) > 0 {
+		events := make([]map[string]any, 0, len(item.ObjectDisplacementEvents))
+		for _, event := range item.ObjectDisplacementEvents {
+			child := make(map[string]any)
+			if event.ID > 0 {
+				child["id"] = event.ID
+			}
+			setString(child, "activeObject", event.ActiveObject)
+			setString(child, "objectKind", event.ObjectKind)
+			setString(child, "objectSubtype", event.ObjectSubtype)
+			setNumeric(child, "objectX", event.ObjectX)
+			setNumeric(child, "objectY", event.ObjectY)
+			setNumeric(child, "objectZ", event.ObjectZ)
+			if event.ObjectPreviousSet {
+				child["objectPreviousSet"] = true
+			}
+			setNumeric(child, "objectPreviousX", event.ObjectPreviousX)
+			setNumeric(child, "objectPreviousY", event.ObjectPreviousY)
+			setNumeric(child, "objectPreviousZ", event.ObjectPreviousZ)
+			setNumeric(child, "objectRadius", event.ObjectRadius)
+			setNumeric(child, "objectHalfSizeX", event.ObjectHalfSizeX)
+			setNumeric(child, "objectHalfSizeY", event.ObjectHalfSizeY)
+			setNumeric(child, "objectHalfSizeZ", event.ObjectHalfSizeZ)
+			setNumeric(child, "objectDisplacementScale", event.ObjectDisplacementScale)
+			if len(event.ObjectDisplacementSpheres) > 0 {
+				spheres := make([]map[string]any, 0, len(event.ObjectDisplacementSpheres))
+				for _, sphere := range event.ObjectDisplacementSpheres {
+					grandchild := make(map[string]any)
+					setNumeric(grandchild, "offsetX", sphere.OffsetX)
+					setNumeric(grandchild, "offsetY", sphere.OffsetY)
+					setNumeric(grandchild, "offsetZ", sphere.OffsetZ)
+					setNumeric(grandchild, "radius", sphere.Radius)
+					spheres = append(spheres, grandchild)
+				}
+				child["objectDisplacementSpheres"] = spheres
+			}
+			events = append(events, child)
+		}
+		record["objectDisplacementEvents"] = events
+	}
+	setString(record, "computeBackend", item.ComputeBackend)
+	setString(record, "materialBackend", item.MaterialBackend)
+	setString(record, "computeSource", item.ComputeSource)
+	setString(record, "materialSource", item.MaterialSource)
+	if len(item.ComputeSourceFiles) > 0 {
+		record["computeSourceFiles"] = cloneSceneStringMap(item.ComputeSourceFiles)
+	}
+	if len(item.MaterialSourceFiles) > 0 {
+		record["materialSourceFiles"] = cloneSceneStringMap(item.MaterialSourceFiles)
+	}
+	setString(record, "seedWGSL", item.SeedWGSL)
+	setString(record, "dropWGSL", item.DropWGSL)
+	setString(record, "displacementWGSL", item.DisplacementWGSL)
+	setString(record, "simulationWGSL", item.SimulationWGSL)
+	setString(record, "normalWGSL", item.NormalWGSL)
+	setString(record, "causticsWGSL", item.CausticsWGSL)
+	setString(record, "poolVertexWGSL", item.PoolVertexWGSL)
+	setString(record, "poolFragmentWGSL", item.PoolFragmentWGSL)
+	setString(record, "surfaceVertexWGSL", item.SurfaceVertexWGSL)
+	setString(record, "surfaceFragmentWGSL", item.SurfaceFragmentWGSL)
+	setString(record, "surfaceBelowFragmentWGSL", item.SurfaceBelowFragmentWGSL)
+	setString(record, "objectShadowWGSL", item.ObjectShadowWGSL)
+	setString(record, "objectMeshShadowVertexWGSL", item.ObjectMeshShadowVertexWGSL)
+	setString(record, "objectMeshShadowFragmentWGSL", item.ObjectMeshShadowFragmentWGSL)
+	setString(record, "displacementWGSLRef", item.DisplacementWGSLRef)
+	setString(record, "seedWGSLRef", item.SeedWGSLRef)
+	setString(record, "dropWGSLRef", item.DropWGSLRef)
+	setString(record, "simulationWGSLRef", item.SimulationWGSLRef)
+	setString(record, "normalWGSLRef", item.NormalWGSLRef)
+	setString(record, "causticsWGSLRef", item.CausticsWGSLRef)
+	setString(record, "poolVertexWGSLRef", item.PoolVertexWGSLRef)
+	setString(record, "poolFragmentWGSLRef", item.PoolFragmentWGSLRef)
+	setString(record, "surfaceVertexWGSLRef", item.SurfaceVertexWGSLRef)
+	setString(record, "surfaceFragmentWGSLRef", item.SurfaceFragmentWGSLRef)
+	setString(record, "surfaceBelowFragmentWGSLRef", item.SurfaceBelowFragmentWGSLRef)
+	setString(record, "objectShadowWGSLRef", item.ObjectShadowWGSLRef)
+	setString(record, "objectMeshShadowVertexWGSLRef", item.ObjectMeshShadowVertexWGSLRef)
+	setString(record, "objectMeshShadowFragmentWGSLRef", item.ObjectMeshShadowFragmentWGSLRef)
 	return record
 }
 
@@ -1868,6 +2231,71 @@ func applySceneLifecycleRecord(record map[string]any, transition TransitionIR, i
 	}
 }
 
+var collectFeatureOrder = []capability.Feature{
+	capability.FeatureWaterObjectMeshShadowPass,
+	capability.FeatureWaterObjectTexturePass,
+	capability.FeatureWaterSim,
+	capability.FeatureIBL,
+	capability.FeatureGPUPicking,
+	capability.FeatureLineDashed,
+	capability.FeatureSkinning,
+}
+
+func waterSystemUsesObjectTexturePass(w WaterSystemIR) bool {
+	if w.ObjectTextureResolution > 0 || strings.TrimSpace(w.ObjectTextureResolutionMode) != "" || w.ObjectTexturePixelBudget > 0 || w.ObjectShadowResolution > 0 {
+		return true
+	}
+	if waterObjectKindUsesObjectTexturePass(w.ObjectKind) || waterObjectKindUsesObjectTexturePass(w.ActiveObject) || waterObjectKindUsesObjectTexturePass(w.InteractionObject) {
+		return true
+	}
+	if len(w.ObjectDisplacementSpheres) > 0 {
+		return true
+	}
+	for _, event := range w.ObjectDisplacementEvents {
+		if len(event.ObjectDisplacementSpheres) > 0 || waterObjectKindUsesObjectTexturePass(event.ObjectKind) || waterObjectKindUsesObjectTexturePass(event.ActiveObject) {
+			return true
+		}
+	}
+	return false
+}
+
+func waterObjectKindUsesObjectTexturePass(value string) bool {
+	return waterObjectKindUsesMeshProjectedPass(value)
+}
+
+func waterSystemUsesObjectMeshShadowPass(w WaterSystemIR) bool {
+	if strings.TrimSpace(w.ObjectMeshShadowVertexWGSL) != "" ||
+		strings.TrimSpace(w.ObjectMeshShadowFragmentWGSL) != "" ||
+		strings.TrimSpace(w.ObjectMeshShadowVertexWGSLRef) != "" ||
+		strings.TrimSpace(w.ObjectMeshShadowFragmentWGSLRef) != "" {
+		return true
+	}
+	if waterObjectKindUsesMeshProjectedPass(w.ObjectKind) ||
+		waterObjectKindUsesMeshProjectedPass(w.ActiveObject) ||
+		waterObjectKindUsesMeshProjectedPass(w.InteractionObject) {
+		return true
+	}
+	for _, event := range w.ObjectDisplacementEvents {
+		if waterObjectKindUsesMeshProjectedPass(event.ObjectKind) || waterObjectKindUsesMeshProjectedPass(event.ActiveObject) {
+			return true
+		}
+	}
+	return false
+}
+
+func waterObjectKindUsesMeshProjectedPass(value string) bool {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "" || text == "none" || text == "off" || text == "disabled" || text == "no_object" {
+		return false
+	}
+	return strings.Contains(text, "compound") ||
+		strings.Contains(text, "mesh") ||
+		strings.Contains(text, "torus") ||
+		strings.Contains(text, "duck") ||
+		strings.Contains(text, "gltf") ||
+		strings.Contains(text, "glb")
+}
+
 // collectFeatures inspects the wire SceneIR and returns the de-duplicated set
 // of backend-constrained features the scene uses. Only features detectable
 // from the wire record are returned; caller-side features (skinning, custom
@@ -1920,6 +2348,21 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 		}
 	}
 
+	if len(ir.WaterSystems) > 0 {
+		seen[capability.FeatureWaterSim] = true
+		for i := range ir.WaterSystems {
+			if waterSystemUsesObjectTexturePass(ir.WaterSystems[i]) {
+				seen[capability.FeatureWaterObjectTexturePass] = true
+			}
+			if waterSystemUsesObjectMeshShadowPass(ir.WaterSystems[i]) {
+				seen[capability.FeatureWaterObjectMeshShadowPass] = true
+			}
+			if seen[capability.FeatureWaterObjectTexturePass] && seen[capability.FeatureWaterObjectMeshShadowPass] {
+				break
+			}
+		}
+	}
+
 	// skinning: check build-time probe for each Model and InstancedGLBMesh.
 	if skinLookup != nil && !seen[capability.FeatureSkinning] {
 		for i := range ir.Models {
@@ -1939,6 +2382,12 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	}
 
 	features := make([]capability.Feature, 0, len(seen))
+	for _, f := range collectFeatureOrder {
+		if seen[f] {
+			features = append(features, f)
+			delete(seen, f)
+		}
+	}
 	for f := range seen {
 		features = append(features, f)
 	}

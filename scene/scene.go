@@ -120,10 +120,14 @@ type Props struct {
 	CapabilityTier        string       `json:"capabilityTier,omitempty"`
 	Compression           *Compression `json:"compression,omitempty"`
 	ControlTarget         Vector3
+	ControlRotateMode     string  `json:"controlRotateMode,omitempty"`
 	ControlRotateSpeed    float64 `json:"controlRotateSpeed,omitempty"`
 	ControlZoomSpeed      float64 `json:"controlZoomSpeed,omitempty"`
 	ControlLookSpeed      float64 `json:"controlLookSpeed,omitempty"`
 	ControlMoveSpeed      float64 `json:"controlMoveSpeed,omitempty"`
+	ControlMinDistance    float64 `json:"controlMinDistance,omitempty"`
+	ControlMaxDistance    float64 `json:"controlMaxDistance,omitempty"`
+	ControlPitchLimit     float64 `json:"controlPitchLimit,omitempty"`
 	ScrollCameraStart     float64 `json:"scrollCameraStart,omitempty"`
 	ScrollCameraEnd       float64 `json:"scrollCameraEnd,omitempty"`
 	MaxFrameRate          float64 `json:"maxFrameRate,omitempty"`
@@ -258,6 +262,7 @@ type Mesh struct {
 	Position      Vector3
 	Rotation      Euler
 	Pickable      *bool
+	Visible       *bool
 	Selected      bool
 	OutlineColor  string
 	OutlineWidth  float64
@@ -462,6 +467,7 @@ type InstancedGLBMesh struct {
 	Material  Material
 	Instances []MeshInstance
 	Pickable  *bool
+	Visible   *bool
 	Static    *bool
 }
 
@@ -510,6 +516,119 @@ type ComputeParticles struct {
 	// Native render: pipeline label is always "bundle.particles.render";
 	// the headless rasterizer twin dispatches by that label — do not change it.
 	RenderMaterial *CustomMaterial
+}
+
+// WaterSystem declares a GPU heightfield water simulation with the pool and
+// optics knobs needed by the jeantimex water pipeline. Rendering support is
+// WebGPU-first; the Scene3D backend capability verdict treats it as a
+// fidelity-gated feature.
+type WaterSystem struct {
+	ID                           string
+	InteractionProfile           string
+	InteractionTarget            string
+	InteractionObject            string
+	Resolution                   int
+	PoolShape                    string
+	PoolWidth                    float64
+	PoolHeight                   float64
+	PoolLength                   float64
+	CornerRadius                 float64
+	WaveSpeed                    float64
+	Damping                      float64
+	NormalScale                  float64
+	SeedDrops                    int
+	DropRadius                   float64
+	DropStrength                 float64
+	DropEventID                  int
+	DropX                        float64
+	DropZ                        float64
+	DropEventRadius              float64
+	DropEventStrength            float64
+	TileTexture                  string
+	CubeMap                      string
+	ShallowColor                 string
+	DeepColor                    string
+	CausticsResolution           int
+	ObjectTextureResolution      int
+	ObjectTextureResolutionMode  string
+	ObjectTexturePixelBudget     int
+	ObjectShadowResolution       int
+	Caustics                     bool
+	Reflection                   bool
+	Refraction                   bool
+	Paused                       bool
+	FollowCamera                 bool
+	LightDirection               Vector3
+	ActiveObject                 string
+	ObjectKind                   string
+	ObjectX                      float64
+	ObjectY                      float64
+	ObjectZ                      float64
+	ObjectPreviousSet            bool
+	ObjectPreviousX              float64
+	ObjectPreviousY              float64
+	ObjectPreviousZ              float64
+	ObjectRadius                 float64
+	ObjectHalfSizeX              float64
+	ObjectHalfSizeY              float64
+	ObjectHalfSizeZ              float64
+	ObjectDriftX                 float64
+	ObjectDriftY                 float64
+	ObjectDriftZ                 float64
+	ObjectBobAmplitude           float64
+	ObjectBobSpeed               float64
+	ObjectDisplacementScale      float64
+	ObjectDisplacementSpheres    []WaterDisplacementSphere
+	ObjectDisplacementEvents     []WaterObjectDisplacementEvent
+	ComputeBackend               string
+	MaterialBackend              string
+	ComputeSource                string
+	MaterialSource               string
+	ComputeSourceFiles           map[string]string
+	MaterialSourceFiles          map[string]string
+	SeedWGSL                     string
+	DropWGSL                     string
+	DisplacementWGSL             string
+	SimulationWGSL               string
+	NormalWGSL                   string
+	CausticsWGSL                 string
+	PoolVertexWGSL               string
+	PoolFragmentWGSL             string
+	SurfaceVertexWGSL            string
+	SurfaceFragmentWGSL          string
+	SurfaceBelowFragmentWGSL     string
+	ObjectShadowWGSL             string
+	ObjectMeshShadowVertexWGSL   string
+	ObjectMeshShadowFragmentWGSL string
+}
+
+// WaterDisplacementSphere approximates one component of a compound object
+// volume for the water displacement kernel.
+type WaterDisplacementSphere struct {
+	Offset Vector3
+	Radius float64
+}
+
+// WaterObjectDisplacementEvent describes a one-shot object motion segment for
+// the water displacement kernel.
+type WaterObjectDisplacementEvent struct {
+	ID                        int
+	ActiveObject              string
+	ObjectKind                string
+	ObjectSubtype             string
+	ObjectX                   float64
+	ObjectY                   float64
+	ObjectZ                   float64
+	ObjectPreviousSet         bool
+	ObjectPreviousX           float64
+	ObjectPreviousY           float64
+	ObjectPreviousZ           float64
+	ObjectRadius              float64
+	ObjectHalfSizeX           float64
+	ObjectHalfSizeY           float64
+	ObjectHalfSizeZ           float64
+	ObjectDisplacementScale   float64
+	ObjectDisplacementSpheres []WaterDisplacementSphere
 }
 
 type ParticleEmitter struct {
@@ -685,8 +804,14 @@ type Model struct {
 	Position           Vector3
 	Rotation           Euler
 	Scale              Vector3
+	Bounds             float64
+	Fit                string
+	FitAlign           string
 	Material           Material
+	CastShadow         bool
+	ReceiveShadow      bool
 	Pickable           *bool
+	Visible            *bool
 	Static             *bool
 	Animation          string
 	AnimationSeq       string
@@ -983,13 +1108,15 @@ type LineDashedMaterial struct {
 // WebGL custom shaders use GLSL ES snippets; WebGPU custom shaders use WGSL.
 type CustomMaterial struct {
 	StandardMaterial
-	ShaderBackend string
-	ShaderLayout  map[string]any
-	VertexGLSL    string
-	FragmentGLSL  string
-	VertexWGSL    string
-	FragmentWGSL  string
-	Uniforms      map[string]any
+	ShaderBackend     string
+	ShaderLayout      map[string]any
+	ShaderSource      string
+	ShaderSourceFiles map[string]string
+	VertexGLSL        string
+	FragmentGLSL      string
+	VertexWGSL        string
+	FragmentWGSL      string
+	Uniforms          map[string]any
 }
 
 type CubeGeometry struct {
@@ -1103,6 +1230,7 @@ type graphLowerer struct {
 	instancedMeshes    []InstancedMeshIR
 	instancedGLBMeshes []InstancedGLBMeshIR
 	computeParticles   []ComputeParticlesIR
+	waterSystems       []WaterSystemIR
 	animations         []AnimationClipIR
 	pending            []pendingLabel
 	pendingSprites     []pendingSprite
@@ -1137,6 +1265,7 @@ func (Points) sceneNode()            {}
 func (InstancedMesh) sceneNode()     {}
 func (InstancedGLBMesh) sceneNode()  {}
 func (ComputeParticles) sceneNode()  {}
+func (WaterSystem) sceneNode()       {}
 func (Label) sceneNode()             {}
 func (Sprite) sceneNode()            {}
 func (HTML) sceneNode()              {}
@@ -1205,6 +1334,39 @@ func cloneSceneAnyMap(values map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func cloneSceneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func mapStringMapValue(value any) (map[string]string, bool) {
+	switch typed := value.(type) {
+	case map[string]string:
+		return cloneSceneStringMap(typed), len(typed) > 0
+	case map[string]any:
+		out := make(map[string]string, len(typed))
+		for key, raw := range typed {
+			stringValue, ok := mapStringValue(raw)
+			if !ok {
+				continue
+			}
+			out[strings.TrimSpace(key)] = stringValue
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 func cloneFloat64Slices(values map[string][]float64) map[string][]float64 {
@@ -1339,10 +1501,14 @@ func (p Props) legacyBaseProps() map[string]any {
 			"z": p.ControlTarget.Z,
 		}
 	}
+	setString(out, "controlRotateMode", p.ControlRotateMode)
 	setNumeric(out, "controlRotateSpeed", p.ControlRotateSpeed)
 	setNumeric(out, "controlZoomSpeed", p.ControlZoomSpeed)
 	setNumeric(out, "controlLookSpeed", p.ControlLookSpeed)
 	setNumeric(out, "controlMoveSpeed", p.ControlMoveSpeed)
+	setNumeric(out, "controlMinDistance", p.ControlMinDistance)
+	setNumeric(out, "controlMaxDistance", p.ControlMaxDistance)
+	setNumeric(out, "controlPitchLimit", p.ControlPitchLimit)
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
 	setNumeric(out, "maxFrameRate", p.MaxFrameRate)
@@ -1495,6 +1661,10 @@ func sceneNodeRequiresComputeCapability(node Node) bool {
 	case ComputeParticles:
 		return true
 	case *ComputeParticles:
+		return current != nil
+	case WaterSystem:
+		return true
+	case *WaterSystem:
 		return current != nil
 	case LODGroup:
 		for _, level := range current.Levels {
@@ -1699,6 +1869,12 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	case *ComputeParticles:
 		if current != nil {
 			l.lowerComputeParticles(*current, parent)
+		}
+	case WaterSystem:
+		l.lowerWaterSystem(current)
+	case *WaterSystem:
+		if current != nil {
+			l.lowerWaterSystem(*current)
 		}
 	case Label:
 		l.pending = append(l.pending, pendingLabel{label: current, parent: parent})
@@ -2192,6 +2368,7 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	// by this mesh's id (per-mesh material). Malformed specs are skipped.
 	l.materialTracks = append(l.materialTracks, materialMotionTracks(mesh.MaterialAnims, id)...)
 	record.Pickable = mesh.Pickable
+	record.Visible = mesh.Visible
 	record.Selected = mesh.Selected
 	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
 	record.OutlineWidth = mesh.OutlineWidth
@@ -2456,6 +2633,180 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 	l.computeParticles = append(l.computeParticles, record)
 }
 
+func waterDisplacementSphereIRs(spheres []WaterDisplacementSphere) []WaterDisplacementSphereIR {
+	items := make([]WaterDisplacementSphereIR, 0, len(spheres))
+	for _, sphere := range spheres {
+		items = append(items, WaterDisplacementSphereIR{
+			OffsetX: sphere.Offset.X,
+			OffsetY: sphere.Offset.Y,
+			OffsetZ: sphere.Offset.Z,
+			Radius:  sphere.Radius,
+		})
+	}
+	return items
+}
+
+func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
+	id := strings.TrimSpace(w.ID)
+	if id == "" {
+		id = "scene-water-" + intString(len(l.waterSystems)+1)
+	}
+	resolution := w.Resolution
+	if resolution <= 0 {
+		resolution = 256
+	}
+	poolShape := strings.TrimSpace(w.PoolShape)
+	if poolShape == "" {
+		poolShape = "Box"
+	}
+	poolWidth := w.PoolWidth
+	if poolWidth == 0 {
+		poolWidth = 1
+	}
+	poolHeight := w.PoolHeight
+	if poolHeight == 0 {
+		poolHeight = 1
+	}
+	poolLength := w.PoolLength
+	if poolLength == 0 {
+		poolLength = 1
+	}
+	waveSpeed := w.WaveSpeed
+	if waveSpeed == 0 {
+		waveSpeed = 1
+	}
+	damping := w.Damping
+	if damping == 0 {
+		damping = 0.995
+	}
+	normalScale := w.NormalScale
+	if normalScale == 0 {
+		normalScale = 1
+	}
+	dropRadius := w.DropRadius
+	if dropRadius == 0 {
+		dropRadius = 0.03
+	}
+	dropStrength := w.DropStrength
+	if dropStrength == 0 {
+		dropStrength = 0.01
+	}
+	computeBackend := strings.TrimSpace(w.ComputeBackend)
+	if computeBackend == "" {
+		computeBackend = "elio"
+	}
+	materialBackend := strings.TrimSpace(w.MaterialBackend)
+	if materialBackend == "" {
+		materialBackend = "selena"
+	}
+	computeSource := strings.TrimSpace(w.ComputeSource)
+	materialSource := strings.TrimSpace(w.MaterialSource)
+	displacementSpheres := waterDisplacementSphereIRs(w.ObjectDisplacementSpheres)
+	displacementEvents := make([]WaterObjectDisplacementEventIR, 0, len(w.ObjectDisplacementEvents))
+	for _, event := range w.ObjectDisplacementEvents {
+		displacementEvents = append(displacementEvents, WaterObjectDisplacementEventIR{
+			ID:                        event.ID,
+			ActiveObject:              strings.TrimSpace(event.ActiveObject),
+			ObjectKind:                strings.TrimSpace(event.ObjectKind),
+			ObjectSubtype:             strings.TrimSpace(event.ObjectSubtype),
+			ObjectX:                   event.ObjectX,
+			ObjectY:                   event.ObjectY,
+			ObjectZ:                   event.ObjectZ,
+			ObjectPreviousSet:         event.ObjectPreviousSet,
+			ObjectPreviousX:           event.ObjectPreviousX,
+			ObjectPreviousY:           event.ObjectPreviousY,
+			ObjectPreviousZ:           event.ObjectPreviousZ,
+			ObjectRadius:              event.ObjectRadius,
+			ObjectHalfSizeX:           event.ObjectHalfSizeX,
+			ObjectHalfSizeY:           event.ObjectHalfSizeY,
+			ObjectHalfSizeZ:           event.ObjectHalfSizeZ,
+			ObjectDisplacementScale:   event.ObjectDisplacementScale,
+			ObjectDisplacementSpheres: waterDisplacementSphereIRs(event.ObjectDisplacementSpheres),
+		})
+	}
+	l.waterSystems = append(l.waterSystems, WaterSystemIR{
+		ID:                           id,
+		InteractionProfile:           strings.TrimSpace(w.InteractionProfile),
+		InteractionTarget:            strings.TrimSpace(w.InteractionTarget),
+		InteractionObject:            strings.TrimSpace(w.InteractionObject),
+		Resolution:                   resolution,
+		PoolShape:                    poolShape,
+		PoolWidth:                    poolWidth,
+		PoolHeight:                   poolHeight,
+		PoolLength:                   poolLength,
+		CornerRadius:                 w.CornerRadius,
+		WaveSpeed:                    waveSpeed,
+		Damping:                      damping,
+		NormalScale:                  normalScale,
+		SeedDrops:                    w.SeedDrops,
+		DropRadius:                   dropRadius,
+		DropStrength:                 dropStrength,
+		DropEventID:                  w.DropEventID,
+		DropX:                        w.DropX,
+		DropZ:                        w.DropZ,
+		DropEventRadius:              w.DropEventRadius,
+		DropEventStrength:            w.DropEventStrength,
+		TileTexture:                  strings.TrimSpace(w.TileTexture),
+		CubeMap:                      strings.TrimSpace(w.CubeMap),
+		ShallowColor:                 strings.TrimSpace(w.ShallowColor),
+		DeepColor:                    strings.TrimSpace(w.DeepColor),
+		CausticsResolution:           w.CausticsResolution,
+		ObjectTextureResolution:      w.ObjectTextureResolution,
+		ObjectTextureResolutionMode:  strings.TrimSpace(w.ObjectTextureResolutionMode),
+		ObjectTexturePixelBudget:     w.ObjectTexturePixelBudget,
+		ObjectShadowResolution:       w.ObjectShadowResolution,
+		Caustics:                     w.Caustics,
+		Reflection:                   w.Reflection,
+		Refraction:                   w.Refraction,
+		Paused:                       w.Paused,
+		FollowCamera:                 w.FollowCamera,
+		LightDirectionX:              w.LightDirection.X,
+		LightDirectionY:              w.LightDirection.Y,
+		LightDirectionZ:              w.LightDirection.Z,
+		ActiveObject:                 strings.TrimSpace(w.ActiveObject),
+		ObjectKind:                   strings.TrimSpace(w.ObjectKind),
+		ObjectX:                      w.ObjectX,
+		ObjectY:                      w.ObjectY,
+		ObjectZ:                      w.ObjectZ,
+		ObjectPreviousSet:            w.ObjectPreviousSet,
+		ObjectPreviousX:              w.ObjectPreviousX,
+		ObjectPreviousY:              w.ObjectPreviousY,
+		ObjectPreviousZ:              w.ObjectPreviousZ,
+		ObjectRadius:                 w.ObjectRadius,
+		ObjectHalfSizeX:              w.ObjectHalfSizeX,
+		ObjectHalfSizeY:              w.ObjectHalfSizeY,
+		ObjectHalfSizeZ:              w.ObjectHalfSizeZ,
+		ObjectDriftX:                 w.ObjectDriftX,
+		ObjectDriftY:                 w.ObjectDriftY,
+		ObjectDriftZ:                 w.ObjectDriftZ,
+		ObjectBobAmplitude:           w.ObjectBobAmplitude,
+		ObjectBobSpeed:               w.ObjectBobSpeed,
+		ObjectDisplacementScale:      w.ObjectDisplacementScale,
+		ObjectDisplacementSpheres:    displacementSpheres,
+		ObjectDisplacementEvents:     displacementEvents,
+		ComputeBackend:               computeBackend,
+		MaterialBackend:              materialBackend,
+		ComputeSource:                computeSource,
+		MaterialSource:               materialSource,
+		ComputeSourceFiles:           cloneSceneStringMap(w.ComputeSourceFiles),
+		MaterialSourceFiles:          cloneSceneStringMap(w.MaterialSourceFiles),
+		SeedWGSL:                     w.SeedWGSL,
+		DropWGSL:                     w.DropWGSL,
+		DisplacementWGSL:             w.DisplacementWGSL,
+		SimulationWGSL:               w.SimulationWGSL,
+		NormalWGSL:                   w.NormalWGSL,
+		CausticsWGSL:                 w.CausticsWGSL,
+		PoolVertexWGSL:               w.PoolVertexWGSL,
+		PoolFragmentWGSL:             w.PoolFragmentWGSL,
+		SurfaceVertexWGSL:            w.SurfaceVertexWGSL,
+		SurfaceFragmentWGSL:          w.SurfaceFragmentWGSL,
+		SurfaceBelowFragmentWGSL:     w.SurfaceBelowFragmentWGSL,
+		ObjectShadowWGSL:             w.ObjectShadowWGSL,
+		ObjectMeshShadowVertexWGSL:   w.ObjectMeshShadowVertexWGSL,
+		ObjectMeshShadowFragmentWGSL: w.ObjectMeshShadowFragmentWGSL,
+	})
+}
+
 // mat4FromTRS builds a column-major 4x4 matrix from translation, rotation (quaternion), and scale.
 func mat4FromTRS(t Vector3, q quaternion, s Vector3) []float64 {
 	// Rotation matrix from quaternion.
@@ -2512,18 +2863,24 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 			OutState:   model.OutState.legacyProps(),
 			Live:       normalizeLive(model.Live),
 		},
-		Src:    src,
-		ScaleX: model.Scale.X,
-		ScaleY: model.Scale.Y,
-		ScaleZ: model.Scale.Z,
+		Src:      src,
+		ScaleX:   model.Scale.X,
+		ScaleY:   model.Scale.Y,
+		ScaleZ:   model.Scale.Z,
+		Bounds:   model.Bounds,
+		Fit:      strings.TrimSpace(model.Fit),
+		FitAlign: strings.TrimSpace(model.FitAlign),
 	}
 	rotation := eulerFromQuaternion(world.Rotation)
 	record.RotationX = rotation.X
 	record.RotationY = rotation.Y
 	record.RotationZ = rotation.Z
 	applyMaterialProps(&record.ObjectIR, legacyMaterial(model.Material))
+	record.CastShadow = model.CastShadow
+	record.ReceiveShadow = model.ReceiveShadow
 	record.Static = model.Static
 	record.Pickable = model.Pickable
+	record.Visible = model.Visible
 	record.Animation = strings.TrimSpace(model.Animation)
 	record.AnimationSeq = strings.TrimSpace(model.AnimationSeq)
 	record.AnimationSpeed = nonNegativeFloatPtr(model.AnimationSpeed)
@@ -2567,6 +2924,7 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		ID:        id,
 		Src:       src,
 		Pickable:  igm.Pickable,
+		Visible:   igm.Visible,
 		Static:    igm.Static,
 		Instances: instances,
 	}
@@ -3094,6 +3452,12 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if shaderLayout, ok := props["shaderLayout"].(map[string]any); ok {
 		record.ShaderLayout = cloneSceneAnyMap(shaderLayout)
 	}
+	if shaderSource, ok := mapStringValue(props["shaderSource"]); ok {
+		record.ShaderSource = shaderSource
+	}
+	if shaderSourceFiles, ok := mapStringMapValue(props["shaderSourceFiles"]); ok {
+		record.ShaderSourceFiles = shaderSourceFiles
+	}
 	record.Roughness = mapFloat64(props["roughness"])
 	record.Metalness = mapFloat64(props["metalness"])
 	record.Clearcoat = mapFloat64(props["clearcoat"])
@@ -3447,6 +3811,8 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
 		record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
 		record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
+		record.ShaderSource = strings.TrimSpace(m.ShaderSource)
+		record.ShaderSourceFiles = cloneSceneStringMap(m.ShaderSourceFiles)
 	default:
 		// Fallback for any Material implementation not enumerated above —
 		// use the legacy map round-trip so correctness is preserved.
@@ -3491,6 +3857,8 @@ func applyMaterialToPointsIR(record *PointsIR, m CustomMaterial) {
 	record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
 	record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
 	record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
+	record.ShaderSource = strings.TrimSpace(m.ShaderSource)
+	record.ShaderSourceFiles = cloneSceneStringMap(m.ShaderSourceFiles)
 }
 
 // applyMaterialToComputeParticlesIR copies authored render-pass shader fields
@@ -3504,6 +3872,8 @@ func applyMaterialToComputeParticlesIR(record *ComputeParticlesIR, m CustomMater
 	record.RenderUniforms = cloneSceneAnyMap(m.Uniforms)
 	record.RenderShaderBackend = strings.TrimSpace(m.ShaderBackend)
 	record.RenderShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
+	record.RenderShaderSource = strings.TrimSpace(m.ShaderSource)
+	record.RenderShaderSourceFiles = cloneSceneStringMap(m.ShaderSourceFiles)
 }
 
 func (m FlatMaterial) legacyMaterial() map[string]any {
@@ -3592,6 +3962,10 @@ func (m CustomMaterial) legacyMaterial() map[string]any {
 	setString(out, "shaderBackend", m.ShaderBackend)
 	if len(m.ShaderLayout) > 0 {
 		out["shaderLayout"] = cloneSceneAnyMap(m.ShaderLayout)
+	}
+	setString(out, "shaderSource", m.ShaderSource)
+	if len(m.ShaderSourceFiles) > 0 {
+		out["shaderSourceFiles"] = cloneSceneStringMap(m.ShaderSourceFiles)
 	}
 	return out
 }

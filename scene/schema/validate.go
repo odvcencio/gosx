@@ -49,6 +49,7 @@ type Document struct {
 	InstancedMeshes    []scene.InstancedMeshIR    `json:"instancedMeshes,omitempty"`
 	InstancedGLBMeshes []scene.InstancedGLBMeshIR `json:"instancedGLBMeshes,omitempty"`
 	ComputeParticles   []scene.ComputeParticlesIR `json:"computeParticles,omitempty"`
+	WaterSystems       []scene.WaterSystemIR      `json:"waterSystems,omitempty"`
 	Animations         []scene.AnimationClipIR    `json:"animations,omitempty"`
 	Labels             []scene.LabelIR            `json:"labels,omitempty"`
 	Sprites            []scene.SpriteIR           `json:"sprites,omitempty"`
@@ -173,6 +174,11 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		addID(particles.ID, path+".id", true)
 		validateComputeParticles(report, particles, path)
 	}
+	for i, water := range doc.WaterSystems {
+		path := fmt.Sprintf("waterSystems[%d]", i)
+		addID(water.ID, path+".id", true)
+		validateWaterSystem(report, water, path)
+	}
 	for i, label := range doc.Labels {
 		path := fmt.Sprintf("labels[%d]", i)
 		addID(label.ID, path+".id", true)
@@ -269,6 +275,7 @@ func validateModel(report *Report, model scene.ModelIR, path string) {
 		"scaleY": model.ScaleY,
 		"scaleZ": model.ScaleZ,
 	})
+	validateNonNegativeFloat(report, model.ID, path+".bounds", model.Bounds)
 	if model.AnimationSpeed != nil {
 		validateNonNegativeFloat(report, model.ID, path+".animationSpeed", *model.AnimationSpeed)
 	}
@@ -445,6 +452,92 @@ func validateComputeParticles(report *Report, particles scene.ComputeParticlesIR
 		"opacityEnd": particles.Material.OpacityEnd,
 	})
 	validateLive(report, particles.ID, path, particles.Live)
+}
+
+func validateWaterSystem(report *Report, water scene.WaterSystemIR, path string) {
+	switch strings.TrimSpace(water.InteractionProfile) {
+	case "", "water-object-drop-orbit":
+	default:
+		report.add(Warn, "scene.water.unknown_interaction_profile", "Water simulation interactionProfile is not recognized", path+".interactionProfile", water.ID, map[string]any{"profile": water.InteractionProfile})
+	}
+	if water.Resolution < 0 {
+		report.add(Error, "scene.water.invalid_resolution", "Water simulation resolution must not be negative", path+".resolution", water.ID, nil)
+	}
+	if water.SeedDrops < 0 {
+		report.add(Error, "scene.water.invalid_seed_drops", "Water simulation seedDrops must not be negative", path+".seedDrops", water.ID, nil)
+	}
+	if water.DropEventID < 0 {
+		report.add(Error, "scene.water.invalid_drop_event_id", "Water simulation dropEventID must not be negative", path+".dropEventID", water.ID, nil)
+	}
+	for field, value := range map[string]int{
+		"causticsResolution":       water.CausticsResolution,
+		"objectTextureResolution":  water.ObjectTextureResolution,
+		"objectTexturePixelBudget": water.ObjectTexturePixelBudget,
+		"objectShadowResolution":   water.ObjectShadowResolution,
+	} {
+		if value < 0 {
+			report.add(Error, "scene.water.invalid_texture_resolution", "Water texture target resolution must not be negative", path+"."+field, water.ID, nil)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(water.ObjectTextureResolutionMode)) {
+	case "", "fixed", "viewport", "auto", "upstream":
+	default:
+		report.add(Warn, "scene.water.unknown_object_texture_resolution_mode", "Water object texture resolution mode is not recognized", path+".objectTextureResolutionMode", water.ID, map[string]any{"mode": water.ObjectTextureResolutionMode})
+	}
+	validateNumericFields(report, water.ID, path, map[string]float64{
+		"poolWidth":         water.PoolWidth,
+		"poolHeight":        water.PoolHeight,
+		"poolLength":        water.PoolLength,
+		"cornerRadius":      water.CornerRadius,
+		"waveSpeed":         water.WaveSpeed,
+		"damping":           water.Damping,
+		"normalScale":       water.NormalScale,
+		"dropRadius":        water.DropRadius,
+		"dropStrength":      water.DropStrength,
+		"dropX":             water.DropX,
+		"dropZ":             water.DropZ,
+		"dropEventRadius":   water.DropEventRadius,
+		"dropEventStrength": water.DropEventStrength,
+		"lightDirectionX":   water.LightDirectionX,
+		"lightDirectionY":   water.LightDirectionY,
+		"lightDirectionZ":   water.LightDirectionZ,
+		"objectX":           water.ObjectX,
+		"objectY":           water.ObjectY,
+		"objectZ":           water.ObjectZ,
+		"objectPreviousX":   water.ObjectPreviousX,
+		"objectPreviousY":   water.ObjectPreviousY,
+		"objectPreviousZ":   water.ObjectPreviousZ,
+		"objectDriftX":      water.ObjectDriftX,
+		"objectDriftY":      water.ObjectDriftY,
+		"objectDriftZ":      water.ObjectDriftZ,
+	})
+	validateNonNegativeNumericFields(report, water.ID, path, map[string]float64{
+		"poolWidth":               water.PoolWidth,
+		"poolHeight":              water.PoolHeight,
+		"poolLength":              water.PoolLength,
+		"cornerRadius":            water.CornerRadius,
+		"normalScale":             water.NormalScale,
+		"dropRadius":              water.DropRadius,
+		"dropEventRadius":         water.DropEventRadius,
+		"objectRadius":            water.ObjectRadius,
+		"objectHalfSizeX":         water.ObjectHalfSizeX,
+		"objectHalfSizeY":         water.ObjectHalfSizeY,
+		"objectHalfSizeZ":         water.ObjectHalfSizeZ,
+		"objectBobAmplitude":      water.ObjectBobAmplitude,
+		"objectBobSpeed":          water.ObjectBobSpeed,
+		"objectDisplacementScale": water.ObjectDisplacementScale,
+	})
+	for i, sphere := range water.ObjectDisplacementSpheres {
+		spherePath := fmt.Sprintf("%s.objectDisplacementSpheres[%d]", path, i)
+		validateNumericFields(report, water.ID, spherePath, map[string]float64{
+			"offsetX": sphere.OffsetX,
+			"offsetY": sphere.OffsetY,
+			"offsetZ": sphere.OffsetZ,
+		})
+		validateNonNegativeNumericFields(report, water.ID, spherePath, map[string]float64{
+			"radius": sphere.Radius,
+		})
+	}
 }
 
 func validatePrimitiveParameters(report *Report, kind, id, path string, size, width, height, depth, radius, radiusTop, radiusBottom, tube float64, segments, radialSegments, tubularSegments int) {

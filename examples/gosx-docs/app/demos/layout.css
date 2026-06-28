@@ -10,6 +10,7 @@
    ------------------------------------------------------------ */
 
 .demos-shell {
+  --demo-site-nav-offset: 61px;
   --demo-bg: #0b0b0d;
   --demo-fg: #f5f5ef;
   --demo-muted: #9a9a9a;
@@ -20,6 +21,7 @@
   /* Per-demo accent palette — applied via data-demo-slug (set by inline script) */
   --demo-accent-playground: #9fffa5;
   --demo-accent-fluid:      #7aa2ff;
+  --demo-accent-water:      #69e3c7;
   --demo-accent-livesim:    #f59e0b;
   --demo-accent-cms:        #ec4899;
   --demo-accent-scene3d:    #5fb4ff;
@@ -31,7 +33,8 @@
   line-height: 1.5;
   color: var(--demo-fg);
   background: var(--demo-bg);
-  min-height: 100vh;
+  min-height: calc(100vh - var(--demo-site-nav-offset));
+  padding-top: var(--demo-site-nav-offset);
   display: flex;
   flex-direction: column;
 }
@@ -39,6 +42,7 @@
 /* Per-demo accent override via data attribute (set by inline script at runtime) */
 .demos-shell[data-demo-slug="playground"] { --demo-accent: #9fffa5; }
 .demos-shell[data-demo-slug="fluid"]      { --demo-accent: #7aa2ff; }
+.demos-shell[data-demo-slug="water"]      { --demo-accent: #69e3c7; }
 .demos-shell[data-demo-slug="livesim"]    { --demo-accent: #f59e0b; }
 .demos-shell[data-demo-slug="cms"]        { --demo-accent: #ec4899; }
 .demos-shell[data-demo-slug="scene3d"]    { --demo-accent: #5fb4ff; }
@@ -328,10 +332,6 @@
   outline-offset: 2px;
 }
 
-/* ------------------------------------------------------------
-   Mobile — off-canvas drawer at <900px
-   ------------------------------------------------------------ */
-
 @media (max-width: 900px) {
   .demos-topbar__menu {
     display: flex;
@@ -344,7 +344,7 @@
 
   .demo-dock {
     position: fixed;
-    top: 0;
+    top: var(--demo-site-nav-offset);
     left: 0;
     bottom: 0;
     width: 280px;
@@ -367,10 +367,6 @@
     width: 100%;
   }
 }
-
-/* ------------------------------------------------------------
-   Reduced-motion
-   ------------------------------------------------------------ */
 
 @media (prefers-reduced-motion: reduce) {
   .demo-dock {

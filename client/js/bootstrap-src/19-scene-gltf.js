@@ -1157,6 +1157,36 @@
     return await response.arrayBuffer();
   }
 
+  function gltfAbsoluteURL(url) {
+    var raw = typeof url === "string" ? url.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    try {
+      return new URL(raw, window.location.href).toString();
+    } catch (_error) {
+      return raw;
+    }
+  }
+
+  function gltfResolveExternalImageURIs(gltf, baseURL) {
+    if (!gltf || !gltf.images || !gltf.images.length) {
+      return;
+    }
+    for (var i = 0; i < gltf.images.length; i += 1) {
+      var image = gltf.images[i];
+      if (!image || typeof image.uri !== "string" || !image.uri || image.uri.indexOf("data:") === 0) {
+        continue;
+      }
+      try {
+        image.uri = new URL(image.uri, baseURL).toString();
+      } catch (_error) {
+        // Keep the authored URI; downstream texture loading will report any
+        // remaining failure with the original value.
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Main entry point
   // ---------------------------------------------------------------------------
@@ -1184,6 +1214,7 @@
 
   async function sceneLoadGLTFModel(url) {
     var isGLB = sceneGLTFAssetFormat(url) === "glb";
+    var assetURL = gltfAbsoluteURL(url);
     var response;
 
     if (isGLB) {
@@ -1202,7 +1233,8 @@
       throw new Error("Failed to fetch glTF: " + url + " (HTTP " + response.status + ")");
     }
     var json = await response.json();
-    var bufferData = await gltfFetchExternalBuffers(json, url);
+    gltfResolveExternalImageURIs(json, assetURL);
+    var bufferData = await gltfFetchExternalBuffers(json, assetURL);
     return gltfExtractScene(json, bufferData);
   }
 

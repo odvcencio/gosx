@@ -4,5 +4,8 @@
   "gpu-picking": true,
   "line-dashed": true,
   "compute-particles": false,
-  "gpu-cull": false
+  "gpu-cull": false,
+  "water-simulation": false,
+  "water-object-texture-pass": false,
+  "water-object-mesh-shadow-pass": false
 }

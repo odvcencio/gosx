@@ -32,6 +32,14 @@ var demosIndexCards = []demoCard{
 		Live:   true,
 	},
 	{
+		Slug:   "water",
+		Title:  "Water Lab",
+		Tag:    "Selena + Elio",
+		Body:   "A pool scene with Selena water and caustic materials, Elio splash particles, instancing, and Scene3D post effects.",
+		Accent: "#69e3c7",
+		Live:   true,
+	},
+	{
 		Slug:   "livesim",
 		Title:  "Live Sim",
 		Tag:    "authoritative multiplayer",

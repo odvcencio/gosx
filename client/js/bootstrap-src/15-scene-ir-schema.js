@@ -28,6 +28,7 @@
    * @property {object[]} [points]
    * @property {object[]} [instancedMeshes]
    * @property {SceneComputeParticles[]} [computeParticles]
+   * @property {SceneWaterSystem[]} [waterSystems]
    * @property {object[]} [html]
    */
 
@@ -43,6 +44,54 @@
    * @property {string} [computeEntry] - Entry point for computeWGSL (default "simulate").
    * @property {string} [computeBackend] - Kernel authoring back-end name (e.g. "elio").
    * @property {string} [computeWGSLRef] - shaderLib ref replacing computeWGSL when deduplicated.
+   */
+
+  /**
+   * @typedef {object} SceneWaterSystem
+   * @property {string} id
+   * @property {number} [resolution]
+   * @property {string} [poolShape]
+   * @property {number} [poolWidth]
+   * @property {number} [poolHeight]
+   * @property {number} [poolLength]
+   * @property {number} [cornerRadius]
+   * @property {number} [waveSpeed]
+   * @property {number} [damping]
+   * @property {number} [normalScale]
+   * @property {number} [seedDrops]
+   * @property {number} [dropRadius]
+   * @property {number} [dropStrength]
+   * @property {number} [dropEventID] - Monotonic one-shot water drop event id.
+   * @property {number} [dropX] - Drop center in normalized water coordinates, -1 to 1.
+   * @property {number} [dropZ] - Drop center in normalized water coordinates, -1 to 1.
+   * @property {number} [dropEventRadius]
+   * @property {number} [dropEventStrength]
+   * @property {string} [shallowColor]
+   * @property {string} [deepColor]
+   * @property {boolean} [paused]
+   * @property {string} [objectKind] - Displacement primitive kind, such as "sphere" or "cube".
+   * @property {number} [objectX]
+   * @property {number} [objectY]
+   * @property {number} [objectZ]
+   * @property {boolean} [objectPreviousSet] - Use objectPreviousX/Y/Z as the prior displacement volume for one transition.
+   * @property {number} [objectPreviousX]
+   * @property {number} [objectPreviousY]
+   * @property {number} [objectPreviousZ]
+   * @property {number} [objectRadius]
+   * @property {number} [objectHalfSizeX]
+   * @property {number} [objectHalfSizeY]
+   * @property {number} [objectHalfSizeZ]
+   * @property {number} [objectDriftX]
+   * @property {number} [objectDriftY]
+   * @property {number} [objectDriftZ]
+   * @property {number} [objectBobAmplitude]
+   * @property {number} [objectBobSpeed]
+   * @property {number} [objectDisplacementScale]
+   * @property {Array<{offsetX?: number, offsetY?: number, offsetZ?: number, radius: number}>} [objectDisplacementSpheres]
+   * @property {Record<string, string>} [computeSourceFiles] - Elio pass name to source path manifest.
+   * @property {Record<string, string>} [materialSourceFiles] - Selena pass name to source path manifest.
+   * @property {string} [computeBackend] - Kernel authoring back-end name (e.g. "elio").
+   * @property {string} [materialBackend] - Material authoring back-end name (e.g. "selena").
    */
 
   /**
@@ -93,6 +142,10 @@
    * @property {number} [opacity]
    * @property {number} [roughness]
    * @property {number} [metalness]
+   * @property {string} [shaderBackend]
+   * @property {object} [shaderLayout]
+   * @property {string} [shaderSource]
+   * @property {Object.<string,string>} [shaderSourceFiles]
    */
 
   /**
@@ -159,6 +212,7 @@
     validateSceneIRArray(ir, "nodes", errors);
     validateSceneIRArray(ir, "postFX", errors);
     validateSceneIRArray(ir, "postEffects", errors);
+    validateSceneIRArray(ir, "waterSystems", errors);
 
     if (isRenderBundle) {
       validateRenderBundleShape(ir, errors);
@@ -259,10 +313,11 @@
     validateSceneIRArray(bundle, "points", errors);
     validateSceneIRArray(bundle, "instancedMeshes", errors);
     validateSceneIRArray(bundle, "computeParticles", errors);
+    validateSceneIRArray(bundle, "waterSystems", errors);
     validateSceneIRArray(bundle, "labels", errors);
     validateSceneIRArray(bundle, "sprites", errors);
     validateSceneIRArray(bundle, "html", errors);
-    if (!bundle.objects && !bundle.meshObjects && !bundle.points && !bundle.instancedMeshes && !bundle.computeParticles && !bundle.labels && !bundle.sprites && !bundle.html) {
+    if (!bundle.objects && !bundle.meshObjects && !bundle.points && !bundle.instancedMeshes && !bundle.computeParticles && !bundle.waterSystems && !bundle.labels && !bundle.sprites && !bundle.html) {
       errors.push("scene IR must include nodes or render-bundle arrays");
     }
   }

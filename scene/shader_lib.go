@@ -26,6 +26,21 @@ const shaderLibIDPrefix = "sl:"
 // are needed.
 var shaderLibFields = []shaderLibFieldDesc{
 	{collection: "computeParticles", field: "computeWGSL"},
+	// WaterSystem Elio/Selena GPU pipeline fields.
+	{collection: "waterSystems", field: "seedWGSL"},
+	{collection: "waterSystems", field: "dropWGSL"},
+	{collection: "waterSystems", field: "displacementWGSL"},
+	{collection: "waterSystems", field: "simulationWGSL"},
+	{collection: "waterSystems", field: "normalWGSL"},
+	{collection: "waterSystems", field: "causticsWGSL"},
+	{collection: "waterSystems", field: "poolVertexWGSL"},
+	{collection: "waterSystems", field: "poolFragmentWGSL"},
+	{collection: "waterSystems", field: "surfaceVertexWGSL"},
+	{collection: "waterSystems", field: "surfaceFragmentWGSL"},
+	{collection: "waterSystems", field: "surfaceBelowFragmentWGSL"},
+	{collection: "waterSystems", field: "objectShadowWGSL"},
+	{collection: "waterSystems", field: "objectMeshShadowVertexWGSL"},
+	{collection: "waterSystems", field: "objectMeshShadowFragmentWGSL"},
 	{collection: "objects", field: "customVertex"},
 	{collection: "objects", field: "customFragment"},
 	{collection: "objects", field: "customVertexWGSL"},

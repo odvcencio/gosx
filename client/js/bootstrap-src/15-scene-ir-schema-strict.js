@@ -26,6 +26,7 @@
       var instancedMeshes = sceneStrictTopLevelArray(diagnostics, ir, "instancedMeshes");
       var instancedGLBMeshes = sceneStrictTopLevelArray(diagnostics, ir, "instancedGLBMeshes");
       var computeParticles = sceneStrictTopLevelArray(diagnostics, ir, "computeParticles");
+      var waterSystems = sceneStrictTopLevelArray(diagnostics, ir, "waterSystems");
       var animations = sceneStrictTopLevelArray(diagnostics, ir, "animations");
       var labels = sceneStrictTopLevelArray(diagnostics, ir, "labels");
       var sprites = sceneStrictTopLevelArray(diagnostics, ir, "sprites");
@@ -45,6 +46,7 @@
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, model && model.id, path + ".id", strict || !!(model && model.pickable));
         validateSceneStrictPrimitive(diagnostics, model || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, model || {}, path);
+        validateSceneStrictNonNegativeScalars(diagnostics, model || {}, path, ["bounds"], "scene.model.invalid_bounds", "Model bounds must be finite and non-negative");
         validateSceneStrictNonNegativeScalars(diagnostics, model || {}, path, ["animationSpeed", "animationWeight", "animationFadeInMS", "animationFadeOutMS"], "scene.animation.invalid_parameter", "Animation parameter must be finite and non-negative");
         validateSceneStrictLiveFields(diagnostics, model && model.live, path, model && model.id);
         if (!sceneStrictString(model && model.src)) {
@@ -62,6 +64,9 @@
       });
       computeParticles.forEach(function(particles, index) {
         validateSceneStrictComputeParticles(diagnostics, seenIDs, knownIDs, particles || {}, "computeParticles[" + index + "]");
+      });
+      waterSystems.forEach(function(water, index) {
+        validateSceneStrictWaterSystem(diagnostics, seenIDs, knownIDs, water || {}, "waterSystems[" + index + "]");
       });
       animations.forEach(function(animation, index) {
         validateSceneStrictAnimation(diagnostics, seenIDs, knownIDs, animation || {}, "animations[" + index + "]");
@@ -272,6 +277,54 @@
         pushSceneStrictDiagnostic(diagnostics, "warn", "scene.particles.uninflated_compute_wgsl_ref", "Compute particle has computeWGSLRef but no computeWGSL — shaderLib inflation may not have run", path + ".computeWGSLRef", particles.id, { ref: particles.computeWGSLRef });
       }
       validateSceneStrictLiveFields(diagnostics, particles.live, path, particles.id);
+    }
+
+    function validateSceneStrictWaterSystem(diagnostics, seenIDs, knownIDs, water, path) {
+      checkSceneStrictID(diagnostics, seenIDs, knownIDs, water.id, path + ".id", true);
+      if (water.resolution != null && (!sceneStrictIsNonNegativeInteger(water.resolution) || water.resolution === 0)) {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.water.invalid_resolution", "Water simulation resolution must be a positive integer", path + ".resolution", water.id, { value: water.resolution });
+      }
+      validateSceneStrictOptionalInteger(diagnostics, water.seedDrops, path + ".seedDrops", "scene.water.invalid_seed_drops", "Water simulation seedDrops must be a non-negative integer", water.id, true);
+      validateSceneStrictOptionalInteger(diagnostics, water.dropEventID, path + ".dropEventID", "scene.water.invalid_drop_event_id", "Water simulation dropEventID must be a non-negative integer", water.id, true);
+      validateSceneStrictFiniteScalars(diagnostics, water, path, ["waveSpeed", "damping", "dropStrength", "dropX", "dropZ", "dropEventStrength", "lightDirectionX", "lightDirectionY", "lightDirectionZ", "objectX", "objectY", "objectZ", "objectPreviousX", "objectPreviousY", "objectPreviousZ", "objectDriftX", "objectDriftY", "objectDriftZ"], "scene.water.non_finite", "Water simulation scalar must be finite", water.id);
+      validateSceneStrictNonNegativeScalars(diagnostics, water, path, ["poolWidth", "poolHeight", "poolLength", "cornerRadius", "normalScale", "dropRadius", "dropEventRadius", "objectRadius", "objectHalfSizeX", "objectHalfSizeY", "objectHalfSizeZ", "objectBobAmplitude", "objectBobSpeed", "objectDisplacementScale"], "scene.water.invalid_parameter", "Water simulation scalar must be finite and non-negative");
+      ["caustics", "reflection", "refraction", "paused", "followCamera", "objectPreviousSet"].forEach(function(name) {
+        if (water[name] != null && typeof water[name] !== "boolean") {
+          pushSceneStrictDiagnostic(diagnostics, "warn", "scene.water.invalid_boolean", "Water simulation boolean field must be a boolean when present", path + "." + name, water.id, { value: water[name] });
+        }
+      });
+      ["poolShape", "tileTexture", "cubeMap", "activeObject", "objectKind", "computeBackend", "materialBackend", "computeSource", "materialSource",
+        "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+        "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+        "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL"].forEach(function(name) {
+        if (water[name] != null && typeof water[name] !== "string") {
+          pushSceneStrictDiagnostic(diagnostics, "warn", "scene.water.invalid_string", "Water simulation string field must be a string when present", path + "." + name, water.id, { value: water[name] });
+        }
+      });
+      validateSceneStrictStringMap(diagnostics, water.computeSourceFiles, path + ".computeSourceFiles", water.id, "scene.water.invalid_source_files", "Water computeSourceFiles must be an object of string paths");
+      validateSceneStrictStringMap(diagnostics, water.materialSourceFiles, path + ".materialSourceFiles", water.id, "scene.water.invalid_source_files", "Water materialSourceFiles must be an object of string paths");
+      if (water.objectDisplacementSpheres != null) {
+        if (!Array.isArray(water.objectDisplacementSpheres)) {
+          pushSceneStrictDiagnostic(diagnostics, "warn", "scene.water.invalid_displacement_spheres", "Water objectDisplacementSpheres must be an array when present", path + ".objectDisplacementSpheres", water.id, { value: water.objectDisplacementSpheres });
+        } else {
+          water.objectDisplacementSpheres.forEach(function(sphere, index) {
+            var spherePath = path + ".objectDisplacementSpheres[" + index + "]";
+            if (!sphere || typeof sphere !== "object") {
+              pushSceneStrictDiagnostic(diagnostics, "warn", "scene.water.invalid_displacement_sphere", "Water displacement sphere must be an object", spherePath, water.id, { value: sphere });
+              return;
+            }
+            validateSceneStrictFiniteScalars(diagnostics, sphere, spherePath, ["offsetX", "offsetY", "offsetZ"], "scene.water.non_finite", "Water displacement sphere offset must be finite", water.id);
+            validateSceneStrictNonNegativeScalars(diagnostics, sphere, spherePath, ["radius"], "scene.water.invalid_parameter", "Water displacement sphere radius must be finite and non-negative");
+          });
+        }
+      }
+      ["seedWGSLRef", "dropWGSLRef", "displacementWGSLRef", "simulationWGSLRef", "normalWGSLRef", "causticsWGSLRef",
+        "poolVertexWGSLRef", "poolFragmentWGSLRef", "surfaceVertexWGSLRef", "surfaceFragmentWGSLRef", "surfaceBelowFragmentWGSLRef",
+        "objectShadowWGSLRef", "objectMeshShadowVertexWGSLRef", "objectMeshShadowFragmentWGSLRef"].forEach(function(name) {
+        if (water[name] != null && typeof water[name] !== "string") {
+          pushSceneStrictDiagnostic(diagnostics, "warn", "scene.water.invalid_wgsl_ref", "Water simulation shaderLib ref must be a string when present", path + "." + name, water.id, { value: water[name] });
+        }
+      });
     }
 
     function validateSceneStrictAnimation(diagnostics, seenIDs, knownIDs, animation, path) {
@@ -503,6 +556,21 @@
       } else if (value < 0) {
         pushSceneStrictDiagnostic(diagnostics, "error", negativeCode, negativeMessage, path, id, { value: value });
       }
+    }
+
+    function validateSceneStrictStringMap(diagnostics, value, path, id, code, message) {
+      if (value == null) {
+        return;
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        pushSceneStrictDiagnostic(diagnostics, "warn", code, message, path, id, { value: value });
+        return;
+      }
+      Object.keys(value).forEach(function(key) {
+        if (typeof value[key] !== "string") {
+          pushSceneStrictDiagnostic(diagnostics, "warn", code, message, path + "." + key, id, { value: value[key] });
+        }
+      });
     }
 
     function validateSceneStrictFiniteScalars(diagnostics, object, path, names, code, message, id) {

@@ -376,6 +376,19 @@
       "id", "width", "height", "scale", "opacity", "offsetX", "offsetY",
     ]);
     hash = sceneCSSHashComputeParticles(hash, bundle && bundle.computeParticles);
+    hash = sceneCSSHashCollection(hash, bundle && bundle.waterSystems, [
+      "id", "resolution", "poolShape", "poolWidth", "poolHeight", "poolLength",
+      "cornerRadius", "waveSpeed", "damping", "normalScale", "seedDrops",
+      "dropRadius", "dropStrength", "dropEventID", "dropX", "dropZ",
+      "dropEventRadius", "dropEventStrength", "tileTexture", "cubeMap", "caustics",
+      "reflection", "refraction", "followCamera", "activeObject",
+      "objectKind", "objectX", "objectY", "objectZ", "objectRadius",
+      "objectHalfSizeX", "objectHalfSizeY", "objectHalfSizeZ",
+      "objectPreviousX", "objectPreviousY", "objectPreviousZ",
+      "objectDriftX", "objectDriftY", "objectDriftZ",
+      "objectBobAmplitude", "objectBobSpeed", "objectDisplacementScale",
+      "computeBackend", "materialBackend",
+    ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.postEffects, [
       "kind", "threshold", "intensity", "radius", "scale", "bias", "saturation", "contrast", "exposure",
     ]);
@@ -1393,6 +1406,7 @@
     hash = scenePlannerHashCollection(hash, bundle && bundle.points, scenePlannerHashPointsEntry);
     hash = scenePlannerHashCollection(hash, bundle && bundle.instancedMeshes, scenePlannerHashInstancedEntry);
     hash = scenePlannerHashCollection(hash, bundle && bundle.computeParticles, scenePlannerHashComputeEntry);
+    hash = scenePlannerHashCollection(hash, bundle && bundle.waterSystems, scenePlannerHashWaterSystemEntry);
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldPositions));
     hash = scenePlannerHashNumber(hash, arrayLength(bundle && bundle.worldColors));
     hash = scenePlannerHashArrayShape(hash, bundle && bundle.worldLineWidths);
@@ -1405,6 +1419,10 @@
   function scenePlannerMaterialsHash(bundle) {
     let hash = 2166136261 >>> 0;
     return String(scenePlannerHashCollection(hash, bundle && bundle.materials, scenePlannerHashMaterial));
+  }
+
+  function scenePlannerHashWaterSystemEntry(hash, water) {
+    return scenePlannerHashAny(hash, water || null, 0);
   }
 
   function scenePlannerShadowHash(bundle) {
@@ -1499,7 +1517,8 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
     hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
-    return scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
+    hash = scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
+    return scenePlannerHashMeshVertices(hash, object && object.vertices);
   }
 
   function scenePlannerHashLineObject(hash, object) {
@@ -1552,6 +1571,32 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionZ, 0));
     hash = scenePlannerHashNumber(hash, light && light.castShadow ? 1 : 0);
     return scenePlannerHashNumber(hash, sceneNumber(light && light.shadowSize, 0));
+  }
+
+  function scenePlannerHashFloatArray(hash, values, maxItems) {
+    if (!values || typeof values.length !== "number") {
+      return scenePlannerHashNumber(hash, 0);
+    }
+    const length = Math.max(0, Math.floor(sceneNumber(values.length, 0)));
+    hash = scenePlannerHashNumber(hash, length);
+    const limit = maxItems && maxItems > 0 ? Math.min(length, maxItems) : length;
+    for (let i = 0; i < limit; i += 1) {
+      hash = scenePlannerHashNumber(hash, sceneNumber(values[i], 0));
+    }
+    if (limit < length) {
+      hash = scenePlannerHashNumber(hash, sceneNumber(values[length - 1], 0));
+    }
+    return hash;
+  }
+
+  function scenePlannerHashMeshVertices(hash, vertices) {
+    if (!vertices || typeof vertices !== "object") {
+      return scenePlannerHashNumber(hash, 0);
+    }
+    hash = scenePlannerHashNumber(hash, sceneNumber(vertices.count, 0));
+    hash = scenePlannerHashFloatArray(hash, vertices.positions, 0);
+    hash = scenePlannerHashFloatArray(hash, vertices.normals, 0);
+    return scenePlannerHashFloatArray(hash, vertices.uvs, 0);
   }
 
   function scenePlannerHashPointsEntry(hash, entry) {

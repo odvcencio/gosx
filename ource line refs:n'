@@ -1,0 +1,60 @@
+ client/js/bootstrap-feature-scene3d-gltf.js        |  Bin [31m16009[m -> [32m16391[m bytes
+ client/js/bootstrap-feature-scene3d-gltf.js.br     |  Bin [31m5589[m -> [32m5666[m bytes
+ client/js/bootstrap-feature-scene3d-gltf.js.gz     |  Bin [31m6330[m -> [32m6428[m bytes
+ client/js/bootstrap-feature-scene3d-gltf.js.map    |  Bin [31m77246[m -> [32m78883[m bytes
+ client/js/bootstrap-feature-scene3d-webgpu.js      |  Bin [31m181169[m -> [32m293015[m bytes
+ client/js/bootstrap-feature-scene3d-webgpu.js.br   |  Bin [31m38918[m -> [32m57332[m bytes
+ client/js/bootstrap-feature-scene3d-webgpu.js.gz   |  Bin [31m45317[m -> [32m67788[m bytes
+ client/js/bootstrap-feature-scene3d-webgpu.js.map  |  Bin [31m613936[m -> [32m913700[m bytes
+ client/js/bootstrap-feature-scene3d.js             |  Bin [31m554931[m -> [32m613672[m bytes
+ client/js/bootstrap-feature-scene3d.js.br          |  Bin [31m124715[m -> [32m137068[m bytes
+ client/js/bootstrap-feature-scene3d.js.gz          |  Bin [31m151599[m -> [32m166926[m bytes
+ client/js/bootstrap-feature-scene3d.js.map         |  Bin [31m2091293[m -> [32m2306843[m bytes
+ client/js/bootstrap-runtime.js                     |  Bin [31m106564[m -> [32m108121[m bytes
+ client/js/bootstrap-runtime.js.br                  |  Bin [31m24741[m -> [32m25037[m bytes
+ client/js/bootstrap-runtime.js.gz                  |  Bin [31m28152[m -> [32m28518[m bytes
+ client/js/bootstrap-runtime.js.map                 |  Bin [31m376112[m -> [32m380097[m bytes
+ client/js/bootstrap-src/10-runtime-scene-core.js   |  330 [32m+[m[31m-[m
+ client/js/bootstrap-src/11-scene-math.js           |   83 [32m+[m
+ client/js/bootstrap-src/12-scene-geometry.js       |  160 [32m+[m
+ .../js/bootstrap-src/15-scene-ir-schema-strict.js  |   50 [32m+[m
+ client/js/bootstrap-src/15-scene-ir-schema.js      |   51 [32m+[m[31m-[m
+ client/js/bootstrap-src/15b-scene-planner.js       |   47 [32m+[m[31m-[m
+ .../bootstrap-src/16-scene-webgl.capabilities.json |    3 [32m+[m[31m-[m
+ .../16a-scene-webgpu.capabilities.json             |    3 [32m+[m[31m-[m
+ client/js/bootstrap-src/16a-scene-webgpu.js        | 4276 [32m+++++++++++++++++++[m[31m-[m
+ client/js/bootstrap-src/19-scene-gltf.js           |   34 [32m+[m[31m-[m
+ client/js/bootstrap-src/20-scene-mount.js          |  414 [32m+[m[31m-[m
+ client/js/bootstrap.js                             |  Bin [31m913230[m -> [32m1084775[m bytes
+ client/js/bootstrap.js.br                          |  Bin [31m201351[m -> [32m232219[m bytes
+ client/js/bootstrap.js.gz                          |  Bin [31m248521[m -> [32m286709[m bytes
+ client/js/bootstrap.js.map                         |  Bin [31m3387762[m -> [32m3904389[m bytes
+ client/js/build-bootstrap.mjs                      |    2 [32m+[m
+ client/js/runtime.test.js                          | 1356 [32m++++++[m[31m-[m
+ dev/server.go                                      |   42 [32m+[m[31m-[m
+ dev/server_test.go                                 |   24 [32m+[m
+ examples/gosx-docs/app/demos/layout.css            |   16 [32m+[m[31m-[m
+ examples/gosx-docs/app/demos/layout.gsx            |  218 [32m+[m[31m-[m
+ examples/gosx-docs/app/demos/page.server.go        |    8 [32m+[m
+ examples/gosx-docs/gsx_test.go                     |    8 [32m+[m[31m-[m
+ examples/gosx-docs/modules/modules.go              |    1 [32m+[m
+ ir/lower.go                                        |   42 [32m+[m[31m-[m
+ route/fileprogram.go                               |   79 [32m+[m[31m-[m
+ route/filesystem_test.go                           |  153 [32m+[m
+ scene/backendcaps_test.go                          |   11 [32m+[m
+ scene/capability/capability.go                     |    3 [32m+[m
+ scene/capability/capability_test.go                |    2 [32m+[m
+ scene/capability_features_test.go                  |   10 [32m+[m
+ scene/diff.go                                      |    7 [32m+[m[31m-[m
+ scene/diff_test.go                                 |    6 [32m+[m
+ scene/scene.go                                     |  238 [32m++[m
+ scene/scene_ir.go                                  |  248 [32m+[m[31m-[m
+ scene/scene_test.go                                |  292 [32m+[m[31m-[m
+ scene/schema/schema.json                           |  172 [32m+[m
+ scene/schema/validate.go                           |   86 [32m+[m
+ scene/schema/validate_test.go                      |   71 [32m+[m
+ scene/shader_lib.go                                |   15 [32m+[m
+ scene/shader_lib_test.go                           |  105 [32m+[m
+ server/runtime_assets.go                           |   14 [32m+[m[31m-[m
+ test/jsx_syntax_test.go                            |   24 [32m+[m
+ 59 files changed, 8302 insertions(+), 402 deletions(-)

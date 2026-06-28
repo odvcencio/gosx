@@ -248,6 +248,195 @@
     return [];
   }
 
+  const SCENE_MOUNT_WATER_SOURCE_ID_FIELDS = ["computeSource", "materialSource"];
+  const SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS = ["computeSourceFiles", "materialSourceFiles"];
+  const SCENE_MOUNT_WATER_SHADER_STRING_FIELDS = [
+    "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+    "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+    "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+  ];
+
+  function sceneWaterMountStringMap(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const out = {};
+    let count = 0;
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      if (typeof value[key] !== "string") continue;
+      out[key] = value[key];
+      count += 1;
+    }
+    return count ? out : null;
+  }
+
+  function sceneDebugWaterShaderSources(waterSystems) {
+    const source = Array.isArray(waterSystems) ? waterSystems : [];
+    const out = [];
+    for (let i = 0; i < source.length; i += 1) {
+      const entry = source[i] && typeof source[i] === "object" ? source[i] : {};
+      const record = { id: String(entry.id || ("scene-water-" + i)) };
+      for (let f = 0; f < SCENE_MOUNT_WATER_SOURCE_ID_FIELDS.length; f += 1) {
+        const name = SCENE_MOUNT_WATER_SOURCE_ID_FIELDS[f];
+        if (typeof entry[name] === "string" && entry[name].trim()) {
+          record[name] = entry[name];
+        }
+      }
+      for (let f = 0; f < SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS.length; f += 1) {
+        const name = SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS[f];
+        const files = sceneWaterMountStringMap(entry[name]);
+        if (files) record[name] = files;
+      }
+      for (let f = 0; f < SCENE_MOUNT_WATER_SHADER_STRING_FIELDS.length; f += 1) {
+        const name = SCENE_MOUNT_WATER_SHADER_STRING_FIELDS[f];
+        record[name] = typeof entry[name] === "string" ? entry[name].trim().length : 0;
+      }
+      out.push(record);
+    }
+    return out;
+  }
+
+  function sceneMountedWaterShaderSources() {
+    const out = {};
+    const script = typeof document !== "undefined" && document.getElementById ? document.getElementById("gosx-manifest") : null;
+    if (!script || !script.textContent) return out;
+    try {
+      const manifest = JSON.parse(script.textContent);
+      const engines = Array.isArray(manifest && manifest.engines) ? manifest.engines : [];
+      for (let ei = 0; ei < engines.length; ei += 1) {
+        const scene = engines[ei] && engines[ei].props && engines[ei].props.scene;
+        const systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : [];
+        for (let wi = 0; wi < systems.length; wi += 1) {
+          const water = systems[wi];
+          if (!water || typeof water !== "object") continue;
+          const id = typeof water.id === "string" && water.id ? water.id : ("scene-water-" + wi);
+          const record = out[id] || { id };
+          let changed = false;
+          for (let fi = 0; fi < SCENE_MOUNT_WATER_SOURCE_ID_FIELDS.length; fi += 1) {
+            const name = SCENE_MOUNT_WATER_SOURCE_ID_FIELDS[fi];
+            if (typeof water[name] === "string" && water[name].trim()) {
+              record[name] = water[name];
+              changed = true;
+            }
+          }
+          for (let fi = 0; fi < SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS.length; fi += 1) {
+            const name = SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS[fi];
+            const files = sceneWaterMountStringMap(water[name]);
+            if (files) {
+              record[name] = files;
+              changed = true;
+            }
+          }
+          for (let fi = 0; fi < SCENE_MOUNT_WATER_SHADER_STRING_FIELDS.length; fi += 1) {
+            const name = SCENE_MOUNT_WATER_SHADER_STRING_FIELDS[fi];
+            if (typeof water[name] === "string" && water[name].trim()) {
+              record[name] = water[name];
+              changed = true;
+            }
+          }
+          if (changed) out[id] = record;
+        }
+      }
+    } catch (_err) {}
+    return out;
+  }
+
+  function sceneHydrateBundleWaterShaderSources(bundle, sources) {
+    if (!bundle || !Array.isArray(bundle.waterSystems) || !sources || typeof sources !== "object") return bundle;
+    bundle.waterSystems = bundle.waterSystems.map(function(entry, index) {
+      if (!entry || typeof entry !== "object") return entry;
+      const id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + index);
+      const source = sources[id] || (Object.keys(sources).length === 1 ? sources[Object.keys(sources)[0]] : null);
+      if (!source || typeof source !== "object") return entry;
+      let hydrated = null;
+      for (let fi = 0; fi < SCENE_MOUNT_WATER_SOURCE_ID_FIELDS.length; fi += 1) {
+        const name = SCENE_MOUNT_WATER_SOURCE_ID_FIELDS[fi];
+        if (typeof entry[name] === "string" && entry[name].trim()) continue;
+        if (typeof source[name] !== "string" || !source[name].trim()) continue;
+        if (!hydrated) hydrated = Object.assign({}, entry);
+        hydrated[name] = source[name];
+      }
+      for (let fi = 0; fi < SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS.length; fi += 1) {
+        const name = SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS[fi];
+        if (sceneWaterMountStringMap(entry[name])) continue;
+        const files = sceneWaterMountStringMap(source[name]);
+        if (!files) continue;
+        if (!hydrated) hydrated = Object.assign({}, entry);
+        hydrated[name] = files;
+      }
+      for (let fi = 0; fi < SCENE_MOUNT_WATER_SHADER_STRING_FIELDS.length; fi += 1) {
+        const name = SCENE_MOUNT_WATER_SHADER_STRING_FIELDS[fi];
+        if (typeof entry[name] === "string" && entry[name].trim()) continue;
+        if (typeof source[name] !== "string" || !source[name].trim()) continue;
+        if (!hydrated) hydrated = Object.assign({}, entry);
+        hydrated[name] = source[name];
+      }
+      return hydrated || entry;
+    });
+    return bundle;
+  }
+
+  function scenePublishWaterShaderSourcesToMount(mount, canvas, sources) {
+    if (canvas) {
+      canvas.__gosxScene3DWaterShaderSources = sources;
+    }
+    if (mount) {
+      mount.__gosxScene3DWaterShaderSources = sources;
+    }
+    const canvasMount = canvas && canvas.parentNode;
+    if (canvasMount && canvasMount !== mount) {
+      canvasMount.__gosxScene3DWaterShaderSources = sources;
+    }
+  }
+
+  function sceneMaxWaterCausticSourceBytes(waterSystems) {
+    const systems = Array.isArray(waterSystems) ? waterSystems : [];
+    let maxBytes = 0;
+    for (let i = 0; i < systems.length; i += 1) {
+      const entry = systems[i];
+      maxBytes = Math.max(maxBytes, entry && typeof entry.causticsWGSL === "string" ? entry.causticsWGSL.trim().length : 0);
+    }
+    return maxBytes;
+  }
+
+  function publishSceneWaterStateSnapshot(mount, sceneState) {
+    if (!mount || typeof mount.setAttribute !== "function") return;
+    const systems = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
+    let objectSystems = 0;
+    let roundedSystems = 0;
+    let causticSystems = 0;
+    let reflectionSystems = 0;
+    let refractionSystems = 0;
+    let activeObject = "";
+    let poolShape = "";
+    let cornerRadius = 0;
+    systems.forEach(function(system, index) {
+      if (!system || typeof system !== "object") return;
+      const shape = String(system.poolShape || "");
+      const rounded = shape.toLowerCase().indexOf("rounded") >= 0 && sceneNumber(system.cornerRadius, 0) > 0.0001;
+      const objectKind = String(system.objectKind || system.activeObject || "").toLowerCase();
+      const hasObject = objectKind !== "" && objectKind !== "none" && objectKind !== "null";
+      if (hasObject) objectSystems += 1;
+      if (rounded) roundedSystems += 1;
+      if (system.caustics) causticSystems += 1;
+      if (system.reflection) reflectionSystems += 1;
+      if (system.refraction) refractionSystems += 1;
+      if (index === 0) {
+        activeObject = String(system.activeObject || system.objectKind || "");
+        poolShape = shape;
+        cornerRadius = sceneNumber(system.cornerRadius, 0);
+      }
+    });
+    mount.setAttribute("data-gosx-scene3d-water-state-systems", String(systems.length));
+    mount.setAttribute("data-gosx-scene3d-water-state-object-systems", String(objectSystems));
+    mount.setAttribute("data-gosx-scene3d-water-state-rounded-systems", String(roundedSystems));
+    mount.setAttribute("data-gosx-scene3d-water-state-caustic-systems", String(causticSystems));
+    mount.setAttribute("data-gosx-scene3d-water-state-reflection-systems", String(reflectionSystems));
+    mount.setAttribute("data-gosx-scene3d-water-state-refraction-systems", String(refractionSystems));
+    mount.setAttribute("data-gosx-scene3d-water-state-active-object", activeObject);
+    mount.setAttribute("data-gosx-scene3d-water-state-pool-shape", poolShape);
+    mount.setAttribute("data-gosx-scene3d-water-state-corner-radius", String(cornerRadius));
+  }
+
   function sceneDebugBundleCounts(bundle, state) {
     const meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
     const worldObjects = Array.isArray(bundle && bundle.objects) ? bundle.objects.length : 0;
@@ -255,6 +444,7 @@
     const instancedMeshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
     const instancedGLBMeshes = Array.isArray(bundle && bundle.instancedGLBMeshes) ? bundle.instancedGLBMeshes.length : 0;
     const computeParticles = Array.isArray(bundle && bundle.computeParticles) ? bundle.computeParticles.length : 0;
+    const waterSystems = Array.isArray(bundle && bundle.waterSystems) ? bundle.waterSystems.length : 0;
     const surfaces = Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0;
     const lines = Array.isArray(bundle && bundle.lines) ? bundle.lines.length : 0;
     const labels = Array.isArray(bundle && bundle.labels) ? bundle.labels.length : sceneDebugCollectionArray(state && state.labels).length;
@@ -270,6 +460,7 @@
       instancedMeshes,
       instancedGLBMeshes,
       computeParticles,
+      waterSystems,
       surfaces,
       lines,
       labels,
@@ -278,7 +469,7 @@
       lights,
       postEffects,
       materials,
-      drawCalls: meshObjects + worldObjects + points + instancedMeshes + instancedGLBMeshes + computeParticles + surfaces + lines + postEffects,
+      drawCalls: meshObjects + worldObjects + points + instancedMeshes + instancedGLBMeshes + computeParticles + waterSystems + surfaces + lines + postEffects,
       worldVertexCount: Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldVertexCount, 0))),
       worldMeshVertexCount: Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0))),
     };
@@ -319,6 +510,8 @@
       roughness: sceneDebugRoundedNumber(material.roughness),
       metalness: sceneDebugRoundedNumber(material.metalness),
       wireframe: Boolean(material.wireframe),
+      shaderSource: typeof material.shaderSource === "string" ? material.shaderSource : "",
+      shaderSourceFiles: sceneIsPlainObject(material.shaderSourceFiles) ? sceneDebugClone(material.shaderSourceFiles, 2) : null,
       key: typeof material.key === "string" ? material.key : "",
     };
   }
@@ -504,6 +697,7 @@
     sceneDebugAddFeature(features, "geometry.lines", Array.isArray(bundle && bundle.lines) ? bundle.lines.length : 0);
     sceneDebugAddFeature(features, "geometry.surface", Array.isArray(bundle && bundle.surfaces) ? bundle.surfaces.length : 0);
     sceneDebugAddFeature(features, "particles.compute", Array.isArray(bundle && bundle.computeParticles) ? bundle.computeParticles.length : 0);
+    sceneDebugAddFeature(features, "water.simulation", Array.isArray(bundle && bundle.waterSystems) ? bundle.waterSystems.length : 0);
     const html = Array.isArray(bundle && bundle.html) ? bundle.html : sceneDebugCollectionArray(state && state.html);
     for (let i = 0; i < html.length; i += 1) {
       const mode = String(html[i] && html[i].mode || "dom").trim().toLowerCase() || "dom";
@@ -855,6 +1049,20 @@
     return props.backendCaps || null; // fallback if caller passes the scene object directly
   }
 
+  function sceneBackendCapsAllowsKind(backendCaps, kind) {
+    if (!backendCaps || !Array.isArray(backendCaps.capable)) return true;
+    var wanted = String(kind || "").toLowerCase();
+    if (wanted === "canvas") wanted = "canvas2d";
+    if (wanted === "webgl2") wanted = "webgl";
+    for (var i = 0; i < backendCaps.capable.length; i += 1) {
+      var candidate = String(backendCaps.capable[i] || "").toLowerCase();
+      if (candidate === "canvas") candidate = "canvas2d";
+      if (candidate === "webgl2") candidate = "webgl";
+      if (candidate === wanted) return true;
+    }
+    return false;
+  }
+
   function chooseSceneBackend(backendCaps, prefs, availability) {
     const avail = availability && typeof availability === "object" ? availability : {};
     const webgpuAvail = Boolean(avail.webgpu);
@@ -885,7 +1093,6 @@
       }
       if (b === "canvas2d" || b === "canvas") { return { backend: "canvas2d", fallbackReason: "", degraded: [] }; }
     }
-    if (webglAvail) { return { backend: "webgl", fallbackReason: exclusionReason || "backendcaps-override", degraded: [] }; }
     return { backend: null, fallbackReason: exclusionReason || "no-capable-backend", degraded: [] };
   }
 
@@ -989,15 +1196,17 @@
     }, { webgpu: webgpuAvail, webgl: true });
     const preferWebGPU = verdict ? verdict.backend === "webgpu" : (webgpuPreference === "prefer" && !webgpuFeatureGap);
     const verdictFallback = verdict ? verdict.fallbackReason : "";
+    const allowWebGL = (webglPreference === "prefer" || webglPreference === "force")
+      && sceneBackendCapsAllowsKind(backendCaps, "webgl");
     const request = {
       props,
       capability,
-      webgpu: preferWebGPU,
-      webgl: webglPreference === "prefer" || webglPreference === "force",
-      webgl2: webglPreference === "prefer" || webglPreference === "force",
-      canvas2d: !requireWebGL,
-      preferWebGPU,
-      forceWebGL: webglPreference === "force",
+      webgpu: preferWebGPU && sceneBackendCapsAllowsKind(backendCaps, "webgpu"),
+      webgl: allowWebGL,
+      webgl2: allowWebGL,
+      canvas2d: !requireWebGL && sceneBackendCapsAllowsKind(backendCaps, "canvas2d"),
+      preferWebGPU: preferWebGPU && sceneBackendCapsAllowsKind(backendCaps, "webgpu"),
+      forceWebGL: webglPreference === "force" && sceneBackendCapsAllowsKind(backendCaps, "webgl"),
     };
     const candidates = sceneBackendRegistry.candidates(request);
     for (const entry of candidates) {
@@ -1119,7 +1328,9 @@
   }
 
   function sceneModelEffectivelyHidden(model) {
-    return sceneModelMaxScale(model) <= 0.0015 || sceneNumber(model && model.opacity, 1) <= 0.0001;
+    return Boolean(model && model.visible === false)
+      || sceneModelMaxScale(model) <= 0.0015
+      || sceneNumber(model && model.opacity, 1) <= 0.0001;
   }
 
   function sceneApplyModelObjectHiddenState(object, model) {
@@ -1127,9 +1338,6 @@
       return;
     }
     object._modelHidden = sceneModelEffectivelyHidden(model);
-    if (object._modelHidden) {
-      object.opacity = 0;
-    }
   }
 
   function sceneModelRotateDirection(point, model) {
@@ -1154,6 +1362,76 @@
       basisZ.x, basisZ.y, basisZ.z, 0,
       sceneNumber(model && model.x, 0), sceneNumber(model && model.y, 0), sceneNumber(model && model.z, 0), 1,
     ]);
+  }
+
+  function sceneModelFitMode(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "bounds":
+      case "bound":
+      case "contain":
+      case "fit":
+      case "max-dimension":
+        return "contain";
+      default:
+        return "";
+    }
+  }
+
+  function sceneModelFitAlign(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "none":
+        return "none";
+      case "bottom":
+      case "center-bottom":
+        return "center-bottom";
+      case "center-min-y":
+      case "center-min":
+      case "water-center-min-y":
+        return "center-min-y";
+      case "center":
+      default:
+        return "center";
+    }
+  }
+
+  function sceneModelWithAssetFit(model, asset) {
+    const mode = sceneModelFitMode(model && model.fit);
+    const target = Math.max(0, sceneNumber(model && model.bounds, 0));
+    const bounds = sceneModelNormalizeAssetBounds(asset && asset.bounds);
+    if (!mode || target <= 0 || !bounds || !(bounds.maxDimension > 0)) {
+      return model;
+    }
+    const fitScale = target / bounds.maxDimension;
+    if (!Number.isFinite(fitScale) || fitScale <= 0) {
+      return model;
+    }
+    const align = sceneModelFitAlign(model && model.fitAlign);
+    const offset = { x: 0, y: 0, z: 0 };
+    if (align !== "none") {
+      offset.x = -bounds.centerX * fitScale;
+      offset.z = -bounds.centerZ * fitScale;
+      if (align === "center-bottom") {
+        offset.y = -bounds.minY * fitScale;
+      } else {
+        offset.y = -bounds.centerY * fitScale;
+        if (align === "center-min-y") {
+          offset.y -= bounds.minY * fitScale;
+        }
+      }
+    }
+    const translated = sceneModelTransformVector(offset, model);
+    const fitted = Object.assign({}, model, {
+      x: sceneNumber(model && model.x, 0) + translated.x,
+      y: sceneNumber(model && model.y, 0) + translated.y,
+      z: sceneNumber(model && model.z, 0) + translated.z,
+      scaleX: sceneNumber(model && model.scaleX, 1) * fitScale,
+      scaleY: sceneNumber(model && model.scaleY, 1) * fitScale,
+      scaleZ: sceneNumber(model && model.scaleZ, 1) * fitScale,
+    });
+    fitted._fitScale = fitScale;
+    fitted._fitBounds = bounds;
+    fitted._fitAlign = align;
+    return fitted;
   }
 
   function sceneModelIdentityBindMatrices(jointCount) {
@@ -1228,7 +1506,7 @@
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy"];
+    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -1257,6 +1535,7 @@
     const material = next.material && typeof next.material === "object"
       ? Object.assign({}, next.material)
       : null;
+    const namedMaterialOverride = typeof override.material === "string" && override.material.trim();
     if (typeof override.materialKind === "string" && override.materialKind) {
       next.materialKind = override.materialKind;
       if (typeof next.material === "string") {
@@ -1265,6 +1544,9 @@
       if (material) {
         material.kind = override.materialKind;
       }
+    }
+    if (namedMaterialOverride) {
+      next.material = override.material.trim();
     }
     sceneAssignMaterialOverride(next, material, "color", "color", override);
     sceneAssignMaterialOverride(next, material, "texture", "texture", override);
@@ -1280,7 +1562,16 @@
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
     sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
     sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
-    if (material) {
+    sceneAssignMaterialOverride(next, material, "customVertex", "customVertex", override);
+    sceneAssignMaterialOverride(next, material, "customFragment", "customFragment", override);
+    sceneAssignMaterialOverride(next, material, "customVertexWGSL", "customVertexWGSL", override);
+    sceneAssignMaterialOverride(next, material, "customFragmentWGSL", "customFragmentWGSL", override);
+    sceneAssignMaterialOverride(next, material, "customUniforms", "customUniforms", override);
+    sceneAssignMaterialOverride(next, material, "shaderBackend", "shaderBackend", override);
+    sceneAssignMaterialOverride(next, material, "shaderLayout", "shaderLayout", override);
+    sceneAssignMaterialOverride(next, material, "shaderSource", "shaderSource", override);
+    sceneAssignMaterialOverride(next, material, "shaderSourceFiles", "shaderSourceFiles", override);
+    if (material && !namedMaterialOverride) {
       next.material = material;
     }
     return next;
@@ -1294,6 +1585,25 @@
     instanced.lodLevel = model.lodLevel;
     instanced.lodMinDistance = model.lodMinDistance;
     instanced.lodMaxDistance = model.lodMaxDistance;
+  }
+
+  function sceneApplyModelRenderFlags(instanced, model) {
+    if (!instanced || !model) {
+      return;
+    }
+    if (typeof model.castShadow === "boolean") {
+      instanced.castShadow = model.castShadow;
+    }
+    if (typeof model.receiveShadow === "boolean") {
+      instanced.receiveShadow = model.receiveShadow;
+    }
+  }
+
+  function sceneApplyModelMaterialName(instanced, model) {
+    if (!instanced || !model || typeof model.material !== "string" || !model.material.trim()) {
+      return;
+    }
+    instanced.material = model.material.trim();
   }
 
   function sceneModelPrimitiveObject(object, model, prefix) {
@@ -1339,6 +1649,9 @@
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelObjectHiddenState(instanced, model);
+    sceneApplyModelMaterialName(instanced, model);
+    sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
@@ -1366,6 +1679,9 @@
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelObjectHiddenState(instanced, model);
+    sceneApplyModelMaterialName(instanced, model);
+    sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
     return normalizeSceneObject(instanced, prefix);
   }
@@ -1558,15 +1874,18 @@
     if (model && Array.isArray(model._live) && model._live.length > 0) {
       instanced.static = false;
     }
-    sceneApplyModelObjectHiddenState(instanced, model);
     if (hasSkin && model && model.animation) {
       instanced.static = false;
     }
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
+    sceneApplyModelObjectHiddenState(instanced, model);
+    sceneApplyModelMaterialName(instanced, model);
+    sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
     const normalized = normalizeSceneObject(instanced, prefix);
+    sceneApplyModelMaterialName(normalized, model);
     if (!hasSkin && normalized && normalized.vertices) {
       normalized._modelLocalVertices = {
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
@@ -1711,6 +2030,149 @@
     });
   }
 
+  function sceneModelBoundsNumber(value) {
+    const number = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function sceneModelExpandBounds(bounds, x, y, z) {
+    const px = sceneModelBoundsNumber(x);
+    const py = sceneModelBoundsNumber(y);
+    const pz = sceneModelBoundsNumber(z);
+    if (px == null || py == null || pz == null) {
+      return bounds;
+    }
+    const next = bounds || {
+      minX: Infinity,
+      minY: Infinity,
+      minZ: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity,
+      maxZ: -Infinity,
+    };
+    if (px < next.minX) next.minX = px;
+    if (py < next.minY) next.minY = py;
+    if (pz < next.minZ) next.minZ = pz;
+    if (px > next.maxX) next.maxX = px;
+    if (py > next.maxY) next.maxY = py;
+    if (pz > next.maxZ) next.maxZ = pz;
+    return next;
+  }
+
+  function sceneModelFinalizeBounds(bounds) {
+    if (!bounds) {
+      return null;
+    }
+    const minX = sceneModelBoundsNumber(bounds.minX);
+    const minY = sceneModelBoundsNumber(bounds.minY);
+    const minZ = sceneModelBoundsNumber(bounds.minZ);
+    const maxX = sceneModelBoundsNumber(bounds.maxX);
+    const maxY = sceneModelBoundsNumber(bounds.maxY);
+    const maxZ = sceneModelBoundsNumber(bounds.maxZ);
+    if (minX == null || minY == null || minZ == null || maxX == null || maxY == null || maxZ == null) {
+      return null;
+    }
+    if (maxX < minX || maxY < minY || maxZ < minZ) {
+      return null;
+    }
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const depth = maxZ - minZ;
+    return {
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+      width,
+      height,
+      depth,
+      centerX: (minX + maxX) * 0.5,
+      centerY: (minY + maxY) * 0.5,
+      centerZ: (minZ + maxZ) * 0.5,
+      maxDimension: Math.max(width, height, depth),
+    };
+  }
+
+  function sceneModelNormalizeAssetBounds(value) {
+    return value && typeof value === "object" ? sceneModelFinalizeBounds(value) : null;
+  }
+
+  function sceneModelExpandPositionArray(bounds, positions, offset) {
+    if (!positions || typeof positions.length !== "number") {
+      return bounds;
+    }
+    const source = positions instanceof Float32Array ? positions : sceneTypedFloatArray(positions);
+    const ox = sceneNumber(offset && offset.x, 0);
+    const oy = sceneNumber(offset && offset.y, 0);
+    const oz = sceneNumber(offset && offset.z, 0);
+    for (let index = 0; index + 2 < source.length; index += 3) {
+      bounds = sceneModelExpandBounds(bounds, source[index] + ox, source[index + 1] + oy, source[index + 2] + oz);
+    }
+    return bounds;
+  }
+
+  function sceneModelExpandPointList(bounds, points, offset) {
+    if (!Array.isArray(points)) {
+      return bounds;
+    }
+    const ox = sceneNumber(offset && offset.x, 0);
+    const oy = sceneNumber(offset && offset.y, 0);
+    const oz = sceneNumber(offset && offset.z, 0);
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index] || {};
+      bounds = sceneModelExpandBounds(bounds, sceneNumber(point.x, 0) + ox, sceneNumber(point.y, 0) + oy, sceneNumber(point.z, 0) + oz);
+    }
+    return bounds;
+  }
+
+  function sceneModelExpandPrimitiveBounds(bounds, object) {
+    const kind = String(object && object.kind || "").trim().toLowerCase();
+    const x = sceneNumber(object && object.x, 0);
+    const y = sceneNumber(object && object.y, 0);
+    const z = sceneNumber(object && object.z, 0);
+    if (kind === "sphere") {
+      const radius = Math.max(0, sceneNumber(object.radius, sceneNumber(object.size, 1.2) * 0.5));
+      bounds = sceneModelExpandBounds(bounds, x - radius, y - radius, z - radius);
+      return sceneModelExpandBounds(bounds, x + radius, y + radius, z + radius);
+    }
+    if (kind === "box" || kind === "cube") {
+      const size = sceneNumber(object.size, 1.2);
+      const halfX = Math.max(0, sceneNumber(object.width, size)) * 0.5;
+      const halfY = Math.max(0, sceneNumber(object.height, size)) * 0.5;
+      const halfZ = Math.max(0, sceneNumber(object.depth, size)) * 0.5;
+      bounds = sceneModelExpandBounds(bounds, x - halfX, y - halfY, z - halfZ);
+      return sceneModelExpandBounds(bounds, x + halfX, y + halfY, z + halfZ);
+    }
+    return bounds;
+  }
+
+  function sceneModelAssetBounds(record, objects, points) {
+    const authored = sceneModelNormalizeAssetBounds(record && record.bounds);
+    if (authored && authored.maxDimension > 0) {
+      return authored;
+    }
+    let bounds = null;
+    const objectEntries = Array.isArray(objects) ? objects : [];
+    for (let index = 0; index < objectEntries.length; index += 1) {
+      const object = objectEntries[index] || {};
+      if (object.vertices && object.vertices.positions) {
+        bounds = sceneModelExpandPositionArray(bounds, object.vertices.positions, object);
+      } else if (Array.isArray(object.points)) {
+        bounds = sceneModelExpandPointList(bounds, object.points, object);
+      } else {
+        bounds = sceneModelExpandPrimitiveBounds(bounds, object);
+      }
+    }
+    const pointEntries = Array.isArray(points) ? points : [];
+    for (let index = 0; index < pointEntries.length; index += 1) {
+      const pointEntry = pointEntries[index] || {};
+      bounds = sceneModelExpandPositionArray(bounds, pointEntry._cachedPos || pointEntry.positions, pointEntry);
+    }
+    return sceneModelFinalizeBounds(bounds);
+  }
+
   function parseSceneModelAsset(raw, src) {
     let payload = raw;
     if (payload && typeof payload === "object" && payload.scene && typeof payload.scene === "object") {
@@ -1720,6 +2182,10 @@
       payload = { objects: payload };
     }
     const record = payload && typeof payload === "object" ? payload : {};
+    const objects = Array.isArray(record.objects) ? record.objects.map(function(object) {
+      return resolveSceneModelObjectURLs(src, object);
+    }) : [];
+    const points = Array.isArray(record.points) ? record.points : [];
     const sprites = Array.isArray(record.sprites) ? record.sprites.map(function(sprite) {
       if (!sprite || typeof sprite !== "object") {
         return sprite;
@@ -1730,10 +2196,9 @@
     }) : [];
     return {
       src,
-      objects: Array.isArray(record.objects) ? record.objects.map(function(object) {
-        return resolveSceneModelObjectURLs(src, object);
-      }) : [],
-      points: Array.isArray(record.points) ? record.points : [],
+      bounds: sceneModelAssetBounds(record, objects, points),
+      objects,
+      points,
       labels: Array.isArray(record.labels) ? record.labels : [],
       sprites,
       html: Array.isArray(record.html) ? record.html : (Array.isArray(record.htmlOverlays) ? record.htmlOverlays : []),
@@ -2145,14 +2610,11 @@
     }
   }
 
-  function sceneRegisterStaticModelLiveRecord(state, model, objectIDs) {
-    if (!state || !model || !Array.isArray(model._live) || model._live.length === 0 || !Array.isArray(objectIDs) || objectIDs.length === 0) {
+  function sceneRegisterStaticModelLiveRecord(state, instanceModel, objectIDs) {
+    if (!state || !instanceModel || !Array.isArray(instanceModel._live) || instanceModel._live.length === 0 || !Array.isArray(objectIDs) || objectIDs.length === 0) {
       return;
     }
-    const modelCopy = Object.assign({}, model || {});
-    if (sceneModelEffectivelyHidden(modelCopy)) {
-      modelCopy.opacity = 0;
-    }
+    const modelCopy = Object.assign({}, instanceModel || {});
     const record = {
       id: typeof modelCopy.id === "string" ? modelCopy.id : "",
       model: modelCopy,
@@ -2170,7 +2632,7 @@
     state._modelSkins.push(record);
   }
 
-  async function scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs) {
+  async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs) {
     if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
     }
@@ -2187,15 +2649,15 @@
     }
 
     const record = {
-      id: typeof model.id === "string" ? model.id : "",
-      model: Object.assign({}, model || {}),
-      live: Array.isArray(model && model._live) ? model._live.slice() : [],
+      id: typeof instanceModel.id === "string" ? instanceModel.id : "",
+      model: Object.assign({}, instanceModel || {}),
+      live: Array.isArray(instanceModel && instanceModel._live) ? instanceModel._live.slice() : [],
       objectIDs: Array.isArray(objectIDs) ? objectIDs.slice() : [],
       nodes: asset.nodes,
       rootNodes: sceneModelRootNodes(asset.nodes),
       skins: skinInstances,
       animatedTransforms: new Map(),
-      rootTransform: sceneModelTransformMatrix(model),
+      rootTransform: sceneModelTransformMatrix(instanceModel),
       animationApi,
       mixer: null,
       animation: "",
@@ -2224,12 +2686,12 @@
           window.__gosx_motion_mixer_add_clip(handle, clip.name, animationApi.wasmClipJSON(clip));
         }
         sceneRegisterModelAnimationRecord(state, record);
-        const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
+        const requestedAnimation = typeof instanceModel.animation === "string" ? instanceModel.animation.trim() : "";
         if (requestedAnimation) {
-          sceneModelRecordPlay(record, requestedAnimation, sceneModelAnimationPlayOptions(model, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+          sceneModelRecordPlay(record, requestedAnimation, sceneModelAnimationPlayOptions(instanceModel, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
           if (sceneModelRecordIsPlaying({ animation: requestedAnimation, wasmMixerActive: true, wasmMixer: handle })) {
             record.animation = requestedAnimation;
-            record.animationSeq = typeof model.animationSeq === "string" ? model.animationSeq : "";
+            record.animationSeq = typeof instanceModel.animationSeq === "string" ? instanceModel.animationSeq : "";
           }
         }
       }
@@ -2242,12 +2704,12 @@
         }
         record.mixer = mixer;
         sceneRegisterModelAnimationRecord(state, record);
-        const requestedAnimation = typeof model.animation === "string" ? model.animation.trim() : "";
+        const requestedAnimation = typeof instanceModel.animation === "string" ? instanceModel.animation.trim() : "";
         if (requestedAnimation) {
-          mixer.play(requestedAnimation, sceneModelAnimationPlayOptions(model, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
+          mixer.play(requestedAnimation, sceneModelAnimationPlayOptions(instanceModel, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
           if (mixer.isPlaying(requestedAnimation)) {
             record.animation = requestedAnimation;
-            record.animationSeq = typeof model.animationSeq === "string" ? model.animationSeq : "";
+            record.animationSeq = typeof instanceModel.animationSeq === "string" ? instanceModel.animationSeq : "";
           }
         }
       }
@@ -2654,6 +3116,13 @@
     const keys = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ"];
     const hasComputedPose = sceneOwns(patch, "computedPose");
     let changed = sceneApplyModelLiveOpacity(state, record, patch);
+    if (sceneOwns(patch, "visible")) {
+      const nextVisible = sceneBool(patch.visible, true);
+      if (record.model.visible !== nextVisible) {
+        record.model.visible = nextVisible;
+        changed = true;
+      }
+    }
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
       if (!Object.prototype.hasOwnProperty.call(patch, key)) {
@@ -2840,11 +3309,12 @@
     let lightCount = 0;
     await Promise.all(models.map(async function(model, modelIndex) {
       const asset = await loadSceneModelAsset(model.src);
+      const instanceModel = sceneModelWithAssetFit(model, asset);
       const prefix = model.id || ("scene-model-" + modelIndex);
       const skinInstances = sceneCloneModelSkins(asset.skins);
       const objectIDs = [];
       for (let i = 0; i < asset.objects.length; i += 1) {
-        const object = sceneInstantiateModelObject(asset.objects[i], model, prefix, i, skinInstances);
+        const object = sceneInstantiateModelObject(asset.objects[i], instanceModel, prefix, i, skinInstances);
         if (!object) {
           continue;
         }
@@ -2854,7 +3324,7 @@
         objectCount += 1;
       }
       for (let i = 0; i < asset.points.length; i += 1) {
-        const point = sceneInstantiateModelPointsEntry(asset.points[i], model, prefix, i);
+        const point = sceneInstantiateModelPointsEntry(asset.points[i], instanceModel, prefix, i);
         if (!point || point.count <= 0) {
           continue;
         }
@@ -2863,7 +3333,7 @@
         pointCount += 1;
       }
       for (let i = 0; i < asset.labels.length; i += 1) {
-        const label = sceneInstantiateModelLabel(asset.labels[i], model, prefix, i);
+        const label = sceneInstantiateModelLabel(asset.labels[i], instanceModel, prefix, i);
         if (!label || !label.text.trim()) {
           continue;
         }
@@ -2872,7 +3342,7 @@
         labelCount += 1;
       }
       for (let i = 0; i < asset.sprites.length; i += 1) {
-        const sprite = sceneInstantiateModelSprite(asset.sprites[i], model, prefix, i);
+        const sprite = sceneInstantiateModelSprite(asset.sprites[i], instanceModel, prefix, i);
         if (!sprite) {
           continue;
         }
@@ -2881,7 +3351,7 @@
         spriteCount += 1;
       }
       for (let i = 0; i < asset.html.length; i += 1) {
-        const entry = sceneInstantiateModelHTML(asset.html[i], model, prefix, i);
+        const entry = sceneInstantiateModelHTML(asset.html[i], instanceModel, prefix, i);
         if (!entry) {
           continue;
         }
@@ -2890,7 +3360,7 @@
         htmlCount += 1;
       }
       for (let i = 0; i < asset.lights.length; i += 1) {
-        const light = sceneInstantiateModelLight(asset.lights[i], model, prefix, i);
+        const light = sceneInstantiateModelLight(asset.lights[i], instanceModel, prefix, i);
         if (!light) {
           continue;
         }
@@ -2899,9 +3369,9 @@
         lightCount += 1;
       }
       if (sceneModelHasSkins(skinInstances)) {
-        await scenePrepareModelSkinPlayback(state, asset, model, skinInstances, objectIDs);
+        await scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs);
       } else {
-        sceneRegisterStaticModelLiveRecord(state, model, objectIDs);
+        sceneRegisterStaticModelLiveRecord(state, instanceModel, objectIDs);
       }
     }));
     state._hydratedModelRecords = hydrated;
@@ -4943,6 +5413,45 @@
     return Math.max(0.01, sceneNumber(props && props.controlMoveSpeed, 4));
   }
 
+  const SCENE_ORBIT_MAX_SPEED = Math.PI * 6;
+  const SCENE_ORBIT_DAMPING = 6;
+  const SCENE_ORBIT_STOP_SPEED = (Math.PI / 180) * 0.01;
+  const SCENE_ORBIT_DEFAULT_PITCH_LIMIT = 1.4;
+  const SCENE_ORBIT_MAX_PITCH_LIMIT = Math.PI / 2 - (Math.PI / 180) * 0.001;
+  const SCENE_ORBIT_DEFAULT_MIN_DISTANCE = 0.6;
+  const SCENE_ORBIT_DEFAULT_MAX_DISTANCE = 256;
+
+  function sceneOrbitPitchLimit(value) {
+    return sceneClamp(
+      sceneNumber(value, SCENE_ORBIT_DEFAULT_PITCH_LIMIT),
+      0.1,
+      SCENE_ORBIT_MAX_PITCH_LIMIT,
+    );
+  }
+
+  function sceneControlsRotateMode(props) {
+    const mode = String(props && props.controlRotateMode || "").trim().toLowerCase();
+    if (mode === "pixel-degrees" || mode === "pixel-degree" || mode === "pixels-degrees") {
+      return "pixel-degrees";
+    }
+    return "viewport";
+  }
+
+  function sceneControlsPitchLimit(props) {
+    return sceneOrbitPitchLimit(props && props.controlPitchLimit);
+  }
+
+  function sceneControlsMinDistance(props) {
+    return Math.max(0.001, sceneNumber(props && props.controlMinDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
+  }
+
+  function sceneControlsMaxDistance(props, minDistance) {
+    return Math.max(
+      Math.max(0.001, sceneNumber(minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE)),
+      sceneNumber(props && props.controlMaxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE),
+    );
+  }
+
   function scenePointerLockRequested(props) {
     return sceneBool(props && props.pointerLock, false);
   }
@@ -5041,14 +5550,18 @@
     };
   }
 
-  function sceneOrbitStateFromCamera(camera, target) {
+  function sceneOrbitStateFromCamera(camera, target, controls) {
     const normalized = sceneRenderCamera(camera);
     const worldPosition = sceneWorldCameraPosition(normalized);
     const orbitTarget = target || { x: 0, y: 0, z: 0 };
     const offsetX = worldPosition.x - sceneNumber(orbitTarget.x, 0);
     const offsetY = worldPosition.y - sceneNumber(orbitTarget.y, 0);
     const offsetZ = worldPosition.z - sceneNumber(orbitTarget.z, 0);
-    const radius = Math.max(0.6, Math.hypot(offsetX, offsetY, offsetZ));
+    const minDistance = Math.max(0.001, sceneNumber(controls && controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
+    const maxDistance = Math.max(minDistance, sceneNumber(controls && controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
+    const radius = sceneClamp(Math.hypot(offsetX, offsetY, offsetZ), minDistance, maxDistance);
+    const pitchLimit = sceneOrbitPitchLimit(controls && controls.pitchLimit);
+    const pitchRatioLimit = Math.sin(pitchLimit);
     return {
       target: {
         x: sceneNumber(orbitTarget.x, 0),
@@ -5056,8 +5569,11 @@
         z: sceneNumber(orbitTarget.z, 0),
       },
       radius,
+      minDistance,
+      maxDistance,
+      pitchLimit,
       yaw: Math.atan2(offsetX, -offsetZ),
-      pitch: Math.asin(sceneClamp(offsetY / radius, -0.98, 0.98)),
+      pitch: Math.asin(sceneClamp(offsetY / Math.max(radius, 0.001), -pitchRatioLimit, pitchRatioLimit)),
       kind: normalized.kind,
       fov: normalized.fov,
       left: normalized.left,
@@ -5073,8 +5589,11 @@
   function sceneOrbitCamera(state, fallbackCamera) {
     const base = sceneRenderCamera(fallbackCamera);
     const orbit = state || sceneOrbitStateFromCamera(base, { x: 0, y: 0, z: 0 });
-    const radius = Math.max(0.6, sceneNumber(orbit.radius, 6));
-    const pitch = sceneClamp(sceneNumber(orbit.pitch, 0), -1.4, 1.4);
+    const minDistance = Math.max(0.001, sceneNumber(orbit.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
+    const maxDistance = Math.max(minDistance, sceneNumber(orbit.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
+    const radius = sceneClamp(sceneNumber(orbit.radius, 6), minDistance, maxDistance);
+    const pitchLimit = sceneOrbitPitchLimit(orbit.pitchLimit);
+    const pitch = sceneClamp(sceneNumber(orbit.pitch, 0), -pitchLimit, pitchLimit);
     const yaw = sceneNumber(orbit.yaw, 0);
     const target = orbit.target || { x: 0, y: 0, z: 0 };
     const cosPitch = Math.cos(pitch);
@@ -5113,6 +5632,8 @@
     if (!mode) {
       return null;
     }
+    const minDistance = sceneControlsMinDistance(props);
+    const maxDistance = sceneControlsMaxDistance(props, minDistance);
     return {
       mode,
       active: false,
@@ -5120,17 +5641,63 @@
       pointerId: null,
       lastX: 0,
       lastY: 0,
+      rotateMode: sceneControlsRotateMode(props),
       rotateSpeed: sceneControlsRotateSpeed(props),
       zoomSpeed: sceneControlsZoomSpeed(props),
       lookSpeed: sceneControlsLookSpeed(props),
       moveSpeed: sceneControlsMoveSpeed(props),
+      minDistance,
+      maxDistance,
+      pitchLimit: sceneControlsPitchLimit(props),
       pointerLock: mode !== "orbit" && scenePointerLockRequested(props),
       pointerLocked: false,
       orbit: null,
+      orbitVelocityYaw: 0,
+      orbitVelocityPitch: 0,
+      orbitLastMoveMS: 0,
       fly: null,
       keys: new Set(),
       target: sceneControlsTarget(props),
     };
+  }
+
+  function sceneOrbitStopInertia(controls) {
+    if (!controls) return;
+    controls.orbitVelocityYaw = 0;
+    controls.orbitVelocityPitch = 0;
+  }
+
+  function sceneOrbitInertiaActive(controls) {
+    if (!controls || controls.active) return false;
+    return Math.abs(sceneNumber(controls.orbitVelocityYaw, 0)) > SCENE_ORBIT_STOP_SPEED ||
+      Math.abs(sceneNumber(controls.orbitVelocityPitch, 0)) > SCENE_ORBIT_STOP_SPEED;
+  }
+
+  function sceneOrbitApplyInertia(controls, readSourceCamera, deltaSeconds) {
+    if (!sceneOrbitInertiaActive(controls)) return false;
+    if (!controls.orbit) {
+      syncSceneControlsFromSource(controls, readSourceCamera);
+    }
+    if (!controls.orbit) return false;
+    const seconds = Math.max(0.001, Math.min(0.05, sceneNumber(deltaSeconds, 0)));
+    controls.orbit.yaw += sceneNumber(controls.orbitVelocityYaw, 0) * seconds;
+    const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
+    const nextPitch = sceneClamp(
+      controls.orbit.pitch + sceneNumber(controls.orbitVelocityPitch, 0) * seconds,
+      -pitchLimit,
+      pitchLimit,
+    );
+    if (nextPitch === -pitchLimit || nextPitch === pitchLimit) {
+      controls.orbitVelocityPitch = 0;
+    }
+    controls.orbit.pitch = nextPitch;
+    const damping = Math.exp(-SCENE_ORBIT_DAMPING * seconds);
+    controls.orbitVelocityYaw *= damping;
+    controls.orbitVelocityPitch *= damping;
+    if (Math.abs(controls.orbitVelocityYaw) <= SCENE_ORBIT_STOP_SPEED) controls.orbitVelocityYaw = 0;
+    if (Math.abs(controls.orbitVelocityPitch) <= SCENE_ORBIT_STOP_SPEED) controls.orbitVelocityPitch = 0;
+    controls.touched = true;
+    return true;
   }
 
   function syncSceneControlsFromCamera(controls, camera) {
@@ -5138,7 +5705,7 @@
       return;
     }
     if (controls.mode === "orbit") {
-      controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
+      controls.orbit = sceneOrbitStateFromCamera(camera, controls.target, controls);
     } else if (controls.mode === "first-person" || controls.mode === "fly") {
       controls.fly = sceneFlyStateFromCamera(camera);
     }
@@ -5151,11 +5718,12 @@
     controls.active = false;
     controls.touched = true;
     controls.pointerId = null;
+    sceneOrbitStopInertia(controls);
     if (controls.keys && typeof controls.keys.clear === "function") {
       controls.keys.clear();
     }
     if (controls.mode === "orbit") {
-      controls.orbit = sceneOrbitStateFromCamera(camera, controls.target);
+      controls.orbit = sceneOrbitStateFromCamera(camera, controls.target, controls);
     } else if (controls.mode === "first-person" || controls.mode === "fly") {
       controls.fly = sceneFlyStateFromCamera(camera);
     }
@@ -5279,6 +5847,8 @@
     controls.active = true;
     controls.touched = true;
     controls.pointerId = event.pointerId;
+    sceneOrbitStopInertia(controls);
+    controls.orbitLastMoveMS = sceneNumber(event && event.timeStamp, sceneNowMilliseconds());
     const metrics = sceneControlsMetrics(readViewport, props);
     const point = sceneLocalPointerPoint(event, canvas, metrics.width, metrics.height);
     controls.lastX = point.x;
@@ -5305,12 +5875,26 @@
     if (!controls.orbit) {
       syncSceneControlsFromSource(controls, readSourceCamera);
     }
-    controls.orbit.yaw += (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * controls.rotateSpeed;
+    const now = sceneNumber(event && event.timeStamp, sceneNowMilliseconds());
+    const seconds = Math.max((now - sceneNumber(controls.orbitLastMoveMS, now)) / 1000, 1 / 240);
+    const rotateSpeed = sceneNumber(controls.rotateSpeed, 1);
+    const pixelRadians = (Math.PI / 180) * rotateSpeed;
+    const deltaYaw = controls.rotateMode === "pixel-degrees"
+      ? sample.deltaX * pixelRadians
+      : (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * rotateSpeed;
+    const deltaPitch = controls.rotateMode === "pixel-degrees"
+      ? sample.deltaY * pixelRadians
+      : (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * rotateSpeed;
+    const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
+    controls.orbit.yaw += deltaYaw;
     controls.orbit.pitch = sceneClamp(
-      controls.orbit.pitch + (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * controls.rotateSpeed,
-      -1.4,
-      1.4,
+      controls.orbit.pitch + deltaPitch,
+      -pitchLimit,
+      pitchLimit,
     );
+    controls.orbitVelocityYaw = sceneClamp(deltaYaw / seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED);
+    controls.orbitVelocityPitch = sceneClamp(deltaPitch / seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED);
+    controls.orbitLastMoveMS = now;
     if (typeof event.preventDefault === "function") {
       event.preventDefault();
     }
@@ -5320,11 +5904,16 @@
     scheduleRender("controls");
   }
 
-  function sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event) {
+  function sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event, scheduleOrbitInertia) {
     if (!sceneDragMatchesActivePointer(controls, event)) {
       return;
     }
     const pointerId = controls.pointerId;
+    const releaseTime = sceneNumber(event && event.timeStamp, sceneNowMilliseconds());
+    const releaseDelay = Math.max(0, (releaseTime - sceneNumber(controls.orbitLastMoveMS, releaseTime)) / 1000);
+    const releaseDamping = Math.exp(-SCENE_ORBIT_DAMPING * releaseDelay);
+    controls.orbitVelocityYaw *= releaseDamping;
+    controls.orbitVelocityPitch *= releaseDamping;
     controls.active = false;
     controls.pointerId = null;
     canvas.style.cursor = "grab";
@@ -5340,15 +5929,19 @@
     if (event && typeof event.stopPropagation === "function") {
       event.stopPropagation();
     }
+    if (typeof scheduleOrbitInertia === "function") {
+      scheduleOrbitInertia();
+    }
   }
 
   function sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event) {
     syncSceneControlsFromSource(controls, readSourceCamera);
+    sceneOrbitStopInertia(controls);
     controls.touched = true;
     controls.orbit.radius = sceneClamp(
       controls.orbit.radius * Math.exp(sceneNumber(event && event.deltaY, 0) * 0.001 * controls.zoomSpeed),
-      0.6,
-      256,
+      Math.max(0.001, sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE)),
+      Math.max(sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE), sceneNumber(controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE)),
     );
     if (event && typeof event.preventDefault === "function") {
       event.preventDefault();
@@ -5552,6 +6145,8 @@
     }
 
     let documentListenersAttached = false;
+    let orbitFrame = 0;
+    let orbitLastFrameMS = 0;
     let flyFrame = 0;
     let flyLastFrameMS = 0;
     const flyMode = controls.mode === "first-person" || controls.mode === "fly";
@@ -5592,10 +6187,38 @@
       document.removeEventListener("pointercancel", finishPointerDrag);
     }
 
+    function cancelOrbitInertia() {
+      if (orbitFrame) {
+        cancelAnimationFrame(orbitFrame);
+        orbitFrame = 0;
+      }
+    }
+
+    function scheduleOrbitInertia() {
+      if (flyMode || orbitFrame || !sceneOrbitInertiaActive(controls)) {
+        return;
+      }
+      orbitLastFrameMS = sceneNowMilliseconds();
+      const step = function(now) {
+        orbitFrame = 0;
+        const current = sceneNumber(now, sceneNowMilliseconds());
+        const delta = Math.min(0.05, Math.max(0.001, (current - orbitLastFrameMS) / 1000));
+        orbitLastFrameMS = current;
+        if (sceneOrbitApplyInertia(controls, readSourceCamera, delta)) {
+          scheduleRender("controls-inertia");
+        }
+        if (sceneOrbitInertiaActive(controls)) {
+          orbitFrame = requestAnimationFrame(step);
+        }
+      };
+      orbitFrame = requestAnimationFrame(step);
+    }
+
     function onPointerDown(event) {
       if (flyMode) {
         sceneFlyStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
       } else {
+        cancelOrbitInertia();
         sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
       }
     }
@@ -5612,7 +6235,7 @@
       if (flyMode) {
         sceneFlyFinishDrag(controls, canvas, detachDocumentListeners, event);
       } else {
-        sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event);
+        sceneOrbitFinishDrag(controls, canvas, detachDocumentListeners, event, scheduleOrbitInertia);
       }
     }
 
@@ -5693,6 +6316,7 @@
       controller: controls,
       dispose() {
         detachDocumentListeners();
+        cancelOrbitInertia();
         if (flyFrame) {
           cancelAnimationFrame(flyFrame);
           flyFrame = 0;
@@ -5798,6 +6422,9 @@
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
     const sceneState = createSceneState(props, capability);
+    if (ctx.mount && typeof window !== "undefined" && window.__gosx_scene3d_water_shader_sources_by_id) {
+      ctx.mount.__gosxScene3DWaterShaderSources = window.__gosx_scene3d_water_shader_sources_by_id;
+    }
     const sceneModelHydration = hydrateSceneStateModels(sceneState, props);
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const lifecycle = initialSceneLifecycleState();
@@ -5927,6 +6554,7 @@
     // material-motion seam — without going through the depth-clamped debug
     // snapshot.
     ctx.mount.__gosxScene3DState = sceneState;
+    publishSceneWaterStateSnapshot(ctx.mount, sceneState);
     ctx.mount.__gosxScene3DCSSDynamic = false;
     ctx.mount.__gosxScene3DCSSRevision = 1;
     ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
@@ -6070,6 +6698,7 @@
     let renderWatchdogRecoveries = 0;
     let renderWatchdogFallbacks = 0;
     let renderWatchdogActiveReason = "";
+    let webgpuProbeReadyListener = null;
 
     // Do not voluntarily lose WebGL while the page is hidden/offscreen.
     // A canvas that has owned WebGL generally cannot switch to a 2D context,
@@ -6179,6 +6808,23 @@
       }
       scheduleRenderWithViewport(reason || "webgpu-render-stall");
       return false;
+    }
+
+    function handleSceneWebGPUProbeReady() {
+      if (disposed || !renderer || renderer.kind !== "webgpu") {
+        return;
+      }
+      const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
+      const reason = rendererReportsWebGPUFailure(diagnostics);
+      if (!reason) {
+        return;
+      }
+      recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
+    }
+
+    if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      webgpuProbeReadyListener = handleSceneWebGPUProbeReady;
+      window.addEventListener("gosx:scene3d:webgpu-probe-ready", webgpuProbeReadyListener);
     }
 
     function checkSceneRenderWatchdog() {
@@ -6527,32 +7173,51 @@
 	      };
 	    }
 
-	    function fallbackSceneRenderer(reason) {
-	      const fallbackReason = reason || "webgl-unavailable";
-	      const preferCanvasFallback = fallbackReason === "environment-constrained" || fallbackReason === "webgl-context-lost";
-	      if (!preferCanvasFallback) {
-	        const webglFallback = createFallbackSceneWebGLRenderer(fallbackReason);
-	        if (webglFallback && webglFallback.result && webglFallback.result.renderer) {
-	          if (webglFallback.canvas !== canvas) {
-	            commitSceneCanvasReplacement(webglFallback.canvas, fallbackReason);
-	          }
-	          return swapRenderer(webglFallback.result.renderer, fallbackReason);
-	        }
-	      }
-	      if (sceneRequiresWebGL(props)) {
-	        gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
-	        applySceneRendererState(ctx.mount, renderer, reason || "webgl-required");
-	        return false;
-	      }
-	      const canvas2dFallback = getFallbackCanvas2D(fallbackReason);
-	      if (!canvas2dFallback) {
-	        return false;
-	      }
-	      if (canvas2dFallback.canvas !== canvas) {
-	        commitSceneCanvasReplacement(canvas2dFallback.canvas, fallbackReason);
-	      }
-	      return swapRenderer(createSceneCanvasRenderer(canvas2dFallback.ctx2d, canvas2dFallback.canvas), fallbackReason);
-	    }
+            function fallbackSceneRenderer(reason) {
+              const fallbackReason = reason || "webgl-unavailable";
+              const backendCaps = sceneBackendCapsOf(props);
+              const allowWebGLFallback = sceneBackendCapsAllowsKind(backendCaps, "webgl");
+              const allowCanvasFallback = sceneBackendCapsAllowsKind(backendCaps, "canvas2d");
+              const preferCanvasFallback = fallbackReason === "environment-constrained" || fallbackReason === "webgl-context-lost";
+              if (!preferCanvasFallback && allowWebGLFallback) {
+                const webglFallback = createFallbackSceneWebGLRenderer(fallbackReason);
+                if (webglFallback && webglFallback.result && webglFallback.result.renderer) {
+                  if (webglFallback.canvas !== canvas) {
+                    commitSceneCanvasReplacement(webglFallback.canvas, fallbackReason);
+                  }
+                  return swapRenderer(webglFallback.result.renderer, fallbackReason);
+                }
+              }
+              if (!allowWebGLFallback && !allowCanvasFallback) {
+                gosxSceneEmit("warn", "renderer-fallback-disallowed", {
+                  reason: fallbackReason,
+                  capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
+                });
+                applySceneRendererState(ctx.mount, renderer, fallbackReason || "no-capable-backend");
+                return false;
+              }
+              if (sceneRequiresWebGL(props)) {
+                gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
+                applySceneRendererState(ctx.mount, renderer, reason || "webgl-required");
+                return false;
+              }
+              if (!allowCanvasFallback) {
+                gosxSceneEmit("warn", "renderer-canvas-fallback-disallowed", {
+                  reason: fallbackReason,
+                  capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
+                });
+                applySceneRendererState(ctx.mount, renderer, fallbackReason || "no-capable-backend");
+                return false;
+              }
+              const canvas2dFallback = getFallbackCanvas2D(fallbackReason);
+              if (!canvas2dFallback) {
+                return false;
+              }
+              if (canvas2dFallback.canvas !== canvas) {
+                commitSceneCanvasReplacement(canvas2dFallback.canvas, fallbackReason);
+              }
+              return swapRenderer(createSceneCanvasRenderer(canvas2dFallback.ctx2d, canvas2dFallback.canvas), fallbackReason);
+            }
 
     function ensureRendererCanCoverBundle(bundle) {
       if (!renderer || !bundle) {
@@ -6615,7 +7280,8 @@
 
     function restoreSceneWebGLRenderer(reason) {
       const webglPreference = sceneCapabilityWebGLPreference(props, capability);
-      if (!(webglPreference === "prefer" || webglPreference === "force")) {
+      if (!(webglPreference === "prefer" || webglPreference === "force")
+          || !sceneBackendCapsAllowsKind(sceneBackendCapsOf(props), "webgl")) {
         return false;
       }
       const restoredRenderer = createSceneRenderer(canvas, props, capability);
@@ -7031,6 +7697,30 @@
 	      ));
     }
 
+    function currentMountedSceneOrbitState() {
+      const controller = sceneControlHandle && sceneControlHandle.controller;
+      if (!controller || controller.mode !== "orbit") {
+        return null;
+      }
+      const sourceCamera = readSceneSourceCamera();
+      syncSceneControlsFromCamera(controller, sourceCamera);
+      const orbit = controller.orbit || sceneOrbitStateFromCamera(sourceCamera, controller.target, controller);
+      if (!orbit) {
+        return null;
+      }
+      const target = orbit.target || controller.target || { x: 0, y: 0, z: 0 };
+      return {
+        target: {
+          x: sceneNumber(target.x, 0),
+          y: sceneNumber(target.y, 0),
+          z: sceneNumber(target.z, 0),
+        },
+        radius: sceneNumber(orbit.radius, 0),
+        yaw: sceneNumber(orbit.yaw, 0),
+        pitch: sceneNumber(orbit.pitch, 0),
+      };
+    }
+
     function publishMountedSceneCamera(camera, reason) {
       const nextCamera = sceneRenderCamera(camera);
       if (lastPublishedCamera && sceneCameraEquivalent(lastPublishedCamera, nextCamera)) {
@@ -7090,6 +7780,10 @@
         snapshot.camera = currentMountedSceneCamera();
         snapshot.gpuResources = sceneDebugGPUResources(ctx.mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
         snapshot.webgpuStats = sceneDebugClone(ctx.mount && ctx.mount.__gosxScene3DWebGPUStats, 3);
+        snapshot.waterShaderSources = {
+          sceneState: sceneDebugWaterShaderSources(sceneState && sceneState.waterSystems),
+          bundle: sceneDebugWaterShaderSources(latestBundle && latestBundle.waterSystems),
+        };
         snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
         snapshot.fighterSamples = sceneDebugFighterSamples(latestBundle, sceneState);
       }
@@ -7223,6 +7917,36 @@
       scheduleRenderWithViewport(reason || "motion");
     });
     const releaseSceneCSSObserver = observeSceneCSSInvalidation();
+    const releaseManagedControlForms = typeof bindSceneManagedControlForms === "function"
+      ? bindSceneManagedControlForms(ctx.mount, sceneState, function(commands) {
+          const result = applySceneCommands(sceneState, commands);
+        publishSceneWaterStateSnapshot(ctx.mount, sceneState);
+          if (result && typeof result.then === "function") {
+            result.then(function() {
+              scheduleRender("managed-control-forms-models");
+            });
+          }
+          scheduleRender("managed-control-forms");
+        }, {
+          getCamera: currentMountedSceneCamera,
+            getOrbitState: currentMountedSceneOrbitState,
+          setCamera: function(camera) {
+            return applyMountedSceneCamera(camera, "managed-control-forms-camera");
+          },
+          getControlTarget: function() {
+            return sceneControlsTarget(props);
+          },
+          stopCameraInertia: function() {
+            if (flyMode) return false;
+            cancelOrbitInertia();
+            sceneOrbitStopInertia(controls);
+            return true;
+          },
+          getBundle: function() {
+            return latestBundle;
+          },
+        })
+      : function() {};
 
     if (runtimeScene) {
       if (ctx.runtime && ctx.runtime.available()) {
@@ -7404,6 +8128,20 @@
             runtimeBundle,
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
+          effectiveBundle.waterShaderSourcesByID = sceneMountedWaterShaderSources();
+          sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
+          scenePublishWaterShaderSourcesToMount(ctx.mount, canvas, effectiveBundle.waterShaderSourcesByID);
+          if (ctx.mount && typeof ctx.mount.setAttribute === "function") {
+            const waterShaderIDs = Object.keys(effectiveBundle.waterShaderSourcesByID || {});
+            let waterCausticBytes = 0;
+            for (let wsi = 0; wsi < waterShaderIDs.length; wsi += 1) {
+              const record = effectiveBundle.waterShaderSourcesByID[waterShaderIDs[wsi]];
+              waterCausticBytes = Math.max(waterCausticBytes, typeof record.causticsWGSL === "string" ? record.causticsWGSL.trim().length : 0);
+            }
+            ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-shader-systems", String(waterShaderIDs.length));
+            ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-caustic-source-bytes", String(waterCausticBytes));
+            ctx.mount.setAttribute("data-gosx-scene3d-water-render-entry-caustic-source-bytes", String(sceneMaxWaterCausticSourceBytes(effectiveBundle.waterSystems)));
+          }
           latestBundle = effectiveBundle;
           publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
           if (!ensureRendererCanCoverBundle(effectiveBundle)) {
@@ -7468,10 +8206,25 @@
         sceneStatePointsWithMaterials(sceneState),
         sceneStateInstancedMeshesWithMaterials(sceneState),
         sceneState.computeParticles,
+        sceneState.waterSystems,
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
       );
+      latestBundle.waterShaderSourcesByID = sceneMountedWaterShaderSources();
+      sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
+      scenePublishWaterShaderSourcesToMount(ctx.mount, canvas, latestBundle.waterShaderSourcesByID);
+      if (ctx.mount && typeof ctx.mount.setAttribute === "function") {
+        const waterShaderIDs = Object.keys(latestBundle.waterShaderSourcesByID || {});
+        let waterCausticBytes = 0;
+        for (let wsi = 0; wsi < waterShaderIDs.length; wsi += 1) {
+          const record = latestBundle.waterShaderSourcesByID[waterShaderIDs[wsi]];
+          waterCausticBytes = Math.max(waterCausticBytes, typeof record.causticsWGSL === "string" ? record.causticsWGSL.trim().length : 0);
+        }
+        ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-shader-systems", String(waterShaderIDs.length));
+        ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-caustic-source-bytes", String(waterCausticBytes));
+        ctx.mount.setAttribute("data-gosx-scene3d-water-render-entry-caustic-source-bytes", String(sceneMaxWaterCausticSourceBytes(latestBundle.waterSystems)));
+      }
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
@@ -7745,6 +8498,10 @@
         clearIdleContextRelease();
         clearVoluntaryRestoreWatchdog();
         stopSceneRenderWatchdog();
+        if (webgpuProbeReadyListener && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+          window.removeEventListener("gosx:scene3d:webgpu-probe-ready", webgpuProbeReadyListener);
+          webgpuProbeReadyListener = null;
+        }
         if (scrollHandler) {
           window.removeEventListener("scroll", scrollHandler);
         }
@@ -7759,6 +8516,7 @@
         releaseLifecycleObserver();
         releaseMotionObserver();
         releaseSceneCSSObserver();
+        releaseManagedControlForms();
         releaseTextLayoutListener();
         releaseSceneDebugSurface();
         dragHandle.dispose();

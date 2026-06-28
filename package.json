@@ -27,7 +27,7 @@
   },
   "homepage": "https://github.com/odvcencio/gosx#readme",
   "devDependencies": {
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "playwright-core": "^1.58.2"
   },
   "dependencies": {

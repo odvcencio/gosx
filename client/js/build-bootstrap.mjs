@@ -103,6 +103,7 @@ const outputs = [
       sourceFile("bootstrap-src/18-scene-canvas.js"),
       sourceFile("bootstrap-src/19-scene-gltf.js"),
       sourceFile("bootstrap-src/19a-scene-animation.js"),
+      sourceFile("bootstrap-src/19b-scene-control-forms.js"),
       sourceFile("bootstrap-src/20-scene-mount.js"),
       // 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
       // engine the video factory (in 30-tail.js) uses on the brain-absent
@@ -226,6 +227,7 @@ const outputs = [
       // keyframe animations or skeletal clips skip ~16KB of bone math
       // and quaternion slerp. Consumers that DO need the mixer can
       // lazy-load it via window.__gosx_scene3d_animation_api.
+      sourceFile("bootstrap-src/19b-scene-control-forms.js"),
       sourceFile("bootstrap-src/20-scene-mount.js"),
       sourceFile("bootstrap-src/26d-feature-scene3d-suffix.js"),
     ],

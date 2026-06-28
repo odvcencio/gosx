@@ -81,8 +81,8 @@ func DiffCommands(previous, next SceneIR) []Command {
 	if !sceneRecordJSONEqual(previous.Models, next.Models) {
 		commands = append(commands, SetModelsCommand(next.Models))
 	}
-	if !sceneRecordJSONEqual(previous.Points, next.Points) || !sceneRecordJSONEqual(previous.ComputeParticles, next.ComputeParticles) {
-		commands = append(commands, SetParticlesCommand(next.Points, next.ComputeParticles))
+	if !sceneRecordJSONEqual(previous.Points, next.Points) || !sceneRecordJSONEqual(previous.ComputeParticles, next.ComputeParticles) || !sceneRecordJSONEqual(previous.WaterSystems, next.WaterSystems) {
+		commands = append(commands, SetParticlesCommand(next.Points, next.ComputeParticles, next.WaterSystems))
 	}
 	if !sceneRecordJSONEqual(previous.InstancedMeshes, next.InstancedMeshes) {
 		commands = append(commands, SetInstancedMeshesCommand(next.InstancedMeshes))
@@ -185,12 +185,13 @@ func CreateLightCommand(record LightIR) Command {
 // SetParticlesCommand replaces point layers and compute particle systems as a
 // unit. Dense particle buffers are diffed by value on the server and swapped as
 // whole normalized runtime records on the client.
-func SetParticlesCommand(points []PointsIR, compute []ComputeParticlesIR) Command {
+func SetParticlesCommand(points []PointsIR, compute []ComputeParticlesIR, water []WaterSystemIR) Command {
 	return Command{
 		Kind: CommandSetParticles,
 		Data: map[string]any{
 			"points":           points,
 			"computeParticles": compute,
+			"waterSystems":     water,
 		},
 	}
 }

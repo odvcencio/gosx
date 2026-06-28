@@ -107,6 +107,81 @@ func TestCollectFeatures(t *testing.T) {
 			t.Errorf("expected FeatureGPUPicking exactly once; got %d", count)
 		}
 	})
+
+	t.Run("water system triggers water simulation", func(t *testing.T) {
+		ir := SceneIR{
+			WaterSystems: []WaterSystemIR{{ID: "pool-water", Resolution: 256}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureWaterSim] {
+			t.Error("expected FeatureWaterSim from waterSystems; not present")
+		}
+		if got[capability.FeatureWaterObjectTexturePass] {
+			t.Error("did not expect FeatureWaterObjectTexturePass without an active water object")
+		}
+		if got[capability.FeatureWaterObjectMeshShadowPass] {
+			t.Error("did not expect FeatureWaterObjectMeshShadowPass without a mesh-projected water object")
+		}
+	})
+
+	t.Run("declared water object target triggers object texture pass capability", func(t *testing.T) {
+		ir := SceneIR{
+			WaterSystems: []WaterSystemIR{{
+				ID:                      "pool-water",
+				Resolution:              256,
+				ActiveObject:            "float-sphere",
+				ObjectKind:              "Sphere",
+				ObjectTextureResolution: 512,
+			}},
+		}
+		features := collectFeatures(ir)
+		got := featureSet(features)
+		if !got[capability.FeatureWaterSim] {
+			t.Error("expected FeatureWaterSim from waterSystems; not present")
+		}
+		if !got[capability.FeatureWaterObjectTexturePass] {
+			t.Error("expected FeatureWaterObjectTexturePass from declared object texture target; not present")
+		}
+		if got[capability.FeatureWaterObjectMeshShadowPass] {
+			t.Error("did not expect FeatureWaterObjectMeshShadowPass from an analytic object texture target")
+		}
+		if len(features) < 2 || features[0] != capability.FeatureWaterObjectTexturePass || features[1] != capability.FeatureWaterSim {
+			t.Fatalf("expected deterministic water feature order [water-object-texture-pass water-simulation], got %v", features)
+		}
+	})
+
+	t.Run("complex water object triggers object texture pass capability", func(t *testing.T) {
+		ir := SceneIR{
+			WaterSystems: []WaterSystemIR{{
+				ID:           "pool-water",
+				Resolution:   256,
+				ActiveObject: "TorusKnot",
+				ObjectKind:   "compound",
+			}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureWaterObjectTexturePass] {
+			t.Error("expected FeatureWaterObjectTexturePass from complex water object; not present")
+		}
+		if !got[capability.FeatureWaterObjectMeshShadowPass] {
+			t.Error("expected FeatureWaterObjectMeshShadowPass from complex water object; not present")
+		}
+	})
+
+	t.Run("authored mesh shadow shader triggers mesh shadow pass capability", func(t *testing.T) {
+		ir := SceneIR{
+			WaterSystems: []WaterSystemIR{{
+				ID:                           "pool-water",
+				Resolution:                   256,
+				ObjectMeshShadowVertexWGSL:   "@vertex fn vertexMain() -> @builtin(position) vec4f { return vec4f(); }",
+				ObjectMeshShadowFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(); }",
+			}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureWaterObjectMeshShadowPass] {
+			t.Error("expected FeatureWaterObjectMeshShadowPass from authored mesh shadow shader; not present")
+		}
+	})
 }
 
 // TestSkinLookupDetectsSkinning verifies that collectFeatures tags

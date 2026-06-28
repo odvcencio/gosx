@@ -1,0 +1,95 @@
+
+// Authored Selena duck material for the GoSX water demo. This is the textured
+// glTF-object sibling of WaterObject: it preserves DuckCM.png while using the
+// same live water heightfield, caustics, and object shadow resources.
+struct WaterObjectUniforms {
+  mvp: mat4x4f,
+  modelMatrix: mat4x4f,
+  lightDir: vec4f,
+  poolSize: vec4f,
+  baseColor: vec4f,
+  params: vec4f,
+  texturePassMode: vec4f,
+  isTexturePass: vec4f,
+};
+
+struct VertexInput {
+  @location(0) position: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) uv: vec2f,
+};
+
+struct VertexOutput {
+  @builtin(position) clipPos: vec4f,
+  @location(0) worldPos: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) uv: vec2f,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: WaterObjectUniforms;
+@group(0) @binding(1) var modelTexture: texture_2d<f32>;
+@group(0) @binding(2) var modelSampler: sampler;
+@group(0) @binding(3) var causticTexture: texture_2d<f32>;
+@group(0) @binding(4) var causticSampler: sampler;
+@group(0) @binding(5) var objectShadowTexture: texture_2d<f32>;
+@group(0) @binding(6) var objectShadowSampler: sampler;
+@group(0) @binding(7) var<storage, read> waterState: array<vec4f>;
+
+fn waterIndex(x: u32, y: u32) -> u32 {
+  return y * u32(max(uniforms.params.x, 1.0)) + x;
+}
+
+fn sampleWaterInfo(worldXZ: vec2f) -> vec4f {
+  let resolution = u32(max(uniforms.params.x, 1.0));
+  let uv = clamp(worldXZ / max(uniforms.poolSize.xz * 2.0, vec2f(0.001)) + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+  let maxCoord = max(resolution - 1u, 1u);
+  let x = min(u32(round(uv.x * f32(maxCoord))), resolution - 1u);
+  let y = min(u32(round(uv.y * f32(maxCoord))), resolution - 1u);
+  return waterState[waterIndex(x, y)];
+}
+
+fn causticUV(point: vec3f, refractedLight: vec3f) -> vec2f {
+  let safeY = select(0.05, refractedLight.y, abs(refractedLight.y) > 0.05);
+  let projected = (point.xz - point.y * refractedLight.xz / safeY) / max(uniforms.poolSize.xz * 2.0, vec2f(0.001));
+  return clamp(projected * 0.75 + vec2f(0.5), vec2f(0.0), vec2f(1.0));
+}
+
+fn isObjectTexturePass() -> bool {
+  return uniforms.isTexturePass.x > 0.5;
+}
+
+fn objectTexturePassMode() -> u32 {
+  return u32(uniforms.texturePassMode.x);
+}
+
+@vertex fn vertexMain(in: VertexInput) -> VertexOutput {
+  var out: VertexOutput;
+  let world = uniforms.modelMatrix * vec4f(in.position, 1.0);
+  out.worldPos = world.xyz;
+  out.normal = normalize((uniforms.modelMatrix * vec4f(in.normal, 0.0)).xyz);
+  out.uv = in.uv;
+  out.clipPos = uniforms.mvp * world;
+  return out;
+}
+
+@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {
+  let info = sampleWaterInfo(in.worldPos.xz);
+  let waterHeight = info.x * uniforms.poolSize.y;
+  if (isObjectTexturePass() && objectTexturePassMode() == 2u && in.worldPos.y < waterHeight) { discard; }
+  let lightDir = normalize(uniforms.lightDir.xyz);
+  let refractedLight = refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333);
+  let n = normalize(in.normal);
+  let albedo = textureSample(modelTexture, modelSampler, in.uv).rgb * uniforms.baseColor.rgb;
+  let submerged = in.worldPos.y < waterHeight;
+  var diffuse = max(dot(-refractedLight, n), 0.0) * 0.6;
+  if (submerged) {
+    let caustic = textureSample(causticTexture, causticSampler, causticUV(in.worldPos, refractedLight)).r;
+    diffuse = diffuse * caustic * 4.0;
+  }
+  let underwaterColor = vec3f(0.4, 0.9, 1.0);
+  var color = albedo * (0.4 + diffuse);
+  if (submerged) {
+    color = color * underwaterColor * 1.2;
+  }
+  return vec4f(color, uniforms.baseColor.a);
+}

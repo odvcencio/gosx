@@ -124,26 +124,42 @@ func (l *lowerer) parseCapabilities(n *gotreesitter.Node) []string {
 }
 
 func engineDirectiveCapabilities(kind string, declared []string) []string {
-	if kind != "video" {
-		return declared
+	if kind != "video" && len(declared) == 0 {
+		return nil
 	}
 
-	seen := make(map[string]struct{}, len(declared)+3)
-	out := make([]string, 0, len(declared)+3)
-	for _, cap := range []string{"video", "fetch", "audio"} {
-		seen[cap] = struct{}{}
-		out = append(out, cap)
-	}
-	for _, cap := range declared {
+	seen := make(map[string]struct{}, len(declared)+6)
+	out := make([]string, 0, len(declared)+6)
+	appendCap := func(cap string) {
 		cap = strings.TrimSpace(cap)
 		if cap == "" {
-			continue
+			return
 		}
-		if _, ok := seen[cap]; ok {
-			continue
+		key := strings.ToLower(cap)
+		if _, ok := seen[key]; ok {
+			return
 		}
-		seen[cap] = struct{}{}
+		seen[key] = struct{}{}
 		out = append(out, cap)
+	}
+	appendDeclared := func(cap string) {
+		switch strings.ToLower(strings.TrimSpace(cap)) {
+		case "gpu":
+			for _, expanded := range []string{"canvas", "webgpu", "webgl", "webgl2", "compute"} {
+				appendCap(expanded)
+			}
+		default:
+			appendCap(cap)
+		}
+	}
+
+	if kind == "video" {
+		for _, cap := range []string{"video", "fetch", "audio"} {
+			appendCap(cap)
+		}
+	}
+	for _, cap := range declared {
+		appendDeclared(cap)
 	}
 	return out
 }

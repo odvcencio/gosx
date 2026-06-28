@@ -22,6 +22,10 @@ func TestVerdict(t *testing.T) {
 		{"skinning+ibl: webgpu degraded by ibl, webgl full", []Feature{FeatureSkinning, FeatureIBL},
 			[]Backend{BackendWebGPU, BackendWebGL},
 			map[Backend][]Feature{BackendWebGPU: {FeatureIBL}}},
+		{"water simulation requires webgpu", []Feature{FeatureWaterSim},
+			[]Backend{BackendWebGPU}, nil},
+		{"water object mesh shadow pass requires webgpu", []Feature{FeatureWaterObjectMeshShadowPass},
+			[]Backend{BackendWebGPU}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -34,6 +38,33 @@ func TestVerdict(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerdictReportsEveryRequiredUnsupportedFeature(t *testing.T) {
+	features := []Feature{FeatureWaterObjectMeshShadowPass, FeatureWaterObjectTexturePass, FeatureWaterSim}
+	got := Verdict(features, nil, DefaultPolicy())
+	if !backendsEqual(got.Capable, []Backend{BackendWebGPU}) {
+		t.Fatalf("Capable = %v, want [webgpu]", got.Capable)
+	}
+	for _, backend := range []Backend{BackendWebGL, BackendCanvas2D} {
+		for _, feature := range features {
+			if !hasExcludeReason(got.Reasons, feature, backend) {
+				t.Fatalf("expected exclude reason for %s/%s, got %+v", feature, backend, got.Reasons)
+			}
+		}
+	}
+	if len(got.Degraded) != 0 {
+		t.Fatalf("excluded backends should not accumulate degraded features, got %v", got.Degraded)
+	}
+}
+
+func hasExcludeReason(reasons []CapReason, feature Feature, backend Backend) bool {
+	for _, reason := range reasons {
+		if reason.Feature == feature && reason.Excludes == backend {
+			return true
+		}
+	}
+	return false
 }
 
 // backendsEqual compares two Backend slices by sorted order (order-insensitive).

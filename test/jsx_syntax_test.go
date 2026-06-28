@@ -776,6 +776,30 @@ func Renderer() Node {
 	}
 }
 
+func TestJSXEngineDirectiveExpandsGPUCapability(t *testing.T) {
+	prog := mustCompile(t, `package main
+
+//gosx:engine surface
+//gosx:capabilities gpu pointer wheel
+func Renderer() Node {
+	return <canvas></canvas>
+}`)
+
+	if len(prog.Components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(prog.Components))
+	}
+	got := prog.Components[0].EngineCapabilities
+	want := []string{"canvas", "webgpu", "webgl", "webgl2", "compute", "pointer", "wheel"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d capabilities, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("capability %d: expected %q, got %q (all: %v)", i, want[i], got[i], got)
+		}
+	}
+}
+
 func TestJSXVideoEngineDirective(t *testing.T) {
 	prog := mustCompile(t, `package main
 

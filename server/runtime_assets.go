@@ -229,11 +229,17 @@ func runtimeManifestDirectAssetPath(root, name string) (string, bool) {
 	if !strings.HasPrefix(name, "assets/") {
 		return "", false
 	}
-	target, ok := safeArtifactPath(filepath.Join(root, "assets"), strings.TrimPrefix(name, "assets/"))
-	if !ok || !isFile(target) {
-		return "", false
+	rel := strings.TrimPrefix(name, "assets/")
+	for _, assetsRoot := range []string{
+		filepath.Join(root, "assets"),
+		filepath.Join(root, "dist", "assets"),
+	} {
+		target, ok := safeArtifactPath(assetsRoot, rel)
+		if ok && isFile(target) {
+			return target, true
+		}
 	}
-	return target, true
+	return "", false
 }
 
 func runtimeCompatSourcePath(root, name string) (string, bool) {

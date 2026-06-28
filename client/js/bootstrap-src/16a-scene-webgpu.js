@@ -232,6 +232,1036 @@
     "}",
   ].join("\n");
 
+  var SCENE_WATER_COMPUTE_SOURCE = [
+    WGSL_COMMON_CONSTANTS,
+    "",
+    "struct WaterUniforms {",
+    "  resolution: u32,",
+    "  cellCount: u32,",
+    "  seedDrops: u32,",
+    "  frameIndex: u32,",
+    "  deltaTime: f32,",
+    "  time: f32,",
+    "  waveSpeed: f32,",
+    "  damping: f32,",
+    "  dropRadius: f32,",
+    "  dropStrength: f32,",
+    "  normalScale: f32,",
+    "  poolWidth: f32,",
+    "  poolHeight: f32,",
+    "  poolLength: f32,",
+    "  cornerRadius: f32,",
+    "  poolShape: f32,",
+    "  lightDir: vec4f,",
+    "  shallowColor: vec4f,",
+    "  deepColor: vec4f,",
+    "  objectCenter: vec4f,",
+    "  objectPreviousCenter: vec4f,",
+    "  objectHalfSizeRadius: vec4f,",
+    "  objectParams: vec4f,",
+    "  opticsFlags: vec4f,",
+    "  interactiveDrop: vec4f,",
+    "  seedSalt: f32,",
+    "};",
+    "",
+    "struct WaterDisplacementSphere {",
+    "  offsetRadius: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> params: WaterUniforms;",
+    "@group(0) @binding(1) var<storage, read> inState: array<vec4f>;",
+    "@group(0) @binding(2) var<storage, read_write> outState: array<vec4f>;",
+    "@group(0) @binding(3) var<storage, read> objectSpheres: array<WaterDisplacementSphere>;",
+    "",
+    "fn waterIndex(x: u32, y: u32) -> u32 {",
+    "  return y * params.resolution + x;",
+    "}",
+    "",
+    "fn hash01(n: f32) -> f32 {",
+    "  return fract(sin(n) * 43758.5453123);",
+    "}",
+    "",
+    "fn waterCoord(i: u32) -> vec2f {",
+    "  let res = params.resolution;",
+    "  let x = i % res;",
+    "  let y = i / res;",
+    "  return (vec2f(f32(x), f32(y)) + vec2f(0.5)) / max(vec2f(f32(res)), vec2f(1.0));",
+    "}",
+    "",
+    "fn volumeInSphere(coord: vec2f, center: vec3f, radius: f32, displacementScale: f32) -> f32 {",
+    "  let safeRadius = max(radius, 0.0001);",
+    "  let toCenter = vec3f(coord.x * 2.0 - 1.0, 0.0, coord.y * 2.0 - 1.0) - center;",
+    "  let t = length(toCenter) / safeRadius;",
+    "  let dy = exp(-pow(t * 1.5, 6.0));",
+    "  let ymin = min(0.0, center.y - dy);",
+    "  let ymax = min(max(0.0, center.y + dy), ymin + 2.0 * dy);",
+    "  return (ymax - ymin) * 0.1 * displacementScale;",
+    "}",
+    "",
+    "fn volumeInCube(coord: vec2f, center: vec3f, halfSize: vec3f, displacementScale: f32) -> f32 {",
+    "  let safeHalfSize = max(halfSize, vec3f(0.0001));",
+    "  let point = vec3f(coord.x * 2.0 - 1.0, 0.0, coord.y * 2.0 - 1.0);",
+    "  let distanceToBox = abs(point - center) - safeHalfSize;",
+    "  let signedDistance = length(max(distanceToBox, vec3f(0.0))) + min(max(distanceToBox.x, max(distanceToBox.y, distanceToBox.z)), 0.0);",
+    "  let scale = max(max(safeHalfSize.x, safeHalfSize.y), safeHalfSize.z);",
+    "  let t = max(signedDistance, 0.0) / scale;",
+    "  let dy = exp(-pow(t * 1.5, 6.0));",
+    "  let ymin = min(0.0, center.y - dy);",
+    "  let ymax = min(max(0.0, center.y + dy), ymin + 2.0 * dy);",
+    "  return (ymax - ymin) * 0.1 * displacementScale;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn seedDrops(@builtin(global_invocation_id) gid: vec3u) {",
+    "  let i = gid.x;",
+    "  if (i >= params.cellCount) { return; }",
+    "  let res = params.resolution;",
+    "  let x = i % res;",
+    "  let y = i / res;",
+    "  let uv = (vec2f(f32(x), f32(y)) + vec2f(0.5)) / max(vec2f(f32(res)), vec2f(1.0));",
+    "  var info = inState[i];",
+    "  let count = min(params.seedDrops, 64u);",
+    "  let seedSalt = params.seedSalt;",
+    "  for (var j = 0u; j < count; j = j + 1u) {",
+    "    let jf = f32(j + 1u);",
+    "    let center = vec2f(hash01(jf * 12.9898 + seedSalt + 0.173), hash01(jf * 78.233 + seedSalt * 1.371 + 0.719));",
+    "    let radius = max(params.dropRadius, 0.0001);",
+    "    var drop = max(0.0, 1.0 - length(center - uv) / radius);",
+    "    drop = 0.5 - cos(drop * PI) * 0.5;",
+    "    let polarity = select(1.0, -1.0, (j & 1u) == 0u);",
+    "    info.x = info.x + drop * params.dropStrength * polarity;",
+    "  }",
+    "  outState[i] = info;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn addDrop(@builtin(global_invocation_id) gid: vec3u) {",
+    "  let i = gid.x;",
+    "  if (i >= params.cellCount) { return; }",
+    "  let uv = waterCoord(i);",
+    "  var info = inState[i];",
+    "  let center = params.interactiveDrop.xy * 0.5 + vec2f(0.5);",
+    "  let radius = max(params.interactiveDrop.z, 0.0001);",
+    "  var drop = max(0.0, 1.0 - length(center - uv) / radius);",
+    "  drop = 0.5 - cos(drop * PI) * 0.5;",
+    "  info.x = info.x + drop * params.interactiveDrop.w;",
+    "  outState[i] = info;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn displaceObject(@builtin(global_invocation_id) gid: vec3u) {",
+    "  let i = gid.x;",
+    "  if (i >= params.cellCount) { return; }",
+    "  var info = inState[i];",
+    "  let kind = params.objectParams.x;",
+    "  let displacementScale = max(params.objectParams.y, 0.0);",
+    "  if (kind < 0.5 || displacementScale <= 0.0) {",
+    "    outState[i] = info;",
+    "    return;",
+    "  }",
+    "  let coord = waterCoord(i);",
+    "  let previous = params.objectPreviousCenter.xyz;",
+    "  let current = params.objectCenter.xyz;",
+    "  if (kind < 1.5) {",
+    "    let radius = params.objectHalfSizeRadius.w;",
+    "    info.x = info.x + volumeInSphere(coord, previous, radius, displacementScale);",
+    "    info.x = info.x - volumeInSphere(coord, current, radius, displacementScale);",
+    "  } else if (kind < 2.5) {",
+    "    let halfSize = params.objectHalfSizeRadius.xyz;",
+    "    info.x = info.x + volumeInCube(coord, previous, halfSize, displacementScale);",
+    "    info.x = info.x - volumeInCube(coord, current, halfSize, displacementScale);",
+    "  } else {",
+    "    let sphereCount = min(u32(params.objectParams.z), 32u);",
+    "    for (var sphereIndex = 0u; sphereIndex < sphereCount; sphereIndex = sphereIndex + 1u) {",
+    "      let sphere = objectSpheres[sphereIndex].offsetRadius;",
+    "      let offset = sphere.xyz;",
+    "      let radius = max(sphere.w, 0.0001);",
+    "      info.x = info.x + volumeInSphere(coord, previous + offset, radius, displacementScale);",
+    "      info.x = info.x - volumeInSphere(coord, current + offset, radius, displacementScale);",
+    "    }",
+    "  }",
+    "  outState[i] = info;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn stepSimulation(@builtin(global_invocation_id) gid: vec3u) {",
+    "  let i = gid.x;",
+    "  if (i >= params.cellCount) { return; }",
+    "  let res = params.resolution;",
+    "  let x = i % res;",
+    "  let y = i / res;",
+    "  var westX = 0u;",
+    "  if (x > 0u) { westX = x - 1u; }",
+    "  let eastX = min(x + 1u, res - 1u);",
+    "  var southY = 0u;",
+    "  if (y > 0u) { southY = y - 1u; }",
+    "  let northY = min(y + 1u, res - 1u);",
+    "  var info = inState[i];",
+    "  let average = (",
+    "    inState[waterIndex(westX, y)].x +",
+    "    inState[waterIndex(eastX, y)].x +",
+    "    inState[waterIndex(x, southY)].x +",
+    "    inState[waterIndex(x, northY)].x",
+    "  ) * 0.25;",
+    "  info.y = (info.y + (average - info.x) * 2.0 * params.waveSpeed) * params.damping;",
+    "  info.x = info.x + info.y;",
+    "  outState[i] = info;",
+    "}",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn updateNormals(@builtin(global_invocation_id) gid: vec3u) {",
+    "  let i = gid.x;",
+    "  if (i >= params.cellCount) { return; }",
+    "  let res = params.resolution;",
+    "  let x = i % res;",
+    "  let y = i / res;",
+    "  let eastX = min(x + 1u, res - 1u);",
+    "  let northY = min(y + 1u, res - 1u);",
+    "  var info = inState[i];",
+    "  let delta = 1.0 / max(f32(res), 1.0);",
+    "  let dx = vec3f(delta, inState[waterIndex(eastX, y)].x - info.x, 0.0);",
+    "  let dz = vec3f(0.0, inState[waterIndex(x, northY)].x - info.x, delta);",
+    "  let normal = normalize(cross(dz, dx));",
+    "  info.z = normal.x;",
+    "  info.w = normal.z;",
+    "  outState[i] = info;",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_RENDER_VERTEX_SOURCE = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct WaterUniforms {",
+    "  resolution: u32,",
+    "  cellCount: u32,",
+    "  seedDrops: u32,",
+    "  frameIndex: u32,",
+    "  deltaTime: f32,",
+    "  time: f32,",
+    "  waveSpeed: f32,",
+    "  damping: f32,",
+    "  dropRadius: f32,",
+    "  dropStrength: f32,",
+    "  normalScale: f32,",
+    "  poolWidth: f32,",
+    "  poolHeight: f32,",
+    "  poolLength: f32,",
+    "  cornerRadius: f32,",
+    "  poolShape: f32,",
+    "  lightDir: vec4f,",
+    "  shallowColor: vec4f,",
+    "  deepColor: vec4f,",
+    "  objectCenter: vec4f,",
+    "  objectPreviousCenter: vec4f,",
+    "  objectHalfSizeRadius: vec4f,",
+    "  objectParams: vec4f,",
+    "  opticsFlags: vec4f,",
+    "  interactiveDrop: vec4f,",
+    "  seedSalt: f32,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) worldPos: vec3f,",
+    "  @location(1) normal: vec3f,",
+    "  @location(2) uv: vec2f,",
+    "  @location(3) height: f32,",
+    "};",
+    "",
+    "struct WaterObjectTextureMatrices {",
+    "  viewProjectionMatrix: mat4x4f,",
+    "  reflectionViewProjectionMatrix: mat4x4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(1) @binding(0) var<uniform> params: WaterUniforms;",
+    "@group(1) @binding(1) var<storage, read> state: array<vec4f>;",
+    "",
+    "fn waterIndex(x: u32, y: u32) -> u32 {",
+    "  return y * params.resolution + x;",
+    "}",
+    "",
+    "@vertex fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {",
+    "  let cellsPerSide = max(params.resolution - 1u, 1u);",
+    "  let quad = vertexIndex / 6u;",
+    "  let corner = vertexIndex % 6u;",
+    "  let cellX = quad % cellsPerSide;",
+    "  let cellY = quad / cellsPerSide;",
+    "  var ox = 0u;",
+    "  var oy = 0u;",
+    "  if (corner == 1u || corner == 2u || corner == 4u) { ox = 1u; }",
+    "  if (corner == 2u || corner == 4u || corner == 5u) { oy = 1u; }",
+    "  let gx = min(cellX + ox, params.resolution - 1u);",
+    "  let gy = min(cellY + oy, params.resolution - 1u);",
+    "  let uv = vec2f(f32(gx), f32(gy)) / max(vec2f(f32(params.resolution - 1u)), vec2f(1.0));",
+    "  let info = state[waterIndex(gx, gy)];",
+    "  let nx = info.z * params.normalScale;",
+    "  let nz = info.w * params.normalScale;",
+    "  let ny = sqrt(max(0.0, 1.0 - info.z * info.z - info.w * info.w));",
+    "  var out: VertexOutput;",
+    "  out.height = info.x;",
+    "  out.uv = uv;",
+    "  out.worldPos = vec3f((uv.x - 0.5) * params.poolWidth * 2.0, info.x * params.poolHeight, (uv.y - 0.5) * params.poolLength * 2.0);",
+    "  out.normal = normalize(vec3f(nx, ny, nz));",
+    "  out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(out.worldPos, 1.0);",
+    "  return out;",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_RENDER_FRAGMENT_SOURCE = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "const WATER_SURFACE_VIEW_BELOW: bool = false;",
+    "",
+    "struct WaterUniforms {",
+    "  resolution: u32,",
+    "  cellCount: u32,",
+    "  seedDrops: u32,",
+    "  frameIndex: u32,",
+    "  deltaTime: f32,",
+    "  time: f32,",
+    "  waveSpeed: f32,",
+    "  damping: f32,",
+    "  dropRadius: f32,",
+    "  dropStrength: f32,",
+    "  normalScale: f32,",
+    "  poolWidth: f32,",
+    "  poolHeight: f32,",
+    "  poolLength: f32,",
+    "  cornerRadius: f32,",
+    "  poolShape: f32,",
+    "  lightDir: vec4f,",
+    "  shallowColor: vec4f,",
+    "  deepColor: vec4f,",
+    "  objectCenter: vec4f,",
+    "  objectPreviousCenter: vec4f,",
+    "  objectHalfSizeRadius: vec4f,",
+    "  objectParams: vec4f,",
+    "  opticsFlags: vec4f,",
+    "  interactiveDrop: vec4f,",
+    "  seedSalt: f32,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) worldPos: vec3f,",
+    "  @location(1) normal: vec3f,",
+    "  @location(2) uv: vec2f,",
+    "  @location(3) height: f32,",
+    "};",
+    "",
+    "struct WaterObjectTextureMatrices {",
+    "  viewProjectionMatrix: mat4x4f,",
+    "  reflectionViewProjectionMatrix: mat4x4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(1) @binding(0) var<uniform> params: WaterUniforms;",
+    "@group(1) @binding(2) var causticSampler: sampler;",
+    "@group(1) @binding(3) var causticTexture: texture_2d<f32>;",
+    "@group(1) @binding(4) var objectReflectionTexture: texture_2d<f32>;",
+    "@group(1) @binding(5) var objectClippedReflectionTexture: texture_2d<f32>;",
+    "@group(1) @binding(6) var objectRefractionTexture: texture_2d<f32>;",
+    "@group(1) @binding(7) var waterSkyTexture: texture_cube<f32>;",
+    "@group(1) @binding(8) var<uniform> objectTextureMatrices: WaterObjectTextureMatrices;",
+    "",
+    "fn roundedPoolSDF(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {",
+    "  let r = clamp(radius, 0.0, max(0.0, min(halfSize.x, halfSize.y) - 0.001));",
+    "  let q = abs(point) - max(halfSize - vec2f(r), vec2f(0.001));",
+    "  return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;",
+    "}",
+    "",
+    "fn sampleWaterSky(direction: vec3f) -> vec3f {",
+    "  let sky = textureSample(waterSkyTexture, causticSampler, normalize(direction)).rgb;",
+    "  let horizon = clamp(direction.y * 0.5 + 0.5, 0.0, 1.0);",
+    "  let fallback = mix(params.deepColor.rgb * 0.55, params.shallowColor.rgb * 1.12, horizon);",
+    "  return mix(fallback, sky, 0.82);",
+    "}",
+    "",
+    "fn sampleProjectedTexture(tex: texture_2d<f32>, matrix: mat4x4f, worldPos: vec3f) -> vec4f {",
+    "  let clip = matrix * vec4f(worldPos, 1.0);",
+    "  let safeW = select(0.0001, clip.w, abs(clip.w) > 0.0001);",
+    "  let ndc = clip.xyz / safeW;",
+    "  let uv = clamp(ndc.xy * vec2f(0.5, -0.5) + vec2f(0.5), vec2f(0.0), vec2f(1.0));",
+    "  let inBounds = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0) * step(0.0, clip.w);",
+    "  return textureSampleLevel(tex, causticSampler, uv, 0.0) * inBounds;",
+    "}",
+    "",
+    "fn intersectSurfaceSphereBounds(origin: vec3f, ray: vec3f, center: vec3f, radius: f32) -> f32 {",
+    "  let toSphere = origin - center;",
+    "  let a = dot(ray, ray);",
+    "  let b = 2.0 * dot(toSphere, ray);",
+    "  let c = dot(toSphere, toSphere) - radius * radius;",
+    "  let discriminant = b * b - 4.0 * a * c;",
+    "  if (discriminant > 0.0 && a > 0.0000001) {",
+    "    let root = sqrt(discriminant);",
+    "    let near = (-b - root) / (2.0 * a);",
+    "    let far = (-b + root) / (2.0 * a);",
+    "    if (near > 0.0) { return near; }",
+    "    if (far > 0.0) { return 0.0; }",
+    "  }",
+    "  return 1000000.0;",
+    "}",
+    "",
+    "fn surfaceObjectCenterWorld() -> vec3f {",
+    "  return vec3f(params.objectCenter.x * params.poolWidth, params.objectCenter.y, params.objectCenter.z * params.poolLength);",
+    "}",
+    "",
+    "fn surfaceObjectHalfSizeWorld() -> vec3f {",
+    "  return vec3f(params.objectHalfSizeRadius.x * params.poolWidth, params.objectHalfSizeRadius.y, params.objectHalfSizeRadius.z * params.poolLength);",
+    "}",
+    "",
+    "fn surfaceObjectRadiusWorld() -> f32 {",
+    "  return max(params.objectHalfSizeRadius.w * params.poolLength, 0.001);",
+    "}",
+    "",
+    "fn objectTextureRadiusWorld() -> f32 {",
+    "  if (params.objectParams.x < 2.5) {",
+    "    let halfSize = surfaceObjectHalfSizeWorld();",
+    "    return max(max(max(halfSize.x, halfSize.y), halfSize.z), surfaceObjectRadiusWorld());",
+    "  }",
+    "  return max(surfaceObjectRadiusWorld(), 0.31);",
+    "}",
+    "",
+    "fn sampleObjectRefraction(origin: vec3f, ray: vec3f) -> vec4f {",
+    "  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return vec4f(0.0); }",
+    "  let hit = intersectSurfaceSphereBounds(origin, ray, surfaceObjectCenterWorld(), objectTextureRadiusWorld());",
+    "  if (hit >= 1000000.0) { return vec4f(0.0); }",
+    "  return sampleProjectedTexture(objectRefractionTexture, objectTextureMatrices.viewProjectionMatrix, origin + ray * hit);",
+    "}",
+    "",
+    "fn sampleObjectReflection(origin: vec3f, ray: vec3f) -> vec4f {",
+    "  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return vec4f(0.0); }",
+    "  let hit = intersectSurfaceSphereBounds(origin, ray, surfaceObjectCenterWorld(), objectTextureRadiusWorld());",
+    "  if (hit >= 1000000.0) { return vec4f(0.0); }",
+    "  return sampleProjectedTexture(objectReflectionTexture, objectTextureMatrices.reflectionViewProjectionMatrix, origin + ray * hit);",
+    "}",
+    "",
+    "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
+    "  var shapeAlpha = 1.0;",
+    "  if (params.poolShape > 0.5) {",
+    "    let halfSize = vec2f(max(params.poolWidth, 0.001), max(params.poolLength, 0.001));",
+    "    let sdf = roundedPoolSDF(in.worldPos.xz, halfSize, params.cornerRadius);",
+    "    let edge = max(0.008, min(params.poolWidth, params.poolLength) / max(f32(params.resolution), 1.0));",
+    "    shapeAlpha = smoothstep(edge, -edge, sdf);",
+    "    if (shapeAlpha <= 0.001) { discard; }",
+    "  }",
+    "  var n = normalize(in.normal);",
+    "  if (WATER_SURFACE_VIEW_BELOW) { n = -n; }",
+    "  let viewDir = normalize(frame.cameraPos - in.worldPos);",
+    "  let reflectDir = reflect(-viewDir, n);",
+    "  let refractEta = select(1.0 / 1.333, 1.333 / 1.0, WATER_SURFACE_VIEW_BELOW);",
+    "  let refractDir = refract(-viewDir, n, refractEta);",
+    "  let fresnelBase = select(0.25, 0.50, WATER_SURFACE_VIEW_BELOW);",
+    "  let fresnel = mix(fresnelBase, 1.0, pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0));",
+    "  let causticsEnabled = clamp(params.opticsFlags.x, 0.0, 1.0);",
+    "  let reflectionEnabled = clamp(params.opticsFlags.y, 0.0, 1.0);",
+    "  let refractionEnabled = clamp(params.opticsFlags.z, 0.0, 1.0);",
+    "  var causticTexel = vec3f(0.0);",
+    "  if (causticsEnabled > 0.0) {",
+    "    causticTexel = textureSample(causticTexture, causticSampler, clamp(in.uv, vec2f(0.0), vec2f(1.0))).rgb;",
+    "  }",
+    "  var reflectionTexel = vec4f(0.0);",
+    "  var clippedReflectionTexel = vec4f(0.0);",
+    "  var refractionTexel = vec4f(0.0);",
+    "  if (reflectionEnabled > 0.0) {",
+    "    reflectionTexel = sampleObjectReflection(in.worldPos, reflectDir);",
+    "    clippedReflectionTexel = sampleProjectedTexture(objectClippedReflectionTexture, objectTextureMatrices.reflectionViewProjectionMatrix, in.worldPos);",
+    "  }",
+    "  if (refractionEnabled > 0.0) {",
+    "    refractionTexel = sampleObjectRefraction(in.worldPos, refractDir);",
+    "  }",
+    "  let causticHint = causticTexel.r * causticsEnabled;",
+    "  let depthMix = clamp(0.38 + in.height * 8.0 + in.uv.y * 0.18, 0.0, 1.0);",
+    "  var reflectedColor = sampleWaterSky(reflectDir);",
+    "  var refractedColor = mix(params.deepColor.rgb, params.shallowColor.rgb, depthMix);",
+    "  if (WATER_SURFACE_VIEW_BELOW) {",
+    "    reflectedColor = reflectedColor * vec3f(0.4, 0.9, 1.0);",
+    "    refractedColor = refractedColor * vec3f(0.8, 1.0, 1.1) + vec3f(0.10, 0.38, 0.46) * causticHint * 0.10;",
+    "  } else {",
+    "    refractedColor = refractedColor * vec3f(0.25, 1.0, 1.25) + vec3f(0.18, 0.28, 0.22) * causticHint * 0.08;",
+    "  }",
+    "  if (params.objectParams.x >= 2.5 && params.opticsFlags.w > 0.0) {",
+    "    if (WATER_SURFACE_VIEW_BELOW) {",
+    "      if (params.objectParams.w > 0.5 && params.objectParams.w < 1.5) {",
+    "        let refractedObject = max(refractionTexel, refractionTexel * vec4f(0.78, 1.0, 1.08, 1.0));",
+    "        refractedColor = mix(refractedColor, refractedObject.rgb, refractedObject.a * refractionEnabled);",
+    "        reflectedColor = mix(reflectedColor, reflectionTexel.rgb, reflectionTexel.a * reflectionEnabled);",
+    "      } else {",
+    "        refractedColor = mix(refractedColor, refractionTexel.rgb * vec3f(0.78, 1.0, 1.08), refractionTexel.a * refractionEnabled);",
+    "        reflectedColor = mix(reflectedColor, reflectionTexel.rgb, reflectionTexel.a * reflectionEnabled);",
+    "      }",
+    "    } else if (params.objectParams.w > 0.5 && params.objectParams.w < 1.5) {",
+    "      refractedColor = mix(refractedColor, refractionTexel.rgb, refractionTexel.a * refractionEnabled);",
+    "      reflectedColor = mix(reflectedColor, reflectionTexel.rgb, reflectionTexel.a * reflectionEnabled);",
+    "    } else {",
+    "      refractedColor = mix(refractedColor, refractionTexel.rgb, refractionTexel.a * refractionEnabled);",
+    "      reflectedColor = mix(reflectedColor, clippedReflectionTexel.rgb, clippedReflectionTexel.a * reflectionEnabled);",
+    "    }",
+    "  }",
+    "  if (WATER_SURFACE_VIEW_BELOW) {",
+    "    return vec4f(mix(reflectedColor, refractedColor, (1.0 - fresnel) * length(refractDir)), shapeAlpha);",
+    "  }",
+    "  return vec4f(mix(refractedColor, reflectedColor, fresnel), shapeAlpha);",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_RENDER_BELOW_FRAGMENT_SOURCE = SCENE_WATER_RENDER_FRAGMENT_SOURCE.replace(
+    "const WATER_SURFACE_VIEW_BELOW: bool = false;",
+    "const WATER_SURFACE_VIEW_BELOW: bool = true;"
+  );
+
+  var SCENE_WATER_POOL_VERTEX_SOURCE = [
+    WGSL_FRAME_STRUCTS,
+    "",
+    "struct WaterUniforms {",
+    "  resolution: u32,",
+    "  cellCount: u32,",
+    "  seedDrops: u32,",
+    "  frameIndex: u32,",
+    "  deltaTime: f32,",
+    "  time: f32,",
+    "  waveSpeed: f32,",
+    "  damping: f32,",
+    "  dropRadius: f32,",
+    "  dropStrength: f32,",
+    "  normalScale: f32,",
+    "  poolWidth: f32,",
+    "  poolHeight: f32,",
+    "  poolLength: f32,",
+    "  cornerRadius: f32,",
+    "  poolShape: f32,",
+    "  lightDir: vec4f,",
+    "  shallowColor: vec4f,",
+    "  deepColor: vec4f,",
+    "  objectCenter: vec4f,",
+    "  objectPreviousCenter: vec4f,",
+    "  objectHalfSizeRadius: vec4f,",
+    "  objectParams: vec4f,",
+    "  opticsFlags: vec4f,",
+    "  interactiveDrop: vec4f,",
+    "  seedSalt: f32,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) worldPos: vec3f,",
+    "  @location(1) normal: vec3f,",
+    "  @location(2) tileUV: vec2f,",
+    "  @location(3) waterUV: vec2f,",
+    "  @location(4) face: f32,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(1) @binding(0) var<uniform> params: WaterUniforms;",
+    "",
+    "const WATER_POOL_ROUNDED_SEGMENTS: u32 = 44u;",
+    "const WATER_POOL_ROUNDED_CORNER_SAMPLES: u32 = 11u;",
+    "const WATER_POOL_ROUNDED_CORNER_STEPS: f32 = 10.0;",
+    "const WATER_POOL_ROUNDED_FLOOR_VERTICES: u32 = WATER_POOL_ROUNDED_SEGMENTS * 3u;",
+    "const WATER_POOL_HALF_PI: f32 = 1.57079632679;",
+    "",
+    "fn waterPoolCornerSign(corner: u32) -> vec2f {",
+    "  var signValue = vec2f(1.0, 1.0);",
+    "  if (corner == 1u || corner == 2u) { signValue.x = -1.0; }",
+    "  if (corner >= 2u) { signValue.y = -1.0; }",
+    "  return signValue;",
+    "}",
+    "",
+    "fn waterPoolRoundedBoundaryPoint(index: u32, halfWidth: f32, halfLength: f32, radius: f32) -> vec2f {",
+    "  let wrapped = index % WATER_POOL_ROUNDED_SEGMENTS;",
+    "  let corner = min(wrapped / WATER_POOL_ROUNDED_CORNER_SAMPLES, 3u);",
+    "  let local = wrapped % WATER_POOL_ROUNDED_CORNER_SAMPLES;",
+    "  let signValue = waterPoolCornerSign(corner);",
+    "  let inset = max(vec2f(halfWidth, halfLength) - vec2f(radius), vec2f(0.001));",
+    "  let theta = f32(corner) * WATER_POOL_HALF_PI + f32(local) / WATER_POOL_ROUNDED_CORNER_STEPS * WATER_POOL_HALF_PI;",
+    "  return signValue * inset + vec2f(cos(theta), sin(theta)) * radius;",
+    "}",
+    "",
+    "fn waterPoolRoundedBoundaryNormal(point: vec2f, halfWidth: f32, halfLength: f32, radius: f32) -> vec2f {",
+    "  let inset = max(vec2f(halfWidth, halfLength) - vec2f(radius), vec2f(0.001));",
+    "  let absPoint = abs(point);",
+    "  var outward = vec2f(0.0, 1.0);",
+    "  if (absPoint.x > inset.x && absPoint.y > inset.y && radius > 0.0001) {",
+    "    outward = normalize(point - sign(point) * inset);",
+    "  } else if (absPoint.x / max(halfWidth, 0.001) > absPoint.y / max(halfLength, 0.001)) {",
+    "    outward = vec2f(sign(point.x), 0.0);",
+    "  } else {",
+    "    outward = vec2f(0.0, sign(point.y));",
+    "  }",
+    "  return -outward;",
+    "}",
+    "",
+    "fn waterPoolQuadUV(corner: u32) -> vec2f {",
+    "  var uv = vec2f(0.0);",
+    "  if (corner == 1u || corner == 2u || corner == 4u) { uv.x = 1.0; }",
+    "  if (corner == 2u || corner == 4u || corner == 5u) { uv.y = 1.0; }",
+    "  return uv;",
+    "}",
+    "",
+    "fn waterPoolRoundedVertex(vertexIndex: u32, halfWidth: f32, halfLength: f32, floorY: f32, rimY: f32, radius: f32) -> VertexOutput {",
+    "  var worldPos = vec3f(0.0);",
+    "  var normal = vec3f(0.0, 1.0, 0.0);",
+    "  var tileUV = vec2f(0.0);",
+    "  var face = 0.0;",
+    "  if (vertexIndex < WATER_POOL_ROUNDED_FLOOR_VERTICES) {",
+    "    let tri = vertexIndex / 3u;",
+    "    let corner = vertexIndex % 3u;",
+    "    var point = vec2f(0.0);",
+    "    if (corner == 1u) {",
+    "      point = waterPoolRoundedBoundaryPoint((tri + 1u) % WATER_POOL_ROUNDED_SEGMENTS, halfWidth, halfLength, radius);",
+    "    } else if (corner == 2u) {",
+    "      point = waterPoolRoundedBoundaryPoint(tri, halfWidth, halfLength, radius);",
+    "    }",
+    "    worldPos = vec3f(point.x, floorY, point.y);",
+    "    tileUV = point * 0.42;",
+    "  } else {",
+    "    let localIndex = vertexIndex - WATER_POOL_ROUNDED_FLOOR_VERTICES;",
+    "    let segment = (localIndex / 6u) % WATER_POOL_ROUNDED_SEGMENTS;",
+    "    let corner = localIndex % 6u;",
+    "    let quadUV = waterPoolQuadUV(corner);",
+    "    let pointA = waterPoolRoundedBoundaryPoint(segment, halfWidth, halfLength, radius);",
+    "    let pointB = waterPoolRoundedBoundaryPoint((segment + 1u) % WATER_POOL_ROUNDED_SEGMENTS, halfWidth, halfLength, radius);",
+    "    let point = mix(pointA, pointB, quadUV.x);",
+    "    let inward = waterPoolRoundedBoundaryNormal(point, halfWidth, halfLength, radius);",
+    "    worldPos = vec3f(point.x, mix(floorY, rimY, quadUV.y), point.y);",
+    "    normal = vec3f(inward.x, 0.0, inward.y);",
+    "    tileUV = vec2f((f32(segment) + quadUV.x) * 0.18, worldPos.y * 0.72);",
+    "    face = 5.0;",
+    "  }",
+    "  var out: VertexOutput;",
+    "  out.worldPos = worldPos;",
+    "  out.normal = normal;",
+    "  out.tileUV = tileUV;",
+    "  out.waterUV = worldPos.xz / max(vec2f(params.poolWidth * 2.0, params.poolLength * 2.0), vec2f(0.001)) + vec2f(0.5);",
+    "  out.face = face;",
+    "  out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(worldPos, 1.0);",
+    "  return out;",
+    "}",
+    "",
+    "@vertex fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {",
+    "  let halfWidth = max(params.poolWidth, 0.001);",
+    "  let halfLength = max(params.poolLength, 0.001);",
+    "  let floorY = -max(params.poolHeight, 0.001);",
+    "  let rimY = max(params.poolHeight * (2.0 / 12.0), 0.025);",
+    "  let maxCornerRadius = max(0.0, min(halfWidth, halfLength) - 0.001);",
+    "  let cornerRadius = clamp(params.cornerRadius, 0.0, maxCornerRadius);",
+    "  if (params.poolShape > 0.5 && cornerRadius > 0.0001) {",
+    "    return waterPoolRoundedVertex(vertexIndex, halfWidth, halfLength, floorY, rimY, cornerRadius);",
+    "  }",
+    "  let face = min(vertexIndex / 6u, 4u);",
+    "  let corner = vertexIndex % 6u;",
+    "  var u = 0.0;",
+    "  var v = 0.0;",
+    "  if (corner == 1u || corner == 2u || corner == 4u) { u = 1.0; }",
+    "  if (corner == 2u || corner == 4u || corner == 5u) { v = 1.0; }",
+    "  var worldPos = vec3f(0.0);",
+    "  var normal = vec3f(0.0, 1.0, 0.0);",
+    "  var tileUV = vec2f(0.0);",
+    "  if (face == 0u) {",
+    "    worldPos = vec3f(mix(-halfWidth, halfWidth, u), floorY, mix(-halfLength, halfLength, v));",
+    "    normal = vec3f(0.0, 1.0, 0.0);",
+    "    tileUV = worldPos.xz * 0.42;",
+    "  } else if (face == 1u) {",
+    "    worldPos = vec3f(mix(-halfWidth, halfWidth, u), mix(floorY, rimY, v), halfLength);",
+    "    normal = vec3f(0.0, 0.0, -1.0);",
+    "    tileUV = vec2f(worldPos.x * 0.42, worldPos.y * 0.72);",
+    "  } else if (face == 2u) {",
+    "    worldPos = vec3f(mix(halfWidth, -halfWidth, u), mix(floorY, rimY, v), -halfLength);",
+    "    normal = vec3f(0.0, 0.0, 1.0);",
+    "    tileUV = vec2f(worldPos.x * 0.42, worldPos.y * 0.72);",
+    "  } else if (face == 3u) {",
+    "    worldPos = vec3f(halfWidth, mix(floorY, rimY, v), mix(halfLength, -halfLength, u));",
+    "    normal = vec3f(-1.0, 0.0, 0.0);",
+    "    tileUV = vec2f(worldPos.z * 0.42, worldPos.y * 0.72);",
+    "  } else {",
+    "    worldPos = vec3f(-halfWidth, mix(floorY, rimY, v), mix(-halfLength, halfLength, u));",
+    "    normal = vec3f(1.0, 0.0, 0.0);",
+    "    tileUV = vec2f(worldPos.z * 0.42, worldPos.y * 0.72);",
+    "  }",
+    "  var out: VertexOutput;",
+    "  out.worldPos = worldPos;",
+    "  out.normal = normal;",
+    "  out.tileUV = tileUV;",
+    "  out.waterUV = worldPos.xz / max(vec2f(params.poolWidth * 2.0, params.poolLength * 2.0), vec2f(0.001)) + vec2f(0.5);",
+    "  out.face = f32(face);",
+    "  out.clipPos = frame.projMatrix * frame.viewMatrix * vec4f(worldPos, 1.0);",
+    "  return out;",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_POOL_FRAGMENT_SOURCE = [
+    "",
+    "struct WaterUniforms {",
+    "  resolution: u32,",
+    "  cellCount: u32,",
+    "  seedDrops: u32,",
+    "  frameIndex: u32,",
+    "  deltaTime: f32,",
+    "  time: f32,",
+    "  waveSpeed: f32,",
+    "  damping: f32,",
+    "  dropRadius: f32,",
+    "  dropStrength: f32,",
+    "  normalScale: f32,",
+    "  poolWidth: f32,",
+    "  poolHeight: f32,",
+    "  poolLength: f32,",
+    "  cornerRadius: f32,",
+    "  poolShape: f32,",
+    "  lightDir: vec4f,",
+    "  shallowColor: vec4f,",
+    "  deepColor: vec4f,",
+    "  objectCenter: vec4f,",
+    "  objectPreviousCenter: vec4f,",
+    "  objectHalfSizeRadius: vec4f,",
+    "  objectParams: vec4f,",
+    "  opticsFlags: vec4f,",
+    "  interactiveDrop: vec4f,",
+    "  seedSalt: f32,",
+    "};",
+    "",
+    "struct WaterDisplacementSphere {",
+    "  offsetRadius: vec4f,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) worldPos: vec3f,",
+    "  @location(1) normal: vec3f,",
+    "  @location(2) tileUV: vec2f,",
+    "  @location(3) waterUV: vec2f,",
+    "  @location(4) face: f32,",
+    "};",
+    "",
+    "@group(1) @binding(0) var<uniform> params: WaterUniforms;",
+    "@group(1) @binding(1) var<storage, read> state: array<vec4f>;",
+    "@group(1) @binding(2) var poolSampler: sampler;",
+    "@group(1) @binding(3) var causticTexture: texture_2d<f32>;",
+    "@group(1) @binding(4) var objectShadowTexture: texture_2d<f32>;",
+    "@group(1) @binding(5) var tileTexture: texture_2d<f32>;",
+    "",
+    "fn waterIndex(x: u32, y: u32) -> u32 {",
+    "  return y * params.resolution + x;",
+    "}",
+    "",
+    "fn sampleWaterInfo(uv: vec2f) -> vec4f {",
+    "  let safeUV = clamp(uv, vec2f(0.0), vec2f(1.0));",
+    "  let maxCoord = max(params.resolution - 1u, 1u);",
+    "  let x = min(u32(round(safeUV.x * f32(maxCoord))), params.resolution - 1u);",
+    "  let y = min(u32(round(safeUV.y * f32(maxCoord))), params.resolution - 1u);",
+    "  return state[waterIndex(x, y)];",
+    "}",
+    "",
+    "fn objectPoolShadow(uv: vec2f, point: vec3f) -> f32 {",
+    "  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return 0.0; }",
+    "  let centerUV = params.objectCenter.xz * 0.5 + vec2f(0.5);",
+    "  let aspect = vec2f(max(params.poolWidth / max(params.poolLength, 0.001), 0.001), 1.0);",
+    "  let sphereRadius = max(params.objectHalfSizeRadius.w * 0.55, 0.018);",
+    "  let cubeRadius = max(max(params.objectHalfSizeRadius.x, params.objectHalfSizeRadius.z) * 0.62, sphereRadius);",
+    "  let radius = select(sphereRadius, cubeRadius, params.objectParams.x > 1.5);",
+    "  let d = length((uv - centerUV) * aspect);",
+    "  let footprint = 1.0 - smoothstep(radius, radius + max(radius * 1.25, 0.022), d);",
+    "  let proximityRadius = select(params.objectHalfSizeRadius.w, max(max(params.objectHalfSizeRadius.x, params.objectHalfSizeRadius.y), params.objectHalfSizeRadius.z), params.objectParams.x > 1.5);",
+    "  let proximity = 1.0 - smoothstep(proximityRadius, proximityRadius + max(proximityRadius * 2.0, 0.08), length(point - params.objectCenter.xyz));",
+    "  return max(footprint * 0.68, proximity * 0.38);",
+    "}",
+    "",
+    "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
+    "  let waterUV = clamp(in.waterUV, vec2f(0.0), vec2f(1.0));",
+    "  let info = sampleWaterInfo(waterUV);",
+    "  let waterHeight = info.x * params.poolHeight;",
+    "  let lightDir = normalize(params.lightDir.xyz);",
+    "  let refracted = refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333);",
+    "  let refractedY = select(0.05, refracted.y, abs(refracted.y) > 0.05);",
+    "  let projected = (in.worldPos.xz - in.worldPos.y * refracted.xz / refractedY) / max(vec2f(params.poolWidth * 2.0, params.poolLength * 2.0), vec2f(0.001));",
+    "  let causticUV = clamp(projected * 0.75 + vec2f(0.5), vec2f(0.0), vec2f(1.0));",
+    "  let tileColor = textureSample(tileTexture, poolSampler, in.tileUV).rgb;",
+    "  let caustic = textureSample(causticTexture, poolSampler, causticUV).rgb;",
+    "  let shadowMap = textureSample(objectShadowTexture, poolSampler, waterUV).r;",
+    "  let objectShadow = max(shadowMap, objectPoolShadow(waterUV, in.worldPos));",
+    "  let diffuse = max(dot(normalize(in.normal), normalize(-refracted)), 0.0);",
+    "  let below = select(0.0, 1.0, in.worldPos.y < waterHeight);",
+    "  let distanceFade = 1.0 / max(length(in.worldPos) * 0.52, 1.0);",
+    "  let underwaterTint = vec3f(0.42, 0.92, 1.0);",
+    "  let dryLight = 0.46 + diffuse * 0.34;",
+    "  let causticEnergy = dot(caustic, vec3f(0.34, 0.44, 0.22)) * params.opticsFlags.x;",
+    "  var color = tileColor * dryLight * distanceFade;",
+    "  color = mix(color, color * underwaterTint * (0.72 + diffuse * 0.22) + caustic * (1.55 + causticEnergy * 0.6), below);",
+    "  color = color * (1.0 - clamp(objectShadow, 0.0, 1.0) * 0.62);",
+    "  let rim = smoothstep(0.0, 0.12, in.worldPos.y);",
+    "  color = mix(color, color + vec3f(0.05, 0.035, 0.018), rim * (1.0 - below));",
+    "  return vec4f(color, 1.0);",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_CAUSTICS_VERTEX_SOURCE = [
+    "struct VertexOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) uv: vec2f,",
+    "};",
+    "",
+    "@vertex fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {",
+    "  let x = f32((vertexIndex << 1u) & 2u);",
+    "  let y = f32(vertexIndex & 2u);",
+    "  var out: VertexOutput;",
+    "  out.uv = vec2f(x, y);",
+    "  out.clipPos = vec4f(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);",
+    "  return out;",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE = [
+    WGSL_COMMON_CONSTANTS,
+    "",
+    "struct WaterUniforms {",
+    "  resolution: u32,",
+    "  cellCount: u32,",
+    "  seedDrops: u32,",
+    "  frameIndex: u32,",
+    "  deltaTime: f32,",
+    "  time: f32,",
+    "  waveSpeed: f32,",
+    "  damping: f32,",
+    "  dropRadius: f32,",
+    "  dropStrength: f32,",
+    "  normalScale: f32,",
+    "  poolWidth: f32,",
+    "  poolHeight: f32,",
+    "  poolLength: f32,",
+    "  cornerRadius: f32,",
+    "  poolShape: f32,",
+    "  lightDir: vec4f,",
+    "  shallowColor: vec4f,",
+    "  deepColor: vec4f,",
+    "  objectCenter: vec4f,",
+    "  objectPreviousCenter: vec4f,",
+    "  objectHalfSizeRadius: vec4f,",
+    "  objectParams: vec4f,",
+    "  opticsFlags: vec4f,",
+    "  interactiveDrop: vec4f,",
+    "  seedSalt: f32,",
+    "};",
+    "",
+    "struct WaterDisplacementSphere {",
+    "  offsetRadius: vec4f,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) uv: vec2f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> params: WaterUniforms;",
+    "@group(0) @binding(1) var<storage, read> state: array<vec4f>;",
+    "@group(0) @binding(2) var<storage, read> objectSpheres: array<WaterDisplacementSphere>;",
+    "@group(0) @binding(3) var objectShadowSampler: sampler;",
+    "@group(0) @binding(4) var objectShadowTexture: texture_2d<f32>;",
+    "",
+    "fn waterIndex(x: u32, y: u32) -> u32 {",
+    "  return y * params.resolution + x;",
+    "}",
+    "",
+    "fn sampleWaterInfo(uv: vec2f) -> vec4f {",
+    "  let safeUV = clamp(uv, vec2f(0.0), vec2f(1.0));",
+    "  let maxCoord = max(params.resolution - 1u, 1u);",
+    "  let x = min(u32(round(safeUV.x * f32(maxCoord))), params.resolution - 1u);",
+    "  let y = min(u32(round(safeUV.y * f32(maxCoord))), params.resolution - 1u);",
+    "  return state[waterIndex(x, y)];",
+    "}",
+    "",
+    "fn objectShadowMask(uv: vec2f) -> f32 {",
+    "  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return 0.0; }",
+    "  let centerUV = params.objectCenter.xz * 0.5 + vec2f(0.5);",
+    "  let aspect = vec2f(max(params.poolWidth / max(params.poolLength, 0.001), 0.001), 1.0);",
+    "  if (params.objectParams.x >= 2.5) {",
+    "    let count = min(u32(params.objectParams.z), 32u);",
+    "    var mask = 0.0;",
+    "    for (var i = 0u; i < count; i = i + 1u) {",
+    "      let sphere = objectSpheres[i].offsetRadius;",
+    "      let sphereUV = centerUV + sphere.xz * 0.5;",
+    "      let radius = max(sphere.w * 0.72, 0.012);",
+    "      let d = length((uv - sphereUV) * aspect);",
+    "      mask = max(mask, 1.0 - smoothstep(radius, radius + max(radius * 1.25, 0.018), d));",
+    "    }",
+    "    return mask;",
+    "  }",
+    "  let sphereRadius = max(params.objectHalfSizeRadius.w * 0.55, 0.018);",
+    "  let cubeRadius = max(max(params.objectHalfSizeRadius.x, params.objectHalfSizeRadius.z) * 0.6, sphereRadius);",
+    "  let radius = select(sphereRadius, cubeRadius, params.objectParams.x > 1.5);",
+    "  let d = length((uv - centerUV) * aspect);",
+    "  return 1.0 - smoothstep(radius, radius + max(radius * 1.2, 0.02), d);",
+    "}",
+    "",
+    "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
+    "  let uv = clamp(in.uv, vec2f(0.0), vec2f(1.0));",
+    "  let texel = 1.0 / max(f32(params.resolution), 1.0);",
+    "  let c = sampleWaterInfo(uv);",
+    "  let e = sampleWaterInfo(uv + vec2f(texel, 0.0));",
+    "  let w = sampleWaterInfo(uv - vec2f(texel, 0.0));",
+    "  let n = sampleWaterInfo(uv + vec2f(0.0, texel));",
+    "  let s = sampleWaterInfo(uv - vec2f(0.0, texel));",
+    "  let lightDir = normalize(params.lightDir.xyz);",
+    "  let waterNormal = normalize(vec3f(c.z * params.normalScale, 1.0, c.w * params.normalScale));",
+    "  let refracted = refract(-lightDir, waterNormal, 1.0 / 1.333);",
+    "  let convergence = abs((e.x + w.x + n.x + s.x) - c.x * 4.0);",
+    "  let slopeFocus = max(0.0, dot(normalize(vec3f(-refracted.x, max(refracted.y, 0.05), -refracted.z)), waterNormal));",
+    "  let shimmer = 0.5 + 0.5 * sin((uv.x * 41.0 + uv.y * 37.0) + params.time * 2.4 + c.x * 180.0);",
+    "  var intensity = smoothstep(0.001, 0.028, convergence * 0.72 + length(c.zw) * 0.035);",
+    "  intensity = intensity * (0.52 + 0.48 * shimmer) * (0.58 + 0.42 * slopeFocus);",
+    "  let shadow = max(objectShadowMask(uv), textureSample(objectShadowTexture, objectShadowSampler, uv).r);",
+    "  intensity = intensity * (1.0 - shadow * 0.82);",
+    "  let warm = vec3f(1.0, 0.78, 0.42);",
+    "  let cool = vec3f(0.44, 0.95, 1.0);",
+    "  return vec4f(mix(cool, warm, clamp(intensity * 1.8, 0.0, 1.0)) * intensity, 1.0);",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_OBJECT_TEXTURE_VERTEX_SOURCE = SCENE_WATER_CAUSTICS_VERTEX_SOURCE;
+
+  var SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE = [
+    WGSL_COMMON_CONSTANTS,
+    "",
+    "struct WaterUniforms {",
+    "  resolution: u32,",
+    "  cellCount: u32,",
+    "  seedDrops: u32,",
+    "  frameIndex: u32,",
+    "  deltaTime: f32,",
+    "  time: f32,",
+    "  waveSpeed: f32,",
+    "  damping: f32,",
+    "  dropRadius: f32,",
+    "  dropStrength: f32,",
+    "  normalScale: f32,",
+    "  poolWidth: f32,",
+    "  poolHeight: f32,",
+    "  poolLength: f32,",
+    "  cornerRadius: f32,",
+    "  poolShape: f32,",
+    "  lightDir: vec4f,",
+    "  shallowColor: vec4f,",
+    "  deepColor: vec4f,",
+    "  objectCenter: vec4f,",
+    "  objectPreviousCenter: vec4f,",
+    "  objectHalfSizeRadius: vec4f,",
+    "  objectParams: vec4f,",
+    "  opticsFlags: vec4f,",
+    "  interactiveDrop: vec4f,",
+    "  seedSalt: f32,",
+    "};",
+    "",
+    "struct WaterDisplacementSphere {",
+    "  offsetRadius: vec4f,",
+    "};",
+    "",
+    "struct VertexOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) uv: vec2f,",
+    "};",
+    "",
+    "struct ObjectTextureOutput {",
+    "  @location(0) reflection: vec4f,",
+    "  @location(1) clippedReflection: vec4f,",
+    "  @location(2) refraction: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> params: WaterUniforms;",
+    "@group(0) @binding(1) var<storage, read> objectSpheres: array<WaterDisplacementSphere>;",
+    "",
+    "fn objectMaskInfo(uv: vec2f) -> vec4f {",
+    "  if (params.objectParams.x < 0.5 || params.opticsFlags.w <= 0.0) { return vec4f(0.0); }",
+    "  let centerUV = params.objectCenter.xz * 0.5 + vec2f(0.5);",
+    "  let aspect = vec2f(max(params.poolWidth / max(params.poolLength, 0.001), 0.001), 1.0);",
+    "  var mask = 0.0;",
+    "  var core = 0.0;",
+    "  if (params.objectParams.x >= 2.5) {",
+    "    let count = min(u32(params.objectParams.z), 32u);",
+    "    for (var i = 0u; i < count; i = i + 1u) {",
+    "      let sphere = objectSpheres[i].offsetRadius;",
+    "      let sphereUV = centerUV + sphere.xz * 0.5;",
+    "      let radius = max(sphere.w * 0.72, 0.012);",
+    "      let d = length((uv - sphereUV) * aspect);",
+    "      let localMask = 1.0 - smoothstep(radius, radius + max(radius * 1.18, 0.018), d);",
+    "      mask = max(mask, localMask);",
+    "      core = max(core, 1.0 - smoothstep(radius * 0.42, radius, d));",
+    "    }",
+    "  } else {",
+    "    let sphereRadius = max(params.objectHalfSizeRadius.w * 0.55, 0.018);",
+    "    let cubeRadius = max(max(params.objectHalfSizeRadius.x, params.objectHalfSizeRadius.z) * 0.6, sphereRadius);",
+    "    let radius = select(sphereRadius, cubeRadius, params.objectParams.x > 1.5);",
+    "    let d = length((uv - centerUV) * aspect);",
+    "    mask = 1.0 - smoothstep(radius, radius + max(radius * 1.2, 0.02), d);",
+    "    core = 1.0 - smoothstep(radius * 0.38, radius, d);",
+    "  }",
+    "  let objectTop = params.objectCenter.y + max(params.objectHalfSizeRadius.y, params.objectHalfSizeRadius.w);",
+    "  let clipped = smoothstep(-0.08, 0.16, objectTop);",
+    "  return vec4f(clamp(mask, 0.0, 1.0), clamp(core, 0.0, 1.0), clipped, 0.0);",
+    "}",
+    "",
+    "@fragment fn fragmentMain(in: VertexOutput) -> ObjectTextureOutput {",
+    "  let uv = clamp(in.uv, vec2f(0.0), vec2f(1.0));",
+    "  let lightOffset = normalize(params.lightDir.xyz).xz * vec2f(0.025, -0.025);",
+    "  let info = objectMaskInfo(clamp(uv - lightOffset, vec2f(0.0), vec2f(1.0)));",
+    "  let mask = info.x;",
+    "  let core = info.y;",
+    "  let clippedMask = mask * info.z;",
+    "  let rim = clamp(mask - core * 0.35, 0.0, 1.0);",
+    "  let reflectionColor = mix(vec3f(0.12, 0.24, 0.42), vec3f(0.82, 0.92, 1.0), rim);",
+    "  let clippedColor = mix(vec3f(0.10, 0.18, 0.28), vec3f(0.72, 0.84, 0.96), core);",
+    "  let refractionColor = mix(vec3f(0.06, 0.22, 0.28), vec3f(0.88, 0.66, 0.36), core);",
+    "  var out: ObjectTextureOutput;",
+    "  out.reflection = vec4f(reflectionColor, mask * params.opticsFlags.y);",
+    "  out.clippedReflection = vec4f(clippedColor, clippedMask * params.opticsFlags.y);",
+    "  out.refraction = vec4f(refractionColor, mask * params.opticsFlags.z);",
+    "  return out;",
+    "}",
+    "",
+    "@fragment fn shadowMain(in: VertexOutput) -> @location(0) vec4f {",
+    "  let info = objectMaskInfo(clamp(in.uv, vec2f(0.0), vec2f(1.0)));",
+    "  let shadow = info.x * (0.42 + 0.58 * info.y);",
+    "  return vec4f(vec3f(shadow), 1.0);",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_OBJECT_SHADOW_FRAGMENT_SOURCE = SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE;
+
+  var SCENE_WATER_OBJECT_MESH_SHADOW_VERTEX_SOURCE = [
+    "struct ObjectMeshShadowUniforms {",
+    "  light: vec4f,",
+    "  pool: vec4f,",
+    "};",
+    "",
+    "struct VertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) normal: vec3f,",
+    "    @location(2) uv: vec2f,",
+    "    @location(3) tangent: vec4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> shadow: ObjectMeshShadowUniforms;",
+    "",
+    "@vertex fn vertexMain(in: VertexInput) -> @builtin(position) vec4f {",
+    "    let worldPosition = in.position;",
+    "    let refractedLight = refract(-normalize(shadow.light.xyz), vec3f(0.0, 1.0, 0.0), 1.0 / 1.333);",
+    "    let fallbackY = select(-0.0001, 0.0001, refractedLight.y >= 0.0);",
+    "    let refractedY = select(fallbackY, refractedLight.y, abs(refractedLight.y) > 0.0001);",
+    "    let projected = 0.75 * (worldPosition.xz - worldPosition.y * refractedLight.xz / refractedY);",
+    "    return vec4f(",
+    "      projected.x / max(shadow.pool.x, 0.0001),",
+    "      projected.y / max(shadow.pool.y, 0.0001),",
+    "      0.0,",
+    "      1.0",
+    "    );",
+    "}",
+  ].join("\n");
+
+  var SCENE_WATER_OBJECT_MESH_SHADOW_FRAGMENT_SOURCE = [
+    "@fragment fn fragmentMain() -> @location(0) vec4f {",
+    "  return vec4f(1.0);",
+    "}",
+  ].join("\n");
+
   var WGSL_PBR_INSTANCED_VERTEX = [
     WGSL_FRAME_STRUCTS,
     "",
@@ -625,6 +1655,53 @@
     "    return vec4f(color, finalOpacity);",
     "}",
   ].join("\n");
+
+  function sceneWaterObjectMeshFragmentSource(texturePassMode) {
+    var mode = Math.max(1, Math.min(2, Math.floor(sceneNumber(texturePassMode, 1))));
+    return [
+      WGSL_MATERIAL_STRUCT,
+      "",
+      "struct VertexOutput {",
+      "    @builtin(position) clipPos: vec4f,",
+      "    @location(0) worldPos: vec3f,",
+      "    @location(1) normal: vec3f,",
+      "    @location(2) uv: vec2f,",
+      "    @location(3) tangent: vec3f,",
+      "    @location(4) bitangent: vec3f,",
+      "    @location(5) instanceColor: vec4f,",
+      "};",
+      "",
+      "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
+      "@group(1) @binding(1) var albedoTex: texture_2d<f32>;",
+      "@group(1) @binding(2) var albedoSamp: sampler;",
+      "@group(1) @binding(9) var emissiveTex: texture_2d<f32>;",
+      "@group(1) @binding(10) var emissiveSamp: sampler;",
+      "",
+      "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
+      "    let texturePassMode = " + mode + "u;",
+      "    if (texturePassMode == 2u && in.worldPos.y < 0.0) { discard; }",
+      "    var albedo = material.albedo;",
+      "    if (material.hasAlbedoMap != 0u) {",
+      "        albedo = albedo * textureSample(albedoTex, albedoSamp, in.uv).rgb;",
+      "    }",
+      "    albedo = albedo * in.instanceColor.rgb;",
+      "    var emissiveColor = albedo;",
+      "    if (material.hasEmissiveMap != 0u) {",
+      "        emissiveColor = textureSample(emissiveTex, emissiveSamp, in.uv).rgb;",
+      "    }",
+      "    let normal = normalize(in.normal);",
+      "    let upLight = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);",
+      "    let rim = pow(1.0 - upLight, 2.0);",
+      "    var color = albedo * (0.58 + upLight * 0.34) + emissiveColor * material.emissive;",
+      "    if (texturePassMode == 2u) {",
+      "        color = mix(color, vec3f(0.62, 0.82, 0.96), 0.18 + rim * 0.24);",
+      "    } else {",
+      "        color = mix(color, vec3f(0.08, 0.18, 0.26), 0.08);",
+      "    }",
+      "    return vec4f(color, material.opacity * clamp(in.instanceColor.a, 0.0, 1.0));",
+      "}",
+    ].join("\n");
+  }
 
   // -----------------------------------------------------------------------
   // Shadow Depth Shader (WGSL)
@@ -1479,7 +2556,7 @@
       [1, 1, 1]
     );
 
-    var record = { texture: placeholderTex, view: placeholderTex.createView(), src: key, loaded: false, failed: false };
+    var record = { texture: placeholderTex, view: placeholderTex.createView(), src: key, loaded: false, pending: true, failed: false };
     cache.set(key, record);
 
     if (typeof Image === "function") {
@@ -1504,19 +2581,148 @@
             record.texture = tex;
             record.view = tex.createView();
             record.loaded = true;
+            record.pending = false;
           }).catch(function() {
             record.failed = true;
+            record.pending = false;
           });
         } else {
           record.failed = true;
+          record.pending = false;
         }
       };
       image.onerror = function() {
         record.failed = true;
+        record.pending = false;
       };
       image.crossOrigin = "anonymous";
       image.src = key;
+    } else {
+      record.failed = true;
+      record.pending = false;
     }
+
+    return record;
+  }
+
+  function wgpuWaterCubeMapFaceURLs(value) {
+    var base = typeof value === "string" ? value.trim() : "";
+    if (!base) return null;
+    if (base.indexOf("{face}") >= 0) {
+      return ["xpos", "xneg", "ypos", "ypos", "zpos", "zneg"].map(function(face) {
+        return base.replace("{face}", face);
+      });
+    }
+    if (base.charAt(base.length - 1) !== "/") base += "/";
+    return ["xpos.jpg", "xneg.jpg", "ypos.jpg", "ypos.jpg", "zpos.jpg", "zneg.jpg"].map(function(face) {
+      return base + face;
+    });
+  }
+
+  function wgpuCreatePlaceholderCubeTexture(device) {
+    var tex = device.createTexture({
+      size: [1, 1, 6],
+      format: "rgba8unorm",
+      dimension: "2d",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    var faces = new Uint8Array([
+      150, 190, 210, 255,
+      110, 155, 180, 255,
+      190, 220, 232, 255,
+      190, 220, 232, 255,
+      125, 170, 195, 255,
+      90, 135, 165, 255,
+    ]);
+    for (var i = 0; i < 6; i++) {
+      device.queue.writeTexture(
+        { texture: tex, origin: [0, 0, i] },
+        faces.subarray(i * 4, i * 4 + 4),
+        { bytesPerRow: 4, rowsPerImage: 1 },
+        [1, 1, 1]
+      );
+    }
+    return tex;
+  }
+
+  function wgpuLoadCubeTexture(device, value, cache) {
+    if (!cache) return null;
+    var urls = wgpuWaterCubeMapFaceURLs(value);
+    if (!urls) return null;
+    var key = "cube:" + urls.join("|");
+    if (cache.has(key)) return cache.get(key);
+
+    var placeholder = wgpuCreatePlaceholderCubeTexture(device);
+    var record = {
+      texture: placeholder,
+      view: placeholder.createView({ dimension: "cube" }),
+      src: key,
+      faces: urls,
+      loaded: false,
+      pending: true,
+      failed: false,
+    };
+    cache.set(key, record);
+
+    if (typeof Image !== "function" || typeof createImageBitmap !== "function") {
+      record.failed = true;
+      record.pending = false;
+      return record;
+    }
+
+    var images = new Array(6);
+    var loaded = 0;
+    var failed = false;
+    function finishIfReady() {
+      if (failed || loaded !== 6) return;
+      var w = images[0].width;
+      var h = images[0].height;
+      if (!w || !h) {
+        record.failed = true;
+        record.pending = false;
+        return;
+      }
+      var tex = device.createTexture({
+        size: [w, h, 6],
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      Promise.all(images.map(function(image) {
+        return createImageBitmap(image);
+      })).then(function(bitmaps) {
+        bitmaps.forEach(function(bitmap, faceIndex) {
+          device.queue.copyExternalImageToTexture(
+            { source: bitmap },
+            { texture: tex, origin: [0, 0, faceIndex] },
+            [w, h]
+          );
+        });
+        record.texture.destroy();
+        record.texture = tex;
+        record.view = tex.createView({ dimension: "cube" });
+        record.loaded = true;
+        record.pending = false;
+      }).catch(function() {
+        record.failed = true;
+        record.pending = false;
+      });
+    }
+    urls.forEach(function(url, index) {
+      var image = new Image();
+      image.onload = function() {
+        images[index] = image;
+        loaded++;
+        finishIfReady();
+      };
+      image.onerror = function() {
+        failed = true;
+        record.failed = true;
+        record.pending = false;
+      };
+      image.crossOrigin = "anonymous";
+      image.src = url;
+    });
 
     return record;
   }
@@ -2639,6 +3845,27 @@
       return !!device && device === scopedDevice;
     }
 
+    function sceneWebGPUWaterDebugMode() {
+      var raw = "";
+      try {
+        if (typeof window !== "undefined" && window.location && window.location.search && typeof URLSearchParams === "function") {
+          raw = new URLSearchParams(window.location.search).get("gosx-water-debug") || "";
+        }
+      } catch (_err) {}
+      if (!raw && canvas && typeof canvas.getAttribute === "function") {
+        raw = canvas.getAttribute("data-gosx-scene3d-water-debug") || "";
+      }
+      return String(raw || "").trim().toLowerCase();
+    }
+
+    function sceneWebGPUWaterDebugSkipsUpdate(mode) {
+      return mode === "no-water" || mode === "no-update";
+    }
+
+    function sceneWebGPUWaterDebugSkipsDraw(mode) {
+      return mode === "compute-only" || mode === "no-draw" || sceneWebGPUWaterDebugSkipsUpdate(mode);
+    }
+
     // Only NOW taint the canvas with a WebGPU context. If any of the
     // checks above failed we never reached this line, so the canvas
     // stays clean and the mount code can fall through to WebGL.
@@ -2735,6 +3962,22 @@
     // Per-layer / per-system failure flag: layerID → true means the authored
     // pipeline failed; fall back to builtin and warn once.
     var pointsAuthoredLayerFailed = new Map();
+    var waterAuthoredComputePipelineCache = new Map();
+    var waterAuthoredComputePipelineFailures = new Set();
+    var waterManifestShaderSourcesByID = null;
+    var activeWaterShaderSourcesByID = null;
+    var waterAuthoredCausticsPipelineCache = new Map();
+    var waterAuthoredCausticsPipelineFailures = new Set();
+    var waterAuthoredCausticsPipelineLastError = "";
+    var waterAuthoredPoolPipelineCache = new Map();
+    var waterAuthoredPoolPipelineFailures = new Set();
+    var waterAuthoredSurfaceModuleCache = new Map();
+    var waterAuthoredSurfacePipelineFailures = new Set();
+    var waterAuthoredSurfacePipelineLastError = "";
+    var waterAuthoredObjectShadowPipelineCache = new Map();
+    var waterAuthoredObjectShadowPipelineFailures = new Set();
+    var waterAuthoredObjectMeshShadowPipelineCache = new Map();
+    var waterAuthoredObjectMeshShadowPipelineFailures = new Set();
 
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
@@ -2744,6 +3987,32 @@
     var elioSkinPipeline = null;
     var computedMorphShaderModule = null;
     var computedMorphPipeline = null;
+    var waterComputeShaderModule = null;
+    var waterRenderVertexModule = null;
+    var waterRenderFragmentModule = null;
+    var waterRenderBelowFragmentModule = null;
+    var waterPoolVertexModule = null;
+    var waterPoolFragmentModule = null;
+    var waterCausticsVertexModule = null;
+    var waterCausticsFragmentModule = null;
+    var waterObjectTextureVertexModule = null;
+    var waterObjectTextureFragmentModule = null;
+    var waterObjectShadowFragmentModule = null;
+    var waterObjectMeshShadowVertexModule = null;
+    var waterObjectMeshShadowFragmentModule = null;
+    var waterObjectMeshRefractionFragmentModule = null;
+    var waterObjectMeshClippedFragmentModule = null;
+    var waterSeedPipeline = null;
+    var waterDropPipeline = null;
+    var waterDisplacementPipeline = null;
+    var waterStepPipeline = null;
+    var waterNormalPipeline = null;
+    var waterCausticsPipeline = null;
+    var waterObjectTexturePipeline = null;
+    var waterObjectShadowPipeline = null;
+    var waterObjectMeshShadowPipeline = null;
+    var waterObjectMeshPipelineCache = {};
+    var waterPoolPipelineCache = {};
     var shadowVertexModule = null;
     var shadowInstancedVertexModule = null;
     var shadowFragmentModule = null;
@@ -2799,8 +4068,11 @@
     var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
     var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
+    var waterSystems = new Map();
+    var waterSystemRetireSerial = 0;
     var instancedCullSystems = new Map(); // meshId → { system, signature }
     var lastComputeParticleTimeSeconds = null;
+    var lastWaterTimeSeconds = null;
     var lastPreparedScene = null;
     var lastWebGPUFrameStats = null;
     var webGPUFrameSeq = 0;
@@ -2834,6 +4106,36 @@
     // Default sampler for materials.
     var linearSampler = null;
     var comparisonSampler = null;
+    var waterTileSampler = null;
+
+    // Water simulation resources.
+    var waterComputeBindGroupLayout = null;
+    var waterRenderBindGroupLayout = null;
+    var waterPoolBindGroupLayout = null;
+    var waterCausticsBindGroupLayout = null;
+    var waterObjectTextureBindGroupLayout = null;
+    var waterObjectMeshShadowBindGroupLayout = null;
+    var waterComputePipelineLayout = null;
+    var waterRenderPipelineLayout = null;
+    var waterPoolPipelineLayout = null;
+    var waterCausticsPipelineLayout = null;
+    var waterObjectTexturePipelineLayout = null;
+    var waterObjectMeshShadowPipelineLayout = null;
+    var waterRenderPipelineCache = new Map();
+    var WATER_MAX_DISPLACEMENT_SPHERES = 32;
+    var WATER_CAUSTICS_TEXTURE_FORMAT = "rgba8unorm";
+    var WATER_CAUSTICS_TEXTURE_SIZE = 1024;
+    var WATER_OBJECT_TEXTURE_FORMAT = "rgba8unorm";
+    var WATER_OBJECT_TEXTURE_SIZE = 512;
+    var WATER_OBJECT_TEXTURE_MAX_SIZE = 1024;
+    var WATER_OBJECT_TEXTURE_TARGET_COUNT = 3;
+    var WATER_OBJECT_SHADOW_TEXTURE_SIZE = 1024;
+    var waterUniformScratch = new ArrayBuffer(256);
+    var waterUniformScratchF = new Float32Array(waterUniformScratch);
+    var waterUniformScratchU = new Uint32Array(waterUniformScratch);
+    var waterObjectSphereScratch = new Float32Array(WATER_MAX_DISPLACEMENT_SPHERES * 4);
+    var waterObjectMeshShadowUniformScratch = new Float32Array(8);
+    var waterObjectTextureMatrixScratch = new Float32Array(32);
 
     // Texture cache.
     var textureCache = new Map();
@@ -2841,6 +4143,8 @@
     // 1x1 white placeholder texture (for unbound material maps).
     var placeholderTex = null;
     var placeholderView = null;
+    var placeholderCubeTex = null;
+    var placeholderCubeView = null;
 
     // Post-processor.
     var postProcessor = null;
@@ -3081,10 +4385,12 @@
     // returned renderer is fully ready before the factory call returns.
     (function initGPUResources() {
       try {
-        // Handle device loss post-factory. Re-uses the stub's probe
-        // invalidation path via window.__gosx_scene3d_webgpu_api.
+        // Handle device loss post-factory and invalidate the shared probe.
         device.lost.then(function(info) {
           console.warn("[gosx] WebGPU device lost:", info && info.message);
+          if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_invalidate === "function") {
+            window.__gosx_scene3d_webgpu_probe_invalidate(info);
+          }
           device = null;
           initFailed = true;
         }).catch(function() {});
@@ -3113,6 +4419,65 @@
             { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
           ],
         });
+        waterComputeBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-water-compute",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          ],
+        });
+        waterRenderBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-water-render",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+            { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+            { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+            { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+            { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+            { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
+            { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+            { binding: 10, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          ],
+        });
+        waterPoolBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-water-pool",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+            { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+            { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+            { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+          ],
+        });
+        waterCausticsBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-water-caustics",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+            { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+            { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+          ],
+        });
+        waterObjectTextureBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-water-object-textures",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          ],
+        });
+        waterObjectMeshShadowBindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-water-object-mesh-shadow",
+          entries: [
+            { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+          ],
+        });
         pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(device);
         pointsUniformBindGroupLayout = wgpuCreatePointsUniformBindGroupLayout(device);
         // Simple uniform BGL for authored user uniforms at group(1).
@@ -3138,6 +4503,24 @@
         computedMorphPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [computedMorphBindGroupLayout],
         });
+        waterComputePipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [waterComputeBindGroupLayout],
+        });
+        waterRenderPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [frameBindGroupLayout, waterRenderBindGroupLayout],
+        });
+        waterPoolPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [frameBindGroupLayout, waterPoolBindGroupLayout],
+        });
+        waterCausticsPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [waterCausticsBindGroupLayout],
+        });
+        waterObjectTexturePipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [waterObjectTextureBindGroupLayout],
+        });
+        waterObjectMeshShadowPipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [waterObjectMeshShadowBindGroupLayout],
+        });
         pointsPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [frameBindGroupLayout, materialBindGroupLayout, pointsBindGroupLayout],
         });
@@ -3161,6 +4544,94 @@
           label: "gosx-computed-morph",
           layout: computedMorphPipelineLayout,
           compute: { module: computedMorphShaderModule, entryPoint: "morphPose" },
+        });
+        waterComputeShaderModule = device.createShaderModule({ label: "gosx-water-compute", code: SCENE_WATER_COMPUTE_SOURCE });
+        waterSeedPipeline = device.createComputePipeline({
+          label: "gosx-water-seed-drops",
+          layout: waterComputePipelineLayout,
+          compute: { module: waterComputeShaderModule, entryPoint: "seedDrops" },
+        });
+        waterDropPipeline = device.createComputePipeline({
+          label: "gosx-water-add-drop",
+          layout: waterComputePipelineLayout,
+          compute: { module: waterComputeShaderModule, entryPoint: "addDrop" },
+        });
+        waterDisplacementPipeline = device.createComputePipeline({
+          label: "gosx-water-displace-object",
+          layout: waterComputePipelineLayout,
+          compute: { module: waterComputeShaderModule, entryPoint: "displaceObject" },
+        });
+        waterStepPipeline = device.createComputePipeline({
+          label: "gosx-water-step",
+          layout: waterComputePipelineLayout,
+          compute: { module: waterComputeShaderModule, entryPoint: "stepSimulation" },
+        });
+        waterNormalPipeline = device.createComputePipeline({
+          label: "gosx-water-normals",
+          layout: waterComputePipelineLayout,
+          compute: { module: waterComputeShaderModule, entryPoint: "updateNormals" },
+        });
+        waterRenderVertexModule = device.createShaderModule({ label: "gosx-water-render-vert", code: SCENE_WATER_RENDER_VERTEX_SOURCE });
+        waterRenderFragmentModule = device.createShaderModule({ label: "gosx-water-render-frag", code: SCENE_WATER_RENDER_FRAGMENT_SOURCE });
+        waterRenderBelowFragmentModule = device.createShaderModule({ label: "gosx-water-render-below-frag", code: SCENE_WATER_RENDER_BELOW_FRAGMENT_SOURCE });
+        waterPoolVertexModule = device.createShaderModule({ label: "gosx-water-pool-vert", code: SCENE_WATER_POOL_VERTEX_SOURCE });
+        waterPoolFragmentModule = device.createShaderModule({ label: "gosx-water-pool-frag", code: SCENE_WATER_POOL_FRAGMENT_SOURCE });
+        waterCausticsVertexModule = device.createShaderModule({ label: "gosx-water-caustics-vert", code: SCENE_WATER_CAUSTICS_VERTEX_SOURCE });
+        waterCausticsFragmentModule = device.createShaderModule({ label: "gosx-water-caustics-frag", code: SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE });
+        waterCausticsPipeline = device.createRenderPipeline({
+          label: "gosx-water-caustics-pass",
+          layout: waterCausticsPipelineLayout,
+          vertex: { module: waterCausticsVertexModule, entryPoint: "vertexMain", buffers: [] },
+          fragment: {
+            module: waterCausticsFragmentModule,
+            entryPoint: "fragmentMain",
+            targets: [{ format: WATER_CAUSTICS_TEXTURE_FORMAT }],
+          },
+          primitive: { topology: "triangle-list" },
+        });
+        waterObjectTextureVertexModule = device.createShaderModule({ label: "gosx-water-object-texture-vert", code: SCENE_WATER_OBJECT_TEXTURE_VERTEX_SOURCE });
+        waterObjectTextureFragmentModule = device.createShaderModule({ label: "gosx-water-object-texture-frag", code: SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE });
+        waterObjectShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-shadow-frag", code: SCENE_WATER_OBJECT_SHADOW_FRAGMENT_SOURCE });
+        waterObjectMeshShadowVertexModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-vert", code: SCENE_WATER_OBJECT_MESH_SHADOW_VERTEX_SOURCE });
+        waterObjectMeshShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-frag", code: SCENE_WATER_OBJECT_MESH_SHADOW_FRAGMENT_SOURCE });
+        waterObjectMeshRefractionFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-texture-frag", code: sceneWaterObjectMeshFragmentSource(1) });
+        waterObjectMeshClippedFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-clipped-frag", code: sceneWaterObjectMeshFragmentSource(2) });
+        waterObjectTexturePipeline = device.createRenderPipeline({
+          label: "gosx-water-object-texture-pass",
+          layout: waterObjectTexturePipelineLayout,
+          vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
+          fragment: {
+            module: waterObjectTextureFragmentModule,
+            entryPoint: "fragmentMain",
+            targets: [
+              { format: WATER_OBJECT_TEXTURE_FORMAT },
+              { format: WATER_OBJECT_TEXTURE_FORMAT },
+              { format: WATER_OBJECT_TEXTURE_FORMAT },
+            ],
+          },
+          primitive: { topology: "triangle-list" },
+        });
+        waterObjectShadowPipeline = device.createRenderPipeline({
+          label: "gosx-water-object-shadow-pass",
+          layout: waterObjectTexturePipelineLayout,
+          vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
+          fragment: {
+            module: waterObjectShadowFragmentModule,
+            entryPoint: "shadowMain",
+            targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+          },
+          primitive: { topology: "triangle-list" },
+        });
+        waterObjectMeshShadowPipeline = device.createRenderPipeline({
+          label: "gosx-water-object-mesh-shadow-pass",
+          layout: waterObjectMeshShadowPipelineLayout,
+          vertex: { module: waterObjectMeshShadowVertexModule, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
+          fragment: {
+            module: waterObjectMeshShadowFragmentModule,
+            entryPoint: "fragmentMain",
+            targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+          },
+          primitive: { topology: "triangle-list", cullMode: "none" },
         });
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
         shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
@@ -3193,6 +4664,13 @@
           mipmapFilter: "linear",
           addressModeU: "clamp-to-edge",
           addressModeV: "clamp-to-edge",
+        });
+        waterTileSampler = device.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "repeat",
+          addressModeV: "repeat",
         });
         comparisonSampler = device.createSampler({
           compare: "less",
@@ -3234,6 +4712,8 @@
           [1, 1, 1]
         );
         placeholderView = placeholderTex.createView();
+        placeholderCubeTex = wgpuCreatePlaceholderCubeTexture(device);
+        placeholderCubeView = placeholderCubeTex.createView({ dimension: "cube" });
       } catch (err) {
         // Synchronous GPU resource setup failed — the probe said the
         // device was good, but something in the texture/buffer/shader
@@ -3296,6 +4776,19 @@
       if (pipelineCache[key]) return pipelineCache[key];
       var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
+      return pipeline;
+    }
+
+    function getWaterObjectMeshPipeline(texturePassMode, blendMode, depthWrite) {
+      var normalizedMode = texturePassMode === 2 ? 2 : 1;
+      var normalizedBlend = blendMode === "alpha" || blendMode === "additive" ? blendMode : "alpha";
+      var normalizedDepthWrite = depthWrite !== false;
+      var key = wgpuPipelineKey("water-object-mesh-" + normalizedMode, normalizedBlend, normalizedDepthWrite, WATER_OBJECT_TEXTURE_FORMAT, "depth24plus", 1);
+      if (waterObjectMeshPipelineCache[key]) return waterObjectMeshPipelineCache[key];
+      var fragmentModule = normalizedMode === 2 ? waterObjectMeshClippedFragmentModule : waterObjectMeshRefractionFragmentModule;
+      if (!fragmentModule) return null;
+      var pipeline = wgpuCreatePBRPipeline(device, pbrPipelineLayout, pbrVertexModule, fragmentModule, normalizedBlend, normalizedDepthWrite, WATER_OBJECT_TEXTURE_FORMAT, 1);
+      waterObjectMeshPipelineCache[key] = pipeline;
       return pipeline;
     }
 
@@ -3403,18 +4896,35 @@
       return undefined;
     }
 
-    function sceneSelenaUniformValue(material, layout, field) {
+    function sceneSelenaRenderContextUniformValue(renderContext, field) {
+      var uniforms = renderContext && renderContext.uniforms;
+      var name = field && field.name;
+      if (!uniforms || typeof uniforms !== "object" || !name) return undefined;
+      if (Object.prototype.hasOwnProperty.call(uniforms, name)) return uniforms[name];
+      return undefined;
+    }
+
+    function sceneSelenaUniformBufferSlot(renderContext) {
+      var suffix = renderContext && typeof renderContext.uniformSlotSuffix === "string"
+        ? renderContext.uniformSlotSuffix.trim().replace(/[^A-Za-z0-9_-]+/g, "-")
+        : "";
+      return suffix ? "_gosxWGPUSelenaUniform_" + suffix : "_gosxWGPUSelenaUniform";
+    }
+
+    function sceneSelenaUniformValue(material, layout, field, owner, renderContext) {
       var name = field && field.name;
       if (name === "mvp") return scratchSelenaViewProjection;
+      if (name === "viewProjectionMatrix") return scratchSelenaViewProjection;
+      if (name === "modelMatrix") return webGPUSelenaObjectModelMatrix(owner);
       if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      var contextValue = sceneSelenaRenderContextUniformValue(renderContext, field);
+      if (contextValue !== undefined) return contextValue;
       // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
       // customUniforms so a declared `param time` — whose compiled default ships
       // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
       if (name === "time") return sceneSelenaFrameTime;
-      var values = material && material.customUniforms;
-      if (values && typeof values === "object" && Object.prototype.hasOwnProperty.call(values, name)) {
-        return values[name];
-      }
+      var value = sceneSelenaMaterialValue(material, name);
+      if (value !== undefined) return value;
       var def = sceneSelenaUniformDefault(layout, name);
       if (def !== undefined) return def;
       var count = sceneSelenaFloatCount(field && field.type);
@@ -3444,12 +4954,20 @@
         }
         return;
       }
+      var vectorValue = Array.isArray(value) || (value && typeof value.length === "number");
+      if (!vectorValue) {
+        f32[base] = sceneSelenaScalar(value);
+        for (var zeroIndex = 1; zeroIndex < count; zeroIndex++) {
+          f32[base + zeroIndex] = 0;
+        }
+        return;
+      }
       for (var i = 0; i < count; i++) {
-        f32[base + i] = sceneNumber(value && value[i], 0);
+        f32[base + i] = sceneNumber(value[i], 0);
       }
     }
 
-    function sceneSelenaUniformData(material) {
+    function sceneSelenaUniformData(material, owner, renderContext) {
       var layout = sceneSelenaMaterialLayout(material);
       if (!layout) return null;
       var size = Math.max(16, Math.floor(sceneNumber(layout.uniformBlock.size, 16)));
@@ -3462,17 +4980,103 @@
           f32,
           Math.floor(sceneNumber(field.offset, 0) / 4),
           String(field.type || "float"),
-          sceneSelenaUniformValue(material, layout, field)
+          sceneSelenaUniformValue(material, layout, field, owner, renderContext)
         );
       }
       return f32;
     }
 
+    function sceneSelenaMaterialValue(material, name) {
+      var values = material && material.customUniforms;
+      if (values && typeof values === "object" && name && Object.prototype.hasOwnProperty.call(values, name)) {
+        return values[name];
+      }
+      if (material && name && Object.prototype.hasOwnProperty.call(material, name)) {
+        return material[name];
+      }
+      return undefined;
+    }
+
+    function sceneSelenaResourceRef(material, descriptor) {
+      var name = descriptor && descriptor.name;
+      var value = sceneSelenaMaterialValue(material, name);
+      if (value && typeof value === "object") {
+        if (typeof value.resource === "string") return value.resource.trim();
+        if (typeof value.ref === "string") return value.ref.trim();
+        if (typeof value.sceneResource === "string") return value.sceneResource.trim();
+      }
+      if (typeof value === "string") {
+        var trimmed = value.trim();
+        if (trimmed.indexOf("gosx:") === 0 || trimmed.indexOf("water:") === 0) return trimmed;
+      }
+      return "";
+    }
+
+    function sceneSelenaParseResourceRef(ref) {
+      if (typeof ref !== "string") return null;
+      var trimmed = ref.trim();
+      if (!trimmed) return null;
+      var parts = trimmed.split(":").filter(function(part) { return part !== ""; });
+      if (parts[0] === "gosx") parts.shift();
+      if (parts[0] !== "water" || parts.length < 3) return null;
+      return { kind: "water", id: parts[1], slot: parts.slice(2).join(":") };
+    }
+
+    function sceneSelenaWaterSystem(ref) {
+      var parsed = sceneSelenaParseResourceRef(ref);
+      if (!parsed || parsed.kind !== "water") return null;
+      var record = waterSystems && typeof waterSystems.get === "function" ? waterSystems.get(parsed.id) : null;
+      return record && record.system ? { system: record.system, slot: parsed.slot } : null;
+    }
+
+    function sceneSelenaLiveTextureView(material, texture) {
+      var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, texture));
+      if (!resolved || !resolved.system) return null;
+      switch (resolved.slot) {
+      case "caustics":
+      case "caustic":
+        return resolved.system.causticsView || null;
+      case "reflection":
+      case "objectReflection":
+        return resolved.system.objectReflectionView || null;
+      case "clippedReflection":
+      case "objectClippedReflection":
+        return resolved.system.objectClippedReflectionView || null;
+      case "refraction":
+      case "objectRefraction":
+        return resolved.system.objectRefractionView || null;
+      case "shadow":
+      case "objectShadow":
+        return resolved.system.objectShadowView || null;
+      default:
+        return null;
+      }
+    }
+
+    function sceneSelenaLiveBuffer(material, bufferDescriptor) {
+      var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, bufferDescriptor));
+      if (!resolved || !resolved.system) return null;
+      switch (resolved.slot) {
+      case "state":
+      case "waterState":
+      case "height":
+      case "heightfield":
+        return resolved.system.activeIndex === 0 ? resolved.system.bufferA : resolved.system.bufferB;
+      case "objectSpheres":
+        return resolved.system.objectSphereBuffer || null;
+      case "uniforms":
+      case "params":
+        return resolved.system.uniformBuffer || null;
+      default:
+        return null;
+      }
+    }
+
     function sceneSelenaTextureURL(material, texture, index) {
       var name = texture && texture.name;
-      var values = material && material.customUniforms;
-      if (values && typeof values === "object" && name && typeof values[name] === "string" && values[name].trim()) {
-        return values[name].trim();
+      var value = sceneSelenaMaterialValue(material, name);
+      if (typeof value === "string" && value.trim() && !sceneSelenaParseResourceRef(value)) {
+        return value.trim();
       }
       if (material && name && typeof material[name] === "string" && material[name].trim()) {
         return material[name].trim();
@@ -3485,6 +5089,17 @@
 
     function sceneSelenaTextureDescriptors(layout) {
       return layout && Array.isArray(layout.textures) ? layout.textures : [];
+    }
+
+    function sceneSelenaStorageBufferDescriptors(layout) {
+      if (layout && Array.isArray(layout.storageBuffers)) return layout.storageBuffers;
+      if (layout && Array.isArray(layout.buffers)) {
+        return layout.buffers.filter(function(buffer) {
+          var kind = String(buffer && (buffer.kind || buffer.type || "")).toLowerCase();
+          return kind.indexOf("storage") >= 0;
+        });
+      }
+      return [];
     }
 
     function sceneSelenaBindGroupLayout(device, layout) {
@@ -3508,6 +5123,15 @@
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
           visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
           sampler: { type: "filtering" },
+        });
+      }
+      var storageBuffers = sceneSelenaStorageBufferDescriptors(layout);
+      for (var b = 0; b < storageBuffers.length; b++) {
+        var bufferWGSL = storageBuffers[b] && storageBuffers[b].wgsl || {};
+        entries.push({
+          binding: sceneNumber(bufferWGSL.binding, 1 + textures.length * 2 + b),
+          visibility: visibility,
+          buffer: { type: "read-only-storage" },
         });
       }
       return device.createBindGroupLayout({ label: "gosx-selena-material", entries: entries });
@@ -3544,8 +5168,11 @@
     // NOTE: getSelenaSkinnedPipeline is a near-identical sibling (skinned-mesh
     // variant using WGPU_PBR_VERTEX_LAYOUT, no attrs). Keep the two in sync —
     // any substantive change here must be mirrored there.
-    function getSelenaPipeline(material, blendMode, depthWrite) {
+    function getSelenaPipeline(material, blendMode, depthWrite, options) {
       if (!sceneSelenaIsMaterial(material)) return null;
+      var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
+      var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(options && options.sampleCount, activeSampleCount || 1)));
+      var pipelineLabelSuffix = options && options.labelSuffix ? String(options.labelSuffix) + "-" : "";
       // Per-material memo (perf): getSelenaPipeline is called once PER OBJECT
       // PER FRAME, and the content key below stringifies the whole shader (~1.2KB)
       // + JSON.stringify(layout) on every call. Board frames are fresh-parsed,
@@ -3563,8 +5190,8 @@
         memo &&
         memo.blendMode === blendMode &&
         memo.depthWrite === depthWrite &&
-        memo.targetFormat === targetFormat &&
-        memo.sampleCount === activeSampleCount
+        memo.targetFormat === pipelineTargetFormat &&
+        memo.sampleCount === pipelineSampleCount
       ) {
         return memo.failed ? null : memo.resource;
       }
@@ -3582,8 +5209,8 @@
         JSON.stringify(layout),
         blendMode,
         depthWrite ? "1" : "0",
-        targetFormat,
-        activeSampleCount,
+        pipelineTargetFormat,
+        pipelineSampleCount,
       ].join("|");
       var cached = selenaPipelineCache.get(key);
       if (cached) {
@@ -3592,8 +5219,8 @@
         material._gosxWGPUSelenaResource = {
           blendMode: blendMode,
           depthWrite: depthWrite,
-          targetFormat: targetFormat,
-          sampleCount: activeSampleCount,
+          targetFormat: pipelineTargetFormat,
+          sampleCount: pipelineSampleCount,
           resource: cached.failed ? null : cached,
           failed: !!cached.failed,
         };
@@ -3612,12 +5239,12 @@
           };
         });
         var pipeline = device.createRenderPipeline({
-          label: "gosx-selena-" + (layout.material || "material") + "-" + blendMode,
+          label: "gosx-selena-" + pipelineLabelSuffix + (layout.material || "material") + "-" + blendMode,
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: buffers },
-          fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
+          fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: pipelineTargetFormat, blend: wgpuBlendState(blendMode) }] },
           primitive: { topology: "triangle-list", cullMode: "back" },
-          multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
+          multisample: { count: pipelineSampleCount },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
         cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout, attrs: attrs };
@@ -3625,8 +5252,8 @@
         material._gosxWGPUSelenaResource = {
           blendMode: blendMode,
           depthWrite: depthWrite,
-          targetFormat: targetFormat,
-          sampleCount: activeSampleCount,
+          targetFormat: pipelineTargetFormat,
+          sampleCount: pipelineSampleCount,
           resource: cached,
           failed: false,
         };
@@ -3639,8 +5266,8 @@
         material._gosxWGPUSelenaResource = {
           blendMode: blendMode,
           depthWrite: depthWrite,
-          targetFormat: targetFormat,
-          sampleCount: activeSampleCount,
+          targetFormat: pipelineTargetFormat,
+          sampleCount: pipelineSampleCount,
           resource: null,
           failed: true,
         };
@@ -3722,13 +5349,13 @@
       }
     }
 
-    function createSelenaBindGroup(material, resource, cacheOwner) {
-      var uniformData = sceneSelenaUniformData(material);
+    function createSelenaBindGroup(material, resource, cacheOwner, renderContext) {
+      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext);
       if (!uniformData || !resource) return null;
       var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
       var uniformBuffer = wgpuCachedTrackedBuffer(
         owner,
-        "_gosxWGPUSelenaUniform",
+        sceneSelenaUniformBufferSlot(renderContext),
         uniformData,
         GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         true
@@ -3740,12 +5367,24 @@
       var textures = sceneSelenaTextureDescriptors(resource.layout);
       for (var i = 0; i < textures.length; i++) {
         var tex = textures[i] || {};
-        var url = sceneSelenaTextureURL(material, tex, i);
+        var liveView = sceneSelenaLiveTextureView(material, tex);
+        var url = liveView ? "" : sceneSelenaTextureURL(material, tex, i);
         var record = url ? wgpuLoadTexture(device, url, textureCache) : null;
-        var view = record && record.view ? record.view : placeholderView;
+        var view = liveView || (record && record.view ? record.view : placeholderView);
         var wgsl = tex.wgsl || {};
         entries.push({ binding: sceneNumber(wgsl.textureBinding, 1 + i * 2), resource: view });
         entries.push({ binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2), resource: linearSampler });
+      }
+      var storageBuffers = sceneSelenaStorageBufferDescriptors(resource.layout);
+      for (var b = 0; b < storageBuffers.length; b++) {
+        var bufferDescriptor = storageBuffers[b] || {};
+        var bufferWGSL = bufferDescriptor.wgsl || {};
+        var buffer = sceneSelenaLiveBuffer(material, bufferDescriptor);
+        if (!buffer) return null;
+        entries.push({
+          binding: sceneNumber(bufferWGSL.binding, 1 + textures.length * 2 + b),
+          resource: { buffer: buffer },
+        });
       }
       return device.createBindGroup({ layout: resource.bindGroupLayout, entries: entries });
     }
@@ -4026,6 +5665,2647 @@
       return records;
     }
 
+    function sceneWaterResolution(value) {
+      var raw = Math.floor(sceneNumber(value, 256));
+      if (!Number.isFinite(raw) || raw <= 0) raw = 256;
+      return Math.max(16, Math.min(512, raw));
+    }
+
+    function sceneWaterCausticsResolution(entry) {
+      var raw = Math.floor(sceneNumber(entry && entry.causticsResolution, WATER_CAUSTICS_TEXTURE_SIZE));
+      if (!Number.isFinite(raw) || raw <= 0) raw = WATER_CAUSTICS_TEXTURE_SIZE;
+      return Math.max(64, Math.min(2048, raw));
+    }
+
+    function sceneWaterObjectTextureResolution(entry) {
+      var raw = Math.floor(sceneNumber(entry && entry.objectTextureResolution, WATER_OBJECT_TEXTURE_SIZE));
+      if (!Number.isFinite(raw) || raw <= 0) raw = WATER_OBJECT_TEXTURE_SIZE;
+      return Math.max(64, Math.min(2048, raw));
+    }
+
+    function sceneWaterObjectTextureResolutionMode(entry) {
+      var mode = typeof (entry && entry.objectTextureResolutionMode) === "string"
+        ? entry.objectTextureResolutionMode.trim().toLowerCase()
+        : "";
+      if (mode === "auto" || mode === "upstream") return "viewport";
+      if (mode === "viewport") return "viewport";
+      return "fixed";
+    }
+
+    function sceneWaterObjectTexturePixelBudget(entry) {
+      var raw = Math.floor(sceneNumber(entry && entry.objectTexturePixelBudget, 0));
+      if (!Number.isFinite(raw) || raw <= 0) return 0;
+      return Math.max(WATER_OBJECT_TEXTURE_TARGET_COUNT, raw);
+    }
+
+    function sceneWaterObjectTextureClampToPixelBudget(size, pixelBudget) {
+      var width = Math.max(1, Math.floor(sceneNumber(size && size.width, WATER_OBJECT_TEXTURE_SIZE)));
+      var height = Math.max(1, Math.floor(sceneNumber(size && size.height, WATER_OBJECT_TEXTURE_SIZE)));
+      var budget = Math.max(0, Math.floor(sceneNumber(pixelBudget, 0)));
+      var totalPixels = width * height * WATER_OBJECT_TEXTURE_TARGET_COUNT;
+      if (budget > 0 && totalPixels > budget) {
+        var scale = Math.sqrt(budget / totalPixels);
+        width = Math.max(1, Math.floor(width * scale));
+        height = Math.max(1, Math.floor(height * scale));
+      }
+      return {
+        mode: size && size.mode || "fixed",
+        width: width,
+        height: height,
+        resolution: Math.max(width, height),
+        pixelBudget: budget,
+      };
+    }
+
+    function sceneWaterObjectTextureTargetSize(entry, width, height) {
+      var mode = sceneWaterObjectTextureResolutionMode(entry);
+      var pixelBudget = sceneWaterObjectTexturePixelBudget(entry);
+      if (mode === "viewport") {
+        var targetWidth = Math.max(1, Math.floor(sceneNumber(width, WATER_OBJECT_TEXTURE_SIZE)));
+        var targetHeight = Math.max(1, Math.floor(sceneNumber(height, WATER_OBJECT_TEXTURE_SIZE)));
+        var maxSide = Math.max(targetWidth, targetHeight, 1);
+        var scale = Math.min(1, WATER_OBJECT_TEXTURE_MAX_SIZE / maxSide);
+        targetWidth = Math.max(1, Math.floor(targetWidth * scale));
+        targetHeight = Math.max(1, Math.floor(targetHeight * scale));
+        return sceneWaterObjectTextureClampToPixelBudget({
+          mode: mode,
+          width: targetWidth,
+          height: targetHeight,
+          resolution: Math.max(targetWidth, targetHeight),
+        }, pixelBudget);
+      }
+      var fixed = sceneWaterObjectTextureResolution(entry);
+      return sceneWaterObjectTextureClampToPixelBudget({ mode: mode, width: fixed, height: fixed, resolution: fixed }, pixelBudget);
+    }
+
+    function sceneWaterObjectShadowResolution(entry) {
+      var raw = Math.floor(sceneNumber(entry && entry.objectShadowResolution, WATER_OBJECT_SHADOW_TEXTURE_SIZE));
+      if (!Number.isFinite(raw) || raw <= 0) raw = WATER_OBJECT_SHADOW_TEXTURE_SIZE;
+      return Math.max(64, Math.min(2048, raw));
+    }
+
+    function sceneWaterVector3(value, fallback) {
+      var fb = fallback || { x: 0, y: 1, z: 0 };
+      if (Array.isArray(value)) {
+        return {
+          x: sceneNumber(value[0], fb.x),
+          y: sceneNumber(value[1], fb.y),
+          z: sceneNumber(value[2], fb.z),
+        };
+      }
+      if (value && typeof value === "object") {
+        return {
+          x: sceneNumber(value.x, fb.x),
+          y: sceneNumber(value.y, fb.y),
+          z: sceneNumber(value.z, fb.z),
+        };
+      }
+      return { x: fb.x, y: fb.y, z: fb.z };
+    }
+
+    function sceneWaterLightVector(entry, fallback) {
+      var fb = fallback || { x: 0.3, y: 0.9, z: 0.45 };
+      if (entry && typeof entry === "object") {
+        if (entry.lightDirection != null) {
+          return sceneWaterVector3(entry.lightDirection, fb);
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(entry, "lightDirectionX") ||
+          Object.prototype.hasOwnProperty.call(entry, "lightDirectionY") ||
+          Object.prototype.hasOwnProperty.call(entry, "lightDirectionZ")
+        ) {
+          return {
+            x: sceneNumber(entry.lightDirectionX, fb.x),
+            y: sceneNumber(entry.lightDirectionY, fb.y),
+            z: sceneNumber(entry.lightDirectionZ, fb.z),
+          };
+        }
+      }
+      return sceneWaterVector3(null, fb);
+    }
+
+    function sceneWaterObjectKind(entry) {
+      var raw = "";
+      if (entry && typeof entry.objectKind === "string" && entry.objectKind) {
+        raw = entry.objectKind;
+      } else if (entry && typeof entry.activeObject === "string" && entry.activeObject) {
+        raw = entry.activeObject;
+      }
+      var value = String(raw || "").trim().toLowerCase();
+      if (!value || value === "none" || value === "no_object") return 0;
+      if (value.indexOf("sphere") >= 0 || value.indexOf("ball") >= 0) return 1;
+      if (value.indexOf("cube") >= 0 || value.indexOf("box") >= 0) return 2;
+      if (value.indexOf("compound") >= 0 || value.indexOf("mesh") >= 0 || value.indexOf("torus") >= 0 || value.indexOf("duck") >= 0) return 3;
+      return 0;
+    }
+
+    function sceneWaterObjectSubtype(entry, kind) {
+      if (!entry || kind !== 3) return 0;
+      var raw = [
+        entry.objectSubtype,
+        entry.activeObject,
+        entry.label,
+        entry.id,
+        entry.src,
+        entry.objectKind,
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (raw.indexOf("torus") >= 0 || raw.indexOf("knot") >= 0) return 1;
+      if (raw.indexOf("duck") >= 0 || raw.indexOf("mesh") >= 0 || raw.indexOf("gltf") >= 0 || raw.indexOf("glb") >= 0) return 2;
+      return 0;
+    }
+
+    function sceneWaterDisplacementSphereSignature(spheres) {
+      if (!Array.isArray(spheres) || spheres.length === 0) return "";
+      return spheres.slice(0, WATER_MAX_DISPLACEMENT_SPHERES).map(function(sphere) {
+        if (Array.isArray(sphere)) {
+          return [
+            sceneNumber(sphere[0], 0).toFixed(5),
+            sceneNumber(sphere[1], 0).toFixed(5),
+            sceneNumber(sphere[2], 0).toFixed(5),
+            sceneNumber(sphere[3], 0).toFixed(5),
+          ].join(",");
+        }
+        var offset = sphere && sphere.offset && typeof sphere.offset === "object" ? sphere.offset : {};
+        return [
+          sceneNumber(sphere && Object.prototype.hasOwnProperty.call(sphere, "offsetX") ? sphere.offsetX : offset.x, 0).toFixed(5),
+          sceneNumber(sphere && Object.prototype.hasOwnProperty.call(sphere, "offsetY") ? sphere.offsetY : offset.y, 0).toFixed(5),
+          sceneNumber(sphere && Object.prototype.hasOwnProperty.call(sphere, "offsetZ") ? sphere.offsetZ : offset.z, 0).toFixed(5),
+          sceneNumber(sphere && sphere.radius, 0).toFixed(5),
+        ].join(",");
+      }).join(";");
+    }
+
+    function sceneWaterObjectMotionSignature(entry, kind) {
+      if (!entry || !kind) return "";
+      return [
+        kind,
+        sceneNumber(entry.objectX, 0).toFixed(5),
+        sceneNumber(entry.objectY, 0).toFixed(5),
+        sceneNumber(entry.objectZ, 0).toFixed(5),
+        sceneBool(entry.objectPreviousSet, false) ? "1" : "0",
+        sceneNumber(entry.objectPreviousX, 0).toFixed(5),
+        sceneNumber(entry.objectPreviousY, 0).toFixed(5),
+        sceneNumber(entry.objectPreviousZ, 0).toFixed(5),
+        sceneNumber(entry.poolWidth, 1).toFixed(5),
+        sceneNumber(entry.poolLength, 1).toFixed(5),
+        sceneNumber(entry.objectRadius, 0).toFixed(5),
+        sceneNumber(entry.objectHalfSizeX, 0).toFixed(5),
+        sceneNumber(entry.objectHalfSizeY, 0).toFixed(5),
+        sceneNumber(entry.objectHalfSizeZ, 0).toFixed(5),
+        sceneNumber(entry.objectDriftX, 0).toFixed(5),
+        sceneNumber(entry.objectDriftY, 0).toFixed(5),
+        sceneNumber(entry.objectDriftZ, 0).toFixed(5),
+        sceneNumber(entry.objectBobAmplitude, 0).toFixed(5),
+        sceneNumber(entry.objectBobSpeed, 0).toFixed(5),
+        sceneNumber(entry.objectDisplacementScale, 1).toFixed(5),
+        sceneWaterObjectSubtype(entry, kind),
+        sceneWaterDisplacementSphereSignature(entry.objectDisplacementSpheres),
+      ].join("|");
+    }
+
+    function sceneWaterObjectExplicitPreviousSignature(entry, kind) {
+      if (!entry || !kind || !sceneBool(entry.objectPreviousSet, false)) return "";
+      return [
+        kind,
+        sceneNumber(entry.objectPreviousX, 0).toFixed(5),
+        sceneNumber(entry.objectPreviousY, 0).toFixed(5),
+        sceneNumber(entry.objectPreviousZ, 0).toFixed(5),
+        sceneNumber(entry.objectX, 0).toFixed(5),
+        sceneNumber(entry.objectY, 0).toFixed(5),
+        sceneNumber(entry.objectZ, 0).toFixed(5),
+      ].join("|");
+    }
+
+    function sceneWaterObjectCenter(entry, timeSeconds) {
+      var time = sceneNumber(timeSeconds, 0);
+      var bobSpeed = sceneNumber(entry && entry.objectBobSpeed, 0);
+      var bob = Math.sin(time * (bobSpeed > 0 ? bobSpeed : 1)) * sceneNumber(entry && entry.objectBobAmplitude, 0);
+      return {
+        x: sceneNumber(entry && entry.objectX, 0) + Math.sin(time * 0.73) * sceneNumber(entry && entry.objectDriftX, 0),
+        y: sceneNumber(entry && entry.objectY, 0) + bob + Math.sin(time * 0.41) * sceneNumber(entry && entry.objectDriftY, 0),
+        z: sceneNumber(entry && entry.objectZ, 0) + Math.cos(time * 0.67) * sceneNumber(entry && entry.objectDriftZ, 0),
+      };
+    }
+
+    function sceneWaterNormalizeObjectCenter(center, poolWidth, poolLength) {
+      var halfWidth = Math.max(0.0001, poolWidth);
+      var halfLength = Math.max(0.0001, poolLength);
+      return {
+        x: sceneNumber(center && center.x, 0) / halfWidth,
+        y: sceneNumber(center && center.y, 0),
+        z: sceneNumber(center && center.z, 0) / halfLength,
+      };
+    }
+
+    function sceneWaterDisplacementSpheres(entry, poolWidth, poolLength) {
+      var source = entry && Array.isArray(entry.objectDisplacementSpheres) ? entry.objectDisplacementSpheres : [];
+      if (source.length === 0) return [];
+      var halfWidth = Math.max(0.0001, poolWidth);
+      var halfLength = Math.max(0.0001, poolLength);
+      var out = [];
+      for (var i = 0; i < source.length && out.length < WATER_MAX_DISPLACEMENT_SPHERES; i++) {
+        var raw = source[i];
+        var offset = raw && raw.offset && typeof raw.offset === "object" ? raw.offset : {};
+        var x = 0;
+        var y = 0;
+        var z = 0;
+        var radius = 0;
+        if (Array.isArray(raw)) {
+          x = sceneNumber(raw[0], 0);
+          y = sceneNumber(raw[1], 0);
+          z = sceneNumber(raw[2], 0);
+          radius = sceneNumber(raw[3], 0);
+        } else {
+          x = sceneNumber(raw && Object.prototype.hasOwnProperty.call(raw, "offsetX") ? raw.offsetX : offset.x, 0);
+          y = sceneNumber(raw && Object.prototype.hasOwnProperty.call(raw, "offsetY") ? raw.offsetY : offset.y, 0);
+          z = sceneNumber(raw && Object.prototype.hasOwnProperty.call(raw, "offsetZ") ? raw.offsetZ : offset.z, 0);
+          radius = sceneNumber(raw && raw.radius, 0);
+        }
+        if (radius <= 0) continue;
+        out.push({
+          x: x / halfWidth,
+          y: y,
+          z: z / halfLength,
+          radius: Math.max(0.0001, radius) / halfLength,
+        });
+      }
+      return out;
+    }
+
+    function sceneWaterObjectState(system, entry, timeSeconds, poolWidth, poolLength) {
+      var kind = sceneWaterObjectKind(entry);
+      if (!kind) {
+        if (system) {
+          system.waterObjectKind = 0;
+          system.waterObjectLabel = "";
+          system.waterObjectActive = false;
+          system.waterObjectSphereCount = 0;
+        }
+        return {
+          kind: 0,
+          center: { x: 0, y: 0, z: 0 },
+          previous: { x: 0, y: 0, z: 0 },
+          halfSize: { x: 0, y: 0, z: 0 },
+          radius: 0,
+          displacementScale: 0,
+          subtype: 0,
+          spheres: [],
+        };
+      }
+      var currentWorld = sceneWaterObjectCenter(entry, timeSeconds);
+      var current = sceneWaterNormalizeObjectCenter(currentWorld, poolWidth, poolLength);
+      var signature = sceneWaterObjectMotionSignature(entry, kind);
+      var previous = current;
+      var explicitPreviousSignature = sceneWaterObjectExplicitPreviousSignature(entry, kind);
+      if (system && explicitPreviousSignature && system.waterObjectExplicitPreviousSignature !== explicitPreviousSignature) {
+        previous = sceneWaterNormalizeObjectCenter({
+          x: sceneNumber(entry && entry.objectPreviousX, currentWorld.x),
+          y: sceneNumber(entry && entry.objectPreviousY, currentWorld.y),
+          z: sceneNumber(entry && entry.objectPreviousZ, currentWorld.z),
+        }, poolWidth, poolLength);
+        system.waterObjectExplicitPreviousSignature = explicitPreviousSignature;
+      } else if (system && system.waterObjectSignature === signature && system.waterObjectPrevious) {
+        previous = system.waterObjectPrevious;
+      }
+      var halfWidth = Math.max(0.0001, poolWidth);
+      var halfLength = Math.max(0.0001, poolLength);
+      var radius = sceneNumber(entry && entry.objectRadius, 0);
+      if (radius <= 0) radius = kind === 1 ? 0.25 : 0.31;
+      var halfSizeX = sceneNumber(entry && entry.objectHalfSizeX, 0);
+      var halfSizeY = sceneNumber(entry && entry.objectHalfSizeY, 0);
+      var halfSizeZ = sceneNumber(entry && entry.objectHalfSizeZ, 0);
+      if (kind === 2) {
+        if (halfSizeX <= 0) halfSizeX = radius;
+        if (halfSizeY <= 0) halfSizeY = radius;
+        if (halfSizeZ <= 0) halfSizeZ = radius;
+      }
+      var spheres = kind === 3 ? sceneWaterDisplacementSpheres(entry, poolWidth, poolLength) : [];
+      var subtype = sceneWaterObjectSubtype(entry, kind);
+      var active = kind === 1 || kind === 2 || spheres.length > 0;
+      if (system) {
+        system.waterObjectSignature = signature;
+        system.waterObjectPrevious = current;
+        system.waterObjectKind = active ? kind : 0;
+        system.waterObjectActive = active;
+        system.waterObjectSphereCount = spheres.length;
+        system.waterObjectSubtype = active ? subtype : 0;
+        system.waterObjectRadius = active ? Math.max(0.0001, radius) : 0;
+        system.waterObjectLabel = kind === 1 ? "sphere" : kind === 2 ? "cube" : subtype === 1 ? "torus-knot" : subtype === 2 ? "mesh" : "compound";
+      }
+      return {
+        kind: kind,
+        center: current,
+        previous: previous,
+        halfSize: {
+          x: Math.max(0, halfSizeX) / halfWidth,
+          y: Math.max(0, halfSizeY),
+          z: Math.max(0, halfSizeZ) / halfLength,
+        },
+        radius: Math.max(0.0001, radius) / halfLength,
+        displacementScale: Math.max(0, sceneNumber(entry && entry.objectDisplacementScale, 1)),
+        subtype: subtype,
+        spheres: spheres,
+      };
+    }
+
+    function sceneWaterObjectDisplacementEvents(entry) {
+      var source = entry && Array.isArray(entry.objectDisplacementEvents) ? entry.objectDisplacementEvents : [];
+      return source.filter(function(event) { return event && typeof event === "object"; });
+    }
+
+    function sceneWaterObjectDisplacementEventID(event) {
+      return Math.max(0, Math.floor(sceneNumber(event && event.id, 0)));
+    }
+
+    function sceneWaterObjectDisplacementEventEntry(entry, event) {
+      var next = Object.assign({}, entry || {}, event || {});
+      next.objectPreviousSet = true;
+      return next;
+    }
+
+    function dispatchWaterObjectDisplacementEvents(system, entry, encoder, pipeline, currentTime) {
+      if (!system || !encoder || !pipeline) return { dispatches: 0, lastID: Math.max(0, Math.floor(sceneNumber(system && system.lastObjectDisplacementEventID, 0))) };
+      var events = sceneWaterObjectDisplacementEvents(entry);
+      if (!events.length) return { dispatches: 0, lastID: Math.max(0, Math.floor(sceneNumber(system.lastObjectDisplacementEventID, 0))) };
+      var lastID = Math.max(0, Math.floor(sceneNumber(system.lastObjectDisplacementEventID, 0)));
+      var nextLastID = lastID;
+      var dispatches = 0;
+      for (var i = 0; i < events.length; i++) {
+        var event = events[i];
+        var id = sceneWaterObjectDisplacementEventID(event);
+        if (id <= lastID) continue;
+        var eventEntry = sceneWaterObjectDisplacementEventEntry(entry, event);
+        var kind = sceneWaterObjectKind(eventEntry);
+        if (!kind) {
+          nextLastID = Math.max(nextLastID, id);
+          continue;
+        }
+        device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, eventEntry, 0, currentTime, { transientObject: true }));
+        var eventDispatches = dispatchWaterPass(encoder, system, pipeline);
+        if (eventDispatches > 0) {
+          dispatches += eventDispatches;
+          nextLastID = Math.max(nextLastID, id);
+        }
+      }
+      if (nextLastID > lastID) system.lastObjectDisplacementEventID = nextLastID;
+      return { dispatches: dispatches, lastID: nextLastID };
+    }
+
+    function sceneWaterWriteObjectSphereBuffer(system, spheres) {
+      if (!system || !system.objectSphereBuffer) return;
+      waterObjectSphereScratch.fill(0);
+      var source = Array.isArray(spheres) ? spheres : [];
+      for (var i = 0; i < source.length && i < WATER_MAX_DISPLACEMENT_SPHERES; i++) {
+        var sphere = source[i] || {};
+        var offset = i * 4;
+        waterObjectSphereScratch[offset] = sceneNumber(sphere.x, 0);
+        waterObjectSphereScratch[offset + 1] = sceneNumber(sphere.y, 0);
+        waterObjectSphereScratch[offset + 2] = sceneNumber(sphere.z, 0);
+        waterObjectSphereScratch[offset + 3] = Math.max(0.0001, sceneNumber(sphere.radius, 0));
+      }
+      device.queue.writeBuffer(system.objectSphereBuffer, 0, waterObjectSphereScratch);
+    }
+
+    function sceneWaterSystemSignature(entry, width, height) {
+      var resolution = sceneWaterResolution(entry && entry.resolution);
+      var causticsResolution = sceneWaterCausticsResolution(entry);
+      var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
+      var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
+      return [
+        resolution,
+        causticsResolution,
+        objectTextureSize.mode,
+        objectTextureSize.width,
+        objectTextureSize.height,
+        objectTextureSize.resolution,
+        objectTextureSize.pixelBudget,
+        objectShadowResolution,
+        Math.max(0, Math.floor(sceneNumber(entry && entry.seedDrops, 7))),
+        sceneNumber(entry && entry.dropRadius, 0.03).toFixed(5),
+        sceneNumber(entry && entry.dropStrength, 0.01).toFixed(5),
+        sceneWaterAuthoredShaderSource(entry, "seedWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "dropWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "displacementWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "simulationWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "normalWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "causticsWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "poolVertexWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "poolFragmentWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "surfaceVertexWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "surfaceFragmentWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "surfaceBelowFragmentWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "objectShadowWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "objectMeshShadowVertexWGSL"),
+        sceneWaterAuthoredShaderSource(entry, "objectMeshShadowFragmentWGSL"),
+      ].join("|");
+    }
+
+    function sceneWaterAuthoredComputeField(stage) {
+      if (stage === "seed") return "seedWGSL";
+      if (stage === "drop") return "dropWGSL";
+      if (stage === "displacement") return "displacementWGSL";
+      if (stage === "simulation") return "simulationWGSL";
+      if (stage === "normal") return "normalWGSL";
+      return "";
+    }
+
+    function sceneWaterAuthoredComputeEntryPoint(stage) {
+      if (stage === "seed") return "seedDrops";
+      if (stage === "drop") return "addDrop";
+      if (stage === "displacement") return "displaceObject";
+      if (stage === "simulation") return "stepSimulation";
+      if (stage === "normal") return "updateNormals";
+      return "";
+    }
+
+    function sceneWaterAuthoredComputeSource(entry, stage) {
+      var field = sceneWaterAuthoredComputeField(stage);
+      return sceneWaterAuthoredShaderSource(entry, field);
+    }
+
+    function sceneWaterAuthoredShaderSource(entry, field) {
+      if (!field) return "";
+      if (entry && typeof entry[field] === "string" && entry[field].trim()) return entry[field].trim();
+      var id = entry && typeof entry.id === "string" && entry.id ? entry.id : "";
+      var activeSources = id && activeWaterShaderSourcesByID && typeof activeWaterShaderSourcesByID.get === "function"
+        ? activeWaterShaderSourcesByID.get(id)
+        : null;
+      if (!activeSources && activeWaterShaderSourcesByID && activeWaterShaderSourcesByID.size === 1) {
+        activeWaterShaderSourcesByID.forEach(function(record) {
+          activeSources = activeSources || record;
+        });
+      }
+      var activeSource = activeSources && activeSources[field];
+      if (typeof activeSource === "string" && activeSource.trim()) return activeSource.trim();
+      var sourceMap = sceneWaterManifestShaderSources();
+      var sources = id ? sourceMap.get(id) : null;
+      if (!sources && sourceMap.size === 1) {
+        sourceMap.forEach(function(record) {
+          sources = sources || record;
+        });
+      }
+      var source = sources && sources[field];
+      return typeof source === "string" ? source.trim() : "";
+    }
+
+    function sceneWaterManifestShaderSources() {
+      if (waterManifestShaderSourcesByID && waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
+      waterManifestShaderSourcesByID = new Map();
+      var mountSources = canvas && (canvas.__gosxScene3DWaterShaderSources || (canvas.parentNode && canvas.parentNode.__gosxScene3DWaterShaderSources));
+      var published = mountSources || (typeof window !== "undefined" ? window.__gosx_scene3d_water_shader_sources_by_id : null);
+      if (published && typeof published === "object") {
+        var ids = Object.keys(published);
+        for (var pi = 0; pi < ids.length; pi += 1) {
+          var publishedRecord = published[ids[pi]];
+          if (publishedRecord && typeof publishedRecord === "object") {
+            waterManifestShaderSourcesByID.set(ids[pi], publishedRecord);
+          }
+        }
+        if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
+      }
+      var doc = canvas && canvas.ownerDocument
+        ? canvas.ownerDocument
+        : (typeof window !== "undefined" && window.document
+          ? window.document
+          : (typeof document !== "undefined" ? document : null));
+      if (!doc || !doc.querySelectorAll) return waterManifestShaderSourcesByID;
+      var fields = [
+        "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+        "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+        "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+      ];
+      function ingestManifestText(text) {
+        if (!text || text.indexOf("waterSystems") < 0 || text.indexOf("WGSL") < 0) return;
+        try {
+          var manifest = JSON.parse(text);
+          var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
+          for (var ei = 0; ei < engines.length; ei += 1) {
+            var scene = engines[ei] && engines[ei].props && engines[ei].props.scene;
+            var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : [];
+            for (var wi = 0; wi < systems.length; wi += 1) {
+              var water = systems[wi];
+              if (!water || typeof water !== "object") continue;
+              var id = typeof water.id === "string" && water.id ? water.id : ("scene-water-" + wi);
+              var record = waterManifestShaderSourcesByID.get(id) || {};
+              for (var fi = 0; fi < fields.length; fi += 1) {
+                var name = fields[fi];
+                if (typeof water[name] === "string" && water[name].trim()) record[name] = water[name];
+              }
+              waterManifestShaderSourcesByID.set(id, record);
+            }
+          }
+        } catch (_err) {}
+      }
+      var manifestScript = doc.getElementById ? doc.getElementById("gosx-manifest") : null;
+      ingestManifestText(manifestScript && manifestScript.textContent || "");
+      if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
+      var scripts = doc.scripts || doc.querySelectorAll("script");
+      for (var si = 0; si < scripts.length; si += 1) {
+        ingestManifestText(scripts[si] && scripts[si].textContent || "");
+      }
+      return waterManifestShaderSourcesByID;
+    }
+
+    function sceneWaterWithAuthoredShaderFallback(entry, fallback) {
+      if (!entry || typeof entry !== "object" || !fallback || typeof fallback !== "object") return entry;
+      var fields = [
+        "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+        "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+        "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+      ];
+      var hydrated = null;
+      for (var i = 0; i < fields.length; i += 1) {
+        var name = fields[i];
+        if (typeof entry[name] === "string" && entry[name].trim()) continue;
+        if (typeof fallback[name] !== "string" || !fallback[name].trim()) continue;
+        if (!hydrated) hydrated = Object.assign({}, entry);
+        hydrated[name] = fallback[name];
+      }
+      return hydrated || entry;
+    }
+
+    function sceneWaterManifestShaderSourceStats() {
+      var sourceMap = sceneWaterManifestShaderSources();
+      var stats = { systems: 0, fields: 0, causticSourceBytes: 0, surfaceSourceBytes: 0 };
+      sourceMap.forEach(function(record) {
+        stats.systems += 1;
+        for (var name in record) {
+          if (!Object.prototype.hasOwnProperty.call(record, name)) continue;
+          if (typeof record[name] !== "string" || !record[name].trim()) continue;
+          stats.fields += 1;
+          if (name === "causticsWGSL") {
+            stats.causticSourceBytes = Math.max(stats.causticSourceBytes, record[name].trim().length);
+          }
+        }
+        stats.surfaceSourceBytes = Math.max(stats.surfaceSourceBytes, sceneWaterSurfaceSourceBytes(record));
+      });
+      return stats;
+    }
+
+    function sceneWaterShaderSourcesFromEntries(entries) {
+      var sourceMap = {};
+      var source = Array.isArray(entries) ? entries : [];
+      var fields = [
+        "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+        "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+        "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+      ];
+      for (var i = 0; i < source.length; i += 1) {
+        var entry = source[i];
+        if (!entry || typeof entry !== "object") continue;
+        var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + i);
+        var record = sourceMap[id] || { id: id };
+        var changed = false;
+        for (var f = 0; f < fields.length; f += 1) {
+          var name = fields[f];
+          if (typeof entry[name] === "string" && entry[name].trim()) {
+            record[name] = entry[name];
+            changed = true;
+          }
+        }
+        if (changed) sourceMap[id] = record;
+      }
+      return sourceMap;
+    }
+
+    function sceneHydrateWaterEntriesFromSources(entries, sources) {
+      if (!Array.isArray(entries) || !sources || typeof sources !== "object") return entries;
+      var keys = Object.keys(sources);
+      if (!keys.length) return entries;
+      var fields = [
+        "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+        "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+        "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+      ];
+      return entries.map(function(entry, index) {
+        if (!entry || typeof entry !== "object") return entry;
+        var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + index);
+        var source = sources[id] || (keys.length === 1 ? sources[keys[0]] : null);
+        if (!source || typeof source !== "object") return entry;
+        var hydrated = null;
+        for (var f = 0; f < fields.length; f += 1) {
+          var name = fields[f];
+          if (typeof entry[name] === "string" && entry[name].trim()) continue;
+          if (typeof source[name] !== "string" || !source[name].trim()) continue;
+          if (!hydrated) hydrated = Object.assign({}, entry);
+          hydrated[name] = source[name];
+        }
+        return hydrated || entry;
+      });
+    }
+
+    function sceneWaterAuthoredComputeBackend(entry) {
+      return entry && typeof entry.computeBackend === "string" && entry.computeBackend
+        ? entry.computeBackend.trim().toLowerCase()
+        : "elio";
+    }
+
+    function sceneWaterAuthoredComputePipeline(system, stage, fallbackPipeline) {
+      var entry = system && system.entry || {};
+      var source = sceneWaterAuthoredComputeSource(entry, stage);
+      if (!source) return { pipeline: fallbackPipeline, authored: false, failed: false };
+      var entryPoint = sceneWaterAuthoredComputeEntryPoint(stage);
+      if (!entryPoint) return { pipeline: fallbackPipeline, authored: false, failed: true };
+      var backend = sceneWaterAuthoredComputeBackend(entry);
+      var key = backend + "|" + stage + "|" + entryPoint + "|" + source;
+      if (waterAuthoredComputePipelineFailures.has(key)) {
+        return { pipeline: fallbackPipeline, authored: false, failed: true };
+      }
+      var cached = waterAuthoredComputePipelineCache.get(key);
+      if (cached) return { pipeline: cached, authored: true, failed: false };
+      try {
+        var module = device.createShaderModule({
+          label: "gosx-water-" + backend + "-" + stage + "-compute",
+          code: source,
+        });
+        var pipeline = device.createComputePipeline({
+          label: "gosx-water-" + backend + "-" + stage,
+          layout: waterComputePipelineLayout,
+          compute: { module: module, entryPoint: entryPoint },
+        });
+        waterAuthoredComputePipelineCache.set(key, pipeline);
+        return { pipeline: pipeline, authored: true, failed: false };
+      } catch (error) {
+        waterAuthoredComputePipelineFailures.add(key);
+        console.warn("[gosx] Scene3D water authored " + stage + " compute pipeline failed; falling back to builtin", error);
+        return { pipeline: fallbackPipeline, authored: false, failed: true };
+      }
+    }
+
+    function sceneWaterAuthoredMaterialBackend(entry) {
+      return entry && typeof entry.materialBackend === "string" && entry.materialBackend
+        ? entry.materialBackend.trim().toLowerCase()
+        : "selena";
+    }
+
+    function sceneWaterAuthoredSurfaceVertexSource(entry) {
+      return sceneWaterAuthoredShaderSource(entry, "surfaceVertexWGSL");
+    }
+
+    function sceneWaterAuthoredSurfaceFragmentSource(entry, side) {
+      if (!entry) return "";
+      if (side === "below") {
+        var below = sceneWaterAuthoredShaderSource(entry, "surfaceBelowFragmentWGSL");
+        if (below) return below;
+      }
+      return sceneWaterAuthoredShaderSource(entry, "surfaceFragmentWGSL");
+    }
+
+    function sceneWaterSurfaceSourceBytes(record) {
+      if (!record || typeof record !== "object") return 0;
+      var total = 0;
+      [
+        "surfaceVertexWGSL",
+        "surfaceFragmentWGSL",
+        "surfaceBelowFragmentWGSL",
+      ].forEach(function(name) {
+        if (typeof record[name] === "string" && record[name].trim()) {
+          total += record[name].trim().length;
+        }
+      });
+      return total;
+    }
+
+    function sceneWaterResolvedSurfaceSourceBytes(entry) {
+      if (!entry || typeof entry !== "object") return 0;
+      return (
+        sceneWaterAuthoredSurfaceVertexSource(entry).length +
+        sceneWaterAuthoredSurfaceFragmentSource(entry, "above").length +
+        sceneWaterAuthoredSurfaceFragmentSource(entry, "below").length
+      );
+    }
+
+    function sceneWaterAuthoredSurfaceModule(label, source) {
+      if (!source) return null;
+      var cached = waterAuthoredSurfaceModuleCache.get(source);
+      if (cached) return cached;
+      var module = device.createShaderModule({ label: label, code: source });
+      waterAuthoredSurfaceModuleCache.set(source, module);
+      return module;
+    }
+
+    function sceneWaterAuthoredCausticsSource(entry) {
+      return sceneWaterAuthoredShaderSource(entry, "causticsWGSL");
+    }
+
+    function sceneWaterAuthoredCausticsPipeline(system) {
+      var entry = system && system.entry || {};
+      var source = sceneWaterAuthoredCausticsSource(entry);
+      if (!source) return { pipeline: waterCausticsPipeline, authored: false, failed: false };
+      var backend = sceneWaterAuthoredMaterialBackend(entry);
+      var key = backend + "|caustics|" + WATER_CAUSTICS_TEXTURE_FORMAT + "|" + source;
+      if (waterAuthoredCausticsPipelineFailures.has(key)) {
+        return { pipeline: waterCausticsPipeline, authored: false, failed: true };
+      }
+      var cached = waterAuthoredCausticsPipelineCache.get(key);
+      if (cached) {
+        if (cached.pipeline) return { pipeline: cached.pipeline, authored: true, failed: false };
+        if (cached.failed) return { pipeline: waterCausticsPipeline, authored: false, failed: true };
+        return { pipeline: waterCausticsPipeline, authored: false, failed: false, pending: true };
+      }
+      var scopedDevice = device;
+      if (!scopedDevice) return { pipeline: waterCausticsPipeline, authored: false, failed: false };
+      var pending = { pending: true };
+      waterAuthoredCausticsPipelineCache.set(key, pending);
+      function markFailed(error) {
+        waterAuthoredCausticsPipelineLastError = String(error && error.message || error || "validation failed").slice(0, 500);
+        waterAuthoredCausticsPipelineFailures.add(key);
+        waterAuthoredCausticsPipelineCache.set(key, { failed: true });
+        console.warn("[gosx] Scene3D water authored caustics pipeline failed; falling back to builtin", error || "");
+      }
+      try {
+        var fragmentModule = scopedDevice.createShaderModule({
+          label: "gosx-water-" + backend + "-caustics-frag",
+          code: source,
+        });
+        var descriptor = {
+          label: "gosx-water-" + backend + "-caustics-pass",
+          layout: waterCausticsPipelineLayout,
+          vertex: { module: waterCausticsVertexModule, entryPoint: "vertexMain", buffers: [] },
+          fragment: {
+            module: fragmentModule,
+            entryPoint: "fragmentMain",
+            targets: [{ format: WATER_CAUSTICS_TEXTURE_FORMAT }],
+          },
+          primitive: { topology: "triangle-list" },
+        };
+        var validationScoped = false;
+        if (typeof scopedDevice.pushErrorScope === "function") {
+          try {
+            scopedDevice.pushErrorScope("validation");
+            validationScoped = true;
+          } catch (_scopeError) {
+            validationScoped = false;
+          }
+        }
+        var pipeline = scopedDevice.createRenderPipeline(descriptor);
+        waterAuthoredCausticsPipelineCache.set(key, { pipeline: pipeline });
+        if (validationScoped) {
+          wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+            if (!rendererDeviceStillActive(scopedDevice)) return;
+            if (scopeErr) {
+              markFailed(scopeErr);
+            } else {
+              waterAuthoredCausticsPipelineLastError = "";
+            }
+          });
+        }
+        return { pipeline: pipeline, authored: true, failed: false };
+      } catch (error) {
+        markFailed(error);
+        return { pipeline: waterCausticsPipeline, authored: false, failed: true };
+      }
+    }
+
+    function sceneWaterAuthoredPoolVertexSource(entry) {
+      return sceneWaterAuthoredShaderSource(entry, "poolVertexWGSL");
+    }
+
+    function sceneWaterAuthoredPoolFragmentSource(entry) {
+      return sceneWaterAuthoredShaderSource(entry, "poolFragmentWGSL");
+    }
+
+    function sceneWaterAuthoredObjectShadowSource(entry) {
+      return sceneWaterAuthoredShaderSource(entry, "objectShadowWGSL");
+    }
+
+    function sceneWaterAuthoredObjectShadowPipeline(system) {
+      var entry = system && system.entry || {};
+      var source = sceneWaterAuthoredObjectShadowSource(entry);
+      if (!source) return { pipeline: waterObjectShadowPipeline, authored: false, failed: false };
+      var backend = sceneWaterAuthoredMaterialBackend(entry);
+      var key = backend + "|object-shadow|" + WATER_OBJECT_TEXTURE_FORMAT + "|" + source;
+      if (waterAuthoredObjectShadowPipelineFailures.has(key)) {
+        return { pipeline: waterObjectShadowPipeline, authored: false, failed: true };
+      }
+      var cached = waterAuthoredObjectShadowPipelineCache.get(key);
+      if (cached) return { pipeline: cached, authored: true, failed: false };
+      try {
+        var fragmentModule = device.createShaderModule({
+          label: "gosx-water-" + backend + "-object-shadow-frag",
+          code: source,
+        });
+        var pipeline = device.createRenderPipeline({
+          label: "gosx-water-" + backend + "-object-shadow-pass",
+          layout: waterObjectTexturePipelineLayout,
+          vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
+          fragment: {
+            module: fragmentModule,
+            entryPoint: "shadowMain",
+            targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+          },
+          primitive: { topology: "triangle-list" },
+        });
+        waterAuthoredObjectShadowPipelineCache.set(key, pipeline);
+        return { pipeline: pipeline, authored: true, failed: false };
+      } catch (error) {
+        waterAuthoredObjectShadowPipelineFailures.add(key);
+        console.warn("[gosx] Scene3D water authored object shadow pipeline failed; falling back to builtin", error);
+        return { pipeline: waterObjectShadowPipeline, authored: false, failed: true };
+      }
+    }
+
+    function sceneWaterAuthoredObjectMeshShadowVertexSource(entry) {
+      return sceneWaterAuthoredShaderSource(entry, "objectMeshShadowVertexWGSL");
+    }
+
+    function sceneWaterAuthoredObjectMeshShadowFragmentSource(entry) {
+      return sceneWaterAuthoredShaderSource(entry, "objectMeshShadowFragmentWGSL");
+    }
+
+    function sceneWaterAuthoredObjectMeshShadowPipeline(system) {
+      var entry = system && system.entry || {};
+      var vertexSource = sceneWaterAuthoredObjectMeshShadowVertexSource(entry);
+      var fragmentSource = sceneWaterAuthoredObjectMeshShadowFragmentSource(entry);
+      if (!vertexSource && !fragmentSource) return { pipeline: waterObjectMeshShadowPipeline, authored: false, failed: false };
+      var backend = sceneWaterAuthoredMaterialBackend(entry);
+      var key = backend + "|object-mesh-shadow|" + WATER_OBJECT_TEXTURE_FORMAT + "|" + vertexSource + "|" + fragmentSource;
+      if (waterAuthoredObjectMeshShadowPipelineFailures.has(key)) {
+        return { pipeline: waterObjectMeshShadowPipeline, authored: false, failed: true };
+      }
+      var cached = waterAuthoredObjectMeshShadowPipelineCache.get(key);
+      if (cached) return { pipeline: cached, authored: true, failed: false };
+      try {
+        var vertexModule = vertexSource
+          ? device.createShaderModule({ label: "gosx-water-" + backend + "-object-mesh-shadow-vert", code: vertexSource })
+          : waterObjectMeshShadowVertexModule;
+        var fragmentModule = fragmentSource
+          ? device.createShaderModule({ label: "gosx-water-" + backend + "-object-mesh-shadow-frag", code: fragmentSource })
+          : waterObjectMeshShadowFragmentModule;
+        var pipeline = device.createRenderPipeline({
+          label: "gosx-water-" + backend + "-object-mesh-shadow-pass",
+          layout: waterObjectMeshShadowPipelineLayout,
+          vertex: { module: vertexModule, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
+          fragment: {
+            module: fragmentModule,
+            entryPoint: "fragmentMain",
+            targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+          },
+          primitive: { topology: "triangle-list", cullMode: "none" },
+        });
+        waterAuthoredObjectMeshShadowPipelineCache.set(key, pipeline);
+        return { pipeline: pipeline, authored: true, failed: false };
+      } catch (error) {
+        waterAuthoredObjectMeshShadowPipelineFailures.add(key);
+        console.warn("[gosx] Scene3D water authored object mesh shadow pipeline failed; falling back to builtin", error);
+        return { pipeline: waterObjectMeshShadowPipeline, authored: false, failed: true };
+      }
+    }
+
+    function sceneWaterPoolShapeRounded(entry) {
+      if (!entry || typeof entry.poolShape !== "string") return false;
+      var value = entry.poolShape.trim().toLowerCase();
+      return value === "rounded box" || value === "rounded" || value === "roundbox";
+    }
+
+    function sceneWaterOpticsFlags(entry, objectState) {
+      return {
+        caustics: sceneBool(entry && entry.caustics, true),
+        reflection: sceneBool(entry && entry.reflection, true),
+        refraction: sceneBool(entry && entry.refraction, true),
+        object: !!(objectState && objectState.kind > 0 && objectState.displacementScale > 0),
+      };
+    }
+
+    function sceneWaterUniformData(system, entry, deltaTime, timeSeconds, options) {
+      var transientObject = !!(options && options.transientObject);
+      var resolution = system && system.resolution ? system.resolution : sceneWaterResolution(entry && entry.resolution);
+      var cellCount = resolution * resolution;
+      var light = sceneWaterLightVector(entry, { x: 0.3, y: 0.9, z: 0.45 });
+      var lightLen = Math.sqrt(light.x * light.x + light.y * light.y + light.z * light.z) || 1;
+      var shallow = sceneColorRGBA(entry && entry.shallowColor, [0.48, 0.82, 0.92, 1]);
+      var deep = sceneColorRGBA(entry && entry.deepColor, [0.03, 0.18, 0.34, 1]);
+      var poolWidth = Math.max(0.01, sceneNumber(entry && entry.poolWidth, 1.0));
+      var poolHeight = Math.max(0.01, sceneNumber(entry && entry.poolHeight, 1.0));
+      var poolLength = Math.max(0.01, sceneNumber(entry && entry.poolLength, 1.0));
+      var rounded = sceneWaterPoolShapeRounded(entry);
+      var maxCornerRadius = Math.max(0, Math.min(poolWidth, poolLength) - 0.001);
+      var cornerRadius = rounded ? Math.max(0, Math.min(maxCornerRadius, sceneNumber(entry && entry.cornerRadius, 0))) : 0;
+      var objectState = sceneWaterObjectState(transientObject ? null : system, entry, timeSeconds, poolWidth, poolLength);
+      var optics = sceneWaterOpticsFlags(entry, objectState);
+      if (system) {
+        system.waterResolution = resolution;
+        system.waterPoolWidth = poolWidth;
+        system.waterPoolHeight = poolHeight;
+        system.waterPoolLength = poolLength;
+        system.waterCornerRadius = cornerRadius;
+        system.waterLightDir = { x: light.x / lightLen, y: light.y / lightLen, z: light.z / lightLen };
+      }
+      waterUniformScratchU[0] = resolution;
+      waterUniformScratchU[1] = cellCount;
+      waterUniformScratchU[2] = Math.max(0, Math.floor(sceneNumber(entry && entry.seedDrops, 7)));
+      waterUniformScratchU[3] = Math.max(0, Math.floor(system && system.frameIndex || 0));
+      waterUniformScratchF[4] = Math.max(0, Math.min(0.1, sceneNumber(deltaTime, 0)));
+      waterUniformScratchF[5] = sceneNumber(timeSeconds, 0);
+      waterUniformScratchF[6] = Math.max(0, Math.min(2, sceneNumber(entry && entry.waveSpeed, 1.0)));
+      waterUniformScratchF[7] = Math.max(0, Math.min(1, sceneNumber(entry && entry.damping, 0.995)));
+      waterUniformScratchF[8] = Math.max(0.0001, Math.min(0.5, sceneNumber(entry && entry.dropRadius, 0.03)));
+      waterUniformScratchF[9] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropStrength, 0.01)));
+      waterUniformScratchF[10] = Math.max(0.01, Math.min(16, sceneNumber(entry && entry.normalScale, 1.0)));
+      waterUniformScratchF[11] = poolWidth;
+      waterUniformScratchF[12] = poolHeight;
+      waterUniformScratchF[13] = poolLength;
+      waterUniformScratchF[14] = cornerRadius;
+      waterUniformScratchF[15] = rounded ? 1 : 0;
+      waterUniformScratchF[16] = light.x / lightLen;
+      waterUniformScratchF[17] = light.y / lightLen;
+      waterUniformScratchF[18] = light.z / lightLen;
+      waterUniformScratchF[19] = 1;
+      waterUniformScratchF[20] = shallow[0];
+      waterUniformScratchF[21] = shallow[1];
+      waterUniformScratchF[22] = shallow[2];
+      waterUniformScratchF[23] = shallow[3];
+      waterUniformScratchF[24] = deep[0];
+      waterUniformScratchF[25] = deep[1];
+      waterUniformScratchF[26] = deep[2];
+      waterUniformScratchF[27] = deep[3];
+      waterUniformScratchF[28] = objectState.center.x;
+      waterUniformScratchF[29] = objectState.center.y;
+      waterUniformScratchF[30] = objectState.center.z;
+      waterUniformScratchF[31] = 1;
+      waterUniformScratchF[32] = objectState.previous.x;
+      waterUniformScratchF[33] = objectState.previous.y;
+      waterUniformScratchF[34] = objectState.previous.z;
+      waterUniformScratchF[35] = 1;
+      waterUniformScratchF[36] = objectState.halfSize.x;
+      waterUniformScratchF[37] = objectState.halfSize.y;
+      waterUniformScratchF[38] = objectState.halfSize.z;
+      waterUniformScratchF[39] = objectState.radius;
+      waterUniformScratchF[40] = objectState.kind;
+      waterUniformScratchF[41] = objectState.displacementScale;
+      waterUniformScratchF[42] = Math.min(WATER_MAX_DISPLACEMENT_SPHERES, objectState.spheres ? objectState.spheres.length : 0);
+      waterUniformScratchF[43] = objectState.subtype || 0;
+      waterUniformScratchF[44] = optics.caustics ? 1 : 0;
+      waterUniformScratchF[45] = optics.reflection ? 1 : 0;
+      waterUniformScratchF[46] = optics.refraction ? 1 : 0;
+      waterUniformScratchF[47] = optics.object ? 1 : 0;
+      waterUniformScratchF[48] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropX, 0)));
+      waterUniformScratchF[49] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropZ, 0)));
+      waterUniformScratchF[50] = Math.max(0.0001, Math.min(0.5, sceneNumber(entry && entry.dropEventRadius, sceneNumber(entry && entry.dropRadius, 0.03))));
+      waterUniformScratchF[51] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropEventStrength, sceneNumber(entry && entry.dropStrength, 0.01))));
+      waterUniformScratchF[52] = Math.max(0, sceneNumber(system && system.seedSalt, 0));
+      sceneWaterWriteObjectSphereBuffer(system, objectState.spheres);
+      return waterUniformScratch;
+    }
+
+    function createWaterComputeBindGroup(system, readBuffer, writeBuffer) {
+      return device.createBindGroup({
+        label: "gosx-water-compute-bg",
+        layout: waterComputeBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: system.uniformBuffer } },
+          { binding: 1, resource: { buffer: readBuffer } },
+          { binding: 2, resource: { buffer: writeBuffer } },
+          { binding: 3, resource: { buffer: system.objectSphereBuffer } },
+        ],
+      });
+    }
+
+    function createWaterRenderBindGroup(system, buffer) {
+      var entry = system && system.entry || {};
+      var cubeRecord = entry.cubeMap ? wgpuLoadCubeTexture(device, entry.cubeMap, textureCache) : null;
+      var cubeLoaded = Boolean(cubeRecord && cubeRecord.loaded && cubeRecord.view);
+      var cubePending = Boolean(cubeRecord && cubeRecord.pending && !cubeRecord.loaded && !cubeRecord.failed);
+      var cubeFailed = Boolean(cubeRecord && cubeRecord.failed);
+      var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+      var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
+      var tileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
+      var tilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
+      var tileFailed = Boolean(tileRecord && tileRecord.failed);
+      if (system) {
+        system.waterSkyCubeRequested = !!(entry && entry.cubeMap);
+        system.waterSkyCubeLoaded = cubeLoaded;
+        system.waterSkyCubePending = cubePending;
+        system.waterSkyCubeFailed = cubeFailed;
+        system.waterSurfaceTileRequested = !!tileURL;
+        system.waterSurfaceTileLoaded = tileLoaded;
+        system.waterSurfaceTilePending = tilePending;
+        system.waterSurfaceTileFailed = tileFailed;
+      }
+      return device.createBindGroup({
+        label: "gosx-water-render-bg",
+        layout: waterRenderBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: system.uniformBuffer } },
+          { binding: 1, resource: { buffer: buffer } },
+          { binding: 2, resource: linearSampler },
+          { binding: 3, resource: system.causticsView || placeholderView },
+          { binding: 4, resource: system.objectReflectionView || placeholderView },
+          { binding: 5, resource: system.objectClippedReflectionView || placeholderView },
+          { binding: 6, resource: system.objectRefractionView || placeholderView },
+          { binding: 7, resource: cubeRecord && cubeRecord.view ? cubeRecord.view : placeholderCubeView },
+          { binding: 8, resource: { buffer: system.objectTextureMatrixBuffer } },
+          { binding: 9, resource: tileLoaded ? tileRecord.view : placeholderView },
+          { binding: 10, resource: { buffer: system.objectSphereBuffer } },
+        ],
+      });
+    }
+
+    function writeWaterObjectTextureMatrices(system) {
+      if (!system || !system.objectTextureMatrixBuffer) return;
+      var viewMatrix = system.objectViewProjectionReady ? system.objectViewProjectionMatrix : null;
+      waterObjectTextureMatrixScratch.set(viewMatrix || scratchSelenaViewProjection, 0);
+      var reflectionMatrix = system.objectReflectionViewProjectionReady ? system.objectReflectionViewProjectionMatrix : null;
+      waterObjectTextureMatrixScratch.set(reflectionMatrix || scratchSelenaViewProjection, 16);
+      device.queue.writeBuffer(system.objectTextureMatrixBuffer, 0, waterObjectTextureMatrixScratch);
+    }
+
+    function createWaterPoolBindGroup(system) {
+      if (!system) return null;
+      var activeBuffer = system.activeIndex === 0 ? system.bufferA : system.bufferB;
+      var entry = system.entry || {};
+      var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+      var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, textureCache) : null;
+      var tileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
+      var tilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
+      var tileFailed = Boolean(tileRecord && tileRecord.failed);
+      system.waterPoolTileRequested = !!tileURL;
+      system.waterPoolTileLoaded = tileLoaded;
+      system.waterPoolTilePending = tilePending;
+      system.waterPoolTileFailed = tileFailed;
+      return device.createBindGroup({
+        label: "gosx-water-pool-bg",
+        layout: waterPoolBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: system.uniformBuffer } },
+          { binding: 1, resource: { buffer: activeBuffer } },
+          { binding: 2, resource: waterTileSampler || linearSampler },
+          { binding: 3, resource: system.causticsView || placeholderView },
+          { binding: 4, resource: system.objectShadowView || placeholderView },
+          { binding: 5, resource: tileLoaded ? tileRecord.view : placeholderView },
+        ],
+      });
+    }
+
+    function createWaterCausticsBindGroup(system, buffer) {
+      return device.createBindGroup({
+        label: "gosx-water-caustics-bg",
+        layout: waterCausticsBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: system.uniformBuffer } },
+          { binding: 1, resource: { buffer: buffer } },
+          { binding: 2, resource: { buffer: system.objectSphereBuffer } },
+          { binding: 3, resource: linearSampler },
+          { binding: 4, resource: system.objectShadowView || placeholderView },
+        ],
+      });
+    }
+
+    function createWaterObjectTextureBindGroup(system) {
+      return device.createBindGroup({
+        label: "gosx-water-object-textures-bg",
+        layout: waterObjectTextureBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: system.uniformBuffer } },
+          { binding: 1, resource: { buffer: system.objectSphereBuffer } },
+        ],
+      });
+    }
+
+    function createWaterObjectMeshShadowBindGroup(system) {
+      if (!system || !system.objectMeshShadowUniformBuffer || !waterObjectMeshShadowBindGroupLayout) return null;
+      return device.createBindGroup({
+        label: "gosx-water-object-mesh-shadow-bg",
+        layout: waterObjectMeshShadowBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: system.objectMeshShadowUniformBuffer } },
+        ],
+      });
+    }
+
+    function sceneWaterObjectMeshShadowUniformData(system) {
+      var entry = system && system.entry || {};
+      var light = sceneWaterLightVector(entry, { x: 0.3, y: 0.9, z: 0.45 });
+      var lightLen = Math.sqrt(light.x * light.x + light.y * light.y + light.z * light.z) || 1;
+      var poolWidth = Math.max(0.001, sceneNumber(entry && entry.poolWidth, 1.0));
+      var poolLength = Math.max(0.001, sceneNumber(entry && entry.poolLength, 1.0));
+      waterObjectMeshShadowUniformScratch[0] = light.x / lightLen;
+      waterObjectMeshShadowUniformScratch[1] = light.y / lightLen;
+      waterObjectMeshShadowUniformScratch[2] = light.z / lightLen;
+      waterObjectMeshShadowUniformScratch[3] = 1;
+      waterObjectMeshShadowUniformScratch[4] = Math.max(0.0001, poolWidth);
+      waterObjectMeshShadowUniformScratch[5] = Math.max(0.0001, poolLength);
+      waterObjectMeshShadowUniformScratch[6] = 0;
+      waterObjectMeshShadowUniformScratch[7] = 0;
+      return waterObjectMeshShadowUniformScratch;
+    }
+
+    function createSceneWaterSystem(scopedDevice, entry, width, height) {
+      var resolution = sceneWaterResolution(entry && entry.resolution);
+      var causticsResolution = sceneWaterCausticsResolution(entry);
+      var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
+      var objectTextureWidth = objectTextureSize.width;
+      var objectTextureHeight = objectTextureSize.height;
+      var objectTextureResolution = objectTextureSize.resolution;
+      var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
+      var cellCount = resolution * resolution;
+      var stateBytes = cellCount * 16;
+      var bufferA = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
+      var bufferB = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
+      var uniformBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 256);
+      var objectSphereBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, WATER_MAX_DISPLACEMENT_SPHERES * 16);
+      var objectTextureMatrixBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 128);
+      var objectMeshShadowUniformBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 32);
+      var causticsTexture = scopedDevice.createTexture({
+        label: "gosx-water-caustics-target",
+        size: [causticsResolution, causticsResolution, 1],
+        format: WATER_CAUSTICS_TEXTURE_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      var causticsView = causticsTexture.createView();
+      var objectReflectionTexture = scopedDevice.createTexture({
+        label: "gosx-water-object-reflection-target",
+        size: [objectTextureWidth, objectTextureHeight, 1],
+        format: WATER_OBJECT_TEXTURE_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      var objectClippedReflectionTexture = scopedDevice.createTexture({
+        label: "gosx-water-object-clipped-reflection-target",
+        size: [objectTextureWidth, objectTextureHeight, 1],
+        format: WATER_OBJECT_TEXTURE_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      var objectRefractionTexture = scopedDevice.createTexture({
+        label: "gosx-water-object-refraction-target",
+        size: [objectTextureWidth, objectTextureHeight, 1],
+        format: WATER_OBJECT_TEXTURE_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      var objectTextureDepthTexture = scopedDevice.createTexture({
+        label: "gosx-water-object-texture-depth",
+        size: [objectTextureWidth, objectTextureHeight, 1],
+        format: "depth24plus",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      var objectShadowTexture = scopedDevice.createTexture({
+        label: "gosx-water-object-shadow-target",
+        size: [objectShadowResolution, objectShadowResolution, 1],
+        format: WATER_OBJECT_TEXTURE_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      var system = {
+        entry: entry,
+        resolution: resolution,
+        causticsResolution: causticsResolution,
+        objectTextureResolution: objectTextureResolution,
+        objectTextureWidth: objectTextureWidth,
+        objectTextureHeight: objectTextureHeight,
+        objectTextureResolutionMode: objectTextureSize.mode,
+        objectTexturePixelBudget: objectTextureSize.pixelBudget,
+        objectShadowResolution: objectShadowResolution,
+        cellCount: cellCount,
+        vertexCount: Math.max(0, (resolution - 1) * (resolution - 1) * 6),
+        bufferA: bufferA,
+        bufferB: bufferB,
+        uniformBuffer: uniformBuffer,
+        objectSphereBuffer: objectSphereBuffer,
+        objectTextureMatrixBuffer: objectTextureMatrixBuffer,
+        objectViewProjectionMatrix: new Float32Array(16),
+        objectViewProjectionReady: false,
+        objectReflectionViewProjectionMatrix: new Float32Array(16),
+        objectReflectionViewProjectionReady: false,
+        objectMeshShadowUniformBuffer: objectMeshShadowUniformBuffer,
+        causticsTexture: causticsTexture,
+        causticsView: causticsView,
+        objectReflectionTexture: objectReflectionTexture,
+        objectReflectionView: objectReflectionTexture.createView(),
+        objectClippedReflectionTexture: objectClippedReflectionTexture,
+        objectClippedReflectionView: objectClippedReflectionTexture.createView(),
+        objectRefractionTexture: objectRefractionTexture,
+        objectRefractionView: objectRefractionTexture.createView(),
+        objectTextureDepthTexture: objectTextureDepthTexture,
+        objectTextureDepthView: objectTextureDepthTexture.createView(),
+        objectShadowTexture: objectShadowTexture,
+        objectShadowView: objectShadowTexture.createView(),
+        activeIndex: 0,
+        frameIndex: 0,
+        seeded: false,
+        seedSalt: Number.isFinite(Number(entry && entry.seedSalt)) ? Number(entry.seedSalt) : Math.random() * 4096,
+        lastDropEventID: 0,
+        dropDispatchCount: 0,
+        dispose: function() {
+          if (system._gosxDisposed) return;
+          system._gosxDisposed = true;
+          if (bufferA && typeof bufferA.destroy === "function") {
+            pointsEntryGPUBuffers.delete(bufferA);
+            bufferA.destroy();
+          }
+          if (bufferB && typeof bufferB.destroy === "function") {
+            pointsEntryGPUBuffers.delete(bufferB);
+            bufferB.destroy();
+          }
+          if (uniformBuffer && typeof uniformBuffer.destroy === "function") {
+            pointsEntryGPUBuffers.delete(uniformBuffer);
+            uniformBuffer.destroy();
+          }
+          if (objectSphereBuffer && typeof objectSphereBuffer.destroy === "function") {
+            pointsEntryGPUBuffers.delete(objectSphereBuffer);
+            objectSphereBuffer.destroy();
+          }
+          if (objectTextureMatrixBuffer && typeof objectTextureMatrixBuffer.destroy === "function") {
+            pointsEntryGPUBuffers.delete(objectTextureMatrixBuffer);
+            objectTextureMatrixBuffer.destroy();
+          }
+          if (objectMeshShadowUniformBuffer && typeof objectMeshShadowUniformBuffer.destroy === "function") {
+            pointsEntryGPUBuffers.delete(objectMeshShadowUniformBuffer);
+            objectMeshShadowUniformBuffer.destroy();
+          }
+          if (causticsTexture && typeof causticsTexture.destroy === "function") {
+            causticsTexture.destroy();
+          }
+          if (objectReflectionTexture && typeof objectReflectionTexture.destroy === "function") {
+            objectReflectionTexture.destroy();
+          }
+          if (objectClippedReflectionTexture && typeof objectClippedReflectionTexture.destroy === "function") {
+            objectClippedReflectionTexture.destroy();
+          }
+          if (objectRefractionTexture && typeof objectRefractionTexture.destroy === "function") {
+            objectRefractionTexture.destroy();
+          }
+          if (objectTextureDepthTexture && typeof objectTextureDepthTexture.destroy === "function") {
+            objectTextureDepthTexture.destroy();
+          }
+          if (objectShadowTexture && typeof objectShadowTexture.destroy === "function") {
+            objectShadowTexture.destroy();
+          }
+        },
+      };
+      system.computeBindGroups = [
+        createWaterComputeBindGroup(system, bufferA, bufferB),
+        createWaterComputeBindGroup(system, bufferB, bufferA),
+      ];
+      system.renderBindGroups = [
+        createWaterRenderBindGroup(system, bufferA),
+        createWaterRenderBindGroup(system, bufferB),
+      ];
+      system.causticsBindGroups = [
+        createWaterCausticsBindGroup(system, bufferA),
+        createWaterCausticsBindGroup(system, bufferB),
+      ];
+      system.objectTextureBindGroup = createWaterObjectTextureBindGroup(system);
+      system.objectMeshShadowBindGroup = createWaterObjectMeshShadowBindGroup(system);
+      return system;
+    }
+
+    function retireWaterSystem(system) {
+      if (!system || typeof system.dispose !== "function" || system._gosxDisposed) return;
+      system._gosxRetireSerial = ++waterSystemRetireSerial;
+      if (device && device.queue && typeof device.queue.onSubmittedWorkDone === "function") {
+        device.queue.onSubmittedWorkDone().then(function() {
+          system.dispose();
+        }).catch(function() {
+          system.dispose();
+        });
+        return;
+      }
+      if (typeof setTimeout === "function") {
+        setTimeout(function() { system.dispose(); }, 0);
+        return;
+      }
+      system.dispose();
+    }
+
+    function disposeWaterSystems() {
+      for (const record of waterSystems.values()) {
+        if (record && record.system && typeof record.system.dispose === "function") {
+          record.system.dispose();
+        }
+      }
+      waterSystems.clear();
+      lastWaterTimeSeconds = null;
+    }
+
+    function syncWaterSystems(entries, width, height) {
+      var activeIds = new Set();
+      var records = [];
+      var sourceEntries = Array.isArray(entries) ? entries : [];
+      for (var i = 0; i < sourceEntries.length; i++) {
+        var entry = sourceEntries[i];
+        if (!entry || typeof entry !== "object") continue;
+        var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + i);
+        var record = waterSystems.get(id);
+        entry = sceneWaterWithAuthoredShaderFallback(entry, record && record.system && record.system.entry);
+        var signature = sceneWaterSystemSignature(entry, width, height);
+        activeIds.add(id);
+        if (!record || record.signature !== signature) {
+          if (record && record.system && typeof record.system.dispose === "function") {
+            retireWaterSystem(record.system);
+          }
+          record = {
+            signature: signature,
+            system: createSceneWaterSystem(device, entry, width, height),
+          };
+          if (record.system) record.system.id = id;
+          waterSystems.set(id, record);
+        } else if (record.system) {
+          record.system.entry = entry;
+          record.system.id = id;
+        }
+        if (record && record.system) {
+          records.push(record);
+        }
+      }
+      for (const [id, record] of waterSystems.entries()) {
+        if (!activeIds.has(id)) {
+          if (record && record.system && typeof record.system.dispose === "function") {
+            retireWaterSystem(record.system);
+          }
+          waterSystems.delete(id);
+        }
+      }
+      return records;
+    }
+
+    function dispatchWaterPass(encoder, system, pipeline) {
+      if (!encoder || !system || !pipeline) return 0;
+      var pass = encoder.beginComputePass({ label: "gosx-water-pass" });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, system.computeBindGroups[system.activeIndex]);
+      pass.dispatchWorkgroups(Math.ceil(system.cellCount / 64));
+      pass.end();
+      system.activeIndex = system.activeIndex === 0 ? 1 : 0;
+      return 1;
+    }
+
+    function renderWaterCausticsPass(encoder, system) {
+      if (!encoder || !system || !waterCausticsPipeline || !system.causticsView) {
+        return { passes: 0, authored: false, failed: false, sourceBytes: 0 };
+      }
+      var pipelineRecord = sceneWaterAuthoredCausticsPipeline(system);
+      var pipeline = pipelineRecord && pipelineRecord.pipeline || waterCausticsPipeline;
+      var sourceBytes = sceneWaterAuthoredCausticsSource(system && system.entry || {}).length;
+      if (!pipeline) return { passes: 0, authored: false, failed: pipelineRecord && pipelineRecord.failed || false, sourceBytes: sourceBytes };
+      var pass = encoder.beginRenderPass({
+        label: "gosx-water-caustics-pass",
+        colorAttachments: [{
+          view: system.causticsView,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        }],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, system.causticsBindGroups[system.activeIndex]);
+      pass.draw(3);
+      pass.end();
+      return { passes: 1, authored: !!(pipelineRecord && pipelineRecord.authored), failed: !!(pipelineRecord && pipelineRecord.failed), sourceBytes: sourceBytes };
+    }
+
+    function sceneWaterActiveObjectID(entry) {
+      var raw = "";
+      if (entry && typeof entry.objectID === "string" && entry.objectID) raw = entry.objectID;
+      else if (entry && typeof entry.objectId === "string" && entry.objectId) raw = entry.objectId;
+      if (raw) return raw;
+      var active = String(entry && entry.activeObject || entry && entry.objectKind || "").trim().toLowerCase();
+      if (active.indexOf("sphere") >= 0) return "float-sphere";
+      if (active.indexOf("cube") >= 0 || active.indexOf("box") >= 0) return "float-cube";
+      if (active.indexOf("torus") >= 0) return "float-torus";
+      if (active.indexOf("duck") >= 0 || active.indexOf("mesh") >= 0) return "float-duck";
+      return "";
+    }
+
+    function sceneWaterMeshObjectID(obj) {
+      if (!obj || typeof obj !== "object") return "";
+      return String(
+        obj.id ||
+        obj.nodeId ||
+        obj.sourceId ||
+        obj.ownerId ||
+        obj.modelId ||
+        obj.name ||
+        ""
+      );
+    }
+
+    function sceneWaterObjectMeshMatches(obj, targetID) {
+      if (!targetID) return false;
+      var id = sceneWaterMeshObjectID(obj);
+      if (!id) return false;
+      if (id === targetID) return true;
+      return id.indexOf(targetID + ":") === 0 || id.indexOf(targetID + "/") === 0 || id.indexOf(targetID + "#") === 0;
+    }
+
+    function sceneWaterObjectMeshKindMatches(obj, entry) {
+      if (!obj || !obj.castShadow) return false;
+      var kind = String(obj.kind || "").trim().toLowerCase();
+      var active = String(entry && entry.activeObject || entry && entry.objectKind || "").trim().toLowerCase();
+      var waterKind = sceneWaterObjectKind(entry);
+      if (waterKind === 1) return kind.indexOf("sphere") >= 0;
+      if (waterKind === 2) return kind.indexOf("box") >= 0 || kind.indexOf("cube") >= 0;
+      if (active.indexOf("torus") >= 0) return kind.indexOf("torus") >= 0;
+      if (active.indexOf("duck") >= 0 || active.indexOf("mesh") >= 0) {
+        var id = sceneWaterMeshObjectID(obj).toLowerCase();
+        return id.indexOf("duck") >= 0 || kind.indexOf("model") >= 0 || kind.indexOf("mesh") >= 0;
+      }
+      return false;
+    }
+
+    function sceneWaterObjectMeshCandidateProfile(bundle, entry, materials) {
+      var targetID = sceneWaterActiveObjectID(entry);
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var materialList = Array.isArray(materials) ? materials : (Array.isArray(bundle && bundle.materials) ? bundle.materials : []);
+      var parts = [];
+      for (var i = 0; i < objects.length && parts.length < 8; i++) {
+        var obj = objects[i] || {};
+        var materialIndex = Math.max(0, Math.floor(sceneNumber(obj.materialIndex, 0)));
+        var material = materialList[materialIndex] || {};
+        var materialName = String(material.name || material.id || obj.material || material.kind || material.materialKind || "?");
+        var materialBackend = sceneSelenaIsMaterial(material) ? "selena" : String(material.shaderBackend || material.kind || material.materialKind || "pbr");
+        parts.push([
+          sceneWaterMeshObjectID(obj) || "?",
+          String(obj.kind || "?"),
+          obj.castShadow ? "shadow" : "no-shadow",
+          obj.viewCulled ? "culled" : "visible",
+          "mat=" + materialName,
+          "backend=" + materialBackend,
+          String(Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)))),
+        ].join(":"));
+      }
+      return (targetID || "?") + "|" + parts.join(",");
+    }
+
+    function sceneWaterObjectMeshList(bundle, entry) {
+      var targetID = sceneWaterActiveObjectID(entry);
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var selected = [];
+      if (targetID) {
+        for (var i = 0; i < objects.length; i++) {
+          var obj = objects[i];
+          if (!obj) continue;
+          if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+          if (sceneWaterObjectMeshMatches(obj, targetID)) selected.push(obj);
+        }
+      }
+      if (selected.length > 0) return selected;
+      for (var j = 0; j < objects.length; j++) {
+        var fallback = objects[j];
+        if (!fallback) continue;
+        if (!Number.isFinite(fallback.vertexOffset) || !Number.isFinite(fallback.vertexCount) || fallback.vertexCount <= 0) continue;
+        if (sceneWaterObjectMeshKindMatches(fallback, entry)) selected.push(fallback);
+      }
+      return selected;
+    }
+
+    function bindWaterObjectMeshVertexBuffers(pass, obj, pbrBuffers) {
+      if (!pass || !obj || !pbrBuffers) return false;
+      var offset = obj.vertexOffset;
+      var count = obj.vertexCount;
+      var isSkinned = webGPUObjectIsSkinned(obj);
+      var computedMorphRecord = !isSkinned ? webGPUObjectComputedMorphDrawRecord(obj) : null;
+      if (isSkinned) {
+        return webGPUBindElioSkinnedBuffers(pass, obj, count);
+      }
+      if (computedMorphRecord) {
+        if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, count, 3)) return false;
+        if (!webGPUBindComputedMorphBuffer(pass, 1, computedMorphRecord.normalBuffer, count, 3)) return false;
+        if (!webGPUBindSceneMeshVertexBuffer(pass, 2, pbrBuffers && pbrBuffers.uvs, offset, count)) return false;
+        if (!webGPUBindComputedMorphBuffer(pass, 3, computedMorphRecord.tangentBuffer, count, 4)) return false;
+        return true;
+      }
+      if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, offset, count)) return false;
+      if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.normals, offset, count)) return false;
+      if (!webGPUBindSceneMeshVertexBuffer(pass, 2, pbrBuffers && pbrBuffers.uvs, offset, count)) return false;
+      if (!webGPUBindSceneMeshVertexBuffer(pass, 3, pbrBuffers && pbrBuffers.tangents, offset, count)) return false;
+      return true;
+    }
+
+    function bindWaterObjectSelenaAttribute(pass, attr, obj, pbrBuffers) {
+      if (!pass || !attr || !obj || !pbrBuffers) return false;
+      var count = obj.vertexCount;
+      var offset = obj.vertexOffset;
+      var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
+      if (attr.source === "positions") {
+        if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return true;
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.positions, offset, count);
+      }
+      if (attr.source === "normals") {
+        if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.normalBuffer, count, 3)) return true;
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.normals, offset, count);
+      }
+      if (attr.source === "uvs") {
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.uvs, offset, count);
+      }
+      if (attr.source === "tangents") {
+        if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return true;
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
+      }
+      return false;
+    }
+
+    function bindWaterObjectSelenaAttributes(pass, resource, obj, pbrBuffers) {
+      var attrs = resource && Array.isArray(resource.attrs) ? resource.attrs : [];
+      for (var ai = 0; ai < attrs.length; ai++) {
+        if (!bindWaterObjectSelenaAttribute(pass, attrs[ai], obj, pbrBuffers)) return false;
+      }
+      return attrs.length > 0;
+    }
+
+    function sceneWaterObjectTextureSelenaUniforms(system, texturePassMode) {
+      var mode = texturePassMode === 2 ? 2 : 1;
+      var entry = system && system.entry || {};
+      var resolution = Math.max(1, sceneNumber(system && system.waterResolution, system && system.resolution ? system.resolution : sceneWaterResolution(entry && entry.resolution)));
+      var poolWidth = Math.max(0.01, sceneNumber(system && system.waterPoolWidth, sceneNumber(entry && entry.poolWidth, 1.0)));
+      var poolHeight = Math.max(0.01, sceneNumber(system && system.waterPoolHeight, sceneNumber(entry && entry.poolHeight, 1.0)));
+      var poolLength = Math.max(0.01, sceneNumber(system && system.waterPoolLength, sceneNumber(entry && entry.poolLength, 1.0)));
+      var rounded = sceneWaterPoolShapeRounded(entry);
+      var maxCornerRadius = Math.max(0, Math.min(poolWidth, poolLength) - 0.001);
+      var cornerRadius = Math.max(0, sceneNumber(system && system.waterCornerRadius, rounded ? Math.max(0, Math.min(maxCornerRadius, sceneNumber(entry && entry.cornerRadius, 0))) : 0));
+      var light = system && system.waterLightDir ? system.waterLightDir : sceneWaterLightVector(entry, { x: 0.3, y: 0.9, z: 0.45 });
+      var lightLen = Math.sqrt(light.x * light.x + light.y * light.y + light.z * light.z) || 1;
+      var kind = Math.max(0, Math.floor(sceneNumber(system && system.waterObjectKind, sceneWaterObjectKind(entry))));
+      var subtype = Math.max(0, Math.floor(sceneNumber(system && system.waterObjectSubtype, sceneWaterObjectSubtype(entry, kind))));
+      var radius = Math.max(0.0001, sceneNumber(system && system.waterObjectRadius, sceneNumber(entry && entry.objectRadius, kind === 1 ? 0.25 : 0.31)));
+      return {
+        isTexturePass: [1, 0, 0, 0],
+        texturePassMode: [mode, 0, 0, 0],
+        waterObjectTexturePassMode: [mode, 0, 0, 0],
+        lightDir: [light.x / lightLen, light.y / lightLen, light.z / lightLen, 0],
+        poolSize: [poolWidth, poolHeight, poolLength, cornerRadius],
+        params: [resolution, radius, kind, subtype],
+      };
+    }
+
+    function sceneWaterObjectTextureSelenaContext(system, texturePassMode, targetName) {
+      var mode = texturePassMode === 2 ? 2 : 1;
+      var target = String(targetName || "target").trim() || "target";
+      var waterID = String(system && (system.id || system.entry && system.entry.id) || "water-system");
+      return {
+        kind: "water-object-texture",
+        uniformSlotSuffix: ["water-object-texture", waterID, target, mode].join("-"),
+        uniforms: sceneWaterObjectTextureSelenaUniforms(system, mode),
+      };
+    }
+
+    function drawWaterObjectMeshObjects(pass, objectList, bundle, materials, frameBindGroup, pbrBuffers, texturePassMode, renderContext) {
+      if (!pass || !Array.isArray(objectList) || objectList.length === 0 || !pbrBuffers) return { drawCalls: 0, selenaDrawCalls: 0 };
+      var drawCalls = 0;
+      var selenaDrawCalls = 0;
+      var currentPipelineKey = "";
+      var lastMaterialIndex = -1;
+      var lastReceiveShadow = null;
+
+      for (var i = 0; i < objectList.length; i++) {
+        var obj = objectList[i];
+        var matIndex = sceneNumber(obj && obj.materialIndex, 0);
+        var mat = materials[matIndex] || null;
+        var renderPassKind = scenePBRObjectRenderPass(obj, mat);
+        var blendMode = renderPassKind === "additive" ? "additive" : "alpha";
+        var depthWrite = renderPassKind !== "alpha" && renderPassKind !== "additive";
+        var selenaResource = getSelenaPipeline(mat, blendMode, depthWrite, {
+          targetFormat: WATER_OBJECT_TEXTURE_FORMAT,
+          sampleCount: 1,
+          labelSuffix: "water-object-texture",
+        });
+        if (selenaResource) {
+          var selenaKey = "selena:" + texturePassMode + ":" + (mat && mat.key || matIndex) + ":" + blendMode + ":" + (depthWrite ? "1" : "0");
+          if (currentPipelineKey !== selenaKey) {
+            pass.setPipeline(selenaResource.pipeline);
+            currentPipelineKey = selenaKey;
+            lastMaterialIndex = -1;
+            lastReceiveShadow = null;
+          }
+          var selenaBG = createSelenaBindGroup(mat, selenaResource, obj, renderContext);
+          if (selenaBG && bindWaterObjectSelenaAttributes(pass, selenaResource, obj, pbrBuffers)) {
+            pass.setBindGroup(0, selenaBG);
+            pass.draw(obj.vertexCount);
+            drawCalls += 1;
+            selenaDrawCalls += 1;
+            continue;
+          }
+        }
+        var pipelineKey = texturePassMode + ":" + blendMode + ":" + (depthWrite ? "1" : "0");
+        if (currentPipelineKey !== pipelineKey) {
+          var pipeline = getWaterObjectMeshPipeline(texturePassMode, blendMode, depthWrite);
+          if (!pipeline) continue;
+          pass.setPipeline(pipeline);
+          pass.setBindGroup(0, frameBindGroup);
+          currentPipelineKey = pipelineKey;
+          lastMaterialIndex = -1;
+          lastReceiveShadow = null;
+        }
+
+        var receiveShadow = false;
+        if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
+          pass.setBindGroup(1, createMaterialBindGroup(mat, receiveShadow, mat || obj));
+          lastMaterialIndex = matIndex;
+          lastReceiveShadow = receiveShadow;
+        }
+
+        var count = obj.vertexCount;
+        if (bindWaterObjectMeshVertexBuffers(pass, obj, pbrBuffers)) {
+          pass.draw(count);
+          drawCalls += 1;
+        }
+      }
+      return { drawCalls: drawCalls, selenaDrawCalls: selenaDrawCalls };
+    }
+
+    function drawWaterObjectProjectedShadowObjects(pass, objectList, pbrBuffers) {
+      if (!pass || !Array.isArray(objectList) || objectList.length === 0 || !pbrBuffers) return 0;
+      var drawCalls = 0;
+      for (var i = 0; i < objectList.length; i++) {
+        var obj = objectList[i];
+        if (!obj || obj.viewCulled) continue;
+        var count = obj.vertexCount;
+        if (!Number.isFinite(count) || count <= 0) continue;
+        if (bindWaterObjectMeshVertexBuffers(pass, obj, pbrBuffers)) {
+          pass.draw(count);
+          drawCalls += 1;
+        }
+      }
+      return drawCalls;
+    }
+
+    function renderWaterObjectMeshTargetPass(encoder, system, view, objectList, bundle, materials, frameBindGroup, pbrBuffers, texturePassMode, label, targetName) {
+      if (!encoder || !system || !view || !system.objectTextureDepthView || !Array.isArray(objectList) || objectList.length === 0) return 0;
+      var pass = encoder.beginRenderPass({
+        label: label || "gosx-water-object-mesh-pass",
+        colorAttachments: [{
+          view: view,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        }],
+        depthStencilAttachment: {
+          view: system.objectTextureDepthView,
+          depthLoadOp: "clear",
+          depthClearValue: 1.0,
+          depthStoreOp: "store",
+        },
+      });
+      var renderContext = sceneWaterObjectTextureSelenaContext(system, texturePassMode, targetName || label);
+      var drawResult = drawWaterObjectMeshObjects(pass, objectList, bundle, materials, frameBindGroup, pbrBuffers, texturePassMode, renderContext);
+      var drawCalls = drawResult && drawResult.drawCalls || 0;
+      pass.end();
+      return {
+        passes: drawCalls > 0 ? 1 : 0,
+        drawCalls: drawCalls,
+        selenaDrawCalls: drawResult && drawResult.selenaDrawCalls || 0,
+      };
+    }
+
+    function waterSystemUsesProjectedObjectTextures(system) {
+      if (!system || !system.waterObjectActive) return false;
+      var entry = system.entry || {};
+      var kind = Math.max(0, Math.floor(sceneNumber(system.waterObjectKind, sceneWaterObjectKind(entry))));
+      return kind === 3;
+    }
+
+    function waterSystemHasObjectTextureSubject(system) {
+      return waterSystemUsesProjectedObjectTextures(system);
+    }
+
+    function renderWaterObjectTexturePass(encoder, system) {
+      if (!encoder || !system || !waterObjectTexturePipeline || !system.objectTextureBindGroup) return 0;
+      if (!system.objectReflectionView || !system.objectClippedReflectionView || !system.objectRefractionView) return 0;
+      var hasSubject = waterSystemHasObjectTextureSubject(system);
+      var pass = encoder.beginRenderPass({
+        label: "gosx-water-object-texture-pass",
+        colorAttachments: [
+          {
+            view: system.objectReflectionView,
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+          {
+            view: system.objectClippedReflectionView,
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+          {
+            view: system.objectRefractionView,
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
+      });
+      if (hasSubject) {
+        pass.setPipeline(waterObjectTexturePipeline);
+        pass.setBindGroup(0, system.objectTextureBindGroup);
+        pass.draw(3);
+      }
+      pass.end();
+      return hasSubject ? 1 : 0;
+    }
+
+    function renderWaterObjectShadowPass(encoder, system) {
+      if (!encoder || !system || !waterObjectShadowPipeline || !system.objectTextureBindGroup || !system.objectShadowView) {
+        return { passes: 0, authored: false, failed: false };
+      }
+      var pipelineRecord = sceneWaterAuthoredObjectShadowPipeline(system);
+      var pipeline = pipelineRecord && pipelineRecord.pipeline || waterObjectShadowPipeline;
+      var hasSubject = waterSystemHasObjectTextureSubject(system);
+      var pass = encoder.beginRenderPass({
+        label: "gosx-water-object-shadow-pass",
+        colorAttachments: [{
+          view: system.objectShadowView,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        }],
+      });
+      if (hasSubject) {
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, system.objectTextureBindGroup);
+        pass.draw(3);
+      }
+      pass.end();
+      return {
+        passes: hasSubject ? 1 : 0,
+        authored: !!(pipelineRecord && pipelineRecord.authored && hasSubject),
+        failed: !!(pipelineRecord && pipelineRecord.failed),
+      };
+    }
+
+    function renderWaterObjectMeshShadowPass(encoder, system, objectList, pbrBuffers) {
+      if (!encoder || !system || !waterObjectMeshShadowPipeline || !system.objectMeshShadowBindGroup || !system.objectMeshShadowUniformBuffer || !system.objectShadowView) {
+        return { passes: 0, drawCalls: 0, authored: false, failed: false };
+      }
+      if (!waterSystemHasObjectTextureSubject(system) || !Array.isArray(objectList) || objectList.length === 0 || !pbrBuffers) {
+        return { passes: 0, drawCalls: 0, authored: false, failed: false };
+      }
+      var pipelineRecord = sceneWaterAuthoredObjectMeshShadowPipeline(system);
+      var pipeline = pipelineRecord && pipelineRecord.pipeline || waterObjectMeshShadowPipeline;
+      device.queue.writeBuffer(system.objectMeshShadowUniformBuffer, 0, sceneWaterObjectMeshShadowUniformData(system));
+      var pass = encoder.beginRenderPass({
+        label: "gosx-water-object-mesh-shadow-pass",
+        colorAttachments: [{
+          view: system.objectShadowView,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        }],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, system.objectMeshShadowBindGroup);
+      var drawCalls = drawWaterObjectProjectedShadowObjects(pass, objectList, pbrBuffers);
+      pass.end();
+      return {
+        passes: drawCalls > 0 ? 1 : 0,
+        drawCalls: drawCalls,
+        authored: !!(pipelineRecord && pipelineRecord.authored && drawCalls > 0),
+        failed: !!(pipelineRecord && pipelineRecord.failed),
+      };
+    }
+
+    function sceneWaterNormalizeReflectionDirection(point) {
+      var x = sceneNumber(point && point.x, 0);
+      var y = sceneNumber(point && point.y, 0);
+      var z = sceneNumber(point && point.z, 0);
+      var length = Math.sqrt(x * x + y * y + z * z);
+      if (length <= 0.000001) return { x: 0, y: 0, z: 1 };
+      return { x: x / length, y: y / length, z: z / length };
+    }
+
+    function sceneWaterReflectionCameraForward(cam) {
+      var x = 0;
+      var y = 0;
+      var z = 1;
+
+      var sinX = Math.sin(cam.rotationX);
+      var cosX = Math.cos(cam.rotationX);
+      var nextY = y * cosX - z * sinX;
+      var nextZ = y * sinX + z * cosX;
+      y = nextY;
+      z = nextZ;
+
+      var sinY = Math.sin(cam.rotationY);
+      var cosY = Math.cos(cam.rotationY);
+      var nextX = x * cosY + z * sinY;
+      nextZ = -x * sinY + z * cosY;
+      x = nextX;
+      z = nextZ;
+
+      var sinZ = Math.sin(cam.rotationZ);
+      var cosZ = Math.cos(cam.rotationZ);
+      nextX = x * cosZ - y * sinZ;
+      nextY = x * sinZ + y * cosZ;
+
+      return sceneWaterNormalizeReflectionDirection({ x: nextX, y: nextY, z: z });
+    }
+
+    function sceneWaterCameraWorldPosition(camera) {
+      var cam = sceneRenderCamera(camera);
+      return { x: cam.x, y: cam.y, z: cam.z };
+    }
+
+    function sceneWaterCameraWorldDirection(camera) {
+      var cam = sceneRenderCamera(camera);
+      var forward = sceneWaterReflectionCameraForward(cam);
+      return sceneWaterNormalizeReflectionDirection({ x: -forward.x, y: -forward.y, z: -forward.z });
+    }
+
+    function sceneWaterMirrorWaterPoint(point) {
+      return {
+        x: sceneNumber(point && point.x, 0),
+        y: -sceneNumber(point && point.y, 0),
+        z: sceneNumber(point && point.z, 0),
+      };
+    }
+
+    function sceneWaterReflectionCamera(camera) {
+      var cam = sceneRenderCamera(camera);
+      var forward = sceneWaterReflectionCameraForward(cam);
+      var reflectedForward = sceneWaterNormalizeReflectionDirection({
+        x: forward.x,
+        y: -forward.y,
+        z: forward.z,
+      });
+      var horizontal = Math.sqrt(
+        reflectedForward.x * reflectedForward.x +
+        reflectedForward.z * reflectedForward.z
+      );
+      return {
+        kind: cam.kind,
+        x: cam.x,
+        y: -cam.y,
+        z: cam.z,
+        rotationX: -Math.atan2(reflectedForward.y, horizontal),
+        rotationY: Math.atan2(reflectedForward.x, reflectedForward.z),
+        rotationZ: -cam.rotationZ,
+        fov: cam.fov,
+        left: cam.left,
+        right: cam.right,
+        top: cam.top,
+        bottom: cam.bottom,
+        zoom: cam.zoom,
+        near: cam.near,
+        far: cam.far,
+      };
+    }
+
+    function sceneWaterReflectionCameraUp(camera) {
+      var up = sceneWaterNormalizeReflectionDirection({
+        x: sceneNumber(camera && camera.upX, 0),
+        y: sceneNumber(camera && camera.upY, 1),
+        z: sceneNumber(camera && camera.upZ, 0),
+      });
+      return { x: up.x, y: -up.y, z: up.z };
+    }
+
+    function sceneWaterLookAtViewMatrix(eye, target, up, out) {
+      var zx = sceneNumber(eye && eye.x, 0) - sceneNumber(target && target.x, 0);
+      var zy = sceneNumber(eye && eye.y, 0) - sceneNumber(target && target.y, 0);
+      var zz = sceneNumber(eye && eye.z, 0) - sceneNumber(target && target.z, 0);
+      var length = Math.sqrt(zx * zx + zy * zy + zz * zz);
+      if (length <= 0.000001) {
+        zx = 0;
+        zy = 0;
+        zz = 1;
+      } else {
+        zx /= length;
+        zy /= length;
+        zz /= length;
+      }
+
+      var upv = sceneWaterNormalizeReflectionDirection(up);
+      var xx = upv.y * zz - upv.z * zy;
+      var xy = upv.z * zx - upv.x * zz;
+      var xz = upv.x * zy - upv.y * zx;
+      length = Math.sqrt(xx * xx + xy * xy + xz * xz);
+      if (length <= 0.000001) {
+        upv = Math.abs(zy) < 0.999 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+        xx = upv.y * zz - upv.z * zy;
+        xy = upv.z * zx - upv.x * zz;
+        xz = upv.x * zy - upv.y * zx;
+        length = Math.sqrt(xx * xx + xy * xy + xz * xz);
+      }
+      if (length <= 0.000001) {
+        xx = 1;
+        xy = 0;
+        xz = 0;
+      } else {
+        xx /= length;
+        xy /= length;
+        xz /= length;
+      }
+
+      var yx = zy * xz - zz * xy;
+      var yy = zz * xx - zx * xz;
+      var yz = zx * xy - zy * xx;
+
+      out[0] = xx;
+      out[1] = yx;
+      out[2] = zx;
+      out[3] = 0;
+      out[4] = xy;
+      out[5] = yy;
+      out[6] = zy;
+      out[7] = 0;
+      out[8] = xz;
+      out[9] = yz;
+      out[10] = zz;
+      out[11] = 0;
+      out[12] = -(xx * eye.x + xy * eye.y + xz * eye.z);
+      out[13] = -(yx * eye.x + yy * eye.y + yz * eye.z);
+      out[14] = -(zx * eye.x + zy * eye.y + zz * eye.z);
+      out[15] = 1;
+      return out;
+    }
+
+    function addWaterObjectTextureStats(stats, system, passCount, targetCount, meshDrawCalls, fallbackPasses, selenaDrawCalls) {
+      var targetWidth = Math.max(0, system && (system.objectTextureWidth || system.objectTextureResolution) || 0);
+      var targetHeight = Math.max(0, system && (system.objectTextureHeight || system.objectTextureResolution) || 0);
+      stats.waterObjectTexturePasses += Math.max(0, passCount || 0);
+      stats.waterObjectTextureTargets += Math.max(0, targetCount || 0);
+      stats.waterObjectTexturePixels += Math.max(0, targetCount || 0) * targetWidth * targetHeight;
+      stats.waterObjectTextureWidth = Math.max(stats.waterObjectTextureWidth || 0, targetWidth);
+      stats.waterObjectTextureHeight = Math.max(stats.waterObjectTextureHeight || 0, targetHeight);
+      stats.waterObjectTexturePixelBudget = Math.max(stats.waterObjectTexturePixelBudget || 0, Math.max(0, system && system.objectTexturePixelBudget || 0));
+      stats.waterObjectTextureMeshPasses += Math.max(0, passCount || 0) - Math.max(0, fallbackPasses || 0);
+      stats.waterObjectTextureMeshDrawCalls += Math.max(0, meshDrawCalls || 0);
+      stats.waterObjectTextureSelenaDrawCalls += Math.max(0, selenaDrawCalls || 0);
+      stats.waterObjectTextureFallbackPasses += Math.max(0, fallbackPasses || 0);
+    }
+
+    function renderWaterObjectSceneTexturePasses(records, encoder, bundle, materials, frameBindGroup, pbrBuffers, width, height, toneMap) {
+      var stats = {
+        waterObjectTexturePasses: 0,
+        waterObjectTextureTargets: 0,
+        waterObjectTexturePixels: 0,
+        waterObjectTextureWidth: 0,
+        waterObjectTextureHeight: 0,
+        waterObjectTexturePixelBudget: 0,
+        waterObjectTextureMeshPasses: 0,
+        waterObjectTextureMeshDrawCalls: 0,
+        waterObjectTextureSelenaDrawCalls: 0,
+        waterObjectTextureFallbackPasses: 0,
+        waterObjectTextureCandidateObjects: 0,
+        waterObjectTextureSelectedObjects: 0,
+        waterObjectTextureFallbackMissingObjects: 0,
+        waterObjectTextureFallbackMissingResources: 0,
+        waterObjectTextureCandidateProfile: "",
+      };
+      if (!encoder || !Array.isArray(records) || records.length === 0) return stats;
+      var restoredFrame = false;
+      for (var i = 0; i < records.length; i++) {
+        var system = records[i] && records[i].system;
+        if (!system || !waterSystemHasObjectTextureSubject(system)) continue;
+        var entry = system.entry || {};
+        var optics = sceneWaterOpticsFlags(entry, {
+          kind: sceneWaterObjectKind(entry),
+          displacementScale: Math.max(0, sceneNumber(entry.objectDisplacementScale, 1)),
+        });
+        if (!optics.object && !optics.reflection && !optics.refraction) continue;
+        var objectList = sceneWaterObjectMeshList(bundle, entry);
+        system.objectViewProjectionReady = false;
+        system.objectReflectionViewProjectionReady = false;
+        stats.waterObjectTextureCandidateObjects += Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+        stats.waterObjectTextureSelectedObjects += objectList.length;
+        if (!stats.waterObjectTextureCandidateProfile) {
+          stats.waterObjectTextureCandidateProfile = sceneWaterObjectMeshCandidateProfile(bundle, entry, materials);
+        }
+        if (!objectList.length || !pbrBuffers || !frameBindGroup) {
+          if (!objectList.length) stats.waterObjectTextureFallbackMissingObjects += 1;
+          if (!pbrBuffers || !frameBindGroup) stats.waterObjectTextureFallbackMissingResources += 1;
+          var fallbackPasses = renderWaterObjectTexturePass(encoder, system);
+          if (fallbackPasses > 0) addWaterObjectTextureStats(stats, system, fallbackPasses, fallbackPasses * 3, 0, fallbackPasses);
+          continue;
+        }
+
+        var targetWidth = Math.max(1, system.objectTextureWidth || system.objectTextureResolution || WATER_OBJECT_TEXTURE_SIZE);
+        var targetHeight = Math.max(1, system.objectTextureHeight || system.objectTextureResolution || WATER_OBJECT_TEXTURE_SIZE);
+        uploadFrameUniforms(bundle && bundle.camera, targetWidth, targetHeight, false);
+        if (system.objectViewProjectionMatrix) {
+          system.objectViewProjectionMatrix.set(scratchSelenaViewProjection);
+          system.objectViewProjectionReady = true;
+        }
+        var refraction = renderWaterObjectMeshTargetPass(
+          encoder,
+          system,
+          system.objectRefractionView,
+          objectList,
+          bundle,
+          materials,
+          frameBindGroup,
+          pbrBuffers,
+          1,
+          "gosx-water-object-mesh-refraction-pass",
+          "refraction"
+        );
+        uploadWaterReflectionFrameUniforms(bundle && bundle.camera, targetWidth, targetHeight, false);
+        if (system.objectReflectionViewProjectionMatrix) {
+          system.objectReflectionViewProjectionMatrix.set(scratchSelenaViewProjection);
+          system.objectReflectionViewProjectionReady = true;
+        }
+        var reflection = renderWaterObjectMeshTargetPass(
+          encoder,
+          system,
+          system.objectReflectionView,
+          objectList,
+          bundle,
+          materials,
+          frameBindGroup,
+          pbrBuffers,
+          1,
+          "gosx-water-object-mesh-reflection-pass",
+          "reflection"
+        );
+        var clipped = renderWaterObjectMeshTargetPass(
+          encoder,
+          system,
+          system.objectClippedReflectionView,
+          objectList,
+          bundle,
+          materials,
+          frameBindGroup,
+          pbrBuffers,
+          2,
+          "gosx-water-object-mesh-clipped-reflection-pass",
+          "clipped-reflection"
+        );
+        restoredFrame = true;
+        var passCount = refraction.passes + reflection.passes + clipped.passes;
+        var drawCalls = refraction.drawCalls + reflection.drawCalls + clipped.drawCalls;
+        var selenaDrawCalls = refraction.selenaDrawCalls + reflection.selenaDrawCalls + clipped.selenaDrawCalls;
+        if (passCount > 0) addWaterObjectTextureStats(stats, system, passCount, passCount, drawCalls, 0, selenaDrawCalls);
+      }
+      if (restoredFrame) {
+        uploadFrameUniforms(bundle && bundle.camera, width, height, toneMap);
+        uploadLights(bundle && bundle.lights);
+      }
+      return stats;
+    }
+
+    function updateWaterSystems(entries, encoder, timeSeconds, bundle, pbrBuffers, width, height) {
+      activeWaterShaderSourcesByID = null;
+      var canvasWaterShaderSources = canvas && (canvas.__gosxScene3DWaterShaderSources || (canvas.parentNode && canvas.parentNode.__gosxScene3DWaterShaderSources));
+      var bundleWaterShaderSources = bundle && bundle.waterShaderSourcesByID && typeof bundle.waterShaderSourcesByID === "object"
+        ? bundle.waterShaderSourcesByID
+        : canvasWaterShaderSources;
+      if (bundleWaterShaderSources && typeof bundleWaterShaderSources === "object") {
+        activeWaterShaderSourcesByID = new Map();
+        Object.keys(bundleWaterShaderSources).forEach(function(id) {
+          var record = bundleWaterShaderSources[id];
+          if (record && typeof record === "object") activeWaterShaderSourcesByID.set(id, record);
+        });
+      }
+      var currentTime = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+      var deltaTime = lastWaterTimeSeconds == null
+        ? 0
+        : Math.max(0, Math.min(0.1, currentTime - lastWaterTimeSeconds));
+      lastWaterTimeSeconds = currentTime;
+      var records = syncWaterSystems(entries, width, height);
+      var stats = {
+        records: records,
+        waterSystems: records.length,
+        waterCells: 0,
+        waterVertices: 0,
+        waterComputeDispatches: 0,
+        waterAuthoredComputeSystems: 0,
+        waterAuthoredComputeDispatches: 0,
+        waterAuthoredComputeFallbacks: 0,
+        waterDropDispatches: 0,
+        waterDropDispatchTotal: 0,
+        waterLastDropEventID: 0,
+        waterObjectSystems: 0,
+        waterObjectDispatches: 0,
+        waterObjectEventDispatches: 0,
+        waterLastObjectDisplacementEventID: 0,
+        waterObjectSpheres: 0,
+        waterRoundedSystems: 0,
+        waterCornerRadius: 0,
+        waterLightDirX: 0,
+        waterLightDirY: 0,
+        waterLightDirZ: 0,
+        waterCausticSystems: 0,
+        waterCausticPasses: 0,
+        waterCausticTexturePixels: 0,
+        waterAuthoredCausticSystems: 0,
+        waterAuthoredCausticPasses: 0,
+        waterAuthoredCausticFallbacks: 0,
+        waterAuthoredCausticFallbackReason: "",
+        waterAuthoredCausticSourceBytes: 0,
+        waterEntryCausticSourceBytes: 0,
+        waterResolvedCausticSourceBytes: 0,
+        waterAuthoredSurfaceSourceBytes: 0,
+        waterEntrySurfaceSourceBytes: 0,
+        waterResolvedSurfaceSourceBytes: 0,
+        waterManifestShaderSystems: 0,
+        waterManifestShaderFields: 0,
+        waterManifestCausticSourceBytes: 0,
+        waterManifestSurfaceSourceBytes: 0,
+        waterBundleShaderSystems: activeWaterShaderSourcesByID ? activeWaterShaderSourcesByID.size : 0,
+        waterBundleCausticSourceBytes: 0,
+        waterBundleSurfaceSourceBytes: 0,
+        waterObjectTexturePasses: 0,
+        waterObjectTextureTargets: 0,
+        waterObjectTexturePixels: 0,
+        waterObjectTextureWidth: 0,
+        waterObjectTextureHeight: 0,
+        waterObjectTexturePixelBudget: 0,
+        waterObjectTextureMeshPasses: 0,
+        waterObjectTextureMeshDrawCalls: 0,
+        waterObjectTextureSelenaDrawCalls: 0,
+        waterObjectTextureFallbackPasses: 0,
+        waterObjectTextureCandidateObjects: 0,
+        waterObjectTextureSelectedObjects: 0,
+        waterObjectTextureFallbackMissingObjects: 0,
+        waterObjectTextureFallbackMissingResources: 0,
+        waterObjectTextureCandidateProfile: "",
+        waterObjectShadowPasses: 0,
+        waterObjectShadowTexturePixels: 0,
+        waterObjectShadowMeshPasses: 0,
+        waterObjectShadowMeshDrawCalls: 0,
+        waterAuthoredObjectShadowPasses: 0,
+        waterAuthoredObjectShadowFallbacks: 0,
+        waterAuthoredObjectMeshShadowPasses: 0,
+        waterAuthoredObjectMeshShadowFallbacks: 0,
+        waterObjectShadowFallbackPasses: 0,
+        waterObjectShadowFallbackMissingObjects: 0,
+        waterObjectShadowFallbackMissingResources: 0,
+        waterReflectionSystems: 0,
+        waterRefractionSystems: 0,
+        waterObjectOpticsSystems: 0,
+      };
+      var manifestShaderStats = sceneWaterManifestShaderSourceStats();
+      stats.waterManifestShaderSystems = manifestShaderStats.systems;
+      stats.waterManifestShaderFields = manifestShaderStats.fields;
+      stats.waterManifestCausticSourceBytes = manifestShaderStats.causticSourceBytes;
+      stats.waterManifestSurfaceSourceBytes = manifestShaderStats.surfaceSourceBytes;
+      if (activeWaterShaderSourcesByID) {
+        activeWaterShaderSourcesByID.forEach(function(record) {
+          stats.waterBundleCausticSourceBytes = Math.max(
+            stats.waterBundleCausticSourceBytes,
+            typeof record.causticsWGSL === "string" ? record.causticsWGSL.trim().length : 0
+          );
+          stats.waterBundleSurfaceSourceBytes = Math.max(
+            stats.waterBundleSurfaceSourceBytes,
+            sceneWaterSurfaceSourceBytes(record)
+          );
+        });
+      }
+      for (var i = 0; i < records.length; i++) {
+        var system = records[i].system;
+        if (!system) continue;
+        var entry = system.entry || {};
+        stats.waterEntryCausticSourceBytes = Math.max(
+          stats.waterEntryCausticSourceBytes,
+          typeof entry.causticsWGSL === "string" ? entry.causticsWGSL.trim().length : 0
+        );
+        stats.waterResolvedCausticSourceBytes = Math.max(
+          stats.waterResolvedCausticSourceBytes,
+          sceneWaterAuthoredCausticsSource(entry).length
+        );
+        stats.waterEntrySurfaceSourceBytes = Math.max(
+          stats.waterEntrySurfaceSourceBytes,
+          sceneWaterSurfaceSourceBytes(entry)
+        );
+        stats.waterResolvedSurfaceSourceBytes = Math.max(
+          stats.waterResolvedSurfaceSourceBytes,
+          sceneWaterResolvedSurfaceSourceBytes(entry)
+        );
+        stats.waterAuthoredSurfaceSourceBytes = Math.max(
+          stats.waterAuthoredSurfaceSourceBytes,
+          stats.waterResolvedSurfaceSourceBytes
+        );
+        var seedCompute = sceneWaterAuthoredComputePipeline(system, "seed", waterSeedPipeline);
+        var dropCompute = sceneWaterAuthoredComputePipeline(system, "drop", waterDropPipeline);
+        var displacementCompute = sceneWaterAuthoredComputePipeline(system, "displacement", waterDisplacementPipeline);
+        var simulationCompute = sceneWaterAuthoredComputePipeline(system, "simulation", waterStepPipeline);
+        var normalCompute = sceneWaterAuthoredComputePipeline(system, "normal", waterNormalPipeline);
+        if (seedCompute.authored || dropCompute.authored || displacementCompute.authored || simulationCompute.authored || normalCompute.authored) {
+          stats.waterAuthoredComputeSystems += 1;
+        }
+        if (seedCompute.failed) stats.waterAuthoredComputeFallbacks += 1;
+        if (dropCompute.failed) stats.waterAuthoredComputeFallbacks += 1;
+        if (displacementCompute.failed) stats.waterAuthoredComputeFallbacks += 1;
+        if (simulationCompute.failed) stats.waterAuthoredComputeFallbacks += 1;
+        if (normalCompute.failed) stats.waterAuthoredComputeFallbacks += 1;
+        if (sceneWaterPoolShapeRounded(entry)) {
+          stats.waterRoundedSystems += 1;
+          stats.waterCornerRadius = Math.max(stats.waterCornerRadius, Math.max(0, sceneNumber(entry.cornerRadius, 0)));
+        }
+        var optics = sceneWaterOpticsFlags(entry, {
+          kind: sceneWaterObjectKind(entry),
+          displacementScale: Math.max(0, sceneNumber(entry.objectDisplacementScale, 1)),
+        });
+        if (optics.caustics) stats.waterCausticSystems += 1;
+        if (optics.reflection) stats.waterReflectionSystems += 1;
+        if (optics.refraction) stats.waterRefractionSystems += 1;
+        if (optics.object) stats.waterObjectOpticsSystems += 1;
+        device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, entry, deltaTime, currentTime));
+        if (system.waterLightDir) {
+          stats.waterLightDirX = sceneNumber(system.waterLightDir.x, 0);
+          stats.waterLightDirY = sceneNumber(system.waterLightDir.y, 0);
+          stats.waterLightDirZ = sceneNumber(system.waterLightDir.z, 0);
+        }
+        stats.waterCells += system.cellCount;
+        stats.waterVertices += system.vertexCount;
+        if (!system.seeded) {
+          system.seeded = true;
+          if (Math.max(0, Math.floor(sceneNumber(entry.seedDrops, 7))) > 0) {
+            var seedDispatches = dispatchWaterPass(encoder, system, seedCompute.pipeline);
+            stats.waterComputeDispatches += seedDispatches;
+            if (seedCompute.authored) stats.waterAuthoredComputeDispatches += seedDispatches;
+          }
+        }
+        var dropEventID = Math.max(0, Math.floor(sceneNumber(entry.dropEventID, 0)));
+        if (dropEventID > 0 && system.lastDropEventID !== dropEventID) {
+          var dropDispatches = dispatchWaterPass(encoder, system, dropCompute.pipeline);
+          if (dropDispatches > 0) {
+            system.lastDropEventID = dropEventID;
+            system.dropDispatchCount = Math.max(0, Math.floor(sceneNumber(system.dropDispatchCount, 0))) + dropDispatches;
+            stats.waterLastDropEventID = Math.max(stats.waterLastDropEventID, dropEventID);
+            stats.waterDropDispatches += dropDispatches;
+            stats.waterComputeDispatches += dropDispatches;
+            if (dropCompute.authored) stats.waterAuthoredComputeDispatches += dropDispatches;
+          }
+        }
+        stats.waterLastDropEventID = Math.max(stats.waterLastDropEventID, Math.max(0, Math.floor(sceneNumber(system.lastDropEventID, 0))));
+        stats.waterDropDispatchTotal += Math.max(0, Math.floor(sceneNumber(system.dropDispatchCount, 0)));
+        var objectEventStats = dispatchWaterObjectDisplacementEvents(system, entry, encoder, displacementCompute.pipeline, currentTime);
+        if (objectEventStats.dispatches > 0) {
+          stats.waterObjectEventDispatches += objectEventStats.dispatches;
+          stats.waterObjectDispatches += objectEventStats.dispatches;
+          stats.waterComputeDispatches += objectEventStats.dispatches;
+          if (displacementCompute.authored) stats.waterAuthoredComputeDispatches += objectEventStats.dispatches;
+          device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, entry, deltaTime, currentTime));
+        }
+        stats.waterLastObjectDisplacementEventID = Math.max(stats.waterLastObjectDisplacementEventID, Math.max(0, Math.floor(sceneNumber(system.lastObjectDisplacementEventID, 0))));
+        if (!entry.paused) {
+          if (system.waterObjectActive || (system.waterObjectKind || 0) > 0) {
+            stats.waterObjectSystems += 1;
+            stats.waterObjectSpheres += Math.max(0, system.waterObjectSphereCount || 0);
+            var objectDispatches = dispatchWaterPass(encoder, system, displacementCompute.pipeline);
+            stats.waterObjectDispatches += objectDispatches;
+            stats.waterComputeDispatches += objectDispatches;
+            if (displacementCompute.authored) stats.waterAuthoredComputeDispatches += objectDispatches;
+          }
+          var stepDispatchesA = dispatchWaterPass(encoder, system, simulationCompute.pipeline);
+          var stepDispatchesB = dispatchWaterPass(encoder, system, simulationCompute.pipeline);
+          stats.waterComputeDispatches += stepDispatchesA + stepDispatchesB;
+          if (simulationCompute.authored) stats.waterAuthoredComputeDispatches += stepDispatchesA + stepDispatchesB;
+        }
+        var normalDispatches = dispatchWaterPass(encoder, system, normalCompute.pipeline);
+        stats.waterComputeDispatches += normalDispatches;
+        if (normalCompute.authored) stats.waterAuthoredComputeDispatches += normalDispatches;
+        if (optics.object || optics.caustics) {
+          var objectShadowPasses = 0;
+          var meshShadow = { passes: 0, drawCalls: 0 };
+          var hasShadowSubject = waterSystemHasObjectTextureSubject(system);
+          var objectList = hasShadowSubject ? sceneWaterObjectMeshList(bundle, entry) : [];
+          if (hasShadowSubject && objectList.length > 0 && pbrBuffers) {
+            meshShadow = renderWaterObjectMeshShadowPass(encoder, system, objectList, pbrBuffers);
+          }
+          if (meshShadow.passes > 0) {
+            objectShadowPasses = meshShadow.passes;
+            stats.waterObjectShadowMeshPasses += meshShadow.passes;
+            stats.waterObjectShadowMeshDrawCalls += meshShadow.drawCalls;
+            if (meshShadow.authored) stats.waterAuthoredObjectMeshShadowPasses += meshShadow.passes;
+            if (meshShadow.failed) stats.waterAuthoredObjectMeshShadowFallbacks += 1;
+          } else if (hasShadowSubject) {
+            if (objectList.length === 0) stats.waterObjectShadowFallbackMissingObjects += 1;
+            if (!pbrBuffers) stats.waterObjectShadowFallbackMissingResources += 1;
+            var shadowResult = renderWaterObjectShadowPass(encoder, system);
+            objectShadowPasses = shadowResult && shadowResult.passes || 0;
+            if (shadowResult && shadowResult.authored) stats.waterAuthoredObjectShadowPasses += objectShadowPasses;
+            if (shadowResult && shadowResult.failed) stats.waterAuthoredObjectShadowFallbacks += 1;
+            stats.waterObjectShadowFallbackPasses += objectShadowPasses;
+          }
+          stats.waterObjectShadowPasses += objectShadowPasses;
+          if (objectShadowPasses > 0) {
+            stats.waterObjectShadowTexturePixels += Math.max(0, system.objectShadowResolution || 0) * Math.max(0, system.objectShadowResolution || 0);
+          }
+        }
+        if (optics.caustics) {
+          var causticResult = renderWaterCausticsPass(encoder, system);
+          var causticPasses = causticResult && causticResult.passes || 0;
+          stats.waterAuthoredCausticSourceBytes = Math.max(stats.waterAuthoredCausticSourceBytes, causticResult && causticResult.sourceBytes || 0);
+          stats.waterCausticPasses += causticPasses;
+          if (causticResult && causticResult.authored) {
+            stats.waterAuthoredCausticSystems += 1;
+            stats.waterAuthoredCausticPasses += causticPasses;
+          }
+          if (causticResult && causticResult.failed) {
+            stats.waterAuthoredCausticFallbacks += 1;
+            stats.waterAuthoredCausticFallbackReason = waterAuthoredCausticsPipelineLastError;
+          }
+          if (causticPasses > 0) {
+            stats.waterCausticTexturePixels += Math.max(0, system.causticsResolution || 0) * Math.max(0, system.causticsResolution || 0);
+          }
+        }
+        system.frameIndex += 1;
+      }
+      return stats;
+    }
+
+    function getWaterPoolPipeline(system, forceBuiltin) {
+      var sampleCount = Math.max(1, Math.floor(activeSampleCount || 1));
+      var entry = forceBuiltin ? {} : (system && system.entry || {});
+      var vertexSource = forceBuiltin ? "" : sceneWaterAuthoredPoolVertexSource(entry);
+      var fragmentSource = forceBuiltin ? "" : sceneWaterAuthoredPoolFragmentSource(entry);
+      var backend = sceneWaterAuthoredMaterialBackend(entry);
+      var authored = !!(vertexSource || fragmentSource);
+      var cacheKey = [
+        "pool",
+        targetFormat,
+        sampleCount,
+        backend,
+        vertexSource || "builtin-vertex",
+        fragmentSource || "builtin-fragment",
+      ].join("\x00");
+      if (waterAuthoredPoolPipelineFailures.has(cacheKey)) {
+        var failedFallback = getWaterPoolPipeline(null, true);
+        return { pipeline: failedFallback && failedFallback.pipeline, authored: false, failed: true };
+      }
+      var cached = authored ? waterAuthoredPoolPipelineCache.get(cacheKey) : waterPoolPipelineCache[cacheKey];
+      if (cached) return cached;
+      try {
+        var vertexModule = vertexSource
+          ? sceneWaterAuthoredSurfaceModule("gosx-water-" + backend + "-pool-vert", vertexSource)
+          : waterPoolVertexModule;
+        var fragmentModule = fragmentSource
+          ? sceneWaterAuthoredSurfaceModule("gosx-water-" + backend + "-pool-frag", fragmentSource)
+          : waterPoolFragmentModule;
+        var record = {
+          pipeline: device.createRenderPipeline({
+            label: authored ? "gosx-water-" + backend + "-pool-pass" : "gosx-water-pool-pass",
+            layout: waterPoolPipelineLayout,
+            vertex: { module: vertexModule, entryPoint: "vertexMain", buffers: [] },
+            fragment: {
+              module: fragmentModule,
+              entryPoint: "fragmentMain",
+              targets: [{ format: targetFormat }],
+            },
+            primitive: { topology: "triangle-list", cullMode: "none" },
+            multisample: { count: sampleCount },
+            depthStencil: {
+              format: "depth24plus",
+              depthWriteEnabled: true,
+              depthCompare: "less-equal",
+            },
+          }),
+          authored: authored,
+          authoredVertex: !!vertexSource,
+          authoredFragment: !!fragmentSource,
+          failed: false,
+        };
+        if (authored) {
+          waterAuthoredPoolPipelineCache.set(cacheKey, record);
+        } else {
+          waterPoolPipelineCache[cacheKey] = record;
+        }
+        return record;
+      } catch (error) {
+        if (authored) {
+          waterAuthoredPoolPipelineFailures.add(cacheKey);
+          console.warn("[gosx] Scene3D water authored pool pipeline failed; falling back to builtin", error);
+          var fallback = getWaterPoolPipeline(null, true);
+          return { pipeline: fallback && fallback.pipeline, authored: false, failed: true };
+        }
+        throw error;
+      }
+    }
+
+    function drawWaterPoolEntries(renderPass, records, frameBindGroup) {
+      var roundedPoolVertexCount = 44 * 9;
+      var stats = {
+        waterPoolPasses: 0,
+        waterPoolDrawCalls: 0,
+        waterPoolDrawVertices: 0,
+        waterPoolTileTextureLoaded: 0,
+        waterPoolTileTextureFallbacks: 0,
+        waterPoolTileTexturePending: 0,
+        waterPoolTileTextureFailed: 0,
+        waterAuthoredPoolPasses: 0,
+        waterAuthoredPoolVertexPasses: 0,
+        waterAuthoredPoolFragmentPasses: 0,
+        waterAuthoredPoolFallbacks: 0,
+      };
+      if (!renderPass || !Array.isArray(records) || records.length === 0 || !frameBindGroup) return stats;
+      renderPass.setBindGroup(0, frameBindGroup);
+      var activePipeline = null;
+      for (var i = 0; i < records.length; i++) {
+        var system = records[i] && records[i].system;
+        if (!system) continue;
+        var entry = system.entry || {};
+        if (entry.renderPool === false || entry.poolPass === false) continue;
+        var pipelineRecord = getWaterPoolPipeline(system);
+        if (!pipelineRecord || !pipelineRecord.pipeline) continue;
+        if (pipelineRecord.pipeline !== activePipeline) {
+          renderPass.setPipeline(pipelineRecord.pipeline);
+          activePipeline = pipelineRecord.pipeline;
+        }
+        var rounded = sceneWaterPoolShapeRounded(entry) && sceneNumber(entry.cornerRadius, 0) > 0.0001;
+        var vertexCount = rounded ? roundedPoolVertexCount : 30;
+        var bindGroup = createWaterPoolBindGroup(system);
+        if (!bindGroup) continue;
+        renderPass.setBindGroup(1, bindGroup);
+        renderPass.draw(vertexCount);
+        stats.waterPoolPasses += 1;
+        stats.waterPoolDrawCalls += 1;
+        stats.waterPoolDrawVertices += vertexCount;
+        if (pipelineRecord.authored) stats.waterAuthoredPoolPasses += 1;
+        if (pipelineRecord.authoredVertex) stats.waterAuthoredPoolVertexPasses += 1;
+        if (pipelineRecord.authoredFragment) stats.waterAuthoredPoolFragmentPasses += 1;
+        if (pipelineRecord.failed) stats.waterAuthoredPoolFallbacks += 1;
+        if (system.waterPoolTileLoaded) {
+          stats.waterPoolTileTextureLoaded += 1;
+        } else if (system.waterPoolTileRequested) {
+          stats.waterPoolTileTextureFallbacks += 1;
+          if (system.waterPoolTilePending) stats.waterPoolTileTexturePending += 1;
+          if (system.waterPoolTileFailed) stats.waterPoolTileTextureFailed += 1;
+        }
+      }
+      return stats;
+    }
+
+    function getWaterRenderPipeline(system, surfaceSide, forceBuiltin) {
+      var sampleCount = Math.max(1, Math.floor(activeSampleCount || 1));
+      var side = surfaceSide === "below" ? "below" : "above";
+      var entry = forceBuiltin ? {} : (system && system.entry || {});
+      var vertexSource = forceBuiltin ? "" : sceneWaterAuthoredSurfaceVertexSource(entry);
+      var fragmentSource = forceBuiltin ? "" : sceneWaterAuthoredSurfaceFragmentSource(entry, side);
+      var backend = sceneWaterAuthoredMaterialBackend(entry);
+      var authored = !!(vertexSource || fragmentSource);
+      var cacheKey = [
+        side,
+        "alpha",
+        sampleCount,
+        targetFormat,
+        backend,
+        vertexSource || "builtin-vertex",
+        fragmentSource || (side === "below" ? "builtin-below-fragment" : "builtin-above-fragment"),
+      ].join("\x00");
+      if (waterAuthoredSurfacePipelineFailures.has(cacheKey)) {
+        var failedFallback = getWaterRenderPipeline(null, side, true);
+        return {
+          pipeline: failedFallback && failedFallback.pipeline,
+          authored: false,
+          authoredVertex: false,
+          failed: true,
+        };
+      }
+      var cached = waterRenderPipelineCache.get(cacheKey);
+      if (cached) {
+        if (cached.pending || cached.failed || cached.pipeline) return cached;
+      }
+      try {
+        var vertexModule = vertexSource
+          ? sceneWaterAuthoredSurfaceModule("gosx-water-" + backend + "-surface-vert", vertexSource)
+          : waterRenderVertexModule;
+        var fragmentModule = fragmentSource
+          ? sceneWaterAuthoredSurfaceModule("gosx-water-" + backend + "-surface-" + side + "-frag", fragmentSource)
+          : (side === "below" ? waterRenderBelowFragmentModule : waterRenderFragmentModule);
+        var descriptor = {
+          label: authored
+            ? "gosx-water-" + backend + "-surface-" + side
+            : (side === "below" ? "gosx-water-render-below" : "gosx-water-render-above"),
+          layout: waterRenderPipelineLayout,
+          vertex: { module: vertexModule, entryPoint: "vertexMain", buffers: [] },
+          fragment: {
+            module: fragmentModule,
+            entryPoint: "fragmentMain",
+            targets: [{ format: targetFormat, blend: wgpuBlendState("alpha") }],
+          },
+          primitive: { topology: "triangle-list", cullMode: side === "below" ? "back" : "front" },
+          multisample: { count: sampleCount },
+          depthStencil: {
+            format: "depth24plus",
+            depthWriteEnabled: false,
+            depthCompare: "less-equal",
+          },
+        };
+        function markSurfaceFailed(error) {
+          waterAuthoredSurfacePipelineLastError = String(error && error.message || error || "validation failed").slice(0, 500);
+          waterAuthoredSurfacePipelineFailures.add(cacheKey);
+          waterRenderPipelineCache.set(cacheKey, { pipeline: null, authored: false, authoredVertex: false, failed: true });
+          console.warn("[gosx] Scene3D water authored " + side + " surface pipeline failed; falling back to builtin", error || "");
+        }
+        var validationDevice = authored ? device : null;
+        var validationScoped = false;
+        if (validationDevice && typeof validationDevice.pushErrorScope === "function") {
+          try {
+            validationDevice.pushErrorScope("validation");
+            validationScoped = true;
+          } catch (_scopeError) {
+            validationScoped = false;
+          }
+        }
+        var pipeline = device.createRenderPipeline(descriptor);
+        var record = { pipeline: pipeline, authored: authored, authoredVertex: !!vertexSource, failed: false, pending: false };
+        waterRenderPipelineCache.set(cacheKey, record);
+        if (authored && validationScoped) {
+          wgpuPopScopedErrorScope(validationDevice).then(function(scopeErr) {
+            if (!rendererDeviceStillActive(validationDevice)) return;
+            if (scopeErr) {
+              markSurfaceFailed(scopeErr);
+            } else {
+              waterAuthoredSurfacePipelineLastError = "";
+            }
+          });
+        }
+        return record;
+      } catch (error) {
+        if (authored) {
+          waterAuthoredSurfacePipelineFailures.add(cacheKey);
+          console.warn("[gosx] Scene3D water authored " + side + " surface pipeline failed; falling back to builtin", error);
+          var fallback = getWaterRenderPipeline(null, side, true);
+          return {
+            pipeline: fallback && fallback.pipeline,
+            authored: false,
+            authoredVertex: false,
+            failed: true,
+          };
+        }
+        throw error;
+      }
+    }
+
+    function drawWaterSurfaceSide(renderPass, records, frameBindGroup, side, stats) {
+      renderPass.setBindGroup(0, frameBindGroup);
+      var activePipeline = null;
+      for (var i = 0; i < records.length; i++) {
+        var system = records[i] && records[i].system;
+        if (!system || system.vertexCount <= 0) continue;
+        var pipelineRecord = getWaterRenderPipeline(system, side);
+        if (!pipelineRecord || !pipelineRecord.pipeline) {
+          if (pipelineRecord && pipelineRecord.pending) {
+            stats.waterAuthoredSurfacePendingDrawCalls += 1;
+          }
+          if (pipelineRecord && pipelineRecord.failed) {
+            stats.waterAuthoredSurfaceFallbacks += 1;
+            stats.waterAuthoredSurfaceFallbackReason = waterAuthoredSurfacePipelineLastError;
+          }
+          pipelineRecord = getWaterRenderPipeline(null, side, true);
+        }
+        if (!pipelineRecord || !pipelineRecord.pipeline) continue;
+        writeWaterObjectTextureMatrices(system);
+        if (pipelineRecord.pipeline !== activePipeline) {
+          renderPass.setPipeline(pipelineRecord.pipeline);
+          activePipeline = pipelineRecord.pipeline;
+        }
+        if (pipelineRecord.authored) {
+          stats.waterAuthoredSurfaceSystems += 1;
+          stats.waterAuthoredSurfaceDrawCalls += 1;
+        }
+        if (pipelineRecord.authoredVertex) {
+          stats.waterAuthoredSurfaceVertexDrawCalls += 1;
+        }
+        if (pipelineRecord.failed) {
+          stats.waterAuthoredSurfaceFallbacks += 1;
+          stats.waterAuthoredSurfaceFallbackReason = waterAuthoredSurfacePipelineLastError;
+        }
+        var entry = system.entry || {};
+        var activeBuffer = system.activeIndex === 0 ? system.bufferA : system.bufferB;
+        var bindGroup = entry.cubeMap
+          ? createWaterRenderBindGroup(system, activeBuffer)
+          : system.renderBindGroups[system.activeIndex];
+        renderPass.setBindGroup(1, bindGroup);
+        renderPass.draw(system.vertexCount);
+        stats.waterDrawCalls += 1;
+        stats.waterDrawVertices += system.vertexCount;
+        if (system.waterSkyCubeLoaded) {
+          stats.waterSkyCubeTextureLoaded += 1;
+        } else if (system.waterSkyCubeRequested) {
+          stats.waterSkyCubeTextureFallbacks += 1;
+          if (system.waterSkyCubePending) stats.waterSkyCubeTexturePending += 1;
+          if (system.waterSkyCubeFailed) stats.waterSkyCubeTextureFailed += 1;
+        }
+        if (side === "below") {
+          stats.waterSurfaceBelowDrawCalls += 1;
+          stats.waterSurfaceBelowDrawVertices += system.vertexCount;
+        } else {
+          stats.waterSurfaceAboveDrawCalls += 1;
+          stats.waterSurfaceAboveDrawVertices += system.vertexCount;
+        }
+      }
+    }
+
+    function drawWaterSystemEntries(renderPass, records, frameBindGroup) {
+      var stats = {
+        waterDrawCalls: 0,
+        waterDrawEntries: 0,
+        waterDrawVertices: 0,
+        waterSurfaceAboveDrawCalls: 0,
+        waterSurfaceAboveDrawVertices: 0,
+        waterSurfaceBelowDrawCalls: 0,
+        waterSurfaceBelowDrawVertices: 0,
+        waterAuthoredSurfaceSystems: 0,
+        waterAuthoredSurfaceDrawCalls: 0,
+        waterAuthoredSurfaceVertexDrawCalls: 0,
+        waterAuthoredSurfacePendingDrawCalls: 0,
+        waterAuthoredSurfaceFallbacks: 0,
+        waterAuthoredSurfaceFallbackReason: "",
+        waterSkyCubeTextureLoaded: 0,
+        waterSkyCubeTextureFallbacks: 0,
+        waterSkyCubeTexturePending: 0,
+        waterSkyCubeTextureFailed: 0,
+      };
+      if (!Array.isArray(records) || records.length === 0) return stats;
+      for (var i = 0; i < records.length; i++) {
+        var system = records[i] && records[i].system;
+        if (system && system.vertexCount > 0) stats.waterDrawEntries += 1;
+      }
+      drawWaterSurfaceSide(renderPass, records, frameBindGroup, "above", stats);
+      drawWaterSurfaceSide(renderPass, records, frameBindGroup, "below", stats);
+      return stats;
+    }
+
     // updateInstancedCullSystems dispatches GPU frustum-cull compute passes for
     // all InstancedMeshes that carry a cullKernelWGSL + the gpu-cull capability.
     // Called once per frame, AFTER uploadFrameUniforms (so scratchSelenaViewProjection
@@ -4257,6 +8537,58 @@
 
       device.queue.writeBuffer(frameUniformBuffer, 0, f);
       return cam;
+    }
+
+    function uploadWaterReflectionFrameUniforms(camera, width, height, toneMap) {
+      if (camera && camera.mode === "ortho2d") {
+        return uploadFrameUniforms(camera, width, height, toneMap);
+      }
+      var cam = sceneRenderCamera(camera);
+      var aspect = Math.max(0.0001, width / Math.max(1, height));
+      var position = sceneWaterCameraWorldPosition(cam);
+      var direction = sceneWaterCameraWorldDirection(cam);
+      var target = {
+        x: position.x + direction.x,
+        y: position.y + direction.y,
+        z: position.z + direction.z,
+      };
+      var eye = sceneWaterMirrorWaterPoint(position);
+      var reflectedTarget = sceneWaterMirrorWaterPoint(target);
+      var reflectedUp = sceneWaterReflectionCameraUp(camera);
+      sceneWaterLookAtViewMatrix(eye, reflectedTarget, reflectedUp, scratchViewMatrix);
+      if (typeof scenePBRProjectionMatrixForCamera === "function") {
+        scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
+      } else {
+        scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
+      }
+
+      scratchProjMatrix[2]  = 0.5 * (scratchProjMatrix[2]  + scratchProjMatrix[3]);
+      scratchProjMatrix[6]  = 0.5 * (scratchProjMatrix[6]  + scratchProjMatrix[7]);
+      scratchProjMatrix[10] = 0.5 * (scratchProjMatrix[10] + scratchProjMatrix[11]);
+      scratchProjMatrix[14] = 0.5 * (scratchProjMatrix[14] + scratchProjMatrix[15]);
+      sceneMat4MultiplyInto(scratchSelenaViewProjection, scratchProjMatrix, scratchViewMatrix);
+
+      var f = _frameUniformF;
+      var u = _frameUniformU;
+      f.set(scratchViewMatrix, 0);
+      f.set(scratchProjMatrix, 16);
+      f[32] = eye.x;
+      f[33] = eye.y;
+      f[34] = -eye.z;
+      f[36] = width;
+      f[37] = height;
+      u[38] = toneMap ? 1 : 0;
+      u[39] = 0;
+      device.queue.writeBuffer(frameUniformBuffer, 0, f);
+      return {
+        kind: cam.kind,
+        x: eye.x,
+        y: eye.y,
+        z: eye.z,
+        fov: cam.fov,
+        near: cam.near,
+        far: cam.far,
+      };
     }
 
     function uploadLights(lights) {
@@ -4558,6 +8890,12 @@
       return matrix && typeof matrix.length === "number" && matrix.length >= 16
         ? matrix
         : pointsIdentityMatrix;
+    }
+    function webGPUSelenaObjectModelMatrix(obj) {
+      if (obj && obj.directVertices === true) {
+        return webGPUObjectModelMatrix(obj);
+      }
+      return pointsIdentityMatrix;
     }
 
     function webGPUMat4MultiplyInto(out, outOffset, a, b, bOffset) {
@@ -6446,6 +10784,103 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-authored-failed-entries", String(published.computeParticleAuthoredFailedEntries || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-empty", String(published.computeParticleSkippedEmpty || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-compute-particle-skipped-not-ready", String(published.computeParticleSkippedNotReady || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-systems", String(published.waterSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-cells", String(published.waterCells || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-vertices", String(published.waterVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-compute-dispatches", String(published.waterComputeDispatches || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-compute-systems", String(published.waterAuthoredComputeSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-compute-dispatches", String(published.waterAuthoredComputeDispatches || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-compute-fallbacks", String(published.waterAuthoredComputeFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-drop-dispatches", String(published.waterDropDispatches || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-drop-dispatch-total", String(published.waterDropDispatchTotal || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-drop-event", String(published.waterLastDropEventID || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-systems", String(published.waterObjectSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-dispatches", String(published.waterObjectDispatches || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-event-dispatches", String(published.waterObjectEventDispatches || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-event", String(published.waterLastObjectDisplacementEventID || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-spheres", String(published.waterObjectSpheres || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-rounded-systems", String(published.waterRoundedSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-corner-radius", String(published.waterCornerRadius || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-x", String(published.waterLightDirX || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-y", String(published.waterLightDirY || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-z", String(published.waterLightDirZ || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-systems", String(published.waterCausticSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-passes", String(published.waterCausticPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-texture-pixels", String(published.waterCausticTexturePixels || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-caustic-systems", String(published.waterAuthoredCausticSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-caustic-passes", String(published.waterAuthoredCausticPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-caustic-fallbacks", String(published.waterAuthoredCausticFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-caustic-fallback-reason", String(published.waterAuthoredCausticFallbackReason || ""));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-caustic-source-bytes", String(published.waterAuthoredCausticSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-entry-caustic-source-bytes", String(published.waterEntryCausticSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-resolved-caustic-source-bytes", String(published.waterResolvedCausticSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-surface-source-bytes", String(published.waterAuthoredSurfaceSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-entry-surface-source-bytes", String(published.waterEntrySurfaceSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-resolved-surface-source-bytes", String(published.waterResolvedSurfaceSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-manifest-shader-systems", String(published.waterManifestShaderSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-manifest-shader-fields", String(published.waterManifestShaderFields || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-manifest-caustic-source-bytes", String(published.waterManifestCausticSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-manifest-surface-source-bytes", String(published.waterManifestSurfaceSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-bundle-shader-systems", String(published.waterBundleShaderSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-bundle-caustic-source-bytes", String(published.waterBundleCausticSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-bundle-surface-source-bytes", String(published.waterBundleSurfaceSourceBytes || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-passes", String(published.waterObjectTexturePasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-targets", String(published.waterObjectTextureTargets || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-pixels", String(published.waterObjectTexturePixels || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-width", String(published.waterObjectTextureWidth || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-height", String(published.waterObjectTextureHeight || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-pixel-budget", String(published.waterObjectTexturePixelBudget || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-mesh-passes", String(published.waterObjectTextureMeshPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-mesh-draw-calls", String(published.waterObjectTextureMeshDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-selena-draw-calls", String(published.waterObjectTextureSelenaDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-fallback-passes", String(published.waterObjectTextureFallbackPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-candidate-objects", String(published.waterObjectTextureCandidateObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-selected-objects", String(published.waterObjectTextureSelectedObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-fallback-missing-objects", String(published.waterObjectTextureFallbackMissingObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-fallback-missing-resources", String(published.waterObjectTextureFallbackMissingResources || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-candidate-profile", String(published.waterObjectTextureCandidateProfile || ""));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-shadow-passes", String(published.waterObjectShadowPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-shadow-texture-pixels", String(published.waterObjectShadowTexturePixels || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-shadow-mesh-passes", String(published.waterObjectShadowMeshPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-shadow-mesh-draw-calls", String(published.waterObjectShadowMeshDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-object-shadow-passes", String(published.waterAuthoredObjectShadowPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-object-shadow-fallbacks", String(published.waterAuthoredObjectShadowFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-object-mesh-shadow-passes", String(published.waterAuthoredObjectMeshShadowPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-object-mesh-shadow-fallbacks", String(published.waterAuthoredObjectMeshShadowFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-shadow-fallback-passes", String(published.waterObjectShadowFallbackPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-shadow-fallback-missing-objects", String(published.waterObjectShadowFallbackMissingObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-shadow-fallback-missing-resources", String(published.waterObjectShadowFallbackMissingResources || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-reflection-systems", String(published.waterReflectionSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-refraction-systems", String(published.waterRefractionSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-object-optics-systems", String(published.waterObjectOpticsSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-pool-passes", String(published.waterPoolPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-pool-draw-calls", String(published.waterPoolDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-pool-draw-vertices", String(published.waterPoolDrawVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-pool-tile-texture-loaded", String(published.waterPoolTileTextureLoaded || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-pool-tile-texture-fallbacks", String(published.waterPoolTileTextureFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-pool-tile-texture-pending", String(published.waterPoolTileTexturePending || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-pool-tile-texture-failed", String(published.waterPoolTileTextureFailed || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-pool-passes", String(published.waterAuthoredPoolPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-pool-vertex-passes", String(published.waterAuthoredPoolVertexPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-pool-fragment-passes", String(published.waterAuthoredPoolFragmentPasses || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-pool-fallbacks", String(published.waterAuthoredPoolFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-entries", String(published.waterDrawEntries || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-vertices", String(published.waterDrawVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-calls", String(published.waterDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-above-draw-calls", String(published.waterSurfaceAboveDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-above-draw-vertices", String(published.waterSurfaceAboveDrawVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-below-draw-calls", String(published.waterSurfaceBelowDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-below-draw-vertices", String(published.waterSurfaceBelowDrawVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-surface-systems", String(published.waterAuthoredSurfaceSystems || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-surface-draw-calls", String(published.waterAuthoredSurfaceDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-surface-vertex-draw-calls", String(published.waterAuthoredSurfaceVertexDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-surface-pending-draw-calls", String(published.waterAuthoredSurfacePendingDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-surface-fallbacks", String(published.waterAuthoredSurfaceFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-authored-surface-fallback-reason", String(published.waterAuthoredSurfaceFallbackReason || ""));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-sky-cube-texture-loaded", String(published.waterSkyCubeTextureLoaded || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-sky-cube-texture-fallbacks", String(published.waterSkyCubeTextureFallbacks || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-sky-cube-texture-pending", String(published.waterSkyCubeTexturePending || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-sky-cube-texture-failed", String(published.waterSkyCubeTextureFailed || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-mesh-objects", String(published.meshObjects || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));
@@ -6978,7 +11413,26 @@
       var hasScreenLines = hasScreenLineData(bundle);
       var hasSurfaces = hasSurfaceData(bundle);
       var hasLabels = hasLabelData(bundle);
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels) return;
+      var hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData) return;
+      var incomingWaterShaderSourcesByID = bundle && bundle.waterShaderSourcesByID && typeof bundle.waterShaderSourcesByID === "object" && Object.keys(bundle.waterShaderSourcesByID).length > 0
+        ? bundle.waterShaderSourcesByID
+        : sceneWaterShaderSourcesFromEntries(bundle && bundle.waterSystems);
+      if (canvas && canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
+        var incomingWaterEntryCausticBytes = 0;
+        var incomingWaterEntries = Array.isArray(bundle && bundle.waterSystems) ? bundle.waterSystems : [];
+        for (var iwe = 0; iwe < incomingWaterEntries.length; iwe += 1) {
+          var iweEntry = incomingWaterEntries[iwe];
+          incomingWaterEntryCausticBytes = Math.max(incomingWaterEntryCausticBytes, iweEntry && typeof iweEntry.causticsWGSL === "string" ? iweEntry.causticsWGSL.trim().length : 0);
+        }
+        var incomingSourceKeys = incomingWaterShaderSourcesByID && typeof incomingWaterShaderSourcesByID === "object" ? Object.keys(incomingWaterShaderSourcesByID) : [];
+        canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-water-incoming-entry-caustic-source-bytes", String(incomingWaterEntryCausticBytes));
+        canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-water-incoming-shader-systems", String(incomingSourceKeys.length));
+      }
+      if (bundle && Array.isArray(bundle.waterSystems)) {
+        bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
+        bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
+      }
       var preparedScene = typeof prepareScene === "function"
         ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
           mount: canvas && canvas.parentNode || null,
@@ -6986,8 +11440,18 @@
         })
         : null;
       if (preparedScene) {
+        var waterShaderSourcesByID = bundle && bundle.waterShaderSourcesByID;
         lastPreparedScene = preparedScene;
         bundle = preparedScene.ir || bundle;
+        if (waterShaderSourcesByID && Object.keys(waterShaderSourcesByID).length > 0 && bundle) {
+          bundle.waterShaderSourcesByID = waterShaderSourcesByID;
+        }
+        if (bundle && Array.isArray(bundle.waterSystems)) {
+          bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
+          if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
+            bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
+          }
+        }
         if (canvas && canvas.parentNode) {
           canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
         }
@@ -7004,6 +11468,7 @@
         hasScreenLines = hasScreenLineData(bundle);
         hasSurfaces = hasSurfaceData(bundle);
         hasLabels = hasLabelData(bundle);
+        hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
       }
 
       var width = canvas.width;
@@ -7055,13 +11520,21 @@
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
+      var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
+      if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
+        bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
+        bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
+      }
+      var waterDebugMode = sceneWebGPUWaterDebugMode();
+      var waterUpdateStats = sceneWebGPUWaterDebugSkipsUpdate(waterDebugMode)
+        ? updateWaterSystems([], encoder, frameTimeSeconds, bundle, pbrSceneBuffers, scaledW, scaledH)
+        : updateWaterSystems(bundle.waterSystems, encoder, frameTimeSeconds, bundle, pbrSceneBuffers, scaledW, scaledH);
       // GPU frustum cull: runs AFTER uploadFrameUniforms so scratchSelenaViewProjection
       // is ready (WebGPU post-depth-remap VP). Runs BEFORE shadow and main passes
       // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
       // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
       // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
       var instancedCullMap = updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
-      var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
@@ -7099,6 +11572,35 @@
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
       var shadowView1 = shadowSlots[1] ? shadowSlots[1].view : null;
       var frameBindGroup = createFrameBindGroup(shadowView0, shadowView1);
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      var waterObjectSceneTextureStats = sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)
+        ? renderWaterObjectSceneTexturePasses([], encoder, bundle, materials, frameBindGroup, pbrSceneBuffers, scaledW, scaledH, !usePostProcessing)
+        : renderWaterObjectSceneTexturePasses(
+          waterUpdateStats.records,
+          encoder,
+          bundle,
+          materials,
+          frameBindGroup,
+          pbrSceneBuffers,
+          scaledW,
+          scaledH,
+          !usePostProcessing
+        );
+      waterUpdateStats.waterObjectTexturePasses += waterObjectSceneTextureStats.waterObjectTexturePasses;
+      waterUpdateStats.waterObjectTextureTargets += waterObjectSceneTextureStats.waterObjectTextureTargets;
+      waterUpdateStats.waterObjectTexturePixels += waterObjectSceneTextureStats.waterObjectTexturePixels;
+      waterUpdateStats.waterObjectTextureWidth = Math.max(waterUpdateStats.waterObjectTextureWidth || 0, waterObjectSceneTextureStats.waterObjectTextureWidth || 0);
+      waterUpdateStats.waterObjectTextureHeight = Math.max(waterUpdateStats.waterObjectTextureHeight || 0, waterObjectSceneTextureStats.waterObjectTextureHeight || 0);
+      waterUpdateStats.waterObjectTexturePixelBudget = Math.max(waterUpdateStats.waterObjectTexturePixelBudget || 0, waterObjectSceneTextureStats.waterObjectTexturePixelBudget || 0);
+      waterUpdateStats.waterObjectTextureMeshPasses += waterObjectSceneTextureStats.waterObjectTextureMeshPasses;
+      waterUpdateStats.waterObjectTextureMeshDrawCalls += waterObjectSceneTextureStats.waterObjectTextureMeshDrawCalls;
+      waterUpdateStats.waterObjectTextureSelenaDrawCalls += waterObjectSceneTextureStats.waterObjectTextureSelenaDrawCalls;
+      waterUpdateStats.waterObjectTextureFallbackPasses += waterObjectSceneTextureStats.waterObjectTextureFallbackPasses;
+      waterUpdateStats.waterObjectTextureCandidateObjects += waterObjectSceneTextureStats.waterObjectTextureCandidateObjects;
+      waterUpdateStats.waterObjectTextureSelectedObjects += waterObjectSceneTextureStats.waterObjectTextureSelectedObjects;
+      waterUpdateStats.waterObjectTextureFallbackMissingObjects += waterObjectSceneTextureStats.waterObjectTextureFallbackMissingObjects;
+      waterUpdateStats.waterObjectTextureFallbackMissingResources += waterObjectSceneTextureStats.waterObjectTextureFallbackMissingResources;
+      waterUpdateStats.waterObjectTextureCandidateProfile = waterObjectSceneTextureStats.waterObjectTextureCandidateProfile || waterUpdateStats.waterObjectTextureCandidateProfile;
 
       // --- Main Render Target ---
       var mainColorView;
@@ -7155,7 +11657,6 @@
         },
       });
 
-      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       var instancedDrawList = hasInstancedData
         ? buildInstancedDrawList(bundle, materials)
         : { opaque: [], alpha: [], additive: [] };
@@ -7184,6 +11685,75 @@
         instancedInstances: webGPUPlannedInstanceCount(bundle.instancedMeshes),
         lineEntries: thickLineRecord ? 1 : worldLineEntries.length,
         surfaceEntries: Array.isArray(bundle.surfaces) ? bundle.surfaces.length : 0,
+        waterSystems: waterUpdateStats.waterSystems,
+        waterCells: waterUpdateStats.waterCells,
+        waterVertices: waterUpdateStats.waterVertices,
+        waterComputeDispatches: waterUpdateStats.waterComputeDispatches,
+        waterAuthoredComputeSystems: waterUpdateStats.waterAuthoredComputeSystems,
+        waterAuthoredComputeDispatches: waterUpdateStats.waterAuthoredComputeDispatches,
+        waterAuthoredComputeFallbacks: waterUpdateStats.waterAuthoredComputeFallbacks,
+        waterDropDispatches: waterUpdateStats.waterDropDispatches,
+        waterDropDispatchTotal: waterUpdateStats.waterDropDispatchTotal,
+        waterLastDropEventID: waterUpdateStats.waterLastDropEventID,
+        waterObjectSystems: waterUpdateStats.waterObjectSystems,
+        waterObjectDispatches: waterUpdateStats.waterObjectDispatches,
+        waterObjectEventDispatches: waterUpdateStats.waterObjectEventDispatches,
+        waterLastObjectDisplacementEventID: waterUpdateStats.waterLastObjectDisplacementEventID,
+        waterObjectSpheres: waterUpdateStats.waterObjectSpheres,
+        waterRoundedSystems: waterUpdateStats.waterRoundedSystems,
+        waterCornerRadius: waterUpdateStats.waterCornerRadius,
+        waterLightDirX: waterUpdateStats.waterLightDirX,
+        waterLightDirY: waterUpdateStats.waterLightDirY,
+        waterLightDirZ: waterUpdateStats.waterLightDirZ,
+        waterCausticSystems: waterUpdateStats.waterCausticSystems,
+        waterCausticPasses: waterUpdateStats.waterCausticPasses,
+        waterCausticTexturePixels: waterUpdateStats.waterCausticTexturePixels,
+        waterAuthoredCausticSystems: waterUpdateStats.waterAuthoredCausticSystems,
+        waterAuthoredCausticPasses: waterUpdateStats.waterAuthoredCausticPasses,
+        waterAuthoredCausticFallbacks: waterUpdateStats.waterAuthoredCausticFallbacks,
+        waterAuthoredCausticFallbackReason: waterUpdateStats.waterAuthoredCausticFallbackReason,
+        waterAuthoredCausticSourceBytes: waterUpdateStats.waterAuthoredCausticSourceBytes,
+        waterEntryCausticSourceBytes: waterUpdateStats.waterEntryCausticSourceBytes,
+        waterResolvedCausticSourceBytes: waterUpdateStats.waterResolvedCausticSourceBytes,
+        waterAuthoredSurfaceSourceBytes: waterUpdateStats.waterAuthoredSurfaceSourceBytes,
+        waterEntrySurfaceSourceBytes: waterUpdateStats.waterEntrySurfaceSourceBytes,
+        waterResolvedSurfaceSourceBytes: waterUpdateStats.waterResolvedSurfaceSourceBytes,
+        waterManifestShaderSystems: waterUpdateStats.waterManifestShaderSystems,
+        waterManifestShaderFields: waterUpdateStats.waterManifestShaderFields,
+        waterManifestCausticSourceBytes: waterUpdateStats.waterManifestCausticSourceBytes,
+        waterManifestSurfaceSourceBytes: waterUpdateStats.waterManifestSurfaceSourceBytes,
+        waterBundleShaderSystems: waterUpdateStats.waterBundleShaderSystems,
+        waterBundleCausticSourceBytes: waterUpdateStats.waterBundleCausticSourceBytes,
+        waterBundleSurfaceSourceBytes: waterUpdateStats.waterBundleSurfaceSourceBytes,
+        waterObjectTexturePasses: waterUpdateStats.waterObjectTexturePasses,
+        waterObjectTextureTargets: waterUpdateStats.waterObjectTextureTargets,
+        waterObjectTexturePixels: waterUpdateStats.waterObjectTexturePixels,
+        waterObjectTextureWidth: waterUpdateStats.waterObjectTextureWidth,
+        waterObjectTextureHeight: waterUpdateStats.waterObjectTextureHeight,
+        waterObjectTexturePixelBudget: waterUpdateStats.waterObjectTexturePixelBudget,
+        waterObjectTextureMeshPasses: waterUpdateStats.waterObjectTextureMeshPasses,
+        waterObjectTextureMeshDrawCalls: waterUpdateStats.waterObjectTextureMeshDrawCalls,
+        waterObjectTextureSelenaDrawCalls: waterUpdateStats.waterObjectTextureSelenaDrawCalls,
+        waterObjectTextureFallbackPasses: waterUpdateStats.waterObjectTextureFallbackPasses,
+        waterObjectTextureCandidateObjects: waterUpdateStats.waterObjectTextureCandidateObjects,
+        waterObjectTextureSelectedObjects: waterUpdateStats.waterObjectTextureSelectedObjects,
+        waterObjectTextureFallbackMissingObjects: waterUpdateStats.waterObjectTextureFallbackMissingObjects,
+        waterObjectTextureFallbackMissingResources: waterUpdateStats.waterObjectTextureFallbackMissingResources,
+        waterObjectTextureCandidateProfile: waterUpdateStats.waterObjectTextureCandidateProfile,
+        waterObjectShadowPasses: waterUpdateStats.waterObjectShadowPasses,
+        waterObjectShadowTexturePixels: waterUpdateStats.waterObjectShadowTexturePixels,
+        waterObjectShadowMeshPasses: waterUpdateStats.waterObjectShadowMeshPasses,
+        waterObjectShadowMeshDrawCalls: waterUpdateStats.waterObjectShadowMeshDrawCalls,
+        waterAuthoredObjectShadowPasses: waterUpdateStats.waterAuthoredObjectShadowPasses,
+        waterAuthoredObjectShadowFallbacks: waterUpdateStats.waterAuthoredObjectShadowFallbacks,
+        waterAuthoredObjectMeshShadowPasses: waterUpdateStats.waterAuthoredObjectMeshShadowPasses,
+        waterAuthoredObjectMeshShadowFallbacks: waterUpdateStats.waterAuthoredObjectMeshShadowFallbacks,
+        waterObjectShadowFallbackPasses: waterUpdateStats.waterObjectShadowFallbackPasses,
+        waterObjectShadowFallbackMissingObjects: waterUpdateStats.waterObjectShadowFallbackMissingObjects,
+        waterObjectShadowFallbackMissingResources: waterUpdateStats.waterObjectShadowFallbackMissingResources,
+        waterReflectionSystems: waterUpdateStats.waterReflectionSystems,
+        waterRefractionSystems: waterUpdateStats.waterRefractionSystems,
+        waterObjectOpticsSystems: waterUpdateStats.waterObjectOpticsSystems,
         customMaterialFallbacks: customMaterialStats.customMaterialFallbacks,
         customWGSLFallbacks: customMaterialStats.customWGSLFallbacks,
         customUniformFallbacks: customMaterialStats.customUniformFallbacks,
@@ -7250,6 +11820,11 @@
         } else if (worldLineEntries.length > 0) {
           drawWorldLineEntries(mainPass, worldLineEntries, "additive", frameBindGroup);
         }
+      }
+
+      if (hasWaterData && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
+        Object.assign(frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup));
+        Object.assign(frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup));
       }
 
       // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
@@ -7325,11 +11900,27 @@
       boardGlyphAtlases.clear();
       boardTextOwners.clear();
       disposeComputeParticleSystems();
+      disposeWaterSystems();
+      waterRenderPipelineCache.clear();
+      waterPoolPipelineCache = {};
+      waterAuthoredPoolPipelineCache.clear();
+      waterAuthoredPoolPipelineFailures.clear();
+      waterAuthoredComputePipelineCache.clear();
+      waterAuthoredComputePipelineFailures.clear();
+      waterAuthoredCausticsPipelineCache.clear();
+      waterAuthoredCausticsPipelineFailures.clear();
+      waterAuthoredSurfaceModuleCache.clear();
+      waterAuthoredSurfacePipelineFailures.clear();
+      waterAuthoredObjectShadowPipelineCache.clear();
+      waterAuthoredObjectShadowPipelineFailures.clear();
+      waterAuthoredObjectMeshShadowPipelineCache.clear();
+      waterAuthoredObjectMeshShadowPipelineFailures.clear();
 
       if (mainDepthTexture) mainDepthTexture.destroy();
       if (mainMSAATexture) mainMSAATexture.destroy();
       if (dummyShadowTex) dummyShadowTex.destroy();
       if (placeholderTex) placeholderTex.destroy();
+      if (placeholderCubeTex) placeholderCubeTex.destroy();
 
       for (var si = 0; si < shadowSlots.length; si++) {
         if (shadowSlots[si]) shadowSlots[si].texture.destroy();

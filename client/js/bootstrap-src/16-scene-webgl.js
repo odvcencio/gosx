@@ -4623,9 +4623,17 @@
       return selenaProgram;
     }
 
-    function selenaUniformValue(material, layout, field) {
+    function webGLSelenaObjectModelMatrix(obj) {
+      if (obj && obj.directVertices === true) {
+        return obj.modelMatrix || identityModelMatrix;
+      }
+      return identityModelMatrix;
+    }
+
+    function selenaUniformValue(material, layout, field, owner) {
       var name = field && field.name;
       if (name === "mvp") return scratchSelenaViewProjection;
+      if (name === "modelMatrix") return webGLSelenaObjectModelMatrix(owner);
       if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
       // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
       // customUniforms so a declared `param time` — whose compiled default ships
@@ -4650,7 +4658,7 @@
       return sceneNumber(value, 0);
     }
 
-    function uploadSelenaUniforms(gl, info, material) {
+    function uploadSelenaUniforms(gl, info, material, owner) {
       var layout = info && info.layout;
       var fields = layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.fields)
         ? layout.uniformBlock.fields
@@ -4659,7 +4667,7 @@
         var field = fields[i] || {};
         var loc = info.uniforms && info.uniforms[field.name];
         if (!loc) continue;
-        var value = selenaUniformValue(material, layout, field);
+        var value = selenaUniformValue(material, layout, field, owner);
         switch (String(field.type || "")) {
         case "mat4":
           gl.uniformMatrix4fv(loc, false, value);
@@ -4834,7 +4842,7 @@
             gl.depthMask(obj.depthWrite !== false);
           }
 
-          uploadSelenaUniforms(gl, selenaProgram, mat);
+          uploadSelenaUniforms(gl, selenaProgram, mat, obj);
           bindSelenaTextures(gl, selenaProgram, mat);
 
           const selenaOffset = obj.vertexOffset;

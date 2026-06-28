@@ -1,0 +1,31 @@
+
+// Authored Selena projected object-mesh shadow vertex pass. Scene3D binds
+// ObjectMeshShadowUniforms at group(0)/binding(0) and supplies ordinary PBR
+// vertex attributes for the selected water object mesh.
+struct ObjectMeshShadowUniforms {
+  light: vec4f,
+  pool: vec4f,
+};
+
+struct VertexInput {
+  @location(0) position: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) uv: vec2f,
+  @location(3) tangent: vec4f,
+};
+
+@group(0) @binding(0) var<uniform> shadow: ObjectMeshShadowUniforms;
+
+@vertex fn vertexMain(in: VertexInput) -> @builtin(position) vec4f {
+  let worldPosition = in.position;
+  let refractedLight = refract(-normalize(shadow.light.xyz), vec3f(0.0, 1.0, 0.0), 1.0 / 1.333);
+  let fallbackY = select(-0.0001, 0.0001, refractedLight.y >= 0.0);
+  let refractedY = select(fallbackY, refractedLight.y, abs(refractedLight.y) > 0.0001);
+  let projected = 0.75 * (worldPosition.xz - worldPosition.y * refractedLight.xz / refractedY);
+  return vec4f(
+    projected.x / max(shadow.pool.x, 0.0001),
+    projected.y / max(shadow.pool.y, 0.0001),
+    0.0,
+    1.0
+  );
+}

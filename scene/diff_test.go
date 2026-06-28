@@ -211,6 +211,9 @@ func TestDiffCommandsReplacesParticleAndInstancedCollections(t *testing.T) {
 		ComputeParticles: []ComputeParticlesIR{
 			{ID: "field", Count: 4, Emitter: ParticleEmitterIR{Kind: "sphere", Radius: 2}},
 		},
+		WaterSystems: []WaterSystemIR{
+			{ID: "pool-water", Resolution: 256, ComputeBackend: "elio", MaterialBackend: "selena"},
+		},
 		InstancedMeshes: []InstancedMeshIR{
 			{ID: "debris", Kind: "torus", Count: 2, Radius: 1.2, Tube: 0.2, Transforms: make([]float64, 32)},
 		},
@@ -229,6 +232,9 @@ func TestDiffCommandsReplacesParticleAndInstancedCollections(t *testing.T) {
 	}
 	if compute, ok := particlesPayload["computeParticles"].([]any); !ok || len(compute) != 1 {
 		t.Fatalf("compute payload = %#v", particlesPayload["computeParticles"])
+	}
+	if water, ok := particlesPayload["waterSystems"].([]any); !ok || len(water) != 1 {
+		t.Fatalf("water payload = %#v", particlesPayload["waterSystems"])
 	}
 	if commands[1].Kind != CommandSetInstancedMeshes {
 		t.Fatalf("instanced command = %#v", commands[1])

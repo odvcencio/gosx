@@ -740,10 +740,14 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	props := Props{
 		Controls:           ControlFirstPerson,
 		ControlTarget:      Vec3(1.5, 0.25, 0.8),
+		ControlRotateMode:  "pixel-degrees",
 		ControlRotateSpeed: 1.4,
 		ControlZoomSpeed:   0.85,
 		ControlLookSpeed:   1.2,
 		ControlMoveSpeed:   6.5,
+		ControlMinDistance: 2,
+		ControlMaxDistance: 10,
+		ControlPitchLimit:  1.5707788735,
 		PointerLock:        Bool(true),
 		MSAASamples:        4,
 		Camera: PerspectiveCamera{
@@ -769,6 +773,9 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	if got := controlTarget["x"]; got != 1.5 {
 		t.Fatalf("expected control target x 1.5, got %#v", got)
 	}
+	if got := legacy["controlRotateMode"]; got != "pixel-degrees" {
+		t.Fatalf("expected rotate mode pixel-degrees, got %#v", got)
+	}
 	if got := legacy["controlRotateSpeed"]; got != 1.4 {
 		t.Fatalf("expected rotate speed 1.4, got %#v", got)
 	}
@@ -780,6 +787,15 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	}
 	if got := legacy["controlMoveSpeed"]; got != 6.5 {
 		t.Fatalf("expected move speed 6.5, got %#v", got)
+	}
+	if got := legacy["controlMinDistance"]; got != 2.0 {
+		t.Fatalf("expected min distance 2, got %#v", got)
+	}
+	if got := legacy["controlMaxDistance"]; got != 10.0 {
+		t.Fatalf("expected max distance 10, got %#v", got)
+	}
+	if got := legacy["controlPitchLimit"]; got != 1.5707788735 {
+		t.Fatalf("expected pitch limit 1.5707788735, got %#v", got)
 	}
 	if got := legacy["msaaSamples"]; got != 4 {
 		t.Fatalf("expected msaa samples 4, got %#v", got)
@@ -899,6 +915,9 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 				Position: Vec3(1.2, 0.4, -0.8),
 				Rotation: Rotate(0.1, 0.2, -0.3),
 				Scale:    Vec3(1.6, 0.8, 1.2),
+				Bounds:   0.5,
+				Fit:      "contain",
+				FitAlign: "center-min-y",
 				Material: GlowMaterial{
 					Color:      "#ffd48f",
 					Opacity:    Float(0.78),
@@ -907,8 +926,10 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 					RenderPass: RenderAdditive,
 					Wireframe:  Bool(false),
 				},
-				Pickable: Bool(true),
-				Static:   Bool(true),
+				CastShadow:    true,
+				ReceiveShadow: true,
+				Pickable:      Bool(true),
+				Static:        Bool(true),
 			},
 			Mesh{
 				ID: "wireframe",
@@ -945,8 +966,14 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 	if math.Abs(model.ScaleX-1.6) > 1e-9 || math.Abs(model.ScaleY-0.8) > 1e-9 || math.Abs(model.ScaleZ-1.2) > 1e-9 {
 		t.Fatalf("expected model scale, got (%#v,%#v,%#v)", model.ScaleX, model.ScaleY, model.ScaleZ)
 	}
+	if math.Abs(model.Bounds-0.5) > 1e-9 || model.Fit != "contain" || model.FitAlign != "center-min-y" {
+		t.Fatalf("expected model fit metadata, got bounds=%#v fit=%#v fitAlign=%#v", model.Bounds, model.Fit, model.FitAlign)
+	}
 	if model.MaterialKind != "glow" {
 		t.Fatalf("expected glow material override, got %#v", model.MaterialKind)
+	}
+	if !model.CastShadow || !model.ReceiveShadow {
+		t.Fatalf("expected model shadow flags to lower, got cast=%v receive=%v", model.CastShadow, model.ReceiveShadow)
 	}
 	if model.Pickable == nil || !*model.Pickable {
 		t.Fatalf("expected explicit pickable model override, got %#v", model.Pickable)
@@ -988,6 +1015,15 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 	}
 	if got := models[0]["pickable"]; got != true {
 		t.Fatalf("expected model pickable in legacy props, got %#v", got)
+	}
+	if got := models[0]["bounds"]; got != 0.5 {
+		t.Fatalf("expected model bounds in legacy props, got %#v", got)
+	}
+	if got := models[0]["fit"]; got != "contain" {
+		t.Fatalf("expected model fit in legacy props, got %#v", got)
+	}
+	if got := models[0]["fitAlign"]; got != "center-min-y" {
+		t.Fatalf("expected model fit alignment in legacy props, got %#v", got)
 	}
 	objects, ok := sceneValue["objects"].([]map[string]any)
 	if !ok || len(objects) != 1 {
@@ -1081,6 +1117,22 @@ func TestPropsEngineCapabilitiesIncludeWebGPUForComputeParticles(t *testing.T) {
 	}
 	if !slicesContainCapability(cfg.Capabilities, engine.CapWebGPU) {
 		t.Fatalf("expected webgpu capability for compute particles, got %#v", cfg.Capabilities)
+	}
+}
+
+func TestPropsEngineCapabilitiesIncludeWebGPUForWaterSystem(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			WaterSystem{ID: "pool-water"},
+		),
+	}
+
+	cfg := props.EngineConfig()
+	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
+		t.Fatalf("expected generated capabilities to validate: %v", err)
+	}
+	if !slicesContainCapability(cfg.Capabilities, engine.CapWebGPU) {
+		t.Fatalf("expected webgpu capability for water system, got %#v", cfg.Capabilities)
 	}
 }
 
@@ -1918,6 +1970,56 @@ func TestPropsSceneIRLowersDepthWriteOnMesh(t *testing.T) {
 	}
 }
 
+func TestPropsSceneIRLowersVisibleOnMeshAndModel(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(
+			Mesh{
+				ID:       "hidden-mesh",
+				Geometry: CubeGeometry{Size: 1},
+				Material: FlatMaterial{Color: "#ffffff"},
+				Visible:  Bool(false),
+			},
+			Model{
+				ID:      "hidden-model",
+				Src:     "duck.gltf",
+				Visible: Bool(false),
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 || ir.Objects[0].Visible == nil || *ir.Objects[0].Visible {
+		t.Fatalf("expected hidden mesh visible=false in SceneIR, got %#v", ir.Objects)
+	}
+	if len(ir.Models) != 1 || ir.Models[0].Visible == nil || *ir.Models[0].Visible {
+		t.Fatalf("expected hidden model visible=false in SceneIR, got %#v", ir.Models)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	objects, ok := sceneValue["objects"].([]map[string]any)
+	if !ok || len(objects) != 1 || objects[0]["visible"] != false {
+		t.Fatalf("expected visible=false in legacy object props, got %#v", sceneValue["objects"])
+	}
+	models, ok := sceneValue["models"].([]map[string]any)
+	if !ok || len(models) != 1 || models[0]["visible"] != false {
+		t.Fatalf("expected visible=false in legacy model props, got %#v", sceneValue["models"])
+	}
+
+	canonical := props.CanonicalIR()
+	if len(canonical.Nodes) != 2 {
+		t.Fatalf("expected 2 canonical nodes, got %d", len(canonical.Nodes))
+	}
+	for _, node := range canonical.Nodes {
+		if node.Mesh == nil || node.Mesh.Visible == nil || *node.Mesh.Visible {
+			t.Fatalf("expected canonical node %q visible=false, got %#v", node.ID, node.Mesh)
+		}
+	}
+}
+
 func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
@@ -2492,6 +2594,330 @@ func TestComputeParticlesPayloadKernelFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
+	const simulation = "@compute @workgroup_size(8, 8) fn simulate() {}"
+	const seed = "@compute @workgroup_size(8, 8) fn seedDrops() {}"
+	const drop = "@compute @workgroup_size(8, 8) fn addDrop() {}"
+	const causticsFragment = "@fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(1.0); }"
+	const poolVertex = "@vertex fn vertexMain() -> @builtin(position) vec4f { return vec4f(0.0); }"
+	const poolFragment = "@fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(0.5); }"
+	const surfaceFragment = "@fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(0.0); }"
+	const surfaceBelowFragment = "const WATER_SURFACE_VIEW_BELOW: bool = true; @fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(0.0); }"
+	const objectShadowFragment = "@fragment fn shadowMain() -> @location(0) vec4f { return vec4f(0.25); }"
+	const objectMeshShadowVertex = "@vertex fn vertexMain() -> @builtin(position) vec4f { return vec4f(0.0); }"
+	const objectMeshShadowFragment = "@fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(1.0); }"
+	props := Props{
+		Graph: NewGraph(
+			WaterSystem{
+				ID:                          "pool-water",
+				InteractionProfile:          "water-object-drop-orbit",
+				InteractionTarget:           "water-main",
+				InteractionObject:           "Sphere",
+				Resolution:                  256,
+				PoolShape:                   "Rounded Box",
+				PoolWidth:                   7.2,
+				PoolHeight:                  1.1,
+				PoolLength:                  4.4,
+				CornerRadius:                0.22,
+				SeedDrops:                   20,
+				DropRadius:                  0.035,
+				DropStrength:                0.012,
+				DropEventID:                 3,
+				DropX:                       -0.25,
+				DropZ:                       0.4,
+				DropEventRadius:             0.03,
+				DropEventStrength:           0.01,
+				TileTexture:                 "/water/tiles.jpg",
+				CubeMap:                     "/water/",
+				ShallowColor:                "#7ad1eb",
+				DeepColor:                   "#082e57",
+				CausticsResolution:          1024,
+				ObjectTextureResolution:     512,
+				ObjectTextureResolutionMode: "viewport",
+				ObjectTexturePixelBudget:    3145728,
+				ObjectShadowResolution:      1024,
+				Caustics:                    true,
+				Reflection:                  true,
+				Refraction:                  true,
+				Paused:                      true,
+				LightDirection:              Vec3(2, 3, -1),
+				ActiveObject:                "Sphere",
+				ObjectKind:                  "sphere",
+				ObjectX:                     -1.28,
+				ObjectY:                     0.22,
+				ObjectZ:                     0.1,
+				ObjectPreviousSet:           true,
+				ObjectPreviousX:             -1.28,
+				ObjectPreviousY:             8,
+				ObjectPreviousZ:             0.1,
+				ObjectRadius:                0.44,
+				ObjectDriftX:                0.16,
+				ObjectBobAmplitude:          0.08,
+				ObjectBobSpeed:              1.55,
+				ObjectDisplacementScale:     1,
+				ComputeSource:               "water/jeantimex-water.elio",
+				MaterialSource:              "water/jeantimex-water.sel",
+				ComputeSourceFiles:          map[string]string{"simulationWGSL": "shaders/jeantimex-water.elio/simulation.elio"},
+				MaterialSourceFiles:         map[string]string{"surfaceFragmentWGSL": "shaders/jeantimex-water.sel/surface.fragment.sel"},
+				ObjectDisplacementSpheres: []WaterDisplacementSphere{
+					{Offset: Vec3(0, 0, 0), Radius: 0.15},
+					{Offset: Vec3(0.1, 0.05, -0.02), Radius: 0.08},
+				},
+				ObjectDisplacementEvents: []WaterObjectDisplacementEvent{
+					{
+						ID:                7,
+						ActiveObject:      "Sphere",
+						ObjectKind:        "sphere",
+						ObjectX:           -1.28,
+						ObjectY:           10,
+						ObjectZ:           0.1,
+						ObjectPreviousSet: true,
+						ObjectPreviousX:   -1.28,
+						ObjectPreviousY:   0.22,
+						ObjectPreviousZ:   0.1,
+						ObjectRadius:      0.44,
+						ObjectDisplacementSpheres: []WaterDisplacementSphere{
+							{Offset: Vec3(0.02, 0, 0), Radius: 0.05},
+						},
+					},
+				},
+				SeedWGSL:                     seed,
+				DropWGSL:                     drop,
+				SimulationWGSL:               simulation,
+				CausticsWGSL:                 causticsFragment,
+				PoolVertexWGSL:               poolVertex,
+				PoolFragmentWGSL:             poolFragment,
+				SurfaceFragmentWGSL:          surfaceFragment,
+				SurfaceBelowFragmentWGSL:     surfaceBelowFragment,
+				ObjectShadowWGSL:             objectShadowFragment,
+				ObjectMeshShadowVertexWGSL:   objectMeshShadowVertex,
+				ObjectMeshShadowFragmentWGSL: objectMeshShadowFragment,
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.WaterSystems) != 1 {
+		t.Fatalf("expected one water system, got %#v", ir.WaterSystems)
+	}
+	water := ir.WaterSystems[0]
+	if water.ID != "pool-water" || water.Resolution != 256 || water.PoolShape != "Rounded Box" {
+		t.Fatalf("unexpected water system identity: %+v", water)
+	}
+	if water.ComputeBackend != "elio" || water.MaterialBackend != "selena" {
+		t.Fatalf("expected Elio/Selena defaults, got compute=%q material=%q", water.ComputeBackend, water.MaterialBackend)
+	}
+	if water.WaveSpeed != 1 || water.Damping != 0.995 || water.NormalScale != 1 {
+		t.Fatalf("expected upstream water physics defaults, got waveSpeed=%v damping=%v normalScale=%v", water.WaveSpeed, water.Damping, water.NormalScale)
+	}
+	if water.ComputeSource != "water/jeantimex-water.elio" || water.MaterialSource != "water/jeantimex-water.sel" {
+		t.Fatalf("expected authored water source modules, got compute=%q material=%q", water.ComputeSource, water.MaterialSource)
+	}
+	if water.ComputeSourceFiles["simulationWGSL"] != "shaders/jeantimex-water.elio/simulation.elio" || water.MaterialSourceFiles["surfaceFragmentWGSL"] != "shaders/jeantimex-water.sel/surface.fragment.sel" {
+		t.Fatalf("water source file manifests did not lower: compute=%#v material=%#v", water.ComputeSourceFiles, water.MaterialSourceFiles)
+	}
+	if water.InteractionProfile != "water-object-drop-orbit" || water.InteractionTarget != "water-main" || water.InteractionObject != "Sphere" {
+		t.Fatalf("interaction profile fields did not lower: %+v", water)
+	}
+	if water.SimulationWGSL != simulation {
+		t.Fatalf("simulation WGSL did not round-trip")
+	}
+	if water.SeedWGSL != seed || water.DropWGSL != drop {
+		t.Fatalf("seed/drop WGSL did not round-trip")
+	}
+	if water.CausticsWGSL != causticsFragment {
+		t.Fatalf("caustics WGSL did not round-trip")
+	}
+	if water.PoolVertexWGSL != poolVertex || water.PoolFragmentWGSL != poolFragment {
+		t.Fatalf("pool WGSL did not round-trip")
+	}
+	if water.SurfaceFragmentWGSL != surfaceFragment || water.SurfaceBelowFragmentWGSL != surfaceBelowFragment {
+		t.Fatalf("surface WGSL did not round-trip: above=%q below=%q", water.SurfaceFragmentWGSL, water.SurfaceBelowFragmentWGSL)
+	}
+	if water.ObjectShadowWGSL != objectShadowFragment || water.ObjectMeshShadowVertexWGSL != objectMeshShadowVertex || water.ObjectMeshShadowFragmentWGSL != objectMeshShadowFragment {
+		t.Fatalf("object shadow WGSL did not round-trip")
+	}
+	if water.DropEventID != 3 || water.DropX != -0.25 || water.DropZ != 0.4 || water.DropEventRadius != 0.03 || water.DropEventStrength != 0.01 {
+		t.Fatalf("drop event fields did not lower: %+v", water)
+	}
+	if water.CubeMap != "/water/" {
+		t.Fatalf("cubemap field did not lower: %+v", water)
+	}
+	if water.ShallowColor != "#7ad1eb" || water.DeepColor != "#082e57" {
+		t.Fatalf("water colors did not lower: shallow=%q deep=%q", water.ShallowColor, water.DeepColor)
+	}
+	if water.CausticsResolution != 1024 || water.ObjectTextureResolution != 512 || water.ObjectTextureResolutionMode != "viewport" || water.ObjectTexturePixelBudget != 3145728 || water.ObjectShadowResolution != 1024 {
+		t.Fatalf("water texture target resolution fields did not lower: %+v", water)
+	}
+	if !water.Paused {
+		t.Fatalf("paused flag did not lower: %+v", water)
+	}
+	if water.LightDirectionX != 2 || water.LightDirectionY != 3 || water.LightDirectionZ != -1 {
+		t.Fatalf("light direction = (%v,%v,%v)", water.LightDirectionX, water.LightDirectionY, water.LightDirectionZ)
+	}
+	if water.ObjectKind != "sphere" || water.ObjectX != -1.28 || water.ObjectRadius != 0.44 || water.ObjectDisplacementScale != 1 {
+		t.Fatalf("object displacement fields did not lower: %+v", water)
+	}
+	if !water.ObjectPreviousSet || water.ObjectPreviousX != -1.28 || water.ObjectPreviousY != 8 || water.ObjectPreviousZ != 0.1 {
+		t.Fatalf("object previous displacement fields did not lower: %+v", water)
+	}
+	if len(water.ObjectDisplacementSpheres) != 2 {
+		t.Fatalf("object displacement spheres length = %d, want 2", len(water.ObjectDisplacementSpheres))
+	}
+	if water.ObjectDisplacementSpheres[1].OffsetX != 0.1 || water.ObjectDisplacementSpheres[1].OffsetY != 0.05 || water.ObjectDisplacementSpheres[1].OffsetZ != -0.02 || water.ObjectDisplacementSpheres[1].Radius != 0.08 {
+		t.Fatalf("object displacement sphere did not lower: %+v", water.ObjectDisplacementSpheres[1])
+	}
+	if len(water.ObjectDisplacementEvents) != 1 {
+		t.Fatalf("object displacement events length = %d, want 1", len(water.ObjectDisplacementEvents))
+	}
+	event := water.ObjectDisplacementEvents[0]
+	if event.ID != 7 || event.ActiveObject != "Sphere" || event.ObjectKind != "sphere" || event.ObjectY != 10 || event.ObjectPreviousY != 0.22 || !event.ObjectPreviousSet {
+		t.Fatalf("object displacement event did not lower: %+v", event)
+	}
+	if len(event.ObjectDisplacementSpheres) != 1 || event.ObjectDisplacementSpheres[0].OffsetX != 0.02 || event.ObjectDisplacementSpheres[0].Radius != 0.05 {
+		t.Fatalf("object displacement event spheres did not lower: %+v", event.ObjectDisplacementSpheres)
+	}
+
+	legacy := props.LegacyProps()
+	sceneValue, ok := legacy["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected scene map, got %#v", legacy["scene"])
+	}
+	systems, ok := sceneValue["waterSystems"].([]map[string]any)
+	if !ok || len(systems) != 1 {
+		t.Fatalf("expected one waterSystems legacy record, got %#v", sceneValue["waterSystems"])
+	}
+	if got := systems[0]["computeBackend"]; got != "elio" {
+		t.Fatalf("legacy computeBackend = %#v, want elio", got)
+	}
+	if got := systems[0]["materialBackend"]; got != "selena" {
+		t.Fatalf("legacy materialBackend = %#v, want selena", got)
+	}
+	if got := systems[0]["computeSource"]; got != "water/jeantimex-water.elio" {
+		t.Fatalf("legacy computeSource = %#v", got)
+	}
+	if got := systems[0]["materialSource"]; got != "water/jeantimex-water.sel" {
+		t.Fatalf("legacy materialSource = %#v", got)
+	}
+	if got := systems[0]["computeSourceFiles"].(map[string]string)["simulationWGSL"]; got != "shaders/jeantimex-water.elio/simulation.elio" {
+		t.Fatalf("legacy computeSourceFiles simulationWGSL = %#v", got)
+	}
+	if got := systems[0]["materialSourceFiles"].(map[string]string)["surfaceFragmentWGSL"]; got != "shaders/jeantimex-water.sel/surface.fragment.sel" {
+		t.Fatalf("legacy materialSourceFiles surfaceFragmentWGSL = %#v", got)
+	}
+	if got := systems[0]["seedWGSL"]; got != seed {
+		t.Fatalf("legacy seedWGSL = %#v", got)
+	}
+	if got := systems[0]["dropWGSL"]; got != drop {
+		t.Fatalf("legacy dropWGSL = %#v", got)
+	}
+	if got := systems[0]["causticsWGSL"]; got != causticsFragment {
+		t.Fatalf("legacy causticsWGSL = %#v", got)
+	}
+	if got := systems[0]["poolVertexWGSL"]; got != poolVertex {
+		t.Fatalf("legacy poolVertexWGSL = %#v", got)
+	}
+	if got := systems[0]["poolFragmentWGSL"]; got != poolFragment {
+		t.Fatalf("legacy poolFragmentWGSL = %#v", got)
+	}
+	if got := systems[0]["surfaceFragmentWGSL"]; got != surfaceFragment {
+		t.Fatalf("legacy surfaceFragmentWGSL = %#v", got)
+	}
+	if got := systems[0]["surfaceBelowFragmentWGSL"]; got != surfaceBelowFragment {
+		t.Fatalf("legacy surfaceBelowFragmentWGSL = %#v", got)
+	}
+	if got := systems[0]["objectShadowWGSL"]; got != objectShadowFragment {
+		t.Fatalf("legacy objectShadowWGSL = %#v", got)
+	}
+	if got := systems[0]["objectMeshShadowVertexWGSL"]; got != objectMeshShadowVertex {
+		t.Fatalf("legacy objectMeshShadowVertexWGSL = %#v", got)
+	}
+	if got := systems[0]["objectMeshShadowFragmentWGSL"]; got != objectMeshShadowFragment {
+		t.Fatalf("legacy objectMeshShadowFragmentWGSL = %#v", got)
+	}
+	if got := systems[0]["interactionProfile"]; got != "water-object-drop-orbit" {
+		t.Fatalf("legacy interactionProfile = %#v, want water-object-drop-orbit", got)
+	}
+	if got := systems[0]["interactionTarget"]; got != "water-main" {
+		t.Fatalf("legacy interactionTarget = %#v, want water-main", got)
+	}
+	if got := systems[0]["interactionObject"]; got != "Sphere" {
+		t.Fatalf("legacy interactionObject = %#v, want Sphere", got)
+	}
+	if got := systems[0]["paused"]; got != true {
+		t.Fatalf("legacy paused = %#v, want true", got)
+	}
+	if got := systems[0]["objectKind"]; got != "sphere" {
+		t.Fatalf("legacy objectKind = %#v, want sphere", got)
+	}
+	if got := systems[0]["objectRadius"]; got != 0.44 {
+		t.Fatalf("legacy objectRadius = %#v, want 0.44", got)
+	}
+	if got := systems[0]["objectPreviousSet"]; got != true {
+		t.Fatalf("legacy objectPreviousSet = %#v, want true", got)
+	}
+	if got := systems[0]["objectPreviousY"]; got != 8.0 {
+		t.Fatalf("legacy objectPreviousY = %#v, want 8", got)
+	}
+	if got := systems[0]["dropEventID"]; got != 3 {
+		t.Fatalf("legacy dropEventID = %#v, want 3", got)
+	}
+	if got := systems[0]["dropX"]; got != -0.25 {
+		t.Fatalf("legacy dropX = %#v, want -0.25", got)
+	}
+	if got := systems[0]["cubeMap"]; got != "/water/" {
+		t.Fatalf("legacy cubeMap = %#v, want /water/", got)
+	}
+	if got := systems[0]["shallowColor"]; got != "#7ad1eb" {
+		t.Fatalf("legacy shallowColor = %#v, want #7ad1eb", got)
+	}
+	if got := systems[0]["deepColor"]; got != "#082e57" {
+		t.Fatalf("legacy deepColor = %#v, want #082e57", got)
+	}
+	if got := systems[0]["causticsResolution"]; got != 1024 {
+		t.Fatalf("legacy causticsResolution = %#v, want 1024", got)
+	}
+	if got := systems[0]["objectTextureResolution"]; got != 512 {
+		t.Fatalf("legacy objectTextureResolution = %#v, want 512", got)
+	}
+	if got := systems[0]["objectTextureResolutionMode"]; got != "viewport" {
+		t.Fatalf("legacy objectTextureResolutionMode = %#v, want viewport", got)
+	}
+	if got := systems[0]["objectShadowResolution"]; got != 1024 {
+		t.Fatalf("legacy objectShadowResolution = %#v, want 1024", got)
+	}
+	legacySpheres, ok := systems[0]["objectDisplacementSpheres"].([]map[string]any)
+	if !ok || len(legacySpheres) != 2 {
+		t.Fatalf("legacy objectDisplacementSpheres = %#v", systems[0]["objectDisplacementSpheres"])
+	}
+	if got := legacySpheres[1]["radius"]; got != 0.08 {
+		t.Fatalf("legacy displacement sphere radius = %#v, want 0.08", got)
+	}
+	legacyEvents, ok := systems[0]["objectDisplacementEvents"].([]map[string]any)
+	if !ok || len(legacyEvents) != 1 {
+		t.Fatalf("legacy objectDisplacementEvents = %#v", systems[0]["objectDisplacementEvents"])
+	}
+	if got := legacyEvents[0]["id"]; got != 7 {
+		t.Fatalf("legacy event id = %#v, want 7", got)
+	}
+	if got := legacyEvents[0]["activeObject"]; got != "Sphere" {
+		t.Fatalf("legacy event activeObject = %#v, want Sphere", got)
+	}
+	if got := legacyEvents[0]["objectY"]; got != 10.0 {
+		t.Fatalf("legacy event objectY = %#v, want 10", got)
+	}
+	if got := legacyEvents[0]["objectPreviousY"]; got != 0.22 {
+		t.Fatalf("legacy event objectPreviousY = %#v, want 0.22", got)
+	}
+	legacyEventSpheres, ok := legacyEvents[0]["objectDisplacementSpheres"].([]map[string]any)
+	if !ok || len(legacyEventSpheres) != 1 {
+		t.Fatalf("legacy event objectDisplacementSpheres = %#v", legacyEvents[0]["objectDisplacementSpheres"])
+	}
+	if got := legacyEventSpheres[0]["radius"]; got != 0.05 {
+		t.Fatalf("legacy event displacement sphere radius = %#v, want 0.05", got)
+	}
+}
+
 // TestComputeParticlesKernelFieldsAbsentWhenEmpty ensures that when the new
 // kernel fields are empty they are omitted from both the IR and legacy JSON
 // (zero-value path unchanged).
@@ -2555,10 +2981,10 @@ func TestInstancedMeshCullFieldsAbsentWhenEmpty(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
 			InstancedMesh{
-				ID:       "plain-instanced",
-				Count:    1,
-				Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
-				Material: FlatMaterial{Color: "#ff0000"},
+				ID:        "plain-instanced",
+				Count:     1,
+				Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Material:  FlatMaterial{Color: "#ff0000"},
 				Positions: []Vector3{Vec3(0, 0, 0)},
 				Scales:    []Vector3{Vec3(1, 1, 1)},
 				// CullKernelWGSL, CullKernelEntry, CullRadius, CullBackend intentionally absent.
@@ -3277,10 +3703,10 @@ func TestInstancedMeshCullFieldsLowering(t *testing.T) {
 				CullBackend:     "elio",
 			},
 			InstancedMesh{
-				ID:       "plain-mesh",
-				Count:    1,
-				Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
-				Material: FlatMaterial{Color: "#ffffff"},
+				ID:        "plain-mesh",
+				Count:     1,
+				Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Material:  FlatMaterial{Color: "#ffffff"},
 				Positions: positions,
 				Scales:    scales,
 			},
@@ -3397,10 +3823,10 @@ func TestInstancedMeshSpreadProps(t *testing.T) {
 // no cull fields produces a map with no cull keys (additive baseline contract).
 func TestInstancedMeshSpreadPropsNoCullFields(t *testing.T) {
 	im := InstancedMesh{
-		ID:       "plain",
-		Count:    1,
-		Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
-		Material: FlatMaterial{Color: "#ffffff"},
+		ID:        "plain",
+		Count:     1,
+		Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+		Material:  FlatMaterial{Color: "#ffffff"},
 		Positions: []Vector3{Vec3(0, 0, 0)},
 		Scales:    []Vector3{Vec3(1, 1, 1)},
 	}

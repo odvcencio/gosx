@@ -86,7 +86,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /gosx/islands/", http.StripPrefix("/gosx/islands/", s.buildDirFileServer("islands")))
 	mux.Handle("GET /gosx/css/", http.StripPrefix("/gosx/css/", s.buildDirFileServer("css")))
-	mux.Handle("GET /gosx/assets/", http.StripPrefix("/gosx/assets/", s.buildDirFileServer("")))
+	mux.HandleFunc("GET /gosx/assets/", s.serveAssetFile)
 	mux.Handle("/", http.HandlerFunc(s.serveProxy))
 	return mux
 }
@@ -253,6 +253,46 @@ func (s *Server) buildDirFileServer(relative string) http.Handler {
 		setDevNoCache(w.Header())
 		fs.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) serveAssetFile(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, "/gosx/assets/")
+	for _, root := range []string{
+		filepath.Join(s.Dir, "dist", "assets"),
+		filepath.Join(s.BuildDir, "assets"),
+		s.BuildDir,
+	} {
+		path, ok := safeDevAssetPath(root, rel)
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		setDevNoCache(w.Header())
+		http.ServeFile(w, r, path)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func safeDevAssetPath(root, rel string) (string, bool) {
+	root = strings.TrimSpace(root)
+	rel = filepath.Clean(filepath.FromSlash(strings.TrimSpace(rel)))
+	if root == "" || rel == "" || rel == "." {
+		return "", false
+	}
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	target := filepath.Join(root, rel)
+	cleanRoot := filepath.Clean(root)
+	cleanTarget := filepath.Clean(target)
+	if cleanTarget != cleanRoot && !strings.HasPrefix(cleanTarget, cleanRoot+string(filepath.Separator)) {
+		return "", false
+	}
+	return cleanTarget, true
 }
 
 func (s *Server) serveProxy(w http.ResponseWriter, r *http.Request) {
