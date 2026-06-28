@@ -65,7 +65,22 @@ func Text(s string) Node {
 }
 
 // Expr creates an expression node from a value.
+//
+// The gsx transpiler emits gosx.Expr(x) for every `{x}` interpolation in a
+// template, regardless of x's static type (it is a syntactic transform with
+// no type information). When x is already a Node — e.g. `{props.Child}` where
+// Child is a gosx.Node, the standard way to inject a composed child or island
+// into a template — it must be inlined into the tree, not stringified. A
+// []Node is wrapped in a Fragment for the same reason. Without this, a Node
+// value would be rendered as fmt.Sprint's struct dump and HTML-escaped into
+// visible garbage text. All other values keep their text representation.
 func Expr(v any) Node {
+	switch t := v.(type) {
+	case Node:
+		return t
+	case []Node:
+		return Fragment(t...)
+	}
 	return Node{kind: kindExpr, text: fmt.Sprint(v)}
 }
 
