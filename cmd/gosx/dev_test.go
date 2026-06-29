@@ -134,6 +134,60 @@ func Page() Node {
 	}
 }
 
+func TestCompileDevIslandsIncludesRootPackageIslandFromQualifiedTagGoImport(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	studioDir := filepath.Join(root, "gosx-studio")
+	out := filepath.Join(appDir, "build", "islands")
+
+	writeTempFile(t, studioDir, "go.mod", "module m31labs.dev/gosx-studio\n\ngo 1.22\n")
+	writeTempFile(t, studioDir, "studio.go", `package studio
+
+func ServerOnlyValue() string { return "studio" }
+`)
+	writeTempFile(t, studioDir, "home_layer_selection_island.gsx", `package studio
+
+//gosx:island
+func HomeLayerSelectionIsland(props any) Node {
+	selected := signal.New("home")
+	return <div data-selected={selected.Get()}>{selected.Get()}</div>
+}
+`)
+
+	writeTempFile(t, appDir, "go.mod", `module example.com/app
+
+go 1.22
+
+require m31labs.dev/gosx-studio v0.0.0
+
+replace m31labs.dev/gosx-studio => ../gosx-studio
+`)
+	writeTempFile(t, appDir, "app/page.gsx", `package app
+
+func Page() Node {
+	return <main><studio.HomeLayerSelectionIsland></studio.HomeLayerSelectionIsland></main>
+}
+`)
+	writeTempFile(t, appDir, "app/page.server.go", `package app
+
+import studio "m31labs.dev/gosx-studio"
+
+var _ = studio.ServerOnlyValue
+`)
+
+	if err := compileDevIslands(appDir, out); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(out, "HomeLayerSelectionIsland.json"))
+	if err != nil {
+		t.Fatalf("expected imported root package HomeLayerSelectionIsland.json: %v", err)
+	}
+	if !strings.Contains(string(data), `"name": "HomeLayerSelectionIsland"`) {
+		t.Fatalf("unexpected imported island JSON: %s", data)
+	}
+}
+
 func TestStageSidecarCSSCopiesFiles(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "build", "css")
