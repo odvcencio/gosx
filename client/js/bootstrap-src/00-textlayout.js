@@ -184,6 +184,10 @@
   }
 
   window.__gosx_notify_shared_signal = gosxNotifySharedSignal;
+  // Public reader, symmetric to __gosx_set_shared_signal: subscribe(name, fn, opts)
+  // → unsubscribe fn. Lets declarative modules (data-gosx-region) and apps observe
+  // shared signals without poking the store internals.
+  window.__gosx_subscribe_shared_signal = gosxSubscribeSharedSignal;
 
   function gosxIssueStore() {
     if (!window.__gosx.issues || !Array.isArray(window.__gosx.issues.entries)) {

@@ -145,7 +145,13 @@ const budgets = [
   // __gosx_scene3d_telemetry) on top of the unified-motion WASM seams above —
   // the merged bundle carries both. Measured: 913_071 / 248_325 / 201_362 +
   // rounding headroom.
-  { file: "bootstrap.js", raw: 915_000, gzip: 249_000, brotli: 202_000 },
+  // Bumped raw 915_000 -> 1_130_000, gzip 249_000 -> 300_000, brotli 202_000 ->
+  // 245_000: the scene3d/water system (16a WaterSystem WGSL passes + water shader
+  // modules, landed in checkpoint f6c21364) is the bulk of this (~204K raw);
+  // declarative interaction primitives 06-declarative-actions.js +
+  // 07-declarative-regions.js add ~5K. Measured 1_119_654 / 295_924 / 239_403.
+  // Trim when the water WIP finalizes its scene-module footprint.
+  { file: "bootstrap.js", raw: 1_130_000, gzip: 300_000, brotli: 245_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -243,7 +249,11 @@ const budgets = [
   // 125_000: integration merge — main's GPU-cull telemetry seam folded into the
   // scene3d chunk alongside the unified-motion seams above. Measured: 554_885 /
   // 151_570 / 124_729 + rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 556_000, gzip: 152_000, brotli: 125_000 },
+  // Bumped raw 556_000 -> 640_000, gzip 152_000 -> 175_000, brotli 125_000 ->
+  // 144_000: scene3d/water system modules (checkpoint f6c21364) — WaterSystem
+  // geometry/material/lighting in the shared scene core. Measured 629_079 /
+  // 171_055 / 140_608. (No 06/07 here — base-only primitives.)
+  { file: "bootstrap-feature-scene3d.js", raw: 640_000, gzip: 175_000, brotli: 144_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -297,7 +307,11 @@ const budgets = [
   // Bumped raw 181_000 -> 181_200: cull telemetry poll/readback reorder (Bug 1) +
   // unlit derivation from kind/materialKind in materialUniformData (Bug 2).
   // Measured: 181_038 + headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 181_200, gzip: 45_500, brotli: 39_000 },
+  // Bumped raw 181_200 -> 315_000, gzip 45_500 -> 73_000, brotli 39_000 ->
+  // 62_000: the water WGSL pipelines in 16a-scene-webgpu.js (WaterSystem pool /
+  // caustics / reflection / refraction passes, checkpoint f6c21364) — the bulk
+  // of this surface. Measured 309_066 / 71_882 / 60_545.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 315_000, gzip: 73_000, brotli: 62_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
@@ -371,9 +385,14 @@ const routeBudgets = [
     // 46_200 for the CanvasBoard WebGPU HTML overlay helper folded into the
     // engines surface. Measured: 181_639 / 51_556 / 45_591, plus rounding
     // headroom.
-    raw: 183_000,
-    gzip: 52_200,
-    brotli: 46_200,
+    // Bumped raw 183_000 -> 190_000, gzip 52_200 -> 54_000, brotli 46_200 ->
+    // 47_500: bootstrap-runtime.js now carries the declarative interaction
+    // primitives 06-declarative-actions.js + 07-declarative-regions.js
+    // (data-gosx-action / -submit-on / -set / -region). Measured 187_357 /
+    // 53_135 / 46_874, plus sub-1% rounding headroom.
+    raw: 190_000,
+    gzip: 54_000,
+    brotli: 47_500,
   },
 ];
 
