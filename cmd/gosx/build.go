@@ -19,7 +19,6 @@ import (
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
-	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
@@ -248,48 +247,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// ── Tier 1: Compile .gsx files ──────────────────────────────────────
 
-	var gsxFiles []string
-	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		// Skip dist/ and build/ directories
-		if info.IsDir() && (info.Name() == "dist" || info.Name() == "build") {
-			return filepath.SkipDir
-		}
-		if strings.HasSuffix(path, ".gsx") {
-			gsxFiles = append(gsxFiles, path)
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("walk source tree: %w", err)
+	islandProgs, gsxFiles, err := collectProjectIslandPrograms(dir)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("  Sources: %d .gsx files\n", len(gsxFiles))
-
-	var islandProgs []*program.Program
-
-	for _, file := range gsxFiles {
-		source, err := os.ReadFile(file)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", file, err)
-		}
-
-		irProg, err := gosx.Compile(source)
-		if err != nil {
-			return fmt.Errorf("compile %s: %w", file, err)
-		}
-
-		for i, comp := range irProg.Components {
-			if comp.IsIsland {
-				island, err := ir.LowerIsland(irProg, i)
-				if err != nil {
-					return fmt.Errorf("lower island %s in %s: %w", comp.Name, file, err)
-				}
-				islandProgs = append(islandProgs, island)
-			}
-		}
-	}
 
 	// ── Tier 3: Island programs (content-hashed) ────────────────────────
 
@@ -332,6 +295,9 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	for _, gsxFile := range gsxFiles {
 		cssFile := strings.TrimSuffix(gsxFile, ".gsx") + ".css"
+		if !isPathWithin(cssFile, dir) {
+			continue
+		}
 		data, err := os.ReadFile(cssFile)
 		if err != nil {
 			continue

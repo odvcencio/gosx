@@ -87,6 +87,53 @@ func Counter() Node {
 	}
 }
 
+func TestCompileDevIslandsIncludesImportedPackageIslands(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	sharedDir := filepath.Join(root, "shared")
+	out := filepath.Join(appDir, "build", "islands")
+
+	writeTempFile(t, sharedDir, "go.mod", "module example.com/shared\n\ngo 1.22\n")
+	writeTempFile(t, sharedDir, "shared.go", "package shared\n")
+	writeTempFile(t, sharedDir, "island.gsx", `package shared
+
+//gosx:island
+func SharedIsland() Node {
+	count := signal.New(0)
+	return <div>{count.Get()}</div>
+}
+`)
+
+	writeTempFile(t, appDir, "go.mod", `module example.com/app
+
+go 1.22
+
+require example.com/shared v0.0.0
+
+replace example.com/shared => ../shared
+`)
+	writeTempFile(t, appDir, "app/page.gsx", `package app
+
+import shared "example.com/shared"
+
+func Page() Node {
+	return <main><shared.SharedIsland></shared.SharedIsland></main>
+}
+`)
+
+	if err := compileDevIslands(appDir, out); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(out, "SharedIsland.json"))
+	if err != nil {
+		t.Fatalf("expected imported SharedIsland.json: %v", err)
+	}
+	if !strings.Contains(string(data), `"name": "SharedIsland"`) {
+		t.Fatalf("unexpected imported island JSON: %s", data)
+	}
+}
+
 func TestStageSidecarCSSCopiesFiles(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "build", "css")

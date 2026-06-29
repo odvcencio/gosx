@@ -15,10 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/dev"
 	"m31labs.dev/gosx/env"
-	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 )
 
@@ -237,47 +235,19 @@ func compileDevIslands(dir, islandDir string) error {
 		}
 	}
 
-	var gsxFiles []string
-	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && shouldSkipProjectDir(info.Name()) {
-			return filepath.SkipDir
-		}
-		if strings.HasSuffix(path, ".gsx") {
-			gsxFiles = append(gsxFiles, path)
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("walk gsx files: %w", err)
+	islands, _, err := collectProjectIslandPrograms(dir)
+	if err != nil {
+		return err
 	}
 
-	for _, file := range gsxFiles {
-		source, err := os.ReadFile(file)
+	for _, isl := range islands {
+		data, err := program.EncodeJSON(isl)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", file, err)
+			return fmt.Errorf("encode island %s: %w", isl.Name, err)
 		}
-		irProg, err := gosx.Compile(source)
-		if err != nil {
-			return fmt.Errorf("compile %s: %w", file, err)
-		}
-		for i, comp := range irProg.Components {
-			if !comp.IsIsland {
-				continue
-			}
-			isl, err := ir.LowerIsland(irProg, i)
-			if err != nil {
-				return fmt.Errorf("lower island %s in %s: %w", comp.Name, file, err)
-			}
-			data, err := program.EncodeJSON(isl)
-			if err != nil {
-				return fmt.Errorf("encode island %s: %w", comp.Name, err)
-			}
-			path := filepath.Join(islandDir, comp.Name+".json")
-			if err := os.WriteFile(path, data, 0644); err != nil {
-				return fmt.Errorf("write %s: %w", path, err)
-			}
+		path := filepath.Join(islandDir, isl.Name+".json")
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
 		}
 	}
 
