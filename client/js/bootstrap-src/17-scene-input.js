@@ -1360,11 +1360,7 @@
         const nx = sceneClamp(state.pointerX / Math.max(initialWidth, 1), 0, 1);
         const ny = sceneClamp(state.pointerY / Math.max(initialHeight, 1), 0, 1);
         const key = nx + "|" + ny;
-        if (key !== publishedCursorKey) {
-          publishedCursorKey = key;
-          queueInputSignal(cursorNamespace + ".x", nx);
-          queueInputSignal(cursorNamespace + ".y", ny);
-        }
+        if (key !== publishedCursorKey) { publishedCursorKey = key; queueInputSignal(cursorNamespace, { x: nx, y: ny }); }
       }
     }
 

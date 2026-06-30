@@ -24171,11 +24171,11 @@ test("P5 cursorOutputSignal: pointermove publishes normalized cursor position", 
 
   assert.ok(env.inputBatchCalls.length > 0, "expected input batch calls after pointermove");
   const lastBatch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
-  const cx = lastBatch["$cursor.x"];
-  const cy = lastBatch["$cursor.y"];
-  assert.ok(cx !== undefined, "expected $cursor.x in batch, got keys: " + Object.keys(lastBatch).join(","));
-  assert.ok(cx >= 0 && cx <= 1, "$cursor.x=" + cx + " not in [0,1]");
-  assert.ok(cy >= 0 && cy <= 1, "$cursor.y=" + cy + " not in [0,1]");
+  const cursor = lastBatch["$cursor"];
+  assert.ok(cursor !== undefined, "expected $cursor in batch, got keys: " + Object.keys(lastBatch).join(","));
+  assert.ok(typeof cursor === "object" && cursor !== null, "expected $cursor to be an object, got: " + JSON.stringify(cursor));
+  assert.ok(cursor.x >= 0 && cursor.x <= 1, "$cursor.x=" + cursor.x + " not in [0,1]");
+  assert.ok(cursor.y >= 0 && cursor.y <= 1, "$cursor.y=" + cursor.y + " not in [0,1]");
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
