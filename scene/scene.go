@@ -117,6 +117,20 @@ type Props struct {
 	DragSignalNamespace   string       `json:"dragSignalNamespace,omitempty"`
 	PickSignalNamespace   string       `json:"pickSignalNamespace,omitempty"`
 	EventSignalNamespace  string       `json:"eventSignalNamespace,omitempty"`
+	// CameraInputSignal: when set, the engine applies the camera from this shared
+	// signal (null/absent = user controls). Drives follow-mode without app JS.
+	CameraInputSignal string `json:"cameraInputSignal,omitempty"`
+	// SelectionInputSignal: when set, the engine reads the selected object id from
+	// this shared signal and outlines the match (same render path as Mesh.Selected).
+	// Bidirectional: the engine also writes its own viewport picks here (typically
+	// PickSignalNamespace + ".selectedID").
+	SelectionInputSignal string `json:"selectionInputSignal,omitempty"`
+	// CameraOutputSignal: when set, the engine publishes the camera into this shared
+	// signal on change. Suppressed while CameraInputSignal is active.
+	CameraOutputSignal string `json:"cameraOutputSignal,omitempty"`
+	// CursorOutputSignal: when set, the engine publishes the normalized pointer
+	// {x,y} in [0,1] over the canvas into this shared signal.
+	CursorOutputSignal string `json:"cursorOutputSignal,omitempty"`
 	CapabilityTier        string       `json:"capabilityTier,omitempty"`
 	Compression           *Compression `json:"compression,omitempty"`
 	ControlTarget         Vector3
@@ -1493,6 +1507,10 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "dragSignalNamespace", p.DragSignalNamespace)
 	setString(out, "pickSignalNamespace", p.PickSignalNamespace)
 	setString(out, "eventSignalNamespace", p.EventSignalNamespace)
+	setString(out, "cameraInputSignal", p.CameraInputSignal)
+	setString(out, "selectionInputSignal", p.SelectionInputSignal)
+	setString(out, "cameraOutputSignal", p.CameraOutputSignal)
+	setString(out, "cursorOutputSignal", p.CursorOutputSignal)
 	setString(out, "capabilityTier", p.CapabilityTier)
 	if p.ControlTarget != (Vector3{}) {
 		out["controlTarget"] = map[string]any{

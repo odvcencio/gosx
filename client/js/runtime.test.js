@@ -23934,3 +23934,435 @@ test("Scene3D managed fluid L key light direction points toward camera like upst
   assert.equal(wheelZoomed, true);
   assert.ok(Math.abs(nextCamera.z - 8) < 0.000001, "wheel zoomed z=" + nextCamera.z);
 });
+
+// === P3 camera-input signal: engine applies camera pushed via shared signal ===
+test("P3 cameraInputSignal: engine applies camera from shared signal", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-camera-signal-root";
+
+  // Uses orbit controls so getCamera() goes through the orbit state (which IS updated
+  // by applySceneControlsCamera) rather than latestBundle.camera (which stays fixed
+  // at the initial render-engine return value).
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-camsig-program.json": { text: '{"name":"SceneCamSig"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-camsig",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-camera-signal-root",
+          runtime: "shared",
+          programRef: "/scene-camsig-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#000",
+            controls: "orbit",
+            controlTarget: { x: 0, y: 0, z: 0 },
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+            cameraInputSignal: "$camera",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#000",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [],
+      worldColors: [],
+      worldVertexCount: 0,
+      materials: [],
+      objects: [],
+      objectCount: 0,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let mounted = env.context.__gosx.engines.get("gosx-engine-camsig");
+  for (let attempt = 0; attempt < 5 && !mounted; attempt += 1) {
+    await flushAsyncWork();
+    mounted = env.context.__gosx.engines.get("gosx-engine-camsig");
+  }
+  assert.ok(mounted, "expected gosx-engine-camsig to mount");
+
+  const initialCamera = mounted.handle.getCamera();
+  assert.ok(Math.abs(initialCamera.z - 6) < 0.1, "initial z=" + initialCamera.z);
+
+  // Push a camera via the shared signal (wrapped in {camera:...} envelope)
+  env.context.__gosx_notify_shared_signal("$camera", JSON.stringify({ camera: { x: 1, y: 2, z: 9, fov: 50 } }));
+  await flushAsyncWork();
+
+  const updatedCamera = mounted.handle.getCamera();
+  assert.ok(Math.abs(updatedCamera.z - 9) < 0.5, "expected z~9 after signal, got z=" + updatedCamera.z);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+// === P3 selectionInputSignal: engine applies object selection from shared signal ===
+test("P3 selectionInputSignal: engine selects object from shared signal", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-selection-signal-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-selsig-program.json": { text: '{"name":"SceneSelSig"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-selsig",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-selection-signal-root",
+          runtime: "shared",
+          programRef: "/scene-selsig-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#000",
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+            selectionInputSignal: "$selection",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#000",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [-0.5, -0.5, 0.5, 0.5, -0.5, 0.5],
+      worldColors: [0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1],
+      worldVertexCount: 2,
+      materials: [{ kind: "flat", color: "#888", opacity: 1, wireframe: false, blendMode: "opaque", emissive: 0 }],
+      objects: [
+        {
+          id: "cube",
+          kind: "box",
+          pickable: true,
+          materialIndex: 0,
+          vertexOffset: 0,
+          vertexCount: 2,
+          static: false,
+          bounds: { minX: -0.5, minY: -0.5, minZ: 0.5, maxX: 0.5, maxY: -0.5, maxZ: 0.5 },
+        },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let mounted = env.context.__gosx.engines.get("gosx-engine-selsig");
+  for (let attempt = 0; attempt < 5 && !mounted; attempt += 1) {
+    await flushAsyncWork();
+    mounted = env.context.__gosx.engines.get("gosx-engine-selsig");
+  }
+  assert.ok(mounted, "expected gosx-engine-selsig to mount");
+
+  const rendersBefore = env.engineRenderCalls.length;
+
+  // Push a selection signal with a real object id
+  env.context.__gosx_notify_shared_signal("$selection", JSON.stringify("cube"));
+  await flushAsyncWork();
+
+  // A render should have been scheduled
+  assert.ok(env.engineRenderCalls.length > rendersBefore, "expected a render after selection signal");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+// === P5 cursorOutputSignal: normalized pointer published into signal ===
+test("P5 cursorOutputSignal: pointermove publishes normalized cursor position", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-cursor-signal-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-cursorsig-program.json": { text: '{"name":"SceneCursorSig"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-cursorsig",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-cursor-signal-root",
+          runtime: "shared",
+          programRef: "/scene-cursorsig-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#000",
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+            cursorOutputSignal: "$cursor",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#000",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [-2, -1, 0.1, 2, -1, 0.1],
+      worldColors: [0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1],
+      worldVertexCount: 2,
+      materials: [{ kind: "flat", color: "#888", opacity: 1, wireframe: false, blendMode: "opaque", emissive: 0 }],
+      objects: [
+        {
+          id: "floor",
+          kind: "plane",
+          pickable: false,
+          materialIndex: 0,
+          vertexOffset: 0,
+          vertexCount: 2,
+          static: true,
+          bounds: { minX: -2, minY: -1, minZ: 0.1, maxX: 2, maxY: -1, maxZ: 0.1 },
+        },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const canvas = mount.firstElementChild;
+  assert.ok(canvas, "expected canvas");
+
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    pointerId: 1,
+    clientX: 320,
+    clientY: 180,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(env.inputBatchCalls.length > 0, "expected input batch calls after pointermove");
+  const lastBatch = JSON.parse(env.inputBatchCalls[env.inputBatchCalls.length - 1][0]);
+  const cx = lastBatch["$cursor.x"];
+  const cy = lastBatch["$cursor.y"];
+  assert.ok(cx !== undefined, "expected $cursor.x in batch, got keys: " + Object.keys(lastBatch).join(","));
+  assert.ok(cx >= 0 && cx <= 1, "$cursor.x=" + cx + " not in [0,1]");
+  assert.ok(cy >= 0 && cy <= 1, "$cursor.y=" + cy + " not in [0,1]");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+// === P5 cameraOutputSignal: camera published into signal on drag ===
+test("P5 cameraOutputSignal: camera drag publishes to output signal", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-camout-signal-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-camout-program.json": { text: '{"name":"SceneCamOut"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-camout",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-camout-signal-root",
+          runtime: "shared",
+          programRef: "/scene-camout-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#000",
+            controls: "orbit",
+            controlTarget: { x: 0, y: 0, z: 0 },
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+            cameraOutputSignal: "$camout",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#000",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [],
+      worldColors: [],
+      worldVertexCount: 0,
+      materials: [],
+      objects: [],
+      objectCount: 0,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let mounted = env.context.__gosx.engines.get("gosx-engine-camout");
+  for (let attempt = 0; attempt < 5 && !mounted; attempt += 1) {
+    await flushAsyncWork();
+    mounted = env.context.__gosx.engines.get("gosx-engine-camout");
+  }
+  assert.ok(mounted, "expected gosx-engine-camout to mount");
+
+  const canvas = mount.firstElementChild;
+  const inputsBefore = env.inputBatchCalls.length;
+
+  // Drag to move camera
+  canvas.dispatchEvent({
+    type: "pointerdown",
+    button: 0,
+    pointerId: 7,
+    clientX: 320,
+    clientY: 180,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  canvas.dispatchEvent({
+    type: "pointermove",
+    button: 0,
+    buttons: 1,
+    pointerId: 7,
+    clientX: 400,
+    clientY: 120,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  canvas.dispatchEvent({
+    type: "pointerup",
+    button: 0,
+    pointerId: 7,
+    clientX: 400,
+    clientY: 120,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // At least one batch should have been emitted with the camera output signal
+  assert.ok(env.inputBatchCalls.length > inputsBefore, "expected input batch after drag");
+  let cameraKeyFound = false;
+  for (const call of env.inputBatchCalls.slice(inputsBefore)) {
+    const batch = JSON.parse(call[0]);
+    if (batch["$camout"] !== undefined) {
+      cameraKeyFound = true;
+      const cam = batch["$camout"];
+      assert.ok(cam && typeof cam.z === "number", "expected camera object with z field");
+      break;
+    }
+  }
+  assert.ok(cameraKeyFound, "expected $camout in an input batch");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+// === P1 hub outbound binding: direction:"out" sends signal to socket ===
+test("P1 hub outbound binding: signal publishes to socket and in-binding still writes shared signal", async () => {
+  const sent = [];
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "cursor-hub",
+          path: "/gosx/hub/cursor",
+          bindings: [
+            { event: "cursor", signal: "$cursor", direction: "out" },
+            { event: "state", signal: "$state" },
+          ],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.hubs.size, 1);
+  assert.equal(env.sockets.length, 1);
+
+  // Trigger the onopen (socket starts with readyState:1 so onopen fired at construction)
+  // In the test double the socket has readyState:1 already — the onopen is called by
+  // attachHubSocketHandlers which triggers bindHubOutputs. We need to fire onopen manually:
+  if (typeof env.sockets[0].onopen === "function") {
+    env.sockets[0].onopen();
+  }
+  await flushAsyncWork();
+
+  // Notify the out signal — should trigger socket.send
+  env.context.__gosx_notify_shared_signal("$cursor", JSON.stringify({ x: 0.5, y: 0.3 }));
+  await flushAsyncWork();
+
+  assert.ok(sent.some((s) => s.event === "cursor" && s.data && s.data.x === 0.5),
+    "expected cursor event sent via socket, got: " + JSON.stringify(sent));
+
+  // An "in" binding receiving a message should write the shared signal but NOT fire socket.send for "out" bindings
+  const sentBefore = sent.length;
+  env.sockets[0].onmessage({ data: JSON.stringify({ event: "state", data: { active: true } }) });
+  await flushAsyncWork();
+
+  assert.deepEqual(env.sharedSignalCalls.find((c) => c[0] === "$state"),
+    ["$state", '{"active":true}'], "expected $state written via in-binding");
+
+  // "out" binding should NOT consume the inbound message (no extra send for "cursor" event from inbound)
+  assert.equal(sent.length, sentBefore, "out binding must not fire from inbound message");
+
+  // Cleanup removes output subscribers
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.context.__gosx.hubs.size, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});

@@ -3446,6 +3446,7 @@
   }
 
   function applyHubBinding(entry, binding, message) {
+    if (binding && binding.direction === "out") return;
     if (!binding || binding.event !== message.event || !binding.signal) return;
     try {
       const result = setSharedSignalJSON(binding.signal, JSON.stringify(message.data));
@@ -5212,6 +5213,46 @@
     };
   }
 
+  function bindHubOutputs(record) {
+    record.outputUnsubscribers = record.outputUnsubscribers || [];
+    if (record.outputUnsubscribers.length > 0) return;
+    const bindings = record.entry && record.entry.bindings;
+    if (!bindings || !bindings.length) return;
+    for (let bi = 0; bi < bindings.length; bi++) {
+      const b = bindings[bi];
+      if (!b || b.direction !== "out" || !b.signal || !b.event) continue;
+      (function(binding) {
+        let lastSentAt = 0;
+        let debounceTimer = null;
+        const sendValue = function(value) {
+          const socket = record.socket;
+          if (socket && (socket.readyState === 1 || socket.readyState == null)) {
+            socket.send(JSON.stringify({ event: binding.event, data: value || {} }));
+          }
+        };
+        const fn = function(value) {
+          if (binding.throttleMs > 0) {
+            const now = Date.now();
+            if (now - lastSentAt >= binding.throttleMs) {
+              lastSentAt = now;
+              sendValue(value);
+            }
+          } else if (binding.debounceMs > 0) {
+            if (debounceTimer != null) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(function() {
+              debounceTimer = null;
+              sendValue(value);
+            }, binding.debounceMs);
+          } else {
+            sendValue(value);
+          }
+        };
+        const unsub = gosxSubscribeSharedSignal(binding.signal, fn, { immediate: false });
+        record.outputUnsubscribers.push(unsub);
+      })(b);
+    }
+  }
+
   function attachHubSocketHandlers(record) {
     const entry = record.entry;
     const socket = record.socket;
@@ -5225,6 +5266,7 @@
       if (record.inputController && typeof record.inputController.flush === "function") {
         record.inputController.flush();
       }
+      bindHubOutputs(record);
     };
     socket.onmessage = function(evt) {
       const decoded = decodeHubMessage(entry, evt.data);
@@ -5427,6 +5469,10 @@
     if (record.inputController && typeof record.inputController.dispose === "function") {
       record.inputController.dispose();
       record.inputController = null;
+    }
+    if (Array.isArray(record.outputUnsubscribers)) {
+      record.outputUnsubscribers.forEach(function(fn) { try { fn(); } catch (_) {} });
+      record.outputUnsubscribers = null;
     }
     if (record.socket && typeof record.socket.close === "function") {
       try {

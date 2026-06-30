@@ -7688,6 +7688,22 @@
 	    installSceneCanvasInteractionHandles();
 
 	    let lastPublishedCamera = null;
+    let lastAppliedSelectionID = null;
+    let applyingSignalCamera = false;
+    let applyingSignalSelection = false;
+
+    function applyMountedSceneSelection(selectedID) {
+      const id = typeof selectedID === "string" ? selectedID : "";
+      if (id === lastAppliedSelectionID) return;
+      applyingSignalSelection = true;
+      const objects = sceneStateObjects(sceneState);
+      for (let i = 0; i < objects.length; i++) {
+        applySceneObjectPatch(sceneState, objects[i].id, { selected: objects[i].id === id });
+      }
+      lastAppliedSelectionID = id;
+      applyingSignalSelection = false;
+      scheduleRender("signal-selection");
+    }
 
 	    function currentMountedSceneCamera(sourceCamera) {
 	      return sceneRenderCamera(sceneCurrentControlCamera(
@@ -7731,6 +7747,9 @@
         camera: nextCamera,
         reason: reason || "render",
       });
+      if (typeof props.cameraOutputSignal === "string" && props.cameraOutputSignal && !applyingSignalCamera) {
+        queueInputSignal(props.cameraOutputSignal, nextCamera);
+      }
     }
 
     function applyMountedSceneCamera(camera, reason) {
@@ -7859,6 +7878,25 @@
       applySceneHubEvent(detail.event, detail.data, "hub-event");
     };
     document.addEventListener("gosx:hub:event", sceneHubListener);
+
+    let unsubCameraSignal = null;
+    if (typeof props.cameraInputSignal === "string" && props.cameraInputSignal) {
+      unsubCameraSignal = gosxSubscribeSharedSignal(props.cameraInputSignal, function(value) {
+        if (disposed) return;
+        const cam = (sceneIsPlainObject(value) && sceneIsPlainObject(value.camera)) ? value.camera : value;
+        applyingSignalCamera = true;
+        applyMountedSceneCamera(cam, "signal-camera");
+        applyingSignalCamera = false;
+      }, { immediate: false });
+    }
+    let unsubSelectionSignal = null;
+    if (typeof props.selectionInputSignal === "string" && props.selectionInputSignal) {
+      unsubSelectionSignal = gosxSubscribeSharedSignal(props.selectionInputSignal, function(value) {
+        if (disposed) return;
+        const id = typeof value === "string" ? value : (value && value.selectedID);
+        applyMountedSceneSelection(id || "");
+      }, { immediate: false });
+    }
 
     // Viewport observer fires on canvas/mount resize. Mark dirty so
     // renderFrame re-measures the rect on the next tick — this is the
@@ -8511,6 +8549,8 @@
         }
 	        detachSceneCanvasContextListeners(canvas);
         document.removeEventListener("gosx:hub:event", sceneHubListener);
+        if (unsubCameraSignal) unsubCameraSignal();
+        if (unsubSelectionSignal) unsubSelectionSignal();
         releaseViewportObserver();
         releaseCapabilityObserver();
         releaseLifecycleObserver();
