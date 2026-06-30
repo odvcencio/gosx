@@ -33,13 +33,18 @@
     var signalName = el.getAttribute("data-gosx-region-signal");
     var onEvents = splitEvents(el.getAttribute("data-gosx-region-on"));
     var field = el.getAttribute("data-gosx-region-field") || "";
+    // allow-empty: still fetch when {value} is empty, substituting "" (e.g. a
+    // tree fragment ?selected= with no selection). Without it, an empty {value}
+    // suppresses the fetch (the default — avoids hitting e.g. /selection/ with a
+    // blank id).
+    var allowEmpty = el.hasAttribute("data-gosx-region-allow-empty");
     var lastValue = "";
 
     function refresh() {
       var u = url;
       if (u.indexOf("{value}") >= 0) {
-        if (!lastValue) return; // no value yet → nothing to fetch
-        u = u.replace("{value}", encodeURIComponent(lastValue));
+        if (!lastValue && !allowEmpty) return; // no value yet → nothing to fetch
+        u = u.replace("{value}", encodeURIComponent(lastValue || ""));
       }
       fetch(u, { headers: { Accept: field ? "application/json" : "text/html" } })
         .then(function (r) { return r.ok ? (field ? r.json() : r.text()) : null; })

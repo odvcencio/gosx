@@ -21,6 +21,7 @@ function makeRegion(attrs) {
     _attrs: attrs,
     innerHTML: "",
     getAttribute(n) { return n in this._attrs ? this._attrs[n] : null; },
+    hasAttribute(n) { return n in this._attrs; },
   };
 }
 
@@ -82,6 +83,22 @@ test("empty signal value suppresses the {value} fetch", () => {
   const { subs, fetches } = runModule([region], { json: {} });
   subs[0].fn("");
   assert.equal(fetches.length, 0);
+});
+
+test("data-gosx-region-allow-empty fetches with empty {value} substituted", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/tree?selected={value}",
+    "data-gosx-region-signal": "$sel",
+    "data-gosx-region-allow-empty": "",
+    "data-gosx-region-field": "tree_html",
+  });
+  const { subs, fetches } = runModule([region], { json: { tree_html: "<ul/>" } });
+  subs[0].fn(""); // empty selection — must STILL fetch (?selected=)
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].u, "/tree?selected=");
+  subs[0].fn("obj-3");
+  assert.equal(fetches.length, 2);
+  assert.equal(fetches[1].u, "/tree?selected=obj-3");
 });
 
 test("hub-event region refetches static URL and injects raw body; ignores other events", async () => {
