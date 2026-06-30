@@ -80,14 +80,19 @@ test("data-gosx-set writes the shared signal on click", () => {
   assert.deepEqual(signals, [{ name: "$sel", payload: JSON.stringify("obj-7") }]);
 });
 
-test("data-gosx-action button issues one POST and disables", () => {
+test("data-gosx-action button POSTs, disables during flight, re-enables on settle", async () => {
   const { listeners, fetches } = runModule();
   const btn = makeEl({ "data-gosx-action": "POST /api/x/accept" }, { tag: "button" });
   fire(listeners.click, btn);
   assert.equal(fetches.length, 1);
   assert.equal(fetches[0].url, "/api/x/accept");
   assert.equal(fetches[0].opts.method, "POST");
-  assert.equal(btn.disabled, true);
+  assert.equal(btn.disabled, true, "disabled during flight");
+  // After the fetch settles (2xx), the button must be usable again so a
+  // persistent submit (composer/comment/suggest) can be re-fired without reload.
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(btn.disabled, false, "re-enabled on settle");
 });
 
 test("data-gosx-action form submits via fetch and does not navigate", () => {
