@@ -2675,6 +2675,15 @@
     return 3;
   }
 
+  // Mirrors sceneWaterPoolShapeRounded in 16a-scene-webgpu.js verbatim: true
+  // iff entry.poolShape selects the rounded-corner pool variant that pool.sel's
+  // `if (poolShape > 0.5 && cornerRadius > 0.0001)` vertex() branch models.
+  function sceneWaterPoolShapeRounded(entry) {
+    if (!entry || typeof entry.poolShape !== "string") return false;
+    var value = entry.poolShape.trim().toLowerCase();
+    return value === "rounded box" || value === "rounded" || value === "roundbox";
+  }
+
   // createSceneWaterRendererWebGL: a self-contained WebGL2 renderer for the
   // water demo, used only by the temporary force-WebGL verification hook (A2).
   // It owns the sim driver, render programs, textures and a sphere mesh, and
@@ -2746,17 +2755,37 @@
     var shadowDesc = sceneWaterParseDescriptor(descriptors.objectShadow);
     var compoundShadowDesc = sceneWaterParseDescriptor(descriptors.compoundShadow);
 
-    // Geometry sizes.
-    var poolVertexCount = 30; // 5 faces (floor + 4 walls) * 6 vertices.
+    // Pool dims / optics from the entry.
+    var poolWidth = sceneWaterNum(entry.poolWidth, 1);
+    var poolLength = sceneWaterNum(entry.poolLength, 1);
+    var poolHeight = sceneWaterNum(entry.poolHeight, 1);
+
+    // Rounded-corner pool wiring: mirrors 16a-scene-webgpu.js's
+    // sceneWaterUniformData/drawWaterPoolEntries pairing exactly.
+    // poolMaxCornerRadius derives from poolWidth/poolLength (fixed at
+    // construction time; runtime pool-shape changes never resize the pool
+    // itself), clamped to [0, min(poolWidth, poolLength) - 0.001] matching
+    // the WebGPU path's system.waterCornerRadius derivation.
+    //
+    // The rounded flag / clamped uniform value / draw-call vertex count are
+    // deliberately NOT captured here from `entry` -- they are recomputed
+    // every drawFrame() from the live bundle entry (see the live* locals
+    // near liveEntry below), because `entry` is only a renderer-creation-time
+    // snapshot: a runtime poolShape/cornerRadius change from the control form
+    // (e.g. switching to "Rounded Box") lands in the bundle's
+    // waterSystems[0], never mutates this captured object in place. This
+    // mirrors drawFrame's pre-existing liveEntry/liveKindNum pattern used for
+    // runtime object-selection changes, and WebGPU's drawWaterPoolEntries,
+    // which reads `system.entry` fresh every pass for the identical reason.
+    var poolMaxCornerRadius = Math.max(0, Math.min(poolWidth, poolLength) - 0.001);
+    // Geometry sizes. The box pool is 5 faces (floor + 4 walls) * 6 vertices;
+    // the rounded pool is pool.sel's 44*3 floor-fan + 44*6 wall-strip = 44*9
+    // (see livePoolVertexCount in drawFrame for the live per-frame pick).
     var gridResolution = Math.max(2, Math.min(160, sim.resolution));
     var surfaceCells = gridResolution - 1;
     var surfaceVertexCount = surfaceCells * surfaceCells * 6;
     var emptyVAO = gl.createVertexArray();
 
-    // Pool dims / optics from the entry.
-    var poolWidth = sceneWaterNum(entry.poolWidth, 1);
-    var poolLength = sceneWaterNum(entry.poolLength, 1);
-    var poolHeight = sceneWaterNum(entry.poolHeight, 1);
     var normalScale = sceneWaterNum(entry.normalScale, 1);
     var lightDir = [
       sceneWaterNum(entry.lightDirectionX, 2),
@@ -2991,6 +3020,28 @@
       // (duck / torus-knot) come straight from the bundle's world-space mesh
       // soup; the analytic sphere/cube keep their construction-time mesh.
       var liveEntry = (lastBundle && Array.isArray(lastBundle.waterSystems) && lastBundle.waterSystems[0]) || entry;
+      // ---- live rounded-corner pool (mirrors WebGPU's drawWaterPoolEntries,
+      // which reads system.entry fresh every pass) ----
+      // livePoolCornerRadius (the uniform value) is clamped to
+      // [0, poolMaxCornerRadius], matching the WebGPU path's
+      // system.waterCornerRadius derivation, and is only non-zero when
+      // livePoolShapeRounded selects the rounded variant.
+      // livePoolRounded (the draw-call vertex-count decision) reads the RAW,
+      // unclamped liveEntry.cornerRadius > 0.0001 -- independent of the
+      // clamped uniform value above -- so pool.sel's own
+      // `poolShape > 0.5 && cornerRadius > 0.0001` gate stays the single
+      // source of truth for whether the 396-vertex rounded branch is what
+      // the shader actually executes (see WebGPU's identical comment at
+      // sceneWaterPoolSelenaRenderContext). Reading liveEntry here (not the
+      // construction-time `entry`) is the actual fix: without it, a runtime
+      // "Rounded Box" switch updates the control-form state but the WebGL2
+      // pool keeps drawing the 30-vertex box forever.
+      var livePoolShapeRounded = sceneWaterPoolShapeRounded(liveEntry);
+      var livePoolCornerRadius = livePoolShapeRounded
+        ? Math.max(0, Math.min(poolMaxCornerRadius, sceneWaterNum(liveEntry.cornerRadius, 0)))
+        : 0;
+      var livePoolRounded = livePoolShapeRounded && sceneWaterNum(liveEntry.cornerRadius, 0) > 0.0001;
+      var livePoolVertexCount = livePoolRounded ? 44 * 9 : 30;
       var liveActiveObject = liveEntry.activeObject || liveEntry.objectKind || "";
       var liveSubtype = liveEntry.objectSubtype || "";
       var liveKindNum = sceneWaterRenderObjectKind(liveEntry);
@@ -3161,8 +3212,12 @@
         mvp: mvp, normalMatrix: identity3,
         poolWidth: poolWidth, poolLength: poolLength, poolHeight: poolHeight,
         lightDir: lightDir,
+        // Rounded-corner pool: pool.sel's own params, picked up by name via
+        // the descriptor-driven applicator above (see livePoolShapeRounded /
+        // livePoolCornerRadius / livePoolRounded derivation near liveEntry).
+        cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded ? 1 : 0,
       });
-      gl.drawArrays(gl.TRIANGLES, 0, poolVertexCount);
+      gl.drawArrays(gl.TRIANGLES, 0, livePoolVertexCount);
       gl.disable(gl.CULL_FACE);
 
       // ---- 2. object ----

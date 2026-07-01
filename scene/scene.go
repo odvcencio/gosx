@@ -595,9 +595,13 @@ type WaterSystem struct {
 	PoolVertexWGSL              string
 	PoolFragmentWGSL            string
 	// PoolSelenaWGSL is the Selena-emitted combined vertex+fragment WGSL module
-	// for the pool render pass ONLY, an additive parallel to PoolVertexWGSL/
-	// PoolFragmentWGSL above that routes through the generic descriptor-driven
-	// Selena WebGPU render path. See WaterSystemIR.PoolSelenaWGSL (scene_ir.go).
+	// for the pool render pass, compiled from the .selena source and consumed
+	// by the generic descriptor-driven Selena WebGPU render path. It is the
+	// sole primary WGSL source for this pass; PoolVertexWGSL/PoolFragmentWGSL
+	// above are legacy JSON fields kept for wire-format compatibility but are
+	// never populated (the hand-written WGSL trees they once carried have
+	// been deleted) and are ignored by the WebGPU path. See
+	// WaterSystemIR.PoolSelenaWGSL (scene_ir.go).
 	PoolSelenaWGSL               string
 	SurfaceVertexWGSL            string
 	SurfaceFragmentWGSL          string
@@ -608,9 +612,11 @@ type WaterSystem struct {
 	// SurfaceSelenaWGSL/SurfaceBelowSelenaWGSL/CausticsSelenaWGSL/
 	// ObjectShadowSelenaWGSL/CompoundShadowSelenaWGSL/ObjectMeshShadowSelenaWGSL
 	// are the Selena-emitted combined vertex+fragment WGSL modules for their
-	// respective render passes, additive parallels to the hand-written *WGSL
-	// slots above that route through the generic descriptor-driven Selena
-	// WebGPU render path (see PoolSelenaWGSL, the template this generalizes).
+	// respective render passes, generalizing PoolSelenaWGSL above to the
+	// remaining render passes and consumed the same way by the generic
+	// descriptor-driven Selena WebGPU render path; the corresponding
+	// hand-written *WGSL slots above are legacy/unpopulated (see
+	// PoolSelenaWGSL).
 	SurfaceSelenaWGSL          string
 	SurfaceBelowSelenaWGSL     string
 	CausticsSelenaWGSL         string
@@ -618,20 +624,27 @@ type WaterSystem struct {
 	CompoundShadowSelenaWGSL   string
 	ObjectMeshShadowSelenaWGSL string
 	// SeedSelenaWGSL..NormalSelenaWGSL are the Selena-emitted single @compute
-	// WGSL modules for the five feedback simulation kernels, additive parallels
-	// to SeedWGSL/DropWGSL/DisplacementWGSL/SimulationWGSL/NormalWGSL above that
-	// route through the generic descriptor-driven Selena feedback-compute
-	// WebGPU path instead of the hardcoded compute pipeline (see
-	// WaterSystemIR.SeedSelenaWGSL, scene_ir.go).
+	// WGSL modules for the five feedback simulation kernels, compiled from the
+	// .selena source and consumed by the generic descriptor-driven Selena
+	// feedback-compute WebGPU path. They are the sole primary WGSL source for
+	// these kernels; SeedWGSL/DropWGSL/DisplacementWGSL/SimulationWGSL/
+	// NormalWGSL above are legacy/unpopulated (see PoolSelenaWGSL). See
+	// WaterSystemIR.SeedSelenaWGSL (scene_ir.go).
 	SeedSelenaWGSL         string
 	DropSelenaWGSL         string
 	DisplacementSelenaWGSL string
 	SimulationSelenaWGSL   string
 	NormalSelenaWGSL       string
 
-	// Selena-compiled GLSL/GLES + descriptor slots. Strictly additive parallels
-	// to the *WGSL slots above for the WebGL/WebGL2 water fallback; the WebGPU
-	// path keeps consuming the *WGSL slots unchanged.
+	// Selena-compiled GLSL/GLES + descriptor slots. Each authored .selena
+	// material/kernel compiles to GLSL (WebGL1) + GLES (WebGL2) + WGSL
+	// (WebGPU, the *SelenaWGSL slots above) plus a backend-agnostic host
+	// binding descriptor; the GLSL/GLES pair here feeds the WebGL/WebGL2
+	// water fallback, while the WebGPU path consumes the *SelenaWGSL slots
+	// instead. The legacy hand-written *WGSL slots above are retired/
+	// unpopulated; if a *SelenaWGSL module is unexpectedly missing at
+	// runtime, the JS client falls back to its builtin SCENE_WATER_*_SOURCE
+	// constants (see 16a-scene-webgpu.js), not these GLSL slots.
 	SeedVertexGLSL           string
 	SeedFragmentGLSL         string
 	SeedVertexGLES           string

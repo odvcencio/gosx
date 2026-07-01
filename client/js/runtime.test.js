@@ -9417,6 +9417,53 @@ test("Scene3D WebGL2 water renderer wires the compound-object shadow pass", () =
   assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, compoundShadowProgram, compoundShadowDesc, \{\s*\n\s*spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,/);
 });
 
+test("Scene3D WebGL2 water pool pass wires the rounded-corner pool geometry (mirrors WebGPU)", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // Mirrors 16a-scene-webgpu.js's sceneWaterPoolShapeRounded verbatim, keyed
+  // off entry.poolShape ("Rounded Box" / "rounded" / "roundbox").
+  assert.match(webgl, /function sceneWaterPoolShapeRounded\(entry\) \{[\s\S]{0,200}rounded box.*roundbox/);
+
+  // poolMaxCornerRadius (the clamp bound) is fixed at construction time from
+  // poolWidth/poolLength, matching the WebGPU path's
+  // system.waterCornerRadius derivation.
+  assert.match(webgl, /var poolMaxCornerRadius = Math\.max\(0, Math\.min\(poolWidth, poolLength\) - 0\.001\);/);
+
+  // The rounded flag / clamped uniform value / draw-call vertex count are
+  // recomputed every drawFrame() from the LIVE bundle entry (liveEntry), not
+  // captured once from the construction-time `entry` -- this is the actual
+  // fix for runtime "Rounded Box" switches never affecting the WebGL2 draw.
+  assert.match(webgl, /var livePoolShapeRounded = sceneWaterPoolShapeRounded\(liveEntry\);/);
+  assert.match(webgl, /var livePoolCornerRadius = livePoolShapeRounded\s*\n\s*\? Math\.max\(0, Math\.min\(poolMaxCornerRadius, sceneWaterNum\(liveEntry\.cornerRadius, 0\)\)\)\s*\n\s*: 0;/);
+
+  // livePoolRounded (the draw-call vertex-count decision) reads the RAW,
+  // unclamped liveEntry.cornerRadius > 0.0001 -- same gate as WebGPU's
+  // `rounded = sceneWaterPoolShapeRounded(entry) && sceneNumber(entry.cornerRadius, 0) > 0.0001`.
+  assert.match(webgl, /var livePoolRounded = livePoolShapeRounded && sceneWaterNum\(liveEntry\.cornerRadius, 0\) > 0\.0001;/);
+
+  // Vertex count: 30 (5 faces * 6 verts) for the box, 44*9=396 for the
+  // rounded floor-fan + wall-strip geometry, exactly like WebGPU's
+  // roundedPoolVertexCount = 44 * 9.
+  assert.match(webgl, /var livePoolVertexCount = livePoolRounded \? 44 \* 9 : 30;/);
+  assert.match(webgl, /gl\.drawArrays\(gl\.TRIANGLES, 0, livePoolVertexCount\);/);
+
+  // Both live locals are derived inside drawFrame() from liveEntry (declared
+  // right before them), NOT from the construction-time `entry` -- guards
+  // against regressing back to a renderer-creation-time snapshot.
+  assert.match(webgl, /var liveEntry = \(lastBundle && Array\.isArray\(lastBundle\.waterSystems\) && lastBundle\.waterSystems\[0\]\) \|\| entry;\s*\n[\s\S]{0,1500}var livePoolShapeRounded = sceneWaterPoolShapeRounded\(liveEntry\);/);
+  assert.doesNotMatch(webgl, /var (poolShapeRounded|poolCornerRadius|poolRounded|poolVertexCount) = /);
+
+  // cornerRadius/poolShape are fed into the pool pass's uniform values object,
+  // where the descriptor-driven sceneWaterRenderSetUniforms applies them by
+  // field name only if pool.sel's compiled descriptor declares them.
+  assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, poolProgram, poolDesc, \{\s*\n\s*mvp: mvp, normalMatrix: identity3,\s*\n\s*poolWidth: poolWidth, poolLength: poolLength, poolHeight: poolHeight,\s*\n\s*lightDir: lightDir,\s*\n[\s\S]{0,400}cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded \? 1 : 0,/);
+
+  // No other WebGL2 pool draw call hardcodes the 30-vertex box count anymore.
+  const poolDrawArraysCalls = webgl.match(/gl\.drawArrays\(gl\.TRIANGLES, 0, livePoolVertexCount\)/g) || [];
+  assert.equal(poolDrawArraysCalls.length, 1, "exactly one draw call should consume livePoolVertexCount");
+  assert.doesNotMatch(webgl, /gl\.drawArrays\(gl\.TRIANGLES, 0, 30\)/);
+});
+
 test("Scene3D WebGPU Selena materials can bind live water resources", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 

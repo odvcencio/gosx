@@ -8,11 +8,12 @@ import (
 	"m31labs.dev/selena"
 )
 
-// waterSelenaFS embeds the selena-authored (`.sel`) water shaders. These are the
-// faithful Selena sources for the jeantimex water port. They are compiled to
-// GLSL (WebGL1) + GLES (WebGL2) + a host binding descriptor and plumbed into the
-// WaterSystem IR as additive GLSL slots. The raw-WGSL `.sel` set under
-// shaders/jeantimex-water.sel/ is left untouched and still drives WebGPU.
+// waterSelenaFS embeds the selena-authored (`.sel`) water shaders — the sole
+// shader source for the jeantimex water port. Each compiles to GLSL (WebGL1) +
+// GLES (WebGL2) + WGSL (WebGPU) + a host binding descriptor and fills the
+// WaterSystem IR slots. The former hand-written raw-WGSL trees
+// (jeantimex-water.sel/, jeantimex-water.elio/) were retired; the JS client
+// keeps builtin SCENE_WATER_* sources only as a last-resort runtime fallback.
 //
 //go:embed shaders/jeantimex-water.selena/*.sel
 var waterSelenaFS embed.FS

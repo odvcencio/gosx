@@ -681,12 +681,14 @@ type WaterSystemIR struct {
 	PoolVertexWGSL              string                           `json:"poolVertexWGSL,omitempty"`
 	PoolFragmentWGSL            string                           `json:"poolFragmentWGSL,omitempty"`
 	// PoolSelenaWGSL is the Selena-emitted, single combined vertex+fragment
-	// WGSL module for the pool render pass ONLY (proof-of-concept for routing
-	// water render passes through the generic descriptor-driven Selena WebGPU
-	// path instead of hand-written WGSL). It is strictly additive: PoolVertexWGSL
-	// / PoolFragmentWGSL above are untouched and remain authoritative for every
-	// other pool configuration. The host binding descriptor for this module is
-	// the existing ShaderDescriptors["pool"] entry (Selena's bindings.Layout is
+	// WGSL module for the pool render pass, compiled from the .selena source
+	// and consumed by the generic descriptor-driven Selena WebGPU render path.
+	// It is the sole primary WGSL source for this pass; PoolVertexWGSL /
+	// PoolFragmentWGSL above are legacy JSON fields kept for wire-format
+	// compatibility but are never populated (the hand-written WGSL trees they
+	// once carried have been deleted) and are ignored by the WebGPU path. The
+	// host binding descriptor for this module is the existing
+	// ShaderDescriptors["pool"] entry (Selena's bindings.Layout is
 	// backend-agnostic, so the descriptor compiled alongside the GLSL/GLES pool
 	// shader already matches this WGSL's @group/@binding layout).
 	PoolSelenaWGSL               string `json:"poolSelenaWGSL,omitempty"`
@@ -706,14 +708,17 @@ type WaterSystemIR struct {
 	CompoundShadowSelenaWGSL   string `json:"compoundShadowSelenaWGSL,omitempty"`
 	ObjectMeshShadowSelenaWGSL string `json:"objectMeshShadowSelenaWGSL,omitempty"`
 	// SeedSelenaWGSL..NormalSelenaWGSL are the Selena-emitted single @compute
-	// WGSL modules for the five feedback simulation kernels, additive parallels
-	// to SeedWGSL/DropWGSL/DisplacementWGSL/SimulationWGSL/NormalWGSL above that
-	// route through the generic descriptor-driven Selena feedback-compute
-	// WebGPU path (getSelenaComputePipeline/createSelenaComputeBindGroup in
-	// 16a-scene-webgpu.js) instead of the hardcoded compute pipeline. The host
-	// binding descriptor for each is the existing ShaderDescriptors[<key>]
-	// entry (compiled alongside the GLSL/GLES kernel from the same .sel
-	// source; Selena's bindings.Layout is backend-agnostic).
+	// WGSL modules for the five feedback simulation kernels, compiled from the
+	// .selena source and consumed by the generic descriptor-driven Selena
+	// feedback-compute WebGPU path (getSelenaComputePipeline/
+	// createSelenaComputeBindGroup in 16a-scene-webgpu.js). They are the sole
+	// primary WGSL source for these kernels; SeedWGSL/DropWGSL/
+	// DisplacementWGSL/SimulationWGSL/NormalWGSL above are legacy JSON fields
+	// kept for wire-format compatibility but are never populated and are
+	// ignored by the WebGPU path. The host binding descriptor for each is the
+	// existing ShaderDescriptors[<key>] entry (compiled alongside the
+	// GLSL/GLES kernel from the same .selena source; Selena's bindings.Layout
+	// is backend-agnostic).
 	SeedSelenaWGSL                  string `json:"seedSelenaWGSL,omitempty"`
 	DropSelenaWGSL                  string `json:"dropSelenaWGSL,omitempty"`
 	DisplacementSelenaWGSL          string `json:"displacementSelenaWGSL,omitempty"`
@@ -734,9 +739,16 @@ type WaterSystemIR struct {
 	ObjectMeshShadowVertexWGSLRef   string `json:"objectMeshShadowVertexWGSLRef,omitempty"`
 	ObjectMeshShadowFragmentWGSLRef string `json:"objectMeshShadowFragmentWGSLRef,omitempty"`
 
-	// Selena-compiled GLSL/GLES slots. These are strictly additive parallels to
-	// the *WGSL slots above and feed the WebGL/WebGL2 water fallback; the WebGPU
-	// path ignores them and continues to consume the *WGSL slots unchanged.
+	// Selena-compiled GLSL/GLES slots. Each authored .selena material/kernel
+	// compiles to GLSL (WebGL1) + GLES (WebGL2) + WGSL (WebGPU, the
+	// *SelenaWGSL slots above) plus a backend-agnostic host binding descriptor
+	// (ShaderDescriptors); these GLSL/GLES slots feed the WebGL/WebGL2 water
+	// fallback and are ignored by the WebGPU path, which consumes the
+	// *SelenaWGSL slots instead. The legacy hand-written *WGSL slots above
+	// (PoolVertexWGSL, SeedWGSL, etc.) have been retired and are never
+	// populated; if a *SelenaWGSL module is unexpectedly missing at runtime,
+	// the JS client falls back to its builtin SCENE_WATER_*_SOURCE constants
+	// (see 16a-scene-webgpu.js), not these slots.
 	//
 	// Each authored Selena material compiles to a vertex+fragment pair per
 	// backend (unlike WGSL, which carries a single combined module): the GLSL
@@ -2006,10 +2018,11 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "objectMeshShadowVertexWGSLRef", item.ObjectMeshShadowVertexWGSLRef)
 	setString(record, "objectMeshShadowFragmentWGSLRef", item.ObjectMeshShadowFragmentWGSLRef)
 
-	// Selena-compiled GLSL/GLES render + sim slots. Additive parallels to the
-	// *WGSL slots above; they feed the WebGL/WebGL2 water fallback (the A1 sim
-	// driver + A2 render passes) and are ignored by the WebGPU path. Emitted
-	// inline (not hoisted into shaderLib) so the runtime reads them directly.
+	// Selena-compiled GLSL/GLES render + sim slots. They feed the WebGL/WebGL2
+	// water fallback (the A1 sim driver + A2 render passes) and are ignored by
+	// the WebGPU path, which consumes the *SelenaWGSL slots above instead.
+	// Emitted inline (not hoisted into shaderLib) so the runtime reads them
+	// directly.
 	setString(record, "seedVertexGLSL", item.SeedVertexGLSL)
 	setString(record, "seedFragmentGLSL", item.SeedFragmentGLSL)
 	setString(record, "seedVertexGLES", item.SeedVertexGLES)
