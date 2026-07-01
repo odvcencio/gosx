@@ -1,0 +1,58 @@
+// water-duck-material.sel — selena port of the JeantimeX textured-object pass
+// (duck-material.sel). Sibling of water-object-material.sel: same shape, but the
+// base albedo is sampled from a model texture (DuckCM.png upstream) instead of a
+// flat color uniform.
+//
+// As in object-material, the caustic is read via stateAt(uv) OUTSIDE the
+// submerged branch (the live raw shader was fixed to sample it unconditionally
+// after Dawn/naga rejected the per-fragment conditional sample) and applied only
+// when submerged. The texture pass discards submerged fragments on mode 2.
+//
+// The uv varying is named vUv to avoid colliding with the "uv" vertex attribute.
+material WaterDuckMaterial {
+    param poolHeight      : float = 0.3
+    param baseColor       : vec4
+    param isTexturePass   : float = 0.0
+    param texturePassMode : float = 0.0
+    param modelTexture    : texture2d
+
+    context {
+        lightDir : vec3
+    }
+
+    state water
+
+    varying worldPos : vec3
+    varying vUv      : vec2
+
+    vertex(geo) -> vec4 {
+        worldPos = geo.position
+        vUv      = geo.uv
+        return mvp * vec4f(geo.position, 1.0)
+    }
+
+    surface(geo) -> color {
+        let info        = stateAt(geo.vUv)
+        let waterHeight = info.x * poolHeight
+        let caustic     = info.y
+        let belowWater  = geo.worldPos.y < waterHeight
+        if (isTexturePass > 0.5 && texturePassMode == 2.0 && belowWater) {
+            discard
+        }
+        let lightN    = normalize(lightDir)
+        let refr      = refract(-lightN, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let up        = vec3f(0.0, 1.0, 0.0)
+        let albedo    = sample(modelTexture, geo.vUv).rgb * baseColor.rgb
+        let submerged = geo.worldPos.y < waterHeight
+        var diffuse   = max(dot(-refr, up), 0.0) * 0.6
+        if (submerged) {
+            diffuse = diffuse * caustic * 4.0
+        }
+        let underwater = vec3f(0.4, 0.9, 1.0)
+        var col = albedo * (0.4 + diffuse)
+        if (submerged) {
+            col = col * underwater * 1.2
+        }
+        return vec4f(col, baseColor.a)
+    }
+}

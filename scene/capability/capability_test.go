@@ -22,10 +22,10 @@ func TestVerdict(t *testing.T) {
 		{"skinning+ibl: webgpu degraded by ibl, webgl full", []Feature{FeatureSkinning, FeatureIBL},
 			[]Backend{BackendWebGPU, BackendWebGL},
 			map[Backend][]Feature{BackendWebGPU: {FeatureIBL}}},
-		{"water simulation requires webgpu", []Feature{FeatureWaterSim},
-			[]Backend{BackendWebGPU}, nil},
-		{"water object mesh shadow pass requires webgpu", []Feature{FeatureWaterObjectMeshShadowPass},
-			[]Backend{BackendWebGPU}, nil},
+		{"water simulation supports webgpu and webgl", []Feature{FeatureWaterSim},
+			[]Backend{BackendWebGPU, BackendWebGL}, nil},
+		{"water object mesh shadow pass supports webgpu and webgl", []Feature{FeatureWaterObjectMeshShadowPass},
+			[]Backend{BackendWebGPU, BackendWebGL}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,14 +43,17 @@ func TestVerdict(t *testing.T) {
 func TestVerdictReportsEveryRequiredUnsupportedFeature(t *testing.T) {
 	features := []Feature{FeatureWaterObjectMeshShadowPass, FeatureWaterObjectTexturePass, FeatureWaterSim}
 	got := Verdict(features, nil, DefaultPolicy())
-	if !backendsEqual(got.Capable, []Backend{BackendWebGPU}) {
-		t.Fatalf("Capable = %v, want [webgpu]", got.Capable)
+	// WebGPU and WebGL both implement the water features now; only canvas2d is
+	// excluded by the required-feature gate.
+	if !backendsEqual(got.Capable, []Backend{BackendWebGPU, BackendWebGL}) {
+		t.Fatalf("Capable = %v, want [webgpu webgl]", got.Capable)
 	}
-	for _, backend := range []Backend{BackendWebGL, BackendCanvas2D} {
-		for _, feature := range features {
-			if !hasExcludeReason(got.Reasons, feature, backend) {
-				t.Fatalf("expected exclude reason for %s/%s, got %+v", feature, backend, got.Reasons)
-			}
+	for _, feature := range features {
+		if !hasExcludeReason(got.Reasons, feature, BackendCanvas2D) {
+			t.Fatalf("expected exclude reason for %s/%s, got %+v", feature, BackendCanvas2D, got.Reasons)
+		}
+		if hasExcludeReason(got.Reasons, feature, BackendWebGL) {
+			t.Fatalf("did not expect webgl exclusion for %s now that WebGL implements it, got %+v", feature, got.Reasons)
 		}
 	}
 	if len(got.Degraded) != 0 {

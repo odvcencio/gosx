@@ -1,0 +1,171 @@
+{
+  "_comment": "Generated fixture: real Selena-compiled pool.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive the pool pass through the generic descriptor-driven Selena WebGPU render path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/pool.sel (TargetWGSL) if pool.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/pool.sel",
+  "layout": {
+    "schemaVersion": "selena.descriptor.v1",
+    "languageVersion": "selena.lang.v1",
+    "material": "WaterPool",
+    "kind": "mesh",
+    "entryPoints": {
+      "vertex": "vertexMain",
+      "fragment": "fragmentMain"
+    },
+    "uniformBlock": {
+      "size": 144,
+      "fields": [
+        {
+          "name": "mvp",
+          "type": "mat4",
+          "offset": 0,
+          "size": 64
+        },
+        {
+          "name": "normalMatrix",
+          "type": "mat3",
+          "offset": 64,
+          "size": 48
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "offset": 112,
+          "size": 4
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "offset": 116,
+          "size": 4
+        },
+        {
+          "name": "poolHeight",
+          "type": "float",
+          "offset": 120,
+          "size": 4
+        },
+        {
+          "name": "lightDir",
+          "type": "vec3",
+          "offset": 128,
+          "size": 12,
+          "class": "context"
+        }
+      ],
+      "defaults": [
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "poolHeight",
+          "type": "float",
+          "values": [
+            0.3
+          ]
+        }
+      ]
+    },
+    "attributes": [],
+    "textures": [
+      {
+        "name": "tileTexture",
+        "dimension": "2d",
+        "wgsl": {
+          "group": 0,
+          "textureBinding": 1,
+          "samplerBinding": 2
+        },
+        "gl": {
+          "uniform": "tileTexture",
+          "unit": 0
+        },
+        "metal": {
+          "texture": 0,
+          "sampler": 0
+        }
+      },
+      {
+        "name": "causticTexture",
+        "dimension": "2d",
+        "wgsl": {
+          "group": 0,
+          "textureBinding": 3,
+          "samplerBinding": 4
+        },
+        "gl": {
+          "uniform": "causticTexture",
+          "unit": 1
+        },
+        "metal": {
+          "texture": 1,
+          "sampler": 1
+        }
+      },
+      {
+        "name": "shadowTexture",
+        "dimension": "2d",
+        "wgsl": {
+          "group": 0,
+          "textureBinding": 5,
+          "samplerBinding": 6
+        },
+        "gl": {
+          "uniform": "shadowTexture",
+          "unit": 2
+        },
+        "metal": {
+          "texture": 2,
+          "sampler": 2
+        }
+      }
+    ],
+    "wgsl": {
+      "group": 0,
+      "binding": 0
+    },
+    "metal": {
+      "buffer": 0
+    },
+    "states": [
+      {
+        "name": "height",
+        "wgsl": {
+          "group": 0,
+          "inBinding": 8,
+          "outBinding": -1
+        },
+        "gl": {
+          "uniform": "stateTex",
+          "unit": 0
+        },
+        "metal": {
+          "inBuffer": 2,
+          "outBuffer": -1
+        }
+      }
+    ],
+    "grid": {
+      "wgsl": {
+        "group": 0,
+        "binding": 7
+      },
+      "metal": {
+        "buffer": 1
+      },
+      "glTexelUniform": ""
+    },
+    "context": [
+      "lightDir"
+    ]
+  },
+  "wgsl": "struct Uniforms {\n  mvp : mat4x4\u003cf32\u003e,\n  normalMatrix : mat3x3\u003cf32\u003e,\n  poolWidth : f32,\n  poolLength : f32,\n  poolHeight : f32,\n  lightDir : vec3\u003cf32\u003e,\n};\n@group(0) @binding(0) var\u003cuniform\u003e u : Uniforms;\n\n@group(0) @binding(1) var tileTexture : texture_2d\u003cf32\u003e;\n@group(0) @binding(2) var tileTextureSampler : sampler;\n@group(0) @binding(3) var causticTexture : texture_2d\u003cf32\u003e;\n@group(0) @binding(4) var causticTextureSampler : sampler;\n@group(0) @binding(5) var shadowTexture : texture_2d\u003cf32\u003e;\n@group(0) @binding(6) var shadowTextureSampler : sampler;\n\nstruct StateGrid {\n  gridWidth  : u32,\n  gridHeight : u32,\n};\n@group(0) @binding(7) var\u003cuniform\u003e _stateGrid : StateGrid;\n@group(0) @binding(8) var\u003cstorage, read\u003e _inState : array\u003cvec4\u003cf32\u003e\u003e;\n\nstruct VertexOutput {\n  @builtin(position) position : vec4\u003cf32\u003e,\n  @location(0) vWorldPos : vec3\u003cf32\u003e,\n  @location(1) vNormal : vec3\u003cf32\u003e,\n  @location(2) vTileUV : vec2\u003cf32\u003e,\n  @location(3) vWaterUV : vec2\u003cf32\u003e,\n  @location(4) vFace : f32,\n};\n\n@vertex\nfn vertexMain(@builtin(vertex_index) vertexIndex : u32) -\u003e VertexOutput {\n  var out : VertexOutput;\n  let fi = f32(vertexIndex);\n  let fv = floor((fi / 6.0));\n  let faceF = min(fv, 4.0);\n  let cu = (fi - (fv * 6.0));\n  let uf = select(select(select(0.0, 1.0, (cu == 4.0)), 1.0, (cu == 2.0)), 1.0, (cu == 1.0));\n  let vf = select(select(select(0.0, 1.0, (cu == 5.0)), 1.0, (cu == 4.0)), 1.0, (cu == 2.0));\n  let hw = max(u.poolWidth, 0.001);\n  let hl = max(u.poolLength, 0.001);\n  let flY = (-max(u.poolHeight, 0.001));\n  let rimY = max((u.poolHeight * 0.1667), 0.025);\n  let wx = select(select(select(mix((-hw), hw, uf), (-hw), (faceF == 4.0)), hw, (faceF == 3.0)), mix(hw, (-hw), uf), (faceF == 2.0));\n  let wy = select(mix(flY, rimY, vf), flY, (faceF == 0.0));\n  let wz = select(select(select(select(mix((-hl), hl, vf), mix((-hl), hl, uf), (faceF == 4.0)), mix(hl, (-hl), uf), (faceF == 3.0)), (-hl), (faceF == 2.0)), hl, (faceF == 1.0));\n  let nx = select(select(0.0, 1.0, (faceF == 4.0)), (-1.0), (faceF == 3.0));\n  let ny = select(0.0, 1.0, (faceF == 0.0));\n  let nz = select(select(0.0, 1.0, (faceF == 2.0)), (-1.0), (faceF == 1.0));\n  let tileX = select(select((wx * 0.42), (wz * 0.42), (faceF == 4.0)), (wz * 0.42), (faceF == 3.0));\n  let tileY = select((wy * 0.72), (wz * 0.42), (faceF == 0.0));\n  let duw = max((u.poolWidth * 2.0), 0.001);\n  let dul = max((u.poolLength * 2.0), 0.001);\n  out.vWorldPos = vec3\u003cf32\u003e(wx, wy, wz);\n  out.vNormal = vec3\u003cf32\u003e(nx, ny, nz);\n  out.vTileUV = vec2\u003cf32\u003e(tileX, tileY);\n  out.vWaterUV = vec2\u003cf32\u003e(((wx / duw) + 0.5), ((wz / dul) + 0.5));\n  out.vFace = faceF;\n  out.position = (u.mvp * vec4\u003cf32\u003e(wx, wy, wz, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -\u003e @location(0) vec4\u003cf32\u003e {\n  let wuv = clamp(in.vWaterUV, vec2\u003cf32\u003e(0.0, 0.0), vec2\u003cf32\u003e(1.0, 1.0));\n  let info = _inState[min(u32((wuv).x * f32(_stateGrid.gridWidth)) + u32((wuv).y * f32(_stateGrid.gridHeight)) * _stateGrid.gridWidth, _stateGrid.gridWidth * _stateGrid.gridHeight - 1u)];\n  let wh = (info.x * u.poolHeight);\n  let ldir = normalize(u.lightDir);\n  let refr = refract((-ldir), vec3\u003cf32\u003e(0.0, 1.0, 0.0), (1.0 / 1.333));\n  let refY = select(0.05, refr.y, (abs(refr.y) \u003e 0.05));\n  let duw = max((u.poolWidth * 2.0), 0.001);\n  let dul = max((u.poolLength * 2.0), 0.001);\n  let projX = ((in.vWorldPos.x - ((in.vWorldPos.y * refr.x) / refY)) / duw);\n  let projZ = ((in.vWorldPos.z - ((in.vWorldPos.y * refr.z) / refY)) / dul);\n  let cUV = clamp(vec2\u003cf32\u003e(((projX * 0.75) + 0.5), ((projZ * 0.75) + 0.5)), vec2\u003cf32\u003e(0.0, 0.0), vec2\u003cf32\u003e(1.0, 1.0));\n  let tileSamp = textureSample(tileTexture, tileTextureSampler, in.vTileUV);\n  let causticS = textureSample(causticTexture, causticTextureSampler, cUV);\n  let shadowS = textureSample(shadowTexture, shadowTextureSampler, wuv);\n  let tileRGB = tileSamp.xyz;\n  let caustic = causticS.xyz;\n  let shadowV = shadowS.x;\n  let nrm = normalize(in.vNormal);\n  let diffuse = max(dot(nrm, normalize((-refr))), 0.0);\n  let below = select(0.0, 1.0, (in.vWorldPos.y \u003c wh));\n  let distFade = (1.0 / max((length(in.vWorldPos) * 0.52), 1.0));\n  let dryLight = (0.46 + (diffuse * 0.34));\n  let causticE = dot(caustic, vec3\u003cf32\u003e(0.34, 0.44, 0.22));\n  let base = ((tileRGB * dryLight) * distFade);\n  let wet = (((base * vec3\u003cf32\u003e(0.42, 0.92, 1.0)) * (0.72 + (diffuse * 0.22))) + (caustic * (1.55 + (causticE * 0.6))));\n  let col0 = mix(base, wet, below);\n  let col1 = (col0 * (1.0 - (clamp(shadowV, 0.0, 1.0) * 0.62)));\n  let rim = smoothstep(0.0, 0.12, in.vWorldPos.y);\n  let rimAdd = vec3\u003cf32\u003e(0.05, 0.035, 0.018);\n  let col2 = mix(col1, (col1 + rimAdd), (rim * (1.0 - below)));\n  return vec4\u003cf32\u003e(vec3\u003cf32\u003e(col2.x, col2.y, col2.z), 1.0);\n}\n"
+}

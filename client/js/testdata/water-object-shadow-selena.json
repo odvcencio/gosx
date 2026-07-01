@@ -1,0 +1,147 @@
+{
+  "_comment": "Generated fixture: real Selena-compiled object-shadow.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive this water pass through the generic descriptor-driven Selena WebGPU render path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/object-shadow.sel (TargetWGSL) if object-shadow.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/object-shadow.sel",
+  "layout": {
+    "schemaVersion": "selena.descriptor.v1",
+    "languageVersion": "selena.lang.v1",
+    "material": "WaterObjectShadow",
+    "kind": "post",
+    "entryPoints": {
+      "vertex": "vertexMain",
+      "fragment": "fragmentMain"
+    },
+    "uniformBlock": {
+      "size": 64,
+      "fields": [
+        {
+          "name": "objectKind",
+          "type": "float",
+          "offset": 0,
+          "size": 4
+        },
+        {
+          "name": "objectEnabled",
+          "type": "float",
+          "offset": 4,
+          "size": 4
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "offset": 8,
+          "size": 4
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "offset": 12,
+          "size": 4
+        },
+        {
+          "name": "objectRadius",
+          "type": "float",
+          "offset": 16,
+          "size": 4
+        },
+        {
+          "name": "objectHalfX",
+          "type": "float",
+          "offset": 20,
+          "size": 4
+        },
+        {
+          "name": "objectHalfZ",
+          "type": "float",
+          "offset": 24,
+          "size": 4
+        },
+        {
+          "name": "lightDir",
+          "type": "vec3",
+          "offset": 32,
+          "size": 12,
+          "class": "context"
+        },
+        {
+          "name": "objectCenterX",
+          "type": "float",
+          "offset": 44,
+          "size": 4,
+          "class": "context"
+        },
+        {
+          "name": "objectCenterZ",
+          "type": "float",
+          "offset": 48,
+          "size": 4,
+          "class": "context"
+        }
+      ],
+      "defaults": [
+        {
+          "name": "objectKind",
+          "type": "float",
+          "values": [
+            0
+          ]
+        },
+        {
+          "name": "objectEnabled",
+          "type": "float",
+          "values": [
+            1
+          ]
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "objectRadius",
+          "type": "float",
+          "values": [
+            0.1
+          ]
+        },
+        {
+          "name": "objectHalfX",
+          "type": "float",
+          "values": [
+            0.1
+          ]
+        },
+        {
+          "name": "objectHalfZ",
+          "type": "float",
+          "values": [
+            0.1
+          ]
+        }
+      ]
+    },
+    "attributes": [],
+    "textures": [],
+    "wgsl": {
+      "group": 0,
+      "binding": 4
+    },
+    "metal": {
+      "buffer": 1
+    },
+    "context": [
+      "lightDir",
+      "objectCenterX",
+      "objectCenterZ"
+    ]
+  },
+  "wgsl": "@group(0) @binding(0) var _sceneColorTex  : texture_2d<f32>;\n@group(0) @binding(1) var _sceneColorSamp : sampler;\n@group(0) @binding(2) var _sceneDepthTex  : texture_depth_2d;\n@group(0) @binding(3) var _sceneDepthSamp : sampler;\n\nstruct UserUniforms {\n  objectKind : f32,\n  objectEnabled : f32,\n  poolWidth : f32,\n  poolLength : f32,\n  objectRadius : f32,\n  objectHalfX : f32,\n  objectHalfZ : f32,\n  lightDir : vec3<f32>,\n  objectCenterX : f32,\n  objectCenterZ : f32,\n};\n@group(0) @binding(4) var<uniform> u : UserUniforms;\n\nstruct PostOutput {\n  @builtin(position) pos : vec4<f32>,\n  @location(0) v_uv      : vec2<f32>,\n};\n\nconst _postPositions = array<vec2<f32>, 3>(\n  vec2<f32>(-1.0, -1.0),\n  vec2<f32>( 3.0, -1.0),\n  vec2<f32>(-1.0,  3.0),\n);\nconst _postUVs = array<vec2<f32>, 3>(\n  vec2<f32>(0.0, 1.0),\n  vec2<f32>(2.0, 1.0),\n  vec2<f32>(0.0, -1.0),\n);\n\n@vertex fn vertexMain(@builtin(vertex_index) vi : u32) -> PostOutput {\n  var out : PostOutput;\n  out.pos  = vec4<f32>(_postPositions[vi], 0.0, 1.0);\n  out.v_uv = _postUVs[vi];\n  return out;\n}\n\nstruct PostInput {\n  @location(0) v_uv : vec2<f32>,\n};\n\n@fragment fn fragmentMain(in : PostInput) -> @location(0) vec4<f32> {\n  let lnorm = normalize(u.lightDir);\n  let uvX = clamp((in.v_uv.x - (lnorm.x * 0.025)), 0.0, 1.0);\n  let uvY = clamp((in.v_uv.y + (lnorm.z * 0.025)), 0.0, 1.0);\n  let centerUV = vec2<f32>(((u.objectCenterX * 0.5) + 0.5), ((u.objectCenterZ * 0.5) + 0.5));\n  let aspect = vec2<f32>(max((u.poolWidth / max(u.poolLength, 0.001)), 0.001), 1.0);\n  let dd = length((vec2<f32>((uvX - centerUV.x), (uvY - centerUV.y)) * aspect));\n  let sphR = max((u.objectRadius * 0.55), 0.018);\n  let cubeR = max((max(u.objectHalfX, u.objectHalfZ) * 0.6), sphR);\n  let radius = select(sphR, cubeR, (u.objectKind > 1.5));\n  var mask : f32 = 0.0;\n  var core : f32 = 0.0;\n  if (((u.objectKind >= 0.5) && (u.objectEnabled > 0.0))) {\n    mask = (1.0 - smoothstep(radius, (radius + max((radius * 1.2), 0.02)), dd));\n    core = (1.0 - smoothstep((radius * 0.38), radius, dd));\n  }\n  let shadow = (mask * (0.42 + (core * 0.58)));\n  return vec4<f32>(vec3<f32>(shadow, shadow, shadow), 1.0);\n}\n"
+}

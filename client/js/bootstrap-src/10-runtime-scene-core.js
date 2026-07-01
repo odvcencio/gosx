@@ -2142,10 +2142,10 @@
       case "conegeometry":
         return "cone";
       case "torusgeometry":
-      case "torusknot":
+        return "torus";
       case "torusknotgeometry":
       case "torus-knot":
-        return "torus";
+        return "torusknot";
       case "box":
       case "cube":
       case "lines":
@@ -2155,6 +2155,7 @@
       case "cylinder":
       case "cone":
       case "torus":
+      case "torusknot":
       case "gltf-mesh":
         return kind;
       default:
@@ -3007,34 +3008,38 @@
       materialSource: typeof item.materialSource === "string" ? item.materialSource : (typeof current.materialSource === "string" ? current.materialSource : ""),
       computeSourceFiles: sceneIsPlainObject(item.computeSourceFiles) ? sceneCloneData(item.computeSourceFiles) : (sceneIsPlainObject(current.computeSourceFiles) ? sceneCloneData(current.computeSourceFiles) : null),
       materialSourceFiles: sceneIsPlainObject(item.materialSourceFiles) ? sceneCloneData(item.materialSourceFiles) : (sceneIsPlainObject(current.materialSourceFiles) ? sceneCloneData(current.materialSourceFiles) : null),
-      seedWGSL: waterShaderString("seedWGSL"),
-      dropWGSL: waterShaderString("dropWGSL"),
-      displacementWGSL: waterShaderString("displacementWGSL"),
-      simulationWGSL: waterShaderString("simulationWGSL"),
-      normalWGSL: waterShaderString("normalWGSL"),
-      causticsWGSL: waterShaderString("causticsWGSL"),
-      poolVertexWGSL: waterShaderString("poolVertexWGSL"),
-      poolFragmentWGSL: waterShaderString("poolFragmentWGSL"),
-      surfaceVertexWGSL: waterShaderString("surfaceVertexWGSL"),
-      surfaceFragmentWGSL: waterShaderString("surfaceFragmentWGSL"),
-      surfaceBelowFragmentWGSL: waterShaderString("surfaceBelowFragmentWGSL"),
-      objectShadowWGSL: waterShaderString("objectShadowWGSL"),
-      objectMeshShadowVertexWGSL: waterShaderString("objectMeshShadowVertexWGSL"),
-      objectMeshShadowFragmentWGSL: waterShaderString("objectMeshShadowFragmentWGSL"),
-      seedWGSLRef: waterShaderString("seedWGSLRef"),
-      dropWGSLRef: waterShaderString("dropWGSLRef"),
-      displacementWGSLRef: waterShaderString("displacementWGSLRef"),
-      simulationWGSLRef: waterShaderString("simulationWGSLRef"),
-      normalWGSLRef: waterShaderString("normalWGSLRef"),
-      causticsWGSLRef: waterShaderString("causticsWGSLRef"),
-      poolVertexWGSLRef: waterShaderString("poolVertexWGSLRef"),
-      poolFragmentWGSLRef: waterShaderString("poolFragmentWGSLRef"),
-      surfaceVertexWGSLRef: waterShaderString("surfaceVertexWGSLRef"),
-      surfaceFragmentWGSLRef: waterShaderString("surfaceFragmentWGSLRef"),
-      surfaceBelowFragmentWGSLRef: waterShaderString("surfaceBelowFragmentWGSLRef"),
-      objectShadowWGSLRef: waterShaderString("objectShadowWGSLRef"),
-      objectMeshShadowVertexWGSLRef: waterShaderString("objectMeshShadowVertexWGSLRef"),
-      objectMeshShadowFragmentWGSLRef: waterShaderString("objectMeshShadowFragmentWGSLRef"),
+      // shaderDescriptors carries the per-shader Selena host binding descriptor
+      // (bindings.Layout JSON), keyed by logical shader name (e.g. "pool").
+      // Passed through unfiltered like *SourceFiles above so the generic
+      // descriptor-driven Selena render path (16a-scene-webgpu.js) can read
+      // shaderDescriptors.pool for the pool pass.
+      shaderDescriptors: sceneIsPlainObject(item.shaderDescriptors) ? sceneCloneData(item.shaderDescriptors) : (sceneIsPlainObject(current.shaderDescriptors) ? sceneCloneData(current.shaderDescriptors) : null),
+      // seedSelenaWGSL..normalSelenaWGSL are the Selena-emitted single
+      // @compute WGSL modules for the five feedback simulation kernels,
+      // consumed by the generic descriptor-driven Selena feedback-compute
+      // path in 16a-scene-webgpu.js. The hand-written seedWGSL/dropWGSL/
+      // displacementWGSL/simulationWGSL/normalWGSL (and every other
+      // hand-written *WGSL/*WGSLRef water slot) have been retired now that
+      // Selena is the sole primary WGSL source ahead of the builtin
+      // SCENE_WATER_*_SOURCE runtime fallback (see 16a-scene-webgpu.js).
+      seedSelenaWGSL: waterShaderString("seedSelenaWGSL"),
+      dropSelenaWGSL: waterShaderString("dropSelenaWGSL"),
+      displacementSelenaWGSL: waterShaderString("displacementSelenaWGSL"),
+      simulationSelenaWGSL: waterShaderString("simulationSelenaWGSL"),
+      normalSelenaWGSL: waterShaderString("normalSelenaWGSL"),
+      // poolSelenaWGSL is the Selena-emitted combined vertex+fragment WGSL
+      // module for the pool pass.
+      poolSelenaWGSL: waterShaderString("poolSelenaWGSL"),
+      // surfaceSelenaWGSL..objectMeshShadowSelenaWGSL generalize
+      // poolSelenaWGSL above to the remaining render passes, consumed by the
+      // generic descriptor-driven Selena WebGPU render path in
+      // 16a-scene-webgpu.js.
+      surfaceSelenaWGSL: waterShaderString("surfaceSelenaWGSL"),
+      surfaceBelowSelenaWGSL: waterShaderString("surfaceBelowSelenaWGSL"),
+      causticsSelenaWGSL: waterShaderString("causticsSelenaWGSL"),
+      objectShadowSelenaWGSL: waterShaderString("objectShadowSelenaWGSL"),
+      compoundShadowSelenaWGSL: waterShaderString("compoundShadowSelenaWGSL"),
+      objectMeshShadowSelenaWGSL: waterShaderString("objectMeshShadowSelenaWGSL"),
     };
   }
 

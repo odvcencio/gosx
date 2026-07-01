@@ -1,0 +1,84 @@
+{
+  "_comment": "Generated fixture: real Selena-compiled object-mesh-shadow.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive this water pass through the generic descriptor-driven Selena WebGPU render path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/object-mesh-shadow.sel (TargetWGSL) if object-mesh-shadow.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/object-mesh-shadow.sel",
+  "layout": {
+    "schemaVersion": "selena.descriptor.v1",
+    "languageVersion": "selena.lang.v1",
+    "material": "WaterMeshShadow",
+    "kind": "mesh",
+    "entryPoints": {
+      "vertex": "vertexMain",
+      "fragment": "fragmentMain"
+    },
+    "uniformBlock": {
+      "size": 144,
+      "fields": [
+        {
+          "name": "mvp",
+          "type": "mat4",
+          "offset": 0,
+          "size": 64
+        },
+        {
+          "name": "normalMatrix",
+          "type": "mat3",
+          "offset": 64,
+          "size": 48
+        },
+        {
+          "name": "poolHalfW",
+          "type": "float",
+          "offset": 112,
+          "size": 4
+        },
+        {
+          "name": "poolHalfL",
+          "type": "float",
+          "offset": 116,
+          "size": 4
+        },
+        {
+          "name": "lightDir",
+          "type": "vec3",
+          "offset": 128,
+          "size": 12,
+          "class": "context"
+        }
+      ],
+      "defaults": [
+        {
+          "name": "poolHalfW",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "poolHalfL",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        }
+      ]
+    },
+    "attributes": [
+      {
+        "name": "position",
+        "location": 0,
+        "type": "vec3"
+      }
+    ],
+    "textures": [],
+    "wgsl": {
+      "group": 0,
+      "binding": 0
+    },
+    "metal": {
+      "buffer": 0
+    },
+    "context": [
+      "lightDir"
+    ]
+  },
+  "wgsl": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  poolHalfW : f32,\n  poolHalfL : f32,\n  lightDir : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  let pos = in.position;\n  let lnorm = normalize(u.lightDir);\n  let refr = refract((-lnorm), vec3<f32>(0.0, 1.0, 0.0), (1.0 / 1.333));\n  let fallY = select((-0.0001), 0.0001, (refr.y >= 0.0));\n  let refY = select(fallY, refr.y, (abs(refr.y) > 0.0001));\n  let pX = (0.75 * (pos.x - ((pos.y * refr.x) / refY)));\n  let pZ = (0.75 * (pos.z - ((pos.y * refr.z) / refY)));\n  let clipX = (pX / max(u.poolHalfW, 0.0001));\n  let clipZ = (pZ / max(u.poolHalfL, 0.0001));\n  out.position = vec4<f32>(clipX, clipZ, 0.0, 1.0);\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  return vec4<f32>(vec3<f32>(1.0, 1.0, 1.0), 1.0);\n}\n"
+}

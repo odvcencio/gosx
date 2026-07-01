@@ -1,0 +1,48 @@
+// water-object-shadow.sel — selena post-kind port of the object-shadow RTT.
+//
+// Renders the projected shadow of the water object onto the pool floor surface.
+// A fullscreen pass: computes a 2D footprint mask from the object UV position.
+//
+// Only the sphere (objectKind ~1) and cube (objectKind ~2) cases are supported.
+// The compound-sphere path (objectKind ~3) from object-shadow.fragment.sel
+// requires param spheres : array<vec4, 32> which post-kind materials do not yet
+// support (CodeUnsupportedType is returned for array params in post). When
+// objectKind >= 2.5, no shadow is produced.
+//
+// Light offset: the shadow UV is shifted by the light projection to place the
+// shadow ahead of the object relative to the light direction.
+material WaterObjectShadow kind post {
+    param objectKind    : float = 0.0
+    param objectEnabled : float = 1.0
+    param poolWidth     : float = 1.5
+    param poolLength    : float = 1.5
+    param objectRadius  : float = 0.1
+    param objectHalfX   : float = 0.1
+    param objectHalfZ   : float = 0.1
+
+    context {
+        lightDir      : vec3
+        objectCenterX : float = 0.0
+        objectCenterZ : float = 0.0
+    }
+
+    surface(geo) -> color {
+        let lnorm     = normalize(lightDir)
+        let uvX       = clamp(geo.uv.x - lnorm.x * 0.025, 0.0, 1.0)
+        let uvY       = clamp(geo.uv.y + lnorm.z * 0.025, 0.0, 1.0)
+        let centerUV  = vec2f(objectCenterX * 0.5 + 0.5, objectCenterZ * 0.5 + 0.5)
+        let aspect    = vec2f(max(poolWidth / max(poolLength, 0.001), 0.001), 1.0)
+        let dd        = length(vec2f(uvX - centerUV.x, uvY - centerUV.y) * aspect)
+        let sphR      = max(objectRadius * 0.55, 0.018)
+        let cubeR     = max(max(objectHalfX, objectHalfZ) * 0.6, sphR)
+        let radius    = objectKind > 1.5 ? cubeR : sphR
+        var mask      = 0.0
+        var core      = 0.0
+        if (objectKind >= 0.5 && objectEnabled > 0.0) {
+            mask = 1.0 - smoothstep(radius, radius + max(radius * 1.2, 0.02), dd)
+            core = 1.0 - smoothstep(radius * 0.38, radius, dd)
+        }
+        let shadow    = mask * (0.42 + core * 0.58)
+        return rgb(shadow, shadow, shadow)
+    }
+}

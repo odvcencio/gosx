@@ -1,0 +1,274 @@
+// water-pool.sel — selena port of the JeantimeX water pool render pass.
+//
+// Models the pool floor + walls, generated entirely from vertexIndex, in one
+// of two shapes selected at RUNTIME by the `poolShape`/`cornerRadius` params
+// (author/UI-driven, see the water demo's page.gsx poolShape/cornerRadius
+// controls and the context-uniform design doc §3.5):
+//
+//   - box (poolShape <= 0.5, or cornerRadius clamps to ~0): 5 faces x 6
+//     vertices = 30 verts, unchanged from the original port.
+//   - rounded (poolShape > 0.5 and cornerRadius > 0.0001): a 44-segment
+//     rounded-rectangle floor fan (44*3 = 132 verts) + a 44-segment wall strip
+//     (44*6 = 264 verts) = 396 verts total, ported from the hand-written
+//     pool.vertex.sel's WATER_POOL_ROUNDED_* constants / waterPoolRoundedVertex
+//     / waterPoolRoundedBoundaryPoint / waterPoolRoundedBoundaryNormal /
+//     waterPoolCornerSign / waterPoolQuadUV. The host must draw with a FIXED
+//     vertex count of 396 whenever the rounded shape is selected (see
+//     16a-scene-webgpu.js's roundedPoolVertexCount = 44 * 9) so every index the
+//     vertex() body branches on is actually issued.
+//
+// This port became possible once selena's vertex() stage grew var/if/for
+// support (the general statement-lowering path surface()/fragment already
+// used) -- previously vertex() was let-chain + varying-writes only, which
+// cannot express the rounded path's per-vertex branching without duplicating
+// the whole body per case. Two remaining selena constraints shaped HOW it's
+// written, both worth calling out for anyone extending this file:
+//
+//   - No modulo/truncating-integer-division operator, and this vertex() stays
+//     in float space (like the original box path) rather than introduce uint
+//     arithmetic. `index % N` becomes `index - floor(index/N)*N` and
+//     `index / N` (truncating) becomes `floor(index/N)`, exactly mirroring the
+//     box path's existing `fv = floor(fi/6.0)` / `cu = fi - fv*6.0` idiom.
+//
+//   - User-defined top-level `fn`s are inlined ONLY into surface() (see
+//     lower/inline.go's inlineFuncs, which walks m.Surface.Body exclusively);
+//     a `fn` called from vertex() parses and passes selena's own front-end
+//     checks but is emitted as a literal call to an undefined function, which
+//     every backend (naga included) rejects. So the hand-written vertex
+//     shader's five helper fns (waterPoolCornerSign, waterPoolRoundedBoundary-
+//     Point, waterPoolRoundedBoundaryNormal, waterPoolQuadUV, and the
+//     waterPoolRoundedVertex dispatcher) are inlined by hand at each of their
+//     four call sites below (the floor fan's two corners, the wall strip's
+//     pointA/pointB) instead of factored into fns. Each inlined copy uses a
+//     distinct variable-name prefix (c1_/c2_/a_/b_) because selena's local
+//     scope is FLAT across a whole vertex()/surface() body (not per-block):
+//     the same name reused in two sibling if/else branches is rejected as a
+//     duplicate local even though only one branch ever executes per vertex.
+//
+// Textures: tileTexture (surface pattern), causticTexture, shadowTexture.
+// State: water simulation height-field accessed via stateAt(uv) in both stages.
+//
+// Key WGSL scalar-splat cases exercised by this shader:
+//   max(vec3, float) in the lighting: max(dot(...), 0.0) is float+float so
+//   no splat, but max(poolWidth*2, 0.001) is float+float too -- no splat here
+//   since both sides are scalar. The stateAt path exercises vec+scalar-exempt
+//   mix (mix(base, wet, below) where below is float).
+material WaterPool {
+    param poolWidth  : float = 1.5
+    param poolLength : float = 1.5
+    param poolHeight : float = 0.3
+
+    // cornerRadius/poolShape: author/UI-driven pool-shape controls (design
+    // doc §3.5 classifies both as "P", author params, matching the
+    // hand-written WaterUniforms fields of the same name). poolShape > 0.5
+    // selects the rounded path; cornerRadius (clamped in-shader to
+    // [0, min(halfWidth,halfLength) - 0.001]) is its corner radius. Defaults
+    // match page.gsx's box-shape default (poolShape="Box", cornerRadius=0).
+    param cornerRadius : float = 0.0
+    param poolShape     : float = 0.0
+
+    context {
+        lightDir : vec3
+    }
+
+    param tileTexture    : texture2d
+    param causticTexture : texture2d
+    param shadowTexture  : texture2d
+
+    state height
+
+    varying vWorldPos : vec3
+    varying vNormal   : vec3
+    varying vTileUV   : vec2
+    varying vWaterUV  : vec2
+    varying vFace     : float
+
+    vertex() -> vec4 {
+        let fi = float(vertexIndex)
+        let hw = max(poolWidth, 0.001)
+        let hl = max(poolLength, 0.001)
+        let flY = -max(poolHeight, 0.001)
+        let rimY = max(poolHeight * 0.1667, 0.025)
+        let maxCornerRadius = max(0.0, min(hw, hl) - 0.001)
+        let cr = clamp(cornerRadius, 0.0, maxCornerRadius)
+        let roundedActive = poolShape > 0.5 && cr > 0.0001
+
+        var wx = 0.0
+        var wy = 0.0
+        var wz = 0.0
+        var nx = 0.0
+        var ny = 1.0
+        var nz = 0.0
+        var tileX = 0.0
+        var tileY = 0.0
+        var faceOut = 0.0
+
+        if (roundedActive) {
+            // Shared inset half-extents (halfWidth/halfLength shrunk by the
+            // corner radius), reused by every boundary-point/-normal below.
+            let insetX = max(hw - cr, 0.001)
+            let insetY = max(hl - cr, 0.001)
+
+            if (fi < 132.0) {
+                // --- floor: a 44-triangle fan from the pool center ---
+                // (WATER_POOL_ROUNDED_FLOOR_VERTICES = 44*3 = 132)
+                let triF      = floor(fi / 3.0)
+                let triCorner = fi - triF * 3.0
+                var px = 0.0
+                var py = 0.0
+                if (triCorner == 1.0) {
+                    // waterPoolRoundedBoundaryPoint((tri + 1) % 44, hw, hl, cr)
+                    let c1Raw   = triF + 1.0
+                    let c1SegF  = floor(c1Raw / 44.0)
+                    let c1Idx   = c1Raw - c1SegF * 44.0
+                    let c1CornF = floor(c1Idx / 11.0)
+                    let c1Corn  = min(c1CornF, 3.0)
+                    let c1Local = c1Idx - c1Corn * 11.0
+                    let c1SignX = (c1Corn == 1.0 || c1Corn == 2.0) ? -1.0 : 1.0
+                    let c1SignY = c1Corn >= 2.0 ? -1.0 : 1.0
+                    let c1Theta = c1Corn * 1.57079632679 + c1Local / 10.0 * 1.57079632679
+                    px = c1SignX * insetX + cos(c1Theta) * cr
+                    py = c1SignY * insetY + sin(c1Theta) * cr
+                } else {
+                    if (triCorner == 2.0) {
+                        // waterPoolRoundedBoundaryPoint(tri, hw, hl, cr)
+                        let c2SegF  = floor(triF / 44.0)
+                        let c2Idx   = triF - c2SegF * 44.0
+                        let c2CornF = floor(c2Idx / 11.0)
+                        let c2Corn  = min(c2CornF, 3.0)
+                        let c2Local = c2Idx - c2Corn * 11.0
+                        let c2SignX = (c2Corn == 1.0 || c2Corn == 2.0) ? -1.0 : 1.0
+                        let c2SignY = c2Corn >= 2.0 ? -1.0 : 1.0
+                        let c2Theta = c2Corn * 1.57079632679 + c2Local / 10.0 * 1.57079632679
+                        px = c2SignX * insetX + cos(c2Theta) * cr
+                        py = c2SignY * insetY + sin(c2Theta) * cr
+                    }
+                    // triCorner == 0.0: point stays the pool center (0, 0),
+                    // matching the hand-written shader's fan-hub vertex.
+                }
+                wx = px
+                wy = flY
+                wz = py
+                tileX = px * 0.42
+                tileY = py * 0.42
+                faceOut = 0.0
+            } else {
+                // --- walls: a 44-segment quad strip (2 tris/segment) ---
+                let localIndex = fi - 132.0
+                let segRaw     = floor(localIndex / 6.0)
+                let segSegF    = floor(segRaw / 44.0)
+                let segment    = segRaw - segSegF * 44.0
+                let wallCorner = localIndex - segRaw * 6.0
+                // waterPoolQuadUV(wallCorner)
+                let quadU = (wallCorner == 1.0 || wallCorner == 2.0 || wallCorner == 4.0) ? 1.0 : 0.0
+                let quadV = (wallCorner == 2.0 || wallCorner == 4.0 || wallCorner == 5.0) ? 1.0 : 0.0
+
+                // pointA = waterPoolRoundedBoundaryPoint(segment, hw, hl, cr)
+                let aCornF = min(floor(segment / 11.0), 3.0)
+                let aLocal = segment - aCornF * 11.0
+                let aSignX = (aCornF == 1.0 || aCornF == 2.0) ? -1.0 : 1.0
+                let aSignY = aCornF >= 2.0 ? -1.0 : 1.0
+                let aTheta = aCornF * 1.57079632679 + aLocal / 10.0 * 1.57079632679
+                let aPX    = aSignX * insetX + cos(aTheta) * cr
+                let aPY    = aSignY * insetY + sin(aTheta) * cr
+
+                // pointB = waterPoolRoundedBoundaryPoint((segment+1) % 44, hw, hl, cr)
+                let bRaw    = segment + 1.0
+                let bSegF   = floor(bRaw / 44.0)
+                let bIdx    = bRaw - bSegF * 44.0
+                let bCornF  = min(floor(bIdx / 11.0), 3.0)
+                let bLocal  = bIdx - bCornF * 11.0
+                let bSignX  = (bCornF == 1.0 || bCornF == 2.0) ? -1.0 : 1.0
+                let bSignY  = bCornF >= 2.0 ? -1.0 : 1.0
+                let bTheta  = bCornF * 1.57079632679 + bLocal / 10.0 * 1.57079632679
+                let bPX     = bSignX * insetX + cos(bTheta) * cr
+                let bPY     = bSignY * insetY + sin(bTheta) * cr
+
+                let point    = vec2f(mix(aPX, bPX, quadU), mix(aPY, bPY, quadU))
+                let inset    = vec2f(insetX, insetY)
+                let absPoint = abs(point)
+
+                // waterPoolRoundedBoundaryNormal(point, hw, hl, cr)
+                var outward = vec2f(0.0, 1.0)
+                if (absPoint.x > insetX && absPoint.y > insetY && cr > 0.0001) {
+                    outward = normalize(point - sign(point) * inset)
+                } else {
+                    if (absPoint.x / max(hw, 0.001) > absPoint.y / max(hl, 0.001)) {
+                        outward = vec2f(sign(point.x), 0.0)
+                    } else {
+                        outward = vec2f(0.0, sign(point.y))
+                    }
+                }
+
+                wx = point.x
+                wy = mix(flY, rimY, quadV)
+                wz = point.y
+                nx = -outward.x
+                ny = 0.0
+                nz = -outward.y
+                tileX = (segment + quadU) * 0.18
+                tileY = wy * 0.72
+                faceOut = 5.0
+            }
+        } else {
+            // --- box: the original 5-face x 6-vertex port, unchanged ---
+            let fv    = floor(fi / 6.0)
+            let faceF = min(fv, 4.0)
+            let cu    = fi - fv * 6.0
+            let uf    = cu == 1.0 ? 1.0 : cu == 2.0 ? 1.0 : cu == 4.0 ? 1.0 : 0.0
+            let vf    = cu == 2.0 ? 1.0 : cu == 4.0 ? 1.0 : cu == 5.0 ? 1.0 : 0.0
+            wx = faceF == 2.0 ? mix(hw, -hw, uf) : faceF == 3.0 ? hw : faceF == 4.0 ? -hw : mix(-hw, hw, uf)
+            wy = faceF == 0.0 ? flY : mix(flY, rimY, vf)
+            wz = faceF == 1.0 ? hl : faceF == 2.0 ? -hl : faceF == 3.0 ? mix(hl, -hl, uf) : faceF == 4.0 ? mix(-hl, hl, uf) : mix(-hl, hl, vf)
+            nx = faceF == 3.0 ? -1.0 : faceF == 4.0 ? 1.0 : 0.0
+            ny = faceF == 0.0 ? 1.0 : 0.0
+            nz = faceF == 1.0 ? -1.0 : faceF == 2.0 ? 1.0 : 0.0
+            tileX = faceF == 3.0 ? wz * 0.42 : faceF == 4.0 ? wz * 0.42 : wx * 0.42
+            tileY = faceF == 0.0 ? wz * 0.42 : wy * 0.72
+            faceOut = faceF
+        }
+
+        let duw   = max(poolWidth * 2.0, 0.001)
+        let dul   = max(poolLength * 2.0, 0.001)
+        vWorldPos = vec3f(wx, wy, wz)
+        vNormal   = vec3f(nx, ny, nz)
+        vTileUV   = vec2f(tileX, tileY)
+        vWaterUV  = vec2f(wx / duw + 0.5, wz / dul + 0.5)
+        vFace     = faceOut
+        return mvp * vec4f(wx, wy, wz, 1.0)
+    }
+
+    surface(geo) -> color {
+        let wuv      = clamp(geo.vWaterUV, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+        let info     = stateAt(wuv)
+        let wh       = info.x * poolHeight
+        let ldir     = normalize(lightDir)
+        let refr     = refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let refY     = abs(refr.y) > 0.05 ? refr.y : 0.05
+        let duw      = max(poolWidth * 2.0, 0.001)
+        let dul      = max(poolLength * 2.0, 0.001)
+        let projX    = (geo.vWorldPos.x - geo.vWorldPos.y * refr.x / refY) / duw
+        let projZ    = (geo.vWorldPos.z - geo.vWorldPos.y * refr.z / refY) / dul
+        let cUV      = clamp(vec2f(projX * 0.75 + 0.5, projZ * 0.75 + 0.5), vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+        let tileSamp = sample(tileTexture, geo.vTileUV)
+        let causticS = sample(causticTexture, cUV)
+        let shadowS  = sample(shadowTexture, wuv)
+        let tileRGB  = tileSamp.xyz
+        let caustic  = causticS.xyz
+        let shadowV  = shadowS.x
+        let nrm      = normalize(geo.vNormal)
+        let diffuse  = max(dot(nrm, normalize(-refr)), 0.0)
+        let below    = geo.vWorldPos.y < wh ? 1.0 : 0.0
+        let distFade = 1.0 / max(length(geo.vWorldPos) * 0.52, 1.0)
+        let dryLight = 0.46 + diffuse * 0.34
+        let causticE = dot(caustic, vec3f(0.34, 0.44, 0.22))
+        let base     = tileRGB * dryLight * distFade
+        let wet      = base * vec3f(0.42, 0.92, 1.0) * (0.72 + diffuse * 0.22) + caustic * (1.55 + causticE * 0.6)
+        let col0     = mix(base, wet, below)
+        let col1     = col0 * (1.0 - clamp(shadowV, 0.0, 1.0) * 0.62)
+        let rim      = smoothstep(0.0, 0.12, geo.vWorldPos.y)
+        let rimAdd   = vec3f(0.05, 0.035, 0.018)
+        let col2     = mix(col1, col1 + rimAdd, rim * (1.0 - below))
+        return rgb(col2.x, col2.y, col2.z)
+    }
+}

@@ -523,83 +523,187 @@ type ComputeParticles struct {
 // WebGPU-first; the Scene3D backend capability verdict treats it as a
 // fidelity-gated feature.
 type WaterSystem struct {
-	ID                           string
-	InteractionProfile           string
-	InteractionTarget            string
-	InteractionObject            string
-	Resolution                   int
-	PoolShape                    string
-	PoolWidth                    float64
-	PoolHeight                   float64
-	PoolLength                   float64
-	CornerRadius                 float64
-	WaveSpeed                    float64
-	Damping                      float64
-	NormalScale                  float64
-	SeedDrops                    int
-	DropRadius                   float64
-	DropStrength                 float64
-	DropEventID                  int
-	DropX                        float64
-	DropZ                        float64
-	DropEventRadius              float64
-	DropEventStrength            float64
-	TileTexture                  string
-	CubeMap                      string
-	ShallowColor                 string
-	DeepColor                    string
-	CausticsResolution           int
-	ObjectTextureResolution      int
-	ObjectTextureResolutionMode  string
-	ObjectTexturePixelBudget     int
-	ObjectShadowResolution       int
-	Caustics                     bool
-	Reflection                   bool
-	Refraction                   bool
-	Paused                       bool
-	FollowCamera                 bool
-	LightDirection               Vector3
-	ActiveObject                 string
-	ObjectKind                   string
-	ObjectX                      float64
-	ObjectY                      float64
-	ObjectZ                      float64
-	ObjectPreviousSet            bool
-	ObjectPreviousX              float64
-	ObjectPreviousY              float64
-	ObjectPreviousZ              float64
-	ObjectRadius                 float64
-	ObjectHalfSizeX              float64
-	ObjectHalfSizeY              float64
-	ObjectHalfSizeZ              float64
-	ObjectDriftX                 float64
-	ObjectDriftY                 float64
-	ObjectDriftZ                 float64
-	ObjectBobAmplitude           float64
-	ObjectBobSpeed               float64
-	ObjectDisplacementScale      float64
-	ObjectDisplacementSpheres    []WaterDisplacementSphere
-	ObjectDisplacementEvents     []WaterObjectDisplacementEvent
-	ComputeBackend               string
-	MaterialBackend              string
-	ComputeSource                string
-	MaterialSource               string
-	ComputeSourceFiles           map[string]string
-	MaterialSourceFiles          map[string]string
-	SeedWGSL                     string
-	DropWGSL                     string
-	DisplacementWGSL             string
-	SimulationWGSL               string
-	NormalWGSL                   string
-	CausticsWGSL                 string
-	PoolVertexWGSL               string
-	PoolFragmentWGSL             string
+	ID                          string
+	InteractionProfile          string
+	InteractionTarget           string
+	InteractionObject           string
+	Resolution                  int
+	PoolShape                   string
+	PoolWidth                   float64
+	PoolHeight                  float64
+	PoolLength                  float64
+	CornerRadius                float64
+	WaveSpeed                   float64
+	Damping                     float64
+	NormalScale                 float64
+	SeedDrops                   int
+	DropRadius                  float64
+	DropStrength                float64
+	DropEventID                 int
+	DropX                       float64
+	DropZ                       float64
+	DropEventRadius             float64
+	DropEventStrength           float64
+	TileTexture                 string
+	CubeMap                     string
+	ShallowColor                string
+	DeepColor                   string
+	CausticsResolution          int
+	ObjectTextureResolution     int
+	ObjectTextureResolutionMode string
+	ObjectTexturePixelBudget    int
+	ObjectShadowResolution      int
+	Caustics                    bool
+	Reflection                  bool
+	Refraction                  bool
+	Paused                      bool
+	FollowCamera                bool
+	LightDirection              Vector3
+	ActiveObject                string
+	ObjectKind                  string
+	ObjectX                     float64
+	ObjectY                     float64
+	ObjectZ                     float64
+	ObjectPreviousSet           bool
+	ObjectPreviousX             float64
+	ObjectPreviousY             float64
+	ObjectPreviousZ             float64
+	ObjectRadius                float64
+	ObjectHalfSizeX             float64
+	ObjectHalfSizeY             float64
+	ObjectHalfSizeZ             float64
+	ObjectDriftX                float64
+	ObjectDriftY                float64
+	ObjectDriftZ                float64
+	ObjectBobAmplitude          float64
+	ObjectBobSpeed              float64
+	ObjectDisplacementScale     float64
+	ObjectDisplacementSpheres   []WaterDisplacementSphere
+	ObjectDisplacementEvents    []WaterObjectDisplacementEvent
+	ComputeBackend              string
+	MaterialBackend             string
+	ComputeSource               string
+	MaterialSource              string
+	ComputeSourceFiles          map[string]string
+	MaterialSourceFiles         map[string]string
+	SeedWGSL                    string
+	DropWGSL                    string
+	DisplacementWGSL            string
+	SimulationWGSL              string
+	NormalWGSL                  string
+	CausticsWGSL                string
+	PoolVertexWGSL              string
+	PoolFragmentWGSL            string
+	// PoolSelenaWGSL is the Selena-emitted combined vertex+fragment WGSL module
+	// for the pool render pass ONLY, an additive parallel to PoolVertexWGSL/
+	// PoolFragmentWGSL above that routes through the generic descriptor-driven
+	// Selena WebGPU render path. See WaterSystemIR.PoolSelenaWGSL (scene_ir.go).
+	PoolSelenaWGSL               string
 	SurfaceVertexWGSL            string
 	SurfaceFragmentWGSL          string
 	SurfaceBelowFragmentWGSL     string
 	ObjectShadowWGSL             string
 	ObjectMeshShadowVertexWGSL   string
 	ObjectMeshShadowFragmentWGSL string
+	// SurfaceSelenaWGSL/SurfaceBelowSelenaWGSL/CausticsSelenaWGSL/
+	// ObjectShadowSelenaWGSL/CompoundShadowSelenaWGSL/ObjectMeshShadowSelenaWGSL
+	// are the Selena-emitted combined vertex+fragment WGSL modules for their
+	// respective render passes, additive parallels to the hand-written *WGSL
+	// slots above that route through the generic descriptor-driven Selena
+	// WebGPU render path (see PoolSelenaWGSL, the template this generalizes).
+	SurfaceSelenaWGSL          string
+	SurfaceBelowSelenaWGSL     string
+	CausticsSelenaWGSL         string
+	ObjectShadowSelenaWGSL     string
+	CompoundShadowSelenaWGSL   string
+	ObjectMeshShadowSelenaWGSL string
+	// SeedSelenaWGSL..NormalSelenaWGSL are the Selena-emitted single @compute
+	// WGSL modules for the five feedback simulation kernels, additive parallels
+	// to SeedWGSL/DropWGSL/DisplacementWGSL/SimulationWGSL/NormalWGSL above that
+	// route through the generic descriptor-driven Selena feedback-compute
+	// WebGPU path instead of the hardcoded compute pipeline (see
+	// WaterSystemIR.SeedSelenaWGSL, scene_ir.go).
+	SeedSelenaWGSL         string
+	DropSelenaWGSL         string
+	DisplacementSelenaWGSL string
+	SimulationSelenaWGSL   string
+	NormalSelenaWGSL       string
+
+	// Selena-compiled GLSL/GLES + descriptor slots. Strictly additive parallels
+	// to the *WGSL slots above for the WebGL/WebGL2 water fallback; the WebGPU
+	// path keeps consuming the *WGSL slots unchanged.
+	SeedVertexGLSL           string
+	SeedFragmentGLSL         string
+	SeedVertexGLES           string
+	SeedFragmentGLES         string
+	DropVertexGLSL           string
+	DropFragmentGLSL         string
+	DropVertexGLES           string
+	DropFragmentGLES         string
+	DisplacementVertexGLSL   string
+	DisplacementFragmentGLSL string
+	DisplacementVertexGLES   string
+	DisplacementFragmentGLES string
+	SimulationVertexGLSL     string
+	SimulationFragmentGLSL   string
+	SimulationVertexGLES     string
+	SimulationFragmentGLES   string
+	NormalVertexGLSL         string
+	NormalFragmentGLSL       string
+	NormalVertexGLES         string
+	NormalFragmentGLES       string
+	CausticsVertexGLSL       string
+	CausticsFragmentGLSL     string
+	CausticsVertexGLES       string
+	CausticsFragmentGLES     string
+	PoolVertexGLSL           string
+	PoolFragmentGLSL         string
+	PoolVertexGLES           string
+	PoolFragmentGLES         string
+	SurfaceVertexGLSL        string
+	SurfaceFragmentGLSL      string
+	SurfaceVertexGLES        string
+	SurfaceFragmentGLES      string
+	SurfaceBelowVertexGLSL   string
+	SurfaceBelowFragmentGLSL string
+	SurfaceBelowVertexGLES   string
+	SurfaceBelowFragmentGLES string
+	ObjectShadowVertexGLSL   string
+	ObjectShadowFragmentGLSL string
+	ObjectShadowVertexGLES   string
+	ObjectShadowFragmentGLES string
+	// CompoundShadow* are the WebGL2-only compound-object (TorusKnot/Duck)
+	// footprint shadow pass (compound-shadow.sel), an additive parallel that
+	// handles the objectKind >= 2.5 case ObjectShadow* cannot express (a
+	// fullscreen pass over up to 32 proxy displacement spheres). The WebGPU
+	// path renders compound shadows via its own mesh-shadow RTT and ignores
+	// these.
+	CompoundShadowVertexGLSL     string
+	CompoundShadowFragmentGLSL   string
+	CompoundShadowVertexGLES     string
+	CompoundShadowFragmentGLES   string
+	ObjectMeshShadowVertexGLSL   string
+	ObjectMeshShadowFragmentGLSL string
+	ObjectMeshShadowVertexGLES   string
+	ObjectMeshShadowFragmentGLES string
+	// ObjectMaterial* are the analytic floating-object render-pass selena slots
+	// (object-material.sel), additive parallels for the WebGL2 water fallback's
+	// object draw. The WebGPU path renders the object via its own <Object>
+	// custom material and ignores these.
+	ObjectMaterialVertexGLSL   string
+	ObjectMaterialFragmentGLSL string
+	ObjectMaterialVertexGLES   string
+	ObjectMaterialFragmentGLES string
+	// DuckMaterial* are the textured mesh-object (glTF duck) render-pass selena
+	// slots (duck-material.sel), additive parallels for the WebGL2 water fallback's
+	// direct duck draw + its object-texture passes. The WebGPU path renders the
+	// duck via its own <Model> custom material and ignores these.
+	DuckMaterialVertexGLSL   string
+	DuckMaterialFragmentGLSL string
+	DuckMaterialVertexGLES   string
+	DuckMaterialFragmentGLES string
+
+	ShaderDescriptors map[string]json.RawMessage
 }
 
 // WaterDisplacementSphere approximates one component of a compound object
@@ -1169,6 +1273,16 @@ type TorusGeometry struct {
 	TubularSegments int
 }
 
+// TorusKnotGeometry is a (p=2, q=3) trefoil torus knot rendered as a swept
+// tube along the parametric center curve used by the water shader SDF.
+// TubularSegments controls path smoothness; RadialSegments controls cross-section.
+type TorusKnotGeometry struct {
+	Radius          float64
+	Tube            float64
+	RadialSegments  int
+	TubularSegments int
+}
+
 type FlatMaterial MaterialStyle
 type GhostMaterial MaterialStyle
 type GlassMaterial MaterialStyle
@@ -1286,14 +1400,15 @@ func (BoundingBoxHelper) sceneNode() {}
 func (SkeletonHelper) sceneNode()    {}
 func (TransformControls) sceneNode() {}
 
-func (CubeGeometry) sceneGeometry()     {}
-func (BoxGeometry) sceneGeometry()      {}
-func (PlaneGeometry) sceneGeometry()    {}
-func (PyramidGeometry) sceneGeometry()  {}
-func (SphereGeometry) sceneGeometry()   {}
-func (LinesGeometry) sceneGeometry()    {}
-func (CylinderGeometry) sceneGeometry() {}
-func (TorusGeometry) sceneGeometry()    {}
+func (CubeGeometry) sceneGeometry()      {}
+func (BoxGeometry) sceneGeometry()       {}
+func (PlaneGeometry) sceneGeometry()     {}
+func (PyramidGeometry) sceneGeometry()   {}
+func (SphereGeometry) sceneGeometry()    {}
+func (LinesGeometry) sceneGeometry()     {}
+func (CylinderGeometry) sceneGeometry()  {}
+func (TorusGeometry) sceneGeometry()     {}
+func (TorusKnotGeometry) sceneGeometry() {}
 
 func (FlatMaterial) sceneMaterial()       {}
 func (GhostMaterial) sceneMaterial()      {}
@@ -2798,13 +2913,99 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 		CausticsWGSL:                 w.CausticsWGSL,
 		PoolVertexWGSL:               w.PoolVertexWGSL,
 		PoolFragmentWGSL:             w.PoolFragmentWGSL,
+		PoolSelenaWGSL:               w.PoolSelenaWGSL,
 		SurfaceVertexWGSL:            w.SurfaceVertexWGSL,
 		SurfaceFragmentWGSL:          w.SurfaceFragmentWGSL,
 		SurfaceBelowFragmentWGSL:     w.SurfaceBelowFragmentWGSL,
 		ObjectShadowWGSL:             w.ObjectShadowWGSL,
 		ObjectMeshShadowVertexWGSL:   w.ObjectMeshShadowVertexWGSL,
 		ObjectMeshShadowFragmentWGSL: w.ObjectMeshShadowFragmentWGSL,
+		SurfaceSelenaWGSL:            w.SurfaceSelenaWGSL,
+		SurfaceBelowSelenaWGSL:       w.SurfaceBelowSelenaWGSL,
+		CausticsSelenaWGSL:           w.CausticsSelenaWGSL,
+		ObjectShadowSelenaWGSL:       w.ObjectShadowSelenaWGSL,
+		CompoundShadowSelenaWGSL:     w.CompoundShadowSelenaWGSL,
+		ObjectMeshShadowSelenaWGSL:   w.ObjectMeshShadowSelenaWGSL,
+		SeedSelenaWGSL:               w.SeedSelenaWGSL,
+		DropSelenaWGSL:               w.DropSelenaWGSL,
+		DisplacementSelenaWGSL:       w.DisplacementSelenaWGSL,
+		SimulationSelenaWGSL:         w.SimulationSelenaWGSL,
+		NormalSelenaWGSL:             w.NormalSelenaWGSL,
+
+		SeedVertexGLSL:               w.SeedVertexGLSL,
+		SeedFragmentGLSL:             w.SeedFragmentGLSL,
+		SeedVertexGLES:               w.SeedVertexGLES,
+		SeedFragmentGLES:             w.SeedFragmentGLES,
+		DropVertexGLSL:               w.DropVertexGLSL,
+		DropFragmentGLSL:             w.DropFragmentGLSL,
+		DropVertexGLES:               w.DropVertexGLES,
+		DropFragmentGLES:             w.DropFragmentGLES,
+		DisplacementVertexGLSL:       w.DisplacementVertexGLSL,
+		DisplacementFragmentGLSL:     w.DisplacementFragmentGLSL,
+		DisplacementVertexGLES:       w.DisplacementVertexGLES,
+		DisplacementFragmentGLES:     w.DisplacementFragmentGLES,
+		SimulationVertexGLSL:         w.SimulationVertexGLSL,
+		SimulationFragmentGLSL:       w.SimulationFragmentGLSL,
+		SimulationVertexGLES:         w.SimulationVertexGLES,
+		SimulationFragmentGLES:       w.SimulationFragmentGLES,
+		NormalVertexGLSL:             w.NormalVertexGLSL,
+		NormalFragmentGLSL:           w.NormalFragmentGLSL,
+		NormalVertexGLES:             w.NormalVertexGLES,
+		NormalFragmentGLES:           w.NormalFragmentGLES,
+		CausticsVertexGLSL:           w.CausticsVertexGLSL,
+		CausticsFragmentGLSL:         w.CausticsFragmentGLSL,
+		CausticsVertexGLES:           w.CausticsVertexGLES,
+		CausticsFragmentGLES:         w.CausticsFragmentGLES,
+		PoolVertexGLSL:               w.PoolVertexGLSL,
+		PoolFragmentGLSL:             w.PoolFragmentGLSL,
+		PoolVertexGLES:               w.PoolVertexGLES,
+		PoolFragmentGLES:             w.PoolFragmentGLES,
+		SurfaceVertexGLSL:            w.SurfaceVertexGLSL,
+		SurfaceFragmentGLSL:          w.SurfaceFragmentGLSL,
+		SurfaceVertexGLES:            w.SurfaceVertexGLES,
+		SurfaceFragmentGLES:          w.SurfaceFragmentGLES,
+		SurfaceBelowVertexGLSL:       w.SurfaceBelowVertexGLSL,
+		SurfaceBelowFragmentGLSL:     w.SurfaceBelowFragmentGLSL,
+		SurfaceBelowVertexGLES:       w.SurfaceBelowVertexGLES,
+		SurfaceBelowFragmentGLES:     w.SurfaceBelowFragmentGLES,
+		ObjectShadowVertexGLSL:       w.ObjectShadowVertexGLSL,
+		ObjectShadowFragmentGLSL:     w.ObjectShadowFragmentGLSL,
+		ObjectShadowVertexGLES:       w.ObjectShadowVertexGLES,
+		ObjectShadowFragmentGLES:     w.ObjectShadowFragmentGLES,
+		CompoundShadowVertexGLSL:     w.CompoundShadowVertexGLSL,
+		CompoundShadowFragmentGLSL:   w.CompoundShadowFragmentGLSL,
+		CompoundShadowVertexGLES:     w.CompoundShadowVertexGLES,
+		CompoundShadowFragmentGLES:   w.CompoundShadowFragmentGLES,
+		ObjectMeshShadowVertexGLSL:   w.ObjectMeshShadowVertexGLSL,
+		ObjectMeshShadowFragmentGLSL: w.ObjectMeshShadowFragmentGLSL,
+		ObjectMeshShadowVertexGLES:   w.ObjectMeshShadowVertexGLES,
+		ObjectMeshShadowFragmentGLES: w.ObjectMeshShadowFragmentGLES,
+		ObjectMaterialVertexGLSL:     w.ObjectMaterialVertexGLSL,
+		ObjectMaterialFragmentGLSL:   w.ObjectMaterialFragmentGLSL,
+		ObjectMaterialVertexGLES:     w.ObjectMaterialVertexGLES,
+		ObjectMaterialFragmentGLES:   w.ObjectMaterialFragmentGLES,
+		DuckMaterialVertexGLSL:       w.DuckMaterialVertexGLSL,
+		DuckMaterialFragmentGLSL:     w.DuckMaterialFragmentGLSL,
+		DuckMaterialVertexGLES:       w.DuckMaterialVertexGLES,
+		DuckMaterialFragmentGLES:     w.DuckMaterialFragmentGLES,
+
+		ShaderDescriptors: cloneWaterShaderDescriptors(w.ShaderDescriptors),
 	})
+}
+
+// cloneWaterShaderDescriptors deep-copies the per-shader Selena descriptor map
+// so the lowered WaterSystemIR does not alias the caller's input.
+func cloneWaterShaderDescriptors(in map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(in))
+	for k, v := range in {
+		clone := make(json.RawMessage, len(v))
+		copy(clone, v)
+		out[k] = clone
+	}
+	return out
 }
 
 // mat4FromTRS builds a column-major 4x4 matrix from translation, rotation (quaternion), and scale.
@@ -3552,6 +3753,16 @@ func applyGeometryToObjectIR(record *ObjectIR, geometry Geometry) string {
 			record.TubularSegments = g.TubularSegments
 		}
 		return "torus"
+	case TorusKnotGeometry:
+		record.Radius = g.Radius
+		record.Tube = g.Tube
+		if g.RadialSegments > 0 {
+			record.RadialSegments = g.RadialSegments
+		}
+		if g.TubularSegments > 0 {
+			record.TubularSegments = g.TubularSegments
+		}
+		return "torusknot"
 	case BufferGeometry:
 		record.Vertices = bufferGeometryVertices(g)
 		return "gltf-mesh"
@@ -3709,6 +3920,22 @@ func (g TorusGeometry) legacyGeometry() (string, map[string]any) {
 		return "torus", nil
 	}
 	return "torus", out
+}
+
+func (g TorusKnotGeometry) legacyGeometry() (string, map[string]any) {
+	out := map[string]any{}
+	setNumeric(out, "radius", g.Radius)
+	setNumeric(out, "tube", g.Tube)
+	if g.RadialSegments > 0 {
+		out["radialSegments"] = g.RadialSegments
+	}
+	if g.TubularSegments > 0 {
+		out["tubularSegments"] = g.TubularSegments
+	}
+	if len(out) == 0 {
+		return "torusknot", nil
+	}
+	return "torusknot", out
 }
 
 func legacyMaterial(material Material) map[string]any {

@@ -1,0 +1,472 @@
+// water-surface.sel — selena port of the JeantimeX above-water surface pass
+// (surface.vertex.sel + surface.fragment.sel from the GoSX water demo).
+//
+// This is the most complex shader in the demo: a vertex-texture-fetch (VTF)
+// displaced water grid whose fragment stage raytraces analytic objects
+// (sphere / box / a compound cluster of displacement spheres / a torus-knot
+// SDF) through the refracted and reflected view rays, samples the pool tile +
+// live caustic, and tints the result through the water volume with a Fresnel
+// blend.
+//
+// PORT NOTES — how the raw WGSL maps onto selena, and where selena's surface
+// is narrower than hand-WGSL (these are the precise feature gaps):
+//
+//  * VERTEX STAGE (vertex(): let-chain + varying writes only). The raw vertex
+//    builds the grid with `var ox/oy` + `if` and integer `%`/`/`. selena's
+//    vertex stage forbids var/if/for/arrays, so the grid index math is done in
+//    float with `floor`/`-` (mod) and ternaries, exactly like water-pool.sel.
+//    The live heightfield is read with stateAt(uv) (vertex texture fetch).
+//
+//  * stateAt(uv) replaces the raw `state : array<vec4f>` storage read. .x is
+//    the height, .zw the slope used to rebuild the surface normal.
+//
+//  * select(a,b,cond) has no selena builtin — every one is rewritten as the
+//    ternary `cond ? b : a` (which lowers back to WGSL select()).
+//
+//  * Vector comparisons (`abs(ray) > vec3f(eps)`) are unavailable — selena's
+//    comparisons are scalar-only. The safe-ray / safe-divide guards are done
+//    component-wise (per-axis ternary, then rebuild the vector).
+//
+//  * Texture sampling: selena `sample()` emits WGSL textureSample (implicit
+//    LOD), which naga only accepts in UNIFORM control flow. The raw shader uses
+//    textureSampleLevel inside conditionals; here every tile/caustic/sky sample
+//    is HOISTED to a top-level `let` and the sampled value is then selected
+//    with arithmetic. Nothing samples inside an if/for.
+//
+//  * fn = expression-only (let-chain + one return). The analytic sphere / box /
+//    pool intersections and the per-hit colour math ARE pure expressions, so
+//    they are real selena `fn`s. The loop-bearing helpers (the 5-tap parallax
+//    march, the compound-sphere scan, and the torus-knot SDF sphere-trace)
+//    CANNOT be fns — selena fns silently drop var/if/for — so they are inlined
+//    as for-loops in surface(). The torus polyline is precomputed once into a
+//    local array and the trace reads it.
+//
+//  * No `break` — the sphere-trace runs its full fixed bound and gates each
+//    step on a `done` flag (the raw `if (d<eps) return t; if (t>bound) break`).
+//
+//  GAPS reported (not silently approximated):
+//   1. (RESOLVED) waterSkyTexture is a texture_cube<f32>. selena now has the
+//      textureCube param type + sampleCube(tex, dir), so the sky is sampled as a
+//      real cube by the reflected/refracted direction (sampleCube(sky, dir).rgb),
+//      exactly like the raw shader. The sun-glint term is added on top.
+//   2. Reflections raytrace the sphere/box analytic objects (objectHitSimple);
+//      the compound-sphere and torus-knot are raytraced for the REFRACTION ray
+//      only (where the object is actually seen through the water). Reflected
+//      compound/torus would just duplicate the same inline loops.
+//   3. Rounded-corner pool walls (the arc-length UV branch) and the analytic
+//      object wall-occlusion term are omitted; this port models the rectangular
+//      pool walls (the raw `else` branch) faithfully.
+//   4. (RESOLVED) The projected real-mesh object textures (sampleObjectRefraction
+//      / sampleProjectedTexture, the raw objectParams.x>=2.5 mix block) are now
+//      ported: projectMeshTexel(tex, mat4, worldPoint) projects through the
+//      per-pass view-projection (selena now has mat4 params + multi-texture2d
+//      sampling) and the surface() tail blends the refraction / reflection /
+//      clipped-reflection mesh targets where the rays hit the object bounds
+//      sphere. The host renders the mesh to those RTTs (the duck / torus-knot);
+//      meshTextureEnable gates the whole block off for the analytic objects.
+
+fn raySphere(origin: vec3, ray: vec3, center: vec3, radius: float) -> float {
+    let toC  = origin - center
+    let a    = dot(ray, ray)
+    let b    = 2.0 * dot(toC, ray)
+    let c    = dot(toC, toC) - radius * radius
+    let disc = b * b - 4.0 * a * c
+    let t    = (-b - sqrt(max(disc, 0.0))) / (2.0 * max(a, 0.0000001))
+    return disc > 0.0 && a > 0.0000001 && t > 0.0 ? t : 1000000.0
+}
+
+fn raySphereBounds(origin: vec3, ray: vec3, center: vec3, radius: float) -> float {
+    let toC  = origin - center
+    let a    = dot(ray, ray)
+    let b    = 2.0 * dot(toC, ray)
+    let c    = dot(toC, toC) - radius * radius
+    let disc = b * b - 4.0 * a * c
+    let root = sqrt(max(disc, 0.0))
+    let near = (-b - root) / (2.0 * max(a, 0.0000001))
+    let far  = (-b + root) / (2.0 * max(a, 0.0000001))
+    let ok   = disc > 0.0 && a > 0.0000001
+    let r0   = far > 0.0 ? 0.0 : 1000000.0
+    let r1   = near > 0.0 ? near : r0
+    return ok ? r1 : 1000000.0
+}
+
+fn rayBox(origin: vec3, ray: vec3, cubeMin: vec3, cubeMax: vec3) -> vec2 {
+    let sx    = abs(ray.x) > 0.0001 ? ray.x : 0.0001
+    let sy    = abs(ray.y) > 0.0001 ? ray.y : 0.0001
+    let sz    = abs(ray.z) > 0.0001 ? ray.z : 0.0001
+    let inv   = vec3f(1.0 / sx, 1.0 / sy, 1.0 / sz)
+    let t0    = (cubeMin - origin) * inv
+    let t1    = (cubeMax - origin) * inv
+    let near3 = min(t0, t1)
+    let far3  = max(t0, t1)
+    return vec2f(max(max(near3.x, near3.y), near3.z), min(min(far3.x, far3.y), far3.z))
+}
+
+fn poolBox(origin: vec3, ray: vec3, hw: float, hh: float, hl: float) -> vec2 {
+    let sx    = abs(ray.x) > 0.0001 ? ray.x : 0.0001
+    let sy    = abs(ray.y) > 0.0001 ? ray.y : 0.0001
+    let sz    = abs(ray.z) > 0.0001 ? ray.z : 0.0001
+    let inv   = vec3f(1.0 / sx, 1.0 / sy, 1.0 / sz)
+    let cmin  = vec3f(-hw, -hh, -hl)
+    let cmax  = vec3f(hw, 2.0, hl)
+    let t0    = (cmin - origin) * inv
+    let t1    = (cmax - origin) * inv
+    let near3 = min(t0, t1)
+    let far3  = max(t0, t1)
+    return vec2f(max(max(near3.x, near3.y), near3.z), min(min(far3.x, far3.y), far3.z))
+}
+
+fn normalFromState(info: vec4, scale: float) -> vec3 {
+    let sx    = clamp(info.z * scale, -0.999, 0.999)
+    let sy    = clamp(info.w * scale, -0.999, 0.999)
+    let lenSq = min(sx * sx + sy * sy, 0.999)
+    return normalize(vec3f(sx, sqrt(max(0.001, 1.0 - lenSq)), sy))
+}
+
+fn boxNormal(point: vec3, center: vec3, half: vec3) -> vec3 {
+    let local = (point - center) / max(half, vec3f(0.001, 0.001, 0.001))
+    let axis  = abs(local)
+    let xMax  = axis.x > axis.y && axis.x > axis.z
+    let yMax  = axis.y > axis.z
+    return xMax ? vec3f(sign(local.x), 0.0, 0.0) : yMax ? vec3f(0.0, sign(local.y), 0.0) : vec3f(0.0, 0.0, sign(local.z))
+}
+
+fn objectHitSimple(origin: vec3, ray: vec3, kind: float, center: vec3, radius: float, half: vec3) -> vec2 {
+    let sd    = raySphere(origin, ray, center, radius)
+    let bh    = rayBox(origin, ray, center - half, center + half)
+    let boxOk = bh.x <= bh.y && bh.y > 0.0
+    let bdIn  = bh.x > 0.0 ? bh.x : bh.y
+    let bd    = boxOk ? bdIn : 1000000.0
+    let dist  = kind < 1.5 ? sd : kind < 2.5 ? bd : 1000000.0
+    let hk    = kind < 1.5 ? 1.0 : kind < 2.5 ? 2.0 : 0.0
+    return vec2f(dist, hk)
+}
+
+fn pointToWaterUV(point: vec3, hw: float, hl: float) -> vec2 {
+    return clamp(point.xz / vec2f(max(hw * 2.0, 0.001), max(hl * 2.0, 0.001)) + vec2f(0.5, 0.5), vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+}
+
+fn objectCausticUV(point: vec3, lightDir: vec3, hw: float, hl: float) -> vec2 {
+    let rl    = refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+    let sy    = abs(rl.y) > 0.0001 ? rl.y : 0.0001
+    let denom = vec2f(max(hw * 2.0, 0.001), max(hl * 2.0, 0.001))
+    let proj  = point.xz - point.y * rl.xz / sy
+    return clamp(0.75 * proj / denom + vec2f(0.5, 0.5), vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+}
+
+fn wallCausticUV(point: vec3, lightDir: vec3, hw: float, hl: float) -> vec2 {
+    let rl       = -refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+    let fallback = rl.y >= 0.0 ? 0.0001 : -0.0001
+    let sy       = abs(rl.y) > 0.0001 ? rl.y : fallback
+    let denom    = vec2f(max(hw * 2.0, 0.001), max(hl * 2.0, 0.001))
+    let proj     = point.xz - point.y * rl.xz / sy
+    return clamp(0.75 * proj / denom + vec2f(0.5, 0.5), vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+}
+
+fn wallNormalRect(point: vec3, hw: float, hl: float, ph: float) -> vec3 {
+    let onFloor = point.y < (-ph + 0.001)
+    let nx      = abs(point.x) / hw
+    let nz      = abs(point.z) / hl
+    let side    = nx > nz ? vec3f(-sign(point.x), 0.0, 0.0) : vec3f(0.0, 0.0, -sign(point.z))
+    return onFloor ? vec3f(0.0, 1.0, 0.0) : side
+}
+
+fn wallUVRect(point: vec3, hw: float, hl: float, ph: float) -> vec2 {
+    let onFloor = point.y < (-ph + 0.001)
+    let nx      = abs(point.x) / hw
+    let nz      = abs(point.z) / hl
+    let side    = nx > nz ? point.yz * 0.5 + vec2f(1.0, 0.5) : point.yx * 0.5 + vec2f(1.0, 0.5)
+    let floorUV = point.xz * 0.5 + vec2f(0.5, 0.5)
+    return onFloor ? floorUV : side
+}
+
+fn objectColorSB(normal: vec3, kind: float, lightDir: vec3, caustic: float, submerged: float, opticsCaustic: float) -> vec3 {
+    let rl          = refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+    let diffuseBase = max(dot(-rl, normal), 0.0) * 0.5
+    let bias        = kind >= 1.5 ? 0.06 : 0.0
+    let wet         = (diffuseBase + bias) * caustic * 4.0 * clamp(opticsCaustic, 0.0, 1.0)
+    let diffuse     = submerged > 0.5 ? wet : diffuseBase
+    return vec3f(0.5, 0.5, 0.5) + vec3f(diffuse, diffuse, diffuse)
+}
+
+fn wallShade(point: vec3, hw: float, hl: float, ph: float, lightDir: vec3, tileRGB: vec3, caustic: vec4, submerged: float, poolNear: float, poolFar: float, opticsCaustic: float) -> vec3 {
+    let nrm      = wallNormalRect(point, hw, hl, ph)
+    let scale0   = 0.5 / max(length(point), 0.1)
+    let rl       = -refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+    let diffuse  = max(dot(rl, nrm), 0.0)
+    let span     = max(poolFar - poolNear, 0.0001)
+    let exponent = -200.0 / (1.0 + 10.0 * span) * (point.y + rl.y * poolFar - 2.0 / 12.0)
+    let dry      = scale0 + diffuse * 0.5 / (1.0 + exp(exponent))
+    let wet      = scale0 + diffuse * caustic.x * 2.0 * caustic.y * clamp(opticsCaustic, 0.0, 1.0)
+    let scale    = submerged > 0.5 ? wet : dry
+    return tileRGB * scale
+}
+
+fn sunGlint(ray: vec3, lightDir: vec3) -> vec3 {
+    let s = pow(max(dot(lightDir, normalize(ray)), 0.0), 5000.0)
+    return vec3f(s, s, s) * vec3f(10.0, 8.0, 6.0)
+}
+
+// projectMeshTexel projects a world point through one object-texture view-
+// projection matrix and samples the corresponding offscreen mesh target. Port
+// of the raw WGSL sampleProjectedTexture: clip -> ndc -> [0,1] uv (y-flipped),
+// gated to the front half-space by step(eps, clip.w). The sample() sits in
+// uniform control flow (called only from top-level lets in surface()), so it
+// lowers cleanly across every backend. The returned alpha is the mesh coverage
+// mask the caller blends by.
+fn projectMeshTexel(tex: texture2d, m: mat4, point: vec3) -> vec4 {
+    let clip    = m * vec4f(point, 1.0)
+    let safeW   = abs(clip.w) > 0.0001 ? clip.w : 0.0001
+    let ndc     = clip.xyz / safeW
+    let uv      = clamp(ndc.xy * vec2f(0.5, -0.5) + vec2f(0.5, 0.5), vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+    let inFront = step(0.0001, clip.w)
+    return sample(tex, uv) * inFront
+}
+
+material WaterSurface {
+    param poolWidth     : float = 1.5
+    param poolLength    : float = 1.5
+    param poolHeight    : float = 0.3
+    param normalScale   : float = 1.0
+    param objectRadius  : float = 0.3
+    param opticsCaustic : float = 1.0
+    param meshTextureEnable : float = 0.0
+
+    param waterColor    : vec3
+
+    context {
+        gridResolution: float = 64.0
+        objectKind    : float = 0.0
+        objectSubtype : float = 0.0
+        objectCount   : float = 0.0
+        opticsEnable  : float = 1.0
+        lightDir      : vec3
+        cameraPos     : vec3
+        objectCenter  : vec3
+        objectHalf    : vec3
+        refractionMatrix : mat4
+        reflectionMatrix : mat4
+        spheres       : array<vec4, 32>
+    }
+
+    param tileTexture   : texture2d
+    param causticTexture: texture2d
+    param sky           : textureCube
+    param objectRefractionTex        : texture2d
+    param objectReflectionTex        : texture2d
+    param objectClippedReflectionTex : texture2d
+
+    state height
+
+    varying vWorldPos : vec3
+    varying vUv       : vec2
+
+    vertex() -> vec4 {
+        let fi    = float(vertexIndex)
+        let res   = max(gridResolution, 1.0)
+        let cells = max(res - 1.0, 1.0)
+        let quad  = floor(fi / 6.0)
+        let corn  = fi - quad * 6.0
+        let cellY = floor(quad / cells)
+        let cellX = quad - cellY * cells
+        let ox    = corn == 1.0 || corn == 2.0 || corn == 4.0 ? 1.0 : 0.0
+        let oy    = corn == 2.0 || corn == 4.0 || corn == 5.0 ? 1.0 : 0.0
+        let gx    = min(cellX + ox, res - 1.0)
+        let gy    = min(cellY + oy, res - 1.0)
+        let uvx   = gx / cells
+        let uvy   = gy / cells
+        let uv    = vec2f(uvx, uvy)
+        let info  = stateAt(uv)
+        let wp    = vec3f((uvx - 0.5) * poolWidth * 2.0, info.x * poolHeight, (uvy - 0.5) * poolLength * 2.0)
+        vWorldPos = wp
+        vUv       = uv
+        return mvp * vec4f(wp, 1.0)
+    }
+
+    surface(geo) -> color {
+        let wp = geo.vWorldPos
+
+        var coord = clamp(geo.vUv, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+        var pinfo = stateAt(coord)
+        for (var pi = 0i; pi < 5i; pi = pi + 1i) {
+            coord = clamp(coord + pinfo.zw * 0.005, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+            pinfo = stateAt(coord)
+        }
+        let n         = normalFromState(pinfo, normalScale)
+        let ldir      = normalize(lightDir)
+        let viewDir   = normalize(cameraPos - wp)
+        let reflectD  = reflect(-viewDir, n)
+        let refractD  = refract(-viewDir, n, 1.0 / 1.333)
+        let fresnel   = mix(0.25, 1.0, pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0))
+
+        let objC      = vec3f(objectCenter.x * poolWidth, objectCenter.y, objectCenter.z * poolLength)
+        let objH      = vec3f(objectHalf.x * poolWidth, objectHalf.y, objectHalf.z * poolLength)
+        let objR      = max(objectRadius * poolLength, 0.001)
+        let objActive    = opticsEnable > 0.0 && objectKind > 0.5
+        let isTorus   = objectSubtype > 0.5 && objectSubtype < 1.5
+        let isCompound= objectKind >= 2.5
+        let hw        = max(poolWidth, 0.001)
+        let hl        = max(poolLength, 0.001)
+        let ph        = max(poolHeight, 0.001)
+
+        let radiusScale = max(objR / 0.42, 0.25)
+        var knot : array<vec4, 65>
+        for (var ki = 0i; ki <= 64i; ki = ki + 1i) {
+            let theta = float(ki) / 64.0 * 6.283185307
+            let rad   = 0.17 * (2.0 + cos(3.0 * theta)) * 0.5
+            knot[ki]  = vec4f(rad * cos(2.0 * theta), -0.17 * sin(3.0 * theta) * 0.5, rad * sin(2.0 * theta), 0.0)
+        }
+
+        let rfSimple = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
+
+        var rfComp = 1000000.0
+        for (var ci = 0i; ci < 32i; ci = ci + 1i) {
+            if (isCompound && float(ci) < objectCount) {
+                let soA = spheres[ci]
+                let scA = objC + vec3f(soA.x * poolWidth, soA.y, soA.z * poolLength)
+                let srA = max(soA.w * poolLength, 0.001)
+                let dA  = raySphere(wp, refractD, scA, srA)
+                if (dA < rfComp) { rfComp = dA }
+            }
+        }
+
+        let rfBound = raySphereBounds(wp, refractD, objC, max(objR, 0.31))
+        let traceOff = isTorus ? 0.0 : 1.0
+        let boundOff = rfBound > 100000.0 ? 1.0 : 0.0
+        var rfT     = rfBound
+        var rfTorus = 1000000.0
+        var rfDone  = max(traceOff, boundOff)
+        for (var ts = 0i; ts < 30i; ts = ts + 1i) {
+            if (rfDone < 0.5) {
+                let pT     = wp + refractD * rfT
+                let posT   = (pT - objC) / radiusScale
+                let boundT = length(posT) - 0.31
+                var mdT    = 1000000.0
+                for (var sj = 1i; sj <= 64i; sj = sj + 1i) {
+                    let aT = knot[sj - 1i].xyz
+                    let bT = knot[sj].xyz
+                    let paT = posT - aT
+                    let baT = bT - aT
+                    let hT  = clamp(dot(paT, baT) / max(dot(baT, baT), 0.000001), 0.0, 1.0)
+                    mdT = min(mdT, length(paT - baT * hT))
+                }
+                let dist = boundT > 0.08 ? boundT * radiusScale : (mdT - 0.045) * radiusScale
+                if (dist < 0.001) { rfTorus = rfT
+                                    rfDone = 1.0 }
+                rfT = rfT + dist
+                if (rfT > rfBound + 0.5) { rfDone = 1.0 }
+            }
+        }
+
+        let rfCompound = isTorus ? rfTorus : rfComp
+        let rfObjDist0 = isCompound ? rfCompound : rfSimple.x
+        let rfObjDist  = objActive ? rfObjDist0 : 1000000.0
+        let rfObjKind  = isCompound ? 3.0 : rfSimple.y
+        let rfHitObj   = rfObjDist < 1000000.0
+        let rfObjP     = wp + refractD * rfObjDist
+
+        let rfSphereN = normalize(rfObjP - objC)
+        let rfBoxN    = boxNormal(rfObjP, objC, objH)
+        var rfCompN   = normalize(rfObjP - objC)
+        var rfCompS   = 1000000.0
+        for (var di = 0i; di < 32i; di = di + 1i) {
+            if (isCompound && !isTorus && float(di) < objectCount) {
+                let soB    = spheres[di]
+                let scB    = objC + vec3f(soB.x * poolWidth, soB.y, soB.z * poolLength)
+                let srB    = max(soB.w * poolLength, 0.001)
+                let toPB   = rfObjP - scB
+                let scoreB = abs(length(toPB) - srB)
+                if (scoreB < rfCompS) { rfCompS = scoreB
+                                        rfCompN = normalize(toPB) }
+            }
+        }
+        let rfPosH  = (rfObjP - objC) / radiusScale
+        var rfTorN  = normalize(rfPosH)
+        var rfTorS  = 1000000.0
+        for (var nj = 1i; nj <= 64i; nj = nj + 1i) {
+            let aN = knot[nj - 1i].xyz
+            let bN = knot[nj].xyz
+            let paN = rfPosH - aN
+            let baN = bN - aN
+            let hN  = clamp(dot(paN, baN) / max(dot(baN, baN), 0.000001), 0.0, 1.0)
+            let cpN = aN + baN * hN
+            let ddN = length(rfPosH - cpN)
+            if (ddN < rfTorS) { rfTorS = ddN
+                                rfTorN = normalize(rfPosH - cpN) }
+        }
+        let rfObjN = rfObjKind < 1.5 ? rfSphereN : rfObjKind < 2.5 ? rfBoxN : isTorus ? rfTorN : rfCompN
+
+        let rfObjWaterH   = stateAt(pointToWaterUV(rfObjP, poolWidth, poolLength)).x
+        let rfObjSub      = rfObjP.y < rfObjWaterH ? 1.0 : 0.0
+        let rfObjCaustic  = sample(causticTexture, objectCausticUV(rfObjP, ldir, poolWidth, poolLength)).x
+        let rfObjColor    = objectColorSB(rfObjN, rfObjKind, ldir, rfObjCaustic, rfObjSub, opticsCaustic)
+
+        let rfPool        = poolBox(wp, refractD, hw, ph, hl)
+        let rfWallP       = wp + refractD * max(rfPool.y, 0.0)
+        let rfWallTile    = sample(tileTexture, fract(wallUVRect(rfWallP, hw, hl, ph))).xyz
+        let rfWallCaustic = sample(causticTexture, wallCausticUV(rfWallP, ldir, poolWidth, poolLength))
+        let rfWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let rfWallPool    = poolBox(rfWallP, rfWallRL, hw, ph, hl)
+        let rfWallSub     = rfWallP.y < stateAt(pointToWaterUV(rfWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
+        let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic)
+
+        let rfSky      = sampleCube(sky, refractD).rgb + sunGlint(refractD, ldir)
+        let rfHitWall  = refractD.y < 0.0 || rfWallP.y < 2.0 / 12.0
+        let rfBase     = rfHitObj ? rfObjColor : rfHitWall ? rfWallColor : rfSky
+        let refracted  = refractD.y < 0.0 ? rfBase * waterColor : rfBase
+
+        let rlSimple      = objectHitSimple(wp, reflectD, objectKind, objC, objR, objH)
+        let rlObjDist     = objActive ? rlSimple.x : 1000000.0
+        let rlObjKind     = rlSimple.y
+        let rlHitObj      = rlObjDist < 1000000.0
+        let rlObjP        = wp + reflectD * rlObjDist
+        let rlObjN        = rlObjKind < 1.5 ? normalize(rlObjP - objC) : boxNormal(rlObjP, objC, objH)
+        let rlObjWaterH   = stateAt(pointToWaterUV(rlObjP, poolWidth, poolLength)).x
+        let rlObjSub      = rlObjP.y < rlObjWaterH ? 1.0 : 0.0
+        let rlObjCaustic  = sample(causticTexture, objectCausticUV(rlObjP, ldir, poolWidth, poolLength)).x
+        let rlObjColor    = objectColorSB(rlObjN, rlObjKind, ldir, rlObjCaustic, rlObjSub, opticsCaustic)
+
+        let rlPool        = poolBox(wp, reflectD, hw, ph, hl)
+        let rlWallP       = wp + reflectD * max(rlPool.y, 0.0)
+        let rlWallTile    = sample(tileTexture, fract(wallUVRect(rlWallP, hw, hl, ph))).xyz
+        let rlWallCaustic = sample(causticTexture, wallCausticUV(rlWallP, ldir, poolWidth, poolLength))
+        let rlWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let rlWallPool    = poolBox(rlWallP, rlWallRL, hw, ph, hl)
+        let rlWallSub     = rlWallP.y < stateAt(pointToWaterUV(rlWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
+        let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic)
+
+        let rlSky      = sampleCube(sky, reflectD).rgb + sunGlint(reflectD, ldir)
+        let rlHitWall  = reflectD.y < 0.0 || rlWallP.y < 2.0 / 12.0
+        let rlBase     = rlHitObj ? rlObjColor : rlHitWall ? rlWallColor : rlSky
+        let reflected  = reflectD.y < 0.0 ? rlBase * waterColor : rlBase
+
+        // Projected real-mesh object textures (A2-refine-2). For mesh objects
+        // (the glTF duck / torus-knot) the analytic raytrace above can't see the
+        // true geometry, so we blend in the offscreen mesh targets rendered this
+        // frame. REFRACTION follows the refracted ray to the object's bounds
+        // sphere and samples the refraction target there (the duck seen THROUGH
+        // the water). REFLECTION samples the mirror-ray bounds hit + the clipped
+        // (above-water) silhouette projected at the surface point. Each blend is
+        // gated by the target's alpha (mesh coverage) * meshTextureEnable, so the
+        // analytic path is untouched when no mesh object is active.
+        let meshBoundR    = max(objR, 0.31)
+        let meshRefrHit   = raySphereBounds(wp, refractD, objC, meshBoundR)
+        let meshRefrP     = wp + refractD * (meshRefrHit < 100000.0 ? meshRefrHit : 0.0)
+        let meshRefrTexel = projectMeshTexel(objectRefractionTex, refractionMatrix, meshRefrP)
+        let meshRefrMask  = (meshRefrHit < 100000.0 ? meshTextureEnable : 0.0) * meshRefrTexel.a
+
+        let meshReflHit   = raySphereBounds(wp, reflectD, objC, meshBoundR)
+        let meshReflP     = wp + reflectD * (meshReflHit < 100000.0 ? meshReflHit : 0.0)
+        let meshReflTexel = projectMeshTexel(objectReflectionTex, reflectionMatrix, meshReflP)
+        let meshReflMask  = (meshReflHit < 100000.0 ? meshTextureEnable : 0.0) * meshReflTexel.a
+
+        let meshClipTexel = projectMeshTexel(objectClippedReflectionTex, reflectionMatrix, wp)
+        let meshClipMask  = meshTextureEnable * meshClipTexel.a
+
+        let refractedM = mix(refracted, meshRefrTexel.rgb, clamp(meshRefrMask, 0.0, 1.0))
+        let reflected1 = mix(reflected, meshReflTexel.rgb, clamp(meshReflMask, 0.0, 1.0))
+        let reflectedM = mix(reflected1, meshClipTexel.rgb, clamp(meshClipMask, 0.0, 1.0))
+
+        return vec4f(mix(refractedM, reflectedM, fresnel), 1.0)
+    }
+}

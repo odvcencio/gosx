@@ -594,6 +594,37 @@ class FakeWebGLContext {
   }
 }
 
+// FakeWebGPUCanvasContext is a minimal double for the GPUCanvasContext
+// returned by canvas.getContext("webgpu"). It covers exactly what
+// sceneWebGPUProbeCanvasContext (16z-scene-webgpu-probe.js) and the real
+// WebGPU renderer (16a-scene-webgpu.js) call on a canvas context: configure(),
+// getCurrentTexture()/createView(), and unconfigure().
+class FakeWebGPUCanvasContext {
+  constructor() {
+    this.ops = [];
+    this.configured = null;
+  }
+
+  configure(descriptor) {
+    this.configured = descriptor || null;
+    this.ops.push(["configure", descriptor || null]);
+  }
+
+  unconfigure() {
+    this.configured = null;
+    this.ops.push(["unconfigure"]);
+  }
+
+  getCurrentTexture() {
+    this.ops.push(["getCurrentTexture"]);
+    return {
+      createView() {
+        return { __kind: "canvasTextureView" };
+      },
+    };
+  }
+}
+
 function fakeElementMatchesSelector(element, selector) {
   if (!element || element.nodeType !== ELEMENT_NODE) {
     return false;
@@ -953,6 +984,12 @@ class FakeElement {
         this._webglContext = this.ownerDocument.createWebGL2Context();
       }
       return this._webglContext;
+    }
+    if (kind === "webgpu" && this.ownerDocument && typeof this.ownerDocument.createWebGPUContext === "function") {
+      if (!this._webgpuContext) {
+        this._webgpuContext = this.ownerDocument.createWebGPUContext();
+      }
+      return this._webgpuContext;
     }
     return null;
   }
@@ -1852,6 +1889,11 @@ function createContext(options) {
     document.createWebGL2Context = options.createWebGL2Context;
   } else if (options.enableWebGL2) {
     document.createWebGL2Context = () => new FakeWebGLContext();
+  }
+  if (typeof options.createWebGPUContext === "function") {
+    document.createWebGPUContext = options.createWebGPUContext;
+  } else if (options.enableWebGPU) {
+    document.createWebGPUContext = () => new FakeWebGPUCanvasContext();
   }
   const consoleSpy = createConsoleSpy();
   const hydrateCalls = [];
@@ -8110,21 +8152,22 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
 
-  assert.match(webgpu, /waterAuthoredComputePipelineCache = new Map/);
-  assert.match(webgpu, /function sceneWaterAuthoredComputeField/);
-  assert.match(webgpu, /return "seedWGSL"/);
-  assert.match(webgpu, /return "dropWGSL"/);
-  assert.match(webgpu, /return "displacementWGSL"/);
-  assert.match(webgpu, /return "simulationWGSL"/);
-  assert.match(webgpu, /return "normalWGSL"/);
-  assert.match(webgpu, /function sceneWaterAuthoredComputePipeline/);
-  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-" \+ stage \+ "-compute"/);
-  assert.match(webgpu, /entryPoint: entryPoint/);
-  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "seed", waterSeedPipeline\)/);
-  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "drop", waterDropPipeline\)/);
-  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "displacement", waterDisplacementPipeline\)/);
-  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "simulation", waterStepPipeline\)/);
-  assert.match(webgpu, /sceneWaterAuthoredComputePipeline\(system, "normal", waterNormalPipeline\)/);
+  // The hand-written data-prop-authored compute pipeline tier
+  // (sceneWaterAuthoredComputePipeline and its sceneWaterAuthoredComputeField/
+  // EntryPoint/Source/Backend helpers, plus waterAuthoredComputePipelineCache/
+  // Failures) has been retired: every compute kernel now resolves
+  // Selena-primary (getSelenaComputePipeline/createSelenaComputeBindGroup)
+  // falling through directly to the builtin SCENE_WATER_COMPUTE_SOURCE
+  // pipeline literals below, with no more per-entry "authored WGSL" pipeline
+  // builder in between.
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredComputePipeline/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredComputeField/);
+  assert.doesNotMatch(webgpu, /waterAuthoredComputePipelineCache = new Map/);
+  assert.match(webgpu, /var seedCompute = \{ pipeline: waterSeedPipeline, authored: false, failed: false \};/);
+  assert.match(webgpu, /var dropCompute = \{ pipeline: waterDropPipeline, authored: false, failed: false \};/);
+  assert.match(webgpu, /var displacementCompute = \{ pipeline: waterDisplacementPipeline, authored: false, failed: false \};/);
+  assert.match(webgpu, /var simulationCompute = \{ pipeline: waterStepPipeline, authored: false, failed: false \};/);
+  assert.match(webgpu, /var normalCompute = \{ pipeline: waterNormalPipeline, authored: false, failed: false \};/);
   assert.match(webgpu, /waterAuthoredComputeDispatches/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-compute-systems/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-compute-dispatches/);
@@ -8160,8 +8203,15 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
   assert.match(webgpu, /return \(vec2f\(f32\(x\), f32\(y\)\) \+ vec2f\(0\.5\)\) \/ max\(vec2f\(f32\(res\)\), vec2f\(1\.0\)\);/, "waterCoord should use render-target texel centers like upstream");
   assert.match(webgpu, /let uv = \(vec2f\(f32\(x\), f32\(y\)\) \+ vec2f\(0\.5\)\) \/ max\(vec2f\(f32\(res\)\), vec2f\(1\.0\)\);/, "seed pass should use render-target texel centers like upstream");
   assert.doesNotMatch(webgpu, /vec2f\(f32\(x\), f32\(y\)\) \/ max\(vec2f\(f32\(res - 1u\)\), vec2f\(1\.0\)\)/, "water compute passes should not use edge-based UVs");
-  assert.match(webgpu, /dispatchWaterPass\(encoder, system, seedCompute\.pipeline\)/);
-  assert.match(webgpu, /dispatchWaterPass\(encoder, system, dropCompute\.pipeline\)/);
+  // seed/drop dispatch through dispatchWaterComputeStage (tries the generic
+  // descriptor-driven Selena feedback-compute path first, see
+  // getSelenaComputePipeline/createSelenaComputeBindGroup above), which falls
+  // back to dispatchWaterPass(encoder, system, fallbackPipeline) -- the SAME
+  // seedCompute/dropCompute resolved pipeline this test already exercises --
+  // when Selena's WGSL+descriptor aren't present on the entry.
+  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "seed", seedCompute\.pipeline\)/);
+  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "drop", dropCompute\.pipeline\)/);
+  assert.match(webgpu, /return \{ dispatches: dispatchWaterPass\(encoder, system, fallbackPipeline\), selena: 0, selenaFallback: 0 \};/);
   assert.match(webgpu, /if \(dropDispatches > 0\) \{\s*system\.lastDropEventID = dropEventID;/s);
   assert.match(webgpu, /system\.dropDispatchCount = Math\.max/);
   assert.match(webgpu, /entry\.dropEventID/);
@@ -8199,14 +8249,20 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
   assert.match(core, /Object\.assign\(\{\}, currentFallback \|\| \{\}, sourceFallback\)/);
   assert.match(core, /const waterShaderString = function\(name\)/);
   assert.match(core, /typeof item\[name\] === "string" && item\[name\]\.trim\(\)/);
-  assert.match(core, /objectShadowWGSL: waterShaderString\("objectShadowWGSL"\)/);
-  assert.match(core, /objectMeshShadowVertexWGSL: waterShaderString\("objectMeshShadowVertexWGSL"\)/);
-  assert.match(core, /objectMeshShadowFragmentWGSL: waterShaderString\("objectMeshShadowFragmentWGSL"\)/);
-  assert.match(core, /seedWGSLRef: waterShaderString\("seedWGSLRef"\)/);
-  assert.match(core, /dropWGSLRef: waterShaderString\("dropWGSLRef"\)/);
-  assert.match(core, /causticsWGSLRef: waterShaderString\("causticsWGSLRef"\)/);
-  assert.match(core, /surfaceBelowFragmentWGSLRef: waterShaderString\("surfaceBelowFragmentWGSLRef"\)/);
-  assert.match(core, /objectMeshShadowFragmentWGSLRef: waterShaderString\("objectMeshShadowFragmentWGSLRef"\)/);
+  // The hand-written Elio/Selena *WGSL/*WGSLRef water fields (shaderLib-dedup
+  // refs included) have been retired from normalizeSceneWaterSystemEntry's
+  // whitelist -- Selena is the sole primary WGSL source now, so only the
+  // *SelenaWGSL slots remain wired through waterShaderString.
+  assert.doesNotMatch(core, /objectShadowWGSL: waterShaderString\("objectShadowWGSL"\)/);
+  assert.doesNotMatch(core, /objectMeshShadowVertexWGSL: waterShaderString\("objectMeshShadowVertexWGSL"\)/);
+  assert.doesNotMatch(core, /objectMeshShadowFragmentWGSL: waterShaderString\("objectMeshShadowFragmentWGSL"\)/);
+  assert.doesNotMatch(core, /seedWGSLRef: waterShaderString\("seedWGSLRef"\)/);
+  assert.doesNotMatch(core, /dropWGSLRef: waterShaderString\("dropWGSLRef"\)/);
+  assert.doesNotMatch(core, /causticsWGSLRef: waterShaderString\("causticsWGSLRef"\)/);
+  assert.doesNotMatch(core, /surfaceBelowFragmentWGSLRef: waterShaderString\("surfaceBelowFragmentWGSLRef"\)/);
+  assert.doesNotMatch(core, /objectMeshShadowFragmentWGSLRef: waterShaderString\("objectMeshShadowFragmentWGSLRef"\)/);
+  assert.match(core, /objectShadowSelenaWGSL: waterShaderString\("objectShadowSelenaWGSL"\)/);
+  assert.match(core, /objectMeshShadowSelenaWGSL: waterShaderString\("objectMeshShadowSelenaWGSL"\)/);
 });
 
 test("Scene3D WebGPU water clips rounded box surfaces with a shader SDF", () => {
@@ -8247,20 +8303,26 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.doesNotMatch(webgpu, /objectOpticalFootprint/);
   assert.match(webgpu, /waterRenderBelowFragmentModule = device\.createShaderModule/);
   assert.match(webgpu, /label: "gosx-water-render-below-frag"/);
-  assert.match(webgpu, /function sceneWaterAuthoredMaterialBackend/);
   assert.match(webgpu, /function sceneWaterObjectSubtype\(entry, kind\)/);
   assert.match(webgpu, /raw\.indexOf\("torus"\) >= 0 \|\| raw\.indexOf\("knot"\) >= 0/);
   assert.match(webgpu, /raw\.indexOf\("duck"\) >= 0 \|\| raw\.indexOf\("mesh"\) >= 0/);
-  assert.match(webgpu, /function sceneWaterAuthoredSurfaceFragmentSource/);
   assert.match(webgpu, /surfaceBelowFragmentWGSL/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "causticsWGSL"\)/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceVertexWGSL"\)/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceFragmentWGSL"\)/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceBelowFragmentWGSL"\)/);
   assert.match(webgpu, /function sceneWaterSurfaceSourceBytes\(record\)/);
-  assert.match(webgpu, /function sceneWaterResolvedSurfaceSourceBytes\(entry\)/);
-  assert.match(webgpu, /sceneWaterAuthoredSurfaceFragmentSource\(entry, "above"\)\.length/);
-  assert.match(webgpu, /sceneWaterAuthoredSurfaceFragmentSource\(entry, "below"\)\.length/);
+  // The hand-written data-prop-authored surface pipeline tier
+  // (sceneWaterAuthoredMaterialBackend, sceneWaterAuthoredSurfaceVertexSource/
+  // FragmentSource, sceneWaterResolvedSurfaceSourceBytes,
+  // sceneWaterAuthoredShaderSource) has been retired: each surface side
+  // resolves Selena-primary falling through to a builtin-only
+  // getWaterRenderPipeline with no more per-entry "authored WGSL" pipeline
+  // builder in between.
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredMaterialBackend/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredSurfaceFragmentSource/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredSurfaceVertexSource/);
+  assert.doesNotMatch(webgpu, /function sceneWaterResolvedSurfaceSourceBytes/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "causticsWGSL"\)/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceVertexWGSL"\)/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceFragmentWGSL"\)/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "surfaceBelowFragmentWGSL"\)/);
   assert.match(webgpu, /binding: 1, visibility: GPUShaderStage\.VERTEX \| GPUShaderStage\.FRAGMENT, buffer: \{ type: "read-only-storage" \}/);
   assert.match(webgpu, /binding: 8, visibility: GPUShaderStage\.FRAGMENT, buffer: \{ type: "uniform" \}/);
   assert.match(webgpu, /binding: 9, visibility: GPUShaderStage\.FRAGMENT, texture: \{ sampleType: "float", viewDimension: "2d" \}/);
@@ -8282,25 +8344,26 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.match(webgpu, /var viewMatrix = system\.objectViewProjectionReady \? system\.objectViewProjectionMatrix : null/);
   assert.match(webgpu, /system\.objectReflectionViewProjectionReady = false/);
   assert.match(webgpu, /function getWaterRenderPipeline\(system, surfaceSide, forceBuiltin\)/);
-  assert.match(webgpu, /var entry = forceBuiltin \? \{\} : \(system && system\.entry \|\| \{\}\)/);
-  assert.match(webgpu, /var vertexSource = forceBuiltin \? "" : sceneWaterAuthoredSurfaceVertexSource\(entry\)/);
+  assert.doesNotMatch(webgpu, /var entry = forceBuiltin \? \{\} : \(system && system\.entry \|\| \{\}\)/);
+  assert.doesNotMatch(webgpu, /var vertexSource = forceBuiltin \? "" : sceneWaterAuthoredSurfaceVertexSource\(entry\)/);
   assert.match(webgpu, /pipelineRecord = getWaterRenderPipeline\(null, side, true\)/);
   assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin\)/);
-  assert.match(webgpu, /getWaterPoolPipeline\(null, true\)/);
-  assert.match(webgpu, /label: authored[\s\S]*"gosx-water-" \+ backend \+ "-surface-" \+ side/);
-  assert.match(webgpu, /authoredVertex: !!vertexSource/);
-  assert.match(webgpu, /waterAuthoredSurfacePipelineFailures/);
+  assert.doesNotMatch(webgpu, /getWaterPoolPipeline\(null, true\)/);
+  assert.doesNotMatch(webgpu, /label: authored[\s\S]*"gosx-water-" \+ backend \+ "-surface-" \+ side/);
+  assert.doesNotMatch(webgpu, /authoredVertex: !!vertexSource/);
+  assert.match(webgpu, /authoredVertex: false/);
+  assert.doesNotMatch(webgpu, /waterAuthoredSurfacePipelineFailures/);
   assert.match(webgpu, /waterAuthoredSurfacePipelineLastError = ""/);
-  assert.match(webgpu, /var validationDevice = authored \? device : null/);
-  assert.match(webgpu, /validationDevice\.pushErrorScope\("validation"\)/);
+  assert.doesNotMatch(webgpu, /var validationDevice = authored \? device : null/);
+  assert.doesNotMatch(webgpu, /validationDevice\.pushErrorScope\("validation"\)/);
   assert.match(webgpu, /var pipeline = device\.createRenderPipeline\(descriptor\)/);
   assert.match(webgpu, /pending: false/);
-  assert.match(webgpu, /wgpuPopScopedErrorScope\(validationDevice\)\.then/);
-  assert.match(webgpu, /waterAuthoredSurfacePipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
+  assert.doesNotMatch(webgpu, /wgpuPopScopedErrorScope\(validationDevice\)\.then/);
+  assert.doesNotMatch(webgpu, /waterAuthoredSurfacePipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
   assert.match(webgpu, /cullMode: side === "below" \? "back" : "front"/);
   assert.match(webgpu, /function drawWaterSurfaceSide/);
-  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "above", stats\)/);
-  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "below", stats\)/);
+  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "above", stats, camera\)/);
+  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "below", stats, camera\)/);
   assert.match(webgpu, /waterSurfaceAboveDrawCalls/);
   assert.match(webgpu, /waterSurfaceBelowDrawCalls/);
   assert.match(webgpu, /waterAuthoredSurfaceDrawCalls/);
@@ -8337,14 +8400,19 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /waterPoolPipelineLayout = device\.createPipelineLayout/);
   assert.match(webgpu, /waterPoolVertexModule = device\.createShaderModule/);
   assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin\)/);
-  assert.match(webgpu, /function createWaterPoolBindGroup\(system\)/);
-  assert.match(webgpu, /function sceneWaterAuthoredPoolVertexSource/);
-  assert.match(webgpu, /function sceneWaterAuthoredPoolFragmentSource/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "poolVertexWGSL"\)/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "poolFragmentWGSL"\)/);
-  assert.match(webgpu, /waterAuthoredPoolPipelineCache = new Map/);
-  assert.match(webgpu, /waterAuthoredPoolPipelineFailures = new Set/);
-  assert.match(webgpu, /label: authored \? "gosx-water-" \+ backend \+ "-pool-pass" : "gosx-water-pool-pass"/);
+  assert.match(webgpu, /function createWaterPoolBindGroup\(system, buffer\)/);
+  // The hand-written data-prop-authored pool pipeline tier
+  // (sceneWaterAuthoredPoolVertexSource/FragmentSource, sceneWaterAuthoredShaderSource,
+  // waterAuthoredPoolPipelineCache/Failures) has been retired: the pool pass
+  // resolves Selena-primary (sceneWaterPoolUsesSelena/getWaterPoolSelenaDraw)
+  // falling through to this builtin-only getWaterPoolPipeline.
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredPoolVertexSource/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredPoolFragmentSource/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "poolVertexWGSL"\)/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "poolFragmentWGSL"\)/);
+  assert.doesNotMatch(webgpu, /waterAuthoredPoolPipelineCache = new Map/);
+  assert.doesNotMatch(webgpu, /waterAuthoredPoolPipelineFailures = new Set/);
+  assert.match(webgpu, /label: "gosx-water-pool-pass"/);
   assert.match(webgpu, /const WATER_POOL_ROUNDED_SEGMENTS: u32 = 44u/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryPoint/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryNormal/);
@@ -8373,24 +8441,6 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
   const waterDir = path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water");
   const waterPage = fs.readFileSync(path.join(waterDir, "page.gsx"), "utf8");
-  const waterShaderFiles = [];
-  const collectWaterShaderFiles = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        collectWaterShaderFiles(full);
-      } else if (/\.(elio|sel)$/.test(entry.name)) {
-        waterShaderFiles.push(full);
-      }
-    }
-  };
-  collectWaterShaderFiles(path.join(waterDir, "shaders"));
-  waterShaderFiles.sort();
-  const waterProgram = [
-    fs.readFileSync(path.join(waterDir, "program.go"), "utf8"),
-    fs.readFileSync(path.join(waterDir, "shader_sources.go"), "utf8"),
-    ...waterShaderFiles.map((filename) => fs.readFileSync(filename, "utf8")),
-  ].join("\n");
 
   assert.match(build, /bootstrap-src\/19b-scene-control-forms\.js/);
   assert.match(controls, /function bindSceneManagedControlForms/);
@@ -8664,159 +8714,31 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   assert.doesNotMatch(waterPage, /Selena Surface/);
   assert.match(waterPage, /shallowColor="#7ad1eb"/);
   assert.match(waterPage, /deepColor="#082e57"/);
-  assert.match(waterPage, /displacementWGSL=\{data\.waterDisplacementWGSL\}/);
-  assert.match(waterPage, /simulationWGSL=\{data\.waterSimulationWGSL\}/);
-  assert.match(waterPage, /normalWGSL=\{data\.waterNormalWGSL\}/);
+  // The hand-written Elio/Selena *WGSL props have been retired -- Selena is
+  // the sole primary WGSL source now (see the *SelenaWGSL props below).
+  assert.doesNotMatch(waterPage, /displacementWGSL=\{data\.waterDisplacementWGSL\}/);
+  assert.doesNotMatch(waterPage, /simulationWGSL=\{data\.waterSimulationWGSL\}/);
+  assert.doesNotMatch(waterPage, /normalWGSL=\{data\.waterNormalWGSL\}/);
+  assert.match(waterPage, /displacementSelenaWGSL=\{data\.waterDisplacementSelenaWGSL\}/);
+  assert.match(waterPage, /simulationSelenaWGSL=\{data\.waterSimulationSelenaWGSL\}/);
+  assert.match(waterPage, /normalSelenaWGSL=\{data\.waterNormalSelenaWGSL\}/);
   assert.match(waterPage, /data-gosx-scene3d-control-subject="water-main"/);
   assert.match(waterPage, /data-gosx-scene3d-control-data=\{data\.waterControlData\}/);
   assert.doesNotMatch(waterPage, /water-controls\.js/);
   assert.doesNotMatch(waterPage, /pool-north-wall|pool-south-wall|pool-west-wall|pool-east-wall|pool-rim-lines/);
   assert.doesNotMatch(waterPage, /data\.poolRimPoints|data\.poolRimSegments/);
+  const waterProgram = fs.readFileSync(path.join(waterDir, "program.go"), "utf8");
+  // The hand-written Elio/Selena shader trees (shaders/jeantimex-water.elio/,
+  // shaders/jeantimex-water.sel/) and shader_sources.go have been deleted --
+  // Selena (shaders/jeantimex-water.selena/, selena_glsl.go) is the sole
+  // primary WGSL source now. program.go still carries the demo's
+  // route-authored control-data JSON glue, which is unaffected.
   assert.match(waterProgram, /waterControlDataJSON/);
-  assert.match(waterProgram, /waterComputeSourceFiles/);
-  assert.match(waterProgram, /"displacementWGSL":\s+"shaders\/jeantimex-water\.elio\/displacement\.elio"/);
-  assert.match(waterProgram, /"simulationWGSL":\s+"shaders\/jeantimex-water\.elio\/simulation\.elio"/);
-  assert.match(waterProgram, /"normalWGSL":\s+"shaders\/jeantimex-water\.elio\/normal\.elio"/);
-  assert.match(waterProgram, /fn displaceObject/);
-  assert.match(waterProgram, /fn stepSimulation/);
-  assert.match(waterProgram, /fn updateNormals/);
-  assert.match(waterProgram, /fn roundedPoolCausticMask/);
-  assert.match(waterProgram, /fn intersectRoundedRectangle2D/);
-  assert.match(waterProgram, /fn intersectRoundedBox/);
-  assert.match(waterProgram, /fn roundedPoolEdgeAttenuation/);
-  assert.match(waterProgram, /1\.0 \/ \(1\.0 \+ exp\(exponent\)\)/);
-  assert.match(waterProgram, /point\.y - refractedLight\.y \* t\.y - 2\.0 \/ 12\.0/);
-  assert.match(waterProgram, /fn projectCausticFloor/);
-  assert.match(waterProgram, /fn intersectCube/);
-  assert.match(waterProgram, /fn cubeOcclusion/);
-  assert.match(waterProgram, /fn sphereSoftShadowOcclusion/);
-  assert.match(waterProgram, /fn cubeSoftShadowOcclusion/);
-  assert.match(waterProgram, /fn meshShadowTextureOcclusion/);
-  assert.match(waterProgram, /let area = cross\(dir, refractedLight\)/);
-  assert.match(waterProgram, /1\.0 \/ \(1\.0 \+ exp\(-shadow\)\)/);
-  assert.match(waterProgram, /let shadowRay = -refractedLight/);
-  assert.match(waterProgram, /for \(var x = -1; x <= 1; x = x \+ 1\)/);
-  assert.match(waterProgram, /return occlusion \/ 9\.0/);
-  assert.match(waterProgram, /let shadowUV = 0\.75 \* \(point\.xz - point\.y \* refractedLight\.xz \/ safeLightY\)/);
-  assert.match(waterProgram, /textureSample\(objectShadowTexture, objectShadowSampler, shadowUV \+ vec2f\(-d, -d\)\)/);
-  assert.match(waterProgram, /return 0\.8 \* occlusion \/ 9\.0/);
-  assert.match(waterProgram, /let analyticSphereShadow = sphereSoftShadowOcclusion\(newPos, flatRay\)/);
-  assert.match(waterProgram, /let analyticCubeShadow = cubeSoftShadowOcclusion\(newPos, flatRay\)/);
-  assert.match(waterProgram, /let meshTextureShadow = meshShadowTextureOcclusion\(newPos, flatRay\)/);
-  assert.match(waterProgram, /let edgeAttenuation = roundedPoolEdgeAttenuation\(newPos, flatRay\)/);
-  assert.match(waterProgram, /if \(poolMask <= 0\.001\)/);
-  assert.match(waterProgram, /let oldArea = max\(length\(dpdx\(oldPos\)\) \* length\(dpdy\(oldPos\)\), 0\.000001\)/);
-  assert.match(waterProgram, /let newArea = max\(length\(dpdx\(newPos\)\) \* length\(dpdy\(newPos\)\), 0\.000001\)/);
-  assert.ok(
-    waterProgram.indexOf("let oldArea = max(length(dpdx(oldPos))") < waterProgram.indexOf("if (poolMask <= 0.001)"),
-    "caustics derivatives must stay before non-uniform poolMask branch",
-  );
-  assert.match(waterProgram, /oldArea \/ newArea \* 0\.2/);
-  assert.match(waterProgram, /intensity = intensity \* poolMask \* edgeAttenuation/);
-  assert.match(waterProgram, /fn objectAmbientOcclusion/);
-  assert.match(waterProgram, /1\.0 - 0\.9 \/ pow\(max\(distanceRatio, 1\.0\), 4\.0\)/);
-  assert.match(waterProgram, /fn intersectSurfaceSphereBounds/);
-  assert.match(waterProgram, /fn sampleObjectRefraction/);
-  assert.match(waterProgram, /fn sampleObjectReflection/);
-  assert.match(waterProgram, /fn objectSubtypeIsTorusKnot\(\) -> bool/);
-  assert.match(waterProgram, /fn objectTextureRadiusWorld\(\) -> f32/);
-  assert.match(waterProgram, /fn objectShadowRadiusWorld\(\) -> f32/);
-  assert.match(waterProgram, /return 0\.13/);
-  assert.match(waterProgram, /let halfSize = surfaceObjectHalfSizeWorld\(\)/);
-  assert.match(waterProgram, /intersectSurfaceSphereBounds\(origin, ray, surfaceObjectCenterWorld\(\), objectTextureRadiusWorld\(\)\)/);
-  assert.doesNotMatch(waterProgram, /intersectSurfaceSphereBounds\(origin, ray, params\.objectCenter\.xyz, objectTextureRadius\(\)\)/);
-  assert.match(waterProgram, /origin \+ ray \* hit/);
-  assert.match(waterProgram, /let inBounds = step\(0\.0, uv\.x\)/);
-  assert.match(waterProgram, /@group\(1\) @binding\(1\) var<storage, read> waterState: array<vec4f>/);
-  assert.match(waterProgram, /@group\(1\) @binding\(10\) var<storage, read> objectSpheres: array<WaterDisplacementSphere>/);
-  assert.match(waterProgram, /fn surfaceObjectCenterWorld\(\) -> vec3f/);
-  assert.match(waterProgram, /params\.objectCenter\.x \* params\.poolWidth/);
-  assert.doesNotMatch(waterProgram, /params\.objectCenter\.x \* params\.poolWidth \* 0\.5/);
-  assert.match(waterProgram, /fn surfaceObjectHalfSizeWorld\(\) -> vec3f/);
-  assert.match(waterProgram, /fn surfaceObjectRadiusWorld\(\) -> f32/);
-  assert.match(waterProgram, /fn surfaceTorusKnotSDF\(point: vec3f\) -> f32/);
-  assert.match(waterProgram, /let segments = 64u/);
-  assert.match(waterProgram, /let rad = 0\.17 \* \(2\.0 \+ cos\(3\.0 \* theta\)\) \* 0\.5/);
-  assert.match(waterProgram, /return \(minDist - 0\.045\) \* radiusScale/);
-  assert.match(waterProgram, /fn intersectSurfaceTorusKnot\(origin: vec3f, ray: vec3f\) -> f32/);
-  assert.match(waterProgram, /for \(var i = 0u; i < 30u; i = i \+ 1u\)/);
-  assert.match(waterProgram, /fn surfaceTorusKnotNormal\(point: vec3f\) -> vec3f/);
-  assert.match(waterProgram, /params\.objectParams\.w > 0\.5 && params\.objectParams\.w < 1\.5/);
-  assert.match(waterProgram, /fn intersectSurfaceSphere\(origin: vec3f, ray: vec3f, center: vec3f, radius: f32\) -> f32/);
-  assert.match(waterProgram, /fn intersectSurfaceBox\(origin: vec3f, ray: vec3f, cubeMin: vec3f, cubeMax: vec3f\) -> vec2f/);
-  assert.match(waterProgram, /fn surfaceWaterHeightAt\(point: vec3f\) -> f32/);
-  assert.match(waterProgram, /return waterState\[cell\.y \* res \+ cell\.x\]\.x/);
-  assert.match(waterProgram, /fn surfaceCompoundObjectHit\(origin: vec3f, ray: vec3f\) -> vec2f/);
-  assert.match(waterProgram, /let sphere = objectSpheres\[i\]\.offsetRadius/);
-  assert.match(waterProgram, /intersectSurfaceSphere\(origin, ray, center, surfaceObjectSphereRadiusWorld\(i\)\)/);
-  assert.match(waterProgram, /fn surfaceCompoundObjectNormal\(point: vec3f\) -> vec3f/);
-  assert.match(waterProgram, /bestNormal = normalize\(toPoint\)/);
-  assert.match(waterProgram, /fn surfaceObjectHitDistance\(origin: vec3f, ray: vec3f\) -> vec2f/);
-  assert.match(waterProgram, /intersectSurfaceSphere\(origin, ray, surfaceObjectCenterWorld\(\), surfaceObjectRadiusWorld\(\)\)/);
-  assert.match(waterProgram, /intersectSurfaceBox\(origin, ray, center - halfSize, center \+ halfSize\)/);
-  assert.match(waterProgram, /let compoundHit = surfaceCompoundObjectHit\(origin, ray\)/);
-  assert.match(waterProgram, /fn surfaceObjectColor\(point: vec3f, hitKind: f32, lightDir: vec3f\) -> vec3f/);
-  assert.match(waterProgram, /normal = surfaceCompoundObjectNormal\(point\)/);
-  assert.match(waterProgram, /let waterHeight = surfaceWaterHeightAt\(point\)/);
-  assert.match(waterProgram, /diffuse = \(diffuse \+ select\(0\.0, 0\.06, hitKind >= 1\.5\)\) \* caustic\.r \* 4\.0/);
-  assert.match(waterProgram, /let objectHit = surfaceObjectHitDistance\(origin, ray\)/);
-  assert.match(waterProgram, /surfaceObjectColor\(origin \+ ray \* objectHit\.x, objectHit\.y, lightDir\)/);
-  assert.match(waterProgram, /@group\(1\) @binding\(9\) var tileTexture: texture_2d<f32>/);
-  assert.match(waterProgram, /fn intersectSurfacePoolBox/);
-  assert.match(waterProgram, /fn intersectSurfaceRoundedRectangle2D/);
-  assert.match(waterProgram, /fn intersectSurfaceRoundedPool/);
-  assert.match(waterProgram, /fn intersectSurfacePool\(origin: vec3f, ray: vec3f\) -> vec2f/);
-  assert.match(waterProgram, /return intersectSurfaceRoundedPool\(origin, ray, params\.cornerRadius\)/);
-  assert.match(waterProgram, /let t = intersectSurfacePool\(origin, ray\)/);
-  assert.match(waterProgram, /struct SurfaceWallSample/);
-  assert.match(waterProgram, /fn surfaceRoundedWallSample\(point: vec3f\) -> SurfaceWallSample/);
-  assert.match(waterProgram, /result\.normal = vec3f\(-cornerNormal\.x, 0\.0, -cornerNormal\.y\)/);
-  assert.match(waterProgram, /radius \* atan2\(cd\.y, cd\.x\)/);
-  assert.match(waterProgram, /result\.uv = vec2f\(point\.y, s\) \* 0\.5 \+ vec2f\(1\.0, 0\.5\)/);
-  assert.match(waterProgram, /fn getWallColor\(point: vec3f, lightDir: vec3f\) -> vec3f/);
-  assert.match(waterProgram, /let wall = surfaceRoundedWallSample\(point\)/);
-  assert.match(waterProgram, /textureSampleLevel\(tileTexture, waterSampler, fract\(wall\.uv\), 0\.0\)/);
-  assert.match(waterProgram, /let refractedLight = -refract\(-lightDir/);
-  assert.match(waterProgram, /scale = scale \+ diffuse \* caustic\.r \* 2\.0 \* caustic\.g/);
-  assert.match(waterProgram, /let exponent = -200\.0 \/ \(1\.0 \+ 10\.0 \* span\)/);
-  assert.match(waterProgram, /fn surfaceObjectWallOcclusion\(point: vec3f\) -> f32/);
-  assert.match(waterProgram, /distanceRatio = length\(point - center\) \/ max\(surfaceObjectRadiusWorld\(\), 0\.001\)/);
-  assert.match(waterProgram, /distanceRatio = length\(\(point - center\) \/ max\(surfaceObjectHalfSizeWorld\(\), vec3f\(0\.001\)\)\)/);
-  assert.match(waterProgram, /distanceRatio = length\(point - center\) \/ max\(objectShadowRadiusWorld\(\), 0\.001\)/);
-  assert.match(waterProgram, /0\.5 \/ max\(length\(point\), 0\.1\) \* surfaceObjectWallOcclusion\(point\)/);
-  assert.match(waterProgram, /@group\(1\) @binding\(5\) var objectClippedReflectionTexture: texture_2d<f32>/);
-  assert.match(waterProgram, /fn surfaceStateAtUV\(uv: vec2f\) -> vec4f/);
-  assert.match(waterProgram, /fn surfaceParallaxState\(uv: vec2f\) -> vec4f/);
-  assert.match(waterProgram, /coord = clamp\(coord \+ info\.zw \* 0\.005/);
-  assert.match(waterProgram, /fn surfaceNormalFromState\(info: vec4f\) -> vec3f/);
-  assert.match(waterProgram, /let surfaceInfo = surfaceParallaxState\(in\.uv\)/);
-  assert.match(waterProgram, /sampleProjectedTexture\(objectClippedReflectionTexture, objectTextureMatrices\.reflectionViewProjectionMatrix, in\.worldPos\)/);
-  assert.match(waterProgram, /return vec4f\(mix\(refractedColor, reflectedColor, fresnel\), shapeAlpha\)/);
-  assert.match(waterProgram, /return vec4f\(mix\(reflectedColor, refractedColor, \(1\.0 - fresnel\) \* length\(refractDir\)\), shapeAlpha\)/);
-  assert.doesNotMatch(waterProgram, /objectOpticalFootprint/);
-  assert.match(waterProgram, /fn getSurfaceRayColor\(origin: vec3f, ray: vec3f, waterColor: vec3f, lightDir: vec3f\) -> vec3f/);
-  assert.match(waterProgram, /color = getWallColor\(hit, lightDir\)/);
-  assert.match(waterProgram, /let refractDir = refract\(-viewDir, n, 1\.0 \/ 1\.333\)/);
-  assert.match(waterProgram, /let refractDir = refract\(-viewDir, n, 1\.333 \/ 1\.0\)/);
-  assert.match(waterProgram, /getSurfaceRayColor\(in\.worldPos, reflectDir, vec3f\(0\.25, 1\.0, 1\.25\), lightDir\)/);
-  assert.match(waterProgram, /getSurfaceRayColor\(in\.worldPos, refractDir, vec3f\(1\.0\), lightDir\) \* vec3f\(0\.8, 1\.0, 1\.1\)/);
-  assert.match(waterProgram, /sampleObjectRefraction\(in\.worldPos, refractDir\)/);
-  assert.match(waterProgram, /sampleObjectReflection\(in\.worldPos, reflectDir\)/);
-  assert.match(waterProgram, /fn waterSunGlint/);
-  assert.match(waterProgram, /pow\(max\(dot\(lightDir, normalize\(ray\)\), 0\.0\), 5000\.0\)/);
-  assert.match(waterProgram, /vec3f\(10\.0, 8\.0, 6\.0\)/);
-  assert.match(waterProgram, /fn objectPoolAmbientOcclusion/);
-  assert.match(waterProgram, /1\.0 - 0\.9 \/ pow\(max\(\(halfSize\.x \+ radius - abs\(point\.x\)\) \/ radius, 1\.0\), 3\.0\)/);
-  assert.match(waterProgram, /"params":\s+\[\]float64\{256, 0\.25, 0, 0\}/);
-  assert.match(waterProgram, /"profile": "water-object-drop-orbit"/);
-  assert.match(waterProgram, /"inactiveY":\s+waterDemoHiddenY/);
-  assert.match(waterProgram, /"physics":\s+map\[string\]any\{"gravityY": -4, "bounce": 0\.7, "defaultBuoyancyScale": 1\.1\}/);
-  assert.match(waterProgram, /"floorClearance"/);
-  assert.match(waterProgram, /"buoyancyRadius"/);
   assert.match(waterProgram, /torusKnotDisplacementSpheres/);
   assert.match(waterProgram, /duckDisplacementSpheres/);
   assert.match(waterProgram, /\/water\/models\/duck\/Duck\.gltf/);
   assert.doesNotMatch(waterProgram, /poolRimPoints|poolRimSegments/);
+  assert.doesNotMatch(waterProgram, /waterShaderSources|waterComputeSourceFiles|waterMaterialSourceFiles/);
 });
 
 test("Scene3D orbit controls keep upstream-style release inertia", () => {
@@ -8902,29 +8824,28 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
   assert.match(webgpu, /causticsTexture = scopedDevice\.createTexture/);
   assert.match(webgpu, /GPUTextureUsage\.RENDER_ATTACHMENT \| GPUTextureUsage\.TEXTURE_BINDING \| GPUTextureUsage\.COPY_DST/);
   assert.match(webgpu, /createWaterCausticsBindGroup/);
-  assert.match(webgpu, /waterAuthoredCausticsPipelineCache = new Map/);
+  // waterManifestShaderSourcesByID/activeWaterShaderSourcesByID and the
+  // generic bundle/manifest water-source diagnostic functions remain (they
+  // no longer feed any pipeline decision); the hand-written
+  // data-prop-authored caustics pipeline tier itself
+  // (sceneWaterAuthoredShaderSource, sceneWaterAuthoredCausticsSource/Pipeline,
+  // waterAuthoredCausticsPipelineCache) has been retired -- caustics resolves
+  // Selena-primary falling through directly to the builtin waterCausticsPipeline.
   assert.match(webgpu, /waterAuthoredCausticsPipelineLastError = ""/);
   assert.match(webgpu, /waterManifestShaderSourcesByID = null/);
   assert.match(webgpu, /activeWaterShaderSourcesByID = null/);
-  assert.match(webgpu, /function sceneWaterAuthoredShaderSource/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredShaderSource/);
   assert.match(webgpu, /function sceneWaterManifestShaderSources/);
   assert.match(webgpu, /function sceneWaterShaderSourcesFromEntries/);
   assert.match(webgpu, /function sceneHydrateWaterEntriesFromSources/);
-  assert.match(webgpu, /function sceneWaterAuthoredCausticsSource/);
-  assert.match(webgpu, /function sceneWaterAuthoredCausticsPipeline/);
-  assert.match(webgpu, /var validationScoped = false/);
-  assert.match(webgpu, /scopedDevice\.pushErrorScope\("validation"\)/);
-  assert.match(webgpu, /scopedDevice\.createRenderPipeline\(descriptor\)/);
-  assert.doesNotMatch(webgpu, /scopedDevice\.createRenderPipelineAsync\(descriptor\)/);
-  assert.match(webgpu, /waterAuthoredCausticsPipelineCache\.set\(key, pending\)/);
-  assert.match(webgpu, /return \{ pipeline: waterCausticsPipeline, authored: false, failed: false, pending: true \}/);
-  assert.match(webgpu, /waterAuthoredCausticsPipelineCache\.set\(key, \{ pipeline: pipeline \}\)/);
-  assert.match(webgpu, /waterAuthoredCausticsPipelineCache\.set\(key, \{ failed: true \}\)/);
-  assert.match(webgpu, /waterAuthoredCausticsPipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "causticsWGSL"\)/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredCausticsSource/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredCausticsPipeline/);
+  assert.doesNotMatch(webgpu, /waterAuthoredCausticsPipelineCache = new Map/);
+  assert.doesNotMatch(webgpu, /waterAuthoredCausticsPipelineCache\.set\(key, pending\)/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "causticsWGSL"\)/);
   assert.match(webgpu, /incomingWaterShaderSourcesByID/);
   assert.match(webgpu, /bundle\.waterSystems = sceneHydrateWaterEntriesFromSources\(bundle\.waterSystems, incomingWaterShaderSourcesByID\)/);
-  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-caustics-pass"/);
+  assert.match(webgpu, /var pipeline = waterCausticsPipeline;/);
   assert.match(webgpu, /function renderWaterCausticsPass/);
   assert.match(webgpu, /pass\.draw\(3\)/);
   assert.match(webgpu, /renderWaterCausticsPass\(encoder, system\)/);
@@ -8980,8 +8901,8 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /@location\(1\) clippedReflection: vec4f/);
   assert.match(webgpu, /@location\(2\) refraction: vec4f/);
   assert.match(webgpu, /WATER_OBJECT_TEXTURE_FORMAT = "rgba8unorm"/);
-  assert.match(webgpu, /WATER_OBJECT_TEXTURE_SIZE = 512/);
-  assert.match(webgpu, /WATER_OBJECT_SHADOW_TEXTURE_SIZE = 1024/);
+  assert.match(webgpu, /WATER_OBJECT_TEXTURE_SIZE = 256/);
+  assert.match(webgpu, /WATER_OBJECT_SHADOW_TEXTURE_SIZE = 256/);
   assert.match(webgpu, /waterObjectTextureBindGroupLayout = device\.createBindGroupLayout/);
   assert.match(webgpu, /waterObjectMeshShadowBindGroupLayout = device\.createBindGroupLayout/);
   assert.match(webgpu, /waterObjectTexturePipelineLayout = device\.createPipelineLayout/);
@@ -8989,15 +8910,20 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /waterObjectTexturePipeline = device\.createRenderPipeline/);
   assert.match(webgpu, /waterObjectShadowPipeline = device\.createRenderPipeline/);
   assert.match(webgpu, /waterObjectMeshShadowPipeline = device\.createRenderPipeline/);
-  assert.match(webgpu, /waterAuthoredObjectShadowPipelineCache = new Map/);
-  assert.match(webgpu, /waterAuthoredObjectMeshShadowPipelineCache = new Map/);
-  assert.match(webgpu, /function sceneWaterAuthoredObjectShadowPipeline/);
-  assert.match(webgpu, /function sceneWaterAuthoredObjectMeshShadowPipeline/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectShadowWGSL"\)/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowVertexWGSL"\)/);
-  assert.match(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowFragmentWGSL"\)/);
-  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-object-shadow-pass"/);
-  assert.match(webgpu, /label: "gosx-water-" \+ backend \+ "-object-mesh-shadow-pass"/);
+  // The hand-written data-prop-authored object-shadow/object-mesh-shadow
+  // pipeline tier has been retired: both passes resolve Selena-primary
+  // falling through directly to the builtin waterObjectShadowPipeline/
+  // waterObjectMeshShadowPipeline with no more per-entry "authored WGSL"
+  // pipeline builder in between.
+  assert.doesNotMatch(webgpu, /waterAuthoredObjectShadowPipelineCache = new Map/);
+  assert.doesNotMatch(webgpu, /waterAuthoredObjectMeshShadowPipelineCache = new Map/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredObjectShadowPipeline/);
+  assert.doesNotMatch(webgpu, /function sceneWaterAuthoredObjectMeshShadowPipeline/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectShadowWGSL"\)/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowVertexWGSL"\)/);
+  assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowFragmentWGSL"\)/);
+  assert.match(webgpu, /pass\.setPipeline\(waterObjectShadowPipeline\)/);
+  assert.match(webgpu, /pass\.setPipeline\(waterObjectMeshShadowPipeline\)/);
   assert.match(webgpu, /waterObjectMeshRefractionFragmentModule = device\.createShaderModule/);
   assert.match(webgpu, /waterObjectMeshClippedFragmentModule = device\.createShaderModule/);
   assert.match(webgpu, /waterObjectMeshShadowVertexModule = device\.createShaderModule/);
@@ -9052,7 +8978,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-y/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-z/);
   assert.match(webgpu, /function sceneWaterObjectTextureTargetSize\(entry, width, height\)/);
-  assert.match(webgpu, /WATER_OBJECT_TEXTURE_MAX_SIZE = 1024/);
+  assert.match(webgpu, /WATER_OBJECT_TEXTURE_MAX_SIZE = 256/);
   assert.match(webgpu, /WATER_OBJECT_TEXTURE_TARGET_COUNT = 3/);
   assert.match(webgpu, /function waterSystemUsesProjectedObjectTextures\(system\)/);
   assert.match(webgpu, /return kind === 3;/);
@@ -9218,17 +9144,36 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /objectTexturePixelBudget=\{3145728\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
   assert.match(waterPage, /objectShadowResolution=\{1024\}/);
-  assert.match(waterPage, /seedWGSL=\{data\.waterSeedWGSL\}/);
-  assert.match(waterPage, /dropWGSL=\{data\.waterDropWGSL\}/);
-  assert.match(waterPage, /poolVertexWGSL=\{data\.waterPoolVertexWGSL\}/);
-  assert.match(waterPage, /poolFragmentWGSL=\{data\.waterPoolFragmentWGSL\}/);
-  assert.match(waterPage, /surfaceVertexWGSL=\{data\.waterSurfaceVertexWGSL\}/);
-  assert.match(waterPage, /objectShadowWGSL=\{data\.waterObjectShadowWGSL\}/);
-  assert.match(waterPage, /objectMeshShadowVertexWGSL=\{data\.waterObjectMeshShadowVertexWGSL\}/);
-  assert.match(waterPage, /objectMeshShadowFragmentWGSL=\{data\.waterObjectMeshShadowFragmentWGSL\}/);
+  // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'
+  // generic shaderSource/shaderSourceFiles) have been retired -- Selena is
+  // the sole primary WGSL source now.
+  assert.doesNotMatch(waterPage, /seedWGSL=\{data\.waterSeedWGSL\}/);
+  assert.doesNotMatch(waterPage, /dropWGSL=\{data\.waterDropWGSL\}/);
+  assert.doesNotMatch(waterPage, /poolVertexWGSL=\{data\.waterPoolVertexWGSL\}/);
+  assert.doesNotMatch(waterPage, /poolFragmentWGSL=\{data\.waterPoolFragmentWGSL\}/);
+  assert.doesNotMatch(waterPage, /surfaceVertexWGSL=\{data\.waterSurfaceVertexWGSL\}/);
+  assert.doesNotMatch(waterPage, /objectShadowWGSL=\{data\.waterObjectShadowWGSL\}/);
+  assert.doesNotMatch(waterPage, /objectMeshShadowVertexWGSL=\{data\.waterObjectMeshShadowVertexWGSL\}/);
+  assert.doesNotMatch(waterPage, /objectMeshShadowFragmentWGSL=\{data\.waterObjectMeshShadowFragmentWGSL\}/);
+  // Selena-compiled combined-WGSL slots: the sole primary WGSL source for
+  // every render pass routed through the generic descriptor-driven Selena
+  // WebGPU render path (see
+  // sceneWaterSelenaMaterial/getWaterSelenaMeshDraw/getWaterSelenaPostDraw in
+  // 16a-scene-webgpu.js).
+  assert.match(waterPage, /poolSelenaWGSL=\{data\.waterPoolSelenaWGSL\}/);
+  assert.match(waterPage, /surfaceSelenaWGSL=\{data\.waterSurfaceSelenaWGSL\}/);
+  assert.match(waterPage, /surfaceBelowSelenaWGSL=\{data\.waterSurfaceBelowSelenaWGSL\}/);
+  assert.match(waterPage, /causticsSelenaWGSL=\{data\.waterCausticsSelenaWGSL\}/);
+  assert.match(waterPage, /objectShadowSelenaWGSL=\{data\.waterObjectShadowSelenaWGSL\}/);
+  assert.match(waterPage, /compoundShadowSelenaWGSL=\{data\.waterCompoundShadowSelenaWGSL\}/);
+  assert.match(waterPage, /objectMeshShadowSelenaWGSL=\{data\.waterObjectMeshShadowSelenaWGSL\}/);
   assert.match(waterPage, /cubeMap="\/water\/"/);
-  assert.match(waterPage, /name="water-object-material"[\s\S]*shaderSource=\{data\.waterObjectMaterialSource\}[\s\S]*shaderSourceFiles=\{data\.waterObjectMaterialSourceFiles\}/);
-  assert.match(waterPage, /name="water-duck-material"[\s\S]*shaderSource=\{data\.waterDuckMaterialSource\}[\s\S]*shaderSourceFiles=\{data\.waterDuckMaterialSourceFiles\}[\s\S]*customVertexWGSL=\{data\.waterDuckMaterialWGSL\}/);
+  assert.doesNotMatch(waterPage, /shaderSource=\{data\.waterObjectMaterialSource\}/);
+  assert.doesNotMatch(waterPage, /shaderSourceFiles=\{data\.waterObjectMaterialSourceFiles\}/);
+  assert.doesNotMatch(waterPage, /shaderSource=\{data\.waterDuckMaterialSource\}/);
+  assert.doesNotMatch(waterPage, /shaderSourceFiles=\{data\.waterDuckMaterialSourceFiles\}/);
+  assert.match(waterPage, /name="water-object-material"[\s\S]*customVertexWGSL=\{data\.waterObjectPassSelenaWGSL\}[\s\S]*shaderLayout=\{data\.waterObjectMaterialSelenaLayout\}[\s\S]*customUniforms=\{data\.waterObjectMaterialSelenaUniforms\}/);
+  assert.match(waterPage, /name="water-duck-material"[\s\S]*customVertexWGSL=\{data\.waterDuckPassSelenaWGSL\}[\s\S]*shaderLayout=\{data\.waterDuckMaterialSelenaLayout\}[\s\S]*customUniforms=\{data\.waterDuckMaterialSelenaUniforms\}/);
   assert.match(waterPage, /id="float-duck"[\s\S]*material="water-duck-material"/);
   assert.match(waterPage, /id="float-duck"[\s\S]*castShadow=\{true\}/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-loaded/);
@@ -9444,6 +9389,32 @@ test("Scene3D selena time auto-uniform: time is forced before customUniforms (re
   assert.ok(webgpuTimeIdx !== -1, 'WebGPU resolver must have time branch');
   assert.ok(webgpuCustomIdx !== -1, 'WebGPU resolver must read material values after reserved uniforms');
   assert.ok(webgpuTimeIdx < webgpuCustomIdx, 'WebGPU time must be forced before material values');
+});
+
+test("Scene3D WebGL2 water renderer wires the compound-object shadow pass", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // The compound-shadow program (compound-shadow.sel GLES) is compiled
+  // alongside the sphere/cube object-shadow program, and both are disposed on
+  // teardown.
+  assert.match(webgl, /var compoundShadowProgram = compile\(entry\.compoundShadowVertexGLES, entry\.compoundShadowFragmentGLES, "Water compound shadow"\)/);
+  assert.match(webgl, /if \(compoundShadowProgram\) gl\.deleteProgram\(compoundShadowProgram\)/);
+  assert.match(webgl, /var compoundShadowDesc = sceneWaterParseDescriptor\(descriptors\.compoundShadow\)/);
+
+  // The shared shadow RTT is sized/allocated whenever either shadow program is
+  // available, since pool only ever samples the one "shadowTexture" result.
+  assert.match(webgl, /var shadowTarget = \(shadowProgram \|\| compoundShadowProgram\) \? sceneWaterRenderCreateColorTarget\(gl, shadowSize\) : null/);
+
+  // Proxy-sphere uniform scratch capped to compound-shadow.sel's array<vec4,32>.
+  assert.match(webgl, /var COMPOUND_SHADOW_MAX_SPHERES = 32/);
+  assert.match(webgl, /function fillCompoundShadowSpheres\(list\)/);
+
+  // Pre-pass B picks compoundShadowProgram over the analytic shadowProgram
+  // when the active object is compound (isMeshObject) and it has live proxy
+  // spheres; both write into the same shadowTarget RTT.
+  assert.match(webgl, /var compoundSphereCount = isMeshObject && compoundShadowProgram\s*\n\s*\? fillCompoundShadowSpheres\(liveEntry\.objectDisplacementSpheres\)\s*\n\s*: 0;/);
+  assert.match(webgl, /var useCompoundShadow = compoundSphereCount > 0;/);
+  assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, compoundShadowProgram, compoundShadowDesc, \{\s*\n\s*spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,/);
 });
 
 test("Scene3D WebGPU Selena materials can bind live water resources", () => {
@@ -18912,19 +18883,208 @@ const goBoardBundleMixedWithHTMLJSON = JSON.stringify(Object.assign(
   },
 ));
 
+// parseWGSLBindingKinds extracts every `@group(G) @binding(B) var ...`
+// declaration from a WGSL source string into a Map keyed "G:B" -> kind, where
+// kind is one of "uniform", "storage-read", "storage-read_write", "texture",
+// or "sampler". This is a lightweight scan (mirroring the same small set of
+// regexes the Go host-binding-descriptor test uses --
+// examples/gosx-docs/.../water/selena_wgsl_binding_test.go -- not a full WGSL
+// parser), used ONLY by makeFakeGPUDevice's opt-in `validateBindings` mode.
+function parseWGSLBindingKinds(source) {
+  const kinds = new Map();
+  const src = typeof source === "string" ? source : "";
+  const textureOrSamplerRE = /@group\(\s*(\d+)\s*\)\s*@binding\(\s*(\d+)\s*\)\s*var\s+\w+\s*:\s*(texture_\w+(?:<[^>]*>)?|sampler)\s*;/g;
+  const storageRE = /@group\(\s*(\d+)\s*\)\s*@binding\(\s*(\d+)\s*\)\s*var<storage,\s*(read_write|read)>\s*\w+\s*:/g;
+  const uniformRE = /@group\(\s*(\d+)\s*\)\s*@binding\(\s*(\d+)\s*\)\s*var<uniform>\s*\w+\s*:/g;
+  let m;
+  while ((m = textureOrSamplerRE.exec(src))) {
+    kinds.set(m[1] + ":" + m[2], m[3] === "sampler" ? "sampler" : "texture");
+  }
+  while ((m = storageRE.exec(src))) {
+    kinds.set(m[1] + ":" + m[2], m[3] === "read_write" ? "storage-read_write" : "storage-read");
+  }
+  while ((m = uniformRE.exec(src))) {
+    kinds.set(m[1] + ":" + m[2], "uniform");
+  }
+  return kinds;
+}
+
+// gpuBindGroupLayoutEntryKind classifies one GPUBindGroupLayoutEntry the same
+// way parseWGSLBindingKinds classifies a WGSL declaration, so the two can be
+// compared directly by makeFakeGPUDevice's validator.
+function gpuBindGroupLayoutEntryKind(entry) {
+  if (!entry) return null;
+  if (entry.texture) return "texture";
+  if (entry.sampler) return "sampler";
+  if (entry.buffer) {
+    if (entry.buffer.type === "uniform") return "uniform";
+    if (entry.buffer.type === "storage") return "storage-read_write";
+    if (entry.buffer.type === "read-only-storage") return "storage-read";
+  }
+  return null;
+}
+
 // makeFakeGPUDevice builds a recording GPUDevice double that satisfies every
 // device call 16a's synchronous init + render() issue on the board path:
 // buffers (incl. mappedAtCreation), textures/views, samplers, bind groups,
 // pipelines, shader modules, command encoders with render/compute passes, the
 // queue, and validation error scopes.
-function makeFakeGPUDevice() {
+//
+// Pass { validateBindings: true } to opt into a structural binding-mismatch
+// gate (used by the pool-pass Selena routing test): createShaderModule
+// already records the WGSL `code` on the returned module; when validation is
+// enabled, createBindGroupLayout rejects malformed entries,
+// createRenderPipeline cross-checks every bind group layout entry the
+// pipeline references (group index + binding number + resource kind) against
+// `@group(G) @binding(B)` declarations actually present in the pipeline's
+// vertex/fragment WGSL, and createBindGroup cross-checks the bind group's
+// actual entries against its OWN bind group layout's declared entries (catches
+// a bind-group builder that drifts from the layout it was built against, the
+// exact class of bug a copy-paste error between sceneSelenaBindGroupLayout and
+// createSelenaBindGroup would produce). Every check throws loudly on mismatch.
+// Defaulting to false/undefined keeps every existing makeFakeGPUDevice() call
+// site (there are hundreds across this file) byte-for-byte unaffected.
+function makeFakeGPUDevice(options) {
+  const validateBindings = Boolean(options && options.validateBindings);
+  function validateBindGroupLayoutDesc(desc) {
+    if (!validateBindings) return;
+    const entries = (desc && desc.entries) || [];
+    for (const entry of entries) {
+      if (typeof entry.binding !== "number" || entry.binding < 0) {
+        throw new Error("[gosx-test fake GPUDevice] createBindGroupLayout entry has an invalid binding: " + JSON.stringify(entry));
+      }
+      const kindCount = [entry.buffer, entry.texture, entry.sampler].filter(Boolean).length;
+      if (kindCount !== 1) {
+        throw new Error(
+          "[gosx-test fake GPUDevice] createBindGroupLayout @binding(" + entry.binding + ") must declare exactly one of buffer/texture/sampler, got " + kindCount,
+        );
+      }
+    }
+  }
+  function validateRenderPipelineDesc(desc) {
+    if (!validateBindings) return;
+    // Scope the strict "every layout entry must be declared in the WGSL"
+    // check to the generic Selena material path ONLY (its pipelines are
+    // always labeled "gosx-selena-..." by getSelenaPipeline, and its bind
+    // group layout is built PER-MATERIAL from the same descriptor that also
+    // drove the WGSL, so the two are always meant to match 1:1). Every other
+    // pipeline in this renderer (PBR, shadow, points, the hand-written water
+    // passes, ...) intentionally shares wide, reusable bind group layouts
+    // (e.g. frameBindGroupLayout carries the shadow-map binding used by SOME
+    // but not all consumers of group 0) -- checking those against one
+    // specific shader's WGSL would be validating the wrong subset direction
+    // and produces false positives unrelated to this task's pool-routing
+    // change.
+    if (typeof desc.label !== "string" || desc.label.indexOf("gosx-selena-") !== 0) return;
+    const vertexCode = desc && desc.vertex && desc.vertex.module && desc.vertex.module.code;
+    const fragmentCode = desc && desc.fragment && desc.fragment.module && desc.fragment.module.code;
+    const combined = [vertexCode, fragmentCode].filter((s) => typeof s === "string" && s).join("\n");
+    if (!combined) return; // no shader text recorded for this pipeline -- nothing to check.
+    const declared = parseWGSLBindingKinds(combined);
+    if (declared.size === 0) return; // shader carries no @group/@binding annotations -- skip.
+    const pipelineLayoutDesc = desc && desc.layout && desc.layout.desc;
+    const bindGroupLayouts = (pipelineLayoutDesc && pipelineLayoutDesc.bindGroupLayouts) || [];
+    for (let g = 0; g < bindGroupLayouts.length; g += 1) {
+      const bglEntries = (bindGroupLayouts[g] && bindGroupLayouts[g].desc && bindGroupLayouts[g].desc.entries) || [];
+      for (const entry of bglEntries) {
+        const key = g + ":" + entry.binding;
+        const declaredKind = declared.get(key);
+        if (!declaredKind) {
+          throw new Error(
+            "[gosx-test fake GPUDevice] createRenderPipeline '" + (desc.label || "") + "': bind group layout references @group(" + g + ") @binding(" + entry.binding +
+            "), but no such binding is declared in the pipeline's WGSL",
+          );
+        }
+        const entryKind = gpuBindGroupLayoutEntryKind(entry);
+        if (entryKind && entryKind !== declaredKind) {
+          throw new Error(
+            "[gosx-test fake GPUDevice] createRenderPipeline '" + (desc.label || "") + "': @group(" + g + ") @binding(" + entry.binding + ") is declared as \"" +
+            declaredKind + "\" in WGSL, but the bind group layout entry is \"" + entryKind + "\"",
+          );
+        }
+      }
+    }
+  }
+  // validateComputePipelineDesc mirrors validateRenderPipelineDesc for the
+  // Selena feedback-compute path (getSelenaComputePipeline in
+  // 16a-scene-webgpu.js): cross-checks every bind group layout entry the
+  // compute pipeline references (group index + binding number + resource
+  // kind) against `@group(G) @binding(B)` declarations actually present in
+  // the pipeline's compute-stage WGSL. Scoped to "gosx-selena-" labeled
+  // pipelines exactly like the render check (every OTHER compute pipeline in
+  // this renderer -- elioSkin, computedMorph, the hardcoded water
+  // seed/drop/displacement/step/normal kernels -- keeps its wide, reusable
+  // bind group layout unchecked here).
+  function validateComputePipelineDesc(desc) {
+    if (!validateBindings) return;
+    if (typeof desc.label !== "string" || desc.label.indexOf("gosx-selena-") !== 0) return;
+    const code = desc && desc.compute && desc.compute.module && desc.compute.module.code;
+    if (typeof code !== "string" || !code) return; // no shader text recorded -- nothing to check.
+    const declared = parseWGSLBindingKinds(code);
+    if (declared.size === 0) return; // shader carries no @group/@binding annotations -- skip.
+    const pipelineLayoutDesc = desc && desc.layout && desc.layout.desc;
+    const bindGroupLayouts = (pipelineLayoutDesc && pipelineLayoutDesc.bindGroupLayouts) || [];
+    for (let g = 0; g < bindGroupLayouts.length; g += 1) {
+      const bglEntries = (bindGroupLayouts[g] && bindGroupLayouts[g].desc && bindGroupLayouts[g].desc.entries) || [];
+      for (const entry of bglEntries) {
+        const key = g + ":" + entry.binding;
+        const declaredKind = declared.get(key);
+        if (!declaredKind) {
+          throw new Error(
+            "[gosx-test fake GPUDevice] createComputePipeline '" + (desc.label || "") + "': bind group layout references @group(" + g + ") @binding(" + entry.binding +
+            "), but no such binding is declared in the pipeline's compute-stage WGSL",
+          );
+        }
+        const entryKind = gpuBindGroupLayoutEntryKind(entry);
+        if (entryKind && entryKind !== declaredKind) {
+          throw new Error(
+            "[gosx-test fake GPUDevice] createComputePipeline '" + (desc.label || "") + "': @group(" + g + ") @binding(" + entry.binding + ") is declared as \"" +
+            declaredKind + "\" in WGSL, but the bind group layout entry is \"" + entryKind + "\"",
+          );
+        }
+      }
+    }
+  }
+  function validateBindGroupDesc(desc) {
+    if (!validateBindings) return;
+    const layoutDesc = desc && desc.layout && desc.layout.desc;
+    if (!layoutDesc || !Array.isArray(layoutDesc.entries)) return; // nothing to cross-check against.
+    const entries = Array.isArray(desc.entries) ? desc.entries : [];
+    const byBinding = new Map(entries.map((e) => [e.binding, e]));
+    for (const layoutEntry of layoutDesc.entries) {
+      const actual = byBinding.get(layoutEntry.binding);
+      if (!actual) {
+        throw new Error(
+          "[gosx-test fake GPUDevice] createBindGroup is missing an entry for @binding(" + layoutEntry.binding + "), which its bind group layout declares",
+        );
+      }
+      const hasBufferResource = !!(actual.resource && typeof actual.resource === "object" && actual.resource.buffer);
+      if (layoutEntry.buffer && !hasBufferResource) {
+        throw new Error(
+          "[gosx-test fake GPUDevice] createBindGroup @binding(" + layoutEntry.binding + ") must supply a {buffer} resource per its layout, got " + JSON.stringify(actual.resource),
+        );
+      }
+      if ((layoutEntry.texture || layoutEntry.sampler) && hasBufferResource) {
+        throw new Error(
+          "[gosx-test fake GPUDevice] createBindGroup @binding(" + layoutEntry.binding + ") must supply a texture/sampler resource per its layout, got a buffer",
+        );
+      }
+    }
+    if (entries.length !== layoutDesc.entries.length) {
+      throw new Error(
+        "[gosx-test fake GPUDevice] createBindGroup entry count " + entries.length + " does not match its bind group layout's entry count " + layoutDesc.entries.length,
+      );
+    }
+  }
   const state = {
     writeBufferCalls: [],
     submitCount: 0,
     renderPasses: [],
     computePasses: [],
     renderPipelines: [],
+    computePipelines: [],
     shaderModules: [],
+    bindGroups: [],
     // Texture lifecycle recording for the sprite path: every createTexture
     // (placeholder + the post-load upload target), writeTexture (placeholder
     // pixel), and copyExternalImageToTexture (the resolved image upload).
@@ -19009,6 +19169,7 @@ function makeFakeGPUDevice() {
       },
     },
     createBindGroupLayout(desc) {
+      validateBindGroupLayoutDesc(desc);
       return { __kind: "bindGroupLayout", desc };
     },
     createPipelineLayout(desc) {
@@ -19020,18 +19181,25 @@ function makeFakeGPUDevice() {
       return module;
     },
     createComputePipeline(desc) {
-      return { __kind: "computePipeline", label: desc && desc.label };
+      validateComputePipelineDesc(desc);
+      const pipeline = { __kind: "computePipeline", label: desc && desc.label, desc };
+      state.computePipelines.push(pipeline);
+      return pipeline;
     },
     createComputePipelineAsync(desc) {
       return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
     },
     createRenderPipeline(desc) {
+      validateRenderPipelineDesc(desc);
       const pipeline = { __kind: "renderPipeline", desc };
       state.renderPipelines.push(pipeline);
       return pipeline;
     },
     createBindGroup(desc) {
-      return { __kind: "bindGroup", desc };
+      validateBindGroupDesc(desc);
+      const bindGroup = { __kind: "bindGroup", desc };
+      state.bindGroups.push(bindGroup);
+      return bindGroup;
     },
     createSampler(desc) {
       return { __kind: "sampler", desc };
@@ -19089,11 +19257,76 @@ function makeFakeGPUDevice() {
   return { device, state };
 }
 
+// freshFeatureBundleSource concatenates the CURRENT bootstrap-src/*.js files
+// for a given feature bundle, mirroring build-bootstrap.mjs's output
+// definition for that bundle (same file list and order -- see the
+// "bootstrap-feature-scene3d.js" / "bootstrap-feature-scene3d-webgpu.js"
+// entries in build-bootstrap.mjs), but WITHOUT invoking esbuild/minification
+// or writing anything to disk. The committed bootstrap-feature-*.js bundle
+// artifacts (bootstrapFeatureScene3DSource / bootstrapFeatureScene3DWebGPUSource
+// above) are prebuilt snapshots that go stale the moment a bootstrap-src file
+// changes; most tests intentionally exercise that committed snapshot (it's
+// what ships), but a test that needs to exercise a bootstrap-src edit BEFORE
+// the bundles are regenerated (e.g. this file's pool-pass Selena-routing test)
+// can opt into a bundle built fresh from bootstrap-src via this helper. If
+// build-bootstrap.mjs's file list for a bundle changes, update the matching
+// list below.
+function freshFeatureBundleSource(name) {
+  const srcDir = path.join(__dirname, "bootstrap-src");
+  function read(rel) {
+    return fs.readFileSync(path.join(srcDir, rel), "utf8");
+  }
+  if (name === "scene3d") {
+    return [
+      "26d-feature-scene3d-prefix.js",
+      "10-runtime-primitives.js",
+      "10-runtime-scene-core.js",
+      "11-scene-math.js",
+      "11a-scene-decompress.js",
+      "12-scene-geometry.js",
+      "13-scene-material.js",
+      "14-scene-lighting.js",
+      "15-scene-ir-schema.js",
+      "15-scene-ir-schema-strict.js",
+      "15-scene-draw-plan.js",
+      "15b-scene-planner.js",
+      "15c-scene-backend-registry.js",
+      "15a-scene-postfx-shared.js",
+      "16b-scene-hdr.js",
+      "16b-scene-compute.js",
+      "16-scene-webgl.js",
+      "16z-scene-webgpu-probe.js",
+      "17-scene-input.js",
+      "18-scene-canvas.js",
+      "19b-scene-control-forms.js",
+      "20-scene-mount.js",
+      "26d-feature-scene3d-suffix.js",
+    ].map(read).join("\n");
+  }
+  if (name === "scene3d-webgpu") {
+    return [
+      "26e-feature-scene3d-webgpu-prefix.js",
+      "16a-scene-webgpu.js",
+      "16b-scene-compute.js",
+      "26e-feature-scene3d-webgpu-suffix.js",
+    ].map(read).join("\n");
+  }
+  throw new Error("freshFeatureBundleSource: unknown bundle " + name);
+}
+
 // createBoardWebGPUHarness boots the runtime + scene3d + scene3d-webgpu chunks
 // (the production load order for 16a), points the 16z probe bridge at a ready
 // fake device, and constructs the REAL createSceneWebGPURenderer over a fake
 // canvas. Returns the renderer plus the recording device state and mount.
-async function createBoardWebGPUHarness() {
+//
+// options.fresh: when true, the scene3d + scene3d-webgpu chunks are built
+// fresh from bootstrap-src/*.js (see freshFeatureBundleSource) instead of
+// reading the committed bootstrap-feature-*.js bundle snapshots, so the
+// harness exercises the CURRENT bootstrap-src source. Defaults to false
+// (every existing call site keeps reading the committed bundles unchanged).
+// options.fakeDeviceOptions is forwarded to makeFakeGPUDevice().
+async function createBoardWebGPUHarness(options) {
+  const opts = options || {};
   const env = createContext({ enableWebGPU: true });
   // WebGPU usage-flag globals the renderer reads when creating resources.
   env.context.GPUBufferUsage = {
@@ -19116,19 +19349,22 @@ async function createBoardWebGPUHarness() {
     return Promise.resolve({ __kind: "imageBitmap", width: image && image.width || 1, height: image && image.height || 1, close() {} });
   };
 
+  const scene3DSource = opts.fresh ? freshFeatureBundleSource("scene3d") : bootstrapFeatureScene3DSource;
+  const scene3DWebGPUSource = opts.fresh ? freshFeatureBundleSource("scene3d-webgpu") : bootstrapFeatureScene3DWebGPUSource;
+
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
-  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  runScript(scene3DSource, env.context, "bootstrap-feature-scene3d.js");
   await flushAsyncWork();
   assert.ok(env.context.__gosx_scene3d_api, "scene3d chunk must publish __gosx_scene3d_api");
 
-  const fake = makeFakeGPUDevice();
+  const fake = makeFakeGPUDevice(opts.fakeDeviceOptions);
   // The 16a factory consumes the probed adapter+device through the 16z
   // bridge global — point it at the fake before loading the webgpu chunk.
   env.context.__gosx_scene3d_webgpu_probe = function() {
     return { adapter: { __kind: "adapter" }, device: fake.device, ready: true };
   };
 
-  runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(scene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
   const api = env.context.__gosx_scene3d_webgpu_api;
   assert.ok(api && typeof api.createRenderer === "function", "webgpu chunk must publish createRenderer");
 
@@ -19172,6 +19408,622 @@ function mainRenderPasses(fake) {
     (pass) => pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) && pass.descriptor.colorAttachments.length > 0,
   );
 }
+
+// waterPoolSelenaFixture is the REAL Selena-compiled pool.sel WGSL + host
+// binding descriptor (bindings.Layout), generated once via
+// `selena.Compile(pool.sel, {Targets:[selena.TargetWGSL]})` -- the exact call
+// examples/gosx-docs/.../water/selena_glsl.go's waterPoolSelenaWGSLData makes.
+// See client/js/testdata/water-pool-selena.json for regeneration instructions.
+const waterPoolSelenaFixture = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "testdata", "water-pool-selena.json"), "utf8"),
+);
+
+// waterSelenaFixture loads the REAL Selena-compiled WGSL + host binding
+// descriptor for one of the remaining migrated water render passes
+// (surface/surface-below/caustics/object-material/duck-material/object-shadow/
+// compound-shadow/object-mesh-shadow), mirroring waterPoolSelenaFixture above.
+// Each fixture is generated the same way: `selena.Compile(<file>, {Targets:
+// [selena.TargetWGSL]})`, the exact call waterSelenaRenderWGSLData
+// (selena_glsl.go) makes for every non-compute entry in waterSelenaShaders.
+function waterSelenaFixture(slug) {
+  return JSON.parse(fs.readFileSync(path.join(__dirname, "testdata", "water-" + slug + "-selena.json"), "utf8"));
+}
+const waterSurfaceSelenaFixture = waterSelenaFixture("surface");
+const waterSurfaceBelowSelenaFixture = waterSelenaFixture("surface-below");
+const waterCausticsSelenaFixture = waterSelenaFixture("caustics");
+const waterObjectMaterialSelenaFixture = waterSelenaFixture("object-material");
+const waterDuckMaterialSelenaFixture = waterSelenaFixture("duck-material");
+const waterObjectShadowSelenaFixture = waterSelenaFixture("object-shadow");
+const waterCompoundShadowSelenaFixture = waterSelenaFixture("compound-shadow");
+const waterObjectMeshShadowSelenaFixture = waterSelenaFixture("object-mesh-shadow");
+
+// waterSelenaFixture also loads the five feedback-COMPUTE kernel fixtures
+// (seed/drop/displacement/simulation/normal), generated the same way via
+// `selena.Compile(<file>, {Targets:[selena.TargetWGSL]})` -- the exact call
+// waterSelenaComputeWGSLData (selena_glsl.go) makes for each compute entry in
+// waterSelenaShaders. Used by the Selena feedback-compute path test below.
+const waterSeedSelenaFixture = waterSelenaFixture("seed");
+const waterDropSelenaFixture = waterSelenaFixture("drop");
+const waterDisplacementSelenaFixture = waterSelenaFixture("displacement");
+const waterSimulationSelenaFixture = waterSelenaFixture("simulation");
+const waterNormalSelenaFixture = waterSelenaFixture("normal");
+
+test("Scene3D WebGPU pool pass routes through the generic Selena render path with matching bindings", async () => {
+  // { fresh: true } builds the scene3d + scene3d-webgpu chunks straight from
+  // bootstrap-src/*.js (see freshFeatureBundleSource) so this test exercises
+  // the pool-pass Selena-routing source edits directly, without regenerating
+  // the committed bootstrap-feature-*.js bundle artifacts. { validateBindings:
+  // true } turns on makeFakeGPUDevice's structural binding-mismatch gate: any
+  // @group/@binding drift between the pool WGSL and the bind group
+  // layout/bind group the renderer builds throws immediately.
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  assert.ok(api && typeof api.createSceneState === "function", "scene3d chunk must publish createSceneState");
+
+  const waterEntry = {
+    id: "water-main",
+    resolution: 4,
+    poolShape: "Box",
+    poolWidth: 1,
+    poolLength: 1,
+    poolHeight: 1,
+    cornerRadius: 0,
+    tileTexture: "",
+    causticsResolution: 4,
+    objectShadowResolution: 4,
+    lightDirectionX: 2,
+    lightDirectionY: 2,
+    lightDirectionZ: -1,
+    materialBackend: "selena",
+    // The real, Selena-compiled pool WGSL + descriptor under test. Everything
+    // else on this entry is the OLD hand-written-WGSL water contract (left
+    // completely alone -- this test only exercises the additive pool slot).
+    poolSelenaWGSL: waterPoolSelenaFixture.wgsl,
+    shaderDescriptors: { pool: waterPoolSelenaFixture.layout },
+  };
+
+  // Drive the entry through the SAME normalization the production runtime
+  // uses (createSceneState -> sceneWaterSystems -> normalizeSceneWaterSystemEntry
+  // in 10-runtime-scene-core.js), proving the poolSelenaWGSL/shaderDescriptors
+  // plumbing survives that layer, not just a hand-built bundle.
+  const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
+  assert.equal(sceneState.waterSystems.length, 1);
+  assert.equal(sceneState.waterSystems[0].poolSelenaWGSL, waterPoolSelenaFixture.wgsl, "poolSelenaWGSL must survive normalizeSceneWaterSystemEntry");
+  assert.ok(
+    sceneState.waterSystems[0].shaderDescriptors && sceneState.waterSystems[0].shaderDescriptors.pool,
+    "shaderDescriptors.pool must survive normalizeSceneWaterSystemEntry",
+  );
+
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  assert.doesNotThrow(() => {
+    harness.renderer.render(sceneState, { width: 64, height: 64 });
+  }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch between the pool WGSL and the renderer's bind group layout/bind group");
+
+  const mount = harness.mount;
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-pool-passes"), "1", "the pool pass must have been routed through the generic Selena path exactly once");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-pool-fallbacks"), "0", "the Selena pool path must not have fallen back to the hand-written pipeline");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-pool-passes"), "1");
+
+  // Structural corroboration: find the compiled Selena pool render pipeline
+  // and its bind group layout, and confirm the layout carries every binding
+  // the pool descriptor declares (uniform block, 3 textures/samplers, the
+  // StateGrid uniform, and the state storage buffer) -- i.e. the new
+  // sceneSelenaBindGroupLayout `state`/`grid` support actually ran, it wasn't
+  // silently skipped.
+  const poolPipeline = harness.fake.state.renderPipelines.find(
+    (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterPool") >= 0,
+  );
+  assert.ok(poolPipeline, "expected a compiled gosx-selena-*-WaterPool-* render pipeline");
+  const poolBGL = poolPipeline.desc.layout.desc.bindGroupLayouts[0];
+  // Array.from (the OUTER realm's, not the sandboxed vm context's) copies the
+  // vm-context entries into plain outer-realm values -- they were built by
+  // code running inside env.context's vm.Context, so without this copy
+  // assert.deepEqual's cross-realm reference-equality check fails even when
+  // the values are identical (Node's util.isDeepStrictEqual distinguishes
+  // exotic objects from a different realm).
+  const poolBindings = Array.from(poolBGL.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(poolBindings, [0, 1, 2, 3, 4, 5, 6, 7, 8], "pool bind group layout must expose uniform(0) + 3 textures/samplers(1-6) + grid(7) + state(8)");
+
+  const poolBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === poolBGL);
+  assert.ok(poolBindGroup, "expected a bind group built against the pool bind group layout");
+  const boundBindings = Array.from(poolBindGroup.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(boundBindings, poolBindings, "the bind group's actual entries must match its layout's declared bindings exactly");
+});
+
+// waterSelenaFrameEntry builds a minimal <WaterSystem>-entry-shaped object
+// (mirroring the pool test's waterEntry) carrying every additive
+// "<pass>SelenaWGSL" slot + shaderDescriptors key this task wires, so any
+// combination of the newly-migrated passes can be exercised without repeating
+// the whole field list per test.
+function waterSelenaFrameEntry(overrides) {
+  return Object.assign({
+    id: "water-main",
+    resolution: 4,
+    poolShape: "Box",
+    poolWidth: 1,
+    poolLength: 1,
+    poolHeight: 1,
+    cornerRadius: 0,
+    tileTexture: "",
+    cubeMap: "",
+    causticsResolution: 4,
+    objectShadowResolution: 4,
+    lightDirectionX: 2,
+    lightDirectionY: 2,
+    lightDirectionZ: -1,
+    caustics: true,
+    reflection: true,
+    refraction: true,
+    materialBackend: "selena",
+    surfaceSelenaWGSL: waterSurfaceSelenaFixture.wgsl,
+    surfaceBelowSelenaWGSL: waterSurfaceBelowSelenaFixture.wgsl,
+    causticsSelenaWGSL: waterCausticsSelenaFixture.wgsl,
+    objectShadowSelenaWGSL: waterObjectShadowSelenaFixture.wgsl,
+    compoundShadowSelenaWGSL: waterCompoundShadowSelenaFixture.wgsl,
+    objectMeshShadowSelenaWGSL: waterObjectMeshShadowSelenaFixture.wgsl,
+    shaderDescriptors: {
+      surface: waterSurfaceSelenaFixture.layout,
+      surfaceBelow: waterSurfaceBelowSelenaFixture.layout,
+      caustics: waterCausticsSelenaFixture.layout,
+      objectShadow: waterObjectShadowSelenaFixture.layout,
+      compoundShadow: waterCompoundShadowSelenaFixture.layout,
+      objectMeshShadow: waterObjectMeshShadowSelenaFixture.layout,
+    },
+  }, overrides || {});
+}
+
+test("normalizeSceneWaterSystemEntry passes every migrated pass's Selena WGSL slot + descriptor key through", async () => {
+  // {fresh: true} -- this test exercises the NEW bootstrap-src edits
+  // (10-runtime-scene-core.js's normalizeSceneWaterSystemEntry whitelist)
+  // directly; the committed bootstrap.js bundle predates them (see the pool
+  // test's {fresh:true} comment above for why).
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+
+  const waterEntry = waterSelenaFrameEntry();
+  const state = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
+  assert.equal(state.waterSystems.length, 1);
+  const normalized = state.waterSystems[0];
+  assert.equal(normalized.surfaceSelenaWGSL, waterSurfaceSelenaFixture.wgsl);
+  assert.equal(normalized.surfaceBelowSelenaWGSL, waterSurfaceBelowSelenaFixture.wgsl);
+  assert.equal(normalized.causticsSelenaWGSL, waterCausticsSelenaFixture.wgsl);
+  assert.equal(normalized.objectShadowSelenaWGSL, waterObjectShadowSelenaFixture.wgsl);
+  assert.equal(normalized.compoundShadowSelenaWGSL, waterCompoundShadowSelenaFixture.wgsl);
+  assert.equal(normalized.objectMeshShadowSelenaWGSL, waterObjectMeshShadowSelenaFixture.wgsl);
+  assert.ok(normalized.shaderDescriptors && normalized.shaderDescriptors.surface, "shaderDescriptors.surface must survive normalization");
+  assert.ok(normalized.shaderDescriptors.surfaceBelow, "shaderDescriptors.surfaceBelow must survive normalization");
+  assert.ok(normalized.shaderDescriptors.caustics, "shaderDescriptors.caustics must survive normalization");
+  assert.ok(normalized.shaderDescriptors.objectShadow, "shaderDescriptors.objectShadow must survive normalization");
+  assert.ok(normalized.shaderDescriptors.compoundShadow, "shaderDescriptors.compoundShadow must survive normalization");
+  assert.ok(normalized.shaderDescriptors.objectMeshShadow, "shaderDescriptors.objectMeshShadow must survive normalization");
+});
+
+test("Scene3D WebGPU water surface/surface-below/caustics passes route through the generic Selena render path", async () => {
+  // { fresh: true } / { validateBindings: true } -- see the pool test above
+  // for why both are needed here.
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+
+  // No active object: exercises the surface/surface-below/caustics passes'
+  // "no live displacement subject" defaults (objectKind/objectCount/opticsEnable
+  // all fall back to 0), leaving the compound-shadow/object-mesh-shadow
+  // passes (which require an active kind===3 object) untouched -- those are
+  // covered by the next test.
+  const waterEntry = waterSelenaFrameEntry();
+  const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
+
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  assert.doesNotThrow(() => {
+    harness.renderer.render(sceneState, { width: 64, height: 64 });
+  }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
+
+  const mount = harness.mount;
+  // Surface pass fires once per side (above + below) per system.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-surface-passes"), "2", "surface + surface-below must both have routed through the Selena path");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-surface-fallbacks"), "0");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-caustic-passes"), "1", "caustics must have routed through the Selena path");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-caustic-fallbacks"), "0");
+
+  // Structural corroboration mirroring the pool test: the compiled surface
+  // pipeline's bind group layout must expose the full descriptor binding
+  // set (uniform + 6 textures/samplers + grid + state -- surface.sel has
+  // tile/caustic/sky/refraction/reflection/clippedReflection), and the bind
+  // group built against it must match exactly (proves the cube-texture
+  // dimension support sceneSelenaBindGroupLayout/createSelenaBindGroup added
+  // for "sky" actually ran).
+  const surfacePipeline = harness.fake.state.renderPipelines.find(
+    (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterSurface-") >= 0 && String(p.desc.label).indexOf("WaterSurfaceBelow") < 0,
+  );
+  assert.ok(surfacePipeline, "expected a compiled gosx-selena-*-WaterSurface-* render pipeline");
+  const surfaceBGL = surfacePipeline.desc.layout.desc.bindGroupLayouts[0];
+  const surfaceBindings = Array.from(surfaceBGL.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(surfaceBindings, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], "surface bind group layout must expose uniform(0) + 6 textures/samplers(1-12) + grid(13) + state(14)");
+  const skyEntry = surfaceBGL.desc.entries.find((e) => e.binding === 5);
+  assert.ok(skyEntry && skyEntry.texture && skyEntry.texture.viewDimension === "cube", "the sky texture binding must be viewDimension:\"cube\"");
+
+  const surfaceBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === surfaceBGL);
+  assert.ok(surfaceBindGroup, "expected a bind group built against the surface bind group layout");
+  const surfaceBoundBindings = Array.from(surfaceBindGroup.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(surfaceBoundBindings, surfaceBindings, "the surface bind group's actual entries must match its layout's declared bindings exactly");
+
+  // Caustics renders into its own offscreen (no depth attachment) target:
+  // the compiled pipeline must NOT carry a depthStencil state.
+  const causticsPipeline = harness.fake.state.renderPipelines.find(
+    (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterCaustics") >= 0,
+  );
+  assert.ok(causticsPipeline, "expected a compiled gosx-selena-*-WaterCaustics-* render pipeline");
+  assert.equal(causticsPipeline.desc.depthStencil, undefined, "the caustics pipeline must omit depthStencil (its render target has no depth attachment)");
+});
+
+test("Scene3D WebGPU water compound-shadow / object-mesh-shadow passes route through the generic Selena render path (G1 array-uniform packing)", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+
+  // Two known displacement spheres, chosen so their (offsetX,offsetY,offsetZ,
+  // radius) values pass through sceneWaterDisplacementSpheres UNCHANGED
+  // (poolWidth=poolLength=1 makes halfWidth=halfLength=1, so the
+  // pool-relative normalization divides by 1) -- this is the G1 test: known
+  // array input -> expected float offsets in the packed uniform buffer.
+  const sphere0 = { offsetX: 0.2, offsetY: 0.05, offsetZ: -0.1, radius: 0.08 };
+  const sphere1 = { offsetX: -0.15, offsetY: 0.02, offsetZ: 0.12, radius: 0.05 };
+
+  const waterEntry = waterSelenaFrameEntry({
+    activeObject: "Rubber Duck",
+    objectKind: "compound",
+    objectSubtype: "duck",
+    objectX: 0,
+    objectY: 0,
+    objectZ: 0,
+    objectDisplacementScale: 1,
+    objectDisplacementSpheres: [sphere0, sphere1],
+  });
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [{
+        name: "water-duck-material",
+        kind: "custom",
+        shaderBackend: "selena",
+        customVertexWGSL: waterDuckMaterialSelenaFixture.wgsl,
+        customFragmentWGSL: waterDuckMaterialSelenaFixture.wgsl,
+        shaderLayout: waterDuckMaterialSelenaFixture.layout,
+        customUniforms: {
+          poolHeight: 1,
+          baseColor: [1, 1, 1, 1],
+          isTexturePass: 0,
+          texturePassMode: 0,
+          lightDir: [2, 3, -1],
+          grid: 4,
+          water: "gosx:water:water-main:state",
+        },
+      }],
+      objects: [
+        { id: "float-duck", kind: "sphere", radius: 0.1, x: 0, y: 0, z: 0, material: "water-duck-material", castShadow: true, wireframe: false },
+      ],
+      waterSystems: [waterEntry],
+    },
+  }, { tier: "full" });
+
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
+  );
+
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  assert.doesNotThrow(() => {
+    harness.renderer.render(bundle, { width: 64, height: 64 });
+  }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
+
+  const mount = harness.mount;
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-object-mesh-shadow-passes"), "1", "object-mesh-shadow must have routed through the Selena path");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-object-mesh-shadow-fallbacks"), "0");
+
+  // The active object is a compound (kind 3) subject with mesh geometry, so
+  // renderWaterObjectMeshShadowPass's meshShadow.passes>0 branch runs and
+  // renderWaterObjectShadowPass (compound-shadow's OWN post-kind pass) is
+  // never reached this frame -- matching the raw hand-written shader's own
+  // control flow (a mesh subject always prefers the projected-mesh shadow).
+  // compound-shadow's post-kind pipeline/bind-group path is exercised
+  // directly below instead, against a hand-built material+renderContext,
+  // proving the SAME getSelenaPostPipeline/createSelenaPostBindGroup
+  // machinery works end-to-end with a real G1 array context field.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-object-shadow-passes"), "0");
+
+  // G1 corroboration: find the compound-shadow UserUniforms write (576
+  // bytes == 144 floats, per waterCompoundShadowSelenaFixture.layout's
+  // uniformBlock.size) and confirm the "spheres" array field (offset 64
+  // bytes -> float index 16, stride 16 bytes -> 4 floats/element) carries
+  // sphere0/sphere1 at their exact expected offsets. This proves
+  // sceneSelenaWriteArrayUniformField's std140 element-stride math, not just
+  // that SOME uniform buffer was written.
+  //
+  // The compound-shadow post-kind pass itself isn't drawn this frame (see
+  // above), but object-mesh-shadow's mesh-kind pass ALSO carries a "spheres"-
+  // shaped array field? No -- object-mesh-shadow has none. So drive
+  // compound-shadow's bind group directly through the SAME public entry
+  // point the renderer itself uses: build a synthetic second frame where the
+  // mesh subject is ABSENT (no matching float-duck mesh object), forcing
+  // renderWaterObjectShadowPass's compound-shadow branch to run.
+  const bundleNoMesh = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    [], [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
+  );
+  assert.doesNotThrow(() => {
+    harness.renderer.render(bundleNoMesh, { width: 64, height: 64 });
+  }, "render() must not throw on the mesh-less frame");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-object-shadow-passes"), "1", "compound-shadow must have routed through the Selena post-kind path once the mesh subject is absent");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-object-shadow-fallbacks"), "0");
+
+  const spheresWrite = harness.fake.state.writeBufferCalls.find((call) => call.data && call.data.length === 144);
+  assert.ok(spheresWrite, "expected a 576-byte (144-float) UserUniforms write for the compound-shadow material");
+  const floats = Array.from(spheresWrite.data);
+  const sphereBase = 16; // 64 bytes / 4
+  // Compare against Math.fround (the value re-rounded through float32) since
+  // spheresWrite.data is itself a Float32Array -- sphere0.offsetX (0.2) is
+  // not exactly representable, so a plain equality would fail on the
+  // representable-vs-source-literal rounding, not a packing bug.
+  assert.equal(floats[sphereBase + 0], Math.fround(sphere0.offsetX));
+  assert.equal(floats[sphereBase + 1], Math.fround(sphere0.offsetY));
+  assert.equal(floats[sphereBase + 2], Math.fround(sphere0.offsetZ));
+  assert.equal(floats[sphereBase + 3], Math.fround(sphere0.radius));
+  assert.equal(floats[sphereBase + 4], Math.fround(sphere1.offsetX));
+  assert.equal(floats[sphereBase + 5], Math.fround(sphere1.offsetY));
+  assert.equal(floats[sphereBase + 6], Math.fround(sphere1.offsetZ));
+  assert.equal(floats[sphereBase + 7], Math.fround(sphere1.radius));
+  // Everything past the 2 real spheres must be zero-filled, not garbage.
+  assert.equal(floats[sphereBase + 8], 0);
+  assert.equal(floats[sphereBase + 4 * 31], 0);
+});
+
+test("Scene3D WebGPU water object-material/duck-material meshes route through the generic Selena render path", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+
+  const waterEntry = waterSelenaFrameEntry();
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "water-object-material",
+          kind: "custom",
+          shaderBackend: "selena",
+          customVertexWGSL: waterObjectMaterialSelenaFixture.wgsl,
+          customFragmentWGSL: waterObjectMaterialSelenaFixture.wgsl,
+          shaderLayout: waterObjectMaterialSelenaFixture.layout,
+          customUniforms: {
+            poolHeight: 1,
+            baseColor: [0.5, 0.5, 0.5, 1],
+            isTexturePass: 0,
+            texturePassMode: 0,
+            lightDir: [2, 3, -1],
+            grid: 4,
+            water: "gosx:water:water-main:state",
+          },
+        },
+        {
+          name: "water-duck-material",
+          kind: "custom",
+          shaderBackend: "selena",
+          customVertexWGSL: waterDuckMaterialSelenaFixture.wgsl,
+          customFragmentWGSL: waterDuckMaterialSelenaFixture.wgsl,
+          shaderLayout: waterDuckMaterialSelenaFixture.layout,
+          customUniforms: {
+            poolHeight: 1,
+            baseColor: [1, 1, 1, 1],
+            isTexturePass: 0,
+            texturePassMode: 0,
+            lightDir: [2, 3, -1],
+            grid: 4,
+            water: "gosx:water:water-main:state",
+          },
+        },
+      ],
+      objects: [
+        { id: "float-sphere", kind: "sphere", radius: 0.25, x: -0.4, y: -0.75, z: 0.2, material: "water-object-material", wireframe: false },
+        { id: "float-duck", kind: "sphere", radius: 0.1, x: 0.4, y: -0.7, z: -0.2, material: "water-duck-material", wireframe: false },
+      ],
+      waterSystems: [waterEntry],
+    },
+  });
+
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
+  );
+
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  assert.doesNotThrow(() => {
+    harness.renderer.render(bundle, { width: 64, height: 64 });
+  }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
+
+  // Both materials are drawn through drawPBRObjects' fully-generic Selena
+  // mesh path (getSelenaPipeline/createSelenaBindGroup) -- the SAME path
+  // pool/surface use, generalized by sceneSelenaGridUniformData's
+  // material.customUniforms.grid fallback (drawPBRObjects supplies no
+  // renderContext at all, unlike the water-system-owned passes above).
+  const objectMatPipeline = harness.fake.state.renderPipelines.find(
+    (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterObjectMaterial") >= 0,
+  );
+  assert.ok(objectMatPipeline, "expected a compiled gosx-selena-*-WaterObjectMaterial-* render pipeline");
+  const duckMatPipeline = harness.fake.state.renderPipelines.find(
+    (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterDuckMaterial") >= 0,
+  );
+  assert.ok(duckMatPipeline, "expected a compiled gosx-selena-*-WaterDuckMaterial-* render pipeline");
+
+  // object-material has NO textures (uniform + grid + state only); duck-material
+  // has ONE (modelTexture) -- confirms the mesh+state grid/state binding
+  // support applies with and without textures present.
+  const objectMatBGL = objectMatPipeline.desc.layout.desc.bindGroupLayouts[0];
+  const objectMatBindings = Array.from(objectMatBGL.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(objectMatBindings, [0, 1, 2], "object-material bind group layout must expose uniform(0) + grid(1) + state(2)");
+
+  const duckMatBGL = duckMatPipeline.desc.layout.desc.bindGroupLayouts[0];
+  const duckMatBindings = Array.from(duckMatBGL.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(duckMatBindings, [0, 1, 2, 3, 4], "duck-material bind group layout must expose uniform(0) + modelTexture(1-2) + grid(3) + state(4)");
+
+  const objectMatBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === objectMatBGL);
+  assert.ok(objectMatBindGroup, "expected a bind group built against the object-material bind group layout");
+  const duckMatBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === duckMatBGL);
+  assert.ok(duckMatBindGroup, "expected a bind group built against the duck-material bind group layout");
+});
+
+// waterComputeKernelPipeline finds the compiled gosx-selena-compute-<Material>
+// pipeline for one feedback kernel among every createComputePipeline call the
+// fake device recorded this test.
+function waterComputeKernelPipeline(fake, materialName) {
+  return fake.state.computePipelines.find(
+    (p) => p.label && String(p.label).indexOf("gosx-selena-compute-" + materialName) >= 0,
+  );
+}
+
+// assertWaterComputeKernelBindings resolves kernel's compiled pipeline (by
+// Selena material name), asserts its bind group layout carries exactly
+// wantBindings, and that a bind group was actually built against that exact
+// layout with the same binding set -- the compute analogue of the render
+// tests' pool/caustics/object-material bind-group corroboration above.
+function assertWaterComputeKernelBindings(fake, materialName, wantBindings) {
+  const pipeline = waterComputeKernelPipeline(fake, materialName);
+  assert.ok(pipeline, "expected a compiled gosx-selena-compute-" + materialName + " pipeline");
+  const bgl = pipeline.desc.layout.desc.bindGroupLayouts[0];
+  const bindings = Array.from(bgl.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(bindings, wantBindings, materialName + " compute bind group layout bindings");
+  const boundGroup = fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === bgl);
+  assert.ok(boundGroup, "expected a bind group built against the " + materialName + " compute bind group layout");
+  const boundBindings = Array.from(boundGroup.desc.entries, (e) => e.binding).sort((a, b) => a - b);
+  assert.deepEqual(boundBindings, bindings, materialName + " bind group entries must match its layout's declared bindings exactly");
+  return pipeline;
+}
+
+test("Scene3D WebGPU water compute kernels route through the generic Selena feedback-compute path with matching bindings", async () => {
+  // {fresh:true, fakeDeviceOptions:{validateBindings:true}} -- this test
+  // exercises the NEW getSelenaComputePipeline/createSelenaComputeBindGroup/
+  // dispatchWaterComputeStage bootstrap-src edits directly, with the fake
+  // device's structural binding-mismatch gate extended to createComputePipeline
+  // (validateComputePipelineDesc above) turned on: any @group/@binding drift
+  // between a kernel's WGSL and the bind-group-layout/bind-group the renderer
+  // builds for it throws immediately.
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  assert.ok(api && typeof api.createSceneState === "function", "scene3d chunk must publish createSceneState");
+
+  const waterEntry = {
+    id: "water-main",
+    resolution: 4,
+    poolShape: "Box",
+    poolWidth: 1,
+    poolLength: 1,
+    poolHeight: 1,
+    cornerRadius: 0,
+    tileTexture: "",
+    causticsResolution: 4,
+    objectShadowResolution: 4,
+    lightDirectionX: 2,
+    lightDirectionY: 2,
+    lightDirectionZ: -1,
+    materialBackend: "selena",
+    // Configuration that exercises every one of the 5 kernels on the FIRST
+    // rendered frame: seedDrops>0 fires the once-only seed dispatch
+    // (system.seeded starts false); dropEventID>0 fires the interactive drop
+    // dispatch (system.lastDropEventID starts 0); an active sphere object
+    // fires the continuous displacement dispatch (system.waterObjectActive);
+    // simulation (x2) and normal always dispatch every unpaused frame.
+    seedDrops: 4,
+    dropEventID: 1,
+    activeObject: "Sphere",
+    objectKind: "sphere",
+    objectX: -0.4,
+    objectY: -0.75,
+    objectZ: 0.2,
+    objectRadius: 0.25,
+    objectDisplacementScale: 1,
+    // The real, Selena-compiled compute WGSL + descriptors under test.
+    // Everything else on this entry is the OLD hand-written-WGSL/hardcoded
+    // compute contract (left completely alone -- this test only exercises
+    // the additive seed/drop/displacement/simulation/normal Selena slots).
+    seedSelenaWGSL: waterSeedSelenaFixture.wgsl,
+    dropSelenaWGSL: waterDropSelenaFixture.wgsl,
+    displacementSelenaWGSL: waterDisplacementSelenaFixture.wgsl,
+    simulationSelenaWGSL: waterSimulationSelenaFixture.wgsl,
+    normalSelenaWGSL: waterNormalSelenaFixture.wgsl,
+    shaderDescriptors: {
+      seed: waterSeedSelenaFixture.layout,
+      drop: waterDropSelenaFixture.layout,
+      displacement: waterDisplacementSelenaFixture.layout,
+      simulation: waterSimulationSelenaFixture.layout,
+      normal: waterNormalSelenaFixture.layout,
+    },
+  };
+
+  // Drive the entry through the SAME normalization the production runtime
+  // uses (createSceneState -> sceneWaterSystems -> normalizeSceneWaterSystemEntry
+  // in 10-runtime-scene-core.js), proving the 5 new *SelenaWGSL slots survive
+  // that layer, not just a hand-built bundle.
+  const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
+  assert.equal(sceneState.waterSystems.length, 1);
+  const normalized = sceneState.waterSystems[0];
+  assert.equal(normalized.seedSelenaWGSL, waterSeedSelenaFixture.wgsl, "seedSelenaWGSL must survive normalizeSceneWaterSystemEntry");
+  assert.equal(normalized.dropSelenaWGSL, waterDropSelenaFixture.wgsl, "dropSelenaWGSL must survive normalizeSceneWaterSystemEntry");
+  assert.equal(normalized.displacementSelenaWGSL, waterDisplacementSelenaFixture.wgsl, "displacementSelenaWGSL must survive normalizeSceneWaterSystemEntry");
+  assert.equal(normalized.simulationSelenaWGSL, waterSimulationSelenaFixture.wgsl, "simulationSelenaWGSL must survive normalizeSceneWaterSystemEntry");
+  assert.equal(normalized.normalSelenaWGSL, waterNormalSelenaFixture.wgsl, "normalSelenaWGSL must survive normalizeSceneWaterSystemEntry");
+  assert.ok(
+    normalized.shaderDescriptors && normalized.shaderDescriptors.seed && normalized.shaderDescriptors.normal,
+    "shaderDescriptors for the compute kernels must survive normalizeSceneWaterSystemEntry",
+  );
+
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  assert.doesNotThrow(() => {
+    harness.renderer.render(sceneState, { width: 64, height: 64 });
+  }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch between a compute kernel's WGSL and the renderer's bind group layout/bind group");
+
+  const mount = harness.mount;
+  // The Selena compute path fired: every kernel found its WGSL+descriptor,
+  // dispatched through getSelenaComputePipeline/createSelenaComputeBindGroup,
+  // and none fell back to the hardcoded/authored pipeline.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-compute-systems"), "1", "the system must be counted once for having Selena compute kernels configured");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-compute-fallbacks"), "0", "no kernel should have fallen back to the hardcoded/authored compute pipeline");
+  const selenaComputeDispatches = Number(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-compute-dispatches"));
+  // seed(1) + drop(1) + displacement(1) + simulation(2) + normal(1) = 6.
+  assert.equal(selenaComputeDispatches, 6, "expected exactly 6 Selena compute dispatches this frame (seed+drop+displacement+2xsimulation+normal)");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-compute-dispatches"), "6", "waterComputeDispatches must equal the Selena count -- nothing fell back");
+
+  // Structural corroboration per kernel: the compiled pipeline's bind group
+  // layout carries EXACTLY the descriptor's bindings (grid=0, inState=1,
+  // outState=2, UserUniforms=3 when the kernel has any param/context field;
+  // normal has none, so its layout stops at binding 2), and a real bind group
+  // was built against that exact layout.
+  assertWaterComputeKernelBindings(harness.fake, "WaterSimSeed", [0, 1, 2, 3]);
+  assertWaterComputeKernelBindings(harness.fake, "WaterSimDrop", [0, 1, 2, 3]);
+  assertWaterComputeKernelBindings(harness.fake, "WaterSimDisplace", [0, 1, 2, 3]);
+  assertWaterComputeKernelBindings(harness.fake, "WaterSimStep", [0, 1, 2, 3]);
+  assertWaterComputeKernelBindings(harness.fake, "WaterSimNormal", [0, 1, 2]);
+});
 
 test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rect quads (zero-copy seam)", async () => {
   const harness = await createBoardWebGPUHarness();
@@ -21227,8 +22079,12 @@ test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", 
   assert.equal(webglCaps["gpu-cull"], false, "WebGL2 capabilities JSON must declare gpu-cull: false (explicit, not absent)");
   assert.ok("gpu-cull" in webglCaps, "gpu-cull must be an explicit key in WebGL2 capabilities JSON (not absent)");
   assert.equal(webgpuCaps["water-object-texture-pass"], true, "WebGPU capabilities JSON must declare water-object-texture-pass: true");
-  assert.equal(webglCaps["water-object-texture-pass"], false, "WebGL2 capabilities JSON must declare water-object-texture-pass: false");
+  // A3: WebGL2 now implements the water passes via the runtime water renderer,
+  // so the manifest declares them true (WebGPU stays primary, WebGL2 fallback).
+  assert.equal(webglCaps["water-object-texture-pass"], true, "WebGL2 capabilities JSON must declare water-object-texture-pass: true (runtime water renderer)");
   assert.ok("water-object-texture-pass" in webglCaps, "water-object-texture-pass must be explicit in WebGL2 capabilities JSON");
+  assert.equal(webglCaps["water-simulation"], true, "WebGL2 capabilities JSON must declare water-simulation: true");
+  assert.equal(webglCaps["water-object-mesh-shadow-pass"], true, "WebGL2 capabilities JSON must declare water-object-mesh-shadow-pass: true");
 });
 
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {

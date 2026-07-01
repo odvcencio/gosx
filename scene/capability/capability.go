@@ -39,9 +39,12 @@ var Matrix = map[Feature]map[Backend]bool{
 	FeatureLineDashed:                {BackendWebGPU: false, BackendWebGL: true},
 	FeatureComputeParts:              {BackendWebGPU: true, BackendWebGL: false},
 	FeatureGPUCull:                   {BackendWebGPU: true, BackendWebGL: false},
-	FeatureWaterSim:                  {BackendWebGPU: true, BackendWebGL: false},
-	FeatureWaterObjectTexturePass:    {BackendWebGPU: true, BackendWebGL: false},
-	FeatureWaterObjectMeshShadowPass: {BackendWebGPU: true, BackendWebGL: false},
+	// Water features are implemented on WebGL2 by the runtime water renderer
+	// (createSceneWaterRendererWebGL/createSceneWaterSimWebGL); WebGPU stays the
+	// preferred/primary backend, WebGL2 is the honest fallback.
+	FeatureWaterSim:                  {BackendWebGPU: true, BackendWebGL: true},
+	FeatureWaterObjectTexturePass:    {BackendWebGPU: true, BackendWebGL: true},
+	FeatureWaterObjectMeshShadowPass: {BackendWebGPU: true, BackendWebGL: true},
 }
 
 func supports(b Backend, f Feature) bool {

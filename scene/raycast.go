@@ -174,6 +174,11 @@ func raycastGeometry(geometry Geometry, ray Ray) (RayHit, string, bool) {
 		radius := positiveOr(g.Radius, 1) + positiveOr(g.Tube, 0.25)
 		hit, ok := intersectSphere(ray, radius)
 		return hit, "torus", ok
+	case TorusKnotGeometry:
+		// Bounding sphere: envelope ≈ 1.5*radius + tube (from (2+1)/2 * radius + tube).
+		radius := positiveOr(g.Radius, 0.17)*1.5 + positiveOr(g.Tube, 0.045)
+		hit, ok := intersectSphere(ray, radius)
+		return hit, "torusknot", ok
 	case LinesGeometry:
 		min, max := lineBounds(g)
 		hit, ok := intersectAABB(ray, min, max)

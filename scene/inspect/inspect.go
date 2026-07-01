@@ -389,6 +389,9 @@ func primitiveVertexCount(kind string, segments, radialSegments, tubularSegments
 		return positiveOrDefault(segments, 32) * 6
 	case "torus", "torusgeometry":
 		return positiveOrDefault(radialSegments, 32) * positiveOrDefault(tubularSegments, 16) * 6
+	case "torusknot", "torusknotgeometry":
+		// tubularSegments = path steps (default 128), radialSegments = cross-section (default 16)
+		return positiveOrDefault(tubularSegments, 128) * positiveOrDefault(radialSegments, 16) * 6
 	default:
 		return 36
 	}

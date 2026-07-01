@@ -623,6 +623,59 @@
     });
   }
 
+  // sceneWebGPUProbeCanvasContext validates getContext("webgpu") + configure on
+  // a 1x1 THROWAWAY canvas using the probed device. requestAdapter and
+  // requestDevice can BOTH succeed on browser/driver combos that still fail to
+  // create or configure a WebGPU canvas context ("Failed to create WebGPU
+  // Context Provider" — seen on some Windows Edge/Firefox setups). The
+  // adapter/device probe does not cover that step, so without this check the
+  // real renderer calls getContext("webgpu") on the MOUNT canvas, taints it,
+  // and fails — after which the WebGL2 fallback can no longer acquire a context
+  // on that canvas (getContext("webgl2") returns null) and the scene reports
+  // "could not acquire a renderer". Validating on a throwaway canvas keeps the
+  // mount canvas clean so the fallback path works. Returns true only when the
+  // browser can actually create AND configure a WebGPU canvas context.
+  function sceneWebGPUProbeCanvasContext(device) {
+    if (typeof document === "undefined" || typeof document.createElement !== "function") {
+      return true; // non-DOM env: no mount canvas to taint; let the renderer decide
+    }
+    if (!device || typeof navigator === "undefined" || !navigator.gpu
+        || typeof navigator.gpu.getPreferredCanvasFormat !== "function") {
+      _webgpuProbeError = "navigator.gpu canvas API unavailable";
+      return false;
+    }
+    var probeCanvas = document.createElement("canvas");
+    probeCanvas.width = 1;
+    probeCanvas.height = 1;
+    var ctx = null;
+    try {
+      ctx = probeCanvas.getContext("webgpu");
+    } catch (e) {
+      _webgpuProbeError = "getContext(webgpu) threw: " + String(e && (e.message || e) || "unknown");
+      console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+      return false;
+    }
+    if (!ctx) {
+      _webgpuProbeError = "getContext(webgpu) returned null (context provider unavailable)";
+      console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+      return false;
+    }
+    try {
+      ctx.configure({
+        device: device,
+        format: navigator.gpu.getPreferredCanvasFormat(),
+        alphaMode: "premultiplied",
+      });
+    } catch (e) {
+      _webgpuProbeError = "canvas configure failed: " + String(e && (e.message || e) || "unknown");
+      console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+      try { if (typeof ctx.unconfigure === "function") ctx.unconfigure(); } catch (_e) {}
+      return false;
+    }
+    try { if (typeof ctx.unconfigure === "function") ctx.unconfigure(); } catch (_e) {}
+    return true;
+  }
+
   function sceneWebGPUStartProbe() {
     var now = sceneWebGPUProbeNow();
     if (_webgpuLostProbeBackoffUntil > now) {
@@ -677,6 +730,19 @@
       if (!device) {
         _webgpuProbeError = "requestDevice returned null";
         console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+        _webgpuDeviceProbe = false;
+        return false;
+      }
+      // Full-lifecycle gate: confirm the browser can actually create AND
+      // configure a WebGPU canvas context (on a throwaway canvas) before we
+      // declare WebGPU available. This is the step that fails on some
+      // Windows Edge/Firefox GPU+driver combos despite a working
+      // adapter+device; catching it here keeps the mount canvas clean so the
+      // WebGL2 fallback can acquire a context instead of dying with
+      // "could not acquire a renderer".
+      if (!sceneWebGPUProbeCanvasContext(device)) {
+        if (!_webgpuProbeError) { _webgpuProbeError = "canvas webgpu context unavailable"; }
+        _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;
         return false;
       }

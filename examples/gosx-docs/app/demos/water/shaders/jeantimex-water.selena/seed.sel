@@ -1,0 +1,40 @@
+// water-sim-seed: seeded-drop pass ported from seed.elio.
+// State vec4 = (height, velocity, normalX, normalZ).  Accumulates up to 64
+// pre-computed drops into the height channel.  Each element of `drops` carries
+// (centerU, centerV, radius, strength); the host encodes the alternating sign
+// (even drops: negative, odd drops: positive) in the strength component, which
+// reproduces the select(1.0,-1.0,(j&1u)==0u) polarity from seedDrops without
+// requiring a bitwise-AND operator.
+//
+// Selena gap noted: integer bitwise AND (&) is not a supported operator; the
+// original per-drop polarity is expressed as a signed strength in the array.
+material WaterSimSeed kind feedback {
+    param dropRadius : float = 0.05
+
+    // NOTE: declare scalar context fields BEFORE array fields. Selena's emitters
+    // render all scalars first then arrays, but the layout descriptor packs in
+    // declaration order — so a scalar declared after an array desyncs the
+    // descriptor offsets from the emitted WGSL struct (the WebGPU host packs by
+    // descriptor offset). Keeping scalars-first makes all three orderings agree.
+    context {
+        dropCount : float
+        drops     : array<vec4, 64>
+    }
+    state water
+
+    feedback(cell) -> vec4 {
+        let here  = state(0, 0)
+        let uv    = cell.uv
+        var h     = here.x
+        let count = int(dropCount)
+        for (var j = 0i; j < count; j = j + 1i) {
+            let drop   = drops[j]
+            let center = drop.xy
+            let r      = max(dropRadius, 0.0001)
+            let dist   = max(0.0, 1.0 - length(center - uv) / r)
+            let bump   = 0.5 - cos(dist * 3.141592653589793) * 0.5
+            h = h + bump * drop.w
+        }
+        return vec4f(h, here.y, here.z, here.w)
+    }
+}

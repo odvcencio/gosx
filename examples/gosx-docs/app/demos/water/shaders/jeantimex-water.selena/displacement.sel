@@ -1,0 +1,85 @@
+// water-sim-displace: object-displacement pass ported from displacement.elio.
+// State vec4 = (height, velocity, normalX, normalZ).  Displaces the height
+// channel by the signed volume change when an object moves through the water
+// surface, matching the displaceObject entry point.
+//
+// The three object kinds are:
+//   kind ~1.0 (kind < 1.5): sphere (uses objectRadius)
+//   kind ~2.0 (kind < 2.5): cube  (uses objectHalfSize)
+//   kind ~3.0 (otherwise) : compound — up to 32 sub-spheres from `spheres`,
+//                           each vec4 = (offsetX, offsetY, offsetZ, radius)
+//
+// volumeInSphere / volumeInCube reproduce the analytic volume-displacement
+// functions from displacement.elio as pure selena fn (let-chain bodies).
+//
+// Note: selena B2a does not allow `return` inside an if/for body; the early-
+// exit guards (kind < 0.5, displacementScale <= 0) are expressed with a
+// `doWork` boolean that gates the rest of the computation.
+
+fn volumeInSphere(uv: vec2, center: vec3, r: float, scale: float) -> float {
+    let safeR    = max(r, 0.0001)
+    let toCenter = vec3f(uv.x * 2.0 - 1.0, 0.0, uv.y * 2.0 - 1.0) - center
+    let t        = length(toCenter) / safeR
+    let dy       = exp(-pow(t * 1.5, 6.0))
+    let ymin     = min(0.0, center.y - dy)
+    let ymax     = min(max(0.0, center.y + dy), ymin + 2.0 * dy)
+    return (ymax - ymin) * 0.1 * scale
+}
+
+fn volumeInCube(uv: vec2, center: vec3, half: vec3, scale: float) -> float {
+    let eps      = vec3f(0.0001, 0.0001, 0.0001)
+    let zero3    = vec3f(0.0, 0.0, 0.0)
+    let safeHalf = max(half, eps)
+    let point    = vec3f(uv.x * 2.0 - 1.0, 0.0, uv.y * 2.0 - 1.0)
+    let d        = abs(point - center) - safeHalf
+    let sd       = length(max(d, zero3)) + min(max(d.x, max(d.y, d.z)), 0.0)
+    let s        = max(max(safeHalf.x, safeHalf.y), safeHalf.z)
+    let t        = max(sd, 0.0) / s
+    let dy       = exp(-pow(t * 1.5, 6.0))
+    let ymin     = min(0.0, center.y - dy)
+    let ymax     = min(max(0.0, center.y + dy), ymin + 2.0 * dy)
+    return (ymax - ymin) * 0.1 * scale
+}
+
+material WaterSimDisplace kind feedback {
+    context {
+        objectKind        : float
+        displacementScale : float
+        objectCenter      : vec3
+        objectPrevCenter  : vec3
+        objectRadius      : float
+        objectHalfSize    : vec3
+        sphereCount       : float
+        spheres           : array<vec4, 32>
+    }
+    state water
+
+    feedback(cell) -> vec4 {
+        let here = state(0, 0)
+        let uv   = cell.uv
+        var h    = here.x
+        if (objectKind >= 0.5) {
+            if (displacementScale > 0.0) {
+                if (objectKind < 1.5) {
+                    h = h + volumeInSphere(uv, objectPrevCenter, objectRadius, displacementScale)
+                    h = h - volumeInSphere(uv, objectCenter, objectRadius, displacementScale)
+                } else {
+                    if (objectKind < 2.5) {
+                        h = h + volumeInCube(uv, objectPrevCenter, objectHalfSize, displacementScale)
+                        h = h - volumeInCube(uv, objectCenter, objectHalfSize, displacementScale)
+                    } else {
+                        let count = int(sphereCount)
+                        for (var si = 0i; si < count; si = si + 1i) {
+                            let sp     = spheres[si]
+                            let offset = sp.xyz
+                            let srad   = max(sp.w, 0.0001)
+                            h = h + volumeInSphere(uv, objectPrevCenter + offset, srad, displacementScale)
+                            h = h - volumeInSphere(uv, objectCenter + offset, srad, displacementScale)
+                        }
+                    }
+                }
+            }
+        }
+        return vec4f(h, here.y, here.z, here.w)
+    }
+}

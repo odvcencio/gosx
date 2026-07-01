@@ -1,0 +1,17 @@
+// water-sim-step: full simulation step ported from simulation.elio.
+// State vec4 = (height, velocity, normalX, normalZ).  The kernel reads the
+// 4-neighbour stencil, integrates velocity with waveSpeed and applies damping,
+// then integrates height, exactly matching the stepSimulation entry point.
+material WaterSimStep kind feedback {
+    param waveSpeed : float = 2.0
+    param damping   : float = 0.99
+    state water
+
+    feedback(cell) -> vec4 {
+        let here = state(0, 0)
+        let avg  = (state(1, 0) + state(-1, 0) + state(0, 1) + state(0, -1)) * 0.25
+        let vel  = (here.y + (avg.x - here.x) * 2.0 * waveSpeed) * damping
+        let h    = here.x + vel
+        return vec4f(h, vel, here.z, here.w)
+    }
+}

@@ -1,0 +1,203 @@
+{
+  "_comment": "Generated fixture: real Selena-compiled caustics.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive this water pass through the generic descriptor-driven Selena WebGPU render path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/caustics.sel (TargetWGSL) if caustics.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/caustics.sel",
+  "layout": {
+    "schemaVersion": "selena.descriptor.v1",
+    "languageVersion": "selena.lang.v1",
+    "material": "WaterCaustics",
+    "kind": "mesh",
+    "entryPoints": {
+      "vertex": "vertexMain",
+      "fragment": "fragmentMain"
+    },
+    "uniformBlock": {
+      "size": 720,
+      "fields": [
+        {
+          "name": "mvp",
+          "type": "mat4",
+          "offset": 0,
+          "size": 64
+        },
+        {
+          "name": "normalMatrix",
+          "type": "mat3",
+          "offset": 64,
+          "size": 48
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "offset": 112,
+          "size": 4
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "offset": 116,
+          "size": 4
+        },
+        {
+          "name": "poolHeight",
+          "type": "float",
+          "offset": 120,
+          "size": 4
+        },
+        {
+          "name": "normalScale",
+          "type": "float",
+          "offset": 124,
+          "size": 4
+        },
+        {
+          "name": "opticsEnable",
+          "type": "float",
+          "offset": 128,
+          "size": 4
+        },
+        {
+          "name": "resolution",
+          "type": "float",
+          "offset": 132,
+          "size": 4,
+          "class": "context"
+        },
+        {
+          "name": "time",
+          "type": "float",
+          "offset": 136,
+          "size": 4,
+          "class": "context"
+        },
+        {
+          "name": "objectKind",
+          "type": "float",
+          "offset": 140,
+          "size": 4,
+          "class": "context"
+        },
+        {
+          "name": "objectCount",
+          "type": "float",
+          "offset": 144,
+          "size": 4,
+          "class": "context"
+        },
+        {
+          "name": "lightDir",
+          "type": "vec3",
+          "offset": 160,
+          "size": 12,
+          "class": "context"
+        },
+        {
+          "name": "objectCenter",
+          "type": "vec3",
+          "offset": 176,
+          "size": 12,
+          "class": "context"
+        },
+        {
+          "name": "objectHalfRadius",
+          "type": "vec4",
+          "offset": 192,
+          "size": 16,
+          "class": "context"
+        },
+        {
+          "name": "spheres",
+          "type": "vec4",
+          "offset": 208,
+          "size": 512,
+          "count": 32,
+          "stride": 16,
+          "class": "context"
+        }
+      ],
+      "defaults": [
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "poolHeight",
+          "type": "float",
+          "values": [
+            0.3
+          ]
+        },
+        {
+          "name": "normalScale",
+          "type": "float",
+          "values": [
+            1
+          ]
+        },
+        {
+          "name": "opticsEnable",
+          "type": "float",
+          "values": [
+            1
+          ]
+        }
+      ]
+    },
+    "attributes": [],
+    "textures": [],
+    "wgsl": {
+      "group": 0,
+      "binding": 0
+    },
+    "metal": {
+      "buffer": 0
+    },
+    "states": [
+      {
+        "name": "height",
+        "wgsl": {
+          "group": 0,
+          "inBinding": 2,
+          "outBinding": -1
+        },
+        "gl": {
+          "uniform": "stateTex",
+          "unit": 0
+        },
+        "metal": {
+          "inBuffer": 2,
+          "outBuffer": -1
+        }
+      }
+    ],
+    "grid": {
+      "wgsl": {
+        "group": 0,
+        "binding": 1
+      },
+      "metal": {
+        "buffer": 1
+      },
+      "glTexelUniform": ""
+    },
+    "context": [
+      "resolution",
+      "time",
+      "objectKind",
+      "objectCount",
+      "lightDir",
+      "objectCenter",
+      "objectHalfRadius",
+      "spheres"
+    ]
+  },
+  "wgsl": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  poolWidth : f32,\n  poolLength : f32,\n  poolHeight : f32,\n  normalScale : f32,\n  opticsEnable : f32,\n  resolution : f32,\n  time : f32,\n  objectKind : f32,\n  objectCount : f32,\n  lightDir : vec3<f32>,\n  objectCenter : vec3<f32>,\n  objectHalfRadius : vec4<f32>,\n  spheres : array<vec4<f32>, 32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct StateGrid {\n  gridWidth  : u32,\n  gridHeight : u32,\n};\n@group(0) @binding(1) var<uniform> _stateGrid : StateGrid;\n@group(0) @binding(2) var<storage, read> _inState : array<vec4<f32>>;\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {\n  var out : VertexOutput;\n  let fi = f32(vertexIndex);\n  let ox = select(0.0, 1.0, (((fi == 1.0) || (fi == 2.0)) || (fi == 4.0)));\n  let oy = select(0.0, 1.0, (((fi == 2.0) || (fi == 4.0)) || (fi == 5.0)));\n  out.vUv = vec2<f32>(ox, oy);\n  out.position = vec4<f32>(((ox * 2.0) - 1.0), ((oy * 2.0) - 1.0), 0.0, 1.0);\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let uv = clamp(in.vUv, vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0));\n  let texel = (1.0 / max(u.resolution, 1.0));\n  let c = _inState[min(u32((uv).x * f32(_stateGrid.gridWidth)) + u32((uv).y * f32(_stateGrid.gridHeight)) * _stateGrid.gridWidth, _stateGrid.gridWidth * _stateGrid.gridHeight - 1u)];\n  let e = _inState[min(u32(((uv + vec2<f32>(texel, 0.0))).x * f32(_stateGrid.gridWidth)) + u32(((uv + vec2<f32>(texel, 0.0))).y * f32(_stateGrid.gridHeight)) * _stateGrid.gridWidth, _stateGrid.gridWidth * _stateGrid.gridHeight - 1u)];\n  let wv = _inState[min(u32(((uv - vec2<f32>(texel, 0.0))).x * f32(_stateGrid.gridWidth)) + u32(((uv - vec2<f32>(texel, 0.0))).y * f32(_stateGrid.gridHeight)) * _stateGrid.gridWidth, _stateGrid.gridWidth * _stateGrid.gridHeight - 1u)];\n  let nn = _inState[min(u32(((uv + vec2<f32>(0.0, texel))).x * f32(_stateGrid.gridWidth)) + u32(((uv + vec2<f32>(0.0, texel))).y * f32(_stateGrid.gridHeight)) * _stateGrid.gridWidth, _stateGrid.gridWidth * _stateGrid.gridHeight - 1u)];\n  let ss = _inState[min(u32(((uv - vec2<f32>(0.0, texel))).x * f32(_stateGrid.gridWidth)) + u32(((uv - vec2<f32>(0.0, texel))).y * f32(_stateGrid.gridHeight)) * _stateGrid.gridWidth, _stateGrid.gridWidth * _stateGrid.gridHeight - 1u)];\n  let ldir = normalize(u.lightDir);\n  let waterNormal = normalize(vec3<f32>((c.z * u.normalScale), 1.0, (c.w * u.normalScale)));\n  let causticNormal = normalize(vec3<f32>(((c.z * u.normalScale) * 0.5), 1.0, ((c.w * u.normalScale) * 0.5)));\n  let refracted = refract((-ldir), waterNormal, (1.0 / 1.333));\n  let causticRay = refract((-ldir), causticNormal, (1.0 / 1.333));\n  let flatRay = refract((-ldir), vec3<f32>(0.0, 1.0, 0.0), (1.0 / 1.333));\n  let origin = vec3<f32>((((uv.x - 0.5) * u.poolWidth) * 2.0), 0.0, (((uv.y - 0.5) * u.poolLength) * 2.0));\n  let originH = vec3<f32>(origin.x, (c.x * u.poolHeight), origin.z);\n  let oldPos = (origin + (flatRay * (((-u.poolHeight) - origin.y) / select(select((-0.0001), 0.0001, (flatRay.y >= 0.0)), flatRay.y, (abs(flatRay.y) > 0.0001)))));\n  let newPos = (originH + (causticRay * (((-u.poolHeight) - originH.y) / select(select((-0.0001), 0.0001, (causticRay.y >= 0.0)), causticRay.y, (abs(causticRay.y) > 0.0001)))));\n  let oldArea = max((length(dpdx(oldPos)) * length(dpdy(oldPos))), 0.000001);\n  let newArea = max((length(dpdx(newPos)) * length(dpdy(newPos))), 0.000001);\n  let convergence = abs(((((e.x + wv.x) + nn.x) + ss.x) - (c.x * 4.0)));\n  let slopeRay = normalize(vec3<f32>((-refracted.x), max(refracted.y, 0.05), (-refracted.z)));\n  let slopeFocus = max(0.0, dot(slopeRay, waterNormal));\n  let shimmer = (0.5 + (0.5 * sin(((((uv.x * 41.0) + (uv.y * 37.0)) + (u.time * 2.4)) + (c.x * 180.0)))));\n  let areaFocus = clamp(((oldArea / newArea) * 0.2), 0.0, 4.0);\n  let slopeMag = length(c.zw);\n  var intensity : f32 = (areaFocus * (0.68 + (0.32 * smoothstep(0.001, 0.028, ((convergence * 0.72) + (slopeMag * 0.035))))));\n  intensity = ((intensity * (0.52 + (0.48 * shimmer))) * (0.58 + (0.42 * slopeFocus)));\n  let centerUV = vec2<f32>(((u.objectCenter.x * 0.5) + 0.5), ((u.objectCenter.z * 0.5) + 0.5));\n  let aspect = vec2<f32>(max((u.poolWidth / max(u.poolLength, 0.001)), 0.001), 1.0);\n  var compMask : f32 = 0.0;\n  for (var i : i32 = 0i; (i < 32i); i = (i + 1i)) {\n    if (((u.objectKind >= 2.5) && (f32(i) < u.objectCount))) {\n      let sp = u.spheres[i];\n      let suv = (centerUV + vec2<f32>((sp.x * 0.5), (sp.z * 0.5)));\n      let rad = max((sp.w * 0.72), 0.012);\n      let dd = length(((uv - suv) * aspect));\n      compMask = max(compMask, (1.0 - smoothstep(rad, (rad + max((rad * 1.25), 0.018)), dd)));\n    }\n  }\n  let singleR0 = max((u.objectHalfRadius.w * 0.55), 0.018);\n  let singleRC = max((max(u.objectHalfRadius.x, u.objectHalfRadius.z) * 0.6), singleR0);\n  let singleR = select(singleR0, singleRC, (u.objectKind > 1.5));\n  let singleD = length(((uv - centerUV) * aspect));\n  let singleMask = (1.0 - smoothstep(singleR, (singleR + max((singleR * 1.2), 0.02)), singleD));\n  let maskRaw = select(singleMask, compMask, (u.objectKind >= 2.5));\n  let maskOn = ((u.objectKind >= 0.5) && (u.opticsEnable > 0.0));\n  let shadowMask = select(0.0, maskRaw, maskOn);\n  let sphereShadow = select(0.0, (1.0 - mix(1.0, clamp((1.0 / (1.0 + exp((-(1.0 + ((dot(cross(((u.objectCenter - newPos) / max(u.objectHalfRadius.w, 0.0001)), flatRay), cross(((u.objectCenter - newPos) / max(u.objectHalfRadius.w, 0.0001)), flatRay)) - 1.0) / max((0.05 + (dot(((u.objectCenter - newPos) / max(u.objectHalfRadius.w, 0.0001)), (-flatRay)) * 0.025)), 0.0001))))))), 0.0, 1.0), clamp((dot(((u.objectCenter - newPos) / max(u.objectHalfRadius.w, 0.0001)), (-flatRay)) * 2.0), 0.0, 1.0))), (((u.objectKind >= 0.5) && (u.objectKind < 1.5)) && (u.opticsEnable > 0.0)));\n  let shadowRay = (-flatRay);\n  let sright = normalize(cross(shadowRay, vec3<f32>(0.0, 1.0, 0.0)));\n  let sup = normalize(cross(sright, shadowRay));\n  let cubeActive = (((u.objectKind >= 1.5) && (u.objectKind < 2.5)) && (u.opticsEnable > 0.0));\n  let cubeHalf = u.objectHalfRadius.xyz;\n  var cubeOcc : f32 = 0.0;\n  for (var cx : i32 = 0i; (cx < 3i); cx = (cx + 1i)) {\n    for (var cy : i32 = 0i; (cy < 3i); cy = (cy + 1i)) {\n      let fx = (f32(cx) - 1.0);\n      let fy = (f32(cy) - 1.0);\n      let so = ((newPos + ((sright * fx) * 0.025)) + ((sup * fy) * 0.025));\n      cubeOcc = (cubeOcc + (step(0.0, vec2<f32>(max(max(min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).x, min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).y), min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).z), min(min(max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).x, max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).y), max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).z)).y) * step(vec2<f32>(max(max(min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).x, min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).y), min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).z), min(min(max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).x, max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).y), max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).z)).x, vec2<f32>(max(max(min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).x, min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).y), min((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).z), min(min(max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).x, max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).y), max((((u.objectCenter - max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001))))), (((u.objectCenter + max(cubeHalf, vec3<f32>(0.0001, 0.0001, 0.0001))) - so) * vec3<f32>((1.0 / select(0.000001, shadowRay.x, (abs(shadowRay.x) > 0.000001))), (1.0 / select(0.000001, shadowRay.y, (abs(shadowRay.y) > 0.000001))), (1.0 / select(0.000001, shadowRay.z, (abs(shadowRay.z) > 0.000001)))))).z)).y)));\n    }\n  }\n  let cubeShadow = select(0.0, (cubeOcc / 9.0), cubeActive);\n  let shadow = max(max(shadowMask, sphereShadow), cubeShadow);\n  let lit = (intensity * (1.0 - (shadow * 0.82)));\n  let warm = vec3<f32>(1.0, 0.78, 0.42);\n  let cool = vec3<f32>(0.44, 0.95, 1.0);\n  return vec4<f32>((mix(cool, warm, clamp((lit * 1.8), 0.0, 1.0)) * lit), 1.0);\n}\n"
+}

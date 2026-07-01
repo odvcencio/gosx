@@ -1097,6 +1097,16 @@
   }
 
   function createSceneWebGLResult(canvas, props, capability, fallbackReason) {
+    // Water scenes that land on WebGL (e.g. after a WebGPU device loss /
+    // watchdog fallback, or any inline webgl selection) must render via the
+    // WebGL2 water runtime, not the generic PBR path which cannot draw the
+    // simulation.
+    if (sceneFirstWaterEntry(props) && typeof createSceneWaterRendererWebGL === "function") {
+      var waterResult = createSceneWaterWebGLResult(canvas, props, fallbackReason);
+      if (waterResult) {
+        return waterResult;
+      }
+    }
     if (typeof createScenePBRRendererOrFallback === "function") {
       const useCanvasAlpha = sceneCanvasAlpha(props);
       const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
@@ -1117,7 +1127,78 @@
     return webglRenderer ? { renderer: webglRenderer, fallbackReason: fallbackReason, degraded: [] } : null;
   }
 
+  function sceneFirstWaterEntry(props) {
+    var scene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : null;
+    if (!systems || !systems.length) return null;
+    return systems[0] || null;
+  }
+
+  // createSceneWaterWebGLResult builds the WebGL2 water runtime for a water
+  // scene. It is the single construction point shared by (a) the real A3
+  // capability-gate fallback (WebGPU unavailable / lost) and (b) the
+  // device-loss recovery path.
+  function createSceneWaterWebGLResult(canvas, props, fallbackReason) {
+    if (typeof createSceneWaterRendererWebGL !== "function") return null;
+    var entry = sceneFirstWaterEntry(props);
+    if (!entry) return null;
+    var gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+      alpha: false, premultipliedAlpha: false, antialias: true, depth: true,
+      powerPreference: "high-performance",
+    }) : null;
+    if (!gl) return null;
+    var renderer = null;
+    try {
+      renderer = createSceneWaterRendererWebGL(gl, canvas, entry);
+    } catch (e) {
+      try { console.warn("[gosx] WebGL water renderer failed:", e); } catch (_e) {}
+      return null;
+    }
+    if (!renderer) return null;
+    try {
+      if (typeof window !== "undefined") {
+        window.__gosx_scene3d_webgl_water = true;
+      }
+    } catch (_e) {}
+    return { renderer: renderer, fallbackReason: fallbackReason || "", degraded: [] };
+  }
+
+  // sceneWaterWebGLAutoResult is the real A3 capability-gate selection: for a
+  // water scene whose active backend resolves to WebGL (because WebGPU is
+  // unavailable, failed the probe, or its device was lost), render the water on
+  // the WebGL2 water runtime instead of the generic PBR path (which cannot draw
+  // the simulation). Returns null when WebGPU will render the scene — WebGPU
+  // stays primary — or when this is not a water scene.
+  function sceneWaterWebGLAutoResult(canvas, props, capability) {
+    if (typeof createSceneWaterRendererWebGL !== "function") return null;
+    if (!sceneFirstWaterEntry(props)) return null;
+    var webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    var backendCaps = sceneBackendCapsOf(props);
+    var verdict = chooseSceneBackend(backendCaps, {
+      requireWebGL: sceneRequiresWebGL(props),
+      forceWebGL: sceneForcesWebGL(props),
+      preferCanvas: sceneBool(props && props.preferCanvas, false),
+      preferWebGPU: sceneCapabilityWebGPUPreference(props, capability) === "prefer",
+    }, { webgpu: webgpuAvail, webgl: true });
+    if (!verdict) return null;
+    // WebGPU stays primary: defer to the normal path when WebGPU is the
+    // resolved + available backend.
+    if (verdict.backend === "webgpu" && webgpuAvail) return null;
+    // Only intercept when WebGL2 is the active backend for this water scene.
+    if (verdict.backend !== "webgl") return null;
+    return createSceneWaterWebGLResult(canvas, props, verdict.fallbackReason || "webgpu-unavailable");
+  }
+
   function createSceneRenderer(canvas, props, capability) {
+    // A3: real capability-gate fallback. For a water scene whose backend
+    // resolves to WebGL (WebGPU unavailable / probe-failed / device lost), use
+    // the WebGL2 water runtime up front so the registry/inline paths don't grab
+    // the generic PBR renderer. WebGPU-capable sessions skip this (returns null)
+    // and keep WebGPU primary.
+    const autoWater = sceneWaterWebGLAutoResult(canvas, props, capability);
+    if (autoWater) {
+      return autoWater;
+    }
     const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
     if (registryResult) {
       return registryResult;

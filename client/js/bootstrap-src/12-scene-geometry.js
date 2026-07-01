@@ -320,6 +320,112 @@
     return sceneFinalizePrimitiveMesh(out);
   }
 
+  // Torus-knot mesh generator — (p=2, q=3) trefoil knot.
+  //
+  // Parameter conventions (match THREE.js TorusKnotGeometry, opposite of GoSX torus):
+  //   tubularSegments — steps along the knot PATH (default 128; page.gsx uses 64)
+  //   radialSegments  — steps around the tube CROSS-SECTION (default 16; page.gsx uses 8)
+  //
+  // Local-space orientation: primary loop in XY plane, Z oscillation.
+  // The scene's rotationX={π/2} maps local→world via (x, -z, y), yielding the
+  // world-space layout the water shader's analytic SDF uses:
+  //   SDF: C = (rad·cos(2θ), −r·sin(3θ)/2, rad·sin(2θ))  [world, XZ-primary]
+  //   local: C = (rad·cos(2θ), rad·sin(2θ), r·sin(3θ)/2) [XY-primary]
+  //   After rotX(π/2): world.x=local.x ✓  world.y=−local.z ✓  world.z=local.y ✓
+  function torusKnotTriangleMesh(object) {
+    const tubularSegments = scenePrimitiveSegmentResolution(object && object.tubularSegments, 128, 8, 512);
+    const radialSegments = scenePrimitiveSegmentResolution(object && object.radialSegments, 16, 3, 64);
+    const radius = scenePositiveNumber(object && object.radius, 0.17);
+    const tube = scenePositiveNumber(object && object.tube, 0.045);
+    const p = 2, q = 3;
+    function knotCurve(theta) {
+      const rad = radius * (2.0 + Math.cos(q * theta)) * 0.5;
+      return { x: rad * Math.cos(p * theta), y: rad * Math.sin(p * theta), z: radius * Math.sin(q * theta) * 0.5 };
+    }
+    function knotTangent(theta) {
+      const h = 0.0001;
+      const a = knotCurve(theta - h), b = knotCurve(theta + h);
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      return { x: dx / len, y: dy / len, z: dz / len };
+    }
+    // Build rotation-minimizing frames (parallel transport) to orient the tube
+    // cross-sections stably without Frenet-frame flipping.
+    const C_arr = [], T_arr = [], N_arr = [], B_arr = [];
+    {
+      const t0 = knotTangent(0);
+      // Initial normal: axis least-parallel to T₀
+      const ax = Math.abs(t0.x), ay = Math.abs(t0.y), az = Math.abs(t0.z);
+      let n0;
+      if (ax <= ay && ax <= az)        { n0 = { x: 0, y: -t0.z, z: t0.y }; }
+      else if (ay <= az)               { n0 = { x: -t0.z, y: 0, z: t0.x }; }
+      else                             { n0 = { x: -t0.y, y: t0.x, z: 0 }; }
+      const nl = Math.sqrt(n0.x * n0.x + n0.y * n0.y + n0.z * n0.z) || 1;
+      n0 = { x: n0.x / nl, y: n0.y / nl, z: n0.z / nl };
+      const b0 = { x: t0.y * n0.z - t0.z * n0.y, y: t0.z * n0.x - t0.x * n0.z, z: t0.x * n0.y - t0.y * n0.x };
+      C_arr.push(knotCurve(0)); T_arr.push(t0); N_arr.push(n0); B_arr.push(b0);
+    }
+    for (let i = 1; i <= tubularSegments; i++) {
+      const theta = (Math.PI * 2 * i) / tubularSegments;
+      const t = knotTangent(theta);
+      const pn = N_arr[i - 1];
+      const dot = pn.x * t.x + pn.y * t.y + pn.z * t.z;
+      let nx = pn.x - dot * t.x, ny = pn.y - dot * t.y, nz = pn.z - dot * t.z;
+      const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+      const bx = t.y * nz - t.z * ny, by = t.z * nx - t.x * nz, bz = t.x * ny - t.y * nx;
+      C_arr.push(knotCurve(theta));
+      T_arr.push(t);
+      N_arr.push({ x: nx, y: ny, z: nz });
+      B_arr.push({ x: bx, y: by, z: bz });
+    }
+    // Seam correction: measure angular gap between frame[N] and frame[0],
+    // distribute it linearly so the tube closes without a twist seam.
+    {
+      const nEnd = N_arr[tubularSegments], n0 = N_arr[0], tEnd = T_arr[tubularSegments];
+      const dot = nEnd.x * n0.x + nEnd.y * n0.y + nEnd.z * n0.z;
+      const cx = nEnd.y * n0.z - nEnd.z * n0.y;
+      const cy = nEnd.z * n0.x - nEnd.x * n0.z;
+      const cz = nEnd.x * n0.y - nEnd.y * n0.x;
+      const sinA = cx * tEnd.x + cy * tEnd.y + cz * tEnd.z;
+      const totalAngle = Math.atan2(sinA, dot);
+      for (let i = 1; i <= tubularSegments; i++) {
+        const angle = totalAngle * i / tubularSegments;
+        const cos = Math.cos(angle), sin = Math.sin(angle);
+        const n = N_arr[i], b = B_arr[i];
+        N_arr[i] = { x: cos * n.x + sin * b.x, y: cos * n.y + sin * b.y, z: cos * n.z + sin * b.z };
+        B_arr[i] = { x: cos * b.x - sin * n.x, y: cos * b.y - sin * n.y, z: cos * b.z - sin * n.z };
+      }
+    }
+    function knotVertex(iSeg, jRad) {
+      const phi = Math.PI * 2 * jRad / radialSegments;
+      const cp = Math.cos(phi), sp = Math.sin(phi);
+      const n = N_arr[iSeg], b = B_arr[iSeg], c = C_arr[iSeg];
+      const nx = cp * n.x + sp * b.x, ny = cp * n.y + sp * b.y, nz = cp * n.z + sp * b.z;
+      return {
+        position: { x: c.x + tube * nx, y: c.y + tube * ny, z: c.z + tube * nz },
+        normal: { x: nx, y: ny, z: nz },
+        uv: { x: iSeg / tubularSegments, y: jRad / radialSegments },
+      };
+    }
+    const out = scenePrimitiveMeshBuilder();
+    for (let i = 0; i < tubularSegments; i++) {
+      for (let j = 0; j < radialSegments; j++) {
+        const a = knotVertex(i, j);
+        const b = knotVertex(i + 1, j);
+        const c = knotVertex(i + 1, j + 1);
+        const d = knotVertex(i, j + 1);
+        scenePushMeshVertex(out, a.position, a.normal, a.uv);
+        scenePushMeshVertex(out, b.position, b.normal, b.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
+        scenePushMeshVertex(out, a.position, a.normal, a.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
+        scenePushMeshVertex(out, d.position, d.normal, d.uv);
+      }
+    }
+    return sceneFinalizePrimitiveMesh(out);
+  }
+
   function scenePrimitiveTriangleMesh(object) {
     switch (object && object.kind) {
       case "box":
@@ -331,6 +437,8 @@
         return sphereTriangleMesh(object);
       case "torus":
         return torusTriangleMesh(object);
+      case "torusknot":
+        return torusKnotTriangleMesh(object);
       default:
         return null;
     }
@@ -354,6 +462,23 @@
     return out;
   }
 
+  function torusKnotSegments(object) {
+    const tubularSegments = scenePrimitiveSegmentResolution(object && object.tubularSegments, 128, 8, 512);
+    const radius = scenePositiveNumber(object && object.radius, 0.17);
+    const p = 2, q = 3;
+    function knotCurve(theta) {
+      const rad = radius * (2.0 + Math.cos(q * theta)) * 0.5;
+      return { x: rad * Math.cos(p * theta), y: rad * Math.sin(p * theta), z: radius * Math.sin(q * theta) * 0.5 };
+    }
+    const out = [];
+    for (let i = 0; i < tubularSegments; i++) {
+      const t0 = (Math.PI * 2 * i) / tubularSegments;
+      const t1 = (Math.PI * 2 * (i + 1)) / tubularSegments;
+      out.push([knotCurve(t0), knotCurve(t1)]);
+    }
+    return out;
+  }
+
   function sceneObjectSegments(object) {
     switch (object.kind) {
       case "box":
@@ -373,6 +498,8 @@
         return coneSegments(object);
       case "torus":
         return torusSegments(object);
+      case "torusknot":
+        return torusKnotSegments(object);
       default:
         return boxSegments(object);
     }

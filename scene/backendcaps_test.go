@@ -62,14 +62,20 @@ func TestSceneIRBackendCapsPickableForcesWebGL(t *testing.T) {
 	}
 }
 
-func TestSceneIRBackendCapsWaterSimulationForcesWebGPU(t *testing.T) {
+// Water sim is now implemented on both WebGPU and WebGL2 (WebGPU stays
+// primary); only canvas2d is excluded by the required-feature gate.
+func TestSceneIRBackendCapsWaterSimulationCapableOnGPU(t *testing.T) {
 	props := Props{Graph: NewGraph(WaterSystem{ID: "pool-water"})}
 	ir := props.SceneIR()
 	if ir.BackendCaps == nil {
 		t.Fatalf("expected BackendCaps to be set on SceneIR")
 	}
-	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGPU {
-		t.Fatalf("expected Capable == [webgpu], got %v", ir.BackendCaps.Capable)
+	got := backendSet(ir.BackendCaps.Capable)
+	if len(ir.BackendCaps.Capable) != 2 || !got[capability.BackendWebGPU] || !got[capability.BackendWebGL] {
+		t.Fatalf("expected Capable == [webgpu webgl], got %v", ir.BackendCaps.Capable)
+	}
+	if got[capability.BackendCanvas2D] {
+		t.Fatalf("expected canvas2d excluded for water sim, got %v", ir.BackendCaps.Capable)
 	}
 }
 
@@ -84,15 +90,19 @@ func TestSceneIRBackendCapsWaterObjectTextureReason(t *testing.T) {
 	if ir.BackendCaps == nil {
 		t.Fatalf("expected BackendCaps to be set on SceneIR")
 	}
-	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGPU {
-		t.Fatalf("expected Capable == [webgpu], got %v", ir.BackendCaps.Capable)
+	got := backendSet(ir.BackendCaps.Capable)
+	if !got[capability.BackendWebGPU] || !got[capability.BackendWebGL] {
+		t.Fatalf("expected webgpu+webgl capable for water object texture pass, got %v", ir.BackendCaps.Capable)
 	}
 	for _, reason := range ir.BackendCaps.Reasons {
 		if reason.Feature == capability.FeatureWaterObjectTexturePass && reason.Excludes == capability.BackendWebGL {
+			t.Fatalf("did not expect webgl exclusion now that WebGL implements water, got %+v", ir.BackendCaps.Reasons)
+		}
+		if reason.Feature == capability.FeatureWaterObjectTexturePass && reason.Excludes == capability.BackendCanvas2D {
 			return
 		}
 	}
-	t.Fatalf("expected webgl exclusion reason for water object texture pass, got %+v", ir.BackendCaps.Reasons)
+	t.Fatalf("expected canvas2d exclusion reason for water object texture pass, got %+v", ir.BackendCaps.Reasons)
 }
 
 func TestSceneIRBackendCapsWaterObjectTextureBudgetReason(t *testing.T) {
@@ -105,11 +115,11 @@ func TestSceneIRBackendCapsWaterObjectTextureBudgetReason(t *testing.T) {
 		t.Fatalf("expected BackendCaps to be set on SceneIR")
 	}
 	for _, reason := range ir.BackendCaps.Reasons {
-		if reason.Feature == capability.FeatureWaterObjectTexturePass && reason.Excludes == capability.BackendWebGL {
+		if reason.Feature == capability.FeatureWaterObjectTexturePass && reason.Excludes == capability.BackendCanvas2D {
 			return
 		}
 	}
-	t.Fatalf("expected webgl exclusion reason for water object texture budget, got %+v", ir.BackendCaps.Reasons)
+	t.Fatalf("expected canvas2d exclusion reason for water object texture budget, got %+v", ir.BackendCaps.Reasons)
 }
 
 func TestSceneIRBackendCapsWaterObjectMeshShadowReason(t *testing.T) {
@@ -122,15 +132,16 @@ func TestSceneIRBackendCapsWaterObjectMeshShadowReason(t *testing.T) {
 	if ir.BackendCaps == nil {
 		t.Fatalf("expected BackendCaps to be set on SceneIR")
 	}
-	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGPU {
-		t.Fatalf("expected Capable == [webgpu], got %v", ir.BackendCaps.Capable)
+	got := backendSet(ir.BackendCaps.Capable)
+	if !got[capability.BackendWebGPU] || !got[capability.BackendWebGL] {
+		t.Fatalf("expected webgpu+webgl capable for water object mesh shadow pass, got %v", ir.BackendCaps.Capable)
 	}
 	for _, reason := range ir.BackendCaps.Reasons {
-		if reason.Feature == capability.FeatureWaterObjectMeshShadowPass && reason.Excludes == capability.BackendWebGL {
+		if reason.Feature == capability.FeatureWaterObjectMeshShadowPass && reason.Excludes == capability.BackendCanvas2D {
 			return
 		}
 	}
-	t.Fatalf("expected webgl exclusion reason for water object mesh shadow pass, got %+v", ir.BackendCaps.Reasons)
+	t.Fatalf("expected canvas2d exclusion reason for water object mesh shadow pass, got %+v", ir.BackendCaps.Reasons)
 }
 
 // Test 3: backendCaps round-trips through the serialized scene payload.

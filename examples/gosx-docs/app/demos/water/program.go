@@ -16,86 +16,50 @@ const (
 	waterDemoHiddenY = 10.0
 )
 
-var waterObjectMaterialLayout = map[string]any{
-	"schemaVersion": "selena.descriptor.v1",
-	"material":      "WaterObject",
-	"uniformBlock": map[string]any{
-		"name":    "WaterObjectUniforms",
-		"size":    224,
-		"binding": 0,
-		"fields": []map[string]any{
-			{"name": "mvp", "type": "mat4", "offset": 0},
-			{"name": "modelMatrix", "type": "mat4", "offset": 64},
-			{"name": "lightDir", "type": "vec4", "offset": 128},
-			{"name": "poolSize", "type": "vec4", "offset": 144},
-			{"name": "baseColor", "type": "vec4", "offset": 160},
-			{"name": "params", "type": "vec4", "offset": 176},
-			{"name": "texturePassMode", "type": "vec4", "offset": 192},
-			{"name": "isTexturePass", "type": "vec4", "offset": 208},
-		},
-		"defaults": []map[string]any{
-			{"name": "lightDir", "values": []float64{2, 3, -1, 0}},
-			{"name": "poolSize", "values": []float64{1, 1, 1, 0}},
-			{"name": "baseColor", "values": []float64{0.5, 0.5, 0.5, 1}},
-			{"name": "params", "values": []float64{256, 0.25, 0, 0}},
-			{"name": "texturePassMode", "values": []float64{0, 0, 0, 0}},
-			{"name": "isTexturePass", "values": []float64{0, 0, 0, 0}},
-		},
-	},
-	"wgsl": map[string]any{"binding": 0},
-	"attributes": []map[string]any{
-		{"name": "position", "type": "vec3", "location": 0},
-		{"name": "normal", "type": "vec3", "location": 1},
-		{"name": "uv", "type": "vec2", "location": 2},
-	},
-	"textures": []map[string]any{
-		{"name": "causticTexture", "wgsl": map[string]any{"textureBinding": 1, "samplerBinding": 2}},
-		{"name": "objectShadowTexture", "wgsl": map[string]any{"textureBinding": 3, "samplerBinding": 4}},
-	},
-	"storageBuffers": []map[string]any{
-		{"name": "waterState", "kind": "read-only-storage", "wgsl": map[string]any{"binding": 5}},
-	},
+// waterObjectMaterialSelenaUniforms/waterDuckMaterialSelenaUniforms are the
+// customUniforms maps for the Selena-compiled object-material.sel/
+// duck-material.sel materials (shaders/jeantimex-water.selena/) -- the sole
+// materials the water-object/water-duck <Material> blocks in page.gsx bind
+// to; the hand-written WaterObject/WaterDuck layout+uniform+WGSL trio they
+// used to pair with has been retired now that Selena is the sole primary
+// material source for these passes. The Selena port's uniform-block field
+// set is a strict simplification of that retired hand-written contract (see
+// waterShaderDescriptors["objectMaterial"/"duckMaterial"],
+// selena_wgsl_binding_test.go): "poolHeight"/"baseColor"/"isTexturePass"/
+// "texturePassMode" are author `param`s (not host-injected context), so a
+// literal default here — matching the WaterSystem's static page.gsx config
+// (poolHeight=1.0) — is the correct, honest value for BOTH consumers of this
+// Material: the main-scene draw (drawPBRObjects, which supplies no
+// renderContext) and the reflection/refraction/shadow RTT draws
+// (drawWaterObjectMeshObjects, which layers a live renderContext.uniforms map
+// with "lightDir" -- the material's one declared `context` field -- on top of
+// these customUniforms; see sceneWaterObjectTextureSelenaUniforms in
+// 16a-scene-webgpu.js). "grid" is NOT a descriptor uniform field: it feeds the
+// generic Selena state-grid uniform (StateGrid{gridWidth,gridHeight}) via
+// sceneSelenaGridUniformData's customUniforms.grid fallback (16a-scene-webgpu.js),
+// needed because the main-scene draw call site has no per-draw renderContext
+// to carry a "grid" value (unlike the RTT draw, which does supply one). "water"
+// is the live water heightfield resource ref, keyed to the descriptor's
+// declared `state water` name (see waterShaderDescriptors["objectMaterial"].states[0].name).
+var waterObjectMaterialSelenaUniforms = map[string]any{
+	"poolHeight":      1.0,
+	"baseColor":       []float64{0.52, 0.54, 0.56, 1},
+	"isTexturePass":   0.0,
+	"texturePassMode": 0.0,
+	"lightDir":        []float64{2, 3, -1},
+	"grid":            256.0,
+	"water":           "gosx:water:water-main:state",
 }
 
-var waterObjectMaterialUniforms = map[string]any{
-	"lightDir":            []float64{2, 3, -1, 0},
-	"poolSize":            []float64{1, 1, 1, 0},
-	"baseColor":           []float64{0.52, 0.54, 0.56, 1},
-	"params":              []float64{256, 0.25, 0, 0},
-	"texturePassMode":     []float64{0, 0, 0, 0},
-	"isTexturePass":       []float64{0, 0, 0, 0},
-	"causticTexture":      "gosx:water:water-main:caustics",
-	"objectShadowTexture": "gosx:water:water-main:shadow",
-	"waterState":          "gosx:water:water-main:state",
-}
-
-var waterDuckMaterialLayout = map[string]any{
-	"schemaVersion": "selena.descriptor.v1",
-	"material":      "WaterDuck",
-	"uniformBlock":  waterObjectMaterialLayout["uniformBlock"],
-	"wgsl":          waterObjectMaterialLayout["wgsl"],
-	"attributes":    waterObjectMaterialLayout["attributes"],
-	"textures": []map[string]any{
-		{"name": "modelTexture", "wgsl": map[string]any{"textureBinding": 1, "samplerBinding": 2}},
-		{"name": "causticTexture", "wgsl": map[string]any{"textureBinding": 3, "samplerBinding": 4}},
-		{"name": "objectShadowTexture", "wgsl": map[string]any{"textureBinding": 5, "samplerBinding": 6}},
-	},
-	"storageBuffers": []map[string]any{
-		{"name": "waterState", "kind": "read-only-storage", "wgsl": map[string]any{"binding": 7}},
-	},
-}
-
-var waterDuckMaterialUniforms = map[string]any{
-	"lightDir":            []float64{2, 3, -1, 0},
-	"poolSize":            []float64{1, 1, 1, 0},
-	"baseColor":           []float64{1, 1, 1, 1},
-	"params":              []float64{256, 1, 0, 0},
-	"texturePassMode":     []float64{0, 0, 0, 0},
-	"isTexturePass":       []float64{0, 0, 0, 0},
-	"modelTexture":        "/water/models/duck/DuckCM.png",
-	"causticTexture":      "gosx:water:water-main:caustics",
-	"objectShadowTexture": "gosx:water:water-main:shadow",
-	"waterState":          "gosx:water:water-main:state",
+var waterDuckMaterialSelenaUniforms = map[string]any{
+	"poolHeight":      1.0,
+	"baseColor":       []float64{1, 1, 1, 1},
+	"isTexturePass":   0.0,
+	"texturePassMode": 0.0,
+	"modelTexture":    "/water/models/duck/DuckCM.png",
+	"lightDir":        []float64{2, 3, -1},
+	"grid":            256.0,
+	"water":           "gosx:water:water-main:state",
 }
 
 func WaterDemoData() (map[string]any, error) {
@@ -105,7 +69,17 @@ func WaterDemoData() (map[string]any, error) {
 			waterDemoErr = err
 			return
 		}
-		shaderSources, err := waterShaderSources()
+		selenaGLSL, err := waterSelenaGLSLData()
+		if err != nil {
+			waterDemoErr = err
+			return
+		}
+		selenaRenderWGSL, err := waterSelenaRenderWGSLData()
+		if err != nil {
+			waterDemoErr = err
+			return
+		}
+		selenaComputeWGSL, err := waterSelenaComputeWGSLData()
 		if err != nil {
 			waterDemoErr = err
 			return
@@ -113,34 +87,50 @@ func WaterDemoData() (map[string]any, error) {
 
 		waterDemoData = map[string]any{
 			"waterControlData":                  controlData,
-			"waterComputeSource":                waterComputeSourceID,
-			"waterMaterialSource":               waterMaterialSourceID,
-			"waterComputeSourceFiles":           cloneWaterSourceFiles(waterComputeSourceFiles),
-			"waterMaterialSourceFiles":          cloneWaterSourceFiles(waterMaterialSourceFiles),
-			"waterObjectMaterialSource":         waterObjectMaterialSourceID,
-			"waterObjectMaterialSourceFiles":    cloneWaterSourceFiles(waterObjectMaterialSourceFiles),
-			"waterDuckMaterialSource":           waterDuckMaterialSourceID,
-			"waterDuckMaterialSourceFiles":      cloneWaterSourceFiles(waterDuckMaterialSourceFiles),
-			"waterSeedWGSL":                     shaderSources["waterSeedWGSL"],
-			"waterDropWGSL":                     shaderSources["waterDropWGSL"],
-			"waterDisplacementWGSL":             shaderSources["waterDisplacementWGSL"],
-			"waterSimulationWGSL":               shaderSources["waterSimulationWGSL"],
-			"waterNormalWGSL":                   shaderSources["waterNormalWGSL"],
-			"waterCausticsWGSL":                 shaderSources["waterCausticsWGSL"],
-			"waterPoolVertexWGSL":               shaderSources["waterPoolVertexWGSL"],
-			"waterPoolFragmentWGSL":             shaderSources["waterPoolFragmentWGSL"],
-			"waterSurfaceVertexWGSL":            shaderSources["waterSurfaceVertexWGSL"],
-			"waterSurfaceFragmentWGSL":          shaderSources["waterSurfaceFragmentWGSL"],
-			"waterSurfaceBelowFragmentWGSL":     shaderSources["waterSurfaceBelowFragmentWGSL"],
-			"waterObjectShadowWGSL":             shaderSources["waterObjectShadowWGSL"],
-			"waterObjectMeshShadowVertexWGSL":   shaderSources["waterObjectMeshShadowVertexWGSL"],
-			"waterObjectMeshShadowFragmentWGSL": shaderSources["waterObjectMeshShadowFragmentWGSL"],
-			"waterObjectMaterialWGSL":           shaderSources["waterObjectMaterialWGSL"],
-			"waterObjectMaterialLayout":         waterObjectMaterialLayout,
-			"waterObjectMaterialUniforms":       waterObjectMaterialUniforms,
-			"waterDuckMaterialWGSL":             shaderSources["waterDuckMaterialWGSL"],
-			"waterDuckMaterialLayout":           waterDuckMaterialLayout,
-			"waterDuckMaterialUniforms":         waterDuckMaterialUniforms,
+			"waterObjectMaterialSelenaUniforms": waterObjectMaterialSelenaUniforms,
+			"waterDuckMaterialSelenaUniforms":   waterDuckMaterialSelenaUniforms,
+		}
+		// Merge the Selena-compiled GLSL/GLES + descriptor slots. These feed the
+		// WebGL/WebGL2 water fallback.
+		for key, value := range selenaGLSL {
+			waterDemoData[key] = value
+		}
+		// Merge the Selena-compiled RENDER-pass WGSL slots (one
+		// "<dataPrefix>SelenaWGSL" key per pass: seed, drop, displacement,
+		// simulation, normal are compute kernels handled by selenaComputeWGSL
+		// below; pool, surface, surfaceBelow, caustics, objectMaterial
+		// ("waterObjectPass"), duckMaterial ("waterDuckPass"), objectShadow,
+		// compoundShadow, objectMeshShadow are RENDER passes handled here). These
+		// feed the generic descriptor-driven Selena WebGPU render path -- the
+		// sole primary WGSL source for every water render pass now that the
+		// hand-written *WGSL shader trees have been retired (the JS runtime's
+		// builtin SCENE_WATER_*_SOURCE constants remain as the last-resort
+		// runtime safety-net fallback; see 16a-scene-webgpu.js).
+		for key, value := range selenaRenderWGSL {
+			waterDemoData[key] = value
+		}
+		// Merge the Selena-compiled feedback-COMPUTE kernel WGSL slots (one
+		// "<dataPrefix>SelenaWGSL" key per kernel: seed, drop, displacement,
+		// simulation, normal). These feed the generic descriptor-driven Selena
+		// feedback-compute WebGPU path -- the sole primary WGSL source for every
+		// water compute kernel (builtin SCENE_WATER_COMPUTE_SOURCE remains the
+		// last-resort runtime safety-net fallback; see 16a-scene-webgpu.js).
+		for key, value := range selenaComputeWGSL {
+			waterDemoData[key] = value
+		}
+		// waterShaderDescriptors (merged from selenaGLSL above) already carries
+		// the objectMaterial/duckMaterial host binding descriptors keyed by
+		// descKey; expose them as flat top-level keys too so page.gsx's plain
+		// <Material> components (which read a literal shaderLayout object, not a
+		// keyed sub-lookup -- unlike <WaterSystem>'s single shaderDescriptors
+		// prop) can reference them directly.
+		if descriptors, ok := waterDemoData["waterShaderDescriptors"].(map[string]json.RawMessage); ok {
+			if layout, ok := descriptors["objectMaterial"]; ok {
+				waterDemoData["waterObjectMaterialSelenaLayout"] = layout
+			}
+			if layout, ok := descriptors["duckMaterial"]; ok {
+				waterDemoData["waterDuckMaterialSelenaLayout"] = layout
+			}
 		}
 	})
 	return waterDemoData, waterDemoErr
@@ -165,7 +155,7 @@ func waterControlDataJSON() (string, error) {
 				"objectHalfSizeX":         0,
 				"objectHalfSizeY":         0,
 				"objectHalfSizeZ":         0,
-				"buoyancyRadius":          0.25,
+				"buoyancyRadius":          0.31,
 				"floorClearance":          0.25,
 				"xLimitRadius":            0.25,
 				"zLimitRadius":            0.25,
@@ -196,7 +186,7 @@ func waterControlDataJSON() (string, error) {
 				"objectHalfSizeX":         0.25,
 				"objectHalfSizeY":         0.25,
 				"objectHalfSizeZ":         0.25,
-				"buoyancyRadius":          0.25,
+				"buoyancyRadius":          0.31,
 				"floorClearance":          0.25,
 				"xLimitRadius":            0.25,
 				"zLimitRadius":            0.25,
@@ -267,7 +257,7 @@ func waterControlDataJSON() (string, error) {
 				"objectHalfSizeX":           0,
 				"objectHalfSizeY":           0,
 				"objectHalfSizeZ":           0,
-				"buoyancyRadius":            0.25,
+				"buoyancyRadius":            0.31,
 				"floorClearance":            0.265,
 				"xLimitRadius":              0.25,
 				"zLimitRadius":              0.25,
@@ -327,4 +317,20 @@ func duckDisplacementSpheres() []map[string]float64 {
 		{"offsetX": 0, "offsetY": 0.1, "offsetZ": 0.1, "radius": 0.08},
 		{"offsetX": 0, "offsetY": -0.08, "offsetZ": -0.05, "radius": 0.1},
 	}
+}
+
+// cloneWaterSourceFiles shallow-copies a data-key -> source-file-path map.
+// Kept alive here (relocated from the now-deleted shader_sources.go, which
+// used to embed the hand-written Elio/Selena shader trees) solely for
+// selena_glsl.go's waterSelenaSourceFiles, which advertises the .selena
+// source-file provenance of each additive Selena GLSL slot.
+func cloneWaterSourceFiles(files map[string]string) map[string]string {
+	if len(files) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(files))
+	for key, value := range files {
+		out[key] = value
+	}
+	return out
 }

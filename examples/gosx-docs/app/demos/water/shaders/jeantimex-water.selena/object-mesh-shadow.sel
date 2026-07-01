@@ -1,0 +1,37 @@
+// water-mesh-shadow.sel — selena port of the projected object-mesh shadow pass.
+//
+// Renders the shadow cast by the water object mesh onto the pool floor by
+// projecting each mesh vertex through the water surface via refracted light.
+// The projection maps world positions to [0,1]x[0,1] pool UV shadow space.
+//
+// Vertex stage: reads geo.position, computes refracted light direction,
+// projects the xz plane using the Snell refraction of the light vector, and
+// returns the shadow clip position (z=0, w=1 for a flat shadow quad).
+//
+// Fragment stage: trivial -- returns solid white (the shadow alpha is baked
+// into the blend state; colour is irrelevant in a shadow-only RTT pass).
+material WaterMeshShadow {
+    param poolHalfW : float = 1.5
+    param poolHalfL : float = 1.5
+
+    context {
+        lightDir : vec3
+    }
+
+    vertex(geo) -> vec4 {
+        let pos   = geo.position
+        let lnorm = normalize(lightDir)
+        let refr  = refract(-lnorm, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let fallY = refr.y >= 0.0 ? 0.0001 : -0.0001
+        let refY  = abs(refr.y) > 0.0001 ? refr.y : fallY
+        let pX    = 0.75 * (pos.x - pos.y * refr.x / refY)
+        let pZ    = 0.75 * (pos.z - pos.y * refr.z / refY)
+        let clipX = pX / max(poolHalfW, 0.0001)
+        let clipZ = pZ / max(poolHalfL, 0.0001)
+        return vec4f(clipX, clipZ, 0.0, 1.0)
+    }
+
+    surface(geo) -> color {
+        return rgb(1.0, 1.0, 1.0)
+    }
+}

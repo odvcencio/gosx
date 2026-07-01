@@ -151,7 +151,16 @@ const budgets = [
   // declarative interaction primitives 06-declarative-actions.js +
   // 07-declarative-regions.js add ~5K. Measured 1_119_654 / 295_924 / 239_403.
   // Trim when the water WIP finalizes its scene-module footprint.
-  { file: "bootstrap.js", raw: 1_130_000, gzip: 300_000, brotli: 245_000 },
+  // Bumped raw 1_130_000 -> 1_180_000, gzip 300_000 -> 312_000, brotli 245_000
+  // -> 252_000: water-demo Selena convergence. The hand-written jeantimex-water
+  // WGSL/Elio shader trees were retired; every water pass (9 render + 5 compute,
+  // incl. rounded pool) now emits from Selena and routes through the generic
+  // descriptor-driven WGSL pipeline/bindgroup path (16a getSelenaComputePipeline,
+  // state/grid handling + G1 array packing + post-kind path). This is net-added
+  // over the retained SCENE_WATER_* builtin fallback tier; removing that fallback
+  // once WebGPU water rendering is visually confirmed reclaims most of this.
+  // Measured: 1_170_081 / 309_540 / 249_595 + sub-1% rounding headroom.
+  { file: "bootstrap.js", raw: 1_180_000, gzip: 312_000, brotli: 252_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -253,7 +262,10 @@ const budgets = [
   // 144_000: scene3d/water system modules (checkpoint f6c21364) — WaterSystem
   // geometry/material/lighting in the shared scene core. Measured 629_079 /
   // 171_055 / 140_608. (No 06/07 here — base-only primitives.)
-  { file: "bootstrap-feature-scene3d.js", raw: 640_000, gzip: 175_000, brotli: 144_000 },
+  // Bumped raw 640_000 -> 665_000, gzip 175_000 -> 182_000, brotli 144_000 ->
+  // 149_000: water-demo Selena convergence (see bootstrap.js note). Measured:
+  // 660_045 / 180_076 / 147_794 + sub-1% rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 665_000, gzip: 182_000, brotli: 149_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -311,7 +323,11 @@ const budgets = [
   // 62_000: the water WGSL pipelines in 16a-scene-webgpu.js (WaterSystem pool /
   // caustics / reflection / refraction passes, checkpoint f6c21364) — the bulk
   // of this surface. Measured 309_066 / 71_882 / 60_545.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 315_000, gzip: 73_000, brotli: 62_000 },
+  // Bumped raw 315_000 -> 331_000, gzip 73_000 -> 77_000, brotli 62_000 ->
+  // 64_500: water-demo Selena convergence (see bootstrap.js note) — the
+  // descriptor-driven WGSL water renderer lands here. Measured: 328_062 /
+  // 76_090 / 63_619 + sub-1% rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 331_000, gzip: 77_000, brotli: 64_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

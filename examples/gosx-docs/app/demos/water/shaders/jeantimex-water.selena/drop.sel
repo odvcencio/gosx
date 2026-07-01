@@ -1,0 +1,26 @@
+// water-sim-drop: interactive drop pass ported from drop.elio.
+// State vec4 = (height, velocity, normalX, normalZ).  Adds a cosine-bump to
+// the height channel at the drop center in UV space, matching addDrop.
+//
+// dropCenter is the interactive drop's XY in NDC [-1,1]; the shader maps it to
+// UV [0,1] as center = dropCenter * 0.5 + 0.5.  cell.uv is the current cell's
+// normalised [0,1]x[0,1] grid coordinate.
+material WaterSimDrop kind feedback {
+    context {
+        dropCenter   : vec2
+        dropRadius   : float = 0.05
+        dropStrength : float = 0.05
+    }
+    state water
+
+    feedback(cell) -> vec4 {
+        let here   = state(0, 0)
+        let uv     = cell.uv
+        let center = dropCenter * 0.5 + 0.5
+        let r      = max(dropRadius, 0.0001)
+        let d      = max(0.0, 1.0 - length(center - uv) / r)
+        let bump   = 0.5 - cos(d * 3.141592653589793) * 0.5
+        let h      = here.x + bump * dropStrength
+        return vec4f(h, here.y, here.z, here.w)
+    }
+}

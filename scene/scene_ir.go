@@ -607,99 +607,213 @@ type ComputeParticlesIR struct {
 // a ping-pong heightmap, seeded drops, dynamic pool bounds, and caustic /
 // reflection / refraction consumers.
 type WaterSystemIR struct {
-	ID                              string                           `json:"id"`
-	InteractionProfile              string                           `json:"interactionProfile,omitempty"`
-	InteractionTarget               string                           `json:"interactionTarget,omitempty"`
-	InteractionObject               string                           `json:"interactionObject,omitempty"`
-	Resolution                      int                              `json:"resolution,omitempty"`
-	PoolShape                       string                           `json:"poolShape,omitempty"`
-	PoolWidth                       float64                          `json:"poolWidth,omitempty"`
-	PoolHeight                      float64                          `json:"poolHeight,omitempty"`
-	PoolLength                      float64                          `json:"poolLength,omitempty"`
-	CornerRadius                    float64                          `json:"cornerRadius,omitempty"`
-	WaveSpeed                       float64                          `json:"waveSpeed,omitempty"`
-	Damping                         float64                          `json:"damping,omitempty"`
-	NormalScale                     float64                          `json:"normalScale,omitempty"`
-	SeedDrops                       int                              `json:"seedDrops,omitempty"`
-	DropRadius                      float64                          `json:"dropRadius,omitempty"`
-	DropStrength                    float64                          `json:"dropStrength,omitempty"`
-	DropEventID                     int                              `json:"dropEventID,omitempty"`
-	DropX                           float64                          `json:"dropX,omitempty"`
-	DropZ                           float64                          `json:"dropZ,omitempty"`
-	DropEventRadius                 float64                          `json:"dropEventRadius,omitempty"`
-	DropEventStrength               float64                          `json:"dropEventStrength,omitempty"`
-	TileTexture                     string                           `json:"tileTexture,omitempty"`
-	CubeMap                         string                           `json:"cubeMap,omitempty"`
-	ShallowColor                    string                           `json:"shallowColor,omitempty"`
-	DeepColor                       string                           `json:"deepColor,omitempty"`
-	CausticsResolution              int                              `json:"causticsResolution,omitempty"`
-	ObjectTextureResolution         int                              `json:"objectTextureResolution,omitempty"`
-	ObjectTextureResolutionMode     string                           `json:"objectTextureResolutionMode,omitempty"`
-	ObjectTexturePixelBudget        int                              `json:"objectTexturePixelBudget,omitempty"`
-	ObjectShadowResolution          int                              `json:"objectShadowResolution,omitempty"`
-	Caustics                        bool                             `json:"caustics,omitempty"`
-	Reflection                      bool                             `json:"reflection,omitempty"`
-	Refraction                      bool                             `json:"refraction,omitempty"`
-	Paused                          bool                             `json:"paused,omitempty"`
-	FollowCamera                    bool                             `json:"followCamera,omitempty"`
-	LightDirectionX                 float64                          `json:"lightDirectionX,omitempty"`
-	LightDirectionY                 float64                          `json:"lightDirectionY,omitempty"`
-	LightDirectionZ                 float64                          `json:"lightDirectionZ,omitempty"`
-	ActiveObject                    string                           `json:"activeObject,omitempty"`
-	ObjectKind                      string                           `json:"objectKind,omitempty"`
-	ObjectX                         float64                          `json:"objectX,omitempty"`
-	ObjectY                         float64                          `json:"objectY,omitempty"`
-	ObjectZ                         float64                          `json:"objectZ,omitempty"`
-	ObjectPreviousSet               bool                             `json:"objectPreviousSet,omitempty"`
-	ObjectPreviousX                 float64                          `json:"objectPreviousX,omitempty"`
-	ObjectPreviousY                 float64                          `json:"objectPreviousY,omitempty"`
-	ObjectPreviousZ                 float64                          `json:"objectPreviousZ,omitempty"`
-	ObjectRadius                    float64                          `json:"objectRadius,omitempty"`
-	ObjectHalfSizeX                 float64                          `json:"objectHalfSizeX,omitempty"`
-	ObjectHalfSizeY                 float64                          `json:"objectHalfSizeY,omitempty"`
-	ObjectHalfSizeZ                 float64                          `json:"objectHalfSizeZ,omitempty"`
-	ObjectDriftX                    float64                          `json:"objectDriftX,omitempty"`
-	ObjectDriftY                    float64                          `json:"objectDriftY,omitempty"`
-	ObjectDriftZ                    float64                          `json:"objectDriftZ,omitempty"`
-	ObjectBobAmplitude              float64                          `json:"objectBobAmplitude,omitempty"`
-	ObjectBobSpeed                  float64                          `json:"objectBobSpeed,omitempty"`
-	ObjectDisplacementScale         float64                          `json:"objectDisplacementScale,omitempty"`
-	ObjectDisplacementSpheres       []WaterDisplacementSphereIR      `json:"objectDisplacementSpheres,omitempty"`
-	ObjectDisplacementEvents        []WaterObjectDisplacementEventIR `json:"objectDisplacementEvents,omitempty"`
-	ComputeBackend                  string                           `json:"computeBackend,omitempty"`
-	MaterialBackend                 string                           `json:"materialBackend,omitempty"`
-	ComputeSource                   string                           `json:"computeSource,omitempty"`
-	MaterialSource                  string                           `json:"materialSource,omitempty"`
-	ComputeSourceFiles              map[string]string                `json:"computeSourceFiles,omitempty"`
-	MaterialSourceFiles             map[string]string                `json:"materialSourceFiles,omitempty"`
-	SeedWGSL                        string                           `json:"seedWGSL,omitempty"`
-	DropWGSL                        string                           `json:"dropWGSL,omitempty"`
-	DisplacementWGSL                string                           `json:"displacementWGSL,omitempty"`
-	SimulationWGSL                  string                           `json:"simulationWGSL,omitempty"`
-	NormalWGSL                      string                           `json:"normalWGSL,omitempty"`
-	CausticsWGSL                    string                           `json:"causticsWGSL,omitempty"`
-	PoolVertexWGSL                  string                           `json:"poolVertexWGSL,omitempty"`
-	PoolFragmentWGSL                string                           `json:"poolFragmentWGSL,omitempty"`
-	SurfaceVertexWGSL               string                           `json:"surfaceVertexWGSL,omitempty"`
-	SurfaceFragmentWGSL             string                           `json:"surfaceFragmentWGSL,omitempty"`
-	SurfaceBelowFragmentWGSL        string                           `json:"surfaceBelowFragmentWGSL,omitempty"`
-	ObjectShadowWGSL                string                           `json:"objectShadowWGSL,omitempty"`
-	ObjectMeshShadowVertexWGSL      string                           `json:"objectMeshShadowVertexWGSL,omitempty"`
-	ObjectMeshShadowFragmentWGSL    string                           `json:"objectMeshShadowFragmentWGSL,omitempty"`
-	DisplacementWGSLRef             string                           `json:"displacementWGSLRef,omitempty"`
-	SeedWGSLRef                     string                           `json:"seedWGSLRef,omitempty"`
-	DropWGSLRef                     string                           `json:"dropWGSLRef,omitempty"`
-	SimulationWGSLRef               string                           `json:"simulationWGSLRef,omitempty"`
-	NormalWGSLRef                   string                           `json:"normalWGSLRef,omitempty"`
-	CausticsWGSLRef                 string                           `json:"causticsWGSLRef,omitempty"`
-	PoolVertexWGSLRef               string                           `json:"poolVertexWGSLRef,omitempty"`
-	PoolFragmentWGSLRef             string                           `json:"poolFragmentWGSLRef,omitempty"`
-	SurfaceVertexWGSLRef            string                           `json:"surfaceVertexWGSLRef,omitempty"`
-	SurfaceFragmentWGSLRef          string                           `json:"surfaceFragmentWGSLRef,omitempty"`
-	SurfaceBelowFragmentWGSLRef     string                           `json:"surfaceBelowFragmentWGSLRef,omitempty"`
-	ObjectShadowWGSLRef             string                           `json:"objectShadowWGSLRef,omitempty"`
-	ObjectMeshShadowVertexWGSLRef   string                           `json:"objectMeshShadowVertexWGSLRef,omitempty"`
-	ObjectMeshShadowFragmentWGSLRef string                           `json:"objectMeshShadowFragmentWGSLRef,omitempty"`
+	ID                          string                           `json:"id"`
+	InteractionProfile          string                           `json:"interactionProfile,omitempty"`
+	InteractionTarget           string                           `json:"interactionTarget,omitempty"`
+	InteractionObject           string                           `json:"interactionObject,omitempty"`
+	Resolution                  int                              `json:"resolution,omitempty"`
+	PoolShape                   string                           `json:"poolShape,omitempty"`
+	PoolWidth                   float64                          `json:"poolWidth,omitempty"`
+	PoolHeight                  float64                          `json:"poolHeight,omitempty"`
+	PoolLength                  float64                          `json:"poolLength,omitempty"`
+	CornerRadius                float64                          `json:"cornerRadius,omitempty"`
+	WaveSpeed                   float64                          `json:"waveSpeed,omitempty"`
+	Damping                     float64                          `json:"damping,omitempty"`
+	NormalScale                 float64                          `json:"normalScale,omitempty"`
+	SeedDrops                   int                              `json:"seedDrops,omitempty"`
+	DropRadius                  float64                          `json:"dropRadius,omitempty"`
+	DropStrength                float64                          `json:"dropStrength,omitempty"`
+	DropEventID                 int                              `json:"dropEventID,omitempty"`
+	DropX                       float64                          `json:"dropX,omitempty"`
+	DropZ                       float64                          `json:"dropZ,omitempty"`
+	DropEventRadius             float64                          `json:"dropEventRadius,omitempty"`
+	DropEventStrength           float64                          `json:"dropEventStrength,omitempty"`
+	TileTexture                 string                           `json:"tileTexture,omitempty"`
+	CubeMap                     string                           `json:"cubeMap,omitempty"`
+	ShallowColor                string                           `json:"shallowColor,omitempty"`
+	DeepColor                   string                           `json:"deepColor,omitempty"`
+	CausticsResolution          int                              `json:"causticsResolution,omitempty"`
+	ObjectTextureResolution     int                              `json:"objectTextureResolution,omitempty"`
+	ObjectTextureResolutionMode string                           `json:"objectTextureResolutionMode,omitempty"`
+	ObjectTexturePixelBudget    int                              `json:"objectTexturePixelBudget,omitempty"`
+	ObjectShadowResolution      int                              `json:"objectShadowResolution,omitempty"`
+	Caustics                    bool                             `json:"caustics,omitempty"`
+	Reflection                  bool                             `json:"reflection,omitempty"`
+	Refraction                  bool                             `json:"refraction,omitempty"`
+	Paused                      bool                             `json:"paused,omitempty"`
+	FollowCamera                bool                             `json:"followCamera,omitempty"`
+	LightDirectionX             float64                          `json:"lightDirectionX,omitempty"`
+	LightDirectionY             float64                          `json:"lightDirectionY,omitempty"`
+	LightDirectionZ             float64                          `json:"lightDirectionZ,omitempty"`
+	ActiveObject                string                           `json:"activeObject,omitempty"`
+	ObjectKind                  string                           `json:"objectKind,omitempty"`
+	ObjectX                     float64                          `json:"objectX,omitempty"`
+	ObjectY                     float64                          `json:"objectY,omitempty"`
+	ObjectZ                     float64                          `json:"objectZ,omitempty"`
+	ObjectPreviousSet           bool                             `json:"objectPreviousSet,omitempty"`
+	ObjectPreviousX             float64                          `json:"objectPreviousX,omitempty"`
+	ObjectPreviousY             float64                          `json:"objectPreviousY,omitempty"`
+	ObjectPreviousZ             float64                          `json:"objectPreviousZ,omitempty"`
+	ObjectRadius                float64                          `json:"objectRadius,omitempty"`
+	ObjectHalfSizeX             float64                          `json:"objectHalfSizeX,omitempty"`
+	ObjectHalfSizeY             float64                          `json:"objectHalfSizeY,omitempty"`
+	ObjectHalfSizeZ             float64                          `json:"objectHalfSizeZ,omitempty"`
+	ObjectDriftX                float64                          `json:"objectDriftX,omitempty"`
+	ObjectDriftY                float64                          `json:"objectDriftY,omitempty"`
+	ObjectDriftZ                float64                          `json:"objectDriftZ,omitempty"`
+	ObjectBobAmplitude          float64                          `json:"objectBobAmplitude,omitempty"`
+	ObjectBobSpeed              float64                          `json:"objectBobSpeed,omitempty"`
+	ObjectDisplacementScale     float64                          `json:"objectDisplacementScale,omitempty"`
+	ObjectDisplacementSpheres   []WaterDisplacementSphereIR      `json:"objectDisplacementSpheres,omitempty"`
+	ObjectDisplacementEvents    []WaterObjectDisplacementEventIR `json:"objectDisplacementEvents,omitempty"`
+	ComputeBackend              string                           `json:"computeBackend,omitempty"`
+	MaterialBackend             string                           `json:"materialBackend,omitempty"`
+	ComputeSource               string                           `json:"computeSource,omitempty"`
+	MaterialSource              string                           `json:"materialSource,omitempty"`
+	ComputeSourceFiles          map[string]string                `json:"computeSourceFiles,omitempty"`
+	MaterialSourceFiles         map[string]string                `json:"materialSourceFiles,omitempty"`
+	SeedWGSL                    string                           `json:"seedWGSL,omitempty"`
+	DropWGSL                    string                           `json:"dropWGSL,omitempty"`
+	DisplacementWGSL            string                           `json:"displacementWGSL,omitempty"`
+	SimulationWGSL              string                           `json:"simulationWGSL,omitempty"`
+	NormalWGSL                  string                           `json:"normalWGSL,omitempty"`
+	CausticsWGSL                string                           `json:"causticsWGSL,omitempty"`
+	PoolVertexWGSL              string                           `json:"poolVertexWGSL,omitempty"`
+	PoolFragmentWGSL            string                           `json:"poolFragmentWGSL,omitempty"`
+	// PoolSelenaWGSL is the Selena-emitted, single combined vertex+fragment
+	// WGSL module for the pool render pass ONLY (proof-of-concept for routing
+	// water render passes through the generic descriptor-driven Selena WebGPU
+	// path instead of hand-written WGSL). It is strictly additive: PoolVertexWGSL
+	// / PoolFragmentWGSL above are untouched and remain authoritative for every
+	// other pool configuration. The host binding descriptor for this module is
+	// the existing ShaderDescriptors["pool"] entry (Selena's bindings.Layout is
+	// backend-agnostic, so the descriptor compiled alongside the GLSL/GLES pool
+	// shader already matches this WGSL's @group/@binding layout).
+	PoolSelenaWGSL               string `json:"poolSelenaWGSL,omitempty"`
+	SurfaceVertexWGSL            string `json:"surfaceVertexWGSL,omitempty"`
+	SurfaceFragmentWGSL          string `json:"surfaceFragmentWGSL,omitempty"`
+	SurfaceBelowFragmentWGSL     string `json:"surfaceBelowFragmentWGSL,omitempty"`
+	ObjectShadowWGSL             string `json:"objectShadowWGSL,omitempty"`
+	ObjectMeshShadowVertexWGSL   string `json:"objectMeshShadowVertexWGSL,omitempty"`
+	ObjectMeshShadowFragmentWGSL string `json:"objectMeshShadowFragmentWGSL,omitempty"`
+	// SurfaceSelenaWGSL..ObjectMeshShadowSelenaWGSL generalize PoolSelenaWGSL
+	// above to the remaining migrated render passes (see scene.WaterSystem for
+	// the full comment).
+	SurfaceSelenaWGSL          string `json:"surfaceSelenaWGSL,omitempty"`
+	SurfaceBelowSelenaWGSL     string `json:"surfaceBelowSelenaWGSL,omitempty"`
+	CausticsSelenaWGSL         string `json:"causticsSelenaWGSL,omitempty"`
+	ObjectShadowSelenaWGSL     string `json:"objectShadowSelenaWGSL,omitempty"`
+	CompoundShadowSelenaWGSL   string `json:"compoundShadowSelenaWGSL,omitempty"`
+	ObjectMeshShadowSelenaWGSL string `json:"objectMeshShadowSelenaWGSL,omitempty"`
+	// SeedSelenaWGSL..NormalSelenaWGSL are the Selena-emitted single @compute
+	// WGSL modules for the five feedback simulation kernels, additive parallels
+	// to SeedWGSL/DropWGSL/DisplacementWGSL/SimulationWGSL/NormalWGSL above that
+	// route through the generic descriptor-driven Selena feedback-compute
+	// WebGPU path (getSelenaComputePipeline/createSelenaComputeBindGroup in
+	// 16a-scene-webgpu.js) instead of the hardcoded compute pipeline. The host
+	// binding descriptor for each is the existing ShaderDescriptors[<key>]
+	// entry (compiled alongside the GLSL/GLES kernel from the same .sel
+	// source; Selena's bindings.Layout is backend-agnostic).
+	SeedSelenaWGSL                  string `json:"seedSelenaWGSL,omitempty"`
+	DropSelenaWGSL                  string `json:"dropSelenaWGSL,omitempty"`
+	DisplacementSelenaWGSL          string `json:"displacementSelenaWGSL,omitempty"`
+	SimulationSelenaWGSL            string `json:"simulationSelenaWGSL,omitempty"`
+	NormalSelenaWGSL                string `json:"normalSelenaWGSL,omitempty"`
+	DisplacementWGSLRef             string `json:"displacementWGSLRef,omitempty"`
+	SeedWGSLRef                     string `json:"seedWGSLRef,omitempty"`
+	DropWGSLRef                     string `json:"dropWGSLRef,omitempty"`
+	SimulationWGSLRef               string `json:"simulationWGSLRef,omitempty"`
+	NormalWGSLRef                   string `json:"normalWGSLRef,omitempty"`
+	CausticsWGSLRef                 string `json:"causticsWGSLRef,omitempty"`
+	PoolVertexWGSLRef               string `json:"poolVertexWGSLRef,omitempty"`
+	PoolFragmentWGSLRef             string `json:"poolFragmentWGSLRef,omitempty"`
+	SurfaceVertexWGSLRef            string `json:"surfaceVertexWGSLRef,omitempty"`
+	SurfaceFragmentWGSLRef          string `json:"surfaceFragmentWGSLRef,omitempty"`
+	SurfaceBelowFragmentWGSLRef     string `json:"surfaceBelowFragmentWGSLRef,omitempty"`
+	ObjectShadowWGSLRef             string `json:"objectShadowWGSLRef,omitempty"`
+	ObjectMeshShadowVertexWGSLRef   string `json:"objectMeshShadowVertexWGSLRef,omitempty"`
+	ObjectMeshShadowFragmentWGSLRef string `json:"objectMeshShadowFragmentWGSLRef,omitempty"`
+
+	// Selena-compiled GLSL/GLES slots. These are strictly additive parallels to
+	// the *WGSL slots above and feed the WebGL/WebGL2 water fallback; the WebGPU
+	// path ignores them and continues to consume the *WGSL slots unchanged.
+	//
+	// Each authored Selena material compiles to a vertex+fragment pair per
+	// backend (unlike WGSL, which carries a single combined module): the GLSL
+	// target emits GLSL ES 1.00 (WebGL1: `attribute`/`varying`) and the GLES
+	// target emits GLSL ES 3.00 (WebGL2: `#version 300 es`, `in`/`out`). The
+	// feedback simulation kernels (seed/drop/displacement/simulation/normal)
+	// compile to a fullscreen vertex + a sim fragment for the ping-pong pass.
+	SeedVertexGLSL           string `json:"seedVertexGLSL,omitempty"`
+	SeedFragmentGLSL         string `json:"seedFragmentGLSL,omitempty"`
+	SeedVertexGLES           string `json:"seedVertexGLES,omitempty"`
+	SeedFragmentGLES         string `json:"seedFragmentGLES,omitempty"`
+	DropVertexGLSL           string `json:"dropVertexGLSL,omitempty"`
+	DropFragmentGLSL         string `json:"dropFragmentGLSL,omitempty"`
+	DropVertexGLES           string `json:"dropVertexGLES,omitempty"`
+	DropFragmentGLES         string `json:"dropFragmentGLES,omitempty"`
+	DisplacementVertexGLSL   string `json:"displacementVertexGLSL,omitempty"`
+	DisplacementFragmentGLSL string `json:"displacementFragmentGLSL,omitempty"`
+	DisplacementVertexGLES   string `json:"displacementVertexGLES,omitempty"`
+	DisplacementFragmentGLES string `json:"displacementFragmentGLES,omitempty"`
+	SimulationVertexGLSL     string `json:"simulationVertexGLSL,omitempty"`
+	SimulationFragmentGLSL   string `json:"simulationFragmentGLSL,omitempty"`
+	SimulationVertexGLES     string `json:"simulationVertexGLES,omitempty"`
+	SimulationFragmentGLES   string `json:"simulationFragmentGLES,omitempty"`
+	NormalVertexGLSL         string `json:"normalVertexGLSL,omitempty"`
+	NormalFragmentGLSL       string `json:"normalFragmentGLSL,omitempty"`
+	NormalVertexGLES         string `json:"normalVertexGLES,omitempty"`
+	NormalFragmentGLES       string `json:"normalFragmentGLES,omitempty"`
+	CausticsVertexGLSL       string `json:"causticsVertexGLSL,omitempty"`
+	CausticsFragmentGLSL     string `json:"causticsFragmentGLSL,omitempty"`
+	CausticsVertexGLES       string `json:"causticsVertexGLES,omitempty"`
+	CausticsFragmentGLES     string `json:"causticsFragmentGLES,omitempty"`
+	PoolVertexGLSL           string `json:"poolVertexGLSL,omitempty"`
+	PoolFragmentGLSL         string `json:"poolFragmentGLSL,omitempty"`
+	PoolVertexGLES           string `json:"poolVertexGLES,omitempty"`
+	PoolFragmentGLES         string `json:"poolFragmentGLES,omitempty"`
+	SurfaceVertexGLSL        string `json:"surfaceVertexGLSL,omitempty"`
+	SurfaceFragmentGLSL      string `json:"surfaceFragmentGLSL,omitempty"`
+	SurfaceVertexGLES        string `json:"surfaceVertexGLES,omitempty"`
+	SurfaceFragmentGLES      string `json:"surfaceFragmentGLES,omitempty"`
+	SurfaceBelowVertexGLSL   string `json:"surfaceBelowVertexGLSL,omitempty"`
+	SurfaceBelowFragmentGLSL string `json:"surfaceBelowFragmentGLSL,omitempty"`
+	SurfaceBelowVertexGLES   string `json:"surfaceBelowVertexGLES,omitempty"`
+	SurfaceBelowFragmentGLES string `json:"surfaceBelowFragmentGLES,omitempty"`
+	ObjectShadowVertexGLSL   string `json:"objectShadowVertexGLSL,omitempty"`
+	ObjectShadowFragmentGLSL string `json:"objectShadowFragmentGLSL,omitempty"`
+	ObjectShadowVertexGLES   string `json:"objectShadowVertexGLES,omitempty"`
+	ObjectShadowFragmentGLES string `json:"objectShadowFragmentGLES,omitempty"`
+	// CompoundShadow* are the WebGL2-only compound-object (TorusKnot/Duck)
+	// footprint shadow pass (compound-shadow.sel), an additive parallel that
+	// handles the objectKind >= 2.5 case ObjectShadow* cannot express (a
+	// fullscreen pass over up to 32 proxy displacement spheres). The WebGPU
+	// path renders compound shadows via its own mesh-shadow RTT and ignores
+	// these.
+	CompoundShadowVertexGLSL     string `json:"compoundShadowVertexGLSL,omitempty"`
+	CompoundShadowFragmentGLSL   string `json:"compoundShadowFragmentGLSL,omitempty"`
+	CompoundShadowVertexGLES     string `json:"compoundShadowVertexGLES,omitempty"`
+	CompoundShadowFragmentGLES   string `json:"compoundShadowFragmentGLES,omitempty"`
+	ObjectMeshShadowVertexGLSL   string `json:"objectMeshShadowVertexGLSL,omitempty"`
+	ObjectMeshShadowFragmentGLSL string `json:"objectMeshShadowFragmentGLSL,omitempty"`
+	ObjectMeshShadowVertexGLES   string `json:"objectMeshShadowVertexGLES,omitempty"`
+	ObjectMeshShadowFragmentGLES string `json:"objectMeshShadowFragmentGLES,omitempty"`
+	ObjectMaterialVertexGLSL     string `json:"objectMaterialVertexGLSL,omitempty"`
+	ObjectMaterialFragmentGLSL   string `json:"objectMaterialFragmentGLSL,omitempty"`
+	ObjectMaterialVertexGLES     string `json:"objectMaterialVertexGLES,omitempty"`
+	ObjectMaterialFragmentGLES   string `json:"objectMaterialFragmentGLES,omitempty"`
+	DuckMaterialVertexGLSL       string `json:"duckMaterialVertexGLSL,omitempty"`
+	DuckMaterialFragmentGLSL     string `json:"duckMaterialFragmentGLSL,omitempty"`
+	DuckMaterialVertexGLES       string `json:"duckMaterialVertexGLES,omitempty"`
+	DuckMaterialFragmentGLES     string `json:"duckMaterialFragmentGLES,omitempty"`
+
+	// ShaderDescriptors carries the per-shader Selena host binding descriptor
+	// (uniform block layout incl. std140 array stride, attributes, textures with
+	// cube/2d dimension, feedback statefields, and the grid texelSize uniform),
+	// keyed by the logical shader name (e.g. "surface", "pool", "seed"). The
+	// WebGL2 runtime uses these to wire uniforms/textures/ping-pong state. Values
+	// are the raw Selena bindings.Layout JSON.
+	ShaderDescriptors map[string]json.RawMessage `json:"shaderDescriptors,omitempty"`
 }
 
 // WaterDisplacementSphereIR is one sphere in a compound water displacement
@@ -1859,12 +1973,24 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "causticsWGSL", item.CausticsWGSL)
 	setString(record, "poolVertexWGSL", item.PoolVertexWGSL)
 	setString(record, "poolFragmentWGSL", item.PoolFragmentWGSL)
+	setString(record, "poolSelenaWGSL", item.PoolSelenaWGSL)
 	setString(record, "surfaceVertexWGSL", item.SurfaceVertexWGSL)
 	setString(record, "surfaceFragmentWGSL", item.SurfaceFragmentWGSL)
 	setString(record, "surfaceBelowFragmentWGSL", item.SurfaceBelowFragmentWGSL)
 	setString(record, "objectShadowWGSL", item.ObjectShadowWGSL)
 	setString(record, "objectMeshShadowVertexWGSL", item.ObjectMeshShadowVertexWGSL)
 	setString(record, "objectMeshShadowFragmentWGSL", item.ObjectMeshShadowFragmentWGSL)
+	setString(record, "surfaceSelenaWGSL", item.SurfaceSelenaWGSL)
+	setString(record, "surfaceBelowSelenaWGSL", item.SurfaceBelowSelenaWGSL)
+	setString(record, "causticsSelenaWGSL", item.CausticsSelenaWGSL)
+	setString(record, "objectShadowSelenaWGSL", item.ObjectShadowSelenaWGSL)
+	setString(record, "compoundShadowSelenaWGSL", item.CompoundShadowSelenaWGSL)
+	setString(record, "objectMeshShadowSelenaWGSL", item.ObjectMeshShadowSelenaWGSL)
+	setString(record, "seedSelenaWGSL", item.SeedSelenaWGSL)
+	setString(record, "dropSelenaWGSL", item.DropSelenaWGSL)
+	setString(record, "displacementSelenaWGSL", item.DisplacementSelenaWGSL)
+	setString(record, "simulationSelenaWGSL", item.SimulationSelenaWGSL)
+	setString(record, "normalSelenaWGSL", item.NormalSelenaWGSL)
 	setString(record, "displacementWGSLRef", item.DisplacementWGSLRef)
 	setString(record, "seedWGSLRef", item.SeedWGSLRef)
 	setString(record, "dropWGSLRef", item.DropWGSLRef)
@@ -1879,6 +2005,76 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "objectShadowWGSLRef", item.ObjectShadowWGSLRef)
 	setString(record, "objectMeshShadowVertexWGSLRef", item.ObjectMeshShadowVertexWGSLRef)
 	setString(record, "objectMeshShadowFragmentWGSLRef", item.ObjectMeshShadowFragmentWGSLRef)
+
+	// Selena-compiled GLSL/GLES render + sim slots. Additive parallels to the
+	// *WGSL slots above; they feed the WebGL/WebGL2 water fallback (the A1 sim
+	// driver + A2 render passes) and are ignored by the WebGPU path. Emitted
+	// inline (not hoisted into shaderLib) so the runtime reads them directly.
+	setString(record, "seedVertexGLSL", item.SeedVertexGLSL)
+	setString(record, "seedFragmentGLSL", item.SeedFragmentGLSL)
+	setString(record, "seedVertexGLES", item.SeedVertexGLES)
+	setString(record, "seedFragmentGLES", item.SeedFragmentGLES)
+	setString(record, "dropVertexGLSL", item.DropVertexGLSL)
+	setString(record, "dropFragmentGLSL", item.DropFragmentGLSL)
+	setString(record, "dropVertexGLES", item.DropVertexGLES)
+	setString(record, "dropFragmentGLES", item.DropFragmentGLES)
+	setString(record, "displacementVertexGLSL", item.DisplacementVertexGLSL)
+	setString(record, "displacementFragmentGLSL", item.DisplacementFragmentGLSL)
+	setString(record, "displacementVertexGLES", item.DisplacementVertexGLES)
+	setString(record, "displacementFragmentGLES", item.DisplacementFragmentGLES)
+	setString(record, "simulationVertexGLSL", item.SimulationVertexGLSL)
+	setString(record, "simulationFragmentGLSL", item.SimulationFragmentGLSL)
+	setString(record, "simulationVertexGLES", item.SimulationVertexGLES)
+	setString(record, "simulationFragmentGLES", item.SimulationFragmentGLES)
+	setString(record, "normalVertexGLSL", item.NormalVertexGLSL)
+	setString(record, "normalFragmentGLSL", item.NormalFragmentGLSL)
+	setString(record, "normalVertexGLES", item.NormalVertexGLES)
+	setString(record, "normalFragmentGLES", item.NormalFragmentGLES)
+	setString(record, "causticsVertexGLSL", item.CausticsVertexGLSL)
+	setString(record, "causticsFragmentGLSL", item.CausticsFragmentGLSL)
+	setString(record, "causticsVertexGLES", item.CausticsVertexGLES)
+	setString(record, "causticsFragmentGLES", item.CausticsFragmentGLES)
+	setString(record, "poolVertexGLSL", item.PoolVertexGLSL)
+	setString(record, "poolFragmentGLSL", item.PoolFragmentGLSL)
+	setString(record, "poolVertexGLES", item.PoolVertexGLES)
+	setString(record, "poolFragmentGLES", item.PoolFragmentGLES)
+	setString(record, "surfaceVertexGLSL", item.SurfaceVertexGLSL)
+	setString(record, "surfaceFragmentGLSL", item.SurfaceFragmentGLSL)
+	setString(record, "surfaceVertexGLES", item.SurfaceVertexGLES)
+	setString(record, "surfaceFragmentGLES", item.SurfaceFragmentGLES)
+	setString(record, "surfaceBelowVertexGLSL", item.SurfaceBelowVertexGLSL)
+	setString(record, "surfaceBelowFragmentGLSL", item.SurfaceBelowFragmentGLSL)
+	setString(record, "surfaceBelowVertexGLES", item.SurfaceBelowVertexGLES)
+	setString(record, "surfaceBelowFragmentGLES", item.SurfaceBelowFragmentGLES)
+	setString(record, "objectShadowVertexGLSL", item.ObjectShadowVertexGLSL)
+	setString(record, "objectShadowFragmentGLSL", item.ObjectShadowFragmentGLSL)
+	setString(record, "objectShadowVertexGLES", item.ObjectShadowVertexGLES)
+	setString(record, "objectShadowFragmentGLES", item.ObjectShadowFragmentGLES)
+	setString(record, "compoundShadowVertexGLSL", item.CompoundShadowVertexGLSL)
+	setString(record, "compoundShadowFragmentGLSL", item.CompoundShadowFragmentGLSL)
+	setString(record, "compoundShadowVertexGLES", item.CompoundShadowVertexGLES)
+	setString(record, "compoundShadowFragmentGLES", item.CompoundShadowFragmentGLES)
+	setString(record, "objectMeshShadowVertexGLSL", item.ObjectMeshShadowVertexGLSL)
+	setString(record, "objectMeshShadowFragmentGLSL", item.ObjectMeshShadowFragmentGLSL)
+	setString(record, "objectMeshShadowVertexGLES", item.ObjectMeshShadowVertexGLES)
+	setString(record, "objectMeshShadowFragmentGLES", item.ObjectMeshShadowFragmentGLES)
+	setString(record, "objectMaterialVertexGLSL", item.ObjectMaterialVertexGLSL)
+	setString(record, "objectMaterialFragmentGLSL", item.ObjectMaterialFragmentGLSL)
+	setString(record, "objectMaterialVertexGLES", item.ObjectMaterialVertexGLES)
+	setString(record, "objectMaterialFragmentGLES", item.ObjectMaterialFragmentGLES)
+	setString(record, "duckMaterialVertexGLSL", item.DuckMaterialVertexGLSL)
+	setString(record, "duckMaterialFragmentGLSL", item.DuckMaterialFragmentGLSL)
+	setString(record, "duckMaterialVertexGLES", item.DuckMaterialVertexGLES)
+	setString(record, "duckMaterialFragmentGLES", item.DuckMaterialFragmentGLES)
+	if len(item.ShaderDescriptors) > 0 {
+		descriptors := make(map[string]any, len(item.ShaderDescriptors))
+		for k, v := range item.ShaderDescriptors {
+			clone := make(json.RawMessage, len(v))
+			copy(clone, v)
+			descriptors[k] = clone
+		}
+		record["shaderDescriptors"] = descriptors
+	}
 	return record
 }
 

@@ -1,0 +1,131 @@
+{
+  "_comment": "Generated fixture: real Selena-compiled compound-shadow.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive this water pass through the generic descriptor-driven Selena WebGPU render path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/compound-shadow.sel (TargetWGSL) if compound-shadow.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/compound-shadow.sel",
+  "layout": {
+    "schemaVersion": "selena.descriptor.v1",
+    "languageVersion": "selena.lang.v1",
+    "material": "WaterCompoundShadow",
+    "kind": "post",
+    "entryPoints": {
+      "vertex": "vertexMain",
+      "fragment": "fragmentMain"
+    },
+    "uniformBlock": {
+      "size": 576,
+      "fields": [
+        {
+          "name": "sphereCount",
+          "type": "float",
+          "offset": 0,
+          "size": 4
+        },
+        {
+          "name": "objectEnabled",
+          "type": "float",
+          "offset": 4,
+          "size": 4
+        },
+        {
+          "name": "objectTop",
+          "type": "float",
+          "offset": 8,
+          "size": 4
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "offset": 12,
+          "size": 4
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "offset": 16,
+          "size": 4
+        },
+        {
+          "name": "lightDir",
+          "type": "vec3",
+          "offset": 32,
+          "size": 12,
+          "class": "context"
+        },
+        {
+          "name": "objectCenterX",
+          "type": "float",
+          "offset": 44,
+          "size": 4,
+          "class": "context"
+        },
+        {
+          "name": "objectCenterZ",
+          "type": "float",
+          "offset": 48,
+          "size": 4,
+          "class": "context"
+        },
+        {
+          "name": "spheres",
+          "type": "vec4",
+          "offset": 64,
+          "size": 512,
+          "count": 32,
+          "stride": 16,
+          "class": "context"
+        }
+      ],
+      "defaults": [
+        {
+          "name": "sphereCount",
+          "type": "float",
+          "values": [
+            0
+          ]
+        },
+        {
+          "name": "objectEnabled",
+          "type": "float",
+          "values": [
+            1
+          ]
+        },
+        {
+          "name": "objectTop",
+          "type": "float",
+          "values": [
+            1
+          ]
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "values": [
+            1.5
+          ]
+        }
+      ]
+    },
+    "attributes": [],
+    "textures": [],
+    "wgsl": {
+      "group": 0,
+      "binding": 4
+    },
+    "metal": {
+      "buffer": 1
+    },
+    "context": [
+      "lightDir",
+      "objectCenterX",
+      "objectCenterZ",
+      "spheres"
+    ]
+  },
+  "wgsl": "@group(0) @binding(0) var _sceneColorTex  : texture_2d<f32>;\n@group(0) @binding(1) var _sceneColorSamp : sampler;\n@group(0) @binding(2) var _sceneDepthTex  : texture_depth_2d;\n@group(0) @binding(3) var _sceneDepthSamp : sampler;\n\nstruct UserUniforms {\n  sphereCount : f32,\n  objectEnabled : f32,\n  objectTop : f32,\n  poolWidth : f32,\n  poolLength : f32,\n  lightDir : vec3<f32>,\n  objectCenterX : f32,\n  objectCenterZ : f32,\n  spheres : array<vec4<f32>, 32>,\n};\n@group(0) @binding(4) var<uniform> u : UserUniforms;\n\nstruct PostOutput {\n  @builtin(position) pos : vec4<f32>,\n  @location(0) v_uv      : vec2<f32>,\n};\n\nconst _postPositions = array<vec2<f32>, 3>(\n  vec2<f32>(-1.0, -1.0),\n  vec2<f32>( 3.0, -1.0),\n  vec2<f32>(-1.0,  3.0),\n);\nconst _postUVs = array<vec2<f32>, 3>(\n  vec2<f32>(0.0, 1.0),\n  vec2<f32>(2.0, 1.0),\n  vec2<f32>(0.0, -1.0),\n);\n\n@vertex fn vertexMain(@builtin(vertex_index) vi : u32) -> PostOutput {\n  var out : PostOutput;\n  out.pos  = vec4<f32>(_postPositions[vi], 0.0, 1.0);\n  out.v_uv = _postUVs[vi];\n  return out;\n}\n\nstruct PostInput {\n  @location(0) v_uv : vec2<f32>,\n};\n\n@fragment fn fragmentMain(in : PostInput) -> @location(0) vec4<f32> {\n  let lnorm = normalize(u.lightDir);\n  let uvX = clamp((in.v_uv.x - (lnorm.x * 0.025)), 0.0, 1.0);\n  let uvY = clamp((in.v_uv.y + (lnorm.z * 0.025)), 0.0, 1.0);\n  let aspect = vec2<f32>(max((u.poolWidth / max(u.poolLength, 0.001)), 0.001), 1.0);\n  var mask : f32 = 0.0;\n  var core : f32 = 0.0;\n  for (var i : i32 = 0i; (i < 32i); i = (i + 1i)) {\n    if (((u.objectEnabled > 0.0) && (f32(i) < u.sphereCount))) {\n      let sphere = u.spheres[i];\n      let sphereUVx = (((u.objectCenterX + sphere.x) * 0.5) + 0.5);\n      let sphereUVy = (((u.objectCenterZ + sphere.z) * 0.5) + 0.5);\n      let radius = max((sphere.w * 0.58), 0.012);\n      let dvec = vec2<f32>(((uvX - sphereUVx) * aspect.x), ((uvY - sphereUVy) * aspect.y));\n      let dd = length(dvec);\n      let localMask = (1.0 - smoothstep(radius, (radius + max((radius * 1.35), 0.018)), dd));\n      mask = max(mask, localMask);\n      core = max(core, (1.0 - smoothstep((radius * 0.42), radius, dd)));\n    }\n  }\n  let clipped = smoothstep((-0.08), 0.16, u.objectTop);\n  let shadow = ((mask * (0.42 + (0.58 * core))) * clipped);\n  return vec4<f32>(vec3<f32>(shadow, shadow, shadow), 1.0);\n}\n"
+}

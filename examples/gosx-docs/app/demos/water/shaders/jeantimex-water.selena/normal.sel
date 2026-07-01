@@ -1,0 +1,21 @@
+// water-sim-normal: normal-update pass ported from normal.elio.
+// State vec4 = (height, velocity, normalX, normalZ).  Reads East and North
+// neighbours to form the finite-difference tangents, computes their cross
+// product and stores normal.x / normal.z in the state's z/w channels.
+//
+// Note: the elio uses delta = 1/resolution so each tangent vector has a
+// horizontal component equal to the cell spacing.  Because normalize(cross(...))
+// is scale-invariant, delta cancels out; we use 1.0 and get identical normals.
+material WaterSimNormal kind feedback {
+    state water
+
+    feedback(cell) -> vec4 {
+        let here    = state(0, 0)
+        let h_east  = state(1, 0).x
+        let h_north = state(0, 1).x
+        let dx      = vec3f(1.0, h_east - here.x, 0.0)
+        let dz      = vec3f(0.0, h_north - here.x, 1.0)
+        let norm    = normalize(cross(dz, dx))
+        return vec4f(here.x, here.y, norm.x, norm.z)
+    }
+}

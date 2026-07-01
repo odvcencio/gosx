@@ -5,7 +5,7 @@
   "line-dashed": true,
   "compute-particles": false,
   "gpu-cull": false,
-  "water-simulation": false,
-  "water-object-texture-pass": false,
-  "water-object-mesh-shadow-pass": false
+  "water-simulation": true,
+  "water-object-texture-pass": true,
+  "water-object-mesh-shadow-pass": true
 }

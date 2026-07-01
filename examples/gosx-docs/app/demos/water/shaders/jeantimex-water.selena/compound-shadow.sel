@@ -1,0 +1,55 @@
+// water-compound-shadow.sel — selena port of the compound-sphere branch of the
+// JeantimeX object-shadow pass (object-shadow.fragment.sel, objectKind ~3).
+//
+// A fullscreen post pass that projects the footprint shadow of a COMPOUND object
+// (a cluster of up to 32 displacement spheres) onto the pool floor. Each sphere's
+// offset+radius is supplied as one element of a uniform array param. This is the
+// case the previous water-object-shadow.sel could NOT express, because post-kind
+// materials rejected array params (CodeUnsupportedType); that restriction is now
+// lifted so a fullscreen pass can loop over `param spheres : array<vec4, 32>`.
+//
+// selena `for` has no `break`, so the loop runs the full fixed bound and gates
+// each sphere's contribution on `float(i) < sphereCount` (matching the upstream
+// `if (i >= sphereCount) { break; }`). Each sphere accumulates max() into the
+// mask/core footprint, exactly as the raw compound branch does.
+material WaterCompoundShadow kind post {
+    param sphereCount   : float = 0.0
+    param objectEnabled : float = 1.0
+    param objectTop     : float = 1.0
+    param poolWidth     : float = 1.5
+    param poolLength    : float = 1.5
+
+    context {
+        lightDir      : vec3
+        objectCenterX : float = 0.0
+        objectCenterZ : float = 0.0
+        spheres       : array<vec4, 32>
+    }
+
+    surface(geo) -> color {
+        let lnorm  = normalize(lightDir)
+        let uvX    = clamp(geo.uv.x - lnorm.x * 0.025, 0.0, 1.0)
+        let uvY    = clamp(geo.uv.y + lnorm.z * 0.025, 0.0, 1.0)
+        let aspect = vec2f(max(poolWidth / max(poolLength, 0.001), 0.001), 1.0)
+
+        var mask = 0.0
+        var core = 0.0
+        for (var i = 0i; i < 32i; i = i + 1i) {
+            if (objectEnabled > 0.0 && float(i) < sphereCount) {
+                let sphere    = spheres[i]
+                let sphereUVx = (objectCenterX + sphere.x) * 0.5 + 0.5
+                let sphereUVy = (objectCenterZ + sphere.z) * 0.5 + 0.5
+                let radius    = max(sphere.w * 0.58, 0.012)
+                let dvec      = vec2f((uvX - sphereUVx) * aspect.x, (uvY - sphereUVy) * aspect.y)
+                let dd        = length(dvec)
+                let localMask = 1.0 - smoothstep(radius, radius + max(radius * 1.35, 0.018), dd)
+                mask = max(mask, localMask)
+                core = max(core, 1.0 - smoothstep(radius * 0.42, radius, dd))
+            }
+        }
+
+        let clipped = smoothstep(-0.08, 0.16, objectTop)
+        let shadow  = mask * (0.42 + 0.58 * core) * clipped
+        return rgb(shadow, shadow, shadow)
+    }
+}

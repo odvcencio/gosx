@@ -1,0 +1,195 @@
+// water-caustics.sel — selena port of the JeantimeX fullscreen caustics pass
+// (caustics.sel). Authored as a fullscreen MESH material: a screen-covering
+// quad is generated from vertexIndex in vertex(), and surface() reads the LIVE
+// water heightfield/slope via stateAt(uv) — the same source the raw shader
+// samples from its `state : array<vec4f>` storage buffer.
+//
+// The caustic RTT refracts the sun through the water surface onto the pool
+// floor and accumulates the focusing intensity: it projects a flat floor
+// footprint and a wave-displaced floor footprint, then the ratio of their
+// screen-space areas (dpdx/dpdy) is the caustic gain. Convergence (the height
+// Laplacian), a slope-focus term, and a shimmer term modulate it; analytic
+// object shadows darken it; a warm/cool ramp colours it.
+//
+// PORT NOTES — what changed now that selena can read state in a mesh fragment:
+//
+//  * LIVE STATE (was GAP A). This pass used to be `kind post`, and post
+//    materials have no state access, so the height/slope were RECONSTRUCTED
+//    analytically from uv+time. selena now supports stateAt(uv) in mesh
+//    vertex+fragment, so c/e/w/n/s are real statefield taps exactly like the raw
+//    shader's c/e/w/n/s. The caustic SOURCE is now the live simulation, not a
+//    synthetic wave — full fidelity. `state height` is declared and the screen
+//    quad is built from vertexIndex in vertex().
+//
+//  * dpdx/dpdy (the area-focus core) are derivative builtins; naga only accepts
+//    them in UNIFORM control flow, so both projected positions are derived at
+//    the top level and the derivatives taken there. No texture samples remain in
+//    this pass, so nothing samples inside an if/for.
+//
+//  * ANALYTIC SHADOWS are faithful: the sphere-array footprint mask, the single
+//    sphere/cube footprint mask, the analytic single-sphere soft shadow, and the
+//    analytic 3x3 cube soft shadow (cubeSoftShadowOcclusion) are all ported. The
+//    cube soft shadow's 3x3 PCF loop is inlined in surface() (selena fns are
+//    expression-only and cannot carry var/if/for), like the surface port.
+//
+//  GAP — meshShadowTextureOcclusion (the 9-tap soft shadow sampled from the
+//    rendered mesh-object shadow RTT) is still dropped: it reads a runtime
+//    texture (objectShadowTexture) that this self-contained material has no
+//    binding for. That is the only remaining caustic-shadow term not modeled.
+//    The rounded-pool caustic mask + edge attenuation are also omitted
+//    (rectangular pool, mask = 1), consistent with the surface port.
+//
+//  Other selena rewrites: select -> ternary, no parenthesised ternaries, no
+//    bool literals (float 0/1 flags), scalar-only comparisons, flat local scope
+//    (every let/var uniquely named).
+
+fn projectFloor(origin: vec3, ray: vec3, ph: float) -> vec3 {
+    let fb = ray.y >= 0.0 ? 0.0001 : -0.0001
+    let sy = abs(ray.y) > 0.0001 ? ray.y : fb
+    let t  = (-ph - origin.y) / sy
+    return origin + ray * t
+}
+
+fn sphereSoftShadow(point: vec3, refractedLight: vec3, kind: float, enable: float, center: vec3, radius: float) -> float {
+    let r      = max(radius, 0.0001)
+    let dir    = (center - point) / r
+    let area   = cross(dir, refractedLight)
+    let s0     = dot(area, area)
+    let dist   = dot(dir, -refractedLight)
+    let s1     = 1.0 + (s0 - 1.0) / max(0.05 + dist * 0.025, 0.0001)
+    let shadow = clamp(1.0 / (1.0 + exp(-s1)), 0.0, 1.0)
+    let lit    = mix(1.0, shadow, clamp(dist * 2.0, 0.0, 1.0))
+    let occ    = 1.0 - lit
+    let on     = kind >= 0.5 && kind < 1.5 && enable > 0.0
+    return on ? occ : 0.0
+}
+
+fn intersectCube(origin: vec3, ray: vec3, cubeMin: vec3, cubeMax: vec3) -> vec2 {
+    let sx    = abs(ray.x) > 0.000001 ? ray.x : 0.000001
+    let sy    = abs(ray.y) > 0.000001 ? ray.y : 0.000001
+    let sz    = abs(ray.z) > 0.000001 ? ray.z : 0.000001
+    let inv   = vec3f(1.0 / sx, 1.0 / sy, 1.0 / sz)
+    let t0    = (cubeMin - origin) * inv
+    let t1    = (cubeMax - origin) * inv
+    let near3 = min(t0, t1)
+    let far3  = max(t0, t1)
+    return vec2f(max(max(near3.x, near3.y), near3.z), min(min(far3.x, far3.y), far3.z))
+}
+
+fn cubeOcclusion(origin: vec3, direction: vec3, center: vec3, half: vec3) -> float {
+    let h   = max(half, vec3f(0.0001, 0.0001, 0.0001))
+    let hit = intersectCube(origin, direction, center - h, center + h)
+    return step(0.0, hit.y) * step(hit.x, hit.y)
+}
+
+material WaterCaustics {
+    param poolWidth   : float = 1.5
+    param poolLength  : float = 1.5
+    param poolHeight  : float = 0.3
+    param normalScale : float = 1.0
+    param opticsEnable: float = 1.0
+
+    context {
+        resolution      : float = 64.0
+        time            : float = 0.0
+        objectKind      : float = 0.0
+        objectCount     : float = 0.0
+        lightDir        : vec3
+        objectCenter    : vec3
+        objectHalfRadius: vec4
+        spheres         : array<vec4, 32>
+    }
+
+    state height
+
+    varying vUv : vec2
+
+    vertex() -> vec4 {
+        let fi  = float(vertexIndex)
+        let ox  = fi == 1.0 || fi == 2.0 || fi == 4.0 ? 1.0 : 0.0
+        let oy  = fi == 2.0 || fi == 4.0 || fi == 5.0 ? 1.0 : 0.0
+        vUv     = vec2f(ox, oy)
+        return vec4f(ox * 2.0 - 1.0, oy * 2.0 - 1.0, 0.0, 1.0)
+    }
+
+    surface(geo) -> color {
+        let uv    = clamp(geo.vUv, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+        let texel = 1.0 / max(resolution, 1.0)
+
+        let c  = stateAt(uv)
+        let e  = stateAt(uv + vec2f(texel, 0.0))
+        let wv = stateAt(uv - vec2f(texel, 0.0))
+        let nn = stateAt(uv + vec2f(0.0, texel))
+        let ss = stateAt(uv - vec2f(0.0, texel))
+
+        let ldir          = normalize(lightDir)
+        let waterNormal   = normalize(vec3f(c.z * normalScale, 1.0, c.w * normalScale))
+        let causticNormal = normalize(vec3f(c.z * normalScale * 0.5, 1.0, c.w * normalScale * 0.5))
+        let refracted     = refract(-ldir, waterNormal, 1.0 / 1.333)
+        let causticRay    = refract(-ldir, causticNormal, 1.0 / 1.333)
+        let flatRay       = refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+
+        let origin  = vec3f((uv.x - 0.5) * poolWidth * 2.0, 0.0, (uv.y - 0.5) * poolLength * 2.0)
+        let originH = vec3f(origin.x, c.x * poolHeight, origin.z)
+        let oldPos  = projectFloor(origin, flatRay, poolHeight)
+        let newPos  = projectFloor(originH, causticRay, poolHeight)
+
+        let oldArea = max(length(dpdx(oldPos)) * length(dpdy(oldPos)), 0.000001)
+        let newArea = max(length(dpdx(newPos)) * length(dpdy(newPos)), 0.000001)
+
+        let convergence = abs((e.x + wv.x + nn.x + ss.x) - c.x * 4.0)
+        let slopeRay    = normalize(vec3f(-refracted.x, max(refracted.y, 0.05), -refracted.z))
+        let slopeFocus  = max(0.0, dot(slopeRay, waterNormal))
+        let shimmer     = 0.5 + 0.5 * sin(uv.x * 41.0 + uv.y * 37.0 + time * 2.4 + c.x * 180.0)
+        let areaFocus   = clamp(oldArea / newArea * 0.2, 0.0, 4.0)
+        let slopeMag    = length(c.zw)
+        var intensity   = areaFocus * (0.68 + 0.32 * smoothstep(0.001, 0.028, convergence * 0.72 + slopeMag * 0.035))
+        intensity = intensity * (0.52 + 0.48 * shimmer) * (0.58 + 0.42 * slopeFocus)
+
+        let centerUV = vec2f(objectCenter.x * 0.5 + 0.5, objectCenter.z * 0.5 + 0.5)
+        let aspect   = vec2f(max(poolWidth / max(poolLength, 0.001), 0.001), 1.0)
+        var compMask = 0.0
+        for (var i = 0i; i < 32i; i = i + 1i) {
+            if (objectKind >= 2.5 && float(i) < objectCount) {
+                let sp  = spheres[i]
+                let suv = centerUV + vec2f(sp.x * 0.5, sp.z * 0.5)
+                let rad = max(sp.w * 0.72, 0.012)
+                let dd  = length((uv - suv) * aspect)
+                compMask = max(compMask, 1.0 - smoothstep(rad, rad + max(rad * 1.25, 0.018), dd))
+            }
+        }
+        let singleR0   = max(objectHalfRadius.w * 0.55, 0.018)
+        let singleRC   = max(max(objectHalfRadius.x, objectHalfRadius.z) * 0.6, singleR0)
+        let singleR    = objectKind > 1.5 ? singleRC : singleR0
+        let singleD    = length((uv - centerUV) * aspect)
+        let singleMask = 1.0 - smoothstep(singleR, singleR + max(singleR * 1.2, 0.02), singleD)
+        let maskRaw    = objectKind >= 2.5 ? compMask : singleMask
+        let maskOn     = objectKind >= 0.5 && opticsEnable > 0.0
+        let shadowMask = maskOn ? maskRaw : 0.0
+
+        let sphereShadow = sphereSoftShadow(newPos, flatRay, objectKind, opticsEnable, objectCenter, objectHalfRadius.w)
+
+        let shadowRay  = -flatRay
+        let sright     = normalize(cross(shadowRay, vec3f(0.0, 1.0, 0.0)))
+        let sup        = normalize(cross(sright, shadowRay))
+        let cubeActive = objectKind >= 1.5 && objectKind < 2.5 && opticsEnable > 0.0
+        let cubeHalf   = objectHalfRadius.xyz
+        var cubeOcc    = 0.0
+        for (var cx = 0i; cx < 3i; cx = cx + 1i) {
+            for (var cy = 0i; cy < 3i; cy = cy + 1i) {
+                let fx = float(cx) - 1.0
+                let fy = float(cy) - 1.0
+                let so = newPos + sright * fx * 0.025 + sup * fy * 0.025
+                cubeOcc = cubeOcc + cubeOcclusion(so, shadowRay, objectCenter, cubeHalf)
+            }
+        }
+        let cubeShadow = cubeActive ? cubeOcc / 9.0 : 0.0
+
+        let shadow = max(max(shadowMask, sphereShadow), cubeShadow)
+
+        let lit  = intensity * (1.0 - shadow * 0.82)
+        let warm = vec3f(1.0, 0.78, 0.42)
+        let cool = vec3f(0.44, 0.95, 1.0)
+        return vec4f(mix(cool, warm, clamp(lit * 1.8, 0.0, 1.0)) * lit, 1.0)
+    }
+}

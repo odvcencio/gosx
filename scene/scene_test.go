@@ -2918,6 +2918,94 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 	}
 }
 
+// TestPropsSceneIRLowersWaterSystemGLSL verifies the additive Selena GLSL/GLES +
+// descriptor slots round-trip through WaterSystem -> WaterSystemIR -> JSON, and
+// that they are omitted (zero-value path unchanged) when not set. The WGSL slots
+// are intentionally not exercised here; they are covered above and unaffected.
+func TestPropsSceneIRLowersWaterSystemGLSL(t *testing.T) {
+	const surfaceVtxGLSL = "attribute float a_vertexIndex;\nvoid main() { gl_Position = vec4(0.0); }"
+	const surfaceFragGLSL = "precision mediump float;\nvoid main() { gl_FragColor = vec4(0.0); }"
+	const surfaceVtxGLES = "#version 300 es\nvoid main() { gl_Position = vec4(0.0); }"
+	const surfaceFragGLES = "#version 300 es\nprecision mediump float;\nout vec4 o; void main() { o = vec4(0.0); }"
+	const seedFragGLSL = "precision highp float;\nvoid main() { gl_FragColor = vec4(1.0); }"
+	const compoundShadowVtxGLSL = "attribute vec2 a_position;\nvoid main() { gl_Position = vec4(a_position, 0.0, 1.0); }"
+	const compoundShadowFragGLSL = "precision mediump float;\nvoid main() { gl_FragColor = vec4(0.0); }"
+	const compoundShadowVtxGLES = "#version 300 es\nvoid main() { gl_Position = vec4(0.0); }"
+	const compoundShadowFragGLES = "#version 300 es\nprecision mediump float;\nout vec4 o; void main() { o = vec4(0.0); }"
+	descriptor := json.RawMessage(`{"kind":"mesh","textures":[{"name":"sky","dimension":"cube"}],"states":[{"name":"height"}]}`)
+
+	props := Props{
+		Graph: NewGraph(
+			WaterSystem{
+				ID:                         "pool-water-glsl",
+				SurfaceVertexGLSL:          surfaceVtxGLSL,
+				SurfaceFragmentGLSL:        surfaceFragGLSL,
+				SurfaceVertexGLES:          surfaceVtxGLES,
+				SurfaceFragmentGLES:        surfaceFragGLES,
+				SeedFragmentGLSL:           seedFragGLSL,
+				CompoundShadowVertexGLSL:   compoundShadowVtxGLSL,
+				CompoundShadowFragmentGLSL: compoundShadowFragGLSL,
+				CompoundShadowVertexGLES:   compoundShadowVtxGLES,
+				CompoundShadowFragmentGLES: compoundShadowFragGLES,
+				ShaderDescriptors:          map[string]json.RawMessage{"surface": descriptor},
+			},
+		),
+	}
+
+	ir := props.SceneIR()
+	if len(ir.WaterSystems) != 1 {
+		t.Fatalf("expected one water system, got %#v", ir.WaterSystems)
+	}
+	water := ir.WaterSystems[0]
+	if water.SurfaceVertexGLSL != surfaceVtxGLSL || water.SurfaceFragmentGLSL != surfaceFragGLSL {
+		t.Fatalf("surface GLSL did not round-trip: vtx=%q frag=%q", water.SurfaceVertexGLSL, water.SurfaceFragmentGLSL)
+	}
+	if water.SurfaceVertexGLES != surfaceVtxGLES || water.SurfaceFragmentGLES != surfaceFragGLES {
+		t.Fatalf("surface GLES did not round-trip: vtx=%q frag=%q", water.SurfaceVertexGLES, water.SurfaceFragmentGLES)
+	}
+	if water.SeedFragmentGLSL != seedFragGLSL {
+		t.Fatalf("seed fragment GLSL did not round-trip: %q", water.SeedFragmentGLSL)
+	}
+	if water.CompoundShadowVertexGLSL != compoundShadowVtxGLSL || water.CompoundShadowFragmentGLSL != compoundShadowFragGLSL {
+		t.Fatalf("compoundShadow GLSL did not round-trip: vtx=%q frag=%q", water.CompoundShadowVertexGLSL, water.CompoundShadowFragmentGLSL)
+	}
+	if water.CompoundShadowVertexGLES != compoundShadowVtxGLES || water.CompoundShadowFragmentGLES != compoundShadowFragGLES {
+		t.Fatalf("compoundShadow GLES did not round-trip: vtx=%q frag=%q", water.CompoundShadowVertexGLES, water.CompoundShadowFragmentGLES)
+	}
+	if string(water.ShaderDescriptors["surface"]) != string(descriptor) {
+		t.Fatalf("surface descriptor did not round-trip: %s", water.ShaderDescriptors["surface"])
+	}
+
+	// JSON wire shape uses the camelCase tags the client reads (parallel to *WGSL).
+	encoded, err := json.Marshal(water)
+	if err != nil {
+		t.Fatalf("marshal water IR: %v", err)
+	}
+	for _, key := range []string{
+		`"surfaceVertexGLSL"`, `"surfaceFragmentGLSL"`,
+		`"surfaceVertexGLES"`, `"surfaceFragmentGLES"`,
+		`"seedFragmentGLSL"`, `"shaderDescriptors"`,
+		`"compoundShadowVertexGLSL"`, `"compoundShadowFragmentGLSL"`,
+		`"compoundShadowVertexGLES"`, `"compoundShadowFragmentGLES"`,
+	} {
+		if !strings.Contains(string(encoded), key) {
+			t.Fatalf("marshaled water IR missing key %s: %s", key, encoded)
+		}
+	}
+
+	// Zero-value path: empty GLSL slots and descriptors are omitted entirely.
+	emptyIR := (Props{Graph: NewGraph(WaterSystem{ID: "empty-water"})}).SceneIR()
+	emptyEncoded, err := json.Marshal(emptyIR.WaterSystems[0])
+	if err != nil {
+		t.Fatalf("marshal empty water IR: %v", err)
+	}
+	for _, key := range []string{"GLSL", "GLES", "shaderDescriptors"} {
+		if strings.Contains(string(emptyEncoded), key) {
+			t.Fatalf("empty water IR should omit %q, got %s", key, emptyEncoded)
+		}
+	}
+}
+
 // TestComputeParticlesKernelFieldsAbsentWhenEmpty ensures that when the new
 // kernel fields are empty they are omitted from both the IR and legacy JSON
 // (zero-value path unchanged).
