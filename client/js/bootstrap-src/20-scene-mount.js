@@ -7786,6 +7786,28 @@
       scheduleRender("signal-selection");
     }
 
+    let lastAppliedGizmoMode = null;
+    let applyingSignalGizmoMode = false;
+
+    // applyMountedSceneGizmoMode drives the TransformControls gizmo live off
+    // Props.GizmoInputSignal — the rotate-mode ring helper (baked with
+    // Mesh.GizmoRing / gizmoRing:true, see scene.go's lowerTransformControls)
+    // is shown only while mode === "rotate". Mirrors applyMountedSceneSelection
+    // above: patch already-mounted objects in place, no server round-trip.
+    function applyMountedSceneGizmoMode(mode) {
+      const nextMode = typeof mode === "string" ? mode : "";
+      if (nextMode === lastAppliedGizmoMode) return;
+      applyingSignalGizmoMode = true;
+      const objects = sceneStateObjects(sceneState);
+      for (let i = 0; i < objects.length; i++) {
+        if (!objects[i].gizmoRing) continue;
+        applySceneObjectPatch(sceneState, objects[i].id, { visible: nextMode === "rotate" });
+      }
+      lastAppliedGizmoMode = nextMode;
+      applyingSignalGizmoMode = false;
+      scheduleRender("signal-gizmo-mode");
+    }
+
 	    function currentMountedSceneCamera(sourceCamera) {
 	      return sceneRenderCamera(sceneCurrentControlCamera(
 	        sceneControlHandle && sceneControlHandle.controller,
@@ -7976,6 +7998,14 @@
         if (disposed) return;
         const id = typeof value === "string" ? value : (value && value.selectedID);
         applyMountedSceneSelection(id || "");
+      }, { immediate: false });
+    }
+    let unsubGizmoSignal = null;
+    if (typeof props.gizmoInputSignal === "string" && props.gizmoInputSignal) {
+      unsubGizmoSignal = gosxSubscribeSharedSignal(props.gizmoInputSignal, function(value) {
+        if (disposed) return;
+        const mode = typeof value === "string" ? value : (value && value.mode);
+        applyMountedSceneGizmoMode(mode || "");
       }, { immediate: false });
     }
 
@@ -8632,6 +8662,7 @@
         document.removeEventListener("gosx:hub:event", sceneHubListener);
         if (unsubCameraSignal) unsubCameraSignal();
         if (unsubSelectionSignal) unsubSelectionSignal();
+        if (unsubGizmoSignal) unsubGizmoSignal();
         releaseViewportObserver();
         releaseCapabilityObserver();
         releaseLifecycleObserver();

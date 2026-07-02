@@ -131,6 +131,13 @@ type Props struct {
 	// CursorOutputSignal: when set, the engine publishes the normalized pointer
 	// {x,y} in [0,1] over the canvas into this shared signal.
 	CursorOutputSignal string `json:"cursorOutputSignal,omitempty"`
+	// GizmoInputSignal: when set, the engine reads the active transform-tool
+	// mode ("translate" | "rotate" | "scale" | "" for none) from this shared
+	// signal and switches the TransformControls gizmo helper live — no page
+	// reload / re-render trip needed. Meshes opted into gizmo-mode-driven
+	// visibility via Mesh.GizmoRing are shown only while the signal matches
+	// "rotate"; everything else is untouched.
+	GizmoInputSignal string `json:"gizmoInputSignal,omitempty"`
 	CapabilityTier        string       `json:"capabilityTier,omitempty"`
 	Compression           *Compression `json:"compression,omitempty"`
 	ControlTarget         Vector3
@@ -278,6 +285,12 @@ type Mesh struct {
 	Pickable      *bool
 	Visible       *bool
 	Selected      bool
+	// GizmoRing marks this mesh as a TransformControls rotate-mode ring helper.
+	// When Props.GizmoInputSignal is set, the engine shows GizmoRing meshes only
+	// while the signal reads "rotate" (mirrors how Selected is driven live by
+	// Props.SelectionInputSignal); the initial Visible value above still governs
+	// the very first frame, before any signal update lands.
+	GizmoRing     bool
 	OutlineColor  string
 	OutlineWidth  float64
 	CastShadow    bool
@@ -1639,6 +1652,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "selectionInputSignal", p.SelectionInputSignal)
 	setString(out, "cameraOutputSignal", p.CameraOutputSignal)
 	setString(out, "cursorOutputSignal", p.CursorOutputSignal)
+	setString(out, "gizmoInputSignal", p.GizmoInputSignal)
 	setString(out, "capabilityTier", p.CapabilityTier)
 	if p.ControlTarget != (Vector3{}) {
 		out["controlTarget"] = map[string]any{
@@ -2473,15 +2487,21 @@ func (l *graphLowerer) lowerTransformControls(control TransformControls, parent 
 		Rotation: control.Rotation,
 		Width:    width,
 	}, parent)
-	if strings.EqualFold(strings.TrimSpace(control.Mode), "rotate") {
-		l.lowerMesh(Mesh{
-			ID:       id + "-ring",
-			Geometry: helperRingGeometry(size, 48, width),
-			Material: LineBasicMaterial{MaterialStyle: MaterialStyle{Color: "#facc15"}, Width: width},
-			Position: position,
-			Rotation: control.Rotation,
-		}, parent)
-	}
+	// The rotate-mode ring is always lowered (not just when the initial mode is
+	// "rotate") so Props.GizmoInputSignal can flip its visibility live on the
+	// client without a full page/scene reload — see Mesh.GizmoRing. Its initial
+	// Visible value still matches the baked mode for the first frame / for
+	// clients that never subscribe to the signal.
+	rotateMode := strings.EqualFold(strings.TrimSpace(control.Mode), "rotate")
+	l.lowerMesh(Mesh{
+		ID:        id + "-ring",
+		Geometry:  helperRingGeometry(size, 48, width),
+		Material:  LineBasicMaterial{MaterialStyle: MaterialStyle{Color: "#facc15"}, Width: width},
+		Position:  position,
+		Rotation:  control.Rotation,
+		Visible:   Bool(rotateMode),
+		GizmoRing: true,
+	}, parent)
 }
 
 func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
@@ -2516,6 +2536,7 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.Pickable = mesh.Pickable
 	record.Visible = mesh.Visible
 	record.Selected = mesh.Selected
+	record.GizmoRing = mesh.GizmoRing
 	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
 	record.OutlineWidth = mesh.OutlineWidth
 	record.CastShadow = mesh.CastShadow

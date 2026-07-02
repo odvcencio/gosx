@@ -602,6 +602,29 @@ func TestPropsLegacyPropsIncludeEventSignalNamespace(t *testing.T) {
 	}
 }
 
+func TestPropsLegacyPropsIncludeGizmoInputSignal(t *testing.T) {
+	props := Props{
+		Width:            640,
+		Height:           360,
+		GizmoInputSignal: "$scene.demo.gizmo",
+	}
+
+	legacy := props.LegacyProps()
+	if got := legacy["gizmoInputSignal"]; got != "$scene.demo.gizmo" {
+		t.Fatalf("expected gizmo input signal, got %#v", got)
+	}
+
+	// Fast SSR path (spreadPropsFast / MarshalJSON) must agree with LegacyProps.
+	raw := props.RawPropsJSON()
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal RawPropsJSON: %v", err)
+	}
+	if got := decoded["gizmoInputSignal"]; got != "$scene.demo.gizmo" {
+		t.Fatalf("expected gizmoInputSignal in fast-path props, got %#v", got)
+	}
+}
+
 func TestPropsSceneIRLowersLightsAndEnvironment(t *testing.T) {
 	props := Props{
 		Environment: Environment{
@@ -3608,6 +3631,63 @@ func TestScene3DHelperNodesLowerToLineObjects(t *testing.T) {
 		if object.MaterialKind != "line-basic" {
 			t.Fatalf("expected helper object %q line-basic material, got %q", object.ID, object.MaterialKind)
 		}
+	}
+}
+
+// TestScene3DTransformControlsRingAlwaysLoweredWithGizmoModeVisibility verifies
+// the P6/gizmoInputSignal precondition: the rotate-mode ring helper must be
+// lowered into the graph regardless of the *initial* TransformControls.Mode,
+// carrying GizmoRing so the client can flip its visibility live off
+// Props.GizmoInputSignal without a full scene re-render. Its baked Visible
+// value should still match the initial mode for clients that never subscribe
+// to the signal.
+func TestScene3DTransformControlsRingAlwaysLoweredWithGizmoModeVisibility(t *testing.T) {
+	findRing := func(ir SceneIR) (ObjectIR, bool) {
+		for _, object := range ir.Objects {
+			if strings.HasSuffix(object.ID, "-ring") {
+				return object, true
+			}
+		}
+		return ObjectIR{}, false
+	}
+
+	translateProps := Props{
+		Graph: NewGraph(TransformControls{ID: "gizmo", Mode: "translate", Size: 1}),
+	}
+	ring, ok := findRing(translateProps.SceneIR())
+	if !ok {
+		t.Fatalf("expected a ring helper object to be lowered even in translate mode")
+	}
+	if !ring.GizmoRing {
+		t.Fatalf("expected ring object to carry GizmoRing=true, got %#v", ring)
+	}
+	if ring.Visible == nil || *ring.Visible {
+		t.Fatalf("expected ring to be baked hidden in translate mode, got %#v", ring.Visible)
+	}
+
+	scaleProps := Props{
+		Graph: NewGraph(TransformControls{ID: "gizmo", Mode: "scale", Size: 1}),
+	}
+	ring, ok = findRing(scaleProps.SceneIR())
+	if !ok {
+		t.Fatalf("expected a ring helper object to be lowered even in scale mode")
+	}
+	if ring.Visible == nil || *ring.Visible {
+		t.Fatalf("expected ring to be baked hidden in scale mode, got %#v", ring.Visible)
+	}
+
+	rotateProps := Props{
+		Graph: NewGraph(TransformControls{ID: "gizmo", Mode: "rotate", Size: 1}),
+	}
+	ring, ok = findRing(rotateProps.SceneIR())
+	if !ok {
+		t.Fatalf("expected a ring helper object to be lowered in rotate mode")
+	}
+	if ring.Visible == nil || !*ring.Visible {
+		t.Fatalf("expected ring to be baked visible in rotate mode, got %#v", ring.Visible)
+	}
+	if !ring.GizmoRing {
+		t.Fatalf("expected ring object to carry GizmoRing=true, got %#v", ring)
 	}
 }
 

@@ -181,6 +181,9 @@ type ObjectIR struct {
 	Pickable              *bool             `json:"pickable,omitempty"`
 	Visible               *bool             `json:"visible,omitempty"`
 	Selected              bool              `json:"selected,omitempty"`
+	// GizmoRing marks a TransformControls rotate-mode ring helper mesh; see
+	// scene.Mesh.GizmoRing and Props.GizmoInputSignal.
+	GizmoRing             bool              `json:"gizmoRing,omitempty"`
 	OutlineColor          string            `json:"outlineColor,omitempty"`
 	OutlineWidth          float64           `json:"outlineWidth,omitempty"`
 	CastShadow            bool              `json:"castShadow,omitempty"`
@@ -1369,6 +1372,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	}
 	if item.Selected {
 		record["selected"] = true
+	}
+	if item.GizmoRing {
+		record["gizmoRing"] = true
 	}
 	setString(record, "outlineColor", item.OutlineColor)
 	setNumeric(record, "outlineWidth", item.OutlineWidth)

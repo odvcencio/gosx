@@ -25146,6 +25146,98 @@ test("P3 selectionInputSignal: engine selects object from shared signal", async 
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+// === P6 gizmoInputSignal: engine switches TransformControls mode live ===
+test("P6 gizmoInputSignal: engine toggles gizmo ring visibility from shared signal", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-gizmo-signal-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-gizmosig-program.json": { text: '{"name":"SceneGizmoSig"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-gizmosig",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-gizmo-signal-root",
+          runtime: "shared",
+          programRef: "/scene-gizmosig-program.json",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#000",
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+            gizmoInputSignal: "$gizmo",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#000",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [-0.5, -0.5, 0.5, 0.5, -0.5, 0.5],
+      worldColors: [0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1],
+      worldVertexCount: 2,
+      materials: [{ kind: "line-basic", color: "#facc15", opacity: 1, wireframe: false, blendMode: "opaque", emissive: 0 }],
+      objects: [
+        {
+          id: "kiln-transform-controls-ring",
+          kind: "lines",
+          pickable: false,
+          visible: false,
+          gizmoRing: true,
+          materialIndex: 0,
+          vertexOffset: 0,
+          vertexCount: 2,
+          static: false,
+          bounds: { minX: -0.5, minY: -0.5, minZ: 0.5, maxX: 0.5, maxY: -0.5, maxZ: 0.5 },
+        },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let mounted = env.context.__gosx.engines.get("gosx-engine-gizmosig");
+  for (let attempt = 0; attempt < 5 && !mounted; attempt += 1) {
+    await flushAsyncWork();
+    mounted = env.context.__gosx.engines.get("gosx-engine-gizmosig");
+  }
+  assert.ok(mounted, "expected gosx-engine-gizmosig to mount");
+
+  const rendersBefore = env.engineRenderCalls.length;
+
+  // Push "rotate" — the baked-hidden ring helper should become visible without
+  // a page reload / new SSR round-trip.
+  env.context.__gosx_notify_shared_signal("$gizmo", JSON.stringify("rotate"));
+  await flushAsyncWork();
+
+  assert.ok(env.engineRenderCalls.length > rendersBefore, "expected a render after gizmo signal");
+  assert.equal(env.consoleLogs.error.length, 0);
+
+  const rendersAfterRotate = env.engineRenderCalls.length;
+
+  // Switching back to "translate" should also re-render (ring hides again).
+  env.context.__gosx_notify_shared_signal("$gizmo", JSON.stringify("translate"));
+  await flushAsyncWork();
+
+  assert.ok(env.engineRenderCalls.length > rendersAfterRotate, "expected a render after switching back to translate");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 // === P5 cursorOutputSignal: normalized pointer published into signal ===
 test("P5 cursorOutputSignal: pointermove publishes normalized cursor position", async () => {
   const mount = new FakeElement("div", null);

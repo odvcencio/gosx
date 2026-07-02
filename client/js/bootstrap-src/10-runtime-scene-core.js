@@ -1760,6 +1760,10 @@
       // Go side and flow into per-segment width buffers at bundle build time.
       lineWidth: sceneNumber(item.lineWidth, sceneNumber(current.lineWidth, 0)),
       selected: sceneBool(Object.prototype.hasOwnProperty.call(item, "selected") ? item.selected : current.selected, false),
+      // gizmoRing marks a TransformControls rotate-mode ring helper; the mount
+      // layer flips its `visible` off Props.GizmoInputSignal at runtime (see
+      // applyMountedSceneGizmoMode in 20-scene-mount.js).
+      gizmoRing: sceneBool(Object.prototype.hasOwnProperty.call(item, "gizmoRing") ? item.gizmoRing : current.gizmoRing, false),
       _modelHidden: Object.prototype.hasOwnProperty.call(item, "_modelHidden")
         ? sceneBool(item._modelHidden, false)
         : sceneBool(current._modelHidden, false),
