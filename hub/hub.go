@@ -68,6 +68,57 @@ type Client struct {
 	binarySend chan []byte
 	syncStates *peerSyncState
 	mu         sync.Mutex
+	// closed is set under mu by removeClient before it closes send/binarySend.
+	// trySend/tryBinarySend check it under the same mu before writing, so a
+	// send can never race with the close of the same channel — see trySend.
+	closed bool
+}
+
+// trySend enqueues msg on the client's text-message channel, returning false
+// without blocking if the channel's buffer is full or the client has
+// disconnected.
+//
+// This exists to close a data race: a naive `select { case c.send <- msg:
+// default: }` looks up (or is handed) a *Client and later writes to c.send
+// with no synchronization against removeClient, which closes that same
+// channel from a different goroutine when the client disconnects. Two
+// clients disconnecting at nearly the same time can trigger exactly this —
+// one client's leave handler fanning a message out to the other (e.g. a
+// presence/cursor update, or a queued CRDT sync message) while the other's
+// own removeClient concurrently closes its channel — which the Go race
+// detector flags (send concurrent with close of the same channel is
+// documented as unsafe/racy) and which panics with "send on closed channel"
+// whenever the close happens to complete first. Gating both the send and the
+// close on c.mu makes them mutually exclusive: a send either completes
+// strictly before the channel is marked closed (and so is never racing an
+// in-flight close), or observes closed=true and is skipped.
+func (c *Client) trySend(msg []byte) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return false
+	}
+	select {
+	case c.send <- msg:
+		return true
+	default:
+		return false
+	}
+}
+
+// tryBinarySend is trySend for the binary (CRDT sync) channel.
+func (c *Client) tryBinarySend(msg []byte) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return false
+	}
+	select {
+	case c.binarySend <- msg:
+		return true
+	default:
+		return false
+	}
 }
 
 // HandlerFunc handles an event from a client.
@@ -205,11 +256,7 @@ func (h *Hub) Broadcast(event string, data any) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, client := range h.clients {
-		select {
-		case client.send <- msg:
-		default:
-			// Client send buffer full — skip
-		}
+		client.trySend(msg)
 	}
 }
 
@@ -227,10 +274,14 @@ func (h *Hub) Send(clientID string, event string, data any) {
 		return
 	}
 
-	select {
-	case client.send <- msg:
-	default:
-	}
+	// client.trySend (not a bare `client.send <- msg`) is required here: this
+	// call is not the whole loop in Broadcast, which stays under h.mu.RLock
+	// for its entire duration (and so can never race removeClient's h.mu.Lock
+	// map delete). Send releases h.mu right after the lookup above, so
+	// without trySend's own c.mu-guarded closed check, a concurrent
+	// removeClient for this same client could close client.send between the
+	// lookup and the send below.
+	client.trySend(msg)
 }
 
 // encodeMessage serializes a hub Message into a single JSON byte slice.
@@ -476,6 +527,16 @@ func (h *Hub) removeClient(c *Client) {
 	h.mu.Unlock()
 
 	h.presence.remove(c.ID)
+
+	// Mark closed under c.mu before closing the channels: trySend/
+	// tryBinarySend check c.closed under the same mutex before writing, so
+	// this ordering guarantees any send that observes closed=false completes
+	// its channel write strictly before the close below runs (mutually
+	// exclusive via c.mu), and any send that loses the race simply observes
+	// closed=true and skips the write instead of racing the close.
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
 	close(c.send)
 	close(c.binarySend)
 

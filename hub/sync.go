@@ -88,10 +88,7 @@ func (h *Hub) queueSyncMessage(client *Client, binding *syncedDoc) {
 		return
 	}
 	payload := append([]byte{binding.prefix}, msg...)
-	select {
-	case client.binarySend <- payload:
-	default:
-	}
+	client.tryBinarySend(payload)
 }
 
 func (h *Hub) broadcastSyncDoc(prefix byte) {
@@ -147,8 +144,5 @@ func (h *Hub) sendCRDTError(client *Client, prefix byte, err error) {
 			"error": err.Error(),
 		}),
 	})
-	select {
-	case client.send <- payload:
-	default:
-	}
+	client.trySend(payload)
 }
