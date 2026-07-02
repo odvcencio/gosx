@@ -427,8 +427,12 @@ const routeBudgets = [
     // 49_000: video-player-primitives folded into bootstrap-feature-engines.js
     // (see that budget's comment above). Measured: 193_656 / 54_863 / 48_463,
     // plus sub-1% rounding headroom.
-    raw: 194_000,
-    gzip: 55_000,
+    // Bumped raw 194_000 -> 196_000, gzip 55_000 -> 55_500: merge of
+    // video-player-primitives with the scene3d gizmo/water/regions line —
+    // bootstrap-runtime.js grew alongside the engines surface. Measured:
+    // 194_439 / 55_145 / 48_675, plus sub-1% rounding headroom.
+    raw: 196_000,
+    gzip: 55_500,
     brotli: 49_000,
   },
 ];
