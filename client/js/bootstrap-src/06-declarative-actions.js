@@ -18,6 +18,17 @@
 // Discrete actions reuse existing idempotent HTTP endpoints whose results the
 // server re-broadcasts over the hub, so bound islands re-render with no response
 // handling here. Streaming/outbound state uses BindHub outbound bindings, not this.
+//
+// CSRF: actionFetch attaches X-CSRF-Token to POST/PUT/PATCH/DELETE requests
+// when the page carries a <meta name="csrf-token"> tag — the mirror of
+// m31labs.dev/gosx/session.Manager.Protect's expected header (session.go's
+// Protect reads r.Header.Get("X-CSRF-Token"), falling back to a csrf_token
+// form field only for non-JSON requests; actionFetch's Accept is always
+// "application/json", so the header is the only path that reaches it). Apps
+// without Protect mounted never render the meta tag, so gosxCSRFToken()
+// returns "" and no header is sent — unchanged behavior, no parallel
+// mechanism. GET requests (Protect's csrfProtectedMethod ignores them) never
+// get the header, matching the server's own method filter.
 (function () {
   if (typeof document === "undefined" || window.__gosxDeclarativeActions) return;
   window.__gosxDeclarativeActions = true;
@@ -33,8 +44,29 @@
     }
   }
 
+  function gosxCSRFToken() {
+    var meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute("content") || "" : "";
+  }
+
+  function isMutatingMethod(method) {
+    switch (String(method || "").toUpperCase()) {
+      case "POST":
+      case "PUT":
+      case "PATCH":
+      case "DELETE":
+        return true;
+      default:
+        return false;
+    }
+  }
+
   function actionFetch(el, method, url, body) {
     var opts = { method: method, headers: { Accept: "application/json" } };
+    if (isMutatingMethod(method)) {
+      var token = gosxCSRFToken();
+      if (token) opts.headers["X-CSRF-Token"] = token;
+    }
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
       opts.body = body;

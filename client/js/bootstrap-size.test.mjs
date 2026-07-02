@@ -422,8 +422,13 @@ const routeBudgets = [
     // engines-prefix window.__gosx_runtime_api bridge (see the
     // bootstrap-feature-engines.js budget note above). gzip headroom
     // unchanged. Measured: 190_224 / 53_972 / 47_629, plus rounding headroom.
+    // Bumped gzip 54_000 -> 54_200 for CSRF token attachment in
+    // 06-declarative-actions.js's actionFetch (gosxCSRFToken() reads
+    // <meta name="csrf-token">, attaches X-CSRF-Token on POST/PUT/PATCH/
+    // DELETE — see session.Manager.Protect). Measured: 190_508 / 54_077 /
+    // 47_753, plus rounding headroom.
     raw: 191_000,
-    gzip: 54_000,
+    gzip: 54_200,
     brotli: 47_800,
   },
 ];
