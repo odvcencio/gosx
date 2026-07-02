@@ -10,3 +10,4 @@
   registerFeature("hubs", function(api) {
     const setSharedSignalJSON = api.setSharedSignalJSON;
     const gosxNotifySharedSignal = api.gosxNotifySharedSignal;
+    const gosxSubscribeSharedSignal = api.gosxSubscribeSharedSignal;

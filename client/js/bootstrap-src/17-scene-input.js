@@ -70,6 +70,11 @@
     return typeof value === "string" ? value.trim() : "";
   }
 
+  function sceneCursorSignalNamespace(props) {
+    const v = props && props.cursorOutputSignal;
+    return typeof v === "string" ? v.trim() : "";
+  }
+
   function sceneSignalSegment(value, fallback) {
     const source = typeof value === "string" ? value.trim().toLowerCase() : "";
     if (!source) {
@@ -1332,7 +1337,8 @@
   function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction) {
     const pickNamespace = scenePickSignalNamespace(props);
     const eventNamespace = sceneEventSignalNamespace(props);
-    if (!canvas || (!pickNamespace && !eventNamespace)) {
+    const cursorNamespace = sceneCursorSignalNamespace(props);
+    if (!canvas || (!pickNamespace && !eventNamespace && !cursorNamespace)) {
       return {
         getSnapshot() {
           return null;
@@ -1346,9 +1352,16 @@
     const initialHeight = initialMetrics.height;
     const state = createScenePickState(initialWidth, initialHeight);
     let documentListenersAttached = false;
+    let publishedCursorKey = "";
 
     function publish() {
       publishSceneInteractionState(pickNamespace, eventNamespace, state);
+      if (cursorNamespace) {
+        const nx = sceneClamp(state.pointerX / Math.max(initialWidth, 1), 0, 1);
+        const ny = sceneClamp(state.pointerY / Math.max(initialHeight, 1), 0, 1);
+        const key = nx + "|" + ny;
+        if (key !== publishedCursorKey) { publishedCursorKey = key; queueInputSignal(cursorNamespace, { x: nx, y: ny }); }
+      }
     }
 
     function emit(action, before) {

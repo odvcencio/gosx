@@ -2,6 +2,7 @@ package hydrate
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/engine"
@@ -216,6 +217,44 @@ func TestManifestAddHub(t *testing.T) {
 	}
 	if m.Hubs[0].Bindings[0].Signal != "$presence" {
 		t.Fatalf("unexpected binding %#v", m.Hubs[0].Bindings[0])
+	}
+}
+
+func TestHubBindingDirectionRoundTrip(t *testing.T) {
+	// Verify that Direction, ThrottleMS, and DebounceMS survive JSON round-trip.
+	b := HubBinding{
+		Event:      "cursor",
+		Signal:     "$cursor",
+		Direction:  "out",
+		ThrottleMS: 50,
+		DebounceMS: 0,
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got HubBinding
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Direction != "out" {
+		t.Fatalf("direction: expected out, got %q", got.Direction)
+	}
+	if got.ThrottleMS != 50 {
+		t.Fatalf("throttleMs: expected 50, got %d", got.ThrottleMS)
+	}
+	// omitempty: DebounceMS=0 should not appear in JSON
+	if got.DebounceMS != 0 {
+		t.Fatalf("debounceMs: expected 0, got %d", got.DebounceMS)
+	}
+	// direction:"" should be omitted
+	b2 := HubBinding{Event: "tick", Signal: "$tick"}
+	data2, err := json.Marshal(b2)
+	if err != nil {
+		t.Fatalf("marshal b2: %v", err)
+	}
+	if strings.Contains(string(data2), "direction") {
+		t.Fatalf("expected direction to be omitted for empty string, got %s", data2)
 	}
 }
 

@@ -94,8 +94,11 @@ type HubEntry struct {
 
 // HubBinding maps a hub event to a shared signal name.
 type HubBinding struct {
-	Event  string `json:"event"`
-	Signal string `json:"signal"`
+	Event      string `json:"event"`
+	Signal     string `json:"signal"`
+	Direction  string `json:"direction,omitempty"`
+	ThrottleMS int    `json:"throttleMs,omitempty"`
+	DebounceMS int    `json:"debounceMs,omitempty"`
 }
 
 // HubInputConfig lets the browser bootstrap forward bounded, page-declared

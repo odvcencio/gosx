@@ -42,10 +42,12 @@
     if (el && "disabled" in el) el.disabled = true;
     return fetch(url, opts)
       .then(function (r) {
-        if (!r.ok) {
-          if (el && "disabled" in el) el.disabled = false;
-          console.warn("[gosx] action failed", method, url, r.status);
-        }
+        // Re-enable on settle (success OR failure), not just on failure: a
+        // persistent submit button (composer send, comment Pin, suggest) must
+        // be usable again after a successful 2xx. Buttons that re-render away
+        // (accept/dismiss) are replaced anyway, so re-enabling is harmless.
+        if (el && "disabled" in el) el.disabled = false;
+        if (!r.ok) console.warn("[gosx] action failed", method, url, r.status);
         return r;
       })
       .catch(function (err) {
