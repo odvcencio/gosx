@@ -2379,6 +2379,7 @@
     var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : null;
     var worldPos = bundle.worldMeshPositions;
     var worldUV = bundle.worldMeshUVs;
+    var worldNormal = bundle.worldMeshNormals;
     if (!objects || !objects.length || !worldPos || !worldUV) return null;
     var chosen = null;
     for (var i = 0; i < objects.length; i++) {
@@ -2406,8 +2407,19 @@
     var uvs = worldUV instanceof Float32Array
       ? worldUV.subarray(startUV, endUV)
       : new Float32Array(worldUV.slice(startUV, endUV));
+    // Normals are baked world-space, same order/stride as positions (see
+    // 10-runtime-scene-core.js: worldMeshPositions/worldMeshNormals/worldMeshUVs
+    // are pushed together per vertex). Optional/defensive: a bundle lacking
+    // worldMeshNormals (or a length mismatch) falls back to null and the
+    // caller (refreshMeshUpload) uses a safe non-NaN default normal.
+    var normals = null;
+    if (worldNormal && endP <= worldNormal.length) {
+      normals = worldNormal instanceof Float32Array
+        ? worldNormal.subarray(start, endP)
+        : new Float32Array(worldNormal.slice(start, endP));
+    }
     return {
-      positions: positions, uvs: uvs, count: chosen.count,
+      positions: positions, normals: normals, uvs: uvs, count: chosen.count,
       id: chosen.id, texture: chosen.obj && chosen.obj.texture || "",
     };
   }
@@ -2545,6 +2557,18 @@
   }
 
   // The sampler-uniform name carrying the ping-pong state for one render pass.
+  // A constant (0,1,0) normal repeated `count` times: the safe fallback used
+  // when a mesh soup lookup can't produce real per-vertex normals (see
+  // refreshMeshUpload). Matches the pre-fix flat-shading "up" vector so a
+  // missing-data edge case degrades to the old flat look instead of NaN.
+  function sceneWaterRenderConstantUpNormals(count) {
+    var out = new Float32Array(Math.max(0, count) * 3);
+    for (var i = 0; i < out.length; i += 3) {
+      out[i] = 0; out[i + 1] = 1; out[i + 2] = 0;
+    }
+    return out;
+  }
+
   function sceneWaterRenderStateUniform(descriptor) {
     var states = descriptor && Array.isArray(descriptor.states) ? descriptor.states : [];
     if (states[0] && states[0].gl && states[0].gl.uniform) return states[0].gl.uniform;
@@ -2567,15 +2591,20 @@
   }
 
   // Upload a baked position(vec3)+uv(vec2) indexed mesh and return its VAO.
-  function sceneWaterRenderUploadMesh(gl, program, positions, uvs, indices) {
+  function sceneWaterRenderUploadMesh(gl, program, positions, normals, uvs, indices) {
     var vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
     var posLoc = gl.getAttribLocation(program, "position");
+    var normalLoc = gl.getAttribLocation(program, "normal");
     var uvLoc = gl.getAttribLocation(program, "uv");
     var posBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
     if (posLoc >= 0) { gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0); }
+    var normalBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+    if (normalLoc >= 0) { gl.enableVertexAttribArray(normalLoc); gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0); }
     var uvBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.STATIC_DRAW);
@@ -2584,16 +2613,21 @@
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
     gl.bindVertexArray(null);
-    return { vao: vao, count: indices.length, buffers: [posBuf, uvBuf, idxBuf] };
+    return { vao: vao, count: indices.length, buffers: [posBuf, normalBuf, uvBuf, idxBuf] };
   }
 
   // Generate a UV-sphere mesh with world-space positions baked in (center +
   // radius * unit). The object-material vertex shader passes `position` straight
-  // through as worldPos, so positions must already be in world space.
+  // through as worldPos, so positions must already be in world space. A sphere's
+  // normal is just the normalized center->vertex direction, i.e. the same unit
+  // vector (nx, ny, nz) used to place the vertex, so it is baked world-space too
+  // (mirrors the WebGPU/generic-PBR convention: normalMatrix is always identity
+  // there because normals reach the shader already in world space).
   function sceneWaterRenderBuildSphere(gl, program, center, radius, poolWidth, poolLength, segments, rings) {
     segments = segments || 32;
     rings = rings || 24;
     var positions = [];
+    var normals = [];
     var uvs = [];
     for (var y = 0; y <= rings; y++) {
       var v = y / rings;
@@ -2608,6 +2642,7 @@
         var wy = center[1] + ny * radius;
         var wz = center[2] + nz * radius;
         positions.push(wx, wy, wz);
+        normals.push(nx, ny, nz);
         var wuv = sceneWaterRenderWaterUV(wx, wz, poolWidth, poolLength);
         uvs.push(wuv[0], wuv[1]);
       }
@@ -2621,7 +2656,7 @@
         indices.push(a, b, a + 1, a + 1, b, b + 1);
       }
     }
-    return sceneWaterRenderUploadMesh(gl, program, positions, uvs, indices);
+    return sceneWaterRenderUploadMesh(gl, program, positions, normals, uvs, indices);
   }
 
   // Generate an axis-aligned box mesh with world-space positions baked in
@@ -2638,7 +2673,8 @@
       [cx - hx, cy - hy, cz + hz], [cx + hx, cy - hy, cz + hz],
       [cx + hx, cy + hy, cz + hz], [cx - hx, cy + hy, cz + hz],
     ];
-    // 6 faces, each as two triangles over its 4 corner indices.
+    // 6 faces, each as two triangles over its 4 corner indices, with the
+    // matching flat face normal (world-space, baked per-vertex like position).
     var faces = [
       [0, 3, 2, 1], // -z
       [4, 5, 6, 7], // +z
@@ -2647,21 +2683,32 @@
       [3, 7, 6, 2], // +y
       [0, 1, 5, 4], // -y
     ];
+    var faceNormals = [
+      [0, 0, -1],
+      [0, 0, 1],
+      [-1, 0, 0],
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+    ];
     var positions = [];
+    var normals = [];
     var uvs = [];
     var indices = [];
     for (var f = 0; f < faces.length; f++) {
       var q = faces[f];
+      var n = faceNormals[f];
       var base = positions.length / 3;
       for (var k = 0; k < 4; k++) {
         var p = c[q[k]];
         positions.push(p[0], p[1], p[2]);
+        normals.push(n[0], n[1], n[2]);
         var wuv = sceneWaterRenderWaterUV(p[0], p[2], poolWidth, poolLength);
         uvs.push(wuv[0], wuv[1]);
       }
       indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
     }
-    return sceneWaterRenderUploadMesh(gl, program, positions, uvs, indices);
+    return sceneWaterRenderUploadMesh(gl, program, positions, normals, uvs, indices);
   }
 
   // Map an objectKind string to the float the render shaders expect:
@@ -2887,7 +2934,7 @@
 
     // Persistent mesh upload (rebuilt each frame from the live bundle's
     // world-space mesh vertices for the active object) + its model texture.
-    var meshUpload = null;       // { vao, posBuf, uvBuf, count }
+    var meshUpload = null;       // { vao, posBuf, normBuf, uvBuf, count }
     var meshUploadKey = "";      // identity guard so we only re-upload on change
     var meshModelTex = null;     // glTF albedo texture for the active mesh
     var meshModelTexURL = "";
@@ -2940,14 +2987,16 @@
     var rafId = 0;
 
     // (Re)upload the live world-space mesh soup into a persistent VAO and point
-    // `position`/`uv` at the active program's attribute locations. The duck bobs
-    // each frame, so positions are streamed (DYNAMIC_DRAW) every call.
+    // `position`/`normal`/`uv` at the active program's attribute locations. The
+    // duck bobs each frame, so positions (and normals) are streamed
+    // (DYNAMIC_DRAW) every call.
     function refreshMeshUpload(prog, mesh) {
       if (!prog || !mesh || !mesh.count) return;
       if (!meshUpload) {
         meshUpload = {
           vao: gl.createVertexArray(),
           posBuf: gl.createBuffer(),
+          normBuf: gl.createBuffer(),
           uvBuf: gl.createBuffer(),
           count: 0,
         };
@@ -2957,6 +3006,17 @@
       gl.bindBuffer(gl.ARRAY_BUFFER, meshUpload.posBuf);
       gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.DYNAMIC_DRAW);
       if (posLoc >= 0) { gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0); }
+      var normalLoc = gl.getAttribLocation(prog, "normal");
+      // mesh.normals is baked world-space (see sceneWaterRenderFindBundleMesh);
+      // if a bundle is missing it (defensive), fall back to a constant up
+      // normal for every vertex rather than leaving the attribute at its
+      // WebGL default (0,0,0), which normalize()s to NaN in the shader.
+      var normalData = mesh.normals && mesh.normals.length === mesh.count * 3
+        ? mesh.normals
+        : sceneWaterRenderConstantUpNormals(mesh.count);
+      gl.bindBuffer(gl.ARRAY_BUFFER, meshUpload.normBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, normalData, gl.DYNAMIC_DRAW);
+      if (normalLoc >= 0) { gl.enableVertexAttribArray(normalLoc); gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0); }
       var uvLoc = gl.getAttribLocation(prog, "uv");
       gl.bindBuffer(gl.ARRAY_BUFFER, meshUpload.uvBuf);
       gl.bufferData(gl.ARRAY_BUFFER, mesh.uvs, gl.DYNAMIC_DRAW);
@@ -3347,6 +3407,7 @@
       if (meshUpload) {
         gl.deleteVertexArray(meshUpload.vao);
         gl.deleteBuffer(meshUpload.posBuf);
+        gl.deleteBuffer(meshUpload.normBuf);
         gl.deleteBuffer(meshUpload.uvBuf);
         meshUpload = null;
       }

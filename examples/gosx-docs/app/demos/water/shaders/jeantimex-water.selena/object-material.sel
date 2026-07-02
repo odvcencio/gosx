@@ -17,9 +17,11 @@
 //
 // The water heightfield (.x) and caustic (.y) are sampled together by a single
 // stateAt(uv). The uv varying is named vUv to avoid colliding with the "uv"
-// vertex attribute (the selena interface rejects a varying whose name shadows
-// an attribute). Body comments are kept out of statement position: a selena `//`
-// comment is only parsed reliably before `material`, after `{`, or after `}`.
+// vertex attribute, and the shaded normal is named vNormal to avoid colliding
+// with the "normal" vertex attribute (the selena interface rejects a varying
+// whose name shadows an attribute). Body comments are kept out of statement
+// position: a selena `//` comment is only parsed reliably before `material`,
+// after `{`, or after `}`.
 material WaterObjectMaterial {
     param poolHeight      : float = 0.3
     param baseColor       : vec4
@@ -34,10 +36,12 @@ material WaterObjectMaterial {
 
     varying worldPos : vec3
     varying vUv      : vec2
+    varying vNormal  : vec3
 
     vertex(geo) -> vec4 {
         worldPos = geo.position
         vUv      = geo.uv
+        vNormal  = normalize(normalMatrix * geo.normal)
         return mvp * vec4f(geo.position, 1.0)
     }
 
@@ -51,9 +55,9 @@ material WaterObjectMaterial {
         }
         let lightN    = normalize(lightDir)
         let refr      = refract(-lightN, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
-        let up        = vec3f(0.0, 1.0, 0.0)
+        let n         = normalize(geo.vNormal)
         let submerged = geo.worldPos.y < waterHeight
-        var diffuse   = max(dot(-refr, up), 0.0) * 0.5
+        var diffuse   = max(dot(-refr, n), 0.0) * 0.5
         if (submerged) {
             diffuse = (diffuse + 0.06) * caustic * 4.0
         }
