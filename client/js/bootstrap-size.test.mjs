@@ -166,7 +166,12 @@ const budgets = [
   // edge, quality levels, preference persistence, PiP + input lock) folded
   // into 30-tail.js. Measured: 1_180_338 / 312_544 / 252_009 + sub-1%
   // rounding headroom.
-  { file: "bootstrap.js", raw: 1_181_000, gzip: 313_000, brotli: 253_000 },
+  //
+  // Bumped raw 1_181_000 -> 1_184_000, gzip 313_000 -> 314_000: merge of
+  // video-player-primitives with the scene3d gizmo/water/regions line —
+  // both grew the bundle independently. Measured: 1_182_312 / 313_299 /
+  // 252_641 + sub-1% rounding headroom.
+  { file: "bootstrap.js", raw: 1_184_000, gzip: 314_000, brotli: 253_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
