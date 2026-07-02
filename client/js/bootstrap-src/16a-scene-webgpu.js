@@ -8873,11 +8873,32 @@
 
     // sceneWaterSurfaceSelenaRenderContext builds the per-frame renderContext
     // shared by the surface AND surface-below passes (surface-below is the
-    // exact same field set minus refractionMatrix/reflectionMatrix, which the
-    // generic packer simply won't find in surface-below's descriptor -- extra
-    // renderContext.uniforms entries a material's fields don't reference are
-    // harmless, see sceneSelenaUniformData's per-declared-field loop).
+    // exact same field set minus refractionMatrix/reflectionMatrix/waterColor,
+    // which the generic packer simply won't find in surface-below's
+    // descriptor -- extra renderContext.uniforms entries a material's fields
+    // don't reference are harmless, see sceneSelenaUniformData's
+    // per-declared-field loop).
+    //
+    // waterColor is an AUTHOR `param` on WaterSurface (surface.sel), not a
+    // `context` field, but the generic uniform packer doesn't distinguish
+    // param/context -- it just needs a value from renderContext.uniforms OR
+    // material.customUniforms OR a compiled descriptor default, and
+    // WaterSurface's `param waterColor : vec3` has no literal default (so the
+    // descriptor carries none either), which used to leave it packed as
+    // (0,0,0) via sceneSelenaUniformValue's final "zero" fallback. surface.sel
+    // multiplies the ENTIRE refracted branch (pool floor/walls/caustics/
+    // submerged objects) by waterColor whenever the refraction ray points
+    // down into the water -- the common case when looking down at the pool --
+    // so a zeroed waterColor blacked out refraction/caustics/pool-interior
+    // through the surface, matching the reported near-black regression. Mirror
+    // WebGL2's createWaterRenderBindGroup-equivalent call site
+    // (16-scene-webgl.js's `sceneWaterRenderHexColor(entry.shallowColor, ...)`)
+    // using the shared sceneColorRGBA helper (11-scene-math.js) both renderers
+    // already use elsewhere (see sceneWaterUniformData's `shallow` derivation
+    // above), so both backends tint the underwater refraction from the SAME
+    // entry.shallowColor config.
     function sceneWaterSurfaceSelenaRenderContext(system, camera, uniformSlotName) {
+      var entry = (system && system.entry) || {};
       var light = (system && system.waterLightDir) || { x: 0.3, y: 0.9, z: 0.45 };
       var half = (system && system.waterObjectHalfSize) || { x: 0, y: 0, z: 0 };
       var center = (system && system.waterObjectCenter) || { x: 0, y: 0, z: 0 };
@@ -8885,12 +8906,20 @@
       var camPos = sceneWaterCameraPosFromCam(camera);
       var refractionMatrix = (system && system.objectViewProjectionReady) ? system.objectViewProjectionMatrix : scratchSelenaViewProjection;
       var reflectionMatrix = (system && system.objectReflectionViewProjectionReady) ? system.objectReflectionViewProjectionMatrix : scratchSelenaViewProjection;
+      var waterColor = sceneColorRGBA(entry.shallowColor, [0.48, 0.82, 0.92, 1]);
       return {
         uniformSlotSuffix: uniformSlotName + "-" + String((system && system.id) || "water"),
         uniforms: {
           poolWidth: sceneNumber(system && system.waterPoolWidth, 1),
           poolLength: sceneNumber(system && system.waterPoolLength, 1),
           poolHeight: sceneNumber(system && system.waterPoolHeight, 1),
+          // normalScale has a compiled descriptor default (1.0, matching
+          // surface.sel's own `param normalScale : float = 1.0`), so this
+          // omission was never a zeroing bug like waterColor -- but it DID
+          // silently ignore a live entry.normalScale override the way
+          // WebGL2's sceneWaterUniformData packs it. Forward it explicitly
+          // (mirrors the caustics render context's identical fix above).
+          normalScale: sceneNumber(entry.normalScale, 1.0),
           objectRadius: sceneNumber(system && system.waterObjectRadius, 0.3),
           opticsCaustic: optics.caustics ? 1 : 0,
           gridResolution: sceneNumber(system && system.waterResolution, 256),
@@ -8898,6 +8927,7 @@
           objectSubtype: sceneNumber(system && system.waterObjectSubtype, 0),
           objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
           opticsEnable: optics.object ? 1 : 0,
+          waterColor: [waterColor[0], waterColor[1], waterColor[2]],
           lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
           cameraPos: [camPos.x, camPos.y, camPos.z],
           objectCenter: [sceneNumber(center.x, 0), sceneNumber(center.y, 0), sceneNumber(center.z, 0)],
@@ -8952,7 +8982,19 @@
       return material;
     }
 
+    // normalScale: WaterCaustics (like WaterSurface/WaterSurfaceBelow above)
+    // declares `param normalScale : float = 1.0` -- a compiled descriptor
+    // default exists, so omitting it here isn't a zeroing bug like waterColor
+    // was (no live default -> sceneSelenaUniformValue's default-lookup step
+    // finds the compiled 1.0 and uses it), but it DOES silently ignore a
+    // live entry.normalScale override (WebGL2's sceneWaterUniformData packs
+    // the live value into the hand-written WaterUniforms buffer at the same
+    // index the caustics/surface passes read). Forward it explicitly so a
+    // user-configured WaterSystem normalScale prop actually reaches the
+    // Selena caustics pass instead of silently pinning to the shader's own
+    // default.
     function sceneWaterCausticsSelenaRenderContext(system) {
+      var entry = (system && system.entry) || {};
       var light = (system && system.waterLightDir) || { x: 0.3, y: 0.9, z: 0.45 };
       var center = (system && system.waterObjectCenter) || { x: 0, y: 0, z: 0 };
       var half = (system && system.waterObjectHalfSize) || { x: 0, y: 0, z: 0 };
@@ -8963,6 +9005,7 @@
           poolWidth: sceneNumber(system && system.waterPoolWidth, 1),
           poolLength: sceneNumber(system && system.waterPoolLength, 1),
           poolHeight: sceneNumber(system && system.waterPoolHeight, 1),
+          normalScale: sceneNumber(entry.normalScale, 1.0),
           opticsEnable: optics.caustics ? 1 : 0,
           resolution: sceneNumber(system && system.waterResolution, 256),
           time: sceneSelenaFrameTime,

@@ -19623,6 +19623,33 @@ function waterSelenaFrameEntry(overrides) {
   }, overrides || {});
 }
 
+// waterSelenaFieldFloats reads the descriptor's declared byte `offset` for
+// `fieldName` (layout.uniformBlock.fields, the SAME field list
+// sceneSelenaUniformData/sceneSelenaWriteUniformField walk) and slices `count`
+// floats out of an already-captured Float32Array uniform write -- lets value
+// assertions below address fields by NAME (matching the .sel source) instead
+// of hand-computed/hardcoded byte offsets, so they stay correct if the
+// compiled layout ever shifts.
+function waterSelenaFieldFloats(layout, floats, fieldName, count) {
+  const field = layout.uniformBlock.fields.find((f) => f.name === fieldName);
+  assert.ok(field, "expected a uniformBlock field named " + fieldName);
+  const base = field.offset / 4;
+  return Array.from(floats.slice(base, base + count));
+}
+
+// waterSelenaLastUniformWrite finds the LAST queue.writeBuffer call the fake
+// device recorded against the uniform buffer bound at binding 0 of
+// `bindGroup` -- the actual bytes the renderer sent the GPU for this
+// material's draw this frame.
+function waterSelenaLastUniformWrite(fake, bindGroup) {
+  const uniformEntry = bindGroup.desc.entries.find((e) => e.binding === 0);
+  assert.ok(uniformEntry, "expected a binding-0 (uniform block) entry in the bind group");
+  const buffer = uniformEntry.resource.buffer;
+  const writes = fake.state.writeBufferCalls.filter((c) => c.buffer === buffer);
+  assert.ok(writes.length > 0, "expected at least one writeBuffer call against the uniform buffer");
+  return writes[writes.length - 1].data;
+}
+
 test("normalizeSceneWaterSystemEntry passes every migrated pass's Selena WGSL slot + descriptor key through", async () => {
   // {fresh: true} -- this test exercises the NEW bootstrap-src edits
   // (10-runtime-scene-core.js's normalizeSceneWaterSystemEntry whitelist)
@@ -19663,7 +19690,25 @@ test("Scene3D WebGPU water surface/surface-below/caustics passes route through t
   // all fall back to 0), leaving the compound-shadow/object-mesh-shadow
   // passes (which require an active kind===3 object) untouched -- those are
   // covered by the next test.
-  const waterEntry = waterSelenaFrameEntry();
+  //
+  // shallowColor/tileTexture/cubeMap/activeObject are set to non-default,
+  // asserted-against values below (the values-level gate): shallowColor feeds
+  // WaterSurface's `param waterColor` (see sceneWaterSurfaceSelenaRenderContext
+  // in 16a-scene-webgpu.js); tileTexture/cubeMap exercise the
+  // literal-URL-texture path (as opposed to a gosx:water:* live resource ref);
+  // the active Sphere object drives opticsEnable to 1.
+  const waterEntry = waterSelenaFrameEntry({
+    shallowColor: "#224466",
+    tileTexture: "/water/tiles.jpg",
+    cubeMap: "/water/",
+    activeObject: "Sphere",
+    objectKind: "sphere",
+    objectX: -0.4,
+    objectY: -0.75,
+    objectZ: 0.2,
+    objectRadius: 0.25,
+    objectDisplacementScale: 1,
+  });
   const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
 
   harness.canvas.width = 64;
@@ -19708,6 +19753,75 @@ test("Scene3D WebGPU water surface/surface-below/caustics passes route through t
   );
   assert.ok(causticsPipeline, "expected a compiled gosx-selena-*-WaterCaustics-* render pipeline");
   assert.equal(causticsPipeline.desc.depthStencil, undefined, "the caustics pipeline must omit depthStencil (its render target has no depth attachment)");
+
+  // VALUES GATE (root-cause regression test): capture the actual
+  // queue.writeBuffer bytes for the surface pass's uniform block and assert
+  // on the packed values, not just structural bind-group shape. Before the
+  // sceneWaterSurfaceSelenaRenderContext fix this test would have PASSED
+  // structurally (bind group built fine, no @group/@binding mismatch) while
+  // silently packing waterColor as (0,0,0) -- surface.sel multiplies the
+  // ENTIRE refracted branch (pool floor/walls/caustics/submerged objects) by
+  // waterColor whenever the refraction ray points down into the water (the
+  // common case looking down at the pool), which is the near-black surface
+  // regression. A zero waterColor is indistinguishable from a legitimately
+  // dark shallowColor at the bind-group-shape level, so only a values
+  // assertion catches it.
+  const surfaceFloats = waterSelenaLastUniformWrite(harness.fake, surfaceBindGroup);
+  const waterColor = waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "waterColor", 3);
+  // #224466 -> (0x22/255, 0x44/255, 0x66/255) = (0.13333, 0.26667, 0.4).
+  assert.ok(waterColor.some((c) => c > 0.01), "waterColor must not be packed as (0,0,0) -- surface.sel's `param waterColor` was left unwired, blacking out the refracted branch");
+  assert.ok(Math.abs(waterColor[0] - 34 / 255) < 1e-5, "waterColor.r must match entry.shallowColor (#224466), not a zero/default fallback");
+  assert.ok(Math.abs(waterColor[1] - 68 / 255) < 1e-5, "waterColor.g must match entry.shallowColor (#224466), not a zero/default fallback");
+  assert.ok(Math.abs(waterColor[2] - 102 / 255) < 1e-5, "waterColor.b must match entry.shallowColor (#224466), not a zero/default fallback");
+
+  const lightDir = waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "lightDir", 3);
+  const lightLen = Math.sqrt(lightDir[0] * lightDir[0] + lightDir[1] * lightDir[1] + lightDir[2] * lightDir[2]);
+  assert.ok(lightLen > 0.5, "lightDir must be a nonzero vector reaching the surface pass (entry lightDirection(2,2,-1))");
+  assert.deepEqual(lightDir.map((c) => Math.round(c * 1e4) / 1e4), [0.6667, 0.6667, -0.3333], "lightDir must equal the normalized entry.lightDirection(2,2,-1), not zero");
+
+  const opticsEnable = waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "opticsEnable", 1)[0];
+  assert.equal(opticsEnable, 1, "opticsEnable must be 1 with an active displacement object (Sphere)");
+
+  // normalScale: secondary parity gap alongside waterColor (see
+  // sceneWaterSurfaceSelenaRenderContext's comment) -- WaterSystem's
+  // waterSelenaFrameEntry fixture doesn't override normalScale, so the
+  // default-config value (1.0) must reach the buffer either via the live
+  // entry.normalScale forward or the compiled descriptor default; assert the
+  // forwarded value explicitly so a future normalScale override is covered.
+  const normalScale = waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "normalScale", 1)[0];
+  assert.equal(normalScale, 1, "normalScale must reach the surface pass uniform buffer (entry.normalScale, default 1.0)");
+
+  // Every real (non-mesh-RTT-dependent) texture binding must resolve to a
+  // LIVE view, not silently collapse to the shared 1x1 placeholder. With
+  // tileTexture/cubeMap URLs supplied and the caustics pass having rendered
+  // this frame, tile(1)/caustic(3)/sky(5) must each be genuinely distinct
+  // resources; objectRefractionTex(7)/objectReflectionTex(9)/
+  // objectClippedReflectionTex(11) legitimately fall back to the SAME shared
+  // placeholder here (a plain Sphere, kind<2.5, never populates the
+  // mesh-projected RTT targets) -- comparing against that known-placeholder
+  // group is a robust way to prove the other three are NOT placeholders
+  // without reaching into renderer-private state.
+  // The fake device's createTexture().createView() mints a FRESH wrapper
+  // object on every call (even for the same underlying texture), so identity
+  // is compared via textureId (the fake's real per-texture identity marker),
+  // not object reference equality.
+  function textureIdFor(binding) {
+    const entry = surfaceBindGroup.desc.entries.find((e) => e.binding === binding);
+    assert.ok(entry, "expected a texture entry at binding " + binding);
+    assert.ok(entry.resource && entry.resource.__kind === "textureView", "expected binding " + binding + " to resolve to a textureView resource");
+    return entry.resource.textureId;
+  }
+  const tileId = textureIdFor(1);
+  const causticId = textureIdFor(3);
+  const skyId = textureIdFor(5);
+  const refractionId = textureIdFor(7);
+  const reflectionId = textureIdFor(9);
+  const clippedReflectionId = textureIdFor(11);
+  assert.equal(reflectionId, refractionId, "sanity: with no active mesh-RTT subject, objectReflectionTex shares the same placeholder as objectRefractionTex");
+  assert.equal(clippedReflectionId, refractionId, "sanity: with no active mesh-RTT subject, objectClippedReflectionTex shares the same placeholder as objectRefractionTex");
+  assert.notEqual(tileId, refractionId, "tileTexture must resolve to the loaded /water/tiles.jpg view, not fall back to the placeholder");
+  assert.notEqual(causticId, refractionId, "causticTexture must resolve to the live gosx:water:*:caustics render-target view, not fall back to the placeholder");
+  assert.notEqual(skyId, refractionId, "sky must resolve to the loaded cube-map view, not fall back to the placeholder");
 });
 
 test("Scene3D WebGPU water compound-shadow / object-mesh-shadow passes route through the generic Selena render path (G1 array-uniform packing)", async () => {
@@ -19879,6 +19993,7 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
             isTexturePass: 0,
             texturePassMode: 0,
             lightDir: [2, 3, -1],
+            modelTexture: "/water/models/duck/DuckCM.png",
             grid: 4,
             water: "gosx:water:water-main:state",
           },
@@ -19934,6 +20049,42 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   assert.ok(objectMatBindGroup, "expected a bind group built against the object-material bind group layout");
   const duckMatBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === duckMatBGL);
   assert.ok(duckMatBindGroup, "expected a bind group built against the duck-material bind group layout");
+
+  // VALUES GATE: object-material/duck-material draw through drawPBRObjects,
+  // which supplies NO renderContext at all (see createSelenaBindGroup(mat,
+  // selenaResource, obj) in 16a-scene-webgpu.js -- only 3 args), so every
+  // uniform field must resolve via material.customUniforms or a compiled
+  // descriptor default. lightDir is a `context` field with NO compiled
+  // default and baseColor is a `param` with NO literal default either -- both
+  // fall to sceneSelenaUniformValue's zero fallback if customUniforms is ever
+  // dropped, which reads as "TorusKnot pure white" / "duck flat/unlit" in a
+  // real browser (lightDir=(0,0,0) normalizes to NaN; baseColor=(0,0,0,0)
+  // zeroes the albedo). Assert the actual packed bytes carry the entry
+  // config, not that value-free zero.
+  const objectMatFloats = waterSelenaLastUniformWrite(harness.fake, objectMatBindGroup);
+  const objectBaseColor = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "baseColor", 4);
+  assert.deepEqual(objectBaseColor, [0.5, 0.5, 0.5, 1], "object-material baseColor must match the entry config (0.5,0.5,0.5,1), not the default-white/zero fallback");
+  const objectLightDir = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "lightDir", 3);
+  assert.deepEqual(objectLightDir, [2, 3, -1], "object-material lightDir must be the nonzero entry config (2,3,-1), not zero");
+  const objectIsTexturePass = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "isTexturePass", 1)[0];
+  assert.equal(objectIsTexturePass, 0, "isTexturePass must be 0 on the main-scene draw (only the RTT reflection/refraction/clipped passes set it)");
+
+  const duckMatFloats = waterSelenaLastUniformWrite(harness.fake, duckMatBindGroup);
+  const duckBaseColor = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "baseColor", 4);
+  assert.deepEqual(duckBaseColor, [1, 1, 1, 1], "duck-material baseColor must match the entry config (1,1,1,1)");
+  const duckLightDir = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "lightDir", 3);
+  assert.deepEqual(duckLightDir, [2, 3, -1], "duck-material lightDir must be the nonzero entry config (2,3,-1), not zero");
+  const duckIsTexturePass = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "isTexturePass", 1)[0];
+  assert.equal(duckIsTexturePass, 0, "isTexturePass must be 0 on the main-scene draw");
+
+  // duck-material's own modelTexture binding (1) must be present and bound
+  // to a texture view (the DuckCM.png URL is supplied above) -- corroborates
+  // "duck renders with its texture" is expected to keep working, isolating
+  // the reported "flat/unlit" symptom to lighting/shading values rather than
+  // a missing texture resource (the surface test above already exercises the
+  // stronger "resolves to a live, non-placeholder view" assertion).
+  const modelTexEntry = duckMatBindGroup.desc.entries.find((e) => e.binding === 1);
+  assert.ok(modelTexEntry && modelTexEntry.resource && modelTexEntry.resource.__kind === "textureView", "expected duck-material's modelTexture entry at binding 1 to be a texture view");
 });
 
 // waterComputeKernelPipeline finds the compiled gosx-selena-compute-<Material>
