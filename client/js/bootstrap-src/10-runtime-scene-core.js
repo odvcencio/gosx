@@ -7599,6 +7599,24 @@
     window.__gosx_runtime_api.browserCapabilitySupported = browserCapabilitySupported;
     window.__gosx_runtime_api.runtimeCapabilityStatus = runtimeCapabilityStatus;
     window.__gosx_runtime_api.engineCapabilityStatus = engineCapabilityStatus;
+    // Engine render-bundle normalizers (camera/label/html), consumed by
+    // normalizeEngineRenderBundle in 30-tail.js's "engine mounting" section.
+    // That function ships in bootstrap-feature-engines.js (see
+    // 26b-feature-engines-prefix.js's registerFeature("engines", ...)), which
+    // does NOT include this file — these live beyond the RUNTIME_UTILS
+    // extraction bootstrap-runtime.js pulls from 10-runtime-scene-core.js (see
+    // build-bootstrap.mjs). Bridged here so any page that already loaded a
+    // chunk containing this file (monolithic bootstrap.js, or the Scene3D
+    // feature chunk before "engines" reads runtimeApi) shares the canonical
+    // implementation instead of the engines-prefix's local fallback copy.
+    window.__gosx_runtime_api.normalizeSceneCameraKind = normalizeSceneCameraKind;
+    window.__gosx_runtime_api.sceneRenderCamera = sceneRenderCamera;
+    window.__gosx_runtime_api.sceneLabelClassName = sceneLabelClassName;
+    window.__gosx_runtime_api.normalizeSceneLabelCollision = normalizeSceneLabelCollision;
+    window.__gosx_runtime_api.normalizeSceneLabelWhiteSpace = normalizeSceneLabelWhiteSpace;
+    window.__gosx_runtime_api.normalizeSceneLabelAlign = normalizeSceneLabelAlign;
+    window.__gosx_runtime_api.normalizeSceneHTMLMode = normalizeSceneHTMLMode;
+    window.__gosx_runtime_api.normalizeSceneHTMLPointerEvents = normalizeSceneHTMLPointerEvents;
   }
 
   // Scene3D shared API — exposed for the async bootstrap-feature-scene3d.js

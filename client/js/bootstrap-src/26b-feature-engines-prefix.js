@@ -27,6 +27,140 @@
     const gosxNotifySharedSignal = api.gosxNotifySharedSignal;
     const gosxSubscribeSharedSignal = api.gosxSubscribeSharedSignal;
 
+    // Bridge runtime-scope render-bundle normalizers that live in
+    // 00-textlayout.js / 10-runtime-scene-core.js / 11-scene-math.js.
+    // normalizeEngineRenderBundle (concatenated in below from 30-tail.js's
+    // "engine mounting" section) calls these to normalize the camera/label/
+    // html/surface fields of ANY runtime:"shared" engine's render bundle —
+    // not just GoSXScene3D's. bootstrap-feature-engines.js does not carry
+    // 10-runtime-scene-core.js or 11-scene-math.js (see build-bootstrap.mjs),
+    // and bootstrap-runtime.js only carries a small extracted prefix of
+    // 10-runtime-scene-core.js that stops well before these functions — so on
+    // a split-bundle page whose ONLY shared-runtime engine is a non-Scene3D
+    // surface (e.g. a custom //gosx:engine using runtime:"shared"), none of
+    // these were ever defined, and decodeEngineRenderBundle's try/catch
+    // silently swallowed the resulting ReferenceError, dropping the whole
+    // render bundle every frame.
+    //
+    // window.__gosx_runtime_api is exported by 00-textlayout.js (always
+    // present — every bundle configuration includes it) and additionally
+    // extended by 10-runtime-scene-core.js / 11-scene-math.js when a chunk
+    // carrying them (bootstrap.js or the Scene3D feature chunk) has already
+    // run. Prefer that canonical implementation when present; otherwise fall
+    // back to a full (not degraded) local reimplementation so the bundle
+    // normalizes correctly even when Scene3D never loads. Mirrors the
+    // established window.__gosx_runtime_api bridge pattern in
+    // 26d-feature-scene3d-prefix.js.
+    const runtimeApi = window.__gosx_runtime_api || {};
+    const normalizeTextLayoutOverflow = runtimeApi.normalizeTextLayoutOverflow || function(value) {
+      const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+      return mode === "ellipsis" ? "ellipsis" : "clip";
+    };
+    const normalizeSceneCameraKind = runtimeApi.normalizeSceneCameraKind || function(value, fallback) {
+      const kind = typeof value === "string" ? value.trim().toLowerCase() : "";
+      if (kind === "orthographic" || kind === "ortho") return "orthographic";
+      if (kind === "perspective" || kind === "persp") return "perspective";
+      return fallback === "orthographic" ? "orthographic" : "perspective";
+    };
+    const sceneRenderCamera = runtimeApi.sceneRenderCamera || function(camera, out) {
+      const target = out || {
+        kind: "perspective",
+        x: 0, y: 0, z: 0,
+        rotationX: 0, rotationY: 0, rotationZ: 0,
+        fov: 0,
+        left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
+        near: 0, far: 0,
+      };
+      target.kind = normalizeSceneCameraKind(camera && camera.kind, "perspective");
+      target.x = sceneNumber(camera && camera.x, 0);
+      target.y = sceneNumber(camera && camera.y, 0);
+      target.z = sceneNumber(camera && camera.z, 6);
+      target.rotationX = sceneNumber(camera && camera.rotationX, 0);
+      target.rotationY = sceneNumber(camera && camera.rotationY, 0);
+      target.rotationZ = sceneNumber(camera && camera.rotationZ, 0);
+      target.fov = sceneNumber(camera && camera.fov, 75);
+      target.left = sceneNumber(camera && camera.left, 0);
+      target.right = sceneNumber(camera && camera.right, 0);
+      target.top = sceneNumber(camera && camera.top, 0);
+      target.bottom = sceneNumber(camera && camera.bottom, 0);
+      target.zoom = Math.max(0.0001, sceneNumber(camera && camera.zoom, 1));
+      target.near = sceneNumber(camera && camera.near, 0.05);
+      target.far = sceneNumber(camera && camera.far, 128);
+      return target;
+    };
+    const sceneLabelClassName = runtimeApi.sceneLabelClassName || function(item) {
+      if (!item || typeof item !== "object") return "";
+      if (typeof item.className === "string" && item.className.trim()) return item.className.trim();
+      if (typeof item.class === "string" && item.class.trim()) return item.class.trim();
+      return "";
+    };
+    const normalizeSceneLabelCollision = runtimeApi.normalizeSceneLabelCollision || function(value) {
+      const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+      switch (mode) {
+        case "allow":
+        case "none":
+        case "overlap":
+          return "allow";
+        default:
+          return "avoid";
+      }
+    };
+    const normalizeSceneLabelWhiteSpace = runtimeApi.normalizeSceneLabelWhiteSpace || function(value) {
+      const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+      switch (mode) {
+        case "pre-wrap":
+          return "pre-wrap";
+        case "pre":
+          return "pre";
+        default:
+          return "normal";
+      }
+    };
+    const normalizeSceneLabelAlign = runtimeApi.normalizeSceneLabelAlign || function(value) {
+      const align = typeof value === "string" ? value.trim().toLowerCase() : "";
+      switch (align) {
+        case "left":
+        case "start":
+          return "left";
+        case "right":
+        case "end":
+          return "right";
+        default:
+          return "center";
+      }
+    };
+    const normalizeSceneHTMLMode = runtimeApi.normalizeSceneHTMLMode || function(value, fallback) {
+      const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+      switch (raw) {
+        case "texture":
+        case "htmltexture":
+          return "texture";
+        case "dom":
+        case "world":
+        case "htmldom":
+          return "dom";
+        default:
+          return fallback || "dom";
+      }
+    };
+    const normalizeSceneHTMLPointerEvents = runtimeApi.normalizeSceneHTMLPointerEvents || function(value, fallback) {
+      const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+      switch (raw) {
+        case "auto":
+        case "true":
+        case "interactive":
+          return "auto";
+        case "none":
+        case "false":
+          return "none";
+        default:
+          return fallback || "none";
+      }
+    };
+    const clamp01 = runtimeApi.clamp01 || function(value) {
+      return Math.max(0, Math.min(1, value));
+    };
+
     // -------------------------------------------------------------------------
     // Engine-surface bytecode hydration (//gosx:engine surface)
     //

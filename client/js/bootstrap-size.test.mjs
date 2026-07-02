@@ -369,7 +369,19 @@ const budgets = [
   // keyed RenderBundle.HTML reconciliation, pointer-event handling, and
   // focus-preserving editable DOM sync. Measured: 75_180 / 23_446 / 20_888,
   // plus sub-1% rounding headroom.
-  { file: "bootstrap-feature-engines.js", raw: 76_000, gzip: 24_000, brotli: 21_300 },
+  //
+  // Bumped raw 76_000 -> 78_500, gzip 24_000 -> 24_500, brotli 21_300 -> 21_700
+  // for the window.__gosx_runtime_api bridge (+ full local fallback
+  // implementations) of sceneRenderCamera, sceneLabelClassName,
+  // normalizeTextLayoutOverflow, normalizeSceneLabelCollision/WhiteSpace/Align,
+  // normalizeSceneHTMLMode/PointerEvents, and clamp01 in
+  // 26b-feature-engines-prefix.js — normalizeEngineRenderBundle (30-tail.js)
+  // referenced these across the feature-bundle IIFE boundary with nothing
+  // defining them, throwing ReferenceError and silently dropping every
+  // runtime:"shared" engine's render bundle on split-bundle pages that never
+  // load bootstrap-feature-scene3d.js. Measured: 77_893 / 24_123 / 21_494,
+  // plus sub-1% rounding headroom.
+  { file: "bootstrap-feature-engines.js", raw: 78_500, gzip: 24_500, brotli: 21_700 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -406,9 +418,13 @@ const routeBudgets = [
     // primitives 06-declarative-actions.js + 07-declarative-regions.js
     // (data-gosx-action / -submit-on / -set / -region). Measured 187_357 /
     // 53_135 / 46_874, plus sub-1% rounding headroom.
-    raw: 190_000,
+    // Bumped raw 190_000 -> 191_000, brotli 47_500 -> 47_800 for the
+    // engines-prefix window.__gosx_runtime_api bridge (see the
+    // bootstrap-feature-engines.js budget note above). gzip headroom
+    // unchanged. Measured: 190_224 / 53_972 / 47_629, plus rounding headroom.
+    raw: 191_000,
     gzip: 54_000,
-    brotli: 47_500,
+    brotli: 47_800,
   },
 ];
 

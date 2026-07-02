@@ -17815,6 +17815,129 @@ test("selective runtime mounts native JS engines without loading the shared wasm
   assert.equal(mount.getAttribute("data-disposed"), "true");
 });
 
+// Regression test for the split feature-bundle build: bootstrap-feature-engines.js
+// runs in its own IIFE (see 26b-feature-engines-prefix.js), separate from the
+// runtime bundle's closure. normalizeEngineRenderBundle (concatenated in from
+// 30-tail.js's "engine mounting" section) normalizes the camera/label/html/
+// surface fields of ANY runtime:"shared" engine's render bundle — not just
+// GoSXScene3D's — via sceneRenderCamera, sceneLabelClassName,
+// normalizeTextLayoutOverflow, normalizeSceneLabelCollision,
+// normalizeSceneLabelWhiteSpace, normalizeSceneLabelAlign,
+// normalizeSceneHTMLMode, normalizeSceneHTMLPointerEvents, and clamp01 — all
+// of which live in 00-textlayout.js / 10-runtime-scene-core.js /
+// 11-scene-math.js, none of which bootstrap-feature-engines.js carries.
+//
+// Before the fix, a page whose ONLY shared-runtime engine is a non-Scene3D
+// surface (so bootstrap-feature-scene3d.js never loads — manifestFeatureNames
+// only requests "scene3d" for a GoSXScene3D component) threw
+// "ReferenceError: sceneRenderCamera is not defined" (or one of the sibling
+// normalizers) the first time that engine's render bundle carried a camera,
+// label, or html entry. decodeEngineRenderBundle's try/catch silently
+// swallowed it and returned null, dropping the entire render bundle every
+// frame with no visible error to the app.
+test("shared-runtime engine render bundle normalizes camera/labels/html/surfaces under the split runtime+engines-only bundles (no scene3d)", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "shared-surface-root";
+
+  const renderedBundles = [];
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      // A custom (non-Scene3D) runtime:"shared" engine factory, mirroring how
+      // a third-party //gosx:engine that opts into the shared WASM runtime
+      // would drive its own render loop via ctx.runtime.renderFrame().
+      TestSharedSurface(context) {
+        context.mount.setAttribute("data-mounted", "true");
+        const bundle = context.runtime.renderFrame(0, 320, 180);
+        renderedBundles.push(bundle);
+        return { dispose() {} };
+      },
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-shared-surface",
+          component: "TestSharedSurface",
+          kind: "surface",
+          mountId: "shared-surface-root",
+          runtime: "shared",
+          jsExport: "TestSharedSurface",
+          props: { width: 320, height: 180 },
+        },
+      ],
+    },
+    onRenderEngine: () => JSON.stringify({
+      camera: { kind: "orthographic", x: 1, y: 2, z: 3, zoom: 2 },
+      labels: [
+        {
+          id: "lbl-1",
+          text: "Hi",
+          position: { x: 1, y: 2 },
+          overflow: "ellipsis",
+          collision: "allow",
+          whiteSpace: "pre",
+          textAlign: "left",
+        },
+      ],
+      html: [
+        {
+          id: "html-1",
+          target: "t1",
+          mode: "texture",
+          html: "<b>hi</b>",
+          pointerEvents: "auto",
+          opacity: 1.4, // out-of-range on purpose — exercises clamp01
+        },
+      ],
+      positions: [0, 1, 2],
+      colors: [1, 1, 1, 1],
+      surfaces: [{ id: "surf-1", sourceKind: "video", textureKey: "tex-1" }],
+    }),
+  });
+
+  const uncaughtErrors = [];
+  env.context.addEventListener("error", (event) => {
+    uncaughtErrors.push(event && event.error ? event.error : event);
+  });
+
+  // The split-bundle combo that reproduces the bug: the runtime chunk plus
+  // the "engines" feature chunk ONLY. bootstrap-feature-scene3d.js never
+  // loads (no GoSXScene3D entry in the manifest), so anything that used to
+  // rely on Scene3D's chunk having already populated window.__gosx_runtime_api
+  // must resolve on its own.
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.deepEqual(uncaughtErrors, [], "mounting the shared-runtime surface must not throw");
+  assert.equal(env.consoleLogs.error.length, 0, "expected no console.error, got: " + JSON.stringify(env.consoleLogs.error));
+  assert.equal(mount.getAttribute("data-mounted"), "true");
+  assert.equal(renderedBundles.length, 1);
+
+  const bundle = renderedBundles[0];
+  assert.ok(bundle, "renderFrame must return a normalized bundle, not null");
+  assert.equal(bundle.camera.kind, "orthographic");
+  assert.equal(bundle.camera.zoom, 2);
+  assert.equal(bundle.labels.length, 1);
+  assert.equal(bundle.labels[0].overflow, "ellipsis");
+  assert.equal(bundle.labels[0].collision, "allow");
+  assert.equal(bundle.labels[0].whiteSpace, "pre");
+  assert.equal(bundle.labels[0].textAlign, "left");
+  assert.equal(bundle.html.length, 1);
+  assert.equal(bundle.html[0].mode, "texture");
+  assert.equal(bundle.html[0].pointerEvents, "auto");
+  assert.equal(bundle.html[0].opacity, 1, "clamp01 must clamp opacity to 1");
+  assert.equal(bundle.surfaces.length, 1);
+  assert.equal(bundle.surfaces[0].sourceKind, "video");
+
+  await env.context.__gosx_dispose_page();
+});
+
 test("selective runtime mounts builtin video sync without the hub feature chunk", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "video-runtime-root";
