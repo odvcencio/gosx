@@ -380,13 +380,27 @@ const budgets = [
   // keyed RenderBundle.HTML reconciliation, pointer-event handling, and
   // focus-preserving editable DOM sync. Measured: 75_180 / 23_446 / 20_888,
   // plus sub-1% rounding headroom.
-  // Bumped raw 76_000 -> 83_000, gzip 24_000 -> 26_000, brotli 21_300 ->
-  // 23_000: video-player-primitives — audioTracks/audioTrack, seekable/
+  //
+  // Bumped raw 76_000 -> 78_500, gzip 24_000 -> 24_500, brotli 21_300 -> 21_700
+  // for the window.__gosx_runtime_api bridge (+ full local fallback
+  // implementations) of sceneRenderCamera, sceneLabelClassName,
+  // normalizeTextLayoutOverflow, normalizeSceneLabelCollision/WhiteSpace/Align,
+  // normalizeSceneHTMLMode/PointerEvents, and clamp01 in
+  // 26b-feature-engines-prefix.js — normalizeEngineRenderBundle (30-tail.js)
+  // referenced these across the feature-bundle IIFE boundary with nothing
+  // defining them, throwing ReferenceError and silently dropping every
+  // runtime:"shared" engine's render bundle on split-bundle pages that never
+  // load bootstrap-feature-scene3d.js. Measured: 77_893 / 24_123 / 21_494,
+  // plus sub-1% rounding headroom.
+  //
+  // Bumped raw 78_500 -> 85_000, gzip 24_500 -> 26_000, brotli 21_700 ->
+  // 23_300: video-player-primitives — audioTracks/audioTrack, seekable/
   // isLive/liveEdgeLag, qualityLevels/qualityLevel, opt-in localStorage
   // preference persistence, and PiP + input-lock command/signal wiring in
-  // the video engine factory (30-tail.js). Measured: 82_116 / 25_285 /
-  // 22_548 + sub-1% rounding headroom.
-  { file: "bootstrap-feature-engines.js", raw: 83_000, gzip: 26_000, brotli: 23_000 },
+  // the video engine factory (30-tail.js), merged with the runtime_api
+  // bridge line above. Measured: 84_129 / 25_836 / 23_000 + sub-1%
+  // rounding headroom.
+  { file: "bootstrap-feature-engines.js", raw: 85_000, gzip: 26_000, brotli: 23_300 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -423,17 +437,22 @@ const routeBudgets = [
     // primitives 06-declarative-actions.js + 07-declarative-regions.js
     // (data-gosx-action / -submit-on / -set / -region). Measured 187_357 /
     // 53_135 / 46_874, plus sub-1% rounding headroom.
-    // Bumped raw 190_000 -> 194_000, gzip 54_000 -> 55_000, brotli 47_500 ->
-    // 49_000: video-player-primitives folded into bootstrap-feature-engines.js
-    // (see that budget's comment above). Measured: 193_656 / 54_863 / 48_463,
-    // plus sub-1% rounding headroom.
-    // Bumped raw 194_000 -> 196_000, gzip 55_000 -> 55_500: merge of
-    // video-player-primitives with the scene3d gizmo/water/regions line —
-    // bootstrap-runtime.js grew alongside the engines surface. Measured:
-    // 194_439 / 55_145 / 48_675, plus sub-1% rounding headroom.
-    raw: 196_000,
-    gzip: 55_500,
-    brotli: 49_000,
+    // Bumped raw 190_000 -> 191_000, brotli 47_500 -> 47_800 for the
+    // engines-prefix window.__gosx_runtime_api bridge (see the
+    // bootstrap-feature-engines.js budget note above). gzip headroom
+    // unchanged. Measured: 190_224 / 53_972 / 47_629, plus rounding headroom.
+    // Bumped gzip 54_000 -> 54_200 for CSRF token attachment in
+    // 06-declarative-actions.js's actionFetch (gosxCSRFToken() reads
+    // <meta name="csrf-token">, attaches X-CSRF-Token on POST/PUT/PATCH/
+    // DELETE — see session.Manager.Protect). Measured: 190_508 / 54_077 /
+    // 47_753, plus rounding headroom.
+    // Bumped raw 191_000 -> 198_000, gzip 54_200 -> 56_500, brotli 47_800 ->
+    // 50_000: video-player-primitives folded into the engines surface,
+    // merged with the runtime_api bridge + CSRF lines above. Measured:
+    // 196_744 / 55_790 / 49_259, plus sub-1% rounding headroom.
+    raw: 198_000,
+    gzip: 56_500,
+    brotli: 50_000,
   },
 ];
 

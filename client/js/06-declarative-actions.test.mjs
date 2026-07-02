@@ -44,10 +44,17 @@ function makeEl(attrs = {}, opts = {}) {
   return el;
 }
 
-function runModule() {
+// runModule(options.csrfToken) stubs document.querySelector('meta[name="csrf-token"]')
+// to return a fake <meta> element carrying options.csrfToken as its "content"
+// attribute — mirrors the meta tag m31labs.dev/gosx/server's AddHeadDecorator
+// hook renders when a page's session carries a CSRF token (see
+// kiln/authwire/wire.go). Omitting csrfToken (or passing "") mimics a page
+// with no Protect-backed token — the backward-compat case.
+function runModule(options = {}) {
   const listeners = {};
   const fetches = [];
   const signals = [];
+  const metaToken = options.csrfToken;
   const ctx = {
     console,
     URLSearchParams,
@@ -55,6 +62,12 @@ function runModule() {
     fetch: (url, opts) => { fetches.push({ url, opts }); return Promise.resolve({ ok: true }); },
     document: {
       addEventListener: (type, fn) => { listeners[type] = fn; },
+      querySelector: (sel) => {
+        if (sel === 'meta[name="csrf-token"]' && metaToken !== undefined) {
+          return { getAttribute: (n) => (n === "content" ? metaToken : null) };
+        }
+        return null;
+      },
     },
     window: {
       __gosx_set_shared_signal: (name, payload) => { signals.push({ name, payload }); },
@@ -112,4 +125,60 @@ test("data-gosx-submit-on=change requests its form submit", () => {
   const input = makeEl({ "data-gosx-submit-on": "change" }, { tag: "input", form });
   fire(listeners.change, input);
   assert.equal(submitted, true);
+});
+
+// --- CSRF token attachment (mirrors m31labs.dev/gosx/session.Manager.Protect's
+// expected X-CSRF-Token header) ---
+
+test("data-gosx-action click POST attaches X-CSRF-Token when the page carries a csrf-token meta tag", () => {
+  const { listeners, fetches } = runModule({ csrfToken: "tok-abc123" });
+  const btn = makeEl({ "data-gosx-action": "POST /api/x/accept" }, { tag: "button" });
+  fire(listeners.click, btn);
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].opts.headers["X-CSRF-Token"], "tok-abc123");
+});
+
+test("data-gosx-action form submit attaches X-CSRF-Token when a csrf-token meta tag is present", () => {
+  const { listeners, fetches } = runModule({ csrfToken: "tok-form-1" });
+  const form = makeEl({ "data-gosx-action": "", method: "POST", action: "/api/x/agent" }, { tag: "form" });
+  fire(listeners.submit, form);
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].opts.headers["X-CSRF-Token"], "tok-form-1");
+});
+
+test("data-gosx-action attaches X-CSRF-Token for PUT/PATCH/DELETE, not just POST", () => {
+  for (const method of ["PUT", "PATCH", "DELETE"]) {
+    const { listeners, fetches } = runModule({ csrfToken: "tok-mut" });
+    const btn = makeEl({ "data-gosx-action": method + " /api/x/thing" }, { tag: "button" });
+    fire(listeners.click, btn);
+    assert.equal(fetches.length, 1, method + " should fetch once");
+    assert.equal(fetches[0].opts.headers["X-CSRF-Token"], "tok-mut", method + " should carry the token");
+  }
+});
+
+test("data-gosx-action does not attach X-CSRF-Token for a GET action, even with a token present", () => {
+  const { listeners, fetches } = runModule({ csrfToken: "tok-get" });
+  const btn = makeEl({ "data-gosx-action": "GET /api/x/refresh" }, { tag: "button" });
+  fire(listeners.click, btn);
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].opts.method, "GET");
+  assert.equal("X-CSRF-Token" in fetches[0].opts.headers, false, "GET must never carry a CSRF header");
+});
+
+test("data-gosx-action omits X-CSRF-Token when no csrf-token meta tag is present (backward compat)", () => {
+  // No csrfToken option at all — document.querySelector('meta[name="csrf-token"]')
+  // returns null, matching an app that never mounted session.Manager.Protect.
+  const { listeners, fetches } = runModule();
+  const btn = makeEl({ "data-gosx-action": "POST /api/x/accept" }, { tag: "button" });
+  fire(listeners.click, btn);
+  assert.equal(fetches.length, 1);
+  assert.equal("X-CSRF-Token" in fetches[0].opts.headers, false);
+});
+
+test("data-gosx-action omits X-CSRF-Token when the csrf-token meta tag is present but empty", () => {
+  const { listeners, fetches } = runModule({ csrfToken: "" });
+  const btn = makeEl({ "data-gosx-action": "POST /api/x/accept" }, { tag: "button" });
+  fire(listeners.click, btn);
+  assert.equal(fetches.length, 1);
+  assert.equal("X-CSRF-Token" in fetches[0].opts.headers, false);
 });

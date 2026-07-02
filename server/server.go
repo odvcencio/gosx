@@ -97,6 +97,7 @@ type App struct {
 	revalidator        *Revalidator
 	operations         []OperationObserver
 	clientEventsLogger *slog.Logger
+	headDecorators     []HeadDecorator
 
 	schedulerOnce sync.Once
 	scheduler     *scheduled.Scheduler
@@ -837,12 +838,58 @@ func (a *App) pageNotModified(ctx *Context) bool {
 	return ApplyCacheHeaders(ctx.Request, ctx.Header(), ctx.status, ctx.cache, a.Revalidator())
 }
 
+// HeadDecorator returns additional content to render in the document <head>
+// for a page request. The second return value reports whether there is
+// anything to add — gosx.Node is a value type (no nil sentinel), so a plain
+// zero-value Node can't be used to mean "nothing"; return false to contribute
+// nothing for this request. Decorators run in registration order, after the
+// runtime/navigation head assets (see decoratePageContext), for every page
+// rendered through App.renderPage — islands, engines, hubs, and the
+// navigation script all reach <head> the same way (ctx.runtime.Head() /
+// NavigationScript()); AddHeadDecorator is the same mechanism for
+// app-supplied content.
+//
+// This exists so an app-level concern that must appear on every page (e.g. a
+// CSRF meta tag mirroring the session's token so client JS can echo it back
+// on mutating requests — see m31labs.dev/gosx/session.Manager.Protect) can be
+// wired ONCE at the composition root instead of edited into every page
+// render function. server intentionally does not import session (route is
+// the layer that already glues server + session + auth together — see
+// route/fileeval.go's csrf template binding); callers that need
+// session-derived head content close over their own *session.Manager, as in:
+//
+//	app.AddHeadDecorator(func(ctx *server.Context) (gosx.Node, bool) {
+//		token := sessions.Token(ctx.Request)
+//		if token == "" {
+//			return gosx.Node{}, false
+//		}
+//		return gosx.RawHTML(`<meta name="csrf-token" content="` + html.EscapeString(token) + `">`), true
+//	})
+type HeadDecorator func(ctx *Context) (gosx.Node, bool)
+
+// AddHeadDecorator registers a HeadDecorator that contributes to every
+// rendered page's <head>. See HeadDecorator. A nil fn is ignored.
+func (a *App) AddHeadDecorator(fn HeadDecorator) {
+	if fn == nil {
+		return
+	}
+	a.headDecorators = append(a.headDecorators, fn)
+}
+
 func (a *App) decoratePageContext(ctx *Context) {
 	if ctx.runtime != nil {
 		ctx.AddHead(ctx.runtime.Head())
 	}
 	if a.navigation {
 		ctx.AddHead(NavigationScript())
+	}
+	for _, decorate := range a.headDecorators {
+		if decorate == nil {
+			continue
+		}
+		if node, ok := decorate(ctx); ok {
+			ctx.AddHead(node)
+		}
 	}
 }
 

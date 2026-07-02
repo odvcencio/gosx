@@ -202,6 +202,95 @@ func TestAppWithLayout(t *testing.T) {
 	}
 }
 
+func TestAppHeadDecoratorContributesToEveryPage(t *testing.T) {
+	app := New()
+	app.SetLayout(func(title string, body gosx.Node) gosx.Node {
+		return gosx.El("html", gosx.El("head"), gosx.El("body", body))
+	})
+	app.Route("/a", func(r *http.Request) gosx.Node { return gosx.Text("a") })
+	app.Route("/b", func(r *http.Request) gosx.Node { return gosx.Text("b") })
+
+	calls := 0
+	app.AddHeadDecorator(func(ctx *Context) (gosx.Node, bool) {
+		calls++
+		return gosx.RawHTML(`<meta name="test-decorator" content="hit">`), true
+	})
+
+	handler := app.Build()
+	for _, path := range []string{"/a", "/b"} {
+		req := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if !strings.Contains(w.Body.String(), `<meta name="test-decorator" content="hit">`) {
+			t.Fatalf("%s: expected decorator content in body, got %q", path, w.Body.String())
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("expected the decorator to run once per page render, got %d calls", calls)
+	}
+}
+
+func TestAppHeadDecoratorSkippedWhenFalse(t *testing.T) {
+	app := New()
+	app.SetLayout(func(title string, body gosx.Node) gosx.Node {
+		return gosx.El("html", gosx.El("head"), gosx.El("body", body))
+	})
+	app.Route("/", func(r *http.Request) gosx.Node { return gosx.Text("home") })
+	app.AddHeadDecorator(func(ctx *Context) (gosx.Node, bool) {
+		return gosx.Node{}, false
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if strings.Contains(w.Body.String(), "test-decorator") {
+		t.Fatalf("expected no decorator content when the decorator returns false, got %q", w.Body.String())
+	}
+}
+
+func TestAppAddHeadDecoratorIgnoresNilFunc(t *testing.T) {
+	app := New()
+	app.AddHeadDecorator(nil)
+	if len(app.headDecorators) != 0 {
+		t.Fatalf("expected a nil HeadDecorator to be ignored, got %d registered", len(app.headDecorators))
+	}
+}
+
+func TestAppHeadDecoratorsRunInRegistrationOrder(t *testing.T) {
+	app := New()
+	app.SetLayout(func(title string, body gosx.Node) gosx.Node {
+		return gosx.El("html", gosx.El("head"), gosx.El("body", body))
+	})
+	app.Route("/", func(r *http.Request) gosx.Node { return gosx.Text("home") })
+
+	var order []string
+	app.AddHeadDecorator(func(ctx *Context) (gosx.Node, bool) {
+		order = append(order, "first")
+		return gosx.RawHTML(`<meta name="first" content="1">`), true
+	})
+	app.AddHeadDecorator(func(ctx *Context) (gosx.Node, bool) {
+		order = append(order, "second")
+		return gosx.RawHTML(`<meta name="second" content="2">`), true
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
+		t.Fatalf("expected decorators to run in registration order, got %v", order)
+	}
+	body := w.Body.String()
+	firstIdx := strings.Index(body, `name="first"`)
+	secondIdx := strings.Index(body, `name="second"`)
+	if firstIdx < 0 || secondIdx < 0 || firstIdx > secondIdx {
+		t.Fatalf("expected first decorator's markup before second's in body, got %q", body)
+	}
+}
+
 func TestHTMLDocument(t *testing.T) {
 	doc := HTMLDocument("Test Page", gosx.Text(""), gosx.Text("hello"))
 	html := gosx.RenderHTML(doc)

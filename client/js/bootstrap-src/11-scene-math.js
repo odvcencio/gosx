@@ -575,6 +575,16 @@
     });
   }
 
+  // clamp01 is consumed by normalizeEngineRenderBundle (30-tail.js), which
+  // ships in bootstrap-feature-engines.js — a bundle that never includes this
+  // file (see build-bootstrap.mjs). Bridged via window.__gosx_runtime_api so
+  // the engines feature prefers this canonical copy when it's already on the
+  // page; the engines-prefix falls back to its own local copy otherwise (see
+  // 26b-feature-engines-prefix.js).
+  if (typeof window !== "undefined" && window.__gosx_runtime_api) {
+    window.__gosx_runtime_api.clamp01 = clamp01;
+  }
+
   function sceneScreenToRay(pointerX, pointerY, width, height, camera) {
     // Unproject screen coordinates into a world-space ray, consistent with sceneProjectPoint.
     var cam = sceneRenderCamera(camera);
