@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.29.1 (2026-07-02)
 
 Video player primitives: audio tracks, seekable/live edge, quality levels,
 preference persistence, and picture-in-picture + input lock.
