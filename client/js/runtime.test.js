@@ -25357,6 +25357,59 @@ test("P7 gizmoHelper: helper group hides/repositions/switches form via selection
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+// === P7 sceneGizmoTargetAnchor: world-baked-vertex mesh objects resolve to
+// their real position, not the origin ===
+//
+// Regression test for a real bug found during browser verification: kiln's
+// scene objects (editor_viewport.go's sceneMeshNodes) lower as BufferGeometry
+// with WORLD-SPACE vertex positions baked directly into vertices.positions —
+// x/y/z stay 0 on those objects (see normalizeSceneObject). Naively reading
+// target.x/y/z (as translate/rotate/scale-mode-driven objects would expect)
+// anchors the gizmo helper group at the origin for every kiln object
+// regardless of its real position. sceneGizmoTargetAnchor must detect the
+// baked-vertex case and fall back to the vertex bounding-box center instead.
+test("P7 sceneGizmoTargetAnchor: falls back to vertex bounding-box center for world-baked mesh objects", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneGizmoTargetAnchor, "function", "expected sceneGizmoTargetAnchor to be exposed on __gosx_scene3d_api");
+
+  // Ordinary transform-driven object: x/y/z directly is the anchor.
+  const transformObject = api.normalizeSceneObject({ id: "cube", kind: "box", x: 5, y: 2, z: -3, rotationY: 0.3 }, "cube", null);
+  const transformAnchor = api.sceneGizmoTargetAnchor(transformObject);
+  assert.equal(transformAnchor.x, 5);
+  assert.equal(transformAnchor.y, 2);
+  assert.equal(transformAnchor.z, -3);
+  assert.ok(Math.abs(transformAnchor.rotationY - 0.3) < 1e-9);
+
+  // kiln-shaped world-baked mesh object: x/y/z are 0 (the kiln lowering
+  // path never sets them), but vertices.positions carries the real
+  // world-space triangle data — a wall centered at (-3.25, 1.5, 0), mirroring
+  // exactly what was observed live against a running kiln workspace.
+  const bakedObject = api.normalizeSceneObject({
+    id: "wall",
+    kind: "gltf-mesh",
+    vertices: {
+      count: 3,
+      positions: [
+        -4.25, 1.0, -0.5,
+        -2.25, 1.0, -0.5,
+        -3.25, 2.0, 0.5,
+      ],
+    },
+  }, "wall", null);
+  assert.equal(bakedObject.x, 0, "sanity: kiln-shaped objects leave x at 0");
+  assert.equal(bakedObject.y, 0, "sanity: kiln-shaped objects leave y at 0");
+  const bakedAnchor = api.sceneGizmoTargetAnchor(bakedObject);
+  assert.ok(Math.abs(bakedAnchor.x - -3.25) < 1e-9, "expected anchor.x to be the vertex bounding-box center, got " + bakedAnchor.x);
+  assert.ok(Math.abs(bakedAnchor.y - 1.5) < 1e-9, "expected anchor.y to be the vertex bounding-box center, got " + bakedAnchor.y);
+  assert.ok(Math.abs(bakedAnchor.z - 0) < 1e-9, "expected anchor.z to be the vertex bounding-box center, got " + bakedAnchor.z);
+
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 // === P5 cursorOutputSignal: normalized pointer published into signal ===
 test("P5 cursorOutputSignal: pointermove publishes normalized cursor position", async () => {
   const mount = new FakeElement("div", null);

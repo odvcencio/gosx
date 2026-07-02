@@ -7802,18 +7802,19 @@
           }
         }
       }
+      const anchor = target ? sceneGizmoTargetAnchor(target) : null;
       for (let i = 0; i < objects.length; i++) {
         const obj = objects[i];
         if (obj.gizmoHelper) {
           const visible = Boolean(target) && obj.gizmoFormMode === mode;
           const patch = { visible: visible };
-          if (target) {
-            patch.x = target.x;
-            patch.y = target.y;
-            patch.z = target.z;
-            patch.rotationX = target.rotationX;
-            patch.rotationY = target.rotationY;
-            patch.rotationZ = target.rotationZ;
+          if (anchor) {
+            patch.x = anchor.x;
+            patch.y = anchor.y;
+            patch.z = anchor.z;
+            patch.rotationX = anchor.rotationX;
+            patch.rotationY = anchor.rotationY;
+            patch.rotationZ = anchor.rotationZ;
           }
           applySceneObjectPatch(sceneState, obj.id, patch);
         } else if (obj.gizmoRing) {
