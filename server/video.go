@@ -100,6 +100,22 @@ type VideoProps struct {
 	SubtitleBase   string            `json:"subtitleBase,omitempty"`
 	SubtitleTrack  string            `json:"subtitleTrack,omitempty"`
 	SubtitleTracks []VideoTrack      `json:"subtitleTracks,omitempty"`
+	// PersistPrefs opts the engine into persisting playback preferences
+	// (volume, muted, rate, subtitleTrack, audioTrack, qualityLevel) to
+	// localStorage and restoring them on mount. PersistKey (below) namespaces
+	// the storage key; either field alone is enough to enable persistence.
+	PersistPrefs bool `json:"persistPrefs,omitempty"`
+	// PersistKey names the localStorage namespace used when PersistPrefs (or
+	// PersistKey itself) enables preference persistence: the engine stores
+	// under "gosx:video:<key>:prefs". When PersistPrefs is true and
+	// PersistKey is empty, the engine falls back to its own instance id.
+	PersistKey string `json:"persistKey,omitempty"`
+	// LockInput makes the engine swallow click/dblclick/space/enter transport
+	// interaction on the <video> element and suppresses native controls. It
+	// defaults to false but is also implied whenever the engine is locked to
+	// a "follow" sync session (Sync set and SyncMode "follow"), since local
+	// transport interaction is already ignored server-side in that mode.
+	LockInput bool `json:"lockInput,omitempty"`
 }
 
 // Video renders a server-side <video> baseline with optional <source> and
@@ -258,6 +274,7 @@ func normalizeVideoProps(props VideoProps) VideoProps {
 	props.AudioTrack = strings.TrimSpace(props.AudioTrack)
 	props.SubtitleBase = AssetURL(props.SubtitleBase)
 	props.SubtitleTrack = strings.TrimSpace(props.SubtitleTrack)
+	props.PersistKey = strings.TrimSpace(props.PersistKey)
 	normalizedSources := make([]VideoSource, 0, len(props.Sources))
 	for _, source := range props.Sources {
 		source.Src = AssetURL(source.Src)
