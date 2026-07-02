@@ -4318,6 +4318,102 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
 });
 
+// Regression test for the split feature-bundle build: bootstrap-feature-scene3d.js
+// runs in its own IIFE (see 26d-feature-scene3d-prefix.js), separate from the
+// runtime bundle's closure that declares `sceneLabelLayoutCacheLimit`
+// (00-textlayout.js). Before the fix, layoutSceneLabel() in 20-scene-mount.js
+// threw "ReferenceError: sceneLabelLayoutCacheLimit is not defined" the first
+// time ANY scene with a Label node laid out text under this bundle
+// combination — silently breaking every comment pin / scene label in
+// production, since apps load bootstrap-runtime.js + bootstrap-feature-scene3d.js,
+// never the monolithic bootstrap.js (which happened to mask the bug because
+// all files share one closure there).
+//
+// Mirrors kiln's comment-pin flow exactly: mount a plain (non-shared-runtime)
+// GoSXScene3D engine via the split bundles, then drive a Label into the scene
+// via the SAME public handle.applyCommands([{kind:0 /* SCENE_CMD_CREATE_OBJECT */,
+// objectId, data:{kind:"label", props:{...}}}]) primitive kiln's pin sync (and
+// P6's declarative scene commands) use — see kiln/app/workspace_comments.go.
+test("Scene3D label layout does not throw under the split runtime+scene3d feature bundles", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-split-bundle-label-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-split-label",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-split-bundle-label-root",
+          props: {
+            width: 320,
+            height: 180,
+            background: "#08151f",
+            scene: { objects: [] },
+          },
+        },
+      ],
+    },
+  });
+
+  const uncaughtErrors = [];
+  env.context.addEventListener("error", (event) => {
+    uncaughtErrors.push(event && event.error ? event.error : event);
+  });
+
+  // The exact bundle combo real apps load: the runtime chunk (which owns
+  // window.__gosx_runtime_api / sceneLabelLayoutCacheLimit) followed by the
+  // async Scene3D feature chunk — NOT the monolithic bootstrap.js.
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.deepEqual(uncaughtErrors, [], "mounting an empty scene must not throw");
+  assert.equal(env.consoleLogs.error.length, 0, "expected no console.error, got: " + JSON.stringify(env.consoleLogs.error));
+
+  const engineState = env.context.__gosx.engines.get("gosx-engine-split-label");
+  assert.ok(engineState, "expected engine to mount");
+  assert.equal(typeof engineState.handle.applyCommands, "function");
+
+  // This is the call that threw ReferenceError before the fix: any Label
+  // node laid out under the split bundles crashed layoutSceneLabel().
+  engineState.handle.applyCommands([
+    {
+      kind: 0,
+      objectId: "ws-comment-pin-1",
+      data: {
+        kind: "label",
+        props: {
+          id: "ws-comment-pin-1",
+          text: "Pin comment",
+          className: "ws-comment-pin",
+          x: 1,
+          y: 2,
+          z: 3,
+        },
+      },
+    },
+  ]);
+  await flushAsyncWork();
+
+  assert.deepEqual(uncaughtErrors, [], "applyCommands([label]) must not throw ReferenceError");
+  assert.equal(env.consoleLogs.error.length, 0, "expected no console.error after applyCommands, got: " + JSON.stringify(env.consoleLogs.error));
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.children.length, 2, "canvas + label layer must both mount");
+  assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(mount.children[1].children.length, 1, "the applyCommands label must render");
+  assert.equal(mount.children[1].children[0].textContent, "Pin comment");
+
+  env.context.__gosx_dispose_engine("gosx-engine-split-label");
+});
+
 // Mounts a shared-runtime Scene3D whose program creates a long box ("cube") and
 // drives one frame. The scene IR carries a motionProgram so the P2.4b WASM
 // motion seam (applyWasmMotionFrame) can lazy-load + tick + decode. Returns the

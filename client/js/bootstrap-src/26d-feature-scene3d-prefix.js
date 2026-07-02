@@ -23,5 +23,13 @@
   var layoutBrowserText = runtimeApi.layoutBrowserText || function() { return null; };
   var applyTextLayoutPresentation = runtimeApi.applyTextLayoutPresentation || function() {};
   var onTextLayoutInvalidated = runtimeApi.onTextLayoutInvalidated || function() { return function() {}; };
+  // sceneLabelLayoutCacheLimit is declared as a const in 00-textlayout.js
+  // (RUNTIME_UTILS scope, not exported via extraction elsewhere) and is
+  // used by 20-scene-mount.js's layoutSceneLabel() to bound the per-label
+  // layout cache. Without this bridge, any page mounting a Scene3D Label
+  // node throws "ReferenceError: sceneLabelLayoutCacheLimit is not
+  // defined" the first time a label lays out, because this bundle runs in
+  // its own IIFE separate from the runtime bundle that defines it.
+  var sceneLabelLayoutCacheLimit = runtimeApi.sceneLabelLayoutCacheLimit || 512;
 
   // --- file 10 (runtime-scene-core.js) is concatenated next, followed by files 11-20 ---
