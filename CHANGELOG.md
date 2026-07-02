@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+Video player primitives: audio tracks, seekable/live edge, quality levels,
+preference persistence, and picture-in-picture + input lock.
+
+The built-in video engine (`server.Video`, `//gosx:engine video`) gains five
+additive capabilities, all opt-in and none renaming or removing an existing
+`$video.*` signal:
+
+- **Audio tracks** — output signal `audioTracks` (id/index/label/language/
+  active), sourced from hls.js `audioTracks`/`hlsAudioTracksUpdated` when
+  attached, else native `video.audioTracks`. Input signal `audioTrack`
+  (index or id; empty/`-1` = default) applies via `hls.audioTrack` or native
+  `AudioTrack.enabled`. The existing `VideoProps.AudioTrack`/`AudioTracks`
+  server props now flow through as the initial selection.
+- **Seekable / live edge** — output signals `seekable` ([start, end] of the
+  last seekable range), `isLive` (from hls.js level details or
+  `duration === Infinity`), and `liveEdgeLag` (seconds behind the live edge,
+  `null` when not live). Updated alongside `buffered` on `timeupdate` and the
+  newly-added `progress` listener.
+- **Quality levels** — output signals `qualityLevels` (index/height/width/
+  bitrate/name/active) and `qualityLevel` (-1 = auto), from hls.js
+  `levels`/`hlsLevelSwitched`. Input signal `qualityLevel` applies via
+  `hls.nextLevel` (not `currentLevel`): `nextLevel` switches at the next
+  fragment boundary without flushing already-buffered media, avoiding a
+  visible stall on a user-driven quality change.
+- **Preference persistence** — new server props `VideoProps.PersistPrefs`
+  (bool) / `PersistKey` (string namespace; either enables it) opt the engine
+  into persisting volume, muted, rate, subtitleTrack, audioTrack, and
+  qualityLevel to `localStorage` under `gosx:video:<key>:prefs` and restoring
+  them on mount through the normal signal path, so islands observe the
+  restored values the same way they'd observe an island-set one. All
+  localStorage access is guarded for private-browsing/storage-disabled
+  contexts.
+- **Picture-in-picture + input lock** — new `command` values `enter-pip`/
+  `exit-pip`/`toggle-pip` (feature-detected, degrade to the `error` signal
+  when unsupported) and output signal `pip`. New server prop
+  `VideoProps.LockInput` (bool; also auto-on whenever the engine is locked to
+  a "follow" sync session) makes the engine swallow click/dblclick/space/
+  Enter transport interaction on the `<video>` element and suppress native
+  controls, exposing output signal `inputLocked`.
+
 ## v0.25.3
 
 Scene3D now has Selena as its native shader authoring backend.
