@@ -160,7 +160,18 @@ const budgets = [
   // over the retained SCENE_WATER_* builtin fallback tier; removing that fallback
   // once WebGPU water rendering is visually confirmed reclaims most of this.
   // Measured: 1_170_081 / 309_540 / 249_595 + sub-1% rounding headroom.
-  { file: "bootstrap.js", raw: 1_180_000, gzip: 312_000, brotli: 252_000 },
+  //
+  // Bumped raw 1_180_000 -> 1_181_000, gzip 312_000 -> 313_000, brotli
+  // 252_000 -> 253_000: video-player-primitives (audio tracks, seekable/live
+  // edge, quality levels, preference persistence, PiP + input lock) folded
+  // into 30-tail.js. Measured: 1_180_338 / 312_544 / 252_009 + sub-1%
+  // rounding headroom.
+  //
+  // Bumped raw 1_181_000 -> 1_184_000, gzip 313_000 -> 314_000: merge of
+  // video-player-primitives with the scene3d gizmo/water/regions line —
+  // both grew the bundle independently. Measured: 1_182_312 / 313_299 /
+  // 252_641 + sub-1% rounding headroom.
+  { file: "bootstrap.js", raw: 1_184_000, gzip: 314_000, brotli: 253_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -381,7 +392,15 @@ const budgets = [
   // runtime:"shared" engine's render bundle on split-bundle pages that never
   // load bootstrap-feature-scene3d.js. Measured: 77_893 / 24_123 / 21_494,
   // plus sub-1% rounding headroom.
-  { file: "bootstrap-feature-engines.js", raw: 78_500, gzip: 24_500, brotli: 21_700 },
+  //
+  // Bumped raw 78_500 -> 85_000, gzip 24_500 -> 26_000, brotli 21_700 ->
+  // 23_300: video-player-primitives — audioTracks/audioTrack, seekable/
+  // isLive/liveEdgeLag, qualityLevels/qualityLevel, opt-in localStorage
+  // preference persistence, and PiP + input-lock command/signal wiring in
+  // the video engine factory (30-tail.js), merged with the runtime_api
+  // bridge line above. Measured: 84_129 / 25_836 / 23_000 + sub-1%
+  // rounding headroom.
+  { file: "bootstrap-feature-engines.js", raw: 85_000, gzip: 26_000, brotli: 23_300 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -427,9 +446,13 @@ const routeBudgets = [
     // <meta name="csrf-token">, attaches X-CSRF-Token on POST/PUT/PATCH/
     // DELETE — see session.Manager.Protect). Measured: 190_508 / 54_077 /
     // 47_753, plus rounding headroom.
-    raw: 191_000,
-    gzip: 54_200,
-    brotli: 47_800,
+    // Bumped raw 191_000 -> 198_000, gzip 54_200 -> 56_500, brotli 47_800 ->
+    // 50_000: video-player-primitives folded into the engines surface,
+    // merged with the runtime_api bridge + CSRF lines above. Measured:
+    // 196_744 / 55_790 / 49_259, plus sub-1% rounding headroom.
+    raw: 198_000,
+    gzip: 56_500,
+    brotli: 50_000,
   },
 ];
 

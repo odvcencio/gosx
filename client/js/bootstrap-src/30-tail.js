@@ -1004,6 +1004,119 @@
     return 0;
   }
 
+  function videoSeekableRange(video) {
+    if (!video || !video.seekable || typeof video.seekable.length !== "number" || video.seekable.length === 0) {
+      return [0, 0];
+    }
+    const lastIndex = video.seekable.length - 1;
+    const start = typeof video.seekable.start === "function" ? Math.max(0, sceneNumber(video.seekable.start(lastIndex), 0)) : 0;
+    const end = typeof video.seekable.end === "function" ? Math.max(0, sceneNumber(video.seekable.end(lastIndex), 0)) : 0;
+    return [start, Math.max(start, end)];
+  }
+
+  function videoNormalizeHLSAudioTrack(item, index, activeIndex) {
+    const source = item && typeof item === "object" ? item : {};
+    const id = source.id != null ? String(source.id) : String(index);
+    const language = String(source.lang || source.language || "").trim();
+    const label = String(source.name || source.label || language || ("Audio " + (index + 1))).trim();
+    return {
+      id: id,
+      index: index,
+      label: label,
+      language: language,
+      active: index === activeIndex,
+    };
+  }
+
+  function videoNormalizeNativeAudioTrack(track, index) {
+    const id = track && track.id ? String(track.id) : String(index);
+    const language = String((track && track.language) || "").trim();
+    const label = String((track && track.label) || language || ("Audio " + (index + 1))).trim();
+    return {
+      id: id,
+      index: index,
+      label: label,
+      language: language,
+      active: Boolean(track && track.enabled),
+    };
+  }
+
+  function videoNormalizeQualityLevel(item, index, activeIndex) {
+    const source = item && typeof item === "object" ? item : {};
+    const height = Math.max(0, Math.round(sceneNumber(source.height, 0)));
+    const width = Math.max(0, Math.round(sceneNumber(source.width, 0)));
+    const bitrate = Math.max(0, Math.round(sceneNumber(source.bitrate, 0)));
+    const name = String(source.name || (height > 0 ? (height + "p") : ("Level " + (index + 1)))).trim();
+    return {
+      index: index,
+      height: height,
+      width: width,
+      bitrate: bitrate,
+      name: name,
+      active: index === activeIndex,
+    };
+  }
+
+  // Preference persistence (Slice 4, opt-in via VideoProps.PersistPrefs /
+  // PersistKey): all localStorage access below is guarded with try/catch so
+  // private-browsing / storage-disabled contexts degrade to a no-op instead
+  // of throwing. This field list is module-scope (not a local const inside
+  // createBuiltInVideoEngine) because restorePersistedVideoPrefs() runs
+  // eagerly at the very top of that closure, before a same-scope `const`
+  // declared further down would have run its initializer (TDZ).
+  const PERSISTED_VIDEO_PREF_FIELDS = ["volume", "mute", "rate", "subtitleTrack", "audioTrack", "qualityLevel"];
+
+  function videoPersistEnabled(props) {
+    return sceneBool(videoPropValue(props, ["persistPrefs"], false), false) ||
+      String(videoPropValue(props, ["persistKey"], "") || "").trim() !== "";
+  }
+
+  function videoPersistStorageKey(props, ctx) {
+    const explicit = String(videoPropValue(props, ["persistKey"], "") || "").trim();
+    const key = explicit || String((ctx && ctx.id) || "default");
+    return "gosx:video:" + key + ":prefs";
+  }
+
+  function videoPersistStorage() {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) {
+        return null;
+      }
+      const probeKey = "__gosx_video_prefs_probe__";
+      window.localStorage.setItem(probeKey, "1");
+      window.localStorage.removeItem(probeKey);
+      return window.localStorage;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function loadPersistedVideoPrefs(storage, key) {
+    if (!storage) {
+      return null;
+    }
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function savePersistedVideoPrefs(storage, key, prefs) {
+    if (!storage) {
+      return;
+    }
+    try {
+      storage.setItem(key, JSON.stringify(prefs));
+    } catch (_error) {
+    }
+  }
+
   function videoViewportSize(mount) {
     const rect = mount && typeof mount.getBoundingClientRect === "function"
       ? mount.getBoundingClientRect()
@@ -1425,6 +1538,11 @@
       loadToken: 0,
       status: "idle",
     };
+    // Restore persisted preferences (Slice 4) before any signal default is
+    // read below, so requestedRate/volume/mute/subtitleTrack initial reads
+    // above and the immediate subscribeVideoSignal() callbacks further down
+    // observe the restored value as if the island had set it itself.
+    restorePersistedVideoPrefs();
     let disposed = false;
     let hls = null;
     let syncSocket = null;
@@ -1462,6 +1580,9 @@
     let videoViewport = null;
     let nativeSubtitleTrack = null;
     let sourceSignalInitialized = false;
+    let hlsLiveFlag = false;
+    let lastAudioTracksSignature = "";
+    let lastQualityLevelsSignature = "";
     const videoOutputPayloads = new Map();
     const videoOutputPrimitiveValues = new Map();
 
@@ -1607,6 +1728,22 @@
       return Math.max(0, Math.min(100, Math.round(sceneNumber(value, 0))));
     }
 
+    // Slice 5 input lock: explicit props.lockInput, OR auto-on whenever the
+    // engine is locked to a "follow" sync session — local transport commands
+    // are already ignored server-side in that mode (see the "command"/"seek"/
+    // "rate" subscribeVideoSignal handlers below), so the native <video>
+    // controls and click/keyboard shortcuts should not be able to fight it.
+    function videoInputLockActive() {
+      return sceneBool(videoPropValue(props, ["lockInput"], false), false) || syncLockedToServer();
+    }
+
+    function videoInputLockBlocksKey(event) {
+      // Do NOT trim: " " (Space) is itself the exact `key` value browsers
+      // report for the spacebar, and String.trim() would strip it to "".
+      const key = event && (event.key != null ? event.key : event.code);
+      return key === " " || key === "Space" || key === "Spacebar" || key === "Enter";
+    }
+
     function renderSyncOverlay() {
       const overlay = ensureSyncOverlay();
       let mode = "";
@@ -1742,6 +1879,57 @@
       const segments = videoAttr("data-gosx-video-cache-segments", 0);
       const status = videoAttr("data-gosx-video-cache-status", "");
       setCacheWaiting(waiting, progress, segments, status);
+    }
+
+    // Preference persistence (Slice 4). restorePersistedVideoPrefs() runs once
+    // very early in setup (before any other `let`/`const` in this closure has
+    // executed its initializer — hence PERSISTED_VIDEO_PREF_FIELDS below lives
+    // at module scope, not as a local const here, to avoid a TDZ reference)
+    // and only ever seeds a signal that has no value yet
+    // (readVideoSignal(field, null) === null) — an island-provided initial
+    // value, or a value already carried over from a prior mount on the same
+    // page, always wins over the persisted one. persistPrefsIfEnabled() is
+    // called from each relevant input-signal handler after it applies a
+    // change, so storage always reflects the last-applied value.
+    function restorePersistedVideoPrefs() {
+      if (!videoPersistEnabled(props)) {
+        return;
+      }
+      const storage = videoPersistStorage();
+      if (!storage) {
+        return;
+      }
+      const prefs = loadPersistedVideoPrefs(storage, videoPersistStorageKey(props, ctx));
+      if (!prefs) {
+        return;
+      }
+      for (const field of PERSISTED_VIDEO_PREF_FIELDS) {
+        if (!Object.prototype.hasOwnProperty.call(prefs, field) || prefs[field] == null) {
+          continue;
+        }
+        if (readVideoSignal(field, null) != null) {
+          continue;
+        }
+        writeVideoSignal(field, prefs[field]);
+      }
+    }
+
+    function persistPrefsIfEnabled() {
+      if (!videoPersistEnabled(props)) {
+        return;
+      }
+      const storage = videoPersistStorage();
+      if (!storage) {
+        return;
+      }
+      savePersistedVideoPrefs(storage, videoPersistStorageKey(props, ctx), {
+        volume: sceneNumber(readVideoSignal("volume", video.volume), video.volume),
+        mute: Boolean(video.muted),
+        rate: requestedRate,
+        subtitleTrack: String(readVideoSignal("subtitleTrack", "") || ""),
+        audioTrack: String(readVideoSignal("audioTrack", "") || ""),
+        qualityLevel: sceneNumber(readVideoSignal("qualityLevel", -1), -1),
+      });
     }
 
     function followMessagePosition(message) {
@@ -1880,6 +2068,52 @@
       return Boolean(document && document.pictureInPictureElement === video);
     }
 
+    function pipSupported() {
+      return Boolean(document && document.pictureInPictureEnabled && video && typeof video.requestPictureInPicture === "function");
+    }
+
+    function enterPiP() {
+      if (videoIsPoppedOut()) {
+        return;
+      }
+      if (!pipSupported()) {
+        setError("picture-in-picture unsupported");
+        return;
+      }
+      try {
+        const result = video.requestPictureInPicture();
+        if (result && typeof result.catch === "function") {
+          result.catch(function(error) {
+            setError(error && error.message ? error.message : "picture-in-picture failed");
+            updateVideoOutputs();
+          });
+        }
+      } catch (error) {
+        setError(error && error.message ? error.message : "picture-in-picture failed");
+      }
+    }
+
+    function exitPiP() {
+      if (!videoIsPoppedOut()) {
+        return;
+      }
+      if (!document || typeof document.exitPictureInPicture !== "function") {
+        setError("picture-in-picture unsupported");
+        return;
+      }
+      try {
+        const result = document.exitPictureInPicture();
+        if (result && typeof result.catch === "function") {
+          result.catch(function(error) {
+            setError(error && error.message ? error.message : "exit picture-in-picture failed");
+            updateVideoOutputs();
+          });
+        }
+      } catch (error) {
+        setError(error && error.message ? error.message : "exit picture-in-picture failed");
+      }
+    }
+
     function setNativeSubtitleTrackMode(trackNode, mode) {
       if (!trackNode) {
         return;
@@ -2002,9 +2236,18 @@
       return mediaDuration;
     }
 
+    function videoIsLive() {
+      if (hls && hlsLiveFlag) {
+        return true;
+      }
+      return Boolean(video) && video.duration === Infinity;
+    }
+
     function updateVideoOutputs() {
       const duration = videoOutputDuration();
       const playing = !sceneBool(video.paused, true) && !sceneBool(video.ended, false);
+      const seekableRange = videoSeekableRange(video);
+      const live = videoIsLive();
       writeVideoOutputSignal("position", Math.max(0, sceneNumber(video.currentTime, 0)));
       writeVideoOutputSignal("duration", duration);
       writeVideoOutputSignal("playing", playing);
@@ -2016,18 +2259,23 @@
       writeVideoOutputSignal("actualRate", sceneNumber(video.playbackRate, requestedRate));
       writeVideoOutputSignal("syncConnected", Boolean(syncSocket && syncSocket.readyState === 1));
       writeVideoOutputSignal("viewerCount", Math.max(0, Math.floor(sceneNumber(followState && followState.viewerCount, 0))));
+      writeVideoOutputSignal("seekable", seekableRange);
+      writeVideoOutputSignal("isLive", live);
+      writeVideoOutputSignal("liveEdgeLag", live ? Math.max(0, seekableRange[1] - Math.max(0, sceneNumber(video.currentTime, 0))) : null);
+      writeVideoOutputSignal("pip", videoIsPoppedOut());
+      writeVideoOutputSignal("inputLocked", videoInputLockActive());
       updateCueOutputs();
       if (!lastError) {
         writeVideoOutputSignal("error", "");
       }
     }
 
-    function addListener(target, type, listener) {
+    function addListener(target, type, listener, options) {
       if (!target || typeof target.addEventListener !== "function") {
         return;
       }
-      target.addEventListener(type, listener);
-      eventListeners.push({ target, type, listener });
+      target.addEventListener(type, listener, options);
+      eventListeners.push({ target, type, listener, options });
     }
 
     function teardownHLS() {
@@ -2035,6 +2283,97 @@
         hls.destroy();
       }
       hls = null;
+    }
+
+    // Slice 1: audio tracks. hls.js owns selection when attached (in-manifest
+    // alternate audio); otherwise fall back to the native video.audioTracks
+    // list where the browser exposes one (e.g. multi-audio MKV in Firefox).
+    function updateAudioTrackOutputs() {
+      let tracks = [];
+      if (hls && Array.isArray(hls.audioTracks) && hls.audioTracks.length > 0) {
+        const activeIndex = sceneNumber(hls.audioTrack, -1);
+        tracks = hls.audioTracks.map(function(item, index) {
+          return videoNormalizeHLSAudioTrack(item, index, activeIndex);
+        });
+      } else if (video.audioTracks && video.audioTracks.length > 0) {
+        for (let i = 0; i < video.audioTracks.length; i += 1) {
+          tracks.push(videoNormalizeNativeAudioTrack(video.audioTracks[i], i));
+        }
+      }
+      const signature = JSON.stringify(tracks);
+      if (signature !== lastAudioTracksSignature) {
+        lastAudioTracksSignature = signature;
+        writeVideoOutputSignal("audioTracks", tracks);
+      }
+    }
+
+    function applyAudioTrackSelection(value) {
+      const selected = String(value == null ? "" : value).trim();
+      if (hls && Array.isArray(hls.audioTracks)) {
+        if (selected !== "" && selected !== "-1") {
+          let nextIndex = -1;
+          const asIndex = Number(selected);
+          if (Number.isInteger(asIndex) && hls.audioTracks[asIndex]) {
+            nextIndex = asIndex;
+          } else {
+            nextIndex = hls.audioTracks.findIndex(function(item, index) {
+              return (item && item.id != null ? String(item.id) : String(index)) === selected;
+            });
+          }
+          if (nextIndex >= 0) {
+            hls.audioTrack = nextIndex;
+          }
+        }
+        updateAudioTrackOutputs();
+        persistPrefsIfEnabled();
+        return;
+      }
+      if (video.audioTracks && video.audioTracks.length > 0) {
+        const wantsDefault = selected === "" || selected === "-1";
+        let matched = false;
+        for (let i = 0; i < video.audioTracks.length; i += 1) {
+          const track = video.audioTracks[i];
+          const id = track && track.id ? String(track.id) : String(i);
+          const isMatch = !wantsDefault && (id === selected || String(i) === selected);
+          if (!wantsDefault) {
+            track.enabled = isMatch;
+          }
+          if (isMatch) {
+            matched = true;
+          }
+        }
+        if (wantsDefault || !matched) {
+          let anyEnabled = false;
+          for (let i = 0; i < video.audioTracks.length; i += 1) {
+            if (video.audioTracks[i].enabled) {
+              anyEnabled = true;
+              break;
+            }
+          }
+          if (!anyEnabled) {
+            video.audioTracks[0].enabled = true;
+          }
+        }
+        updateAudioTrackOutputs();
+        persistPrefsIfEnabled();
+      }
+    }
+
+    // Slice 3: HLS quality levels (ABR rungs).
+    function updateQualityLevelOutputs() {
+      if (!hls || !Array.isArray(hls.levels)) {
+        return;
+      }
+      const activeIndex = sceneNumber(hls.currentLevel, -1);
+      const levels = hls.levels.map(function(item, index) {
+        return videoNormalizeQualityLevel(item, index, activeIndex);
+      });
+      const signature = JSON.stringify(levels);
+      if (signature !== lastQualityLevelsSignature) {
+        lastQualityLevelsSignature = signature;
+        writeVideoOutputSignal("qualityLevels", levels);
+      }
+      writeVideoOutputSignal("qualityLevel", activeIndex);
     }
 
     function recoverHLSFatalError(HlsCtor, data) {
@@ -2827,6 +3166,10 @@
       followState = null;
       clearFollowTimer();
       teardownHLS();
+      hlsLiveFlag = false;
+      lastQualityLevelsSignature = "";
+      writeVideoOutputSignal("qualityLevels", []);
+      writeVideoOutputSignal("qualityLevel", -1);
       subtitleState.cues = [];
       subtitleState.lastSignature = "";
       updateCueOutputs();
@@ -2912,6 +3255,42 @@
               }
             });
           }
+          if (HlsCtor.Events.AUDIO_TRACKS_UPDATED) {
+            hls.on(HlsCtor.Events.AUDIO_TRACKS_UPDATED, function() {
+              updateAudioTrackOutputs();
+              const requested = readVideoSignal("audioTrack", videoPropValue(props, ["audioTrack"], ""));
+              if (String(requested || "").trim() !== "") {
+                applyAudioTrackSelection(requested);
+              }
+            });
+          }
+          if (HlsCtor.Events.AUDIO_TRACK_SWITCHED) {
+            hls.on(HlsCtor.Events.AUDIO_TRACK_SWITCHED, function() {
+              updateAudioTrackOutputs();
+            });
+          }
+          if (HlsCtor.Events.LEVELS_UPDATED) {
+            hls.on(HlsCtor.Events.LEVELS_UPDATED, function() {
+              updateQualityLevelOutputs();
+              const requested = sceneNumber(readVideoSignal("qualityLevel", videoPropValue(props, ["qualityLevel"], -1)), -1);
+              if (requested !== -1) {
+                // See the "qualityLevel" subscribeVideoSignal handler below for
+                // why nextLevel (not currentLevel) is used here.
+                hls.nextLevel = requested;
+              }
+            });
+          }
+          if (HlsCtor.Events.LEVEL_SWITCHED) {
+            hls.on(HlsCtor.Events.LEVEL_SWITCHED, function() {
+              updateQualityLevelOutputs();
+            });
+          }
+          if (HlsCtor.Events.LEVEL_LOADED) {
+            hls.on(HlsCtor.Events.LEVEL_LOADED, function(_event, data) {
+              hlsLiveFlag = Boolean(data && data.details && data.details.live);
+              updateVideoOutputs();
+            });
+          }
         }
       } else {
         video.src = nextSource;
@@ -2931,6 +3310,11 @@
     video.setAttribute("data-gosx-video", "true");
     setInteractionState("active");
     videoApplyElementProps(video, props);
+    if (videoInputLockActive() && typeof video.removeAttribute === "function") {
+      // lockInput (Slice 5) suppresses native controls so they cannot fight
+      // the swallowed click/dblclick/keyboard transport interaction below.
+      video.removeAttribute("controls");
+    }
     videoEnsureAuthoredChildren(video, props);
     syncNativeSubtitleTrackMode();
     subtitleState.status = subtitleState.tracks.length > 0 ? "ready" : "idle";
@@ -2939,6 +3323,9 @@
     writeVideoOutputSignal("activeCues", []);
     writeVideoOutputSignal("syncConnected", false);
     writeVideoOutputSignal("error", "");
+    writeVideoOutputSignal("audioTracks", []);
+    writeVideoOutputSignal("qualityLevels", []);
+    writeVideoOutputSignal("qualityLevel", -1);
 
     addListener(video, "timeupdate", function() {
       updateVideoOutputs();
@@ -2946,6 +3333,42 @@
     });
     addListener(video, "durationchange", updateVideoOutputs);
     addListener(video, "loadedmetadata", updateVideoOutputs);
+    addListener(video, "progress", updateVideoOutputs);
+    addListener(video, "loadedmetadata", function() {
+      updateAudioTrackOutputs();
+      const requested = readVideoSignal("audioTrack", videoPropValue(props, ["audioTrack"], ""));
+      if (String(requested || "").trim() !== "") {
+        applyAudioTrackSelection(requested);
+      }
+    });
+    if (video.audioTracks && typeof video.audioTracks.addEventListener === "function") {
+      addListener(video.audioTracks, "addtrack", updateAudioTrackOutputs);
+      addListener(video.audioTracks, "removetrack", updateAudioTrackOutputs);
+      addListener(video.audioTracks, "change", updateAudioTrackOutputs);
+    }
+    if (videoInputLockActive()) {
+      // Swallow click/dblclick/space/Enter transport interaction on the
+      // <video> element itself, in the capture phase so it preempts the
+      // browser's own default click-to-toggle-play / keyboard shortcuts.
+      addListener(video, "click", function(event) {
+        if (videoInputLockActive() && event) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+      addListener(video, "dblclick", function(event) {
+        if (videoInputLockActive() && event) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+      addListener(video, "keydown", function(event) {
+        if (videoInputLockActive() && videoInputLockBlocksKey(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+    }
     addListener(video, "canplay", function() {
       stalled = false;
       clearError();
@@ -3027,6 +3450,8 @@
     });
     addListener(video, "enterpictureinpicture", syncNativeSubtitleTrackMode);
     addListener(video, "leavepictureinpicture", syncNativeSubtitleTrackMode);
+    addListener(video, "enterpictureinpicture", updateVideoOutputs);
+    addListener(video, "leavepictureinpicture", updateVideoOutputs);
 
     if (typeof ResizeObserver === "function") {
       resizeObserver = new ResizeObserver(function() {
@@ -3079,6 +3504,16 @@
         mount.requestFullscreen();
       } else if (command === "exit-fullscreen" && document && typeof document.exitFullscreen === "function") {
         document.exitFullscreen();
+      } else if (command === "enter-pip") {
+        enterPiP();
+      } else if (command === "exit-pip") {
+        exitPiP();
+      } else if (command === "toggle-pip") {
+        if (videoIsPoppedOut()) {
+          exitPiP();
+        } else {
+          enterPiP();
+        }
       }
       updateVideoOutputs();
     }));
@@ -3086,10 +3521,12 @@
       const volume = Math.max(0, Math.min(1, sceneNumber(value, sceneNumber(video.volume, 1))));
       video.volume = volume;
       updateVideoOutputs();
+      persistPrefsIfEnabled();
     }));
     unsubscribers.push(subscribeVideoSignal("mute", function(value) {
       video.muted = sceneBool(value, Boolean(video.muted));
       updateVideoOutputs();
+      persistPrefsIfEnabled();
     }));
     unsubscribers.push(subscribeVideoSignal("rate", function(value) {
       requestedRate = Math.max(0.1, sceneNumber(value, requestedRate));
@@ -3097,9 +3534,30 @@
       if (!(mode === "follow" && String(videoPropValue(props, ["sync"], "")).trim() !== "")) {
         applyRequestedRate();
       }
+      persistPrefsIfEnabled();
     }));
     unsubscribers.push(subscribeVideoSignal("subtitleTrack", function(value) {
       startSubtitleLoad(value);
+      persistPrefsIfEnabled();
+    }));
+    unsubscribers.push(subscribeVideoSignal("audioTrack", function(value) {
+      applyAudioTrackSelection(value);
+    }));
+    unsubscribers.push(subscribeVideoSignal("qualityLevel", function(value) {
+      if (!hls) {
+        return;
+      }
+      const requested = sceneNumber(value, -1);
+      // Use nextLevel (not currentLevel): hls.js's currentLevel setter calls
+      // immediateLevelSwitch(), which flushes the already-buffered-ahead
+      // media and forces an immediate re-buffer/stall. nextLevel calls
+      // nextLevelSwitch() instead, which only takes effect at the next
+      // fragment boundary — no flush, no visible stall, at the cost of the
+      // switch not being instantaneous. That trade-off is the right default
+      // for a user-driven "change quality" action.
+      hls.nextLevel = requested;
+      updateQualityLevelOutputs();
+      persistPrefsIfEnabled();
     }));
 
     const initialVolume = Math.max(0, Math.min(1, sceneNumber(readVideoSignal("volume", videoPropValue(props, ["volume"], 1)), 1)));
@@ -3143,7 +3601,7 @@
         }
         for (const entry of eventListeners) {
           if (entry.target && typeof entry.target.removeEventListener === "function") {
-            entry.target.removeEventListener(entry.type, entry.listener);
+            entry.target.removeEventListener(entry.type, entry.listener, entry.options);
           }
         }
         for (const unsub of unsubscribers) {

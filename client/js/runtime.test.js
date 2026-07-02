@@ -17637,6 +17637,481 @@ window.Hls.ErrorTypes = { NETWORK_ERROR: "networkError", MEDIA_ERROR: "mediaErro
   assert.equal(sharedSignalValue(env, "$video.error"), "levelLoadError");
 });
 
+const VIDEO_PRIMITIVES_FAKE_HLS_SCRIPT = `window.__hlsInstances = [];
+window.Hls = function FakeHls(config) {
+  const self = this;
+  self.config = config;
+  self.handlers = {};
+  self.audioTracks = [];
+  self.levels = [];
+  self.audioTrackSets = [];
+  self.nextLevelSets = [];
+  self._audioTrack = -1;
+  self._currentLevel = -1;
+  self._nextLevel = -1;
+  self.attachMedia = function(video) { self.video = video; };
+  self.loadSource = function(src) { self.src = src; };
+  self.on = function(event, handler) { self.handlers[event] = handler; };
+  self.destroy = function() {};
+  Object.defineProperty(self, "audioTrack", {
+    get: function() { return self._audioTrack; },
+    set: function(value) { self._audioTrack = value; self.audioTrackSets.push(value); },
+  });
+  Object.defineProperty(self, "currentLevel", {
+    get: function() { return self._currentLevel; },
+    set: function(value) { self._currentLevel = value; },
+  });
+  Object.defineProperty(self, "nextLevel", {
+    get: function() { return self._nextLevel; },
+    set: function(value) { self._nextLevel = value; self.nextLevelSets.push(value); },
+  });
+  window.__hlsInstances.push(self);
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = {
+  MANIFEST_PARSED: "hlsManifestParsed",
+  SUBTITLE_TRACKS_UPDATED: "hlsSubtitleTracksUpdated",
+  ERROR: "hlsError",
+  AUDIO_TRACKS_UPDATED: "hlsAudioTracksUpdated",
+  AUDIO_TRACK_SWITCHED: "hlsAudioTrackSwitched",
+  LEVELS_UPDATED: "hlsLevelsUpdated",
+  LEVEL_SWITCHED: "hlsLevelSwitched",
+  LEVEL_LOADED: "hlsLevelLoaded",
+};`;
+
+test("bootstrap video engine exposes HLS audio tracks and applies audioTrack selection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-audio-tracks-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime/vendor/hls.min.js": { text: VIDEO_PRIMITIVES_FAKE_HLS_SCRIPT },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "AudioTracksVideo",
+          kind: "video",
+          mountId: "video-audio-tracks-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.m3u8", audioTrack: "1" },
+        },
+      ],
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: { id: "gosx-doc-video", pattern: "GET /video", path: "/video", title: "Video", status: 200 },
+    enhancement: { bootstrap: true, runtime: true, navigation: false },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const hls = env.context.__hlsInstances[0];
+  assert.ok(hls, "expected fake hls instance");
+  const tracks = [
+    { id: 0, name: "English", lang: "en" },
+    { id: 1, name: "Spanish", lang: "es" },
+  ];
+  hls.audioTracks = tracks;
+  hls.handlers.hlsAudioTracksUpdated(null, { audioTracks: tracks });
+  await flushAsyncWork();
+
+  // The engine-side subscribeVideoSignal("audioTrack", ...) applies the
+  // island's requested track once it's known which index the requested id
+  // maps to.
+  assert.deepEqual(Array.from(hls.audioTrackSets), [1]);
+  assert.deepEqual(sharedSignalValue(env, "$video.audioTracks"), [
+    { id: "0", index: 0, label: "English", language: "en", active: false },
+    { id: "1", index: 1, label: "Spanish", language: "es", active: true },
+  ]);
+
+  env.context.__gosx_notify_shared_signal("$video.audioTrack", JSON.stringify("0"));
+  await flushAsyncWork();
+  assert.deepEqual(Array.from(hls.audioTrackSets), [1, 0]);
+  assert.deepEqual(sharedSignalValue(env, "$video.audioTracks"), [
+    { id: "0", index: 0, label: "English", language: "en", active: true },
+    { id: "1", index: 1, label: "Spanish", language: "es", active: false },
+  ]);
+});
+
+test("bootstrap video engine exposes HLS quality levels and switches via nextLevel", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-quality-levels-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime/vendor/hls.min.js": { text: VIDEO_PRIMITIVES_FAKE_HLS_SCRIPT },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "QualityLevelsVideo",
+          kind: "video",
+          mountId: "video-quality-levels-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.m3u8" },
+        },
+      ],
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: { id: "gosx-doc-video", pattern: "GET /video", path: "/video", title: "Video", status: 200 },
+    enhancement: { bootstrap: true, runtime: true, navigation: false },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const hls = env.context.__hlsInstances[0];
+  assert.ok(hls, "expected fake hls instance");
+  const levels = [
+    { height: 480, width: 854, bitrate: 800000, name: "480p" },
+    { height: 1080, width: 1920, bitrate: 3000000, name: "1080p" },
+  ];
+  hls.levels = levels;
+  hls.handlers.hlsLevelsUpdated(null, { levels });
+  await flushAsyncWork();
+
+  assert.deepEqual(sharedSignalValue(env, "$video.qualityLevels"), [
+    { index: 0, height: 480, width: 854, bitrate: 800000, name: "480p", active: false },
+    { index: 1, height: 1080, width: 1920, bitrate: 3000000, name: "1080p", active: false },
+  ]);
+  assert.equal(sharedSignalValue(env, "$video.qualityLevel"), -1);
+
+  env.context.__gosx_notify_shared_signal("$video.qualityLevel", JSON.stringify(1));
+  await flushAsyncWork();
+  // nextLevel (not currentLevel) must be used so a manual quality switch
+  // doesn't force an immediate buffer flush/stall.
+  assert.deepEqual(Array.from(hls.nextLevelSets), [1]);
+
+  hls._currentLevel = 1;
+  hls.handlers.hlsLevelSwitched(null, { level: 1 });
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.qualityLevel"), 1);
+  assert.deepEqual(sharedSignalValue(env, "$video.qualityLevels"), [
+    { index: 0, height: 480, width: 854, bitrate: 800000, name: "480p", active: false },
+    { index: 1, height: 1080, width: 1920, bitrate: 3000000, name: "1080p", active: true },
+  ]);
+});
+
+test("bootstrap video engine reports seekable range, live state, and live edge lag", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-seekable-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SeekableVideo",
+          kind: "video",
+          mountId: "video-seekable-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.ok(video);
+  video.seekable = {
+    length: 1,
+    start() { return 5; },
+    end() { return 95; },
+  };
+  video.currentTime = 40;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.deepEqual(sharedSignalValue(env, "$video.seekable"), [5, 95]);
+  assert.equal(sharedSignalValue(env, "$video.isLive"), false);
+  assert.equal(sharedSignalValue(env, "$video.liveEdgeLag"), null);
+
+  video.duration = Infinity;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.equal(sharedSignalValue(env, "$video.isLive"), true);
+  assert.equal(sharedSignalValue(env, "$video.liveEdgeLag"), 55);
+});
+
+test("bootstrap video engine enters and exits picture-in-picture via command signal", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-pip-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PiPVideo",
+          kind: "video",
+          mountId: "video-pip-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.ok(video);
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("enter-pip"));
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.error"), "picture-in-picture unsupported");
+  assert.equal(sharedSignalValue(env, "$video.pip"), false);
+
+  env.document.pictureInPictureEnabled = true;
+  video.requestPictureInPicture = function() {
+    video.requestPictureInPictureCalls = (video.requestPictureInPictureCalls || 0) + 1;
+    env.document.pictureInPictureElement = video;
+    return Promise.resolve();
+  };
+  env.document.exitPictureInPicture = function() {
+    env.document.pictureInPictureElement = null;
+    return Promise.resolve();
+  };
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("enter-pip"));
+  await flushAsyncWork();
+  assert.equal(video.requestPictureInPictureCalls, 1);
+  assert.equal(sharedSignalValue(env, "$video.pip"), true);
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("toggle-pip"));
+  await flushAsyncWork();
+  assert.equal(env.document.pictureInPictureElement, null);
+  assert.equal(sharedSignalValue(env, "$video.pip"), false);
+});
+
+test("bootstrap video engine lockInput swallows click/keyboard transport interaction and hides native controls", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-lock-root";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "LockedVideo",
+          kind: "video",
+          mountId: "video-lock-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4", controls: true, lockInput: true },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.ok(video);
+  assert.equal(video.hasAttribute("controls"), false);
+  assert.equal(sharedSignalValue(env, "$video.inputLocked"), true);
+
+  let clickPrevented = false;
+  let clickStopped = false;
+  video.dispatchEvent({
+    type: "click",
+    target: video,
+    preventDefault() { clickPrevented = true; },
+    stopPropagation() { clickStopped = true; },
+  });
+  assert.equal(clickPrevented, true);
+  assert.equal(clickStopped, true);
+
+  let spacePrevented = false;
+  video.dispatchEvent({
+    type: "keydown",
+    target: video,
+    key: " ",
+    preventDefault() { spacePrevented = true; },
+    stopPropagation() {},
+  });
+  assert.equal(spacePrevented, true);
+
+  let letterPrevented = false;
+  video.dispatchEvent({
+    type: "keydown",
+    target: video,
+    key: "a",
+    preventDefault() { letterPrevented = true; },
+    stopPropagation() {},
+  });
+  assert.equal(letterPrevented, false);
+});
+
+test("bootstrap video engine persists and restores playback preferences when persistPrefs is set", async () => {
+  class FakeLocalStorage {
+    constructor() {
+      this.map = new Map();
+    }
+
+    getItem(key) {
+      return this.map.has(key) ? this.map.get(key) : null;
+    }
+
+    setItem(key, value) {
+      this.map.set(key, String(value));
+    }
+
+    removeItem(key) {
+      this.map.delete(key);
+    }
+  }
+
+  const storage = new FakeLocalStorage();
+  const mountA = new FakeElement("div", null);
+  mountA.id = "video-persist-root-a";
+
+  let envA;
+  envA = createContext({
+    elements: [mountA],
+    onSetSharedSignal(name, payload) {
+      if (envA && typeof envA.context.__gosx_notify_shared_signal === "function") {
+        envA.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-persist",
+          component: "PersistVideoA",
+          kind: "video",
+          mountId: "video-persist-root-a",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4", persistPrefs: true },
+        },
+      ],
+    },
+  });
+  envA.context.localStorage = storage;
+
+  runScript(bootstrapSource, envA.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  envA.context.__gosx_notify_shared_signal("$video.volume", JSON.stringify(0.3));
+  await flushAsyncWork();
+  envA.context.__gosx_notify_shared_signal("$video.mute", JSON.stringify(true));
+  await flushAsyncWork();
+
+  const stored = JSON.parse(storage.getItem("gosx:video:gosx-engine-persist:prefs"));
+  assert.equal(stored.volume, 0.3);
+  assert.equal(stored.mute, true);
+
+  // A fresh mount (simulating a page reload) with the same persistKey
+  // namespace (defaulted from the engine id) restores the saved prefs
+  // through the normal $video.volume / $video.mute signal path.
+  const mountB = new FakeElement("div", null);
+  mountB.id = "video-persist-root-b";
+
+  const envB = createContext({
+    elements: [mountB],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-persist",
+          component: "PersistVideoB",
+          kind: "video",
+          mountId: "video-persist-root-b",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4", persistPrefs: true },
+        },
+      ],
+    },
+  });
+  envB.context.localStorage = storage;
+
+  runScript(bootstrapSource, envB.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const videoB = mountB.firstChild;
+  assert.ok(videoB);
+  assert.equal(videoB.volume, 0.3);
+  assert.equal(sharedSignalValue(envB, "$video.muted"), true);
+});
+
 test("bootstrap decompresses compressedPositions for Scene3D points", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-decompress-root";

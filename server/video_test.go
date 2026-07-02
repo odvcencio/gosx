@@ -144,6 +144,35 @@ func TestSyncTuningNilOmitsKey(t *testing.T) {
 	}
 }
 
+func TestVideoPersistAndLockInputPropsRoundTrip(t *testing.T) {
+	cfg := VideoEngineConfig(VideoProps{
+		Src:          "media/promo.mp4",
+		PersistPrefs: true,
+		PersistKey:   "  channel-42  ",
+		LockInput:    true,
+	})
+	got := string(cfg.Props)
+	if !strings.Contains(got, `"persistPrefs":true`) {
+		t.Fatalf("expected persistPrefs:true in props, got %s", got)
+	}
+	if !strings.Contains(got, `"persistKey":"channel-42"`) {
+		t.Fatalf("expected trimmed persistKey in props, got %s", got)
+	}
+	if !strings.Contains(got, `"lockInput":true`) {
+		t.Fatalf("expected lockInput:true in props, got %s", got)
+	}
+}
+
+func TestVideoPersistAndLockInputPropsOmitWhenZero(t *testing.T) {
+	cfg := VideoEngineConfig(VideoProps{Src: "media/promo.mp4"})
+	got := string(cfg.Props)
+	for _, key := range []string{`"persistPrefs"`, `"persistKey"`, `"lockInput"`} {
+		if strings.Contains(got, key) {
+			t.Fatalf("expected %s to be omitted when zero, got %s", key, got)
+		}
+	}
+}
+
 func TestSyncStrategyRoundTrips(t *testing.T) {
 	for _, strategy := range []string{"", "nudge", "snap", "nudge-legacy"} {
 		props := VideoProps{
