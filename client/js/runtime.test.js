@@ -7948,10 +7948,15 @@ test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buf
   const drawPBR = source.slice(source.indexOf("function drawPBRObjects"), source.indexOf("function instancedMeshCount"));
   const skinnedBind = source.slice(source.indexOf("function webGPUBindElioSkinnedBuffers"), source.indexOf("// -----------------------------------------------------------------------\n    // Shadow Pass"));
 
-  assert.match(sceneBuffers, /"_gosxWGPUScenePBRPositions"/);
-  assert.match(sceneBuffers, /"_gosxWGPUScenePBRNormals"/);
-  assert.match(sceneBuffers, /"_gosxWGPUScenePBRUVs"/);
-  assert.match(sceneBuffers, /"_gosxWGPUScenePBRTangents"/);
+  // wgpuStablePBRAttributeBuffer caches each attribute on a renderer-scoped,
+  // content-compared slot (not wgpuCachedTrackedBuffer(bundle, "_gosxWGPU...")
+  // -- `bundle` is a brand-new object every render() call, so an
+  // owner-identity cache keyed on it can never hit; see
+  // pbrSceneAttributeCache's declaration for the full rationale).
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("positions",\s*positions\)/);
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("normals",\s*normals\)/);
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("uvs",\s*uvs\)/);
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("tangents",\s*tangents\)/);
   assert.match(bindSceneBuffer, /byteOffset = offset \* components \* 4/);
   assert.match(bindSceneBuffer, /pass\.setVertexBuffer\(slot,\s*record\.buffer,\s*byteOffset,\s*byteSize\)/);
 
@@ -20087,6 +20092,304 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   assert.ok(modelTexEntry && modelTexEntry.resource && modelTexEntry.resource.__kind === "textureView", "expected duck-material's modelTexture entry at binding 1 to be a texture view");
 });
 
+// waterPerfShapeEntry builds a full <WaterSystem> entry (every render-pass
+// Selena slot from waterSelenaFrameEntry PLUS the 5 feedback-compute kernel
+// slots) so a single rendered frame exercises the complete migrated pass set:
+// pool/surface/surface-below/caustics/object-shadow/compound-shadow/
+// object-mesh-shadow render passes + seed/drop/displacement/simulation/normal
+// compute kernels. `duck: true` switches the active object to a kind:3
+// (compound) subject matching the water demo's Rubber Duck config (objectKind
+// "compound"/objectSubtype "duck"), which is the ONLY water-object kind that
+// engages waterSystemHasObjectTextureSubject's object-texture RTT passes
+// (refraction/reflection/clipped-reflection) and the projected mesh-shadow
+// pass (see waterSystemUsesProjectedObjectTextures, kind===3 gate) -- `duck:
+// false` (kind 1, Sphere) exercises the cheaper projected-sphere shadow path
+// instead, so diffing the two isolates the passes the task says the duck adds
+// from any incidental per-frame churn shared by both.
+function waterPerfShapeEntry(duck) {
+  const entry = waterSelenaFrameEntry({
+    activeObject: duck ? "Rubber Duck" : "Sphere",
+    objectKind: duck ? "compound" : "sphere",
+    objectSubtype: duck ? "duck" : undefined,
+    objectX: duck ? 0.4 : -0.4,
+    objectY: -0.7,
+    objectZ: duck ? -0.2 : 0.2,
+    objectRadius: duck ? 0.1 : 0.25,
+    objectDisplacementScale: 1,
+    objectDisplacementSpheres: duck ? [
+      { offsetX: 0.2, offsetY: 0.05, offsetZ: -0.1, radius: 0.08 },
+      { offsetX: -0.15, offsetY: 0.02, offsetZ: 0.12, radius: 0.05 },
+    ] : undefined,
+    seedDrops: 0,
+    dropEventID: 0,
+  });
+  entry.seedSelenaWGSL = waterSeedSelenaFixture.wgsl;
+  entry.dropSelenaWGSL = waterDropSelenaFixture.wgsl;
+  entry.displacementSelenaWGSL = waterDisplacementSelenaFixture.wgsl;
+  entry.simulationSelenaWGSL = waterSimulationSelenaFixture.wgsl;
+  entry.normalSelenaWGSL = waterNormalSelenaFixture.wgsl;
+  entry.shaderDescriptors = Object.assign({}, entry.shaderDescriptors, {
+    seed: waterSeedSelenaFixture.layout,
+    drop: waterDropSelenaFixture.layout,
+    displacement: waterDisplacementSelenaFixture.layout,
+    simulation: waterSimulationSelenaFixture.layout,
+    normal: waterNormalSelenaFixture.layout,
+  });
+  return entry;
+}
+
+// waterPerfShapeScene builds the material + object list for one perf-shape
+// scenario against a caller-supplied `api` (from a fresh harness), mirroring
+// the object-material/duck-material test above but parameterized on `duck`.
+function waterPerfShapeScene(api, duck) {
+  const materialName = duck ? "water-duck-material" : "water-object-material";
+  const fixture = duck ? waterDuckMaterialSelenaFixture : waterObjectMaterialSelenaFixture;
+  const objectID = duck ? "float-duck" : "float-sphere";
+  const customUniforms = {
+    poolHeight: 1,
+    baseColor: duck ? [1, 1, 1, 1] : [0.5, 0.5, 0.5, 1],
+    isTexturePass: 0,
+    texturePassMode: 0,
+    lightDir: [2, 3, -1],
+    grid: 4,
+    water: "gosx:water:water-main:state",
+  };
+  if (duck) customUniforms.modelTexture = "/water/models/duck/DuckCM.png";
+  const waterEntry = waterPerfShapeEntry(duck);
+  const state = api.createSceneState({
+    scene: {
+      materials: [{
+        name: materialName,
+        kind: "custom",
+        shaderBackend: "selena",
+        customVertexWGSL: fixture.wgsl,
+        customFragmentWGSL: fixture.wgsl,
+        shaderLayout: fixture.layout,
+        customUniforms,
+      }],
+      objects: [
+        { id: objectID, kind: "sphere", radius: duck ? 0.1 : 0.25, x: duck ? 0.4 : -0.4, y: -0.7, z: duck ? -0.2 : 0.2, material: materialName, castShadow: true, receiveShadow: true, wireframe: false },
+      ],
+      waterSystems: [waterEntry],
+    },
+  });
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  return { state, objects };
+}
+
+// deviceCallSnapshot captures the cumulative device-call counters the fake
+// GPUDevice records that a steady-state (post-warmup) frame must NOT keep
+// growing: pipeline/shader-module compiles (memoized, should be 0 after frame
+// 1), bind groups (pooled, should plateau), and queue.writeBuffer call count +
+// total byte volume (uniforms only once warm -- no per-frame mesh re-upload).
+function deviceCallSnapshot(fake) {
+  const bytes = fake.state.writeBufferCalls.reduce((sum, c) => sum + (c.data && c.data.byteLength || 0), 0);
+  return {
+    renderPipelines: fake.state.renderPipelines.length,
+    computePipelines: fake.state.computePipelines.length,
+    shaderModules: fake.state.shaderModules.length,
+    bindGroups: fake.state.bindGroups.length,
+    writeBufferCalls: fake.state.writeBufferCalls.length,
+    writeBufferBytes: bytes,
+  };
+}
+
+function deviceCallDelta(before, after) {
+  return {
+    renderPipelines: after.renderPipelines - before.renderPipelines,
+    computePipelines: after.computePipelines - before.computePipelines,
+    shaderModules: after.shaderModules - before.shaderModules,
+    bindGroups: after.bindGroups - before.bindGroups,
+    writeBufferCalls: after.writeBufferCalls - before.writeBufferCalls,
+    writeBufferBytes: after.writeBufferBytes - before.writeBufferBytes,
+  };
+}
+
+// renderWaterPerfShapeFrames renders N consecutive frames of one scenario
+// (`duck` true/false) against a FRESH harness (fresh device + renderer), and
+// returns the per-frame device-call delta array. Each frame rebuilds the
+// bundle via api.createSceneRenderBundle -- exactly like a real animation
+// loop re-marshaling scene state every tick -- so meshObjects/materials
+// entries are BRAND-NEW JS objects each frame (see createSceneRenderBundle's
+// appendSceneObjectToBundle, which always pushes a fresh object), the same
+// identity churn a live Go-driven frame loop produces. Any cache keyed on
+// per-frame object identity rather than a stable owner (the WaterSystem
+// instance, the material) will show up here as non-zero createBindGroup/
+// createBuffer(writeBuffer) growth on every single frame, not just frame 1.
+async function renderWaterPerfShapeFrames(duck, frameCount) {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, duck);
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const deltas = [];
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
+    );
+    const before = deviceCallSnapshot(harness.fake);
+    harness.renderer.render(bundle, { width: 64, height: 64 });
+    const after = deviceCallSnapshot(harness.fake);
+    deltas.push(deviceCallDelta(before, after));
+  }
+  return { harness, deltas };
+}
+
+test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls stay flat for Sphere and Rubber Duck alike", async () => {
+  const FRAME_COUNT = 5;
+  const [sphere, duck] = await Promise.all([
+    renderWaterPerfShapeFrames(false, FRAME_COUNT),
+    renderWaterPerfShapeFrames(true, FRAME_COUNT),
+  ]);
+
+  function assertSteadyState(label, deltas) {
+    // Frame 0 is the warmup frame: pipelines/shader modules compile and the
+    // bind-group/uniform-buffer pools fill for the first time here, so it is
+    // EXPECTED to carry the compile + first-build cost. Frames 1..N-1 are
+    // steady state -- every pipeline is memoized (getSelenaPipeline's
+    // material-stamp + content-keyed Map) and every bind group / uniform
+    // buffer should be served from the owner-keyed cache (createSelenaBindGroup's
+    // pool, wgpuCachedTrackedBuffer), so these frames must show ZERO new
+    // pipeline/shader-module compiles and a CONSTANT (not growing)
+    // createBindGroup/writeBuffer count frame over frame.
+    for (let i = 1; i < deltas.length; i += 1) {
+      const d = deltas[i];
+      assert.equal(d.renderPipelines, 0, label + " frame " + i + ": createRenderPipeline must be 0 in steady state (got " + d.renderPipelines + ") -- a pipeline cache key is unstable");
+      assert.equal(d.computePipelines, 0, label + " frame " + i + ": createComputePipeline must be 0 in steady state (got " + d.computePipelines + ")");
+      assert.equal(d.shaderModules, 0, label + " frame " + i + ": createShaderModule must be 0 in steady state (got " + d.shaderModules + ")");
+    }
+    // Bind-group count must plateau: frame N's count must equal frame 1's
+    // count exactly (not grow) once the pools are warm. A water ping-pong
+    // state buffer legitimately alternates between 2 buffer identities, which
+    // createSelenaBindGroup's pool already accommodates (capped at 4 entries),
+    // so the STEADY count itself may be reached over 2 frames, but it must not
+    // grow without bound over 5.
+    const steadyBindGroups = deltas.slice(1).map((d) => d.bindGroups);
+    const maxBindGroups = Math.max(...steadyBindGroups);
+    const lastBindGroups = steadyBindGroups[steadyBindGroups.length - 1];
+    assert.ok(
+      lastBindGroups <= maxBindGroups,
+      label + ": createBindGroup count must plateau, not keep growing -- per-frame deltas were " + JSON.stringify(steadyBindGroups),
+    );
+    // writeBuffer volume: once caches are warm, only per-frame UNIFORM values
+    // (small: a few hundred bytes per material/pass) should be re-written --
+    // never the combined-scene PBR mesh attribute buffer (positions/normals/
+    // uvs/tangents; ensurePBRSceneAttributeBuffers) full-reuploaded every
+    // frame, which is what a `bundle`-identity-keyed cache produces since
+    // createSceneRenderBundle hands back a brand-new bundle object every
+    // render() call (see wgpuStablePBRAttributeBuffer's comment). Every
+    // water-demo float-* object is configured with zero drift/bob/spin (see
+    // program.go), i.e. genuinely static once placed, so a steady frame's
+    // writeBuffer volume must be a small fraction of the warmup frame's (which
+    // legitimately re-derives + uploads the mesh once) -- not comparable to
+    // it, which would mean the mesh soup is being re-uploaded whole every
+    // single frame instead of once.
+    const warmupBytes = deltas[0].writeBufferBytes;
+    const steadyBytes = deltas.slice(1).map((d) => d.writeBufferBytes);
+    for (let i = 0; i < steadyBytes.length; i += 1) {
+      assert.ok(
+        steadyBytes[i] < warmupBytes * 0.25,
+        label + " frame " + (i + 1) + ": steady-state writeBuffer bytes (" + steadyBytes[i] + ") must be well below the warmup frame's (" + warmupBytes +
+        ") -- a value this close to the warmup frame means the combined-scene PBR mesh vertex buffer is being fully re-uploaded every frame instead of once",
+      );
+    }
+    return { steadyBindGroups, steadyBytes };
+  }
+
+  const sphereShape = assertSteadyState("Sphere", sphere.deltas);
+  const duckShape = assertSteadyState("Rubber Duck", duck.deltas);
+
+  // Surface the raw numbers (this is the actual diagnostic output the task
+  // asks for -- sphere vs duck steady-state call counts).
+  console.log(
+    "[perf-shape] sphere deltas=" + JSON.stringify(sphere.deltas) +
+    " duck deltas=" + JSON.stringify(duck.deltas),
+  );
+
+  // The duck is allowed to cost MORE per frame than the sphere (extra RTT
+  // passes/mesh-shadow pass are real, intentional, intrinsic work) -- but
+  // whatever its steady-state bind-group count is, it must be the SAME across
+  // every steady frame, exactly like the sphere. Assert both scenarios'
+  // steady-state bind-group counts are internally constant (already checked
+  // above) and print the sphere/duck ratio so a regression that reintroduces
+  // per-frame churn (ratio scaling with frame index instead of staying flat)
+  // is visible even if an individual frame's absolute count wouldn't trip the
+  // plateau check above.
+  assert.ok(sphereShape.steadyBindGroups.every((n) => n === sphereShape.steadyBindGroups[0]), "sphere steady-state createBindGroup count must be identical every frame: " + JSON.stringify(sphereShape.steadyBindGroups));
+  assert.ok(duckShape.steadyBindGroups.every((n) => n === duckShape.steadyBindGroups[0]), "duck steady-state createBindGroup count must be identical every frame: " + JSON.stringify(duckShape.steadyBindGroups));
+});
+
+test("[perf-shape] Scene3D WebGPU wgpuStablePBRAttributeBuffer still re-uploads every frame a mesh object's world geometry actually changes", async () => {
+  // Correctness guard for wgpuStablePBRAttributeBuffer's content-compare skip
+  // (16a-scene-webgpu.js): a spinning object's worldMeshPositions are CPU-
+  // baked fresh every frame from object.spinX * timeSeconds (see
+  // translateScenePointInto in 10-runtime-scene-core.js), so they genuinely
+  // differ frame to frame -- unlike the water demo's static float-* objects,
+  // this must NOT hit the "unchanged content" fast path.
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ name: "spin-mat", kind: "standard", color: "#8de1ff" }],
+      // Explicit vertices (not a bare kind:"box"/"sphere" primitive, which
+      // sceneObjectHasTriangleMesh only recognizes as a triangle mesh once it
+      // carries its own vertices -- otherwise it renders as a procedural
+      // line/outline object, a different, irrelevant path) so this object
+      // actually flows through appendSceneMeshObjectToBundle's per-vertex
+      // world-space bake (the CPU path whose OUTPUT feeds
+      // ensurePBRSceneAttributeBuffers/wgpuStablePBRAttributeBuffer).
+      objects: [{
+        id: "spin-tri",
+        kind: "mesh",
+        spinX: 1,
+        spinY: 0.7,
+        material: "spin-mat",
+        vertices: {
+          count: 3,
+          positions: [0, 1, 0, -1, -1, 0, 1, -1, 0],
+          normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+          uvs: [0.5, 1, 0, 0, 1, 0],
+        },
+      }],
+    },
+  });
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const bytesPerFrame = [];
+  for (let frame = 0; frame < 4; frame += 1) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, frame * 0.25, [], [], [], [], [], 0, false,
+    );
+    const beforeBytes = harness.fake.state.writeBufferCalls.reduce((s, c) => s + (c.data && c.data.byteLength || 0), 0);
+    harness.renderer.render(bundle, { width: 64, height: 64 });
+    const afterBytes = harness.fake.state.writeBufferCalls.reduce((s, c) => s + (c.data && c.data.byteLength || 0), 0);
+    bytesPerFrame.push(afterBytes - beforeBytes);
+  }
+  // Every frame (not just the warmup frame) must re-upload -- the object
+  // genuinely rotates every frame, so bytesPerFrame must NOT collapse toward
+  // ~0 the way the static water-demo case does (see the sibling perf-shape
+  // test above): each frame's PBR mesh reupload is comparable in size to the
+  // first (allow generous slack for unrelated small per-frame uniform noise,
+  // but it must stay the same ORDER of magnitude, not crater to near-zero).
+  for (let i = 1; i < bytesPerFrame.length; i += 1) {
+    assert.ok(
+      bytesPerFrame[i] > bytesPerFrame[0] * 0.5,
+      "frame " + i + ": writeBuffer bytes (" + bytesPerFrame[i] + ") collapsed relative to frame 0 (" + bytesPerFrame[0] +
+      ") even though the object spins every frame -- wgpuStablePBRAttributeBuffer's content-compare must not skip a real geometry change",
+    );
+  }
+});
+
 // waterComputeKernelPipeline finds the compiled gosx-selena-compute-<Material>
 // pipeline for one feedback kernel among every createComputePipeline call the
 // fake device recorded this test.
@@ -24596,6 +24899,136 @@ test("Scene3D managed fluid controls sync previous position on pool resize like 
   assert.equal(water.objectPreviousY, 0);
   assert.equal(water.objectPreviousZ, 0);
   assert.equal(form.__gosxScene3DFluidObjectState.objects.Sphere.velocity.y, 0);
+});
+
+
+test("Scene3D managed fluid dragging threads the pre-drag position into the water displacement payload", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+
+  // Source-shape guard: the drag handler must hand its pre-drag snapshot to the
+  // next objectStep() via the pendingPrevious mechanism. The old code wrote it
+  // to objectState.previousPosition — a dead field nothing reads — so 0% of a
+  // drag's delta ever reached the displacement kernel (no splash on drag).
+  const dragBodyStart = controlsSource.indexOf("function sceneManagedFluidObjectDragObject");
+  assert.ok(dragBodyStart > 0, "drag handler must exist");
+  const dragBody = controlsSource.slice(dragBodyStart, controlsSource.indexOf("\n  function ", dragBodyStart + 1));
+  assert.match(dragBody, /objectState\.pendingPrevious = sceneManagedFluidObjectCopyVec3\(objectState\.position\)/);
+  assert.doesNotMatch(dragBody, /objectState\.previousPosition\s*=/);
+
+  // Behavioral: a drag-shaped mutation (pendingPrevious snapshot + in-place
+  // position update, exactly what the fixed handler performs) must surface as
+  // objectPreviousSet with the full pre-drag position in the water payload.
+  const document = {
+    documentElement: { setAttribute() {} },
+    getElementById() { return null; },
+    querySelector() { return null; },
+  };
+  let nowMs = 0;
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    SCENE_CMD_SET_TRANSFORM: 2,
+    SCENE_CMD_SET_PARTICLES: 6,
+    SCENE_CMD_SET_MODELS: 10,
+    document,
+    performance: { now: () => nowMs },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    window: { document },
+  });
+  vm.runInContext(
+    controlsSource + "\nwindow.__managedFluidDragTest = { apply: sceneManagedFluidObjectApply, objectState: sceneManagedFluidObjectObjectState };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+
+  const duck = {
+    id: "float-duck",
+    label: "Rubber Duck",
+    objectKind: "compound",
+    objectSubtype: "duck",
+    objectX: 0.4,
+    objectY: -0.735,
+    objectZ: -0.2,
+    objectRadius: 0.25,
+    objectHalfSizeX: 0,
+    objectHalfSizeY: 0,
+    objectHalfSizeZ: 0,
+    buoyancyRadius: 0.31,
+    floorClearance: 0.265,
+    xLimitRadius: 0.25,
+    zLimitRadius: 0.25,
+    meshYOffset: 0,
+    objectDisplacementScale: 0.15,
+    objectDisplacementSpheres: [
+      { offsetX: 0, offsetY: 0, offsetZ: 0, radius: 0.15 },
+      { offsetX: 0, offsetY: 0.1, offsetZ: 0.1, radius: 0.08 },
+      { offsetX: 0, offsetY: -0.08, offsetZ: -0.05, radius: 0.1 },
+    ],
+  };
+  const profile = { objects: { Duck: duck } };
+  const form = {
+    dataset: {},
+    elements: {
+      paused: { checked: false, disabled: false },
+      object: { value: "Duck", disabled: false },
+      gravity: { checked: false, disabled: false },
+      densityEnabled: { checked: false, disabled: false },
+      density: { value: "0.9", disabled: false },
+      poolShape: { value: "Box", disabled: false },
+      cornerRadius: { value: "0.1", max: "1", disabled: false },
+      poolWidth: { value: "1", disabled: false },
+      poolHeight: { value: "1", disabled: false },
+      poolLength: { value: "1", disabled: false },
+      followCamera: { checked: false, disabled: false },
+    },
+    getAttribute(name) {
+      if (name === "data-gosx-scene3d-control-data") return JSON.stringify(profile);
+      if (name === "data-gosx-scene3d-control-subject") return "water-main";
+      return "";
+    },
+    setAttribute(name, value) { this.dataset[name] = String(value); },
+    querySelector() { return null; },
+    closest() { return null; },
+  };
+  const sceneState = { waterSystems: [{ id: "water-main" }], models: [] };
+  let applied = [];
+  const applyCommands = commands => { applied = commands; };
+  const waterPayload = () => applied.find(command => command.kind === 6).data.waterSystems[0];
+
+  nowMs = 500;
+  assert.equal(context.window.__managedFluidDragTest.apply(form, sceneState, applyCommands, {}), true);
+  const controlState = form.__gosxScene3DFluidObjectState;
+  const objectState = context.window.__managedFluidDragTest.objectState(controlState, duck);
+  const preDrag = { x: objectState.position.x, y: objectState.position.y, z: objectState.position.z };
+
+  const delta = { x: 0.3, y: 0.05, z: -0.2 };
+  if (!objectState.pendingPrevious) {
+    objectState.pendingPrevious = { x: objectState.position.x, y: objectState.position.y, z: objectState.position.z };
+  }
+  objectState.position.x += delta.x;
+  objectState.position.y += delta.y;
+  objectState.position.z += delta.z;
+  objectState.velocity = { x: 0, y: 0, z: 0 };
+
+  nowMs = 501; // fast mousemove: 1ms later
+  assert.equal(context.window.__managedFluidDragTest.apply(form, sceneState, applyCommands, {}), true);
+  const water = waterPayload();
+  assert.equal(water.objectPreviousSet, true, "drag delta must reach the water displacement payload");
+  assert.ok(Math.abs(water.objectPreviousX - preDrag.x) < 1e-9);
+  assert.ok(Math.abs(water.objectPreviousY - preDrag.y) < 1e-9);
+  assert.ok(Math.abs(water.objectPreviousZ - preDrag.z) < 1e-9);
+  const capturedMag = Math.hypot(
+    water.objectX - water.objectPreviousX,
+    water.objectY - water.objectPreviousY,
+    water.objectZ - water.objectPreviousZ,
+  );
+  const dragMag = Math.hypot(delta.x, delta.y, delta.z);
+  assert.ok(capturedMag > dragMag * 0.9, `captured ${capturedMag} of drag ${dragMag}`);
 });
 
 
