@@ -1764,6 +1764,16 @@
       // layer flips its `visible` off Props.GizmoInputSignal at runtime (see
       // applyMountedSceneGizmoMode in 20-scene-mount.js).
       gizmoRing: sceneBool(Object.prototype.hasOwnProperty.call(item, "gizmoRing") ? item.gizmoRing : current.gizmoRing, false),
+      // gizmoHelper/gizmoFormMode: this object is one piece of a
+      // TransformControls live helper group. The mount layer hides the whole
+      // group when the selection signal is empty, repositions it onto the
+      // selected object's world transform, and shows only the piece whose
+      // gizmoFormMode matches the active gizmo-mode signal (see
+      // syncMountedSceneGizmoHelpers in 20-scene-mount.js).
+      gizmoHelper: sceneBool(Object.prototype.hasOwnProperty.call(item, "gizmoHelper") ? item.gizmoHelper : current.gizmoHelper, false),
+      gizmoFormMode: typeof item.gizmoFormMode === "string" && item.gizmoFormMode
+        ? item.gizmoFormMode
+        : (typeof current.gizmoFormMode === "string" ? current.gizmoFormMode : ""),
       _modelHidden: Object.prototype.hasOwnProperty.call(item, "_modelHidden")
         ? sceneBool(item._modelHidden, false)
         : sceneBool(current._modelHidden, false),
@@ -5126,6 +5136,16 @@
   function appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
     if (sceneObjectHasTriangleMesh(object)) {
       appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds);
+      return;
+    }
+    // Explicit visible:false always wins for the line/surface path too —
+    // mirrors sceneMeshObjectEffectivelyInvisible's first check for the
+    // triangle-mesh path above. Without this, line-kind objects (helpers,
+    // TransformControls gizmo pieces, etc.) ignored `visible` entirely and
+    // always rendered regardless of the flag (a latent gap the P7 live-
+    // reactive gizmo helper feature depends on being fixed — see
+    // syncMountedSceneGizmoHelpers in 20-scene-mount.js).
+    if (object && object.visible === false) {
       return;
     }
     const sourceSegments = sceneObjectSegments(object);

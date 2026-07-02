@@ -25238,6 +25238,125 @@ test("P6 gizmoInputSignal: engine toggles gizmo ring visibility from shared sign
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+// === P7 gizmoHelper: TransformControls helper group repositions live onto
+// the selected object and switches form per gizmo-mode signal ===
+//
+// Exercises the exact mechanics the mount layer's syncMountedSceneGizmoHelpers
+// (20-scene-mount.js) performs, via the same public primitives it calls
+// (api.applySceneCommands with kind:2/SET_TRANSFORM routes to
+// applySceneObjectPatch — the same function the mount-layer sink uses) — a
+// full engine mount isn't needed to exercise this since the mount layer's
+// job is entirely "patch already-mounted sceneState objects", and that
+// patching + the resulting render-bundle inclusion/exclusion is exactly what
+// this test verifies end to end (createSceneState -> patch -> createSceneRenderBundle).
+test("P7 gizmoHelper: helper group hides/repositions/switches form via selection + gizmo-mode state", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const SET_TRANSFORM = 2;
+
+  const state = api.createSceneState({
+    scene: {
+      objects: [
+        { id: "cube-1", kind: "box", x: 5, y: 2, z: -3, rotationY: 0.3, size: 1 },
+        // Mirrors scene.go's lowerGizmoAxesHelper (translate form).
+        { id: "gizmo-x", kind: "lines", points: [{ x: 0, y: 0, z: 0 }, { x: 1.5, y: 0, z: 0 }], visible: false, gizmoHelper: true, gizmoFormMode: "translate" },
+        // Mirrors the rotate-mode ring.
+        { id: "gizmo-ring", kind: "lines", points: [{ x: 1.5, y: 0, z: 0 }, { x: 0, y: 1.5, z: 0 }], visible: false, gizmoHelper: true, gizmoFormMode: "rotate", gizmoRing: true },
+        // Mirrors lowerGizmoScaleHandles (scale form).
+        { id: "gizmo-scale-x", kind: "lines", points: [{ x: -0.1, y: -0.1, z: -0.1 }, { x: 0.1, y: 0.1, z: 0.1 }], visible: false, gizmoHelper: true, gizmoFormMode: "scale" },
+      ],
+    },
+  });
+
+  function syncHelpers(selectedID, mode) {
+    const objects = api.sceneStateObjects(state);
+    const target = selectedID ? objects.find((o) => o.id === selectedID) : null;
+    for (const obj of objects) {
+      if (!obj.gizmoHelper) continue;
+      const visible = Boolean(target) && obj.gizmoFormMode === mode;
+      const data = { visible };
+      if (target) {
+        data.x = target.x;
+        data.y = target.y;
+        data.z = target.z;
+        data.rotationX = target.rotationX;
+        data.rotationY = target.rotationY;
+        data.rotationZ = target.rotationZ;
+      }
+      api.applySceneCommands(state, [{ kind: SET_TRANSFORM, objectId: obj.id, data }]);
+    }
+  }
+
+  function bundleObjectIDs() {
+    const bundle = api.createSceneRenderBundle(
+      640, 360, "#000",
+      { x: 0, y: 0, z: 6, fov: 60 },
+      api.sceneStateObjectsWithMaterials(state),
+      [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+    );
+    return bundle.objects.map((o) => o.id);
+  }
+
+  // Nothing selected yet: every helper piece stays hidden and excluded from
+  // the render bundle regardless of mode (P7 DoD: "deselect -> hidden").
+  syncHelpers("", "translate");
+  let objects = api.sceneStateObjects(state);
+  assert.ok(objects.filter((o) => o.gizmoHelper).every((o) => o.visible === false), "no helper piece should be visible with nothing selected");
+  let ids = bundleObjectIDs();
+  assert.ok(!ids.includes("gizmo-x") && !ids.includes("gizmo-ring") && !ids.includes("gizmo-scale-x"), "hidden helper pieces must not reach the render bundle");
+
+  // Select cube-1 in translate mode: only the translate axis shows, and it —
+  // along with every other (still-hidden) helper piece — is repositioned
+  // onto the selected object's world transform.
+  syncHelpers("cube-1", "translate");
+  objects = api.sceneStateObjects(state);
+  const axisX = objects.find((o) => o.id === "gizmo-x");
+  const ring = objects.find((o) => o.id === "gizmo-ring");
+  const scaleX = objects.find((o) => o.id === "gizmo-scale-x");
+  assert.equal(axisX.visible, true, "translate axis must be visible in translate mode with a selection");
+  assert.equal(ring.visible, false, "ring must stay hidden in translate mode");
+  assert.equal(scaleX.visible, false, "scale handle must stay hidden in translate mode");
+  for (const obj of [axisX, ring, scaleX]) {
+    assert.equal(obj.x, 5, obj.id + ".x should track the selected object");
+    assert.equal(obj.y, 2, obj.id + ".y should track the selected object");
+    assert.equal(obj.z, -3, obj.id + ".z should track the selected object");
+    assert.ok(Math.abs(obj.rotationY - 0.3) < 1e-9, obj.id + ".rotationY should track the selected object");
+  }
+  ids = bundleObjectIDs();
+  assert.ok(ids.includes("gizmo-x"), "visible translate axis must reach the render bundle");
+  assert.ok(ids.includes("cube-1"));
+  assert.ok(!ids.includes("gizmo-ring"), "hidden ring must be excluded from the render bundle (visible:false line-kind fix)");
+  assert.ok(!ids.includes("gizmo-scale-x"), "hidden scale handle must be excluded from the render bundle");
+
+  // Switch to rotate mode (still selected): only the ring shows now.
+  syncHelpers("cube-1", "rotate");
+  objects = api.sceneStateObjects(state);
+  assert.equal(objects.find((o) => o.id === "gizmo-x").visible, false, "translate axis hides when mode switches to rotate");
+  assert.equal(objects.find((o) => o.id === "gizmo-ring").visible, true, "ring shows in rotate mode");
+  assert.equal(objects.find((o) => o.id === "gizmo-scale-x").visible, false);
+  ids = bundleObjectIDs();
+  assert.ok(ids.includes("gizmo-ring") && !ids.includes("gizmo-x") && !ids.includes("gizmo-scale-x"));
+
+  // Switch to scale mode (still selected): only the scale handle shows.
+  syncHelpers("cube-1", "scale");
+  objects = api.sceneStateObjects(state);
+  assert.equal(objects.find((o) => o.id === "gizmo-x").visible, false);
+  assert.equal(objects.find((o) => o.id === "gizmo-ring").visible, false);
+  assert.equal(objects.find((o) => o.id === "gizmo-scale-x").visible, true, "scale handle shows in scale mode");
+
+  // Deselect: everything hides again regardless of mode (form stays "scale").
+  syncHelpers("", "scale");
+  objects = api.sceneStateObjects(state);
+  assert.ok(objects.filter((o) => o.gizmoHelper).every((o) => o.visible === false), "deselecting hides every helper piece");
+  ids = bundleObjectIDs();
+  assert.ok(!ids.includes("gizmo-x") && !ids.includes("gizmo-ring") && !ids.includes("gizmo-scale-x"));
+
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 // === P5 cursorOutputSignal: normalized pointer published into signal ===
 test("P5 cursorOutputSignal: pointermove publishes normalized cursor position", async () => {
   const mount = new FakeElement("div", null);

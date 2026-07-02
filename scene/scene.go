@@ -91,32 +91,32 @@ type Environment struct {
 // Props is the typed Go-side Scene3D surface. It lowers into the current
 // Scene3D compatibility prop bag while preserving room for a real scene graph.
 type Props struct {
-	ProgramRef            string       `json:"-"`
-	Capabilities          []string     `json:"-"`
-	RequiredCapabilities  []string     `json:"-"`
-	Width                 int          `json:"width,omitempty"`
-	Height                int          `json:"height,omitempty"`
-	Label                 string       `json:"label,omitempty"`
-	AriaLabel             string       `json:"ariaLabel,omitempty"`
-	Background            string       `json:"background,omitempty"`
-	Controls              string       `json:"controls,omitempty"`
-	AutoRotate            *bool        `json:"autoRotate,omitempty"`
-	Responsive            *bool        `json:"responsive,omitempty"`
-	FillHeight            *bool        `json:"fillHeight,omitempty"`
-	PreferWebGPU          *bool        `json:"preferWebGPU,omitempty"`
-	PreferWebGL           *bool        `json:"preferWebGL,omitempty"`
-	ForceWebGL            *bool        `json:"forceWebGL,omitempty"`
-	RequireWebGL          *bool        `json:"requireWebGL,omitempty"`
-	PreferCanvas          *bool        `json:"preferCanvas,omitempty"`
-	UnsupportedMessage    string       `json:"unsupportedMessage,omitempty"`
-	CanvasAlpha           *bool        `json:"canvasAlpha,omitempty"`
-	DragToRotate          *bool        `json:"dragToRotate,omitempty"`
-	PointerLock           *bool        `json:"pointerLock,omitempty"`
-	DeferPostFX           *bool        `json:"deferPostFX,omitempty"`
-	DeferPostFXDelayMS    int          `json:"deferPostFXDelayMS,omitempty"`
-	DragSignalNamespace   string       `json:"dragSignalNamespace,omitempty"`
-	PickSignalNamespace   string       `json:"pickSignalNamespace,omitempty"`
-	EventSignalNamespace  string       `json:"eventSignalNamespace,omitempty"`
+	ProgramRef           string   `json:"-"`
+	Capabilities         []string `json:"-"`
+	RequiredCapabilities []string `json:"-"`
+	Width                int      `json:"width,omitempty"`
+	Height               int      `json:"height,omitempty"`
+	Label                string   `json:"label,omitempty"`
+	AriaLabel            string   `json:"ariaLabel,omitempty"`
+	Background           string   `json:"background,omitempty"`
+	Controls             string   `json:"controls,omitempty"`
+	AutoRotate           *bool    `json:"autoRotate,omitempty"`
+	Responsive           *bool    `json:"responsive,omitempty"`
+	FillHeight           *bool    `json:"fillHeight,omitempty"`
+	PreferWebGPU         *bool    `json:"preferWebGPU,omitempty"`
+	PreferWebGL          *bool    `json:"preferWebGL,omitempty"`
+	ForceWebGL           *bool    `json:"forceWebGL,omitempty"`
+	RequireWebGL         *bool    `json:"requireWebGL,omitempty"`
+	PreferCanvas         *bool    `json:"preferCanvas,omitempty"`
+	UnsupportedMessage   string   `json:"unsupportedMessage,omitempty"`
+	CanvasAlpha          *bool    `json:"canvasAlpha,omitempty"`
+	DragToRotate         *bool    `json:"dragToRotate,omitempty"`
+	PointerLock          *bool    `json:"pointerLock,omitempty"`
+	DeferPostFX          *bool    `json:"deferPostFX,omitempty"`
+	DeferPostFXDelayMS   int      `json:"deferPostFXDelayMS,omitempty"`
+	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
+	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
+	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
 	// CameraInputSignal: when set, the engine applies the camera from this shared
 	// signal (null/absent = user controls). Drives follow-mode without app JS.
 	CameraInputSignal string `json:"cameraInputSignal,omitempty"`
@@ -137,7 +137,7 @@ type Props struct {
 	// reload / re-render trip needed. Meshes opted into gizmo-mode-driven
 	// visibility via Mesh.GizmoRing are shown only while the signal matches
 	// "rotate"; everything else is untouched.
-	GizmoInputSignal string `json:"gizmoInputSignal,omitempty"`
+	GizmoInputSignal      string       `json:"gizmoInputSignal,omitempty"`
 	CapabilityTier        string       `json:"capabilityTier,omitempty"`
 	Compression           *Compression `json:"compression,omitempty"`
 	ControlTarget         Vector3
@@ -277,20 +277,36 @@ type Group struct {
 
 // Mesh lowers into one legacy scene object.
 type Mesh struct {
-	ID            string
-	Geometry      Geometry
-	Material      Material
-	Position      Vector3
-	Rotation      Euler
-	Pickable      *bool
-	Visible       *bool
-	Selected      bool
+	ID       string
+	Geometry Geometry
+	Material Material
+	Position Vector3
+	Rotation Euler
+	Pickable *bool
+	Visible  *bool
+	Selected bool
 	// GizmoRing marks this mesh as a TransformControls rotate-mode ring helper.
 	// When Props.GizmoInputSignal is set, the engine shows GizmoRing meshes only
 	// while the signal reads "rotate" (mirrors how Selected is driven live by
 	// Props.SelectionInputSignal); the initial Visible value above still governs
 	// the very first frame, before any signal update lands.
-	GizmoRing     bool
+	GizmoRing bool
+	// GizmoHelper marks this mesh as part of a TransformControls live helper
+	// group (translate axes triad / rotate ring / scale handles). When both
+	// Props.SelectionInputSignal and Props.GizmoInputSignal are set, the
+	// client (see syncMountedSceneGizmoHelpers in 20-scene-mount.js) drives
+	// every GizmoHelper mesh's visibility AND position/rotation live: hidden
+	// while the selection signal is empty, shown (only the GizmoFormMode
+	// piece matching the active gizmo-mode signal) and repositioned onto the
+	// selected object's world transform otherwise — no page navigation or
+	// SSR round-trip needed. GizmoRing above still separately opts a mesh
+	// into the legacy mode-only (selection-independent) toggle.
+	GizmoHelper bool
+	// GizmoFormMode labels which TransformControls form this GizmoHelper mesh
+	// represents: "translate" (axes triad), "rotate" (ring), or "scale"
+	// (handle cubes). Compared against Props.GizmoInputSignal's live value by
+	// the client to decide which single form is visible at a time.
+	GizmoFormMode string
 	OutlineColor  string
 	OutlineWidth  float64
 	CastShadow    bool
@@ -2464,6 +2480,20 @@ func (l *graphLowerer) lowerSkeletonHelper(helper SkeletonHelper, parent worldTr
 	}, parent)
 }
 
+// lowerTransformControls lowers all three TransformControls forms — the
+// translate-mode axes triad, the rotate-mode ring, and the scale-mode handle
+// cubes — every time, regardless of the initial control.Mode, and tags each
+// piece GizmoHelper + GizmoFormMode (scene.Mesh). This lets the client (see
+// syncMountedSceneGizmoHelpers in gosx's 20-scene-mount.js) drive the whole
+// group live off Props.SelectionInputSignal + Props.GizmoInputSignal with no
+// page navigation: hidden while nothing is selected, repositioned onto
+// whatever object the selection signal names, and switched to the one form
+// matching the active gizmo-mode signal.
+//
+// An empty control.Mode (used by callers with no initial selection, e.g.
+// kiln's click-driven workspace before any object is picked) bakes every
+// form hidden for the first frame — control.Target empty likewise skips the
+// anchor lookup, leaving Position as given (typically the zero vector).
 func (l *graphLowerer) lowerTransformControls(control TransformControls, parent worldTransform) {
 	size := control.Size
 	if size <= 0 {
@@ -2480,28 +2510,80 @@ func (l *graphLowerer) lowerTransformControls(control TransformControls, parent 
 		}
 	}
 	id := l.nextSceneHelperID("scene-transform-controls", control.ID)
-	l.lowerAxesHelper(AxesHelper{
-		ID:       id,
-		Size:     size,
-		Position: position,
-		Rotation: control.Rotation,
-		Width:    width,
-	}, parent)
-	// The rotate-mode ring is always lowered (not just when the initial mode is
-	// "rotate") so Props.GizmoInputSignal can flip its visibility live on the
-	// client without a full page/scene reload — see Mesh.GizmoRing. Its initial
-	// Visible value still matches the baked mode for the first frame / for
-	// clients that never subscribe to the signal.
-	rotateMode := strings.EqualFold(strings.TrimSpace(control.Mode), "rotate")
+	mode := strings.ToLower(strings.TrimSpace(control.Mode))
+
+	l.lowerGizmoAxesHelper(id, position, control.Rotation, size, width, mode == "translate", parent)
+
+	rotateMode := mode == "rotate"
 	l.lowerMesh(Mesh{
-		ID:        id + "-ring",
-		Geometry:  helperRingGeometry(size, 48, width),
-		Material:  LineBasicMaterial{MaterialStyle: MaterialStyle{Color: "#facc15"}, Width: width},
-		Position:  position,
-		Rotation:  control.Rotation,
-		Visible:   Bool(rotateMode),
-		GizmoRing: true,
+		ID:            id + "-ring",
+		Geometry:      helperRingGeometry(size, 48, width),
+		Material:      LineBasicMaterial{MaterialStyle: MaterialStyle{Color: "#facc15"}, Width: width},
+		Position:      position,
+		Rotation:      control.Rotation,
+		Visible:       Bool(rotateMode),
+		GizmoRing:     true,
+		GizmoHelper:   true,
+		GizmoFormMode: "rotate",
 	}, parent)
+
+	l.lowerGizmoScaleHandles(id, position, control.Rotation, size, width, mode == "scale", parent)
+}
+
+// lowerGizmoAxesHelper lowers the XYZ axes triad used as the
+// TransformControls translate-mode form, tagging each line mesh GizmoHelper
+// + GizmoFormMode "translate" so client signal sinks can reposition and
+// toggle it live (see lowerTransformControls). Deliberately separate from
+// lowerAxesHelper/AxesHelper so the public standalone axes-helper node type
+// (e.g. a static scene-origin reference triad) never carries gizmo tagging.
+func (l *graphLowerer) lowerGizmoAxesHelper(id string, position Vector3, rotation Euler, size, width float64, visible bool, parent worldTransform) {
+	v := Bool(visible)
+	lowerLineHelper := func(suffix, color string, points []Vector3) {
+		l.lowerMesh(Mesh{
+			ID:            id + "-" + suffix,
+			Geometry:      LinesGeometry{Points: points, Segments: [][2]int{{0, 1}}, Width: width},
+			Material:      LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
+			Position:      position,
+			Rotation:      rotation,
+			Visible:       v,
+			GizmoHelper:   true,
+			GizmoFormMode: "translate",
+		}, parent)
+	}
+	lowerLineHelper("x", "#ef4444", []Vector3{{}, {X: size}})
+	lowerLineHelper("y", "#22c55e", []Vector3{{}, {Y: size}})
+	lowerLineHelper("z", "#3b82f6", []Vector3{{}, {Z: size}})
+}
+
+// lowerGizmoScaleHandles lowers three small wire-cube handles, one at the tip
+// of each axis, as the TransformControls scale-mode form — visually distinct
+// from the translate axes (thin lines) and the rotate ring. Tags each cube
+// GizmoHelper + GizmoFormMode "scale". The per-axis offset is applied in the
+// control's local (unrotated) frame, matching how the axes triad's own line
+// endpoints are defined — a deliberate simplification for non-identity
+// control.Rotation, consistent with this being an overlay helper rather than
+// a physically-accurate handle.
+func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotation Euler, size, width float64, visible bool, parent worldTransform) {
+	handle := size * 0.16
+	if handle <= 0 {
+		handle = 0.2
+	}
+	v := Bool(visible)
+	lowerHandle := func(suffix, color string, offset Vector3) {
+		l.lowerMesh(Mesh{
+			ID:            id + "-scale-" + suffix,
+			Geometry:      boxHelperGeometry(handle, handle, handle, width),
+			Material:      LineBasicMaterial{MaterialStyle: MaterialStyle{Color: color}, Width: width},
+			Position:      Vector3{X: position.X + offset.X, Y: position.Y + offset.Y, Z: position.Z + offset.Z},
+			Rotation:      rotation,
+			Visible:       v,
+			GizmoHelper:   true,
+			GizmoFormMode: "scale",
+		}, parent)
+	}
+	lowerHandle("x", "#ef4444", Vector3{X: size})
+	lowerHandle("y", "#22c55e", Vector3{Y: size})
+	lowerHandle("z", "#3b82f6", Vector3{Z: size})
 }
 
 func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
@@ -2537,6 +2619,8 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.Visible = mesh.Visible
 	record.Selected = mesh.Selected
 	record.GizmoRing = mesh.GizmoRing
+	record.GizmoHelper = mesh.GizmoHelper
+	record.GizmoFormMode = strings.TrimSpace(mesh.GizmoFormMode)
 	record.OutlineColor = strings.TrimSpace(mesh.OutlineColor)
 	record.OutlineWidth = mesh.OutlineWidth
 	record.CastShadow = mesh.CastShadow

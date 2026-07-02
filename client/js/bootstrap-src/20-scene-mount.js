@@ -7772,6 +7772,55 @@
     let lastAppliedSelectionID = null;
     let applyingSignalCamera = false;
     let applyingSignalSelection = false;
+    let lastAppliedGizmoMode = null;
+    let applyingSignalGizmoMode = false;
+
+    // syncMountedSceneGizmoHelpers is the shared live-update pass for
+    // TransformControls helper meshes (Mesh.GizmoHelper / gizmoHelper:true;
+    // see scene.go's lowerTransformControls). Re-run after either the
+    // selection signal or the gizmo-mode signal changes, so the two signals
+    // together drive every GizmoHelper mesh: hidden while nothing is
+    // selected, repositioned onto the selected object's live world
+    // transform otherwise, and — of the three baked forms (translate axes
+    // triad / rotate ring / scale handle cubes) — only the one whose
+    // gizmoFormMode matches the active mode signal shown. No page
+    // navigation / SSR round-trip needed for any of it.
+    //
+    // Also preserves the legacy selection-independent mode-only toggle (P6)
+    // for any plain Mesh.GizmoRing=true object that doesn't opt into the
+    // full gizmoHelper group.
+    function syncMountedSceneGizmoHelpers() {
+      const objects = sceneStateObjects(sceneState);
+      const mode = lastAppliedGizmoMode || "translate";
+      const selID = lastAppliedSelectionID || "";
+      let target = null;
+      if (selID) {
+        for (let i = 0; i < objects.length; i++) {
+          if (objects[i].id === selID) {
+            target = objects[i];
+            break;
+          }
+        }
+      }
+      for (let i = 0; i < objects.length; i++) {
+        const obj = objects[i];
+        if (obj.gizmoHelper) {
+          const visible = Boolean(target) && obj.gizmoFormMode === mode;
+          const patch = { visible: visible };
+          if (target) {
+            patch.x = target.x;
+            patch.y = target.y;
+            patch.z = target.z;
+            patch.rotationX = target.rotationX;
+            patch.rotationY = target.rotationY;
+            patch.rotationZ = target.rotationZ;
+          }
+          applySceneObjectPatch(sceneState, obj.id, patch);
+        } else if (obj.gizmoRing) {
+          applySceneObjectPatch(sceneState, obj.id, { visible: mode === "rotate" });
+        }
+      }
+    }
 
     function applyMountedSceneSelection(selectedID) {
       const id = typeof selectedID === "string" ? selectedID : "";
@@ -7783,27 +7832,21 @@
       }
       lastAppliedSelectionID = id;
       applyingSignalSelection = false;
+      syncMountedSceneGizmoHelpers();
       scheduleRender("signal-selection");
     }
 
-    let lastAppliedGizmoMode = null;
-    let applyingSignalGizmoMode = false;
-
     // applyMountedSceneGizmoMode drives the TransformControls gizmo live off
-    // Props.GizmoInputSignal — the rotate-mode ring helper (baked with
-    // Mesh.GizmoRing / gizmoRing:true, see scene.go's lowerTransformControls)
-    // is shown only while mode === "rotate". Mirrors applyMountedSceneSelection
+    // Props.GizmoInputSignal, delegating to syncMountedSceneGizmoHelpers
+    // (which also accounts for the current selection) for the actual
+    // visibility + reposition work. Mirrors applyMountedSceneSelection
     // above: patch already-mounted objects in place, no server round-trip.
     function applyMountedSceneGizmoMode(mode) {
       const nextMode = typeof mode === "string" ? mode : "";
       if (nextMode === lastAppliedGizmoMode) return;
       applyingSignalGizmoMode = true;
-      const objects = sceneStateObjects(sceneState);
-      for (let i = 0; i < objects.length; i++) {
-        if (!objects[i].gizmoRing) continue;
-        applySceneObjectPatch(sceneState, objects[i].id, { visible: nextMode === "rotate" });
-      }
       lastAppliedGizmoMode = nextMode;
+      syncMountedSceneGizmoHelpers();
       applyingSignalGizmoMode = false;
       scheduleRender("signal-gizmo-mode");
     }
