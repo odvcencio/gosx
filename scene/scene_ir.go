@@ -183,46 +183,50 @@ type ObjectIR struct {
 	Selected              bool              `json:"selected,omitempty"`
 	// GizmoRing marks a TransformControls rotate-mode ring helper mesh; see
 	// scene.Mesh.GizmoRing and Props.GizmoInputSignal.
-	GizmoRing             bool              `json:"gizmoRing,omitempty"`
-	OutlineColor          string            `json:"outlineColor,omitempty"`
-	OutlineWidth          float64           `json:"outlineWidth,omitempty"`
-	CastShadow            bool              `json:"castShadow,omitempty"`
-	ReceiveShadow         bool              `json:"receiveShadow,omitempty"`
-	DepthWrite            *bool             `json:"depthWrite,omitempty"`
-	Roughness             float64           `json:"roughness,omitempty"`
-	Metalness             float64           `json:"metalness,omitempty"`
-	Clearcoat             float64           `json:"clearcoat,omitempty"`
-	Sheen                 float64           `json:"sheen,omitempty"`
-	Transmission          float64           `json:"transmission,omitempty"`
-	Iridescence           float64           `json:"iridescence,omitempty"`
-	Anisotropy            float64           `json:"anisotropy,omitempty"`
-	NormalMap             string            `json:"normalMap,omitempty"`
-	RoughnessMap          string            `json:"roughnessMap,omitempty"`
-	MetalnessMap          string            `json:"metalnessMap,omitempty"`
-	EmissiveMap           string            `json:"emissiveMap,omitempty"`
-	LODGroup              string            `json:"lodGroup,omitempty"`
-	LODLevel              int               `json:"lodLevel,omitempty"`
-	LODMinDistance        float64           `json:"lodMinDistance,omitempty"`
-	LODMaxDistance        float64           `json:"lodMaxDistance,omitempty"`
-	X                     float64           `json:"x,omitempty"`
-	Y                     float64           `json:"y,omitempty"`
-	Z                     float64           `json:"z,omitempty"`
-	RotationX             float64           `json:"rotationX,omitempty"`
-	RotationY             float64           `json:"rotationY,omitempty"`
-	RotationZ             float64           `json:"rotationZ,omitempty"`
-	SpinX                 float64           `json:"spinX,omitempty"`
-	SpinY                 float64           `json:"spinY,omitempty"`
-	SpinZ                 float64           `json:"spinZ,omitempty"`
-	ShiftX                float64           `json:"shiftX,omitempty"`
-	ShiftY                float64           `json:"shiftY,omitempty"`
-	ShiftZ                float64           `json:"shiftZ,omitempty"`
-	DriftSpeed            float64           `json:"driftSpeed,omitempty"`
-	DriftPhase            float64           `json:"driftPhase,omitempty"`
-	Transition            TransitionIR      `json:"transition,omitzero"`
-	InState               map[string]any    `json:"inState,omitempty"`
-	OutState              map[string]any    `json:"outState,omitempty"`
-	Live                  []string          `json:"live,omitempty"`
-	Vertices              *MeshVertices     `json:"vertices,omitempty"`
+	GizmoRing bool `json:"gizmoRing,omitempty"`
+	// GizmoHelper / GizmoFormMode: see scene.Mesh.GizmoHelper and
+	// scene.Mesh.GizmoFormMode.
+	GizmoHelper    bool           `json:"gizmoHelper,omitempty"`
+	GizmoFormMode  string         `json:"gizmoFormMode,omitempty"`
+	OutlineColor   string         `json:"outlineColor,omitempty"`
+	OutlineWidth   float64        `json:"outlineWidth,omitempty"`
+	CastShadow     bool           `json:"castShadow,omitempty"`
+	ReceiveShadow  bool           `json:"receiveShadow,omitempty"`
+	DepthWrite     *bool          `json:"depthWrite,omitempty"`
+	Roughness      float64        `json:"roughness,omitempty"`
+	Metalness      float64        `json:"metalness,omitempty"`
+	Clearcoat      float64        `json:"clearcoat,omitempty"`
+	Sheen          float64        `json:"sheen,omitempty"`
+	Transmission   float64        `json:"transmission,omitempty"`
+	Iridescence    float64        `json:"iridescence,omitempty"`
+	Anisotropy     float64        `json:"anisotropy,omitempty"`
+	NormalMap      string         `json:"normalMap,omitempty"`
+	RoughnessMap   string         `json:"roughnessMap,omitempty"`
+	MetalnessMap   string         `json:"metalnessMap,omitempty"`
+	EmissiveMap    string         `json:"emissiveMap,omitempty"`
+	LODGroup       string         `json:"lodGroup,omitempty"`
+	LODLevel       int            `json:"lodLevel,omitempty"`
+	LODMinDistance float64        `json:"lodMinDistance,omitempty"`
+	LODMaxDistance float64        `json:"lodMaxDistance,omitempty"`
+	X              float64        `json:"x,omitempty"`
+	Y              float64        `json:"y,omitempty"`
+	Z              float64        `json:"z,omitempty"`
+	RotationX      float64        `json:"rotationX,omitempty"`
+	RotationY      float64        `json:"rotationY,omitempty"`
+	RotationZ      float64        `json:"rotationZ,omitempty"`
+	SpinX          float64        `json:"spinX,omitempty"`
+	SpinY          float64        `json:"spinY,omitempty"`
+	SpinZ          float64        `json:"spinZ,omitempty"`
+	ShiftX         float64        `json:"shiftX,omitempty"`
+	ShiftY         float64        `json:"shiftY,omitempty"`
+	ShiftZ         float64        `json:"shiftZ,omitempty"`
+	DriftSpeed     float64        `json:"driftSpeed,omitempty"`
+	DriftPhase     float64        `json:"driftPhase,omitempty"`
+	Transition     TransitionIR   `json:"transition,omitzero"`
+	InState        map[string]any `json:"inState,omitempty"`
+	OutState       map[string]any `json:"outState,omitempty"`
+	Live           []string       `json:"live,omitempty"`
+	Vertices       *MeshVertices  `json:"vertices,omitempty"`
 }
 
 // MarshalJSON encodes ObjectIR via the standard reflection path but
@@ -1376,6 +1380,10 @@ func (item ObjectIR) legacyProps() map[string]any {
 	if item.GizmoRing {
 		record["gizmoRing"] = true
 	}
+	if item.GizmoHelper {
+		record["gizmoHelper"] = true
+	}
+	setString(record, "gizmoFormMode", item.GizmoFormMode)
 	setString(record, "outlineColor", item.OutlineColor)
 	setNumeric(record, "outlineWidth", item.OutlineWidth)
 	if item.CastShadow {

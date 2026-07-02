@@ -3691,6 +3691,72 @@ func TestScene3DTransformControlsRingAlwaysLoweredWithGizmoModeVisibility(t *tes
 	}
 }
 
+// TestScene3DTransformControlsAlwaysLowersAllThreeForms verifies the P7
+// click-driven-reactivity precondition: every TransformControls form
+// (translate axes triad, rotate ring, scale handle cubes) is lowered
+// regardless of the initial Mode, each tagged GizmoHelper=true with the
+// GizmoFormMode identifying which form it is — so a client-side selection +
+// gizmo-mode signal sink can hide/reposition/switch-form the whole group
+// live with no page navigation (see gosx's syncMountedSceneGizmoHelpers in
+// 20-scene-mount.js and kiln's editor_viewport.go sceneHelperNodes).
+func TestScene3DTransformControlsAlwaysLowersAllThreeForms(t *testing.T) {
+	countByFormMode := func(ir SceneIR) map[string]int {
+		counts := map[string]int{}
+		for _, object := range ir.Objects {
+			if !strings.HasPrefix(object.ID, "gizmo") {
+				continue
+			}
+			if !object.GizmoHelper {
+				t.Fatalf("expected TransformControls-lowered object %q to carry GizmoHelper=true, got %#v", object.ID, object)
+			}
+			if object.GizmoFormMode == "" {
+				t.Fatalf("expected TransformControls-lowered object %q to carry a non-empty GizmoFormMode, got %#v", object.ID, object)
+			}
+			counts[object.GizmoFormMode]++
+		}
+		return counts
+	}
+
+	props := Props{
+		Graph: NewGraph(TransformControls{ID: "gizmo", Mode: "translate", Size: 1}),
+	}
+	counts := countByFormMode(props.SceneIR())
+	if counts["translate"] != 3 {
+		t.Fatalf("expected 3 translate-form objects (axes triad), got %d: %#v", counts["translate"], counts)
+	}
+	if counts["rotate"] != 1 {
+		t.Fatalf("expected 1 rotate-form object (ring), got %d: %#v", counts["rotate"], counts)
+	}
+	if counts["scale"] != 3 {
+		t.Fatalf("expected 3 scale-form objects (handle cubes), got %d: %#v", counts["scale"], counts)
+	}
+}
+
+// TestScene3DTransformControlsEmptyModeBakesEveryFormHidden verifies kiln's
+// "no initial selection" click-driven case: an empty Mode (control.Target
+// also empty) bakes every one of the three forms hidden for the first
+// frame, so the client's syncMountedSceneGizmoHelpers sink starts from a
+// fully-hidden group until a selection signal arrives.
+func TestScene3DTransformControlsEmptyModeBakesEveryFormHidden(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(TransformControls{ID: "gizmo", Size: 1}),
+	}
+	ir := props.SceneIR()
+	found := 0
+	for _, object := range ir.Objects {
+		if !strings.HasPrefix(object.ID, "gizmo") {
+			continue
+		}
+		found++
+		if object.Visible == nil || *object.Visible {
+			t.Fatalf("expected object %q to be baked hidden when Mode is empty, got %#v", object.ID, object.Visible)
+		}
+	}
+	if found != 7 {
+		t.Fatalf("expected all 7 TransformControls-lowered objects (3 translate + 1 rotate + 3 scale), got %d", found)
+	}
+}
+
 func TestScene3DLineCustomAndOutlineMaterialsReachObjectIR(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(

@@ -56,13 +56,13 @@ fn fragmentMain(in : VertexOut) -> @location(0) vec4<f32> {
 // and that shader-lib dedup hoists matching sources across multiple layers.
 func TestPointsAuthoredMaterialRoundTrip(t *testing.T) {
 	mat := CustomMaterial{
-		VertexGLSL:   testVertexGLSL,
-		FragmentGLSL: testFragmentGLSL,
-		VertexWGSL:   testWGSLSource,
-		FragmentWGSL: testWGSLSource,
-		Uniforms:     map[string]any{"intensity": float32(1.5)},
+		VertexGLSL:    testVertexGLSL,
+		FragmentGLSL:  testFragmentGLSL,
+		VertexWGSL:    testWGSLSource,
+		FragmentWGSL:  testWGSLSource,
+		Uniforms:      map[string]any{"intensity": float32(1.5)},
 		ShaderBackend: "selena",
-		ShaderLayout: map[string]any{"material": "GlowPoints"},
+		ShaderLayout:  map[string]any{"material": "GlowPoints"},
 	}
 
 	props := Props{

@@ -2955,4 +2955,5 @@
     layoutBrowserText,
     applyTextLayoutPresentation,
     onTextLayoutInvalidated,
+    sceneLabelLayoutCacheLimit,
   };

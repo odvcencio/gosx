@@ -33,12 +33,12 @@ const (
 // feature; the drift guard (later task) ties this to renderer manifests.
 // custom-shader is per-material (resolved via ShaderResolver), not a flat cell.
 var Matrix = map[Feature]map[Backend]bool{
-	FeatureSkinning:                  {BackendWebGPU: true, BackendWebGL: true},
-	FeatureIBL:                       {BackendWebGPU: false, BackendWebGL: true},
-	FeatureGPUPicking:                {BackendWebGPU: false, BackendWebGL: true},
-	FeatureLineDashed:                {BackendWebGPU: false, BackendWebGL: true},
-	FeatureComputeParts:              {BackendWebGPU: true, BackendWebGL: false},
-	FeatureGPUCull:                   {BackendWebGPU: true, BackendWebGL: false},
+	FeatureSkinning:     {BackendWebGPU: true, BackendWebGL: true},
+	FeatureIBL:          {BackendWebGPU: false, BackendWebGL: true},
+	FeatureGPUPicking:   {BackendWebGPU: false, BackendWebGL: true},
+	FeatureLineDashed:   {BackendWebGPU: false, BackendWebGL: true},
+	FeatureComputeParts: {BackendWebGPU: true, BackendWebGL: false},
+	FeatureGPUCull:      {BackendWebGPU: true, BackendWebGL: false},
 	// Water features are implemented on WebGL2 by the runtime water renderer
 	// (createSceneWaterRendererWebGL/createSceneWaterSimWebGL); WebGPU stays the
 	// preferred/primary backend, WebGL2 is the honest fallback.

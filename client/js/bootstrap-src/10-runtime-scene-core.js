@@ -1764,6 +1764,16 @@
       // layer flips its `visible` off Props.GizmoInputSignal at runtime (see
       // applyMountedSceneGizmoMode in 20-scene-mount.js).
       gizmoRing: sceneBool(Object.prototype.hasOwnProperty.call(item, "gizmoRing") ? item.gizmoRing : current.gizmoRing, false),
+      // gizmoHelper/gizmoFormMode: this object is one piece of a
+      // TransformControls live helper group. The mount layer hides the whole
+      // group when the selection signal is empty, repositions it onto the
+      // selected object's world transform, and shows only the piece whose
+      // gizmoFormMode matches the active gizmo-mode signal (see
+      // syncMountedSceneGizmoHelpers in 20-scene-mount.js).
+      gizmoHelper: sceneBool(Object.prototype.hasOwnProperty.call(item, "gizmoHelper") ? item.gizmoHelper : current.gizmoHelper, false),
+      gizmoFormMode: typeof item.gizmoFormMode === "string" && item.gizmoFormMode
+        ? item.gizmoFormMode
+        : (typeof current.gizmoFormMode === "string" ? current.gizmoFormMode : ""),
       _modelHidden: Object.prototype.hasOwnProperty.call(item, "_modelHidden")
         ? sceneBool(item._modelHidden, false)
         : sceneBool(current._modelHidden, false),
@@ -4490,6 +4500,55 @@
     }
   }
 
+  // sceneGizmoTargetAnchor resolves the world-space anchor point (and, when
+  // meaningful, rotation) that 20-scene-mount.js's syncMountedSceneGizmoHelpers
+  // repositions the TransformControls gizmo helper group onto for a given
+  // selected object. Most declaratively-authored objects carry their
+  // transform in x/y/z/rotationX../rotationZ, which is directly the anchor.
+  // Some callers (e.g. kiln's mesh objects — see editor_viewport.go's
+  // sceneMeshNodes, which lowers BufferGeometry with world-baked vertex
+  // positions) instead ship world-baked vertex data (object.vertices.positions)
+  // with x/y/z left at 0 — reading x/y/z there would always anchor the gizmo
+  // at the origin regardless of the object's real position. Detect that case
+  // and fall back to the vertex bounding-box center instead.
+  function sceneGizmoTargetAnchor(obj) {
+    const vertices = obj && obj.vertices;
+    const positions = vertices && vertices.positions;
+    if (positions && positions.length >= 3) {
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      for (let i = 0; i + 2 < positions.length; i += 3) {
+        const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+      }
+      // World-baked vertex data already has any rotation applied, so there's
+      // no separate rotation left to extract — identity is the honest answer
+      // here (matches the object's own rotationX/Y/Z, which callers baking
+      // vertices this way leave at 0 for the same reason).
+      return {
+        x: (minX + maxX) / 2,
+        y: (minY + maxY) / 2,
+        z: (minZ + maxZ) / 2,
+        rotationX: 0,
+        rotationY: 0,
+        rotationZ: 0,
+      };
+    }
+    return {
+      x: sceneNumber(obj && obj.x, 0),
+      y: sceneNumber(obj && obj.y, 0),
+      z: sceneNumber(obj && obj.z, 0),
+      rotationX: sceneNumber(obj && obj.rotationX, 0),
+      rotationY: sceneNumber(obj && obj.rotationY, 0),
+      rotationZ: sceneNumber(obj && obj.rotationZ, 0),
+    };
+  }
+
   function applySceneObjectPatch(state, objectID, patch) {
     const key = sceneObjectKey(objectID);
     const current = state.objects.get(key);
@@ -5126,6 +5185,16 @@
   function appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
     if (sceneObjectHasTriangleMesh(object)) {
       appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds);
+      return;
+    }
+    // Explicit visible:false always wins for the line/surface path too —
+    // mirrors sceneMeshObjectEffectivelyInvisible's first check for the
+    // triangle-mesh path above. Without this, line-kind objects (helpers,
+    // TransformControls gizmo pieces, etc.) ignored `visible` entirely and
+    // always rendered regardless of the flag (a latent gap the P7 live-
+    // reactive gizmo helper feature depends on being fixed — see
+    // syncMountedSceneGizmoHelpers in 20-scene-mount.js).
+    if (object && object.visible === false) {
       return;
     }
     const sourceSegments = sceneObjectSegments(object);
@@ -7579,6 +7648,7 @@
     normalizeSceneLabelWhiteSpace,
     normalizeSceneLight,
     normalizeSceneObject,
+    sceneGizmoTargetAnchor,
     normalizeSceneSprite,
     normalizeSceneSpriteFit,
     listSceneMaterialProfiles: typeof listSceneMaterialProfiles === "function" ? listSceneMaterialProfiles : undefined,

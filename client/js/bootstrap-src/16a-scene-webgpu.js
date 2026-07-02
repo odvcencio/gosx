@@ -4142,6 +4142,15 @@
     // Texture cache.
     var textureCache = new Map();
 
+    // pbrSceneAttributeCache backs wgpuStablePBRAttributeBuffer below, keyed
+    // by slot name (not by `bundle`, which createSceneRenderBundle rebuilds
+    // fresh every render() call -- see that function's comment). Renderer-
+    // scoped like selenaPipelineCache/textureCache above: it can't go stale
+    // across device loss because a lost device kills THIS whole closure
+    // (device=null, initFailed=true) and recovery always calls createRenderer()
+    // again for a brand new one.
+    var pbrSceneAttributeCache = {};
+
     // 1x1 white placeholder texture (for unbound material maps).
     var placeholderTex = null;
     var placeholderView = null;
@@ -4253,6 +4262,29 @@
       }
       device.queue.writeBuffer(buffer, 0, data);
       return buffer;
+    }
+
+    // wgpuStablePBRAttributeBuffer backs ensurePBRSceneAttributeBuffers: one
+    // GPU buffer per attribute `slot`, cached on the renderer-scoped
+    // pbrSceneAttributeCache (bundle can't be the owner -- see its comment
+    // above). Skips BOTH the buffer (re)allocation and the queue.writeBuffer
+    // call whenever `typedArray`'s CONTENT matches the last upload -- not
+    // just its identity, which is never stable across frames even for scene
+    // geometry that never moves (createSceneRenderBundle hands back a fresh
+    // Float32Array every call). Every water-demo float-* object has zero
+    // drift/bob/spin (program.go), so once placed this collapses "4 buffer
+    // allocs + 4 full uploads every frame forever" to "once" -- a scene with
+    // genuinely animating mesh geometry still uploads whenever content changes.
+    function wgpuStablePBRAttributeBuffer(slot, typedArray) {
+      // Reuse the cached snapshot's IDENTITY (not typedArray's, which is
+      // fresh every frame) once content-equal, so the delegated
+      // wgpuCachedTrackedBuffer call below (identity-based) naturally skips
+      // its own writeBuffer -- see this function's comment above.
+      var snap = pbrSceneAttributeCache[slot];
+      var same = snap && snap.length === typedArray.length;
+      for (var i = 0; same && i < snap.length; i++) if (snap[i] !== typedArray[i]) same = false;
+      if (!same) pbrSceneAttributeCache[slot] = snap = typedArray.slice();
+      return wgpuCachedTrackedBuffer(pbrSceneAttributeCache, slot + "B", snap, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
     }
 
     function wgpuCachedTrackedBuffer(owner, slot, typedArray, usage, dynamic) {
@@ -10926,16 +10958,22 @@
       if (!bundle) return null;
       var vertexCount = webGPUSceneMeshVertexCount(bundle);
       if (vertexCount <= 0) return null;
-      var usage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
       var positions = webGPUSceneMeshAttributeData(bundle, "worldMeshPositions", 3, [0, 0, 0], vertexCount);
       var normals = webGPUSceneMeshAttributeData(bundle, "worldMeshNormals", 3, [0, 0, 1], vertexCount);
       var uvs = webGPUSceneMeshAttributeData(bundle, "worldMeshUVs", 2, [0, 0], vertexCount);
       var tangents = webGPUSceneMeshAttributeData(bundle, "worldMeshTangents", 4, [1, 0, 0, 1], vertexCount);
+      // wgpuStablePBRAttributeBuffer (not wgpuCachedTrackedBuffer(bundle, ...))
+      // -- `bundle` is a brand-new object every render() call (see
+      // pbrSceneAttributeCache's declaration above), so caching on it can
+      // never skip a re-upload; content-compare against the renderer-scoped
+      // cache instead, so a scene whose mesh geometry hasn't actually changed
+      // (the common case -- see the water demo's static float-* objects)
+      // skips the createBuffer + queue.writeBuffer pair entirely.
       return {
-        positions: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRPositions", positions, usage, true), components: 3 },
-        normals: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRNormals", normals, usage, true), components: 3 },
-        uvs: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRUVs", uvs, usage, true), components: 2 },
-        tangents: { buffer: wgpuCachedTrackedBuffer(bundle, "_gosxWGPUScenePBRTangents", tangents, usage, true), components: 4 },
+        positions: { buffer: wgpuStablePBRAttributeBuffer("positions", positions), components: 3 },
+        normals: { buffer: wgpuStablePBRAttributeBuffer("normals", normals), components: 3 },
+        uvs: { buffer: wgpuStablePBRAttributeBuffer("uvs", uvs), components: 2 },
+        tangents: { buffer: wgpuStablePBRAttributeBuffer("tangents", tangents), components: 4 },
         vertexCount: vertexCount,
       };
     }

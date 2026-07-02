@@ -1307,7 +1307,15 @@
       y: sceneNumber(nextHit.y, 0) - sceneNumber(drag.previousHit.y, 0),
       z: sceneNumber(nextHit.z, 0) - sceneNumber(drag.previousHit.z, 0),
     };
-    objectState.previousPosition = sceneManagedFluidObjectCopyVec3(objectState.position);
+    // Hand the pre-drag position to the next objectStep() via pendingPrevious —
+    // the same handoff the selection path uses. objectStep derives "previous"
+    // from live position when pendingPrevious is absent, and by then position
+    // already holds the post-drag value, so without this the drag delta never
+    // reaches the water displacement kernel (no splash while dragging). Keep
+    // the oldest snapshot if several drag events land before one objectStep.
+    if (!objectState.pendingPrevious) {
+      objectState.pendingPrevious = sceneManagedFluidObjectCopyVec3(objectState.position);
+    }
     objectState.position.x += delta.x;
     objectState.position.y += delta.y;
     objectState.position.z += delta.z;

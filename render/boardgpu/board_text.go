@@ -120,7 +120,8 @@ var boardTextShaderLayout = map[string]any{
 	},
 	"textures": []any{
 		map[string]any{
-			"name": "atlas",
+			"name":      "atlas",
+			"dimension": "2d",
 			"wgsl": map[string]any{
 				"group":          float64(0),
 				"textureBinding": float64(1),

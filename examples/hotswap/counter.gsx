@@ -20,7 +20,10 @@ func Counter() Node {
 	decrement := func() { count.Set(count.Get() - 1) }
 	return <div class="counter">
 		<button class="counter-btn" onClick={decrement}>-</button>
-		<span class="counter-label">count is {count.Get()}</span>
+		<span class="counter-label">
+			count is
+			{count.Get()}
+		</span>
 		<button class="counter-btn" onClick={increment}>+</button>
 	</div>
 }

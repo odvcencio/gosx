@@ -109,7 +109,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fsPath, ok := runtimeManifestDirectAssetPath(root, name); ok {
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
 		serveRuntimeFile(w, r, fsPath)
 		return
@@ -117,7 +117,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 
 	if version := strings.TrimSpace(r.URL.Query().Get("v")); version != "" {
 		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
-			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			MarkObservedRequest(r, "runtime", "/gosx/"+name)
 			serveRuntimeFile(w, r, fsPath)
 			return
@@ -132,7 +132,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
 		serveRuntimeFile(w, r, fsPath)
 		return
