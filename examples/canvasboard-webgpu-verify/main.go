@@ -4,8 +4,8 @@
 // It serves ONE page (GET /) showing TWO CanvasBoard instances rendering
 // the IDENTICAL node set side by side:
 //
-//   LEFT  — no backend attribute → 26b1 painter path (the reference).
-//   RIGHT — data-gosx-canvas-backend="webgpu" → the M1 GPU path.
+//	LEFT  — no backend attribute → 26b1 painter path (the reference).
+//	RIGHT — data-gosx-canvas-backend="webgpu" → the M1 GPU path.
 //
 // Neither board auto-interacts; both sit at the same initial camera so the
 // rendering can be compared directly. A self-validation script on the page
@@ -331,10 +331,10 @@ func serveClientJS(w http.ResponseWriter, r *http.Request, path string) {
 func makeTestPNG() image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	colors := [4]color.RGBA{
-		{R: 255, G: 128, B: 0, A: 255},  // top-left: orange
-		{R: 0, G: 200, B: 255, A: 255},  // top-right: cyan
-		{R: 180, G: 0, B: 255, A: 255},  // bottom-left: purple
-		{R: 64, G: 255, B: 64, A: 255},  // bottom-right: green
+		{R: 255, G: 128, B: 0, A: 255}, // top-left: orange
+		{R: 0, G: 200, B: 255, A: 255}, // top-right: cyan
+		{R: 180, G: 0, B: 255, A: 255}, // bottom-left: purple
+		{R: 64, G: 255, B: 64, A: 255}, // bottom-right: green
 	}
 	for y := 0; y < 64; y++ {
 		for x := 0; x < 64; x++ {

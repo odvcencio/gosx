@@ -387,13 +387,13 @@ type RenderComputeParticles struct {
 	ComputeEntry   string `json:"computeEntry,omitempty"`
 	ComputeBackend string `json:"computeBackend,omitempty"`
 	// Optional authored render-pass shader forwarded from scene ComputeParticles.
-	RenderVertex       string         `json:"renderVertex,omitempty"`
-	RenderFragment     string         `json:"renderFragment,omitempty"`
-	RenderVertexWGSL   string         `json:"renderVertexWGSL,omitempty"`
-	RenderFragmentWGSL string         `json:"renderFragmentWGSL,omitempty"`
-	RenderUniforms     map[string]any `json:"renderUniforms,omitempty"`
-	RenderShaderBackend string        `json:"renderShaderBackend,omitempty"`
-	RenderShaderLayout map[string]any `json:"renderShaderLayout,omitempty"`
+	RenderVertex        string         `json:"renderVertex,omitempty"`
+	RenderFragment      string         `json:"renderFragment,omitempty"`
+	RenderVertexWGSL    string         `json:"renderVertexWGSL,omitempty"`
+	RenderFragmentWGSL  string         `json:"renderFragmentWGSL,omitempty"`
+	RenderUniforms      map[string]any `json:"renderUniforms,omitempty"`
+	RenderShaderBackend string         `json:"renderShaderBackend,omitempty"`
+	RenderShaderLayout  map[string]any `json:"renderShaderLayout,omitempty"`
 }
 
 // RenderBundle is the renderer-facing scene payload emitted by the shared

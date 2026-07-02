@@ -12,10 +12,10 @@ func swapProgA() *program.Program {
 	return &program.Program{
 		Name: "A",
 		Exprs: []program.Expr{
-			{Op: program.OpSignalGet, Value: "count", Type: program.TypeInt},        // 0
-			{Op: program.OpLitInt, Value: "3", Type: program.TypeInt},               // 1 (init)
-			{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},               // 2
-			{Op: program.OpAdd, Operands: []program.ExprID{0, 2}, Type: program.TypeInt}, // 3
+			{Op: program.OpSignalGet, Value: "count", Type: program.TypeInt},                                // 0
+			{Op: program.OpLitInt, Value: "3", Type: program.TypeInt},                                       // 1 (init)
+			{Op: program.OpLitInt, Value: "1", Type: program.TypeInt},                                       // 2
+			{Op: program.OpAdd, Operands: []program.ExprID{0, 2}, Type: program.TypeInt},                    // 3
 			{Op: program.OpSignalSet, Operands: []program.ExprID{3}, Value: "count", Type: program.TypeInt}, // 4
 		},
 		Nodes: []program.Node{
@@ -39,10 +39,10 @@ func swapProgB() *program.Program {
 	return &program.Program{
 		Name: "B",
 		Exprs: []program.Expr{
-			{Op: program.OpSignalGet, Value: "count", Type: program.TypeInt},        // 0
-			{Op: program.OpLitInt, Value: "99", Type: program.TypeInt},              // 1 (init — ignored on merge)
-			{Op: program.OpLitInt, Value: "10", Type: program.TypeInt},              // 2 (new step)
-			{Op: program.OpAdd, Operands: []program.ExprID{0, 2}, Type: program.TypeInt}, // 3
+			{Op: program.OpSignalGet, Value: "count", Type: program.TypeInt},                                // 0
+			{Op: program.OpLitInt, Value: "99", Type: program.TypeInt},                                      // 1 (init — ignored on merge)
+			{Op: program.OpLitInt, Value: "10", Type: program.TypeInt},                                      // 2 (new step)
+			{Op: program.OpAdd, Operands: []program.ExprID{0, 2}, Type: program.TypeInt},                    // 3
 			{Op: program.OpSignalSet, Operands: []program.ExprID{3}, Value: "count", Type: program.TypeInt}, // 4
 		},
 		Nodes: []program.Node{

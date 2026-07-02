@@ -240,10 +240,10 @@ func TestParticleRenderOverrideUsesStorageEntryWhenPresent(t *testing.T) {
 	defer r.Destroy()
 
 	cp := engine.RenderComputeParticles{
-		ID:    "galaxy",
-		Count: 64,
-		Emitter: engine.RenderParticleEmitter{Lifetime: 2.0, Radius: 1.0},
-		Material: engine.RenderParticleMaterial{Color: "#ffffff", Size: 0.1, Opacity: 1.0},
+		ID:                 "galaxy",
+		Count:              64,
+		Emitter:            engine.RenderParticleEmitter{Lifetime: 2.0, Radius: 1.0},
+		Material:           engine.RenderParticleMaterial{Color: "#ffffff", Size: 0.1, Opacity: 1.0},
 		RenderVertexWGSL:   dualEntryParticleRenderWGSL,
 		RenderFragmentWGSL: dualEntryParticleRenderWGSL,
 	}

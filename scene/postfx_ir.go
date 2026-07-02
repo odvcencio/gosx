@@ -327,15 +327,15 @@ func (ir DOFIR) MarshalJSON() ([]byte, error) {
 //   - "" / "beforeTonemap" → after bloom, before tonemap (default)
 //   - "afterTonemap"       → after tonemap, in the LDR region
 type CustomPostIR struct {
-	Name           string         `json:"name"`
-	Stage          string         `json:"stage,omitempty"`
-	FragmentWGSL   string         `json:"fragmentWGSL,omitempty"`
-	VertexWGSL     string         `json:"vertexWGSL,omitempty"`
-	FragmentGLSL   string         `json:"fragmentGLSL,omitempty"`
-	VertexGLSL     string         `json:"vertexGLSL,omitempty"`
-	ShaderBackend  string         `json:"shaderBackend,omitempty"`
-	ShaderLayout   map[string]any `json:"shaderLayout,omitempty"`
-	Uniforms       map[string]any `json:"uniforms,omitempty"`
+	Name          string         `json:"name"`
+	Stage         string         `json:"stage,omitempty"`
+	FragmentWGSL  string         `json:"fragmentWGSL,omitempty"`
+	VertexWGSL    string         `json:"vertexWGSL,omitempty"`
+	FragmentGLSL  string         `json:"fragmentGLSL,omitempty"`
+	VertexGLSL    string         `json:"vertexGLSL,omitempty"`
+	ShaderBackend string         `json:"shaderBackend,omitempty"`
+	ShaderLayout  map[string]any `json:"shaderLayout,omitempty"`
+	Uniforms      map[string]any `json:"uniforms,omitempty"`
 }
 
 func (ir CustomPostIR) legacyProps() map[string]any {

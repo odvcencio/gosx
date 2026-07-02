@@ -16,10 +16,10 @@ func counterPlusN(n string) *program.Program {
 	return &program.Program{
 		Name: "Counter",
 		Exprs: []program.Expr{
-			{Op: program.OpSignalGet, Value: "$count", Type: program.TypeInt},       // 0
-			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},               // 1 init
-			{Op: program.OpLitInt, Value: n, Type: program.TypeInt},                 // 2 step
-			{Op: program.OpAdd, Operands: []program.ExprID{0, 2}, Type: program.TypeInt}, // 3
+			{Op: program.OpSignalGet, Value: "$count", Type: program.TypeInt},                                // 0
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},                                        // 1 init
+			{Op: program.OpLitInt, Value: n, Type: program.TypeInt},                                          // 2 step
+			{Op: program.OpAdd, Operands: []program.ExprID{0, 2}, Type: program.TypeInt},                     // 3
 			{Op: program.OpSignalSet, Operands: []program.ExprID{3}, Value: "$count", Type: program.TypeInt}, // 4
 		},
 		Nodes: []program.Node{
@@ -155,7 +155,7 @@ func sharedDisplay(name string) *program.Program {
 		},
 		Nodes: []program.Node{
 			{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}}, // 0
-			{Kind: program.NodeExpr, Expr: program.ExprID(0)},                       // 1
+			{Kind: program.NodeExpr, Expr: program.ExprID(0)},                      // 1
 		},
 		Root: 0,
 		Signals: []program.SignalDef{

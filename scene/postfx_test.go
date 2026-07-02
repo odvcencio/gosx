@@ -193,9 +193,9 @@ func TestCustomPostIRLowering(t *testing.T) {
 
 func TestCustomPostIRMarshalJSON(t *testing.T) {
 	ir := CustomPostIR{
-		Name:         "Lens",
-		Stage:        "beforeTonemap",
-		FragmentWGSL: "fn fragmentMain() {}",
+		Name:          "Lens",
+		Stage:         "beforeTonemap",
+		FragmentWGSL:  "fn fragmentMain() {}",
 		ShaderBackend: "selena",
 	}
 	b, err := json.Marshal(ir)
