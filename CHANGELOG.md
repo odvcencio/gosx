@@ -42,6 +42,238 @@ additive capabilities, all opt-in and none renaming or removing an existing
   Enter transport interaction on the `<video>` element and suppress native
   controls, exposing output signal `inputLocked`.
 
+## v0.29.0 (2026-07-02) — retracted
+
+Retracted minutes after tagging: the commit included a stray shell-redirect
+artifact (a file whose name was itself a shell error, `ource line refs:n'`)
+that broke Go module zip fetches for this tag. v0.29.1 above is the
+re-release with that one file removed and no other code changes — its video
+player primitives entry is the headline feature of this code drop. (No
+`retract` directive is present in `go.mod`; the module proxy simply serves
+v0.29.1 for consumers who resolve the latest tag.)
+
+The rest of the range since v0.28.0 that v0.29.1's entry doesn't cover:
+
+Scene3D grows a native water simulation: a `waterSystems` IR schema, WGSL
+compute shaders for simulation/drop-seeding/object displacement, and
+vertex/fragment passes for surfaces, caustics, and reflections, backed by new
+ray-plane/ray-sphere/ray-AABB intersection helpers in scene math. The demo
+then converges onto Selena — all 9 render passes and 5 compute kernels run
+through the generic descriptor-driven Selena pipeline/bind-group path instead
+of hand-written WGSL — and closes out with a WebGL2 rounded-corner pool and
+e2e coverage. A pure-Go port of `mapbox/earcut` (ISC-licensed, zero
+dependencies, zero CGo, WASM-verified) adds polygon triangulation for the pool
+geometry. Follow-up fixes restore `waterColor`/`normalScale` uniforms on the
+WebGPU Selena passes, fix flattened normal shading on floating objects,
+stop a per-frame mesh re-upload so drags now splash the water, and fix a
+`ReferenceError` in Scene3D label layout under split runtime+feature bundles.
+
+The client bootstrap gains a declarative-engine-signals layer: a declarative
+actions module (`data-gosx-action`/`data-gosx-set`/`data-gosx-submit-on` event
+delegation, with a fetch-settle fix so submit buttons re-enable regardless of
+response status) and a declarative server-fragment regions module (HTML
+fragment swapping, an `__gosx_subscribe_shared_signal` bridge for observing
+signals, and a `data-gosx-region-allow-empty` attribute for fetching past an
+empty linked signal). Scene3D picks up a live gizmo mode toggle driven by a
+shared signal (no reload needed to flip the transform-controls ring
+visibility), declarative `<script type="application/json"
+data-gosx-scene-commands>` payloads broadcast to mounted `GoSXScene3D`
+engines, camera/selection scene signal props with hub output bindings
+(`direction:out`), and a P5 cursor-signal cleanup that collapses separate x/y
+publishes into one structured `{x, y}` signal. `App` gains a `HeadDecorator`
+mechanism, used to attach the CSRF token to mutating declarative-actions
+requests via a `<meta>` tag instead of requiring app code to wire it by hand.
+
+`cmd/gosx` island discovery is refactored into its own `island_discovery.go`
+and learns to resolve `.gsx` component tags that reference imported Go
+packages (via `go list`), not just same-package components, deduplicating the
+build/dev compilation pipelines in the process.
+
+Smaller fixes in the range: a hub data race on closing client channels
+(guarded `trySend`/`tryBinarySend` helpers plus a `closed` flag under the
+client mutex), and the gsx transpiler inlining `Node`/`[]Node` values in
+`Expr` directly instead of dumping their struct representation.
+
+## v0.28.0 (2026-06-24)
+
+Deterministic motion core, unified with the Scene3D render/perf path.
+
+The 51-commit `feat/unified-motion-core` branch lands as the new `motion`
+package: a self-contained animation IR and evaluator with deterministic
+spring integration, easing functions (including per-key ease overrides),
+keyframe timelines with stagger scheduling and a reduced-motion policy,
+procedural generators (including a `GenOscillator`), quaternion slerp/
+normalize, CUBICSPLINE glTF interpolation, and a `Mixer` for crossfading
+animation clips. A zero-allocation `WriteBuf` and target/prop-ID interning
+keep per-frame writes off the heap, wire serialization carries programs
+across the WASM↔JS boundary, and a new motion runtime manages programs on
+both sides (with WASM bridge exports and a `test-motion-parity` build
+target). Motion reaches beyond object transforms to material uniforms
+through a new `TargetMaterial` kind, so per-mesh shader parameters can now
+animate the same way transforms do. The native `render/bundle` package and
+client VM both move from nlerp to slerp for rotation interpolation, and
+Scene3D gains a motion facade for spin handling, a WASM motion seam for
+transform/material-uniform updates, and per-object clip animation with a
+client-side TRS evaluator and mixer bridge for glTF `MODEL` animations.
+Golden regression tests lock down the evaluation semantics end-to-end.
+
+The 6-commit `perf/scene3d-slices` branch merges on top, with motion's
+semantics kept as the source of truth per the integration's conflict
+resolution: a per-object world-bake cache for static geometry, per-frame
+lighting-color caching, hoisted uniform staging buffers, material/geometry
+cache hoisting, and optimized float formatting in the static-pass-key hash —
+all grafted around `spinQ`/`clip` evaluation computed once per object rather
+than changing what gets rendered.
+
+Finally, any Selena material declaring `param time : float` now automatically
+receives the current per-frame clock, exactly like `mvp`/`normalMatrix`, on
+both the WebGL2 and WebGPU backends. This lets declarative Scene3D scenes
+(`programRef: ""`) do time-driven in-shader animation — glow, pulse,
+palette tint — without loading the Go/WASM motion runtime, which stays
+reserved for islands and shared-runtime pages.
+
+## v0.27.4 (2026-06-23)
+
+Follow-up to the two same-day low-power detection fixes below: the
+duplicated `lowPower`/`constrainedHardware` hardware checks are consolidated
+behind a single `gosxLowEndHardware` helper (both signals now derive from one
+source of truth), with a regression test guarding against the checks
+drifting apart again.
+
+## v0.27.3 (2026-06-23)
+
+Fix constrained-hardware detection to require both low memory *and* few CPU
+cores before flagging a device as constrained, so capable phones are no
+longer downgraded on a weak memory signal alone (`lowPower`/`reducedData`
+remain explicit overrides).
+
+## v0.27.2 (2026-06-23)
+
+Fix low-power detection: the memory and core-count checks now gate to the
+low-power GPU path with AND instead of OR, resolving mobile Chrome's privacy-
+rounded `deviceMemory`/`hardwareConcurrency` values falsely flagging capable
+phones as low-end. `AdaptiveQuality` runtime scaling still handles hardware
+that's genuinely slow at runtime.
+
+## v0.27.1 (2026-06-23)
+
+Dependency update: `m31labs.dev/selena` moves from v0.1.1 to v0.2.0 and the
+temporary local `replace` directive is removed.
+
+## v0.27.0 (2026-06-23)
+
+GPU compute/cull infrastructure, plus two new packages.
+
+A `ComputeExecutor` interface lets headless GPU tests register compute
+pipeline executors dynamically, and `CompressInstancedTransforms` compresses
+instanced transforms for cheaper upload. GPU cull telemetry follows: a
+staging-buffer async readback captures survivor counts, gated behind
+`__gosx_scene3d_cull_telemetry` and throttled to every 30 frames to avoid GPU
+stalls, aggregated for tooling through `window.__gosx_scene3d_telemetry()`.
+Accompanying fixes: a projective-shear bug in instanced mesh transforms, a
+`CompressedArray` serialization bug that dropped a zero `maxVal`, static
+instance buffers now cached to avoid GC churn, the WebGPU frustum-planes
+helper bridged into the split bootstrap chunk, an instanced-mesh count
+fallback fix, telemetry poll ordering and flat-material-unlit fixes, a
+WebGPU-premature-fallback-to-painter fix, and a WebGPU probe-timing fix so
+capability checks wait for adapter/device init.
+
+Two new packages: `query` adds type-safe URL query-parameter binding
+(`Decode`/`Encode` against `query`-tagged structs, plus `RouteContext.
+QueryInto`), and `machine` adds a typed, signal-backed finite-state machine
+for GoSX islands — guards, actions, and entry/exit hooks through a fluent
+chainable API, replacing ad hoc boolean flags and effect chains.
+
+## v0.26.0 (2026-06-15)
+
+CanvasBoard's WebGPU path grows authored shader pipelines and GPU-driven
+instancing, continuing the ortho-2D board work from v0.25.11.
+
+Boards gain authored shader pipelines with a WebGPU backend across the
+renderer/scene/build/canvasboard layers, shader-lib deduplication for scene
+IR, HTML overlay sync with inline editing, and a `BoardText` material for
+labels (with matching WebGPU glyph rendering). A Y-down projection plus cull-
+mode override replaces the board's older ad hoc `FlipY`/`CullMode` material
+overrides once the new GPU instanced-cull system lands, and a board-thumbnail
+LOD fix stops sprite smearing.
+
+`InstancedMesh` picks up GPU cull fields, `shaderLib` hoisting, and a
+`SpreadProps` method. The browser runtime adds a GPU instanced-cull system
+(slice 2) plus a WebGL2 CPU cull fallback with shared plane math for devices
+without compute support.
+
+## v0.25.11 (2026-06-10)
+
+CanvasBoard's ortho-2D boards get a native WebGPU rendering path, and Selena
+materials extend to skinned meshes.
+
+New orthographic-2D matrix utilities in scene math and the WebGPU renderer,
+a zero-copy adapter so ortho-2D board bundles route through the WebGPU scene
+path, GPU geometry attachment for 2D canvas boards, a board fill material
+with embedded Selena source (plus a dedicated `BoardFill` Selena shader),
+board lines/sprites expanded into GPU quads, a DOM label overlay, and WebGPU
+backend routing for canvas2d boards generally. Smaller fixes along the way:
+sprite materials given a white base color for correct PBR shading, and a
+canvas-resize skip-frame logic fix. A validation harness plus budget/spike
+tests (including a golden ortho-camera MVP-matrix test and a headless PNG
+render test) cover the new path.
+
+Selena custom materials can now render on skinned meshes, using slot-0
+skinned positions, with matching test coverage. Custom compute-particle
+payload kernels are also supported for scene particle systems, and the
+WebGPU scene rendering pipeline picks up a general update alongside this
+work.
+
+## v0.25.10 (2026-06-04)
+
+`scene.SelenaUniforms` converts tagged Go structs or maps into host Selena
+uniform overrides, supporting `selena`/`json`/lower-camelCase field naming
+with `selena:"-"` exclusion, and deep-cloning slices/arrays so runtime
+mutation can't leak back into the uniform source.
+
+## v0.25.9 (2026-06-04)
+
+`scene.CompileSelenaBundle` parses a `.sel` source once and compiles multiple
+named materials from it, backed by a new `SelenaCompiledMaterial` type and a
+shared helper that `CompileSelenaMaterial` now also uses — cutting
+duplication between the single- and multi-material compile paths.
+
+## v0.25.8 (2026-06-04)
+
+Two VDOM reconciliation fixes for the client VM. Child reconciliation now
+splits into a shared-prefix, tail-removal, and tail-creation pass, with a
+`mergeAdjacentText` step that collapses consecutive text nodes to mirror
+browser hydration behavior — fixing index shifts and node-count mismatches
+when patches applied against the live DOM. Unkeyed reconciliation is then
+optimized to a two-pointer identity diff over each child's key/source,
+with an index-based fallback when identities aren't unique, fixing
+cascading mismatches when a conditional toggled in the middle of a sibling
+list.
+
+## v0.25.6 (2026-06-04)
+
+The IR lowerer adds conditional-rendering support for JSX operands:
+`{cond && <jsx>}` and ternaries with JSX branches now lower into
+`NodeConditional` subtrees via new `lowerConditionalExprContainer`/
+`buildIfComponent` helpers, instead of being handed to the island
+expression DSL as raw text (which can't parse JSX). Plain-value ternaries
+without JSX still lower as expression holes for the DSL to evaluate.
+
+## v0.25.5 (2026-06-04)
+
+The grammar adds ternary conditional support inside text-child containers,
+with operator precedence loose enough to associate with `||`.
+
+## v0.25.4 (2026-06-04)
+
+`signal.Computed` now lowers identically to `signal.Derive` as a derived
+signal in the IR, aligning the frontend with the documented reactive-signal
+API. Separately, the browser runtime executes `shaderBackend: "selena"`
+materials natively — cached GLSL programs, uniform uploads, texture binding,
+and mesh attribute setup in the WebGL path, with a matching WebGPU pipeline
+and bind-group path — instead of falling back to the PBR renderer, and
+excludes Selena materials from the legacy custom-WGSL fallback detection.
+
 ## v0.25.3
 
 Scene3D now has Selena as its native shader authoring backend.
