@@ -23,7 +23,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -163,5 +163,34 @@ build-desktop-macos:
 
 build-runtime:
 	$(GO) run ./cmd/gosx build-runtime build
+
+# release-gate: cheap, always-on checks that make the next bad tag impossible.
+# Each gate below exists because of a specific past incident:
+#   1. `go run ./cmd/gosx release check` - internal/version, README, and CHANGELOG
+#      drifted out of sync and sat wrong for four releases at v0.25.3 undetected.
+#   2. go.mod replace-directive scan - `go run mod@version` fails outright when
+#      go.mod contains ANY replace directive; this is what made v0.27.0 a bad tag.
+#   3. tracked-filename scan - a stray file with a shell-redirect-style name broke
+#      Go module zip creation and forced the v0.29.0 retraction.
+#   4. module-zip smoke (`git archive --format=zip`) - reproduces the exact
+#      operation that broke v0.29.0 so a zip-breaking commit fails fast.
+release-gate:
+	@echo "release-gate (1/4): go run ./cmd/gosx release check"
+	$(GO) run ./cmd/gosx release check
+	@echo "release-gate (2/4): go.mod replace-directive scan"
+	@if grep -E '^replace ' go.mod; then \
+		echo "release-gate: go.mod has a replace directive; 'go run mod@version' fails with any replace present (this is why v0.27.0 was a bad tag). Remove it before release."; \
+		exit 1; \
+	fi
+	@echo "release-gate (3/4): tracked-filename scan"
+	@bad="$$(git ls-files | grep -E '[:"|<>?*[:cntrl:]]' || true)"; \
+	if [ -n "$$bad" ]; then \
+		echo "release-gate: tracked filenames contain characters Go's module zip format rejects (a file like this broke v0.29.0's module zip and forced its retraction):"; \
+		echo "$$bad"; \
+		exit 1; \
+	fi
+	@echo "release-gate (4/4): module-zip smoke (git archive --format=zip)"
+	@git archive --format=zip -o /dev/null HEAD
+	@echo "release-gate: all gates passed"
 
 ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
