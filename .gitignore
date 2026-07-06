@@ -13,3 +13,7 @@ data/
 docs/blog-outlines/
 docs/specs/
 docs/superpowers/
+
+# Local dev workspace overlay (links sibling prism/selena checkouts) — never commit
+go.work
+go.work.sum

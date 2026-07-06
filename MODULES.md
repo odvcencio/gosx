@@ -2,8 +2,8 @@
 
 This repository contains independently versioned Go modules:
 
-- `github.com/odvcencio/gosx`: the core framework.
-- `github.com/odvcencio/gosx/editor`: the optional browser editor shell and assets.
+- `m31labs.dev/gosx`: the core framework.
+- `m31labs.dev/gosx/editor`: the optional browser editor shell and assets.
 
 Markdown++ rendering is the canonical content-source layer for the core
 `content` package through `github.com/odvcencio/mdpp`. The framework owns the
