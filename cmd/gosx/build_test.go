@@ -273,6 +273,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-feature-hubs.8888.js"):    "bootstrap-feature-hubs",
 		filepath.Join(distDir, "assets", "runtime", "patch.9999.js"):                     "patch",
 		filepath.Join(distDir, "assets", "runtime", "hls.min.aaaa.js"):                   "hls",
+		filepath.Join(distDir, "assets", "runtime", "relay.bbbb.js"):                     "relay",
 		filepath.Join(distDir, "assets", "islands", "Counter.abcd.gxi"):                  "counter",
 		filepath.Join(distDir, "assets", "css", "counter.dcba.css"):                      "counter-css",
 	}
@@ -293,6 +294,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 			BootstrapFeatureHubs:    HashedAsset{File: "bootstrap-feature-hubs.8888.js"},
 			Patch:                   HashedAsset{File: "patch.9999.js"},
 			VideoHLS:                HashedAsset{File: "hls.min.aaaa.js"},
+			Relay:                   HashedAsset{File: "relay.bbbb.js"},
 		},
 		Islands: []IslandAsset{{Name: "Counter", Format: "bin", HashedAsset: HashedAsset{File: "Counter.abcd.gxi"}}},
 		CSS:     []CSSAsset{{Component: "Counter", Source: "counter.css", HashedAsset: HashedAsset{File: "counter.dcba.css"}}},
@@ -302,6 +304,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		"/gosx/assets/runtime/bootstrap-runtime.5555.js",
 		"/gosx/bootstrap-feature-engines.js",
 		"/gosx/hls.min.js",
+		"/gosx/relay.js",
 		"/gosx/islands/Counter.gxi",
 		"/gosx/css/counter.css",
 	}
@@ -315,6 +318,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		"gosx/assets/runtime/bootstrap-runtime.5555.js.br",
 		"gosx/bootstrap-feature-engines.js",
 		"gosx/hls.min.js",
+		"gosx/relay.js",
 		"gosx/islands/Counter.gxi",
 		"gosx/css/counter.css",
 	} {

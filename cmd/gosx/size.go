@@ -170,6 +170,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "patch.js", file: rt.Patch.File, role: "navigation patch"},
 		{name: "hls.min.js", file: rt.VideoHLS.File, role: "video hls chunk"},
 		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
+		{name: "relay.js", file: rt.Relay.File, role: "cross-frame preview relay"},
 	}
 }
 

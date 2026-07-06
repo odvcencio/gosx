@@ -258,6 +258,7 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"patch.js":                     filepath.Join(buildDir, "patch.js"),
 		"hls.min.js":                   filepath.Join(buildDir, "hls.min.js"),
 		"stripe-bridge.js":             filepath.Join(buildDir, "stripe-bridge.js"),
+		"relay.js":                     filepath.Join(buildDir, "relay.js"),
 	}
 	if direct, ok := candidates[name]; ok && isFile(direct) {
 		return direct, true
@@ -281,6 +282,12 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		}
 	}
 	if name == "stripe-bridge.js" {
+		clientPath := filepath.Join(root, "client", "js", name)
+		if isFile(clientPath) {
+			return clientPath, true
+		}
+	}
+	if name == "relay.js" {
 		clientPath := filepath.Join(root, "client", "js", name)
 		if isFile(clientPath) {
 			return clientPath, true
@@ -344,6 +351,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.VideoHLS.File)
 	case "stripe-bridge.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.StripeBridge.File)
+	case "relay.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Relay.File)
 	}
 
 	if strings.HasPrefix(name, "islands/") {

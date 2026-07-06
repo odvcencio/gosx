@@ -208,6 +208,9 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "stripe-bridge.js"), filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js")); err != nil {
 		return fmt.Errorf("stage stripe-bridge.js: %w", err)
 	}
+	if err := copyFile(filepath.Join(buildDir, "relay.js"), filepath.Join(gosxRoot, "client", "js", "relay.js")); err != nil {
+		return fmt.Errorf("stage relay.js: %w", err)
+	}
 
 	if err := compileDevIslands(dir, islandDir); err != nil {
 		return err

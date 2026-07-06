@@ -1258,6 +1258,77 @@ func TestAppServesCompatRuntimeHLSAssetFromSourceBuild(t *testing.T) {
 	}
 }
 
+func TestAppServesCompatRelayJSFromSourceBuild(t *testing.T) {
+	root := t.TempDir()
+	clientJSDir := filepath.Join(root, "client", "js")
+	if err := os.MkdirAll(clientJSDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clientJSDir, "relay.js"), []byte("window.__gosxRelay = true;"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/relay.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "__gosxRelay") {
+		t.Fatalf("unexpected relay.js body %q", body)
+	}
+}
+
+func TestAppServesCompatRelayJSFromBuildManifest(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "relay.9999.js"), []byte("window.__gosxRelay = 'hashed';"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			Relay: buildmanifest.HashedAsset{
+				File: "relay.9999.js",
+				Hash: "9999",
+				Size: 30,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/gosx/relay.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("expected built compat asset to be immutable, got %q", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "hashed") {
+		t.Fatalf("unexpected built relay.js body %q", body)
+	}
+}
+
 func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	root := t.TempDir()
 	assetsDir := filepath.Join(root, "assets", "runtime")
