@@ -33,6 +33,7 @@ type RuntimeAssets struct {
 	Patch                            HashedAsset `json:"patch"`
 	VideoHLS                         HashedAsset `json:"videoHLS,omitempty"`
 	StripeBridge                     HashedAsset `json:"stripeBridge,omitempty"`
+	Relay                            HashedAsset `json:"relay,omitempty"`
 }
 
 type IslandAsset struct {
@@ -79,6 +80,7 @@ type RuntimePaths struct {
 	Patch                            string
 	VideoHLS                         string
 	StripeBridge                     string
+	Relay                            string
 }
 
 // Load reads a build manifest from disk.
@@ -114,6 +116,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		Patch:                            AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
 		VideoHLS:                         AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
 		StripeBridge:                     AssetURL(assetBaseURL, "runtime", m.Runtime.StripeBridge.File),
+		Relay:                            AssetURL(assetBaseURL, "runtime", m.Runtime.Relay.File),
 	}
 }
 
