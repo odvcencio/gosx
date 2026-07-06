@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.29.4 (2026-07-06)
+
+Fix: Scene3D client bootstrap dropped instanced-mesh cull fields —
+`cullKernelWGSL`, `cullKernelEntry`, `cullRadius`, `cullBackend` — in
+`normalizeSceneInstancedMeshEntry()` (`client/js/bootstrap-src/10-runtime-scene-core.js`).
+The function rebuilt each `instancedMeshes` scene entry into a whitelisted
+object and never carried these four fields forward, even though the Go scene
+types (`scene.InstancedMeshIR`) and the manifest JSON carry them end-to-end.
+Consequence: `updateInstancedCullSystems` in `16a-scene-webgpu.js` always saw
+`mesh.cullKernelWGSL === undefined` and never created a GPU cull system, so
+WebGPU GPU-cull systems were never created and `cullSurvivors` telemetry
+stayed `{}` forever — even after the v0.29.x shaderLib-dedup inflation
+(`cullKernelWGSLRef` → `cullKernelWGSL`) ran. The normalizer now carries all
+four fields through, mirroring the existing `shaderSource`/`shaderSourceFiles`
+whitelist pattern. (#33)
+
 ## v0.29.3 (2026-07-06)
 
 Fix: `/gosx/relay.js` was emitted by `island.EnablePreviewBootstrap` but never
