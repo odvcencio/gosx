@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.29.3 (2026-07-06)
+
+Fix: `/gosx/relay.js` was emitted by `island.EnablePreviewBootstrap` but never
+staged, hashed, or served by the asset pipeline, so any app that turned on
+preview bootstrap shipped a 404 for the relay script. `relay.js` is now wired
+through the same path as every other runtime asset: the build manifest embeds
+it, `gosx build`/`gosx dev`/`gosx export` stage and hash it alongside the rest
+of the runtime bundle, and the server's runtime-asset resolvers serve it (with
+regression tests covering manifest, build, and server resolution). (#31)
+
 ## v0.29.2 (2026-07-05)
 
 Maintenance release: repo health, version truth, and changelog backfill.
