@@ -23262,6 +23262,65 @@ test("shaderLib hydrate: missing cullKernelWGSL lib entry leaves field absent, n
   assert.equal(bad.cullKernelWGSLRef, undefined, "ref key must be deleted even when lib entry missing");
 });
 
+// Regression test: normalizeSceneInstancedMeshEntry (10-runtime-scene-core.js)
+// used to omit cullKernelWGSL/cullKernelEntry/cullRadius/cullBackend when it
+// rebuilt each instancedMeshes entry into its whitelisted `normalized` object.
+// Consequence: updateInstancedCullSystems in 16a-scene-webgpu.js always saw
+// mesh.cullKernelWGSL === undefined and never created a GPU cull system, so
+// cullSurvivors telemetry stayed {} forever even though the Go scene types and
+// manifest JSON carried the fields end-to-end (and even after the shaderLib
+// dedup inflation above turns cullKernelWGSLRef into cullKernelWGSL). This
+// exercises the actual normalizer (via the public createSceneState entry
+// point, same as the WebGPU/WebGL render paths use) rather than just the raw
+// pre-normalization manifest props.
+test("normalizeSceneInstancedMeshEntry preserves cullKernelWGSL/cullKernelEntry/cullRadius/cullBackend and still drops unknown fields", async () => {
+  const kernel = "@compute @workgroup_size(64) fn cull() {}";
+  const transforms = new Array(16).fill(0);
+  transforms[0] = transforms[5] = transforms[10] = transforms[15] = 1; // identity
+
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-instanced-cull-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: makeShaderLibManifestEntryForInstancedMeshes(
+      {},
+      [
+        {
+          id: "meteors",
+          count: 3,
+          kind: "box",
+          transforms,
+          cullKernelWGSL: kernel,
+          cullKernelEntry: "cullMain",
+          cullRadius: 4.5,
+          cullBackend: "WebGPU",
+          thisFieldDoesNotExist: "should be dropped by the whitelist",
+        },
+      ],
+    ),
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1, "island must be hydrated");
+  const props = JSON.parse(env.hydrateCalls[0][2]);
+
+  const state = env.context.__gosx_scene3d_api.createSceneState(props, null);
+  assert.equal(state.instancedMeshes.length, 1);
+  const mesh = state.instancedMeshes[0];
+
+  assert.equal(mesh.cullKernelWGSL, kernel, "cullKernelWGSL must survive normalization");
+  assert.equal(mesh.cullKernelEntry, "cullMain", "cullKernelEntry must survive normalization");
+  assert.equal(mesh.cullRadius, 4.5, "cullRadius must survive normalization");
+  assert.equal(mesh.cullBackend, "webgpu", "cullBackend must survive normalization (lowercased, like shaderBackend)");
+  assert.equal(mesh.thisFieldDoesNotExist, undefined, "unknown fields must still be dropped by the whitelist");
+});
+
 // -------------------------------------------------------------------------
 // Task 5: gpu-cull capability (from Go capability Matrix + JSON manifests)
 // -------------------------------------------------------------------------
