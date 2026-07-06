@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.29.2 (2026-07-05)
+
+Maintenance release: repo health, version truth, and changelog backfill.
+
+- Fixed native `go build ./...` failing on `client/wasm`: a build-tagged
+  `main_stub.go` (`!js || !wasm`) gives the WASM-only main package a native
+  no-op entrypoint while preserving its native unit tests.
+- Fixed `internal/version` constants, which had been stuck at v0.25.3 across
+  four releases; `gosx release check` now validates against the real tag.
+- Updated README and MODULES.md to the `m31labs.dev/gosx` module path and the
+  current release; backfilled CHANGELOG headings for every release from
+  v0.25.4 through v0.29.0 (v0.29.0 marked retracted).
+- Ignored `go.work`/`go.work.sum` so local workspace files stay out of the
+  module.
+
 ## v0.29.1 (2026-07-02)
 
 Video player primitives: audio tracks, seekable/live edge, quality levels,
