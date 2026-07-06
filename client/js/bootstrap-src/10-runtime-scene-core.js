@@ -2757,6 +2757,15 @@
       shaderLayout: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderLayout")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
       shaderSource: typeof sceneObjectMaterialValue(item, "shaderSource") === "string" ? sceneObjectMaterialValue(item, "shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
       shaderSourceFiles: sceneIsPlainObject(sceneObjectMaterialValue(item, "shaderSourceFiles")) ? sceneCloneData(sceneObjectMaterialValue(item, "shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
+      // Elio GPU cull kernel (WebGPU compute cull pass). Carried end-to-end
+      // from scene/scene_ir.go InstancedMeshIR.Cull* fields through the
+      // manifest; without these, updateInstancedCullSystems in
+      // 16a-scene-webgpu.js never sees cullKernelWGSL and no GPU cull system
+      // is created (cullSurvivors telemetry stays empty).
+      cullKernelWGSL: typeof sceneObjectMaterialValue(item, "cullKernelWGSL") === "string" ? sceneObjectMaterialValue(item, "cullKernelWGSL").trim() : (typeof current.cullKernelWGSL === "string" ? current.cullKernelWGSL : ""),
+      cullKernelEntry: typeof sceneObjectMaterialValue(item, "cullKernelEntry") === "string" ? sceneObjectMaterialValue(item, "cullKernelEntry").trim() : (typeof current.cullKernelEntry === "string" ? current.cullKernelEntry : ""),
+      cullRadius: sceneNumber(sceneObjectMaterialValue(item, "cullRadius"), sceneNumber(current.cullRadius, 0)),
+      cullBackend: typeof sceneObjectMaterialValue(item, "cullBackend") === "string" ? sceneObjectMaterialValue(item, "cullBackend").trim().toLowerCase() : (typeof current.cullBackend === "string" ? current.cullBackend : ""),
       transforms,
       colors,
       attributes,
