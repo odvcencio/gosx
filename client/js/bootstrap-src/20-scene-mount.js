@@ -7983,6 +7983,10 @@
     });
     let pendingMotionData = null;
     let pendingMotionHandle = null;
+    // De-dupes the "audio" hub event below by AudioCue.Seq (scene/audio.go),
+    // mirroring the fight demo's own lastFeedbackSeq check in 30-tail.js's
+    // onHubMessage — a cue redelivered on an unchanged seq is a no-op here.
+    let lastSceneAudioSeq = 0;
 
     function applySceneHubEvent(eventName, data, reason) {
       const cameraChanged = sceneApplyCameraLiveEvent(sceneState, data);
@@ -7993,6 +7997,58 @@
       const liveChanged = sceneApplyLiveEvent(sceneState, eventName, data, motion.reducedMotion, sceneNowMilliseconds());
       if (cameraChanged || modelChanged || liveChanged) {
         scheduleRender(reason || "hub-event");
+      }
+    }
+
+    // applySceneAudioCue is the dedicated "audio" hub-event delivery path
+    // documented on scene.AudioCue (scene/audio.go): it lets any
+    // server-driven scene fire a sample-clip or synth cue independent of
+    // the fight-specific hub input controller's own hard-coded tick
+    // parsing (createHubInputController.onHubMessage, 30-tail.js), which
+    // remains untouched. window.__gosx.audio and window.__gosx.arcadeAudio
+    // are looked up dynamically (not imported) because this file is also
+    // compiled standalone into bootstrap-feature-scene3d.js, which does not
+    // itself carry either engine's source — both are expected to already
+    // be installed on window by whatever base runtime bundle loaded first,
+    // same as the pre-existing props.audio manifest wiring below.
+    function applySceneAudioCue(data) {
+      const cue = data && typeof data === "object" ? data : null;
+      if (!cue) {
+        return;
+      }
+      const seq = Math.floor(sceneNumber(cue.seq, 0));
+      if (seq > 0) {
+        if (seq === lastSceneAudioSeq) {
+          return;
+        }
+        lastSceneAudioSeq = seq;
+      }
+      const clip = typeof cue.clip === "string" ? cue.clip.trim() : "";
+      const gosxAudio = window.__gosx && window.__gosx.audio;
+      if (clip && gosxAudio && typeof gosxAudio.play === "function") {
+        gosxAudio.play(clip, {
+          volume: cue.volume,
+          rate: cue.rate,
+          loop: Boolean(cue.loop),
+          bus: cue.bus,
+          pan: cue.pan,
+          position: cue.position,
+          handle: cue.handle,
+        });
+        return;
+      }
+      const arcadeAudio = window.__gosx && window.__gosx.arcadeAudio;
+      if (!arcadeAudio) {
+        return;
+      }
+      const synthOptions = { intensity: cue.intensity, pan: cue.pan, depth: cue.depth, rate: cue.rate };
+      if (cue.patch && typeof cue.patch === "object" && typeof arcadeAudio.playPatch === "function") {
+        arcadeAudio.playPatch(cue.patch, synthOptions);
+        return;
+      }
+      const name = typeof cue.cue === "string" ? cue.cue.trim() : "";
+      if (name && name !== "none" && typeof arcadeAudio.play === "function") {
+        arcadeAudio.play(name, synthOptions);
       }
     }
 
@@ -8020,6 +8076,10 @@
         if (pendingMotionHandle == null) {
           pendingMotionHandle = engineFrame(flushPendingMotionEvent);
         }
+        return;
+      }
+      if (detail.event === "audio") {
+        applySceneAudioCue(detail.data);
         return;
       }
       applySceneHubEvent(detail.event, detail.data, "hub-event");

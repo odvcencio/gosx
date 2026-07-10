@@ -2388,6 +2388,64 @@
     "}",
   ].join("\n");
 
+  // FXAA 3.11 quality-preset edge anti-aliasing — the chain-end pass. Uses
+  // the same 2-binding (texture + sampler) layout as WGSL_POST_BLIT_FRAGMENT
+  // (getPostBlitLayout) since FXAA has no tunable uniforms. Algorithm
+  // mirrors the native render/bundle FXAA pass (render/bundle/postfx.go,
+  // fxaa311WGSLTemplate) for cross-backend parity: green-channel luma edge
+  // detection, local contrast search, 2-tap + 2-tap subpixel blend.
+  var WGSL_POST_FXAA_FRAGMENT = [
+    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
+    "@group(0) @binding(1) var inputSamp: sampler;",
+    "",
+    "fn greenLuma(c: vec3f) -> f32 {",
+    "    return c.g;",
+    "}",
+    "",
+    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
+    "    let texDim = vec2f(textureDimensions(inputTex));",
+    "    let texelSize = 1.0 / texDim;",
+    "",
+    "    let rgbNW = textureSample(inputTex, inputSamp, uv + vec2f(-1.0, -1.0) * texelSize).rgb;",
+    "    let rgbNE = textureSample(inputTex, inputSamp, uv + vec2f( 1.0, -1.0) * texelSize).rgb;",
+    "    let rgbSW = textureSample(inputTex, inputSamp, uv + vec2f(-1.0,  1.0) * texelSize).rgb;",
+    "    let rgbSE = textureSample(inputTex, inputSamp, uv + vec2f( 1.0,  1.0) * texelSize).rgb;",
+    "    let rgbM  = textureSample(inputTex, inputSamp, uv).rgb;",
+    "",
+    "    let lumaNW = greenLuma(rgbNW);",
+    "    let lumaNE = greenLuma(rgbNE);",
+    "    let lumaSW = greenLuma(rgbSW);",
+    "    let lumaSE = greenLuma(rgbSE);",
+    "    let lumaM  = greenLuma(rgbM);",
+    "",
+    "    let lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));",
+    "    let lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));",
+    "",
+    "    var dir = vec2f(",
+    "        -((lumaNW + lumaNE) - (lumaSW + lumaSE)),",
+    "         ((lumaNW + lumaSW) - (lumaNE + lumaSE)),",
+    "    );",
+    "",
+    "    let reduceMul = 1.0 / 8.0;",
+    "    let reduceMin = 1.0 / 128.0;",
+    "    let spanMax = 8.0;",
+    "    let dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * reduceMul), reduceMin);",
+    "    let rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);",
+    "    dir = clamp(dir * rcpDirMin, vec2f(-spanMax), vec2f(spanMax)) * texelSize;",
+    "",
+    "    let rgbA = 0.5 * (",
+    "        textureSample(inputTex, inputSamp, uv + dir * (1.0 / 3.0 - 0.5)).rgb +",
+    "        textureSample(inputTex, inputSamp, uv + dir * (2.0 / 3.0 - 0.5)).rgb);",
+    "    let rgbB = rgbA * 0.5 + 0.25 * (",
+    "        textureSample(inputTex, inputSamp, uv + dir * -0.5).rgb +",
+    "        textureSample(inputTex, inputSamp, uv + dir *  0.5).rgb);",
+    "",
+    "    let lumaB = greenLuma(rgbB);",
+    "    let color = select(rgbB, rgbA, lumaB < lumaMin || lumaB > lumaMax);",
+    "    return vec4f(color, 1.0);",
+    "}",
+  ].join("\n");
+
   var WGSL_POST_SSAO_FRAGMENT = [
     "struct SSAOParams {",
     "    radius: f32,",
@@ -3687,6 +3745,21 @@
               });
               fullscreenPass(encoder, dofPipeline, dofBG, outputView);
               stats.postDOFPasses += 1;
+              currentTexView = outputView;
+              break;
+            }
+            case SCENE_POST_FXAA: {
+              // Chain-end edge AA. Reuses the blit bind group layout
+              // (texture + sampler, no uniforms) since FXAA has no params.
+              var fxaaPipeline = getPipeline("fxaa", WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout());
+              var fxaaBG = device.createBindGroup({
+                layout: getPostBlitLayout(),
+                entries: [
+                  { binding: 0, resource: currentTexView },
+                  { binding: 1, resource: linearSampler },
+                ],
+              });
+              fullscreenPass(encoder, fxaaPipeline, fxaaBG, outputView);
               currentTexView = outputView;
               break;
             }

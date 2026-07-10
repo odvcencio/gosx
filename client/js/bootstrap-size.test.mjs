@@ -171,7 +171,25 @@ const budgets = [
   // video-player-primitives with the scene3d gizmo/water/regions line —
   // both grew the bundle independently. Measured: 1_182_312 / 313_299 /
   // 252_641 + sub-1% rounding headroom.
-  { file: "bootstrap.js", raw: 1_184_000, gzip: 314_000, brotli: 253_000 },
+  //
+  // Bumped raw 1_184_000 -> 1_187_000, gzip 314_000 -> 315_000, brotli
+  // 253_000 -> 254_000: E6 typed audio authoring surface (scene/audio.go's
+  // Audio/AudioCue/SynthPatch) — arcadeAudio gains an ADSR envelope
+  // (arcadeEnvelopeADSR) and a generic tone/sweep/noise patch player
+  // (arcadePlayPatch), both exposed via window.__gosx.arcadeAudio, plus the
+  // dedicated "audio" hub-event cue path in 20-scene-mount.js. Measured:
+  // 1_185_499 / 314_215 / 253_293 + sub-1% rounding headroom.
+  //
+  // Bumped raw 1_187_000 -> 1_196_000, gzip 315_000 -> 317_000, brotli
+  // 254_000 -> 256_000: WebGL GPU-skinned Selena materials
+  // (scenePBRSelenaSkinAugmentVertex in 16-scene-webgl.js — renames compiled
+  // position/normal attributes, injects the joint-blend skin matrix + model
+  // matrix so custom materials draw skinned rigs) plus the gameplay post-FX
+  // preset fast path and FXAA pass across 16-scene-webgl.js /
+  // 16a-scene-webgpu.js / 30-tail.js, landed together with the E6 audio line
+  // above. Measured: 1_192_618 / 315_900 / 254_712 + sub-1% rounding
+  // headroom.
+  { file: "bootstrap.js", raw: 1_196_000, gzip: 317_000, brotli: 256_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -276,7 +294,17 @@ const budgets = [
   // Bumped raw 640_000 -> 665_000, gzip 175_000 -> 182_000, brotli 144_000 ->
   // 149_000: water-demo Selena convergence (see bootstrap.js note). Measured:
   // 660_045 / 180_076 / 147_794 + sub-1% rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 665_000, gzip: 182_000, brotli: 149_000 },
+  //
+  // Bumped raw 665_000 -> 667_000, brotli 149_000 -> 150_000: E6 typed audio
+  // authoring surface's dedicated "audio" hub-event cue path in
+  // 20-scene-mount.js (see bootstrap.js note). gzip headroom unchanged.
+  // Measured: 665_662 / 181_802 / 149_179 + sub-1% rounding headroom.
+  //
+  // Bumped raw 667_000 -> 673_000, gzip 182_000 -> 184_000, brotli 150_000 ->
+  // 151_000: WebGL GPU-skinned Selena materials + gameplay post preset/FXAA
+  // (see bootstrap.js note). Measured: 670_458 / 183_192 / 150_191 + sub-1%
+  // rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 673_000, gzip: 184_000, brotli: 151_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

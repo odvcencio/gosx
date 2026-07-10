@@ -15,6 +15,7 @@ func TestPostEffectInterfaceImplementations(t *testing.T) {
 	var _ PostEffect = SSAO{}
 	var _ PostEffect = DOF{}
 	var _ PostEffect = CustomPost{}
+	var _ PostEffect = FXAA{}
 }
 
 func TestPostFXZeroValueIsEmpty(t *testing.T) {
@@ -118,6 +119,89 @@ func TestDOFIRLegacyProps(t *testing.T) {
 	}
 	if got["maxBlur"] != 6.0 {
 		t.Fatalf("expected maxBlur 6, got %#v", got["maxBlur"])
+	}
+}
+
+func TestFXAAIRLegacyProps(t *testing.T) {
+	ir := FXAAIR{}
+	got := ir.legacyProps()
+	if got["kind"] != "fxaa" {
+		t.Errorf(`kind = %v, want "fxaa"`, got["kind"])
+	}
+	if len(got) != 1 {
+		t.Errorf("FXAAIR legacyProps should carry only kind, got %v", got)
+	}
+}
+
+func TestFXAAIRMarshalJSON(t *testing.T) {
+	b, err := json.Marshal(FXAAIR{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["kind"] != "fxaa" {
+		t.Errorf("kind = %v, want fxaa", got["kind"])
+	}
+}
+
+func TestFXAAPassesThroughSceneIRAtChainEnd(t *testing.T) {
+	pfx := PostFX{Effects: []PostEffect{
+		Bloom{Threshold: 0.7},
+		Tonemap{Mode: TonemapACES},
+		FXAA{},
+	}}
+	irs := pfx.sceneIR()
+	if len(irs) != 3 {
+		t.Fatalf("got %d IRs, want 3", len(irs))
+	}
+	if _, ok := irs[0].(BloomIR); !ok {
+		t.Errorf("irs[0] = %T, want BloomIR", irs[0])
+	}
+	if _, ok := irs[1].(TonemapIR); !ok {
+		t.Errorf("irs[1] = %T, want TonemapIR", irs[1])
+	}
+	if _, ok := irs[2].(FXAAIR); !ok {
+		t.Errorf("irs[2] = %T, want FXAAIR (chain end)", irs[2])
+	}
+}
+
+func TestGameplayPostFXShape(t *testing.T) {
+	pfx := GameplayPostFX()
+	if pfx.MaxPixels != PostFXMaxPixels720p {
+		t.Errorf("MaxPixels = %d, want PostFXMaxPixels720p (cheap gameplay budget)", pfx.MaxPixels)
+	}
+	if len(pfx.Effects) != 3 {
+		t.Fatalf("got %d effects, want 3 (bloom, tonemap, fxaa)", len(pfx.Effects))
+	}
+	bloom, ok := pfx.Effects[0].(Bloom)
+	if !ok {
+		t.Fatalf("Effects[0] = %T, want Bloom", pfx.Effects[0])
+	}
+	if bloom.Scale != 0.5 {
+		t.Errorf("Bloom.Scale = %v, want 0.5 (half-res bloom)", bloom.Scale)
+	}
+	if bloom.Threshold < 0.85 {
+		t.Errorf("Bloom.Threshold = %v, want a conservative (>=0.85) threshold so only emissives bloom", bloom.Threshold)
+	}
+	tonemap, ok := pfx.Effects[1].(Tonemap)
+	if !ok {
+		t.Fatalf("Effects[1] = %T, want Tonemap", pfx.Effects[1])
+	}
+	if tonemap.Mode != TonemapACES {
+		t.Errorf("Tonemap.Mode = %v, want TonemapACES", tonemap.Mode)
+	}
+	if _, ok := pfx.Effects[2].(FXAA); !ok {
+		t.Errorf("Effects[2] = %T, want FXAA (must be chain end)", pfx.Effects[2])
+	}
+	// No SSAO/DOF/ColorGrade/Vignette — those are cinematic-only per the doc.
+	for _, e := range pfx.Effects {
+		switch e.(type) {
+		case SSAO, DOF, ColorGrade, Vignette:
+			t.Errorf("GameplayPostFX should not include %T (cinematic-only effect)", e)
+		}
 	}
 }
 

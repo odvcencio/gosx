@@ -325,6 +325,7 @@ class FakeWebGLContext {
     if (name === "a_instanceMatrix") return 4;
     if (name === "a_joints") return 7;
     if (name === "a_weights") return 8;
+    if (name === "a_normal") return 5;
     if (name === "a_instanceColor") return 9;
     if (name === "a_size") return 10;
     return -1;
@@ -458,6 +459,10 @@ class FakeWebGLContext {
 
   uniformMatrix4fv(location, transpose, value) {
     this.ops.push(["uniformMatrix4fv", location && location.name, Boolean(transpose), value && value.length]);
+  }
+
+  uniformMatrix3fv(location, transpose, value) {
+    this.ops.push(["uniformMatrix3fv", location && location.name, Boolean(transpose), value && value.length]);
   }
 
   enable(capability) {
@@ -6160,6 +6165,232 @@ test("bootstrap uploads skinned GLB joint matrices through WebGL PBR", async () 
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+// Fixture: byte-identical to the GLSL m31labs.dev/selena emits for a default
+// (no vertex()) mesh material with a `worldNormal`-reading surface() — the
+// same shape as the game's FighterLit material (fight/materials/fighter.sel).
+// mvp is model-free (view*proj only) and normalMatrix is hardcoded identity
+// by the WebGL renderer's selenaUniformValue; both conventions assume
+// `position`/`normal` arrive already in world space.
+const SELENA_SKINNABLE_VERTEX_GLSL_FIXTURE = [
+  "attribute vec3 position;",
+  "attribute vec3 normal;",
+  "uniform mat4 mvp;",
+  "uniform mat3 normalMatrix;",
+  "uniform vec3 baseColor;",
+  "uniform vec3 rimColor;",
+  "uniform float rimGain;",
+  "uniform float gain;",
+  "uniform float light_ambient;",
+  "uniform vec3 light_dir;",
+  "varying vec3 vWorldNormal;",
+  "",
+  "void main() {",
+  "  vWorldNormal = normalize((normalMatrix * normal));",
+  "  gl_Position = (mvp * vec4(position, 1.0));",
+  "}",
+].join("\n");
+
+const SELENA_SKINNABLE_FRAGMENT_GLSL_FIXTURE = [
+  "precision mediump float;",
+  "uniform mat4 mvp;",
+  "uniform mat3 normalMatrix;",
+  "uniform vec3 baseColor;",
+  "uniform vec3 rimColor;",
+  "uniform float rimGain;",
+  "uniform float gain;",
+  "uniform float light_ambient;",
+  "uniform vec3 light_dir;",
+  "varying vec3 vWorldNormal;",
+  "",
+  "void main() {",
+  "  vec3 n = normalize(vWorldNormal);",
+  "  float ndl = max(dot(n, light_dir), 0.0);",
+  "  float lit = (light_ambient + (ndl * gain));",
+  "  float rim = pow((1.0 - ndl), 3.0);",
+  "  gl_FragColor = vec4(((baseColor * lit) + (rimColor * (rim * rimGain))), 1.0);",
+  "}",
+].join("\n");
+
+const SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE = {
+  schemaVersion: "selena.descriptor.v1",
+  languageVersion: "selena.lang.v1",
+  material: "FighterLit",
+  kind: "mesh",
+  entryPoints: { vertex: "vertexMain", fragment: "fragmentMain" },
+  attributes: [
+    { location: 0, name: "position", type: "vec3" },
+    { location: 1, name: "normal", type: "vec3" },
+  ],
+  textures: [],
+  uniformBlock: {
+    size: 176,
+    fields: [
+      { name: "mvp", type: "mat4", offset: 0, size: 64 },
+      { name: "normalMatrix", type: "mat3", offset: 64, size: 48 },
+      { name: "baseColor", type: "vec3", offset: 112, size: 12 },
+      { name: "rimColor", type: "vec3", offset: 128, size: 12 },
+      { name: "rimGain", type: "float", offset: 140, size: 4 },
+      { name: "gain", type: "float", offset: 144, size: 4 },
+      { name: "light_ambient", type: "float", offset: 148, size: 4 },
+      { name: "light_dir", type: "vec3", offset: 160, size: 12 },
+    ],
+    defaults: [
+      { name: "baseColor", type: "vec3", values: [0.62, 0.66, 0.74] },
+      { name: "rimColor", type: "vec3", values: [0.4, 0.85, 1] },
+      { name: "rimGain", type: "float", values: [1.1] },
+      { name: "gain", type: "float", values: [1] },
+    ],
+  },
+  wgsl: { group: 0, binding: 0 },
+  metal: { buffer: 0 },
+};
+
+test("bootstrap renders a skinned GLB through the Selena material (default flip keystone)", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-skinned-selena-webgl-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/rig.glb": {
+        bytes: buildSkinnedGLBBytes(),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-skinned-selena-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-skinned-selena-webgl-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [
+              {
+                id: "rig",
+                src: "/models/rig.glb",
+                animation: "bend",
+                loop: true,
+                shaderBackend: "selena",
+                customVertex: SELENA_SKINNABLE_VERTEX_GLSL_FIXTURE,
+                customFragment: SELENA_SKINNABLE_FRAGMENT_GLSL_FIXTURE,
+                shaderLayout: SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+
+  // "rimGain" is only ever looked up by sceneSelenaUniformLocations, so its
+  // presence proves the SKINNED Selena program actually compiled and bound —
+  // not merely that the object fell back to the standard skinned PBR program
+  // (which shares the a_joints/a_weights/u_modelMatrix/u_hasSkin names but
+  // never queries Selena's own uniform block fields).
+  assert.ok(gl.ops.some((entry) => entry[0] === "getUniformLocation" && entry[1] === "rimGain"),
+    "expected the skinned Selena program's rimGain uniform to be resolved");
+
+  // The augmented vertex shader renames position/normal to a_position/a_normal
+  // and adds the joint-skin attributes/uniforms alongside them.
+  assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_position"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_normal"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_joints"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "getAttribLocation" && entry[1] === "a_weights"));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_hasSkin" && entry[2] === 1));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_modelMatrix" && entry[3] === 16));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniformMatrix4fv" && entry[1] === "u_jointMatrices[0]" && entry[3] === 32));
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays"));
+
+  // No fallback warning: the material compiled+augmented cleanly, so the
+  // object drew with Selena rather than silently reverting to built-in PBR.
+  assert.equal(env.consoleLogs.warn.length, 0, "expected no fallback warnings, got: " + JSON.stringify(env.consoleLogs.warn));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-skin GPU code, and validates as GLSL", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const match = webgl.match(/function scenePBRSelenaSkinAugmentVertex\(source\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(match, "scenePBRSelenaSkinAugmentVertex must be extractable from 16-scene-webgl.js source");
+
+  const fnSrc = "function scenePBRSelenaSkinAugmentVertex(source) {" + match[1] + "\n  }";
+  const augment = new Function("return (" + fnSrc + ")")();
+
+  // Non-skinnable shapes (no `position` attribute in the expected form) must
+  // return null so the caller safely falls back to the standard PBR path.
+  assert.equal(augment(""), null);
+  assert.equal(augment("attribute vec2 pointUV;\nvoid main() {}"), null);
+
+  const result = augment(SELENA_SKINNABLE_VERTEX_GLSL_FIXTURE);
+  assert.ok(result && typeof result.source === "string");
+  assert.equal(result.hasNormal, true);
+
+  const out = result.source;
+  // Original attributes renamed to the raw (bind-pose) slots.
+  assert.match(out, /attribute vec3 a_position;/);
+  assert.match(out, /attribute vec3 a_normal;/);
+  assert.doesNotMatch(out, /attribute vec3 position;/);
+  assert.doesNotMatch(out, /attribute vec3 normal;/);
+  // New skin plumbing declared.
+  assert.match(out, /attribute vec4 a_joints;/);
+  assert.match(out, /attribute vec4 a_weights;/);
+  assert.match(out, /uniform mat4 u_modelMatrix;/);
+  assert.match(out, /uniform mat4 u_jointMatrices\[64\];/);
+  assert.match(out, /uniform bool u_hasSkin;/);
+  // Injected preamble computes WORLD-SPACE position/normal locals before the
+  // untouched original body (which still does `mvp * vec4(position, 1.0)`
+  // and `normalMatrix * normal` — both now resolve to the injected locals).
+  assert.match(out, /vec3 position = selenaSkinWorldPos4\.xyz;/);
+  assert.match(out, /vec3 normal = normalize\(mat3\(u_modelMatrix\) \* \(mat3\(selenaSkinMatrix\) \* a_normal\)\);/);
+  assert.match(out, /gl_Position = \(mvp \* vec4\(position, 1\.0\)\);/);
+  assert.match(out, /vWorldNormal = normalize\(\(normalMatrix \* normal\)\);/);
+
+  // Real syntax/semantic validation of the augmented shader with glslang,
+  // when available — the same oracle-grade check cmd/fightdiag uses (naga)
+  // for the WGSL side. Skips gracefully in environments without the binary
+  // rather than failing the suite on an unrelated tooling gap.
+  const { spawnSync } = require("node:child_process");
+  const which = spawnSync("which", ["glslangValidator"]);
+  if (which.status === 0) {
+    const os = require("node:os");
+    const tmpFile = path.join(os.tmpdir(), "selena-skinned-fighter-" + process.pid + ".vert");
+    fs.writeFileSync(tmpFile, out);
+    try {
+      const validated = spawnSync("glslangValidator", ["-S", "vert", tmpFile], { encoding: "utf8" });
+      assert.equal(validated.status, 0,
+        "augmented skinned Selena vertex shader failed glslangValidator: " + validated.stdout + validated.stderr);
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  }
+
+  // A position-only material (no normal attribute) must still augment
+  // (position skinning is the mandatory half); the normal block is skipped.
+  const positionOnly = [
+    "attribute vec3 position;",
+    "uniform mat4 mvp;",
+    "void main() {",
+    "  gl_Position = mvp * vec4(position, 1.0);",
+    "}",
+  ].join("\n");
+  const positionOnlyResult = augment(positionOnly);
+  assert.ok(positionOnlyResult);
+  assert.equal(positionOnlyResult.hasNormal, false);
+  assert.doesNotMatch(positionOnlyResult.source, /vec3 normal = /);
+});
+
 test("bootstrap allocates Scene3D texture units without CSM and IBL collisions", () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -9328,6 +9559,7 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var SCENE_POST_COLOR_GRADE = sceneApi\.SCENE_POST_COLOR_GRADE/);
   assert.match(prefix, /var SCENE_POST_SSAO = sceneApi\.SCENE_POST_SSAO/);
   assert.match(prefix, /var SCENE_POST_DOF = sceneApi\.SCENE_POST_DOF/);
+  assert.match(prefix, /var SCENE_POST_FXAA = sceneApi\.SCENE_POST_FXAA/);
   assert.match(prefix, /var generateInstancedGeometry = sceneApi\.generateInstancedGeometry/);
   assert.match(prefix, /var normalizeInstancedGeometryKind = sceneApi\.normalizeInstancedGeometryKind/);
   assert.match(prefix, /var buildSceneWorldDrawPlan = sceneApi\.buildSceneWorldDrawPlan/);
@@ -9349,6 +9581,7 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(core, /\n    SCENE_POST_COLOR_GRADE: "colorGrade",\n/);
   assert.match(core, /\n    SCENE_POST_SSAO: "ssao",\n/);
   assert.match(core, /\n    SCENE_POST_DOF: "dof",\n/);
+  assert.match(core, /\n    SCENE_POST_FXAA: "fxaa",\n/);
   assert.match(core, /generateInstancedGeometry: typeof generateInstancedGeometry === "function"/);
   assert.match(core, /normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function"/);
   assert.match(math, /sceneMat4MultiplyInto,\n/);
@@ -9394,6 +9627,27 @@ test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
   assert.match(webgpu, /data-gosx-scene3d-webgpu-post-dof-passes/);
 });
 
+test("Scene3D FXAA is wired as the chain-end postfx pass in WebGL and WebGPU", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // WebGL: GLSL fullscreen pass, dedicated program, wired into the effect switch.
+  assert.match(webgl, /var SCENE_POST_FXAA = "fxaa";/);
+  assert.match(webgl, /const SCENE_POST_FXAA_SOURCE = \[/);
+  assert.match(webgl, /float greenLuma\(vec3 c\) \{ return c\.g; \}/);
+  assert.match(webgl, /function applyFXAA\(inputTex, effect, targetFBO, w, h\)/);
+  assert.match(webgl, /getProgram\("fxaa", SCENE_POST_FXAA_SOURCE\)/);
+  assert.match(webgl, /case SCENE_POST_FXAA:/);
+  assert.match(webgl, /currentTexture = applyFXAA\(currentTexture, effect, targetFBO, passW, passH\);/);
+
+  // WebGPU: WGSL fullscreen pass reusing the blit (texture+sampler) bind
+  // group layout since FXAA has no tunable uniforms.
+  assert.match(webgpu, /var WGSL_POST_FXAA_FRAGMENT = \[/);
+  assert.match(webgpu, /fn greenLuma\(c: vec3f\) -> f32 \{/);
+  assert.match(webgpu, /case SCENE_POST_FXAA: \{/);
+  assert.match(webgpu, /getPipeline\("fxaa", WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout\(\)\)/);
+});
+
 test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
@@ -9430,8 +9684,8 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
-  assert.match(webgl, /function createSceneSelenaProgram\(gl, material\)/);
-  assert.match(webgl, /ensureSelenaProgram\(mat\)/);
+  assert.match(webgl, /function createSceneSelenaProgram\(gl, material, skinned\)/);
+  assert.match(webgl, /ensureSelenaProgram\(mat, isSkinned\)/);
   assert.match(webgl, /uploadSelenaUniforms\(gl, selenaProgram, mat, obj\)/);
   assert.match(webgl, /bindSelenaTextures\(gl, selenaProgram, mat\)/);
   assert.match(webgl, /bindSelenaMeshAttribute\(gl, selenaProgram, "position"/);

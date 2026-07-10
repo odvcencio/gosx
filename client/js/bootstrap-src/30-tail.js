@@ -5628,6 +5628,93 @@
     });
   }
 
+  function arcadeLayerGain(layer) {
+    const gain = layer && typeof layer.gain === "number" ? layer.gain : 1;
+    return Math.max(0, gain);
+  }
+
+  // arcadeMergePatchLayerOptions layers a SynthPatch layer's own pan/
+  // delayMS/rate/envelope (see scene/audio.go's ToneLayer/SweepLayer/
+  // NoiseLayer) on top of the patch-level options every layer starts
+  // from, so a single arcadePlayPatch() call can fire layers that each
+  // deviate from the shared pan/timing/rate.
+  function arcadeMergePatchLayerOptions(layer, baseOpts) {
+    const merged = Object.assign({}, baseOpts);
+    if (layer && typeof layer.pan === "number") {
+      merged.pan = arcadeClamp(layer.pan, -0.95, 0.95, baseOpts.pan);
+    }
+    if (layer && typeof layer.delayMS === "number" && layer.delayMS > 0) {
+      merged.delayMS = Math.max(0, baseOpts.delayMS + layer.delayMS);
+    }
+    if (layer && typeof layer.rate === "number" && layer.rate > 0) {
+      merged.rate = arcadeClamp(layer.rate, 0.05, 4, baseOpts.rate);
+    }
+    if (layer && layer.envelope && typeof layer.envelope === "object") {
+      merged.envelope = layer.envelope;
+    }
+    return merged;
+  }
+
+  // arcadePlayPatch fires a SynthPatch (scene/audio.go): an arbitrary
+  // combination of tone/sweep/noise layers, each an arcadeTone/
+  // arcadeSweep/arcadeNoise call under the hood. This is the trigger seam
+  // arcadeAudio previously lacked outside playArcadeSFX's fixed, hard-coded
+  // cue vocabulary — see window.__gosx.arcadeAudio below and
+  // 20-scene-mount.js's "audio" hub-event handling for how a server-driven
+  // scene reaches this.
+  function arcadePlayPatch(patch, options) {
+    const audio = unlockArcadeAudio();
+    if (!audio || !patch || typeof patch !== "object") return;
+    const baseOpts = arcadeSoundOptions(options);
+    (Array.isArray(patch.tones) ? patch.tones : []).forEach(function(tone) {
+      if (!tone || typeof tone !== "object") return;
+      arcadeTone(
+        audio,
+        hubInputNumber(tone.frequency, 440),
+        Math.max(0.01, hubInputNumber(tone.duration, 0.05)),
+        arcadeLayerGain(tone),
+        tone.waveform || "square",
+        arcadeMergePatchLayerOptions(tone, baseOpts),
+      );
+    });
+    (Array.isArray(patch.sweeps) ? patch.sweeps : []).forEach(function(sweep) {
+      if (!sweep || typeof sweep !== "object") return;
+      arcadeSweep(
+        audio,
+        hubInputNumber(sweep.startFrequency, 440),
+        hubInputNumber(sweep.endFrequency, 220),
+        Math.max(0.01, hubInputNumber(sweep.duration, 0.12)),
+        arcadeLayerGain(sweep),
+        sweep.waveform || "sawtooth",
+        arcadeMergePatchLayerOptions(sweep, baseOpts),
+      );
+    });
+    (Array.isArray(patch.noises) ? patch.noises : []).forEach(function(noise) {
+      if (!noise || typeof noise !== "object") return;
+      arcadeNoise(
+        audio,
+        Math.max(0.01, hubInputNumber(noise.duration, 0.08)),
+        arcadeLayerGain(noise),
+        noise.filterType || "bandpass",
+        hubInputNumber(noise.filterFrequency, 1200),
+        arcadeMergePatchLayerOptions(noise, baseOpts),
+      );
+    });
+  }
+
+  // window.__gosx.arcadeAudio exposes the procedural synth engine outside
+  // its previous sole caller (createHubInputController's onHubMessage,
+  // above). This is the "minimal trigger seam" scene/audio.go's AudioCue
+  // doc references: any code holding window.__gosx (e.g.
+  // 20-scene-mount.js's "audio" hub-event handling) can fire a built-in
+  // named cue or an inline SynthPatch without depending on this closure.
+  window.__gosx.arcadeAudio = {
+    play: playArcadeSFX,
+    playPatch: arcadePlayPatch,
+    stop: stopArcadeSFX,
+    unlock: unlockArcadeAudio,
+  };
+
   function hubInputNumber(value, fallback) {
     const next = Number(value);
     return Number.isFinite(next) ? next : fallback;

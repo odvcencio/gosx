@@ -11,6 +11,7 @@
   var SCENE_POST_SSAO = "ssao";
   var SCENE_POST_DOF = "dof";
   var SCENE_POST_CUSTOM_POST = "customPost";
+  var SCENE_POST_FXAA = "fxaa";
 
   // --- PBR Shader Sources ---
 
@@ -1717,6 +1718,64 @@
     "    float gray = dot(color, vec3(0.2126, 0.7152, 0.0722));",
     "    color = mix(vec3(gray), color, u_saturation);",
     "    fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);",
+    "}",
+  ].join("\n");
+
+  // FXAA 3.11 quality-preset edge anti-aliasing — the chain-end pass. Runs
+  // at full pass resolution (a single 5-tap-plus-subpixel-blend pass is
+  // cheap) because the offscreen HDR post-FX pipeline defeats hardware
+  // MSAA; this restores edge smoothing for scenes that enable any PostFX.
+  // Algorithm mirrors the native render/bundle FXAA pass
+  // (render/bundle/postfx.go, fxaa311WGSLTemplate) for cross-backend
+  // parity: green-channel luma edge detection, local contrast search, and a
+  // 2-tap + 2-tap subpixel blend.
+  const SCENE_POST_FXAA_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_texture;",
+    "out vec4 fragColor;",
+    "",
+    "float greenLuma(vec3 c) { return c.g; }",
+    "",
+    "void main() {",
+    "    vec2 texelSize = 1.0 / vec2(textureSize(u_texture, 0));",
+    "    vec3 rgbNW = texture(u_texture, v_uv + vec2(-1.0, -1.0) * texelSize).rgb;",
+    "    vec3 rgbNE = texture(u_texture, v_uv + vec2( 1.0, -1.0) * texelSize).rgb;",
+    "    vec3 rgbSW = texture(u_texture, v_uv + vec2(-1.0,  1.0) * texelSize).rgb;",
+    "    vec3 rgbSE = texture(u_texture, v_uv + vec2( 1.0,  1.0) * texelSize).rgb;",
+    "    vec3 rgbM  = texture(u_texture, v_uv).rgb;",
+    "",
+    "    float lumaNW = greenLuma(rgbNW);",
+    "    float lumaNE = greenLuma(rgbNE);",
+    "    float lumaSW = greenLuma(rgbSW);",
+    "    float lumaSE = greenLuma(rgbSE);",
+    "    float lumaM  = greenLuma(rgbM);",
+    "",
+    "    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));",
+    "    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));",
+    "",
+    "    vec2 dir;",
+    "    dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));",
+    "    dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));",
+    "",
+    "    float reduceMul = 1.0 / 8.0;",
+    "    float reduceMin = 1.0 / 128.0;",
+    "    float spanMax = 8.0;",
+    "    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * reduceMul), reduceMin);",
+    "    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);",
+    "    dir = clamp(dir * rcpDirMin, vec2(-spanMax), vec2(spanMax)) * texelSize;",
+    "",
+    "    vec3 rgbA = 0.5 * (",
+    "        texture(u_texture, v_uv + dir * (1.0 / 3.0 - 0.5)).rgb +",
+    "        texture(u_texture, v_uv + dir * (2.0 / 3.0 - 0.5)).rgb);",
+    "    vec3 rgbB = rgbA * 0.5 + 0.25 * (",
+    "        texture(u_texture, v_uv + dir * -0.5).rgb +",
+    "        texture(u_texture, v_uv + dir *  0.5).rgb);",
+    "",
+    "    float lumaB = greenLuma(rgbB);",
+    "    vec3 color = (lumaB < lumaMin || lumaB > lumaMax) ? rgbA : rgbB;",
+    "    fragColor = vec4(color, 1.0);",
     "}",
   ].join("\n");
 
@@ -3659,6 +3718,16 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    // Apply FXAA edge anti-aliasing. Chain-end pass — no ping-pong FBOs, no
+    // uniforms, single fullscreen draw (see SCENE_POST_FXAA_SOURCE).
+    function applyFXAA(inputTex, effect, targetFBO, w, h) {
+      var prog = getProgram("fxaa", SCENE_POST_FXAA_SOURCE);
+      if (!prog) return inputTex;
+      beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
+      drawSceneFullscreenQuad(gl, quad.vao);
+      return targetFBO ? targetFBO.colorTex : null;
+    }
+
     function applySSAO(inputTex, effect, targetFBO, w, h) {
       var prog = getProgram("ssao", SCENE_POST_SSAO_SOURCE);
       if (!prog) return inputTex;
@@ -3789,6 +3858,9 @@
               break;
             case SCENE_POST_DOF:
               currentTexture = applyDOF(currentTexture, effect, targetFBO, passW, passH, camera);
+              break;
+            case SCENE_POST_FXAA:
+              currentTexture = applyFXAA(currentTexture, effect, targetFBO, passW, passH);
               break;
             case SCENE_POST_CUSTOM_POST: {
               // Selena post contract (WebGL2): use provided GLSL pair.
@@ -4323,36 +4395,125 @@
     return uniforms;
   }
 
-  function createSceneSelenaProgram(gl, material) {
+  // Augment a Selena mesh material's compiled vertex GLSL so it can drive a
+  // GPU-skinned draw (rigged glTF fighters). Selena's default (no vertex())
+  // mesh materials emit `gl_Position = mvp * vec4(position, 1.0)` with `mvp`
+  // already model-free (view*proj) and `normalMatrix` hardcoded to identity —
+  // the established convention is that `position`/`normal` arrive PRE-BAKED
+  // to world space (see appendSceneMeshObjectToBundle's CPU bake loop for
+  // static meshes in 10-runtime-scene-core.js). Skinned objects skip that
+  // CPU bake (object.skin branch) and hand the raw bind-pose attributes
+  // straight through instead, so a Selena material bound as-is on a skinned
+  // draw would render the frozen bind pose with no model placement at all.
+  //
+  // This rewrites the attribute declarations for `position`/`normal` to
+  // `a_position`/`a_normal` (raw, local-space) and injects a small preamble
+  // at the top of main() that: (1) computes the per-vertex joint skin
+  // matrix from a_joints/a_weights/u_jointMatrices exactly like
+  // SCENE_PBR_SKINNED_VERTEX_SOURCE does, (2) applies u_modelMatrix, and
+  // (3) rebinds `position`/`normal` as fresh locals holding the resulting
+  // WORLD-SPACE values — satisfying the same "already world-space" contract
+  // the rest of the compiled Selena body (and normalMatrix=identity) expect,
+  // with zero changes to the generated body itself. Returns null when the
+  // material doesn't declare a `position` attribute in the expected form
+  // (the caller then leaves the skinned draw on the standard PBR fallback).
+  function scenePBRSelenaSkinAugmentVertex(source) {
+    if (typeof source !== "string" || !source) return null;
+    var posMatch = /\b(attribute|in)\s+vec3\s+position\s*;/.exec(source);
+    if (!posMatch) return null;
+    var qualifier = posMatch[1];
+    var out = source.replace(posMatch[0], qualifier + " vec3 a_position;");
+
+    var hasNormal = false;
+    var normMatch = /\b(attribute|in)\s+vec3\s+normal\s*;/.exec(out);
+    if (normMatch) {
+      hasNormal = true;
+      out = out.replace(normMatch[0], normMatch[1] + " vec3 a_normal;");
+    }
+
+    var mainMarker = "void main() {";
+    var mainIdx = out.indexOf(mainMarker);
+    if (mainIdx < 0) return null;
+
+    var extraDecls =
+      "\n" + qualifier + " vec4 a_joints;" +
+      "\n" + qualifier + " vec4 a_weights;" +
+      "\nuniform mat4 u_modelMatrix;" +
+      "\nuniform mat4 u_jointMatrices[64];" +
+      "\nuniform bool u_hasSkin;\n";
+    out = out.slice(0, mainIdx) + extraDecls + out.slice(mainIdx);
+
+    mainIdx = out.indexOf(mainMarker);
+    var bodyStart = mainIdx + mainMarker.length;
+    var skinBlock =
+      "\n  mat4 selenaSkinMatrix = u_hasSkin ? (" +
+      "\n      a_weights.x * u_jointMatrices[int(a_joints.x)] +" +
+      "\n      a_weights.y * u_jointMatrices[int(a_joints.y)] +" +
+      "\n      a_weights.z * u_jointMatrices[int(a_joints.z)] +" +
+      "\n      a_weights.w * u_jointMatrices[int(a_joints.w)]" +
+      "\n  ) : mat4(1.0);" +
+      "\n  vec4 selenaSkinWorldPos4 = u_modelMatrix * (selenaSkinMatrix * vec4(a_position, 1.0));" +
+      "\n  vec3 position = selenaSkinWorldPos4.xyz;";
+    if (hasNormal) {
+      skinBlock += "\n  vec3 normal = normalize(mat3(u_modelMatrix) * (mat3(selenaSkinMatrix) * a_normal));";
+    }
+    out = out.slice(0, bodyStart) + skinBlock + out.slice(bodyStart);
+    return { source: out, hasNormal: hasNormal };
+  }
+
+  function createSceneSelenaProgram(gl, material, skinned) {
     var layout = sceneSelenaMaterialLayout(material);
     if (!layout) return null;
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, material.customVertex);
+    var vertexSource = material.customVertex;
+    var skinInfo = null;
+    if (skinned) {
+      skinInfo = scenePBRSelenaSkinAugmentVertex(vertexSource);
+      if (!skinInfo) return null;
+      vertexSource = skinInfo.source;
+    }
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
     if (!vertexShader) return null;
     var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, material.customFragment);
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
     }
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Selena shader");
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, skinned ? "Selena shader (skinned)" : "Selena shader");
     if (!program) return null;
     var attrs = {};
     var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
     for (var i = 0; i < layoutAttrs.length; i++) {
       var attr = layoutAttrs[i] || {};
       if (typeof attr.name !== "string") continue;
+      var glName = attr.name;
+      if (skinned && attr.name === "position") glName = "a_position";
+      else if (skinned && attr.name === "normal" && skinInfo.hasNormal) glName = "a_normal";
       attrs[attr.name] = {
-        loc: gl.getAttribLocation(program, attr.name),
+        loc: gl.getAttribLocation(program, glName),
         size: sceneSelenaAttributeComponents(attr.type),
       };
     }
-    return {
+    var result = {
       program: program,
       vertexShader: vertexShader,
       fragmentShader: fragmentShader,
       attributes: attrs,
       uniforms: sceneSelenaUniformLocations(gl, program, layout),
       layout: layout,
+      skinned: Boolean(skinned),
     };
+    if (skinned) {
+      result.skinUniforms = {
+        modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+        jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
+        hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
+      };
+      result.skinAttributes = {
+        joints: gl.getAttribLocation(program, "a_joints"),
+        weights: gl.getAttribLocation(program, "a_weights"),
+      };
+    }
+    return result;
   }
 
   function createScenePBRCustomProgram(gl, material) {
@@ -6198,19 +6359,26 @@
       return customProgram;
     }
 
-    function ensureSelenaProgram(material) {
+    function ensureSelenaProgram(material, skinned) {
       if (!sceneSelenaIsMaterial(material)) {
         return null;
       }
-      const key = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      const baseKey = material && material.key ? material.key : sceneMaterialProfileKey(material);
+      // Skinned draws compile a distinct program variant (augmented vertex
+      // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
+      // its own key: the same material can back both static and skinned
+      // objects across a scene.
+      const key = skinned ? baseKey + "::skinned" : baseKey;
       const cached = selenaProgramCache.get(key);
       if (cached) {
         return cached.failed ? null : cached.program;
       }
-      const selenaProgram = createSceneSelenaProgram(gl, material);
+      const selenaProgram = createSceneSelenaProgram(gl, material, skinned);
       selenaProgramCache.set(key, selenaProgram ? { program: selenaProgram } : { failed: true });
       if (!selenaProgram) {
-        console.warn("[gosx] Selena shader compilation failed; object will use the standard PBR shader.");
+        console.warn(skinned
+          ? "[gosx] Skinned Selena shader compile/augment failed; object will use the standard skinned PBR shader."
+          : "[gosx] Selena shader compilation failed; object will use the standard PBR shader.");
       }
       return selenaProgram;
     }
@@ -6335,6 +6503,53 @@
       else gl.vertexAttrib3f(attr.loc, 0, 0, name === "normal" ? 1 : 0);
     }
 
+    // Upload the per-draw skin uniforms (u_hasSkin/u_modelMatrix/
+    // u_jointMatrices) for a skinned Selena program — the mirror of the
+    // built-in skinned-PBR upload a few lines below (isSkinned branch of
+    // drawPBRObjectList), reused verbatim here since both paths share the
+    // exact same joint-matrix contract (SCENE_PBR_SKINNED_VERTEX_SOURCE).
+    function uploadSelenaSkinUniforms(gl, info, obj) {
+      var skinUniforms = info && info.skinUniforms;
+      if (!skinUniforms) return;
+      if (skinUniforms.hasSkin) gl.uniform1i(skinUniforms.hasSkin, 1);
+      if (skinUniforms.modelMatrix) {
+        gl.uniformMatrix4fv(skinUniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
+      }
+      var jointMatrices = obj.skin && obj.skin.jointMatrices;
+      if (jointMatrices && skinUniforms.jointMatrices) {
+        var jointCount = Math.min(Math.floor(jointMatrices.length / 16), 64);
+        if (jointCount > 0) {
+          var jointUpload = jointMatrices;
+          var requiredFloats = jointCount * 16;
+          if (jointMatrices.length !== requiredFloats) {
+            jointUpload = jointMatrices.subarray(0, requiredFloats);
+          }
+          gl.uniformMatrix4fv(skinUniforms.jointMatrices, false, jointUpload);
+        }
+      }
+    }
+
+    // Bind the a_joints/a_weights attributes for a skinned Selena draw.
+    function bindSelenaSkinAttributes(gl, info, obj) {
+      var skinAttrs = info && info.skinAttributes;
+      if (!skinAttrs) return;
+      var vertices = obj && obj.vertices;
+      var joints = vertices && vertices.joints;
+      var weights = vertices && vertices.weights;
+      if (skinAttrs.joints >= 0 && joints) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(skinAttrs.joints);
+        gl.vertexAttribPointer(skinAttrs.joints, 4, gl.FLOAT, false, 0, 0);
+      }
+      if (skinAttrs.weights >= 0 && weights) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(skinAttrs.weights);
+        gl.vertexAttribPointer(skinAttrs.weights, 4, gl.FLOAT, false, 0, 0);
+      }
+    }
+
 	    function scenePBRDirectAttribute(vertices, key, count, tupleSize) {
 	      const data = vertices && vertices[key];
 	      const required = Math.max(0, Math.floor(sceneNumber(count, 0))) * tupleSize;
@@ -6419,7 +6634,14 @@
         const matIndex = sceneNumber(obj.materialIndex, 0);
         const mat = materials[matIndex] || null;
         var isSkinned = objectIsSkinned(obj);
-        var selenaProgram = !isSkinned ? ensureSelenaProgram(mat) : null;
+        // Selena is now reachable on skinned draws too (ensureSelenaProgram
+        // compiles+caches the joint-skinning variant of the material's
+        // vertex shader — see scenePBRSelenaSkinAugmentVertex). If the
+        // material can't be safely augmented (e.g. no `position` attribute
+        // in the expected form) this returns null and the object falls
+        // through to the standard skinned PBR program below, exactly as
+        // before.
+        var selenaProgram = ensureSelenaProgram(mat, isSkinned);
         if (selenaProgram) {
           if (currentProgram !== selenaProgram.program) {
             gl.useProgram(selenaProgram.program);
@@ -6437,12 +6659,19 @@
           uploadSelenaUniforms(gl, selenaProgram, mat, obj);
           bindSelenaTextures(gl, selenaProgram, mat);
 
+          if (selenaProgram.skinned && obj.skin) {
+            uploadSelenaSkinUniforms(gl, selenaProgram, obj);
+          }
+
           const selenaOffset = obj.vertexOffset;
           const selenaCount = obj.vertexCount;
           const selenaDirectVertices = Boolean(obj.directVertices && obj.vertices);
           bindSelenaMeshAttribute(gl, selenaProgram, "position", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
           bindSelenaMeshAttribute(gl, selenaProgram, "normal", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
           bindSelenaMeshAttribute(gl, selenaProgram, "uv", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
+          if (selenaProgram.skinned && obj.skin) {
+            bindSelenaSkinAttributes(gl, selenaProgram, obj);
+          }
           gl.drawArrays(gl.TRIANGLES, 0, selenaCount);
 
           if (selenaDepthWriteOverride) {

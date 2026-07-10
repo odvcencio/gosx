@@ -536,6 +536,18 @@ var seeds = []seed{
 	{feature: "shared scene signals", category: "runtime", profile: "runtime", overrides: overrides(Signals, Complete)},
 
 	{feature: "bloom", category: "post-fx", profile: "postfx", overrides: overrides(Tests, Complete)},
+	// FXAA (E1+E2, spec.feralsurge.v0.2): the "postfx" profile default marks
+	// WebGPU/WebGL Complete, which was a lie until this landed — render/bundle
+	// (native WebGPU, render/bundle/postfx.go) always ran a fixed FXAA 3.11
+	// pass, but BOTH browser renderers had zero FXAA of their own. Now real:
+	// scene.FXAA + scene.GameplayPostFX() (scene/postfx.go) lower through
+	// FXAAIR (scene/postfx_ir.go) to a chain-end pass in 16-scene-webgl.js
+	// (SCENE_POST_FXAA_SOURCE, GLSL) and 16a-scene-webgpu.js
+	// (WGSL_POST_FXAA_FRAGMENT), proven by client/js/runtime.test.js's
+	// "Scene3D FXAA is wired as the chain-end postfx pass..." source-pattern
+	// test plus scene/postfx_test.go. Tests Complete like its bloom/tonemap
+	// siblings, backed by the same class of artifact (source-pattern JS test
+	// + Go unit test), not a real-GPU pixel proof.
 	{feature: "FXAA", category: "post-fx", profile: "postfx", overrides: overrides(Tests, Complete)},
 	{feature: "tonemap", category: "post-fx", profile: "postfx", overrides: overrides(Tests, Complete)},
 	{feature: "SSAO", category: "post-fx", profile: "postfx", overrides: overrides(Tests, Partial)},
