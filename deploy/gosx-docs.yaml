@@ -1,12 +1,5 @@
-apiVersion: v1
-kind: Secret
-metadata:
-  name: gosx-docs
-  namespace: draco-quest
-type: Opaque
-stringData:
-  session-secret: 8d6672f457f91af4ac9b1d5060b9f00f3f440933af4aa5b905f26e97da28f17a
----
+# The gosx-docs Secret is provisioned out-of-band. It must contain a
+# `session-secret` key; never commit the secret value to this manifest.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

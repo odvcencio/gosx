@@ -69,7 +69,7 @@ func WaterDemoData() (map[string]any, error) {
 			waterDemoErr = err
 			return
 		}
-		selenaGLSL, err := waterSelenaGLSLData()
+		selenaGLES, err := waterSelenaGLESData()
 		if err != nil {
 			waterDemoErr = err
 			return
@@ -90,9 +90,9 @@ func WaterDemoData() (map[string]any, error) {
 			"waterObjectMaterialSelenaUniforms": waterObjectMaterialSelenaUniforms,
 			"waterDuckMaterialSelenaUniforms":   waterDuckMaterialSelenaUniforms,
 		}
-		// Merge the Selena-compiled GLSL/GLES + descriptor slots. These feed the
-		// WebGL/WebGL2 water fallback.
-		for key, value := range selenaGLSL {
+		// Merge the Selena-compiled GLES + descriptor slots. The page supports
+		// WebGL2 and does not compile or transmit unused desktop GLSL artifacts.
+		for key, value := range selenaGLES {
 			waterDemoData[key] = value
 		}
 		// Merge the Selena-compiled RENDER-pass WGSL slots (one
@@ -118,7 +118,7 @@ func WaterDemoData() (map[string]any, error) {
 		for key, value := range selenaComputeWGSL {
 			waterDemoData[key] = value
 		}
-		// waterShaderDescriptors (merged from selenaGLSL above) already carries
+		// waterShaderDescriptors (merged from selenaGLES above) already carries
 		// the objectMaterial/duckMaterial host binding descriptors keyed by
 		// descKey; expose them as flat top-level keys too so page.gsx's plain
 		// <Material> components (which read a literal shaderLayout object, not a
@@ -317,20 +317,4 @@ func duckDisplacementSpheres() []map[string]float64 {
 		{"offsetX": 0, "offsetY": 0.1, "offsetZ": 0.1, "radius": 0.08},
 		{"offsetX": 0, "offsetY": -0.08, "offsetZ": -0.05, "radius": 0.1},
 	}
-}
-
-// cloneWaterSourceFiles shallow-copies a data-key -> source-file-path map.
-// Kept alive here (relocated from the now-deleted shader_sources.go, which
-// used to embed the hand-written Elio/Selena shader trees) solely for
-// selena_glsl.go's waterSelenaSourceFiles, which advertises the .selena
-// source-file provenance of each additive Selena GLSL slot.
-func cloneWaterSourceFiles(files map[string]string) map[string]string {
-	if len(files) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(files))
-	for key, value := range files {
-		out[key] = value
-	}
-	return out
 }

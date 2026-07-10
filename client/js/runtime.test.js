@@ -9144,6 +9144,7 @@ test("Scene3D WebGPU water consumes caustic reflection refraction optics flags",
 
 test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
 
   assert.match(webgpu, /SCENE_WATER_CAUSTICS_VERTEX_SOURCE/);
@@ -9206,13 +9207,29 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-resolved-caustic-source-bytes/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-bundle-caustic-source-bytes/);
   assert.match(mount, /function sceneMountedWaterShaderSources/);
+  assert.match(mount, /const mountedWaterShaderSources = [\s\S]*sceneMountedWaterShaderSources\(\)/);
+  assert.equal((mount.match(/sceneMountedWaterShaderSources\(\)/g) || []).length, 2,
+    "water manifest source extraction must be defined and invoked only once per mount");
+  assert.doesNotMatch(mount, /waterShaderSourcesByID = sceneMountedWaterShaderSources\(\)/);
+  assert.match(mount, /reason: "water-simulation"/);
+  assert.match(mount, /reason: "water-paused"/);
+  assert.match(mount, /data-gosx-scene3d-water-renderer/);
+  assert.match(mount, /data-gosx-scene3d-water-frame-seq/);
+  assert.match(mount, /data-gosx-scene3d-water-simulation-seq/);
+  assert.match(mount, /data-gosx-scene3d-water-unsupported-reason/);
+  assert.match(mount, /data-gosx-scene3d-water-lifecycle/);
+  assert.match(mount, /data-gosx-scene3d-water-state-pool-width/);
+  assert.match(mount, /data-gosx-scene3d-water-state-pool-height/);
+  assert.match(mount, /data-gosx-scene3d-water-state-pool-length/);
+  assert.match(mount, /unsupportedReason: "water-webgl2-unavailable"/);
+  assert.match(mount, /if \(sceneFirstWaterEntry\(props\)\) \{[\s\S]*return \{\s*renderer: null,[\s\S]*unsupportedReason: "water-webgl2-unavailable"/);
+  assert.match(core, /function sceneObjectAnimated\(object\) \{[\s\S]*hasOwnProperty\.call\(object, "visible"\)[\s\S]*!sceneBool\(object\.visible, true\)/);
   assert.match(mount, /SCENE_MOUNT_WATER_SOURCE_ID_FIELDS = \["computeSource", "materialSource"\]/);
   assert.match(mount, /SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS = \["computeSourceFiles", "materialSourceFiles"\]/);
   assert.match(mount, /record\[name\] = files/);
   assert.match(mount, /hydrated\[name\] = files/);
   assert.match(mount, /function sceneHydrateBundleWaterShaderSources/);
   assert.match(mount, /sceneHydrateBundleWaterShaderSources\(effectiveBundle, effectiveBundle\.waterShaderSourcesByID\)/);
-  assert.match(mount, /data-gosx-scene3d-water-render-entry-caustic-source-bytes/);
 });
 
 test("Scene3D WebGPU water renders upstream-style object texture targets", () => {
@@ -9221,6 +9238,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
   const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
   const waterPage = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "page.gsx"), "utf8");
+  const waterProgram = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "program.go"), "utf8");
 
   assert.match(webgpu, /SCENE_WATER_OBJECT_TEXTURE_VERTEX_SOURCE/);
   assert.match(webgpu, /SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE/);
@@ -9475,11 +9493,12 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /id="float-sphere"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-cube"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-torus"[\s\S]*wireframe=\{false\}/);
-  assert.match(waterPage, /causticsResolution=\{1024\}/);
+  assert.match(waterPage, /resolution=\{192\}/);
+  assert.match(waterPage, /causticsResolution=\{512\}/);
   assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
-  assert.match(waterPage, /objectTexturePixelBudget=\{3145728\}/);
+  assert.match(waterPage, /objectTexturePixelBudget=\{786432\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
-  assert.match(waterPage, /objectShadowResolution=\{1024\}/);
+  assert.match(waterPage, /objectShadowResolution=\{512\}/);
   // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'
   // generic shaderSource/shaderSourceFiles) have been retired -- Selena is
   // the sole primary WGSL source now.
@@ -9510,8 +9529,10 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.doesNotMatch(waterPage, /shaderSourceFiles=\{data\.waterDuckMaterialSourceFiles\}/);
   assert.match(waterPage, /name="water-object-material"[\s\S]*customVertexWGSL=\{data\.waterObjectPassSelenaWGSL\}[\s\S]*shaderLayout=\{data\.waterObjectMaterialSelenaLayout\}[\s\S]*customUniforms=\{data\.waterObjectMaterialSelenaUniforms\}/);
   assert.match(waterPage, /name="water-duck-material"[\s\S]*customVertexWGSL=\{data\.waterDuckPassSelenaWGSL\}[\s\S]*shaderLayout=\{data\.waterDuckMaterialSelenaLayout\}[\s\S]*customUniforms=\{data\.waterDuckMaterialSelenaUniforms\}/);
-  assert.match(waterPage, /id="float-duck"[\s\S]*material="water-duck-material"/);
-  assert.match(waterPage, /id="float-duck"[\s\S]*castShadow=\{true\}/);
+  // The duck descriptor is introduced by the control mutation only; keeping a
+  // hidden <Model> in the initial graph eagerly fetched glTF before selection.
+  assert.doesNotMatch(waterPage, /id="float-duck"/);
+  assert.match(waterProgram, /\/water\/models\/duck\/Duck\.gltf/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-loaded/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-fallbacks/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-shadow-passes/);
@@ -9776,6 +9797,59 @@ test("Scene3D WebGL2 water renderer wires the compound-object shadow pass", () =
   assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, compoundShadowProgram, compoundShadowDesc, \{\s*\n\s*spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,/);
 });
 
+test("Scene3D water renderers use one scheduler and bounded balanced-quality work", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // The mount owns animation. A backend-private rAF doubles WebGL work when
+  // the mount also animates a WaterSystem and bypasses pause/offscreen policy.
+  const forcedWater = webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/);
+  assert.ok(forcedWater, "forced WebGL water renderer should exist");
+  assert.doesNotMatch(forcedWater[0], /requestAnimationFrame|cancelAnimationFrame/);
+  assert.match(forcedWater[0], /function render\(bundle \/\*, viewport \*\/\) \{[\s\S]{0,180}drawFrame\(\);/);
+
+  // Balanced/survival modes halve simulation substeps and cadence the two
+  // retained-texture prepasses. WebGPU also avoids stationary displacement.
+  assert.match(webgl, /if \(!liveEntry\.paused\) sim\.step\(\{ substeps: 2 \}\)/);
+  assert.match(webgl, /var refreshExpensivePasses = \(frameCount % expensivePassCadence\) === 0/);
+  assert.match(webgl, /meshUploadSource === mesh && meshUploadProgram === prog/);
+  assert.match(webgpu, /var expensivePassCadence = system\.resolution === 128 \? 3 : \(system\.resolution === 192 \? 2 : 1\)/);
+  assert.match(webgpu, /system\.waterObjectMoved = objectMoved/);
+  assert.match(webgpu, /var stepResultB = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline\)/);
+  assert.match(webgpu, /optics\.caustics && refreshExpensivePasses/);
+});
+
+test("Scene3D WebGL2 water seeds only the authored initial ripples", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const primeRipples = webgl.match(/function primeRipples\(\) \{[\s\S]*?\n    \}/);
+  assert.ok(primeRipples, "forced WebGL water renderer should prime authored state");
+
+  assert.match(primeRipples[0], /sim\.seed\(\);/);
+  assert.doesNotMatch(primeRipples[0], /sim\.seed\(\{/);
+  assert.doesNotMatch(primeRipples[0], /sim\.drop\(/);
+});
+
+test("Scene3D WebGL2 water consumes live events and renderer inputs", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const forcedWater = webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/);
+  assert.ok(forcedWater, "forced WebGL water renderer should exist");
+
+  assert.match(forcedWater[0], /dropEventID > 0 && dropEventID !== lastDropEventID/);
+  assert.match(forcedWater[0], /sim\.drop\(\{[\s\S]{0,500}dropEventStrength/);
+  assert.match(forcedWater[0], /objectDisplacementEvents[\s\S]{0,1000}sim\.displace\(displacementEvent\)/);
+  assert.match(forcedWater[0], /var livePoolWidth = sceneWaterNum\(liveEntry\.poolWidth/);
+  assert.match(forcedWater[0], /var liveLightDir = \[[\s\S]{0,240}liveEntry\.lightDirectionZ/);
+  assert.match(forcedWater[0], /var liveOpticsEnable = \(liveEntry\.reflection \|\| liveEntry\.refraction\) \? 1 : 0/);
+  assert.match(forcedWater[0], /sceneWaterRenderHexColor\(liveEntry\.shallowColor/);
+});
+
+test("Scene3D WebGL2 water refreshes analytic meshes by live transform signature", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  assert.match(webgl, /function refreshAnalyticMesh\(kind, center, radius, half, livePoolWidth, livePoolLength\)/);
+  assert.match(webgl, /signature !== analyticMeshSignature[\s\S]{0,220}deleteAnalyticMesh\(sphereMesh\);[\s\S]{0,120}deleteAnalyticMesh\(boxMesh\);/);
+  assert.match(webgl, /objectMesh = refreshAnalyticMesh\(liveKindNum, liveCenter, liveRadius, liveHalf, livePoolWidth, livePoolLength\)/);
+});
+
 test("Scene3D WebGL2 water pool pass wires the rounded-corner pool geometry (mirrors WebGPU)", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
 
@@ -9783,17 +9857,15 @@ test("Scene3D WebGL2 water pool pass wires the rounded-corner pool geometry (mir
   // off entry.poolShape ("Rounded Box" / "rounded" / "roundbox").
   assert.match(webgl, /function sceneWaterPoolShapeRounded\(entry\) \{[\s\S]{0,200}rounded box.*roundbox/);
 
-  // poolMaxCornerRadius (the clamp bound) is fixed at construction time from
-  // poolWidth/poolLength, matching the WebGPU path's
-  // system.waterCornerRadius derivation.
-  assert.match(webgl, /var poolMaxCornerRadius = Math\.max\(0, Math\.min\(poolWidth, poolLength\) - 0\.001\);/);
+  // The clamp bound follows live dimensions instead of the construction entry.
+  assert.match(webgl, /var livePoolMaxCornerRadius = Math\.max\(0, Math\.min\(livePoolWidth, livePoolLength\) - 0\.001\);/);
 
   // The rounded flag / clamped uniform value / draw-call vertex count are
   // recomputed every drawFrame() from the LIVE bundle entry (liveEntry), not
   // captured once from the construction-time `entry` -- this is the actual
   // fix for runtime "Rounded Box" switches never affecting the WebGL2 draw.
   assert.match(webgl, /var livePoolShapeRounded = sceneWaterPoolShapeRounded\(liveEntry\);/);
-  assert.match(webgl, /var livePoolCornerRadius = livePoolShapeRounded\s*\n\s*\? Math\.max\(0, Math\.min\(poolMaxCornerRadius, sceneWaterNum\(liveEntry\.cornerRadius, 0\)\)\)\s*\n\s*: 0;/);
+  assert.match(webgl, /var livePoolCornerRadius = livePoolShapeRounded\s*\n\s*\? Math\.max\(0, Math\.min\(livePoolMaxCornerRadius, sceneWaterNum\(liveEntry\.cornerRadius, 0\)\)\)\s*\n\s*: 0;/);
 
   // livePoolRounded (the draw-call vertex-count decision) reads the RAW,
   // unclamped liveEntry.cornerRadius > 0.0001 -- same gate as WebGPU's
@@ -9809,13 +9881,14 @@ test("Scene3D WebGL2 water pool pass wires the rounded-corner pool geometry (mir
   // Both live locals are derived inside drawFrame() from liveEntry (declared
   // right before them), NOT from the construction-time `entry` -- guards
   // against regressing back to a renderer-creation-time snapshot.
-  assert.match(webgl, /var liveEntry = \(lastBundle && Array\.isArray\(lastBundle\.waterSystems\) && lastBundle\.waterSystems\[0\]\) \|\| entry;\s*\n[\s\S]{0,1500}var livePoolShapeRounded = sceneWaterPoolShapeRounded\(liveEntry\);/);
+  assert.match(webgl, /var liveEntry = \(lastBundle && Array\.isArray\(lastBundle\.waterSystems\) && lastBundle\.waterSystems\[0\]\) \|\| entry;/);
+  assert.match(webgl, /var livePoolShapeRounded = sceneWaterPoolShapeRounded\(liveEntry\);/);
   assert.doesNotMatch(webgl, /var (poolShapeRounded|poolCornerRadius|poolRounded|poolVertexCount) = /);
 
   // cornerRadius/poolShape are fed into the pool pass's uniform values object,
   // where the descriptor-driven sceneWaterRenderSetUniforms applies them by
   // field name only if pool.sel's compiled descriptor declares them.
-  assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, poolProgram, poolDesc, \{\s*\n\s*mvp: mvp, normalMatrix: identity3,\s*\n\s*poolWidth: poolWidth, poolLength: poolLength, poolHeight: poolHeight,\s*\n\s*lightDir: lightDir,\s*\n[\s\S]{0,400}cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded \? 1 : 0,/);
+  assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, poolProgram, poolDesc, \{\s*\n\s*mvp: mvp, normalMatrix: identity3,\s*\n\s*poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,\s*\n\s*lightDir: liveLightDir,\s*\n[\s\S]{0,400}cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded \? 1 : 0,/);
 
   // No other WebGL2 pool draw call hardcodes the 30-vertex box count anymore.
   const poolDrawArraysCalls = webgl.match(/gl\.drawArrays\(gl\.TRIANGLES, 0, livePoolVertexCount\)/g) || [];
@@ -21093,7 +21166,7 @@ function waterPerfShapeEntry(duck) {
 // waterPerfShapeScene builds the material + object list for one perf-shape
 // scenario against a caller-supplied `api` (from a fresh harness), mirroring
 // the object-material/duck-material test above but parameterized on `duck`.
-function waterPerfShapeScene(api, duck) {
+function waterPerfShapeScene(api, duck, resolution) {
   const materialName = duck ? "water-duck-material" : "water-object-material";
   const fixture = duck ? waterDuckMaterialSelenaFixture : waterObjectMaterialSelenaFixture;
   const objectID = duck ? "float-duck" : "float-sphere";
@@ -21108,6 +21181,7 @@ function waterPerfShapeScene(api, duck) {
   };
   if (duck) customUniforms.modelTexture = "/water/models/duck/DuckCM.png";
   const waterEntry = waterPerfShapeEntry(duck);
+  if (resolution) waterEntry.resolution = resolution;
   const state = api.createSceneState({
     scene: {
       materials: [{
@@ -21141,6 +21215,8 @@ function deviceCallSnapshot(fake) {
     computePipelines: fake.state.computePipelines.length,
     shaderModules: fake.state.shaderModules.length,
     bindGroups: fake.state.bindGroups.length,
+    renderPasses: fake.state.renderPasses.length,
+    computePasses: fake.state.computePasses.length,
     writeBufferCalls: fake.state.writeBufferCalls.length,
     writeBufferBytes: bytes,
   };
@@ -21152,6 +21228,8 @@ function deviceCallDelta(before, after) {
     computePipelines: after.computePipelines - before.computePipelines,
     shaderModules: after.shaderModules - before.shaderModules,
     bindGroups: after.bindGroups - before.bindGroups,
+    renderPasses: after.renderPasses - before.renderPasses,
+    computePasses: after.computePasses - before.computePasses,
     writeBufferCalls: after.writeBufferCalls - before.writeBufferCalls,
     writeBufferBytes: after.writeBufferBytes - before.writeBufferBytes,
   };
@@ -21168,13 +21246,13 @@ function deviceCallDelta(before, after) {
 // per-frame object identity rather than a stable owner (the WaterSystem
 // instance, the material) will show up here as non-zero createBindGroup/
 // createBuffer(writeBuffer) growth on every single frame, not just frame 1.
-async function renderWaterPerfShapeFrames(duck, frameCount) {
+async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
   const harness = await createBoardWebGPUHarness({
     fresh: true,
     fakeDeviceOptions: { validateBindings: true },
   });
   const api = harness.env.context.__gosx_scene3d_api;
-  const { state, objects } = waterPerfShapeScene(api, duck);
+  const { state, objects } = waterPerfShapeScene(api, duck, resolution);
   harness.canvas.width = 64;
   harness.canvas.height = 64;
 
@@ -21273,8 +21351,22 @@ test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls sta
   // per-frame churn (ratio scaling with frame index instead of staying flat)
   // is visible even if an individual frame's absolute count wouldn't trip the
   // plateau check above.
-  assert.ok(sphereShape.steadyBindGroups.every((n) => n === sphereShape.steadyBindGroups[0]), "sphere steady-state createBindGroup count must be identical every frame: " + JSON.stringify(sphereShape.steadyBindGroups));
-  assert.ok(duckShape.steadyBindGroups.every((n) => n === duckShape.steadyBindGroups[0]), "duck steady-state createBindGroup count must be identical every frame: " + JSON.stringify(duckShape.steadyBindGroups));
+  assert.ok(sphereShape.steadyBindGroups.slice(1).every((n) => n === sphereShape.steadyBindGroups[1]), "sphere post-warmup createBindGroup count must be identical every frame: " + JSON.stringify(sphereShape.steadyBindGroups));
+  assert.ok(duckShape.steadyBindGroups.slice(1).every((n) => n === duckShape.steadyBindGroups[1]), "duck post-warmup createBindGroup count must be identical every frame: " + JSON.stringify(duckShape.steadyBindGroups));
+});
+
+test("[perf-shape] Scene3D WebGPU balanced water skips stationary displacement and cadences retained prepasses", async () => {
+  const { deltas } = await renderWaterPerfShapeFrames(false, 3, 192);
+  // Frame 0 establishes the object's displacement footprint. The unchanged
+  // Sphere needs only the two integration stages + normal on later frames.
+  assert.equal(deltas[0].computePasses - deltas[1].computePasses, 1,
+    "stationary balanced water should remove exactly the no-op displacement pass after warmup");
+  assert.equal(deltas[1].computePasses, deltas[2].computePasses,
+    "stationary compute shape should remain stable after warmup");
+  // Balanced quality refreshes caustics and object shadow every other frame;
+  // the retained textures are sampled on the intervening frame.
+  assert.ok(deltas[2].renderPasses > deltas[1].renderPasses,
+    "balanced cadence should omit retained prepass work on odd frames: " + JSON.stringify(deltas));
 });
 
 test("[perf-shape] Scene3D WebGPU wgpuStablePBRAttributeBuffer still re-uploads every frame a mesh object's world geometry actually changes", async () => {

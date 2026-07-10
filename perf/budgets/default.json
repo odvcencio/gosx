@@ -37,12 +37,26 @@
         "scene_p95 <= 33",
         "scene_p99 <= 50"
       ]
+    },
+    "water-ci": {
+      "description": "Water release route on CI software WebGL. Gates load, payload, and main-thread regressions; real-GPU frame cadence is certified separately.",
+      "assertions": [
+        "network_kb <= 1900",
+        "lcp <= 5000",
+        "long_tasks <= 8",
+        "tbt <= 750",
+        "js_total_kb <= 900"
+      ]
     }
   },
   "routes": [
     {
       "url": "/",
       "profile": "basic-island"
+    },
+    {
+      "url": "/demos/water",
+      "profile": "water-ci"
     }
   ]
 }

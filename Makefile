@@ -23,7 +23,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-water-prod test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -124,8 +124,13 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 test-e2e:
-	$(NODE) --test e2e/gosx_docs_e2e.test.mjs e2e/motion-spin.test.mjs
+	$(NODE) --test e2e/gosx_docs_e2e.test.mjs e2e/webgpu_honesty_gate_e2e.test.mjs e2e/motion-spin.test.mjs e2e/motion-material.test.mjs e2e/water_demo_e2e.test.mjs
 	$(GO) test ./e2e
+
+# Build the deployable docs bundle and prove the production server can serve
+# the water route and its content-addressed Scene3D runtime assets.
+test-water-prod:
+	$(SHELL) ./scripts/prod-water-smoke.sh
 
 test-desktop:
 	$(GO) test ./desktop ./cmd/gosx -run 'Desktop|RunDesktop|NormalizeOptions|NewUnsupportedPlatform'

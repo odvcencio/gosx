@@ -6653,6 +6653,7 @@
       var kind = sceneWaterObjectKind(entry);
       if (!kind) {
         if (system) {
+          system.waterObjectMoved = system.waterObjectActive === true;
           system.waterObjectKind = 0;
           system.waterObjectLabel = "";
           system.waterObjectActive = false;
@@ -6676,6 +6677,9 @@
       var currentWorld = sceneWaterObjectCenter(entry, timeSeconds);
       var current = sceneWaterNormalizeObjectCenter(currentWorld, poolWidth, poolLength);
       var signature = sceneWaterObjectMotionSignature(entry, kind);
+      var lastCenter = system && system.waterObjectPrevious;
+      var objectMoved = !lastCenter || system.waterObjectSignature !== signature ||
+        current.x !== lastCenter.x || current.y !== lastCenter.y || current.z !== lastCenter.z;
       var previous = current;
       var explicitPreviousSignature = sceneWaterObjectExplicitPreviousSignature(entry, kind);
       if (system && explicitPreviousSignature && system.waterObjectExplicitPreviousSignature !== explicitPreviousSignature) {
@@ -6710,6 +6714,7 @@
       };
       var normalizedDisplacementScale = Math.max(0, sceneNumber(entry && entry.objectDisplacementScale, 1));
       if (system) {
+        system.waterObjectMoved = objectMoved;
         system.waterObjectSignature = signature;
         system.waterObjectPrevious = current;
         system.waterObjectKind = active ? kind : 0;
@@ -8597,7 +8602,7 @@
         }
         stats.waterLastObjectDisplacementEventID = Math.max(stats.waterLastObjectDisplacementEventID, Math.max(0, Math.floor(sceneNumber(system.lastObjectDisplacementEventID, 0))));
         if (!entry.paused) {
-          if (system.waterObjectActive || (system.waterObjectKind || 0) > 0) {
+          if ((system.waterObjectActive || (system.waterObjectKind || 0) > 0) && system.waterObjectMoved) {
             stats.waterObjectSystems += 1;
             stats.waterObjectSpheres += Math.max(0, system.waterObjectSphereCount || 0);
             var objectResult = dispatchWaterComputeStage(encoder, system, entry, "displacement", displacementCompute.pipeline);
@@ -8609,6 +8614,9 @@
             if (displacementCompute.authored && objectResult.selena === 0) stats.waterAuthoredComputeDispatches += objectDispatches;
           }
           var stepResultA = dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline);
+          // Preserve the established two-substep integration semantics across
+          // quality tiers. Grid resolution and retained-pass cadence provide
+          // the performance scaling without halving wave speed/damping updates.
           var stepResultB = dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline);
           var stepDispatchesA = stepResultA.dispatches;
           var stepDispatchesB = stepResultB.dispatches;
@@ -8625,7 +8633,9 @@
         stats.waterSelenaComputeDispatches += normalResult.selena;
         stats.waterSelenaComputeFallbacks += normalResult.selenaFallback;
         if (normalCompute.authored && normalResult.selena === 0) stats.waterAuthoredComputeDispatches += normalDispatches;
-        if (optics.object || optics.caustics) {
+        var expensivePassCadence = system.resolution === 128 ? 3 : (system.resolution === 192 ? 2 : 1);
+        var refreshExpensivePasses = (system.frameIndex % expensivePassCadence) === 0;
+        if ((optics.object || optics.caustics) && refreshExpensivePasses) {
           var objectShadowPasses = 0;
           var meshShadow = { passes: 0, drawCalls: 0 };
           var hasShadowSubject = waterSystemHasObjectTextureSubject(system);
@@ -8657,7 +8667,7 @@
             stats.waterObjectShadowTexturePixels += Math.max(0, system.objectShadowResolution || 0) * Math.max(0, system.objectShadowResolution || 0);
           }
         }
-        if (optics.caustics) {
+        if (optics.caustics && refreshExpensivePasses) {
           var causticResult = renderWaterCausticsPass(encoder, system);
           var causticPasses = causticResult && causticResult.passes || 0;
           stats.waterAuthoredCausticSourceBytes = Math.max(stats.waterAuthoredCausticSourceBytes, causticResult && causticResult.sourceBytes || 0);

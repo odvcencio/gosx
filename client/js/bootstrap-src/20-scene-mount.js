@@ -269,32 +269,6 @@
     return count ? out : null;
   }
 
-  function sceneDebugWaterShaderSources(waterSystems) {
-    const source = Array.isArray(waterSystems) ? waterSystems : [];
-    const out = [];
-    for (let i = 0; i < source.length; i += 1) {
-      const entry = source[i] && typeof source[i] === "object" ? source[i] : {};
-      const record = { id: String(entry.id || ("scene-water-" + i)) };
-      for (let f = 0; f < SCENE_MOUNT_WATER_SOURCE_ID_FIELDS.length; f += 1) {
-        const name = SCENE_MOUNT_WATER_SOURCE_ID_FIELDS[f];
-        if (typeof entry[name] === "string" && entry[name].trim()) {
-          record[name] = entry[name];
-        }
-      }
-      for (let f = 0; f < SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS.length; f += 1) {
-        const name = SCENE_MOUNT_WATER_SOURCE_FILE_MAP_FIELDS[f];
-        const files = sceneWaterMountStringMap(entry[name]);
-        if (files) record[name] = files;
-      }
-      for (let f = 0; f < SCENE_MOUNT_WATER_SHADER_STRING_FIELDS.length; f += 1) {
-        const name = SCENE_MOUNT_WATER_SHADER_STRING_FIELDS[f];
-        record[name] = typeof entry[name] === "string" ? entry[name].trim().length : 0;
-      }
-      out.push(record);
-    }
-    return out;
-  }
-
   function sceneMountedWaterShaderSources() {
     const out = {};
     const script = typeof document !== "undefined" && document.getElementById ? document.getElementById("gosx-manifest") : null;
@@ -388,16 +362,6 @@
     }
   }
 
-  function sceneMaxWaterCausticSourceBytes(waterSystems) {
-    const systems = Array.isArray(waterSystems) ? waterSystems : [];
-    let maxBytes = 0;
-    for (let i = 0; i < systems.length; i += 1) {
-      const entry = systems[i];
-      maxBytes = Math.max(maxBytes, entry && typeof entry.causticsWGSL === "string" ? entry.causticsWGSL.trim().length : 0);
-    }
-    return maxBytes;
-  }
-
   function publishSceneWaterStateSnapshot(mount, sceneState) {
     if (!mount || typeof mount.setAttribute !== "function") return;
     const systems = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
@@ -409,6 +373,9 @@
     let activeObject = "";
     let poolShape = "";
     let cornerRadius = 0;
+    let poolWidth = 0;
+    let poolHeight = 0;
+    let poolLength = 0;
     systems.forEach(function(system, index) {
       if (!system || typeof system !== "object") return;
       const shape = String(system.poolShape || "");
@@ -424,6 +391,9 @@
         activeObject = String(system.activeObject || system.objectKind || "");
         poolShape = shape;
         cornerRadius = sceneNumber(system.cornerRadius, 0);
+        poolWidth = sceneNumber(system.poolWidth, 0);
+        poolHeight = sceneNumber(system.poolHeight, 0);
+        poolLength = sceneNumber(system.poolLength, 0);
       }
     });
     mount.setAttribute("data-gosx-scene3d-water-state-systems", String(systems.length));
@@ -435,6 +405,70 @@
     mount.setAttribute("data-gosx-scene3d-water-state-active-object", activeObject);
     mount.setAttribute("data-gosx-scene3d-water-state-pool-shape", poolShape);
     mount.setAttribute("data-gosx-scene3d-water-state-corner-radius", String(cornerRadius));
+    mount.setAttribute("data-gosx-scene3d-water-state-pool-width", String(poolWidth));
+    mount.setAttribute("data-gosx-scene3d-water-state-pool-height", String(poolHeight));
+    mount.setAttribute("data-gosx-scene3d-water-state-pool-length", String(poolLength));
+  }
+
+  function sceneWaterSystemsPaused(sceneState) {
+    const systems = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
+    return systems.length > 0 && systems.every(function(system) {
+      return sceneBool(system && system.paused, false);
+    });
+  }
+
+  // Keep the always-on water proof surface deliberately small. These four
+  // attributes are sufficient for release probes to distinguish a working,
+  // advancing renderer from an unsupported, paused, or suspended scene. The
+  // much larger shader/source diagnostics remain behind the debug flag below.
+  function publishSceneWaterLifecycleState(mount, sceneState, lifecycle, disposed) {
+    if (!mount || typeof mount.setAttribute !== "function") return;
+    const systems = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
+    if (!systems.length) return;
+    const paused = sceneWaterSystemsPaused(sceneState);
+    const pageVisible = lifecycle ? lifecycle.pageVisible !== false : true;
+    const inViewport = lifecycle ? lifecycle.inViewport !== false : true;
+    let state = "running";
+    if (disposed) state = "disposed";
+    else if (!pageVisible) state = "page-hidden";
+    else if (!inViewport) state = "offscreen";
+    else if (paused) state = "paused";
+    setAttrValue(mount, "data-gosx-scene3d-water-paused", paused ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-water-lifecycle", state);
+  }
+
+  function publishSceneWaterRendererState(mount, sceneState, renderer, reason) {
+    if (!mount || typeof mount.setAttribute !== "function") return;
+    const systems = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
+    if (!systems.length) return;
+    const active = Boolean(renderer && (renderer.kind === "webgpu" || renderer.kind === "webgl"));
+    setAttrValue(mount, "data-gosx-scene3d-water-renderer", active ? "active" : "unsupported");
+    const unsupportedReason = active ? "" : (reason || "water-renderer-unavailable");
+    setAttrValue(mount, "data-gosx-scene3d-water-unsupported-reason", unsupportedReason);
+  }
+
+  function recordSceneWaterFrame(mount, bundle) {
+    if (!mount || typeof mount.setAttribute !== "function" || !bundle ||
+        !Array.isArray(bundle.waterSystems) || bundle.waterSystems.length === 0) return;
+    const current = Number(mount.__gosxScene3DWaterFrameSeq);
+    const next = (Number.isFinite(current) ? current : 0) + 1;
+    mount.__gosxScene3DWaterFrameSeq = next;
+    // Keep the exact counter in JS for probes while publishing to DOM at 4 Hz
+    // on a 60 FPS scene. This preserves a monotonic liveness signal without a
+    // style/MutationObserver-visible attribute write on every frame.
+    if (next === 1 || next % 15 === 0) {
+      setAttrValue(mount, "data-gosx-scene3d-water-frame-seq", String(next));
+    }
+    const advancesSimulation = bundle.waterSystems.some(function(system) {
+      return !sceneBool(system && system.paused, false);
+    });
+    if (!advancesSimulation) return;
+    const simulationCurrent = Number(mount.__gosxScene3DWaterSimulationSeq);
+    const simulationNext = (Number.isFinite(simulationCurrent) ? simulationCurrent : 0) + 1;
+    mount.__gosxScene3DWaterSimulationSeq = simulationNext;
+    if (simulationNext === 1 || simulationNext % 15 === 0) {
+      setAttrValue(mount, "data-gosx-scene3d-water-simulation-seq", String(simulationNext));
+    }
   }
 
   function sceneDebugBundleCounts(bundle, state) {
@@ -1101,11 +1135,19 @@
     // watchdog fallback, or any inline webgl selection) must render via the
     // WebGL2 water runtime, not the generic PBR path which cannot draw the
     // simulation.
-    if (sceneFirstWaterEntry(props) && typeof createSceneWaterRendererWebGL === "function") {
+    if (sceneFirstWaterEntry(props)) {
       var waterResult = createSceneWaterWebGLResult(canvas, props, fallbackReason);
       if (waterResult) {
         return waterResult;
       }
+      // A generic PBR/WebGL renderer cannot draw the water simulation. Return
+      // an explicit unsupported result so callers never mistake a valid GL
+      // context and a blank generic scene for a working water backend.
+      return {
+        renderer: null,
+        fallbackReason: fallbackReason || "",
+        unsupportedReason: "water-webgl2-unavailable",
+      };
     }
     if (typeof createScenePBRRendererOrFallback === "function") {
       const useCanvasAlpha = sceneCanvasAlpha(props);
@@ -1170,7 +1212,6 @@
   // the simulation). Returns null when WebGPU will render the scene — WebGPU
   // stays primary — or when this is not a water scene.
   function sceneWaterWebGLAutoResult(canvas, props, capability) {
-    if (typeof createSceneWaterRendererWebGL !== "function") return null;
     if (!sceneFirstWaterEntry(props)) return null;
     var webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
     var backendCaps = sceneBackendCapsOf(props);
@@ -1186,7 +1227,11 @@
     if (verdict.backend === "webgpu" && webgpuAvail) return null;
     // Only intercept when WebGL2 is the active backend for this water scene.
     if (verdict.backend !== "webgl") return null;
-    return createSceneWaterWebGLResult(canvas, props, verdict.fallbackReason || "webgpu-unavailable");
+    return createSceneWaterWebGLResult(canvas, props, verdict.fallbackReason || "webgpu-unavailable") || {
+      renderer: null,
+      fallbackReason: verdict.fallbackReason || "webgpu-unavailable",
+      unsupportedReason: "water-webgl2-unavailable",
+    };
   }
 
   function createSceneRenderer(canvas, props, capability) {
@@ -6503,6 +6548,13 @@
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
     const sceneState = createSceneState(props, capability);
+    // The manifest is immutable for the lifetime of an engine mount. Parse its
+    // large inline shader payload once instead of once per rendered frame.
+    const mountedWaterShaderSources = typeof window !== "undefined" &&
+      window.__gosx_scene3d_water_shader_sources_by_id &&
+      typeof window.__gosx_scene3d_water_shader_sources_by_id === "object"
+      ? window.__gosx_scene3d_water_shader_sources_by_id
+      : sceneMountedWaterShaderSources();
     if (ctx.mount && typeof window !== "undefined" && window.__gosx_scene3d_water_shader_sources_by_id) {
       ctx.mount.__gosxScene3DWaterShaderSources = window.__gosx_scene3d_water_shader_sources_by_id;
     }
@@ -6550,6 +6602,12 @@
       }
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
         return { wants: true, reason: "compute-particles" };
+      }
+      if (Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length > 0) {
+        if (sceneWaterSystemsPaused(sceneState)) {
+          return { wants: false, reason: "water-paused" };
+        }
+        return { wants: true, reason: "water-simulation" };
       }
       if (sceneHasActiveModelAnimations(sceneState)) {
         return { wants: true, reason: "model-animation" };
@@ -6610,6 +6668,11 @@
 
     let canvas = createSceneMountCanvas();
     ctx.mount.appendChild(canvas);
+    scenePublishWaterShaderSourcesToMount(ctx.mount, canvas, mountedWaterShaderSources);
+    setAttrValue(ctx.mount, "data-gosx-scene3d-water-frame-seq",
+      Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length ? "0" : "");
+    setAttrValue(ctx.mount, "data-gosx-scene3d-water-simulation-seq",
+      Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length ? "0" : "");
 
     const labelLayer = document.createElement("div");
     labelLayer.setAttribute("data-gosx-scene3d-label-layer", "true");
@@ -6649,8 +6712,12 @@
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
       console.warn("[gosx] Scene3D could not acquire a renderer");
-      const unsupportedReason = sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable";
+      const unsupportedReason = initialRenderer && initialRenderer.unsupportedReason
+        ? initialRenderer.unsupportedReason
+        : (sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable");
       applySceneRendererState(ctx.mount, { kind: "unsupported" }, unsupportedReason);
+      publishSceneWaterRendererState(ctx.mount, sceneState, null, unsupportedReason);
+      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
       setAttrValue(ctx.mount, "data-gosx-scene3d-ready", "false");
       if (canvas.parentNode === ctx.mount) {
         ctx.mount.removeChild(canvas);
@@ -6685,6 +6752,8 @@
     }
     let renderer = initialRenderer.renderer;
     applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
+    publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
+    publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
     let latestBundle = null;
     const labelLayoutCache = new Map();
     const labelElements = new Map();
@@ -7131,6 +7200,7 @@
       const previous = renderer;
       renderer = nextRenderer;
       applySceneRendererState(ctx.mount, renderer, fallbackReason);
+      publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
       renderWatchdogLastSeq = -1;
       renderWatchdogLastAt = 0;
       renderWatchdogLastAdvanceAt = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
@@ -7269,6 +7339,18 @@
                   return swapRenderer(webglFallback.result.renderer, fallbackReason);
                 }
               }
+              if (sceneFirstWaterEntry(props)) {
+                // Canvas2D and generic WebGL cannot represent the water
+                // simulation. Expose the backend failure instead of swapping
+                // to a renderer that would produce a plausible-but-blank demo.
+                const waterReason = "water-webgl2-unavailable";
+                applySceneRendererState(ctx.mount, renderer, waterReason);
+                publishSceneWaterRendererState(ctx.mount, sceneState, null, waterReason);
+                gosxSceneEmit("warn", "water-renderer-fallback-unavailable", {
+                  reason: fallbackReason,
+                });
+                return false;
+              }
               if (!allowWebGLFallback && !allowCanvasFallback) {
                 gosxSceneEmit("warn", "renderer-fallback-disallowed", {
                   reason: fallbackReason,
@@ -7328,6 +7410,7 @@
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
+      recordSceneWaterFrame(ctx.mount, latestBundle);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
@@ -7946,10 +8029,7 @@
         snapshot.camera = currentMountedSceneCamera();
         snapshot.gpuResources = sceneDebugGPUResources(ctx.mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
         snapshot.webgpuStats = sceneDebugClone(ctx.mount && ctx.mount.__gosxScene3DWebGPUStats, 3);
-        snapshot.waterShaderSources = {
-          sceneState: sceneDebugWaterShaderSources(sceneState && sceneState.waterSystems),
-          bundle: sceneDebugWaterShaderSources(latestBundle && latestBundle.waterSystems),
-        };
+        snapshot.waterShaderSources = { sceneState: [], bundle: [] };
         snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
         snapshot.fighterSamples = sceneDebugFighterSamples(latestBundle, sceneState);
       }
@@ -8140,6 +8220,7 @@
       scheduleRender(reason || "capability");
     });
     const releaseLifecycleObserver = observeSceneLifecycle(ctx.mount, lifecycle, function(reason) {
+      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
       if (!sceneCanRender()) {
         cancelFrame();
         cancelScheduledRender();
@@ -8173,7 +8254,8 @@
     const releaseManagedControlForms = typeof bindSceneManagedControlForms === "function"
       ? bindSceneManagedControlForms(ctx.mount, sceneState, function(commands) {
           const result = applySceneCommands(sceneState, commands);
-        publishSceneWaterStateSnapshot(ctx.mount, sceneState);
+          publishSceneWaterStateSnapshot(ctx.mount, sceneState);
+          publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
           if (result && typeof result.then === "function") {
             result.then(function() {
               scheduleRender("managed-control-forms-models");
@@ -8381,20 +8463,8 @@
             runtimeBundle,
             sceneCurrentControlCamera(sceneControlHandle.controller, runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
-          effectiveBundle.waterShaderSourcesByID = sceneMountedWaterShaderSources();
+          effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
-          scenePublishWaterShaderSourcesToMount(ctx.mount, canvas, effectiveBundle.waterShaderSourcesByID);
-          if (ctx.mount && typeof ctx.mount.setAttribute === "function") {
-            const waterShaderIDs = Object.keys(effectiveBundle.waterShaderSourcesByID || {});
-            let waterCausticBytes = 0;
-            for (let wsi = 0; wsi < waterShaderIDs.length; wsi += 1) {
-              const record = effectiveBundle.waterShaderSourcesByID[waterShaderIDs[wsi]];
-              waterCausticBytes = Math.max(waterCausticBytes, typeof record.causticsWGSL === "string" ? record.causticsWGSL.trim().length : 0);
-            }
-            ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-shader-systems", String(waterShaderIDs.length));
-            ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-caustic-source-bytes", String(waterCausticBytes));
-            ctx.mount.setAttribute("data-gosx-scene3d-water-render-entry-caustic-source-bytes", String(sceneMaxWaterCausticSourceBytes(effectiveBundle.waterSystems)));
-          }
           latestBundle = effectiveBundle;
           publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
           if (!ensureRendererCanCoverBundle(effectiveBundle)) {
@@ -8403,6 +8473,7 @@
           }
           syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport);
+          recordSceneWaterFrame(ctx.mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
@@ -8464,20 +8535,8 @@
         sceneState.postFXMaxPixels,
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
       );
-      latestBundle.waterShaderSourcesByID = sceneMountedWaterShaderSources();
+      latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
-      scenePublishWaterShaderSourcesToMount(ctx.mount, canvas, latestBundle.waterShaderSourcesByID);
-      if (ctx.mount && typeof ctx.mount.setAttribute === "function") {
-        const waterShaderIDs = Object.keys(latestBundle.waterShaderSourcesByID || {});
-        let waterCausticBytes = 0;
-        for (let wsi = 0; wsi < waterShaderIDs.length; wsi += 1) {
-          const record = latestBundle.waterShaderSourcesByID[waterShaderIDs[wsi]];
-          waterCausticBytes = Math.max(waterCausticBytes, typeof record.causticsWGSL === "string" ? record.causticsWGSL.trim().length : 0);
-        }
-        ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-shader-systems", String(waterShaderIDs.length));
-        ctx.mount.setAttribute("data-gosx-scene3d-water-bundle-caustic-source-bytes", String(waterCausticBytes));
-        ctx.mount.setAttribute("data-gosx-scene3d-water-render-entry-caustic-source-bytes", String(sceneMaxWaterCausticSourceBytes(latestBundle.waterSystems)));
-      }
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
@@ -8491,6 +8550,7 @@
       }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport);
+      recordSceneWaterFrame(ctx.mount, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -8733,6 +8793,8 @@
     return {
       applyCommands(commands) {
         const result = applySceneCommands(sceneState, commands);
+        publishSceneWaterStateSnapshot(ctx.mount, sceneState);
+        publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
         if (result && typeof result.then === "function") {
           result.then(function() {
             scheduleRender("commands-models");
@@ -8748,6 +8810,7 @@
       },
       dispose() {
         disposed = true;
+        publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, true);
         clearIdleContextRelease();
         clearVoluntaryRestoreWatchdog();
         stopSceneRenderWatchdog();

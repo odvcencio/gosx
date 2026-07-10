@@ -3,7 +3,7 @@ set -eu
 
 port="${PERF_PORT:-3071}"
 base_url="${PERF_BASE_URL:-http://127.0.0.1:${port}}"
-urls="${PERF_URLS:-${base_url}/docs/getting-started}"
+urls="${PERF_URLS:-${base_url}/docs/getting-started ${base_url}/demos/water}"
 budget="${PERF_BUDGET:-perf/budgets/default.json}"
 out="${PERF_OUT:-build/perf-report.json}"
 flags="${PERF_FLAGS:---mobile pixel7 --throttle 4 --coverage --timeout 45s}"
