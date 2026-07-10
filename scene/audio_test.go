@@ -385,3 +385,30 @@ func TestAudioCueGoldenSynthPatch(t *testing.T) {
 	}
 	goldenJSON(t, "audio_cue_patch_golden.json", cue.Props())
 }
+
+// TestPropsAudioManifestLowersUnderAudioKey pins the Props.Audio seam: a
+// scene-level manifest lands under the "audio" prop key mountEngine already
+// forwards to gosxAudio.registerManifest, and an absent manifest emits no key.
+func TestPropsAudioManifestLowersUnderAudioKey(t *testing.T) {
+	vol := 0.8
+	props := Props{
+		Audio: &Audio{
+			Buses: []AudioBus{{ID: "music", Volume: &vol}, {ID: "sfx"}},
+		},
+	}
+	lowered := props.LegacyProps()
+	audio, ok := lowered["audio"].(map[string]any)
+	if !ok {
+		t.Fatalf("audio key missing or wrong shape: %T", lowered["audio"])
+	}
+	buses, ok := audio["buses"].([]map[string]any)
+	if !ok || len(buses) != 2 {
+		t.Fatalf("buses = %#v, want 2 entries", audio["buses"])
+	}
+	if buses[0]["id"] != "music" {
+		t.Fatalf("first bus = %#v, want music", buses[0])
+	}
+	if _, present := (Props{}).LegacyProps()["audio"]; present {
+		t.Fatal("zero Props must not emit an audio key")
+	}
+}
