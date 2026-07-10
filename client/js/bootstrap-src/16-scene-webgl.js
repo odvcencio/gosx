@@ -5852,6 +5852,61 @@
 	    // Per-frame clock (seconds) fed to selena materials that declare `param time : float`.
 	    // Set once per frame before any selena draw; explicit customUniforms.time still overrides.
 	    var sceneSelenaFrameTime = 0;
+
+	    // Live per-frame values for Selena `context { ... }` uniform fields
+	    // (bindings.Layout marks them Class "context"). Reserved names the
+	    // Scene3D WebGL executor injects — all other context fields fall
+	    // through to the material's own values/defaults, so the water-demo
+	    // corpus (resolution/objectKind/spheres/...) keeps its per-material
+	    // channels, and `time` stays the reserved auto-uniform resolved
+	    // before this map is consulted:
+	    //   cameraPos : vec3 — world-space camera position (same -z
+	    //                      convention as u_cameraPosition on the
+	    //                      built-in PBR path)
+	    //   sunDir    : vec3 — normalized direction TOWARD the first
+	    //                      directional light (the PBR light array
+	    //                      stores from-light directions; Selena
+	    //                      surfaces dot against toward-light, so this
+	    //                      negates it)
+	    //   sunColor  : vec3 — that light's color × intensity
+	    //   ambient   : vec3 — environment ambientColor × ambientIntensity
+	    var sceneSelenaFrameContext = null;
+
+	    function sceneSelenaFrameContextUpdate(cam, lights, environment) {
+	      var sunDir = [0, 1, 0];
+	      var sunColor = [1, 1, 1];
+	      var lightArray = Array.isArray(lights) ? lights : [];
+	      for (var i = 0; i < lightArray.length; i++) {
+	        var light = lightArray[i] || {};
+	        if (String(light.kind || "").toLowerCase() !== "directional") continue;
+	        var dx = sceneNumber(light.directionX, 0);
+	        var dy = sceneNumber(light.directionY, -1);
+	        var dz = sceneNumber(light.directionZ, 0);
+	        var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+	        sunDir = [-dx / len, -dy / len, -dz / len];
+	        var rgba = sceneColorRGBA(light.color, [1, 1, 1, 1]);
+	        var intensity = sceneNumber(light.intensity, 1);
+	        sunColor = [rgba[0] * intensity, rgba[1] * intensity, rgba[2] * intensity];
+	        break;
+	      }
+	      var env = environment || {};
+	      var ambientRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
+	      var ambientIntensity = sceneNumber(env.ambientIntensity, 0);
+	      sceneSelenaFrameContext = {
+	        cameraPos: [
+	          sceneNumber(cam && cam.x, 0),
+	          sceneNumber(cam && cam.y, 0),
+	          -sceneNumber(cam && cam.z, 0),
+	        ],
+	        sunDir: sunDir,
+	        sunColor: sunColor,
+	        ambient: [
+	          ambientRGBA[0] * ambientIntensity,
+	          ambientRGBA[1] * ambientIntensity,
+	          ambientRGBA[2] * ambientIntensity,
+	        ],
+	      };
+	    }
 	    var identityModelMatrix = new Float32Array([
 	      1, 0, 0, 0,
 	      0, 1, 0, 0,
@@ -6239,6 +6294,11 @@
       // correct value even on scenes that have no PBR mesh data.
       _frameLightsHash = scenePBRLightsHash(bundle.lights, bundle.environment);
 
+      // Refresh the Selena context-injection state (cameraPos/sunDir/
+      // sunColor/ambient) — also outside `if (hasPBRData)`, so scenes whose
+      // meshes are ALL Selena-dressed still get live context.
+      sceneSelenaFrameContextUpdate(cam, bundle.lights, bundle.environment);
+
       // Only activate PBR mesh program if there are mesh objects to draw.
       if (hasPBRData) {
       gl.useProgram(program);
@@ -6399,6 +6459,15 @@
       // customUniforms so a declared `param time` — whose compiled default ships
       // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
       if (name === "time") return sceneSelenaFrameTime;
+      // Context-class fields with reserved names resolve to live per-frame
+      // scene state (see sceneSelenaFrameContextUpdate); unknown context
+      // names fall through to the material's own values/defaults below.
+      if (field && field.class === "context" && sceneSelenaFrameContext) {
+        if (name === "cameraPos") return sceneSelenaFrameContext.cameraPos;
+        if (name === "sunDir") return sceneSelenaFrameContext.sunDir;
+        if (name === "sunColor") return sceneSelenaFrameContext.sunColor;
+        if (name === "ambient") return sceneSelenaFrameContext.ambient;
+      }
       var values = material && material.customUniforms;
       if (values && typeof values === "object" && Object.prototype.hasOwnProperty.call(values, name)) {
         return values[name];
