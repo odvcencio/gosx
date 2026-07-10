@@ -185,6 +185,49 @@ type CustomPost struct {
 
 func (CustomPost) isPostEffect() {}
 
+// FXAA applies fast approximate anti-aliasing (the FXAA 3.11 quality
+// preset) as a full-resolution pass.
+//
+// Post-processing renders the scene into an offscreen HDR framebuffer
+// before compositing to the canvas, which defeats hardware MSAA — once any
+// PostEffect is present, Props.MSAASamples no longer smooths the presented
+// image. FXAA is how a post-FX scene gets edge smoothing back without a
+// second full-scene MSAA-resolve render, and it is cheap enough to run at
+// full pass resolution (unlike Bloom, which should run reduced).
+//
+// FXAA has no tunable fields — it is a fixed pass. Always place it LAST in
+// Effects: it edge-searches the final tonemapped/graded LDR image via
+// green-channel luma, so running it before Tonemap would search HDR data
+// and search wrong.
+type FXAA struct{}
+
+func (FXAA) isPostEffect() {}
+
+// GameplayPostFX returns a post-processing chain sized for 60fps skinned
+// gameplay: half-resolution Bloom with a conservative threshold (so only
+// emissive/specular hot spots bloom, not general geometry), ACES Tonemap,
+// and a chain-end FXAA pass for edge anti-aliasing.
+//
+// Budget intent: this is deliberately the minimum chain that still buys
+// "glow + clean edges" for active play — 1 bloom bright-pass + 2 separable
+// blurs + 1 composite (all at half of the already-720p-capped resolution
+// via Bloom.Scale), 1 tonemap pass, and 1 full-res FXAA pass. It
+// intentionally omits SSAO, DOF, ColorGrade, and Vignette: those are
+// cinematic/static-page effects that cost more passes than a 60fps frame
+// budget can absorb alongside skinned-mesh rendering. Compose your own
+// richer chain (SSAO+Bloom+Tonemap+ColorGrade+Vignette) for menus,
+// portraits, and other static pages instead of reusing this preset there.
+func GameplayPostFX() PostFX {
+	return PostFX{
+		MaxPixels: PostFXMaxPixels720p,
+		Effects: []PostEffect{
+			Bloom{Threshold: 0.92, Strength: 0.35, Radius: 6, Scale: 0.5},
+			Tonemap{Mode: TonemapACES, Exposure: 1.0},
+			FXAA{},
+		},
+	}
+}
+
 // resolveMaxPixels normalizes the field for IR emission. Zero or negative
 // values become the default 1080p cap; positive values pass through.
 func (p PostFX) resolveMaxPixels() int {

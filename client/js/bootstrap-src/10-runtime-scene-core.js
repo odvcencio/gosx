@@ -7651,6 +7651,7 @@
     SCENE_POST_SSAO: "ssao",
     SCENE_POST_DOF: "dof",
     SCENE_POST_CUSTOM_POST: "customPost",
+    SCENE_POST_FXAA: "fxaa",
     validateSceneIR: typeof validateSceneIR === "function" ? validateSceneIR : undefined,
     prepareScene: typeof prepareScene === "function" ? prepareScene : undefined,
     scenePreparedCommandSequence: typeof scenePreparedCommandSequence === "function" ? scenePreparedCommandSequence : undefined,

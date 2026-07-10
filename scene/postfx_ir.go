@@ -318,6 +318,22 @@ func (ir DOFIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// FXAAIR lowers FXAA into the bundle.postEffects[i] shape:
+//
+//	{kind: "fxaa"}
+//
+// FXAA has no tunable fields, so this IR carries no data beyond its kind.
+type FXAAIR struct{}
+
+func (ir FXAAIR) legacyProps() map[string]any {
+	return map[string]any{"kind": "fxaa"}
+}
+
+// MarshalJSON encodes the IR shape directly.
+func (ir FXAAIR) MarshalJSON() ([]byte, error) {
+	return []byte(`{"kind":"fxaa"}`), nil
+}
+
 // CustomPostIR lowers CustomPost into the bundle.postEffects[i] shape.
 // The WGSL/GLSL shaders and binding layout are forwarded from the material's
 // CustomMaterial fields so the JS runtime can build pipelines from them
@@ -421,6 +437,8 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Aperture:      float64(ev.Aperture),
 				MaxBlur:       float64(ev.MaxBlur),
 			})
+		case FXAA:
+			out = append(out, FXAAIR{})
 		case CustomPost:
 			ir := lowerCustomPost(ev)
 			if ir != nil {

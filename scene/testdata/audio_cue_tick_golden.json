@@ -1,0 +1,9 @@
+{
+  "bus": "sfx",
+  "cue": "launcher",
+  "depth": -0.1,
+  "intensity": 0.72,
+  "pan": 0.25,
+  "phaseCue": "fight",
+  "seq": 128
+}

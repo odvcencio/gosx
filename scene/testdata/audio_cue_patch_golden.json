@@ -1,0 +1,42 @@
+{
+  "cue": "beast-roar",
+  "depth": 0.4,
+  "intensity": 1.1,
+  "pan": 0,
+  "patch": {
+    "name": "beast-roar",
+    "noises": [
+      {
+        "delayMS": 40,
+        "duration": 0.15,
+        "filterFrequency": 500,
+        "filterType": "lowpass"
+      }
+    ],
+    "sweeps": [
+      {
+        "duration": 0.35,
+        "endFrequency": 60,
+        "pan": -0.2,
+        "startFrequency": 220,
+        "waveform": "square"
+      }
+    ],
+    "tones": [
+      {
+        "duration": 0.4,
+        "envelope": {
+          "attack": 0.02,
+          "decay": 0.1,
+          "release": 0.3,
+          "sustain": 0.6
+        },
+        "frequency": 90,
+        "gain": 0.8,
+        "waveform": "sawtooth"
+      }
+    ]
+  },
+  "phaseCue": "",
+  "seq": 9
+}

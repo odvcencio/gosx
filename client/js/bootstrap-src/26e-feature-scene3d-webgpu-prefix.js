@@ -43,6 +43,7 @@
   var SCENE_POST_SSAO = sceneApi.SCENE_POST_SSAO || "ssao";
   var SCENE_POST_DOF = sceneApi.SCENE_POST_DOF || "dof";
   var SCENE_POST_CUSTOM_POST = sceneApi.SCENE_POST_CUSTOM_POST || "customPost";
+  var SCENE_POST_FXAA = sceneApi.SCENE_POST_FXAA || "fxaa";
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var sceneMat4MultiplyInto = sceneApi.sceneMat4MultiplyInto || function(out, a, b) {
     for (var col = 0; col < 4; col++) {

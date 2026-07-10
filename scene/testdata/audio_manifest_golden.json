@@ -1,0 +1,38 @@
+{
+  "buses": [
+    {
+      "id": "master",
+      "volume": 1
+    },
+    {
+      "id": "sfx",
+      "parent": "master",
+      "volume": 0.8
+    },
+    {
+      "id": "music",
+      "muted": true,
+      "parent": "master",
+      "volume": 0.5
+    }
+  ],
+  "clips": [
+    {
+      "bus": "sfx",
+      "contentType": "audio/mpeg",
+      "id": "hit",
+      "preload": true,
+      "rate": 1,
+      "src": "/audio/hit.mp3",
+      "volume": 0.9
+    },
+    {
+      "bus": "music",
+      "id": "theme",
+      "loop": true,
+      "src": "/audio/theme.ogg",
+      "volume": 0.7
+    }
+  ],
+  "masterVolume": 1
+}
