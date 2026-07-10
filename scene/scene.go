@@ -174,6 +174,12 @@ type Props struct {
 	Shadows               Shadows
 	Physics               PhysicsWorld
 	Graph                 Graph
+	// Audio optionally declares a gosxAudio manifest (buses + clips) for
+	// this scene's engine. It lowers under the "audio" prop key, which the
+	// client's mountEngine already forwards to
+	// window.__gosx.audio.registerManifest — see the Audio type
+	// (scene/audio.go) for the two-engine (gosxAudio/arcadeAudio) model.
+	Audio *Audio
 }
 
 // Compression configures TurboQuant compression for Scene3D vertex data.
@@ -1641,6 +1647,11 @@ func (p Props) spreadPropsFast() map[string]any {
 
 func (p Props) legacyBaseProps() map[string]any {
 	out := map[string]any{}
+	if p.Audio != nil {
+		if audio := p.Audio.Props(); len(audio) > 0 {
+			out["audio"] = audio
+		}
+	}
 	setInt(out, "width", p.Width)
 	setInt(out, "height", p.Height)
 	setString(out, "label", p.Label)
