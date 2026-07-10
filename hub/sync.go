@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 
 	"m31labs.dev/gosx/crdt"
@@ -14,6 +15,25 @@ type syncedDoc struct {
 	prefix byte
 	doc    *crdt.Doc
 }
+
+// BinaryAuthorizer decides whether an inbound binary CRDT sync frame
+// (a client -> server ReceiveSyncMessage) from client for the SyncDoc
+// registered as docName should be applied. Return false to drop the frame
+// instead of merging it into the document.
+//
+// This gate covers INBOUND application only. It has no effect on
+// broadcastSyncDoc — server -> client sync fan-out (including the initial
+// bootstrap frame queued by initClientSync) is never gated, so read-only
+// clients keep receiving live convergent state; only their own writes can be
+// refused.
+//
+// If no authorizer is installed (the default), every joined client may push
+// inbound sync for every registered SyncDoc, matching the hub's behavior
+// before this hook existed. Install one with Hub.SetBinaryAuthorizer for any
+// SyncDoc whose server-side application must be restricted per client (e.g.
+// a per-connection read/write permission resolved at WebSocket upgrade
+// time — see m31labs.dev/kiln/collab.Session's CanWrite wiring).
+type BinaryAuthorizer func(client *Client, docName string) bool
 
 type peerSyncState struct {
 	mu    sync.Mutex
@@ -35,6 +55,16 @@ func (p *peerSyncState) docState(prefix byte) *crdtsync.State {
 	value := crdtsync.NewState()
 	p.state[prefix] = value
 	return value
+}
+
+// SetBinaryAuthorizer installs fn as the hub's inbound binary sync gate (see
+// BinaryAuthorizer). Passing nil removes any previously installed authorizer,
+// reverting to allow-all for inbound sync. Safe to call at any time,
+// including before any SyncDoc registration or client connection.
+func (h *Hub) SetBinaryAuthorizer(fn BinaryAuthorizer) {
+	h.syncMu.Lock()
+	defer h.syncMu.Unlock()
+	h.binaryAuthorizer = fn
 }
 
 // SyncDoc registers a CRDT document for binary sync on this hub.
@@ -119,9 +149,15 @@ func (h *Hub) handleBinaryMessage(client *Client, data []byte) {
 	prefix := data[0]
 	h.syncMu.RLock()
 	binding := h.syncDocs[prefix]
+	authorizer := h.binaryAuthorizer
 	h.syncMu.RUnlock()
 	if binding == nil {
 		h.sendCRDTError(client, prefix, fmt.Errorf("unknown crdt doc %d", prefix))
+		return
+	}
+	if authorizer != nil && !authorizer(client, binding.name) {
+		log.Printf("[hub/%s] dropped unauthorized inbound sync for doc %q from client %s", h.name, binding.name, client.ID)
+		h.sendCRDTError(client, prefix, fmt.Errorf("not authorized to sync doc %q", binding.name))
 		return
 	}
 
