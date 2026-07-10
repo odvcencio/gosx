@@ -9715,7 +9715,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
   // name === "time" before user values can shadow it.
-  assert.match(webgl, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,200}hasOwnProperty\.call\(values, name\)/);
+  assert.match(webgl, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,900}hasOwnProperty\.call\(values, name\)/);
   assert.match(webgpu, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,240}sceneSelenaMaterialValue\(material, name\)/);
 
   // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
@@ -9734,7 +9734,7 @@ test("Scene3D selena time auto-uniform: time is forced before customUniforms (re
   // The time branch must appear BEFORE the customUniforms early-return in both
   // resolvers (mirrors mvp/normalMatrix), so a compiled `param time` default
   // shipped in customUniforms cannot shadow the per-frame clock.
-  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,1200}/)[0];
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,2200}/)[0];
   const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,1400}/)[0];
 
   const webglCustomIdx = webglResolver.indexOf('return values[name]');
@@ -27127,4 +27127,36 @@ test("P1 hub outbound binding: signal publishes to socket and in-binding still w
   env.context.__gosx_disconnect_hub("gosx-hub-0");
   assert.equal(env.context.__gosx.hubs.size, 0);
   assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Selena context-class fields resolve to live per-frame scene state on WebGL", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // The per-frame updater exists and derives every reserved name from real
+  // scene state: camera (with the -z convention the PBR path uses), the
+  // first directional light (negated into toward-light form), its
+  // color x intensity, and environment ambient color x intensity.
+  assert.match(webgl, /function sceneSelenaFrameContextUpdate\(cam, lights, environment\)/);
+  assert.match(webgl, /-sceneNumber\(cam && cam\.z, 0\)/);
+  assert.match(webgl, /if \(String\(light\.kind \|\| ""\)\.toLowerCase\(\) !== "directional"\) continue;/);
+  assert.match(webgl, /sunDir = \[-dx \/ len, -dy \/ len, -dz \/ len\];/);
+  assert.match(webgl, /ambientRGBA\[0\] \* ambientIntensity/);
+
+  // It refreshes once per frame in the lights block, OUTSIDE hasPBRData —
+  // Selena-only scenes still get live context.
+  assert.match(webgl, /sceneSelenaFrameContextUpdate\(cam, bundle\.lights, bundle\.environment\);/);
+
+  // selenaUniformValue consults it for context-class fields AFTER the
+  // reserved auto-uniforms (time keeps winning) and BEFORE customUniforms
+  // (live state beats the material's static fallbacks), with unknown
+  // context names falling through.
+  const uniformFn = webgl.slice(webgl.indexOf("function selenaUniformValue"));
+  const timeAt = uniformFn.indexOf('if (name === "time")');
+  const contextAt = uniformFn.indexOf('field.class === "context"');
+  const customAt = uniformFn.indexOf("material.customUniforms");
+  assert.ok(timeAt >= 0 && contextAt > timeAt && customAt > contextAt,
+    "context branch must sit between the time auto-uniform and customUniforms");
+  for (const name of ["cameraPos", "sunDir", "sunColor", "ambient"]) {
+    assert.match(uniformFn, new RegExp(`if \\(name === "${name}"\\) return sceneSelenaFrameContext\\.${name};`));
+  }
 });
