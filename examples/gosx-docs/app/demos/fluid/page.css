@@ -35,6 +35,10 @@
   max-width: 100%;
   background: var(--demo-bg, #0b0b0d);
   border: 1px solid var(--demo-accent, #a8b8ff);
+  /* Dragging nudges the particle presentation (see fluid-client.js); avoid
+     the browser turning a drag into a page/touch scroll. */
+  touch-action: none;
+  cursor: crosshair;
 }
 
 /* ─── HUD panel ─────────────────────────────────────────────────────────── */

@@ -55,7 +55,7 @@ func Page() Node {
 	</div>
 	<footer class="fluid__footer">
 		<span>
-			GoSX Field → 6-bit keyframes/deltas → Hub at 20 Hz · browser decodes one slice and renders particles
+			GoSX Field → 6-bit keyframes/deltas → Hub at 20 Hz · browser decodes one slice and renders particles · drag inside the canvas for a visual-only nudge (client-side presentation effect, does not touch the server field)
 		</span>
 	</footer>
 	<script src="/fluid-client.js" defer></script>
