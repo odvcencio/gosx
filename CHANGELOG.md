@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.29.5 (2026-07-10)
+## v0.29.5 (2026-07-11)
 
 Production Scene3D, audio, collaboration hardening, and deployable content
 collections. This release banks the full post-v0.29.4 range and makes the
