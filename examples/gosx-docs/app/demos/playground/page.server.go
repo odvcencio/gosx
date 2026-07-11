@@ -2,6 +2,7 @@ package playground
 
 import (
 	"encoding/base64"
+	"strings"
 
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/island/program"
@@ -39,6 +40,18 @@ func init() {
 					"slug":    def.Slug,
 					"presets": Presets(),
 					"preview": ctx.Runtime().IslandWithProgramAsset(islandProgram, map[string]any{}, programRef, "bin", ""),
+					// Initial compiler-output facts for the default preset, computed
+					// server-side so the panel shows real numbers on first paint
+					// instead of a placeholder that over-promises (see page.gsx).
+					"initialProgramBytes": len(compiled.Program),
+					"initialNodeCount":    compiled.NodeCount,
+					"initialExprCount":    compiled.ExprCount,
+					"initialDiagnostics":  len(compiled.Diagnostics),
+					// Initial editor line/char counts, computed with the same
+					// formula the client uses after edits (playground-editor.js)
+					// so the numbers never visibly jump on hydration.
+					"initialLines": strings.Count(def.Source, "\n") + 1,
+					"initialChars": len(def.Source),
 				}, nil
 			},
 			Actions: route.FileActions{

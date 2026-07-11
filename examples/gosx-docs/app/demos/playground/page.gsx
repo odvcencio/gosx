@@ -25,7 +25,17 @@ func Page() Node {
 					<button class="play__reset-btn" type="button" aria-label="Reset to selected preset">Reset</button>
 				</div>
 				<p class="play__preset-description" id="play-preset-description">{data.presets[0].Description}</p>
-				<textarea class="play__source" spellcheck="false" aria-label="gsx source">{data.source}</textarea>
+				<textarea
+					class="play__source"
+					spellcheck="false"
+					aria-label="gsx source"
+					title="Ctrl+Enter compiles immediately"
+				>{data.source}</textarea>
+				<div class="play__editor-meta">
+					<span class="play__editor-meta-item" data-editor-stat="lines">{data.initialLines} lines</span>
+					<span class="play__editor-meta-item" data-editor-stat="chars">{data.initialChars} chars</span>
+					<span class="play__editor-meta-item play__editor-meta-hint">Ctrl+Enter compiles now</span>
+				</div>
 				<div class="play__errors" aria-live="polite"></div>
 			</div>
 			<div class="play__preview">
@@ -35,7 +45,30 @@ func Page() Node {
 		</div>
 		<details class="play__compiler">
 			<summary>Compiler output</summary>
-			<div class="play__compiler-body">Hydrate to see IR and program bytes.</div>
+			<div class="play__compiler-body">
+				<div class="play__stat-strip">
+					<div class="play__stat">
+						<span class="play__stat-label">Latency</span>
+						<b class="play__stat-value" data-stat="latency">—</b>
+					</div>
+					<div class="play__stat">
+						<span class="play__stat-label">Program</span>
+						<b class="play__stat-value" data-stat="bytes">{data.initialProgramBytes} bytes</b>
+					</div>
+					<div class="play__stat">
+						<span class="play__stat-label">Nodes</span>
+						<b class="play__stat-value" data-stat="nodes">{data.initialNodeCount}</b>
+					</div>
+					<div class="play__stat">
+						<span class="play__stat-label">Exprs</span>
+						<b class="play__stat-value" data-stat="exprs">{data.initialExprCount}</b>
+					</div>
+					<div class="play__stat">
+						<span class="play__stat-label">Diagnostics</span>
+						<b class="play__stat-value" data-stat="diagnostics">{data.initialDiagnostics}</b>
+					</div>
+				</div>
+			</div>
 		</details>
 		<script src="/playground-editor.js" defer></script>
 	</section>

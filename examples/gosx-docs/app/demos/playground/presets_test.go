@@ -7,19 +7,40 @@ import (
 	"m31labs.dev/gosx/ir"
 )
 
-// expectedSlugs is the canonical list of preset slugs the suite enforces.
+// expectedSlugs is the canonical list of preset slugs the suite enforces, in
+// display order. TestPresetSlugsMatchExpected below actually checks this
+// list against Presets() — update it whenever a preset is added, removed, or
+// reordered.
 var expectedSlugs = []string{
 	"counter",
 	"two-counters",
 	"toggle",
 	"greeter",
 	"shared-theme",
+	"progress-bar",
+	"color-mixer",
+	"heartbeat",
 }
 
 func TestPresetsNonEmpty(t *testing.T) {
 	got := Presets()
 	if len(got) < 5 {
 		t.Fatalf("Presets() returned %d entries, want >= 5", len(got))
+	}
+}
+
+// TestPresetSlugsMatchExpected verifies Presets() returns exactly the
+// expectedSlugs list, in order. This is the enforcement the package comment
+// on expectedSlugs promises — without it, expectedSlugs was decorative only.
+func TestPresetSlugsMatchExpected(t *testing.T) {
+	got := Presets()
+	if len(got) != len(expectedSlugs) {
+		t.Fatalf("Presets() returned %d entries, want %d (%v)", len(got), len(expectedSlugs), expectedSlugs)
+	}
+	for i, want := range expectedSlugs {
+		if got[i].Slug != want {
+			t.Errorf("Presets()[%d].Slug = %q, want %q", i, got[i].Slug, want)
+		}
 	}
 }
 

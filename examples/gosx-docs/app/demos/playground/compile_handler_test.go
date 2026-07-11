@@ -56,6 +56,13 @@ func TestCompileSourceAllPresets(t *testing.T) {
 			if len(result.Diagnostics) != 0 {
 				t.Fatalf("preset %q: expected zero diagnostics, got: %v", p.Slug, result.Diagnostics)
 			}
+			// NodeCount/ExprCount are surfaced to the playground editor's
+			// compiler-output panel as real IR facts (see compile_handler.go
+			// CompileResult) — every successfully-compiled preset must report
+			// a non-zero node count so the panel never shows a bogus zero.
+			if result.NodeCount <= 0 {
+				t.Fatalf("preset %q: expected NodeCount > 0, got %d", p.Slug, result.NodeCount)
+			}
 		})
 	}
 }

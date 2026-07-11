@@ -62,6 +62,17 @@ type CompileResult struct {
 	// failures). A non-empty Diagnostics slice with a zero Program means the
 	// input had a problem the user needs to see.
 	Diagnostics []Diagnostic `json:"diagnostics"`
+
+	// NodeCount is the number of nodes in the lowered island program.
+	// Zero for diagnostic-only results (parse/validation failures never
+	// reach the lowering pass). Surfaced to the playground editor so the
+	// compiler-output panel can show real IR facts instead of a vague
+	// promise.
+	NodeCount int `json:"nodeCount"`
+
+	// ExprCount is the number of entries in the lowered island program's
+	// expression table. Zero for diagnostic-only results.
+	ExprCount int `json:"exprCount"`
 }
 
 // ErrEmptySource is returned when CompileSource receives empty input.
@@ -143,6 +154,8 @@ func compileSourceWithCountsImpl(source []byte) (CompileResult, int, int, error)
 		Component: prog.Components[0].Name,
 		HTML:      renderPlaygroundSSR(prog.Components[0].Name),
 		Program:   bin,
+		NodeCount: nNodes,
+		ExprCount: nExprs,
 	}, nNodes, nExprs, nil
 }
 
@@ -311,6 +324,8 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: "compiler unavailable"}},
+				"nodeCount":   0,
+				"exprCount":   0,
 			})
 		}
 		rateKey := clientIPFromRequest(ctx.Request)
@@ -320,6 +335,8 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: "invalid request body"}},
+				"nodeCount":   0,
+				"exprCount":   0,
 			})
 		}
 		result, err := compiler.Compile(rateKey, []byte(req.Source))
@@ -331,6 +348,8 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: sentinelMessage(err)}},
+				"nodeCount":   0,
+				"exprCount":   0,
 			})
 		}
 		return ctx.Success("", map[string]any{
@@ -338,6 +357,8 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 			"html":        result.HTML,
 			"program":     base64.StdEncoding.EncodeToString(result.Program),
 			"diagnostics": result.Diagnostics,
+			"nodeCount":   result.NodeCount,
+			"exprCount":   result.ExprCount,
 		})
 	}
 }
@@ -355,6 +376,8 @@ func CompileAction(ctx *action.Context) error {
 			"html":        "",
 			"program":     "",
 			"diagnostics": []Diagnostic{{Message: "invalid request body"}},
+			"nodeCount":   0,
+			"exprCount":   0,
 		})
 	}
 	result, err := CompileSource([]byte(req.Source))
@@ -365,6 +388,8 @@ func CompileAction(ctx *action.Context) error {
 			"html":        "",
 			"program":     "",
 			"diagnostics": []Diagnostic{{Message: err.Error()}},
+			"nodeCount":   0,
+			"exprCount":   0,
 		})
 	}
 	return ctx.Success("", map[string]any{
@@ -372,6 +397,8 @@ func CompileAction(ctx *action.Context) error {
 		"html":        result.HTML,
 		"program":     base64.StdEncoding.EncodeToString(result.Program),
 		"diagnostics": result.Diagnostics,
+		"nodeCount":   result.NodeCount,
+		"exprCount":   result.ExprCount,
 	})
 }
 

@@ -41,6 +41,17 @@
     return bytes;
   }
 
+  // now returns a monotonic-ish millisecond timestamp for latency
+  // measurement. Falls back to Date.now() in environments without the
+  // Performance API (none of the currently supported browsers, but cheap
+  // insurance).
+  function now() {
+    if (window.performance && typeof window.performance.now === "function") {
+      return window.performance.now();
+    }
+    return Date.now();
+  }
+
   function mount() {
     var shell = document.querySelector(".play");
     if (!shell) {
@@ -55,6 +66,8 @@
     var compilerBody = shell.querySelector(".play__compiler-body");
     var picker = shell.querySelector(".play__preset-select");
     var presetDescription = shell.querySelector(".play__preset-description");
+    var linesStat = shell.querySelector('[data-editor-stat="lines"]');
+    var charsStat = shell.querySelector('[data-editor-stat="chars"]');
 
     if (!compileURL || !textarea || !preview) {
       return;
@@ -69,6 +82,21 @@
     function setStatus(state, message) {
       shell.setAttribute("data-playground-state", state);
       if (status) status.textContent = message;
+    }
+
+    // updateEditorMeta refreshes the line/char counters below the textarea.
+    // Called on every input event plus preset switches and resets, so the
+    // counters always describe what is actually in the textarea right now.
+    function updateEditorMeta() {
+      var value = textarea.value;
+      var lineCount = value.length === 0 ? 1 : value.split("\n").length;
+      var charCount = value.length;
+      if (linesStat) {
+        linesStat.textContent = lineCount + (lineCount === 1 ? " line" : " lines");
+      }
+      if (charsStat) {
+        charsStat.textContent = charCount + (charCount === 1 ? " char" : " chars");
+      }
     }
 
     function showErrors(diagnostics) {
@@ -89,25 +117,41 @@
         .join("\n");
     }
 
-    function showCompilerInfo(data) {
+    // setStat writes a single compiler-output stat by its data-stat name.
+    // No-op if the panel markup (or that particular stat) is missing so this
+    // stays resilient to markup drift.
+    function setStat(name, value) {
       if (!compilerBody) {
         return;
       }
-      var programInfo = data.program
-        ? "program: " +
-          Math.ceil(data.program.length * 0.75) +
-          " bytes (base64 " +
-          data.program.length +
-          " chars)"
-        : "program: none";
-      var diagsN = (data.diagnostics || []).length;
-      compilerBody.textContent = programInfo + "\ndiagnostics: " + diagsN;
+      var el = compilerBody.querySelector('[data-stat="' + name + '"]');
+      if (el) {
+        el.textContent = value;
+      }
+    }
+
+    // showCompilerInfo populates the compiler-output stat strip from the
+    // compile response. Every number here is either read directly off the
+    // response (program bytes, node/expr counts, diagnostics count) or
+    // client-measured (latencyMs) — never invented.
+    function showCompilerInfo(data, latencyMs) {
+      if (!compilerBody) {
+        return;
+      }
+      setStat("bytes", data.program ? Math.ceil(data.program.length * 0.75) + " bytes" : "—");
+      setStat("nodes", typeof data.nodeCount === "number" ? String(data.nodeCount) : "—");
+      setStat("exprs", typeof data.exprCount === "number" ? String(data.exprCount) : "—");
+      setStat("diagnostics", String((data.diagnostics || []).length));
+      if (typeof latencyMs === "number") {
+        setStat("latency", Math.round(latencyMs) + " ms");
+      }
     }
 
     function compile(source) {
       var generation = ++requestGeneration;
       if (activeController) activeController.abort();
       activeController = typeof AbortController === "function" ? new AbortController() : null;
+      var startedAt = now();
       setStatus("compiling", "Compiling GoSX…");
       fetch(compileURL, {
         method: "POST",
@@ -145,8 +189,9 @@
             return;
           }
           var data = result.data;
+          var latencyMs = now() - startedAt;
           showErrors(data.diagnostics || []);
-          showCompilerInfo(data);
+          showCompilerInfo(data, latencyMs);
           if (data.diagnostics && data.diagnostics.length > 0) {
             var diagnosticText = data.diagnostics.map(function (d) { return d.message || ""; }).join(" ");
             var isRateLimited = /rate limit|too many requests/i.test(diagnosticText);
@@ -215,7 +260,25 @@
       }, DEBOUNCE_MS);
     }
 
-    textarea.addEventListener("input", scheduleCompile);
+    textarea.addEventListener("input", function () {
+      updateEditorMeta();
+      scheduleCompile();
+    });
+
+    // Ctrl+Enter (Cmd+Enter on macOS) compiles immediately, skipping the
+    // debounce — a deliberate "compile now" action.
+    textarea.addEventListener("keydown", function (e) {
+      var isEnter = e.key === "Enter" || e.keyCode === 13;
+      if (!isEnter || !(e.ctrlKey || e.metaKey)) {
+        return;
+      }
+      e.preventDefault();
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      compile(textarea.value);
+    });
 
     // Preset picker: when the user selects a new preset, update the textarea
     // and trigger an immediate compile (no debounce — the user took a
@@ -237,6 +300,7 @@
         }
         textarea.value = src;
         updatePresetDescription(opt);
+        updateEditorMeta();
         compile(src);
       });
     }
@@ -258,12 +322,14 @@
           return;
         }
         textarea.value = src;
+        updateEditorMeta();
         compile(src);
       });
     }
 
     // Initial compile: run once after the GoSX wasm runtime has loaded so the
     // preview shows the default preset immediately on page load.
+    updateEditorMeta();
     setStatus("waiting", "Waiting for the GoSX runtime…");
     waitForRuntime()
       .then(function () { compile(textarea.value); })
