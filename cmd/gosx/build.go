@@ -1079,6 +1079,7 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"Contents:",
 		"- `assets/` contains immutable hashed runtime, island, and CSS assets.",
 		"- `app/` contains runtime file-routed page sources used by `route.AddDir(...)`.",
+		"- `content/` contains collection documents loaded by server-rendered and prerendered routes.",
 		"- `public/` contains root-served static assets when present.",
 		"- `build.json` maps hashed asset names for runtime/island loading.",
 		"- `edge/worker.js` can serve prerendered routes at the edge and proxy misses/actions to origin.",

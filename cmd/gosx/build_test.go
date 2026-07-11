@@ -68,6 +68,9 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	if !strings.Contains(readme, "deployable GoSX bundle") {
 		t.Fatalf("unexpected dist README: %q", readme)
 	}
+	if !strings.Contains(readme, "`content/` contains collection documents") {
+		t.Fatalf("dist README omits staged content directory: %q", readme)
+	}
 }
 
 func TestEvaluateProjectSceneBudget(t *testing.T) {
@@ -109,6 +112,9 @@ func TestWriteBuildReadmeWithoutServerBinary(t *testing.T) {
 	}
 	if !strings.Contains(readme, "`assets/` contains immutable hashed runtime") {
 		t.Fatalf("unexpected readme content %q", readme)
+	}
+	if !strings.Contains(readme, "`content/` contains collection documents") {
+		t.Fatalf("readme omits optional content directory: %q", readme)
 	}
 }
 
