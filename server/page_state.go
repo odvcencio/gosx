@@ -19,6 +19,7 @@ type PageState struct {
 	deferred *DeferredRegistry
 	cache    *CacheState
 	runtime  *PageRuntime
+	nonce    string
 }
 
 // NewPageState creates an empty shared page-state container.
@@ -143,6 +144,28 @@ func (s *PageState) SetLastModified(at time.Time) {
 		return
 	}
 	s.CacheState().SetLastModified(at)
+}
+
+// SetNonce records the per-request Content-Security-Policy script nonce so
+// document-rendering helpers (NavigationScriptWithNonce, the App document
+// pipeline, etc.) can attach it to inline <script> elements. Typically set
+// once, early in the request, by middleware that also emits the matching
+// `Content-Security-Policy: script-src 'self' 'nonce-<value>'` response
+// header.
+func (s *PageState) SetNonce(nonce string) {
+	if s == nil {
+		return
+	}
+	s.nonce = nonce
+}
+
+// Nonce returns the per-request CSP script nonce set via SetNonce, or an
+// empty string if none was set.
+func (s *PageState) Nonce() string {
+	if s == nil {
+		return ""
+	}
+	return s.nonce
 }
 
 // SetMetadata merges page metadata into the request context.

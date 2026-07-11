@@ -314,6 +314,27 @@ func TestHTMLDocument(t *testing.T) {
 	}
 }
 
+func TestHTMLDocumentWithNonceThreadsNonceToNavigationScript(t *testing.T) {
+	doc := HTMLDocumentWithNonce("Test Page", "abc123", NavigationScriptWithNonce("abc123"), gosx.Text("hello"))
+	html := gosx.RenderHTML(doc)
+
+	if !strings.Contains(html, `<script data-gosx-navigation="true" nonce="abc123">`) {
+		t.Fatalf("expected nonced navigation script in document, got %q", html)
+	}
+}
+
+func TestHTMLDocumentWithNonceEmptyMatchesHTMLDocument(t *testing.T) {
+	withEmpty := gosx.RenderHTML(HTMLDocumentWithNonce("Test Page", "", gosx.Text(""), gosx.Text("hello")))
+	plain := gosx.RenderHTML(HTMLDocument("Test Page", gosx.Text(""), gosx.Text("hello")))
+
+	if withEmpty != plain {
+		t.Fatalf("expected HTMLDocumentWithNonce(\"\") to match HTMLDocument, got %q vs %q", withEmpty, plain)
+	}
+	if strings.Contains(plain, "nonce=") {
+		t.Fatalf("expected no nonce attribute when nonce is empty, got %q", plain)
+	}
+}
+
 func TestResolveListenAddrUsesPortEnv(t *testing.T) {
 	prev := os.Getenv("PORT")
 	t.Cleanup(func() {
@@ -1024,6 +1045,50 @@ func TestAppEmitsDocumentContract(t *testing.T) {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in %q", snippet, body)
 		}
+	}
+}
+
+func TestAppThreadsPerRequestNonceToInlineScripts(t *testing.T) {
+	app := New()
+	app.EnableNavigation()
+	app.Page("GET /docs", func(ctx *Context) gosx.Node {
+		ctx.SetNonce("req-nonce-1")
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Docs"}})
+		return gosx.El("main", gosx.Text("hello docs"))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`<script data-gosx-navigation="true" nonce="req-nonce-1">`,
+		`data-gosx-document-contract nonce="req-nonce-1">`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+}
+
+func TestAppWithoutNonceOmitsNonceAttribute(t *testing.T) {
+	app := New()
+	app.EnableNavigation()
+	app.Page("GET /docs", func(ctx *Context) gosx.Node {
+		ctx.SetMetadata(Metadata{Title: Title{Absolute: "Docs"}})
+		return gosx.El("main", gosx.Text("hello docs"))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if strings.Contains(body, "nonce=") {
+		t.Fatalf("expected no nonce attribute when nonce is unset, got %q", body)
 	}
 }
 

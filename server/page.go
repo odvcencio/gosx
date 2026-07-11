@@ -65,6 +65,14 @@ type DocumentContext struct {
 	Navigation    bool
 	Head          gosx.Node
 	Body          gosx.Node
+	// Nonce is the per-request Content-Security-Policy script nonce, if any.
+	// When set, it is attached to inline <script> elements emitted as part
+	// of the document shell (currently the document contract script; see
+	// documentContractNode). It is not applied retroactively to Head/Body
+	// content supplied by the caller — use NavigationScriptWithNonce (and
+	// equivalent *WithNonce helpers) when composing Head/Body so those
+	// inline scripts carry the same nonce.
+	Nonce string
 }
 
 // DeferredResolver resolves a streamed page fragment after the initial HTML
@@ -119,6 +127,7 @@ func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, 
 		Metadata:   metadata,
 		Navigation: navigation,
 		Body:       body,
+		Nonce:      c.Nonce(),
 	}
 	if runtime := c.RuntimeState(); runtime != nil {
 		doc.Runtime = runtime.Summary()
@@ -234,7 +243,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		">", "\\u003e",
 		"&", "\\u0026",
 	).Replace(string(payload))
-	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract>` + safe + `</script>`)
+	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract` + nonceAttr(doc.Nonce) + `>` + safe + `</script>`)
 }
 
 func documentBootstrapMode(value string) string {

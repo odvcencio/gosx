@@ -724,13 +724,37 @@ func listenAddrHost(addr string) (string, bool) {
 }
 
 // HTMLDocument wraps content in a full HTML5 document.
+//
+// This does not attach a CSP nonce to any inline <script> elements that head
+// or body may already contain (e.g. NavigationScript()). Callers shipping a
+// strict Content-Security-Policy (script-src without 'unsafe-inline') should
+// use HTMLDocumentWithNonce and compose head/body from the *WithNonce
+// variants of GoSX's inline-script helpers.
 func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
-	return gosx.RawHTML(renderDocument(title, head, body))
+	return HTMLDocumentWithNonce(title, "", head, body)
 }
 
-func renderDocument(title string, head gosx.Node, body gosx.Node) string {
+// HTMLDocumentWithNonce wraps content in a full HTML5 document, threading a
+// per-request CSP nonce through the document shell so a downstream server
+// can ship `Content-Security-Policy: script-src 'self' 'nonce-<value>'`
+// without 'unsafe-inline'.
+//
+// The nonce is attached to inline <script>/<style> elements that the
+// document shell itself emits as part of rendering (currently none directly
+// in HTMLDocument's own boilerplate, but see documentContractNode for the
+// App document pipeline's document-contract script). It is NOT applied
+// retroactively to the head/body nodes passed in — build those using the
+// matching *WithNonce helper (e.g. NavigationScriptWithNonce(nonce) instead
+// of NavigationScript()) so their inline scripts carry the same nonce.
+// Passing an empty nonce is equivalent to HTMLDocument.
+func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx.Node) gosx.Node {
+	return gosx.RawHTML(renderDocument(title, nonce, head, body))
+}
+
+func renderDocument(title string, nonce string, head gosx.Node, body gosx.Node) string {
 	return renderDocumentWithContext(&DocumentContext{
 		Title: title,
+		Nonce: nonce,
 		Head:  head,
 		Body:  body,
 	})
@@ -881,7 +905,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 		ctx.AddHead(ctx.runtime.Head())
 	}
 	if a.navigation {
-		ctx.AddHead(NavigationScript())
+		ctx.AddHead(NavigationScriptWithNonce(ctx.Nonce()))
 	}
 	for _, decorate := range a.headDecorators {
 		if decorate == nil {
@@ -904,7 +928,7 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	case a.document != nil:
 		return a.document(doc)
 	case a.layout != nil:
-		return HTMLDocument(pageTitle(ctx, pattern, defaultTitle), ctx.Head(), renderedBody)
+		return HTMLDocumentWithNonce(pageTitle(ctx, pattern, defaultTitle), ctx.Nonce(), ctx.Head(), renderedBody)
 	default:
 		return gosx.RawHTML(renderDocumentWithContext(doc))
 	}
