@@ -19506,6 +19506,103 @@ test("bootstrap starts a canvas2d paint loop (tick + render + paint) only for th
   assert.match(source, /getContext\("2d"\)/);
 });
 
+// Regression test for the "hidden-at-hydration" CanvasBoard defect: a
+// <canvas> with no CSS width/height override renders at its OWN width/height
+// CONTENT ATTRIBUTES — the very attributes _initEngineSurfaceCanvasSize
+// writes. Once mounted while its box is collapsed (host CSS never gives the
+// canvas OR a close ancestor a real box — whether it hydrated behind a
+// display:none workbench panel, or a host CSS selector no longer matches
+// after an upstream DOM-nesting change), a bare getBoundingClientRect()
+// measurement is a stable 1x1 fixed point: ResizeObserver still fires
+// correctly on every subsequent layout change, but it keeps re-measuring the
+// same self-referential 1x1 box forever. _measuredCanvasCSSBox must walk up
+// to the first real-boxed ancestor instead, capped at the board's declared
+// size, and keep observing that ancestor for later layout changes.
+test("canvas2d surface recovers from a self-referential 1x1 backing store by sizing from the nearest real-boxed ancestor", async () => {
+  const env = createContext({});
+  installManualRAF(env.context);
+
+  // Mirrors the real regression: the immediate parent (.studio-site-map-canvas)
+  // is ALSO still collapsed (a broken host CSS selector never gave it a real
+  // height either), but the grandparent (.studio-advanced-canvas-board) has a
+  // real box — the fix must walk past the degenerate parent to find it.
+  const grandparent = new FakeElement("section", env.context.document);
+  grandparent.clientWidth = 746;
+  grandparent.clientHeight = 738;
+
+  const parent = new FakeElement("section", env.context.document);
+  parent.clientWidth = 746;
+  parent.clientHeight = 20;
+  grandparent.appendChild(parent);
+  parent.parentElement = grandparent;
+
+  const canvas = new FakeElement("canvas", env.context.document);
+  canvas.setAttribute("data-gosx-surface-kind", "canvas2d");
+  canvas.setAttribute("width", "1280");
+  canvas.setAttribute("height", "720");
+  canvas.width = 1280;
+  canvas.height = 720;
+  canvas.isConnected = true;
+  canvas.focus = () => {};
+  // The canvas's own box is stuck at 1x1 — the self-referential collapse this
+  // fix must recover from (unaffected by anything this test does to the
+  // ancestors above).
+  canvas.getBoundingClientRect = () => ({ width: 1, height: 1, left: 0, top: 0 });
+  parent.appendChild(canvas);
+  canvas.parentElement = parent;
+  env.context.document.body.appendChild(grandparent);
+
+  env.context.document.querySelectorAll = function(selector) {
+    if (selector === "[data-gosx-surface-kind]:not([data-gosx-engine-bytecode])") {
+      return canvas.hasAttribute("data-gosx-engine-bytecode") ? [] : [canvas];
+    }
+    return [];
+  };
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureEnginesSource, env.context, "bootstrap-feature-engines.js");
+  const enginesFactory = env.context.__gosx_bootstrap_features && env.context.__gosx_bootstrap_features.engines;
+  assert.equal(typeof enginesFactory, "function", "engines feature factory must be registered");
+
+  env.context.__gosx_hydrate = function() { return ""; };
+
+  const feature = enginesFactory({
+    engineFactories: {},
+    sceneNumber: (v, d) => (typeof v === "number" ? v : d),
+    sceneBool: (v, d) => (typeof v === "boolean" ? v : d),
+  });
+
+  await feature.runtimeReady({});
+  await flushAsyncWork();
+
+  // Mount alone must already recover — the walk runs unconditionally, not
+  // just on a later ResizeObserver fire — picking the largest-area real
+  // ancestor within reach, capped at the board's declared 1280x720.
+  assert.equal(canvas.width, 746, "backing store width must recover from the grandparent's real box");
+  assert.equal(canvas.height, 720, "backing store height must be capped at the board's declared height");
+
+  // The fallback must also register the discovered ancestor with the SAME
+  // ResizeObserver, so a LATER layout change there (the canvas's own box never
+  // changes on its own) re-triggers the recovery. Real browsers deliver a
+  // ResizeObserver's first notification shortly after observe() is called
+  // (proven empirically against real Chromium — see the handoff report); the
+  // fake observer here requires an explicit trigger to model that first fire.
+  const ro = env.resizeObservers[0];
+  assert.ok(ro, "a ResizeObserver must have been created for the canvas2d board");
+  assert.ok(ro.targets.has(canvas), "the observer must still observe the canvas itself");
+  ro.trigger([canvas]);
+  assert.ok(ro.targets.has(grandparent), "the observer must ALSO observe the ancestor it fell back to");
+
+  // Simulate the ancestor's box changing later (e.g. a rail collapse widens
+  // the workbench) — re-triggering the observer picks up the new size even
+  // though the canvas's own (still self-referential) box never moved.
+  grandparent.clientWidth = 900;
+  grandparent.clientHeight = 700;
+  ro.trigger([canvas]);
+  assert.equal(canvas.width, 900);
+  assert.equal(canvas.height, 700);
+});
+
 // -----------------------------------------------------------------------------
 // Canvas2D painter — paintCanvasBundle(ctx, bundle, cssWidth, cssHeight, dpr)
 //

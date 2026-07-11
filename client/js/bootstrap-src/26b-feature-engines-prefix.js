@@ -320,6 +320,7 @@
           const dpr = window.devicePixelRatio || 1;
           dispatch(10, [canvas.clientWidth, canvas.clientHeight, dpr], "");
         });
+        canvas.__gosxResizeObserver = ro;
         ro.observe(canvas);
         instance.resizeObserver = ro;
       }
@@ -352,13 +353,103 @@
       instance.raf = requestAnimationFrame(tick);
     }
 
+    // _canvasDeclaredSize returns the server-authored width/height — the
+    // initial HTML width/height attributes gosx.CanvasBoard (or an engine
+    // surface placeholder) renders with, e.g. 1280x720 — captured ONCE,
+    // before this module ever overwrites canvas.width/height. It gives the
+    // self-recovery fallback below a stable ceiling instead of chasing its
+    // own prior writes.
+    function _canvasDeclaredSize(canvas) {
+      if (canvas.__gosxDeclaredSize) return canvas.__gosxDeclaredSize;
+      const wAttr = parseInt(canvas.getAttribute("width") || "0", 10);
+      const hAttr = parseInt(canvas.getAttribute("height") || "0", 10);
+      const size = {
+        width: Number.isFinite(wAttr) && wAttr > 0 ? wAttr : 0,
+        height: Number.isFinite(hAttr) && hAttr > 0 ? hAttr : 0,
+      };
+      canvas.__gosxDeclaredSize = size;
+      return size;
+    }
+
+    // _measuredCanvasCSSBox resolves the CSS box the canvas's backing store
+    // should be sized to. Ordinarily this is just the canvas's own
+    // getBoundingClientRect() — the common case where host CSS gives the
+    // canvas (or a wrapper it fills via width:100%/height:100%) an explicit,
+    // non-degenerate box.
+    //
+    // FALLBACK (self-referential collapse): a <canvas> is a replaced element,
+    // so WITHOUT an explicit CSS size its rendered box equals its OWN
+    // width/height CONTENT ATTRIBUTES — the very attributes this function
+    // writes. That makes a bare getBoundingClientRect() measurement circular
+    // in at least two real scenarios this module must recover from:
+    //   1. Hydrating while an ancestor is display:none (e.g. mounted inside a
+    //      hidden workbench mode panel) floors the canvas to 1x1. Even after
+    //      the ancestor becomes visible again, the canvas now renders at the
+    //      1x1 it was JUST set to — a stable fixed point, not a
+    //      ResizeObserver failure (the observer fires fine on the reveal; it
+    //      just measures a box that can never grow back on its own).
+    //   2. Host CSS meant to size the canvas (or an ancestor) never matches —
+    //      e.g. an upstream DOM-nesting change breaks a descendant-combinator
+    //      selector the host authored against an older structure — leaving
+    //      the exact same self-reference.
+    // Recover by walking up the ancestor chain (bounded) for the element
+    // reporting the LARGEST real (>1 CSS px both axes) box and using that
+    // instead, capped at the board's own declared size so a still-degenerate
+    // or unbounded ancestor chain never balloons the canvas past what it was
+    // authored for.
+    function _measuredCanvasCSSBox(canvas) {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 1 && rect.height > 1) {
+        return { width: rect.width, height: rect.height, source: canvas };
+      }
+      const declared = _canvasDeclaredSize(canvas);
+      let bestEl = null;
+      let bestW = 0;
+      let bestH = 0;
+      let bestArea = 0;
+      let el = canvas.parentElement;
+      let hops = 0;
+      while (el && hops < 8) {
+        const w = el.clientWidth;
+        const h = el.clientHeight;
+        const area = w * h;
+        if (w > 1 && h > 1 && area > bestArea) {
+          bestEl = el;
+          bestW = w;
+          bestH = h;
+          bestArea = area;
+        }
+        el = el.parentElement;
+        hops += 1;
+      }
+      if (bestEl) {
+        return {
+          width: declared.width > 0 ? Math.min(bestW, declared.width) : bestW,
+          height: declared.height > 0 ? Math.min(bestH, declared.height) : bestH,
+          source: bestEl,
+        };
+      }
+      return { width: rect.width, height: rect.height, source: canvas };
+    }
+
     function _initEngineSurfaceCanvasSize(canvas) {
       const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      const w = Math.max(1, Math.floor(rect.width));
-      const h = Math.max(1, Math.floor(rect.height));
+      const box = _measuredCanvasCSSBox(canvas);
+      const w = Math.max(1, Math.floor(box.width));
+      const h = Math.max(1, Math.floor(box.height));
       if (canvas.width !== w * dpr) canvas.width = w * dpr;
       if (canvas.height !== h * dpr) canvas.height = h * dpr;
+      // If sizing fell back to an ancestor (the canvas's own box is still
+      // self-referentially collapsed), also observe that ancestor so a LATER
+      // layout change there (window resize, rail drag, a host CSS fix)
+      // re-triggers this same recovery — the canvas's own box never changes
+      // on its own once an unrelated ancestor's resize is the only thing that
+      // moved.
+      const ro = canvas.__gosxResizeObserver;
+      if (ro && box.source !== canvas && canvas.__gosxSizeFallbackAncestor !== box.source) {
+        canvas.__gosxSizeFallbackAncestor = box.source;
+        try { ro.observe(box.source); } catch (e) { /* tolerate */ }
+      }
     }
 
     // _ensureSurfaceCanvas returns the placeholder as a <canvas>, swapping a
@@ -1212,6 +1303,7 @@
           if (instance.disposed) return;
           _initEngineSurfaceCanvasSize(canvas);
         });
+        canvas.__gosxResizeObserver = ro;
         ro.observe(canvas);
         instance.resizeObserver = ro;
       }
