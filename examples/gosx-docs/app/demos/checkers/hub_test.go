@@ -152,7 +152,7 @@ func TestSnapshotWireAndSemanticHoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, field := range []string{`"revision"`, `"matchRevision"`, `"selected"`, `"legal"`, `"legalHops"`, `"board"`, `"canUndo"`} {
+	for _, field := range []string{`"revision"`, `"matchRevision"`, `"selected"`, `"legal"`, `"legalHops"`, `"board"`, `"canUndo"`, `"sceneCommands"`} {
 		if !strings.Contains(text, field) {
 			t.Errorf("snapshot JSON missing %s", field)
 		}
@@ -172,6 +172,23 @@ func TestSnapshotWireAndSemanticHoles(t *testing.T) {
 	}
 	if occupied != 20 {
 		t.Fatalf("occupied=%d want 20", occupied)
+	}
+}
+
+func TestVisualCommandsFollowCommittedBoard(t *testing.T) {
+	g := newGameSession()
+	g.cpuEnabled = false
+	move := GenerateMoves(nil, g.match, g.match.Active)[0]
+	before := g.snapshot()
+	g.source(move.From)
+	after := g.destination(move.To())
+	if len(before.SceneCommands) != 1 || len(after.SceneCommands) != 1 {
+		t.Fatalf("visual batches before=%d after=%d", len(before.SceneCommands), len(after.SceneCommands))
+	}
+	b, _ := json.Marshal(before.SceneCommands)
+	a, _ := json.Marshal(after.SceneCommands)
+	if string(a) == string(b) {
+		t.Fatal("committed move did not change renderer command payload")
 	}
 }
 

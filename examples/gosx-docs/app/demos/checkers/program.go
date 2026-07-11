@@ -190,6 +190,28 @@ func pieceInstances(player int, positions []scene.Vector3) scene.InstancedMesh {
 	}
 }
 
+// visualCommands derives the complete instanced renderer state from the same
+// authoritative board snapshot used by the semantic controls.
+func visualCommands(board []int) []scene.Command {
+	holes := boardHoles()
+	positions := make([][]scene.Vector3, CampCount)
+	for h, owner := range board {
+		if owner < 1 || owner > CampCount || h >= len(holes) {
+			continue
+		}
+		p := holes[h].Position
+		positions[owner-1] = append(positions[owner-1], scene.Vec3(p.X, 0.2, p.Z))
+	}
+	graph := []scene.Node{socketInstances(holes)}
+	for player, points := range positions {
+		if len(points) > 0 {
+			graph = append(graph, pieceInstances(player, points))
+		}
+	}
+	ir := (scene.Props{Graph: scene.NewGraph(graph...)}).SceneIR()
+	return []scene.Command{scene.SetInstancedMeshesCommand(ir.InstancedMeshes)}
+}
+
 func repeatedScale(count int, scale scene.Vector3) []scene.Vector3 {
 	out := make([]scene.Vector3, count)
 	for i := range out {

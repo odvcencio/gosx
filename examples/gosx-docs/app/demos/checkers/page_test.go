@@ -46,7 +46,7 @@ func TestCheckersClientProvidesRovingKeyboardAndMaterialSelection(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(source)
-	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", `searchParams.set("material"`} {
+	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", `searchParams.set("material"`, "state.sceneCommands", "gosx:scene3d:commands", "revision: state.revision"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("checkers-client.js missing %q", required)
 		}

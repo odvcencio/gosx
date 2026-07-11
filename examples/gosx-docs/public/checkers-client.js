@@ -6,6 +6,7 @@
   var root, board, statusEl, turnEl, undoButton, restartButton, materialSelect, personalitySelect, difficultySelect, policyEl;
   var state = null;
   var revision = -1;
+  var visualMatchRevision = -1;
 
   function mount() {
     root = document.querySelector("[data-checkers-root]");
@@ -92,6 +93,11 @@
   }
 
   function render() {
+	var sceneMount = document.querySelector(".checkers-showcase__scene [data-gosx-scene3d-mounted]");
+	if (sceneMount && Array.isArray(state.sceneCommands) && Number(state.matchRevision) !== visualMatchRevision) {
+	  sceneMount.dispatchEvent(new CustomEvent("gosx:scene3d:commands", { detail: { revision: state.revision, commands: state.sceneCommands } }));
+	  visualMatchRevision = Number(state.matchRevision);
+	}
     var legal = Object.create(null);
     var hops = Object.create(null);
     (state.legal || []).forEach(function (hole) { legal[hole] = true; });

@@ -13,6 +13,7 @@ import (
 	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/scene"
 )
 
 const stateEvent = "checkers:state"
@@ -30,27 +31,28 @@ type holeView struct {
 	Z     int
 }
 type gameSnapshot struct {
-	Revision       uint64 `json:"revision"`
-	MatchRevision  uint64 `json:"matchRevision"`
-	Turn           uint32 `json:"turn"`
-	Active         int    `json:"active"`
-	Selected       int    `json:"selected"`
-	Legal          []int  `json:"legal"`
-	LegalHops      []int  `json:"legalHops"`
-	Board          []int  `json:"board"`
-	Message        string `json:"message"`
-	CanUndo        bool   `json:"canUndo"`
-	Winner         int    `json:"winner"`
-	Finished       bool   `json:"finished"`
-	Thinking       bool   `json:"thinking"`
-	Personality    string `json:"personality"`
-	Difficulty     string `json:"difficulty"`
-	PolicyLabel    string `json:"policyLabel"`
-	PolicyFallback bool   `json:"policyFallback"`
-	PolicyReason   string `json:"policyReason"`
-	SearchNodes    uint64 `json:"searchNodes"`
-	SearchDepth    int    `json:"searchDepth"`
-	SearchMS       int64  `json:"searchMS"`
+	Revision       uint64          `json:"revision"`
+	MatchRevision  uint64          `json:"matchRevision"`
+	Turn           uint32          `json:"turn"`
+	Active         int             `json:"active"`
+	Selected       int             `json:"selected"`
+	Legal          []int           `json:"legal"`
+	LegalHops      []int           `json:"legalHops"`
+	Board          []int           `json:"board"`
+	Message        string          `json:"message"`
+	CanUndo        bool            `json:"canUndo"`
+	Winner         int             `json:"winner"`
+	Finished       bool            `json:"finished"`
+	Thinking       bool            `json:"thinking"`
+	Personality    string          `json:"personality"`
+	Difficulty     string          `json:"difficulty"`
+	PolicyLabel    string          `json:"policyLabel"`
+	PolicyFallback bool            `json:"policyFallback"`
+	PolicyReason   string          `json:"policyReason"`
+	SearchNodes    uint64          `json:"searchNodes"`
+	SearchDepth    int             `json:"searchDepth"`
+	SearchMS       int64           `json:"searchMS"`
+	SceneCommands  []scene.Command `json:"sceneCommands"`
 }
 
 type gameSession struct {
@@ -221,6 +223,7 @@ func (g *gameSession) snapshotLocked() gameSnapshot {
 	if g.match.Outcome.Finished {
 		s.Winner = int(g.match.Outcome.Winner)
 	}
+	s.SceneCommands = visualCommands(s.Board)
 	return s
 }
 
