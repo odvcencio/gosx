@@ -1,11 +1,12 @@
 package docs
 
 func Page() Node {
-	return <div class="cms-demo">
+	return <form class="cms-demo" id="cms-content-form" method="post" action={actionPath("publish")}>
+		<input type="hidden" name="csrf_token" value={csrf.token} />
 		<header class="cms-header">
 			<div class="cms-header__brand">
 				<span class="cms-header__logo">CMS Editor</span>
-				<span class="cms-header__badge">Block Editor</span>
+				<span class="cms-header__badge">Server Action</span>
 			</div>
 			<div class="cms-header__actions">
 				<If cond={data.status.count > 0}>
@@ -20,10 +21,7 @@ func Page() Node {
 						{data.status.at}
 					</span>
 				</If>
-				<form class="cms-publish-form" method="post" action={actionPath("publish")}>
-					<input type="hidden" name="csrf_token" value={csrf.token} />
-					<button type="submit" class="cms-btn cms-btn--primary">Publish</button>
-				</form>
+				<button type="submit" class="cms-btn cms-btn--primary">Publish changes</button>
 			</div>
 		</header>
 		<div class="cms-workspace">
@@ -54,7 +52,7 @@ func Page() Node {
 				</div>
 			</aside>
 			<main class="cms-editor" aria-label="Block editor">
-				<h2 class="cms-panel-label">Editor</h2>
+				<h2 class="cms-panel-label">Draft editor</h2>
 				<div class="cms-block-list">
 					<Each of={data.blocks} as="block">
 						<article class={"cms-editor-block cms-editor-block--" + block.kind} aria-label={block.kind + " block"}>
@@ -65,16 +63,25 @@ func Page() Node {
 								<If cond={block.kind == "hero"}>
 									<label class="cms-field">
 										<span>Title</span>
-										<input class="cms-input" type="text" name="title" value={block.title} placeholder="Page title" />
+										<input
+											class="cms-input"
+											type="text"
+											name="hero_title"
+											value={block.title}
+											placeholder="Page title"
+											required
+											maxlength="120"
+										 />
 									</label>
 									<label class="cms-field">
 										<span>Subtitle</span>
 										<input
 											class="cms-input"
 											type="text"
-											name="subtitle"
+											name="hero_subtitle"
 											value={block.subtitle}
 											placeholder="Supporting subtitle"
+											maxlength="240"
 										 />
 									</label>
 								</If>
@@ -84,29 +91,43 @@ func Page() Node {
 										<input
 											class="cms-input"
 											type="text"
-											name="title"
+											name="feature_title"
 											value={block.title}
 											placeholder="Feature title"
+											required
+											maxlength="120"
 										 />
 									</label>
 									<label class="cms-field">
 										<span>Body</span>
-										<textarea class="cms-input cms-input--textarea" name="body" placeholder="Feature description">{block.body}</textarea>
+										<textarea
+											class="cms-input cms-input--textarea"
+											name="feature_body"
+											placeholder="Feature description"
+											maxlength="1000"
+										>{block.body}</textarea>
 									</label>
 								</If>
 								<If cond={block.kind == "quote"}>
 									<label class="cms-field">
 										<span>Quote</span>
-										<textarea class="cms-input cms-input--textarea" name="text" placeholder="The quote text">{block.text}</textarea>
+										<textarea
+											class="cms-input cms-input--textarea"
+											name="quote_text"
+											placeholder="The quote text"
+											required
+											maxlength="500"
+										>{block.text}</textarea>
 									</label>
 									<label class="cms-field">
 										<span>Author</span>
 										<input
 											class="cms-input"
 											type="text"
-											name="author"
+											name="quote_author"
 											value={block.author}
 											placeholder="Author name"
+											maxlength="120"
 										 />
 									</label>
 								</If>
@@ -116,7 +137,7 @@ func Page() Node {
 				</div>
 			</main>
 			<aside class="cms-preview" aria-label="Content preview">
-				<h2 class="cms-panel-label">Preview</h2>
+				<h2 class="cms-panel-label">Published preview</h2>
 				<div class="cms-preview__canvas">
 					<Each of={data.blocks} as="block">
 						<div class={"cms-preview-block cms-preview-block--" + block.kind}>
@@ -154,5 +175,5 @@ func Page() Node {
 				blocks in document
 			</span>
 		</footer>
-	</div>
+	</form>
 }

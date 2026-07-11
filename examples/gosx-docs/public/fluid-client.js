@@ -23,6 +23,11 @@
   var lastFrameTime = 0;
   var fps = 0;
   var wireBytesEma = 0;
+  var lastStreamAt = 0;
+  var streamHz = 0;
+  var sampleVX = 0, sampleVY = 0;
+  var rafID = 0, visible = true, intersecting = true, mounted = false;
+  var connectionTimer = 0;
 
   // ── Particles ────────────────────────────────────────────────────────────────
 
@@ -53,10 +58,25 @@
     hudEls.wire      = document.getElementById("fluid-wire");
     hudEls.rate      = document.getElementById("fluid-rate");
     hudEls.particles = document.getElementById("fluid-particles");
+    hudEls.state = document.getElementById("fluid-state");
+    hudEls.compression = document.getElementById("fluid-compression");
+    hudEls.frameKind = document.getElementById("fluid-frame-kind");
 
     initParticles();
     document.addEventListener("gosx:hub:event", onHubEvent);
-    requestAnimationFrame(draw);
+    mounted = true;
+    document.addEventListener("visibilitychange", onVisibility);
+    document.addEventListener("gosx:navigate", teardown, { once: true });
+    connectionTimer = setInterval(refreshConnectionState, 1000);
+    if (typeof IntersectionObserver === "function") {
+      observer = new IntersectionObserver(function (entries) {
+        intersecting = !!(entries[0] && entries[0].isIntersecting);
+        visible = intersecting && !document.hidden;
+        if (visible && !rafID) rafID = requestAnimationFrame(draw);
+      });
+      observer.observe(canvas);
+    }
+    rafID = requestAnimationFrame(draw);
   }
 
   // ── Hub event ────────────────────────────────────────────────────────────────
@@ -72,6 +92,9 @@
     // Estimate wire size from base64 length (base64 ≈ 4/3 of binary).
     var wireBytes = Math.ceil(q.Packed.length * 0.75);
     wireBytesEma = wireBytesEma * 0.9 + wireBytes * 0.1;
+    var now = performance.now();
+    if (lastStreamAt) streamHz = streamHz * 0.8 + (1000 / (now - lastStreamAt)) * 0.2;
+    lastStreamAt = now;
 
     var decoded = decodeQuantized(q);
 
@@ -89,6 +112,10 @@
 
     previousField = decoded.slice();
     currentField = decoded;
+    if (hudEls.state) hudEls.state.textContent = "ready";
+    if (hudEls.frameKind) hudEls.frameKind.textContent = q.IsDelta ? "delta" : "keyframe";
+    var rawBytes = q.Resolution[0] * q.Resolution[1] * q.Resolution[2] * q.Components * 4;
+    if (hudEls.compression) hudEls.compression.textContent = (rawBytes / wireBytes).toFixed(1) + "×";
 
     tick++;
     if (hudEls.tick) hudEls.tick.textContent = String(tick);
@@ -150,7 +177,7 @@
   // Sample the field's XY velocity at canvas-pixel (px, py) using the middle Z
   // slice. Uses nearest-voxel sampling — fast enough for 1500 particles/frame.
   function sampleXYMiddleSlice(px, py) {
-    if (!currentField || !fieldBounds) return [0, 0];
+    if (!currentField || !fieldBounds) { sampleVX = 0; sampleVY = 0; return; }
 
     var resX = fieldResolution[0];
     var resY = fieldResolution[1];
@@ -176,16 +203,19 @@
     var c = fieldComponents;
     var vx = currentField[voxelIdx * c + 0];
     var vy = currentField[voxelIdx * c + 1];
-    return [vx, vy];
+    sampleVX = vx;
+    sampleVY = vy;
   }
 
   // ── Render loop ───────────────────────────────────────────────────────────────
 
   function draw(now) {
+    rafID = 0;
+    if (!mounted || !visible || document.hidden) return;
     var dt = lastFrameTime ? (now - lastFrameTime) / 1000 : 0;
     lastFrameTime = now;
     fps = dt > 0 ? fps * 0.9 + (1 / dt) * 0.1 : fps;
-    if (hudEls.rate) hudEls.rate.textContent = Math.round(fps) + " fps";
+    if (hudEls.rate) hudEls.rate.textContent = Math.round(fps) + " fps / " + Math.round(streamHz) + " Hz";
 
     // Fade the previous frame to produce motion trails.
     ctx.fillStyle = "rgba(11, 11, 13, 0.14)";
@@ -196,9 +226,9 @@
 
       for (var p = 0; p < PARTICLE_COUNT; p++) {
         var part = particles[p];
-        var vel = sampleXYMiddleSlice(part.x, part.y);
-        var vx = vel[0];
-        var vy = vel[1];
+        sampleXYMiddleSlice(part.x, part.y);
+        var vx = sampleVX;
+        var vy = sampleVY;
 
         part.x += vx * speedScale * dt;
         part.y += vy * speedScale * dt;
@@ -219,7 +249,33 @@
       }
     }
 
-    requestAnimationFrame(draw);
+    rafID = requestAnimationFrame(draw);
+  }
+
+  var observer = null;
+  function onVisibility() {
+    visible = !document.hidden && intersecting;
+    if (visible && !rafID) rafID = requestAnimationFrame(draw);
+  }
+  function refreshConnectionState() {
+    var hubs = window.__gosx && window.__gosx.hubs;
+    var open = false, connecting = false;
+    if (hubs) hubs.forEach(function (record) {
+      if (!record || !record.entry || record.entry.name !== HUB_NAME || !record.socket) return;
+      open = open || record.socket.readyState === 1;
+      connecting = connecting || record.socket.readyState === 0;
+    });
+    if (!open && hudEls.state) hudEls.state.textContent = connecting ? "reconnecting…" : "offline";
+    if (open && currentField && hudEls.state) hudEls.state.textContent = "ready";
+  }
+  function teardown() {
+    mounted = false;
+    if (rafID) cancelAnimationFrame(rafID);
+    rafID = 0;
+    document.removeEventListener("gosx:hub:event", onHubEvent);
+    document.removeEventListener("visibilitychange", onVisibility);
+    clearInterval(connectionTimer);
+    if (observer) observer.disconnect();
   }
 
   // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -230,3 +286,8 @@
     mount();
   }
 })();
+    if (q.IsDelta && !previousField) {
+      if (hudEls.state) hudEls.state.textContent = "waiting for keyframe";
+      if (hudEls.frameKind) hudEls.frameKind.textContent = "delta skipped";
+      return;
+    }

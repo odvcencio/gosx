@@ -16,27 +16,29 @@ import (
 
 // publishStore is an in-memory store for the last published CMS state.
 type publishStore struct {
-	mu    sync.Mutex
-	count int
-	at    time.Time
+	mu     sync.Mutex
+	count  int
+	at     time.Time
+	blocks []map[string]string
 }
 
 // snapshot returns the last-publish count and a human-readable timestamp.
 // Returns (0, "Never published") if nothing has been published yet.
-func (s *publishStore) snapshot() (int, string) {
+func (s *publishStore) snapshot() ([]map[string]string, int, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.at.IsZero() {
-		return 0, "Never published"
+		return cloneCMSBlocks(defaultCMSBlocks()), 0, "Not published yet"
 	}
-	return s.count, s.at.Format("15:04:05")
+	return cloneCMSBlocks(s.blocks), s.count, s.at.Format("15:04:05")
 }
 
 // save records a new publish event with the given block count.
-func (s *publishStore) save(count int) {
+func (s *publishStore) save(blocks []map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.count = count
+	s.blocks = cloneCMSBlocks(blocks)
+	s.count = len(blocks)
 	s.at = time.Now()
 }
 
@@ -68,12 +70,12 @@ func cmsClientIP(r *http.Request) string {
 
 func init() {
 	docsapp.RegisterStaticDocsPage("CMS Editor",
-		"Block editor with inline editing and unified publish.",
+		"Edit structured blocks and publish the validated document through a GoSX server Action.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-				count, at := cmsStore.snapshot()
+				blocks, count, at := cmsStore.snapshot()
 				return map[string]any{
-					"blocks": defaultCMSBlocks(),
+					"blocks": blocks,
 					"status": map[string]any{
 						"count": count,
 						"at":    at,
@@ -86,11 +88,13 @@ func init() {
 						ctx.ValidationFailure("Slow down — try again in a moment.", nil)
 						return nil
 					}
-					// Form-encoded POSTs don't carry a JSON body — count the
-					// blocks from the default set as "current content".
-					count := len(defaultCMSBlocks())
-					cmsStore.save(count)
-					n, _ := cmsStore.snapshot()
+					blocks, fieldErrors := cmsBlocksFromForm(ctx.FormData)
+					if len(fieldErrors) > 0 {
+						ctx.ValidationFailure("Fix the highlighted content before publishing.", fieldErrors)
+						return nil
+					}
+					cmsStore.save(blocks)
+					_, n, _ := cmsStore.snapshot()
 					return ctx.Success(
 						fmt.Sprintf("Published %d blocks", n),
 						map[string]any{"count": n},
@@ -99,6 +103,39 @@ func init() {
 			},
 		},
 	)
+}
+
+func cmsBlocksFromForm(values map[string]string) ([]map[string]string, map[string]string) {
+	value := func(name string) string { return strings.TrimSpace(values[name]) }
+	blocks := []map[string]string{
+		{"kind": "hero", "title": value("hero_title"), "subtitle": value("hero_subtitle")},
+		{"kind": "feature", "title": value("feature_title"), "body": value("feature_body")},
+		{"kind": "quote", "text": value("quote_text"), "author": value("quote_author")},
+	}
+	errs := map[string]string{}
+	for _, name := range []string{"hero_title", "feature_title", "quote_text"} {
+		if value(name) == "" {
+			errs[name] = "Required"
+		}
+	}
+	limits := map[string]int{"hero_title": 120, "hero_subtitle": 240, "feature_title": 120, "feature_body": 1000, "quote_text": 500, "quote_author": 120}
+	for name, limit := range limits {
+		if len(value(name)) > limit {
+			errs[name] = fmt.Sprintf("Must be %d characters or fewer", limit)
+		}
+	}
+	return blocks, errs
+}
+
+func cloneCMSBlocks(blocks []map[string]string) []map[string]string {
+	out := make([]map[string]string, len(blocks))
+	for i, block := range blocks {
+		out[i] = make(map[string]string, len(block))
+		for key, value := range block {
+			out[i][key] = value
+		}
+	}
+	return out
 }
 
 // defaultCMSBlocks returns the seed content shown in the editor on load.

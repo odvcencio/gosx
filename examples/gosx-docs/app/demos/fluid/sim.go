@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"encoding/json"
 	"log"
 	"math"
 	"sync"
@@ -26,6 +27,8 @@ type Sim struct {
 	startTime time.Time
 	running   atomic.Bool
 	once      sync.Once
+	previous  *field.Field
+	tick      uint64
 }
 
 // NewSim constructs a Sim backed by the given hub.
@@ -79,7 +82,23 @@ func (s *Sim) tickLoop() {
 		}
 		t := float32(time.Since(s.startTime).Seconds())
 		f := s.computeFrame(t)
-		if err := field.PublishField(s.hub, topic, f, field.QuantizeOptions{BitWidth: bitWidth}); err != nil {
+		s.tick++
+		// Emit an absolute recovery frame every two seconds so clients that
+		// join mid-stream never interpret a delta without its base.
+		var base *field.Field
+		if s.tick%40 != 1 {
+			base = s.previous
+		}
+		q, err := f.QuantizeChecked(field.QuantizeOptions{BitWidth: bitWidth, DeltaAgainst: base})
+		if err == nil {
+			var payload []byte
+			payload, err = json.Marshal(q)
+			if err == nil {
+				s.hub.Broadcast("field:"+topic, json.RawMessage(payload))
+			}
+		}
+		s.previous = f
+		if err != nil {
 			log.Printf("fluid demo publish failed: %v", err)
 		}
 	}

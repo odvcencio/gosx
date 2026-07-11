@@ -10,28 +10,16 @@ func Page() Node {
 		</header>
 		<div class="demos-landing__grid">
 			<Each of={data.demos} as="demo">
-				<If cond={demo.Live}>
-					<a class="demo-card demo-card--live" href={"/demos/" + demo.Slug} data-demo={demo.Slug}>
-						<div class="demo-card__swatch" style={"background: " + demo.Accent}></div>
-						<div class="demo-card__meta">
-							<span class="demo-card__chip demo-card__chip--live">Live</span>
-							<h2 class="demo-card__title">{demo.Title}</h2>
-							<p class="demo-card__tag">{demo.Tag}</p>
-							<p class="demo-card__body">{demo.Body}</p>
-						</div>
-					</a>
-				</If>
-				<If cond={!demo.Live}>
-					<div class="demo-card demo-card--soon" data-demo={demo.Slug} aria-disabled="true">
-						<div class="demo-card__swatch" style={"background: " + demo.Accent}></div>
-						<div class="demo-card__meta">
-							<span class="demo-card__chip demo-card__chip--soon">Soon</span>
-							<h2 class="demo-card__title">{demo.Title}</h2>
-							<p class="demo-card__tag">{demo.Tag}</p>
-							<p class="demo-card__body">{demo.Body}</p>
-						</div>
+				<a class="demo-card demo-card--live" href={"/demos/" + demo.Slug} data-demo={demo.Slug}>
+					<div class="demo-card__swatch" style={"background: " + demo.Accent}></div>
+					<div class="demo-card__meta">
+						<span class={"demo-card__chip demo-card__chip--" + demo.Status}>{demo.Status}</span>
+						<h2 class="demo-card__title">{demo.Title}</h2>
+						<p class="demo-card__tag">{demo.Tag}</p>
+						<p class="demo-card__body">{demo.Promise}</p>
+						<p class="demo-card__lesson">{demo.Lesson}</p>
 					</div>
-				</If>
+				</a>
 			</Each>
 		</div>
 	</section>

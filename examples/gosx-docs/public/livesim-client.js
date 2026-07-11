@@ -6,8 +6,11 @@
   var HUB_NAME = "livesim";
   var EVENT_TICK = "sim:tick";
 
-  var canvas, ctx, hudFrame, hudCount, hudState;
+  var canvas, ctx, hudFrame, hudCount, hudState, hudRender, spawnButton;
   var latestState = null;
+  var previousState = null;
+  var receivedAt = 0;
+  var lastDrawAt = 0, renderFPS = 0, rafID = 0, mounted = false, intersecting = true;
 
   function mount() {
     canvas = document.getElementById("livesim-canvas");
@@ -16,21 +19,38 @@
     hudFrame = document.getElementById("livesim-frame");
     hudCount = document.getElementById("livesim-count");
     hudState = document.getElementById("livesim-state");
-    canvas.addEventListener("click", onClick);
+    hudRender = document.getElementById("livesim-render");
+    spawnButton = document.getElementById("livesim-spawn");
+    canvas.addEventListener("pointerdown", onPointer);
+    canvas.addEventListener("keydown", onKeyDown);
+    if (spawnButton) spawnButton.addEventListener("click", spawnCenter);
     document.addEventListener("gosx:hub:event", onHubEvent);
-    requestAnimationFrame(draw);
+    document.addEventListener("visibilitychange", resumeIfVisible);
+    document.addEventListener("gosx:navigate", teardown, { once: true });
+    mounted = true;
+    if (typeof IntersectionObserver === "function") {
+      observer = new IntersectionObserver(function (entries) {
+        intersecting = !!(entries[0] && entries[0].isIntersecting);
+        resumeIfVisible();
+      });
+      observer.observe(canvas);
+    }
+    rafID = requestAnimationFrame(draw);
     if (hudState) hudState.textContent = "waiting…";
   }
 
   function onHubEvent(evt) {
     var detail = evt.detail;
     if (!detail || detail.hubName !== HUB_NAME) return;
+    if (detail.event === "__welcome") { if (hudState) hudState.textContent = "connected · waiting"; return; }
     if (detail.event !== EVENT_TICK) return;
 
     var state = decodeState(detail.data);
     if (!state) return;
 
+    previousState = latestState;
     latestState = state;
+    receivedAt = performance.now();
     if (hudFrame) hudFrame.textContent = String(detail.data.frame || state.frame || 0);
     if (hudCount) hudCount.textContent = String((state.circles || []).length);
     if (hudState) hudState.textContent = "live";
@@ -55,7 +75,7 @@
     return null;
   }
 
-  function onClick(evt) {
+  function onPointer(evt) {
     var rect = canvas.getBoundingClientRect();
     var scaleX = canvas.width / rect.width;
     var scaleY = canvas.height / rect.height;
@@ -63,6 +83,14 @@
     var y = Math.round((evt.clientY - rect.top) * scaleY);
     sendInput({ x: x, y: y });
   }
+
+  function onKeyDown(evt) {
+    if (evt.key !== "Enter" && evt.key !== " ") return;
+    evt.preventDefault();
+    spawnCenter();
+  }
+
+  function spawnCenter() { sendInput({ x: canvas.width / 2, y: canvas.height / 3 }); }
 
   function sendInput(data) {
     // Reach the hub WebSocket via the global __gosx.hubs map that
@@ -85,7 +113,12 @@
 
   // ─── Renderer ──────────────────────────────────────────────────────────────
 
-  function draw() {
+  function draw(now) {
+    rafID = 0;
+    if (!mounted || document.hidden || !intersecting) return;
+    if (lastDrawAt) renderFPS = renderFPS * 0.9 + (1000 / (now - lastDrawAt)) * 0.1;
+    lastDrawAt = now;
+    if (hudRender) hudRender.textContent = Math.round(renderFPS) + " fps";
     if (ctx && latestState) {
       var w = canvas.width;
       var h = canvas.height;
@@ -117,7 +150,7 @@
       ctx.stroke();
 
       // Circles.
-      var circles = latestState.circles || [];
+      var circles = interpolatedCircles(now);
       for (var i = 0; i < circles.length; i++) {
         var c = circles[i];
         ctx.globalAlpha = 0.25;
@@ -137,7 +170,36 @@
       ctx.globalAlpha = 1.0;
     }
 
-    requestAnimationFrame(draw);
+    rafID = requestAnimationFrame(draw);
+  }
+
+  function interpolatedCircles(now) {
+    var current = latestState.circles || [];
+    if (!previousState) return current;
+    var prior = previousState.circles || [];
+    var byID = Object.create(null);
+    for (var p = 0; p < prior.length; p++) byID[prior[p].id] = prior[p];
+    var alpha = Math.max(0, Math.min(1, (now - receivedAt) / 50));
+    return current.map(function (circle) {
+      var old = byID[circle.id];
+      if (!old) return circle;
+      return { id: circle.id, x: old.x + (circle.x - old.x) * alpha, y: old.y + (circle.y - old.y) * alpha, r: circle.r };
+    });
+  }
+
+  var observer = null;
+  function resumeIfVisible() {
+    if (mounted && !document.hidden && intersecting && !rafID) rafID = requestAnimationFrame(draw);
+  }
+  function teardown() {
+    mounted = false;
+    if (rafID) cancelAnimationFrame(rafID);
+    document.removeEventListener("gosx:hub:event", onHubEvent);
+    document.removeEventListener("visibilitychange", resumeIfVisible);
+    canvas.removeEventListener("pointerdown", onPointer);
+    canvas.removeEventListener("keydown", onKeyDown);
+    if (spawnButton) spawnButton.removeEventListener("click", spawnCenter);
+    if (observer) observer.disconnect();
   }
 
   // ─── Bootstrap ─────────────────────────────────────────────────────────────

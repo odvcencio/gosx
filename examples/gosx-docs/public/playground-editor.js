@@ -3,7 +3,7 @@
 
   // Tunables
   var DEBOUNCE_MS = 200;
-  var ISLAND_ID = "playground-preview";
+  var RUNTIME_TIMEOUT_MS = 8000;
 
   function ready(fn) {
     if (document.readyState === "loading") {
@@ -14,7 +14,7 @@
   }
 
   function waitForRuntime() {
-    return new Promise(function (resolve) {
+    return new Promise(function (resolve, reject) {
       if (typeof window.__gosx_hydrate === "function") {
         return resolve();
       }
@@ -24,6 +24,10 @@
           resolve();
         }
       }, 50);
+      setTimeout(function () {
+        clearInterval(interval);
+        reject(new Error("GoSX runtime did not become ready"));
+      }, RUNTIME_TIMEOUT_MS);
     });
   }
 
@@ -46,20 +50,26 @@
     var compileURL = shell.getAttribute("data-compile-url");
     var csrfToken = shell.getAttribute("data-csrf-token") || "";
     var textarea = shell.querySelector(".play__source");
-    var preview = shell.querySelector('[data-gosx-island="' + ISLAND_ID + '"]');
+    var preview = shell.querySelector(".play__preview-frame [data-gosx-island]");
     var errors = shell.querySelector(".play__errors");
     var compilerBody = shell.querySelector(".play__compiler-body");
     var picker = shell.querySelector(".play__preset-select");
+    var presetDescription = shell.querySelector(".play__preset-description");
 
     if (!compileURL || !textarea || !preview) {
       return;
     }
+    var islandID = preview.getAttribute("data-gosx-island");
 
     var timer = null;
-    var inFlight = false;
-    // Track the last successfully hydrated component name so subsequent
-    // recompiles of the same source can reuse it. Falls back to "Page".
-    var latestComponent = "Page";
+    var requestGeneration = 0;
+    var activeController = null;
+    var status = shell.querySelector(".play__preview-status");
+
+    function setStatus(state, message) {
+      shell.setAttribute("data-playground-state", state);
+      if (status) status.textContent = message;
+    }
 
     function showErrors(diagnostics) {
       if (!errors) {
@@ -95,10 +105,10 @@
     }
 
     function compile(source) {
-      if (inFlight) {
-        return;
-      }
-      inFlight = true;
+      var generation = ++requestGeneration;
+      if (activeController) activeController.abort();
+      activeController = typeof AbortController === "function" ? new AbortController() : null;
+      setStatus("compiling", "Compiling GoSX…");
       fetch(compileURL, {
         method: "POST",
         headers: {
@@ -109,11 +119,19 @@
         },
         credentials: "same-origin",
         body: JSON.stringify({ source: source }),
+        signal: activeController ? activeController.signal : undefined,
       })
         .then(function (resp) {
+          if (generation !== requestGeneration) return null;
+          if (!resp.ok) {
+            var error = new Error(resp.status === 429 ? "Rate limited — pause for a moment" : "Compile request failed (" + resp.status + ")");
+            error.rateLimited = resp.status === 429;
+            throw error;
+          }
           return resp.json();
         })
         .then(function (result) {
+          if (generation !== requestGeneration || !result) return;
           if (!result || !result.ok || !result.data) {
             showErrors([
               {
@@ -123,15 +141,25 @@
                   (result && result.message) || "compile failed",
               },
             ]);
+            setStatus("network-error", "Compile request failed");
             return;
           }
           var data = result.data;
           showErrors(data.diagnostics || []);
           showCompilerInfo(data);
           if (data.diagnostics && data.diagnostics.length > 0) {
+            var diagnosticText = data.diagnostics.map(function (d) { return d.message || ""; }).join(" ");
+            var isRateLimited = /rate limit|too many requests/i.test(diagnosticText);
+            setStatus(isRateLimited ? "rate-limited" : "diagnostic", isRateLimited ? "Rate limited — pause for a moment" : "Fix the diagnostic to update preview");
             return;
           }
           if (!data.program) {
+            setStatus("diagnostic", "No runnable island program");
+            return;
+          }
+          if (!data.component) {
+            showErrors([{ line: 0, column: 0, message: "compiler did not return a component identity" }]);
+            setStatus("diagnostic", "Missing component identity");
             return;
           }
           var bytes = base64ToBytes(data.program);
@@ -139,23 +167,14 @@
           // to avoid leaking signal subscriptions and DOM event listeners.
           try {
             if (typeof window.__gosx_dispose === "function") {
-              window.__gosx_dispose(ISLAND_ID);
+              window.__gosx_dispose(islandID);
             }
           } catch (e) {
             // Ignore dispose errors — a missing island is fine on first run.
           }
-          // The component name is not echoed by the compile endpoint, so we
-          // reuse the last known name. The preview frame carries
-          // data-component after the first hydration; read it from there.
-          var frame = shell.querySelector(
-            '[data-gosx-island="' + ISLAND_ID + '"]'
-          );
-          if (frame && frame.getAttribute("data-component")) {
-            latestComponent = frame.getAttribute("data-component");
-          }
           var ret = window.__gosx_hydrate(
-            ISLAND_ID,
-            latestComponent,
+            islandID,
+            data.component,
             "{}",
             bytes,
             "bin"
@@ -168,19 +187,22 @@
                 message: ret.replace(/^error:\s*/, ""),
               },
             ]);
+            setStatus("diagnostic", "Hydration failed");
+            return;
           }
+          preview.setAttribute("data-component", data.component);
+          setStatus("hydrated", data.component + " hydrated from GoSX island bytecode");
         })
         .catch(function (err) {
-          showErrors([
-            {
-              line: 0,
-              column: 0,
-              message: "network error: " + ((err && err.message) || err),
-            },
-          ]);
-        })
-        .then(function () {
-          inFlight = false;
+          if (generation !== requestGeneration || (err && err.name === "AbortError")) return;
+	          showErrors([
+	            {
+	              line: 0,
+	              column: 0,
+	              message: ((err && err.message) || "network error"),
+	            },
+	            ]);
+          setStatus(err && err.rateLimited ? "rate-limited" : "network-error", err && err.rateLimited ? "Rate limited — pause for a moment" : "Network error — preview unchanged");
         });
     }
 
@@ -199,6 +221,11 @@
     // and trigger an immediate compile (no debounce — the user took a
     // deliberate action).
     if (picker) {
+      function updatePresetDescription(opt) {
+        if (presetDescription && opt) {
+          presetDescription.textContent = opt.getAttribute("data-description") || "";
+        }
+      }
       picker.addEventListener("change", function () {
         var opt = picker.options[picker.selectedIndex];
         if (!opt) {
@@ -209,6 +236,7 @@
           return;
         }
         textarea.value = src;
+        updatePresetDescription(opt);
         compile(src);
       });
     }
@@ -236,9 +264,13 @@
 
     // Initial compile: run once after the GoSX wasm runtime has loaded so the
     // preview shows the default preset immediately on page load.
-    waitForRuntime().then(function () {
-      compile(textarea.value);
-    });
+    setStatus("waiting", "Waiting for the GoSX runtime…");
+    waitForRuntime()
+      .then(function () { compile(textarea.value); })
+      .catch(function (err) {
+        showErrors([{ line: 0, column: 0, message: err.message }]);
+        setStatus("runtime-error", "GoSX runtime unavailable");
+      });
   }
 
   ready(mount);

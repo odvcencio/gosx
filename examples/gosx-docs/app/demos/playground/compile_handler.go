@@ -45,6 +45,11 @@ type Diagnostic struct {
 
 // CompileResult is the pure output of the playground pipeline.
 type CompileResult struct {
+	// Component is the compiled island component identity. The browser must pass
+	// this exact name to the hydrator; presets are intentionally not all named
+	// "Page".
+	Component string `json:"component"`
+
 	// HTML is the SSR placeholder the client runtime hydrates. In this task
 	// it is a static hydration target; future tasks may enrich it.
 	HTML string `json:"html"`
@@ -135,8 +140,9 @@ func compileSourceWithCountsImpl(source []byte) (CompileResult, int, int, error)
 	}
 
 	return CompileResult{
-		HTML:    renderPlaygroundSSR(prog.Components[0].Name),
-		Program: bin,
+		Component: prog.Components[0].Name,
+		HTML:      renderPlaygroundSSR(prog.Components[0].Name),
+		Program:   bin,
 	}, nNodes, nExprs, nil
 }
 
@@ -301,6 +307,7 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		}
 		if compiler == nil {
 			return ctx.Success("", map[string]any{
+				"component":   "",
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: "compiler unavailable"}},
@@ -309,6 +316,7 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		rateKey := clientIPFromRequest(ctx.Request)
 		if err := json.Unmarshal(ctx.Payload, &req); err != nil {
 			return ctx.Success("", map[string]any{
+				"component":   "",
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: "invalid request body"}},
@@ -319,12 +327,14 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		// uniform shape to render.
 		if err != nil {
 			return ctx.Success("", map[string]any{
+				"component":   "",
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: sentinelMessage(err)}},
 			})
 		}
 		return ctx.Success("", map[string]any{
+			"component":   result.Component,
 			"html":        result.HTML,
 			"program":     base64.StdEncoding.EncodeToString(result.Program),
 			"diagnostics": result.Diagnostics,
@@ -341,6 +351,7 @@ func CompileAction(ctx *action.Context) error {
 	}
 	if err := json.Unmarshal(ctx.Payload, &req); err != nil {
 		return ctx.Success("", map[string]any{
+			"component":   "",
 			"html":        "",
 			"program":     "",
 			"diagnostics": []Diagnostic{{Message: "invalid request body"}},
@@ -350,12 +361,14 @@ func CompileAction(ctx *action.Context) error {
 	if err != nil {
 		// Fatal — expose as a single diagnostic so the client renders something.
 		return ctx.Success("", map[string]any{
+			"component":   "",
 			"html":        "",
 			"program":     "",
 			"diagnostics": []Diagnostic{{Message: err.Error()}},
 		})
 	}
 	return ctx.Success("", map[string]any{
+		"component":   result.Component,
 		"html":        result.HTML,
 		"program":     base64.StdEncoding.EncodeToString(result.Program),
 		"diagnostics": result.Diagnostics,

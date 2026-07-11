@@ -123,6 +123,14 @@
   outline-offset: 1px;
 }
 
+.play__preset-description {
+  flex-shrink: 0;
+  margin: 0;
+  color: var(--demo-muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
 .play__source {
   flex: 1;
   font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", "Fira Code",

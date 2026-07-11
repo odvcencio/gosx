@@ -38,6 +38,22 @@
   cursor: crosshair;
   /* Prevent text selection while clicking rapidly */
   user-select: none;
+  touch-action: none;
+}
+
+.livesim__canvas:focus-visible,
+.livesim__spawn:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 3px;
+}
+
+.livesim__spawn {
+  border: 1px solid var(--demo-accent);
+  background: transparent;
+  color: var(--demo-accent);
+  padding: var(--space-xs, 0.5rem);
+  font: 600 var(--type-xs, 0.75rem) var(--font-mono, monospace);
+  cursor: pointer;
 }
 
 /* ─── HUD panel ─────────────────────────────────────────────────────────────── */

@@ -12,18 +12,24 @@ func Page() Node {
 			<div class="play__editor">
 				<div class="play__editor-top">
 					<label class="play__preset-label" for="play-preset-select">Preset</label>
-					<select class="play__preset-select" id="play-preset-select" aria-label="Choose a preset">
+					<select
+						class="play__preset-select"
+						id="play-preset-select"
+						aria-label="Choose a preset"
+						aria-describedby="play-preset-description"
+					>
 						<Each of={data.presets} as="p">
-							<option value={p.Slug} data-source={p.Source}>{p.Title}</option>
+							<option value={p.Slug} data-source={p.Source} data-description={p.Description}>{p.Title}</option>
 						</Each>
 					</select>
 					<button class="play__reset-btn" type="button" aria-label="Reset to selected preset">Reset</button>
 				</div>
+				<p class="play__preset-description" id="play-preset-description">{data.presets[0].Description}</p>
 				<textarea class="play__source" spellcheck="false" aria-label="gsx source">{data.source}</textarea>
 				<div class="play__errors" aria-live="polite"></div>
 			</div>
 			<div class="play__preview">
-				<div class="play__preview-frame" data-gosx-island="playground-preview"></div>
+				<div class="play__preview-frame">{data.preview}</div>
 				<div class="play__preview-status" aria-live="polite">Preview updates as you type</div>
 			</div>
 		</div>

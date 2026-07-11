@@ -155,6 +155,15 @@
   margin: 6px 0 0;
 }
 
+.demo-card__lesson {
+  padding-top: var(--space-sm);
+  margin: auto 0 0;
+  color: var(--demo-fg);
+  font-size: var(--type-xs);
+  line-height: 1.55;
+  border-top: 1px solid var(--demo-hair);
+}
+
 /* ------------------------------------------------------------
    Status chip — top-right corner of .demo-card__meta
    ------------------------------------------------------------ */

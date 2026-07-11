@@ -5307,6 +5307,8 @@ test("bootstrap drives shared-runtime Scene3D first-person controls without auth
 test("bootstrap loads declarative Scene3D model assets without authored JS", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-model-root";
+  const modelStatuses = [];
+  mount.addEventListener("gosx:scene3d:model-status", (event) => modelStatuses.push(event.detail));
 
   const env = createContext({
     elements: [mount],
@@ -5434,6 +5436,12 @@ test("bootstrap loads declarative Scene3D model assets without authored JS", asy
   await flushAsyncWork();
 
   assert.equal(env.fetchCalls.some((call) => call.url === "/models/runner.gosx3d.json"), true);
+  assert.deepEqual(modelStatuses.map((entry) => entry.status), ["loading", "loaded"]);
+  assert.equal(modelStatuses[0].asset, "/models/runner.gosx3d.json");
+  assert.equal(modelStatuses[0].cached, false);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-model-status"), "loaded");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-model-asset"), "/models/runner.gosx3d.json");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-model-cache"), "false");
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
   assert.equal(mount.children[0].tagName, "CANVAS");

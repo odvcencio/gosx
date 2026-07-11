@@ -252,3 +252,9 @@
     font-size: 0.8125rem;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .collab--connected .collab__status-dot {
+    animation: none;
+  }
+}

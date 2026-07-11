@@ -43,7 +43,7 @@ func init() {
 
 	docsapp.RegisterStaticDocsPage(
 		"Collab Editor",
-		"LWW collaborative markdown editor over a single hub.",
+		"A deliberately simple last-write-wins document synchronized over one GoSX Hub.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				ctx.Runtime().BindHub("collab", "/demos/collab/ws", []hydrate.HubBinding{})

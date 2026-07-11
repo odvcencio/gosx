@@ -29,6 +29,9 @@ func TestCompileSourceDefaultPresetRoundTrip(t *testing.T) {
 	if !strings.Contains(result.HTML, `data-gosx-island="playground-preview"`) {
 		t.Fatalf("HTML missing hydration target attribute, got: %s", result.HTML)
 	}
+	if result.Component != "Counter" {
+		t.Fatalf("Component = %q; want Counter", result.Component)
+	}
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("expected zero diagnostics, got: %v", result.Diagnostics)
 	}
@@ -43,6 +46,12 @@ func TestCompileSourceAllPresets(t *testing.T) {
 			}
 			if len(result.Program) == 0 {
 				t.Fatalf("preset %q: expected non-empty Program bytes", p.Slug)
+			}
+			if result.Component == "" {
+				t.Fatal("compiled component identity is empty")
+			}
+			if !strings.Contains(result.HTML, `data-component="`+result.Component+`"`) {
+				t.Fatalf("SSR target does not carry component %q", result.Component)
 			}
 			if len(result.Diagnostics) != 0 {
 				t.Fatalf("preset %q: expected zero diagnostics, got: %v", p.Slug, result.Diagnostics)

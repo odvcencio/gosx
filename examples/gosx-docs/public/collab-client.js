@@ -8,7 +8,7 @@
   var EVENT_EDIT = "doc:edit";
   var DEBOUNCE_MS = 100;
 
-  var textarea, preview, statusEl, shell;
+  var textarea, preview, statusEl, versionEl, shell;
   var currentVersion = 0;
   var editTimer = null;
   var suppressEvent = false;
@@ -19,11 +19,15 @@
     textarea  = document.getElementById("collab-source");
     preview   = document.getElementById("collab-preview");
     statusEl  = document.getElementById("collab-status");
+    versionEl = document.getElementById("collab-version");
     shell     = document.querySelector(".collab");
     if (!textarea || !preview) return;
+    currentVersion = Number(shell && shell.getAttribute("data-initial-version")) || 0;
 
     textarea.addEventListener("input", onLocalInput);
     document.addEventListener("gosx:hub:event", onHubEvent);
+    document.addEventListener("gosx:navigate", teardown, { once: true });
+    socketTimer = setInterval(refreshSocketState, 1000);
 
     // Render whatever SSR seeded into the textarea.
     renderPreview(textarea.value);
@@ -35,12 +39,16 @@
   function onLocalInput() {
     if (suppressEvent) return;
     clearTimeout(editTimer);
+    setStatus("pending");
     editTimer = setTimeout(sendEdit, DEBOUNCE_MS);
     renderPreview(textarea.value);
   }
 
   function sendEdit() {
-    sendHub(EVENT_EDIT, { text: textarea.value, version: currentVersion });
+    editTimer = null;
+    if (!sendHub(EVENT_EDIT, { text: textarea.value, version: currentVersion })) {
+      setStatus("offline · edit kept locally");
+    }
   }
 
   // ── Hub events ─────────────────────────────────────────────────────────────
@@ -64,6 +72,7 @@
     // Already in sync — just update our version tracker.
     if (state.version <= currentVersion && state.text === textarea.value) {
       currentVersion = state.version;
+      if (versionEl) versionEl.textContent = String(currentVersion);
       setStatus("synced");
       return;
     }
@@ -72,7 +81,10 @@
   }
 
   function applyRemoteState(state) {
+    clearTimeout(editTimer);
+    editTimer = null;
     currentVersion = state.version;
+    if (versionEl) versionEl.textContent = String(currentVersion);
     setStatus("synced");
     if (state.text === textarea.value) return;
 
@@ -90,7 +102,8 @@
 
   function sendHub(event, data) {
     var hubs = window.__gosx && window.__gosx.hubs;
-    if (!hubs) return;
+    if (!hubs) return false;
+    var sent = false;
     hubs.forEach(function (record) {
       if (
         record &&
@@ -100,12 +113,33 @@
         record.socket.readyState === 1
       ) {
         record.socket.send(JSON.stringify({ event: event, data: data }));
+        sent = true;
       }
     });
+    return sent;
   }
 
   function setStatus(text) {
     if (statusEl) statusEl.textContent = text;
+  }
+
+  var socketTimer = null;
+  function refreshSocketState() {
+    var hubs = window.__gosx && window.__gosx.hubs;
+    var open = false, connecting = false;
+    if (hubs) hubs.forEach(function (record) {
+      if (!record || !record.entry || record.entry.name !== HUB_NAME || !record.socket) return;
+      open = open || record.socket.readyState === 1;
+      connecting = connecting || record.socket.readyState === 0;
+    });
+    if (!open && !editTimer) setStatus(connecting ? "reconnecting…" : "offline");
+    if (shell) shell.classList.toggle("collab--connected", open);
+  }
+
+  function teardown() {
+    clearTimeout(editTimer);
+    clearInterval(socketTimer);
+    document.removeEventListener("gosx:hub:event", onHubEvent);
   }
 
   // ── Markdown renderer ──────────────────────────────────────────────────────

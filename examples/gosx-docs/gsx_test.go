@@ -90,23 +90,26 @@ func TestDemosLayoutStructure(t *testing.T) {
 		t.Error(`demos/layout.gsx missing aria-label="Demos" on dock nav`)
 	}
 
-	// 5. All seven demo slugs must appear in the dock.
-	slugs := []string{"playground", "fluid", "livesim", "cms", "scene3d", "scene3d-bench", "collab"}
-	for _, slug := range slugs {
-		if !strings.Contains(src, slug) {
-			t.Errorf("demos/layout.gsx missing demo slug %q", slug)
-		}
+	// 5. Dock entries must derive from the shared catalog.
+	if !strings.Contains(src, `<Each of={Demos()}`) {
+		t.Error("demos/layout.gsx dock does not derive from Demos()")
 	}
 
-	// 6. Meta footer must have the three data-drawer pill buttons.
-	drawerAttrs := []string{
-		`data-drawer="source"`,
-		`data-drawer="packages"`,
-		`data-drawer="prerender"`,
+	// 6. Metadata affordance and accessible dialog must be real and wired.
+	detailsAttrs := []string{
+		`data-demo-details-open`,
+		`role="dialog"`,
+		`aria-modal="true"`,
+		`data-demo-details-source`,
 	}
-	for _, attr := range drawerAttrs {
+	for _, attr := range detailsAttrs {
 		if !strings.Contains(src, attr) {
-			t.Errorf("demos/layout.gsx missing meta button with %s", attr)
+			t.Errorf("demos/layout.gsx missing details contract %s", attr)
+		}
+	}
+	for _, retired := range []string{`data-drawer="source"`, `data-drawer="packages"`, `data-drawer="prerender"`} {
+		if strings.Contains(src, retired) {
+			t.Errorf("demos/layout.gsx retains inert metadata control %s", retired)
 		}
 	}
 
@@ -362,6 +365,19 @@ func TestScene3DDemoCinematicShape(t *testing.T) {
 	if !strings.Contains(gsxSrc, "aria-label") {
 		t.Error("scene3d/page.gsx missing aria-label — accessibility required")
 	}
+	for _, proof := range []string{
+		"Typed Go → SceneIR → browser GPU",
+		"data-gosx-scene3d-renderer",
+		"What GoSX owns",
+		"View the typed scene source",
+	} {
+		if !strings.Contains(gsxSrc, proof) {
+			t.Errorf("scene3d/page.gsx missing framework proof %q", proof)
+		}
+	}
+	if strings.Contains(gsxSrc, `scene3d-showcase__overlay" aria-hidden="true`) {
+		t.Error("scene3d teaching overlay must not be hidden from assistive technology")
+	}
 }
 
 // TestScene3DBenchRewrittenShape verifies the scene3d-bench demo was rewritten
@@ -426,6 +442,26 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 	if !strings.Contains(gsxSrc, "PerformanceObserver") {
 		t.Error("scene3d-bench/page.gsx missing PerformanceObserver — observer must remain")
 	}
+
+	for _, honestMetric := range []string{
+		"CPU submit · current",
+		"rAF cadence",
+		"It does not claim GPU completion time",
+		`data-gosx-scene3d-renderer`,
+		`schema: "gosx.scene3d-bench.v1"`,
+		"copy JSON",
+		"download",
+	} {
+		if !strings.Contains(gsxSrc, honestMetric) {
+			t.Errorf("scene3d-bench/page.gsx missing honest measurement contract %q", honestMetric)
+		}
+	}
+	if strings.Contains(gsxSrc, `id="bench3d-overlay" aria-live`) {
+		t.Error("rapid benchmark telemetry must not use aria-live")
+	}
+	if strings.Contains(gsxSrc, "GPU work is included") {
+		t.Error("scene3d-bench/page.gsx falsely claims CPU submission measures GPU completion")
+	}
 }
 
 // TestDemosIndexLists8Cards verifies the /demos index page files have the
@@ -436,6 +472,7 @@ func TestDemosIndexLists8Cards(t *testing.T) {
 	demosDir := filepath.Join(filepath.Dir(thisFile), "app", "demos")
 	pagePath := filepath.Join(demosDir, "page.gsx")
 	serverPath := filepath.Join(demosDir, "page.server.go")
+	catalogPath := filepath.Join(demosDir, "catalog.go")
 
 	// 1. page.gsx must compile.
 	pageSource, err := os.ReadFile(pagePath)
@@ -450,18 +487,27 @@ func TestDemosIndexLists8Cards(t *testing.T) {
 		t.Fatal("app/demos/page.gsx has no components (bare-fragment form breaks route resolution)")
 	}
 
-	// 2. page.server.go must contain all 8 demo slugs.
+	// 2. The shared catalog must contain all 8 demo slugs, while the loader
+	// consumes Demos() rather than maintaining another roster.
 	serverSource, err := os.ReadFile(serverPath)
 	if err != nil {
 		t.Fatalf("read app/demos/page.server.go: %v", err)
 	}
 	serverSrc := string(serverSource)
+	catalogSource, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatalf("read app/demos/catalog.go: %v", err)
+	}
+	catalogSrc := string(catalogSource)
 
 	slugs := []string{"playground", "fluid", "water", "livesim", "cms", "scene3d", "scene3d-bench", "collab"}
 	for _, slug := range slugs {
-		if !strings.Contains(serverSrc, slug) {
-			t.Errorf("app/demos/page.server.go missing demo slug %q", slug)
+		if !strings.Contains(catalogSrc, `Slug: "`+slug+`"`) {
+			t.Errorf("app/demos/catalog.go missing demo slug %q", slug)
 		}
+	}
+	if !strings.Contains(serverSrc, `"demos": Demos()`) {
+		t.Error("app/demos/page.server.go does not load the shared catalog")
 	}
 
 	// 3. Must use RegisterStaticDocsPage.
@@ -560,8 +606,8 @@ func TestLiveSimDemoShape(t *testing.T) {
 		t.Fatalf("read layout.gsx: %v", err)
 	}
 	layoutSrc := string(layoutSource)
-	if !strings.Contains(layoutSrc, `href="/demos/livesim"`) {
-		t.Error(`layout.gsx missing href="/demos/livesim" — dock item not flipped to Live`)
+	if !strings.Contains(layoutSrc, `href={"/demos/" + demo.Slug}`) || !strings.Contains(layoutSrc, `<Each of={Demos()}`) {
+		t.Error("layout.gsx dock links do not derive from the shared demo catalog")
 	}
 	// Must NOT still have aria-disabled on the livesim entry.
 	// Check that the pattern `data-demo="livesim" aria-disabled` does not appear
@@ -671,8 +717,8 @@ func TestCollabDemoShape(t *testing.T) {
 	}
 	layoutSrc := string(layoutSource)
 
-	if !strings.Contains(layoutSrc, `href="/demos/collab"`) {
-		t.Error(`layout.gsx missing href="/demos/collab" — dock item not flipped to Live`)
+	if !strings.Contains(layoutSrc, `href={"/demos/" + demo.Slug}`) || !strings.Contains(layoutSrc, `<Each of={Demos()}`) {
+		t.Error("layout.gsx dock links do not derive from the shared demo catalog")
 	}
 	if strings.Contains(layoutSrc, `data-demo="collab" aria-disabled`) {
 		t.Error("layout.gsx collab entry still has aria-disabled — not fully flipped")
@@ -712,7 +758,8 @@ func TestFluidDemoShape(t *testing.T) {
 	simSrc := string(simSource)
 
 	simChecks := []struct{ needle, label string }{
-		{"field.PublishField", "field.PublishField"},
+		{"QuantizeChecked", "periodic recoverable field quantization"},
+		{"s.tick%40", "periodic absolute keyframe cadence"},
 		{"field.FromFunc", "field.FromFunc"},
 		{"QuantizeOptions{BitWidth:", "QuantizeOptions{BitWidth:"},
 	}
@@ -792,8 +839,8 @@ func TestFluidDemoShape(t *testing.T) {
 	}
 	layoutSrc := string(layoutSource)
 
-	if !strings.Contains(layoutSrc, `href="/demos/fluid"`) {
-		t.Error(`layout.gsx missing href="/demos/fluid" — dock item not flipped to Live`)
+	if !strings.Contains(layoutSrc, `href={"/demos/" + demo.Slug}`) || !strings.Contains(layoutSrc, `<Each of={Demos()}`) {
+		t.Error("layout.gsx dock links do not derive from the shared demo catalog")
 	}
 	if strings.Contains(layoutSrc, `data-demo="fluid" aria-disabled`) {
 		t.Error("layout.gsx fluid entry still has aria-disabled — not fully flipped")

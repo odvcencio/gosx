@@ -1377,6 +1377,8 @@
   }
 
   const sceneModelAssetCache = new Map();
+  const sceneModelAssetReady = new Set();
+  const sceneModelAssetFailures = new Set();
 
   function resolveSceneModelAssetURL(baseSrc, value) {
     const raw = typeof value === "string" ? value.trim() : "";
@@ -2532,12 +2534,35 @@
   // keyframe or skeletal clips from outside the main scene mount.
   window.__gosx_ensure_scene3d_animation_loaded = ensureAnimationFeatureLoaded;
 
-  async function loadSceneModelAsset(src) {
+  function publishSceneModelAssetStatus(mount, status, asset, cached, error) {
+    if (!mount) return;
+    const detail = {
+      status: String(status || ""),
+      asset: String(asset || ""),
+      cached: Boolean(cached),
+      error: error ? String(error) : "",
+    };
+    setAttrValue(mount, "data-gosx-scene3d-model-status", detail.status);
+    setAttrValue(mount, "data-gosx-scene3d-model-asset", detail.asset);
+    setAttrValue(mount, "data-gosx-scene3d-model-cache", detail.cached ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-model-error", detail.error);
+    if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
+      mount.dispatchEvent(new CustomEvent("gosx:scene3d:model-status", { detail, bubbles: true }));
+    }
+  }
+
+  async function loadSceneModelAsset(src, mount) {
     const key = String(src || "").trim();
     if (!key) {
       return parseSceneModelAsset({}, key);
     }
-    if (!sceneModelAssetCache.has(key)) {
+    const cached = sceneModelAssetCache.has(key);
+    if (sceneModelAssetReady.has(key)) {
+      publishSceneModelAssetStatus(mount, "cached", key, true, "");
+      return sceneModelAssetCache.get(key);
+    }
+    publishSceneModelAssetStatus(mount, "loading", key, cached, "");
+    if (!cached) {
       sceneModelAssetCache.set(key, (async function() {
         try {
           const format = sceneModelAssetFormat(key);
@@ -2548,14 +2573,19 @@
             // cached module. Pages that never load models never fetch
             // the chunk at all.
             var gltfApi = await ensureGLTFFeatureLoaded();
-            return parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(await gltfApi.sceneLoadGLTFModel(key), key), key);
+            const asset = parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(await gltfApi.sceneLoadGLTFModel(key), key), key);
+            sceneModelAssetReady.add(key);
+            return asset;
           }
           const response = await fetch(key, { credentials: "same-origin" });
           if (!response || !response.ok) {
             throw new Error("HTTP " + String(response && response.status || 0));
           }
-          return parseSceneModelAsset(await response.json(), key);
+          const asset = parseSceneModelAsset(await response.json(), key);
+          sceneModelAssetReady.add(key);
+          return asset;
         } catch (error) {
+          sceneModelAssetFailures.add(key);
           console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
           gosxSceneEmit("warn", "model-asset-load-failed", {
             asset: String(key || ""),
@@ -2565,7 +2595,13 @@
         }
       })());
     }
-    return sceneModelAssetCache.get(key);
+    const asset = await sceneModelAssetCache.get(key);
+    if (sceneModelAssetFailures.has(key)) {
+      publishSceneModelAssetStatus(mount, "error", key, cached, "model asset failed to load");
+    } else {
+      publishSceneModelAssetStatus(mount, cached ? "cached" : "loaded", key, cached, "");
+    }
+    return asset;
   }
 
   function sceneModelHasSkins(skins) {
@@ -3434,7 +3470,7 @@
     let htmlCount = 0;
     let lightCount = 0;
     await Promise.all(models.map(async function(model, modelIndex) {
-      const asset = await loadSceneModelAsset(model.src);
+      const asset = await loadSceneModelAsset(model.src, state && state._modelStatusMount);
       const instanceModel = sceneModelWithAssetFit(model, asset);
       const prefix = model.id || ("scene-model-" + modelIndex);
       const skinInstances = sceneCloneModelSkins(asset.skins);
@@ -6700,6 +6736,7 @@
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
     const sceneState = createSceneState(props, capability);
+    sceneState._modelStatusMount = ctx.mount;
     // The manifest is immutable for the lifetime of an engine mount. Parse its
     // large inline shader payload once instead of once per rendered frame.
     const mountedWaterShaderSources = typeof window !== "undefined" &&

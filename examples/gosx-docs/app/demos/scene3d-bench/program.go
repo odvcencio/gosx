@@ -1,9 +1,10 @@
 // Package docs provides the Scene3D benchmark page at /demos/scene3d-bench.
 //
-// The page hosts a live in-browser frame-time overlay that reads
+// The page hosts a live in-browser diagnostics overlay that reads
 // performance.measure entries named "scene3d-render" (emitted by the
 // PBR renderer when window.__gosx_scene3d_perf === true) and displays
-// rolling p50/p95/max statistics across a 240-frame ring buffer.
+// rolling CPU-submit p50/p95/max statistics across a 240-sample ring buffer.
+// A separate requestAnimationFrame sampler reports browser frame cadence.
 //
 // Scene workloads are selected via ?workload=<name> URL query. Each
 // workload targets a different code path inside the renderer so a
