@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,7 +33,7 @@ func driveClientSyncUntil(
 	t.Helper()
 
 	const maxRounds = 8
-	var lastErr error
+	lastObserved := "no server response"
 	for round := 0; round < maxRounds; round++ {
 		if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 			t.Fatalf("set sync response deadline: %v", err)
@@ -49,24 +50,25 @@ func driveClientSyncUntil(
 		}
 
 		value, _, err := serverDoc.Get(crdt.Root, prop)
-		if err == nil {
-			if value.Str != want {
-				t.Fatalf("server %s = %q, want %q", prop, value.Str, want)
-			}
+		if err == nil && value.Str == want {
 			return round + 1
 		}
-		lastErr = err
+		if err != nil {
+			lastObserved = err.Error()
+		} else {
+			lastObserved = fmt.Sprintf("got %q", value.Str)
+		}
 
 		reply, ok := clientDoc.GenerateSyncMessage(clientState)
 		if !ok {
-			t.Fatalf("server still missing %s after round %d, but client had no sync reply: %v", prop, round+1, err)
+			t.Fatalf("server did not converge %s=%q after round %d (%s), but client had no sync reply", prop, want, round+1, lastObserved)
 		}
 		if err := conn.WriteMessage(websocket.BinaryMessage, append([]byte{prefix}, reply...)); err != nil {
 			t.Fatalf("write sync reply (round %d): %v", round+1, err)
 		}
 	}
 
-	t.Fatalf("server did not converge %s=%q after %d sync rounds: %v", prop, want, maxRounds, lastErr)
+	t.Fatalf("server did not converge %s=%q after %d sync rounds: %s", prop, want, maxRounds, lastObserved)
 	return 0
 }
 
@@ -137,8 +139,8 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 		t.Fatalf("expected synced title server, got %q", value.Str)
 	}
 
-	if err := clientDoc.Put(crdt.Root, "subtitle", crdt.StringValue("client")); err != nil {
-		t.Fatalf("client subtitle put: %v", err)
+	if err := clientDoc.Put(crdt.Root, "title", crdt.StringValue("client")); err != nil {
+		t.Fatalf("client title put: %v", err)
 	}
 	clientChange, err := clientDoc.Commit("client update")
 	if err != nil {
@@ -158,16 +160,16 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 		t.Fatalf("write client sync message: %v", err)
 	}
 
-	if rounds := driveClientSyncUntil(t, conn, prefix, clientDoc, clientState, doc, "subtitle", "client"); rounds < 2 {
+	if rounds := driveClientSyncUntil(t, conn, prefix, clientDoc, clientState, doc, "title", "client"); rounds < 2 {
 		t.Fatalf("forced Bloom false positive converged in %d round; want at least 2", rounds)
 	}
 
-	value, _, err = doc.Get(crdt.Root, "subtitle")
+	value, _, err = doc.Get(crdt.Root, "title")
 	if err != nil {
-		t.Fatalf("get server subtitle: %v", err)
+		t.Fatalf("get server title: %v", err)
 	}
 	if value.Str != "client" {
-		t.Fatalf("expected server subtitle client, got %q", value.Str)
+		t.Fatalf("expected server title client, got %q", value.Str)
 	}
 }
 
