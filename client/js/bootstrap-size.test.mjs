@@ -428,7 +428,17 @@ const budgets = [
   // the video engine factory (30-tail.js), merged with the runtime_api
   // bridge line above. Measured: 84_129 / 25_836 / 23_000 + sub-1%
   // rounding headroom.
-  { file: "bootstrap-feature-engines.js", raw: 85_000, gzip: 26_000, brotli: 23_300 },
+  //
+  // Bumped raw 85_000 -> 86_000, gzip 26_000 -> 26_500: hidden-at-hydration
+  // canvas2d backing-store recovery in _initEngineSurfaceCanvasSize
+  // (26b-feature-engines-prefix.js) — _canvasDeclaredSize +
+  // _measuredCanvasCSSBox walk up the ancestor chain for a real (>1px) box
+  // when the canvas's own getBoundingClientRect() is still self-referentially
+  // collapsed (hydrated while hidden, or a host CSS selector that no longer
+  // matches after a DOM-nesting change), and additionally observe that
+  // ancestor so a later layout change re-triggers the fix. Measured:
+  // 85_024 / 26_115 / 23_259; brotli unchanged.
+  { file: "bootstrap-feature-engines.js", raw: 86_000, gzip: 26_500, brotli: 23_300 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
