@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -228,7 +229,7 @@ func TestHubConnectionMetadataConcurrentUpgradesAndDisconnects(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			connections[i] = dialHubMetadataTestClient(t, server, "/actor-")
+			connections[i] = dialHubMetadataTestClient(t, server, "/actor-"+strconv.Itoa(i))
 		}()
 	}
 	wg.Wait()
