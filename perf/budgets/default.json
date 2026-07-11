@@ -37,12 +37,25 @@
         "scene_p95 <= 33",
         "scene_p99 <= 50"
       ]
+    },
+    "water-ci": {
+      "description": "Water route under CI software rasterization. Gates load and payload stability, not frame performance; real-GPU cadence is certified separately.",
+      "assertions": [
+        "network_kb <= 1600",
+        "lcp <= 2000",
+        "long_tasks <= 20",
+        "tbt <= 18000"
+      ]
     }
   },
   "routes": [
     {
       "url": "/",
       "profile": "basic-island"
+    },
+    {
+      "url": "/demos/water",
+      "profile": "water-ci"
     }
   ]
 }

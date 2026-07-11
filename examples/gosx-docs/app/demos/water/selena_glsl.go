@@ -9,9 +9,11 @@ import (
 )
 
 // waterSelenaFS embeds the selena-authored (`.sel`) water shaders — the sole
-// shader source for the jeantimex water port. Each compiles to GLSL (WebGL1) +
-// GLES (WebGL2) + WGSL (WebGPU) + a host binding descriptor and fills the
-// WaterSystem IR slots. The former hand-written raw-WGSL trees
+// shader source for the jeantimex water port. The demo compiles only the GLES
+// (WebGL2) and WGSL (WebGPU) artifacts it serves, plus backend-agnostic host
+// binding descriptors. Framework-wide WaterSystem desktop GLSL fields remain
+// available, but this page does not pay to compile or transmit unused WebGL1
+// artifacts. The former hand-written raw-WGSL trees
 // (jeantimex-water.sel/, jeantimex-water.elio/) were retired; the JS client
 // keeps builtin SCENE_WATER_* sources only as a last-resort runtime fallback.
 //
@@ -20,7 +22,7 @@ var waterSelenaFS embed.FS
 
 // waterSelenaShader maps one logical WaterSystem shader slot to its authored
 // Selena source. dataPrefix is the WaterDemoData key prefix the page.gsx reads
-// (e.g. "waterSurface" → data.waterSurfaceVertexGLSL); descKey is the key under
+// (e.g. "waterSurface" → data.waterSurfaceVertexGLES); descKey is the key under
 // the per-shader descriptor map (data.waterShaderDescriptors).
 type waterSelenaShader struct {
 	descKey    string
@@ -50,25 +52,11 @@ var waterSelenaShaders = []waterSelenaShader{
 	{descKey: "objectMeshShadow", dataPrefix: "waterObjectMeshShadow", file: "object-mesh-shadow.sel"},
 }
 
-// waterSelenaSourceFiles maps the public GLSL data keys to their colocated
-// authored Selena source modules, mirroring waterMaterialSourceFiles. Kept as
-// source identity so the page manifest can advertise the .sel provenance of each
-// GLSL slot.
-var waterSelenaSourceFiles = func() map[string]string {
-	out := make(map[string]string, len(waterSelenaShaders))
-	for _, s := range waterSelenaShaders {
-		out[s.dataPrefix+"GLSL"] = "shaders/jeantimex-water.selena/" + s.file
-	}
-	return out
-}()
-
-// waterSelenaGLSLData compiles every WaterSystemIR-relevant Selena water shader
-// to GLSL + GLES + a host descriptor and returns the WaterDemoData entries that
-// feed the additive GLSL WaterSystem slots. The returned map carries, per
-// shader, "<dataPrefix>VertexGLSL/FragmentGLSL/VertexGLES/FragmentGLES" strings
-// plus a single "waterShaderDescriptors" map keyed by descKey.
-func waterSelenaGLSLData() (map[string]any, error) {
-	out := make(map[string]any, len(waterSelenaShaders)*4+1)
+// waterSelenaGLESData compiles every page-relevant Selena water shader to the
+// WebGL2 dialect plus a host descriptor. It deliberately emits no desktop GLSL
+// keys, keeping unused WebGL1 source out of WaterDemoData and rendered HTML.
+func waterSelenaGLESData() (map[string]any, error) {
+	out := make(map[string]any, len(waterSelenaShaders)*2+1)
 	descriptors := make(map[string]json.RawMessage, len(waterSelenaShaders))
 	for _, s := range waterSelenaShaders {
 		src, err := waterSelenaFS.ReadFile("shaders/jeantimex-water.selena/" + s.file)
@@ -76,14 +64,10 @@ func waterSelenaGLSLData() (map[string]any, error) {
 			return nil, fmt.Errorf("read selena water shader %s: %w", s.file, err)
 		}
 		result, err := selena.Compile(src, selena.CompileOptions{
-			Targets: []selena.Target{selena.TargetGLSL, selena.TargetGLES},
+			Targets: []selena.Target{selena.TargetGLES},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("compile selena water shader %s: %w", s.file, err)
-		}
-		glsl, ok := result.Artifact(selena.TargetGLSL)
-		if !ok || glsl.Vertex == "" || glsl.Fragment == "" {
-			return nil, fmt.Errorf("selena water shader %s did not emit GLSL vertex/fragment", s.file)
 		}
 		gles, ok := result.Artifact(selena.TargetGLES)
 		if !ok || gles.Vertex == "" || gles.Fragment == "" {
@@ -93,14 +77,11 @@ func waterSelenaGLSLData() (map[string]any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("marshal selena descriptor for %s: %w", s.file, err)
 		}
-		out[s.dataPrefix+"VertexGLSL"] = glsl.Vertex
-		out[s.dataPrefix+"FragmentGLSL"] = glsl.Fragment
 		out[s.dataPrefix+"VertexGLES"] = gles.Vertex
 		out[s.dataPrefix+"FragmentGLES"] = gles.Fragment
 		descriptors[s.descKey] = json.RawMessage(layout)
 	}
 	out["waterShaderDescriptors"] = descriptors
-	out["waterSelenaSourceFiles"] = cloneWaterSourceFiles(waterSelenaSourceFiles)
 	return out, nil
 }
 
@@ -133,8 +114,8 @@ var waterSelenaComputeDescKeys = map[string]bool{
 // safety-net fallback (see 16a-scene-webgpu.js).
 //
 // The host binding descriptor for each WGSL slot is the SAME descriptor
-// already exposed at waterShaderDescriptors[descKey] by waterSelenaGLSLData
-// (compiled from the same .sel source, just for GLSL/GLES targets): Selena's
+// already exposed at waterShaderDescriptors[descKey] by waterSelenaGLESData
+// (compiled from the same .sel source for the GLES target): Selena's
 // bindings.Layout is backend-agnostic -- the "wgsl" sub-object (group/binding
 // numbers), uniform block field order/offsets and Class tags do not depend on
 // which target(s) were requested at compile time. TestWaterSelenaWGSLDescriptorMatchesBindings
@@ -186,7 +167,7 @@ func waterSelenaRenderWGSLData() (map[string]any, error) {
 // (sceneWaterAuthoredComputePipeline) unchanged.
 //
 // The host binding descriptor for each WGSL slot is the SAME descriptor
-// already exposed at waterShaderDescriptors[descKey] by waterSelenaGLSLData,
+// already exposed at waterShaderDescriptors[descKey] by waterSelenaGLESData,
 // exactly like waterSelenaRenderWGSLData's descriptor reuse above (Selena's
 // bindings.Layout is backend-agnostic: the "wgsl"/"grid"/"states" sub-objects,
 // uniform block field order/offsets, and Class tags don't depend on which

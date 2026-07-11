@@ -261,11 +261,11 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	runtimeSource := string(runtimeBytes)
 	webgpuSource := string(webgpuBytes)
 	program := string(programBytes)
-	if got := strings.Count(page, `y={10}`); got != 3 {
-		t.Fatalf("water page hidden object y count = %d, want 3 upstream inactive y=10 placements", got)
+	if got := strings.Count(page, `y={10}`); got != 2 {
+		t.Fatalf("water page hidden object y count = %d, want 2 eagerly authored inactive meshes", got)
 	}
-	if got := strings.Count(page, `visible={false}`); got != 3 {
-		t.Fatalf("water page hidden object visibility count = %d, want 3 upstream inactive visible=false placements", got)
+	if got := strings.Count(page, `visible={false}`); got != 2 {
+		t.Fatalf("water page hidden object visibility count = %d, want 2 eagerly authored inactive meshes", got)
 	}
 
 	if strings.Contains(page, `data-water-`) {
@@ -318,14 +318,6 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`name="object"`,
 		`value="TorusKnot"`,
 		`value="Rubber Duck"`,
-		`src="/water/models/duck/Duck.gltf"`,
-		`rotationY={0}`,
-		`scaleX={1}`,
-		`scaleY={1}`,
-		`scaleZ={1}`,
-		`bounds={0.5}`,
-		`fit="contain"`,
-		`fitAlign="center-min-y"`,
 		`name="gravity"`,
 		`name="densityEnabled"`,
 		`name="poolShape"`,
@@ -348,9 +340,9 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`lightDirectionZ={-1}`,
 		`waveSpeed={1.0}`,
 		`damping={0.995}`,
-		`causticsResolution={1024}`,
+		`causticsResolution={512}`,
 		`objectTextureResolutionMode="viewport"`,
-		`objectShadowResolution={1024}`,
+		`objectShadowResolution={512}`,
 		// Selena-compiled combined-WGSL slots: the sole primary WGSL source
 		// for every water compute kernel/render pass now that the
 		// hand-written Elio/Selena *WGSL props have been retired.
@@ -379,12 +371,18 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`shaderLayout={data.waterDuckMaterialSelenaLayout}`,
 		`customUniforms={data.waterDuckMaterialSelenaUniforms}`,
 		`material="water-object-material"`,
-		`material="water-duck-material"`,
 		`castShadow={true}`,
-		`receiveShadow={true}`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("page.gsx missing %q", want)
+		}
+	}
+	if strings.Contains(page, `<Model`) || strings.Contains(page, `VertexGLSL={data.`) || strings.Contains(page, `FragmentGLSL={data.`) {
+		t.Fatal("water page eagerly embeds the Duck model or unused desktop GLSL payload")
+	}
+	for _, want := range []string{`/water/models/duck/Duck.gltf`, `"material": "water-duck-material"`, `"receiveShadow": true`} {
+		if !strings.Contains(program, want) {
+			t.Fatalf("program.go lazy Duck descriptor missing %q", want)
 		}
 	}
 	objectOptionOrder := []string{`value="None"`, `value="Sphere"`, `value="Cube"`, `value="TorusKnot"`, `value="Rubber Duck"`}
@@ -752,36 +750,35 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	}
 }
 
-// TestWaterSelenaGLSLSlots verifies the demo compiles its Selena-authored water
-// shaders to real GLSL/GLES, that those slots flow end-to-end into a
-// WaterSystemIR (parallel to the WGSL slots), and that the per-shader Selena
+// TestWaterSelenaGLESSlots verifies the demo compiles its Selena-authored water
+// shaders only to the WebGL2 dialect, that those slots flow end-to-end into a
+// WaterSystemIR, and that the per-shader Selena
 // descriptor carries the cube texture, feedback statefield, and std140 uniform
-// array bindings a WebGL2 runtime needs. The WGSL/WebGPU slots are untouched.
-func TestWaterSelenaGLSLSlots(t *testing.T) {
+// array bindings a WebGL2 runtime needs. Desktop GLSL remains a framework IR
+// capability but is deliberately absent from this page's data payload.
+func TestWaterSelenaGLESSlots(t *testing.T) {
 	data, err := WaterDemoData()
 	if err != nil {
 		t.Fatalf("WaterDemoData returned error: %v", err)
 	}
 
-	// Every GLSL/GLES slot the page.gsx feeds must be present and look like the
-	// expected backend dialect.
+	// Every GLES slot page.gsx feeds must be present and look like WebGL2, while
+	// unused desktop GLSL keys must not be generated.
 	for _, p := range []string{
 		"waterSeed", "waterDrop", "waterDisplacement", "waterSimulation", "waterNormal",
 		"waterCaustics", "waterPool", "waterSurface", "waterSurfaceBelow",
 		"waterObjectShadow", "waterCompoundShadow", "waterObjectMeshShadow",
 	} {
-		vGLSL, _ := data[p+"VertexGLSL"].(string)
-		fGLSL, _ := data[p+"FragmentGLSL"].(string)
 		vGLES, _ := data[p+"VertexGLES"].(string)
 		fGLES, _ := data[p+"FragmentGLES"].(string)
-		if strings.TrimSpace(vGLSL) == "" || strings.TrimSpace(fGLSL) == "" {
-			t.Fatalf("%s GLSL vertex/fragment empty (vtx=%d frag=%d)", p, len(vGLSL), len(fGLSL))
+		if _, ok := data[p+"VertexGLSL"]; ok {
+			t.Fatalf("%s unexpectedly compiled desktop vertex GLSL", p)
+		}
+		if _, ok := data[p+"FragmentGLSL"]; ok {
+			t.Fatalf("%s unexpectedly compiled desktop fragment GLSL", p)
 		}
 		if strings.TrimSpace(vGLES) == "" || strings.TrimSpace(fGLES) == "" {
 			t.Fatalf("%s GLES vertex/fragment empty (vtx=%d frag=%d)", p, len(vGLES), len(fGLES))
-		}
-		if !strings.Contains(fGLSL, "void main") {
-			t.Fatalf("%s GLSL fragment is not GLSL (no void main): %.80q", p, fGLSL)
 		}
 		// GLES target is GLSL ES 3.00 (the WebGL2 dialect).
 		if !strings.HasPrefix(strings.TrimSpace(vGLES), "#version 300 es") {
@@ -789,10 +786,10 @@ func TestWaterSelenaGLSLSlots(t *testing.T) {
 		}
 	}
 
-	// The surface fragment is the headline WebGL2 fallback shader.
-	surfaceFrag, _ := data["waterSurfaceFragmentGLSL"].(string)
-	if !strings.Contains(surfaceFrag, "void main") {
-		t.Fatalf("surface fragment GLSL missing void main")
+	// The GLES surface fragment is the headline WebGL2 fallback shader.
+	surfaceFrag, _ := data["waterSurfaceFragmentGLES"].(string)
+	if !strings.HasPrefix(strings.TrimSpace(surfaceFrag), "#version 300 es") || !strings.Contains(surfaceFrag, "void main") {
+		t.Fatalf("surface fragment GLES is invalid")
 	}
 
 	descriptors, ok := data["waterShaderDescriptors"].(map[string]json.RawMessage)
@@ -863,12 +860,13 @@ func TestWaterSelenaGLSLSlots(t *testing.T) {
 		t.Fatalf("compoundShadow descriptor missing spheres array uniform: %+v", compoundShadowLayout.UniformBlock.Fields)
 	}
 
-	// End-to-end: the compiled GLSL + descriptor flow into a WaterSystemIR via
-	// the same typed slots the WGSL path uses.
+	// End-to-end: real GLES + descriptors flow into WaterSystemIR. Sentinel
+	// desktop GLSL proves the framework-wide IR fields remain available even
+	// though WaterDemoData no longer compiles them.
 	ws := scene.WaterSystem{
 		ID:                  "water-main",
-		SurfaceVertexGLSL:   data["waterSurfaceVertexGLSL"].(string),
-		SurfaceFragmentGLSL: data["waterSurfaceFragmentGLSL"].(string),
+		SurfaceVertexGLSL:   "attribute vec3 position; void main(){gl_Position=vec4(position,1.0);}",
+		SurfaceFragmentGLSL: "void main(){gl_FragColor=vec4(1.0);}",
 		SurfaceVertexGLES:   data["waterSurfaceVertexGLES"].(string),
 		SurfaceFragmentGLES: data["waterSurfaceFragmentGLES"].(string),
 		ShaderDescriptors:   descriptors,
@@ -878,8 +876,8 @@ func TestWaterSelenaGLSLSlots(t *testing.T) {
 		t.Fatalf("expected one water system, got %d", len(ir.WaterSystems))
 	}
 	got := ir.WaterSystems[0]
-	if !strings.Contains(got.SurfaceFragmentGLSL, "void main") {
-		t.Fatalf("WaterSystemIR.SurfaceFragmentGLSL not populated with real GLSL")
+	if got.SurfaceFragmentGLSL != ws.SurfaceFragmentGLSL {
+		t.Fatalf("WaterSystemIR.SurfaceFragmentGLSL did not preserve framework field")
 	}
 	if string(got.ShaderDescriptors["surface"]) != string(descriptors["surface"]) {
 		t.Fatalf("WaterSystemIR.ShaderDescriptors[surface] did not round-trip")

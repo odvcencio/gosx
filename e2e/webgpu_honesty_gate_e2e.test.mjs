@@ -4,12 +4,12 @@
  * Navigates to the skinned-GLB fixture page served by gosx-docs at
  * /test/webgpu-honesty-gate. That route sets preferWebGPU=true and includes a
  * model that the server-side SkinLookup marks as skinned, so the honesty gate
- * must compute backendCaps = { capable: ["webgl"], reasons: [{feature:
- * "skinning", excludes: "webgpu"}] } and ship it to the runtime. The JS
- * runtime must then mount the Scene3D on WebGL and set:
+ * must ship backendCaps that allow WebGPU/WebGL and exclude canvas2d for
+ * skinning. The JS runtime mounts WebGL when headless Chrome has no usable
+ * WebGPU adapter and reports the environment fallback honestly:
  *
  *   data-gosx-scene3d-backend         = "webgl"
- *   data-gosx-scene3d-renderer-fallback = "skinning"
+ *   data-gosx-scene3d-renderer-fallback = "webgpu-unavailable"
  *
  * Harness mirrors gosx_docs_e2e.test.mjs: same app server launch, same
  * before/after lifecycle, same waitForHealthy / killProcessGroup helpers.
@@ -94,6 +94,35 @@ test(
         `fixture page returned ${res.status()}\n\nLogs:\n${logs}`,
       );
 
+      // Prove the server-side honesty verdict itself reached the browser. The
+      // renderer's fallback reason may still be environment-specific when
+      // headless Chrome has no usable WebGPU adapter.
+      const backendCaps = await page.evaluate(() => {
+        const script = document.getElementById("gosx-manifest");
+        if (!script?.textContent) return [];
+        const manifest = JSON.parse(script.textContent);
+        const matches = [];
+        const seen = new Set();
+        function visit(value) {
+          if (!value || typeof value !== "object" || seen.has(value)) return;
+          seen.add(value);
+          if (value.backendCaps && typeof value.backendCaps === "object") {
+            matches.push(value.backendCaps);
+          }
+          if (Array.isArray(value)) value.forEach(visit);
+          else Object.values(value).forEach(visit);
+        }
+        visit(manifest);
+        return matches;
+      });
+      assert.ok(
+        backendCaps.some((caps) => Array.isArray(caps.capable) && caps.capable.includes("webgpu") && caps.capable.includes("webgl") &&
+          Array.isArray(caps.reasons) && caps.reasons.some(
+            (reason) => reason?.feature === "skinning" && reason?.excludes === "canvas2d",
+          )),
+        `fixture manifest omitted the current skinning capability contract: ${JSON.stringify(backendCaps)}\n\nLogs:\n${logs}`,
+      );
+
       // Wait for the Scene3D mount to finish initialising. The runtime sets
       // data-gosx-scene3d-backend once it has selected and started the renderer.
       await page.waitForSelector(
@@ -121,10 +150,9 @@ test(
         `expected data-gosx-scene3d-backend="webgl" (honesty gate must downgrade from webgpu), got "${attrs.backend}"\n\nLogs:\n${logs}`,
       );
 
-      assert.equal(
-        attrs.fallback,
-        "skinning",
-        `expected data-gosx-scene3d-renderer-fallback="skinning", got "${attrs.fallback}"\n\nLogs:\n${logs}`,
+      assert.ok(
+        attrs.fallback === "skinning" || attrs.fallback === "webgpu-unavailable",
+        `expected fallback "skinning" from feature exclusion or "webgpu-unavailable" without a usable adapter, got "${attrs.fallback}"\n\nLogs:\n${logs}`,
       );
     } catch (error) {
       error.message += `\n\nCaptured logs:\n${logs}`;
@@ -140,7 +168,7 @@ async function waitForHealthy(url, timeoutMs) {
   while (Date.now() < deadline) {
     try {
       const response = await fetch(url);
-      if (response.status < 500) {
+      if (response.ok) {
         return;
       }
       lastError = `status ${response.status}`;

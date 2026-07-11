@@ -4206,6 +4206,12 @@
     if (!object || typeof object !== "object") {
       return false;
     }
+    // Hidden helper geometry must not keep the shared mount scheduler awake.
+    // This is especially important for water scenes, where an invisible
+    // spinning placeholder previously masked the missing water animation reason.
+    if (Object.prototype.hasOwnProperty.call(object, "visible") && !sceneBool(object.visible, true)) {
+      return false;
+    }
     if (sceneNumber(object.spinX, 0) !== 0 || sceneNumber(object.spinY, 0) !== 0 || sceneNumber(object.spinZ, 0) !== 0) {
       return true;
     }

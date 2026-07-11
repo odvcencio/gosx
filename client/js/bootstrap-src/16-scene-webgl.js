@@ -2101,18 +2101,16 @@
 
     // Prefer RGBA32F; fall back to RGBA16F when 32F is not renderable.
     var formats = [];
-    if (caps.colorBufferFloat) formats.push({ internal: gl.RGBA32F, type: gl.FLOAT, label: "RGBA32F" });
-    formats.push({ internal: gl.RGBA16F, type: gl.HALF_FLOAT, label: "RGBA16F" });
+    if (caps.colorBufferFloat) formats.push({ internal: gl.RGBA32F, type: gl.FLOAT });
+    formats.push({ internal: gl.RGBA16F, type: gl.HALF_FLOAT });
 
     var states = null;
-    var formatLabel = "";
     for (var fi = 0; fi < formats.length; fi++) {
       var a = sceneWaterCreateStateTarget(gl, resolution, formats[fi].internal, formats[fi].type, filter);
       if (!a) continue;
       var b = sceneWaterCreateStateTarget(gl, resolution, formats[fi].internal, formats[fi].type, filter);
       if (!b) { gl.deleteTexture(a.tex); gl.deleteFramebuffer(a.fbo); continue; }
       states = [a, b];
-      formatLabel = formats[fi].label;
       break;
     }
     if (!states) return null;
@@ -2265,25 +2263,35 @@
 
     // Object-move event: displace water by an object volume sweeping from its
     // previous to current center (sphere kind=1, cube kind=2, compound kind=3).
-    function displace(opts) {
+    function displace(source) {
       if (!programs.displacement) return false;
-      opts = opts || {};
-      var center = opts.center || [sceneWaterNum(entry.objectX, 0), sceneWaterNum(entry.objectY, 0), sceneWaterNum(entry.objectZ, 0)];
-      var prev = opts.prevCenter || (entry.objectPreviousSet
-        ? [sceneWaterNum(entry.objectPreviousX, 0), sceneWaterNum(entry.objectPreviousY, 0), sceneWaterNum(entry.objectPreviousZ, 0)]
-        : center);
-      var halfSize = opts.halfSize || [
-        sceneWaterNum(entry.objectHalfSizeX, 0.1),
-        sceneWaterNum(entry.objectHalfSizeY, 0.1),
-        sceneWaterNum(entry.objectHalfSizeZ, 0.1),
+      source = source || entry;
+      var center = [sceneWaterNum(source.objectX, 0), sceneWaterNum(source.objectY, 0), sceneWaterNum(source.objectZ, 0)];
+      var prev = source.objectPreviousSet
+        ? [sceneWaterNum(source.objectPreviousX, center[0]), sceneWaterNum(source.objectPreviousY, center[1]), sceneWaterNum(source.objectPreviousZ, center[2])]
+        : center;
+      var halfSize = [
+        sceneWaterNum(source.objectHalfSizeX, 0.1),
+        sceneWaterNum(source.objectHalfSizeY, 0.1),
+        sceneWaterNum(source.objectHalfSizeZ, 0.1),
       ];
-      var spheres = opts.spheres || null;
+      var spheres = null;
+      if (Array.isArray(source.objectDisplacementSpheres)) {
+        spheres = new Float32Array(source.objectDisplacementSpheres.length * 4);
+        for (var si = 0; si < source.objectDisplacementSpheres.length; si++) {
+          var sphere = source.objectDisplacementSpheres[si] || {};
+          spheres[si * 4] = sceneWaterNum(sphere.offsetX, 0);
+          spheres[si * 4 + 1] = sceneWaterNum(sphere.offsetY, 0);
+          spheres[si * 4 + 2] = sceneWaterNum(sphere.offsetZ, 0);
+          spheres[si * 4 + 3] = Math.max(0.0001, sceneWaterNum(sphere.radius, 0));
+        }
+      }
       runPass("displacement", {
-        objectKind: opts.kind != null ? +opts.kind : sceneWaterNum(entry.objectKindValue, 0),
-        displacementScale: opts.displacementScale != null ? +opts.displacementScale : Math.max(0, sceneWaterNum(entry.objectDisplacementScale, 1)),
+        objectKind: sceneWaterRenderObjectKind(source),
+        displacementScale: Math.max(0, sceneWaterNum(source.objectDisplacementScale, 1)),
         objectCenter: center,
         objectPrevCenter: prev,
-        objectRadius: opts.radius != null ? +opts.radius : sceneWaterNum(entry.objectRadius, 0.1),
+        objectRadius: sceneWaterNum(source.objectRadius, 0.1),
         objectHalfSize: halfSize,
         sphereCount: spheres ? Math.floor(spheres.length / 4) : 0,
         spheres: spheres,
@@ -2308,20 +2316,12 @@
 
     return {
       resolution: resolution,
-      format: formatLabel,
-      floatLinear: caps.floatLinear,
       // The texture render passes (A2) sample the heightfield from this handle.
       currentStateTexture: function() { return states ? states[current].tex : null; },
-      currentStateTarget: function() { return states ? states[current] : null; },
-      texelSize: function() { return 1 / resolution; },
       step: step,
       drop: drop,
       seed: seed,
       displace: displace,
-      clear: clearState,
-      hasSeed: function() { return !!programs.seed; },
-      hasDrop: function() { return !!programs.drop; },
-      hasDisplacement: function() { return !!programs.displacement; },
       dispose: dispose,
     };
   }
@@ -2868,10 +2868,8 @@
 
     // Rounded-corner pool wiring: mirrors 16a-scene-webgpu.js's
     // sceneWaterUniformData/drawWaterPoolEntries pairing exactly.
-    // poolMaxCornerRadius derives from poolWidth/poolLength (fixed at
-    // construction time; runtime pool-shape changes never resize the pool
-    // itself), clamped to [0, min(poolWidth, poolLength) - 0.001] matching
-    // the WebGPU path's system.waterCornerRadius derivation.
+    // The maximum radius derives from the live pool dimensions in drawFrame,
+    // matching the WebGPU path's system.waterCornerRadius derivation.
     //
     // The rounded flag / clamped uniform value / draw-call vertex count are
     // deliberately NOT captured here from `entry` -- they are recomputed
@@ -2883,7 +2881,6 @@
     // mirrors drawFrame's pre-existing liveEntry/liveKindNum pattern used for
     // runtime object-selection changes, and WebGPU's drawWaterPoolEntries,
     // which reads `system.entry` fresh every pass for the identical reason.
-    var poolMaxCornerRadius = Math.max(0, Math.min(poolWidth, poolLength) - 0.001);
     // Geometry sizes. The box pool is 5 faces (floor + 4 walls) * 6 vertices;
     // the rounded pool is pool.sel's 44*3 floor-fan + 44*6 wall-strip = 44*9
     // (see livePoolVertexCount in drawFrame for the live per-frame pick).
@@ -2892,25 +2889,10 @@
     var surfaceVertexCount = surfaceCells * surfaceCells * 6;
     var emptyVAO = gl.createVertexArray();
 
-    var normalScale = sceneWaterNum(entry.normalScale, 1);
-    var lightDir = [
-      sceneWaterNum(entry.lightDirectionX, 2),
-      sceneWaterNum(entry.lightDirectionY, 2),
-      sceneWaterNum(entry.lightDirectionZ, -1),
-    ];
-    var waterColor = sceneWaterRenderHexColor(entry.shallowColor, [0.48, 0.82, 0.92]);
-    var objectKind = sceneWaterRenderObjectKind(entry);
     var objectCenter = [sceneWaterNum(entry.objectX, 0), sceneWaterNum(entry.objectY, -0.5), sceneWaterNum(entry.objectZ, 0)];
     var objectHalf = [sceneWaterNum(entry.objectHalfSizeX, 0), sceneWaterNum(entry.objectHalfSizeY, 0), sceneWaterNum(entry.objectHalfSizeZ, 0)];
     var objectRadius = sceneWaterNum(entry.objectRadius, 0.25);
-    var opticsEnable = (entry.reflection || entry.refraction) ? 1 : 1;
-    var opticsCaustic = entry.caustics ? 1 : 0;
     var identity3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-    var objectEnabled = objectKind > 0 ? 1 : 0;
-    // vec4(halfX, halfY, halfZ, radius) — matches the caustics shader's
-    // objectHalfRadius (sphere reads .w, cube reads .xz). Mirrors the WebGPU
-    // objectHalfSizeRadius packing.
-    var objectHalfRadius = [objectHalf[0], objectHalf[1], objectHalf[2], objectRadius];
 
     // Textures: real tile + sky cube. Caustics + object-shadow are rendered to
     // their own RTTs each frame (sizes mirror the WebGPU path: caustics =
@@ -2921,8 +2903,13 @@
     var causticStub = sceneWaterRenderSolidTexture(gl, 14, 16, 18, 255); // ~0.06 grey
     var shadowStub = sceneWaterRenderSolidTexture(gl, 0, 0, 0, 255);     // 0 => no shadow
 
-    var causticsSize = Math.max(64, Math.min(2048, Math.floor(sceneWaterNum(entry.causticsResolution, 1024)) || 1024));
-    var shadowSize = Math.max(64, Math.min(2048, Math.floor(sceneWaterNum(entry.objectShadowResolution, 512)) || 512));
+    // Water quality is deliberately inferred from the simulation resolution so
+    // older manifests get the cheaper balanced path without a schema change.
+    // Full: 256/1024, balanced: 192/512, survival: 128/256.
+    var waterQuality = sim.resolution === 128 ? "survival" : (sim.resolution === 192 ? "balanced" : "full");
+    var qualityTargetCap = waterQuality === "survival" ? 256 : (waterQuality === "balanced" ? 512 : 1024);
+    var causticsSize = Math.max(64, Math.min(qualityTargetCap, Math.floor(sceneWaterNum(entry.causticsResolution, qualityTargetCap)) || qualityTargetCap));
+    var shadowSize = Math.max(64, Math.min(qualityTargetCap, Math.floor(sceneWaterNum(entry.objectShadowResolution, qualityTargetCap)) || qualityTargetCap));
     var causticsTarget = causticsProgram ? sceneWaterRenderCreateColorTarget(gl, causticsSize) : null;
     // One shared shadow RTT: either shadowProgram (sphere/cube) or
     // compoundShadowProgram (compound) renders into it per frame — the pool
@@ -2972,19 +2959,27 @@
     // capped WebGPU object-texture size. Each carries a depth renderbuffer so the
     // duck self-occludes correctly. An empty transparent stub backs the surface
     // sampler when the mesh path is inactive.
-    var objectTextureSize = 512;
-    var objectRefractionTarget = duckProgram || objectProgram
-      ? sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize) : null;
-    var objectReflectionTarget = objectRefractionTarget
-      ? sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize) : null;
-    var objectClippedTarget = objectReflectionTarget
-      ? sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize) : null;
-    if (!objectReflectionTarget || !objectClippedTarget) {
-      // Partial allocation — drop them all so the surface uses the empty stub.
-      [objectRefractionTarget, objectReflectionTarget, objectClippedTarget].forEach(function(t) {
-        if (t) { gl.deleteTexture(t.tex); gl.deleteRenderbuffer(t.depth); gl.deleteFramebuffer(t.fbo); }
-      });
-      objectRefractionTarget = objectReflectionTarget = objectClippedTarget = null;
+    var objectTextureSize = waterQuality === "survival" ? 256 : 512;
+    var objectRefractionTarget = null;
+    var objectReflectionTarget = null;
+    var objectClippedTarget = null;
+    function ensureObjectTextureTargets() {
+      if (objectRefractionTarget && objectReflectionTarget && objectClippedTarget) return true;
+      if (!duckProgram && !objectProgram) return false;
+      objectRefractionTarget = sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize);
+      objectReflectionTarget = objectRefractionTarget ? sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize) : null;
+      objectClippedTarget = objectReflectionTarget ? sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize) : null;
+      if (!objectReflectionTarget || !objectClippedTarget) {
+        [objectRefractionTarget, objectReflectionTarget, objectClippedTarget].forEach(function(t) {
+          if (t) { gl.deleteTexture(t.tex); gl.deleteRenderbuffer(t.depth); gl.deleteFramebuffer(t.fbo); }
+        });
+        objectRefractionTarget = objectReflectionTarget = objectClippedTarget = null;
+        return false;
+      }
+      objectRefractionTex = objectRefractionTarget.tex;
+      objectReflectionTex = objectReflectionTarget.tex;
+      objectClippedTex = objectClippedTarget.tex;
+      return true;
     }
     var objectTextureStub = sceneWaterRenderSolidTexture(gl, 0, 0, 0, 0); // transparent => no mesh
     var objectRefractionTex = objectRefractionTarget ? objectRefractionTarget.tex : objectTextureStub;
@@ -2994,7 +2989,9 @@
     // Persistent mesh upload (rebuilt each frame from the live bundle's
     // world-space mesh vertices for the active object) + its model texture.
     var meshUpload = null;       // { vao, posBuf, normBuf, uvBuf, count }
-    var meshUploadKey = "";      // identity guard so we only re-upload on change
+    var meshUploadKey = "";
+    var meshUploadSource = null;
+    var meshUploadProgram = null;
     var meshModelTex = null;     // glTF albedo texture for the active mesh
     var meshModelTexURL = "";
     // Projection matrices the surface uses to sample the object-texture targets.
@@ -3003,47 +3000,55 @@
     var objectReflectionMatrix = new Float32Array(16);
     var reflectAcrossWater = new Float32Array([1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-    // Analytic object meshes: build BOTH a sphere and a box up front so that
-    // switching the active object (sphere ↔ cube) takes effect without rebuilding
-    // GL resources each frame. The render loop selects
-    //   objectMesh = liveKindNum === 2 ? boxMesh : sphereMesh
-    // per frame. Building both at init costs one extra buffer upload and avoids
-    // any per-frame GL leak (no dynamic alloc/free on selection change).
+    // Analytic object geometry is baked in world space by the authored shader
+    // contract. Rebuild only when its live transform, dimensions, or pool UV
+    // projection changes; delete the superseded buffers immediately.
     var sphereMesh = null;
     var boxMesh = null;
-    if (objectProgram) {
-      var initBoxHalf = [
-        objectHalf[0] > 0 ? objectHalf[0] : objectRadius,
-        objectHalf[1] > 0 ? objectHalf[1] : objectRadius,
-        objectHalf[2] > 0 ? objectHalf[2] : objectRadius,
-      ];
-      sphereMesh = sceneWaterRenderBuildSphere(gl, objectProgram, objectCenter, Math.max(objectRadius, 0.001), poolWidth, poolLength, 32, 24);
-      boxMesh = sceneWaterRenderBuildBox(gl, objectProgram, objectCenter, initBoxHalf, poolWidth, poolLength);
+    var analyticMeshSignature = "";
+    function deleteAnalyticMesh(mesh) {
+      if (!mesh) return;
+      gl.deleteVertexArray(mesh.vao);
+      for (var i = 0; i < mesh.buffers.length; i++) gl.deleteBuffer(mesh.buffers[i]);
     }
-    // Selected per-frame in the render loop based on liveKindNum.
+    function refreshAnalyticMesh(kind, center, radius, half, livePoolWidth, livePoolLength) {
+      if (!objectProgram || (kind !== 1 && kind !== 2)) return null;
+      var signature = [kind, center[0], center[1], center[2], radius,
+        half[0], half[1], half[2], livePoolWidth, livePoolLength].join(":");
+      if (signature !== analyticMeshSignature) {
+        deleteAnalyticMesh(sphereMesh);
+        deleteAnalyticMesh(boxMesh);
+        sphereMesh = null;
+        boxMesh = null;
+        if (kind === 2) {
+          boxMesh = sceneWaterRenderBuildBox(gl, objectProgram, center, half, livePoolWidth, livePoolLength);
+        } else {
+          sphereMesh = sceneWaterRenderBuildSphere(gl, objectProgram, center, Math.max(radius, 0.001), livePoolWidth, livePoolLength, 32, 24);
+        }
+        analyticMeshSignature = signature;
+      }
+      return kind === 2 ? boxMesh : sphereMesh;
+    }
     var objectMesh = null;
 
     // Frame clock for the caustic shimmer term (time uniform), in seconds.
     var causticsStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
 
-    // Seed a clearly visible set of ripples for the static screenshot, then a
-    // couple of strong drops. The normal interaction layer drives these live;
-    // here we just want motion on the surface for verification.
+    // Seed the authored initial surface once. Keep WebGL in lockstep with the
+    // WebGPU path: screenshots and verification must not override scene physics
+    // with stronger, backend-specific ripples.
     var seeded = false;
+    var lastDropEventID = 0;
+    var lastObjectDisplacementEventID = 0;
     function primeRipples() {
       if (seeded) return;
       seeded = true;
-      if (sim.hasSeed()) sim.seed({ count: 16, strength: 0.35, radius: 0.05 });
-      if (sim.hasDrop()) {
-        sim.drop({ x: 0.0, z: 0.0, strength: 0.6, radius: 0.05 });
-        sim.drop({ x: -0.35, z: 0.25, strength: 0.5, radius: 0.045 });
-        sim.drop({ x: 0.4, z: -0.3, strength: 0.5, radius: 0.045 });
-      }
+      sim.seed();
     }
 
     var disposed = false;
     var lastBundle = null;
-    var rafId = 0;
+    var frameCount = 0;
 
     // (Re)upload the live world-space mesh soup into a persistent VAO and point
     // `position`/`normal`/`uv` at the active program's attribute locations. The
@@ -3051,6 +3056,11 @@
     // (DYNAMIC_DRAW) every call.
     function refreshMeshUpload(prog, mesh) {
       if (!prog || !mesh || !mesh.count) return;
+      // drawFrame uses the same mesh for its projected and direct passes. Avoid
+      // uploading all three streams twice in that frame; a new bundle mesh
+      // object still invalidates this guard when animation changes geometry.
+      var nextKey = mesh.id + ":" + mesh.count;
+      if (meshUpload && meshUploadSource === mesh && meshUploadProgram === prog && meshUploadKey === nextKey) return;
       if (!meshUpload) {
         meshUpload = {
           vao: gl.createVertexArray(),
@@ -3081,7 +3091,9 @@
       gl.bufferData(gl.ARRAY_BUFFER, mesh.uvs, gl.DYNAMIC_DRAW);
       if (uvLoc >= 0) { gl.enableVertexAttribArray(uvLoc); gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 0, 0); }
       meshUpload.count = mesh.count;
-      meshUploadKey = mesh.id + ":" + mesh.count;
+      meshUploadKey = nextKey;
+      meshUploadSource = mesh;
+      meshUploadProgram = prog;
       gl.bindVertexArray(null);
     }
 
@@ -3089,7 +3101,7 @@
     // view-projection + texture-pass mode (1 = refraction/reflection, 2 = clipped
     // reflection: discards submerged fragments). Mirrors the WebGPU
     // renderWaterObjectMeshTargetPass: clear transparent, depth-test on, no cull.
-    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex) {
+    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameLightDir, framePoolHeight) {
       if (!prog || !target || !meshUpload || !meshUpload.count) return;
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, target.size, target.size);
@@ -3106,7 +3118,7 @@
       if (modelTex) samplers.push({ name: "modelTexture", target: gl.TEXTURE_2D, tex: modelTex });
       sceneWaterRenderBindSamplers(gl, prog, samplers);
       sceneWaterRenderSetUniforms(gl, prog, desc, {
-        mvp: vpMatrix, normalMatrix: identity3, lightDir: lightDir, poolHeight: poolHeight,
+        mvp: vpMatrix, normalMatrix: identity3, lightDir: frameLightDir, poolHeight: framePoolHeight,
         baseColor: [1, 1, 1, 1], isTexturePass: 1, texturePassMode: mode,
       });
       gl.drawArrays(gl.TRIANGLES, 0, meshUpload.count);
@@ -3118,9 +3130,32 @@
       var width = canvas.width || 1;
       var height = canvas.height || 1;
       var aspect = width / Math.max(1, height);
+      var liveEntry = (lastBundle && Array.isArray(lastBundle.waterSystems) && lastBundle.waterSystems[0]) || entry;
 
       primeRipples();
-      sim.step();
+      var dropEventID = Math.max(0, Math.floor(sceneWaterNum(liveEntry.dropEventID, 0)));
+      if (dropEventID > 0 && dropEventID !== lastDropEventID) {
+        if (sim.drop({
+          x: sceneWaterNum(liveEntry.dropX, 0),
+          z: sceneWaterNum(liveEntry.dropZ, 0),
+          radius: sceneWaterNum(liveEntry.dropEventRadius, sceneWaterNum(liveEntry.dropRadius, 0.05)),
+          strength: sceneWaterNum(liveEntry.dropEventStrength, sceneWaterNum(liveEntry.dropStrength, 0.05)),
+        })) {
+          lastDropEventID = dropEventID;
+        }
+      }
+      var displacementEvents = Array.isArray(liveEntry.objectDisplacementEvents) ? liveEntry.objectDisplacementEvents : [];
+      for (var eventIndex = 0; eventIndex < displacementEvents.length; eventIndex++) {
+        var displacementEvent = displacementEvents[eventIndex];
+        var displacementEventID = Math.max(0, Math.floor(sceneWaterNum(displacementEvent && displacementEvent.id, 0)));
+        if (!displacementEvent || displacementEventID <= lastObjectDisplacementEventID) continue;
+        sim.displace(displacementEvent);
+        lastObjectDisplacementEventID = Math.max(lastObjectDisplacementEventID, displacementEventID);
+      }
+      // Keep the established two-substep integration rate at every quality.
+      // Resolution and retained-pass cadence are safe quality levers; dropping
+      // an integration step changes wave propagation and damping semantics.
+      if (!liveEntry.paused) sim.step({ substeps: 2 });
       var stateTex = sim.currentStateTexture();
       if (!stateTex) return;
 
@@ -3138,11 +3173,23 @@
       // renderer + its analytic mesh were built once. The MESH objects
       // (duck / torus-knot) come straight from the bundle's world-space mesh
       // soup; the analytic sphere/cube keep their construction-time mesh.
-      var liveEntry = (lastBundle && Array.isArray(lastBundle.waterSystems) && lastBundle.waterSystems[0]) || entry;
+      var livePoolWidth = sceneWaterNum(liveEntry.poolWidth, poolWidth);
+      var livePoolLength = sceneWaterNum(liveEntry.poolLength, poolLength);
+      var livePoolHeight = sceneWaterNum(liveEntry.poolHeight, poolHeight);
+      var livePoolMaxCornerRadius = Math.max(0, Math.min(livePoolWidth, livePoolLength) - 0.001);
+      var liveNormalScale = sceneWaterNum(liveEntry.normalScale, 1);
+      var liveLightDir = [
+        sceneWaterNum(liveEntry.lightDirectionX, 2),
+        sceneWaterNum(liveEntry.lightDirectionY, 2),
+        sceneWaterNum(liveEntry.lightDirectionZ, -1),
+      ];
+      var liveWaterColor = sceneWaterRenderHexColor(liveEntry.shallowColor, [0.48, 0.82, 0.92]);
+      var liveOpticsEnable = (liveEntry.reflection || liveEntry.refraction) ? 1 : 0;
+      var liveOpticsCaustic = liveEntry.caustics ? 1 : 0;
       // ---- live rounded-corner pool (mirrors WebGPU's drawWaterPoolEntries,
       // which reads system.entry fresh every pass) ----
       // livePoolCornerRadius (the uniform value) is clamped to
-      // [0, poolMaxCornerRadius], matching the WebGPU path's
+      // [0, livePoolMaxCornerRadius], matching the WebGPU path's
       // system.waterCornerRadius derivation, and is only non-zero when
       // livePoolShapeRounded selects the rounded variant.
       // livePoolRounded (the draw-call vertex-count decision) reads the RAW,
@@ -3157,7 +3204,7 @@
       // pool keeps drawing the 30-vertex box forever.
       var livePoolShapeRounded = sceneWaterPoolShapeRounded(liveEntry);
       var livePoolCornerRadius = livePoolShapeRounded
-        ? Math.max(0, Math.min(poolMaxCornerRadius, sceneWaterNum(liveEntry.cornerRadius, 0)))
+        ? Math.max(0, Math.min(livePoolMaxCornerRadius, sceneWaterNum(liveEntry.cornerRadius, 0)))
         : 0;
       var livePoolRounded = livePoolShapeRounded && sceneWaterNum(liveEntry.cornerRadius, 0) > 0.0001;
       var livePoolVertexCount = livePoolRounded ? 44 * 9 : 30;
@@ -3184,8 +3231,7 @@
       ];
       // vec4(halfX, halfY, halfZ, radius) for caustics uniform (mirrors objectHalfRadius).
       var liveHalfRadius = [liveHalf[0], liveHalf[1], liveHalf[2], liveRadius];
-      // Select the pre-built analytic mesh for the current live kind; no GL alloc.
-      objectMesh = liveKindNum === 2 ? boxMesh : sphereMesh;
+      objectMesh = refreshAnalyticMesh(liveKindNum, liveCenter, liveRadius, liveHalf, livePoolWidth, livePoolLength);
       // The mesh program: textured duck-material for the duck, plain
       // object-material for the torus (its <Mesh> uses water-object-material).
       var meshProgram = liveMeshID === "float-duck" && duckProgram ? duckProgram : objectProgram;
@@ -3213,7 +3259,9 @@
       // Fullscreen pass over the live sim state -> the caustic light pattern the
       // pool + surface project onto the wet floor. Mirrors the WebGPU caustics
       // setup (causticsResolution target, state at unit 0, resolution = sim grid).
-      if (causticsProgram && causticsTarget) {
+      var expensivePassCadence = waterQuality === "full" ? 1 : (waterQuality === "balanced" ? 2 : 3);
+      var refreshExpensivePasses = (frameCount % expensivePassCadence) === 0;
+      if (causticsProgram && causticsTarget && refreshExpensivePasses) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, causticsTarget.fbo);
         gl.viewport(0, 0, causticsTarget.size, causticsTarget.size);
         gl.disable(gl.DEPTH_TEST);
@@ -3228,10 +3276,10 @@
         ]);
         sceneWaterRenderSetUniforms(gl, causticsProgram, causticsDesc, {
           mvp: mvp, normalMatrix: identity3,
-          poolWidth: poolWidth, poolLength: poolLength, poolHeight: poolHeight,
-          normalScale: normalScale, resolution: sim.resolution, time: timeSec,
-          objectKind: liveKindNum, objectCount: 0, opticsEnable: opticsEnable,
-          lightDir: lightDir, objectCenter: liveCenter, objectHalfRadius: liveHalfRadius,
+          poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
+          normalScale: liveNormalScale, resolution: sim.resolution, time: timeSec,
+          objectKind: liveKindNum, objectCount: 0, opticsEnable: liveOpticsEnable,
+          lightDir: liveLightDir, objectCenter: liveCenter, objectHalfRadius: liveHalfRadius,
         });
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
@@ -3249,7 +3297,7 @@
         ? fillCompoundShadowSpheres(liveEntry.objectDisplacementSpheres)
         : 0;
       var useCompoundShadow = compoundSphereCount > 0;
-      if (shadowTarget && (useCompoundShadow ? compoundShadowProgram : shadowProgram)) {
+      if (shadowTarget && (useCompoundShadow ? compoundShadowProgram : shadowProgram) && refreshExpensivePasses) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, shadowTarget.fbo);
         gl.viewport(0, 0, shadowTarget.size, shadowTarget.size);
         gl.disable(gl.DEPTH_TEST);
@@ -3267,15 +3315,15 @@
           gl.useProgram(compoundShadowProgram);
           sceneWaterRenderSetUniforms(gl, compoundShadowProgram, compoundShadowDesc, {
             spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,
-            objectEnabled: 1, objectTop: shadowObjectTop, lightDir: lightDir,
-            poolWidth: poolWidth, poolLength: poolLength,
+            objectEnabled: 1, objectTop: shadowObjectTop, lightDir: liveLightDir,
+            poolWidth: livePoolWidth, poolLength: livePoolLength,
             objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
           });
         } else {
           gl.useProgram(shadowProgram);
           sceneWaterRenderSetUniforms(gl, shadowProgram, shadowDesc, {
-            objectKind: liveKindNum, objectEnabled: liveKindNum > 0 ? 1 : 0, lightDir: lightDir,
-            poolWidth: poolWidth, poolLength: poolLength,
+            objectKind: liveKindNum, objectEnabled: liveKindNum > 0 ? 1 : 0, lightDir: liveLightDir,
+            poolWidth: livePoolWidth, poolLength: livePoolLength,
             objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
             objectRadius: liveRadius, objectHalfX: liveHalf[0], objectHalfZ: liveHalf[2],
           });
@@ -3290,12 +3338,12 @@
       // sampling is disabled (meshTextureEnable = 0) and the transparent stub
       // backs the samplers. Mirrors the WebGPU object-texture pass (capped 512²).
       var meshTextureReady = false;
-      if (isMeshObject && meshData && meshProgram && objectRefractionTarget) {
+      if (isMeshObject && meshData && meshProgram && ensureObjectTextureTargets()) {
         var meshDescActive = meshUsesModelTex ? duckDesc : objectDesc;
         var meshModel = meshUsesModelTex ? meshModelTex : null;
-        renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex);
-        renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex);
-        renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex);
+        renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, liveLightDir, livePoolHeight);
+        renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, liveLightDir, livePoolHeight);
+        renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, liveLightDir, livePoolHeight);
         meshTextureReady = true;
       }
 
@@ -3306,7 +3354,7 @@
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.disable(gl.CULL_FACE);
-      var bg = sceneWaterRenderHexColor(entry.deepColor, [0.03, 0.08, 0.12]);
+      var bg = sceneWaterRenderHexColor(liveEntry.deepColor, [0.03, 0.08, 0.12]);
       gl.clearColor(bg[0] * 0.4, bg[1] * 0.4, bg[2] * 0.4, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -3329,8 +3377,8 @@
       ]);
       sceneWaterRenderSetUniforms(gl, poolProgram, poolDesc, {
         mvp: mvp, normalMatrix: identity3,
-        poolWidth: poolWidth, poolLength: poolLength, poolHeight: poolHeight,
-        lightDir: lightDir,
+        poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
+        lightDir: liveLightDir,
         // Rounded-corner pool: pool.sel's own params, picked up by name via
         // the descriptor-driven applicator above (see livePoolShapeRounded /
         // livePoolCornerRadius / livePoolRounded derivation near liveEntry).
@@ -3361,7 +3409,7 @@
         if (meshUsesModelTex && meshModelTex) directSamplers.push({ name: "modelTexture", target: gl.TEXTURE_2D, tex: meshModelTex });
         sceneWaterRenderBindSamplers(gl, meshProgram, directSamplers);
         sceneWaterRenderSetUniforms(gl, meshProgram, directDesc, {
-          mvp: mvp, normalMatrix: identity3, lightDir: lightDir, poolHeight: poolHeight,
+          mvp: mvp, normalMatrix: identity3, lightDir: liveLightDir, poolHeight: livePoolHeight,
           baseColor: meshUsesModelTex ? [1, 1, 1, 1] : [0.52, 0.54, 0.56, 1],
           isTexturePass: 0, texturePassMode: 0,
         });
@@ -3373,7 +3421,7 @@
           { name: sceneWaterRenderStateUniform(objectDesc), target: gl.TEXTURE_2D, tex: stateTex },
         ]);
         sceneWaterRenderSetUniforms(gl, objectProgram, objectDesc, {
-          mvp: mvp, normalMatrix: identity3, lightDir: lightDir, poolHeight: poolHeight,
+          mvp: mvp, normalMatrix: identity3, lightDir: liveLightDir, poolHeight: livePoolHeight,
           baseColor: [0.52, 0.54, 0.56, 1], isTexturePass: 0, texturePassMode: 0,
         });
         gl.drawElements(gl.TRIANGLES, objectMesh.count, gl.UNSIGNED_SHORT, 0);
@@ -3403,12 +3451,12 @@
       var surfRadius = liveRadius;
       sceneWaterRenderSetUniforms(gl, surfaceProgram, surfaceDesc, {
         mvp: mvp, normalMatrix: identity3,
-        poolWidth: poolWidth, poolLength: poolLength, poolHeight: poolHeight,
-        normalScale: normalScale, gridResolution: gridResolution,
+        poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
+        normalScale: liveNormalScale, gridResolution: gridResolution,
         objectKind: isMeshObject ? 3 : liveKindNum, objectSubtype: liveMeshID === "float-torus" ? 1 : 0,
         objectCount: 0, objectRadius: surfRadius,
-        opticsEnable: opticsEnable, opticsCaustic: opticsCaustic,
-        lightDir: lightDir, cameraPos: cameraPos, waterColor: waterColor,
+        opticsEnable: liveOpticsEnable, opticsCaustic: liveOpticsCaustic,
+        lightDir: liveLightDir, cameraPos: cameraPos, waterColor: liveWaterColor,
         objectCenter: surfCenter, objectHalf: liveHalf,
         // Projected mesh object-texture sampling.
         meshTextureEnable: meshTextureReady ? 1 : 0,
@@ -3420,34 +3468,18 @@
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.bindVertexArray(null);
-    }
-
-    // Self-driven animation loop: the mount's scheduler does not classify water
-    // systems as "wants animation", so the forced water renderer keeps its own
-    // rAF loop alive to animate the ripple. The mount still calls render(bundle)
-    // each time it has a fresh bundle/camera; we just capture it here.
-    function loop() {
-      if (disposed) { rafId = 0; return; }
-      drawFrame();
-      if (typeof requestAnimationFrame === "function") {
-        rafId = requestAnimationFrame(loop);
-      }
+      frameCount++;
     }
 
     function render(bundle /*, viewport */) {
       if (disposed) return;
       if (bundle) lastBundle = bundle;
       drawFrame();
-      if (!rafId && typeof requestAnimationFrame === "function") {
-        rafId = requestAnimationFrame(loop);
-      }
     }
 
     function dispose() {
       if (disposed) return;
       disposed = true;
-      if (rafId && typeof cancelAnimationFrame === "function") cancelAnimationFrame(rafId);
-      rafId = 0;
       try { sim.dispose(); } catch (e) {}
       if (poolProgram) gl.deleteProgram(poolProgram);
       if (surfaceProgram) gl.deleteProgram(surfaceProgram);
@@ -3457,12 +3489,8 @@
       if (shadowProgram) gl.deleteProgram(shadowProgram);
       if (compoundShadowProgram) gl.deleteProgram(compoundShadowProgram);
       if (emptyVAO) gl.deleteVertexArray(emptyVAO);
-      [sphereMesh, boxMesh].forEach(function(m) {
-        if (m) {
-          gl.deleteVertexArray(m.vao);
-          for (var i = 0; i < m.buffers.length; i++) gl.deleteBuffer(m.buffers[i]);
-        }
-      });
+      deleteAnalyticMesh(sphereMesh);
+      deleteAnalyticMesh(boxMesh);
       if (meshUpload) {
         gl.deleteVertexArray(meshUpload.vao);
         gl.deleteBuffer(meshUpload.posBuf);
@@ -3483,6 +3511,13 @@
       kind: "webgl",
       isWaterForced: true,
       render: render,
+      getStats: function() {
+        return {
+          waterFrames: frameCount,
+          waterQuality: waterQuality,
+          waterSimulationResolution: sim.resolution,
+        };
+      },
       dispose: dispose,
       resize: function() {},
       supportsBundle: function() { return true; },

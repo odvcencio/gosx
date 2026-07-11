@@ -188,6 +188,8 @@ async function runBrowserProbe(targetURL, explicitScreenshotPath) {
         renderer: mount.getAttribute("data-gosx-scene3d-renderer") || "",
         fallback: mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "",
         frameSeq: Number(mount.getAttribute("data-gosx-scene3d-webgpu-frame-seq") || 0),
+        waterRenderer: mount.getAttribute("data-gosx-scene3d-water-renderer") || "",
+        waterFrameSeq: Number(mount.getAttribute("data-gosx-scene3d-water-frame-seq") || 0),
       };
     });
     browserReport.waterTelemetry = await page.evaluate(() => {
@@ -245,6 +247,7 @@ async function runBrowserProbe(targetURL, explicitScreenshotPath) {
       };
     });
     browserReport.performance = await sampleWaterFramePerformance(page);
+    browserReport.pixels = await compositedPixelStats(page);
     assert(browserReport.canvases.length > 0, "browser page did not render a canvas");
     assert(
       browserReport.canvases.some((canvas) => canvas.clientWidth > 0 && canvas.clientHeight > 0),
@@ -297,7 +300,7 @@ async function exerciseWaterControls(page) {
   assert(duck.waterObjectTextureSelenaDrawCalls >= 3, "duck Selena object texture draw calls did not run: " + JSON.stringify(duck));
   assert(duck.waterObjectTextureFallbackPasses === 0, "duck object texture fell back: " + JSON.stringify(duck));
   assert(duck.waterObjectTextureSelectedObjects > 0, "duck object texture did not select a mesh: " + JSON.stringify(duck));
-  assert(duck.waterObjectTexturePixelBudget === 3145728, "duck object texture pixel budget changed: " + JSON.stringify(duck));
+  assert(duck.waterObjectTexturePixelBudget === 786432, "duck object texture pixel budget changed: " + JSON.stringify(duck));
   assert(duck.waterObjectTexturePixels === duck.waterObjectTextureTargets * duck.waterObjectTextureWidth * duck.waterObjectTextureHeight, "duck object texture pixel telemetry mismatch: " + JSON.stringify(duck));
   assert(duck.waterObjectTexturePixels <= duck.waterObjectTexturePixelBudget, "duck object texture pixel budget exceeded: " + JSON.stringify(duck));
   assert(duck.waterObjectShadowMeshPasses > 0, "duck object mesh shadow did not run: " + JSON.stringify(duck));
@@ -548,9 +551,11 @@ async function sampleWaterFramePerformance(page) {
 function assertWaterTelemetry(browserReport) {
   const mount = browserReport.scene3dMount || {};
   const telemetry = browserReport.waterTelemetry || {};
+  assert(mount.waterRenderer === "active", "common water renderer did not report active: " + JSON.stringify(mount));
+  assert(mount.waterFrameSeq > 0, "common water presentation telemetry did not advance: " + JSON.stringify(mount));
   assert(mount.frameSeq > 0, "Scene3D WebGPU frame telemetry did not advance");
   assert(telemetry.waterSystems > 0, "water telemetry missing water systems");
-  assert(telemetry.waterCells >= 65536, "water simulation has too few cells: " + telemetry.waterCells);
+  assert(telemetry.waterCells >= 36864, "water simulation has too few cells: " + telemetry.waterCells);
   assert(telemetry.waterComputeDispatches > 0, "water compute dispatches did not run");
   assert(telemetry.waterAuthoredComputeSystems > 0, "authored Elio compute systems did not activate");
   assert(telemetry.waterAuthoredComputeDispatches > 0, "authored Elio compute dispatches did not run");
@@ -592,10 +597,11 @@ function assertWaterTelemetry(browserReport) {
 function assertWaterPerformance(browserReport) {
   const telemetry = browserReport.waterTelemetry || {};
   const perf = browserReport.performance || {};
-  assert(telemetry.waterCells === 65536, "water cell budget changed: " + telemetry.waterCells);
-  assert(telemetry.waterVertices <= 400000, "water vertex budget exceeded: " + telemetry.waterVertices);
+  const minimumFPS = Number(process.env.GOSX_WATER_MIN_FPS || 50);
+  assert(telemetry.waterCells === 36864, "water cell budget changed: " + telemetry.waterCells);
+  assert(telemetry.waterVertices <= 240000, "water vertex budget exceeded: " + telemetry.waterVertices);
   assert(telemetry.waterComputeDispatches <= 8, "water compute dispatch budget exceeded: " + telemetry.waterComputeDispatches);
-  assert(telemetry.waterCausticTexturePixels <= 1048576, "caustics texture budget exceeded: " + telemetry.waterCausticTexturePixels);
+  assert(telemetry.waterCausticTexturePixels <= 262144, "caustics texture budget exceeded: " + telemetry.waterCausticTexturePixels);
   assert(telemetry.waterObjectTextureTargets === 0, "analytic sphere should not allocate projected object optical targets: " + telemetry.waterObjectTextureTargets);
   assert(telemetry.waterObjectTexturePixels === 0, "analytic sphere projected object optical pixels should be zero: " + telemetry.waterObjectTexturePixels);
   assert(telemetry.waterObjectTextureWidth === 0 && telemetry.waterObjectTextureHeight === 0, "analytic sphere projected object texture dimensions should be zero: " + JSON.stringify(telemetry));
@@ -605,8 +611,41 @@ function assertWaterPerformance(browserReport) {
   assert(telemetry.waterObjectShadowMeshDrawCalls === 0, "analytic sphere projected object shadow draw calls should be zero: " + telemetry.waterObjectShadowMeshDrawCalls);
   assert(telemetry.waterDrawCalls <= 2, "water surface draw-call budget exceeded: " + telemetry.waterDrawCalls);
   assert(telemetry.waterDrawVertices <= 800000, "water surface vertex budget exceeded: " + telemetry.waterDrawVertices);
-  assert(perf.frames >= 20, "water frame cadence too low: " + JSON.stringify(perf));
-  assert(perf.fps >= 20, "water sampled fps too low: " + JSON.stringify(perf));
+  assert(perf.frames >= Math.floor(minimumFPS * 0.9), "water frame cadence too low: " + JSON.stringify(perf));
+  assert(perf.fps >= minimumFPS, "water sampled fps below " + minimumFPS + ": " + JSON.stringify(perf));
+  const pixels = browserReport.pixels || {};
+  assert(pixels.quantizedColors >= 24, "water hardware image is visually flat: " + JSON.stringify(pixels));
+  assert(pixels.luminanceRange >= 35, "water hardware image lacks tonal structure: " + JSON.stringify(pixels));
+  assert(pixels.luminanceStdDev >= 10, "water hardware image resembles a blank fallback: " + JSON.stringify(pixels));
+}
+
+async function compositedPixelStats(page) {
+  const canvas = page.locator("canvas[data-gosx-scene3d-canvas]").first();
+  const png = await canvas.screenshot({ type: "png" });
+  return page.evaluate(async (bytes) => {
+    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+    const surface = new OffscreenCanvas(Math.min(160, bitmap.width), Math.min(100, bitmap.height));
+    const ctx = surface.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0, surface.width, surface.height);
+    bitmap.close();
+    const data = ctx.getImageData(0, 0, surface.width, surface.height).data;
+    const colors = new Set();
+    const luminances = [];
+    for (let i = 0; i < data.length; i += 16) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      colors.add(`${r >> 4}:${g >> 4}:${b >> 4}`);
+      luminances.push(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    }
+    const mean = luminances.reduce((sum, value) => sum + value, 0) / luminances.length;
+    const variance = luminances.reduce((sum, value) => sum + (value - mean) ** 2, 0) / luminances.length;
+    return {
+      quantizedColors: colors.size,
+      luminanceRange: Math.max(...luminances) - Math.min(...luminances),
+      luminanceStdDev: Math.sqrt(variance),
+    };
+  }, [...png]);
 }
 
 function playwrightCoreURL() {

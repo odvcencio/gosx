@@ -27,7 +27,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -102,8 +102,43 @@ jobs:
           PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
+      - name: Production water bundle smoke test
+        run: make test-water-prod
+
       - name: Build CLI
         run: make build-cli
 
       - name: Build WASM runtime
         run: make build-runtime
+
+  # Opt-in certification for a self-hosted runner with a real GPU. Generic
+  # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame
+  # timing. Set WATER_WEBGPU_RUNNER to the runner label to enable this job.
+  water-webgpu-certification:
+    if: ${{ vars.WATER_WEBGPU_RUNNER != '' }}
+    runs-on: ${{ vars.WATER_WEBGPU_RUNNER }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Certify water on hardware WebGPU
+        env:
+          GOSX_WATER_E2E_REQUIRE_WEBGPU: "1"
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ vars.WATER_WEBGPU_CHROME }}
+        run: node --test e2e/water_demo_e2e.test.mjs
