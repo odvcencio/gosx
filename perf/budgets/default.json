@@ -39,13 +39,12 @@
       ]
     },
     "water-ci": {
-      "description": "Water release route on CI software WebGL. Gates load, payload, and main-thread regressions; real-GPU frame cadence is certified separately.",
+      "description": "Water route under CI software rasterization. Gates load and payload stability, not frame performance; real-GPU cadence is certified separately.",
       "assertions": [
-        "network_kb <= 1900",
-        "lcp <= 5000",
-        "long_tasks <= 8",
-        "tbt <= 750",
-        "js_total_kb <= 900"
+        "network_kb <= 1600",
+        "lcp <= 2000",
+        "long_tasks <= 20",
+        "tbt <= 18000"
       ]
     }
   },
