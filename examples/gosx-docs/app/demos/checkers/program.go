@@ -13,7 +13,39 @@ const (
 	pieceCount       = 60
 	activePieceCount = 20
 	holeSpacing      = 0.52
+	pieceRestHeight  = 0.2
 )
+
+// boardHolePositions caches the world-space rest position of a piece sitting
+// in each hole, indexed by hole ID, in the same coordinates pieceInstances
+// uses. The board layout is deterministic, so computing it once is safe.
+var boardHolePositions = func() []scene.Vector3 {
+	holes := boardHoles()
+	out := make([]scene.Vector3, len(holes))
+	for i, hole := range holes {
+		out[i] = scene.Vec3(hole.Position.X, pieceRestHeight, hole.Position.Z)
+	}
+	return out
+}()
+
+// moveWorldPath returns the world-space waypoints of one committed move —
+// the origin hole followed by every landing — for client-side presentation
+// tweening. The authoritative board state remains the snapshot itself.
+func moveWorldPath(move Move) []pathPoint {
+	path := make([]pathPoint, 0, int(move.Len)+1)
+	appendHole := func(h Hole) {
+		if int(h) >= len(boardHolePositions) {
+			return
+		}
+		p := boardHolePositions[h]
+		path = append(path, pathPoint{X: p.X, Y: p.Y, Z: p.Z})
+	}
+	appendHole(move.From)
+	for i := uint8(0); i < move.Len; i++ {
+		appendHole(move.Landings[i])
+	}
+	return path
+}
 
 var playerColors = []string{
 	"#e66b62",
@@ -163,7 +195,7 @@ func initialPieceCamps(holes []boardHole) [6][]scene.Vector3 {
 				continue
 			}
 			used[hole.ID] = true
-			camps[player] = append(camps[player], scene.Vec3(hole.Position.X, 0.2, hole.Position.Z))
+			camps[player] = append(camps[player], scene.Vec3(hole.Position.X, pieceRestHeight, hole.Position.Z))
 			if len(camps[player]) == 10 {
 				break
 			}
@@ -200,7 +232,7 @@ func visualCommands(board []int) []scene.Command {
 			continue
 		}
 		p := holes[h].Position
-		positions[owner-1] = append(positions[owner-1], scene.Vec3(p.X, 0.2, p.Z))
+		positions[owner-1] = append(positions[owner-1], scene.Vec3(p.X, pieceRestHeight, p.Z))
 	}
 	graph := []scene.Node{socketInstances(holes)}
 	for player, points := range positions {

@@ -12,6 +12,7 @@ const (
 	Friendly Difficulty = iota
 	Club
 	Expert
+	Grandmaster
 )
 
 type EvalWeights struct {
@@ -28,7 +29,7 @@ type SearchOptions struct {
 }
 
 func OptionsForDifficulty(level Difficulty, mobile bool, now time.Time) SearchOptions {
-	budget, depth := 35*time.Millisecond, 3
+	budget, depth, table := 35*time.Millisecond, 3, 1<<15
 	switch level {
 	case Club:
 		budget, depth = 120*time.Millisecond, 5
@@ -37,8 +38,29 @@ func OptionsForDifficulty(level Difficulty, mobile bool, now time.Time) SearchOp
 		if mobile {
 			budget = 180 * time.Millisecond
 		}
+	case Grandmaster:
+		budget, depth, table = 1000*time.Millisecond, 11, 1<<17
+		if mobile {
+			budget = 500 * time.Millisecond
+		}
 	}
-	return SearchOptions{Deadline: now.Add(budget), MaxDepth: depth, TableEntries: 1 << 15, Weights: DefaultWeights}
+	return SearchOptions{Deadline: now.Add(budget), MaxDepth: depth, TableEntries: table, Weights: DefaultWeights}
+}
+
+// BudgetScale converts the Arbiter policy's per-move budget baseline (tuned
+// for a Club-strength move) into the budget class of the selected difficulty.
+// The difficulty deadline in OptionsForDifficulty remains the hard cap.
+func BudgetScale(level Difficulty) float64 {
+	switch level {
+	case Friendly:
+		return 0.5
+	case Expert:
+		return 3
+	case Grandmaster:
+		return 8
+	default:
+		return 1
+	}
 }
 
 type SearchStats struct {

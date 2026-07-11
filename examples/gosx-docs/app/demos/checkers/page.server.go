@@ -31,28 +31,64 @@ type holeView struct {
 	Z     int
 }
 type gameSnapshot struct {
-	Revision       uint64          `json:"revision"`
-	MatchRevision  uint64          `json:"matchRevision"`
-	Turn           uint32          `json:"turn"`
-	Active         int             `json:"active"`
-	Selected       int             `json:"selected"`
-	Legal          []int           `json:"legal"`
-	LegalHops      []int           `json:"legalHops"`
-	Board          []int           `json:"board"`
-	Message        string          `json:"message"`
-	CanUndo        bool            `json:"canUndo"`
-	Winner         int             `json:"winner"`
-	Finished       bool            `json:"finished"`
-	Thinking       bool            `json:"thinking"`
-	Personality    string          `json:"personality"`
-	Difficulty     string          `json:"difficulty"`
-	PolicyLabel    string          `json:"policyLabel"`
-	PolicyFallback bool            `json:"policyFallback"`
-	PolicyReason   string          `json:"policyReason"`
-	SearchNodes    uint64          `json:"searchNodes"`
-	SearchDepth    int             `json:"searchDepth"`
-	SearchMS       int64           `json:"searchMS"`
-	SceneCommands  []scene.Command `json:"sceneCommands"`
+	Revision        uint64          `json:"revision"`
+	MatchRevision   uint64          `json:"matchRevision"`
+	Turn            uint32          `json:"turn"`
+	Active          int             `json:"active"`
+	Selected        int             `json:"selected"`
+	Legal           []int           `json:"legal"`
+	LegalHops       []int           `json:"legalHops"`
+	Board           []int           `json:"board"`
+	Message         string          `json:"message"`
+	CanUndo         bool            `json:"canUndo"`
+	Winner          int             `json:"winner"`
+	Finished        bool            `json:"finished"`
+	Thinking        bool            `json:"thinking"`
+	Personality     string          `json:"personality"`
+	Difficulty      string          `json:"difficulty"`
+	PolicyLabel     string          `json:"policyLabel"`
+	PolicyFallback  bool            `json:"policyFallback"`
+	PolicyReason    string          `json:"policyReason"`
+	SearchNodes     uint64          `json:"searchNodes"`
+	SearchDepth     int             `json:"searchDepth"`
+	SearchMS        int64           `json:"searchMS"`
+	SearchCutoffs   uint64          `json:"searchCutoffs"`
+	SearchCacheHits uint64          `json:"searchCacheHits"`
+	LastMove        *lastMoveView   `json:"lastMove,omitempty"`
+	SceneCommands   []scene.Command `json:"sceneCommands"`
+}
+
+// pathPoint is one world-space waypoint in Scene3D coordinates.
+type pathPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+// lastMoveView describes the most recently committed move so the client can
+// animate the Scene3D piece along the authoritative path. ForRevision pins the
+// view to the match revision the move produced; clients only animate when they
+// observe that exact revision transition.
+type lastMoveView struct {
+	ForRevision uint64      `json:"forRevision"`
+	Player      int         `json:"player"`
+	From        int         `json:"from"`
+	To          int         `json:"to"`
+	Holes       []int       `json:"holes"`
+	Kind        string      `json:"kind"`
+	Path        []pathPoint `json:"path"`
+}
+
+func lastMoveFor(move Move, player int, revision uint64) *lastMoveView {
+	kind := "step"
+	if move.Kind == Hop {
+		kind = "hop"
+	}
+	holes := make([]int, 0, move.Len)
+	for i := uint8(0); i < move.Len; i++ {
+		holes = append(holes, int(move.Landings[i]))
+	}
+	return &lastMoveView{ForRevision: revision, Player: player, From: int(move.From), To: int(move.To()), Holes: holes, Kind: kind, Path: moveWorldPath(move)}
 }
 
 type gameSession struct {
@@ -67,6 +103,7 @@ type gameSession struct {
 	thinking    bool
 	policy      checkpolicy.Resolution
 	searchStats SearchStats
+	lastMove    *lastMoveView
 	generation  uint64
 	cancel      context.CancelFunc
 	cpuEnabled  bool
@@ -124,6 +161,7 @@ func (g *gameSession) destination(h Hole) gameSnapshot {
 		g.mu.Unlock()
 		return s
 	}
+	mover := int(g.match.Active) + 1
 	u, err := g.match.Apply(chosen)
 	if err != nil {
 		g.message = err.Error()
@@ -132,6 +170,7 @@ func (g *gameSession) destination(h Hole) gameSnapshot {
 		return s
 	}
 	g.undos = append(g.undos, u)
+	g.lastMove = lastMoveFor(chosen, mover, g.match.Revision)
 	g.selected = NoHole
 	startCPU := g.cpuEnabled && !g.match.Outcome.Finished && g.match.Active == 3
 	if g.match.Outcome.Finished {
@@ -164,6 +203,7 @@ func (g *gameSession) restart() gameSnapshot {
 	g.thinking = false
 	g.selected = NoHole
 	g.undos = nil
+	g.lastMove = nil
 	g.revision++
 	g.message = "Game restarted. Player 1 to move."
 	return g.snapshotLocked()
@@ -175,6 +215,7 @@ func (g *gameSession) undo() gameSnapshot {
 	g.cancelSearchLocked()
 	g.generation++
 	g.thinking = false
+	g.lastMove = nil
 	if len(g.undos) == 0 {
 		g.message = "Nothing to undo."
 		return g.snapshotLocked()
@@ -198,7 +239,7 @@ func (g *gameSession) snapshot() gameSnapshot {
 }
 
 func (g *gameSession) snapshotLocked() gameSnapshot {
-	s := gameSnapshot{Revision: g.revision, MatchRevision: g.match.Revision, Turn: g.match.Turn, Active: int(g.match.Active), Selected: -1, Message: g.message, CanUndo: len(g.undos) > 0, Winner: -1, Finished: g.match.Outcome.Finished, Board: make([]int, HoleCount), Thinking: g.thinking, Personality: string(g.personality), Difficulty: difficultyName(g.difficulty), PolicyLabel: g.policy.Policy.ExplanationLabel, PolicyFallback: g.policy.Fallback, PolicyReason: g.policy.Reason, SearchNodes: g.searchStats.Nodes, SearchDepth: g.searchStats.CompletedDepth, SearchMS: g.searchStats.Elapsed.Milliseconds()}
+	s := gameSnapshot{Revision: g.revision, MatchRevision: g.match.Revision, Turn: g.match.Turn, Active: int(g.match.Active), Selected: -1, Message: g.message, CanUndo: len(g.undos) > 0, Winner: -1, Finished: g.match.Outcome.Finished, Board: make([]int, HoleCount), Thinking: g.thinking, Personality: string(g.personality), Difficulty: difficultyName(g.difficulty), PolicyLabel: g.policy.Policy.ExplanationLabel, PolicyFallback: g.policy.Fallback, PolicyReason: g.policy.Reason, SearchNodes: g.searchStats.Nodes, SearchDepth: g.searchStats.CompletedDepth, SearchMS: g.searchStats.Elapsed.Milliseconds(), SearchCutoffs: g.searchStats.Cutoffs, SearchCacheHits: g.searchStats.CacheHits, LastMove: g.lastMove}
 	if g.selected != NoHole {
 		s.Selected = int(g.selected)
 		seen := [HoleCount]bool{}
@@ -259,6 +300,8 @@ func (g *gameSession) settings(personality, difficulty string) gameSnapshot {
 		g.difficulty = Club
 	case "expert":
 		g.difficulty = Expert
+	case "grandmaster":
+		g.difficulty = Grandmaster
 	}
 	g.message = "CPU settings updated. The active policy is resolved at its next turn."
 	return g.snapshotLocked()
@@ -269,6 +312,8 @@ func difficultyName(d Difficulty) string {
 		return "friendly"
 	case Expert:
 		return "expert"
+	case Grandmaster:
+		return "grandmaster"
 	default:
 		return "club"
 	}
@@ -288,7 +333,9 @@ func (g *gameSession) runCPU(sourceRevision, generation uint64) {
 	resolution := checkpolicy.Resolve(ctx, nil, checkpolicy.Facts{Personality: personality, Phase: "midgame"})
 	policy := resolution.Policy
 	opts := OptionsForDifficulty(difficulty, false, time.Now())
-	budget := time.Duration(policy.BudgetMS) * time.Millisecond
+	// The policy budget is a Club-strength baseline; scale it into the
+	// selected difficulty's class, with the difficulty deadline as hard cap.
+	budget := time.Duration(float64(policy.BudgetMS)*BudgetScale(difficulty)) * time.Millisecond
 	if remaining := time.Until(opts.Deadline); budget > remaining {
 		budget = remaining
 	}
@@ -313,11 +360,13 @@ func (g *gameSession) runCPU(sourceRevision, generation uint64) {
 		broadcast(snapshot)
 		return
 	}
+	mover := int(g.match.Active) + 1
 	undo, applyErr := g.match.Apply(move)
 	if applyErr != nil {
 		g.message = "CPU produced no applicable move."
 	} else {
 		g.undos = append(g.undos, undo)
+		g.lastMove = lastMoveFor(move, mover, g.match.Revision)
 		g.message = fmt.Sprintf("CPU played %s · %s · depth %d · %d nodes.", Notation(move), policy.ExplanationLabel, stats.CompletedDepth, stats.Nodes)
 	}
 	snapshot := g.snapshotLocked()

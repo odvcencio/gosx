@@ -90,6 +90,60 @@ func TestSettingsSelectBoundedCPUPosture(t *testing.T) {
 	if invalid.Personality != "iron-fox" || invalid.Difficulty != "friendly" {
 		t.Fatalf("invalid settings escaped bounds: %+v", invalid)
 	}
+	grandmaster := g.settings("jade-crane", "grandmaster")
+	if grandmaster.Personality != "jade-crane" || grandmaster.Difficulty != "grandmaster" {
+		t.Fatalf("grandmaster settings rejected: %+v", grandmaster)
+	}
+}
+
+func TestSnapshotCarriesAnimatableLastMove(t *testing.T) {
+	g := newGameSession()
+	g.cpuEnabled = false
+	if g.snapshot().LastMove != nil {
+		t.Fatal("fresh session should have no last move")
+	}
+	move := GenerateMoves(nil, g.match, g.match.Active)[0]
+	g.source(move.From)
+	committed := g.destination(move.To())
+	last := committed.LastMove
+	if last == nil {
+		t.Fatalf("commit produced no last move: %+v", committed)
+	}
+	if last.ForRevision != committed.MatchRevision || last.Player != 1 || last.From != int(move.From) || last.To != int(move.To()) {
+		t.Fatalf("last move identity: %+v", last)
+	}
+	if len(last.Path) != int(move.Len)+1 || len(last.Holes) != int(move.Len) {
+		t.Fatalf("last move path shape: %+v", last)
+	}
+	start, end := boardHolePositions[move.From], boardHolePositions[move.To()]
+	if last.Path[0].X != start.X || last.Path[0].Z != start.Z || last.Path[len(last.Path)-1].X != end.X || last.Path[len(last.Path)-1].Z != end.Z {
+		t.Fatalf("last move endpoints: %+v", last.Path)
+	}
+	if last.Path[0].Y != pieceRestHeight {
+		t.Fatalf("path rest height: %+v", last.Path[0])
+	}
+	if undone := g.undo(); undone.LastMove != nil {
+		t.Fatalf("undo should clear last move: %+v", undone.LastMove)
+	}
+	g.source(move.From)
+	g.destination(move.To())
+	if restarted := g.restart(); restarted.LastMove != nil {
+		t.Fatalf("restart should clear last move: %+v", restarted.LastMove)
+	}
+}
+
+func TestCPUCommitPublishesLastMoveForItsSeat(t *testing.T) {
+	g := newGameSession()
+	move := GenerateMoves(nil, g.match, g.match.Active)[0]
+	g.source(move.From)
+	g.destination(move.To())
+	final := waitSession(t, g, 2*time.Second, func(s gameSnapshot) bool { return !s.Thinking && s.Turn == 2 })
+	if final.LastMove == nil || final.LastMove.Player != 4 || final.LastMove.ForRevision != final.MatchRevision {
+		t.Fatalf("CPU last move: %+v", final.LastMove)
+	}
+	if len(final.LastMove.Path) < 2 {
+		t.Fatalf("CPU path too short: %+v", final.LastMove.Path)
+	}
 }
 
 func waitSession(t *testing.T, g *gameSession, timeout time.Duration, predicate func(gameSnapshot) bool) gameSnapshot {
@@ -189,6 +243,11 @@ func TestVisualCommandsFollowCommittedBoard(t *testing.T) {
 	a, _ := json.Marshal(after.SceneCommands)
 	if string(a) == string(b) {
 		t.Fatal("committed move did not change renderer command payload")
+	}
+	// The client move tween patches raw column-major transforms in place, so
+	// the wire payload must keep uncompressed per-instance transforms.
+	if !strings.Contains(string(a), `"transforms"`) {
+		t.Fatal("scene commands lost raw instance transforms; client animation would degrade to teleporting")
 	}
 }
 

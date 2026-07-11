@@ -30,7 +30,11 @@ func TestCheckersPageCompilesWithSemanticFallback(t *testing.T) {
 		"checkers-material",
 		`role="grid"`,
 		"data-x",
-		"Prototype limitations",
+		"Demo limitations",
+		`value="grandmaster"`,
+		"checkers-search-depth",
+		"checkers-search-nodes",
+		"checkers-search-time",
 		"<noscript>",
 		"/checkers-client.js",
 	} {
@@ -46,7 +50,7 @@ func TestCheckersClientProvidesRovingKeyboardAndMaterialSelection(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(source)
-	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", "syncMaterialFromURL", `"imperial-jade": true`, `"carved-wood": true`, `"brushed-steel": true`, `data-checkers-material`, `searchParams.set("material"`, "state.sceneCommands", "gosx:scene3d:commands", "revision: state.revision"} {
+	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", "syncMaterialFromURL", `"imperial-jade": true`, `"carved-wood": true`, `"brushed-steel": true`, `data-checkers-material`, `searchParams.set("material"`, "state.sceneCommands", "gosx:scene3d:commands", "revision: state.revision", "prefers-reduced-motion", "requestAnimationFrame", "state.lastMove", "data-last-from", "data-last-to", "checkers-search-depth"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("checkers-client.js missing %q", required)
 		}

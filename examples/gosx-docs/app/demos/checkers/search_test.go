@@ -17,11 +17,21 @@ func TestDifficultyBudgetsAndBounds(t *testing.T) {
 	}{
 		{Friendly, false, 35 * time.Millisecond, 3}, {Club, false, 120 * time.Millisecond, 5},
 		{Expert, false, 350 * time.Millisecond, 8}, {Expert, true, 180 * time.Millisecond, 8},
+		{Grandmaster, false, 1000 * time.Millisecond, 11}, {Grandmaster, true, 500 * time.Millisecond, 11},
 	}
 	for _, tc := range cases {
 		got := OptionsForDifficulty(tc.level, tc.mobile, now)
 		if got.Deadline.Sub(now) != tc.budget || got.MaxDepth != tc.depth || got.TableEntries <= 0 {
 			t.Fatalf("options %+v", got)
+		}
+	}
+	if OptionsForDifficulty(Grandmaster, false, now).TableEntries <= OptionsForDifficulty(Club, false, now).TableEntries {
+		t.Fatal("grandmaster should search with a larger transposition table")
+	}
+	scales := map[Difficulty]float64{Friendly: 0.5, Club: 1, Expert: 3, Grandmaster: 8}
+	for level, want := range scales {
+		if got := BudgetScale(level); got != want {
+			t.Fatalf("BudgetScale(%d)=%v want %v", level, got, want)
 		}
 	}
 	w := (EvalWeights{Progress: 99999, DestinationCamp: -99999, Endgame: 1}).bounded()

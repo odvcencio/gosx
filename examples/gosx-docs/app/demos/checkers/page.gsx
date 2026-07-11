@@ -7,7 +7,7 @@ func Page() Node {
 		</div>
 		<section class="checkers-showcase__intro" data-checkers-root>
 			<p class="checkers-showcase__eyebrow">
-				<span>Prototype</span>
+				<span>Live</span>
 				· GoSX Scene3D · authoritative Go Hub
 			</p>
 			<h1 id="checkers-title">Chinese Checkers</h1>
@@ -54,11 +54,30 @@ func Page() Node {
 						<option value="friendly">Friendly</option>
 						<option value="club" selected>Club</option>
 						<option value="expert">Expert</option>
+						<option value="grandmaster">Grandmaster</option>
 					</select>
 				</label>
 				<button type="button" id="checkers-undo" disabled>Undo</button>
 				<button type="button" id="checkers-restart">Restart</button>
 			</div>
+			<dl class="checkers-showcase__search" aria-label="CPU search telemetry">
+				<div>
+					<dt>Depth</dt>
+					<dd id="checkers-search-depth">—</dd>
+				</div>
+				<div>
+					<dt>Nodes</dt>
+					<dd id="checkers-search-nodes">—</dd>
+				</div>
+				<div>
+					<dt>Think</dt>
+					<dd id="checkers-search-time">—</dd>
+				</div>
+				<div>
+					<dt>TT hits</dt>
+					<dd id="checkers-search-cache">—</dd>
+				</div>
+			</dl>
 		</section>
 		<p class="checkers-showcase__policy" id="checkers-policy">CPU policy: safe fallback loading…</p>
 		<details class="checkers-showcase__board-panel" open>
@@ -90,7 +109,7 @@ func Page() Node {
 			</div>
 		</details>
 		<p class="checkers-showcase__limitations">
-			Prototype limitations: this is an in-memory two-player Hub match, not product multiplayer. The 3D pieces do not yet animate committed moves. The CPU uses a bounded Arbiter policy fallback when no evaluator is linked; Elio GPU hints remain optional and inactive.
+			Demo limitations: this is an in-memory two-player Hub match, not product multiplayer. The CPU uses a bounded Arbiter policy fallback when no evaluator is linked; Elio GPU hints remain optional and inactive.
 		</p>
 		<noscript>
 			<p class="checkers-showcase__noscript">
