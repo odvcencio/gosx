@@ -3,70 +3,103 @@ package docs
 func Page() Node {
 	return <form class="cms-demo" id="cms-content-form" method="post" action={actionPath("publish")}>
 		<input type="hidden" name="csrf_token" value={csrf.token} />
+		<input type="hidden" name="block_count" id="cms-block-count" value={len(data.blocks)} />
+		<script src="/cms-client.js" defer></script>
 		<header class="cms-header">
 			<div class="cms-header__brand">
 				<span class="cms-header__logo">CMS Editor</span>
 				<span class="cms-header__badge">Server Action</span>
 			</div>
 			<div class="cms-header__actions">
+				<span class="cms-header__unsaved" id="cms-unsaved-badge" role="status" aria-live="polite" hidden>
+					<span class="cms-header__status-dot cms-header__status-dot--unsaved" aria-hidden="true"></span>
+					Unsaved changes
+				</span>
 				<If cond={data.status.count > 0}>
-					<span class={"cms-header__status cms-header__status--published"}>
-						<span class="cms-header__status-dot"></span>
-						{"Published " + fmt.Sprint(data.status.count) + " blocks · " + fmt.Sprint(data.status.at)}
+					<span class="cms-header__status cms-header__status--published" id="cms-status">
+						<span class="cms-header__status-dot" id="cms-status-dot"></span>
+						<span id="cms-status-text">
+							{"Published " + data.status.count + " blocks · " + data.status.at}
+						</span>
 					</span>
 				</If>
 				<If cond={data.status.count == 0}>
-					<span class="cms-header__status">
-						<span class="cms-header__status-dot"></span>
-						{data.status.at}
+					<span class="cms-header__status" id="cms-status">
+						<span class="cms-header__status-dot" id="cms-status-dot"></span>
+						<span id="cms-status-text">{data.status.at}</span>
 					</span>
 				</If>
-				<button type="submit" class="cms-btn cms-btn--primary">Publish changes</button>
+				<button type="submit" class="cms-btn cms-btn--primary" id="cms-publish-btn">
+					<span class="cms-btn__label" id="cms-publish-label">Publish changes</span>
+				</button>
 			</div>
 		</header>
 		<div class="cms-workspace">
 			<aside class="cms-palette" aria-label="Block types">
 				<h2 class="cms-panel-label">Blocks</h2>
-				<div class="cms-palette__list">
-					<div class="cms-block-card cms-block-card--hero">
+				<p class="cms-palette__hint">Click a block to add it to the draft</p>
+				<div class="cms-palette__list" id="cms-palette-list">
+					<button
+						type="button"
+						class="cms-block-card cms-block-card--hero"
+						data-block-kind="hero"
+						aria-label="Add Hero block"
+					>
 						<span class="cms-block-card__icon" aria-hidden="true">H</span>
 						<div class="cms-block-card__meta">
 							<strong>Hero</strong>
 							<span>Title + Subtitle</span>
 						</div>
-					</div>
-					<div class="cms-block-card cms-block-card--feature">
+					</button>
+					<button
+						type="button"
+						class="cms-block-card cms-block-card--feature"
+						data-block-kind="feature"
+						aria-label="Add Feature block"
+					>
 						<span class="cms-block-card__icon" aria-hidden="true">F</span>
 						<div class="cms-block-card__meta">
 							<strong>Feature</strong>
 							<span>Title + Body</span>
 						</div>
-					</div>
-					<div class="cms-block-card cms-block-card--quote">
+					</button>
+					<button
+						type="button"
+						class="cms-block-card cms-block-card--quote"
+						data-block-kind="quote"
+						aria-label="Add Quote block"
+					>
 						<span class="cms-block-card__icon" aria-hidden="true">Q</span>
 						<div class="cms-block-card__meta">
 							<strong>Quote</strong>
 							<span>Text + Author</span>
 						</div>
-					</div>
+					</button>
 				</div>
 			</aside>
 			<main class="cms-editor" aria-label="Block editor">
 				<h2 class="cms-panel-label">Draft editor</h2>
-				<div class="cms-block-list">
-					<Each of={data.blocks} as="block">
-						<article class={"cms-editor-block cms-editor-block--" + block.kind} aria-label={block.kind + " block"}>
+				<div class="cms-block-list" id="cms-block-list">
+					<Each of={data.blocks} as="block" index="i">
+						<article
+							class={"cms-editor-block cms-editor-block--" + block.kind}
+							aria-label={block.kind + " block"}
+							data-block-index={i}
+							data-block-kind={block.kind}
+						>
 							<div class="cms-editor-block__header">
 								<span class="cms-editor-block__type">{block.kind}</span>
 							</div>
 							<div class="cms-editor-block__fields">
+								<input type="hidden" name={"block_" + i + "_kind"} value={block.kind} />
 								<If cond={block.kind == "hero"}>
 									<label class="cms-field">
 										<span>Title</span>
 										<input
 											class="cms-input"
+											data-preview-field="title"
 											type="text"
-											name="hero_title"
+											name={"block_" + i + "_title"}
 											value={block.title}
 											placeholder="Page title"
 											required
@@ -77,8 +110,9 @@ func Page() Node {
 										<span>Subtitle</span>
 										<input
 											class="cms-input"
+											data-preview-field="subtitle"
 											type="text"
-											name="hero_subtitle"
+											name={"block_" + i + "_subtitle"}
 											value={block.subtitle}
 											placeholder="Supporting subtitle"
 											maxlength="240"
@@ -90,8 +124,9 @@ func Page() Node {
 										<span>Title</span>
 										<input
 											class="cms-input"
+											data-preview-field="title"
 											type="text"
-											name="feature_title"
+											name={"block_" + i + "_title"}
 											value={block.title}
 											placeholder="Feature title"
 											required
@@ -102,7 +137,8 @@ func Page() Node {
 										<span>Body</span>
 										<textarea
 											class="cms-input cms-input--textarea"
-											name="feature_body"
+											data-preview-field="body"
+											name={"block_" + i + "_body"}
 											placeholder="Feature description"
 											maxlength="1000"
 										>{block.body}</textarea>
@@ -113,7 +149,8 @@ func Page() Node {
 										<span>Quote</span>
 										<textarea
 											class="cms-input cms-input--textarea"
-											name="quote_text"
+											data-preview-field="text"
+											name={"block_" + i + "_text"}
 											placeholder="The quote text"
 											required
 											maxlength="500"
@@ -123,8 +160,9 @@ func Page() Node {
 										<span>Author</span>
 										<input
 											class="cms-input"
+											data-preview-field="author"
 											type="text"
-											name="quote_author"
+											name={"block_" + i + "_author"}
 											value={block.author}
 											placeholder="Author name"
 											maxlength="120"
@@ -136,31 +174,31 @@ func Page() Node {
 					</Each>
 				</div>
 			</main>
-			<aside class="cms-preview" aria-label="Content preview">
-				<h2 class="cms-panel-label">Published preview</h2>
-				<div class="cms-preview__canvas">
-					<Each of={data.blocks} as="block">
-						<div class={"cms-preview-block cms-preview-block--" + block.kind}>
+			<aside class="cms-preview" aria-label="Live preview">
+				<h2 class="cms-panel-label">Live preview</h2>
+				<div class="cms-preview__canvas" id="cms-preview-canvas">
+					<Each of={data.blocks} as="block" index="i">
+						<div class={"cms-preview-block cms-preview-block--" + block.kind} data-block-index={i}>
 							<If cond={block.kind == "hero"}>
 								<div class="cms-preview-hero">
-									<h1>{block.title}</h1>
+									<h1 data-preview-field="title">{block.title}</h1>
 									<span class="cms-preview-hero__divider"></span>
-									<p>{block.subtitle}</p>
+									<p data-preview-field="subtitle">{block.subtitle}</p>
 								</div>
 							</If>
 							<If cond={block.kind == "feature"}>
 								<div class="cms-preview-feature">
-									<h3>{block.title}</h3>
-									<p>{block.body}</p>
+									<h3 data-preview-field="title">{block.title}</h3>
+									<p data-preview-field="body">{block.body}</p>
 								</div>
 							</If>
 							<If cond={block.kind == "quote"}>
 								<figure class="cms-preview-quote">
-									<blockquote>{block.text}</blockquote>
+									<blockquote data-preview-field="text">{block.text}</blockquote>
 									<hr />
 									<figcaption>
 										—
-										{block.author}
+										<span data-preview-field="author">{block.author}</span>
 									</figcaption>
 								</figure>
 							</If>
@@ -171,9 +209,11 @@ func Page() Node {
 		</div>
 		<footer class="cms-statusbar">
 			<span class="cms-statusbar__info">
-				<span>{len(data.blocks)}</span>
+				<span id="cms-block-total">{len(data.blocks)}</span>
 				blocks in document
 			</span>
+			<span class="cms-statusbar__hint" id="cms-publish-feedback" role="status" aria-live="polite"></span>
 		</footer>
+		<div class="cms-sr-only" aria-live="polite" id="cms-announcer"></div>
 	</form>
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,13 @@ import (
 	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
 	"m31labs.dev/gosx/route"
 )
+
+// cmsMaxBlocks caps how many blocks a single publish request may submit.
+// Defense in depth only: the demo has no server-side reordering or removal,
+// and normal use (clicking the palette a reasonable number of times) never
+// approaches this, but a raw HTTP client could otherwise post an unbounded
+// block_count and force the server to loop arbitrarily.
+const cmsMaxBlocks = 60
 
 // publishStore is an in-memory store for the last published CMS state.
 type publishStore struct {
@@ -94,10 +102,14 @@ func init() {
 						return nil
 					}
 					cmsStore.save(blocks)
-					_, n, _ := cmsStore.snapshot()
+					_, n, at := cmsStore.snapshot()
 					return ctx.Success(
 						fmt.Sprintf("Published %d blocks", n),
-						map[string]any{"count": n},
+						map[string]any{
+							"count":  n,
+							"at":     at,
+							"byKind": cmsSummarizeBlocks(blocks),
+						},
 					)
 				},
 			},
@@ -105,26 +117,73 @@ func init() {
 	)
 }
 
+// cmsBlocksFromForm reconstructs the submitted draft from indexed form
+// fields: a "block_count" field gives the number of blocks, and each block i
+// carries "block_<i>_kind" plus kind-specific fields ("block_<i>_title" /
+// "_subtitle" for hero, "_title" / "_body" for feature, "_text" / "_author"
+// for quote). This indexed scheme — rather than the single fixed hero/
+// feature/quote field set the demo shipped with originally — is what lets
+// the client add any number of blocks of any kind and have them all survive
+// a real publish.
 func cmsBlocksFromForm(values map[string]string) ([]map[string]string, map[string]string) {
 	value := func(name string) string { return strings.TrimSpace(values[name]) }
-	blocks := []map[string]string{
-		{"kind": "hero", "title": value("hero_title"), "subtitle": value("hero_subtitle")},
-		{"kind": "feature", "title": value("feature_title"), "body": value("feature_body")},
-		{"kind": "quote", "text": value("quote_text"), "author": value("quote_author")},
-	}
 	errs := map[string]string{}
-	for _, name := range []string{"hero_title", "feature_title", "quote_text"} {
-		if value(name) == "" {
-			errs[name] = "Required"
-		}
+
+	count, convErr := strconv.Atoi(value("block_count"))
+	if convErr != nil || count < 0 {
+		count = 0
 	}
-	limits := map[string]int{"hero_title": 120, "hero_subtitle": 240, "feature_title": 120, "feature_body": 1000, "quote_text": 500, "quote_author": 120}
-	for name, limit := range limits {
-		if len(value(name)) > limit {
-			errs[name] = fmt.Sprintf("Must be %d characters or fewer", limit)
+	if count > cmsMaxBlocks {
+		count = cmsMaxBlocks
+	}
+	if count == 0 {
+		errs["block_count"] = "Add at least one block before publishing."
+		return nil, errs
+	}
+
+	limits := map[string]int{"title": 120, "subtitle": 240, "body": 1000, "text": 500, "author": 120}
+	checkField := func(field, role string, required bool) string {
+		v := value(field)
+		if required && v == "" {
+			errs[field] = "Required"
+		}
+		if limit, ok := limits[role]; ok && len(v) > limit {
+			errs[field] = fmt.Sprintf("Must be %d characters or fewer", limit)
+		}
+		return v
+	}
+
+	blocks := make([]map[string]string, 0, count)
+	for i := 0; i < count; i++ {
+		prefix := fmt.Sprintf("block_%d_", i)
+		switch value(prefix + "kind") {
+		case "hero":
+			title := checkField(prefix+"title", "title", true)
+			subtitle := checkField(prefix+"subtitle", "subtitle", false)
+			blocks = append(blocks, map[string]string{"kind": "hero", "title": title, "subtitle": subtitle})
+		case "feature":
+			title := checkField(prefix+"title", "title", true)
+			body := checkField(prefix+"body", "body", false)
+			blocks = append(blocks, map[string]string{"kind": "feature", "title": title, "body": body})
+		case "quote":
+			text := checkField(prefix+"text", "text", true)
+			author := checkField(prefix+"author", "author", false)
+			blocks = append(blocks, map[string]string{"kind": "quote", "text": text, "author": author})
+		default:
+			errs[prefix+"kind"] = "Unknown block type"
 		}
 	}
 	return blocks, errs
+}
+
+// cmsSummarizeBlocks counts published blocks by kind, always reporting the
+// three known kinds (even at zero) so the client can render a stable summary.
+func cmsSummarizeBlocks(blocks []map[string]string) map[string]int {
+	summary := map[string]int{"hero": 0, "feature": 0, "quote": 0}
+	for _, block := range blocks {
+		summary[block["kind"]]++
+	}
+	return summary
 }
 
 func cloneCMSBlocks(blocks []map[string]string) []map[string]string {
