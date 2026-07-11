@@ -61,13 +61,34 @@ func TestScheduler_IntervalRunsRepeatedly(t *testing.T) {
 	s.Start(ctx)
 	defer s.Stop(50 * time.Millisecond)
 
-	if !waitFor(150*time.Millisecond, func() bool { return atomic.LoadInt32(&count) >= 2 }) {
+	// Capture a scheduled due time before checking repeated execution. A
+	// TaskStatus is a snapshot: with a 10ms interval, comparing its NextDueAt
+	// to a later time.Now() can legitimately fail if the deadline crosses in
+	// between. What the scheduler promises is that the recorded deadline
+	// advances as the interval runs.
+	var firstDue time.Time
+	if !waitFor(2*time.Second, func() bool {
+		st, ok := statusFor(s, "ticker")
+		if !ok || st.NextDueAt.IsZero() {
+			return false
+		}
+		firstDue = st.NextDueAt
+		return true
+	}) {
+		t.Fatal("expected scheduler to record an initial NextDueAt")
+	}
+
+	if !waitFor(2*time.Second, func() bool { return atomic.LoadInt32(&count) >= 2 }) {
 		t.Fatalf("expected >=2 runs, got %d", atomic.LoadInt32(&count))
 	}
 
-	st, ok := statusFor(s, "ticker")
-	if !ok {
-		t.Fatalf("no status for ticker")
+	var st TaskStatus
+	if !waitFor(2*time.Second, func() bool {
+		var ok bool
+		st, ok = statusFor(s, "ticker")
+		return ok && st.NextDueAt.After(firstDue)
+	}) {
+		t.Fatalf("NextDueAt did not advance beyond %v; latest status: %+v", firstDue, st)
 	}
 	if st.LastRunAt.IsZero() {
 		t.Errorf("LastRunAt should be set")
@@ -77,9 +98,6 @@ func TestScheduler_IntervalRunsRepeatedly(t *testing.T) {
 	}
 	if st.CurrentAttempt < 0 {
 		t.Errorf("CurrentAttempt should be sane, got %d", st.CurrentAttempt)
-	}
-	if !st.NextDueAt.After(time.Now()) {
-		t.Errorf("NextDueAt should be in the future, got %v", st.NextDueAt)
 	}
 }
 

@@ -14,6 +14,62 @@ import (
 	crdtsync "m31labs.dev/gosx/crdt/sync"
 )
 
+// driveClientSyncUntil completes the request/need exchange after a client has
+// sent its first sync frame. A Bloom-filter false positive may cause that first
+// frame to advertise a new head without carrying its change; in that case the
+// server replies with Need and the client must send another round. Each server
+// response is also an observable barrier for the asynchronous websocket pump.
+func driveClientSyncUntil(
+	t *testing.T,
+	conn *websocket.Conn,
+	prefix byte,
+	clientDoc *crdt.Doc,
+	clientState *crdtsync.State,
+	serverDoc *crdt.Doc,
+	prop crdt.Prop,
+	want string,
+) int {
+	t.Helper()
+
+	const maxRounds = 8
+	var lastErr error
+	for round := 0; round < maxRounds; round++ {
+		if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatalf("set sync response deadline: %v", err)
+		}
+		msgType, response, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read sync response (round %d): %v", round+1, err)
+		}
+		if msgType != websocket.BinaryMessage || len(response) < 2 || response[0] != prefix {
+			t.Fatalf("expected prefixed binary sync response for doc %d, got type=%d payload=%v", prefix, msgType, response)
+		}
+		if err := clientDoc.ReceiveSyncMessage(clientState, response[1:]); err != nil {
+			t.Fatalf("apply sync response (round %d): %v", round+1, err)
+		}
+
+		value, _, err := serverDoc.Get(crdt.Root, prop)
+		if err == nil {
+			if value.Str != want {
+				t.Fatalf("server %s = %q, want %q", prop, value.Str, want)
+			}
+			return round + 1
+		}
+		lastErr = err
+
+		reply, ok := clientDoc.GenerateSyncMessage(clientState)
+		if !ok {
+			t.Fatalf("server still missing %s after round %d, but client had no sync reply: %v", prop, round+1, err)
+		}
+		if err := conn.WriteMessage(websocket.BinaryMessage, append([]byte{prefix}, reply...)); err != nil {
+			t.Fatalf("write sync reply (round %d): %v", round+1, err)
+		}
+	}
+
+	t.Fatalf("server did not converge %s=%q after %d sync rounds: %v", prop, want, maxRounds, lastErr)
+	return 0
+}
+
 func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 	h := New("collab")
 	doc := crdt.NewDoc()
@@ -84,9 +140,15 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 	if err := clientDoc.Put(crdt.Root, "subtitle", crdt.StringValue("client")); err != nil {
 		t.Fatalf("client subtitle put: %v", err)
 	}
-	if _, err := clientDoc.Commit("client update"); err != nil {
+	clientChange, err := clientDoc.Commit("client update")
+	if err != nil {
 		t.Fatalf("commit client update: %v", err)
 	}
+	// Deterministically model a Bloom false positive for the client's new
+	// change. The first frame will advertise the new head without carrying the
+	// change, so the server must request it and the client must complete a
+	// second sync round. This is the formerly flaky path made reproducible.
+	clientState.PeerBloom = crdtsync.NewBloomFilterForHashes([][32]byte{[32]byte(clientChange)})
 	clientMsg, ok := clientDoc.GenerateSyncMessage(clientState)
 	if !ok {
 		t.Fatal("expected client sync message after local change")
@@ -96,7 +158,9 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 		t.Fatalf("write client sync message: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	if rounds := driveClientSyncUntil(t, conn, prefix, clientDoc, clientState, doc, "subtitle", "client"); rounds < 2 {
+		t.Fatalf("forced Bloom false positive converged in %d round; want at least 2", rounds)
+	}
 
 	value, _, err = doc.Get(crdt.Root, "subtitle")
 	if err != nil {
@@ -212,7 +276,7 @@ func TestHubBinaryAuthorizerDropsUnauthorizedInboundSync(t *testing.T) {
 	// sendMutation builds a fresh client-side replica bootstrapped from the
 	// CURRENT server doc, sets field=value locally, and pushes the resulting
 	// sync message inbound over conn.
-	sendMutation := func(conn *websocket.Conn, field, value string) {
+	sendMutation := func(conn *websocket.Conn, field, value string) (*crdt.Doc, *crdtsync.State) {
 		t.Helper()
 		bootstrapState := crdtsync.NewState()
 		bootstrapMsg, ok := doc.GenerateSyncMessage(bootstrapState)
@@ -237,15 +301,12 @@ func TestHubBinaryAuthorizerDropsUnauthorizedInboundSync(t *testing.T) {
 		if err := conn.WriteMessage(websocket.BinaryMessage, append([]byte{prefix}, clientMsg...)); err != nil {
 			t.Fatalf("write client sync message: %v", err)
 		}
+		return clientDoc, clientState
 	}
 
 	// Unauthorized (viewer) client's inbound sync is dropped: the server
 	// document never gets "poisoned".
 	sendMutation(viewerConn, "poisoned", "from-viewer")
-	time.Sleep(150 * time.Millisecond)
-	if _, _, err := doc.Get(crdt.Root, "poisoned"); err == nil {
-		t.Fatal("unauthorized client's inbound sync frame was applied to the server document")
-	}
 
 	// The viewer should have received a __crdt_error frame in response.
 	sawError := false
@@ -267,10 +328,13 @@ func TestHubBinaryAuthorizerDropsUnauthorizedInboundSync(t *testing.T) {
 	if !sawError {
 		t.Fatal("expected unauthorized client to receive a __crdt_error frame")
 	}
+	if _, _, err := doc.Get(crdt.Root, "poisoned"); err == nil {
+		t.Fatal("unauthorized client's inbound sync frame was applied to the server document")
+	}
 
 	// Authorized (writer) client's inbound sync IS applied.
-	sendMutation(writerConn, "approved", "from-writer")
-	time.Sleep(150 * time.Millisecond)
+	writerDoc, writerState := sendMutation(writerConn, "approved", "from-writer")
+	driveClientSyncUntil(t, writerConn, prefix, writerDoc, writerState, doc, "approved", "from-writer")
 	value, _, err := doc.Get(crdt.Root, "approved")
 	if err != nil {
 		t.Fatalf("get server approved field: %v", err)
