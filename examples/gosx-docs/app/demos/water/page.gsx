@@ -243,6 +243,8 @@ func Page() Node {
 				<span>60 Hz sim</span>
 				<span aria-hidden="true">·</span>
 				<span>DPR <output id="water-proof-dpr">1.25</output></span>
+				<span aria-hidden="true">·</span>
+				<span>Grid <output id="water-proof-grid">128²</output></span>
 			</p>
 			<div class="water-demo__proof-actions">
 				<output id="water-proof-model" class="water-demo__model-proof" data-state="deferred">Duck glTF · deferred</output>
@@ -434,6 +436,7 @@ func Page() Node {
   var backend = document.getElementById("water-proof-backend");
   var tier = document.getElementById("water-proof-tier");
   var dpr = document.getElementById("water-proof-dpr");
+  var grid = document.getElementById("water-proof-grid");
   var model = document.getElementById("water-proof-model");
   var dialog = document.getElementById("water-story");
   var open = document.getElementById("water-story-open");
@@ -452,6 +455,7 @@ func Page() Node {
     if (backend) backend.textContent = title(attr("data-gosx-scene3d-renderer", "starting"));
     if (tier) tier.textContent = title(attr("data-gosx-scene3d-quality-active", "balanced"));
     if (dpr) dpr.textContent = String(Number(attr("data-gosx-scene3d-quality-dpr-cap", "1.25")).toFixed(2)).replace(/0+$/, "").replace(/\.$/, "");
+    if (grid) grid.textContent = String(Math.max(0, Math.floor(Number(attr("data-gosx-scene3d-quality-surface-resolution", "128"))))) + "²";
   }
   function updateModel(detail) {
     if (!model || !detail || !/\/water\/models\/duck\/Duck\.gltf(?:\?|$)/i.test(detail.asset || "")) return;
