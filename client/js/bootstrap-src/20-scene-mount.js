@@ -3902,7 +3902,10 @@
     const adaptiveValue = props && (props.adaptiveQuality != null
       ? props.adaptiveQuality
       : (props.adaptivePerformance != null ? props.adaptivePerformance : props.dynamicQuality));
-    const enabled = sceneBool(adaptiveValue, false);
+    const adaptiveConfig = adaptiveValue && typeof adaptiveValue === "object" ? adaptiveValue : {};
+    const enabled = adaptiveValue && typeof adaptiveValue === "object"
+      ? adaptiveValue.enabled !== false
+      : sceneBool(adaptiveValue, false);
     const targetFrameMS = Math.max(8, Math.min(50, sceneNumber(
       props && (props.adaptiveTargetFrameMS != null ? props.adaptiveTargetFrameMS : props.targetFrameMS),
       capability && capability.tier === "constrained" ? 20 : 16.7,
@@ -3911,20 +3914,71 @@
     const minDevicePixelRatio = Math.max(1, Math.min(2, sceneNumber(minProp, 1)));
     const warmupFrames = Math.max(0, Math.floor(sceneNumber(props && props.adaptiveWarmupFrames, 24)));
     const adaptivePostFX = sceneBool(props && props.adaptivePostFX, true);
+    const authoredFrameIntervalMS = Math.max(0, sceneNumber(props && props.frameIntervalMS, 0));
+    const authoredMaxFPS = Math.max(0, sceneNumber(props && props.maxFPS, 0));
+    const cpuRAFBudgetMS = Math.max(targetFrameMS, authoredFrameIntervalMS > 0
+      ? authoredFrameIntervalMS
+      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 0));
+    const profileOverrides = (props && (props.qualityProfiles || props.adaptiveQualityProfiles)) || adaptiveConfig.profiles || {};
+    const defaults = {
+      full: { dprCap: 1.6, surfaceResolution: 160, causticsResolution: 512, objectShadowResolution: 512, objectTextureMaxSide: 512, objectTexturePixelBudget: 786432, expensivePassCadence: 1 },
+      balanced: { dprCap: 1.25, surfaceResolution: 128, causticsResolution: 384, objectShadowResolution: 384, objectTextureMaxSide: 384, objectTexturePixelBudget: 442368, expensivePassCadence: 2 },
+      survival: { dprCap: 1.0, surfaceResolution: 96, causticsResolution: 256, objectShadowResolution: 256, objectTextureMaxSide: 256, objectTexturePixelBudget: 196608, expensivePassCadence: 3 },
+    };
+    const profiles = {};
+    ["full", "balanced", "survival"].forEach(function(tier) {
+      const source = profileOverrides && profileOverrides[tier] && typeof profileOverrides[tier] === "object"
+        ? profileOverrides[tier]
+        : {};
+      const fallback = defaults[tier];
+      profiles[tier] = {
+        tier,
+        dprCap: Math.max(1, Math.min(3, sceneNumber(source.dprCap, fallback.dprCap))),
+        surfaceResolution: Math.max(32, Math.floor(sceneNumber(source.surfaceResolution, fallback.surfaceResolution))),
+        causticsResolution: Math.max(64, Math.floor(sceneNumber(source.causticsResolution, fallback.causticsResolution))),
+        objectShadowResolution: Math.max(64, Math.floor(sceneNumber(source.objectShadowResolution, fallback.objectShadowResolution))),
+        objectTextureMaxSide: Math.max(64, Math.floor(sceneNumber(source.objectTextureMaxSide, fallback.objectTextureMaxSide))),
+        objectTexturePixelBudget: Math.max(65536, Math.floor(sceneNumber(source.objectTexturePixelBudget, fallback.objectTexturePixelBudget))),
+        expensivePassCadence: Math.max(1, Math.floor(sceneNumber(source.expensivePassCadence, fallback.expensivePassCadence))),
+      };
+    });
+    const requestedValue = (props && (props.requestedQualityTier || props.adaptiveQualityTier || props.qualityTier)) || adaptiveConfig.tier;
+    const requestedTier = requestedValue === "balanced" || requestedValue === "survival" ? requestedValue : "full";
     return {
       enabled,
       targetFrameMS,
+      cpuRAFBudgetMS,
       minDevicePixelRatio,
       warmupFrames,
       adaptivePostFX,
+      profiles,
+      requestedTier,
+      activeTier: requestedTier,
+      activeProfile: profiles[requestedTier],
       frameCount: 0,
+      validSamples: 0,
       badFrames: 0,
       goodFrames: 0,
+      severeFrames: 0,
       ewmaFrameMS: 0,
+      p95FrameMS: 0,
       lastFrameMS: 0,
-      currentMaxDevicePixelRatio: 0,
+      measurement: "none",
+      lastMeasurement: null,
+      sampleWindow: [],
+      sampleCursor: 0,
+      sampleScratch: new Array(120),
+      lastRAFNowMS: null,
+      resumePending: true,
+      cooldownMS: Math.max(5000, sceneNumber(props && props.adaptiveCooldownMS, 5000)),
+      cooldownUntilMS: 0,
+      transitionReason: enabled ? "initial" : "disabled",
+      currentMaxDevicePixelRatio: profiles[requestedTier].dprCap,
       postFXSuppressed: false,
-      tier: enabled ? "full" : "fixed",
+      tier: enabled ? requestedTier : "fixed",
+      qualityRevision: 0,
+      lastPublishedAtMS: 0,
+      lastPublishedRevision: -1,
       baseExplicitMaxDevicePixelRatio: sceneNumber(base && base.explicitMaxDevicePixelRatio, 0),
     };
   }
@@ -3935,29 +3989,58 @@
       : [];
   }
 
-  function applySceneAdaptiveQualityState(mount, state) {
+  function applySceneAdaptiveQualityState(mount, state, nowMS, force) {
     if (!mount || !state) {
       return;
     }
+    const profile = state.activeProfile || (state.profiles && state.profiles.full) || {};
+    mount.__gosxScene3DQualityState = {
+      enabled: Boolean(state.enabled),
+      requestedTier: state.requestedTier,
+      activeTier: state.activeTier,
+      qualityRevision: state.qualityRevision,
+      reason: state.transitionReason,
+      cooldownUntilMS: state.cooldownUntilMS,
+      validSamples: state.validSamples,
+      ewmaFrameMS: state.ewmaFrameMS,
+      p95FrameMS: state.p95FrameMS,
+      measurement: state.measurement,
+      lastMeasurement: state.lastMeasurement,
+      profile,
+      postFXSuppressed: Boolean(state.postFXSuppressed),
+    };
+    const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+    const changed = state.lastPublishedRevision !== state.qualityRevision;
+    if (!force && !changed && now - state.lastPublishedAtMS < 250) return;
+    state.lastPublishedAtMS = now;
+    state.lastPublishedRevision = state.qualityRevision;
     setAttrValue(mount, "data-gosx-scene3d-adaptive-quality", state.enabled ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-quality-tier", state.tier || (state.enabled ? "full" : "fixed"));
+    setAttrValue(mount, "data-gosx-scene3d-quality-requested", state.requestedTier || "full");
+    setAttrValue(mount, "data-gosx-scene3d-quality-active", state.activeTier || "full");
+    setAttrValue(mount, "data-gosx-scene3d-quality-revision", String(Math.max(0, state.qualityRevision || 0)));
+    setAttrValue(mount, "data-gosx-scene3d-quality-reason", state.transitionReason || "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-measurement", state.measurement || "none");
     setAttrValue(mount, "data-gosx-scene3d-quality-dpr-cap", state.currentMaxDevicePixelRatio > 0 ? state.currentMaxDevicePixelRatio.toFixed(3) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-p95-ms", state.p95FrameMS > 0 ? state.p95FrameMS.toFixed(2) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-surface-resolution", String(profile.surfaceResolution || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-caustics-resolution", String(profile.causticsResolution || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-object-shadow-resolution", String(profile.objectShadowResolution || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-object-texture-max-side", String(profile.objectTextureMaxSide || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-object-texture-pixel-budget", String(profile.objectTexturePixelBudget || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-expensive-pass-cadence", String(profile.expensivePassCadence || 1));
     setAttrValue(mount, "data-gosx-scene3d-quality-postfx-suppressed", state.postFXSuppressed ? "true" : "false");
   }
 
   function scenePrimeAdaptiveQuality(state, viewport, mount) {
     if (!state || !state.enabled) {
-      applySceneAdaptiveQualityState(mount, state);
+      applySceneAdaptiveQualityState(mount, state, 0, true);
       return;
     }
-    if (!(state.currentMaxDevicePixelRatio > 0)) {
-      state.currentMaxDevicePixelRatio = Math.max(
-        state.minDevicePixelRatio,
-        sceneNumber(viewport && viewport.devicePixelRatio, 1),
-      );
-    }
-    applySceneAdaptiveQualityState(mount, state);
+    state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, sceneNumber(state.activeProfile && state.activeProfile.dprCap, 1));
+    applySceneAdaptiveQualityState(mount, state, 0, true);
   }
 
   function sceneApplyAdaptivePostFX(sceneState, adaptiveQuality) {
@@ -3979,91 +4062,160 @@
     return true;
   }
 
-  function sceneQualityTierForDPR(state) {
-    if (!state || !state.enabled) {
-      return "fixed";
+  function sceneAdaptiveP95(state) {
+    const count = state.sampleWindow.length;
+    if (count === 0) return 0;
+    const scratch = state.sampleScratch;
+    for (let i = 0; i < count; i++) scratch[i] = state.sampleWindow[i];
+    for (let i = 1; i < count; i++) {
+      const value = scratch[i];
+      let j = i - 1;
+      while (j >= 0 && scratch[j] > value) {
+        scratch[j + 1] = scratch[j];
+        j -= 1;
+      }
+      scratch[j + 1] = value;
     }
-    if (state.postFXSuppressed) {
-      return "survival";
-    }
-    const current = sceneNumber(state.currentMaxDevicePixelRatio, 1);
-    const min = sceneNumber(state.minDevicePixelRatio, 1);
-    if (current <= min + 0.01) {
-      return "lean";
-    }
-    if (state.badFrames > 0 || current < sceneNumber(state.baseExplicitMaxDevicePixelRatio, current)) {
-      return "balanced";
-    }
-    return "full";
+    return scratch[Math.max(0, Math.ceil(count * 0.95) - 1)];
   }
 
-  function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart) {
+  function sceneAdaptiveRendererSample(renderer, nowMS) {
+    if (!renderer || typeof renderer.pollPerformanceSample !== "function") return null;
+    let sample = null;
+    try { sample = renderer.pollPerformanceSample(); } catch (e) { return null; }
+    if (sample && typeof sample.then === "function") return null;
+    if (typeof sample === "number") sample = { durationMS: sample, source: "renderer" };
+    if (!sample || typeof sample !== "object") return null;
+    const durationMS = sceneNumber(sample.durationMS != null ? sample.durationMS : (sample.frameMS != null ? sample.frameMS : sample.gpuMS), 0);
+    if (!(durationMS > 0) || !Number.isFinite(durationMS)) return null;
+    return {
+      durationMS,
+      source: String(sample.source || sample.measurement || "renderer"),
+      atMS: sceneNumber(sample.atMS, nowMS),
+      rafIntervalMS: 0,
+      cpuDurationMS: 0,
+    };
+  }
+
+  function sceneAdaptiveRendererTimingStatus(renderer) {
+    if (!renderer || typeof renderer.getPerformanceTimingStatus !== "function") return null;
+    try {
+      const status = renderer.getPerformanceTimingStatus();
+      return status && typeof status === "object" ? status : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function sceneAdaptiveSetTier(state, tier, reason, nowMS) {
+    if (!state.profiles[tier] || state.activeTier === tier) return false;
+    state.activeTier = tier;
+    state.activeProfile = state.profiles[tier];
+    state.tier = tier;
+    state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, state.activeProfile.dprCap);
+    state.qualityRevision += 1;
+    state.transitionReason = reason;
+    state.cooldownUntilMS = nowMS + state.cooldownMS;
+    state.badFrames = 0;
+    state.goodFrames = 0;
+    state.severeFrames = 0;
+    return true;
+  }
+
+  function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
     if (!state || !state.enabled) {
       return false;
     }
     const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-    const frameMS = Math.max(0, now - sceneNumber(frameStart, now));
-    if (!isFinite(frameMS)) {
+    const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
+    const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
+    const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
+    state.lastRAFNowMS = rafNow;
+    state.frameCount += 1;
+    const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
+    const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
+    let sample = sceneAdaptiveRendererSample(renderer, now);
+    if (!sample && !rendererTimingLocked && rafIntervalMS > 0 && cpuDurationMS >= 0) {
+      sample = { durationMS: Math.max(rafIntervalMS, cpuDurationMS), source: "cpu-raf", atMS: now, rafIntervalMS, cpuDurationMS };
+    }
+    if (state.resumePending || state.frameCount <= state.warmupFrames || !sample) {
+      state.resumePending = false;
+      applySceneAdaptiveQualityState(mount, state, now, false);
       return false;
     }
-    state.frameCount += 1;
+    const frameMS = sample.durationMS;
     state.lastFrameMS = frameMS;
+    state.measurement = sample.source;
+    state.lastMeasurement = sample;
+    state.validSamples += 1;
     state.ewmaFrameMS = state.ewmaFrameMS > 0
       ? state.ewmaFrameMS * 0.84 + frameMS * 0.16
       : frameMS;
-
-    if (state.frameCount <= state.warmupFrames) {
-      applySceneAdaptiveQualityState(mount, state);
-      return false;
+    if (state.sampleWindow.length < 120) state.sampleWindow.push(frameMS);
+    else {
+      state.sampleWindow[state.sampleCursor] = frameMS;
+      state.sampleCursor = (state.sampleCursor + 1) % 120;
     }
+    if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const target = Math.max(8, sceneNumber(state.targetFrameMS, 16.7));
-    const missesBudget = frameMS > target * 1.35 || state.ewmaFrameMS > target * 1.18;
-    const severeMiss = frameMS > target * 2.4;
+    const target = Math.max(8, sceneNumber(sample.source === "cpu-raf" ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
+    const severeMiss = frameMS > target * 2;
     if (missesBudget) {
-      state.badFrames += severeMiss ? 4 : 1;
+      state.badFrames += 1;
       state.goodFrames = 0;
-    } else if (state.ewmaFrameMS < target * 0.9) {
+    } else if (frameMS < target * 0.72) {
       state.goodFrames += 1;
       state.badFrames = 0;
+    } else {
+      state.badFrames = 0;
+      state.goodFrames = 0;
     }
+    state.severeFrames = severeMiss ? state.severeFrames + 1 : 0;
 
     let changed = false;
-    let reason = "";
-    if (severeMiss || state.badFrames >= 10) {
-      const minDPR = Math.max(1, sceneNumber(state.minDevicePixelRatio, 1));
-      const currentDPR = state.currentMaxDevicePixelRatio > 0
-        ? state.currentMaxDevicePixelRatio
-        : sceneNumber(viewport && viewport.devicePixelRatio, 1);
-      if (currentDPR > minDPR + 0.01) {
-        const step = severeMiss ? 0.25 : 0.125;
-        state.currentMaxDevicePixelRatio = Math.max(minDPR, Math.round((currentDPR - step) * 1000) / 1000);
-        state.badFrames = 0;
-        changed = true;
-        reason = "dpr";
+    const order = ["full", "balanced", "survival"];
+    const activeIndex = Math.max(0, order.indexOf(state.activeTier));
+    const requestedIndex = Math.max(0, order.indexOf(state.requestedTier));
+    if (now >= state.cooldownUntilMS && (state.badFrames >= 20 || state.severeFrames >= 3)) {
+      if (activeIndex < order.length - 1) {
+        changed = sceneAdaptiveSetTier(state, order[activeIndex + 1], state.severeFrames >= 3 ? "severe" : "sustained", now);
       } else if (state.adaptivePostFX && !state.postFXSuppressed && sceneAdaptivePostFXSource(sceneState).length > 0) {
         state.postFXSuppressed = true;
-        state.badFrames = 0;
+        state.qualityRevision += 1;
+        state.transitionReason = "postfx";
+        state.cooldownUntilMS = now + state.cooldownMS;
         changed = true;
-        reason = "postfx";
+      }
+    } else if (now >= state.cooldownUntilMS && state.validSamples >= 300 && state.goodFrames >= 300) {
+      if (state.postFXSuppressed) {
+        state.postFXSuppressed = false;
+        state.qualityRevision += 1;
+        state.transitionReason = "postfx-restore";
+        state.cooldownUntilMS = now + state.cooldownMS;
+        changed = true;
+      } else if (activeIndex > requestedIndex) {
+        changed = sceneAdaptiveSetTier(state, order[activeIndex - 1], "recovered", now);
       }
     }
-    state.tier = sceneQualityTierForDPR(state);
     if (changed) {
       sceneApplyAdaptivePostFX(sceneState, state);
       applyScenePostFXState(mount, sceneState);
-      applySceneAdaptiveQualityState(mount, state);
-      gosxSceneEmit("warn", "adaptive-quality-downshift", {
-        reason,
+      applySceneAdaptiveQualityState(mount, state, now, true);
+      gosxSceneEmit("warn", "adaptive-quality-transition", {
+        reason: state.transitionReason,
+        requestedTier: state.requestedTier,
+        activeTier: state.activeTier,
         frameMS,
         ewmaFrameMS: state.ewmaFrameMS,
+        p95FrameMS: state.p95FrameMS,
         targetFrameMS: state.targetFrameMS,
         dprCap: state.currentMaxDevicePixelRatio,
         postFXSuppressed: state.postFXSuppressed,
       });
       return true;
     }
-    applySceneAdaptiveQualityState(mount, state);
+    applySceneAdaptiveQualityState(mount, state, now, false);
     return false;
   }
 
@@ -6755,6 +6907,68 @@
     publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
     publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
     let latestBundle = null;
+    let lastSceneRenderNowMS = null;
+    let rendererLifecycleActive = null;
+    let rendererLifecyclePaused = null;
+
+    function sceneFrameNowMS(value) {
+      const now = value == null ? NaN : Number(value);
+      if (Number.isFinite(now) && now >= 0) return now;
+      return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    }
+
+    function sceneWaterPausedForLifecycle() {
+      return sceneWaterSystemsPaused(sceneState);
+    }
+
+    function notifySceneRendererLifecycle(reason, force, disposing) {
+      const active = !disposing && sceneCanRender();
+      const paused = sceneWaterPausedForLifecycle();
+      if (!force && rendererLifecycleActive === active && rendererLifecyclePaused === paused) return;
+      if (adaptiveQuality && active && !paused && (rendererLifecycleActive !== true || rendererLifecyclePaused === true)) {
+        adaptiveQuality.resumePending = true;
+        adaptiveQuality.lastRAFNowMS = null;
+      }
+      rendererLifecycleActive = active;
+      rendererLifecyclePaused = paused;
+      if (!active || paused || disposing) lastSceneRenderNowMS = null;
+      if (renderer && typeof renderer.setLifecycle === "function") {
+        renderer.setLifecycle({
+          nowMS: sceneFrameNowMS(null),
+          active: active,
+          paused: paused,
+          disposed: Boolean(disposing),
+          reason: reason || "lifecycle",
+        });
+      }
+    }
+
+    function createSceneRenderFrameMeta(now) {
+      const nowMS = sceneFrameNowMS(now);
+      const active = sceneCanRender();
+      const displayDeltaMS = active && lastSceneRenderNowMS != null && nowMS >= lastSceneRenderNowMS
+        ? nowMS - lastSceneRenderNowMS
+        : 0;
+      lastSceneRenderNowMS = active ? nowMS : null;
+      const qualityEnabled = Boolean(adaptiveQuality && adaptiveQuality.enabled);
+      const qualityProfile = qualityEnabled && adaptiveQuality.activeProfile
+        ? adaptiveQuality.activeProfile
+        : null;
+      return {
+        nowMS: nowMS,
+        displayDeltaMS: displayDeltaMS,
+        active: active,
+        qualityEnabled: qualityEnabled,
+        qualityTier: adaptiveQuality && adaptiveQuality.tier ? adaptiveQuality.tier : "fixed",
+        qualityRevision: Math.max(0, Math.floor(sceneNumber(adaptiveQuality && adaptiveQuality.qualityRevision, 0))),
+        qualityProfile: qualityProfile,
+        qualityRequestedTier: adaptiveQuality.requestedTier,
+        qualityActiveTier: adaptiveQuality.activeTier,
+        performanceMeasurement: adaptiveQuality.lastMeasurement,
+      };
+    }
+
+    notifySceneRendererLifecycle("initial", true, false);
     const labelLayoutCache = new Map();
     const labelElements = new Map();
     const spriteElements = new Map();
@@ -7201,6 +7415,7 @@
       renderer = nextRenderer;
       applySceneRendererState(ctx.mount, renderer, fallbackReason);
       publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
+      notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
       renderWatchdogLastSeq = -1;
       renderWatchdogLastAt = 0;
       renderWatchdogLastAdvanceAt = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
@@ -7409,7 +7624,7 @@
       }
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
-      renderer.render(latestBundle, viewport);
+      renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(null));
       recordSceneWaterFrame(ctx.mount, latestBundle);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
@@ -8221,6 +8436,7 @@
     });
     const releaseLifecycleObserver = observeSceneLifecycle(ctx.mount, lifecycle, function(reason) {
       publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+      notifySceneRendererLifecycle(reason || "lifecycle", false, false);
       if (!sceneCanRender()) {
         cancelFrame();
         cancelScheduledRender();
@@ -8256,6 +8472,7 @@
           const result = applySceneCommands(sceneState, commands);
           publishSceneWaterStateSnapshot(ctx.mount, sceneState);
           publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+          notifySceneRendererLifecycle("managed-control-forms", false, false);
           if (result && typeof result.then === "function") {
             result.then(function() {
               scheduleRender("managed-control-forms-models");
@@ -8472,7 +8689,7 @@
             return;
           }
           syncSceneNodeSentinels(effectiveBundle);
-          renderer.render(effectiveBundle, viewport);
+          renderer.render(effectiveBundle, viewport, createSceneRenderFrameMeta(now));
           recordSceneWaterFrame(ctx.mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -8483,7 +8700,7 @@
           if (inspectorOverlay) {
             inspectorOverlay.update();
           }
-          if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart)) {
+          if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
             viewportDirty = true;
           }
           scheduleNextAnimationFrame();
@@ -8492,6 +8709,7 @@
       }
       if (runtimeScene && ctx.runtime) {
         const commandResult = applySceneCommands(sceneState, ctx.runtime.tick());
+        notifySceneRendererLifecycle("runtime-tick", false, false);
         if (commandResult && typeof commandResult.then === "function") {
           commandResult.then(function() {
             scheduleRender("runtime-model-commands");
@@ -8549,7 +8767,7 @@
         return;
       }
       syncSceneNodeSentinels(latestBundle);
-      renderer.render(latestBundle, viewport);
+      renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(now));
       recordSceneWaterFrame(ctx.mount, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
@@ -8561,7 +8779,7 @@
       if (inspectorOverlay) {
         inspectorOverlay.update();
       }
-      if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart)) {
+      if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
         viewportDirty = true;
       }
       scheduleNextAnimationFrame();
@@ -8795,6 +9013,7 @@
         const result = applySceneCommands(sceneState, commands);
         publishSceneWaterStateSnapshot(ctx.mount, sceneState);
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+        notifySceneRendererLifecycle("commands", false, false);
         if (result && typeof result.then === "function") {
           result.then(function() {
             scheduleRender("commands-models");
@@ -8811,6 +9030,7 @@
       dispose() {
         disposed = true;
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, true);
+        notifySceneRendererLifecycle("dispose", true, true);
         clearIdleContextRelease();
         clearVoluntaryRestoreWatchdog();
         stopSceneRenderWatchdog();

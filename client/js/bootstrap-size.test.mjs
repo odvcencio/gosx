@@ -189,7 +189,15 @@ const budgets = [
   // 16a-scene-webgpu.js / 30-tail.js, landed together with the E6 audio line
   // above. Measured: 1_192_618 / 315_900 / 254_712 + sub-1% rounding
   // headroom.
-  { file: "bootstrap.js", raw: 1_196_000, gzip: 317_000, brotli: 256_000 },
+  // Bumped raw 1_196_000 -> 1_199_000, gzip 317_000 -> 318_000, brotli
+  // 256_000 -> 256_500: water steady-state performance slice — cached WebGL
+  // uniform locations, retained shadow/object-texture passes, and throttled
+  // broad WebGPU DOM diagnostics. Measured: 1_197_095 / 317_299 / 255_972.
+  // Fixed-rate water plus hysteretic adaptive profiles, nonblocking GPU timing,
+  // and atomic quality resource swaps. Measured: 1_226_483 / 326_008 / 262_876.
+  // Water fixed-clock event queues, timing failure state, and allocation
+  // retry telemetry add ~3.7KB raw while compressed output remains in budget.
+  { file: "bootstrap.js", raw: 1_234_000, gzip: 328_000, brotli: 264_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -304,7 +312,12 @@ const budgets = [
   // 151_000: WebGL GPU-skinned Selena materials + gameplay post preset/FXAA
   // (see bootstrap.js note). Measured: 670_458 / 183_192 / 150_191 + sub-1%
   // rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 673_000, gzip: 184_000, brotli: 151_000 },
+  // Bumped raw 673_000 -> 675_000, gzip 184_000 -> 185_000, brotli 151_000 ->
+  // 152_000 for the WebGL water performance slice above. Measured:
+  // 673_640 / 184_371 / 151_257.
+  // Shared fixed clock plus WebGL adaptive resources/timer ring. Measured:
+  // 689_945 / 189_731 / 155_635.
+  { file: "bootstrap-feature-scene3d.js", raw: 693_000, gzip: 191_000, brotli: 157_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -366,7 +379,12 @@ const budgets = [
   // 64_500: water-demo Selena convergence (see bootstrap.js note) — the
   // descriptor-driven WGSL water renderer lands here. Measured: 328_062 /
   // 76_090 / 63_619 + sub-1% rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 331_000, gzip: 77_000, brotli: 64_500 },
+  // Bumped raw 331_000 -> 333_000, gzip 77_000 -> 78_000, brotli 64_500 ->
+  // 65_000 for exact in-memory frame proof plus 4 Hz broad DOM diagnostics.
+  // Measured: 331_872 / 76_994 / 64_334.
+  // WebGPU fixed ticks plus timestamp ring and atomic adaptive RTT swaps.
+  // Measured: 344_693 / 80_230 / 67_009.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 349_000, gzip: 81_500, brotli: 68_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

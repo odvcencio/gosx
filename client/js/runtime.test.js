@@ -8438,6 +8438,10 @@ test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
   assert.match(source, /data-gosx-scene3d-webgpu-frame-seq/);
   assert.match(source, /data-gosx-scene3d-webgpu-frame-at/);
   assert.match(source, /__gosxScene3DWebGPUStats = published/);
+  assert.match(source, /__gosxScene3DWebGPUProof = \{/);
+  assert.match(source, /WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS = 250/);
+  assert.match(source, /var mirrorDiagnostics = verboseTelemetry \|\| diagnosticElapsed < 0 \|\| diagnosticElapsed >= WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS/);
+  assert.match(source, /if \(!mirrorDiagnostics\) return/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-entries/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-instances/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-draw-instances/);
@@ -9332,7 +9336,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-y/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-z/);
   assert.match(webgpu, /function sceneWaterObjectTextureTargetSize\(entry, width, height\)/);
-  assert.match(webgpu, /WATER_OBJECT_TEXTURE_MAX_SIZE = 256/);
+  assert.match(webgpu, /WATER_OBJECT_TEXTURE_MAX_SIZE = 2048/);
   assert.match(webgpu, /WATER_OBJECT_TEXTURE_TARGET_COUNT = 3/);
   assert.match(webgpu, /function waterSystemUsesProjectedObjectTextures\(system\)/);
   assert.match(webgpu, /return kind === 3;/);
@@ -9352,7 +9356,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
   assert.doesNotMatch(webgpu, /uploadFrameUniforms\(sceneWaterReflectionCamera\(bundle && bundle\.camera\), targetWidth, targetHeight, false\)/);
   assert.match(webgpu, /var objectShadowResolution = sceneWaterObjectShadowResolution\(entry\)/);
-  assert.match(webgpu, /resolution,[\s\S]*causticsResolution,[\s\S]*objectTextureSize\.mode,[\s\S]*objectTextureSize\.width,[\s\S]*objectTextureSize\.height,[\s\S]*objectTextureSize\.resolution,[\s\S]*objectTextureSize\.pixelBudget,[\s\S]*objectShadowResolution,[\s\S]*seedDrops/);
+  assert.match(webgpu, /qualityTier: "full",[\s\S]*surfaceResolution: resolution,[\s\S]*causticsResolution: causticsResolution,[\s\S]*objectTexturePixelBudget: objectTextureSize\.pixelBudget,[\s\S]*objectShadowResolution: objectShadowResolution/);
   assert.match(core, /causticsResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.causticsResolution/);
   assert.match(core, /objectTextureResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.objectTextureResolution/);
   assert.match(core, /objectTextureResolutionMode: typeof item\.objectTextureResolutionMode === "string"/);
@@ -9458,7 +9462,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /renderWaterObjectMeshShadowPass\(encoder, system, objectList, pbrBuffers\)/);
   assert.match(webgpu, /renderWaterObjectSceneTexturePasses\(/);
   assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
-  assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameTimeSeconds, bundle, pbrSceneBuffers, scaledW, scaledH\)/);
+  assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH\)/);
   assert.match(webgpu, /waterObjectTexturePasses/);
   assert.match(webgpu, /waterObjectTextureTargets/);
   assert.match(webgpu, /waterObjectTextureMeshPasses/);
@@ -9741,7 +9745,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
 
   // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
   // before any render-pass encoder draw commands.
-  assert.match(webgpu, /var frameTimeSeconds = performance\.now\(\) \/ 1000;\s*\n\s*sceneSelenaFrameTime = frameTimeSeconds;/);
+  assert.match(webgpu, /var frameTimeSeconds = frameNowMS \/ 1000;\s*\n\s*sceneSelenaFrameTime = frameTimeSeconds;/);
 
   // WebGL: clock is set right after scratchSelenaViewProjection is populated
   // (sceneMat4MultiplyInto), before the shadow pass and before drawPBRObjectList.
@@ -9783,7 +9787,8 @@ test("Scene3D WebGL2 water renderer wires the compound-object shadow pass", () =
 
   // The shared shadow RTT is sized/allocated whenever either shadow program is
   // available, since pool only ever samples the one "shadowTexture" result.
-  assert.match(webgl, /var shadowTarget = \(shadowProgram \|\| compoundShadowProgram\) \? sceneWaterRenderCreateColorTarget\(gl, shadowSize\) : null/);
+  assert.match(webgl, /var shadowTarget = null/);
+  assert.match(webgl, /var nextShadowTarget = sceneWaterRenderCreateColorTarget\(gl, nextShadowSize\)/);
 
   // Proxy-sphere uniform scratch capped to compound-shadow.sel's array<vec4,32>.
   assert.match(webgl, /var COMPOUND_SHADOW_MAX_SPHERES = 32/);
@@ -9806,17 +9811,183 @@ test("Scene3D water renderers use one scheduler and bounded balanced-quality wor
   const forcedWater = webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/);
   assert.ok(forcedWater, "forced WebGL water renderer should exist");
   assert.doesNotMatch(forcedWater[0], /requestAnimationFrame|cancelAnimationFrame/);
-  assert.match(forcedWater[0], /function render\(bundle \/\*, viewport \*\/\) \{[\s\S]{0,180}drawFrame\(\);/);
+  assert.match(forcedWater[0], /function render\(bundle, viewport, frameMeta\)[\s\S]*drawFrame\(frameMeta\)/);
 
-  // Balanced/survival modes halve simulation substeps and cadence the two
-  // retained-texture prepasses. WebGPU also avoids stationary displacement.
-  assert.match(webgl, /if \(!liveEntry\.paused\) sim\.step\(\{ substeps: 2 \}\)/);
-  assert.match(webgl, /var refreshExpensivePasses = \(frameCount % expensivePassCadence\) === 0/);
+  // Balanced/survival modes preserve simulation substeps and cadence retained
+  // texture work. WebGPU also avoids stationary displacement.
+  assert.match(webgl, /if \(clockFrame\.ticks > 0\) \{\s*drainWaterEvents\(\);\s*sim\.simulate\(clockFrame\.substeps\);\s*sim\.recomputeNormal\(\);\s*\}/);
+  assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
   assert.match(webgl, /meshUploadSource === mesh && meshUploadProgram === prog/);
-  assert.match(webgpu, /var expensivePassCadence = system\.resolution === 128 \? 3 : \(system\.resolution === 192 \? 2 : 1\)/);
+  assert.match(webgpu, /var expensivePassCadence = Math\.max\(1, system\.expensivePassCadence \|\| 1\)/);
   assert.match(webgpu, /system\.waterObjectMoved = objectMoved/);
-  assert.match(webgpu, /var stepResultB = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline\)/);
+  assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*var stepResult = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline\)/);
   assert.match(webgpu, /optics\.caustics && refreshExpensivePasses/);
+});
+
+function loadSceneWaterClockAPI() {
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const start = core.indexOf("function sceneNumber(value, fallback)");
+  const end = core.indexOf("function sceneNumberOrCSSVar", start);
+  assert.notEqual(start, -1, "sceneNumber anchor missing from scene core");
+  assert.notEqual(end, -1, "sceneNumberOrCSSVar anchor missing from scene core");
+  const context = {};
+  vm.runInNewContext(
+    '"use strict";\n' + core.slice(start, end) +
+      "\nglobalThis.clockAPI = { sceneWaterAdvanceClock, sceneWaterResetClock };",
+    context,
+    { filename: "scene-water-clock.js" },
+  );
+  return context.clockAPI;
+}
+
+test("Scene3D shared water clock is fixed-rate across display cadence and lifecycle", () => {
+  const api = loadSceneWaterClockAPI();
+  const options = { simulationHz: 60, maxCatchUpTicks: 2, solverSubsteps: 2 };
+
+  function runCadence(displayHz, seconds) {
+    const clock = {};
+    api.sceneWaterAdvanceClock(clock, 0, true, false, options);
+    const frames = displayHz * seconds;
+    for (let frame = 1; frame <= frames; frame += 1) {
+      api.sceneWaterAdvanceClock(clock, frame * 1000 / displayHz, true, false, options);
+    }
+    return clock;
+  }
+
+  for (const displayHz of [120, 60, 30]) {
+    const clock = runCadence(displayHz, 1);
+    assert.equal(clock.tickSeq, 60, displayHz + " Hz display must produce 60 simulation ticks/second");
+    assert.equal(clock.solverSubstepSeq, 120, displayHz + " Hz display must preserve two solver substeps/tick");
+    assert.equal(clock.droppedTicks, 0, displayHz + " Hz display must not drop healthy cadence");
+  }
+
+  const jitter = {};
+  const jitterTimes = [0, 4, 11, 19, 28, 35, 51, 67, 83, 100];
+  for (const now of jitterTimes) api.sceneWaterAdvanceClock(jitter, now, true, false, options);
+  assert.equal(jitter.tickSeq, 6, "jitter must accumulate elapsed time instead of tying ticks to display count");
+  assert.equal(jitter.solverSubstepSeq, 12);
+
+  const stalled = {};
+  api.sceneWaterAdvanceClock(stalled, 0, true, false, options);
+  api.sceneWaterAdvanceClock(stalled, 100, true, false, options);
+  assert.equal(stalled.ticks, 2, "catch-up must be capped");
+  assert.equal(stalled.substeps, 4);
+  assert.equal(stalled.dropped, 4, "six elapsed ticks minus two executed ticks must drop four");
+  assert.equal(stalled.droppedTicks, 4);
+  assert.ok(stalled.accumulatorMS >= 0 && stalled.accumulatorMS < stalled.tickMS);
+
+  api.sceneWaterAdvanceClock(stalled, 90, true, false, options);
+  assert.equal(stalled.ticks, 0, "clock rollback must not simulate");
+  assert.equal(stalled.reset, true);
+  api.sceneWaterAdvanceClock(stalled, 107, true, false, options);
+  assert.equal(stalled.ticks, 1, "rollback must re-anchor at the rollback timestamp");
+
+  api.sceneWaterAdvanceClock(stalled, 120, true, true, options);
+  assert.equal(stalled.ticks, 0);
+  assert.equal(stalled.anchored, false, "pause must unanchor the clock");
+  api.sceneWaterAdvanceClock(stalled, 5000, true, false, options);
+  assert.equal(stalled.ticks, 0, "first frame after unpause must never catch up hidden time");
+  assert.equal(stalled.reset, true);
+  api.sceneWaterAdvanceClock(stalled, 5017, true, false, options);
+  assert.equal(stalled.ticks, 1);
+  api.sceneWaterAdvanceClock(stalled, 9000, false, false, options);
+  api.sceneWaterAdvanceClock(stalled, 12000, true, false, options);
+  assert.equal(stalled.ticks, 0, "first frame after offscreen resume must never catch up");
+});
+
+test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event IDs while paused", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(webgl, /var pendingDropEvents = new Map\(\)/);
+  assert.match(webgl, /var pendingObjectDisplacementEvents = new Map\(\)/);
+  assert.match(webgl, /queueWaterEvents\(liveEntry\);\s*if \(clockFrame\.ticks > 0\) \{\s*drainWaterEvents\(\);/);
+  assert.match(webgl, /pendingDropEvents\.set\(dropEventID,[\s\S]*pendingObjectDisplacementEvents\.set\(displacementEventID, queuedEvent\)/);
+  assert.match(webgl, /waterSeedEventPending: !seeded,[\s\S]*waterDropEventsPending: pendingDropEvents\.size,[\s\S]*waterObjectDisplacementEventsPending: pendingObjectDisplacementEvents\.size/);
+  assert.match(webgl, /if \(clockFrame\.ticks > 0\) \{\s*drainWaterEvents\(\);\s*sim\.simulate\(clockFrame\.substeps\);\s*sim\.recomputeNormal\(\);\s*\}/);
+  assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
+  assert.doesNotMatch(webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/)[0], /requestAnimationFrame|cancelAnimationFrame/);
+
+  assert.match(webgpu, /var hasSimulationTick = canConsumeWaterState && waterClock\.ticks > 0/);
+  assert.match(webgpu, /if \(hasSimulationTick && !system\.seeded\)/);
+  assert.match(webgpu, /if \(hasSimulationTick && dropEventID > 0 && system\.lastDropEventID !== dropEventID\)/);
+  assert.match(webgpu, /hasSimulationTick\s*\? dispatchWaterObjectDisplacementEvents/);
+  assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*solverStep < 2/);
+  assert.match(webgpu, /if \(hasSimulationTick\) \{\s*var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal"/);
+  assert.match(webgpu, /Math\.floor\(Math\.max\(0, waterClock\.tickSeq \|\| 0\) \/ expensivePassCadence\)/);
+
+  assert.equal((mount.match(/renderer\.render\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
+    "every mount render seam must pass frame metadata");
+  assert.match(mount, /renderer\.setLifecycle\(\{\s*nowMS:[\s\S]*active:[\s\S]*paused:[\s\S]*disposed:[\s\S]*reason:/);
+  assert.match(mount, /if \(!active \|\| paused \|\| disposing\) lastSceneRenderNowMS = null/);
+});
+
+test("Scene3D WebGPU timing initialization failure unlocks CPU-rAF fallback", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const timingInit = webgpu.match(/function ensureGPUTiming\(\) \{[\s\S]*?\n    \}/);
+  assert.ok(timingInit, "WebGPU timing initialization seam should exist");
+  assert.match(timingInit[0], /catch \(error\) \{[\s\S]*candidateQuerySet\.destroy\(\)[\s\S]*candidateBuffer\.destroy\(\)[\s\S]*gpuTiming = false;\s*gpuTimingFailed = true;/);
+  assert.match(webgpu, /return \{ available: active, active: active, pending: pending, failed: gpuTimingFailed, source: "gpu-timestamp" \}/);
+
+  const fallback = createAdaptiveQualityHarness();
+  fallback.renderer.pollPerformanceSample = function() { return null; };
+  fallback.renderer.getPerformanceTimingStatus = function() {
+    return { available: false, active: false, pending: false, failed: true, source: "gpu-timestamp" };
+  };
+  fallback.sample(99, 34);
+  assert.equal(fallback.state.measurement, "cpu-raf");
+  assert.equal(fallback.state.validSamples, 1, "failed GPU timing must not leave adaptive quality sample-starved");
+});
+
+test("Scene3D WebGPU quality allocation retries with bounded backoff and publishes telemetry", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const applyQuality = webgpu.match(/function applySceneWaterQualityProfile\([\s\S]*?\n    \}\n\n    function retireWaterSystem/);
+  assert.ok(applyQuality, "WebGPU quality allocation seam should exist");
+  assert.match(applyQuality[0], /system\.qualityAllocationPending && webGPUFrameSeq < system\.qualityAllocationNextFrame/);
+  assert.match(applyQuality[0], /system\.qualityAllocationFailures \+= 1;[\s\S]*system\.qualityAllocationConsecutiveFailures \+= 1;/);
+  assert.match(applyQuality[0], /system\.qualityAllocationNextFrame = webGPUFrameSeq \+ Math\.min\(60,\s*Math\.pow\(2, Math\.min\(6, system\.qualityAllocationConsecutiveFailures - 1\)\)\)/);
+  assert.match(webgpu, /waterQualityAllocationPending: published\.waterQualityAllocationPending \|\| 0,[\s\S]*waterQualityAllocationFailures: published\.waterQualityAllocationFailures \|\| 0,[\s\S]*waterQualityAllocationRetryFrame: published\.waterQualityAllocationRetryFrame \|\| 0/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-pending/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-failures/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-retry-frame/);
+});
+
+test("Scene3D WebGL2 water caches uniform locations and bounds retained-pass work", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // Cache hits and misses per WebGLProgram. Weak keys plus explicit disposal
+  // keep renderer replacement from retaining deleted programs.
+  assert.match(webgl, /var sceneWaterUniformLocations = new WeakMap\(\)/);
+  assert.match(webgl, /if \(locations\.has\(name\)\) return locations\.get\(name\)/);
+  assert.match(webgl, /sceneWaterUniformLocations\.delete\(program\)/);
+  const applyUniforms = webgl.match(/function sceneWaterApplyPassUniforms[\s\S]*?\n  \}/)[0];
+  const renderUniforms = webgl.match(/function sceneWaterRenderSetUniforms[\s\S]*?\n  \}/)[0];
+  assert.doesNotMatch(applyUniforms, /gl\.getUniformLocation/);
+  assert.doesNotMatch(renderUniforms, /gl\.getUniformLocation/);
+  assert.match(applyUniforms, /sceneWaterUniformLocation\(gl, program,/);
+  assert.match(renderUniforms, /sceneWaterUniformLocation\(gl, program,/);
+
+  // Caustics retain their quality cadence, while the object-shadow RTT is
+  // refreshed only when its exact object/light/pool footprint changes.
+  assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
+  assert.match(webgl, /var shadowSignature = waterShadowSignature\(/);
+  assert.match(webgl, /var refreshShadowPass = shadowSignature !== lastShadowSignature/);
+  assert.match(webgl, /shadowTarget && \(useCompoundShadow \? compoundShadowProgram : shadowProgram\) && refreshShadowPass/);
+  assert.match(webgl, /lastShadowSignature = shadowSignature;\s*\n\s*shadowRefreshCount\+\+/);
+
+  // Match WebGPU's retained object-texture strategy: one mesh target update per
+  // frame, with the other two textures reused and matrices still updated.
+  assert.match(webgl, /var meshTexturePassSlot = meshTexturePassCursor % 3/);
+  assert.match(webgl, /if \(meshTexturePassSlot === 0\)[\s\S]{0,900}else if \(meshTexturePassSlot === 1\)[\s\S]{0,900}else \{/);
+  assert.match(webgl, /meshTexturePassCursor = \(meshTexturePassCursor \+ 1\) % 3/);
+  assert.match(webgl, /objectRefractionMatrix\.set\(mvp\)[\s\S]{0,160}objectReflectionMatrix\.set/);
+
+  // Balanced mode shades a smaller surface grid without changing the 192-cell
+  // simulation or its two integration substeps, and exposes the choice in stats.
+  assert.match(webgl, /activeSurfaceGrid = selectWaterSurfaceGrid\(adaptiveEnabled/);
+  assert.match(webgl, /waterSurfaceGridResolution: gridResolution/);
+  assert.match(webgl, /waterSurfaceVertices: surfaceVertexCount/);
 });
 
 test("Scene3D WebGL2 water seeds only the authored initial ripples", () => {
@@ -9824,7 +9995,7 @@ test("Scene3D WebGL2 water seeds only the authored initial ripples", () => {
   const primeRipples = webgl.match(/function primeRipples\(\) \{[\s\S]*?\n    \}/);
   assert.ok(primeRipples, "forced WebGL water renderer should prime authored state");
 
-  assert.match(primeRipples[0], /sim\.seed\(\);/);
+  assert.match(primeRipples[0], /if \(!sim\.seed\(\)\) return false;/);
   assert.doesNotMatch(primeRipples[0], /sim\.seed\(\{/);
   assert.doesNotMatch(primeRipples[0], /sim\.drop\(/);
 });
@@ -9834,9 +10005,10 @@ test("Scene3D WebGL2 water consumes live events and renderer inputs", () => {
   const forcedWater = webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/);
   assert.ok(forcedWater, "forced WebGL water renderer should exist");
 
-  assert.match(forcedWater[0], /dropEventID > 0 && dropEventID !== lastDropEventID/);
-  assert.match(forcedWater[0], /sim\.drop\(\{[\s\S]{0,500}dropEventStrength/);
-  assert.match(forcedWater[0], /objectDisplacementEvents[\s\S]{0,1000}sim\.displace\(displacementEvent\)/);
+  assert.match(forcedWater[0], /dropEventID > lastDropEventID/);
+  assert.match(forcedWater[0], /pendingDropEvents\.set\(dropEventID, \{[\s\S]{0,500}dropEventStrength/);
+  assert.match(forcedWater[0], /pendingObjectDisplacementEvents\.set\(displacementEventID, queuedEvent\)/);
+  assert.match(forcedWater[0], /sim\.displace\(pendingObjectDisplacementEvents\.get\(displacementID\)\)/);
   assert.match(forcedWater[0], /var livePoolWidth = sceneWaterNum\(liveEntry\.poolWidth/);
   assert.match(forcedWater[0], /var liveLightDir = \[[\s\S]{0,240}liveEntry\.lightDirectionZ/);
   assert.match(forcedWater[0], /var liveOpticsEnable = \(liveEntry\.reflection \|\| liveEntry\.refraction\) \? 1 : 0/);
@@ -10217,6 +10389,30 @@ test("Scene3D WebGPU probe keeps optional features opt-in for headless devices",
   assert.equal(diagnostics.requestedFeatures.length, 0);
   assert.equal(diagnostics.deviceFeatures.length, 0);
   assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), false);
+});
+
+test("Scene3D adaptive WebGPU requests only supported timestamp-query", async () => {
+  let descriptor = null;
+  const adapter = {
+    features: new Set(["timestamp-query", "shader-f16", "subgroups"]),
+    limits: {},
+    requestDevice: async (next) => {
+      descriptor = next || {};
+      return { lost: new Promise(() => {}), features: new Set(descriptor.requiredFeatures || []), limits: {} };
+    },
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource } },
+    navigatorGPU: { requestAdapter: async () => adapter, getPreferredCanvasFormat: () => "rgba8unorm" },
+    manifest: { engines: [{ component: "GoSXScene3D", props: { adaptiveQuality: { tier: "balanced" } } }] },
+  });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d-adaptive-probe.js");
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.deepEqual(Array.from(descriptor.requiredFeatures || []), ["timestamp-query"]);
+  assert.deepEqual(Array.from(env.context.__gosx_scene3d_webgpu_diagnostics().requestedFeatures), ["timestamp-query"]);
 });
 
 test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter", async () => {
@@ -13798,68 +13994,141 @@ test("Scene3D defers postfx until idle delay", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
 });
 
-test("Scene3D adaptive quality downshifts DPR before shedding postfx", async () => {
+function loadSceneAdaptiveQualityAPI() {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const start = source.indexOf("function createSceneAdaptiveQualityState");
+  const end = source.indexOf("function applyScenePostFXState", start);
+  assert.notEqual(start, -1, "adaptive controller start anchor missing");
+  assert.notEqual(end, -1, "adaptive controller end anchor missing");
+  const clock = { now: 0 };
+  const context = { __clock: clock };
+  vm.runInNewContext(`
+    function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+    function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
+    function setAttrValue(mount, name, value) { const next = String(value == null ? "" : value); if (mount.getAttribute(name) !== next) mount.setAttribute(name, next); }
+    function applyScenePostFXState() {}
+    function gosxSceneEmit() {}
+    const performance = { now: () => __clock.now };
+  ` + source.slice(start, end) + `
+    globalThis.adaptiveAPI = { createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality };
+  `, context, { filename: "scene-adaptive-quality.js" });
+  return { api: context.adaptiveAPI, clock };
+}
+
+function createAdaptiveQualityHarness(extraProps) {
+  const loaded = loadSceneAdaptiveQualityAPI();
+  const props = Object.assign({
+    adaptiveQuality: true,
+    qualityTier: "balanced",
+    adaptiveTargetFrameMS: 16,
+    adaptiveWarmupFrames: 0,
+    adaptiveCooldownMS: 5000,
+    adaptivePostFX: true,
+  }, extraProps || {});
+  const state = loaded.api.createSceneAdaptiveQualityState(props, { explicitMaxDevicePixelRatio: 1.6 }, { tier: "full" });
   const mount = new FakeElement("div", null);
-  mount.id = "scene-adaptive-quality";
-  let perfNow = 0;
-
-  const env = createContext({
-    elements: [mount],
-    devicePixelRatio: 2,
-    performanceNow: () => {
-      perfNow += 60;
-      return perfNow;
-    },
-    manifest: {
-      engines: [
-        {
-          id: "gosx-engine-adaptive-quality",
-          component: "GoSXScene3D",
-          kind: "surface",
-          mountId: "scene-adaptive-quality",
-          jsExport: "GoSXScene3D",
-          props: {
-            width: 480,
-            height: 300,
-            autoRotate: true,
-            maxDevicePixelRatio: 2,
-            minDevicePixelRatio: 1,
-            adaptiveQuality: true,
-            adaptiveTargetFrameMS: 16,
-            adaptiveWarmupFrames: 0,
-            adaptivePostFX: true,
-            scene: {
-              postEffects: [
-                { kind: "bloom", threshold: 0.7, intensity: 0.5 },
-              ],
-              objects: [
-                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
-              ],
-            },
-          },
-          capabilities: ["canvas", "animation"],
-        },
-      ],
-    },
-  });
-  const raf = installManualRAF(env.context);
-
-  runScript(bootstrapSource, env.context, "bootstrap.js");
-  await flushAsyncWork();
-
-  assert.equal(mount.getAttribute("data-gosx-scene3d-adaptive-quality"), "true");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "2");
-
-  for (let i = 0; i < 5; i += 1) {
-    assert.equal(raf.count(), 1);
-    raf.flush((i + 1) * 16);
-    await flushAsyncWork();
+  const bloom = { kind: "bloom" };
+  const sceneState = { _adaptiveSourcePostEffects: [bloom], postEffects: [bloom] };
+  const renderer = {
+    sample: null,
+    pollPerformanceSample() { const sample = this.sample; this.sample = null; return sample; },
+  };
+  let frameNowMS = 0;
+  function sample(durationMS, advanceMS) {
+    const advance = advanceMS == null ? 16 : advanceMS;
+    loaded.clock.now += advance;
+    frameNowMS += advance;
+    renderer.sample = { source: "gpu-test", gpuMS: durationMS, atMS: loaded.clock.now };
+    return loaded.api.sceneUpdateAdaptiveQuality(state, mount, sceneState, {}, loaded.clock.now - 1, frameNowMS, renderer);
   }
+  loaded.api.applySceneAdaptiveQualityState(mount, state, 0, true);
+  sample(1); // resume/initial anchor is deliberately excluded
+  return { ...loaded, state, mount, sceneState, renderer, sample };
+}
 
-  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-postfx-suppressed"), "true");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "none");
+test("Scene3D adaptive profiles start balanced and expose exact frame contract", () => {
+  const { state, mount } = createAdaptiveQualityHarness();
+  assert.equal(state.requestedTier, "balanced");
+  assert.equal(state.activeTier, "balanced");
+  assert.deepEqual(JSON.parse(JSON.stringify(state.activeProfile)), {
+    tier: "balanced", dprCap: 1.25, surfaceResolution: 128,
+    causticsResolution: 384, objectShadowResolution: 384,
+    objectTextureMaxSide: 384, objectTexturePixelBudget: 442368,
+    expensivePassCadence: 2,
+  });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-requested"), "balanced");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-active"), "balanced");
+  assert.equal(mount.__gosxScene3DQualityState.profile, state.activeProfile);
+  const mountSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(mountSource, /qualityEnabled: qualityEnabled,[\s\S]{0,320}qualityProfile: qualityProfile,[\s\S]{0,320}performanceMeasurement: adaptiveQuality\.lastMeasurement/);
+});
+
+test("Scene3D adaptive config objects default enabled and disabled mode sends no profile override", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const enabled = api.createSceneAdaptiveQualityState({ adaptiveQuality: { tier: "balanced" } }, {}, {});
+  const disabled = api.createSceneAdaptiveQualityState({ adaptiveQuality: { enabled: false }, qualityTier: "balanced" }, {}, {});
+  assert.equal(enabled.enabled, true);
+  assert.equal(disabled.enabled, false);
+  const mountSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(mountSource, /const qualityProfile = qualityEnabled && adaptiveQuality\.activeProfile[\s\S]{0,100}: null/);
+});
+
+test("Scene3D adaptive measurement locks to active renderer timing and respects authored frame caps", () => {
+  const locked = createAdaptiveQualityHarness();
+  locked.renderer.pollPerformanceSample = function() { return null; };
+  locked.renderer.getPerformanceTimingStatus = function() { return { available: true, active: true, pending: true, source: "gpu-test" }; };
+  const before = locked.state.validSamples;
+  for (let i = 0; i < 24; i++) locked.sample(99, 34);
+  assert.equal(locked.state.validSamples, before, "null GPU samples must not mix in CPU-rAF while renderer timing is active");
+  assert.equal(locked.state.activeTier, "balanced");
+
+  const capped = createAdaptiveQualityHarness({ maxFPS: 30 });
+  capped.renderer.pollPerformanceSample = function() { return null; };
+  capped.renderer.getPerformanceTimingStatus = function() { return { available: false, active: false, pending: false, source: "none" }; };
+  for (let i = 0; i < 24; i++) capped.sample(99, 34);
+  assert.equal(capped.state.measurement, "cpu-raf");
+  assert.equal(capped.state.activeTier, "balanced", "authored 30 FPS rAF cadence must not trigger a false downshift");
+});
+
+test("Scene3D adaptive controller is hysteretic, cooldown-safe, and recovers one tier", () => {
+  const sustained = createAdaptiveQualityHarness();
+  for (let i = 0; i < 19; i++) sustained.sample(20);
+  assert.equal(sustained.state.activeTier, "balanced");
+  sustained.sample(20);
+  assert.equal(sustained.state.activeTier, "survival");
+  assert.equal(sustained.state.qualityRevision, 1);
+  assert.equal(sustained.state.postFXSuppressed, false, "postFX must remain until after survival");
+  for (let i = 0; i < 300; i++) sustained.sample(5);
+  assert.equal(sustained.state.activeTier, "survival", "cooldown must prevent oscillation");
+  sustained.sample(5, 5001);
+  assert.equal(sustained.state.activeTier, "balanced", "recovery is one tier and never above requested balanced");
+
+  const severe = createAdaptiveQualityHarness();
+  severe.sample(40); severe.sample(40);
+  assert.equal(severe.state.activeTier, "balanced");
+  severe.sample(40);
+  assert.equal(severe.state.activeTier, "survival", "three >2x samples must severe-downshift");
+});
+
+test("Scene3D adaptive controller sheds postFX last and bounds DOM telemetry", () => {
+  const harness = createAdaptiveQualityHarness({ qualityTier: "full" });
+  let writes = 0;
+  const originalSet = harness.mount.setAttribute.bind(harness.mount);
+  harness.mount.setAttribute = function(name, value) { writes += 1; originalSet(name, value); };
+  for (let i = 0; i < 20; i++) harness.sample(20);
+  assert.equal(harness.state.activeTier, "balanced");
+  assert.equal(harness.state.postFXSuppressed, false);
+  harness.sample(20, 5001);
+  for (let i = 1; i < 20; i++) harness.sample(20);
+  assert.equal(harness.state.activeTier, "survival");
+  assert.equal(harness.state.postFXSuppressed, false);
+  harness.sample(20, 5001);
+  for (let i = 1; i < 20; i++) harness.sample(20);
+  assert.equal(harness.state.activeTier, "survival");
+  assert.equal(harness.state.postFXSuppressed, true);
+  assert.ok(writes < 180, "quality attrs must publish at <=4Hz or transitions, got " + writes);
+  assert.equal(harness.mount.__gosxScene3DQualityState.validSamples, harness.state.validSamples);
+  assert.equal(harness.mount.__gosxScene3DQualityState.measurement, "gpu-test");
 });
 
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
@@ -20023,6 +20292,7 @@ function gpuBindGroupLayoutEntryKind(entry) {
 // site (there are hundreds across this file) byte-for-byte unaffected.
 function makeFakeGPUDevice(options) {
   const validateBindings = Boolean(options && options.validateBindings);
+  const timestampQuery = Boolean(options && options.timestampQuery);
   function validateBindGroupLayoutDesc(desc) {
     if (!validateBindings) return;
     const entries = (desc && desc.entries) || [];
@@ -20162,6 +20432,7 @@ function makeFakeGPUDevice(options) {
     computePipelines: [],
     shaderModules: [],
     bindGroups: [],
+    buffers: [],
     // Texture lifecycle recording for the sprite path: every createTexture
     // (placeholder + the post-load upload target), writeTexture (placeholder
     // pixel), and copyExternalImageToTexture (the resolved image upload).
@@ -20217,8 +20488,8 @@ function makeFakeGPUDevice(options) {
   }
   const device = {
     lost: new Promise(() => {}),
-    features: new Set(),
-    limits: {},
+    features: new Set(timestampQuery ? ["timestamp-query"] : []),
+    limits: timestampQuery ? { timestampPeriod: 1 } : {},
     queue: {
       writeBuffer(buffer, offset, data) {
         state.writeBufferCalls.push({
@@ -20281,6 +20552,10 @@ function makeFakeGPUDevice(options) {
     createSampler(desc) {
       return { __kind: "sampler", desc };
     },
+    createQuerySet(desc) {
+      if (!timestampQuery) throw new Error("timestamp-query unsupported");
+      return { __kind: "querySet", desc, destroy() {} };
+    },
     createTexture(desc) {
       textureSeq += 1;
       const texture = {
@@ -20290,7 +20565,7 @@ function makeFakeGPUDevice(options) {
         createView() {
           return { __kind: "textureView", textureId: textureSeq };
         },
-        destroy() {},
+        destroy() { texture.destroyed = true; },
       };
       state.textures.push(texture);
       return texture;
@@ -20300,17 +20575,33 @@ function makeFakeGPUDevice(options) {
         __kind: "buffer",
         size: desc && desc.size || 0,
         usage: desc && desc.usage,
-        destroy() {},
+        destroy() { buffer.destroyed = true; },
       };
+      if (timestampQuery) {
+        buffer._backing = new ArrayBuffer(buffer.size);
+        buffer.mapAsync = () => Promise.resolve();
+        buffer.getMappedRange = () => buffer._backing;
+        buffer.unmap = () => {};
+      }
       if (desc && desc.mappedAtCreation) {
         const backing = new ArrayBuffer(buffer.size);
         buffer.getMappedRange = () => backing;
         buffer.unmap = () => {};
       }
+      state.buffers.push(buffer);
       return buffer;
     },
     createCommandEncoder() {
       return {
+        writeTimestamp() {},
+        resolveQuerySet() {},
+        copyBufferToBuffer(_source, _sourceOffset, destination) {
+          if (timestampQuery && destination && destination._backing) {
+            const values = new BigUint64Array(destination._backing);
+            values[0] = 0n;
+            values[1] = 4_000_000n;
+          }
+        },
         beginRenderPass(descriptor) {
           const pass = makePass(descriptor, "render");
           state.renderPasses.push(pass);
@@ -20348,10 +20639,15 @@ function makeFakeGPUDevice(options) {
 // can opt into a bundle built fresh from bootstrap-src via this helper. If
 // build-bootstrap.mjs's file list for a bundle changes, update the matching
 // list below.
-function freshFeatureBundleSource(name) {
+function freshFeatureBundleSource(name, options) {
   const srcDir = path.join(__dirname, "bootstrap-src");
+  const opts = options || {};
   function read(rel) {
-    return fs.readFileSync(path.join(srcDir, rel), "utf8");
+    const source = fs.readFileSync(path.join(srcDir, rel), "utf8");
+    if (rel === "16-scene-webgl.js" && opts.exportWaterRendererForTest) {
+      return source + "\nwindow.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n";
+    }
+    return source;
   }
   if (name === "scene3d") {
     return [
@@ -20404,7 +20700,11 @@ function freshFeatureBundleSource(name) {
 // options.fakeDeviceOptions is forwarded to makeFakeGPUDevice().
 async function createBoardWebGPUHarness(options) {
   const opts = options || {};
-  const env = createContext({ enableWebGPU: true });
+  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow });
+  // Most renderer harnesses assert the complete diagnostic attribute surface.
+  // Production defaults to throttled telemetry; tests opt out only when they
+  // are specifically verifying that production behavior.
+  env.context.__gosx_scene3d_webgpu_telemetry = opts.verboseTelemetry !== false;
   // WebGPU usage-flag globals the renderer reads when creating resources.
   env.context.GPUBufferUsage = {
     MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
@@ -20916,7 +21216,8 @@ test("Scene3D WebGPU water compound-shadow / object-mesh-shadow passes route thr
   harness.canvas.width = 64;
   harness.canvas.height = 64;
   assert.doesNotThrow(() => {
-    harness.renderer.render(bundle, { width: 64, height: 64 });
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 17, active: true });
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
 
   const mount = harness.mount;
@@ -21264,12 +21565,419 @@ async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
       objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
     );
     const before = deviceCallSnapshot(harness.fake);
-    harness.renderer.render(bundle, { width: 64, height: 64 });
+    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+      nowMS: frame * 17,
+      displayDeltaMS: frame === 0 ? 0 : 17,
+      active: true,
+      qualityTier: resolution === 128 ? "survival" : (resolution === 192 ? "balanced" : "full"),
+      qualityRevision: 0,
+    });
     const after = deviceCallSnapshot(harness.fake);
     deltas.push(deviceCallDelta(before, after));
   }
   return { harness, deltas };
 }
+
+test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events exactly", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 192);
+  const entry = state.waterSystems[0];
+  entry.seedDrops = 0;
+  entry.activeObject = "None";
+  entry.objectKind = "none";
+  entry.objectDisplacementScale = 0;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  function renderAt(nowMS) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
+    );
+    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+      nowMS,
+      displayDeltaMS: 0,
+      active: true,
+      qualityTier: "balanced",
+      qualityRevision: 0,
+    });
+    return harness.mount.__gosxScene3DWebGPUStats;
+  }
+
+  let stats = renderAt(0);
+  assert.equal(stats.waterSimulationTicks, 0, "first frame only anchors the clock");
+  assert.equal(stats.waterSurfaceResolution, 192, "adaptive-disabled frame metadata must preserve authored WebGPU topology");
+  assert.equal(stats.waterSolverSubsteps, 0);
+  assert.equal(stats.waterNormalDispatches, 0, "zero ticks must not recompute normals");
+
+  stats = renderAt(8);
+  assert.equal(stats.waterSimulationTicks, 0, "120Hz display-only frame must not advance 60Hz simulation");
+  assert.equal(stats.waterNormalDispatches, 0);
+
+  stats = renderAt(17);
+  assert.equal(stats.waterSimulationTicks, 1);
+  assert.equal(stats.waterSolverSubsteps, 2, "one fixed tick must execute two solver substeps");
+  assert.equal(stats.waterNormalDispatches, 1, "N ticks must batch into one normal recompute");
+
+  stats = renderAt(51);
+  assert.equal(stats.waterSimulationTicks, 2);
+  assert.equal(stats.waterSolverSubsteps, 4, "two catch-up ticks must execute four solver substeps");
+  assert.equal(stats.waterNormalDispatches, 1, "catch-up still recomputes normals once");
+
+  entry.paused = true;
+  entry.dropEventID = 7;
+  entry.dropX = 0.25;
+  entry.dropZ = -0.2;
+  entry.objectDisplacementEvents = [{
+    id: 9,
+    activeObject: "Sphere",
+    objectKind: "sphere",
+    objectX: 0.1,
+    objectY: -0.5,
+    objectZ: 0.2,
+    objectPreviousSet: true,
+    objectPreviousX: 0,
+    objectPreviousY: -0.5,
+    objectPreviousZ: 0.2,
+    objectRadius: 0.2,
+    objectDisplacementScale: 1,
+  }];
+  harness.renderer.setLifecycle({ nowMS: 60, active: true, paused: true });
+  stats = renderAt(1000);
+  assert.equal(stats.waterLastDropEventID, 0, "paused drop ID must remain unconsumed");
+  assert.equal(stats.waterLastObjectDisplacementEventID, 0, "paused object event ID must remain unconsumed");
+  assert.equal(stats.waterSimulationTicks, 0);
+  assert.equal(stats.waterNormalDispatches, 0);
+
+  entry.paused = false;
+  harness.renderer.setLifecycle({ nowMS: 1100, active: true, paused: false });
+  stats = renderAt(1100);
+  assert.equal(stats.waterSimulationTicks, 0, "resume frame must anchor without catch-up");
+  assert.equal(stats.waterLastDropEventID, 0, "resume anchor must not consume queued drops without a tick");
+  assert.equal(stats.waterLastObjectDisplacementEventID, 0, "resume anchor must not consume queued object events without a tick");
+  stats = renderAt(1117);
+  assert.equal(stats.waterSimulationTicks, 1, "first post-resume fixed tick must drain queued events");
+  assert.equal(stats.waterLastDropEventID, 7, "queued drop must process once after resume");
+  assert.equal(stats.waterLastObjectDisplacementEventID, 9, "queued object event must process once after resume");
+});
+
+test("Scene3D fake WebGPU quality transitions preserve simulation buffers and authored caps", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 192);
+  const entry = state.waterSystems[0];
+  entry.seedDrops = 0;
+  entry.causticsResolution = 512;
+  entry.objectShadowResolution = 512;
+  entry.objectTextureResolution = 512;
+  entry.objectTexturePixelBudget = 786432;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  function renderProfile(nowMS, revision, profile) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
+    );
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS, active: true, qualityEnabled: true, qualityRevision: revision, qualityProfile: profile });
+    return harness.mount.__gosxScene3DWebGPUStats;
+  }
+  const balanced = { tier: "balanced", dprCap: 1.25, surfaceResolution: 128, causticsResolution: 384, objectShadowResolution: 384, objectTextureMaxSide: 384, objectTexturePixelBudget: 442368, expensivePassCadence: 2 };
+  let stats = renderProfile(0, 1, balanced);
+  assert.equal(stats.waterQualityTier, "balanced");
+  assert.equal(stats.waterSurfaceResolution, 128);
+  assert.equal(stats.waterActiveCausticsResolution, 384);
+  assert.equal(stats.waterActiveObjectShadowResolution, 384);
+  const simulationBuffers = harness.fake.state.buffers.filter((buffer) => buffer.size === 192 * 192 * 16);
+  assert.equal(simulationBuffers.length, 2);
+
+  const survival = { tier: "survival", dprCap: 1, surfaceResolution: 96, causticsResolution: 256, objectShadowResolution: 256, objectTextureMaxSide: 256, objectTexturePixelBudget: 196608, expensivePassCadence: 3 };
+  stats = renderProfile(17, 2, survival);
+  assert.equal(stats.waterQualityTier, "survival");
+  assert.equal(stats.waterSurfaceResolution, 96);
+  assert.equal(stats.waterActiveCausticsResolution, 256);
+  assert.equal(stats.waterActiveObjectShadowResolution, 256);
+  assert.equal(harness.fake.state.buffers.filter((buffer) => buffer.size === 192 * 192 * 16).length, 2, "profile transition must not allocate replacement simulation buffers");
+  assert.ok(simulationBuffers.every((buffer) => !buffer.destroyed), "profile transition must preserve live simulation buffers");
+  assert.equal(stats.waterSimulationTickSeq, 1, "profile transition must advance the existing fixed clock without reseeding");
+
+  const oversized = { tier: "full", dprCap: 2, surfaceResolution: 320, causticsResolution: 1024, objectShadowResolution: 1024, objectTextureMaxSide: 1024, objectTexturePixelBudget: 3_145_728, expensivePassCadence: 1 };
+  stats = renderProfile(34, 3, oversized);
+  assert.equal(stats.waterSurfaceResolution, 192, "surface cap cannot exceed authored simulation topology");
+  assert.equal(stats.waterActiveCausticsResolution, 512, "full profile cannot exceed authored caustics cap");
+  assert.equal(stats.waterActiveObjectShadowResolution, 512, "full profile cannot exceed authored shadow cap");
+  assert.ok(simulationBuffers.every((buffer) => !buffer.destroyed));
+  assert.equal(harness.renderer.pollPerformanceSample(), null, "timestamp-unavailable devices must fall back safely without blocking");
+});
+
+test("Scene3D fake WebGPU ignores supplied quality profiles when adaptive quality is disabled", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 192);
+  const entry = state.waterSystems[0];
+  entry.seedDrops = 0;
+  entry.causticsResolution = 512;
+  entry.objectShadowResolution = 512;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000", { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
+  );
+  harness.renderer.render(bundle, { width: 64, height: 64 }, {
+    nowMS: 0,
+    active: true,
+    qualityEnabled: false,
+    qualityRevision: 99,
+    qualityProfile: {
+      tier: "survival", surfaceResolution: 96, causticsResolution: 256,
+      objectShadowResolution: 256, objectTextureMaxSide: 256,
+      objectTexturePixelBudget: 196608, expensivePassCadence: 3,
+    },
+  });
+  const stats = harness.mount.__gosxScene3DWebGPUStats;
+  assert.equal(stats.waterQualityTier, "full");
+  assert.equal(stats.waterQualityRevision, 0);
+  assert.equal(stats.waterSurfaceResolution, 192);
+  assert.equal(stats.waterActiveCausticsResolution, 512);
+  assert.equal(stats.waterActiveObjectShadowResolution, 512);
+});
+
+test("Scene3D fake WebGPU timestamp ring is supported and nonblocking", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false, fakeDeviceOptions: { timestampQuery: true } });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 192);
+  state.waterSystems[0].seedDrops = 0;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  for (let frame = 0; frame < 3; frame++) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000", { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, frame * 0.017, [], [], [], state.waterSystems, [], 0, false,
+    );
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 17, active: true });
+    if (frame < 2) assert.equal(harness.renderer.pollPerformanceSample(), null, "timestamp polling must not wait for unresolved GPU work");
+  }
+  await flushAsyncWork();
+  const status = harness.renderer.getPerformanceTimingStatus();
+  assert.equal(status.available, true);
+  assert.equal(status.active, true);
+  const sample = harness.renderer.pollPerformanceSample();
+  assert.equal(sample.source, "gpu-timestamp");
+  assert.equal(sample.gpuMS, 4);
+});
+
+test("Scene3D fake WebGPU timing partial allocation failure destroys candidates and exposes CPU fallback", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    verboseTelemetry: false,
+    fakeDeviceOptions: { timestampQuery: true },
+  });
+  const device = harness.fake.device;
+  const originalCreateBuffer = device.createBuffer.bind(device);
+  const querySet = { destroyed: false, destroy() { this.destroyed = true; } };
+  device.createQuerySet = function() { return querySet; };
+  const timingBuffers = [];
+  device.createBuffer = function(desc) {
+    const isTimingBuffer = desc && desc.size === 16 && (desc.usage === (0x200 | 0x4) || desc.usage === (0x8 | 0x1));
+    if (!isTimingBuffer) return originalCreateBuffer(desc);
+    if (timingBuffers.length === 1) throw new Error("injected timestamp readback allocation failure");
+    const buffer = originalCreateBuffer(desc);
+    timingBuffers.push(buffer);
+    return buffer;
+  };
+
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 192);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000", { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
+  );
+  assert.doesNotThrow(() => harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true }));
+  assert.equal(querySet.destroyed, true, "partially-created query set must be destroyed");
+  assert.equal(timingBuffers.length, 1);
+  assert.equal(timingBuffers[0].destroyed, true, "partially-created timing buffer must be destroyed");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(harness.renderer.getPerformanceTimingStatus())),
+    { available: false, active: false, pending: false, failed: true, source: "gpu-timestamp" },
+  );
+  assert.equal(harness.renderer.pollPerformanceSample(), null, "failed GPU timing must fall back without blocking");
+});
+
+test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events exactly", () => {
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(
+    freshFeatureBundleSource("scene3d", { exportWaterRendererForTest: true }),
+    env.context,
+    "bootstrap-feature-scene3d-water-test.js",
+  );
+  const createWaterRenderer = env.context.__gosx_test_create_water_webgl;
+  assert.equal(typeof createWaterRenderer, "function");
+
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const gl = new FakeWebGLContext();
+  gl.HALF_FLOAT = 0x140B;
+  gl.FRAMEBUFFER_COMPLETE = 0x8CD5;
+  gl.QUERY_RESULT_AVAILABLE = 0x8867;
+  gl.QUERY_RESULT = 0x8866;
+  gl.checkFramebufferStatus = function() { return gl.FRAMEBUFFER_COMPLETE; };
+  gl.drawElements = function(mode, count, type, offset) { gl.ops.push(["drawElements", mode, count, type, offset]); };
+  const timerExt = { TIME_ELAPSED_EXT: 0x88BF, GPU_DISJOINT_EXT: 0x8FBB };
+  let timerAvailable = false;
+  let timerDisjoint = false;
+  let timerSeq = 0;
+  gl.createQuery = function() { return { id: ++timerSeq }; };
+  gl.deleteQuery = function(query) { gl.ops.push(["deleteQuery", query && query.id]); };
+  gl.beginQuery = function(target, query) { gl.ops.push(["beginQuery", target, query.id]); };
+  gl.endQuery = function(target) { gl.ops.push(["endQuery", target]); };
+  gl.getQueryParameter = function(_query, param) {
+    if (param === gl.QUERY_RESULT_AVAILABLE) return timerAvailable;
+    if (param === gl.QUERY_RESULT) return 4_000_000;
+    return 0;
+  };
+  const originalGetParameter = gl.getParameter.bind(gl);
+  gl.getParameter = function(param) { return param === timerExt.GPU_DISJOINT_EXT ? timerDisjoint : originalGetParameter(param); };
+  const originalGetExtension = gl.getExtension.bind(gl);
+  gl.getExtension = function(name) {
+    if (name === "EXT_color_buffer_float" || name === "EXT_color_buffer_half_float" || name === "OES_texture_float_linear") return {};
+    if (name === "EXT_disjoint_timer_query_webgl2") return timerExt;
+    return originalGetExtension(name);
+  };
+  canvas._webglContext = gl;
+
+  const shader = "void main() {}";
+  const entry = {
+    id: "water-main",
+    resolution: 192,
+    seedDrops: 0,
+    paused: false,
+    activeObject: "None",
+    objectKind: "none",
+    simulationVertexGLES: shader,
+    simulationFragmentGLES: shader,
+    normalVertexGLES: shader,
+    normalFragmentGLES: shader,
+    dropVertexGLES: shader,
+    dropFragmentGLES: shader,
+    displacementVertexGLES: shader,
+    displacementFragmentGLES: shader,
+    poolVertexGLES: shader,
+    poolFragmentGLES: shader,
+    surfaceVertexGLES: shader,
+    surfaceFragmentGLES: shader,
+    causticsVertexGLES: shader,
+    causticsFragmentGLES: shader,
+    objectShadowVertexGLES: shader,
+    objectShadowFragmentGLES: shader,
+    causticsResolution: 512,
+    objectShadowResolution: 512,
+    objectTextureResolution: 512,
+    objectTexturePixelBudget: 786432,
+    shaderDescriptors: {},
+  };
+  const renderer = createWaterRenderer(gl, canvas, entry);
+  assert.ok(renderer, "fake WebGL water renderer must initialize");
+  const bundle = { waterSystems: [entry], camera: { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 } };
+  const viewport = { width: 64, height: 64 };
+
+  renderer.render(bundle, viewport, { nowMS: 0, active: true });
+  let stats = renderer.getStats();
+  assert.equal(stats.waterSimulationTicksLastFrame, 0);
+  assert.equal(stats.waterQualityAdaptiveEnabled, false, "missing qualityEnabled must preserve authored WebGL resources");
+  assert.equal(stats.waterSimulationPasses, 0);
+  assert.equal(stats.waterNormalPasses, 0);
+
+  renderer.render(bundle, viewport, { nowMS: 8, active: true });
+  stats = renderer.getStats();
+  assert.equal(stats.waterSimulationPasses, 0, "120Hz display-only frame must not run WebGL simulation");
+  assert.equal(stats.waterNormalPasses, 0);
+
+  renderer.render(bundle, viewport, { nowMS: 17, active: true });
+  stats = renderer.getStats();
+  assert.equal(stats.waterSimulationTicksLastFrame, 1);
+  assert.equal(stats.waterSimulationPasses, 2);
+  assert.equal(stats.waterNormalPasses, 1);
+
+  renderer.render(bundle, viewport, { nowMS: 51, active: true });
+  stats = renderer.getStats();
+  assert.equal(stats.waterSimulationTicksLastFrame, 2);
+  assert.equal(stats.waterSimulationPasses, 6, "two catch-up ticks add four solver passes");
+  assert.equal(stats.waterNormalPasses, 2, "catch-up adds one normal pass");
+
+  entry.paused = true;
+  entry.dropEventID = 7;
+  entry.objectDisplacementEvents = [{ id: 9, objectKind: "sphere", objectRadius: 0.2 }];
+  renderer.setLifecycle({ nowMS: 60, active: true, paused: true });
+  renderer.render(bundle, viewport, { nowMS: 1000, active: true });
+  stats = renderer.getStats();
+  assert.equal(stats.waterSimulationPasses, 6);
+  assert.equal(stats.waterNormalPasses, 2);
+  assert.equal(stats.waterLastDropEventID, 0, "paused WebGL drop ID must remain unconsumed");
+  assert.equal(stats.waterLastObjectDisplacementEventID, 0, "paused WebGL object event ID must remain unconsumed");
+
+  entry.paused = false;
+  renderer.setLifecycle({ nowMS: 1100, active: true, paused: false });
+  renderer.render(bundle, viewport, { nowMS: 1100, active: true });
+  stats = renderer.getStats();
+  assert.equal(stats.waterSimulationTicksLastFrame, 0, "resume frame must anchor without catch-up");
+  assert.equal(stats.waterLastDropEventID, 0, "resume anchor must not consume queued drops without a tick");
+  assert.equal(stats.waterLastObjectDisplacementEventID, 0, "resume anchor must not consume queued object events without a tick");
+  renderer.render(bundle, viewport, { nowMS: 1117, active: true });
+  stats = renderer.getStats();
+  assert.equal(stats.waterSimulationTicksLastFrame, 1, "first post-resume fixed tick must drain queued events");
+  assert.equal(stats.waterNormalDirty, false, "queued events and the fixed step must finish with fresh normals");
+  assert.equal(stats.waterLastDropEventID, 7);
+  assert.equal(stats.waterLastObjectDisplacementEventID, 9);
+
+  assert.equal(renderer.pollPerformanceSample(), null, "timer polling must be nonblocking while the query is unavailable");
+  timerAvailable = true;
+  const timerSample = renderer.pollPerformanceSample();
+  assert.equal(timerSample.source, "webgl-timer");
+  assert.equal(timerSample.gpuMS, 4);
+  timerDisjoint = true;
+  assert.equal(renderer.pollPerformanceSample(), null, "disjoint timing must be discarded and reset safely");
+  timerDisjoint = false;
+
+  renderer.render(bundle, viewport, {
+    nowMS: 1117, active: true, qualityEnabled: true, qualityRevision: 1,
+    qualityProfile: { tier: "balanced", dprCap: 1.25, surfaceResolution: 128, causticsResolution: 384, objectShadowResolution: 384, objectTextureMaxSide: 384, objectTexturePixelBudget: 442368, expensivePassCadence: 2 },
+  });
+  stats = renderer.getStats();
+  assert.equal(stats.waterQualityTier, "balanced");
+  assert.equal(stats.waterSurfaceGridResolution, 128);
+  assert.equal(stats.waterCausticsResolution, 384);
+  assert.equal(stats.waterObjectShadowResolution, 384);
+  assert.equal(stats.waterSimulationResolution, 192);
+  const simulationTickSeq = stats.waterSimulationTickSeq;
+
+  renderer.render(bundle, viewport, {
+    nowMS: 1134, active: true, qualityEnabled: true, qualityRevision: 2,
+    qualityProfile: { tier: "survival", dprCap: 1, surfaceResolution: 96, causticsResolution: 256, objectShadowResolution: 256, objectTextureMaxSide: 256, objectTexturePixelBudget: 196608, expensivePassCadence: 3 },
+  });
+  stats = renderer.getStats();
+  assert.equal(stats.waterQualityTier, "survival");
+  assert.equal(stats.waterSurfaceGridResolution, 96);
+  assert.equal(stats.waterCausticsResolution, 256);
+  assert.equal(stats.waterObjectShadowResolution, 256);
+  assert.equal(stats.waterSimulationResolution, 192, "quality transitions must preserve authored simulation topology");
+  assert.ok(stats.waterSimulationTickSeq > simulationTickSeq, "quality transition must preserve and advance the existing clock");
+
+  renderer.render(bundle, viewport, {
+    nowMS: 1151, active: true, qualityEnabled: true, qualityRevision: 3,
+    qualityProfile: { tier: "full", dprCap: 2, surfaceResolution: 320, causticsResolution: 1024, objectShadowResolution: 1024, objectTextureMaxSide: 1024, objectTexturePixelBudget: 3_145_728, expensivePassCadence: 1 },
+  });
+  stats = renderer.getStats();
+  assert.equal(stats.waterSurfaceGridResolution, 160, "full profile must remain bounded by the procedural authored grid");
+  assert.equal(stats.waterCausticsResolution, 512, "full profile must not exceed authored caustics resolution");
+  assert.equal(stats.waterObjectShadowResolution, 512, "full profile must not exceed authored shadow resolution");
+  renderer.dispose();
+});
 
 test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls stay flat for Sphere and Rubber Duck alike", async () => {
   const FRAME_COUNT = 5;
@@ -21288,7 +21996,9 @@ test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls sta
     // pool, wgpuCachedTrackedBuffer), so these frames must show ZERO new
     // pipeline/shader-module compiles and a CONSTANT (not growing)
     // createBindGroup/writeBuffer count frame over frame.
-    for (let i = 1; i < deltas.length; i += 1) {
+    // The first active frame anchors the fixed clock, so simulation/normal
+    // pipelines are first compiled on frame 1. Frames 2..N are steady state.
+    for (let i = 2; i < deltas.length; i += 1) {
       const d = deltas[i];
       assert.equal(d.renderPipelines, 0, label + " frame " + i + ": createRenderPipeline must be 0 in steady state (got " + d.renderPipelines + ") -- a pipeline cache key is unstable");
       assert.equal(d.computePipelines, 0, label + " frame " + i + ": createComputePipeline must be 0 in steady state (got " + d.computePipelines + ")");
@@ -21300,7 +22010,7 @@ test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls sta
     // createSelenaBindGroup's pool already accommodates (capped at 4 entries),
     // so the STEADY count itself may be reached over 2 frames, but it must not
     // grow without bound over 5.
-    const steadyBindGroups = deltas.slice(1).map((d) => d.bindGroups);
+    const steadyBindGroups = deltas.slice(2).map((d) => d.bindGroups);
     const maxBindGroups = Math.max(...steadyBindGroups);
     const lastBindGroups = steadyBindGroups[steadyBindGroups.length - 1];
     assert.ok(
@@ -21321,7 +22031,7 @@ test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls sta
     // it, which would mean the mesh soup is being re-uploaded whole every
     // single frame instead of once.
     const warmupBytes = deltas[0].writeBufferBytes;
-    const steadyBytes = deltas.slice(1).map((d) => d.writeBufferBytes);
+    const steadyBytes = deltas.slice(2).map((d) => d.writeBufferBytes);
     for (let i = 0; i < steadyBytes.length; i += 1) {
       assert.ok(
         steadyBytes[i] < warmupBytes * 0.25,
@@ -21357,16 +22067,67 @@ test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls sta
 
 test("[perf-shape] Scene3D WebGPU balanced water skips stationary displacement and cadences retained prepasses", async () => {
   const { deltas } = await renderWaterPerfShapeFrames(false, 3, 192);
-  // Frame 0 establishes the object's displacement footprint. The unchanged
-  // Sphere needs only the two integration stages + normal on later frames.
-  assert.equal(deltas[0].computePasses - deltas[1].computePasses, 1,
-    "stationary balanced water should remove exactly the no-op displacement pass after warmup");
-  assert.equal(deltas[1].computePasses, deltas[2].computePasses,
-    "stationary compute shape should remain stable after warmup");
-  // Balanced quality refreshes caustics and object shadow every other frame;
-  // the retained textures are sampled on the intervening frame.
-  assert.ok(deltas[2].renderPasses > deltas[1].renderPasses,
-    "balanced cadence should omit retained prepass work on odd frames: " + JSON.stringify(deltas));
+  // Frame 0 anchors the fixed clock and establishes the footprint. Each later
+  // 60 Hz tick needs only two integration stages plus one normal pass; a
+  // stationary displacement pass would make this four.
+  assert.equal(deltas[1].computePasses, 4,
+    "first fixed tick should include the one-time authored seed plus two integration stages and normals");
+  assert.equal(deltas[2].computePasses, 3,
+    "steady stationary ticks should drop to two integration stages plus normals");
+  // The fake sphere has no mesh RTT resources, so retained prepass work stays
+  // absent and the render shape remains flat across the cadence boundary.
+  assert.equal(deltas[2].renderPasses, deltas[1].renderPasses,
+    "balanced retained-pass work should stay bounded: " + JSON.stringify(deltas));
+});
+
+test("[perf-shape] Scene3D WebGPU keeps exact frame proof while throttling broad DOM telemetry", async () => {
+  let nowMS = 0;
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    verboseTelemetry: false,
+    performanceNow: () => nowMS,
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 192);
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  let attributeWrites = 0;
+  const originalSetAttribute = harness.mount.setAttribute.bind(harness.mount);
+  harness.mount.setAttribute = function(name, value) {
+    attributeWrites += 1;
+    return originalSetAttribute(name, value);
+  };
+  function renderFrame(time) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, time, [], [], [], state.waterSystems, [], 0, false,
+    );
+    harness.renderer.render(bundle, { width: 64, height: 64 });
+  }
+
+  renderFrame(0);
+  const firstFrameWrites = attributeWrites;
+  assert.ok(firstFrameWrites > 50, "first frame should publish the full diagnostic snapshot, got " + firstFrameWrites);
+  nowMS = 16;
+  renderFrame(0.016);
+  const secondFrameWrites = attributeWrites - firstFrameWrites;
+  nowMS = 32;
+  renderFrame(0.032);
+  const thirdFrameWrites = attributeWrites - firstFrameWrites - secondFrameWrites;
+  assert.ok(secondFrameWrites <= 12, "second frame should only publish essential proof attrs, got " + secondFrameWrites);
+  assert.ok(thirdFrameWrites <= 12, "third frame should only publish essential proof attrs, got " + thirdFrameWrites);
+  assert.equal(harness.mount.__gosxScene3DWebGPUStats.frameSeq, 3, "in-memory stats must advance exactly every frame");
+  assert.equal(harness.mount.__gosxScene3DWebGPUProof.frameSeq, 3, "essential proof must advance exactly every frame");
+  assert.equal(Number(harness.mount.getAttribute("data-gosx-scene3d-webgpu-frame-seq")), 3, "essential DOM frame sequence must stay prompt");
+
+  harness.env.context.__gosx_scene3d_webgpu_telemetry = true;
+  const beforeVerbose = attributeWrites;
+  nowMS = 48;
+  renderFrame(0.048);
+  assert.ok(attributeWrites - beforeVerbose > 50, "explicit diagnostics should publish the broad attribute surface immediately");
+  assert.equal(harness.mount.__gosxScene3DWebGPUStats.frameSeq, 4);
 });
 
 test("[perf-shape] Scene3D WebGPU wgpuStablePBRAttributeBuffer still re-uploads every frame a mesh object's world geometry actually changes", async () => {
@@ -21544,7 +22305,8 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
   harness.canvas.width = 64;
   harness.canvas.height = 64;
   assert.doesNotThrow(() => {
-    harness.renderer.render(sceneState, { width: 64, height: 64 });
+    harness.renderer.render(sceneState, { width: 64, height: 64 }, { nowMS: 0, active: true, qualityTier: "full" });
+    harness.renderer.render(sceneState, { width: 64, height: 64 }, { nowMS: 17, active: true, qualityTier: "full" });
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch between a compute kernel's WGSL and the renderer's bind group layout/bind group");
 
   const mount = harness.mount;
@@ -21554,8 +22316,10 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-compute-systems"), "1", "the system must be counted once for having Selena compute kernels configured");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-compute-fallbacks"), "0", "no kernel should have fallen back to the hardcoded/authored compute pipeline");
   const selenaComputeDispatches = Number(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-compute-dispatches"));
-  // seed(1) + drop(1) + displacement(1) + simulation(2) + normal(1) = 6.
-  assert.equal(selenaComputeDispatches, 6, "expected exactly 6 Selena compute dispatches this frame (seed+drop+displacement+2xsimulation+normal)");
+  // The anchor frame performs no simulation mutation. Its queued seed, drop,
+  // and displacement drain on the first fixed tick alongside 2x simulation
+  // and one normal dispatch.
+  assert.equal(selenaComputeDispatches, 6, "expected 6 Selena dispatches on the first fixed tick (3 queued events+2xsimulation+normal)");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-compute-dispatches"), "6", "waterComputeDispatches must equal the Selena count -- nothing fell back");
 
   // Structural corroboration per kernel: the compiled pipeline's bind group

@@ -25,6 +25,7 @@ func Page() Node {
   		preferWebGPU={true}
   		maxDevicePixelRatio={1.6}
   		adaptiveQuality={true}
+		qualityTier="balanced"
   		canvasAlpha={false}
   	>
   		<Camera
