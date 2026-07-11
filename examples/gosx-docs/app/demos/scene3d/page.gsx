@@ -13,7 +13,7 @@ func Page() Node {
 			<p class="scene3d-showcase__eyebrow">Typed Go → SceneIR → browser GPU</p>
 			<h1 class="scene3d-showcase__title">Scene3D</h1>
 			<p class="scene3d-showcase__tagline">
-				Seven materials, four lights, shadows, ACES tonemapping, bloom, and orbit controls—declared in Go.
+				Seven materials, four lights, slow per-object spin, a glossy clearcoat floor, shadows, ACES tonemapping, bloom, and orbit controls—declared in Go.
 			</p>
 			<p class="scene3d-showcase__runtime" aria-live="polite">
 				<span>GoSX renderer</span>
@@ -25,7 +25,7 @@ func Page() Node {
 			<details class="scene3d-showcase__proof">
 				<summary>What GoSX owns</summary>
 				<ul>
-					<li>Typed scene graph and stable mesh IDs</li>
+					<li>Typed scene graph, stable mesh IDs, and per-mesh declarative spin</li>
 					<li>
 						PBR materials and a three-point lighting rig
 					</li>
