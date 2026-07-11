@@ -35,8 +35,16 @@ func TestDemoCatalogContracts(t *testing.T) {
 			t.Errorf("demo %q source path %q: %v", demo.Slug, demo.SourcePath, err)
 		}
 	}
-	if cms, ok := FindDemo("cms"); !ok || cms.Status != "prototype" {
-		t.Error("CMS must remain explicitly labeled prototype until editing is real")
+	// CMS earned "live" once block adding, live preview, and full-draft publish
+	// became real; its limitations must keep documenting what is still missing.
+	cms, ok := FindDemo("cms")
+	if !ok || cms.Status != "live" {
+		t.Error("CMS must be listed live now that block editing and live preview are real")
+	}
+	for _, required := range []string{"no persistence", "no reordering", "no block removal"} {
+		if !strings.Contains(cms.Limitations, required) {
+			t.Errorf("cms limitations missing %q: %s", required, cms.Limitations)
+		}
 	}
 	checkers, ok := FindDemo("checkers")
 	if !ok || checkers.Status != "live" {
