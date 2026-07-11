@@ -20,8 +20,8 @@
 package surface
 
 import (
-	"runtime"
 	"testing"
+	"time"
 
 	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/island/program"
@@ -261,17 +261,21 @@ func TestBindCanvas_DisposeOnContextClose(t *testing.T) {
 		t.Fatal("host receiver not bound under 'c' after BindCanvas")
 	}
 
-	// Closing the context fires the watcher goroutine; give it a
-	// moment to run.
+	// Closing the context fires the watcher goroutine. Wait for its two
+	// externally observable effects with a deadline: a fixed number of
+	// runtime.Gosched calls does not guarantee that the watcher runs under
+	// race instrumentation or a loaded CI worker.
 	ctx.Close()
-	// Synchronization without sleeps: poll the receiver state via
-	// the (already-tested) HasLoop / LookupHost contract.
-	for i := 0; i < 100; i++ {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
 		_, bound := machine.LookupHost("c")
 		if !recv.HasLoop() && !bound {
 			break
 		}
-		runtime.Gosched()
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 
 	if recv.HasLoop() {
