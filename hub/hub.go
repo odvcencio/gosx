@@ -60,10 +60,17 @@ type Hub struct {
 	MaxClients int
 }
 
+// ConnectionMetadata contains server-supplied values associated with one
+// WebSocket connection. The hub clones the map during ServeHTTPWithMetadata;
+// clients cannot change it after the connection has been accepted. Metadata is
+// intentionally server-only and is never included in a wire message.
+type ConnectionMetadata map[string]string
+
 // Client represents a connected WebSocket client.
 type Client struct {
 	ID         string
 	Hub        *Hub
+	metadata   ConnectionMetadata
 	conn       *websocket.Conn
 	send       chan []byte
 	binarySend chan []byte
@@ -73,6 +80,17 @@ type Client struct {
 	// trySend/tryBinarySend check it under the same mu before writing, so a
 	// send can never race with the close of the same channel — see trySend.
 	closed bool
+}
+
+// Metadata returns one server-supplied metadata value for this connection.
+// Metadata is immutable for the lifetime of a Client and is not serialized to
+// the WebSocket peer. A nil Client or missing key returns false.
+func (c *Client) Metadata(key string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	value, ok := c.metadata[key]
+	return value, ok
 }
 
 // trySend enqueues msg on the client's text-message channel, returning false
@@ -333,9 +351,34 @@ func (h *Hub) Name() string {
 	return h.name
 }
 
+func cloneConnectionMetadata(metadata ConnectionMetadata) ConnectionMetadata {
+	if len(metadata) == 0 {
+		return nil
+	}
+	clone := make(ConnectionMetadata, len(metadata))
+	for key, value := range metadata {
+		clone[key] = value
+	}
+	return clone
+}
+
 // ServeHTTP handles WebSocket upgrade requests.
 // Mount at: mux.Handle("/gosx/hub/{name}", hub)
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.ServeHTTPWithMetadata(w, r, nil)
+}
+
+// ServeHTTPWithMetadata handles a WebSocket upgrade and associates the
+// server-supplied metadata with the accepted connection. The metadata is
+// cloned before the client is registered, so callers may safely reuse or
+// discard their input map after this method returns. The metadata is
+// installed before welcome, sync bootstrap, latch replay, and join handlers
+// run. It is never serialized to the connected peer.
+//
+//	Mount at: mux.Handle("/gosx/hub/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//		hub.ServeHTTPWithMetadata(w, r, metadata)
+//	}))
+func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, metadata ConnectionMetadata) {
 	if h.MaxClients > 0 && h.ClientCount() >= h.MaxClients {
 		http.Error(w, "hub full", http.StatusServiceUnavailable)
 		return
@@ -364,6 +407,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	client := &Client{
 		ID:         clientID,
 		Hub:        h,
+		metadata:   cloneConnectionMetadata(metadata),
 		conn:       conn,
 		send:       make(chan []byte, 256),
 		binarySend: make(chan []byte, 256),
