@@ -844,7 +844,11 @@ func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverB
 	// prerendered documentation routes. Keep the conventional project-level
 	// content tree beside app/ in the deployment root so ResolveAppRoot and
 	// content.Load observe the same layout in development and production.
-	if err := copyDirIfPresent(filepath.Join(projectDir, "content"), filepath.Join(distDir, "content")); err != nil {
+	contentDistDir := filepath.Join(distDir, "content")
+	if err := os.RemoveAll(contentDistDir); err != nil {
+		return fmt.Errorf("clean staged content: %w", err)
+	}
+	if err := copyDirIfPresent(filepath.Join(projectDir, "content"), contentDistDir); err != nil {
 		return err
 	}
 	if err := copyDirIfPresent(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public")); err != nil {

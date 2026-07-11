@@ -34,6 +34,7 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	mustWriteFile(t, filepath.Join(projectDir, "content", "docs", "intro.md"), "# Introduction\n")
 	mustWriteFile(t, filepath.Join(projectDir, "public", "styles.css"), "body {}\n")
 	mustWriteFile(t, filepath.Join(projectDir, ".env.example"), "PORT=8080\n")
+	mustWriteFile(t, filepath.Join(distDir, "content", "docs", "removed.md"), "# Removed\n")
 	serverBinaryPath := filepath.Join(distDir, "server", "app")
 	mustWriteFile(t, serverBinaryPath, "binary")
 
@@ -52,6 +53,9 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 		if _, err := os.Stat(filepath.Join(distDir, rel)); err != nil {
 			t.Fatalf("expected %s in bundle: %v", rel, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(distDir, "content", "docs", "removed.md")); !os.IsNotExist(err) {
+		t.Fatalf("stale content file survived deployment staging: %v", err)
 	}
 
 	runScript := readFile(t, filepath.Join(distDir, "run.sh"))
