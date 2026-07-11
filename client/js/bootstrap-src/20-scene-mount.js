@@ -8088,6 +8088,13 @@
 	        latestScenePickDetail = detail ? sceneDebugClone(detail, 4) : null;
 	        dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
 	        ctx.emit("scene-interaction", detail);
+	        if (ctx.mount && typeof ctx.mount.dispatchEvent === "function") {
+	          const inputDetail = { kind: "pick", input: detail ? sceneDebugClone(detail, 4) : null };
+	          const inputEvent = typeof CustomEvent === "function"
+	            ? new CustomEvent("gosx:scene3d:input", { detail: inputDetail, bubbles: true })
+	            : { type: "gosx:scene3d:input", detail: inputDetail };
+	          ctx.mount.dispatchEvent(inputEvent);
+	        }
 	      });
 	    }
 
@@ -8102,6 +8109,40 @@
 	    }
 
 	    installSceneCanvasInteractionHandles();
+
+	    // Page-owned simulation/engine programs use this mount-scoped event seam
+	    // to apply typed Scene3D diffs. A monotonic revision rejects late async
+	    // search results and replayed batches without exposing renderer internals.
+	    let lastMountCommandRevision = 0;
+	    function emitMountCommandsApplied(revision, commandCount) {
+	      if (!ctx.mount || typeof ctx.mount.dispatchEvent !== "function") return;
+	      const detail = { revision, commandCount };
+	      const event = typeof CustomEvent === "function"
+	        ? new CustomEvent("gosx:scene3d:commands-applied", { detail, bubbles: true })
+	        : { type: "gosx:scene3d:commands-applied", detail };
+	      ctx.mount.dispatchEvent(event);
+	    }
+	    function onMountCommands(event) {
+	      const detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
+	      const revision = Number(detail.revision);
+	      const commands = Array.isArray(detail.commands) ? detail.commands : null;
+	      if (!Number.isSafeInteger(revision) || revision <= 0 || revision <= lastMountCommandRevision || !commands) return;
+	      lastMountCommandRevision = revision;
+	      const result = applySceneCommands(sceneState, commands);
+	      notifySceneRendererLifecycle("mount-commands", false, false);
+	      scheduleRender("mount-commands");
+	      if (result && typeof result.then === "function") {
+	        result.then(function() {
+	          scheduleRender("mount-commands-async");
+	          emitMountCommandsApplied(revision, commands.length);
+	        });
+	      } else {
+	        emitMountCommandsApplied(revision, commands.length);
+	      }
+	    }
+	    if (ctx.mount && typeof ctx.mount.addEventListener === "function") {
+	      ctx.mount.addEventListener("gosx:scene3d:commands", onMountCommands);
+	    }
 
 	    let lastPublishedCamera = null;
     let lastAppliedSelectionID = null;
@@ -9066,6 +9107,9 @@
       },
       dispose() {
         disposed = true;
+	        if (ctx.mount && typeof ctx.mount.removeEventListener === "function") {
+	          ctx.mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
+	        }
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, true);
         notifySceneRendererLifecycle("dispose", true, true);
         clearIdleContextRelease();

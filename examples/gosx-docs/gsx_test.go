@@ -464,10 +464,10 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 	}
 }
 
-// TestDemosIndexLists8Cards verifies the /demos index page files have the
+// TestDemosIndexLists9Cards verifies the /demos index page files have the
 // expected structure and roster. We use raw-source grep rather than rendering
 // because the GSX IR does not expose an HTML renderer in tests.
-func TestDemosIndexLists8Cards(t *testing.T) {
+func TestDemosIndexLists9Cards(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	demosDir := filepath.Join(filepath.Dir(thisFile), "app", "demos")
 	pagePath := filepath.Join(demosDir, "page.gsx")
@@ -500,7 +500,7 @@ func TestDemosIndexLists8Cards(t *testing.T) {
 	}
 	catalogSrc := string(catalogSource)
 
-	slugs := []string{"playground", "fluid", "water", "livesim", "cms", "scene3d", "scene3d-bench", "collab"}
+	slugs := []string{"playground", "fluid", "water", "livesim", "cms", "scene3d", "scene3d-bench", "collab", "checkers"}
 	for _, slug := range slugs {
 		if !strings.Contains(catalogSrc, `Slug: "`+slug+`"`) {
 			t.Errorf("app/demos/catalog.go missing demo slug %q", slug)

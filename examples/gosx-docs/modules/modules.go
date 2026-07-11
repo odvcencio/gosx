@@ -4,6 +4,7 @@ package modules
 import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/cms"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"

@@ -4419,6 +4419,48 @@ test("Scene3D label layout does not throw under the split runtime+scene3d featur
   env.context.__gosx_dispose_engine("gosx-engine-split-label");
 });
 
+test("Scene3D mount command bridge applies only increasing revisions and reports completion", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-mount-command-bridge";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: { engines: [{
+      id: "gosx-engine-command-bridge",
+      component: "GoSXScene3D",
+      kind: "surface",
+      mountId: mount.id,
+      props: { width: 320, height: 180, scene: { objects: [] } },
+    }] },
+  });
+  const applied = [];
+  mount.addEventListener("gosx:scene3d:commands-applied", (event) => applied.push(event.detail));
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const createLabel = (id) => ({ kind: 0, objectId: id, data: { kind: "label", props: { id, text: id } } });
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: { revision: 2, commands: [createLabel("accepted")] },
+  }));
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: { revision: 1, commands: [createLabel("stale")] },
+  }));
+  await flushAsyncWork();
+
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].revision, 2);
+  assert.equal(applied[0].commandCount, 1);
+  assert.equal(mount.children[1].children.length, 1);
+  assert.equal(mount.children[1].children[0].textContent, "accepted");
+
+  env.context.__gosx_dispose_engine("gosx-engine-command-bridge");
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: { revision: 3, commands: [createLabel("disposed")] },
+  }));
+  assert.equal(applied.length, 1, "dispose must remove the mount listener");
+});
+
 // Mounts a shared-runtime Scene3D whose program creates a long box ("cube") and
 // drives one frame. The scene IR carries a motionProgram so the P2.4b WASM
 // motion seam (applyWasmMotionFrame) can lazy-load + tick + decode. Returns the

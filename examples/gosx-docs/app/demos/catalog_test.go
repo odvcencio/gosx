@@ -9,8 +9,8 @@ import (
 )
 
 func TestDemoCatalogContracts(t *testing.T) {
-	if len(Demos()) != 8 {
-		t.Fatalf("Demos() length = %d, want 8", len(Demos()))
+	if len(Demos()) != 9 {
+		t.Fatalf("Demos() length = %d, want 9", len(Demos()))
 	}
 	seen := make(map[string]bool, len(Demos()))
 	validStatus := map[string]bool{"featured": true, "live": true, "lab": true, "prototype": true}
@@ -38,6 +38,29 @@ func TestDemoCatalogContracts(t *testing.T) {
 	if cms, ok := FindDemo("cms"); !ok || cms.Status != "prototype" {
 		t.Error("CMS must remain explicitly labeled prototype until editing is real")
 	}
+	checkers, ok := FindDemo("checkers")
+	if !ok || checkers.Status != "live" {
+		t.Fatal("checkers must be truthfully listed as a live two-seat match")
+	}
+	for _, required := range []string{"two-player", "no product network multiplayer", "persistence", "active CPU", "compiled Arbiter policy fallback", "Elio"} {
+		if !strings.Contains(checkers.Limitations, required) {
+			t.Errorf("checkers limitations missing %q: %s", required, checkers.Limitations)
+		}
+	}
+	for _, required := range []string{"Selena", "Arbiter policy", "Elio adapter"} {
+		if !contains(checkers.Facets, required) {
+			t.Errorf("checkers facets missing %q", required)
+		}
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDemoDetailsClientKeyboardContract(t *testing.T) {

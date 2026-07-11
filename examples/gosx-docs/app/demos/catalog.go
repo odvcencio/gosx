@@ -21,6 +21,15 @@ type DemoDefinition struct {
 
 var demoCatalog = []DemoDefinition{
 	{
+		Slug: "checkers", Title: "Chinese Checkers", Tag: "playable Go strategy table",
+		Promise: "Play a revisioned two-seat match on a complete 121-hole Scene3D table with three selectable Selena material families.",
+		Lesson:  "GoSX keeps legality, replay, and CPU search in deterministic Go; a Hub owns turns, Selena owns optics, Arbiter-ready policies bound search posture, and optional Elio hints retain a Go CPU fallback.",
+		Accent:  "#e5b84f", Facets: []string{"Scene3D", "Hub", "Simulation", "Selena", "Arbiter policy", "Elio adapter"},
+		SourcePath: "examples/gosx-docs/app/demos/checkers/page.gsx", Packages: []string{"scene", "hub", "route", "selena", "arbiter", "elio"},
+		Status: "live", RenderMode: "SSR + Scene3D GPU runtime + authoritative GoSX Hub",
+		Limitations: "Playable mode is two-player and in-memory. There is no product network multiplayer or persistence; the active CPU uses bounded Go search with a compiled Arbiter policy fallback, while Elio hints remain optional and inactive.",
+	},
+	{
 		Slug: "water", Title: "Water Lab", Tag: "adaptive GPU simulation",
 		Promise: "Disturb a physically responsive pool with caustics, buoyant objects, and adaptive quality.",
 		Lesson:  "A typed GoSX WaterSystem drives Selena-authored shaders through native WebGPU and WebGL2 backends.",
