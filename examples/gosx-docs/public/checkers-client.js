@@ -20,6 +20,7 @@
     difficultySelect = document.getElementById("checkers-difficulty");
     policyEl = document.getElementById("checkers-policy");
     if (!root || !board) return;
+	 syncMaterialFromURL();
     board.addEventListener("click", onBoardClick);
     board.addEventListener("keydown", onBoardKeydown);
     if (undoButton) undoButton.addEventListener("click", function () { send("checkers:undo", {}); });
@@ -29,6 +30,15 @@
     if (difficultySelect) difficultySelect.addEventListener("change", onSettingsChange);
     document.addEventListener("gosx:hub:event", onHubEvent);
     document.addEventListener("gosx:navigate", teardown, { once: true });
+  }
+
+  function syncMaterialFromURL() {
+	var requested = new URL(window.location.href).searchParams.get("material") || "carved-wood";
+	var valid = { "imperial-jade": true, "carved-wood": true, "brushed-steel": true };
+	var active = valid[requested] ? requested : "carved-wood";
+	if (materialSelect) materialSelect.value = active;
+	root.setAttribute("data-checkers-material", active);
+	root.setAttribute("data-checkers-material-source", valid[requested] ? "url" : "fallback");
   }
 
   function onMaterialChange() {

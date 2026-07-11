@@ -352,12 +352,19 @@ func init() {
 	docsapp.RegisterStaticDocsPage("Chinese Checkers", "A playable Hub-backed Chinese Checkers match with pure-Go authoritative rules.", route.FileModuleOptions{Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 		ctx.Runtime().BindHub("checkers", "/demos/checkers/ws", []hydrate.HubBinding{})
 		snapshot := liveGame.snapshot()
-		material := checkermaterials.Family(ctx.Query("material"))
-		if material != checkermaterials.ImperialJade && material != checkermaterials.CarvedWood && material != checkermaterials.BrushedSteel {
-			material = checkermaterials.CarvedWood
-		}
+		material := validatedMaterial(ctx.Query("material"))
 		return map[string]any{"scene": ShowcaseSceneWithMaterial(string(material)), "holes": semanticHoles(snapshot), "material": string(material)}, nil
 	}})
+}
+
+func validatedMaterial(value string) checkermaterials.Family {
+	material := checkermaterials.Family(value)
+	switch material {
+	case checkermaterials.ImperialJade, checkermaterials.CarvedWood, checkermaterials.BrushedSteel:
+		return material
+	default:
+		return checkermaterials.CarvedWood
+	}
 }
 
 func semanticHoles(snapshot gameSnapshot) []holeView {
