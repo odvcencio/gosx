@@ -31,8 +31,10 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	distDir := filepath.Join(t.TempDir(), "dist")
 
 	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
+	mustWriteFile(t, filepath.Join(projectDir, "content", "docs", "intro.md"), "# Introduction\n")
 	mustWriteFile(t, filepath.Join(projectDir, "public", "styles.css"), "body {}\n")
 	mustWriteFile(t, filepath.Join(projectDir, ".env.example"), "PORT=8080\n")
+	mustWriteFile(t, filepath.Join(distDir, "content", "docs", "removed.md"), "# Removed\n")
 	serverBinaryPath := filepath.Join(distDir, "server", "app")
 	mustWriteFile(t, serverBinaryPath, "binary")
 
@@ -42,6 +44,7 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 
 	for _, rel := range []string{
 		"app/page.gsx",
+		"content/docs/intro.md",
 		"public/styles.css",
 		".env.example",
 		"README.md",
@@ -50,6 +53,9 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 		if _, err := os.Stat(filepath.Join(distDir, rel)); err != nil {
 			t.Fatalf("expected %s in bundle: %v", rel, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(distDir, "content", "docs", "removed.md")); !os.IsNotExist(err) {
+		t.Fatalf("stale content file survived deployment staging: %v", err)
 	}
 
 	runScript := readFile(t, filepath.Join(distDir, "run.sh"))
@@ -65,6 +71,9 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	readme := readFile(t, filepath.Join(distDir, "README.md"))
 	if !strings.Contains(readme, "deployable GoSX bundle") {
 		t.Fatalf("unexpected dist README: %q", readme)
+	}
+	if !strings.Contains(readme, "`content/` contains collection documents") {
+		t.Fatalf("dist README omits staged content directory: %q", readme)
 	}
 }
 
@@ -107,6 +116,9 @@ func TestWriteBuildReadmeWithoutServerBinary(t *testing.T) {
 	}
 	if !strings.Contains(readme, "`assets/` contains immutable hashed runtime") {
 		t.Fatalf("unexpected readme content %q", readme)
+	}
+	if !strings.Contains(readme, "`content/` contains collection documents") {
+		t.Fatalf("readme omits optional content directory: %q", readme)
 	}
 }
 

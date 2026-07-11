@@ -641,7 +641,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	fmt.Println("  • Runtime assets cached forever with content hashes (Tier 2)")
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
-	fmt.Println("  • dist/ includes app/ and public/ for file-routed runtime deployment")
+	fmt.Println("  • dist/ includes app/, content/, and public/ for file-routed runtime deployment")
 	if !opts.Dev && builtServer {
 		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
 		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
@@ -838,6 +838,17 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 
 func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverBinaryPath string) error {
 	if err := copyDirIfPresent(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app")); err != nil {
+		return err
+	}
+	// Content collections are runtime inputs for server-rendered and
+	// prerendered documentation routes. Keep the conventional project-level
+	// content tree beside app/ in the deployment root so ResolveAppRoot and
+	// content.Load observe the same layout in development and production.
+	contentDistDir := filepath.Join(distDir, "content")
+	if err := os.RemoveAll(contentDistDir); err != nil {
+		return fmt.Errorf("clean staged content: %w", err)
+	}
+	if err := copyDirIfPresent(filepath.Join(projectDir, "content"), contentDistDir); err != nil {
 		return err
 	}
 	if err := copyDirIfPresent(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public")); err != nil {
@@ -1072,6 +1083,7 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"Contents:",
 		"- `assets/` contains immutable hashed runtime, island, and CSS assets.",
 		"- `app/` contains runtime file-routed page sources used by `route.AddDir(...)`.",
+		"- `content/` contains collection documents loaded by server-rendered and prerendered routes.",
 		"- `public/` contains root-served static assets when present.",
 		"- `build.json` maps hashed asset names for runtime/island loading.",
 		"- `edge/worker.js` can serve prerendered routes at the edge and proxy misses/actions to origin.",
