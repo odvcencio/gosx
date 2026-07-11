@@ -641,7 +641,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	fmt.Println("  • Runtime assets cached forever with content hashes (Tier 2)")
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
-	fmt.Println("  • dist/ includes app/ and public/ for file-routed runtime deployment")
+	fmt.Println("  • dist/ includes app/, content/, and public/ for file-routed runtime deployment")
 	if !opts.Dev && builtServer {
 		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
 		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
@@ -838,6 +838,13 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 
 func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverBinaryPath string) error {
 	if err := copyDirIfPresent(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app")); err != nil {
+		return err
+	}
+	// Content collections are runtime inputs for server-rendered and
+	// prerendered documentation routes. Keep the conventional project-level
+	// content tree beside app/ in the deployment root so ResolveAppRoot and
+	// content.Load observe the same layout in development and production.
+	if err := copyDirIfPresent(filepath.Join(projectDir, "content"), filepath.Join(distDir, "content")); err != nil {
 		return err
 	}
 	if err := copyDirIfPresent(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public")); err != nil {

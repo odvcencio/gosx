@@ -31,6 +31,7 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	distDir := filepath.Join(t.TempDir(), "dist")
 
 	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
+	mustWriteFile(t, filepath.Join(projectDir, "content", "docs", "intro.md"), "# Introduction\n")
 	mustWriteFile(t, filepath.Join(projectDir, "public", "styles.css"), "body {}\n")
 	mustWriteFile(t, filepath.Join(projectDir, ".env.example"), "PORT=8080\n")
 	serverBinaryPath := filepath.Join(distDir, "server", "app")
@@ -42,6 +43,7 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 
 	for _, rel := range []string{
 		"app/page.gsx",
+		"content/docs/intro.md",
 		"public/styles.css",
 		".env.example",
 		"README.md",
