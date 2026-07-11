@@ -42,18 +42,44 @@
 }
 
 .livesim__canvas:focus-visible,
-.livesim__spawn:focus-visible {
+.livesim__spawn:focus-visible,
+.livesim__burst:focus-visible {
   outline: 2px solid var(--demo-accent);
   outline-offset: 3px;
 }
 
-.livesim__spawn {
+.livesim__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.livesim__spawn,
+.livesim__burst {
   border: 1px solid var(--demo-accent);
-  background: transparent;
-  color: var(--demo-accent);
   padding: var(--space-xs, 0.5rem);
   font: 600 var(--type-xs, 0.75rem) var(--font-mono, monospace);
   cursor: pointer;
+  transition: opacity var(--duration-fast, 150ms) var(--ease-out, ease-out);
+}
+
+.livesim__spawn {
+  background: transparent;
+  color: var(--demo-accent);
+}
+
+.livesim__spawn:hover,
+.livesim__burst:hover {
+  opacity: 0.8;
+}
+
+/* Burst is the "bigger" action (spawns a cluster of circles) — a filled
+   variant of the accent distinguishes it from the single-spawn button
+   without introducing a second color. */
+.livesim__burst {
+  background: var(--demo-accent);
+  color: var(--demo-bg, #0b0b0d);
+  font-weight: 700;
 }
 
 /* ─── HUD panel ─────────────────────────────────────────────────────────────── */
@@ -126,5 +152,20 @@
     border-left: none;
     border-top: 3px solid var(--demo-accent, #f59e0b);
     padding: 0.75rem 0 0;
+  }
+}
+
+/* ─── Reduced motion ─────────────────────────────────────────────────────────── */
+/* The canvas render loop itself gates trails/collision-flash/spawn-flash    */
+/* animation on prefers-reduced-motion in JS (physics motion is the demo's  */
+/* content and stays; only decorative extras are skipped). This covers any  */
+/* CSS-driven transitions on the surrounding chrome.                        */
+
+@media (prefers-reduced-motion: reduce) {
+  .livesim *,
+  .livesim *::before,
+  .livesim *::after {
+    transition: none;
+    animation: none;
   }
 }
