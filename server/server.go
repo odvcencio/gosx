@@ -877,9 +877,8 @@ func (a *App) AddHeadDecorator(fn HeadDecorator) {
 }
 
 func (a *App) decoratePageContext(ctx *Context) {
-	if ctx.runtime != nil {
-		ctx.AddHead(ctx.runtime.Head())
-	}
+	// Runtime head emission moved into PageState.Head() (lazy, at document
+	// render) so layout-registered engines reach the manifest.
 	if a.navigation {
 		ctx.AddHead(NavigationScript())
 	}

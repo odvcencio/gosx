@@ -428,10 +428,11 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 	if ctx.StatusCode() == 0 {
 		ctx.SetStatus(defaultStatus)
 	}
-	if runtime := ctx.RuntimeState(); runtime != nil {
-		ctx.AddHead(runtime.Head())
-	}
 
+	// The runtime head (engine manifest + bootstrap) is NOT added here:
+	// PageState.Head() resolves it lazily when the document shell renders,
+	// after every layout has run — so engines registered by layouts (e.g. a
+	// site-wide background Scene3D in layout.gsx) reach the manifest too.
 	for i := len(layouts) - 1; i >= 0; i-- {
 		node = layouts[i](ctx, node)
 	}
