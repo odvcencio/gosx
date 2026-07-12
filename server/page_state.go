@@ -175,6 +175,12 @@ func (s *PageState) AddHead(nodes ...gosx.Node) {
 }
 
 // Head renders metadata and appended head nodes into a fragment.
+//
+// The runtime head (engine manifest + bootstrap scripts) is resolved HERE,
+// at Head() call time, rather than being pre-rendered into s.head by the
+// page pipeline. The document shell calls Head() after every inner layout
+// has rendered, so engines registered by layouts (not just pages) make it
+// into the manifest — the manifest is marshaled when Head() runs.
 func (s *PageState) Head() gosx.Node {
 	if s == nil {
 		return gosx.Text("")
@@ -184,6 +190,11 @@ func (s *PageState) Head() gosx.Node {
 		nodes = append(nodes, metaHead)
 	}
 	nodes = append(nodes, s.head...)
+	if s.runtime != nil {
+		if runtimeHead := s.runtime.Head(); !runtimeHead.IsZero() {
+			nodes = append(nodes, runtimeHead)
+		}
+	}
 	if len(nodes) == 0 {
 		return gosx.Text("")
 	}
