@@ -20290,6 +20290,24 @@ function makeFakeGPUDevice(options) {
       setVertexBuffer(slot, buffer, offset, size) {
         pass.vertexBuffers.push({ slot, buffer, offset, size });
       },
+      // The water surface grid is drawn INDEXED (one transform per grid vertex instead
+      // of six per quad), so the fake device has to model the indexed path too. Indexed
+      // draws are recorded into pass.draws alongside plain ones — every existing
+      // assertion about which pipeline drew, and how many draws a frame issues, keeps
+      // working without knowing which form was used.
+      setIndexBuffer(buffer, format, offset, size) {
+        pass.indexBuffers = pass.indexBuffers || [];
+        pass.indexBuffers.push({ buffer, format, offset, size });
+      },
+      drawIndexed(indexCount, instanceCount) {
+        pass.draws.push({
+          vertexCount: indexCount,
+          indexCount,
+          indexed: true,
+          instanceCount: instanceCount == null ? 1 : instanceCount,
+          pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
+        });
+      },
       draw(vertexCount, instanceCount) {
         pass.draws.push({
           vertexCount,

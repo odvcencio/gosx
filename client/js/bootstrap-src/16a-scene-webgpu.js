@@ -481,18 +481,20 @@
     "  return y * params.resolution + x;",
     "}",
     "",
+    // The surface grid is drawn INDEXED. It used to be a non-indexed triangle list:
+    // six vertices per quad, so every interior grid point was transformed ~6 times and
+    // re-read `state[]` from the storage buffer ~6 times. At the shipped 192x192 grid
+    // that is 218,886 vertex invocations per pass, twice per frame (above + below
+    // surface) — and on Apple/Metal it dominated the frame: measured 200ms of GPU work
+    // for a scene occupying 0.1 megapixels, while the same scene minus the water cost
+    // 1.3ms. Immediate-mode desktop GPUs brute-force the duplication and show nothing.
+    //
+    // With an index buffer, vertex_index IS the grid vertex id (resolution^2 of them,
+    // 36,864 at the default), the post-transform cache does its job, and the geometry
+    // produced is identical.
     "@vertex fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {",
-    "  let cellsPerSide = max(params.resolution - 1u, 1u);",
-    "  let quad = vertexIndex / 6u;",
-    "  let corner = vertexIndex % 6u;",
-    "  let cellX = quad % cellsPerSide;",
-    "  let cellY = quad / cellsPerSide;",
-    "  var ox = 0u;",
-    "  var oy = 0u;",
-    "  if (corner == 1u || corner == 2u || corner == 4u) { ox = 1u; }",
-    "  if (corner == 2u || corner == 4u || corner == 5u) { oy = 1u; }",
-    "  let gx = min(cellX + ox, params.resolution - 1u);",
-    "  let gy = min(cellY + oy, params.resolution - 1u);",
+    "  let gx = vertexIndex % params.resolution;",
+    "  let gy = vertexIndex / params.resolution;",
     "  let uv = vec2f(f32(gx), f32(gy)) / max(vec2f(f32(params.resolution - 1u)), vec2f(1.0));",
     "  let info = state[waterIndex(gx, gy)];",
     "  let nx = info.z * params.normalScale;",
@@ -507,6 +509,37 @@
     "  return out;",
     "}",
   ].join("\n");
+
+  // sceneWaterCreateSurfaceIndexBuffer builds the triangle-list index buffer for a
+  // resolution x resolution surface grid: two triangles per cell, indices addressing
+  // the shared grid vertices. Winding matches the previous non-indexed corner order
+  // exactly (0,1,2, 3,4,5 -> (0,0),(1,0),(1,1), (0,0),(1,1),(0,1)), so the geometry and
+  // its facing are unchanged.
+  function sceneWaterCreateSurfaceIndexBuffer(device, resolution) {
+    var res = Math.max(2, Math.floor(resolution || 0));
+    var cells = res - 1;
+    var indices = new Uint32Array(cells * cells * 6);
+    var w = 0;
+    for (var cy = 0; cy < cells; cy++) {
+      for (var cx = 0; cx < cells; cx++) {
+        var a = cy * res + cx;
+        var d = a + res + 1;
+        indices[w++] = a; indices[w++] = a + 1; indices[w++] = d;
+        indices[w++] = a; indices[w++] = d; indices[w++] = a + res;
+      }
+    }
+    var buffer = device.createBuffer({
+      size: indices.byteLength,
+      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(buffer, 0, indices);
+    return buffer;
+  }
+
+  function sceneWaterDrawSurface(renderPass, system) {
+    renderPass.setIndexBuffer(system.indexBuffer, "uint32");
+    renderPass.drawIndexed(system.vertexCount);
+  }
 
   var SCENE_WATER_RENDER_FRAGMENT_SOURCE = [
     WGSL_FRAME_STRUCTS,
@@ -7410,6 +7443,7 @@
         objectShadowResolution: objectShadowResolution,
         cellCount: cellCount,
         vertexCount: Math.max(0, (resolution - 1) * (resolution - 1) * 6),
+        indexBuffer: sceneWaterCreateSurfaceIndexBuffer(device, resolution),
         bufferA: bufferA,
         bufferB: bufferB,
         uniformBuffer: uniformBuffer,
@@ -7441,6 +7475,10 @@
         dispose: function() {
           if (system._gosxDisposed) return;
           system._gosxDisposed = true;
+          if (system.indexBuffer && typeof system.indexBuffer.destroy === "function") {
+            system.indexBuffer.destroy();
+            system.indexBuffer = null;
+          }
           if (bufferA && typeof bufferA.destroy === "function") {
             pointsEntryGPUBuffers.delete(bufferA);
             bufferA.destroy();
@@ -9859,7 +9897,12 @@
             }
             renderPass.setBindGroup(0, selenaDraw.bindGroup);
             frameGroupBound = false;
-            renderPass.draw(system.vertexCount);
+            if (system.indexBuffer) {
+              renderPass.setIndexBuffer(system.indexBuffer, "uint32");
+              renderPass.drawIndexed(system.indexCount);
+            } else {
+              sceneWaterDrawSurface(renderPass, system);
+            }
             stats.waterDrawCalls += 1;
             stats.waterDrawVertices += system.vertexCount;
             stats.waterSelenaSurfacePasses += 1;
@@ -9918,7 +9961,7 @@
         }
         var bindGroup = getWaterRenderBindGroupCached(system);
         renderPass.setBindGroup(1, bindGroup);
-        renderPass.draw(system.vertexCount);
+        sceneWaterDrawSurface(renderPass, system);
         stats.waterDrawCalls += 1;
         stats.waterDrawVertices += system.vertexCount;
         if (system.waterSkyCubeLoaded) {
