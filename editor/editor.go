@@ -784,6 +784,9 @@ func (e *Editor) renderAssetTags() []gosx.Node {
 			gosx.Attr("defer", "defer"),
 		)))
 	}
+	if e.Options.Collaboration != nil {
+		nodes = append(nodes, gosx.El("script", gosx.Attrs(gosx.Attr("src", "/editor/collaborative-editor.js"), gosx.Attr("defer", "defer"))))
+	}
 	return nodes
 }
 

@@ -15,7 +15,7 @@ const (
 	DefaultScriptURL = "/editor/native-editor.js"
 )
 
-//go:embed assets/editor.css assets/mdpp-diagrams.js assets/native-editor.js
+//go:embed assets/editor.css assets/mdpp-diagrams.js assets/native-editor.js assets/collaborative-editor.js
 var embeddedAssets embed.FS
 
 // AssetHandler serves the optional native editor browser assets.

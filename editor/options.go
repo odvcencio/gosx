@@ -155,6 +155,17 @@ type FormButton struct {
 	Class string
 }
 
+// Collaboration declaratively binds a code surface to a GoSX hub document.
+type Collaboration struct {
+	HubURL      string
+	CellID      string
+	Path        string
+	EditEvent   string
+	UpdateEvent string
+	CursorEvent string
+	FocusEvent  string
+}
+
 // DefaultPanels is the standard panel set exposed by the editor shell.
 var DefaultPanels = []Panel{
 	PanelPreview,
@@ -214,6 +225,7 @@ type Options struct {
 	Hub                       *hub.Hub
 	PostID                    string
 	ReadOnly                  bool
+	Collaboration             *Collaboration
 }
 
 func (o *Options) defaults() {

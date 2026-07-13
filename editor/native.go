@@ -48,8 +48,24 @@ func (e *Editor) renderNativeForm() gosx.Node {
 	if e.Options.ReadOnly {
 		attrs = append(attrs, gosx.BoolAttr("data-readonly"))
 	}
+	if collaboration := e.Options.Collaboration; collaboration != nil {
+		attrs = appendStringAttr(attrs, "data-collaboration-hub", collaboration.HubURL)
+		attrs = appendStringAttr(attrs, "data-collaboration-cell", collaboration.CellID)
+		attrs = appendStringAttr(attrs, "data-collaboration-path", collaboration.Path)
+		attrs = appendStringAttr(attrs, "data-collaboration-edit-event", defaultCollaborationEvent(collaboration.EditEvent, "edit"))
+		attrs = appendStringAttr(attrs, "data-collaboration-update-event", defaultCollaborationEvent(collaboration.UpdateEvent, "cell:update"))
+		attrs = appendStringAttr(attrs, "data-collaboration-cursor-event", defaultCollaborationEvent(collaboration.CursorEvent, "presence:cursor"))
+		attrs = appendStringAttr(attrs, "data-collaboration-focus-event", defaultCollaborationEvent(collaboration.FocusEvent, "presence:focus"))
+	}
 
 	return gosx.El("form", attrs, gosx.Fragment(children...))
+}
+
+func defaultCollaborationEvent(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func (e *Editor) renderNativePanelRadios() []gosx.Node {
