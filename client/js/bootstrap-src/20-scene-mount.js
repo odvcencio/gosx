@@ -2604,6 +2604,22 @@
     return asset;
   }
 
+  // Public prewarm hook for progressive single-engine upgrades (e.g. a boot
+  // script that swaps a preview mount from a small preview GLB to the full
+  // model without tearing down/re-mounting the engine). Fetching + parsing a
+  // GLB/glTF model asset ahead of the actual swap lands the parsed result in
+  // the module-level asset cache (sceneModelAssetCache / sceneModelAssetReady)
+  // keyed by src, so a later hydrateSceneStateModels() call for the same src
+  // — e.g. triggered through handle.applyCommands([{kind: CommandSetModels}])
+  // — resolves synchronously from cache instead of paying fetch+parse cost
+  // inline with the visible swap frame. Safe to call with no mounted engine;
+  // resolves to the parsed asset ({objects, points, labels, sprites, html,
+  // lights, ...}, all empty arrays on failure) so callers can verify the load
+  // actually produced content before committing to a swap.
+  window.__gosx_scene3d_preload_model = function(src) {
+    return loadSceneModelAsset(String(src || "").trim(), null);
+  };
+
   function sceneModelHasSkins(skins) {
     return Array.isArray(skins) && skins.some(function(skin) {
       return Boolean(skin && Array.isArray(skin.joints) && skin.joints.length > 0 && skin.inverseBindMatrices);
@@ -9086,7 +9102,7 @@
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
     }
 
-    return {
+    const handle = {
       applyCommands(commands) {
         const result = applySceneCommands(sceneState, commands);
         publishSceneWaterStateSnapshot(ctx.mount, sceneState);
@@ -9104,6 +9120,45 @@
       },
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");
+      },
+      // updateSceneProps merges a partial props object into the mount's
+      // live props in place. Most Scene3D state (models, points, postFX,
+      // camera, ...) is already reachable through applyCommands(), which
+      // re-derives sceneState from the command payload. A handful of
+      // fields are instead read once at mount time into closure-captured
+      // derived state — currently just maxDevicePixelRatio/maxPixelRatio,
+      // baked into viewportBase — so patching props alone would not take
+      // effect. This is the minimal escape hatch for those: it mutates the
+      // live props object and, for viewport-affecting keys, recomputes
+      // viewportBase and forces a re-measured render. Used by progressive
+      // single-engine upgrades (preview -> full in place, no re-mount) to
+      // restore the full-quality device pixel ratio after the preview
+      // phase intentionally capped it for a cheap first paint.
+      updateSceneProps(partial) {
+        if (disposed || !partial || typeof partial !== "object") {
+          return;
+        }
+        let touchedViewport = false;
+        for (const key in partial) {
+          if (!Object.prototype.hasOwnProperty.call(partial, key)) {
+            continue;
+          }
+          props[key] = partial[key];
+          if (key === "maxDevicePixelRatio" || key === "maxPixelRatio") {
+            touchedViewport = true;
+          }
+        }
+        if (touchedViewport) {
+          const nextBase = sceneViewportBase(props);
+          viewportBase.baseWidth = nextBase.baseWidth;
+          viewportBase.baseHeight = nextBase.baseHeight;
+          viewportBase.aspectRatio = nextBase.aspectRatio;
+          viewportBase.responsive = nextBase.responsive;
+          viewportBase.explicitMaxDevicePixelRatio = nextBase.explicitMaxDevicePixelRatio;
+          scheduleRenderWithViewport("update-props");
+        } else {
+          scheduleRender("update-props");
+        }
       },
       dispose() {
         disposed = true;
@@ -9188,6 +9243,18 @@
         delete ctx.mount.__gosxScene3DCSSDynamic;
         delete ctx.mount.__gosxScene3DCSSRevision;
         delete ctx.mount.__gosxScene3DCSSAnimationUntil;
+        delete ctx.mount.__gosxScene3DHandle;
       },
     };
+    // Mirror the returned handle directly on the mount element. The
+    // window.__gosx.engines registry entry for this engine is written by the
+    // GENERIC declarative-engine mounting path AFTER this factory's promise
+    // resolves (a separate module, loaded/initialized independently of this
+    // Scene3D chunk) — under some load-order timings that registration can
+    // lag well behind (or, rarely, never observe) this factory's own
+    // completion. Callers that need the handle as soon as this mount is
+    // interactive (e.g. an app-level progressive-upgrade script) should
+    // prefer reading it from here over window.__gosx.engines.get(id).handle.
+    ctx.mount.__gosxScene3DHandle = handle;
+    return handle;
   });

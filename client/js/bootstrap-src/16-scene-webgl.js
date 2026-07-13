@@ -7807,10 +7807,16 @@
         return;
       }
 
-      var builtinPP = ensurePointsProgram();
-      if (!builtinPP) {
-        return;
-      }
+      // NOTE: the builtin program is intentionally NOT compiled here. Every
+      // layer prefers its own authored (Selena-compiled) GLSL program — the
+      // builtin is only a per-layer fallback for entries that ship no
+      // authored shader. Eagerly compiling it up front made one optional,
+      // rarely-needed program a single point of failure for the ENTIRE
+      // points pass: if it failed to compile (or the compile triggered a
+      // WebGL context loss on a constrained/software backend), every layer
+      // — including ones with perfectly good authored programs — silently
+      // stopped rendering. See ensurePointsProgram(), called lazily below
+      // only for entries that actually need it.
 
       // Upload fog uniforms once (shared by all entries in this call).
       var env = environment || {};
@@ -7831,7 +7837,13 @@
         var hasAuthoredGL = (typeof entry.customVertex === "string" && entry.customVertex.trim()) &&
                             (typeof entry.customFragment === "string" && entry.customFragment.trim());
         var pp = hasAuthoredGL ? ensurePointsAuthoredGLProgram(entry, layerID) : null;
-        if (!pp) pp = builtinPP;
+        var usedAuthored = Boolean(pp);
+        if (!pp) pp = ensurePointsProgram();
+        // Neither an authored program nor the builtin fallback compiled for
+        // this layer (e.g. the builtin failed to compile in this
+        // environment) — skip only this entry rather than aborting the rest
+        // of the points pass.
+        if (!pp) continue;
         if (currentProgram !== pp.program) {
           gl.useProgram(pp.program);
           currentProgram = pp.program;
@@ -7844,7 +7856,7 @@
           if (pp.uniforms.fogColor != null) gl.uniform3f(pp.uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
         }
         // Upload authored custom uniforms if using an authored program.
-        if (hasAuthoredGL && pp !== builtinPP) {
+        if (usedAuthored) {
           applyPointsAuthoredCustomUniforms(pp, entry.customUniforms);
         }
 
@@ -8006,7 +8018,7 @@
           webglComputeParticleDrawStats.drawEntries += 1;
           webglComputeParticleDrawStats.drawInstances += count;
           webglComputeParticleDrawStats.drawCalls += 1;
-          if (hasAuthoredGL && pp !== builtinPP) {
+          if (usedAuthored) {
             webglComputeParticleDrawStats.authoredDrawEntries += 1;
             webglComputeParticleDrawStats.authoredDrawInstances += count;
             webglComputeParticleDrawStats.authoredDrawCalls += 1;
