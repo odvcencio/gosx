@@ -137,24 +137,32 @@ type Props struct {
 	// reload / re-render trip needed. Meshes opted into gizmo-mode-driven
 	// visibility via Mesh.GizmoRing are shown only while the signal matches
 	// "rotate"; everything else is untouched.
-	GizmoInputSignal      string       `json:"gizmoInputSignal,omitempty"`
-	CapabilityTier        string       `json:"capabilityTier,omitempty"`
-	Compression           *Compression `json:"compression,omitempty"`
-	ControlTarget         Vector3
-	ControlRotateMode     string  `json:"controlRotateMode,omitempty"`
-	ControlRotateSpeed    float64 `json:"controlRotateSpeed,omitempty"`
-	ControlZoomSpeed      float64 `json:"controlZoomSpeed,omitempty"`
-	ControlLookSpeed      float64 `json:"controlLookSpeed,omitempty"`
-	ControlMoveSpeed      float64 `json:"controlMoveSpeed,omitempty"`
-	ControlMinDistance    float64 `json:"controlMinDistance,omitempty"`
-	ControlMaxDistance    float64 `json:"controlMaxDistance,omitempty"`
-	ControlPitchLimit     float64 `json:"controlPitchLimit,omitempty"`
-	ScrollCameraStart     float64 `json:"scrollCameraStart,omitempty"`
-	ScrollCameraEnd       float64 `json:"scrollCameraEnd,omitempty"`
-	MaxFrameRate          float64 `json:"maxFrameRate,omitempty"`
-	MaxFPS                float64 `json:"maxFPS,omitempty"`
-	FrameIntervalMS       float64 `json:"frameIntervalMS,omitempty"`
-	MaxDevicePixelRatio   float64 `json:"maxDevicePixelRatio,omitempty"`
+	GizmoInputSignal    string       `json:"gizmoInputSignal,omitempty"`
+	CapabilityTier      string       `json:"capabilityTier,omitempty"`
+	Compression         *Compression `json:"compression,omitempty"`
+	ControlTarget       Vector3
+	ControlRotateMode   string  `json:"controlRotateMode,omitempty"`
+	ControlRotateSpeed  float64 `json:"controlRotateSpeed,omitempty"`
+	ControlZoomSpeed    float64 `json:"controlZoomSpeed,omitempty"`
+	ControlLookSpeed    float64 `json:"controlLookSpeed,omitempty"`
+	ControlMoveSpeed    float64 `json:"controlMoveSpeed,omitempty"`
+	ControlMinDistance  float64 `json:"controlMinDistance,omitempty"`
+	ControlMaxDistance  float64 `json:"controlMaxDistance,omitempty"`
+	ControlPitchLimit   float64 `json:"controlPitchLimit,omitempty"`
+	ScrollCameraStart   float64 `json:"scrollCameraStart,omitempty"`
+	ScrollCameraEnd     float64 `json:"scrollCameraEnd,omitempty"`
+	MaxFrameRate        float64 `json:"maxFrameRate,omitempty"`
+	MaxFPS              float64 `json:"maxFPS,omitempty"`
+	FrameIntervalMS     float64 `json:"frameIntervalMS,omitempty"`
+	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
+	// MaxPixels caps the render target by TOTAL backing pixels (width*height
+	// after the device pixel ratio is applied). MaxDevicePixelRatio alone cannot
+	// express this: a ratio is blind to how large the display is, so identical
+	// props cost ~3x more fill on a Retina laptop than on a 1080p monitor and any
+	// fill-bound scene falls off a cliff there. The runtime derives an effective
+	// DPR from this budget, so the cap is resolution-aware. Zero means unbounded
+	// (the ratio cap alone applies).
+	MaxPixels             int     `json:"maxPixels,omitempty"`
 	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
 	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
 	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
@@ -1702,6 +1710,9 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
+	if p.MaxPixels > 0 {
+		out["maxPixels"] = p.MaxPixels
+	}
 	setNumeric(out, "minDevicePixelRatio", p.MinDevicePixelRatio)
 	setBool(out, "adaptiveQuality", p.AdaptiveQuality)
 	setNumeric(out, "adaptiveTargetFrameMS", p.AdaptiveTargetFrameMS)

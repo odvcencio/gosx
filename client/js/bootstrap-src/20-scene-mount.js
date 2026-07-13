@@ -4278,6 +4278,19 @@
         Math.min(maxDevicePixelRatio, adaptiveQuality.currentMaxDevicePixelRatio),
       );
     }
+    // maxPixels caps the render target by TOTAL backing pixels, which
+    // maxDevicePixelRatio cannot: a ratio knows nothing about how large the
+    // display is. The same props that push ~2 MP on a 1080p/DPR-1 screen push
+    // ~6 MP on a Retina laptop, so any fill-bound scene (large soft sprites,
+    // a big water surface, a multi-pass post-FX chain) silently costs 3x more
+    // there and falls off a cliff. Deriving the ratio from a pixel budget makes
+    // the cap resolution-aware. Opt-in: unset means the old behaviour exactly.
+    const maxPixels = sceneNumber(props && (props.maxPixels || props.maxRenderPixels), 0);
+    if (maxPixels > 0) {
+      const cssPixels = Math.max(1, cssWidth * cssHeight);
+      const budgetRatio = Math.sqrt(maxPixels / cssPixels);
+      maxDevicePixelRatio = Math.max(1, Math.min(maxDevicePixelRatio, budgetRatio));
+    }
     const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
     return {
       cssWidth,
@@ -8809,6 +8822,11 @@
     const handle = {
       applyCommands(commands) {
         const result = applySceneCommands(sceneState, commands);
+        // Commands can change the post-FX chain (CommandSetPostEffects). Without
+        // this the data-gosx-scene3d-postfx attribute keeps reporting the state
+        // at mount time, so a scene whose post-FX was restored by a progressive
+        // upgrade still reads "none" — a diagnostic that actively misleads.
+        applyScenePostFXState(ctx.mount, sceneState);
         publishSceneWaterStateSnapshot(ctx.mount, sceneState);
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
         if (result && typeof result.then === "function") {

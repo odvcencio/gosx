@@ -3179,7 +3179,15 @@
     if (!kind) {
       return null;
     }
-    return {
+    // Custom (shader-authored) post passes carry fields this normalizer knows
+    // nothing about: the shader source, its layout, stage, backend and uniforms.
+    // createSceneState() stores post effects RAW, so those fields survive the
+    // mount path — but rebuilding an effect from the built-in whitelist below
+    // silently stripped them, so any custom pass re-applied through
+    // applyCommands (a progressive post-FX upgrade, say) arrived at the renderer
+    // with no shader and rendered nothing. Preserve everything the caller
+    // supplied, then overlay the normalized built-in knobs.
+    const normalized = {
       kind,
       threshold: sceneNumberOrCSSVar(item.threshold, sceneNumber(current.threshold, 0)),
       intensity: sceneNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, 0)),
@@ -3195,6 +3203,7 @@
       mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
     };
+    return Object.assign({}, current, item, normalized);
   }
 
   function scenePostEffects(props) {
