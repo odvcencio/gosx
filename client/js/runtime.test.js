@@ -9459,6 +9459,27 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /renderWaterObjectSceneTexturePasses\(/);
   assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
   assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameTimeSeconds, bundle, pbrSceneBuffers, scaledW, scaledH\)/);
+
+  // The water surface's vertex stage does NOT come from the built-in WGSL shader:
+  // the Selena pipeline builds the vertex AND fragment stage from one module, so
+  // surface.sel / surface-below.sel supply it, and they expand vertexIndex into
+  // (cell, corner) using their gridResolution param. The draw count and that param
+  // therefore have to describe the SAME mesh. v0.30.6 changed one without the other
+  // -- an index buffer against a corner-expanding shader -- which scrambled the
+  // geometry into oversized triangles and made the frame 2.5x more expensive.
+  //
+  // So: the Selena draw is sized by surfaceVertexCount, gridResolution is fed from
+  // the matching surfaceMeshResolution, and the built-in fallback (which expands
+  // params.resolution, the simulation grid) keeps drawing the full-resolution mesh.
+  assert.match(webgpu, /sceneWaterDrawSurface\(renderPass, system\.surfaceVertexCount\)/);
+  assert.match(webgpu, /sceneWaterDrawSurface\(renderPass, system\.vertexCount\)/);
+  assert.match(webgpu, /gridResolution: sceneNumber\(system && system\.surfaceMeshResolution/);
+  assert.match(webgpu, /surfaceVertexCount: Math\.max\(0, \(surfaceMeshResolution - 1\) \* \(surfaceMeshResolution - 1\) \* 6\)/);
+  // Mesh resolution changes the vertex count, so it must key the system signature
+  // or a change to it would silently reuse the old system's buffers.
+  assert.match(webgpu, /return \[\s*resolution,\s*surfaceMeshResolution,/);
+  // The surface must not be drawn indexed: no index buffer may be bound to it.
+  assert.doesNotMatch(webgpu, /sceneWaterCreateSurfaceIndexBuffer/);
   assert.match(webgpu, /waterObjectTexturePasses/);
   assert.match(webgpu, /waterObjectTextureTargets/);
   assert.match(webgpu, /waterObjectTextureMeshPasses/);

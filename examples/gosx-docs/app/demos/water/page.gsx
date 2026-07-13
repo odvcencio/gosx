@@ -53,6 +53,7 @@ func Page() Node {
   			interactionTarget="water-main"
   			interactionObject="Sphere"
   			resolution={data.diagResolution}
+			surfaceMeshResolution={data.diagMeshRes}
   			poolShape="Box"
   			poolWidth={1.0}
   			poolHeight={1.0}

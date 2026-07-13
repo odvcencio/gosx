@@ -39,6 +39,19 @@ var waterDiagDefaults = map[string]any{
 	"dpr":             1.0, // hard-capped: see page.gsx (Apple cliff)
 	"maxPixels":       1200000,
 	"resolution":      192,
+	// meshRes tessellates the surface INDEPENDENTLY of the simulation. 0 = match
+	// resolution, i.e. exactly what shipped. The surface is currently drawn at
+	// roughly one triangle per 1.4 screen pixels; a GPU shades in 2x2 quads, so
+	// every sub-pixel triangle still bills a full four-lane quad of the expensive
+	// reflection/refraction shader. That predicts cost tracks triangle count rather
+	// than pixel count -- which is exactly what the measurements say: 2.56x the
+	// pixels (dpr 1.6) cost only 1.27x the time, while dropping resolution moved it
+	// enormously. Simulation, normals and shading all stay at full resolution
+	// because both surface shaders sample the heightfield by normalized uv.
+	//
+	//	/demos/water?diag=1&meshRes=96   quarter the triangles, same sim
+	//	/demos/water?diag=1&meshRes=64   ninth the triangles, same sim
+	"meshRes":         0,
 	"causticsRes":     512,
 	"shadowRes":       512,
 	"caustics":        true,
@@ -68,6 +81,7 @@ func WaterDiagConfig(ctx *route.RouteContext) map[string]any {
 	out["dpr"] = waterDiagFloat(ctx, "dpr", waterDiagDefaults["dpr"].(float64), 0.5, 3.0)
 	out["maxPixels"] = waterDiagInt(ctx, "maxPixels", waterDiagDefaults["maxPixels"].(int), 100000, 16000000)
 	out["resolution"] = waterDiagInt(ctx, "res", waterDiagDefaults["resolution"].(int), 16, 512)
+	out["meshRes"] = waterDiagInt(ctx, "meshRes", waterDiagDefaults["meshRes"].(int), 0, 512)
 	out["causticsRes"] = waterDiagInt(ctx, "causticsRes", waterDiagDefaults["causticsRes"].(int), 0, 2048)
 	out["shadowRes"] = waterDiagInt(ctx, "shadowRes", waterDiagDefaults["shadowRes"].(int), 0, 2048)
 	out["caustics"] = waterDiagBool(ctx, "caustics", waterDiagDefaults["caustics"].(bool))

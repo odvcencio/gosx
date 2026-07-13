@@ -72,7 +72,7 @@
       var reported = num(attr("quality-frame-ms"));
 
       var q = new URLSearchParams(location.search);
-      var knobs = ["dpr", "res", "caustics", "reflection", "refraction", "causticsRes", "shadowRes", "maxPixels"]
+      var knobs = ["dpr", "res", "meshRes", "caustics", "reflection", "refraction", "causticsRes", "shadowRes", "maxPixels"]
         .filter(function (k) { return q.has(k); })
         .map(function (k) { return k + "=" + q.get(k); });
 
@@ -96,6 +96,7 @@
         row("water passes", attr("webgpu-water-selena-surface-passes") + " surface / " +
           attr("webgpu-water-caustic-passes") + " caustic", false) +
         row("water verts", attr("webgpu-water-draw-vertices") || "-", false) +
+        row("mesh res", q.get("meshRes") || "= sim", false) +
         row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false) +
         '<div style="height:6px"></div>' +
         row("canvas", lastW + "x" + lastH, false) +
@@ -181,6 +182,7 @@
         surfacePasses: attr("webgpu-water-selena-surface-passes"),
         causticPasses: attr("webgpu-water-caustic-passes"),
         drawVertices: attr("webgpu-water-draw-vertices"),
+        meshRes: new URLSearchParams(location.search).get("meshRes") || "(= sim)",
         computeDispatches: attr("webgpu-water-compute-dispatches"),
         canvas: lastW + "x" + lastH,
         resizesPerSec: resizeWindow.length,

@@ -619,6 +619,7 @@ type WaterSystemIR struct {
 	InteractionTarget           string                           `json:"interactionTarget,omitempty"`
 	InteractionObject           string                           `json:"interactionObject,omitempty"`
 	Resolution                  int                              `json:"resolution,omitempty"`
+	SurfaceMeshResolution       int                              `json:"surfaceMeshResolution,omitempty"`
 	PoolShape                   string                           `json:"poolShape,omitempty"`
 	PoolWidth                   float64                          `json:"poolWidth,omitempty"`
 	PoolHeight                  float64                          `json:"poolHeight,omitempty"`
@@ -1865,6 +1866,7 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "interactionTarget", item.InteractionTarget)
 	setString(record, "interactionObject", item.InteractionObject)
 	setInt(record, "resolution", item.Resolution)
+	setInt(record, "surfaceMeshResolution", item.SurfaceMeshResolution)
 	setString(record, "poolShape", item.PoolShape)
 	setNumeric(record, "poolWidth", item.PoolWidth)
 	setNumeric(record, "poolHeight", item.PoolHeight)

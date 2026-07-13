@@ -580,11 +580,20 @@ type ComputeParticles struct {
 // WebGPU-first; the Scene3D backend capability verdict treats it as a
 // fidelity-gated feature.
 type WaterSystem struct {
-	ID                          string
-	InteractionProfile          string
-	InteractionTarget           string
-	InteractionObject           string
-	Resolution                  int
+	ID                 string
+	InteractionProfile string
+	InteractionTarget  string
+	InteractionObject  string
+	Resolution         int
+	// SurfaceMeshResolution tessellates the surface mesh independently of
+	// Resolution, which sizes the simulation heightfield. Zero means "match
+	// Resolution". The surface shaders sample the heightfield by normalized uv and
+	// never read the grid size in their fragment stage, so a coarser mesh shades
+	// identically -- it only carries the vertical displacement on fewer vertices.
+	// The surface is otherwise tessellated to roughly one triangle per screen
+	// pixel, and a GPU shades in 2x2 quads, so sub-pixel triangles bill a full
+	// four-lane quad each: cost tracks triangle count, not pixels.
+	SurfaceMeshResolution       int
 	PoolShape                   string
 	PoolWidth                   float64
 	PoolHeight                  float64
@@ -3003,6 +3012,7 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 		InteractionTarget:            strings.TrimSpace(w.InteractionTarget),
 		InteractionObject:            strings.TrimSpace(w.InteractionObject),
 		Resolution:                   resolution,
+		SurfaceMeshResolution:        w.SurfaceMeshResolution,
 		PoolShape:                    poolShape,
 		PoolWidth:                    poolWidth,
 		PoolHeight:                   poolHeight,

@@ -519,11 +519,6 @@
     "}",
   ].join("\n");
 
-  // sceneWaterCreateSurfaceIndexBuffer builds the triangle-list index buffer for a
-  // resolution x resolution surface grid: two triangles per cell, indices addressing
-  // the shared grid vertices. Winding matches the previous non-indexed corner order
-  // exactly (0,1,2, 3,4,5 -> (0,0),(1,0),(1,1), (0,0),(1,1),(0,1)), so the geometry and
-  // its facing are unchanged.
   // The water surface is drawn NON-indexed: six vertices per grid cell, with the
   // vertex shader expanding vertexIndex into (cell, corner). That expansion is
   // duplicated in surface.sel and surface-below.sel (which supply the vertex stage
@@ -531,8 +526,8 @@
   // and in the WebGL2 backend's drawArrays. An index buffer here would feed those
   // shaders grid ids where they expect sequential corner ids, so switching to
   // drawIndexed means changing all four together, not just this one.
-  function sceneWaterDrawSurface(renderPass, system) {
-    renderPass.draw(system.vertexCount);
+  function sceneWaterDrawSurface(renderPass, vertexCount) {
+    renderPass.draw(vertexCount);
   }
 
   var SCENE_WATER_RENDER_FRAGMENT_SOURCE = [
@@ -6453,6 +6448,14 @@
       return Math.max(16, Math.min(512, raw));
     }
 
+    // Tessellation of the surface mesh. Defaults to the simulation resolution, so
+    // an entry that does not set it is byte-identical to before this existed.
+    function sceneWaterSurfaceMeshResolution(entry, simResolution) {
+      var raw = Math.floor(sceneNumber(entry && entry.surfaceMeshResolution, 0));
+      if (!Number.isFinite(raw) || raw <= 0) return simResolution;
+      return Math.max(16, Math.min(512, raw));
+    }
+
     function sceneWaterCausticsResolution(entry) {
       var raw = Math.floor(sceneNumber(entry && entry.causticsResolution, WATER_CAUSTICS_TEXTURE_SIZE));
       if (!Number.isFinite(raw) || raw <= 0) raw = WATER_CAUSTICS_TEXTURE_SIZE;
@@ -6891,11 +6894,13 @@
     // SCENE_WATER_*_SOURCE fallback, neither of which is entry-authored.
     function sceneWaterSystemSignature(entry, width, height) {
       var resolution = sceneWaterResolution(entry && entry.resolution);
+      var surfaceMeshResolution = sceneWaterSurfaceMeshResolution(entry, resolution);
       var causticsResolution = sceneWaterCausticsResolution(entry);
       var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
       var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
       return [
         resolution,
+        surfaceMeshResolution,
         causticsResolution,
         objectTextureSize.mode,
         objectTextureSize.width,
@@ -7374,6 +7379,7 @@
 
     function createSceneWaterSystem(scopedDevice, entry, width, height) {
       var resolution = sceneWaterResolution(entry && entry.resolution);
+      var surfaceMeshResolution = sceneWaterSurfaceMeshResolution(entry, resolution);
       var causticsResolution = sceneWaterCausticsResolution(entry);
       var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
       var objectTextureWidth = objectTextureSize.width;
@@ -7437,6 +7443,8 @@
         objectShadowResolution: objectShadowResolution,
         cellCount: cellCount,
         vertexCount: Math.max(0, (resolution - 1) * (resolution - 1) * 6),
+        surfaceMeshResolution: surfaceMeshResolution,
+        surfaceVertexCount: Math.max(0, (surfaceMeshResolution - 1) * (surfaceMeshResolution - 1) * 6),
         bufferA: bufferA,
         bufferB: bufferB,
         uniformBuffer: uniformBuffer,
@@ -9130,7 +9138,10 @@
           normalScale: sceneNumber(entry.normalScale, 1.0),
           objectRadius: sceneNumber(system && system.waterObjectRadius, 0.3),
           opticsCaustic: optics.caustics ? 1 : 0,
-          gridResolution: sceneNumber(system && system.waterResolution, 256),
+          // Tessellation, NOT the simulation grid: gridResolution is read only by the
+          // surface shaders' vertex() stage. Their fragment stage samples the
+          // heightfield by normalized uv, so this cannot change shading.
+          gridResolution: sceneNumber(system && system.surfaceMeshResolution, sceneNumber(system && system.waterResolution, 256)),
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
           objectSubtype: sceneNumber(system && system.waterObjectSubtype, 0),
           objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
@@ -9886,9 +9897,9 @@
             }
             renderPass.setBindGroup(0, selenaDraw.bindGroup);
             frameGroupBound = false;
-            sceneWaterDrawSurface(renderPass, system);
+            sceneWaterDrawSurface(renderPass, system.surfaceVertexCount);
             stats.waterDrawCalls += 1;
-            stats.waterDrawVertices += system.vertexCount;
+            stats.waterDrawVertices += system.surfaceVertexCount;
             stats.waterSelenaSurfacePasses += 1;
             if (system.waterSkyCubeLoaded) {
               stats.waterSkyCubeTextureLoaded += 1;
@@ -9945,7 +9956,7 @@
         }
         var bindGroup = getWaterRenderBindGroupCached(system);
         renderPass.setBindGroup(1, bindGroup);
-        sceneWaterDrawSurface(renderPass, system);
+        sceneWaterDrawSurface(renderPass, system.vertexCount);
         stats.waterDrawCalls += 1;
         stats.waterDrawVertices += system.vertexCount;
         if (system.waterSkyCubeLoaded) {
