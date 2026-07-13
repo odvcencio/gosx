@@ -6,6 +6,11 @@ func Layout() Node {
 		<a class="skip-link" href="#pill-nav">Skip to navigation</a>
 		<nav id="pill-nav" class="pill-nav" role="navigation" aria-label="Main navigation">
 			<a href="/" class="pill-logo" data-gosx-link="true">GoSX</a>
+			<div class="pill-links">
+				<a href="/docs/getting-started" data-gosx-link="true" class="pill-link">Docs</a>
+				<a href="/demos" data-gosx-link="true" class="pill-link">Demos</a>
+				<a href="https://github.com/odvcencio/gosx" rel="noopener" class="pill-link">GitHub</a>
+			</div>
 			<button
 				class="pill-toggle"
 				aria-expanded="false"

@@ -64,6 +64,48 @@
 }
 
 /* ------------------------------------------------------------
+   Pill links (inline, desktop)
+   ------------------------------------------------------------ */
+
+.pill-links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-left: auto;
+  margin-right: var(--space-md);
+}
+
+.pill-link {
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  position: relative;
+  transition: color var(--duration-fast);
+}
+
+.pill-link::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 0;
+  height: 1px;
+  background: var(--accent);
+  transition: width var(--duration-normal) var(--ease-out-expo);
+}
+
+.pill-link:hover {
+  color: var(--text-primary);
+}
+
+.pill-link:hover::after,
+.pill-link:focus-visible::after {
+  width: 100%;
+}
+
+/* ------------------------------------------------------------
    Pill toggle (hamburger)
    ------------------------------------------------------------ */
 
@@ -220,6 +262,10 @@
 @media (max-width: 767px) {
   .pill-nav {
     padding: var(--space-xs) var(--space-sm);
+  }
+
+  .pill-links {
+    display: none;
   }
 
   .site-footer__inner {

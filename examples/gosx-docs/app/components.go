@@ -6,7 +6,6 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/highlight"
-	"m31labs.dev/gosx/server"
 )
 
 var tooltipID atomic.Int64
@@ -39,14 +38,10 @@ func CodeBlock(lang, source string) gosx.Node {
 	)
 }
 
-// StatCard renders a proof-point stat card with server-measured text.
+// StatCard renders a proof-point stat card.
 func StatCard(value, label string) gosx.Node {
 	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "stat-card glass-panel")),
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "stat-card__value")),
-			server.TextBlock(server.TextBlockProps{
-				Font: "700 32px Space Grotesk",
-			}, value),
-		),
+		gosx.El("span", gosx.Attrs(gosx.Attr("class", "stat-card__value")), gosx.Text(value)),
 		gosx.El("span", gosx.Attrs(gosx.Attr("class", "stat-card__label")), gosx.Text(label)),
 	)
 }

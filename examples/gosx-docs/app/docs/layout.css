@@ -29,6 +29,18 @@
   padding-right: var(--space-md);
 }
 
+.toc-rail::before {
+  content: 'On this page';
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  padding-left: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
 .toc-link {
   display: block;
   padding: var(--space-xs) 0;
@@ -68,6 +80,9 @@
   line-height: var(--lh-headline);
   margin-top: var(--space-2xl);
   margin-bottom: var(--space-sm);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+  scroll-margin-top: 6rem;
 }
 
 .prose h3 {
@@ -75,6 +90,7 @@
   font-size: var(--text-h3);
   margin-top: var(--space-xl);
   margin-bottom: var(--space-xs);
+  scroll-margin-top: 6rem;
 }
 
 .prose p {
@@ -112,7 +128,7 @@
   border-bottom-color: var(--accent);
 }
 
-.prose code {
+.prose :not(pre) > code {
   font-family: var(--font-mono);
   font-size: 0.875em;
   background: var(--code-bg);
@@ -129,15 +145,25 @@
    Docs header
    ------------------------------------------------------------ */
 
+/* First section heading sits right under the header rule — skip its own rule */
+.prose h2:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
 .docs-header {
   margin-bottom: var(--space-2xl);
   padding-bottom: var(--space-lg);
   border-bottom: 1px solid var(--border);
 }
 
+.docs-header__eyebrow {
+  margin: 0 0 var(--space-sm);
+}
+
 .docs-header__title {
   font-family: var(--font-display);
-  font-size: var(--text-h2);
+  font-size: clamp(2.2rem, 1.8rem + 2vw, 3.2rem);
   letter-spacing: var(--ls-headline);
   line-height: var(--lh-headline);
   margin: 0 0 var(--space-sm) 0;
@@ -183,24 +209,53 @@
 
 .docs-footer {
   margin-top: var(--space-3xl);
-  padding-top: var(--space-lg);
-  border-top: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
+  gap: var(--space-sm);
 }
 
 .docs-footer__link {
-  color: var(--accent);
+  display: block;
+  flex: 1;
+  max-width: 48%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  color: var(--text-primary);
   text-decoration: none;
-  transition: color var(--duration-fast);
+  font-family: var(--font-display);
+  transition:
+    border-color var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-normal) var(--ease-out-expo);
 }
 
-.docs-footer__link:hover {
-  color: var(--accent-deep);
+.docs-footer__link::before {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  margin-bottom: 0.35rem;
+}
+
+.docs-footer__link--prev::before {
+  content: '← Previous';
 }
 
 .docs-footer__link--next {
   margin-left: auto;
+  text-align: right;
+}
+
+.docs-footer__link--next::before {
+  content: 'Next →';
+}
+
+.docs-footer__link:hover {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 32px rgba(212, 175, 55, 0.08);
 }
 
 /* ------------------------------------------------------------
