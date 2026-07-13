@@ -48,7 +48,7 @@
         const target = definitionAtCursor(source, latestTags);
         if (!target) return;
         event.preventDefault();
-        const offset = tagStart(target);
+        const offset = Number(target.nameRange?.start16 ?? tagStart(target));
         source.setSelectionRange(offset, offset);
         source.focus();
         return;
