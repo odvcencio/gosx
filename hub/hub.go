@@ -304,6 +304,32 @@ func (h *Hub) Send(clientID string, event string, data any) {
 	client.trySend(msg)
 }
 
+// Disconnect closes one connected client from the server side. The client's
+// read pump performs the normal removal, presence cleanup, and leave callback,
+// so forced disconnects have the same lifecycle semantics as peer closes.
+// It returns false when the client is no longer connected.
+func (h *Hub) Disconnect(clientID, reason string) bool {
+	h.mu.RLock()
+	client, ok := h.clients[clientID]
+	h.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	if reason == "" {
+		reason = "disconnected by server"
+	}
+	client.mu.Lock()
+	if client.closed {
+		client.mu.Unlock()
+		return false
+	}
+	_ = client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = client.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason), time.Now().Add(writeWait))
+	_ = client.conn.Close()
+	client.mu.Unlock()
+	return true
+}
+
 // encodeMessage serializes a hub Message into a single JSON byte slice.
 //
 // The previous implementation encoded Data with json.Marshal into a

@@ -38,6 +38,47 @@ func TestHubBasic(t *testing.T) {
 	}
 }
 
+func TestHubDisconnectRunsNormalLifecycle(t *testing.T) {
+	h := New("disconnect")
+	left := make(chan string, 1)
+	h.On("leave", func(ctx *Context) { left <- ctx.Client.ID })
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	welcome := readUntilEvent(t, conn, "__welcome")
+	var identity struct {
+		ClientID string `json:"clientId"`
+	}
+	if err := json.Unmarshal(welcome.Data, &identity); err != nil {
+		t.Fatalf("decode welcome: %v", err)
+	}
+	if !h.Disconnect(identity.ClientID, "access revoked") {
+		t.Fatal("expected connected client to be disconnected")
+	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected peer connection to close")
+	}
+	select {
+	case clientID := <-left:
+		if clientID != identity.ClientID {
+			t.Fatalf("leave client = %q, want %q", clientID, identity.ClientID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("leave callback did not run")
+	}
+	if h.ClientCount() != 0 || h.Presence().Count() != 0 {
+		t.Fatalf("forced disconnect leaked client or presence: clients=%d presence=%d", h.ClientCount(), h.Presence().Count())
+	}
+	if h.Disconnect(identity.ClientID, "again") {
+		t.Fatal("second disconnect should report missing client")
+	}
+}
+
 func TestHubState(t *testing.T) {
 	h := New("test")
 	h.SetState("count", 42)
