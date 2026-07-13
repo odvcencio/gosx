@@ -4186,7 +4186,6 @@
     var lastWaterTimeSeconds = null;
     var lastPreparedScene = null;
     var lastWebGPUFrameStats = null;
-    var lastGPUWorkMS = 0;
     var webGPUFrameSeq = 0;
     // Cull telemetry: frame counter for throttling readback (~every 30 frames)
     // and the last aggregated survivor snapshot written to the mount attribute.
@@ -13590,10 +13589,12 @@
       var gpuT0 = (webGPUFrameSeq % 15) === 0 ? performance.now() : 0;
       device.queue.submit([encoder.finish()]);
       if (gpuT0 && device.queue.onSubmittedWorkDone) {
+        var gpuMount = canvas && canvas.parentNode;
         device.queue.onSubmittedWorkDone().then(function () {
-          lastGPUWorkMS = performance.now() - gpuT0;
-          mount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUWorkMS.toFixed(1));
-        });
+          if (gpuMount && gpuMount.setAttribute) {
+            gpuMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", (performance.now() - gpuT0).toFixed(1));
+          }
+        }).catch(function () {});
       }
       publishWebGPUFrameStats(frameStats);
       if (scopedFrameErrors) endWebGPUErrorScope();
