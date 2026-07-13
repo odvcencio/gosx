@@ -320,6 +320,7 @@
     };
 
     const renderHighlight = () => {
+	  if (form.dataset.codeIntelligenceRuntime) return;
       highlight.innerHTML = highlightMarkdownPP(textarea.value) + "\n";
     };
 

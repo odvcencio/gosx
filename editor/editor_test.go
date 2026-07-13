@@ -121,7 +121,7 @@ func TestRender_ComputesContentStatsAndStatuses(t *testing.T) {
 
 func TestAssetHandlerServesNativeAssets(t *testing.T) {
 	handler := AssetHandler()
-	for _, path := range []string{"/editor.css", "/mdpp-diagrams.js", "/native-editor.js"} {
+	for _, path := range []string{"/editor.css", "/mdpp-diagrams.js", "/native-editor.js", "/collaborative-editor.js", "/code-intelligence.js"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)

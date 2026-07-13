@@ -603,6 +603,42 @@
   color: #ef9f76;
 }
 
+.syntax-keyword,
+.syntax-operator {
+  color: #c792ea;
+}
+
+.syntax-string,
+.syntax-character {
+  color: #c3e88d;
+}
+
+.syntax-comment {
+  color: var(--editor-muted);
+  font-style: italic;
+}
+
+.syntax-function,
+.syntax-function-method {
+  color: #82aaff;
+}
+
+.syntax-type,
+.syntax-type-builtin {
+  color: #ffcb6b;
+}
+
+.syntax-number,
+.syntax-constant,
+.syntax-constant-builtin {
+  color: #f78c6c;
+}
+
+.syntax-property,
+.syntax-field {
+  color: #89ddff;
+}
+
 .editor-native-sidebar {
   min-width: 0;
   min-height: 0;

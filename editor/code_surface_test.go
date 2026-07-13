@@ -44,6 +44,35 @@ func TestCodeSurfaceRendersDeclarativeCollaborationBinding(t *testing.T) {
 	}
 }
 
+func TestCodeSurfaceRendersDeclarativeIntelligenceBinding(t *testing.T) {
+	component := New("code", Options{
+		Surface:  SurfaceCode,
+		Language: Go,
+		Content:  "package main\n",
+		CodeIntelligence: &CodeIntelligence{
+			Language:          "go",
+			WasmExecURL:       "/intelligence/wasm_exec.js",
+			RuntimeURL:        "/intelligence/gotreesitter.wasm",
+			GrammarURL:        "/intelligence/go.bin",
+			HighlightQueryURL: "/intelligence/go-highlights.scm",
+			TagsQueryURL:      "/intelligence/go-tags.scm",
+		},
+	})
+	html := gosx.RenderHTML(component.Render())
+	for _, want := range []string{
+		`data-code-intelligence-language="go"`,
+		`data-code-intelligence-runtime="/intelligence/gotreesitter.wasm"`,
+		`data-code-intelligence-grammar="/intelligence/go.bin"`,
+		`data-code-intelligence-highlights="/intelligence/go-highlights.scm"`,
+		`data-code-intelligence-tags="/intelligence/go-tags.scm"`,
+		`/editor/code-intelligence.js`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q in %s", want, html)
+		}
+	}
+}
+
 func TestCodeSurfaceDefaults(t *testing.T) {
 	ed := New("code", Options{Surface: SurfaceCode})
 	if ed.Language != PlainText {

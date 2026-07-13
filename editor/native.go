@@ -57,6 +57,14 @@ func (e *Editor) renderNativeForm() gosx.Node {
 		attrs = appendStringAttr(attrs, "data-collaboration-cursor-event", defaultCollaborationEvent(collaboration.CursorEvent, "presence:cursor"))
 		attrs = appendStringAttr(attrs, "data-collaboration-focus-event", defaultCollaborationEvent(collaboration.FocusEvent, "presence:focus"))
 	}
+	if intelligence := e.Options.CodeIntelligence; intelligence != nil {
+		attrs = appendStringAttr(attrs, "data-code-intelligence-language", fallback(intelligence.Language, string(e.Options.Language)))
+		attrs = appendStringAttr(attrs, "data-code-intelligence-wasm-exec", intelligence.WasmExecURL)
+		attrs = appendStringAttr(attrs, "data-code-intelligence-runtime", intelligence.RuntimeURL)
+		attrs = appendStringAttr(attrs, "data-code-intelligence-grammar", intelligence.GrammarURL)
+		attrs = appendStringAttr(attrs, "data-code-intelligence-highlights", intelligence.HighlightQueryURL)
+		attrs = appendStringAttr(attrs, "data-code-intelligence-tags", intelligence.TagsQueryURL)
+	}
 
 	return gosx.El("form", attrs, gosx.Fragment(children...))
 }

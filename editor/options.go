@@ -166,6 +166,18 @@ type Collaboration struct {
 	FocusEvent  string
 }
 
+// CodeIntelligence declaratively binds a code surface to a gotreesitter WASM
+// runtime and language resources. The browser runtime remains framework-owned;
+// applications only provide immutable asset URLs.
+type CodeIntelligence struct {
+	Language          string
+	WasmExecURL       string
+	RuntimeURL        string
+	GrammarURL        string
+	HighlightQueryURL string
+	TagsQueryURL      string
+}
+
 // DefaultPanels is the standard panel set exposed by the editor shell.
 var DefaultPanels = []Panel{
 	PanelPreview,
@@ -226,6 +238,7 @@ type Options struct {
 	PostID                    string
 	ReadOnly                  bool
 	Collaboration             *Collaboration
+	CodeIntelligence          *CodeIntelligence
 }
 
 func (o *Options) defaults() {
