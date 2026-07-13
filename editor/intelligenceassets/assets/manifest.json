@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "language": "go",
+  "compiler": "go",
+  "assets": {
+    "go-highlights.scm": "sha256:81182c986547eba7fa6316e82dfd621fb13b8fc89efac85432aee51a48ed0896",
+    "go-tags.scm": "sha256:7aaa45071b9e78628c92c64a4d68239b75fe09afd3337e23b2c7dcaa48cd846d",
+    "go.bin": "sha256:31b259c253281b4386078e0aaceaa88a01665d7e52bade9f6b342df3537e3ef0",
+    "gotreesitter.wasm": "sha256:5732b7f7f48c5dc565606b3252fd0c07745c103d3bac73cc916000a5841f4559",
+    "wasm_exec.js": "sha256:0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14"
+  }
+}
