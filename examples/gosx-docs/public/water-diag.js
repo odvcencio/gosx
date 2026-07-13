@@ -97,11 +97,52 @@
           attr("webgpu-water-caustic-passes") + " caustic", false) +
         row("water verts", attr("webgpu-water-draw-vertices") || "-", false) +
         row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false) +
+        '<div style="height:6px"></div>' +
+        row("canvas", lastW + "x" + lastH, false) +
+        row("resizes/sec", String(resizeWindow.length), resizeWindow.length > 0) +
+        row("resizes total", String(resizeCount), resizeCount > 3) +
+        row("LoAF worst", loaf.maxMS.toFixed(0) + " ms", loaf.maxMS > 30) +
+        row("· script", loaf.scriptMS.toFixed(0) + " ms", false) +
+        row("· render", loaf.renderMS.toFixed(0) + " ms", false) +
         (knobs.length
           ? '<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:.7">' +
             knobs.join(" · ") + "</div>"
           : '<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:.5">stock settings</div>');
     }
+
+    // Canvas-size churn. Toggling every expensive knob in the water system moved the
+    // frame rate by nothing at all, which means the cost is not a workload — it is a
+    // stall. The prime suspect is a swapchain reconfiguration every frame: a canvas
+    // whose backing store and CSS box disagree by a rounding step at fractional DPR
+    // can oscillate forever, and reconfiguring a Metal drawable per frame costs tens
+    // of milliseconds no matter how little you ask it to draw. If resizes/sec is
+    // anything but 0, that is the bug.
+    var lastW = 0, lastH = 0, resizeCount = 0, resizeWindow = [];
+    function sampleCanvasSize(now) {
+      var c = mount.querySelector("canvas");
+      if (!c) return;
+      if (c.width !== lastW || c.height !== lastH) {
+        if (lastW !== 0) { resizeCount += 1; resizeWindow.push(now); }
+        lastW = c.width; lastH = c.height;
+      }
+      while (resizeWindow.length && now - resizeWindow[0] > 1000) resizeWindow.shift();
+    }
+
+    // Long Animation Frames: splits a slow frame into script vs render vs the rest, so
+    // a stall inside the browser's own pipeline is distinguishable from our JS.
+    var loaf = { count: 0, maxMS: 0, scriptMS: 0, renderMS: 0 };
+    try {
+      new PerformanceObserver(function (list) {
+        list.getEntries().forEach(function (e) {
+          loaf.count += 1;
+          loaf.maxMS = Math.max(loaf.maxMS, e.duration || 0);
+          loaf.renderMS = Math.max(loaf.renderMS, e.renderStart ? (e.startTime + e.duration) - e.renderStart : 0);
+          (e.scripts || []).forEach(function (sc) {
+            loaf.scriptMS = Math.max(loaf.scriptMS, sc.duration || 0);
+          });
+        });
+      }).observe({ type: "long-animation-frame", buffered: true });
+    } catch (_) {}
 
     function tick(now) {
       if (last > 0) {
@@ -109,6 +150,7 @@
         if (times.length > 180) times.shift();
       }
       last = now;
+      sampleCanvasSize(now);
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
@@ -138,6 +180,12 @@
         causticPasses: attr("webgpu-water-caustic-passes"),
         drawVertices: attr("webgpu-water-draw-vertices"),
         computeDispatches: attr("webgpu-water-compute-dispatches"),
+        canvas: lastW + "x" + lastH,
+        resizesPerSec: resizeWindow.length,
+        resizesTotal: resizeCount,
+        loafWorstMS: +loaf.maxMS.toFixed(0),
+        loafScriptMS: +loaf.scriptMS.toFixed(0),
+        loafRenderMS: +loaf.renderMS.toFixed(0),
       };
       console.log(JSON.stringify(out, null, 1));
       return out;

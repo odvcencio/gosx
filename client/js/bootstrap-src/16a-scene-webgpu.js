@@ -4007,8 +4007,44 @@
       return config;
     }
 
-    function configureWebGPUCanvas() {
+    // configuredSurfaceKey remembers the configuration currently applied to the
+    // canvas context, so we can skip a redundant reconfigure.
+    var configuredSurfaceKey = "";
+
+    function sceneWebGPUSurfaceKey(canvas) {
+      var p = activePresentation || {};
+      return [
+        canvas ? canvas.width : 0,
+        canvas ? canvas.height : 0,
+        targetFormat,
+        p.alphaMode,
+        p.colorSpace,
+        p.toneMappingMode || "",
+        device ? "d" : "",
+      ].join("|");
+    }
+
+    // configureWebGPUCanvas reconfigures the canvas swapchain ONLY when the surface
+    // it depends on actually changed (size, format, alpha mode, colour space, tone
+    // mapping, device).
+    //
+    // This used to be called unconditionally on every rendered frame, under a comment
+    // that claimed it reconfigured "if canvas resized" — there was no such check.
+    // GPUCanvasContext.configure() re-creates the drawable; on Metal that is an
+    // expensive, synchronising driver operation, so the water demo paid a fixed
+    // per-frame stall that no amount of reducing its workload could touch: disabling
+    // caustics, reflection, refraction, or cutting the mesh to a quarter of its
+    // vertices all changed the frame rate by nothing, because the cost was never in
+    // the work being drawn. It pinned frames to a multiple of the display refresh on
+    // Apple hardware while D3D12/NVIDIA drivers, which make a redundant configure()
+    // nearly free, showed no symptom at all.
+    function configureWebGPUCanvas(canvas) {
+      var target = canvas || (gpuCtx && gpuCtx.canvas) || null;
+      var key = sceneWebGPUSurfaceKey(target);
+      if (key === configuredSurfaceKey) return false;
       gpuCtx.configure(sceneWebGPUCanvasConfiguration());
+      configuredSurfaceKey = key;
+      return true;
     }
 
     // GPU resources (initialized after device is ready).
@@ -4520,6 +4556,8 @@
             window.__gosx_scene3d_webgpu_probe_invalidate(info);
           }
           device = null;
+      configuredSurfaceKey = "";
+          configuredSurfaceKey = "";
           initFailed = true;
           // Eagerly free per-device water-system GPU objects (buffers/textures)
           // and clear the waterSystems map. The probe-based recovery path
@@ -13156,8 +13194,10 @@
         performance.mark("scene3d-render-start");
       }
 
-      // Reconfigure context if canvas resized.
-      configureWebGPUCanvas();
+      // Reconfigure the context ONLY if the surface actually changed (see
+      // configureWebGPUCanvas: an unconditional configure() here was a per-frame
+      // swapchain re-creation and a hard stall on Metal).
+      configureWebGPUCanvas(canvas);
 
       // Determine post-processing.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
@@ -13608,6 +13648,7 @@
       }
 
       device = null;
+      configuredSurfaceKey = "";
     }
 
     // Device + GPU resources were already initialized synchronously

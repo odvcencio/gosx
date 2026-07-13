@@ -9493,12 +9493,16 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /id="float-sphere"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-cube"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-torus"[\s\S]*wireframe=\{false\}/);
-  assert.match(waterPage, /resolution=\{192\}/);
-  assert.match(waterPage, /causticsResolution=\{512\}/);
+  // These props are URL-overridable for perf diagnostics (see the water demo's
+  // diag.go), so page.gsx binds them instead of hardcoding literals. The DEFAULTS are
+  // still the shipped values — that contract is pinned by
+  // TestWaterDiagDefaultsMatchShippedValues in the demo's Go tests.
+  assert.match(waterPage, /resolution=\{data\.diagResolution\}/);
+  assert.match(waterPage, /causticsResolution=\{data\.diagCausticsRes\}/);
   assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
-  assert.match(waterPage, /objectTexturePixelBudget=\{786432\}/);
+  assert.match(waterPage, /objectTexturePixelBudget=\{data\.diagObjectTexBudget\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
-  assert.match(waterPage, /objectShadowResolution=\{512\}/);
+  assert.match(waterPage, /objectShadowResolution=\{data\.diagShadowRes\}/);
   // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'
   // generic shaderSource/shaderSourceFiles) have been retired -- Selena is
   // the sole primary WGSL source now.
