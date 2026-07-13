@@ -94,6 +94,28 @@
   backdrop-filter: blur(18px);
 }
 
+.editor-code-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.editor-code-path {
+  overflow: hidden;
+  color: var(--editor-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-code-language {
+  flex: 0 0 auto;
+  color: var(--editor-muted);
+  font-family: var(--editor-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
 .editor-panel-radio {
   position: absolute;
   width: 1px;
