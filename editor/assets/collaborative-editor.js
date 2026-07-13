@@ -55,6 +55,11 @@
         if (typeof event.data !== "string") return;
         let message; try { message = JSON.parse(event.data); } catch (_) { return; }
         let data = message.data; if (typeof data === "string") try { data = JSON.parse(data); } catch (_) { return; }
+        if (message.event === "edit:reject") {
+          localDirty = false;
+          status.textContent = "Collaborative · resynchronizing";
+          return;
+        }
         if (message.event === cfg.collaborationUpdateEvent) applySnapshot(data);
         if (message.event === cfg.collaborationCursorEvent) applyCursor(data || {});
       });
