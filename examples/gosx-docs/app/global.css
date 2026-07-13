@@ -64,6 +64,8 @@
   --accent: #D4AF37;
   --accent-deep: #c9a227;
   --accent-glow: hsla(46, 65%, 53%, 0.3);
+  --accent-soft: rgba(212, 175, 55, 0.10);
+  --accent-line: rgba(212, 175, 55, 0.35);
   --chrome-dark: #C0C0C0;
   --chrome-light: #E8E8E8;
 
@@ -233,6 +235,207 @@ body {
     -webkit-text-fill-color: CanvasText;
     background: none;
   }
+}
+
+/* ------------------------------------------------------------
+   Utility: kicker label (mono gold eyebrow)
+   ------------------------------------------------------------ */
+
+.kicker {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+/* ------------------------------------------------------------
+   Buttons
+   ------------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.7em 1.6em;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-small);
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out-expo),
+    border-color var(--duration-fast) var(--ease-out-expo),
+    color var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-normal) var(--ease-out-expo),
+    transform var(--duration-fast) var(--ease-spring);
+}
+
+.btn--gold {
+  background: var(--accent);
+  color: #0a0a08;
+  border: 1px solid var(--accent);
+}
+
+.btn--gold:hover {
+  background: #e6c352;
+  box-shadow: 0 0 32px var(--accent-glow);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-hover);
+}
+
+.btn--ghost:hover {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+/* ------------------------------------------------------------
+   Code sample (shared component — used by every docs page)
+   ------------------------------------------------------------ */
+
+.code-sample {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  margin: var(--space-md) 0;
+}
+
+.code-sample__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem var(--space-sm);
+  border-bottom: 1px solid var(--code-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.code-sample__label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+}
+
+.code-sample__body {
+  display: flex;
+  overflow-x: auto;
+}
+
+.code-sample__gutter {
+  padding: var(--space-sm) 0.75rem;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.28);
+  user-select: none;
+  -webkit-user-select: none;
+  min-width: 3ch;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--lh-code);
+  margin: 0;
+  border-right: 1px solid var(--code-border);
+  flex-shrink: 0;
+}
+
+.code-block {
+  padding: var(--space-sm);
+  overflow-x: visible;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--lh-code);
+  color: var(--code-text);
+  margin: 0;
+  flex: 1;
+}
+
+/* Inline-code chrome never applies inside a code sample */
+.code-sample code,
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* Syntax highlighting — tree-sitter class names */
+
+.ts-keyword { color: var(--code-keyword); }
+.ts-string { color: var(--code-string); }
+.ts-number { color: var(--code-number); }
+.ts-bool { color: var(--code-number); }
+.ts-type { color: var(--code-type); }
+.ts-builtin { color: var(--code-type); }
+.ts-comment { color: var(--code-comment); }
+.ts-function { color: var(--code-function); }
+.ts-property { color: var(--code-property); }
+.ts-operator { color: var(--code-operator); }
+.ts-punctuation { color: var(--code-punctuation); }
+.ts-namespace { color: var(--code-type); }
+.ts-tag { color: var(--code-keyword); }
+.ts-attr { color: var(--code-property); }
+.ts-text { color: var(--code-text); }
+
+/* ------------------------------------------------------------
+   Stat card (shared component)
+   ------------------------------------------------------------ */
+
+.stat-card {
+  padding: var(--space-lg);
+  text-align: center;
+  transition:
+    border-color var(--duration-fast) var(--ease-out-expo),
+    box-shadow var(--duration-normal) var(--ease-out-expo);
+}
+
+.stat-card:hover {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 40px rgba(212, 175, 55, 0.08);
+}
+
+.stat-card__value {
+  display: block;
+  font-family: var(--font-display);
+  font-size: var(--text-h2);
+  color: var(--text-primary);
+  line-height: var(--lh-headline);
+}
+
+.stat-card__label {
+  display: block;
+  font-size: var(--text-small);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  margin-top: var(--space-xs);
+}
+
+/* ------------------------------------------------------------
+   Capability tag (shared component)
+   ------------------------------------------------------------ */
+
+.cap-tag {
+  display: inline-block;
+  padding: 0.25em 0.75em;
+  font-size: var(--text-small);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  border: 1px solid var(--border);
+  border-radius: 2rem;
+  color: var(--text-muted);
 }
 
 /* ------------------------------------------------------------
