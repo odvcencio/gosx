@@ -280,6 +280,28 @@ func (h *Hub) Broadcast(event string, data any) {
 	}
 }
 
+// BroadcastWhere sends an event only to connections accepted by predicate.
+// The predicate sees immutable server-side connection metadata and must not
+// block. Filtered events are intentionally not latched: a latch is global and
+// replaying one scoped payload to a later unauthorized client would cross the
+// authorization boundary.
+func (h *Hub) BroadcastWhere(event string, data any, predicate func(*Client) bool) {
+	if predicate == nil {
+		return
+	}
+	msg, err := encodeMessage(event, data)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, client := range h.clients {
+		if predicate(client) {
+			client.trySend(msg)
+		}
+	}
+}
+
 // Send sends a message to a specific client.
 func (h *Hub) Send(clientID string, event string, data any) {
 	h.mu.RLock()

@@ -50,6 +50,7 @@ func (e *Editor) renderNativeForm() gosx.Node {
 	}
 	if collaboration := e.Options.Collaboration; collaboration != nil {
 		attrs = appendStringAttr(attrs, "data-collaboration-hub", collaboration.HubURL)
+		attrs = appendStringAttr(attrs, "data-collaboration-capability-url", collaboration.CapabilityURL)
 		attrs = appendStringAttr(attrs, "data-collaboration-cell", collaboration.CellID)
 		attrs = appendStringAttr(attrs, "data-collaboration-path", collaboration.Path)
 		attrs = appendStringAttr(attrs, "data-collaboration-edit-event", defaultCollaborationEvent(collaboration.EditEvent, "edit"))

@@ -14,19 +14,33 @@
     status.setAttribute("aria-live", "polite");
     source.parentElement.appendChild(status);
 
-    const wsURL = () => {
+    const wsURL = capability => {
       const raw = cfg.collaborationHub || "";
-      if (/^wss?:/.test(raw)) return raw;
-      return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + (raw[0] === "/" ? raw : "/" + raw);
+      const value = /^wss?:/.test(raw) ? raw : (location.protocol === "https:" ? "wss://" : "ws://") + location.host + (raw[0] === "/" ? raw : "/" + raw);
+      const url = new URL(value);
+      if (capability) url.searchParams.set("capability", capability);
+      return url.toString();
     };
     const send = (event, data) => {
       if (!socket || socket.readyState !== WebSocket.OPEN) return false;
       socket.send(JSON.stringify({event: event, data: data || {}}));
       return true;
     };
-    const connect = () => {
+    const connect = async () => {
       if (closed) return;
-      socket = new WebSocket(wsURL());
+      let capability = "";
+      if (cfg.collaborationCapabilityUrl) {
+        try {
+          const response = await fetch(cfg.collaborationCapabilityUrl, {credentials: "same-origin", cache: "no-store"});
+          if (!response.ok) throw new Error("capability request failed");
+          capability = String((await response.json()).token || "");
+        } catch (_) {
+          status.textContent = "Collaborative · authorization failed";
+          clearTimeout(timer); timer = setTimeout(connect, reconnect || 250); reconnect = Math.min((reconnect || 250) * 2, 8000);
+          return;
+        }
+      }
+      socket = new WebSocket(wsURL(capability));
       socket.addEventListener("open", () => { reconnect = 250; status.textContent = "Collaborative · connected"; });
       socket.addEventListener("message", event => {
         if (typeof event.data !== "string") return;

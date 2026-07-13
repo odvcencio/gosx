@@ -38,9 +38,9 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 }
 
 func TestCodeSurfaceRendersDeclarativeCollaborationBinding(t *testing.T) {
-	component := New("code", Options{Surface: SurfaceCode, Content: "x", Collaboration: &Collaboration{HubURL: "/gosx/hub/cells", CellID: "cell-1", Path: "main.go"}})
+	component := New("code", Options{Surface: SurfaceCode, Content: "x", Collaboration: &Collaboration{HubURL: "/gosx/hub/cells", CapabilityURL: "/api/cells/cell-1/capability", CellID: "cell-1", Path: "main.go"}})
 	html := gosx.RenderHTML(component.Render())
-	for _, want := range []string{"data-collaboration-hub=\"/gosx/hub/cells\"", "data-collaboration-cell=\"cell-1\"", "data-collaboration-path=\"main.go\"", "/editor/collaborative-editor.js"} {
+	for _, want := range []string{"data-collaboration-hub=\"/gosx/hub/cells\"", "data-collaboration-capability-url=\"/api/cells/cell-1/capability\"", "data-collaboration-cell=\"cell-1\"", "data-collaboration-path=\"main.go\"", "/editor/collaborative-editor.js"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q in %s", want, html)
 		}

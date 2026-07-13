@@ -193,6 +193,29 @@ func TestHubConnectionMetadataLifecycleAndWireIsolation(t *testing.T) {
 
 }
 
+func TestBroadcastWhereScopesFanoutByImmutableMetadata(t *testing.T) {
+	h := New("metadata-filtered-broadcast")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTPWithMetadata(w, r, ConnectionMetadata{"cell": strings.TrimPrefix(r.URL.Path, "/")})
+	}))
+	defer server.Close()
+	a := dialHubMetadataTestClient(t, server, "/cell-a")
+	b := dialHubMetadataTestClient(t, server, "/cell-b")
+	defer a.Close()
+	defer b.Close()
+	readUntilEvent(t, a, "__welcome")
+	readUntilEvent(t, b, "__welcome")
+	h.BroadcastWhere("cell:update", map[string]string{"id": "cell-a"}, func(client *Client) bool {
+		cell, _ := client.Metadata("cell")
+		return cell == "cell-a"
+	})
+	readUntilEvent(t, a, "cell:update")
+	_ = b.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, _, err := b.ReadMessage(); err == nil {
+		t.Fatal("filtered broadcast crossed cell metadata boundary")
+	}
+}
+
 func TestHubConnectionMetadataConcurrentUpgradesAndDisconnects(t *testing.T) {
 	h := New("metadata-race")
 	joined := make(chan string, 64)

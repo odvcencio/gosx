@@ -157,13 +157,14 @@ type FormButton struct {
 
 // Collaboration declaratively binds a code surface to a GoSX hub document.
 type Collaboration struct {
-	HubURL      string
-	CellID      string
-	Path        string
-	EditEvent   string
-	UpdateEvent string
-	CursorEvent string
-	FocusEvent  string
+	HubURL        string
+	CapabilityURL string
+	CellID        string
+	Path          string
+	EditEvent     string
+	UpdateEvent   string
+	CursorEvent   string
+	FocusEvent    string
 }
 
 // CodeIntelligence declaratively binds a code surface to a gotreesitter WASM
