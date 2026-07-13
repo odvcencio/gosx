@@ -92,12 +92,15 @@
       const encoder = new TextEncoder();
       const path = encoder.encode(cfg.collaborationPath || "");
       const insert = encoder.encode(splice.insert);
+      const base = encoder.encode(lastPublished);
+      let baseHash = 0x811c9dc5;
+      for (const byte of base) baseHash = Math.imul(baseHash ^ byte, 0x01000193) >>> 0;
       if (path.length > 65535) throw new Error("collaboration path is too long");
       const frame = new ArrayBuffer(22 + path.length + insert.length);
       const view = new DataView(frame);
       view.setUint8(0, 0x4d); view.setUint8(1, 0x58); view.setUint8(2, 0x53); view.setUint8(3, 0x50);
       view.setUint16(4, path.length, false);
-      view.setUint32(6, revision >>> 0, false);
+      view.setUint32(6, baseHash, false);
       view.setUint32(10, splice.index >>> 0, false);
       view.setUint32(14, splice.deleteCount >>> 0, false);
       view.setUint32(18, insert.length >>> 0, false);
