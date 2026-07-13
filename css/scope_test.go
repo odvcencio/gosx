@@ -223,3 +223,34 @@ func TestScopeCSSInherentlyGlobalSelectors(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeCSSCommentBetweenRules(t *testing.T) {
+	// Banner comments between rules (preceded by newlines) must not leak into
+	// the next rule's selector prelude. A comma inside the comment text used
+	// to split the "selector" mid-comment and emit invalid scoped selectors,
+	// which browsers then drop wholesale.
+	css := `.first { color: red; }
+
+/* ------------------------------------------------------------
+   Site shell, nav overlay, footer
+   ------------------------------------------------------------ */
+
+.site-shell {
+  min-height: 100vh;
+}`
+
+	scoped := ScopeCSS(css, "e46c")
+
+	if !strings.Contains(scoped, `:where([data-gosx-s="e46c"]) .site-shell`) {
+		t.Fatalf("expected scoped .site-shell selector, got:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, `.site-shell:where([data-gosx-s="e46c"])`) {
+		t.Fatalf("expected root-safe .site-shell selector, got:\n%s", scoped)
+	}
+	if strings.Contains(scoped, `Site shell, :where`) || strings.Contains(scoped, `nav overlay:where`) {
+		t.Fatalf("comment text was scoped as a selector:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, "Site shell, nav overlay, footer") {
+		t.Fatalf("comment content should pass through untouched, got:\n%s", scoped)
+	}
+}

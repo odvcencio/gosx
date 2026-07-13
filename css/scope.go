@@ -40,6 +40,14 @@ type scopeContext struct {
 func scopeRuleList(source string, ctx scopeContext) string {
 	var out strings.Builder
 	for pos := 0; pos < len(source); {
+		// Emit whitespace byte-by-byte so comments preceded by newlines are
+		// consumed by the comment branch instead of leaking into a prelude,
+		// where they would be mangled by selector-list splitting.
+		if isCSSSpace(source[pos]) {
+			out.WriteByte(source[pos])
+			pos++
+			continue
+		}
 		if strings.HasPrefix(source[pos:], "/*") {
 			end := findCSSCommentEnd(source, pos)
 			out.WriteString(source[pos:end])
