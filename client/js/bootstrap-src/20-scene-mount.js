@@ -3938,6 +3938,10 @@
       goodFrames: 0,
       ewmaFrameMS: 0,
       lastFrameMS: 0,
+      lastFrameNowMS: 0,
+      lastFrameCPUMS: 0,
+      lastFrameIntervalMS: 0,
+      lastFrameSource: "",
       currentMaxDevicePixelRatio: 0,
       postFXSuppressed: false,
       tier: enabled ? "full" : "fixed",
@@ -3959,6 +3963,12 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-tier", state.tier || (state.enabled ? "full" : "fixed"));
     setAttrValue(mount, "data-gosx-scene3d-quality-dpr-cap", state.currentMaxDevicePixelRatio > 0 ? state.currentMaxDevicePixelRatio.toFixed(3) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
+    // Publish BOTH halves. A single "frame ms" hid a 15x gap between what the render
+    // loop cost on the CPU and what the browser actually delivered; anyone debugging
+    // a slow scene needs to see that gap immediately.
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-cpu-ms", state.lastFrameCPUMS > 0 ? state.lastFrameCPUMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-interval-ms", state.lastFrameIntervalMS > 0 ? state.lastFrameIntervalMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-source", state.lastFrameSource || "");
     setAttrValue(mount, "data-gosx-scene3d-quality-postfx-suppressed", state.postFXSuppressed ? "true" : "false");
   }
 
@@ -4018,12 +4028,34 @@
       return false;
     }
     const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-    const frameMS = Math.max(0, now - sceneNumber(frameStart, now));
+    const cpuMS = Math.max(0, now - sceneNumber(frameStart, now));
+
+    // cpuMS is the duration of the JS render call. On WebGPU that is command
+    // ENCODING — the GPU executes asynchronously afterwards — so a GPU-bound scene
+    // reports a tiny cpuMS while the browser delivers frames many times slower.
+    // Measured in the wild: a water scene reporting 3.8ms/frame while actually
+    // running at 17fps (58ms frames). The governor believed cpuMS, held the "full"
+    // tier and never stepped anything down: it was structurally blind to exactly
+    // the scenes it exists to protect.
+    //
+    // The DELIVERED frame interval is ground truth for whether frames are being met.
+    // It cannot simply replace cpuMS — a cheap scene is vsync-locked, so its interval
+    // is idle time, not work — so it is only trusted once it says frames are being
+    // missed (past ~40fps). Below that, behaviour is exactly as before.
+    const prevNow = sceneNumber(state.lastFrameNowMS, 0);
+    const intervalMS = prevNow > 0 ? Math.max(0, now - prevNow) : 0;
+    state.lastFrameNowMS = now;
+    const missingFrames = intervalMS > 24;
+    const frameMS = missingFrames ? Math.max(cpuMS, intervalMS) : cpuMS;
+
     if (!isFinite(frameMS)) {
       return false;
     }
     state.frameCount += 1;
     state.lastFrameMS = frameMS;
+    state.lastFrameCPUMS = cpuMS;
+    state.lastFrameIntervalMS = intervalMS;
+    state.lastFrameSource = missingFrames ? "interval" : "cpu";
     state.ewmaFrameMS = state.ewmaFrameMS > 0
       ? state.ewmaFrameMS * 0.84 + frameMS * 0.16
       : frameMS;
