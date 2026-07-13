@@ -7,7 +7,7 @@
     const source = form.querySelector("textarea[name=content]");
     if (!source) return;
     const cfg = form.dataset;
-    let socket, timer, reconnect, closed = false, revision = 0, localDirty = false;
+    let socket, editTimer, reconnectTimer, rotationTimer, reconnect, closed = false, revision = 0, localDirty = false;
     const cursors = new Map();
     const status = document.createElement("div");
     status.className = "editor-collaboration-status";
@@ -33,10 +33,18 @@
         try {
           const response = await fetch(cfg.collaborationCapabilityUrl, {credentials: "same-origin", cache: "no-store"});
           if (!response.ok) throw new Error("capability request failed");
-          capability = String((await response.json()).token || "");
+          const grant = await response.json();
+          capability = String(grant.token || "");
+          const expiresAt = Number(grant.expiresAt || 0) * 1000;
+          clearTimeout(rotationTimer);
+          if (expiresAt > Date.now()) {
+            rotationTimer = setTimeout(() => {
+              if (socket) socket.close(4001, "capability rotation");
+            }, Math.max(1000, expiresAt - Date.now() - 15000));
+          }
         } catch (_) {
           status.textContent = "Collaborative · authorization failed";
-          clearTimeout(timer); timer = setTimeout(connect, reconnect || 250); reconnect = Math.min((reconnect || 250) * 2, 8000);
+          clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, reconnect || 250); reconnect = Math.min((reconnect || 250) * 2, 8000);
           return;
         }
       }
@@ -49,7 +57,7 @@
         if (message.event === cfg.collaborationUpdateEvent) applySnapshot(data);
         if (message.event === cfg.collaborationCursorEvent) applyCursor(data || {});
       });
-      socket.addEventListener("close", () => { status.textContent = "Collaborative · reconnecting"; clearTimeout(timer); timer = setTimeout(connect, reconnect || 250); reconnect = Math.min((reconnect || 250) * 2, 8000); });
+      socket.addEventListener("close", () => { status.textContent = "Collaborative · reconnecting"; clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, reconnect || 250); reconnect = Math.min((reconnect || 250) * 2, 8000); });
     };
     const applySnapshot = snapshot => {
       if (!snapshot || snapshot.id !== cfg.collaborationCell || Number(snapshot.revision || 0) < revision) return;
@@ -76,11 +84,11 @@
       cursors.set(data.clientID, data); status.textContent = "Collaborative · " + cursors.size + " remote cursor" + (cursors.size === 1 ? "" : "s");
       form.dispatchEvent(new CustomEvent("gosx:remote-cursor", {detail: data}));
     };
-    source.addEventListener("input", () => { localDirty = true; clearTimeout(timer); timer = setTimeout(publishEdit, 60); });
+    source.addEventListener("input", () => { localDirty = true; clearTimeout(editTimer); editTimer = setTimeout(publishEdit, 60); });
     source.addEventListener("select", publishCursor); source.addEventListener("keyup", publishCursor); source.addEventListener("pointerup", publishCursor);
     source.addEventListener("focus", () => send(cfg.collaborationFocusEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, focused: true}));
     source.addEventListener("blur", () => send(cfg.collaborationFocusEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, focused: false}));
-    window.addEventListener("pagehide", () => { closed = true; if (socket) socket.close(); }, {once: true});
+    window.addEventListener("pagehide", () => { closed = true; clearTimeout(editTimer); clearTimeout(reconnectTimer); clearTimeout(rotationTimer); if (socket) socket.close(); }, {once: true});
     connect();
   }
 })();

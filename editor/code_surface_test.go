@@ -53,7 +53,7 @@ func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(asset)
-	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false"} {
+	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false", "grant.expiresAt", "capability rotation"} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("collaboration runtime missing %q", want)
 		}
