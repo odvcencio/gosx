@@ -44,6 +44,19 @@ func TestCodeSurfaceRendersDeclarativeCollaborationBinding(t *testing.T) {
 	}
 }
 
+func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
+	asset, err := embeddedAssets.ReadFile("assets/collaborative-editor.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(asset)
+	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false"} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("collaboration runtime missing %q", want)
+		}
+	}
+}
+
 func TestCodeSurfaceRendersDeclarativeIntelligenceBinding(t *testing.T) {
 	component := New("code", Options{
 		Surface:  SurfaceCode,

@@ -7,7 +7,7 @@
     const source = form.querySelector("textarea[name=content]");
     if (!source) return;
     const cfg = form.dataset;
-    let socket, timer, reconnect, closed = false, revision = 0;
+    let socket, timer, reconnect, closed = false, revision = 0, localDirty = false;
     const cursors = new Map();
     const status = document.createElement("div");
     status.className = "editor-collaboration-status";
@@ -39,9 +39,17 @@
     };
     const applySnapshot = snapshot => {
       if (!snapshot || snapshot.id !== cfg.collaborationCell || Number(snapshot.revision || 0) < revision) return;
-      revision = Number(snapshot.revision || revision);
       const file = (snapshot.files || []).find(item => item.path === cfg.collaborationPath);
-      if (!file || file.content === source.value) return;
+      if (!file) return;
+      revision = Number(snapshot.revision || revision);
+      if (file.content === source.value) {
+        localDirty = false;
+        return;
+      }
+      // A server snapshot can race a browser typing burst. Preserve the local
+      // buffer until the server echoes that exact content; the next debounced
+      // publish carries the complete authoritative human edit.
+      if (localDirty) return;
       const start = source.selectionStart, end = source.selectionEnd;
       source.value = file.content;
       source.setSelectionRange(Math.min(start, source.value.length), Math.min(end, source.value.length));
@@ -54,7 +62,7 @@
       cursors.set(data.clientID, data); status.textContent = "Collaborative · " + cursors.size + " remote cursor" + (cursors.size === 1 ? "" : "s");
       form.dispatchEvent(new CustomEvent("gosx:remote-cursor", {detail: data}));
     };
-    source.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(publishEdit, 60); });
+    source.addEventListener("input", () => { localDirty = true; clearTimeout(timer); timer = setTimeout(publishEdit, 60); });
     source.addEventListener("select", publishCursor); source.addEventListener("keyup", publishCursor); source.addEventListener("pointerup", publishCursor);
     source.addEventListener("focus", () => send(cfg.collaborationFocusEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, focused: true}));
     source.addEventListener("blur", () => send(cfg.collaborationFocusEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, focused: false}));
