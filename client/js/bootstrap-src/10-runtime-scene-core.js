@@ -2972,6 +2972,11 @@
       interactionTarget: typeof item.interactionTarget === "string" ? item.interactionTarget : (typeof current.interactionTarget === "string" ? current.interactionTarget : ""),
       interactionObject: typeof item.interactionObject === "string" ? item.interactionObject : (typeof current.interactionObject === "string" ? current.interactionObject : ""),
       resolution: Math.max(1, Math.floor(sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))),
+      // Tessellation of the surface mesh, independent of the simulation grid above.
+      // 0 means "match resolution". This normalizer is a WHITELIST -- a field absent
+      // here is silently dropped before the renderer ever sees it, which is how a
+      // custom postfx pass got destroyed once already.
+      surfaceMeshResolution: Math.max(0, Math.floor(sceneNumber(item.surfaceMeshResolution, sceneNumber(current.surfaceMeshResolution, 0)))),
       poolShape: typeof item.poolShape === "string" && item.poolShape ? item.poolShape : (typeof current.poolShape === "string" ? current.poolShape : "Box"),
       poolWidth: Math.max(0.001, sceneNumber(item.poolWidth, sceneNumber(current.poolWidth, 1))),
       poolHeight: Math.max(0.001, sceneNumber(item.poolHeight, sceneNumber(current.poolHeight, 1))),

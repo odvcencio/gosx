@@ -96,7 +96,8 @@
         row("water passes", attr("webgpu-water-selena-surface-passes") + " surface / " +
           attr("webgpu-water-caustic-passes") + " caustic", false) +
         row("water verts", attr("webgpu-water-draw-vertices") || "-", false) +
-        row("mesh res", q.get("meshRes") || "= sim", false) +
+        row("mesh res (used)", attr("webgpu-water-surface-mesh-resolution") || "-",
+          Boolean(q.get("meshRes")) && attr("webgpu-water-surface-mesh-resolution") !== q.get("meshRes")) +
         row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false) +
         '<div style="height:6px"></div>' +
         row("canvas", lastW + "x" + lastH, false) +
@@ -182,7 +183,10 @@
         surfacePasses: attr("webgpu-water-selena-surface-passes"),
         causticPasses: attr("webgpu-water-caustic-passes"),
         drawVertices: attr("webgpu-water-draw-vertices"),
-        meshRes: new URLSearchParams(location.search).get("meshRes") || "(= sim)",
+        meshResRequested: new URLSearchParams(location.search).get("meshRes") || "(= sim)",
+        // The EFFECTIVE value. These two disagreeing means the prop was dropped on the
+        // way to the renderer -- a silent no-op knob, which already happened once.
+        meshResUsed: attr("webgpu-water-surface-mesh-resolution"),
         computeDispatches: attr("webgpu-water-compute-dispatches"),
         canvas: lastW + "x" + lastH,
         resizesPerSec: resizeWindow.length,

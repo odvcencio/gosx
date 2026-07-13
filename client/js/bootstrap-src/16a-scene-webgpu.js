@@ -519,17 +519,6 @@
     "}",
   ].join("\n");
 
-  // The water surface is drawn NON-indexed: six vertices per grid cell, with the
-  // vertex shader expanding vertexIndex into (cell, corner). That expansion is
-  // duplicated in surface.sel and surface-below.sel (which supply the vertex stage
-  // that actually runs -- the Selena pipeline builds BOTH stages from one module)
-  // and in the WebGL2 backend's drawArrays. An index buffer here would feed those
-  // shaders grid ids where they expect sequential corner ids, so switching to
-  // drawIndexed means changing all four together, not just this one.
-  function sceneWaterDrawSurface(renderPass, vertexCount) {
-    renderPass.draw(vertexCount);
-  }
-
   var SCENE_WATER_RENDER_FRAGMENT_SOURCE = [
     WGSL_FRAME_STRUCTS,
     "",
@@ -9138,9 +9127,7 @@
           normalScale: sceneNumber(entry.normalScale, 1.0),
           objectRadius: sceneNumber(system && system.waterObjectRadius, 0.3),
           opticsCaustic: optics.caustics ? 1 : 0,
-          // Tessellation, NOT the simulation grid: gridResolution is read only by the
-          // surface shaders' vertex() stage. Their fragment stage samples the
-          // heightfield by normalized uv, so this cannot change shading.
+          // Tessellation, not the simulation grid: read only by the shaders' vertex().
           gridResolution: sceneNumber(system && system.surfaceMeshResolution, sceneNumber(system && system.waterResolution, 256)),
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
           objectSubtype: sceneNumber(system && system.waterObjectSubtype, 0),
@@ -9897,9 +9884,10 @@
             }
             renderPass.setBindGroup(0, selenaDraw.bindGroup);
             frameGroupBound = false;
-            sceneWaterDrawSurface(renderPass, system.surfaceVertexCount);
+            renderPass.draw(system.surfaceVertexCount);
             stats.waterDrawCalls += 1;
             stats.waterDrawVertices += system.surfaceVertexCount;
+            stats.waterSurfaceMeshResolution = system.surfaceMeshResolution;
             stats.waterSelenaSurfacePasses += 1;
             if (system.waterSkyCubeLoaded) {
               stats.waterSkyCubeTextureLoaded += 1;
@@ -9956,7 +9944,7 @@
         }
         var bindGroup = getWaterRenderBindGroupCached(system);
         renderPass.setBindGroup(1, bindGroup);
-        sceneWaterDrawSurface(renderPass, system.vertexCount);
+        renderPass.draw(system.vertexCount);
         stats.waterDrawCalls += 1;
         stats.waterDrawVertices += system.vertexCount;
         if (system.waterSkyCubeLoaded) {
@@ -9981,6 +9969,7 @@
         waterDrawCalls: 0,
         waterDrawEntries: 0,
         waterDrawVertices: 0,
+        waterSurfaceMeshResolution: 0,
         waterSurfaceAboveDrawCalls: 0,
         waterSurfaceAboveDrawVertices: 0,
         waterSurfaceBelowDrawCalls: 0,
@@ -12614,6 +12603,7 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-water-selena-object-mesh-shadow-fallbacks", String(published.waterSelenaObjectMeshShadowFallbacks || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-entries", String(published.waterDrawEntries || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-vertices", String(published.waterDrawVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-mesh-resolution", String(published.waterSurfaceMeshResolution || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-calls", String(published.waterDrawCalls || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-above-draw-calls", String(published.waterSurfaceAboveDrawCalls || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-above-draw-vertices", String(published.waterSurfaceAboveDrawVertices || 0));

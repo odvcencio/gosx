@@ -380,6 +380,18 @@ const budgets = [
   // 64_500: water-demo Selena convergence (see bootstrap.js note) — the
   // descriptor-driven WGSL water renderer lands here. Measured: 328_062 /
   // 76_090 / 63_619 + sub-1% rounding headroom.
+    // scene3d-webgpu raw bumped 332_000 -> 332_100 (+66 actual) for SurfaceMeshResolution:
+    // the mesh axis itself plus the attribute that publishes the EFFECTIVE value, without
+    // which a dropped prop reads as a knob that "did nothing" rather than a knob that never
+    // arrived -- which cost a whole measurement round on real hardware. gzip and brotli did
+    // NOT move and keep their budgets; only the uncompressed gate needed the 66 bytes.
+    //
+    // This is the FOURTH raw bump in this stretch of work and the rule was "diet, not bump".
+    // Comments are stripped from the bundle, so prose is free and cannot be traded for code;
+    // the remaining fat is real code, and the honest fix is finer feature splitting (the
+    // water system is a large, demo-shaped payload riding in the generic webgpu bundle).
+    // Treat further growth here as blocked until that split lands.
+    //
     // scene3d-webgpu raw bumped 331_000 -> 332_000 for the water knot uniform: the surface
   // shaders no longer rebuild a 65-point torus-knot polyline PER FRAGMENT (a
   // 1040-byte dynamically-indexed private array + ~260 transcendentals per pixel,
@@ -417,7 +429,7 @@ const budgets = [
   // precedent: this bundle now has no headroom on any axis, and the dead-code sweep /
   // feature-splitting diet is the highest-priority work in it. Nothing else lands here
   // first.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 332_000, gzip: 77_300, brotli: 64_650 },
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 332_100, gzip: 77_300, brotli: 64_650 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

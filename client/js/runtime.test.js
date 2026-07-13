@@ -9471,8 +9471,15 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   // So: the Selena draw is sized by surfaceVertexCount, gridResolution is fed from
   // the matching surfaceMeshResolution, and the built-in fallback (which expands
   // params.resolution, the simulation grid) keeps drawing the full-resolution mesh.
-  assert.match(webgpu, /sceneWaterDrawSurface\(renderPass, system\.surfaceVertexCount\)/);
-  assert.match(webgpu, /sceneWaterDrawSurface\(renderPass, system\.vertexCount\)/);
+  // normalizeSceneWaterSystemEntry returns an object LITERAL: any field not named
+  // there is silently dropped before the renderer sees it. surfaceMeshResolution was,
+  // which made the knob a no-op that still reported the requested value back. The
+  // renderer therefore also publishes the EFFECTIVE mesh resolution, so a dropped prop
+  // shows up as a disagreement instead of a mystery.
+  assert.match(core, /surfaceMeshResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.surfaceMeshResolution/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-surface-mesh-resolution/);
+  assert.match(webgpu, /renderPass\.draw\(system\.surfaceVertexCount\)/);
+  assert.match(webgpu, /renderPass\.draw\(system\.vertexCount\)/);
   assert.match(webgpu, /gridResolution: sceneNumber\(system && system\.surfaceMeshResolution/);
   assert.match(webgpu, /surfaceVertexCount: Math\.max\(0, \(surfaceMeshResolution - 1\) \* \(surfaceMeshResolution - 1\) \* 6\)/);
   // Mesh resolution changes the vertex count, so it must key the system signature
