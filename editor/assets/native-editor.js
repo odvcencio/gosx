@@ -309,6 +309,8 @@
     let visualRowMapSource = null;
     let visualRowMapWidth = 0;
     let preserveWhitespaceOnlyLines = false;
+    let secondaryCursors = [];
+    let multiCursorStatus = null;
     const previewIdleDelay = 300;
     const metadataIdleDelay = 450;
     const autosaveDelay = 1800;
@@ -751,6 +753,96 @@
       }
     };
 
+    const updateMultiCursorStatus = () => {
+      const count = secondaryCursors.length + 1;
+      form.dataset.multiCursorCount = String(count);
+      if (!multiCursorStatus && saveStatus?.parentElement) {
+        multiCursorStatus = document.createElement("span");
+        multiCursorStatus.className = "editor-multi-cursor-status";
+        multiCursorStatus.setAttribute("aria-live", "polite");
+        saveStatus.parentElement.appendChild(multiCursorStatus);
+      }
+      if (multiCursorStatus) {
+        multiCursorStatus.textContent = count > 1 ? `${count} cursors` : "";
+        multiCursorStatus.hidden = count <= 1;
+      }
+    };
+
+    const clearSecondaryCursors = () => {
+      if (secondaryCursors.length === 0) return;
+      secondaryCursors = [];
+      updateMultiCursorStatus();
+    };
+
+    const adjacentLineOffset = (offset, direction) => {
+      const value = textarea.value;
+      const lineStart = value.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
+      const column = offset - lineStart;
+      if (direction > 0) {
+        const lineEnd = value.indexOf("\n", offset);
+        if (lineEnd < 0) return null;
+        const nextEnd = value.indexOf("\n", lineEnd + 1);
+        return Math.min(lineEnd + 1 + column, nextEnd < 0 ? value.length : nextEnd);
+      }
+      if (lineStart === 0) return null;
+      const previousEnd = lineStart - 1;
+      const previousStart = value.lastIndexOf("\n", Math.max(0, previousEnd - 1)) + 1;
+      return Math.min(previousStart + column, previousEnd);
+    };
+
+    const addAdjacentCursor = (direction) => {
+      const anchor = secondaryCursors.length > 0
+        ? secondaryCursors[secondaryCursors.length - 1]
+        : (textarea.selectionEnd || 0);
+      const offset = adjacentLineOffset(anchor, direction);
+      if (offset === null || offset === textarea.selectionEnd || secondaryCursors.includes(offset)) return;
+      secondaryCursors.push(offset);
+      secondaryCursors.sort((a, b) => a - b);
+      updateMultiCursorStatus();
+    };
+
+    const applyMultiCursorEdit = (event) => {
+      if (secondaryCursors.length === 0) return false;
+      const type = event.inputType || "";
+      let inserted = event.data;
+      if (type === "insertLineBreak" || type === "insertParagraph") inserted = "\n";
+      const supportedInsert = type === "insertText" || type === "insertCompositionText" ||
+        type === "insertLineBreak" || type === "insertParagraph";
+      const supportedDelete = type === "deleteContentBackward" || type === "deleteContentForward";
+      if (!supportedInsert && !supportedDelete) return false;
+      event.preventDefault();
+
+      const primaryStart = textarea.selectionStart || 0;
+      const primaryEnd = textarea.selectionEnd || primaryStart;
+      const edits = secondaryCursors.map(offset => ({start: offset, end: offset, primary: false}));
+      edits.push({start: primaryStart, end: primaryEnd, primary: true});
+      edits.sort((a, b) => b.start - a.start || Number(a.primary) - Number(b.primary));
+      let value = textarea.value;
+      const resulting = [];
+      for (const edit of edits) {
+        let start = edit.start;
+        let end = edit.end;
+        if (supportedDelete && start === end) {
+          if (type === "deleteContentBackward") start = Math.max(0, start - 1);
+          else end = Math.min(value.length, end + 1);
+        }
+        const replacement = supportedInsert ? String(inserted ?? "") : "";
+        value = value.slice(0, start) + replacement + value.slice(end);
+        const result = start + replacement.length;
+        for (const cursor of resulting) {
+          if (cursor.offset >= end) cursor.offset += replacement.length - (end - start);
+        }
+        resulting.push({offset: result, primary: edit.primary});
+      }
+      textarea.value = value;
+      const primaryResult = resulting.find(cursor => cursor.primary)?.offset ?? primaryStart;
+      secondaryCursors = resulting.filter(cursor => !cursor.primary).map(cursor => cursor.offset).sort((a, b) => a - b);
+      textarea.setSelectionRange(primaryResult, primaryResult);
+      dispatchEditorInput();
+      updateMultiCursorStatus();
+      return true;
+    };
+
     const insertAtSelection = (snippet) => {
       if (!snippet) return;
       const start = textarea.selectionStart || 0;
@@ -1104,9 +1196,24 @@
     });
     textarea.addEventListener("keydown", (event) => {
       if (handleEmojiAutocompleteKeydown(event)) return;
+      if (event.key === "Escape" && secondaryCursors.length > 0) {
+        event.preventDefault();
+        clearSecondaryCursors();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.altKey &&
+          (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        event.preventDefault();
+        addAdjacentCursor(event.key === "ArrowDown" ? 1 : -1);
+        return;
+      }
       handleTabKey(event);
     });
-    textarea.addEventListener("mousedown", focusBlankVisualRow);
+    textarea.addEventListener("beforeinput", applyMultiCursorEdit);
+    textarea.addEventListener("mousedown", (event) => {
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) clearSecondaryCursors();
+      focusBlankVisualRow(event);
+    });
     textarea.addEventListener("scroll", syncScroll);
     textarea.addEventListener("paste", (event) => {
       const items = event.clipboardData && event.clipboardData.items;

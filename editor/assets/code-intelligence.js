@@ -16,12 +16,14 @@
       (cfg.collaborationPath || Math.random().toString(36).slice(2));
     let timer = 0;
     let runtime;
+    let latestTags = [];
 
     try {
       runtime = await loadRuntime(cfg.codeIntelligenceWasmExec, cfg.codeIntelligenceRuntime);
       await loadLanguage(runtime, cfg);
-      applyAnalysis(form, source, highlight,
-        requireOK(runtime.open(cfg.codeIntelligenceLanguage, documentID, source.value)));
+      const initial = requireOK(runtime.open(cfg.codeIntelligenceLanguage, documentID, source.value));
+      latestTags = initial.tags || [];
+      applyAnalysis(form, source, highlight, initial);
     } catch (error) {
       reportError(form, error);
       return;
@@ -31,7 +33,9 @@
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         try {
-          applyAnalysis(form, source, highlight, requireOK(runtime.update(documentID, source.value)));
+          const analysis = requireOK(runtime.update(documentID, source.value));
+          latestTags = analysis.tags || [];
+          applyAnalysis(form, source, highlight, analysis);
         } catch (error) {
           reportError(form, error);
         }
@@ -39,7 +43,53 @@
     };
     source.addEventListener("input", update);
     source.addEventListener("gosx:remote-input", update);
+    source.addEventListener("keydown", (event) => {
+      if (event.key === "F12") {
+        const target = definitionAtCursor(source, latestTags);
+        if (!target) return;
+        event.preventDefault();
+        const offset = tagStart(target);
+        source.setSelectionRange(offset, offset);
+        source.focus();
+        return;
+      }
+      if (event.altKey && event.shiftKey && event.key === "ArrowUp") {
+        const target = enclosingTag(source, latestTags);
+        if (!target) return;
+        event.preventDefault();
+        source.setSelectionRange(tagStart(target), tagEnd(target));
+      }
+    });
     window.addEventListener("pagehide", () => runtime.close(documentID), {once: true});
+  }
+
+  function tagStart(tag) {
+    return Number(tag.range?.start16 ?? tag.nameRange?.start16 ?? 0);
+  }
+
+  function tagEnd(tag) {
+    return Number(tag.range?.end16 ?? tag.nameRange?.end16 ?? tagStart(tag));
+  }
+
+  function enclosingTag(source, tags) {
+    const start = source.selectionStart || 0;
+    const end = source.selectionEnd || start;
+    return tags
+      .filter(tag => tagStart(tag) <= start && tagEnd(tag) >= end &&
+        (tagStart(tag) < start || tagEnd(tag) > end))
+      .sort((a, b) => (tagEnd(a) - tagStart(a)) - (tagEnd(b) - tagStart(b)))[0];
+  }
+
+  function definitionAtCursor(source, tags) {
+    const cursor = source.selectionStart || 0;
+    const text = source.value;
+    let start = cursor;
+    let end = cursor;
+    while (start > 0 && /[\p{L}\p{N}_$]/u.test(text[start - 1])) start--;
+    while (end < text.length && /[\p{L}\p{N}_$]/u.test(text[end])) end++;
+    const name = text.slice(start, end);
+    if (!name) return null;
+    return tags.find(tag => String(tag.kind || "").startsWith("definition.") && tag.name === name) || null;
   }
 
   function loadRuntime(wasmExecURL, runtimeURL) {

@@ -60,6 +60,43 @@ func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
 	}
 }
 
+func TestNativeEditorAssetProvidesMultiCursorEditing(t *testing.T) {
+	asset, err := embeddedAssets.ReadFile("assets/native-editor.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(asset)
+	for _, want := range []string{
+		`dataset.multiCursorCount`,
+		`beforeinput`,
+		`deleteContentBackward`,
+		`event.key === "ArrowDown"`,
+		`event.key === "Escape"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("native editor asset missing %q", want)
+		}
+	}
+}
+
+func TestCodeIntelligenceAssetProvidesStructuralNavigation(t *testing.T) {
+	asset, err := embeddedAssets.ReadFile("assets/code-intelligence.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(asset)
+	for _, want := range []string{
+		`event.key === "F12"`,
+		`event.altKey && event.shiftKey`,
+		`definitionAtCursor`,
+		`enclosingTag`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("code intelligence asset missing %q", want)
+		}
+	}
+}
+
 func TestCodeSurfaceRendersDeclarativeIntelligenceBinding(t *testing.T) {
 	component := New("code", Options{
 		Surface:  SurfaceCode,
