@@ -45,11 +45,12 @@ type Hub struct {
 	// Presence tracking
 	presence *Presence
 
-	syncMu           sync.RWMutex
-	syncDocs         map[byte]*syncedDoc
-	syncDocName      map[string]byte
-	nextSyncDoc      byte
-	binaryAuthorizer BinaryAuthorizer
+	syncMu                 sync.RWMutex
+	syncDocs               map[byte]*syncedDoc
+	syncDocName            map[string]byte
+	nextSyncDoc            byte
+	binaryAuthorizer       BinaryAuthorizer
+	binaryChangeAuthorizer BinaryChangeAuthorizer
 
 	latched map[string][]byte
 	// latchedMu protects latched. Never held while acquiring h.mu or any

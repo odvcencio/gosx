@@ -98,6 +98,13 @@ type Lang string
 const (
 	MarkdownPP Lang = "markdown++"
 	Markdown   Lang = "markdown"
+	PlainText  Lang = "text"
+	Go         Lang = "go"
+	GoSX       Lang = "gosx"
+	JavaScript Lang = "javascript"
+	TypeScript Lang = "typescript"
+	JSON       Lang = "json"
+	YAML       Lang = "yaml"
 )
 
 // Theme selects the editor color theme.
@@ -108,16 +115,27 @@ const (
 	ThemeLight Theme = "light"
 )
 
+// Surface selects the product shell around the editable document.
+type Surface string
+
+const (
+	// SurfacePublishing is the Markdown++ publishing surface.
+	SurfacePublishing Surface = "publishing"
+	// SurfaceCode is a source-code surface without publishing metadata.
+	SurfaceCode Surface = "code"
+)
+
 // Panel identifies a side panel.
 type Panel string
 
 const (
-	PanelPreview  Panel = "preview"
-	PanelMetadata Panel = "metadata"
-	PanelImages   Panel = "images"
-	PanelHistory  Panel = "history"
-	PanelOutline  Panel = "outline"
-	PanelScratch  Panel = "scratch"
+	PanelPreview     Panel = "preview"
+	PanelMetadata    Panel = "metadata"
+	PanelImages      Panel = "images"
+	PanelHistory     Panel = "history"
+	PanelOutline     Panel = "outline"
+	PanelDiagnostics Panel = "diagnostics"
+	PanelScratch     Panel = "scratch"
 )
 
 // Status identifies the publication state shown in the editor chrome.
@@ -147,8 +165,12 @@ var DefaultPanels = []Panel{
 	PanelHistory,
 }
 
+// DefaultCodePanels is the side-panel set for source-code editing.
+var DefaultCodePanels = []Panel{PanelOutline, PanelDiagnostics, PanelHistory}
+
 // Options configures the editor.
 type Options struct {
+	Surface                   Surface
 	Content                   string
 	Label                     string
 	Title                     string
@@ -163,6 +185,7 @@ type Options struct {
 	FormAction                string
 	AutoSaveURL               string
 	PreviewURL                string
+	DiagnosticsURL            string
 	UploadURL                 string
 	ImagesURL                 string
 	StylesheetURL             string
@@ -194,8 +217,15 @@ type Options struct {
 }
 
 func (o *Options) defaults() {
+	if o.Surface == "" {
+		o.Surface = SurfacePublishing
+	}
 	if o.Language == "" {
-		o.Language = MarkdownPP
+		if o.Surface == SurfaceCode {
+			o.Language = PlainText
+		} else {
+			o.Language = MarkdownPP
+		}
 	}
 	if o.Theme == "" {
 		o.Theme = ThemeDark
@@ -204,7 +234,11 @@ func (o *Options) defaults() {
 		o.Status = StatusDraft
 	}
 	if o.Placeholder == "" {
-		o.Placeholder = "Write your post in markdown..."
+		if o.Surface == SurfaceCode {
+			o.Placeholder = "Start typing…"
+		} else {
+			o.Placeholder = "Write your post in markdown..."
+		}
 	}
 	if o.BackHref == "" {
 		o.BackHref = "/"
@@ -225,13 +259,19 @@ func (o *Options) defaults() {
 		o.ExtraFields = map[string]string{}
 	}
 	if len(o.Toolbar.Items) == 0 {
-		o.Toolbar = cloneToolbar(DefaultToolbar)
+		if o.Surface != SurfaceCode {
+			o.Toolbar = cloneToolbar(DefaultToolbar)
+		}
 	}
 	if o.Keymap == nil {
 		o.Keymap = cloneKeymap(DefaultKeymap)
 	}
 	if o.Panels == nil {
-		o.Panels = clonePanels(DefaultPanels)
+		if o.Surface == SurfaceCode {
+			o.Panels = clonePanels(DefaultCodePanels)
+		} else {
+			o.Panels = clonePanels(DefaultPanels)
+		}
 	}
 	if len(o.Buttons) == 0 {
 		o.Buttons = []FormButton{{

@@ -1,0 +1,48 @@
+package editor
+
+import (
+	"strings"
+	"testing"
+
+	"m31labs.dev/gosx"
+)
+
+func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
+	ed := New("code", Options{
+		Surface:        SurfaceCode,
+		Title:          "internal/api/api.go",
+		Language:       Go,
+		Content:        "package api\n",
+		FormAction:     "/edit",
+		DiagnosticsURL: "/diagnostics",
+	})
+	html := gosx.RenderHTML(ed.Render())
+	for _, want := range []string{
+		`editor-surface-code`,
+		`data-editor-surface="code"`,
+		`data-editor-language="go"`,
+		`data-diagnostics-url="/diagnostics"`,
+		`internal/api/api.go`,
+		`name="content"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("code surface missing %q in %s", want, html)
+		}
+	}
+	if strings.Contains(html, "Untitled field note") || strings.Contains(html, "Metadata") {
+		t.Fatalf("code surface leaked publishing chrome: %s", html)
+	}
+}
+
+func TestCodeSurfaceDefaults(t *testing.T) {
+	ed := New("code", Options{Surface: SurfaceCode})
+	if ed.Language != PlainText {
+		t.Fatalf("language = %q, want %q", ed.Language, PlainText)
+	}
+	if len(ed.Options.Panels) != len(DefaultCodePanels) {
+		t.Fatalf("panels = %#v, want %#v", ed.Options.Panels, DefaultCodePanels)
+	}
+	if len(ed.Options.Toolbar.Items) != 0 {
+		t.Fatalf("code surface must not inherit Markdown toolbar: %#v", ed.Options.Toolbar.Items)
+	}
+}

@@ -65,3 +65,36 @@ func TestHistory_RedoClearedOnNewEdit(t *testing.T) {
 		t.Fatal("redo should be cleared after new edit")
 	}
 }
+
+func TestHistory_UndoActorDoesNotSelectRemoteEdit(t *testing.T) {
+	h := NewHistory()
+	h.Push(Operation{Kind: OpInsert, Content: []byte("operator"), Origin: "user", Actor: "operator"})
+	h.Push(Operation{Kind: OpInsert, Content: []byte("agent"), Origin: "crdt", Actor: "agent"})
+
+	op, ok := h.UndoActor("operator")
+	if !ok || string(op.Content) != "operator" {
+		t.Fatalf("operator undo = %#v, ok=%v", op, ok)
+	}
+	if _, ok := h.UndoActor("operator"); ok {
+		t.Fatal("operator undo selected another actor's edit")
+	}
+	op, ok = h.UndoActor("agent")
+	if !ok || string(op.Content) != "agent" {
+		t.Fatalf("agent undo = %#v, ok=%v", op, ok)
+	}
+}
+
+func TestHistory_NewEditClearsOnlySameActorRedo(t *testing.T) {
+	h := NewHistory()
+	h.Push(Operation{Kind: OpInsert, Content: []byte("a"), Origin: "user", Actor: "operator"})
+	h.Push(Operation{Kind: OpInsert, Content: []byte("b"), Origin: "user", Actor: "agent"})
+	h.UndoActor("operator")
+	h.UndoActor("agent")
+	h.Push(Operation{Kind: OpInsert, Content: []byte("new"), Origin: "toolbar", Actor: "operator"})
+	if _, ok := h.RedoActor("operator"); ok {
+		t.Fatal("same-actor redo survived a new edit")
+	}
+	if op, ok := h.RedoActor("agent"); !ok || string(op.Content) != "b" {
+		t.Fatalf("other actor redo was cleared: %#v, ok=%v", op, ok)
+	}
+}

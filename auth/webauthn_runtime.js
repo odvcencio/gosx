@@ -114,10 +114,71 @@
     return fetchJSON(finishURL, credentialToJSON(credential));
   }
 
+  function declarativePayload(element) {
+    var payload = {};
+    var raw = element.getAttribute("data-gosx-webauthn-payload");
+    if (raw) {
+      try { payload = JSON.parse(raw); } catch (_) { payload = {}; }
+    }
+    var emailSelector = element.getAttribute("data-gosx-webauthn-email");
+    if (emailSelector) {
+      var email = document.querySelector(emailSelector);
+      if (email && email.value) {
+        payload.user = payload.user || {};
+        payload.user.email = email.value;
+        payload.user.name = payload.user.name || email.value;
+        payload.user.id = payload.user.id || email.value;
+      }
+    }
+    return payload;
+  }
+
+  function setDeclarativeStatus(element, message, failed) {
+    var selector = element.getAttribute("data-gosx-webauthn-status");
+    var status = selector ? document.querySelector(selector) : null;
+    if (!status) return;
+    status.textContent = message || "";
+    status.setAttribute("data-state", failed ? "error" : "ok");
+  }
+
+  function bindDeclarative(root) {
+    var scope = root && root.querySelectorAll ? root : document;
+    var elements = scope.querySelectorAll("[data-gosx-webauthn-action]");
+    for (var i = 0; i < elements.length; i++) {
+      (function (element) {
+        if (element.getAttribute("data-gosx-webauthn-bound") === "true") return;
+        element.setAttribute("data-gosx-webauthn-bound", "true");
+        element.addEventListener("click", async function () {
+          var action = element.getAttribute("data-gosx-webauthn-action");
+          var optionsURL = element.getAttribute("data-gosx-webauthn-options");
+          var finishURL = element.getAttribute("data-gosx-webauthn-finish");
+          element.disabled = true;
+          setDeclarativeStatus(element, action === "register" ? "Waiting for your passkey…" : "Checking your passkey…", false);
+          try {
+            var result = action === "register"
+              ? await register(optionsURL, finishURL, declarativePayload(element))
+              : await authenticate(optionsURL, finishURL, declarativePayload(element));
+            setDeclarativeStatus(element, "Passkey accepted.", false);
+            window.location.assign(result.redirect || element.getAttribute("data-gosx-webauthn-success") || "/");
+          } catch (error) {
+            setDeclarativeStatus(element, error && error.message ? error.message : "Passkey request failed.", true);
+            element.disabled = false;
+          }
+        });
+      })(elements[i]);
+    }
+  }
+
   window.GoSXWebAuthn = {
     register: register,
     authenticate: authenticate,
     b64ToBytes: b64ToBytes,
     bytesToB64: bytesToB64,
+    bind: bindDeclarative,
   };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { bindDeclarative(document); });
+  } else {
+    bindDeclarative(document);
+  }
 })();

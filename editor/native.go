@@ -40,8 +40,11 @@ func (e *Editor) renderNativeForm() gosx.Node {
 	)
 	attrs = appendStringAttr(attrs, "data-autosave-url", e.Options.AutoSaveURL)
 	attrs = appendStringAttr(attrs, "data-preview-url", e.Options.PreviewURL)
+	attrs = appendStringAttr(attrs, "data-diagnostics-url", e.Options.DiagnosticsURL)
 	attrs = appendStringAttr(attrs, "data-upload-url", e.Options.UploadURL)
 	attrs = appendStringAttr(attrs, "data-images-url", e.Options.ImagesURL)
+	attrs = appendStringAttr(attrs, "data-editor-surface", string(e.Options.Surface))
+	attrs = appendStringAttr(attrs, "data-editor-language", string(e.Options.Language))
 	if e.Options.ReadOnly {
 		attrs = append(attrs, gosx.BoolAttr("data-readonly"))
 	}
@@ -80,6 +83,9 @@ func (e *Editor) renderNativePanelRadios() []gosx.Node {
 }
 
 func (e *Editor) renderNativeTopbar() gosx.Node {
+	if e.Options.Surface == SurfaceCode {
+		return e.renderNativeCodeTopbar()
+	}
 	return gosx.El(
 		"header",
 		gosx.Attrs(gosx.Attr("class", "editor-topbar editor-native-topbar")),
@@ -117,6 +123,22 @@ func (e *Editor) renderNativeTopbar() gosx.Node {
 				),
 				gosx.Text(e.saveStatusText()),
 			),
+			gosx.Fragment(e.renderNativeFormButtons(e.Options.Buttons)...),
+		),
+	)
+}
+
+func (e *Editor) renderNativeCodeTopbar() gosx.Node {
+	return gosx.El(
+		"header",
+		gosx.Attrs(gosx.Attr("class", "editor-topbar editor-native-topbar editor-code-topbar")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-code-identity")),
+			gosx.El("strong", gosx.Attrs(gosx.Attr("class", "editor-code-path")), gosx.Text(e.titleValue())),
+			gosx.El("span", gosx.Attrs(gosx.Attr("class", "editor-code-language")), gosx.Text(string(e.Options.Language))),
+		),
+		gosx.El("nav", gosx.Attrs(gosx.Attr("class", "editor-segments"), gosx.Attr("aria-label", "Editor panels")), gosx.Fragment(e.renderNativePanelSegments()...)),
+		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-actions editor-native-actions")),
+			gosx.El("span", gosx.Attrs(gosx.Attr("id", "editor-save-status"), gosx.Attr("class", "editor-save-status editor-save-status-saved"), gosx.Attr("aria-live", "polite")), gosx.Text(e.saveStatusText())),
 			gosx.Fragment(e.renderNativeFormButtons(e.Options.Buttons)...),
 		),
 	)
@@ -183,6 +205,14 @@ func (e *Editor) renderNativeBody() gosx.Node {
 }
 
 func (e *Editor) renderNativeToolbar() gosx.Node {
+	if e.Options.Surface == SurfaceCode {
+		return gosx.El("div", gosx.Attrs(
+			gosx.Attr("class", "editor-toolbar editor-code-toolbar"),
+			gosx.Attr("id", "editor-toolbar"),
+			gosx.Attr("role", "toolbar"),
+			gosx.Attr("aria-label", "Code editing"),
+		))
+	}
 	groups := [][]Command{
 		{CmdBold, CmdItalic, CmdStrike, CmdCode, CmdLink, CmdImage, CmdEmoji},
 		{CmdH1, CmdH2, CmdH3},
@@ -229,6 +259,8 @@ func (e *Editor) renderNativePanels() []gosx.Node {
 			nodes = append(nodes, e.renderNativeImagesPanel())
 		case PanelOutline:
 			nodes = append(nodes, e.renderNativeOutlinePanel())
+		case PanelDiagnostics:
+			nodes = append(nodes, e.renderNativeDiagnosticsPanel())
 		case PanelScratch:
 			nodes = append(nodes, e.renderNativeScratchPanel())
 		case PanelHistory:
@@ -236,6 +268,16 @@ func (e *Editor) renderNativePanels() []gosx.Node {
 		}
 	}
 	return nodes
+}
+
+func (e *Editor) renderNativeDiagnosticsPanel() gosx.Node {
+	return gosx.El("section", gosx.Attrs(
+		gosx.Attr("class", "editor-panel editor-panel-diagnostics"),
+		gosx.Attr("data-editor-panel", string(PanelDiagnostics)),
+	),
+		gosx.El("h2", gosx.Text("Diagnostics")),
+		gosx.El("div", gosx.Attrs(gosx.Attr("id", "editor-diagnostics"), gosx.Attr("aria-live", "polite")), gosx.Text("No diagnostics.")),
+	)
 }
 
 func (e *Editor) renderNativePreviewPanel() gosx.Node {

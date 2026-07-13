@@ -204,6 +204,7 @@
 #editor-panel-metadata:checked ~ .editor-native-topbar .editor-segment-metadata,
 #editor-panel-images:checked ~ .editor-native-topbar .editor-segment-images,
 #editor-panel-outline:checked ~ .editor-native-topbar .editor-segment-outline,
+#editor-panel-diagnostics:checked ~ .editor-native-topbar .editor-segment-diagnostics,
 #editor-panel-scratch:checked ~ .editor-native-topbar .editor-segment-scratch,
 #editor-panel-history:checked ~ .editor-native-topbar .editor-segment-history {
   background: rgba(240, 200, 106, 0.18);
@@ -618,6 +619,7 @@
 #editor-panel-metadata:checked ~ .editor-native-body .editor-panel-metadata,
 #editor-panel-images:checked ~ .editor-native-body .editor-panel-images,
 #editor-panel-outline:checked ~ .editor-native-body .editor-panel-outline,
+#editor-panel-diagnostics:checked ~ .editor-native-body .editor-panel-diagnostics,
 #editor-panel-scratch:checked ~ .editor-native-body .editor-panel-scratch,
 #editor-panel-history:checked ~ .editor-native-body .editor-panel-history {
   display: flex;

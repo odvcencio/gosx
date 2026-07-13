@@ -52,12 +52,20 @@ func (e *Editor) Render() gosx.Node {
 	return gosx.El(
 		"div",
 		gosx.Attrs(
-			gosx.Attr("class", "editor-page editor-page-native"),
+			gosx.Attr("class", e.pageClass()),
 			gosx.Attr("id", e.Name),
 		),
 		gosx.Fragment(e.renderAssetTags()...),
 		e.renderNativeForm(),
 	)
+}
+
+func (e *Editor) pageClass() string {
+	className := "editor-page editor-page-native"
+	if e.Options.Surface == SurfaceCode {
+		className += " editor-surface-code"
+	}
+	return className
 }
 
 func (e *Editor) renderLoader() gosx.Node {
@@ -898,6 +906,8 @@ func panelTitle(panel Panel) string {
 		return "History"
 	case PanelOutline:
 		return "Outline"
+	case PanelDiagnostics:
+		return "Diagnostics"
 	case PanelScratch:
 		return "Scratch"
 	default:

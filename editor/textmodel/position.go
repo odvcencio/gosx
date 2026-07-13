@@ -48,4 +48,5 @@ type Operation struct {
 	Range   Range
 	Content []byte
 	Origin  string // "user", "undo", "crdt", "toolbar"
+	Actor   string // stable collaborator identity; empty preserves local-only use
 }

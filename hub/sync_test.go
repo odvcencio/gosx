@@ -379,3 +379,84 @@ func TestHubBinaryAuthorizerDropsUnauthorizedInboundSync(t *testing.T) {
 	}
 	_ = viewerID
 }
+
+func TestHubBinaryChangeAuthorizerRejectsActorSubstitutionBeforeMerge(t *testing.T) {
+	h := New("collab-change-auth")
+	serverDoc := crdt.NewDoc()
+	if err := serverDoc.Put(crdt.Root, "title", crdt.StringValue("server")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serverDoc.Commit("seed"); err != nil {
+		t.Fatal(err)
+	}
+	h.SyncDoc("room-actor", serverDoc)
+	prefix := h.syncDocName["room-actor"]
+
+	clientDoc := crdt.NewDoc()
+	clientState := crdtsync.NewState()
+	bootstrapState := crdtsync.NewState()
+	bootstrap, ok := serverDoc.GenerateSyncMessage(bootstrapState)
+	if !ok {
+		t.Fatal("expected bootstrap sync message")
+	}
+	if err := clientDoc.ReceiveSyncMessage(clientState, bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientDoc.Put(crdt.Root, "title", crdt.StringValue("client")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientDoc.Commit("client edit"); err != nil {
+		t.Fatal(err)
+	}
+	frame, ok := clientDoc.GenerateSyncMessage(clientState)
+	if !ok {
+		t.Fatal("expected client sync message")
+	}
+
+	client := &Client{
+		ID:         "writer",
+		Hub:        h,
+		send:       make(chan []byte, 2),
+		binarySend: make(chan []byte, 2),
+		syncStates: newPeerSyncState(),
+	}
+	h.SetBinaryChangeAuthorizer(func(_ *Client, docName string, changes []crdt.Change) error {
+		if docName != "room-actor" || len(changes) == 0 {
+			return fmt.Errorf("missing authorized changes")
+		}
+		for _, change := range changes {
+			if change.ActorID != "bound-actor" {
+				return fmt.Errorf("actor %q is not bound to connection", change.ActorID)
+			}
+		}
+		return nil
+	})
+	h.handleBinaryMessage(client, append([]byte{prefix}, frame...))
+	value, _, err := serverDoc.Get(crdt.Root, "title")
+	if err != nil || value.Str != "server" {
+		t.Fatalf("rejected frame mutated document: value=%q err=%v", value.Str, err)
+	}
+	select {
+	case payload := <-client.send:
+		if !strings.Contains(string(payload), "not bound to connection") {
+			t.Fatalf("unexpected rejection payload %s", payload)
+		}
+	default:
+		t.Fatal("expected CRDT authorization error")
+	}
+
+	boundActor := clientDoc.ActorID().String()
+	h.SetBinaryChangeAuthorizer(func(_ *Client, _ string, changes []crdt.Change) error {
+		for _, change := range changes {
+			if change.ActorID != boundActor {
+				return fmt.Errorf("actor mismatch")
+			}
+		}
+		return nil
+	})
+	h.handleBinaryMessage(client, append([]byte{prefix}, frame...))
+	value, _, err = serverDoc.Get(crdt.Root, "title")
+	if err != nil || value.Str != "client" {
+		t.Fatalf("authorized frame not merged: value=%q err=%v", value.Str, err)
+	}
+}

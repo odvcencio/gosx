@@ -35,6 +35,14 @@ type syncedDoc struct {
 // time — see m31labs.dev/kiln/collab.Session's CanWrite wiring).
 type BinaryAuthorizer func(client *Client, docName string) bool
 
+// BinaryChangeAuthorizer validates the concrete CRDT changes carried by an
+// inbound sync frame before the document merges them. It is intended for
+// actor binding, capability checks, and per-change audit policy that cannot be
+// enforced by the document-level BinaryAuthorizer alone. Returning an error
+// rejects the complete frame without mutating the document or peer sync state.
+// Frames that carry only sync heads/need metadata are passed with no changes.
+type BinaryChangeAuthorizer func(client *Client, docName string, changes []crdt.Change) error
+
 type peerSyncState struct {
 	mu    sync.Mutex
 	state map[byte]*crdtsync.State
@@ -65,6 +73,14 @@ func (h *Hub) SetBinaryAuthorizer(fn BinaryAuthorizer) {
 	h.syncMu.Lock()
 	defer h.syncMu.Unlock()
 	h.binaryAuthorizer = fn
+}
+
+// SetBinaryChangeAuthorizer installs the pre-merge change-level sync gate.
+// Passing nil restores the default behavior after any document-level gate.
+func (h *Hub) SetBinaryChangeAuthorizer(fn BinaryChangeAuthorizer) {
+	h.syncMu.Lock()
+	defer h.syncMu.Unlock()
+	h.binaryChangeAuthorizer = fn
 }
 
 // SyncDoc registers a CRDT document for binary sync on this hub.
@@ -150,6 +166,7 @@ func (h *Hub) handleBinaryMessage(client *Client, data []byte) {
 	h.syncMu.RLock()
 	binding := h.syncDocs[prefix]
 	authorizer := h.binaryAuthorizer
+	changeAuthorizer := h.binaryChangeAuthorizer
 	h.syncMu.RUnlock()
 	if binding == nil {
 		h.sendCRDTError(client, prefix, fmt.Errorf("unknown crdt doc %d", prefix))
@@ -160,6 +177,18 @@ func (h *Hub) handleBinaryMessage(client *Client, data []byte) {
 		h.sendCRDTError(client, prefix, fmt.Errorf("not authorized to sync doc %q", binding.name))
 		return
 	}
+	if changeAuthorizer != nil {
+		changes, err := decodeSyncChanges(data[1:])
+		if err != nil {
+			h.sendCRDTError(client, prefix, err)
+			return
+		}
+		if err := changeAuthorizer(client, binding.name, changes); err != nil {
+			log.Printf("[hub/%s] dropped unauthorized CRDT changes for doc %q from client %s: %v", h.name, binding.name, client.ID, err)
+			h.sendCRDTError(client, prefix, err)
+			return
+		}
+	}
 
 	state := client.syncStates.docState(prefix)
 	if err := binding.doc.ReceiveSyncMessage(state, data[1:]); err != nil {
@@ -167,6 +196,22 @@ func (h *Hub) handleBinaryMessage(client *Client, data []byte) {
 		return
 	}
 	h.broadcastSyncDoc(prefix)
+}
+
+func decodeSyncChanges(data []byte) ([]crdt.Change, error) {
+	message, err := crdtsync.DecodeMessage(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode sync frame for authorization: %w", err)
+	}
+	changes := make([]crdt.Change, 0, len(message.Changes))
+	for _, chunk := range message.Changes {
+		change, err := crdt.DecodeChangeChunk(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("decode sync change for authorization: %w", err)
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil
 }
 
 func (h *Hub) sendCRDTError(client *Client, prefix byte, err error) {

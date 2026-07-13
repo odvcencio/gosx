@@ -29,10 +29,11 @@ type mapEntry struct {
 }
 
 type listElem struct {
-	ID      OpID   `json:"id"`
-	After   string `json:"after,omitempty"`
-	Value   Value  `json:"value"`
-	Deleted bool   `json:"deleted,omitempty"`
+	ID           OpID   `json:"id"`
+	After        string `json:"after,omitempty"`
+	Value        Value  `json:"value"`
+	Deleted      bool   `json:"deleted,omitempty"`
+	VisibilityID OpID   `json:"visibilityId,omitempty"`
 }
 
 type object struct {
@@ -330,6 +331,114 @@ func (d *Doc) DeleteAt(list ObjID, index uint64) error {
 	}
 	elemID := visible[index].ID
 	op := d.newLocalOpLocked("delete", list, Prop(elemID.String()), NullValue())
+	patch, err := d.applyOpLocked(op)
+	if err != nil {
+		return err
+	}
+	d.pending = append(d.pending, op)
+	d.pendingPatches = append(d.pendingPatches, patch)
+	return nil
+}
+
+// ElementIDAt returns the stable CRDT element identity at a visible index.
+func (d *Doc) ElementIDAt(list ObjID, index uint64) (OpID, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	target, err := d.objectLocked(list)
+	if err != nil {
+		return OpID{}, err
+	}
+	if target.Kind != objectKindList && target.Kind != objectKindText {
+		return OpID{}, fmt.Errorf("%s is not a list-like object", list)
+	}
+	visible := visibleElems(target.List)
+	if int(index) >= len(visible) {
+		return OpID{}, fmt.Errorf("list index %d out of range (length %d)", index, len(visible))
+	}
+	return visible[index].ID, nil
+}
+
+// DeleteByElemID tombstones a stable list/text element. Repeating the delete
+// is safe and does not depend on the element's current visible index.
+func (d *Doc) DeleteByElemID(list ObjID, elemID OpID) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.setElementVisibilityLocked(list, elemID, true)
+}
+
+// ReviveElem makes a tombstoned list/text element visible again using a
+// causally ordered operation. It is used by actor-scoped undo so another
+// actor's neighboring edits do not need to be rewritten.
+func (d *Doc) ReviveElem(list ObjID, elemID OpID) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.setElementVisibilityLocked(list, elemID, false)
+}
+
+// SpliceText applies one index-based text edit as element-level CRDT
+// operations and returns the stable identities affected by the edit.
+func (d *Doc) SpliceText(text ObjID, index, deleteCount uint64, insert string) (inserted, deleted []OpID, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	target, err := d.objectLocked(text)
+	if err != nil {
+		return nil, nil, err
+	}
+	if target.Kind != objectKindText {
+		return nil, nil, fmt.Errorf("%s is not a text object", text)
+	}
+	visible := visibleElems(target.List)
+	if index > uint64(len(visible)) || deleteCount > uint64(len(visible))-index {
+		return nil, nil, fmt.Errorf("text splice [%d,%d) out of range (length %d)", index, index+deleteCount, len(visible))
+	}
+	after := ""
+	if index > 0 {
+		after = visible[index-1].ID.String()
+	}
+	for _, elem := range visible[index : index+deleteCount] {
+		if err := d.setElementVisibilityLocked(text, elem.ID, true); err != nil {
+			return inserted, deleted, err
+		}
+		deleted = append(deleted, elem.ID)
+	}
+	for _, runeValue := range []rune(insert) {
+		op := d.newLocalOpLocked("insert", text, "", StringValue(string(runeValue)))
+		op.After = after
+		patch, err := d.applyOpLocked(op)
+		if err != nil {
+			return inserted, deleted, err
+		}
+		d.pending = append(d.pending, op)
+		d.pendingPatches = append(d.pendingPatches, patch)
+		inserted = append(inserted, op.ID)
+		after = op.ID.String()
+	}
+	return inserted, deleted, nil
+}
+
+func (d *Doc) setElementVisibilityLocked(list ObjID, elemID OpID, deleted bool) error {
+	target, err := d.objectLocked(list)
+	if err != nil {
+		return err
+	}
+	if target.Kind != objectKindList && target.Kind != objectKindText {
+		return fmt.Errorf("%s is not a list-like object", list)
+	}
+	found := false
+	for i := range target.List {
+		if target.List[i].ID == elemID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("element %s not found on %s", elemID.String(), list)
+	}
+	action := "revive"
+	if deleted {
+		action = "delete"
+	}
+	op := d.newLocalOpLocked(action, list, Prop(elemID.String()), NullValue())
 	patch, err := d.applyOpLocked(op)
 	if err != nil {
 		return err
@@ -702,6 +811,8 @@ func (d *Doc) applyOpLocked(op Op) (Patch, error) {
 		return d.applyPutLocked(target, op)
 	case "delete":
 		return d.applyDeleteLocked(target, op)
+	case "revive":
+		return d.applyReviveLocked(target, op)
 	case "increment":
 		return d.applyIncrementLocked(target, op)
 	case "insert":
@@ -736,7 +847,14 @@ func (d *Doc) applyDeleteLocked(target *object, op Op) (Patch, error) {
 		elemIDStr := string(op.Prop)
 		for i := range target.List {
 			if target.List[i].ID.String() == elemIDStr {
-				target.List[i].Deleted = true
+				visibilityID := target.List[i].VisibilityID
+				if visibilityID.Actor == "" {
+					visibilityID = target.List[i].ID
+				}
+				if op.ID.Greater(visibilityID) {
+					target.List[i].Deleted = true
+					target.List[i].VisibilityID = op.ID
+				}
 				break
 			}
 		}
@@ -744,6 +862,28 @@ func (d *Doc) applyDeleteLocked(target *object, op Op) (Patch, error) {
 	default:
 		return Patch{}, fmt.Errorf("delete is not supported on %s objects", target.Kind)
 	}
+}
+
+func (d *Doc) applyReviveLocked(target *object, op Op) (Patch, error) {
+	if target.Kind != objectKindList && target.Kind != objectKindText {
+		return Patch{}, fmt.Errorf("revive is only supported on list-like objects")
+	}
+	elemIDStr := string(op.Prop)
+	for i := range target.List {
+		if target.List[i].ID.String() != elemIDStr {
+			continue
+		}
+		visibilityID := target.List[i].VisibilityID
+		if visibilityID.Actor == "" {
+			visibilityID = target.List[i].ID
+		}
+		if op.ID.Greater(visibilityID) {
+			target.List[i].Deleted = false
+			target.List[i].VisibilityID = op.ID
+		}
+		return Patch{Obj: op.Obj, Prop: op.Prop, Action: "revive", Value: target.List[i].Value.Clone()}, nil
+	}
+	return Patch{}, fmt.Errorf("element %s not found", elemIDStr)
 }
 
 func (d *Doc) applyIncrementLocked(target *object, op Op) (Patch, error) {
@@ -772,9 +912,10 @@ func (d *Doc) applyInsertLocked(target *object, op Op) (Patch, error) {
 		return Patch{}, fmt.Errorf("insert is only supported on list-like objects")
 	}
 	elem := listElem{
-		ID:    op.ID,
-		After: op.After,
-		Value: op.Value.Clone(),
+		ID:           op.ID,
+		After:        op.After,
+		Value:        op.Value.Clone(),
+		VisibilityID: op.ID,
 	}
 	target.List = append(target.List, elem)
 	normalizeListOrder(target)
@@ -859,7 +1000,10 @@ func normalizeListOrder(target *object) {
 	}
 	for after := range children {
 		sort.Slice(children[after], func(i, j int) bool {
-			return children[after][i].ID.Less(children[after][j].ID)
+			// Later inserts at the same logical cursor position precede the
+			// older sibling subtree. This preserves ordinary text-splice
+			// semantics while retaining deterministic actor/counter ordering.
+			return children[after][i].ID.Greater(children[after][j].ID)
 		})
 	}
 
