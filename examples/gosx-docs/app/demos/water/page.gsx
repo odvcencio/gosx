@@ -23,8 +23,8 @@ func Page() Node {
   		controlMaxDistance={10}
   		controlPitchLimit={1.5707788735}
   		preferWebGPU={true}
-  		maxDevicePixelRatio={1.6}
-  		maxPixels={900000}
+  		maxDevicePixelRatio={1.0}
+  		maxPixels={1200000}
   		adaptiveQuality={true}
   		canvasAlpha={false}
   	>
