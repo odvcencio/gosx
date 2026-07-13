@@ -296,7 +296,7 @@ func (e *Editor) renderNativePanels() []gosx.Node {
 
 func (e *Editor) renderNativeDiagnosticsPanel() gosx.Node {
 	return gosx.El("section", gosx.Attrs(
-		gosx.Attr("class", "editor-panel editor-panel-diagnostics"),
+		gosx.Attr("class", "editor-native-card editor-panel editor-panel-diagnostics"),
 		gosx.Attr("data-editor-panel", string(PanelDiagnostics)),
 	),
 		gosx.El("h2", gosx.Text("Diagnostics")),

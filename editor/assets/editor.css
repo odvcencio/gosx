@@ -51,6 +51,36 @@
   overflow: hidden;
 }
 
+/* Code surfaces are embeddable application components. Publishing surfaces
+   retain the viewport shell above, while host workspaces keep their own
+   navigation, observability, and surrounding controls visible. */
+.editor-page.editor-surface-code {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  height: clamp(30rem, 58vh, 42rem);
+  min-height: 30rem;
+  border-block: 1px solid var(--editor-border);
+}
+
+.editor-surface-code .editor-native-form {
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-surface-code .editor-native-topbar {
+  min-height: 3.25rem;
+}
+
+.editor-surface-code .editor-native-body {
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, 28%);
+}
+
+.editor-surface-code .editor-code-toolbar {
+  display: none;
+}
+
 .editor-native-topbar {
   display: flex;
   align-items: center;

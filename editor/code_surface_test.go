@@ -32,6 +32,9 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 	if strings.Contains(html, "Untitled field note") || strings.Contains(html, "Metadata") {
 		t.Fatalf("code surface leaked publishing chrome: %s", html)
 	}
+	if !strings.Contains(html, `class="editor-native-card editor-panel editor-panel-diagnostics"`) {
+		t.Fatalf("diagnostics panel must participate in panel selection: %s", html)
+	}
 }
 
 func TestCodeSurfaceRendersDeclarativeCollaborationBinding(t *testing.T) {
