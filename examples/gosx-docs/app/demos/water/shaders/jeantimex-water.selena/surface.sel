@@ -64,6 +64,44 @@
 //      clipped-reflection mesh targets where the rays hit the object bounds
 //      sphere. The host renders the mesh to those RTTs (the duck / torus-knot);
 //      meshTextureEnable gates the whole block off for the analytic objects.
+//
+// PERF INVESTIGATION (occupancy cliff, DPR 1.0->1.6 costing 7x instead of
+// 2.5x time on Apple/Metal): every fragment currently evaluates the object
+// hit, the wall hit, AND the sky term for both rays, arithmetically
+// selecting one (rfBase/rlBase below) -- ~22 texture samples/fragment plus
+// the ALU and live registers of every untaken branch. The obvious fix is to
+// gate the object/wall shading (normal reconstruction, causticTexture
+// sample, wallShade/objectColorSB) behind their hit tests with sampleLevel()
+// (selena's new explicit-LOD builtin, legal inside non-uniform control flow
+// under WGSL/naga unlike sample()'s implicit-LOD textureSample). That
+// restructure was implemented and prototyped, then NOT shipped, because it
+// could not be proven safe:
+//
+// A pixelmatch before/after harness against the real GLES2/WebGL2 backend
+// (e2e/water_pixel_parity_snapshot_test.go, the same ANGLE/SwiftShader
+// software path gosx's default e2e CI exercises) showed the gated variant
+// differing from the original by up to +/-15 of 255 per channel on ~20% of
+// pixels. But a control experiment -- diffing the ORIGINAL, byte-identical
+// shader against itself across separate process launches -- showed the SAME
+// backend has substantial inherent run-to-run rendering noise on its own
+// (max per-channel delta up to 7-8/255, ~10-20% of pixels, even with the
+// sim paused and the RNG seed pinned), of comparable magnitude to the
+// restructure's signal. That noise floor made it impossible to distinguish
+// "the restructure changed the output" from "this software rasterizer is
+// just noisy between runs" within the available verification time --
+// exactly the "prove, don't assert" bar this material is held to, and
+// exactly the case for reporting rather than shipping on faith. See the
+// harness and its investigation notes for the specifics (including an
+// earlier, retracted finding that blamed sample()/sampleLevel() directly --
+// that comparison was against the same unreliable baseline).
+//
+// Given that, NO branch-gated restructuring of this material's object/wall
+// shading is shipped (selena has no per-backend #ifdef, so one .sel source
+// must be safe on every backend gosx compiles it for). The only change kept
+// is branch-free: rfWallRL and rlWallRL were identical expressions (both
+// pure functions of ldir alone, no sampling) recomputed once per ray; they
+// are now computed once as `wallRL`. This is pure value reuse with no
+// control-flow change, so it carries none of the risk above.
 
 fn raySphere(origin: vec3, ray: vec3, center: vec3, radius: float) -> float {
     let toC  = origin - center
@@ -295,6 +333,14 @@ material WaterSurface {
         }
         let n         = normalFromState(pinfo, normalScale)
         let ldir      = normalize(lightDir)
+        // wallRL is the light ray refracted at the (flat, y-up) water
+        // plane, used by wallShade/poolBox for both rays below. It depends
+        // only on ldir, so both rays used one copy each of the identical
+        // expression (formerly rfWallRL / rlWallRL) — computed once here.
+        // Pure ALU CSE, no control-flow change, no sampling touched — see
+        // the PERF INVESTIGATION note in the file header for why this is
+        // the only optimization from that investigation shipped here.
+        let wallRL    = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
         let viewDir   = normalize(cameraPos - wp)
         let reflectD  = reflect(-viewDir, n)
         let refractD  = refract(-viewDir, n, 1.0 / 1.333)
@@ -406,8 +452,7 @@ material WaterSurface {
         let rfWallP       = wp + refractD * max(rfPool.y, 0.0)
         let rfWallTile    = sample(tileTexture, fract(wallUVRect(rfWallP, hw, hl, ph))).xyz
         let rfWallCaustic = sample(causticTexture, wallCausticUV(rfWallP, ldir, poolWidth, poolLength))
-        let rfWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
-        let rfWallPool    = poolBox(rfWallP, rfWallRL, hw, ph, hl)
+        let rfWallPool    = poolBox(rfWallP, wallRL, hw, ph, hl)
         let rfWallSub     = rfWallP.y < stateAt(pointToWaterUV(rfWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
         let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic)
 
@@ -431,8 +476,7 @@ material WaterSurface {
         let rlWallP       = wp + reflectD * max(rlPool.y, 0.0)
         let rlWallTile    = sample(tileTexture, fract(wallUVRect(rlWallP, hw, hl, ph))).xyz
         let rlWallCaustic = sample(causticTexture, wallCausticUV(rlWallP, ldir, poolWidth, poolLength))
-        let rlWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
-        let rlWallPool    = poolBox(rlWallP, rlWallRL, hw, ph, hl)
+        let rlWallPool    = poolBox(rlWallP, wallRL, hw, ph, hl)
         let rlWallSub     = rlWallP.y < stateAt(pointToWaterUV(rlWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
         let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic)
 
