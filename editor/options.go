@@ -165,6 +165,7 @@ type Collaboration struct {
 	UpdateEvent   string
 	CursorEvent   string
 	FocusEvent    string
+	BinarySplices bool
 }
 
 // CodeIntelligence declaratively binds a code surface to a gotreesitter WASM

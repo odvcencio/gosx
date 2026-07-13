@@ -173,6 +173,20 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 	}
 }
 
+func TestApplicationBinaryHandlerConsumesRecognizedFrame(t *testing.T) {
+	h := New("application-binary")
+	client := &Client{metadata: ConnectionMetadata{"cell": "cell-1"}}
+	called := false
+	h.SetBinaryMessageHandler(func(got *Client, data []byte) bool {
+		called = got == client && string(data) == "MX1payload"
+		return called
+	})
+	h.handleBinaryMessage(client, []byte("MX1payload"))
+	if !called {
+		t.Fatal("application binary frame was not consumed")
+	}
+}
+
 // TestHubBinaryAuthorizerDropsUnauthorizedInboundSync is the regression guard
 // for the inbound-binary-sync bypass of a hub-level write gate: without a
 // BinaryAuthorizer, ANY connected client — including one that a caller (e.g.

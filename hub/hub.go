@@ -51,6 +51,7 @@ type Hub struct {
 	nextSyncDoc            byte
 	binaryAuthorizer       BinaryAuthorizer
 	binaryChangeAuthorizer BinaryChangeAuthorizer
+	binaryMessageHandler   BinaryMessageHandler
 
 	latched map[string][]byte
 	// latchedMu protects latched. Never held while acquiring h.mu or any

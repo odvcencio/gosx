@@ -43,6 +43,13 @@ type BinaryAuthorizer func(client *Client, docName string) bool
 // Frames that carry only sync heads/need metadata are passed with no changes.
 type BinaryChangeAuthorizer func(client *Client, docName string, changes []crdt.Change) error
 
+// BinaryMessageHandler may consume an application-defined binary frame before
+// the CRDT sync-prefix dispatcher sees it. It must return true only for frames
+// it recognizes. Connection metadata remains immutable and available through
+// client.Metadata, so application protocols can bind frames to authenticated
+// actors without carrying identity in the payload.
+type BinaryMessageHandler func(client *Client, data []byte) bool
+
 type peerSyncState struct {
 	mu    sync.Mutex
 	state map[byte]*crdtsync.State
@@ -81,6 +88,12 @@ func (h *Hub) SetBinaryChangeAuthorizer(fn BinaryChangeAuthorizer) {
 	h.syncMu.Lock()
 	defer h.syncMu.Unlock()
 	h.binaryChangeAuthorizer = fn
+}
+
+func (h *Hub) SetBinaryMessageHandler(fn BinaryMessageHandler) {
+	h.syncMu.Lock()
+	defer h.syncMu.Unlock()
+	h.binaryMessageHandler = fn
 }
 
 // SyncDoc registers a CRDT document for binary sync on this hub.
@@ -159,6 +172,12 @@ func (h *Hub) broadcastSyncDoc(prefix byte) {
 
 func (h *Hub) handleBinaryMessage(client *Client, data []byte) {
 	if client == nil || len(data) < 2 {
+		return
+	}
+	h.syncMu.RLock()
+	applicationHandler := h.binaryMessageHandler
+	h.syncMu.RUnlock()
+	if applicationHandler != nil && applicationHandler(client, data) {
 		return
 	}
 

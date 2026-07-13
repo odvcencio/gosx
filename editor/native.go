@@ -57,6 +57,9 @@ func (e *Editor) renderNativeForm() gosx.Node {
 		attrs = appendStringAttr(attrs, "data-collaboration-update-event", defaultCollaborationEvent(collaboration.UpdateEvent, "cell:update"))
 		attrs = appendStringAttr(attrs, "data-collaboration-cursor-event", defaultCollaborationEvent(collaboration.CursorEvent, "presence:cursor"))
 		attrs = appendStringAttr(attrs, "data-collaboration-focus-event", defaultCollaborationEvent(collaboration.FocusEvent, "presence:focus"))
+		if collaboration.BinarySplices {
+			attrs = appendStringAttr(attrs, "data-collaboration-binary-splices", "true")
+		}
 	}
 	if intelligence := e.Options.CodeIntelligence; intelligence != nil {
 		attrs = appendStringAttr(attrs, "data-code-intelligence-language", fallback(intelligence.Language, string(e.Options.Language)))

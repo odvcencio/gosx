@@ -38,9 +38,9 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 }
 
 func TestCodeSurfaceRendersDeclarativeCollaborationBinding(t *testing.T) {
-	component := New("code", Options{Surface: SurfaceCode, Content: "x", Collaboration: &Collaboration{HubURL: "/gosx/hub/cells", CapabilityURL: "/api/cells/cell-1/capability", CellID: "cell-1", Path: "main.go"}})
+	component := New("code", Options{Surface: SurfaceCode, Content: "x", Collaboration: &Collaboration{HubURL: "/gosx/hub/cells", CapabilityURL: "/api/cells/cell-1/capability", CellID: "cell-1", Path: "main.go", BinarySplices: true}})
 	html := gosx.RenderHTML(component.Render())
-	for _, want := range []string{"data-collaboration-hub=\"/gosx/hub/cells\"", "data-collaboration-capability-url=\"/api/cells/cell-1/capability\"", "data-collaboration-cell=\"cell-1\"", "data-collaboration-path=\"main.go\"", "/editor/collaborative-editor.js"} {
+	for _, want := range []string{"data-collaboration-hub=\"/gosx/hub/cells\"", "data-collaboration-capability-url=\"/api/cells/cell-1/capability\"", "data-collaboration-cell=\"cell-1\"", "data-collaboration-path=\"main.go\"", "data-collaboration-binary-splices", "/editor/collaborative-editor.js"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q in %s", want, html)
 		}
@@ -53,7 +53,7 @@ func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(asset)
-	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false", "grant.expiresAt", "capability rotation"} {
+	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false", "grant.expiresAt", "capability rotation", "minimalSplice", "encodeSplice", "socket.send(encodeSplice(splice))"} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("collaboration runtime missing %q", want)
 		}

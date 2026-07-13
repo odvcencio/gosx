@@ -8,6 +8,7 @@
     if (!source) return;
     const cfg = form.dataset;
     let socket, editTimer, reconnectTimer, rotationTimer, reconnect, closed = false, revision = 0, localDirty = false;
+    let lastPublished = source.value;
     const cursors = new Map();
     const status = document.createElement("div");
     status.className = "editor-collaboration-status";
@@ -66,6 +67,7 @@
       revision = Number(snapshot.revision || revision);
       if (file.content === source.value) {
         localDirty = false;
+        lastPublished = file.content;
         return;
       }
       // A server snapshot can race a browser typing burst. Preserve the local
@@ -74,10 +76,46 @@
       if (localDirty) return;
       const start = source.selectionStart, end = source.selectionEnd;
       source.value = file.content;
+      lastPublished = file.content;
       source.setSelectionRange(Math.min(start, source.value.length), Math.min(end, source.value.length));
       source.dispatchEvent(new Event("gosx:remote-input", {bubbles: true}));
     };
-    const publishEdit = () => send(cfg.collaborationEditEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, content: source.value});
+    const minimalSplice = (before, after) => {
+      const oldRunes = Array.from(before), newRunes = Array.from(after);
+      let start = 0;
+      while (start < oldRunes.length && start < newRunes.length && oldRunes[start] === newRunes[start]) start++;
+      let oldEnd = oldRunes.length, newEnd = newRunes.length;
+      while (oldEnd > start && newEnd > start && oldRunes[oldEnd - 1] === newRunes[newEnd - 1]) { oldEnd--; newEnd--; }
+      return {index: start, deleteCount: oldEnd - start, insert: newRunes.slice(start, newEnd).join("")};
+    };
+    const encodeSplice = splice => {
+      const encoder = new TextEncoder();
+      const path = encoder.encode(cfg.collaborationPath || "");
+      const insert = encoder.encode(splice.insert);
+      if (path.length > 65535) throw new Error("collaboration path is too long");
+      const frame = new ArrayBuffer(22 + path.length + insert.length);
+      const view = new DataView(frame);
+      view.setUint8(0, 0x4d); view.setUint8(1, 0x58); view.setUint8(2, 0x53); view.setUint8(3, 0x50);
+      view.setUint16(4, path.length, false);
+      view.setUint32(6, revision >>> 0, false);
+      view.setUint32(10, splice.index >>> 0, false);
+      view.setUint32(14, splice.deleteCount >>> 0, false);
+      view.setUint32(18, insert.length >>> 0, false);
+      new Uint8Array(frame, 22, path.length).set(path);
+      new Uint8Array(frame, 22 + path.length, insert.length).set(insert);
+      return frame;
+    };
+    const publishEdit = () => {
+      if (cfg.collaborationBinarySplices === "true") {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+        const splice = minimalSplice(lastPublished, source.value);
+        if (splice.deleteCount === 0 && splice.insert === "") return true;
+        socket.send(encodeSplice(splice));
+        lastPublished = source.value;
+        return true;
+      }
+      return send(cfg.collaborationEditEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, content: source.value});
+    };
     const publishCursor = () => send(cfg.collaborationCursorEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, start: source.selectionStart, end: source.selectionEnd});
     const applyCursor = data => {
       if (data.cellID !== cfg.collaborationCell || data.path !== cfg.collaborationPath || !data.clientID) return;
