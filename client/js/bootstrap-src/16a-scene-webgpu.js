@@ -9897,12 +9897,7 @@
             }
             renderPass.setBindGroup(0, selenaDraw.bindGroup);
             frameGroupBound = false;
-            if (system.indexBuffer) {
-              renderPass.setIndexBuffer(system.indexBuffer, "uint32");
-              renderPass.drawIndexed(system.indexCount);
-            } else {
-              sceneWaterDrawSurface(renderPass, system);
-            }
+            sceneWaterDrawSurface(renderPass, system);
             stats.waterDrawCalls += 1;
             stats.waterDrawVertices += system.vertexCount;
             stats.waterSelenaSurfacePasses += 1;

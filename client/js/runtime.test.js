@@ -20300,6 +20300,13 @@ function makeFakeGPUDevice(options) {
         pass.indexBuffers.push({ buffer, format, offset, size });
       },
       drawIndexed(indexCount, instanceCount) {
+        // The real GPURenderPassEncoder throws a TypeError on a non-integer count
+        // ("value is not of type 'unsigned long'"). A stale field reference produced
+        // exactly that in the browser while the fake device recorded it happily, so the
+        // fake must be as strict as the real one or it certifies broken frames.
+        if (!Number.isInteger(indexCount) || indexCount < 0) {
+          throw new TypeError("drawIndexed: indexCount is not an unsigned long: " + indexCount);
+        }
         pass.draws.push({
           vertexCount: indexCount,
           indexCount,
