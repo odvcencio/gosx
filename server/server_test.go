@@ -182,7 +182,7 @@ func TestAppBasic(t *testing.T) {
 func TestAppWithLayout(t *testing.T) {
 	app := New()
 	app.SetLayout(func(title string, body gosx.Node) gosx.Node {
-		return gosx.El("html", gosx.El("body", body))
+		return gosx.El("html", gosx.Attrs(gosx.Attr("data-custom-layout", "true")), gosx.El("head"), gosx.El("body", body))
 	})
 	app.Route("/page", func(r *http.Request) gosx.Node {
 		return gosx.Text("content")
@@ -199,6 +199,9 @@ func TestAppWithLayout(t *testing.T) {
 	}
 	if !strings.Contains(body, "<html") {
 		t.Fatalf("expected '<html' in body, got %q", body)
+	}
+	if !strings.Contains(body, `data-custom-layout="true"`) {
+		t.Fatalf("expected the configured layout to be invoked, got %q", body)
 	}
 }
 

@@ -903,10 +903,23 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	case a.document != nil:
 		return a.document(doc)
 	case a.layout != nil:
-		return HTMLDocument(pageTitle(ctx, pattern, defaultTitle), ctx.Head(), renderedBody)
+		return renderLegacyLayout(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx.Head())
 	default:
 		return gosx.RawHTML(renderDocumentWithContext(doc))
 	}
+}
+
+func renderLegacyLayout(document, extraHead gosx.Node) gosx.Node {
+	rendered := gosx.RenderHTML(document)
+	head := gosx.RenderHTML(extraHead)
+	if strings.TrimSpace(head) == "" {
+		return gosx.RawHTML(rendered)
+	}
+	closingHead := strings.Index(strings.ToLower(rendered), "</head>")
+	if closingHead < 0 {
+		return gosx.RawHTML(rendered)
+	}
+	return gosx.RawHTML(rendered[:closingHead] + head + rendered[closingHead:])
 }
 
 func pageTitle(ctx *Context, pattern string, defaultTitle string) string {
