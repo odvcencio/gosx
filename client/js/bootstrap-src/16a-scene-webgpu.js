@@ -8746,6 +8746,34 @@
       return out;
     }
 
+    // sceneWaterKnotContextArray packs the 65-point trefoil torus-knot
+    // polyline that surface.sel / surface-below.sel's SDF sphere-trace reads
+    // via `context { knot : array<vec4,65> }`. The points depend on NOTHING in
+    // the scene (pure function of the loop index — the shaders used to rebuild
+    // them per FRAGMENT, ~260 transcendentals plus a 1040-byte dynamically
+    // indexed private array that collapsed GPU occupancy), so they are computed
+    // once here and cached module-level. Formula is byte-identical to the old
+    // in-shader loop: theta = ki/64 * 2pi, rad = 0.17*(2+cos(3*theta))*0.5,
+    // point = (rad*cos(2*theta), -0.17*sin(3*theta)*0.5, rad*sin(2*theta), 0).
+    var sceneWaterKnotArrayCache;
+    function sceneWaterKnotContextArray() {
+      var out = sceneWaterKnotArrayCache;
+      if (!out) {
+        // .w of every element stays 0 (Float32Array zero-init), matching the
+        // old vec4f(..., 0.0) fourth component.
+        sceneWaterKnotArrayCache = out = new Float32Array(65 * 4);
+        for (var ki = 0; ki <= 64; ki++) {
+          var theta = ki / 64.0 * 6.283185307;
+          var rad = 0.17 * (2.0 + Math.cos(3.0 * theta)) * 0.5;
+          var offset = ki * 4;
+          out[offset] = rad * Math.cos(2.0 * theta);
+          out[offset + 1] = -0.17 * Math.sin(3.0 * theta) * 0.5;
+          out[offset + 2] = rad * Math.sin(2.0 * theta);
+        }
+      }
+      return out;
+    }
+
     // sceneWaterSelenaUsesPass gates a pass on its Selena WGSL+descriptor both
     // being present (a pass-specific caller may AND in additional conditions,
     // e.g. sceneWaterPoolUsesSelena's "not rounded" check below).
@@ -9050,6 +9078,7 @@
           refractionMatrix: refractionMatrix,
           reflectionMatrix: reflectionMatrix,
           spheres: sceneWaterSpheresContextArray(system),
+          knot: sceneWaterKnotContextArray(),
         },
         grid: sceneNumber(system && system.waterResolution, 256),
       };

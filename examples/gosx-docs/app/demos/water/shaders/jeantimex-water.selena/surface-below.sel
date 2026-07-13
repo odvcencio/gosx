@@ -181,6 +181,7 @@ material WaterSurfaceBelow {
         objectCenter  : vec3
         objectHalf    : vec3
         spheres       : array<vec4, 32>
+        knot          : array<vec4, 65>
     }
 
     param tileTexture   : texture2d
@@ -240,13 +241,11 @@ material WaterSurfaceBelow {
         let hl        = max(poolLength, 0.001)
         let ph        = max(poolHeight, 0.001)
 
+        // knot (the 65-point trefoil polyline the torus-knot SDF trace below
+        // reads) is a pure constant of ki — bound as the `knot` context
+        // uniform array (packed once by the host runtime), NOT rebuilt per
+        // fragment. See water-surface.sel for the perf rationale.
         let radiusScale = max(objR / 0.42, 0.25)
-        var knot : array<vec4, 65>
-        for (var ki = 0i; ki <= 64i; ki = ki + 1i) {
-            let theta = float(ki) / 64.0 * 6.283185307
-            let rad   = 0.17 * (2.0 + cos(3.0 * theta)) * 0.5
-            knot[ki]  = vec4f(rad * cos(2.0 * theta), -0.17 * sin(3.0 * theta) * 0.5, rad * sin(2.0 * theta), 0.0)
-        }
 
         let rfSimple = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
 

@@ -2603,6 +2603,32 @@
     }
   }
 
+  // The 65-point trefoil torus-knot polyline surface.sel's SDF sphere-trace
+  // reads via `context { knot : array<vec4,65> }`. Pure constant (function of
+  // the loop index only — the shader used to rebuild it per FRAGMENT, ~260
+  // transcendentals plus a 1040-byte dynamically indexed private array), so it
+  // is computed once and cached module-level; the renderer uploads it a single
+  // time per linked surface program (GL uniform values persist per program).
+  // Formula is byte-identical to the old in-shader loop.
+  var sceneWaterKnotUniformCache;
+  function sceneWaterKnotUniformArray() {
+    var out = sceneWaterKnotUniformCache;
+    if (!out) {
+      // .w of every element stays 0 (Float32Array zero-init), matching the
+      // old vec4f(..., 0.0) fourth component.
+      sceneWaterKnotUniformCache = out = new Float32Array(65 * 4);
+      for (var ki = 0; ki <= 64; ki++) {
+        var theta = ki / 64.0 * 6.283185307;
+        var rad = 0.17 * (2.0 + Math.cos(3.0 * theta)) * 0.5;
+        var offset = ki * 4;
+        out[offset] = rad * Math.cos(2.0 * theta);
+        out[offset + 1] = -0.17 * Math.sin(3.0 * theta) * 0.5;
+        out[offset + 2] = rad * Math.sin(2.0 * theta);
+      }
+    }
+    return out;
+  }
+
   // Bind an ordered list of samplers to sequential texture units and point each
   // GLSL sampler uniform at its unit. list entries: {name, target, tex}.
   function sceneWaterRenderBindSamplers(gl, program, list) {
@@ -2860,6 +2886,14 @@
     var causticsDesc = sceneWaterParseDescriptor(descriptors.caustics);
     var shadowDesc = sceneWaterParseDescriptor(descriptors.objectShadow);
     var compoundShadowDesc = sceneWaterParseDescriptor(descriptors.compoundShadow);
+
+    // The torus-knot polyline context array is a pure constant, so upload it
+    // ONCE per linked surface program instead of per frame (uniform values
+    // persist on the program object; sceneWaterRenderSetUniforms skips every
+    // field the values map doesn't name, so only knot[0..64] is written here).
+    gl.useProgram(surfaceProgram);
+    sceneWaterRenderSetUniforms(gl, surfaceProgram, surfaceDesc, { knot: sceneWaterKnotUniformArray() });
+    gl.useProgram(null);
 
     // Pool dims / optics from the entry.
     var poolWidth = sceneWaterNum(entry.poolWidth, 1);
