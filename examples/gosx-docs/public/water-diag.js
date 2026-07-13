@@ -104,6 +104,8 @@
         row("LoAF worst", loaf.maxMS.toFixed(0) + " ms", loaf.maxMS > 30) +
         row("· script", loaf.scriptMS.toFixed(0) + " ms", false) +
         row("· render", loaf.renderMS.toFixed(0) + " ms", false) +
+        '<div style="height:6px"></div>' +
+        row("GPU work", (attr("webgpu-gpu-ms") || "-") + " ms", num(attr("webgpu-gpu-ms")) > 20) +
         (knobs.length
           ? '<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:.7">' +
             knobs.join(" · ") + "</div>"
@@ -186,6 +188,7 @@
         loafWorstMS: +loaf.maxMS.toFixed(0),
         loafScriptMS: +loaf.scriptMS.toFixed(0),
         loafRenderMS: +loaf.renderMS.toFixed(0),
+        gpuWorkMS: num(attr("webgpu-gpu-ms")),
       };
       console.log(JSON.stringify(out, null, 1));
       return out;

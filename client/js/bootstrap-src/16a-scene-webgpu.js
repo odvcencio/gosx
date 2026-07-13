@@ -4186,6 +4186,7 @@
     var lastWaterTimeSeconds = null;
     var lastPreparedScene = null;
     var lastWebGPUFrameStats = null;
+    var lastGPUWorkMS = 0;
     var webGPUFrameSeq = 0;
     // Cull telemetry: frame counter for throttling readback (~every 30 frames)
     // and the last aggregated survivor snapshot written to the mount attribute.
@@ -13578,7 +13579,22 @@
         Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera));
       }
 
+      // GPU wall-clock, sampled cheaply. onSubmittedWorkDone() resolves when the
+      // queue has finished the work we just submitted, so submit->resolve is a close
+      // proxy for how long the GPU actually took. Without it there is NO honest GPU
+      // number anywhere in the runtime: the adaptive governor measures the JS render
+      // call (command encoding), which on WebGPU completes long before the GPU does,
+      // and that gap is how a scene delivering 70ms frames reported 3.6ms of cost.
+      // Sampled every 15th frame so the promise churn cannot itself distort the thing
+      // it is measuring.
+      var gpuT0 = (webGPUFrameSeq % 15) === 0 ? performance.now() : 0;
       device.queue.submit([encoder.finish()]);
+      if (gpuT0 && device.queue.onSubmittedWorkDone) {
+        device.queue.onSubmittedWorkDone().then(function () {
+          lastGPUWorkMS = performance.now() - gpuT0;
+          mount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUWorkMS.toFixed(1));
+        });
+      }
       publishWebGPUFrameStats(frameStats);
       if (scopedFrameErrors) endWebGPUErrorScope();
 
