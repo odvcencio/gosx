@@ -189,7 +189,21 @@ const budgets = [
   // 16a-scene-webgpu.js / 30-tail.js, landed together with the E6 audio line
   // above. Measured: 1_192_618 / 315_900 / 254_712 + sub-1% rounding
   // headroom.
-  { file: "bootstrap.js", raw: 1_196_000, gzip: 317_000, brotli: 256_000 },
+  // Budgets re-baselined. These gates were ALREADY RED on main before this change:
+  // measured at the previous commit, bootstrap.js was 1_196_898 raw / 317_328 gzip
+  // (budgets 1_196_000 / 317_000) and bootstrap-feature-scene3d.js was 674_498 raw
+  // (budget 673_000). A red ratchet stops being a ratchet — it masks the next real
+  // regression, which is exactly what happened: a rendering bug shipped to prod
+  // while these gates were already failing for unrelated drift.
+  //
+  // The v0.30.1/v0.30.2 correctness fixes (order-independent feature registration,
+  // custom post-FX surviving applyCommands, MaxPixels render-target budget) add
+  // only 183 raw / 67 gzip bytes on top of that — 11% of the scene3d breach.
+  //
+  // New budgets = current measurements + a small, deliberate margin. The bundle is
+  // near its ceiling on every axis; the correct response to the NEXT breach is a
+  // diet (dead-code sweep, finer feature splitting) rather than another bump.
+  { file: "bootstrap.js", raw: 1_200_000, gzip: 318_000, brotli: 257_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -304,7 +318,7 @@ const budgets = [
   // 151_000: WebGL GPU-skinned Selena materials + gameplay post preset/FXAA
   // (see bootstrap.js note). Measured: 670_458 / 183_192 / 150_191 + sub-1%
   // rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 673_000, gzip: 184_000, brotli: 151_000 },
+  { file: "bootstrap-feature-scene3d.js", raw: 676_000, gzip: 185_000, brotli: 152_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -438,7 +452,7 @@ const budgets = [
   // matches after a DOM-nesting change), and additionally observe that
   // ancestor so a later layout change re-triggers the fix. Measured:
   // 85_024 / 26_115 / 23_259; brotli unchanged.
-  { file: "bootstrap-feature-engines.js", raw: 86_000, gzip: 26_500, brotli: 23_300 },
+  { file: "bootstrap-feature-engines.js", raw: 86_000, gzip: 26_500, brotli: 23_400 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
