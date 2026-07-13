@@ -683,7 +683,7 @@ make test-fuzz-smoke # Bounded native Go fuzzing for high-risk generated harness
 make test-js       # Bootstrap + patch under Node test runner
 make test-wasm     # WASM runtime through exported functions
 make test-wasm-islands # Slim island-only WASM runtime through exported functions
-make test-e2e      # Playwright browser tests against gosx dev
+make test-e2e      # chromedp browser tests against gosx dev (go test -tags e2e ./e2e)
 make test-desktop  # Desktop package tests plus Windows cross-compile guards
 make test-desktop-macos # macOS desktop/cmd cross-compile guardrails
 make build-desktop-windows  # Windows desktop-capable CLI binaries
@@ -699,7 +699,7 @@ limit Go scheduler width, set a Go memory target, and keep a hard timeout/VM
 ceiling around the process so generated bundles, `node_modules`, build output,
 and the index cache itself cannot turn structural analysis into an OOM risk.
 
-Client correctness is verified at four layers: pure Go VM/bridge tests, JS runtime contract tests under Node, compiler-to-bridge integration tests, and live Playwright browser tests against the docs app. The high-risk domains have explicit proof tests: auth/session tamper rejection, encrypted cookie rotation, and CSRF JSON/header paths; CRDT partition convergence, large-history sync, and tombstone persistence; physics CCD, warm-started stacks, and 10k-collider raycast scale; route specificity across static/dynamic/catch-all patterns; Scene3D 1000-level hierarchy transform propagation; and docs accessibility invariants for landmarks, named controls, duplicate IDs, and ARIA references. Danmuji `.dmj` specs add scenario/property coverage plus generated native Go fuzz harnesses for session cookie decoding, CRDT document loading, physics raycasts, and escaped router paths.
+Client correctness is verified at four layers: pure Go VM/bridge tests, JS runtime contract tests under Node, compiler-to-bridge integration tests, and live chromedp browser tests against the docs app. The high-risk domains have explicit proof tests: auth/session tamper rejection, encrypted cookie rotation, and CSRF JSON/header paths; CRDT partition convergence, large-history sync, and tombstone persistence; physics CCD, warm-started stacks, and 10k-collider raycast scale; route specificity across static/dynamic/catch-all patterns; Scene3D 1000-level hierarchy transform propagation; and docs accessibility invariants for landmarks, named controls, duplicate IDs, and ARIA references. Danmuji `.dmj` specs add scenario/property coverage plus generated native Go fuzz harnesses for session cookie decoding, CRDT document loading, physics raycasts, and escaped router paths.
 
 ## Dependencies
 

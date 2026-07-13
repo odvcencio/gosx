@@ -8767,7 +8767,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
 });
 
 test("Scene3D managed control forms replace the route water-controls bridge", () => {
-  const build = fs.readFileSync(path.join(__dirname, "build-bootstrap.mjs"), "utf8");
+  const build = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
   const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
   const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.js"), "utf8");
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
@@ -11185,11 +11185,11 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
 });
 
 test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
-  const builder = fs.readFileSync(path.join(__dirname, "build-bootstrap.mjs"), "utf8");
+  const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
   const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
 
-  assert.match(builder, /sourceExtract\(RUNTIME_SCENE_CORE_FILE,\s*"runtime-utils"/);
+  assert.match(builder, /sourceExtract\(runtimeSceneCoreFile,\s*"runtime-utils"/);
   assert.doesNotMatch(builder, /10a-runtime-utils/);
   assert.doesNotMatch(core, /function sceneBool\(/);
   assert.doesNotMatch(core, /function clearChildren\(/);
