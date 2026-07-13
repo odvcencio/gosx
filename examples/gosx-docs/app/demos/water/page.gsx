@@ -474,7 +474,12 @@ func Page() Node {
   });
   updateProof();
   var proofTimer = window.setInterval(updateProof, 250);
-  window.addEventListener("pagehide", function () { window.clearInterval(proofTimer); }, { once: true });
+  function stopProofTimer() { window.clearInterval(proofTimer); }
+  window.addEventListener("pagehide", stopProofTimer, { once: true });
+  // In-app navigation replaces this page without a pagehide - stop the
+  // poll there too, or every visit to this demo leaks a 4 Hz interval
+  // holding the detached DOM alive.
+  document.addEventListener("gosx:navigate", stopProofTimer, { once: true });
 
   if (dialog && open && close && typeof dialog.showModal === "function") {
     open.addEventListener("click", function () { dialog.showModal(); });

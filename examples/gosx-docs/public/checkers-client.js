@@ -10,6 +10,13 @@
   var revision = -1;
   var visualMatchRevision = -1;
   var activeAnim = null;
+  // Strictly-increasing revision for gosx:scene3d:commands dispatches. The
+  // mount runtime drops any batch whose revision is <= the last applied one
+  // (see 20-scene-mount.js onMountCommands), and state.revision is constant
+  // for the lifetime of one snapshot — but a move tween dispatches many
+  // batches per snapshot, so reusing state.revision verbatim would freeze the
+  // animation on its first frame and drop the final landing batch.
+  var dispatchRevision = 0;
   var reduceMotionQuery = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
 
   function mount() {
@@ -111,7 +118,8 @@
   }
 
   function dispatchScene(sceneMount, commands) {
-    sceneMount.dispatchEvent(new CustomEvent("gosx:scene3d:commands", { detail: { revision: state.revision, commands: commands } }));
+    dispatchRevision = Math.max(dispatchRevision + 1, Number(state && state.revision) || 0);
+    sceneMount.dispatchEvent(new CustomEvent("gosx:scene3d:commands", { detail: { revision: dispatchRevision, commands: commands } }));
   }
 
   function stopMoveAnimation(applyFinal) {

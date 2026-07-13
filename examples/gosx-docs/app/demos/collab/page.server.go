@@ -13,6 +13,15 @@ import (
 var Hub *hub.Hub
 var doc *Doc
 
+// docUpdate is the doc:update wire payload: the resulting document state plus
+// the hub client ID whose edit produced it (empty for join-time sends). The
+// origin lets the sending client recognize its own accepted echo and adopt the
+// new version without overwriting keystrokes typed during the round trip.
+type docUpdate struct {
+	DocState
+	Origin string `json:"origin"`
+}
+
 // roster tracks connected editors' stable identities and last known cursor
 // positions for the presence + remote-cursor features. It is this demo's
 // own bookkeeping — separate from hub.Hub's built-in Presence tracker.
@@ -33,11 +42,17 @@ func init() {
 			// Malformed message — ignore; client will resync on next broadcast.
 			return
 		}
-		state, _ := doc.Apply(payload.Text, payload.Version)
+		state, accepted := doc.Apply(payload.Text, payload.Version)
 		// Broadcast resulting state to ALL clients (including the sender).
 		// If the edit was rejected (stale), the sender gets the current state
-		// and will re-sync automatically.
-		ctx.Hub.Broadcast("doc:update", state)
+		// and will re-sync automatically. Origin is only attached to accepted
+		// edits: a rejected edit's broadcast carries someone else's text, and
+		// the sender must apply it like any remote update.
+		update := docUpdate{DocState: state}
+		if accepted {
+			update.Origin = ctx.Client.ID
+		}
+		ctx.Hub.Broadcast("doc:update", update)
 	})
 
 	// cursor:update — client reports its caret/selection as a character

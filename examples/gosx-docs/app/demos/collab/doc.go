@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	defaultDocText = "# Welcome to the GoSX Hub Sync demo\n\nThis is a deliberately small **last-write-wins synchronization** example.\n\nOpen this page in two tabs and start typing — edits sync through one hub with 100ms debounce.\n\n## What it proves\n\n- Live preview rendered in the browser\n- Snapshot sync over a GoSX WebSocket hub\n- Explicit connected, pending, and synced states\n\n## Deliberate limits\n\n- One shared in-memory document\n- No persistence or rooms\n- No cursors or presence\n- No CRDT or conflict merging: the last accepted snapshot wins\n\n> Try it: open two tabs side by side and watch the versioned snapshots converge.\n"
+	defaultDocText = "# Welcome to the GoSX Hub Sync demo\n\nThis is a deliberately small **last-write-wins synchronization** example.\n\nOpen this page in two tabs and start typing — edits sync through one hub with 100ms debounce.\n\n## What it proves\n\n- Live preview rendered in the browser\n- Snapshot sync over a GoSX WebSocket hub\n- Live presence and labeled remote cursors\n- Explicit connected, pending, and synced states\n\n## Deliberate limits\n\n- One shared in-memory document\n- No persistence or rooms\n- No CRDT or conflict merging: the last accepted snapshot wins\n\n> Try it: open two tabs side by side and watch the versioned snapshots converge.\n"
 	maxDocBytes    = 64 * 1024 // cap at 64 KB to prevent abuse
 )
 

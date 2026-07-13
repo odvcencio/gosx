@@ -39,6 +39,11 @@
   var nextIndex = 0;
   var submitting = false;
   var baselineSnapshot = "";
+  // Draft snapshot captured at the moment a publish was submitted. On success
+  // the baseline resets to THIS snapshot, not the live draft — anything typed
+  // during the fetch round trip was not published and must keep the
+  // "Unsaved changes" badge visible.
+  var submittedSnapshot = null;
   var feedbackTimer = null;
   var labelTimer = null;
 
@@ -70,7 +75,8 @@
     var palette = document.getElementById("cms-palette-list");
     if (palette) palette.addEventListener("click", onPaletteClick);
 
-    baselineSnapshot = serializeDraft();
+    baselineSnapshot = submittedSnapshot !== null ? submittedSnapshot : serializeDraft();
+    submittedSnapshot = null;
     updateUnsavedState();
   }
 
@@ -259,6 +265,7 @@
     evt.preventDefault();
 
     submitting = true;
+    submittedSnapshot = serializeDraft();
     setButtonBusy(true);
     setFeedback("Publishing…", "");
 

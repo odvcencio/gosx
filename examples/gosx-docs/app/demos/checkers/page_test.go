@@ -50,7 +50,7 @@ func TestCheckersClientProvidesRovingKeyboardAndMaterialSelection(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(source)
-	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", "syncMaterialFromURL", `"imperial-jade": true`, `"carved-wood": true`, `"brushed-steel": true`, `data-checkers-material`, `searchParams.set("material"`, "state.sceneCommands", "gosx:scene3d:commands", "revision: state.revision", "prefers-reduced-motion", "requestAnimationFrame", "state.lastMove", "data-last-from", "data-last-to", "checkers-search-depth"} {
+	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", "syncMaterialFromURL", `"imperial-jade": true`, `"carved-wood": true`, `"brushed-steel": true`, `data-checkers-material`, `searchParams.set("material"`, "state.sceneCommands", "gosx:scene3d:commands", "revision: dispatchRevision", "prefers-reduced-motion", "requestAnimationFrame", "state.lastMove", "data-last-from", "data-last-to", "checkers-search-depth"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("checkers-client.js missing %q", required)
 		}

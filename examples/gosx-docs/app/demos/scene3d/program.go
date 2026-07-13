@@ -202,7 +202,7 @@ func heroMeshes() []scene.Node {
 			angleDeg: 30,
 			geometry: scene.BoxGeometry{Width: 1.05, Height: 1.05, Depth: 1.05},
 			material: scene.StandardMaterial{Color: "#dce0e8", Roughness: 0.35, Metalness: 0.95},
-			spin:     scene.Rotate(0.0018, 0.0032, 0),
+			spin:     scene.Rotate(0.18, 0.32, 0),
 			name:     "chrome-box",
 		},
 		{
@@ -213,7 +213,7 @@ func heroMeshes() []scene.Node {
 			geometry: scene.PyramidGeometry{Width: 1.0, Height: 1.4, Depth: 1.0},
 			material: scene.StandardMaterial{Color: "#1c1c20", Roughness: 0.78, Metalness: 0.1},
 			yOffset:  0.1,
-			spin:     scene.Rotate(0, 0.0026, 0),
+			spin:     scene.Rotate(0, 0.26, 0),
 			name:     "matte-pyramid",
 		},
 		{
@@ -223,7 +223,7 @@ func heroMeshes() []scene.Node {
 			angleDeg: 90,
 			geometry: scene.CylinderGeometry{RadiusTop: 0.4, RadiusBottom: 0.5, Height: 1.2, Segments: 32},
 			material: scene.StandardMaterial{Color: "#e8edf5", Roughness: 0.12, Metalness: 0.04},
-			spin:     scene.Rotate(0.0022, 0, 0.0014),
+			spin:     scene.Rotate(0.22, 0, 0.14),
 			name:     "dielectric-cylinder",
 		},
 		{
@@ -233,7 +233,7 @@ func heroMeshes() []scene.Node {
 			angleDeg: 120,
 			geometry: scene.TorusGeometry{Radius: 0.52, Tube: 0.18, RadialSegments: 32, TubularSegments: 64},
 			material: scene.StandardMaterial{Color: "#c9962a", Roughness: 0.38, Metalness: 0.82},
-			spin:     scene.Rotate(0.002, 0.0011, 0),
+			spin:     scene.Rotate(0.2, 0.11, 0),
 			name:     "aged-torus",
 		},
 		{

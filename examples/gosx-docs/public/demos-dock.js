@@ -60,11 +60,21 @@
         if (link) setDockOpen(body, button, false);
       });
     }
-    document.addEventListener("keydown", function(event) {
-      if (event && event.key === "Escape") {
-        setDockOpen(body, button, false);
-      }
-    });
+    // One document-level Escape handler for the lifetime of the app. The
+    // bind guards above live on DOM nodes that client-side navigation
+    // replaces, so binding document listeners inside this function would add
+    // a fresh (and leaked) listener per navigation. Instead the current
+    // page's closure is parked on document and the single listener calls
+    // through it.
+    document.__gosxDemosDockEscape = function() { setDockOpen(body, button, false); };
+    if (!document.__gosxDemosDockKeyBound) {
+      document.__gosxDemosDockKeyBound = true;
+      document.addEventListener("keydown", function(event) {
+        if (event && event.key === "Escape" && document.__gosxDemosDockEscape) {
+          document.__gosxDemosDockEscape();
+        }
+      });
+    }
   }
 
   function syncDetails(shell, activeLink) {
@@ -147,9 +157,19 @@
 		first.focus();
 	  }
 	});
-	document.addEventListener("keydown", function(event) {
-	  if (event && event.key === "Escape") closeDetails();
-	});
+	// Same single-listener pattern as the dock's Escape handler above: the
+	// details drawer is rebuilt on every navigation, so the document-level
+	// listener is bound once and dispatches to the current page's close
+	// function.
+	document.__gosxDemoDetailsClose = closeDetails;
+	if (!document.__gosxDemoDetailsKeyBound) {
+	  document.__gosxDemoDetailsKeyBound = true;
+	  document.addEventListener("keydown", function(event) {
+		if (event && event.key === "Escape" && document.__gosxDemoDetailsClose) {
+		  document.__gosxDemoDetailsClose();
+		}
+	  });
+	}
   }
 
   function setText(root, selector, value) {

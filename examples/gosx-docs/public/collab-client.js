@@ -21,6 +21,14 @@
   var suppressEvent = false;
   var ownClientId = null;
 
+  // Texts we have sent as doc:edit but not yet seen echo back. When our own
+  // accepted echo returns (doc:update with origin === ownClientId and a text
+  // we sent), we adopt the new version WITHOUT touching the textarea — any
+  // keystrokes typed during the round trip stay intact and the pending
+  // debounce re-sends them at the adopted version. Overwriting here used to
+  // destroy every keystroke typed while an edit was in flight.
+  var unackedSentTexts = [];
+
   // Remote caret markers, keyed by hub client ID.
   // { [id]: { el, name, color, offset, selEnd, lastSeen } }
   var remoteCursors = {};
@@ -77,7 +85,11 @@
 
   function sendEdit() {
     editTimer = null;
-    if (!sendHub(EVENT_EDIT, { text: textarea.value, version: currentVersion })) {
+    var text = textarea.value;
+    if (sendHub(EVENT_EDIT, { text: text, version: currentVersion })) {
+      unackedSentTexts.push(text);
+      if (unackedSentTexts.length > 20) unackedSentTexts.shift();
+    } else {
       setStatus("offline · edit kept locally");
     }
   }
@@ -167,6 +179,19 @@
       return;
     }
 
+    // Our own accepted edit echoing back: adopt the version, keep the (possibly
+    // newer) local text, and let any pending debounce carry the newer text at
+    // the adopted version. Never overwrite the textarea with our own echo.
+    var fromSelf = state.origin && ownClientId && state.origin === ownClientId;
+    var ackIndex = fromSelf ? unackedSentTexts.indexOf(state.text) : -1;
+    if (ackIndex >= 0) {
+      unackedSentTexts.splice(0, ackIndex + 1);
+      currentVersion = state.version;
+      if (versionEl) versionEl.textContent = String(currentVersion);
+      if (state.text === textarea.value) setStatus("synced");
+      return;
+    }
+
     applyRemoteState(state);
   }
 
@@ -187,16 +212,56 @@
     // whichever preview blocks the diff touched.
     flashStatusDot();
 
-    // Preserve cursor position best-effort.
-    var start = textarea.selectionStart;
-    var end   = textarea.selectionEnd;
+    // Re-anchor carets across the edit. A doc:update is a whole-text snapshot,
+    // so recover the single splice (common prefix/suffix) that transformed the
+    // old text into the new one and shift every raw character offset through
+    // it — our own selection and every remote cursor marker. Raw offsets left
+    // untransformed point at the wrong text after any edit earlier in the doc.
+    var splice = computeSplice(previousText, state.text);
+    var start = transformOffset(textarea.selectionStart, splice);
+    var end   = transformOffset(textarea.selectionEnd, splice);
     suppressEvent = true;
     textarea.value = state.text;
     suppressEvent = false;
     try { textarea.setSelectionRange(start, end); } catch (_) {}
+    for (var rc in remoteCursors) {
+      if (!Object.prototype.hasOwnProperty.call(remoteCursors, rc)) continue;
+      remoteCursors[rc].offset = transformOffset(remoteCursors[rc].offset, splice);
+      remoteCursors[rc].selEnd = transformOffset(remoteCursors[rc].selEnd, splice);
+    }
     renderPreview(state.text);
     flashChangedLines(computeChangedLineRange(previousText, state.text));
     repositionAllCursors();
+    // Peers hold our caret as a raw offset into the old text — re-broadcast the
+    // re-anchored position so their marker for us stays honest.
+    scheduleCursorSend();
+  }
+
+  // computeSplice finds the single replaced region between two texts: the
+  // length of their common prefix, where the common suffix starts in each, and
+  // the net length delta. Returns null when the texts are identical.
+  function computeSplice(oldText, newText) {
+    if (oldText === newText) return null;
+    var oldLen = oldText.length;
+    var newLen = newText.length;
+    var minLen = Math.min(oldLen, newLen);
+    var p = 0;
+    while (p < minLen && oldText.charCodeAt(p) === newText.charCodeAt(p)) p++;
+    var sfx = 0;
+    while (sfx < minLen - p && oldText.charCodeAt(oldLen - 1 - sfx) === newText.charCodeAt(newLen - 1 - sfx)) sfx++;
+    return { prefix: p, oldSuffixStart: oldLen - sfx, newSuffixStart: newLen - sfx, delta: newLen - oldLen };
+  }
+
+  // transformOffset maps a character offset in the old text to the equivalent
+  // offset in the new text across one splice: offsets before the change are
+  // untouched, offsets after it shift by the length delta, and offsets inside
+  // the replaced region clamp into the replacement.
+  function transformOffset(offset, splice) {
+    var o = typeof offset === "number" ? offset : 0;
+    if (!splice) return o;
+    if (o <= splice.prefix) return o;
+    if (o >= splice.oldSuffixStart) return o + splice.delta;
+    return Math.max(splice.prefix, Math.min(o, splice.newSuffixStart));
   }
 
   // ── Remote-convergence flash ─────────────────────────────────────────────────

@@ -322,7 +322,7 @@ func BenchMixedScene() scene.Props {
 			Position:      scene.Vec3(x, 0.4, z),
 			CastShadow:    true,
 			ReceiveShadow: true,
-			Spin:          scene.Rotate(0, 0.004, 0),
+			Spin:          scene.Rotate(0, 0.24, 0),
 		})
 	}
 	// 6 thick lightning bolts mixing blend modes.
@@ -449,7 +449,7 @@ func BenchMeshSwarmScene() scene.Props {
 			Position:      p,
 			CastShadow:    true,
 			ReceiveShadow: true,
-			Spin:          scene.Rotate(0, 0.006, 0.002),
+			Spin:          scene.Rotate(0, 0.36, 0.12),
 		})
 	}
 	return scene.Props{
