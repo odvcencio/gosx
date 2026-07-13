@@ -1,7 +1,32 @@
+//go:build !js
+
 // Bytecode lowering for engine surfaces (Slice X.D — AST-compiler
 // initiative). Wraps ir/golower so engine/surface/discover.go can route
 // annotation-free surface declarations to the shared-VM bytecode path
 // per ADR 0003.
+//
+// Host-only (like discover.go, its sole caller): LowerToBytecode compiles
+// .gsx source into bytecode at build time via ir/golower, which pulls in
+// ir (and, transitively, gotreesitter for CST parsing — see ir/lower.go).
+// The WASM client only ever hydrates the already-compiled bytecode this
+// produces (client/bridge/bridge_engine_surface.go's decodeEngineSurfaceProgram
+// documents the JSON this emits, but never calls LowerToBytecode itself); it
+// has no legitimate reason to link the .gsx compiler or gotreesitter at all
+// — compile_stub_tinygo.go states exactly this intent for gosx.Compile, but
+// this file (lacking any exclusion) was the leak: TinyGo links gotreesitter
+// transitively through ir -> ir/lower.go, and something in that linked-in
+// grammar-loading path (encoding/gob's type-info construction against a
+// non-empty interface) trips TinyGo's internal/reflectlite gap
+// ("AssignableTo with interface" is unimplemented for interfaces with
+// methods — see /usr/local/lib/tinygo/src/internal/reflectlite/type.go)
+// during WASM boot, before any hydrate call — an unrecoverable panic that,
+// combined with this build's -panic=trap, silently traps as a bare
+// `unreachable` on every /admin/editor load. Excluding this file from js
+// builds (matching discover.go's existing `!js` tag) removes the entire
+// gotreesitter/gob chain from the WASM client, since neither of the other
+// engine/surface files the client imports (canvas_host_impl.go, vm_host.go,
+// context_host.go, surface.go, wrap.go, registry.go, head_assets.go,
+// annotation.go) reference ir or gotreesitter.
 //
 // JS-side bootstrap wiring note: the bytecode dispatcher reads
 // data-gosx-engine-bytecode from the rendered <canvas> placeholder
