@@ -45,6 +45,12 @@ var waterDiagDefaults = map[string]any{
 	"reflection":      true,
 	"refraction":      true,
 	"objectTexBudget": 786432,
+	// water=0 removes the WaterSystem from the scene graph entirely. It is the
+	// coarsest bisection there is: the cost is either inside the water system or it
+	// is not. Everything finer (caustics, reflection, refraction, resolution) failed
+	// to move the frame rate at all, so the next question is whether the water is
+	// even the thing that is slow.
+	"water": true,
 }
 
 // WaterDiagConfig resolves the water system's cost knobs from the URL, falling back
@@ -68,6 +74,7 @@ func WaterDiagConfig(ctx *route.RouteContext) map[string]any {
 	out["reflection"] = waterDiagBool(ctx, "reflection", waterDiagDefaults["reflection"].(bool))
 	out["refraction"] = waterDiagBool(ctx, "refraction", waterDiagDefaults["refraction"].(bool))
 	out["objectTexBudget"] = waterDiagInt(ctx, "objectTexBudget", waterDiagDefaults["objectTexBudget"].(int), 0, 8000000)
+	out["water"] = waterDiagBool(ctx, "water", waterDiagDefaults["water"].(bool))
 	return out
 }
 

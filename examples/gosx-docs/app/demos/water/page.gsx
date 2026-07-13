@@ -46,6 +46,7 @@ func Page() Node {
   			fogColor="#071217"
   			fogDensity={0.016}
   		 />
+  		<If cond={data.diagWater}>
   		<WaterSystem
   			id="water-main"
   			interactionProfile="water-object-drop-orbit"
@@ -134,6 +135,7 @@ func Page() Node {
   			duckMaterialFragmentGLES={data.waterDuckPassFragmentGLES}
   			shaderDescriptors={data.waterShaderDescriptors}
   		 />
+  		</If>
   		<Material
   			name="brass-glow"
   			kind="standard"
