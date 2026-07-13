@@ -23,8 +23,8 @@ func Page() Node {
   		controlMaxDistance={10}
   		controlPitchLimit={1.5707788735}
   		preferWebGPU={true}
-  		maxDevicePixelRatio={1.0}
-  		maxPixels={1200000}
+  		maxDevicePixelRatio={data.diagDpr}
+  		maxPixels={data.diagMaxPixels}
   		adaptiveQuality={true}
   		canvasAlpha={false}
   	>
@@ -51,7 +51,7 @@ func Page() Node {
   			interactionProfile="water-object-drop-orbit"
   			interactionTarget="water-main"
   			interactionObject="Sphere"
-  			resolution={192}
+  			resolution={data.diagResolution}
   			poolShape="Box"
   			poolWidth={1.0}
   			poolHeight={1.0}
@@ -67,13 +67,13 @@ func Page() Node {
   			cubeMap="/water/"
   			shallowColor="#7ad1eb"
   			deepColor="#082e57"
-  			causticsResolution={512}
+  			causticsResolution={data.diagCausticsRes}
   			objectTextureResolutionMode="viewport"
-  			objectTexturePixelBudget={786432}
-  			objectShadowResolution={512}
-  			caustics={true}
-  			reflection={true}
-  			refraction={true}
+  			objectTexturePixelBudget={data.diagObjectTexBudget}
+  			objectShadowResolution={data.diagShadowRes}
+  			caustics={data.diagCaustics}
+  			reflection={data.diagReflection}
+  			refraction={data.diagRefraction}
   			followCamera={false}
   			lightDirectionX={2}
   			lightDirectionY={2}
@@ -383,5 +383,8 @@ func Page() Node {
   			</fieldset>
   		</div>
   	</form>
+  	<If cond={data.diagDiag}>
+  		<script src="/water-diag.js" defer></script>
+  	</If>
   </main>
 }

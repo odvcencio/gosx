@@ -1,0 +1,110 @@
+package docs
+
+// Water demo perf diagnostics.
+//
+// The water demo falls off a cliff on Apple/Metal (measured: 502x383 CSS canvas,
+// DPR 1.0 -> 0.192 MP -> 120fps; DPR 1.6 -> 0.49 MP -> 17fps — 2.5x the pixels for
+// 7x the time) while a desktop RTX absorbs it. Reasoning about that from a Linux
+// box with a software rasteriser has repeatedly produced confident, wrong answers,
+// and the headless pixel/perf gates cannot adjudicate it: SwiftShader is
+// non-deterministic against ITSELF (same code, two runs: up to 8/255 per-channel
+// drift over 8-20% of pixels).
+//
+// So this makes the real machine the instrument. Every expensive knob in the water
+// system becomes a URL parameter, and an on-page overlay reports the frame cost the
+// browser actually delivers. Flip one knob at a time on the affected hardware and
+// the cost attributes itself.
+//
+//	/demos/water?diag=1                        overlay only, stock settings
+//	/demos/water?diag=1&dpr=1.6                the configuration that dies
+//	/demos/water?diag=1&dpr=1.6&caustics=0     ...is it the caustics pass?
+//	/demos/water?diag=1&dpr=1.6&reflection=0   ...the reflection ray?
+//	/demos/water?diag=1&dpr=1.6&refraction=0   ...the refraction ray?
+//	/demos/water?diag=1&dpr=1.6&res=96         ...the mesh/sim density?
+//
+// Nothing here changes the demo for anyone who does not ask for it: with no
+// parameters the values are exactly the shipped ones.
+
+import (
+	"strconv"
+	"strings"
+
+	"m31labs.dev/gosx/route"
+)
+
+// waterDiagDefaults are the shipped values. A knob absent from the URL keeps its
+// default, so /demos/water is byte-identical to what it was without diag.
+var waterDiagDefaults = map[string]any{
+	"diag":            false,
+	"dpr":             1.0, // hard-capped: see page.gsx (Apple cliff)
+	"maxPixels":       1200000,
+	"resolution":      192,
+	"causticsRes":     512,
+	"shadowRes":       512,
+	"caustics":        true,
+	"reflection":      true,
+	"refraction":      true,
+	"objectTexBudget": 786432,
+}
+
+// WaterDiagConfig resolves the water system's cost knobs from the URL, falling back
+// to the shipped defaults. Returns the values plus whether the overlay is on.
+func WaterDiagConfig(ctx *route.RouteContext) map[string]any {
+	out := make(map[string]any, len(waterDiagDefaults))
+	for k, v := range waterDiagDefaults {
+		out[k] = v
+	}
+	if ctx == nil || ctx.Request == nil {
+		return out
+	}
+
+	out["diag"] = waterDiagBool(ctx, "diag", false)
+	out["dpr"] = waterDiagFloat(ctx, "dpr", waterDiagDefaults["dpr"].(float64), 0.5, 3.0)
+	out["maxPixels"] = waterDiagInt(ctx, "maxPixels", waterDiagDefaults["maxPixels"].(int), 100000, 16000000)
+	out["resolution"] = waterDiagInt(ctx, "res", waterDiagDefaults["resolution"].(int), 16, 512)
+	out["causticsRes"] = waterDiagInt(ctx, "causticsRes", waterDiagDefaults["causticsRes"].(int), 0, 2048)
+	out["shadowRes"] = waterDiagInt(ctx, "shadowRes", waterDiagDefaults["shadowRes"].(int), 0, 2048)
+	out["caustics"] = waterDiagBool(ctx, "caustics", waterDiagDefaults["caustics"].(bool))
+	out["reflection"] = waterDiagBool(ctx, "reflection", waterDiagDefaults["reflection"].(bool))
+	out["refraction"] = waterDiagBool(ctx, "refraction", waterDiagDefaults["refraction"].(bool))
+	out["objectTexBudget"] = waterDiagInt(ctx, "objectTexBudget", waterDiagDefaults["objectTexBudget"].(int), 0, 8000000)
+	return out
+}
+
+func waterDiagBool(ctx *route.RouteContext, name string, fallback bool) bool {
+	raw := strings.TrimSpace(ctx.Query(name))
+	if raw == "" {
+		return fallback
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "on", "yes":
+		return true
+	case "0", "false", "off", "no":
+		return false
+	}
+	return fallback
+}
+
+func waterDiagInt(ctx *route.RouteContext, name string, fallback, min, max int) int {
+	raw := strings.TrimSpace(ctx.Query(name))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < min || v > max {
+		return fallback
+	}
+	return v
+}
+
+func waterDiagFloat(ctx *route.RouteContext, name string, fallback, min, max float64) float64 {
+	raw := strings.TrimSpace(ctx.Query(name))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < min || v > max {
+		return fallback
+	}
+	return v
+}

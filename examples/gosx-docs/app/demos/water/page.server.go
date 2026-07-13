@@ -1,6 +1,8 @@
 package docs
 
 import (
+	"strings"
+
 	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
@@ -13,7 +15,17 @@ func init() {
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				addWaterDemoPreloadHead(ctx)
-				return WaterDemoData()
+				data, err := WaterDemoData()
+				if err != nil {
+					return nil, err
+				}
+				// Cost knobs resolved from the URL (see diag.go). With no query
+				// parameters these are exactly the shipped values, so the demo is
+				// unchanged for everyone who does not ask for the diagnostics.
+				for k, v := range WaterDiagConfig(ctx) {
+					data["diag"+strings.ToUpper(k[:1])+k[1:]] = v
+				}
+				return data, nil
 			},
 		},
 	)
