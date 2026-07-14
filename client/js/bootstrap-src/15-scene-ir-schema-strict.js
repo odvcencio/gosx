@@ -284,9 +284,12 @@
       if (water.resolution != null && (!sceneStrictIsNonNegativeInteger(water.resolution) || water.resolution === 0)) {
         pushSceneStrictDiagnostic(diagnostics, "error", "scene.water.invalid_resolution", "Water simulation resolution must be a positive integer", path + ".resolution", water.id, { value: water.resolution });
       }
+      if (water.surfaceResolution != null && (!sceneStrictIsNonNegativeInteger(water.surfaceResolution) || water.surfaceResolution < 2)) {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.water.invalid_surface_resolution", "Water surface resolution must be an integer of at least 2", path + ".surfaceResolution", water.id, { value: water.surfaceResolution });
+      }
       validateSceneStrictOptionalInteger(diagnostics, water.seedDrops, path + ".seedDrops", "scene.water.invalid_seed_drops", "Water simulation seedDrops must be a non-negative integer", water.id, true);
       validateSceneStrictOptionalInteger(diagnostics, water.dropEventID, path + ".dropEventID", "scene.water.invalid_drop_event_id", "Water simulation dropEventID must be a non-negative integer", water.id, true);
-      validateSceneStrictFiniteScalars(diagnostics, water, path, ["waveSpeed", "damping", "dropStrength", "dropX", "dropZ", "dropEventStrength", "lightDirectionX", "lightDirectionY", "lightDirectionZ", "objectX", "objectY", "objectZ", "objectPreviousX", "objectPreviousY", "objectPreviousZ", "objectDriftX", "objectDriftY", "objectDriftZ"], "scene.water.non_finite", "Water simulation scalar must be finite", water.id);
+      validateSceneStrictFiniteScalars(diagnostics, water, path, ["waveSpeed", "damping", "dropStrength", "dropX", "dropZ", "dropEventStrength", "lightDirectionX", "lightDirectionY", "lightDirectionZ", "aboveWaterColorR", "aboveWaterColorG", "aboveWaterColorB", "objectX", "objectY", "objectZ", "objectPreviousX", "objectPreviousY", "objectPreviousZ", "objectDriftX", "objectDriftY", "objectDriftZ"], "scene.water.non_finite", "Water simulation scalar must be finite", water.id);
       validateSceneStrictNonNegativeScalars(diagnostics, water, path, ["poolWidth", "poolHeight", "poolLength", "cornerRadius", "normalScale", "dropRadius", "dropEventRadius", "objectRadius", "objectHalfSizeX", "objectHalfSizeY", "objectHalfSizeZ", "objectBobAmplitude", "objectBobSpeed", "objectDisplacementScale"], "scene.water.invalid_parameter", "Water simulation scalar must be finite and non-negative");
       ["caustics", "reflection", "refraction", "paused", "followCamera", "objectPreviousSet"].forEach(function(name) {
         if (water[name] != null && typeof water[name] !== "boolean") {

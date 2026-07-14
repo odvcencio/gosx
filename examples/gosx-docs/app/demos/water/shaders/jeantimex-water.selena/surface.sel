@@ -34,25 +34,17 @@
 //    with arithmetic. Nothing samples inside an if/for.
 //
 //  * fn = expression-only (let-chain + one return). The analytic sphere / box /
-//    pool intersections and the per-hit colour math ARE pure expressions, so
-//    they are real selena `fn`s. The loop-bearing helpers (the 5-tap parallax
-//    march, the compound-sphere scan, and the torus-knot SDF sphere-trace)
-//    CANNOT be fns — selena fns silently drop var/if/for — so they are inlined
-//    as for-loops in surface(). The torus polyline is precomputed once into a
-//    local array and the trace reads it.
-//
-//  * No `break` — the sphere-trace runs its full fixed bound and gates each
-//    step on a `done` flag (the raw `if (d<eps) return t; if (t>bound) break`).
+//    pool intersections and per-hit colour math are pure expressions. Complex
+//    mesh objects use their real projected refraction/reflection targets rather
+//    than a second approximate SDF/compound-sphere raymarch in this shader.
 //
 //  GAPS reported (not silently approximated):
 //   1. (RESOLVED) waterSkyTexture is a texture_cube<f32>. selena now has the
 //      textureCube param type + sampleCube(tex, dir), so the sky is sampled as a
 //      real cube by the reflected/refracted direction (sampleCube(sky, dir).rgb),
 //      exactly like the raw shader. The sun-glint term is added on top.
-//   2. Reflections raytrace the sphere/box analytic objects (objectHitSimple);
-//      the compound-sphere and torus-knot are raytraced for the REFRACTION ray
-//      only (where the object is actually seen through the water). Reflected
-//      compound/torus would just duplicate the same inline loops.
+//   2. Reflections and refractions raytrace sphere/box analytic objects. Torus
+//      and glTF assets use the projected real-mesh targets described below.
 //   3. Rounded-corner pool walls (the arc-length UV branch) and the analytic
 //      object wall-occlusion term are omitted; this port models the rectangular
 //      pool walls (the raw `else` branch) faithfully.
@@ -64,44 +56,6 @@
 //      clipped-reflection mesh targets where the rays hit the object bounds
 //      sphere. The host renders the mesh to those RTTs (the duck / torus-knot);
 //      meshTextureEnable gates the whole block off for the analytic objects.
-//
-// PERF INVESTIGATION (occupancy cliff, DPR 1.0->1.6 costing 7x instead of
-// 2.5x time on Apple/Metal): every fragment currently evaluates the object
-// hit, the wall hit, AND the sky term for both rays, arithmetically
-// selecting one (rfBase/rlBase below) -- ~22 texture samples/fragment plus
-// the ALU and live registers of every untaken branch. The obvious fix is to
-// gate the object/wall shading (normal reconstruction, causticTexture
-// sample, wallShade/objectColorSB) behind their hit tests with sampleLevel()
-// (selena's new explicit-LOD builtin, legal inside non-uniform control flow
-// under WGSL/naga unlike sample()'s implicit-LOD textureSample). That
-// restructure was implemented and prototyped, then NOT shipped, because it
-// could not be proven safe:
-//
-// A pixelmatch before/after harness against the real GLES2/WebGL2 backend
-// (e2e/water_pixel_parity_snapshot_test.go, the same ANGLE/SwiftShader
-// software path gosx's default e2e CI exercises) showed the gated variant
-// differing from the original by up to +/-15 of 255 per channel on ~20% of
-// pixels. But a control experiment -- diffing the ORIGINAL, byte-identical
-// shader against itself across separate process launches -- showed the SAME
-// backend has substantial inherent run-to-run rendering noise on its own
-// (max per-channel delta up to 7-8/255, ~10-20% of pixels, even with the
-// sim paused and the RNG seed pinned), of comparable magnitude to the
-// restructure's signal. That noise floor made it impossible to distinguish
-// "the restructure changed the output" from "this software rasterizer is
-// just noisy between runs" within the available verification time --
-// exactly the "prove, don't assert" bar this material is held to, and
-// exactly the case for reporting rather than shipping on faith. See the
-// harness and its investigation notes for the specifics (including an
-// earlier, retracted finding that blamed sample()/sampleLevel() directly --
-// that comparison was against the same unreliable baseline).
-//
-// Given that, NO branch-gated restructuring of this material's object/wall
-// shading is shipped (selena has no per-backend #ifdef, so one .sel source
-// must be safe on every backend gosx compiles it for). The only change kept
-// is branch-free: rfWallRL and rlWallRL were identical expressions (both
-// pure functions of ldir alone, no sampling) recomputed once per ray; they
-// are now computed once as `wallRL`. This is pure value reuse with no
-// control-flow change, so it carries none of the risk above.
 
 fn raySphere(origin: vec3, ray: vec3, center: vec3, radius: float) -> float {
     let toC  = origin - center
@@ -285,7 +239,6 @@ material WaterSurface {
         refractionMatrix : mat4
         reflectionMatrix : mat4
         spheres       : array<vec4, 32>
-        knot          : array<vec4, 65>
     }
 
     param tileTexture   : texture2d
@@ -333,14 +286,6 @@ material WaterSurface {
         }
         let n         = normalFromState(pinfo, normalScale)
         let ldir      = normalize(lightDir)
-        // wallRL is the light ray refracted at the (flat, y-up) water
-        // plane, used by wallShade/poolBox for both rays below. It depends
-        // only on ldir, so both rays used one copy each of the identical
-        // expression (formerly rfWallRL / rlWallRL) — computed once here.
-        // Pure ALU CSE, no control-flow change, no sampling touched — see
-        // the PERF INVESTIGATION note in the file header for why this is
-        // the only optimization from that investigation shipped here.
-        let wallRL    = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
         let viewDir   = normalize(cameraPos - wp)
         let reflectD  = reflect(-viewDir, n)
         let refractD  = refract(-viewDir, n, 1.0 / 1.333)
@@ -350,101 +295,19 @@ material WaterSurface {
         let objH      = vec3f(objectHalf.x * poolWidth, objectHalf.y, objectHalf.z * poolLength)
         let objR      = max(objectRadius * poolLength, 0.001)
         let objActive    = opticsEnable > 0.0 && objectKind > 0.5
-        let isTorus   = objectSubtype > 0.5 && objectSubtype < 1.5
-        let isCompound= objectKind >= 2.5
         let hw        = max(poolWidth, 0.001)
         let hl        = max(poolLength, 0.001)
         let ph        = max(poolHeight, 0.001)
 
-        // knot (the 65-point trefoil polyline the torus-knot SDF trace below
-        // reads) is a pure constant of ki — it is bound as the `knot` context
-        // uniform array (packed once by the host runtime), NOT rebuilt per
-        // fragment: the old per-pixel build loop cost ~260 transcendentals and
-        // forced a 1040-byte dynamically-indexed private array into scratch
-        // memory, collapsing occupancy (worst on Metal/Apple GPUs).
-        let radiusScale = max(objR / 0.42, 0.25)
-
         let rfSimple = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
-
-        var rfComp = 1000000.0
-        for (var ci = 0i; ci < 32i; ci = ci + 1i) {
-            if (!(isCompound && float(ci) < objectCount)) { break }
-            if (isCompound && float(ci) < objectCount) {
-                let soA = spheres[ci]
-                let scA = objC + vec3f(soA.x * poolWidth, soA.y, soA.z * poolLength)
-                let srA = max(soA.w * poolLength, 0.001)
-                let dA  = raySphere(wp, refractD, scA, srA)
-                if (dA < rfComp) { rfComp = dA }
-            }
-        }
-
-        let rfBound = raySphereBounds(wp, refractD, objC, max(objR, 0.31))
-        let traceOff = isTorus ? 0.0 : 1.0
-        let boundOff = rfBound > 100000.0 ? 1.0 : 0.0
-        var rfT     = rfBound
-        var rfTorus = 1000000.0
-        var rfDone  = max(traceOff, boundOff)
-        for (var ts = 0i; ts < 30i; ts = ts + 1i) {
-            if (rfDone >= 0.5) { break }
-            if (rfDone < 0.5) {
-                let pT     = wp + refractD * rfT
-                let posT   = (pT - objC) / radiusScale
-                let boundT = length(posT) - 0.31
-                var mdT    = 1000000.0
-                for (var sj = 1i; sj <= 64i; sj = sj + 1i) {
-                    let aT = knot[sj - 1i].xyz
-                    let bT = knot[sj].xyz
-                    let paT = posT - aT
-                    let baT = bT - aT
-                    let hT  = clamp(dot(paT, baT) / max(dot(baT, baT), 0.000001), 0.0, 1.0)
-                    mdT = min(mdT, length(paT - baT * hT))
-                }
-                let dist = boundT > 0.08 ? boundT * radiusScale : (mdT - 0.045) * radiusScale
-                if (dist < 0.001) { rfTorus = rfT
-                                    rfDone = 1.0 }
-                rfT = rfT + dist
-                if (rfT > rfBound + 0.5) { rfDone = 1.0 }
-            }
-        }
-
-        let rfCompound = isTorus ? rfTorus : rfComp
-        let rfObjDist0 = isCompound ? rfCompound : rfSimple.x
-        let rfObjDist  = objActive ? rfObjDist0 : 1000000.0
-        let rfObjKind  = isCompound ? 3.0 : rfSimple.y
+        let rfObjDist  = objActive && objectKind < 2.5 ? rfSimple.x : 1000000.0
+        let rfObjKind  = rfSimple.y
         let rfHitObj   = rfObjDist < 1000000.0
         let rfObjP     = wp + refractD * rfObjDist
 
         let rfSphereN = normalize(rfObjP - objC)
         let rfBoxN    = boxNormal(rfObjP, objC, objH)
-        var rfCompN   = normalize(rfObjP - objC)
-        var rfCompS   = 1000000.0
-        for (var di = 0i; di < 32i; di = di + 1i) {
-            if (!(isCompound && !isTorus && float(di) < objectCount)) { break }
-            if (isCompound && !isTorus && float(di) < objectCount) {
-                let soB    = spheres[di]
-                let scB    = objC + vec3f(soB.x * poolWidth, soB.y, soB.z * poolLength)
-                let srB    = max(soB.w * poolLength, 0.001)
-                let toPB   = rfObjP - scB
-                let scoreB = abs(length(toPB) - srB)
-                if (scoreB < rfCompS) { rfCompS = scoreB
-                                        rfCompN = normalize(toPB) }
-            }
-        }
-        let rfPosH  = (rfObjP - objC) / radiusScale
-        var rfTorN  = normalize(rfPosH)
-        var rfTorS  = 1000000.0
-        for (var nj = 1i; nj <= 64i; nj = nj + 1i) {
-            let aN = knot[nj - 1i].xyz
-            let bN = knot[nj].xyz
-            let paN = rfPosH - aN
-            let baN = bN - aN
-            let hN  = clamp(dot(paN, baN) / max(dot(baN, baN), 0.000001), 0.0, 1.0)
-            let cpN = aN + baN * hN
-            let ddN = length(rfPosH - cpN)
-            if (ddN < rfTorS) { rfTorS = ddN
-                                rfTorN = normalize(rfPosH - cpN) }
-        }
-        let rfObjN = rfObjKind < 1.5 ? rfSphereN : rfObjKind < 2.5 ? rfBoxN : isTorus ? rfTorN : rfCompN
+        let rfObjN = rfObjKind < 1.5 ? rfSphereN : rfBoxN
 
         let rfObjWaterH   = stateAt(pointToWaterUV(rfObjP, poolWidth, poolLength)).x
         let rfObjSub      = rfObjP.y < rfObjWaterH ? 1.0 : 0.0
@@ -455,7 +318,8 @@ material WaterSurface {
         let rfWallP       = wp + refractD * max(rfPool.y, 0.0)
         let rfWallTile    = sample(tileTexture, fract(wallUVRect(rfWallP, hw, hl, ph))).xyz
         let rfWallCaustic = sample(causticTexture, wallCausticUV(rfWallP, ldir, poolWidth, poolLength))
-        let rfWallPool    = poolBox(rfWallP, wallRL, hw, ph, hl)
+        let rfWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let rfWallPool    = poolBox(rfWallP, rfWallRL, hw, ph, hl)
         let rfWallSub     = rfWallP.y < stateAt(pointToWaterUV(rfWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
         let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic)
 
@@ -479,7 +343,8 @@ material WaterSurface {
         let rlWallP       = wp + reflectD * max(rlPool.y, 0.0)
         let rlWallTile    = sample(tileTexture, fract(wallUVRect(rlWallP, hw, hl, ph))).xyz
         let rlWallCaustic = sample(causticTexture, wallCausticUV(rlWallP, ldir, poolWidth, poolLength))
-        let rlWallPool    = poolBox(rlWallP, wallRL, hw, ph, hl)
+        let rlWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let rlWallPool    = poolBox(rlWallP, rlWallRL, hw, ph, hl)
         let rlWallSub     = rlWallP.y < stateAt(pointToWaterUV(rlWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
         let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic)
 

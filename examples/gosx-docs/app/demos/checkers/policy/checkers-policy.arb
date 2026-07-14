@@ -1,0 +1,37 @@
+feature game from "checkers-match" {
+    personality: string
+    phase: string
+    camp_occupancy: number
+    mobile_thermal_tier: string
+    prior_turn_latency_ms: number
+}
+
+rule JadeCrane priority 10 {
+    when { game.personality == "jade-crane" }
+    then SearchPolicy {
+        version: "checkers-policy.v1", progress_weight: 2.4, hop_weight: 2.1,
+        mobility_denial: 0.6, camp_safety: 0.8, compactness: 0.7,
+        risk_tolerance: 0.48, budget_ms: 120, opening_preference: "long-hop",
+        tie_break: "forward", explanation_label: "Jade Crane favors clean forward hop structures",
+    }
+}
+
+rule IronFox priority 20 {
+    when { game.personality == "iron-fox" }
+    then SearchPolicy {
+        version: "checkers-policy.v1", progress_weight: 1.5, hop_weight: 1.1,
+        mobility_denial: 2.6, camp_safety: 0.8, compactness: 1.2,
+        risk_tolerance: 0.64, budget_ms: 140, opening_preference: "blocking",
+        tie_break: "deny", explanation_label: "Iron Fox applies blocking pressure without bypassing legality",
+    }
+}
+
+rule CedarTurtle priority 30 {
+    when { game.personality == "cedar-turtle" }
+    then SearchPolicy {
+        version: "checkers-policy.v1", progress_weight: 1.1, hop_weight: 0.8,
+        mobility_denial: 0.4, camp_safety: 2.5, compactness: 2.2,
+        risk_tolerance: 0.18, budget_ms: 55, opening_preference: "compact",
+        tie_break: "forgiving", explanation_label: "Cedar Turtle keeps a compact and forgiving camp shape",
+    }
+}

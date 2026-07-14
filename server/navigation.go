@@ -16,17 +16,20 @@ func NavigationScript() gosx.Node {
 
 // Link renders an anchor tag opted into the GoSX page-navigation runtime.
 func Link(href string, args ...any) gosx.Node {
+	attrs := gosx.Attrs(
+		gosx.Attr("href", href),
+		gosx.BoolAttr(NavigationLinkAttr),
+		gosx.Attr(NavigationLinkStateAttr, "idle"),
+		gosx.Attr(NavigationLinkCurrentPolicyAttr, "auto"),
+		gosx.Attr(NavigationLinkPrefetchStateAttr, "idle"),
+	)
+	attrs = append(attrs, gosx.ProgressiveEnhancementAttrs(gosx.ProgressiveEnhancementOptions{
+		Kind:     "navigation",
+		Layer:    "bootstrap",
+		Fallback: "native-link",
+	})...)
 	prefixed := append([]any{
-		gosx.Attrs(
-			gosx.Attr("href", href),
-			gosx.BoolAttr(NavigationLinkAttr),
-			gosx.Attr(NavigationLinkStateAttr, "idle"),
-			gosx.Attr(NavigationLinkCurrentPolicyAttr, "auto"),
-			gosx.Attr(NavigationLinkPrefetchStateAttr, "idle"),
-			gosx.Attr(NavigationEnhanceAttr, "navigation"),
-			gosx.Attr(NavigationEnhanceLayerAttr, "bootstrap"),
-			gosx.Attr(NavigationFallbackAttr, "native-link"),
-		),
+		attrs,
 	}, args...)
 	return gosx.El("a", prefixed...)
 }
@@ -35,13 +38,11 @@ func Link(href string, args ...any) gosx.Node {
 // layer while preserving native HTML fallback behavior.
 func Form(args ...any) gosx.Node {
 	prefixed := append([]any{
-		gosx.Attrs(
-			gosx.BoolAttr(NavigationFormAttr),
-			gosx.Attr(NavigationFormStateAttr, "idle"),
-			gosx.Attr(NavigationEnhanceAttr, "form"),
-			gosx.Attr(NavigationEnhanceLayerAttr, "bootstrap"),
-			gosx.Attr(NavigationFallbackAttr, "native-form"),
-		),
+		gosx.ManagedFormAttrs(gosx.ManagedFormOptions{
+			State:    "idle",
+			Layer:    "bootstrap",
+			Fallback: "native-form",
+		}),
 	}, args...)
 	return gosx.El("form", prefixed...)
 }

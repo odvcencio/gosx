@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	defaultDocText = "# Welcome to the GoSX Collab demo\n\nThis is a **real-time collaborative** markdown editor.\n\nOpen this page in two tabs and start typing — edits sync instantly via a hub using a _last-write-wins_ model with 100ms debounce.\n\n## Features\n\n- Live preview rendered in the browser\n- LWW sync over a WebSocket hub\n- No persistence — everything is in memory\n- No cursors, no CRDT — just simple and fast\n\n## How it works\n\n1. You type in the `SOURCE` pane\n2. The client debounces 100ms, then sends `doc:edit` to the hub\n3. The server applies the edit (LWW: last version wins)\n4. The server broadcasts `doc:update` to all connected clients\n5. Each client renders the preview\n\n> Try it: open two tabs side by side.\n"
+	defaultDocText = "# Welcome to the GoSX Hub Sync demo\n\nThis is a deliberately small **last-write-wins synchronization** example.\n\nOpen this page in two tabs and start typing — edits sync through one hub with 100ms debounce.\n\n## What it proves\n\n- Live preview rendered in the browser\n- Snapshot sync over a GoSX WebSocket hub\n- Explicit connected, pending, and synced states\n\n## Deliberate limits\n\n- One shared in-memory document\n- No persistence or rooms\n- No cursors or presence\n- No CRDT or conflict merging: the last accepted snapshot wins\n\n> Try it: open two tabs side by side and watch the versioned snapshots converge.\n"
 	maxDocBytes    = 64 * 1024 // cap at 64 KB to prevent abuse
 )
 

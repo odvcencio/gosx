@@ -1060,7 +1060,7 @@ func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundl
 		pass.SetPipeline(r.shadowPipeline)
 		pass.SetBindGroup(0, r.shadowBindGrps[cascade])
 		for i, im := range b.InstancedMeshes {
-			if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+			if !im.CastShadow || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
 				continue
 			}
 			prim, err := r.ensurePrimitiveForMesh(im)

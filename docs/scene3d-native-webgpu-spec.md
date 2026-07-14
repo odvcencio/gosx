@@ -66,6 +66,29 @@ The current repo already has the right shape:
 - `render/gpu` abstracts WebGPU-like devices, buffers, textures, pipelines, command encoders, render passes, compute passes, and surfaces.
 - `render/bundle.Renderer` owns the native WebGPU render path, including lit/unlit pipelines, shadow passes, culling, particles, bloom, FXAA, picking, textures, materials, skinning, and HDR/post-FX intermediates.
 - Browser WASM code wires `__gosx_render_engine_to_canvas` to `bundle.Renderer.Frame` through `client/wasm/render_full.go`.
+- `scene/preview` lowers typed `scene.Props` or serialized SceneIR directly to the same `engine.RenderBundle` and renders through the pure-Go CPU backend.
+- `scene/harness` adds a reusable interactive test session over typed props: native frames, exact ray traces, pixel evidence, renderer-payload summaries, and Selena artifact validation share one stable JSON report.
+- `gosx scene render` writes deterministic PNG previews without Chrome, a display server, a WebGPU adapter, or a graphics driver.
+
+The native authoring-preview loop is now:
+
+```bash
+gosx scene render --out preview.png --width 1280 --height 720 scene.sceneir.json
+```
+
+Typed demos can call `preview.Render(props, options)` directly or use a small `go:generate` wrapper, keeping the fallback image and live Scene3D graph sourced from the same Go composition. The Chinese Checkers demo is the production-shaped reference: its generated PNG sits behind the live canvas and remains visible when browser GPU setup cannot complete.
+
+For interaction and shader confidence, typed tests can keep one browser-free session alive and interleave frames with scene queries:
+
+```go
+session := harness.New(props, preview.Options{Width: 960, Height: 600})
+frame, err := session.Render(0)
+trace := session.Trace("center pick", ray, scene.PickableOnly())
+err = session.Validate()
+err = session.WriteJSON(reportWriter)
+```
+
+Harness reports exclude wall-clock timings so agent snapshots remain stable. Each frame records its PNG SHA-256, coverage, visible bounds, colors, batches, materials, instances, device state, and native diagnostics. Each trace records visited nodes, tested primitives and instances, filtered geometry, all sorted hits, exact instance indexes, and the intersection method. Selena materials are required to retain WGSL and GLSL stage entrypoints plus their binding-layout material name after SceneIR and render-bundle lowering; the report fingerprints every stage independently. This proves compiler-valid artifact transport and deterministic native fallback rendering without claiming that the CPU rasterizer executed the authored GPU shader.
 
 The key gap this patch starts closing is primitive completeness. The existing `render/bundle/primitive.go` path only generated cube/box, plane, and sphere native geometry. Scene3D’s authoring surface includes more built-in mesh primitives than that, and the renderer should not silently skip them.
 

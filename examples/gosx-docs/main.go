@@ -13,6 +13,7 @@ import (
 	"m31labs.dev/gosx/auth"
 	"m31labs.dev/gosx/env"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	checkers "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
 	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
@@ -73,6 +74,12 @@ func main() {
 	}
 
 	app := server.New()
+	// Keep page-generated hashed runtime URLs and the runtime file server on the
+	// same application root. Without this, `go run ./examples/gosx-docs` from
+	// the repository root can read the repository's dist/build.json while
+	// serving the docs app's build output, leaving Scene3D and navigation chunks
+	// as 404s.
+	app.SetRuntimeRoot(root)
 	router.SetRevalidator(app.Revalidator())
 	app.EnableISR()
 	app.EnableNavigation()
@@ -101,6 +108,7 @@ func main() {
 	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
 	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
 	app.Mount("/demos/collab/ws", collab.Hub)
+	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
 	app.Mount("/demos/livesim/ws", livesim.Hub)
 	rootHandler, err := router.BuildChecked()

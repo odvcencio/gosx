@@ -1,5 +1,5 @@
 {
-  "_comment": "Generated fixture: real Selena-compiled duck-material.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive this water pass through the generic descriptor-driven Selena WebGPU render path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/duck-material.sel (TargetWGSL) if duck-material.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/duck-material.sel",
+  "_comment": "Generated fixture: real Selena-compiled duck-material.sel WGSL + host binding descriptor (bindings.Layout). Regenerate with `go run ./examples/gosx-docs/app/demos/water/cmd/generate-selena-fixtures`. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/duck-material.sel",
   "layout": {
     "schemaVersion": "selena.descriptor.v1",
     "languageVersion": "selena.lang.v1",
@@ -10,7 +10,7 @@
       "fragment": "fragmentMain"
     },
     "uniformBlock": {
-      "size": 176,
+      "size": 240,
       "fields": [
         {
           "name": "mvp",
@@ -28,6 +28,18 @@
           "name": "poolHeight",
           "type": "float",
           "offset": 112,
+          "size": 4
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "offset": 116,
+          "size": 4
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "offset": 120,
           "size": 4
         },
         {
@@ -54,6 +66,13 @@
           "offset": 160,
           "size": 12,
           "class": "context"
+        },
+        {
+          "name": "modelMatrix",
+          "type": "mat4",
+          "offset": 176,
+          "size": 64,
+          "class": "context"
         }
       ],
       "defaults": [
@@ -62,6 +81,20 @@
           "type": "float",
           "values": [
             0.3
+          ]
+        },
+        {
+          "name": "poolWidth",
+          "type": "float",
+          "values": [
+            1
+          ]
+        },
+        {
+          "name": "poolLength",
+          "type": "float",
+          "values": [
+            1
           ]
         },
         {
@@ -114,6 +147,23 @@
           "texture": 0,
           "sampler": 0
         }
+      },
+      {
+        "name": "causticTexture",
+        "dimension": "2d",
+        "wgsl": {
+          "group": 0,
+          "textureBinding": 3,
+          "samplerBinding": 4
+        },
+        "gl": {
+          "uniform": "causticTexture",
+          "unit": 1
+        },
+        "metal": {
+          "texture": 1,
+          "sampler": 1
+        }
       }
     ],
     "wgsl": {
@@ -128,8 +178,9 @@
         "name": "water",
         "wgsl": {
           "group": 0,
-          "inBinding": 4,
-          "outBinding": -1
+          "inBinding": 6,
+          "outBinding": -1,
+          "inKind": "texture"
         },
         "gl": {
           "uniform": "stateTex",
@@ -144,7 +195,7 @@
     "grid": {
       "wgsl": {
         "group": 0,
-        "binding": 3
+        "binding": 5
       },
       "metal": {
         "buffer": 1
@@ -152,8 +203,9 @@
       "glTexelUniform": ""
     },
     "context": [
-      "lightDir"
+      "lightDir",
+      "modelMatrix"
     ]
   },
-  "wgsl": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  poolHeight : f32,\n  baseColor : vec4<f32>,\n  isTexturePass : f32,\n  texturePassMode : f32,\n  lightDir : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\n@group(0) @binding(1) var modelTexture : texture_2d<f32>;\n@group(0) @binding(2) var modelTextureSampler : sampler;\n\nstruct StateGrid {\n  gridWidth  : u32,\n  gridHeight : u32,\n};\n@group(0) @binding(3) var<uniform> _stateGrid : StateGrid;\n@group(0) @binding(4) var<storage, read> _inState : array<vec4<f32>>;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n  @location(2) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) worldPos : vec3<f32>,\n  @location(1) vUv : vec2<f32>,\n  @location(2) vNormal : vec3<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.worldPos = in.position;\n  out.vUv = in.uv;\n  out.vNormal = normalize((u.normalMatrix * in.normal));\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let info = _inState[min(u32((in.vUv).x * f32(_stateGrid.gridWidth)) + u32((in.vUv).y * f32(_stateGrid.gridHeight)) * _stateGrid.gridWidth, _stateGrid.gridWidth * _stateGrid.gridHeight - 1u)];\n  let waterHeight = (info.x * u.poolHeight);\n  let caustic = info.y;\n  let belowWater = (in.worldPos.y < waterHeight);\n  if ((((u.isTexturePass > 0.5) && (u.texturePassMode == 2.0)) && belowWater)) {\n    discard;\n  }\n  let lightN = normalize(u.lightDir);\n  let refr = refract((-lightN), vec3<f32>(0.0, 1.0, 0.0), (1.0 / 1.333));\n  let n = normalize(in.vNormal);\n  let albedo = (textureSample(modelTexture, modelTextureSampler, in.vUv).rgb * u.baseColor.rgb);\n  let submerged = (in.worldPos.y < waterHeight);\n  var diffuse : f32 = (max(dot((-refr), n), 0.0) * 0.6);\n  if (submerged) {\n    diffuse = ((diffuse * caustic) * 4.0);\n  }\n  let underwater = vec3<f32>(0.4, 0.9, 1.0);\n  var col : vec3<f32> = (albedo * (0.4 + diffuse));\n  if (submerged) {\n    col = ((col * underwater) * 1.2);\n  }\n  return vec4<f32>(col, u.baseColor.a);\n}\n"
+  "wgsl": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  poolHeight : f32,\n  poolWidth : f32,\n  poolLength : f32,\n  baseColor : vec4<f32>,\n  isTexturePass : f32,\n  texturePassMode : f32,\n  lightDir : vec3<f32>,\n  modelMatrix : mat4x4<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\n@group(0) @binding(1) var modelTexture : texture_2d<f32>;\n@group(0) @binding(2) var modelTextureSampler : sampler;\n@group(0) @binding(3) var causticTexture : texture_2d<f32>;\n@group(0) @binding(4) var causticTextureSampler : sampler;\n\nstruct StateGrid {\n  gridWidth  : u32,\n  gridHeight : u32,\n};\n@group(0) @binding(5) var<uniform> _stateGrid : StateGrid;\n@group(0) @binding(6) var _inState : texture_2d<f32>;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n  @location(2) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) worldPos : vec3<f32>,\n  @location(1) vUv : vec2<f32>,\n  @location(2) vNormal : vec3<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  let world = (u.modelMatrix * vec4<f32>(in.position, 1.0));\n  out.worldPos = world.xyz;\n  out.vUv = in.uv;\n  out.vNormal = normalize((u.normalMatrix * in.normal));\n  out.position = (u.mvp * world);\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let waterUV = ((in.worldPos.xz * vec2<f32>((0.5 / u.poolWidth), (0.5 / u.poolLength))) + vec2<f32>(0.5, 0.5));\n  let info = textureLoad(_inState, vec2<u32>(min(u32((waterUV).x * f32(_stateGrid.gridWidth)), _stateGrid.gridWidth - 1u), min(u32((waterUV).y * f32(_stateGrid.gridHeight)), _stateGrid.gridHeight - 1u)), 0);\n  let waterHeight = info.x;\n  let belowWater = (in.worldPos.y < waterHeight);\n  if ((((u.isTexturePass > 0.5) && (u.texturePassMode == 2.0)) && belowWater)) {\n    discard;\n  }\n  let lightN = normalize(u.lightDir);\n  let refr = refract((-lightN), vec3<f32>(0.0, 1.0, 0.0), (1.0 / 1.333));\n  let causticUV = (((0.75 * (in.worldPos.xz - ((in.worldPos.y * refr.xz) / refr.y))) * vec2<f32>((0.5 / u.poolWidth), (0.5 / u.poolLength))) + vec2<f32>(0.5, 0.5));\n  let caustic = textureSample(causticTexture, causticTextureSampler, causticUV).x;\n  let n = normalize(in.vNormal);\n  let albedo = (textureSample(modelTexture, modelTextureSampler, in.vUv).rgb * u.baseColor.rgb);\n  let submerged = (in.worldPos.y < waterHeight);\n  var diffuse : f32 = (max(dot((-refr), n), 0.0) * 0.6);\n  if (submerged) {\n    diffuse = ((diffuse * caustic) * 4.0);\n  }\n  let underwater = vec3<f32>(0.4, 0.9, 1.0);\n  var col : vec3<f32> = (albedo * (0.4 + diffuse));\n  if (submerged) {\n    col = ((col * underwater) * 1.2);\n  }\n  return vec4<f32>(col, u.baseColor.a);\n}\n"
 }

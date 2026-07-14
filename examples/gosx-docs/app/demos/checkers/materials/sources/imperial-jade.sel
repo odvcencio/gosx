@@ -1,0 +1,13 @@
+material ImperialJade {
+    param deepJade : color = rgb(0.08, 0.32, 0.20)
+    param paleJade : color = rgb(0.42, 0.86, 0.61)
+    param rimTint  : color = rgb(0.70, 0.96, 0.80)
+    surface(geo) -> color {
+        let n         = normalize(geo.normal)
+        let thickness = clamp(1.0 - abs(n.y), 0.0, 1.0)
+        let internal  = sin((geo.uv.x + geo.uv.y) * 18.0) * 0.035
+        let body      = mix(deepJade.rgb, paleJade.rgb, thickness * 0.62 + internal)
+        let rim       = pow(1.0 - abs(n.z), 3.0) * 0.22
+        return vec4f(mix(body, rimTint.rgb, rim), 0.94)
+    }
+}

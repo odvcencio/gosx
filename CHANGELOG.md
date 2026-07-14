@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.31.6 (2026-07-14)
+
+- Added framework-owned runtime surfaces, scoped DOM reconciliation, keyed
+  streaming blocks, lifecycle telemetry, and typed server contracts so rich
+  GoSX applications no longer need demo-authored JavaScript escape hatches.
+- Expanded Scene3D with deterministic native previews, browser-free harness
+  certification, exact BVH ray evidence, grab-direction orbit controls, and
+  headless GPU diagnostics suitable for agent-operated authoring workflows.
+- Upgraded Selena water rendering across WebGPU and WebGL from the same
+  authored material sources, including independent surface topology, sampled
+  state textures, adaptive quality profiles, and tighter physical normals.
+- Rebuilt the Chinese Checkers showcase with authored Selena materials,
+  detailed instancing, native preview telemetry, and a clearer outcome-driven
+  docs homepage and demo catalog.
+- Kept browser bundle generation in the pure-Go `cmd/buildbootstrap` pipeline
+  while adding the new runtime surface modules to monolithic, lite, and
+  selective runtime outputs.
+
 ## v0.31.5 (2026-07-14)
 
 - Added the code-focused editor surface, externally supplied syntax spans,

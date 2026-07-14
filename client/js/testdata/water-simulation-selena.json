@@ -1,5 +1,5 @@
 {
-  "_comment": "Generated fixture: real Selena-compiled simulation.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive the simulation feedback-compute kernel through the generic descriptor-driven Selena WebGPU compute path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/simulation.sel (TargetWGSL) if simulation.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/simulation.sel",
+  "_comment": "Generated fixture: real Selena-compiled simulation.sel WGSL + host binding descriptor (bindings.Layout). Regenerate with `go run ./examples/gosx-docs/app/demos/water/cmd/generate-selena-fixtures`. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/simulation.sel",
   "layout": {
     "schemaVersion": "selena.descriptor.v1",
     "languageVersion": "selena.lang.v1",
@@ -58,7 +58,8 @@
         "wgsl": {
           "group": 0,
           "inBinding": 1,
-          "outBinding": 2
+          "outBinding": 2,
+          "inKind": "storage"
         },
         "gl": {
           "uniform": "stateTex",
@@ -81,5 +82,5 @@
       "glTexelUniform": "texelSize"
     }
   },
-  "wgsl": "struct GridUniforms {\n  gridWidth : u32,\n  gridLen   : u32,\n};\n@group(0) @binding(0) var\u003cuniform\u003e _grid : GridUniforms;\n@group(0) @binding(1) var\u003cstorage, read\u003e inState : array\u003cvec4\u003cf32\u003e\u003e;\n@group(0) @binding(2) var\u003cstorage, read_write\u003e outState : array\u003cvec4\u003cf32\u003e\u003e;\n\nstruct UserUniforms {\n  waveSpeed : f32,\n  damping : f32,\n};\n@group(0) @binding(3) var\u003cuniform\u003e u : UserUniforms;\n\n@compute @workgroup_size(64)\nfn computeMain(@builtin(global_invocation_id) gid : vec3\u003cu32\u003e) {\n  let cellIndex = gid.x;\n  if (cellIndex \u003e= _grid.gridLen) { return; }\n  let here = inState[clamp(i32(cellIndex) + (0) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)];\n  let avg = ((((inState[clamp(i32(cellIndex) + (1) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)] + inState[clamp(i32(cellIndex) + (-1) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)]) + inState[clamp(i32(cellIndex) + (0) + (1) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)]) + inState[clamp(i32(cellIndex) + (0) + (-1) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)]) * 0.25);\n  let vel = ((here.y + (((avg.x - here.x) * 2.0) * u.waveSpeed)) * u.damping);\n  let h = (here.x + vel);\n  outState[cellIndex] = vec4\u003cf32\u003e(h, vel, here.z, here.w);\n}\n"
+  "wgsl": "struct GridUniforms {\n  gridWidth : u32,\n  gridLen   : u32,\n};\n@group(0) @binding(0) var<uniform> _grid : GridUniforms;\n@group(0) @binding(1) var<storage, read> inState : array<vec4<f32>>;\n@group(0) @binding(2) var<storage, read_write> outState : array<vec4<f32>>;\n\nstruct UserUniforms {\n  waveSpeed : f32,\n  damping : f32,\n};\n@group(0) @binding(3) var<uniform> u : UserUniforms;\n\n@compute @workgroup_size(64)\nfn computeMain(@builtin(global_invocation_id) gid : vec3<u32>) {\n  let cellIndex = gid.x;\n  if (cellIndex >= _grid.gridLen) { return; }\n  let here = inState[clamp(i32(cellIndex) + (0) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)];\n  let avg = ((((inState[clamp(i32(cellIndex) + (1) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)] + inState[clamp(i32(cellIndex) + (-1) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)]) + inState[clamp(i32(cellIndex) + (0) + (1) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)]) + inState[clamp(i32(cellIndex) + (0) + (-1) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)]) * 0.25);\n  let vel = ((here.y + (((avg.x - here.x) * 2.0) * u.waveSpeed)) * u.damping);\n  let h = (here.x + vel);\n  outState[cellIndex] = vec4<f32>(h, vel, here.z, here.w);\n}\n"
 }

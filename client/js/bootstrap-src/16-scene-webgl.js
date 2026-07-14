@@ -1928,6 +1928,10 @@
     return value;
   }
 
+  function sceneWaterAdvanceRendererClock(clock, nowMS, active, paused, options) {
+    return sceneWaterAdvanceClock(clock, nowMS, active, paused, options);
+  }
+
   // Grid resolution for the heightfield, matching the WebGPU clamp.
   function sceneWaterSimResolution(value) {
     var raw = Math.floor(sceneWaterNum(value, 256));
@@ -1994,6 +1998,29 @@
     }
   }
 
+  // Water descriptors reuse the same programs and uniform names for every
+  // simulation/render pass. Cache both hits and misses so steady-state frames
+  // do not repeatedly cross the WebGL API boundary. Weak program keys avoid
+  // retaining deleted programs; dispose paths also evict eagerly.
+  var sceneWaterUniformLocations = new WeakMap();
+
+  function sceneWaterUniformLocation(gl, program, name) {
+    if (!program || !name) return null;
+    var locations = sceneWaterUniformLocations.get(program);
+    if (!locations) {
+      locations = new Map();
+      sceneWaterUniformLocations.set(program, locations);
+    }
+    if (locations.has(name)) return locations.get(name);
+    var location = gl.getUniformLocation(program, name);
+    locations.set(name, location);
+    return location;
+  }
+
+  function sceneWaterForgetUniformLocations(program) {
+    if (program) sceneWaterUniformLocations.delete(program);
+  }
+
   // Set one scalar/vector uniform from a flat numeric value/array.
   function sceneWaterSetScalarUniform(gl, loc, type, value, base) {
     base = base || 0;
@@ -2014,7 +2041,7 @@
     var width = sceneWaterTypeWidth(field.type);
     var active = Math.min(count, Math.floor(value.length / width));
     for (var i = 0; i < active; i++) {
-      var loc = gl.getUniformLocation(program, field.name + "[" + i + "]");
+      var loc = sceneWaterUniformLocation(gl, program, field.name + "[" + i + "]");
       if (!loc) continue;
       sceneWaterSetScalarUniform(gl, loc, field.type, value, i * width);
     }
@@ -2031,13 +2058,13 @@
     for (var s = 0; s < states.length; s++) {
       var glState = states[s] && states[s].gl;
       if (glState && glState.uniform) {
-        var sLoc = gl.getUniformLocation(program, glState.uniform);
+        var sLoc = sceneWaterUniformLocation(gl, program, glState.uniform);
         if (sLoc) gl.uniform1i(sLoc, glState.unit || 0);
       }
     }
     var texelName = descriptor.grid && descriptor.grid.glTexelUniform;
     if (texelName) {
-      var texLoc = gl.getUniformLocation(program, texelName);
+      var texLoc = sceneWaterUniformLocation(gl, program, texelName);
       if (texLoc) gl.uniform2f(texLoc, 1 / resolution, 1 / resolution);
     }
     var block = descriptor.uniformBlock;
@@ -2052,7 +2079,7 @@
         continue;
       }
       if (value === undefined || value === null) continue;
-      var loc = gl.getUniformLocation(program, field.name);
+      var loc = sceneWaterUniformLocation(gl, program, field.name);
       if (!loc) continue;
       if (field.type === "float") {
         gl.uniform1f(loc, +value);
@@ -2175,6 +2202,8 @@
     // Resting-surface defaults, mirroring the WebGPU runtime clamps.
     var waveSpeed = sceneWaterClamp(sceneWaterNum(entry.waveSpeed, 1.0), 0, 2);
     var damping = sceneWaterClamp(sceneWaterNum(entry.damping, 0.995), 0, 1);
+    var normalCellSizeX = 2 * Math.max(0.0001, sceneWaterNum(entry.poolWidth, 1)) / resolution;
+    var normalCellSizeZ = 2 * Math.max(0.0001, sceneWaterNum(entry.poolLength, 1)) / resolution;
     var dropRadius = sceneWaterClamp(sceneWaterNum(entry.dropRadius, 0.05), 0.0001, 0.5);
     var dropStrength = sceneWaterClamp(sceneWaterNum(entry.dropStrength, 0.05), -1, 1);
     var seedSalt = sceneWaterNum(entry.seedSalt, (Math.random() * 4096) | 0);
@@ -2209,6 +2238,19 @@
       gl.activeTexture(gl.TEXTURE0 + unit);
       gl.bindTexture(gl.TEXTURE_2D, read.tex);
       sceneWaterApplyPassUniforms(gl, pass.program, pass.descriptor, resolution, values);
+      // Normal reconstruction is a physical WaterSystem contract, not an
+      // optional shader-layout hint. Bind the cell spacing explicitly as a
+      // compatibility backstop for Selena descriptors produced before those
+      // params were added (or for hosts that intentionally omit a descriptor).
+      // Zero spacing collapses both tangents and normalize(0), poisoning the
+      // state texture with NaNs; explicit binding keeps fallback rendering,
+      // caustics, picking, and native/browser certification deterministic.
+      if (name === "normal") {
+        var cellXLoc = sceneWaterUniformLocation(gl, pass.program, "cellSizeX");
+        var cellZLoc = sceneWaterUniformLocation(gl, pass.program, "cellSizeZ");
+        if (cellXLoc !== null) gl.uniform1f(cellXLoc, normalCellSizeX);
+        if (cellZLoc !== null) gl.uniform1f(cellZLoc, normalCellSizeZ);
+      }
       gl.bindVertexArray(emptyVAO);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.bindVertexArray(null);
@@ -2216,14 +2258,28 @@
       return true;
     }
 
-    // Advance the heightfield: simulation substep(s) then a normal recompute.
-    // Defaults to 2 simulation substeps per frame to match the WebGPU path.
-    function step(options) {
-      var substeps = options && options.substeps > 0 ? Math.floor(options.substeps) : 2;
+    var normalDirty = false;
+    var simulationPassCount = 0;
+    var normalPassCount = 0;
+
+    // Run solver passes independently from normal reconstruction so catch-up
+    // ticks can batch 2*N solver passes followed by exactly one normal pass.
+    function simulate(substeps) {
+      substeps = Math.max(0, Math.floor(sceneWaterNum(substeps, 0)));
+      if (substeps <= 0) return 0;
       var simValues = { waveSpeed: waveSpeed, damping: damping };
       for (var i = 0; i < substeps; i++) runPass("simulation", simValues);
-      runPass("normal", null);
+      simulationPassCount += substeps;
+      normalDirty = true;
+      return substeps;
+    }
+
+    function recomputeNormal() {
+      if (!normalDirty) return false;
+      if (!runPass("normal", { cellSizeX: normalCellSizeX, cellSizeZ: normalCellSizeZ })) return false;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      normalDirty = false;
+      normalPassCount++;
       return true;
     }
 
@@ -2234,13 +2290,14 @@
       var z = opts && opts.z != null ? +opts.z : sceneWaterNum(entry.dropZ, 0);
       var radius = opts && opts.radius != null ? +opts.radius : dropRadius;
       var strength = opts && opts.strength != null ? +opts.strength : dropStrength;
-      runPass("drop", {
+      var applied = runPass("drop", {
         dropCenter: [sceneWaterClamp(x, -1, 1), sceneWaterClamp(z, -1, 1)],
         dropRadius: sceneWaterClamp(radius, 0.0001, 0.5),
         dropStrength: strength,
       });
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      return true;
+      if (applied) normalDirty = true;
+      return applied;
     }
 
     // Reset event: stamp the procedural seed drops onto the resting surface.
@@ -2252,13 +2309,14 @@
       var radius = opts && opts.radius != null ? +opts.radius : dropRadius;
       var strength = opts && opts.strength != null ? +opts.strength : dropStrength;
       var salt = opts && opts.seedSalt != null ? +opts.seedSalt : seedSalt;
-      runPass("seed", {
+      var applied = runPass("seed", {
         dropCount: count,
         dropRadius: sceneWaterClamp(radius, 0.0001, 0.5),
         drops: sceneWaterBuildSeedDrops(count, salt, strength),
       });
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      return true;
+      if (applied) normalDirty = true;
+      return applied;
     }
 
     // Object-move event: displace water by an object volume sweeping from its
@@ -2286,7 +2344,7 @@
           spheres[si * 4 + 3] = Math.max(0.0001, sceneWaterNum(sphere.radius, 0));
         }
       }
-      runPass("displacement", {
+      var applied = runPass("displacement", {
         objectKind: sceneWaterRenderObjectKind(source),
         displacementScale: Math.max(0, sceneWaterNum(source.objectDisplacementScale, 1)),
         objectCenter: center,
@@ -2297,12 +2355,16 @@
         spheres: spheres,
       });
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      return true;
+      if (applied) normalDirty = true;
+      return applied;
     }
 
     function dispose() {
       for (var ci = 0; ci < compiledShaders.length; ci++) {
-        if (compiledShaders[ci]) gl.deleteProgram(compiledShaders[ci]);
+        if (compiledShaders[ci]) {
+          sceneWaterForgetUniformLocations(compiledShaders[ci]);
+          gl.deleteProgram(compiledShaders[ci]);
+        }
       }
       compiledShaders.length = 0;
       programs = {};
@@ -2318,10 +2380,18 @@
       resolution: resolution,
       // The texture render passes (A2) sample the heightfield from this handle.
       currentStateTexture: function() { return states ? states[current].tex : null; },
-      step: step,
+      simulate: simulate,
+      recomputeNormal: recomputeNormal,
       drop: drop,
       seed: seed,
       displace: displace,
+      getStats: function() {
+        return {
+          simulationPasses: simulationPassCount,
+          normalPasses: normalPassCount,
+          normalDirty: normalDirty,
+        };
+      },
       dispose: dispose,
     };
   }
@@ -2589,7 +2659,7 @@
         sceneWaterSetArrayUniform(gl, program, field, v, count);
         continue;
       }
-      var loc = gl.getUniformLocation(program, field.name);
+      var loc = sceneWaterUniformLocation(gl, program, field.name);
       if (!loc) continue;
       switch (field.type) {
         case "mat4": gl.uniformMatrix4fv(loc, false, v); break;
@@ -2636,7 +2706,7 @@
       var b = list[i];
       gl.activeTexture(gl.TEXTURE0 + i);
       gl.bindTexture(b.target, b.tex);
-      var loc = gl.getUniformLocation(program, b.name);
+      var loc = sceneWaterUniformLocation(gl, program, b.name);
       if (loc) gl.uniform1i(loc, i);
     }
   }
@@ -2918,22 +2988,33 @@
     // Geometry sizes. The box pool is 5 faces (floor + 4 walls) * 6 vertices;
     // the rounded pool is pool.sel's 44*3 floor-fan + 44*6 wall-strip = 44*9
     // (see livePoolVertexCount in drawFrame for the live per-frame pick).
-    // Surface tessellation, independent of the simulation grid (sim.resolution) -- this
-    // backend already capped it at 160 while the sim ran at 192, so the two were never the
-    // same axis. surfaceMeshResolution now names it explicitly and keeps WebGPU and WebGL2
-    // drawing the SAME mesh; 0 means match the simulation, and the 160 cap still applies.
-    var meshResolution = sceneWaterNum(entry.surfaceMeshResolution, 0) > 0
-      ? sceneWaterSimResolution(entry.surfaceMeshResolution)
-      : sim.resolution;
-    var gridResolution = Math.max(2, Math.min(160, meshResolution));
-    var surfaceCells = gridResolution - 1;
-    var surfaceVertexCount = surfaceCells * surfaceCells * 6;
+    var authoredSurfaceResolution = Math.max(2, Math.min(512,
+      Math.floor(sceneWaterNum(entry.surfaceResolution, sim.resolution)) || sim.resolution));
+    function waterSurfaceGridProfile(cap) {
+      var resolution = Math.max(2, Math.min(cap, authoredSurfaceResolution));
+      var cells = resolution - 1;
+      return { resolution: resolution, vertexCount: cells * cells * 6 };
+    }
+    // Surface grids are procedural (gl_VertexID), so caching is just the exact
+    // resolution/count pair; quality changes allocate no geometry buffers.
+    var surfaceGridProfiles = Object.create(null);
+    function cachedWaterSurfaceGrid(cap) {
+      var requested = Math.max(2, Math.min(authoredSurfaceResolution,
+        Math.floor(sceneWaterNum(cap, authoredSurfaceResolution))));
+      var key = String(requested);
+      if (!surfaceGridProfiles[key]) surfaceGridProfiles[key] = waterSurfaceGridProfile(requested);
+      return surfaceGridProfiles[key];
+    }
+    var activeSurfaceGrid = cachedWaterSurfaceGrid(authoredSurfaceResolution);
+    var gridResolution = activeSurfaceGrid.resolution;
+    var surfaceVertexCount = activeSurfaceGrid.vertexCount;
     var emptyVAO = gl.createVertexArray();
 
     var objectCenter = [sceneWaterNum(entry.objectX, 0), sceneWaterNum(entry.objectY, -0.5), sceneWaterNum(entry.objectZ, 0)];
     var objectHalf = [sceneWaterNum(entry.objectHalfSizeX, 0), sceneWaterNum(entry.objectHalfSizeY, 0), sceneWaterNum(entry.objectHalfSizeZ, 0)];
     var objectRadius = sceneWaterNum(entry.objectRadius, 0.25);
     var identity3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    var identity4 = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
     // Textures: real tile + sky cube. Caustics + object-shadow are rendered to
     // their own RTTs each frame (sizes mirror the WebGPU path: caustics =
@@ -2944,18 +3025,28 @@
     var causticStub = sceneWaterRenderSolidTexture(gl, 14, 16, 18, 255); // ~0.06 grey
     var shadowStub = sceneWaterRenderSolidTexture(gl, 0, 0, 0, 255);     // 0 => no shadow
 
-    // Water quality is deliberately inferred from the simulation resolution so
-    // older manifests get the cheaper balanced path without a schema change.
-    // Full: 256/1024, balanced: 192/512, survival: 128/256.
-    var waterQuality = sim.resolution === 128 ? "survival" : (sim.resolution === 192 ? "balanced" : "full");
-    var qualityTargetCap = waterQuality === "survival" ? 256 : (waterQuality === "balanced" ? 512 : 1024);
-    var causticsSize = Math.max(64, Math.min(qualityTargetCap, Math.floor(sceneWaterNum(entry.causticsResolution, qualityTargetCap)) || qualityTargetCap));
-    var shadowSize = Math.max(64, Math.min(qualityTargetCap, Math.floor(sceneWaterNum(entry.objectShadowResolution, qualityTargetCap)) || qualityTargetCap));
-    var causticsTarget = causticsProgram ? sceneWaterRenderCreateColorTarget(gl, causticsSize) : null;
+    // Authored values are the immutable upper bound for every adaptive tier.
+    var authoredCausticsSize = Math.max(64, Math.min(2048,
+      Math.floor(sceneWaterNum(entry.causticsResolution, 512)) || 512));
+    var authoredShadowSize = Math.max(64, Math.min(2048,
+      Math.floor(sceneWaterNum(entry.objectShadowResolution, 512)) || 512));
+    var authoredObjectTextureSize = Math.max(64, Math.min(2048,
+      Math.floor(sceneWaterNum(entry.objectTextureResolution, 512)) || 512));
+    var authoredObjectTexturePixelBudget = Math.max(3,
+      Math.floor(sceneWaterNum(entry.objectTexturePixelBudget,
+        authoredObjectTextureSize * authoredObjectTextureSize * 3)) ||
+        authoredObjectTextureSize * authoredObjectTextureSize * 3);
+    var waterQuality = "full";
+    var causticsSize = authoredCausticsSize;
+    var shadowSize = authoredShadowSize;
+    // Defer quality-dependent RTT allocation until the first frame supplies its
+    // quality contract. This avoids allocating authored/full targets only to
+    // replace them immediately when the initial requested tier is balanced.
+    var causticsTarget = null;
     // One shared shadow RTT: either shadowProgram (sphere/cube) or
     // compoundShadowProgram (compound) renders into it per frame — the pool
     // pass only ever samples the single "shadowTexture" result.
-    var shadowTarget = (shadowProgram || compoundShadowProgram) ? sceneWaterRenderCreateColorTarget(gl, shadowSize) : null;
+    var shadowTarget = null;
     // Compound-shadow proxy-sphere uniform scratch: vec4(offsetX, offsetY,
     // offsetZ, radius) per sphere, raw world units matching the objectCenterX/Z
     // convention this renderer already uses for the analytic shadow pass (see
@@ -2986,6 +3077,18 @@
       for (var z = count * 4; z < compoundShadowSpheres.length; z++) compoundShadowSpheres[z] = 0;
       return count;
     }
+
+    function waterShadowSignature(kind, meshID, center, radius, half, lightDir, width, length, useCompound, sphereCount) {
+      var parts = [kind, meshID, center[0], center[2], radius, half[0], half[2],
+        lightDir[0], lightDir[1], lightDir[2], width, length, useCompound ? 1 : 0];
+      if (useCompound) {
+        // Compound shadow position includes object height and every authored
+        // proxy sphere. Rebuild only when the exact footprint inputs change.
+        parts.push(center[1], half[1], sphereCount);
+        for (var i = 0; i < sphereCount * 4; i++) parts.push(compoundShadowSpheres[i]);
+      }
+      return parts.join(":");
+    }
     // Live caustic/shadow textures the pool + surface sample; fall back to stubs.
     var causticTex = causticsTarget ? causticsTarget.tex : causticStub;
     var shadowTex = shadowTarget ? shadowTarget.tex : shadowStub;
@@ -3000,26 +3103,80 @@
     // capped WebGPU object-texture size. Each carries a depth renderbuffer so the
     // duck self-occludes correctly. An empty transparent stub backs the surface
     // sampler when the mesh path is inactive.
-    var objectTextureSize = waterQuality === "survival" ? 256 : 512;
+    var objectTextureSize = authoredObjectTextureSize;
     var objectRefractionTarget = null;
     var objectReflectionTarget = null;
     var objectClippedTarget = null;
-    function ensureObjectTextureTargets() {
-      if (objectRefractionTarget && objectReflectionTarget && objectClippedTarget) return true;
-      if (!duckProgram && !objectProgram) return false;
-      objectRefractionTarget = sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize);
-      objectReflectionTarget = objectRefractionTarget ? sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize) : null;
-      objectClippedTarget = objectReflectionTarget ? sceneWaterRenderCreateColorDepthTarget(gl, objectTextureSize) : null;
-      if (!objectReflectionTarget || !objectClippedTarget) {
-        [objectRefractionTarget, objectReflectionTarget, objectClippedTarget].forEach(function(t) {
-          if (t) { gl.deleteTexture(t.tex); gl.deleteRenderbuffer(t.depth); gl.deleteFramebuffer(t.fbo); }
-        });
-        objectRefractionTarget = objectReflectionTarget = objectClippedTarget = null;
-        return false;
+    var objectTextureSlotsReady = [false, false, false];
+    var objectTextureTargetsRequired = false;
+    function disposeWaterColorTarget(target) {
+      if (!target) return;
+      gl.deleteTexture(target.tex);
+      gl.deleteFramebuffer(target.fbo);
+    }
+    function disposeWaterColorDepthTarget(target) {
+      if (!target) return;
+      gl.deleteTexture(target.tex);
+      gl.deleteRenderbuffer(target.depth);
+      gl.deleteFramebuffer(target.fbo);
+    }
+    function createObjectTextureTargetSet(size) {
+      if (!duckProgram && !objectProgram) return null;
+      var refraction = sceneWaterRenderCreateColorDepthTarget(gl, size);
+      var reflection = refraction ? sceneWaterRenderCreateColorDepthTarget(gl, size) : null;
+      var clipped = reflection ? sceneWaterRenderCreateColorDepthTarget(gl, size) : null;
+      if (!refraction || !reflection || !clipped) {
+        [refraction, reflection, clipped].forEach(disposeWaterColorDepthTarget);
+        return null;
       }
+      // Retained targets that have not reached their round-robin slot yet must
+      // sample as transparent, never undefined allocation contents.
+      [refraction, reflection, clipped].forEach(function(target) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+        gl.viewport(0, 0, target.size, target.size);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clearDepth(1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      });
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return { refraction: refraction, reflection: reflection, clipped: clipped };
+    }
+    function installObjectTextureTargetSet(targets, size) {
+      var previous = [objectRefractionTarget, objectReflectionTarget, objectClippedTarget];
+      objectRefractionTarget = targets.refraction;
+      objectReflectionTarget = targets.reflection;
+      objectClippedTarget = targets.clipped;
+      objectTextureSize = size;
       objectRefractionTex = objectRefractionTarget.tex;
       objectReflectionTex = objectReflectionTarget.tex;
       objectClippedTex = objectClippedTarget.tex;
+      previous.forEach(disposeWaterColorDepthTarget);
+      objectTextureSlotsReady[0] = false;
+      objectTextureSlotsReady[1] = false;
+      objectTextureSlotsReady[2] = false;
+      meshTexturePassCursor = 0;
+    }
+    function ensureObjectTextureTargets() {
+      objectTextureTargetsRequired = true;
+      if (objectRefractionTarget && objectReflectionTarget && objectClippedTarget) return true;
+      prepareQualityRetry(qualityRetryState.object, objectTextureSize);
+      if (waitForQualityRetry(qualityRetryState.object)) {
+        if (qualityAdaptiveEnabled) activeQualityRevision = -1;
+        return false;
+      }
+      var targets = createObjectTextureTargetSet(objectTextureSize);
+      if (!targets) {
+        failQualityAllocation(qualityRetryState.object);
+        if (qualityAdaptiveEnabled) activeQualityRevision = -1;
+        return false;
+      }
+      installObjectTextureTargetSet(targets, objectTextureSize);
+      finishQualityAllocation(qualityRetryState.object);
+      qualityAllocationPending = qualityRetryState.caustics.pending ||
+        qualityRetryState.shadow.pending || qualityRetryState.object.pending;
+      if (qualityAdaptiveEnabled && !qualityAllocationPending) {
+        activeQualityRevision = requestedQualityRevision;
+      }
       return true;
     }
     var objectTextureStub = sceneWaterRenderSolidTexture(gl, 0, 0, 0, 0); // transparent => no mesh
@@ -3081,15 +3238,366 @@
     var seeded = false;
     var lastDropEventID = 0;
     var lastObjectDisplacementEventID = 0;
+    var pendingDropEvents = new Map();
+    var pendingObjectDisplacementEvents = new Map();
+    var queuedWaterEventCount = 1; // authored seed is queued until the first tick
+    var drainedWaterEventCount = 0;
     function primeRipples() {
-      if (seeded) return;
+      if (seeded) return true;
+      if (!sim.seed()) return false;
       seeded = true;
-      sim.seed();
+      drainedWaterEventCount++;
+      return true;
+    }
+    function queueWaterEvents(liveEntry) {
+      var dropEventID = Math.max(0, Math.floor(sceneWaterNum(liveEntry && liveEntry.dropEventID, 0)));
+      if (dropEventID > lastDropEventID) {
+        if (!pendingDropEvents.has(dropEventID)) queuedWaterEventCount++;
+        pendingDropEvents.set(dropEventID, {
+          x: sceneWaterNum(liveEntry.dropX, 0),
+          z: sceneWaterNum(liveEntry.dropZ, 0),
+          radius: sceneWaterNum(liveEntry.dropEventRadius, sceneWaterNum(liveEntry.dropRadius, 0.05)),
+          strength: sceneWaterNum(liveEntry.dropEventStrength, sceneWaterNum(liveEntry.dropStrength, 0.05)),
+        });
+      }
+      var displacementEvents = Array.isArray(liveEntry && liveEntry.objectDisplacementEvents)
+        ? liveEntry.objectDisplacementEvents : [];
+      for (var eventIndex = 0; eventIndex < displacementEvents.length; eventIndex++) {
+        var displacementEvent = displacementEvents[eventIndex];
+        var displacementEventID = Math.max(0, Math.floor(sceneWaterNum(displacementEvent && displacementEvent.id, 0)));
+        if (!displacementEvent || displacementEventID <= lastObjectDisplacementEventID) continue;
+        if (!pendingObjectDisplacementEvents.has(displacementEventID)) queuedWaterEventCount++;
+        var queuedEvent = Object.assign({}, displacementEvent);
+        if (Array.isArray(displacementEvent.objectDisplacementSpheres)) {
+          queuedEvent.objectDisplacementSpheres = displacementEvent.objectDisplacementSpheres.map(function(sphere) {
+            return sphere && typeof sphere === "object" ? Object.assign({}, sphere) : sphere;
+          });
+        }
+        pendingObjectDisplacementEvents.set(displacementEventID, queuedEvent);
+      }
+    }
+    function drainWaterEvents() {
+      primeRipples();
+      var dropIDs = Array.from(pendingDropEvents.keys()).sort(function(a, b) { return a - b; });
+      for (var dropIndex = 0; dropIndex < dropIDs.length; dropIndex++) {
+        var dropID = dropIDs[dropIndex];
+        if (!sim.drop(pendingDropEvents.get(dropID))) break;
+        pendingDropEvents.delete(dropID);
+        lastDropEventID = dropID;
+        drainedWaterEventCount++;
+      }
+      var displacementIDs = Array.from(pendingObjectDisplacementEvents.keys()).sort(function(a, b) { return a - b; });
+      for (var displacementIndex = 0; displacementIndex < displacementIDs.length; displacementIndex++) {
+        var displacementID = displacementIDs[displacementIndex];
+        if (!sim.displace(pendingObjectDisplacementEvents.get(displacementID))) break;
+        pendingObjectDisplacementEvents.delete(displacementID);
+        lastObjectDisplacementEventID = displacementID;
+        drainedWaterEventCount++;
+      }
     }
 
     var disposed = false;
     var lastBundle = null;
     var frameCount = 0;
+    var waterClock = {};
+    var waterClockOptions = {
+      simulationHz: 60,
+      // Match the authored water model: each presented frame may advance one
+      // logical tick, made of two solver passes. Slow frames report skipped
+      // ticks instead of multiplying GPU work and causing a catch-up spiral.
+      maxCatchUpTicks: 1,
+      solverSubsteps: 2,
+    };
+    var lifecycleActive = true;
+    var lifecyclePaused = false;
+    var activeQualityTier = "full";
+    var activeQualityRevision = -1;
+    var activeQualityDPRCap = 0;
+    var activeExpensivePassCadence = 1;
+    var activeObjectTexturePixelBudget = authoredObjectTexturePixelBudget;
+    var lastCausticsTickSeq = -1;
+    var causticsRefreshCount = 0;
+    var lastShadowSignature = null;
+    var shadowRefreshCount = 0;
+    var meshTexturePassCursor = 0;
+    var meshTexturePassCount = 0;
+    var qualityAllocationFailureCount = 0;
+    var qualityAllocationPending = false;
+    var qualityRetryState = {
+      caustics: { desired: 0, failures: 0, nextFrame: 0, pending: false },
+      shadow: { desired: 0, failures: 0, nextFrame: 0, pending: false },
+      object: { desired: 0, failures: 0, nextFrame: 0, pending: false },
+    };
+    var timerExtension = null;
+    var timerQueries = [];
+    var timerQueryCursor = 0;
+    var timerQueryActive = null;
+    var pendingPerformanceSample = null;
+    var lastPerformanceSample = null;
+
+    try {
+      timerExtension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
+      if (timerExtension && typeof gl.createQuery === "function" &&
+          typeof gl.getQueryParameter === "function") {
+        for (var timerIndex = 0; timerIndex < 3; timerIndex++) {
+          timerQueries.push({ query: gl.createQuery(), pending: false, atMS: 0 });
+        }
+        if (timerQueries.some(function(record) { return !record.query; })) {
+          disposeWaterTimerQueries();
+        }
+      } else {
+        timerExtension = null;
+      }
+    } catch (timerInitError) {
+      timerExtension = null;
+      timerQueries.length = 0;
+    }
+
+    function disposeWaterTimerQueries() {
+      if (typeof gl.deleteQuery === "function") {
+        timerQueries.forEach(function(record) {
+          if (record && record.query) gl.deleteQuery(record.query);
+        });
+      }
+      timerQueries.length = 0;
+      timerExtension = null;
+      timerQueryActive = null;
+      pendingPerformanceSample = null;
+    }
+
+    function resetWaterTimerRing() {
+      if (!timerExtension || typeof gl.createQuery !== "function") return;
+      timerQueries.forEach(function(record) {
+        if (record.query && typeof gl.deleteQuery === "function") gl.deleteQuery(record.query);
+        record.query = gl.createQuery();
+        record.pending = false;
+        record.atMS = 0;
+      });
+      if (timerQueries.some(function(record) { return !record.query; })) {
+        disposeWaterTimerQueries();
+        return;
+      }
+      timerQueryCursor = 0;
+      timerQueryActive = null;
+    }
+
+    function pollWaterTimerQueries() {
+      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return;
+      try {
+        if (gl.getParameter(timerExtension.GPU_DISJOINT_EXT)) {
+          resetWaterTimerRing();
+          pendingPerformanceSample = null;
+          return;
+        }
+        for (var i = 0; i < timerQueries.length; i++) {
+          var record = timerQueries[i];
+          if (!record.pending || !gl.getQueryParameter(record.query, gl.QUERY_RESULT_AVAILABLE)) continue;
+          var elapsedNS = Number(gl.getQueryParameter(record.query, gl.QUERY_RESULT));
+          record.pending = false;
+          if (Number.isFinite(elapsedNS) && elapsedNS >= 0) {
+            pendingPerformanceSample = {
+              source: "webgl-timer",
+              gpuMS: elapsedNS / 1000000,
+              atMS: record.atMS,
+            };
+            lastPerformanceSample = pendingPerformanceSample;
+          }
+        }
+      } catch (timerPollError) {
+        disposeWaterTimerQueries();
+      }
+    }
+
+    function beginWaterTimerQuery(nowMS) {
+      pollWaterTimerQueries();
+      if (!timerExtension || timerQueries.length !== 3 || timerQueryActive) return null;
+      var record = timerQueries[timerQueryCursor];
+      if (!record || record.pending) return null;
+      try {
+        gl.beginQuery(timerExtension.TIME_ELAPSED_EXT, record.query);
+        record.atMS = nowMS;
+        timerQueryActive = record;
+        timerQueryCursor = (timerQueryCursor + 1) % timerQueries.length;
+        return record;
+      } catch (timerBeginError) {
+        disposeWaterTimerQueries();
+        return null;
+      }
+    }
+
+    function endWaterTimerQuery(record) {
+      if (!record || timerQueryActive !== record || !timerExtension) return;
+      try {
+        gl.endQuery(timerExtension.TIME_ELAPSED_EXT);
+        record.pending = true;
+        timerQueryActive = null;
+      } catch (timerEndError) {
+        disposeWaterTimerQueries();
+      }
+    }
+
+    function pollPerformanceSample() {
+      pollWaterTimerQueries();
+      var sample = pendingPerformanceSample;
+      pendingPerformanceSample = null;
+      return sample;
+    }
+
+    function getPerformanceTimingStatus() {
+      var available = Boolean(timerExtension && timerQueries.length === 3);
+      var pending = Boolean(timerQueryActive) || timerQueries.some(function(record) {
+        return Boolean(record && record.pending);
+      });
+      return {
+        available: available,
+        active: available,
+        pending: pending,
+        source: "webgl-timer",
+      };
+    }
+
+    function selectWaterSurfaceGrid(requested) {
+      return cachedWaterSurfaceGrid(requested);
+    }
+
+    var qualityAdaptiveEnabled = false;
+    var requestedQualityRevision = -1;
+
+    function prepareQualityRetry(state, desired) {
+      if (state.desired === desired) return;
+      state.desired = desired;
+      state.failures = 0;
+      state.nextFrame = frameCount;
+      state.pending = false;
+    }
+
+    function failQualityAllocation(state) {
+      state.failures += 1;
+      state.pending = true;
+      state.nextFrame = frameCount + Math.min(60, Math.pow(2, Math.min(6, state.failures - 1)));
+      qualityAllocationFailureCount += 1;
+      qualityAllocationPending = true;
+    }
+
+    function finishQualityAllocation(state) {
+      state.failures = 0;
+      state.nextFrame = 0;
+      state.pending = false;
+    }
+
+    function waitForQualityRetry(state) {
+      if (frameCount >= state.nextFrame) return false;
+      state.pending = true;
+      qualityAllocationPending = true;
+      return true;
+    }
+
+    function applyWaterQualityProfile(frameMeta) {
+      var adaptiveEnabled = Boolean(frameMeta && frameMeta.qualityEnabled === true);
+      var profile = adaptiveEnabled && frameMeta && frameMeta.qualityProfile;
+      var revision = adaptiveEnabled
+        ? Math.floor(sceneWaterNum(frameMeta && frameMeta.qualityRevision, profile && profile.revision))
+        : -1;
+      if (adaptiveEnabled && (!profile || !Number.isFinite(revision))) return;
+      if (adaptiveEnabled && revision === activeQualityRevision && !qualityAllocationPending) return;
+
+      qualityAdaptiveEnabled = adaptiveEnabled;
+      requestedQualityRevision = revision;
+      qualityAllocationPending = false;
+      var source = profile || {};
+      var tier = adaptiveEnabled ? String(source.tier || "full").toLowerCase() : "full";
+      if (tier !== "balanced" && tier !== "survival") tier = "full";
+      activeQualityTier = tier;
+      waterQuality = tier;
+      activeQualityDPRCap = adaptiveEnabled ? Math.max(0, sceneWaterNum(source.dprCap, 0)) : 0;
+      activeExpensivePassCadence = adaptiveEnabled ? Math.max(1, Math.min(8,
+        Math.floor(sceneWaterNum(source.expensivePassCadence, 1)) || 1)) : 1;
+
+      activeSurfaceGrid = selectWaterSurfaceGrid(adaptiveEnabled
+        ? Math.min(authoredSurfaceResolution, sceneWaterNum(source.surfaceResolution, authoredSurfaceResolution))
+        : authoredSurfaceResolution);
+      gridResolution = activeSurfaceGrid.resolution;
+      surfaceVertexCount = activeSurfaceGrid.vertexCount;
+
+      var nextCausticsSize = adaptiveEnabled ? Math.max(64, Math.min(authoredCausticsSize,
+        Math.floor(sceneWaterNum(source.causticsResolution, authoredCausticsSize)) || authoredCausticsSize)) : authoredCausticsSize;
+      prepareQualityRetry(qualityRetryState.caustics, nextCausticsSize);
+      if (causticsProgram && (!causticsTarget || causticsTarget.size !== nextCausticsSize)) {
+        if (!waitForQualityRetry(qualityRetryState.caustics)) {
+          var nextCausticsTarget = sceneWaterRenderCreateColorTarget(gl, nextCausticsSize);
+          if (nextCausticsTarget) {
+            var previousCausticsTarget = causticsTarget;
+            causticsTarget = nextCausticsTarget;
+            causticTex = nextCausticsTarget.tex;
+            causticsSize = nextCausticsSize;
+            disposeWaterColorTarget(previousCausticsTarget);
+            causticsRefreshCount = 0;
+            lastCausticsTickSeq = -1;
+            finishQualityAllocation(qualityRetryState.caustics);
+          } else {
+            failQualityAllocation(qualityRetryState.caustics);
+          }
+        }
+      } else {
+        finishQualityAllocation(qualityRetryState.caustics);
+      }
+
+      var nextShadowSize = adaptiveEnabled ? Math.max(64, Math.min(authoredShadowSize,
+        Math.floor(sceneWaterNum(source.objectShadowResolution, authoredShadowSize)) || authoredShadowSize)) : authoredShadowSize;
+      prepareQualityRetry(qualityRetryState.shadow, nextShadowSize);
+      if ((shadowProgram || compoundShadowProgram) && (!shadowTarget || shadowTarget.size !== nextShadowSize)) {
+        if (!waitForQualityRetry(qualityRetryState.shadow)) {
+          var nextShadowTarget = sceneWaterRenderCreateColorTarget(gl, nextShadowSize);
+          if (nextShadowTarget) {
+            var previousShadowTarget = shadowTarget;
+            shadowTarget = nextShadowTarget;
+            shadowTex = nextShadowTarget.tex;
+            shadowSize = nextShadowSize;
+            disposeWaterColorTarget(previousShadowTarget);
+            lastShadowSignature = null;
+            finishQualityAllocation(qualityRetryState.shadow);
+          } else {
+            failQualityAllocation(qualityRetryState.shadow);
+          }
+        }
+      } else {
+        finishQualityAllocation(qualityRetryState.shadow);
+      }
+
+      var objectMaxSide = adaptiveEnabled ? Math.max(1, Math.min(authoredObjectTextureSize,
+        Math.floor(sceneWaterNum(source.objectTextureMaxSide, authoredObjectTextureSize)) || authoredObjectTextureSize)) : authoredObjectTextureSize;
+      var objectPixelBudget = adaptiveEnabled ? Math.max(3, Math.min(authoredObjectTexturePixelBudget,
+        Math.floor(sceneWaterNum(source.objectTexturePixelBudget, authoredObjectTexturePixelBudget)) || authoredObjectTexturePixelBudget)) : authoredObjectTexturePixelBudget;
+      var objectBudgetSide = Math.max(1, Math.floor(Math.sqrt(objectPixelBudget / 3)));
+      var nextObjectTextureSize = Math.max(1, Math.min(objectMaxSide, objectBudgetSide));
+      prepareQualityRetry(qualityRetryState.object, nextObjectTextureSize);
+      if (nextObjectTextureSize !== objectTextureSize && objectRefractionTarget && objectReflectionTarget && objectClippedTarget) {
+        if (!waitForQualityRetry(qualityRetryState.object)) {
+          var nextObjectTargets = createObjectTextureTargetSet(nextObjectTextureSize);
+          if (nextObjectTargets) {
+            installObjectTextureTargetSet(nextObjectTargets, nextObjectTextureSize);
+            finishQualityAllocation(qualityRetryState.object);
+          } else {
+            failQualityAllocation(qualityRetryState.object);
+          }
+        }
+      } else {
+        if (!objectRefractionTarget || !objectReflectionTarget || !objectClippedTarget) {
+          objectTextureSize = nextObjectTextureSize;
+        }
+        if (objectTextureTargetsRequired && (!objectRefractionTarget || !objectReflectionTarget || !objectClippedTarget)) {
+          qualityRetryState.object.pending = true;
+          qualityAllocationPending = true;
+        } else {
+          finishQualityAllocation(qualityRetryState.object);
+        }
+      }
+
+      activeObjectTexturePixelBudget = objectTextureSize * objectTextureSize * 3;
+      qualityAllocationPending = qualityRetryState.caustics.pending ||
+        qualityRetryState.shadow.pending || qualityRetryState.object.pending;
+      activeQualityRevision = adaptiveEnabled && !qualityAllocationPending ? revision : -1;
+    }
 
     // (Re)upload the live world-space mesh soup into a persistent VAO and point
     // `position`/`normal`/`uv` at the active program's attribute locations. The
@@ -3142,7 +3650,7 @@
     // view-projection + texture-pass mode (1 = refraction/reflection, 2 = clipped
     // reflection: discards submerged fragments). Mirrors the WebGPU
     // renderWaterObjectMeshTargetPass: clear transparent, depth-test on, no cull.
-    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameLightDir, framePoolHeight) {
+    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameCausticTex, frameLightDir, framePoolWidth, framePoolLength, framePoolHeight, frameObjectCenter, frameObjectRadius, frameObjectKind) {
       if (!prog || !target || !meshUpload || !meshUpload.count) return;
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, target.size, target.size);
@@ -3155,48 +3663,45 @@
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.useProgram(prog);
       gl.bindVertexArray(meshUpload.vao);
-      var samplers = [{ name: sceneWaterRenderStateUniform(desc), target: gl.TEXTURE_2D, tex: stateTex }];
+      var samplers = [
+        { name: sceneWaterRenderStateUniform(desc), target: gl.TEXTURE_2D, tex: stateTex },
+        { name: "causticTexture", target: gl.TEXTURE_2D, tex: frameCausticTex },
+      ];
       if (modelTex) samplers.push({ name: "modelTexture", target: gl.TEXTURE_2D, tex: modelTex });
       sceneWaterRenderBindSamplers(gl, prog, samplers);
       sceneWaterRenderSetUniforms(gl, prog, desc, {
-        mvp: vpMatrix, normalMatrix: identity3, lightDir: frameLightDir, poolHeight: framePoolHeight,
+        mvp: vpMatrix, modelMatrix: identity4, normalMatrix: identity3,
+        lightDir: frameLightDir, poolWidth: framePoolWidth, poolLength: framePoolLength, poolHeight: framePoolHeight,
+        objectCenter: frameObjectCenter, objectRadius: frameObjectRadius, objectKind: frameObjectKind,
         baseColor: [1, 1, 1, 1], isTexturePass: 1, texturePassMode: mode,
       });
       gl.drawArrays(gl.TRIANGLES, 0, meshUpload.count);
       gl.bindVertexArray(null);
     }
 
-    function drawFrame() {
+    function drawFrame(frameMeta) {
       if (disposed) return;
       var width = canvas.width || 1;
       var height = canvas.height || 1;
       var aspect = width / Math.max(1, height);
       var liveEntry = (lastBundle && Array.isArray(lastBundle.waterSystems) && lastBundle.waterSystems[0]) || entry;
+      applyWaterQualityProfile(frameMeta);
+      var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
+        ? Number(frameMeta.nowMS)
+        : ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
+      var active = lifecycleActive && (!frameMeta || frameMeta.active !== false);
+      var paused = lifecyclePaused || sceneBool(liveEntry.paused, false);
+      var clockFrame = sceneWaterAdvanceRendererClock(waterClock, nowMS, active, paused, waterClockOptions);
 
-      primeRipples();
-      var dropEventID = Math.max(0, Math.floor(sceneWaterNum(liveEntry.dropEventID, 0)));
-      if (dropEventID > 0 && dropEventID !== lastDropEventID) {
-        if (sim.drop({
-          x: sceneWaterNum(liveEntry.dropX, 0),
-          z: sceneWaterNum(liveEntry.dropZ, 0),
-          radius: sceneWaterNum(liveEntry.dropEventRadius, sceneWaterNum(liveEntry.dropRadius, 0.05)),
-          strength: sceneWaterNum(liveEntry.dropEventStrength, sceneWaterNum(liveEntry.dropStrength, 0.05)),
-        })) {
-          lastDropEventID = dropEventID;
-        }
+      // Capture event payloads on every submitted display frame, but never
+      // mutate the simulation unless the fixed clock produced a real tick.
+      // Paused/inactive frames therefore retain their queued IDs and data.
+      queueWaterEvents(liveEntry);
+      if (clockFrame.ticks > 0) {
+        drainWaterEvents();
+        sim.simulate(clockFrame.substeps);
+        sim.recomputeNormal();
       }
-      var displacementEvents = Array.isArray(liveEntry.objectDisplacementEvents) ? liveEntry.objectDisplacementEvents : [];
-      for (var eventIndex = 0; eventIndex < displacementEvents.length; eventIndex++) {
-        var displacementEvent = displacementEvents[eventIndex];
-        var displacementEventID = Math.max(0, Math.floor(sceneWaterNum(displacementEvent && displacementEvent.id, 0)));
-        if (!displacementEvent || displacementEventID <= lastObjectDisplacementEventID) continue;
-        sim.displace(displacementEvent);
-        lastObjectDisplacementEventID = Math.max(lastObjectDisplacementEventID, displacementEventID);
-      }
-      // Keep the established two-substep integration rate at every quality.
-      // Resolution and retained-pass cadence are safe quality levers; dropping
-      // an integration step changes wave propagation and damping semantics.
-      if (!liveEntry.paused) sim.step({ substeps: 2 });
       var stateTex = sim.currentStateTexture();
       if (!stateTex) return;
 
@@ -3224,7 +3729,11 @@
         sceneWaterNum(liveEntry.lightDirectionY, 2),
         sceneWaterNum(liveEntry.lightDirectionZ, -1),
       ];
-      var liveWaterColor = sceneWaterRenderHexColor(liveEntry.shallowColor, [0.48, 0.82, 0.92]);
+      var fallbackWaterColor = sceneWaterRenderHexColor(liveEntry.shallowColor, [0.48, 0.82, 0.92]);
+      var hasHDRWaterColor = sceneWaterNum(liveEntry.aboveWaterColorR, 0) !== 0 || sceneWaterNum(liveEntry.aboveWaterColorG, 0) !== 0 || sceneWaterNum(liveEntry.aboveWaterColorB, 0) !== 0;
+      var liveWaterColor = hasHDRWaterColor
+        ? [sceneWaterNum(liveEntry.aboveWaterColorR, 0.25), sceneWaterNum(liveEntry.aboveWaterColorG, 1), sceneWaterNum(liveEntry.aboveWaterColorB, 1.25)]
+        : fallbackWaterColor;
       var liveOpticsEnable = (liveEntry.reflection || liveEntry.refraction) ? 1 : 0;
       var liveOpticsCaustic = liveEntry.caustics ? 1 : 0;
       // ---- live rounded-corner pool (mirrors WebGPU's drawWaterPoolEntries,
@@ -3300,8 +3809,18 @@
       // Fullscreen pass over the live sim state -> the caustic light pattern the
       // pool + surface project onto the wet floor. Mirrors the WebGPU caustics
       // setup (causticsResolution target, state at unit 0, resolution = sim grid).
-      var expensivePassCadence = waterQuality === "full" ? 1 : (waterQuality === "balanced" ? 2 : 3);
-      var refreshExpensivePasses = (frameCount % expensivePassCadence) === 0;
+      var expensivePassCadence = activeExpensivePassCadence;
+      // Solver work is bounded, but retained-pass cadence follows logical wall
+      // time even when a very low authored frame rate forces solver ticks to be
+      // dropped beyond the bounded catch-up capacity.
+      var logicalCausticsTickSeq = clockFrame.tickSeq + (waterClock.droppedTicks || 0);
+      var causticsCadenceDue = clockFrame.ticks > 0 &&
+        Math.floor(logicalCausticsTickSeq / expensivePassCadence) >
+          Math.floor(Math.max(0, lastCausticsTickSeq) / expensivePassCadence);
+      var refreshExpensivePasses = active && (
+        causticsRefreshCount === 0 ||
+        causticsCadenceDue
+      );
       if (causticsProgram && causticsTarget && refreshExpensivePasses) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, causticsTarget.fbo);
         gl.viewport(0, 0, causticsTarget.size, causticsTarget.size);
@@ -3318,11 +3837,13 @@
         sceneWaterRenderSetUniforms(gl, causticsProgram, causticsDesc, {
           mvp: mvp, normalMatrix: identity3,
           poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
-          normalScale: liveNormalScale, resolution: sim.resolution, time: timeSec,
+          normalScale: liveNormalScale, gridResolution: gridResolution, resolution: sim.resolution, time: timeSec,
           objectKind: liveKindNum, objectCount: 0, opticsEnable: liveOpticsEnable,
           lightDir: liveLightDir, objectCenter: liveCenter, objectHalfRadius: liveHalfRadius,
         });
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.drawArrays(gl.TRIANGLES, 0, surfaceVertexCount);
+        lastCausticsTickSeq = logicalCausticsTickSeq;
+        causticsRefreshCount++;
       }
 
       // ---- pre-pass B: object-shadow RTT ----
@@ -3338,7 +3859,12 @@
         ? fillCompoundShadowSpheres(liveEntry.objectDisplacementSpheres)
         : 0;
       var useCompoundShadow = compoundSphereCount > 0;
-      if (shadowTarget && (useCompoundShadow ? compoundShadowProgram : shadowProgram) && refreshExpensivePasses) {
+      var shadowSignature = waterShadowSignature(
+        liveKindNum, liveMeshID, liveCenter, liveRadius, liveHalf, liveLightDir,
+        livePoolWidth, livePoolLength, useCompoundShadow, compoundSphereCount
+      );
+      var refreshShadowPass = shadowSignature !== lastShadowSignature;
+      if (shadowTarget && (useCompoundShadow ? compoundShadowProgram : shadowProgram) && refreshShadowPass) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, shadowTarget.fbo);
         gl.viewport(0, 0, shadowTarget.size, shadowTarget.size);
         gl.disable(gl.DEPTH_TEST);
@@ -3370,6 +3896,8 @@
           });
         }
         gl.drawArrays(gl.TRIANGLES, 0, 3);
+        lastShadowSignature = shadowSignature;
+        shadowRefreshCount++;
       }
 
       // ---- pre-pass C: object-texture targets (mesh duck / torus) ----
@@ -3382,10 +3910,32 @@
       if (isMeshObject && meshData && meshProgram && ensureObjectTextureTargets()) {
         var meshDescActive = meshUsesModelTex ? duckDesc : objectDesc;
         var meshModel = meshUsesModelTex ? meshModelTex : null;
-        renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, liveLightDir, livePoolHeight);
-        renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, liveLightDir, livePoolHeight);
-        renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, liveLightDir, livePoolHeight);
-        meshTextureReady = true;
+        if (!objectTextureSlotsReady[0] || !objectTextureSlotsReady[1] || !objectTextureSlotsReady[2]) {
+          // A replacement set is not visible to the surface until all three
+          // projective views contain the same-frame mesh. This is a one-time
+          // transition cost and avoids two frames of transparent reflection.
+            renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
+            renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
+            renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
+          objectTextureSlotsReady[0] = true;
+          objectTextureSlotsReady[1] = true;
+          objectTextureSlotsReady[2] = true;
+          meshTexturePassCursor = 0;
+          meshTexturePassCount += 3;
+        } else {
+          // Steady state retains two views and refreshes one round-robin.
+          var meshTexturePassSlot = meshTexturePassCursor % 3;
+          if (meshTexturePassSlot === 0) {
+            renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
+          } else if (meshTexturePassSlot === 1) {
+            renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
+          } else {
+            renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
+          }
+          meshTexturePassCursor = (meshTexturePassCursor + 1) % 3;
+          meshTexturePassCount++;
+        }
+        meshTextureReady = objectTextureSlotsReady[0] && objectTextureSlotsReady[1] && objectTextureSlotsReady[2];
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -3446,11 +3996,16 @@
         refreshMeshUpload(meshProgram, meshData);
         gl.bindVertexArray(meshUpload.vao);
         var directDesc = meshUsesModelTex ? duckDesc : objectDesc;
-        var directSamplers = [{ name: sceneWaterRenderStateUniform(directDesc), target: gl.TEXTURE_2D, tex: stateTex }];
+        var directSamplers = [
+          { name: sceneWaterRenderStateUniform(directDesc), target: gl.TEXTURE_2D, tex: stateTex },
+          { name: "causticTexture", target: gl.TEXTURE_2D, tex: causticTex },
+        ];
         if (meshUsesModelTex && meshModelTex) directSamplers.push({ name: "modelTexture", target: gl.TEXTURE_2D, tex: meshModelTex });
         sceneWaterRenderBindSamplers(gl, meshProgram, directSamplers);
         sceneWaterRenderSetUniforms(gl, meshProgram, directDesc, {
-          mvp: mvp, normalMatrix: identity3, lightDir: liveLightDir, poolHeight: livePoolHeight,
+          mvp: mvp, modelMatrix: identity4, normalMatrix: identity3,
+          lightDir: liveLightDir, poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
+          objectCenter: liveCenter, objectRadius: liveRadius, objectKind: liveKindNum,
           baseColor: meshUsesModelTex ? [1, 1, 1, 1] : [0.52, 0.54, 0.56, 1],
           isTexturePass: 0, texturePassMode: 0,
         });
@@ -3460,9 +4015,12 @@
         gl.bindVertexArray(objectMesh.vao);
         sceneWaterRenderBindSamplers(gl, objectProgram, [
           { name: sceneWaterRenderStateUniform(objectDesc), target: gl.TEXTURE_2D, tex: stateTex },
+          { name: "causticTexture", target: gl.TEXTURE_2D, tex: causticTex },
         ]);
         sceneWaterRenderSetUniforms(gl, objectProgram, objectDesc, {
-          mvp: mvp, normalMatrix: identity3, lightDir: liveLightDir, poolHeight: livePoolHeight,
+          mvp: mvp, modelMatrix: identity4, normalMatrix: identity3,
+          lightDir: liveLightDir, poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
+          objectCenter: liveCenter, objectRadius: liveRadius, objectKind: liveKindNum,
           baseColor: [0.52, 0.54, 0.56, 1], isTexturePass: 0, texturePassMode: 0,
         });
         gl.drawElements(gl.TRIANGLES, objectMesh.count, gl.UNSIGNED_SHORT, 0);
@@ -3512,23 +4070,40 @@
       frameCount++;
     }
 
-    function render(bundle /*, viewport */) {
+    function render(bundle, viewport, frameMeta) {
       if (disposed) return;
       if (bundle) lastBundle = bundle;
-      drawFrame();
+      var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
+        ? Number(frameMeta.nowMS)
+        : ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
+      var timerRecord = beginWaterTimerQuery(nowMS);
+      try {
+        drawFrame(frameMeta);
+      } finally {
+        endWaterTimerQuery(timerRecord);
+      }
+    }
+
+    function setLifecycle(next) {
+      next = next || {};
+      var nextActive = next.disposed === true ? false : next.active !== false;
+      var nextPaused = next.paused === true;
+      if (nextActive === lifecycleActive && nextPaused === lifecyclePaused && next.disposed !== true) return;
+      lifecycleActive = nextActive;
+      lifecyclePaused = nextPaused;
+      sceneWaterResetClock(waterClock, next.nowMS, lifecycleActive, lifecyclePaused);
     }
 
     function dispose() {
       if (disposed) return;
       disposed = true;
+      disposeWaterTimerQueries();
       try { sim.dispose(); } catch (e) {}
-      if (poolProgram) gl.deleteProgram(poolProgram);
-      if (surfaceProgram) gl.deleteProgram(surfaceProgram);
-      if (objectProgram) gl.deleteProgram(objectProgram);
-      if (duckProgram) gl.deleteProgram(duckProgram);
-      if (causticsProgram) gl.deleteProgram(causticsProgram);
-      if (shadowProgram) gl.deleteProgram(shadowProgram);
-      if (compoundShadowProgram) gl.deleteProgram(compoundShadowProgram);
+      [poolProgram, surfaceProgram, objectProgram, duckProgram, causticsProgram, shadowProgram, compoundShadowProgram].forEach(function(program) {
+        if (!program) return;
+        sceneWaterForgetUniformLocations(program);
+        gl.deleteProgram(program);
+      });
       if (emptyVAO) gl.deleteVertexArray(emptyVAO);
       deleteAnalyticMesh(sphereMesh);
       deleteAnalyticMesh(boxMesh);
@@ -3553,12 +4128,61 @@
       isWaterForced: true,
       render: render,
       getStats: function() {
+        pollWaterTimerQueries();
+        var simulationStats = sim.getStats();
         return {
           waterFrames: frameCount,
           waterQuality: waterQuality,
           waterSimulationResolution: sim.resolution,
+          waterSurfaceGridResolution: gridResolution,
+          waterSurfaceVertices: surfaceVertexCount,
+          waterCausticsRefreshes: causticsRefreshCount,
+          waterShadowRefreshes: shadowRefreshCount,
+          waterObjectTexturePasses: meshTexturePassCount,
+          waterSimulationTickSeq: waterClock.tickSeq || 0,
+          waterSolverSubstepSeq: waterClock.solverSubstepSeq || 0,
+          waterDroppedSimulationTicks: waterClock.droppedTicks || 0,
+          waterDroppedSimulationTicksLastFrame: waterClock.dropped || 0,
+          waterSimulationCatchUpCap: waterClockOptions.maxCatchUpTicks,
+          waterSimulationTicksLastFrame: waterClock.ticks || 0,
+          waterSolverSubstepsLastFrame: waterClock.substeps || 0,
+          waterSimulationClockReset: waterClock.reset === true,
+          waterSimulationPasses: simulationStats.simulationPasses,
+          waterNormalPasses: simulationStats.normalPasses,
+          waterNormalDirty: simulationStats.normalDirty,
+          waterLastDropEventID: lastDropEventID,
+          waterLastObjectDisplacementEventID: lastObjectDisplacementEventID,
+          waterSeedEventPending: !seeded,
+          waterDropEventsPending: pendingDropEvents.size,
+          waterObjectDisplacementEventsPending: pendingObjectDisplacementEvents.size,
+          waterEventsPending: (seeded ? 0 : 1) + pendingDropEvents.size + pendingObjectDisplacementEvents.size,
+          waterEventsQueued: queuedWaterEventCount,
+          waterEventsDrained: drainedWaterEventCount,
+          waterQualityTier: activeQualityTier,
+          waterQualityAdaptiveEnabled: qualityAdaptiveEnabled,
+          waterQualityRevision: activeQualityRevision,
+          waterQualityRequestedRevision: requestedQualityRevision,
+          waterQualityDPRCap: activeQualityDPRCap,
+          waterCausticsResolution: causticsTarget ? causticsTarget.size : 0,
+          waterObjectShadowResolution: shadowTarget ? shadowTarget.size : 0,
+          waterObjectTextureResolution: objectTextureSize,
+          waterObjectTexturePixelBudget: activeObjectTexturePixelBudget,
+          waterObjectTextureReady: objectTextureSlotsReady[0] && objectTextureSlotsReady[1] && objectTextureSlotsReady[2],
+          waterExpensivePassCadence: activeExpensivePassCadence,
+          waterQualityAllocationPending: qualityAllocationPending,
+          waterQualityAllocationFailures: qualityAllocationFailureCount,
+          waterQualityCausticsRetryFrame: qualityRetryState.caustics.nextFrame,
+          waterQualityShadowRetryFrame: qualityRetryState.shadow.nextFrame,
+          waterQualityObjectRetryFrame: qualityRetryState.object.nextFrame,
+          waterPerformanceTimingAvailable: getPerformanceTimingStatus().available,
+          waterPerformanceTimingPending: getPerformanceTimingStatus().pending,
+          waterLastGPUMS: lastPerformanceSample ? lastPerformanceSample.gpuMS : 0,
+          waterLastGPUTimingAtMS: lastPerformanceSample ? lastPerformanceSample.atMS : 0,
         };
       },
+      pollPerformanceSample: pollPerformanceSample,
+      getPerformanceTimingStatus: getPerformanceTimingStatus,
+      setLifecycle: setLifecycle,
       dispose: dispose,
       resize: function() {},
       supportsBundle: function() { return true; },

@@ -1,6 +1,7 @@
 package fluid
 
 import (
+	"encoding/json"
 	"log"
 	"math"
 	"sync"
@@ -12,7 +13,7 @@ import (
 )
 
 const (
-	gridN      = 16
+	gridN      = 24
 	tickRateHz = 20
 	bitWidth   = 6
 	topic      = "velocity"
@@ -26,6 +27,8 @@ type Sim struct {
 	startTime time.Time
 	running   atomic.Bool
 	once      sync.Once
+	previous  *field.Field
+	tick      uint64
 }
 
 // NewSim constructs a Sim backed by the given hub.
@@ -79,7 +82,29 @@ func (s *Sim) tickLoop() {
 		}
 		t := float32(time.Since(s.startTime).Seconds())
 		f := s.computeFrame(t)
-		if err := field.PublishField(s.hub, topic, f, field.QuantizeOptions{BitWidth: bitWidth}); err != nil {
+		s.tick++
+		// Emit an absolute recovery frame every two seconds (s.tick%40) so
+		// clients that join mid-stream never interpret a delta without its
+		// base. Kept at 40 ticks / 2s even as gridN grows: keyframes and
+		// deltas cost identical wire bytes (both pack totalVoxels *
+		// Components values at the same bitWidth — see field.QuantizeChecked),
+		// so this cadence is purely a join-latency knob, not a bandwidth one.
+		// The client (fluid-client.js onHubEvent) now correctly ignores any
+		// delta seen before the first keyframe rather than misrendering it.
+		var base *field.Field
+		if s.tick%40 != 1 {
+			base = s.previous
+		}
+		q, err := f.QuantizeChecked(field.QuantizeOptions{BitWidth: bitWidth, DeltaAgainst: base})
+		if err == nil {
+			var payload []byte
+			payload, err = json.Marshal(q)
+			if err == nil {
+				s.hub.Broadcast("field:"+topic, json.RawMessage(payload))
+			}
+		}
+		s.previous = f
+		if err != nil {
 			log.Printf("fluid demo publish failed: %v", err)
 		}
 	}

@@ -95,6 +95,76 @@ func SharedTheme() Node {
 }
 `,
 	},
+	{
+		Slug:        "progress-bar",
+		Title:       "Progress Bar",
+		Description: "Bounded counter driving a CSS-animated fill bar",
+		Source: `package playground
+
+//gosx:island
+func ProgressBar() Node {
+	count := signal.New(0)
+	return <div class="progress-bar">
+		<div class="progress-bar__track">
+			<div class="progress-bar__fill" style={"width: " + (count.Get() < 0 ? 0 : count.Get() > 10 ? 10 : count.Get()) * 10 + "%"}></div>
+		</div>
+		<div class="progress-bar__controls">
+			<button data-on-click="count.Set(count.Get() - 1 < 0 ? 0 : count.Get() - 1)">-1</button>
+			<span class="progress-bar__value">{count.Get()}</span>
+			<button data-on-click="count.Set(count.Get() + 1 > 10 ? 10 : count.Get() + 1)">+1</button>
+		</div>
+	</div>
+}
+`,
+	},
+	{
+		Slug:        "color-mixer",
+		Title:       "Color Mixer",
+		Description: "Three signals mixed live into an RGB swatch",
+		Source: `package playground
+
+//gosx:island
+func ColorMixer() Node {
+	r := signal.New(120)
+	g := signal.New(200)
+	b := signal.New(255)
+	return <div class="color-mixer">
+		<div class="color-mixer__swatch" style={"background: rgb(" + r.Get() + ", " + g.Get() + ", " + b.Get() + ")"}></div>
+		<label class="color-mixer__row">
+			<span class="color-mixer__label">R</span>
+			<input type="range" min="0" max="255" value={r.Get()} data-on-input="r.Set(value.toint())" />
+			<b class="color-mixer__value">{r.Get()}</b>
+		</label>
+		<label class="color-mixer__row">
+			<span class="color-mixer__label">G</span>
+			<input type="range" min="0" max="255" value={g.Get()} data-on-input="g.Set(value.toint())" />
+			<b class="color-mixer__value">{g.Get()}</b>
+		</label>
+		<label class="color-mixer__row">
+			<span class="color-mixer__label">B</span>
+			<input type="range" min="0" max="255" value={b.Get()} data-on-input="b.Set(value.toint())" />
+			<b class="color-mixer__value">{b.Get()}</b>
+		</label>
+	</div>
+}
+`,
+	},
+	{
+		Slug:        "heartbeat",
+		Title:       "Heartbeat",
+		Description: "Boolean signal driving a pulsing CSS animation",
+		Source: `package playground
+
+//gosx:island
+func Heartbeat() Node {
+	on := signal.New(false)
+	return <div class="heartbeat">
+		<button class="heartbeat__toggle" data-on-click="on.Set(!on.Get())">{on.Get() ? "Pause" : "Pulse"}</button>
+		<div class={"heartbeat__dot " + (on.Get() ? "heartbeat__dot--active" : "")}></div>
+	</div>
+}
+`,
+	},
 }
 
 // Presets returns the curated list in display order. The first entry is the

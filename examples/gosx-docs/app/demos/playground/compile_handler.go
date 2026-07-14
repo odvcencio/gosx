@@ -45,6 +45,11 @@ type Diagnostic struct {
 
 // CompileResult is the pure output of the playground pipeline.
 type CompileResult struct {
+	// Component is the compiled island component identity. The browser must pass
+	// this exact name to the hydrator; presets are intentionally not all named
+	// "Page".
+	Component string `json:"component"`
+
 	// HTML is the SSR placeholder the client runtime hydrates. In this task
 	// it is a static hydration target; future tasks may enrich it.
 	HTML string `json:"html"`
@@ -57,6 +62,17 @@ type CompileResult struct {
 	// failures). A non-empty Diagnostics slice with a zero Program means the
 	// input had a problem the user needs to see.
 	Diagnostics []Diagnostic `json:"diagnostics"`
+
+	// NodeCount is the number of nodes in the lowered island program.
+	// Zero for diagnostic-only results (parse/validation failures never
+	// reach the lowering pass). Surfaced to the playground editor so the
+	// compiler-output panel can show real IR facts instead of a vague
+	// promise.
+	NodeCount int `json:"nodeCount"`
+
+	// ExprCount is the number of entries in the lowered island program's
+	// expression table. Zero for diagnostic-only results.
+	ExprCount int `json:"exprCount"`
 }
 
 // ErrEmptySource is returned when CompileSource receives empty input.
@@ -135,8 +151,11 @@ func compileSourceWithCountsImpl(source []byte) (CompileResult, int, int, error)
 	}
 
 	return CompileResult{
-		HTML:    renderPlaygroundSSR(prog.Components[0].Name),
-		Program: bin,
+		Component: prog.Components[0].Name,
+		HTML:      renderPlaygroundSSR(prog.Components[0].Name),
+		Program:   bin,
+		NodeCount: nNodes,
+		ExprCount: nExprs,
 	}, nNodes, nExprs, nil
 }
 
@@ -301,17 +320,23 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		}
 		if compiler == nil {
 			return ctx.Success("", map[string]any{
+				"component":   "",
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: "compiler unavailable"}},
+				"nodeCount":   0,
+				"exprCount":   0,
 			})
 		}
 		rateKey := clientIPFromRequest(ctx.Request)
 		if err := json.Unmarshal(ctx.Payload, &req); err != nil {
 			return ctx.Success("", map[string]any{
+				"component":   "",
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: "invalid request body"}},
+				"nodeCount":   0,
+				"exprCount":   0,
 			})
 		}
 		result, err := compiler.Compile(rateKey, []byte(req.Source))
@@ -319,15 +344,21 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		// uniform shape to render.
 		if err != nil {
 			return ctx.Success("", map[string]any{
+				"component":   "",
 				"html":        "",
 				"program":     "",
 				"diagnostics": []Diagnostic{{Message: sentinelMessage(err)}},
+				"nodeCount":   0,
+				"exprCount":   0,
 			})
 		}
 		return ctx.Success("", map[string]any{
+			"component":   result.Component,
 			"html":        result.HTML,
 			"program":     base64.StdEncoding.EncodeToString(result.Program),
 			"diagnostics": result.Diagnostics,
+			"nodeCount":   result.NodeCount,
+			"exprCount":   result.ExprCount,
 		})
 	}
 }
@@ -341,24 +372,33 @@ func CompileAction(ctx *action.Context) error {
 	}
 	if err := json.Unmarshal(ctx.Payload, &req); err != nil {
 		return ctx.Success("", map[string]any{
+			"component":   "",
 			"html":        "",
 			"program":     "",
 			"diagnostics": []Diagnostic{{Message: "invalid request body"}},
+			"nodeCount":   0,
+			"exprCount":   0,
 		})
 	}
 	result, err := CompileSource([]byte(req.Source))
 	if err != nil {
 		// Fatal — expose as a single diagnostic so the client renders something.
 		return ctx.Success("", map[string]any{
+			"component":   "",
 			"html":        "",
 			"program":     "",
 			"diagnostics": []Diagnostic{{Message: err.Error()}},
+			"nodeCount":   0,
+			"exprCount":   0,
 		})
 	}
 	return ctx.Success("", map[string]any{
+		"component":   result.Component,
 		"html":        result.HTML,
 		"program":     base64.StdEncoding.EncodeToString(result.Program),
 		"diagnostics": result.Diagnostics,
+		"nodeCount":   result.NodeCount,
+		"exprCount":   result.ExprCount,
 	})
 }
 

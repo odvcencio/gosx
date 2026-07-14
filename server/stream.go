@@ -127,13 +127,15 @@ func renderDeferredChunk(slotID, html string) string {
 	b.Grow(256 + len(html) + 4*len(templateID) + 2*len(slotID))
 	b.WriteString(`<template id=`)
 	b.WriteString(strconv.Quote(templateID))
-	b.WriteString(` data-gosx-stream-template>`)
+	b.WriteString(` data-gosx-stream-template data-gosx-stream-target=`)
+	b.WriteString(strconv.Quote(slotID))
+	b.WriteString(`>`)
 	b.WriteString(html)
 	b.WriteString(`</template><script>(function(){var slot=document.getElementById(`)
 	b.WriteString(strconv.Quote(slotID))
 	b.WriteString(`);var tpl=document.getElementById(`)
 	b.WriteString(strconv.Quote(templateID))
-	b.WriteString(`);if(!slot||!tpl){return;}slot.replaceWith(tpl.content.cloneNode(true));tpl.remove();})();</script>`)
+	b.WriteString(`);if(!slot||!tpl){return;}var content=tpl.content.cloneNode(true);var replaced=false;if(window.__gosx&&window.__gosx.dom&&typeof window.__gosx.dom.replaceFragment==="function"){replaced=window.__gosx.dom.replaceFragment(slot,content)===true;}if(!replaced){slot.replaceWith(content);}tpl.remove();})();</script>`)
 	return b.String()
 }
 

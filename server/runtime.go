@@ -79,6 +79,17 @@ func (r *PageRuntime) Island(prog *islandprogram.Program, props any) gosx.Node {
 	return r.renderer.RenderIslandFromProgram(prog, props)
 }
 
+// IslandWithProgramAsset registers an exact browser-loadable program asset
+// before rendering an island. It is useful for request-time compiled programs
+// that are not present in the production build manifest.
+func (r *PageRuntime) IslandWithProgramAsset(prog *islandprogram.Program, props any, ref, format, hash string) gosx.Node {
+	if r == nil || prog == nil || strings.TrimSpace(ref) == "" {
+		return gosx.Text("")
+	}
+	r.renderer.SetProgramAsset(prog.Name, ref, format, hash)
+	return r.Island(prog, props)
+}
+
 // ComputeIsland registers a headless island program for page-scoped client
 // compute. It shares the island VM and signal bridge without owning a DOM root.
 func (r *PageRuntime) ComputeIsland(cfg island.ComputeIslandConfig) string {

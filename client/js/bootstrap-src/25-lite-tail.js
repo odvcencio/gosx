@@ -12,15 +12,38 @@
   }
 
   function disposeBootstrapOnlyPage() {
-    disposeManagedMotion();
-    disposeManagedTextLayouts();
+    if (typeof window.__gosx_dispose_runtime_content === "function") {
+      window.__gosx_dispose_runtime_content(document.body || document.documentElement);
+    } else {
+      if (typeof window.__gosx_dispose_declarative_regions === "function") {
+        window.__gosx_dispose_declarative_regions(document.body || document.documentElement);
+      }
+      if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
+        window.__gosx_dispose_runtime_surfaces(document.body || document.documentElement);
+      }
+      disposeManagedMotion();
+      disposeManagedTextLayouts();
+    }
   }
 
   function bootstrapLitePage() {
     refreshGosxEnvironmentState("bootstrap-lite");
     refreshGosxDocumentState("bootstrap-lite");
-    mountManagedMotion(document.body || document.documentElement);
-    mountManagedTextLayouts(document.body || document.documentElement);
+    if (typeof window.__gosx_mount_runtime_content === "function") {
+      window.__gosx_mount_runtime_content(document.body || document.documentElement);
+    } else {
+      mountManagedMotion(document.body || document.documentElement);
+      mountManagedTextLayouts(document.body || document.documentElement);
+      if (typeof window.__gosx_mount_runtime_surfaces === "function") {
+        window.__gosx_mount_runtime_surfaces(document.body || document.documentElement);
+      }
+      if (typeof window.__gosx_mount_stream_templates === "function") {
+        window.__gosx_mount_stream_templates(document.body || document.documentElement);
+      }
+      if (typeof window.__gosx_mount_declarative_regions === "function") {
+        window.__gosx_mount_declarative_regions(document.body || document.documentElement);
+      }
+    }
     window.__gosx.ready = true;
     refreshGosxDocumentState("ready");
   }

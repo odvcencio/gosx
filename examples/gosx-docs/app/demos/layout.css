@@ -10,15 +10,47 @@
    ------------------------------------------------------------ */
 
 .demos-shell {
+	--font-display: "Space Grotesk", sans-serif;
+	--font-body: "Inter", sans-serif;
+	--font-mono: "JetBrains Mono", monospace;
+	--type-xs: 0.75rem;
+	--type-sm: 0.875rem;
+	--type-base: 1rem;
+	--type-lg: 1.25rem;
+	--type-xl: 1.5625rem;
+	--type-2xl: 1.953rem;
+	--type-3xl: clamp(2.25rem, 1.9rem + 1.5vw, 3.052rem);
+	--color-canvas: #0b0b0d;
+	--color-surface: #151519;
+	--color-surface-raised: #1d1d22;
+	--color-text: #f5f5ef;
+	--color-text-secondary: #c7c7c2;
+	--color-text-muted: #9a9a9a;
+	--color-accent: #69e3c7;
+	--color-border: rgba(255, 255, 255, 0.08);
+	--color-border-strong: rgba(255, 255, 255, 0.16);
+	--color-backdrop: rgba(0, 0, 0, 0.64);
+	--duration-fast: 150ms;
+	--duration-standard: 200ms;
+	--duration-reveal: 300ms;
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+	--space-xs: clamp(0.5rem, 0.45rem + 0.2vw, 0.75rem);
+	--space-sm: clamp(0.75rem, 0.7rem + 0.25vw, 1rem);
+	--space-md: clamp(1rem, 0.9rem + 0.5vw, 1.5rem);
+	--space-lg: clamp(1.5rem, 1.3rem + 0.8vw, 2rem);
+	--space-xl: clamp(2rem, 1.7rem + 1.25vw, 3rem);
+	--space-2xl: clamp(3rem, 2.5rem + 2vw, 4rem);
+	--space-3xl: clamp(4rem, 3rem + 4vw, 6rem);
   --demo-site-nav-offset: 61px;
-  --demo-bg: #0b0b0d;
-  --demo-fg: #f5f5ef;
-  --demo-muted: #9a9a9a;
-  --demo-hair: rgba(255, 255, 255, 0.08);
-  --demo-hair-strong: rgba(255, 255, 255, 0.16);
+  --demo-bg: var(--color-canvas);
+  --demo-fg: var(--color-text);
+  --demo-muted: var(--color-text-muted);
+  --demo-hair: var(--color-border);
+  --demo-hair-strong: var(--color-border-strong);
   --demo-accent: #9fffa5;
 
-  /* Per-demo accent palette — applied via data-demo-slug (set by inline script) */
+  /* Per-demo accent palette — active link metadata is projected by GoSX. */
   --demo-accent-playground: #9fffa5;
   --demo-accent-fluid:      #7aa2ff;
   --demo-accent-water:      #69e3c7;
@@ -28,7 +60,7 @@
   --demo-accent-scene3d-bench: #cbd5e1;
   --demo-accent-collab:     #d9f99d;
 
-  font-family: "IBM Plex Sans", "Inter", system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.5;
   color: var(--demo-fg);
@@ -39,7 +71,7 @@
   flex-direction: column;
 }
 
-/* Per-demo accent override via data attribute (set by inline script at runtime) */
+/* Per-demo accent override via the runtime-managed navigation context. */
 .demos-shell[data-demo-slug="playground"] { --demo-accent: #9fffa5; }
 .demos-shell[data-demo-slug="fluid"]      { --demo-accent: #7aa2ff; }
 .demos-shell[data-demo-slug="water"]      { --demo-accent: #69e3c7; }
@@ -269,6 +301,27 @@
   border: 1px solid rgba(159, 255, 165, 0.25);
 }
 
+.demo-dock__chip--featured,
+.demo-card__chip--featured {
+  background: color-mix(in srgb, var(--demo-accent) 14%, transparent);
+  color: var(--demo-accent);
+  border: 1px solid color-mix(in srgb, var(--demo-accent) 30%, transparent);
+}
+
+.demo-dock__chip--lab,
+.demo-card__chip--lab {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--demo-hair-strong);
+}
+
+.demo-dock__chip--prototype,
+.demo-card__chip--prototype {
+  color: var(--demo-muted);
+  background: var(--color-surface);
+  border: 1px dashed var(--demo-hair-strong);
+}
+
 .demo-dock__chip--soon {
   background: rgba(154, 154, 154, 0.08);
   color: var(--demo-muted);
@@ -285,6 +338,15 @@
   min-height: 0;
   overflow: hidden;
   background: var(--demo-bg);
+}
+
+/* A missing/empty catalog must never steal viewport width from a demo. */
+.demos-body:not(:has(.demo-dock__item)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.demos-body:not(:has(.demo-dock__item)) .demo-dock {
+  display: none;
 }
 
 /* Individual demos own their own padding */
@@ -332,6 +394,131 @@
   outline-offset: 2px;
 }
 
+.demo-details-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 390;
+  background: var(--color-backdrop);
+}
+
+.demo-details {
+  position: fixed;
+  top: var(--demo-site-nav-offset);
+  right: 0;
+  bottom: 0;
+  z-index: 400;
+  width: min(30rem, 100vw);
+  box-sizing: border-box;
+  padding: var(--space-lg);
+  overflow-y: auto;
+  color: var(--demo-fg);
+  background: var(--color-surface);
+  border-left: 1px solid var(--demo-hair-strong);
+  box-shadow: -1rem 0 3rem var(--color-backdrop);
+}
+
+.demo-details__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.demo-details__eyebrow {
+  margin: 0 0 var(--space-xs);
+  color: var(--demo-accent);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.demo-details__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-xl);
+  line-height: 1.15;
+}
+
+.demo-details__close {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  place-items: center;
+  color: var(--demo-fg);
+  font: inherit;
+  font-size: var(--type-lg);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--demo-hair-strong);
+  border-radius: 50%;
+}
+
+.demo-details__close:hover,
+.demo-details__close:active {
+  background: var(--color-surface-raised);
+}
+
+.demo-details__close:focus-visible,
+.demo-details__source:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 3px;
+}
+
+.demo-details__lesson {
+  margin: 0 0 var(--space-lg);
+  color: var(--color-text-secondary);
+  font-size: var(--type-base);
+  line-height: 1.65;
+}
+
+.demo-details__facts {
+  display: grid;
+  gap: var(--space-md);
+  margin: 0 0 var(--space-lg);
+}
+
+.demo-details__facts > div {
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--demo-hair);
+}
+
+.demo-details__facts dt {
+  margin-bottom: var(--space-xs);
+  color: var(--demo-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  text-transform: uppercase;
+}
+
+.demo-details__facts dd {
+  margin: 0;
+  color: var(--demo-fg);
+}
+
+.demo-details__source {
+  display: inline-flex;
+  gap: var(--space-xs);
+  align-items: center;
+  color: var(--demo-bg);
+  background: var(--demo-accent);
+  border-radius: 0.375rem;
+  padding: var(--space-sm) var(--space-md);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.demo-details__path {
+  display: block;
+  margin-top: var(--space-sm);
+  color: var(--demo-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .demos-topbar__menu {
     display: flex;
@@ -355,10 +542,7 @@
     overflow-y: auto;
   }
 
-  /* JS toggles aria-expanded on the menu button; CSS reads it via sibling/body class.
-     The drawer open state is driven by the [data-dock-open] attribute on .demos-body,
-     toggled by the same inline wiring future task 14 will add.
-     For now the selector matches when the button has aria-expanded="true". */
+  /* GoSX's declarative toggle owns the drawer's attribute and ARIA state. */
   .demos-body[data-dock-open] .demo-dock {
     transform: translateX(0);
   }

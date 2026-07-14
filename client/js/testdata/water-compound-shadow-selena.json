@@ -1,5 +1,5 @@
 {
-  "_comment": "Generated fixture: real Selena-compiled compound-shadow.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive this water pass through the generic descriptor-driven Selena WebGPU render path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/compound-shadow.sel (TargetWGSL) if compound-shadow.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/compound-shadow.sel",
+  "_comment": "Generated fixture: real Selena-compiled compound-shadow.sel WGSL + host binding descriptor (bindings.Layout). Regenerate with `go run ./examples/gosx-docs/app/demos/water/cmd/generate-selena-fixtures`. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/compound-shadow.sel",
   "layout": {
     "schemaVersion": "selena.descriptor.v1",
     "languageVersion": "selena.lang.v1",

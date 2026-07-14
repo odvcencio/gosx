@@ -26,24 +26,37 @@
   height: 100%;
 }
 
-/* Overlay — bottom-left corner, pointer-events off so orbit drag works */
+/* Overlay — bottom-left teaching layer; its compact bounds leave the scene interactive. */
 .scene3d-showcase__overlay {
   position: absolute;
   bottom: var(--space-lg, 2rem);
   left: var(--space-lg, 2rem);
   z-index: 1;
-  pointer-events: none;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  max-width: 22rem;
+  gap: var(--space-xs);
+  max-width: min(28rem, calc(100% - 2 * var(--space-lg)));
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--color-canvas) 88%, transparent);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.5rem;
+  box-shadow: 0 1rem 3rem var(--color-backdrop);
+}
+
+.scene3d-showcase__eyebrow {
+  margin: 0;
+  color: var(--demo-accent);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* Display title */
 .scene3d-showcase__title {
-  font-family: var(--font-display, "IBM Plex Sans", system-ui, sans-serif);
-  font-size: clamp(1.75rem, 4vw, 2.75rem);
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--type-2xl);
+  font-weight: 700;
   line-height: 1.1;
   letter-spacing: -0.02em;
   color: var(--demo-fg);
@@ -57,28 +70,75 @@
   width: 2rem;
   height: 2px;
   background: var(--demo-accent);
-  margin-top: 0.5rem;
+  margin-top: var(--space-xs);
   border-radius: 1px;
 }
 
 /* One-line tagline */
 .scene3d-showcase__tagline {
-  font-family: var(--font-display, "IBM Plex Sans", system-ui, sans-serif);
-  font-size: 0.8rem;
-  color: var(--demo-muted);
-  letter-spacing: 0.03em;
-  margin: 0.25rem 0 0;
+  font-family: var(--font-body);
+  font-size: var(--type-sm);
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.5;
 }
 
 /* Controls hint — monospace, dimmer */
 .scene3d-showcase__controls {
-  font-family: var(--font-mono, "IBM Plex Mono", "Fira Code", monospace);
-  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
   color: var(--demo-accent);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin: 0;
   opacity: 0.75;
+}
+
+.scene3d-showcase__runtime {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+  margin: 0;
+  color: var(--demo-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+
+.scene3d-showcase__runtime output {
+  color: var(--demo-accent);
+}
+
+.scene3d-showcase__proof {
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--type-xs);
+}
+
+.scene3d-showcase__proof summary {
+  width: fit-content;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.scene3d-showcase__proof summary:hover,
+.scene3d-showcase__proof summary:active {
+  color: var(--demo-fg);
+}
+
+.scene3d-showcase__proof summary:focus-visible,
+.scene3d-showcase__proof a:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 3px;
+}
+
+.scene3d-showcase__proof ul {
+  margin: var(--space-sm) 0;
+  padding-left: var(--space-md);
+  color: var(--color-text-secondary);
+}
+
+.scene3d-showcase__proof a {
+  color: var(--demo-accent);
 }
 
 /* Responsive — smaller overlay on narrow viewports */
@@ -88,13 +148,7 @@
     left: var(--space-md, 1.25rem);
   }
 
-  .scene3d-showcase__title {
-    font-size: clamp(1.4rem, 6vw, 2rem);
-  }
-
-  .scene3d-showcase__tagline {
-    font-size: 0.72rem;
-  }
+  .scene3d-showcase__proof ul { display: none; }
 }
 
 /* Reduced-motion: honour system preference (AutoRotate is purely JS-side) */
@@ -103,3 +157,5 @@
     transition: none;
   }
 }
+    max-width: calc(100% - 2 * var(--space-md));
+    padding: var(--space-sm);

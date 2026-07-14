@@ -4,12 +4,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"m31labs.dev/gosx"
 )
 
 const (
-	NavigationEnhanceAttr      = "data-gosx-enhance"
-	NavigationEnhanceLayerAttr = "data-gosx-enhance-layer"
-	NavigationFallbackAttr     = "data-gosx-fallback"
+	NavigationEnhanceAttr      = gosx.EnhancementAttr
+	NavigationEnhanceLayerAttr = gosx.EnhancementLayerAttr
+	NavigationFallbackAttr     = gosx.RuntimeFallbackAttr
 
 	NavigationLinkAttr               = "data-gosx-link"
 	NavigationLinkStateAttr          = "data-gosx-link-state"
@@ -19,9 +21,9 @@ const (
 	NavigationLinkPrefetchStateAttr  = "data-gosx-prefetch-state"
 	NavigationLinkManagedCurrentAttr = "data-gosx-aria-current-managed"
 
-	NavigationFormAttr      = "data-gosx-form"
-	NavigationFormModeAttr  = "data-gosx-form-mode"
-	NavigationFormStateAttr = "data-gosx-form-state"
+	NavigationFormAttr      = gosx.ManagedFormAttr
+	NavigationFormModeAttr  = gosx.ManagedFormModeAttr
+	NavigationFormStateAttr = gosx.ManagedFormStateAttr
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"

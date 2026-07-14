@@ -292,7 +292,7 @@
 
   const loadedScriptTags = new Map();
 
-  function loadScriptTag(src) {
+  function loadScriptTag(src, role) {
     if (!src) return Promise.resolve();
     if (loadedScriptTags.has(src)) {
       return loadedScriptTags.get(src);
@@ -300,6 +300,7 @@
     const promise = new Promise(function(resolve, reject) {
       const script = document.createElement("script");
       script.src = src;
+      script.setAttribute("data-gosx-script", role || "managed-runtime");
       script.onload = resolve;
       script.onerror = function() {
         reject(new Error("failed to load script: " + src));
@@ -1124,6 +1125,86 @@
 
   function sceneCSSVarReference(value) {
     return typeof value === "string" && /^var\(\s*--[-_a-zA-Z0-9]+\s*(?:,|\))/.test(value.trim());
+  }
+
+  // Fixed-rate water clock shared by WebGL and WebGPU. Kept after the
+  // runtime-utils extraction boundary so non-Scene3D routes do not download
+  // water simulation policy.
+  function sceneWaterResetClock(clock, nowMS, active, paused) {
+    var state = clock && typeof clock === "object" ? clock : {};
+    var now = Number(nowMS);
+    state.lastNowMS = Number.isFinite(now) ? now : 0;
+    state.accumulatorMS = 0;
+    state.anchored = false;
+    state.active = Boolean(active);
+    state.paused = Boolean(paused);
+    state.ticks = 0;
+    state.substeps = 0;
+    state.dropped = 0;
+    state.deltaSeconds = 0;
+    state.reset = true;
+    if (!Number.isFinite(Number(state.tickSeq))) state.tickSeq = 0;
+    if (!Number.isFinite(Number(state.solverSubstepSeq))) state.solverSubstepSeq = 0;
+    if (!Number.isFinite(Number(state.droppedTicks))) state.droppedTicks = 0;
+    return state;
+  }
+
+  function sceneWaterAdvanceClock(clock, nowMS, active, paused, options) {
+    var state = clock && typeof clock === "object" ? clock : {};
+    var opts = options && typeof options === "object" ? options : {};
+    var simulationHz = Math.max(1, Math.min(240, sceneNumber(opts.simulationHz, 60)));
+    var maxCatchUpTicks = Math.max(0, Math.min(8, Math.floor(sceneNumber(opts.maxCatchUpTicks, 2))));
+    var solverSubsteps = Math.max(1, Math.min(8, Math.floor(sceneNumber(opts.solverSubsteps, 2))));
+    var tickMS = 1000 / simulationHz;
+    var now = Number(nowMS);
+
+    state.simulationHz = simulationHz;
+    state.maxCatchUpTicks = maxCatchUpTicks;
+    state.solverSubstepsPerTick = solverSubsteps;
+    state.tickMS = tickMS;
+    state.tickSeconds = 1 / simulationHz;
+    state.ticks = 0;
+    state.substeps = 0;
+    state.dropped = 0;
+    state.deltaSeconds = 0;
+    state.reset = false;
+    if (!Number.isFinite(Number(state.tickSeq))) state.tickSeq = 0;
+    if (!Number.isFinite(Number(state.solverSubstepSeq))) state.solverSubstepSeq = 0;
+    if (!Number.isFinite(Number(state.droppedTicks))) state.droppedTicks = 0;
+
+    var running = Boolean(active) && !Boolean(paused);
+    if (!running || !Number.isFinite(now)) return sceneWaterResetClock(state, now, active, paused);
+    var lastNow = Number(state.lastNowMS);
+    if (!state.anchored || !Number.isFinite(lastNow) || state.active === false || state.paused === true) {
+      sceneWaterResetClock(state, now, true, false);
+      state.anchored = true;
+      return state;
+    }
+    if (now < lastNow) {
+      sceneWaterResetClock(state, now, true, false);
+      state.anchored = true;
+      return state;
+    }
+
+    var accumulatedMS = Math.max(0, sceneNumber(state.accumulatorMS, 0)) + Math.max(0, now - lastNow);
+    state.lastNowMS = now;
+    state.active = true;
+    state.paused = false;
+    var wholeTicks = Math.max(0, Math.floor((accumulatedMS + tickMS * 1e-9) / tickMS));
+    var ticks = Math.min(wholeTicks, maxCatchUpTicks);
+    var dropped = Math.max(0, wholeTicks - ticks);
+    accumulatedMS -= wholeTicks * tickMS;
+    if (!(accumulatedMS >= 0) || accumulatedMS >= tickMS) accumulatedMS = 0;
+
+    state.accumulatorMS = accumulatedMS;
+    state.ticks = ticks;
+    state.substeps = ticks * solverSubsteps;
+    state.dropped = dropped;
+    state.deltaSeconds = ticks * state.tickSeconds;
+    state.tickSeq += ticks;
+    state.solverSubstepSeq += state.substeps;
+    state.droppedTicks += dropped;
+    return state;
   }
 
   function sceneNumberOrCSSVar(value, fallback) {
@@ -2979,18 +3060,14 @@
       interactionTarget: typeof item.interactionTarget === "string" ? item.interactionTarget : (typeof current.interactionTarget === "string" ? current.interactionTarget : ""),
       interactionObject: typeof item.interactionObject === "string" ? item.interactionObject : (typeof current.interactionObject === "string" ? current.interactionObject : ""),
       resolution: Math.max(1, Math.floor(sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))),
-      // Tessellation of the surface mesh, independent of the simulation grid above.
-      // 0 means "match resolution". This normalizer is a WHITELIST -- a field absent
-      // here is silently dropped before the renderer ever sees it, which is how a
-      // custom postfx pass got destroyed once already.
-      surfaceMeshResolution: Math.max(0, Math.floor(sceneNumber(item.surfaceMeshResolution, sceneNumber(current.surfaceMeshResolution, 0)))),
+      surfaceResolution: Math.max(2, Math.floor(sceneNumber(item.surfaceResolution, sceneNumber(current.surfaceResolution, sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))))),
       poolShape: typeof item.poolShape === "string" && item.poolShape ? item.poolShape : (typeof current.poolShape === "string" ? current.poolShape : "Box"),
       poolWidth: Math.max(0.001, sceneNumber(item.poolWidth, sceneNumber(current.poolWidth, 1))),
       poolHeight: Math.max(0.001, sceneNumber(item.poolHeight, sceneNumber(current.poolHeight, 1))),
       poolLength: Math.max(0.001, sceneNumber(item.poolLength, sceneNumber(current.poolLength, 1))),
       cornerRadius: Math.max(0, sceneNumber(item.cornerRadius, sceneNumber(current.cornerRadius, 0))),
-      waveSpeed: sceneNumber(item.waveSpeed, sceneNumber(current.waveSpeed, 0.995)),
-      damping: sceneNumber(item.damping, sceneNumber(current.damping, 0.985)),
+      waveSpeed: sceneNumber(item.waveSpeed, sceneNumber(current.waveSpeed, 1)),
+      damping: sceneNumber(item.damping, sceneNumber(current.damping, 0.995)),
       normalScale: sceneNumber(item.normalScale, sceneNumber(current.normalScale, 1)),
       seedDrops: Math.max(0, Math.floor(sceneNumber(item.seedDrops, sceneNumber(current.seedDrops, 0)))),
       dropRadius: Math.max(0, sceneNumber(item.dropRadius, sceneNumber(current.dropRadius, 0.03))),
@@ -3004,6 +3081,9 @@
       cubeMap: typeof item.cubeMap === "string" ? item.cubeMap : (typeof current.cubeMap === "string" ? current.cubeMap : ""),
       shallowColor: typeof item.shallowColor === "string" ? item.shallowColor : (typeof current.shallowColor === "string" ? current.shallowColor : ""),
       deepColor: typeof item.deepColor === "string" ? item.deepColor : (typeof current.deepColor === "string" ? current.deepColor : ""),
+      aboveWaterColorR: sceneNumber(item.aboveWaterColorR, sceneNumber(current.aboveWaterColorR, 0)),
+      aboveWaterColorG: sceneNumber(item.aboveWaterColorG, sceneNumber(current.aboveWaterColorG, 0)),
+      aboveWaterColorB: sceneNumber(item.aboveWaterColorB, sceneNumber(current.aboveWaterColorB, 0)),
       causticsResolution: Math.max(0, Math.floor(sceneNumber(item.causticsResolution, sceneNumber(current.causticsResolution, 0)))),
       objectTextureResolution: Math.max(0, Math.floor(sceneNumber(item.objectTextureResolution, sceneNumber(current.objectTextureResolution, 0)))),
       objectTextureResolutionMode: typeof item.objectTextureResolutionMode === "string" ? item.objectTextureResolutionMode : (typeof current.objectTextureResolutionMode === "string" ? current.objectTextureResolutionMode : ""),
@@ -7747,6 +7827,8 @@
     sceneNormalizeDirection,
     sceneNowMilliseconds,
     sceneNumber,
+    sceneWaterAdvanceClock,
+    sceneWaterResetClock,
     sceneObjectAnimated,
     scenePointStyleCode,
     scenePrimeInitialTransitions,

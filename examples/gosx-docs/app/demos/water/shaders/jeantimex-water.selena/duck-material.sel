@@ -13,13 +13,17 @@
 // the "normal" vertex attribute.
 material WaterDuckMaterial {
     param poolHeight      : float = 0.3
+    param poolWidth       : float = 1.0
+    param poolLength      : float = 1.0
     param baseColor       : vec4
     param isTexturePass   : float = 0.0
     param texturePassMode : float = 0.0
     param modelTexture    : texture2d
+    param causticTexture  : texture2d
 
     context {
-        lightDir : vec3
+        lightDir    : vec3
+        modelMatrix : mat4
     }
 
     state water
@@ -29,22 +33,25 @@ material WaterDuckMaterial {
     varying vNormal  : vec3
 
     vertex(geo) -> vec4 {
-        worldPos = geo.position
+        let world = modelMatrix * vec4f(geo.position, 1.0)
+        worldPos = world.xyz
         vUv      = geo.uv
         vNormal  = normalize(normalMatrix * geo.normal)
-        return mvp * vec4f(geo.position, 1.0)
+        return mvp * world
     }
 
     surface(geo) -> color {
-        let info        = stateAt(geo.vUv)
-        let waterHeight = info.x * poolHeight
-        let caustic     = info.y
+        let waterUV     = geo.worldPos.xz * vec2f(0.5 / poolWidth, 0.5 / poolLength) + vec2f(0.5, 0.5)
+        let info        = stateAt(waterUV)
+        let waterHeight = info.x
         let belowWater  = geo.worldPos.y < waterHeight
         if (isTexturePass > 0.5 && texturePassMode == 2.0 && belowWater) {
             discard
         }
         let lightN    = normalize(lightDir)
         let refr      = refract(-lightN, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let causticUV = 0.75 * (geo.worldPos.xz - geo.worldPos.y * refr.xz / refr.y) * vec2f(0.5 / poolWidth, 0.5 / poolLength) + vec2f(0.5, 0.5)
+        let caustic   = sample(causticTexture, causticUV).x
         let n         = normalize(geo.vNormal)
         let albedo    = sample(modelTexture, geo.vUv).rgb * baseColor.rgb
         let submerged = geo.worldPos.y < waterHeight

@@ -1,9 +1,10 @@
 // Package docs provides the Scene3D benchmark page at /demos/scene3d-bench.
 //
-// The page hosts a live in-browser frame-time overlay that reads
+// The page hosts a live in-browser diagnostics overlay that reads
 // performance.measure entries named "scene3d-render" (emitted by the
 // PBR renderer when window.__gosx_scene3d_perf === true) and displays
-// rolling p50/p95/max statistics across a 240-frame ring buffer.
+// rolling CPU-submit p50/p95/max statistics across a 240-sample ring buffer.
+// A separate requestAnimationFrame sampler reports browser frame cadence.
 //
 // Scene workloads are selected via ?workload=<name> URL query. Each
 // workload targets a different code path inside the renderer so a
@@ -30,6 +31,10 @@ func BenchScene(workload string) scene.Props {
 		return BenchThickLinesScene()
 	case "particles":
 		return BenchParticlesScene()
+	case "mesh-swarm":
+		return BenchMeshSwarmScene()
+	case "particles-storm":
+		return BenchParticlesStormScene()
 	case "mixed":
 		fallthrough
 	default:
@@ -369,5 +374,152 @@ func BenchMixedScene() scene.Props {
 			},
 		},
 		Graph: scene.NewGraph(nodes...),
+	}
+}
+
+// fibonacciSpherePoints returns n points spread approximately evenly across
+// the surface of a sphere of the given radius, using the fibonacci lattice
+// method. Split out of BenchMeshSwarmScene as a pure, allocation-cheap
+// helper so the distribution itself is unit testable without constructing a
+// full scene.Props tree.
+func fibonacciSpherePoints(n int, radius float64) []scene.Vector3 {
+	if n <= 0 {
+		return nil
+	}
+	if n == 1 {
+		return []scene.Vector3{scene.Vec3(0, 0, radius)}
+	}
+	const goldenAngle = math.Pi * (3 - 2.2360679774997896) // pi * (3 - sqrt(5))
+	points := make([]scene.Vector3, n)
+	for i := 0; i < n; i++ {
+		y := 1 - (float64(i)/float64(n-1))*2 // 1 .. -1
+		r := math.Sqrt(math.Max(0, 1-y*y))
+		theta := goldenAngle * float64(i)
+		x := math.Cos(theta) * r
+		z := math.Sin(theta) * r
+		points[i] = scene.Vec3(x*radius, y*radius, z*radius)
+	}
+	return points
+}
+
+// BenchMeshSwarmScene is the heaviest CPU-submit workload in the bench
+// suite: 100 individually declared PBR meshes distributed on a fibonacci
+// sphere lattice, each spinning every frame so the renderer must rebuild
+// and resubmit the full draw list on every tick rather than benefiting
+// from any static-scene fast path. All 100 meshes cast and receive shadows
+// under the full postfx chain. Where BenchPBRHeavyScene establishes a
+// 30-mesh baseline for buildPBRDrawList / drawPBRObjectList / shadow-map
+// rendering, this workload is >3x the object count and is meant to make
+// p95/max CPU submit times separate clearly from that baseline on real
+// hardware.
+func BenchMeshSwarmScene() scene.Props {
+	const count = 100
+	const radius = 4.5
+	points := fibonacciSpherePoints(count, radius)
+	nodes := []scene.Node{
+		scene.DirectionalLight{
+			Color:      "#fff1d6",
+			Intensity:  1.0,
+			Direction:  scene.Vec3(0.3, -1, -0.5),
+			CastShadow: true,
+			ShadowSize: 1024,
+		},
+		scene.PointLight{
+			Color:     "#5fb4ff",
+			Intensity: 0.7,
+			Position:  scene.Vec3(0, 0, 0),
+			Range:     10,
+		},
+	}
+	for i, p := range points {
+		var geom scene.Geometry = scene.SphereGeometry{Segments: 16}
+		switch i % 3 {
+		case 1:
+			geom = scene.BoxGeometry{Width: 0.35, Height: 0.35, Depth: 0.35}
+		case 2:
+			geom = scene.TorusGeometry{Radius: 0.2, Tube: 0.06, RadialSegments: 12, TubularSegments: 20}
+		}
+		nodes = append(nodes, scene.Mesh{
+			Geometry: geom,
+			Material: scene.StandardMaterial{
+				Color:     "#d4af37",
+				Roughness: 0.3,
+				Metalness: 0.85,
+			},
+			Position:      p,
+			CastShadow:    true,
+			ReceiveShadow: true,
+			Spin:          scene.Rotate(0, 0.006, 0.002),
+		})
+	}
+	return scene.Props{
+		Width:      1024,
+		Height:     600,
+		Background: "#05080f",
+		Responsive: scene.Bool(true),
+		Controls:   "orbit",
+		Camera: scene.PerspectiveCamera{
+			Position: scene.Vec3(0, 3, 11),
+			FOV:      55,
+		},
+		Environment: scene.Environment{
+			AmbientColor:     "#ffffff",
+			AmbientIntensity: 0.2,
+		},
+		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
+		PostFX: scene.PostFX{
+			MaxPixels: scene.PostFXMaxPixels1080p,
+			Effects: []scene.PostEffect{
+				scene.Bloom{Threshold: 0.75, Strength: 0.5, Radius: 6, Scale: 0.25},
+				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
+			},
+		},
+		Graph: scene.NewGraph(nodes...),
+	}
+}
+
+// BenchParticlesStormScene pushes the compute-particle path an order of
+// magnitude past BenchParticlesScene: 20,000 particles (10x) against a
+// heavier bloom pass. The particle simulation and render draw run on the
+// GPU compute path, so this workload is meant to separate GPU-bound frame
+// cadence (rAF cadence / rAF p95) from CPU submit time — CPU submit should
+// stay comparatively flat versus BenchParticlesScene while rAF cadence
+// visibly drops on constrained hardware.
+func BenchParticlesStormScene() scene.Props {
+	return scene.Props{
+		Width:      1024,
+		Height:     600,
+		Background: "#05080f",
+		Responsive: scene.Bool(true),
+		Controls:   "orbit",
+		Camera: scene.PerspectiveCamera{
+			Position: scene.Vec3(0, 0, 12),
+			FOV:      60,
+		},
+		PostFX: scene.PostFX{
+			MaxPixels: scene.PostFXMaxPixels1080p,
+			Effects: []scene.PostEffect{
+				scene.Bloom{Threshold: 0.45, Strength: 1.0, Radius: 10, Scale: 0.25},
+				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.15},
+			},
+		},
+		Graph: scene.NewGraph(
+			scene.AmbientLight{Color: "#ffffff", Intensity: 0.8},
+			scene.ComputeParticles{
+				ID:    "bench-particles-storm",
+				Count: 20000,
+				Emitter: scene.ParticleEmitter{
+					Kind:     "sphere",
+					Radius:   4.5,
+					Rate:     1500,
+					Lifetime: 4,
+					Scatter:  0.5,
+				},
+				Material: scene.ParticleMaterial{
+					Color: "#ffd8a0",
+					Size:  0.045,
+				},
+			},
+		),
 	}
 }

@@ -37,6 +37,9 @@ func TestAppSuspenseStreamsComponentBoundariesByCompletion(t *testing.T) {
 	if !strings.Contains(body, `data-gosx-stream-boundary="component"`) {
 		t.Fatalf("expected component stream boundary marker, got %q", body)
 	}
+	if !strings.Contains(body, `data-gosx-stream-template data-gosx-stream-target=`) {
+		t.Fatalf("expected declarative stream target marker, got %q", body)
+	}
 	fast := strings.Index(body, "FAST-DONE")
 	slow := strings.Index(body, "SLOW-DONE")
 	if fast == -1 || slow == -1 {
@@ -44,5 +47,18 @@ func TestAppSuspenseStreamsComponentBoundariesByCompletion(t *testing.T) {
 	}
 	if fast > slow {
 		t.Fatalf("expected faster component boundary to stream first, got %q", body)
+	}
+}
+
+func TestRenderDeferredChunkUsesCoreLifecycleWithNativeFallback(t *testing.T) {
+	body := renderDeferredChunk("slot-1", `<section>resolved</section>`)
+	if !strings.Contains(body, `window.__gosx&&window.__gosx.dom&&typeof window.__gosx.dom.replaceFragment==="function"`) {
+		t.Fatalf("expected streamed chunk to prefer the core fragment lifecycle, got %q", body)
+	}
+	if !strings.Contains(body, `if(!replaced){slot.replaceWith(content);}`) {
+		t.Fatalf("expected streamed chunk to retain native replacement fallback, got %q", body)
+	}
+	if !strings.Contains(body, `tpl.remove()`) {
+		t.Fatalf("expected streamed chunk to remove its declarative template, got %q", body)
 	}
 }

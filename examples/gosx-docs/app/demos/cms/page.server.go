@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,29 +15,38 @@ import (
 	"m31labs.dev/gosx/route"
 )
 
+// cmsMaxBlocks caps how many blocks a single publish request may submit.
+// Defense in depth only: the demo has no server-side reordering or removal,
+// and normal use (clicking the palette a reasonable number of times) never
+// approaches this, but a raw HTTP client could otherwise post an unbounded
+// block_count and force the server to loop arbitrarily.
+const cmsMaxBlocks = 60
+
 // publishStore is an in-memory store for the last published CMS state.
 type publishStore struct {
-	mu    sync.Mutex
-	count int
-	at    time.Time
+	mu     sync.Mutex
+	count  int
+	at     time.Time
+	blocks []map[string]string
 }
 
 // snapshot returns the last-publish count and a human-readable timestamp.
 // Returns (0, "Never published") if nothing has been published yet.
-func (s *publishStore) snapshot() (int, string) {
+func (s *publishStore) snapshot() ([]map[string]string, int, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.at.IsZero() {
-		return 0, "Never published"
+		return cloneCMSBlocks(defaultCMSBlocks()), 0, "Not published yet"
 	}
-	return s.count, s.at.Format("15:04:05")
+	return cloneCMSBlocks(s.blocks), s.count, s.at.Format("15:04:05")
 }
 
 // save records a new publish event with the given block count.
-func (s *publishStore) save(count int) {
+func (s *publishStore) save(blocks []map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.count = count
+	s.blocks = cloneCMSBlocks(blocks)
+	s.count = len(blocks)
 	s.at = time.Now()
 }
 
@@ -68,12 +78,12 @@ func cmsClientIP(r *http.Request) string {
 
 func init() {
 	docsapp.RegisterStaticDocsPage("CMS Editor",
-		"Block editor with inline editing and unified publish.",
+		"Edit structured blocks and publish the validated document through a GoSX server Action.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-				count, at := cmsStore.snapshot()
+				blocks, count, at := cmsStore.snapshot()
 				return map[string]any{
-					"blocks": defaultCMSBlocks(),
+					"blocks": blocks,
 					"status": map[string]any{
 						"count": count,
 						"at":    at,
@@ -86,19 +96,105 @@ func init() {
 						ctx.ValidationFailure("Slow down — try again in a moment.", nil)
 						return nil
 					}
-					// Form-encoded POSTs don't carry a JSON body — count the
-					// blocks from the default set as "current content".
-					count := len(defaultCMSBlocks())
-					cmsStore.save(count)
-					n, _ := cmsStore.snapshot()
+					blocks, fieldErrors := cmsBlocksFromForm(ctx.FormData)
+					if len(fieldErrors) > 0 {
+						ctx.ValidationFailure("Fix the highlighted content before publishing.", fieldErrors)
+						return nil
+					}
+					cmsStore.save(blocks)
+					_, n, at := cmsStore.snapshot()
 					return ctx.Success(
 						fmt.Sprintf("Published %d blocks", n),
-						map[string]any{"count": n},
+						map[string]any{
+							"count":  n,
+							"at":     at,
+							"byKind": cmsSummarizeBlocks(blocks),
+						},
 					)
 				},
 			},
 		},
 	)
+}
+
+// cmsBlocksFromForm reconstructs the submitted draft from indexed form
+// fields: a "block_count" field gives the number of blocks, and each block i
+// carries "block_<i>_kind" plus kind-specific fields ("block_<i>_title" /
+// "_subtitle" for hero, "_title" / "_body" for feature, "_text" / "_author"
+// for quote). This indexed scheme — rather than the single fixed hero/
+// feature/quote field set the demo shipped with originally — is what lets
+// the client add any number of blocks of any kind and have them all survive
+// a real publish.
+func cmsBlocksFromForm(values map[string]string) ([]map[string]string, map[string]string) {
+	value := func(name string) string { return strings.TrimSpace(values[name]) }
+	errs := map[string]string{}
+
+	count, convErr := strconv.Atoi(value("block_count"))
+	if convErr != nil || count < 0 {
+		count = 0
+	}
+	if count > cmsMaxBlocks {
+		count = cmsMaxBlocks
+	}
+	if count == 0 {
+		errs["block_count"] = "Add at least one block before publishing."
+		return nil, errs
+	}
+
+	limits := map[string]int{"title": 120, "subtitle": 240, "body": 1000, "text": 500, "author": 120}
+	checkField := func(field, role string, required bool) string {
+		v := value(field)
+		if required && v == "" {
+			errs[field] = "Required"
+		}
+		if limit, ok := limits[role]; ok && len(v) > limit {
+			errs[field] = fmt.Sprintf("Must be %d characters or fewer", limit)
+		}
+		return v
+	}
+
+	blocks := make([]map[string]string, 0, count)
+	for i := 0; i < count; i++ {
+		prefix := fmt.Sprintf("block_%d_", i)
+		switch value(prefix + "kind") {
+		case "hero":
+			title := checkField(prefix+"title", "title", true)
+			subtitle := checkField(prefix+"subtitle", "subtitle", false)
+			blocks = append(blocks, map[string]string{"kind": "hero", "title": title, "subtitle": subtitle})
+		case "feature":
+			title := checkField(prefix+"title", "title", true)
+			body := checkField(prefix+"body", "body", false)
+			blocks = append(blocks, map[string]string{"kind": "feature", "title": title, "body": body})
+		case "quote":
+			text := checkField(prefix+"text", "text", true)
+			author := checkField(prefix+"author", "author", false)
+			blocks = append(blocks, map[string]string{"kind": "quote", "text": text, "author": author})
+		default:
+			errs[prefix+"kind"] = "Unknown block type"
+		}
+	}
+	return blocks, errs
+}
+
+// cmsSummarizeBlocks counts published blocks by kind, always reporting the
+// three known kinds (even at zero) so the client can render a stable summary.
+func cmsSummarizeBlocks(blocks []map[string]string) map[string]int {
+	summary := map[string]int{"hero": 0, "feature": 0, "quote": 0}
+	for _, block := range blocks {
+		summary[block["kind"]]++
+	}
+	return summary
+}
+
+func cloneCMSBlocks(blocks []map[string]string) []map[string]string {
+	out := make([]map[string]string, len(blocks))
+	for i, block := range blocks {
+		out[i] = make(map[string]string, len(block))
+		for key, value := range block {
+			out[i][key] = value
+		}
+	}
+	return out
 }
 
 // defaultCMSBlocks returns the seed content shown in the editor on load.

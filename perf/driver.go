@@ -67,6 +67,29 @@ func New(opts ...Option) (*Driver, error) {
 		// for requestAdapter() to succeed — these flags just remove the
 		// hard disable so the browser can try.
 		chromedp.Flag("enable-unsafe-webgpu", true),
+		// Chromium 139+ no longer falls back to the Swiftshader software
+		// rasterizer automatically in headless mode — it must be opted in
+		// explicitly, or requestAdapter()/requestDevice() (and WebGL2) both
+		// fail outright on any host without a real GPU (no /dev/dri, common
+		// in headless CI / sandboxed dev containers), and Scene3D silently
+		// degrades all the way to the canvas2d fallback renderer, which never
+		// emits "scene3d-render" performance measures — so scene_frame_count/
+		// scene_p95/scene_p99/scene_frame_max all report "metric not found"
+		// even though the page itself renders fine. See chromedp's own
+		// DisableGPU doc comment (allocate.go) and
+		// https://chromestatus.com/feature/5166674414927872. This only adds
+		// the opt-in fallback flag (not --disable-gpu), so a host with a real
+		// GPU still uses hardware acceleration first.
+		chromedp.Flag("enable-unsafe-swiftshader", true),
+		// enable-unsafe-swiftshader alone is not sufficient on this box: Chrome
+		// still needs an explicit ANGLE backend selection and the GPU blocklist
+		// overridden, or it never actually routes to the Swiftshader/SwANGLE
+		// software path (requestDevice() keeps failing). Matches the flag set
+		// m31labs.dev's scripts/galaxy-visual-smoke.go already uses successfully
+		// against this same class of GPU-less sandbox.
+		chromedp.Flag("use-gl", "angle"),
+		chromedp.Flag("use-angle", "gl-egl"),
+		chromedp.Flag("ignore-gpu-blocklist", true),
 	)
 	if d.noSandbox {
 		allocOpts = append(allocOpts, chromedp.Flag("no-sandbox", true))
