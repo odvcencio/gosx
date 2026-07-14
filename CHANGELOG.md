@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## v0.31.4 (2026-07-13)
 
 - Added dedicated standard-Go WebAssembly engines with
