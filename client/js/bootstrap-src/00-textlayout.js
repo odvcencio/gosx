@@ -190,17 +190,21 @@
   window.__gosx_subscribe_shared_signal = gosxSubscribeSharedSignal;
 
   function gosxIssueStore() {
-    if (!window.__gosx.issues || !Array.isArray(window.__gosx.issues.entries)) {
+    const current = window.__gosx.issues;
+    if (!current || !Array.isArray(current.entries) || !(current.subscribers instanceof Set)) {
       window.__gosx.issues = {
-        nextID: 0,
-        entries: [],
+        nextID: current && Number.isFinite(current.nextID) ? current.nextID : 0,
+        entries: current && Array.isArray(current.entries) ? current.entries : [],
+        subscribers: current && current.subscribers instanceof Set ? current.subscribers : new Set(),
       };
     }
     return window.__gosx.issues;
   }
 
   function gosxCloneIssue(issue) {
-    return Object.assign({}, issue || {});
+    const clone = Object.assign({}, issue || {});
+    delete clone._element;
+    return clone;
   }
 
   function gosxIssueText(value) {
@@ -244,6 +248,38 @@
     element.removeAttribute("data-gosx-fallback-active");
   }
 
+  function gosxIssueMatches(entry, filter) {
+    if (filter == null) return true;
+    if (typeof filter === "function") return Boolean(filter(gosxCloneIssue(entry)));
+    if (typeof filter === "string") return entry.id === filter;
+    if (typeof filter !== "object") return false;
+    if (filter.id && entry.id !== String(filter.id)) return false;
+    for (const key of ["scope", "type", "severity", "component", "ref", "source", "phase"]) {
+      if (filter[key] != null && entry[key] !== String(filter[key])) return false;
+    }
+    if (filter.element && entry._element !== filter.element) return false;
+    if (filter.root && entry._element !== filter.root
+      && !(typeof filter.root.contains === "function" && filter.root.contains(entry._element))) {
+      return false;
+    }
+    return true;
+  }
+
+  function gosxNotifyIssueChange(type, entry) {
+    const store = gosxIssueStore();
+    const detail = { type, issue: gosxCloneIssue(entry) };
+    for (const listener of Array.from(store.subscribers)) {
+      try {
+        listener(detail);
+      } catch (error) {
+        console.error("[gosx] diagnostics subscriber failed:", error);
+      }
+    }
+    if (document && typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+      document.dispatchEvent(new CustomEvent("gosx:diagnostics", { detail }));
+    }
+  }
+
   function gosxReportRuntimeIssue(issue) {
     const store = gosxIssueStore();
     store.nextID += 1;
@@ -260,6 +296,7 @@
       fallback: gosxIssueText(issue && issue.fallback) || "server",
       elementID: gosxIssueText(issue && issue.element && issue.element.id),
       timestamp: Date.now(),
+      _element: issue && issue.element ? issue.element : null,
     };
     store.entries.push(entry);
     if (store.entries.length > 100) {
@@ -271,16 +308,90 @@
         detail: { issue: gosxCloneIssue(entry) },
       }));
     }
+    gosxNotifyIssueChange("report", entry);
     return gosxCloneIssue(entry);
+  }
+
+  // One failure policy is shared by core declarative features and optional
+  // browser surfaces. The issue fields stay diagnostic-friendly while the
+  // caller supplies a small, bounded telemetry payload separately. Aborted
+  // work is expected during latest-wins refreshes and lifecycle disposal, so
+  // it is deliberately invisible to both channels.
+  function gosxReportRuntimeFailure(operation, error, fields) {
+    const options = fields || {};
+    if (options.signal && options.signal.aborted) return null;
+    if (error && String(error.name || "") === "AbortError") return null;
+    const phase = String(operation || "request").trim() || "request";
+    const message = error && error.message
+      ? String(error.message)
+      : phase + " request failed";
+    const issue = gosxReportRuntimeIssue(Object.assign({
+      scope: "runtime",
+      type: "request",
+      severity: "warning",
+      phase,
+      message,
+      error,
+      fallback: "server",
+    }, options));
+    const telemetry = window.__gosx && window.__gosx.telemetry;
+    if (telemetry && typeof telemetry.emit === "function") {
+      telemetry.emit(
+        "warn",
+        gosxIssueText(options.category) || gosxIssueText(options.scope) || "runtime",
+        message,
+        Object.assign({ operation: phase }, options.telemetry || {})
+      );
+    }
+    return issue;
   }
 
   function gosxListIssues() {
     return gosxIssueStore().entries.map(gosxCloneIssue);
   }
 
+  function gosxSubscribeIssues(listener) {
+    if (typeof listener !== "function") return function () {};
+    const store = gosxIssueStore();
+    store.subscribers.add(listener);
+    return function () {
+      store.subscribers.delete(listener);
+    };
+  }
+
+  function gosxClearIssues(filter) {
+    const store = gosxIssueStore();
+    const removed = [];
+    const retained = [];
+    for (const entry of store.entries) {
+      if (!gosxIssueMatches(entry, filter)) {
+        retained.push(entry);
+        continue;
+      }
+      removed.push(entry);
+      gosxClearIssueState(entry._element);
+    }
+    store.entries = retained;
+    for (const entry of removed) gosxNotifyIssueChange("clear", entry);
+    return removed.map(gosxCloneIssue);
+  }
+
   window.__gosx.reportIssue = gosxReportRuntimeIssue;
+  window.__gosx.reportFailure = gosxReportRuntimeFailure;
   window.__gosx.listIssues = gosxListIssues;
   window.__gosx.clearIssueState = gosxClearIssueState;
+  window.__gosx.clearIssues = gosxClearIssues;
+  window.__gosx.subscribeIssues = gosxSubscribeIssues;
+  window.__gosx.diagnostics = {
+    report: gosxReportRuntimeIssue,
+    reportFailure: gosxReportRuntimeFailure,
+    list: gosxListIssues,
+    clear: gosxClearIssues,
+    clearFor(element) {
+      return gosxClearIssues({ root: element });
+    },
+    subscribe: gosxSubscribeIssues,
+  };
 
   const textMeasureCache = new Map();
   const textMeasureCacheLimit = 4096;
@@ -2912,9 +3023,13 @@
     }
   }
 
-  function disposeManagedTextLayouts() {
-    for (const id of Array.from(window.__gosx.textLayouts.keys())) {
-      disposeManagedTextLayout(id);
+  function disposeManagedTextLayouts(root) {
+    const scoped = root && root !== document && root !== document.body && root !== document.documentElement;
+    for (const snapshot of Array.from(window.__gosx.textLayouts.values())) {
+      if (!snapshot || !snapshot.element) continue;
+      if (!scoped || snapshot.element === root || (root.contains && root.contains(snapshot.element))) {
+        disposeManagedTextLayout(snapshot.element);
+      }
     }
   }
 
@@ -2941,6 +3056,7 @@
       return element && element.__gosxTextLayout ? element.__gosxTextLayout : null;
     },
     dispose: disposeManagedTextLayout,
+    disposeAll: disposeManagedTextLayouts,
   };
 
   // Runtime API — exposed for the async Scene3D feature chunk which

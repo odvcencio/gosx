@@ -99,9 +99,125 @@
       .filter(Boolean);
   }
 
+  var regionBindings = new Map();
+  var readyListenerInstalled = false;
+
+  function createRegionTransport() {
+    if (window.__gosx && window.__gosx.transport && typeof window.__gosx.transport.scope === "function") {
+      return window.__gosx.transport.scope();
+    }
+    return null;
+  }
+
+  function emit(type, detail) {
+    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") return;
+    document.dispatchEvent(new CustomEvent(type, { detail: detail }));
+  }
+
+  function observeRegion(level, message, fields) {
+    if (typeof window.__gosx_emit !== "function") return;
+    window.__gosx_emit(level, "region", message, fields || {});
+  }
+
+  function setRegionState(el, state, url) {
+    if (!el || typeof el.setAttribute !== "function") return;
+    el.setAttribute("data-gosx-region-state", state);
+    if (url) el.setAttribute("data-gosx-region-request", url);
+    else if (typeof el.removeAttribute === "function") el.removeAttribute("data-gosx-region-request");
+  }
+
+  function regionRequestController(record) {
+    if (record.requestController && typeof record.requestController.abort === "function") {
+      record.requestController.abort();
+    }
+    record.requestController = typeof AbortController === "function" ? new AbortController() : null;
+    return record.requestController;
+  }
+
+  function fetchRegion(record, url) {
+    var el = record.element;
+    var controller = null;
+    if (!record.transport) record.transport = createRegionTransport();
+    var request = { headers: { Accept: record.field ? "application/json" : "text/html" } };
+    var fetcher;
+    if (record.transport && typeof record.transport.requestLatest === "function") {
+      fetcher = function (input, init) {
+        return record.transport.requestLatest("refresh", input, init);
+      };
+    } else {
+      controller = regionRequestController(record);
+      if (controller) request.signal = controller.signal;
+      fetcher = window.__gosx && typeof window.__gosx.request === "function"
+        ? window.__gosx.request
+        : (typeof window.fetch === "function" ? window.fetch.bind(window) : fetch);
+    }
+    setRegionState(el, "pending", url);
+    emit("gosx:region:before", { element: el, url: url });
+    observeRegion("debug", "region refresh started", { url: url });
+    return fetcher(url, request)
+      .then(function (response) {
+        if (!response || !response.ok) return null;
+        return record.field ? response.json() : response.text();
+      })
+      .then(function (data) {
+        if (record.disposed || (controller && controller.signal.aborted) || data == null) return;
+        var html = record.field ? data[record.field] : data;
+        if (typeof html !== "string") return;
+        if (typeof window.__gosx_replace_runtime_content === "function") {
+          if (!window.__gosx_replace_runtime_content(el, html)) {
+            throw new Error("runtime content replacement failed");
+          }
+        } else {
+          if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
+            window.__gosx_dispose_runtime_surfaces(el);
+          }
+          el.innerHTML = html;
+          applySceneCommandScripts(el);
+          if (typeof window.__gosx_mount_runtime_surfaces === "function") {
+            window.__gosx_mount_runtime_surfaces(el);
+          }
+        }
+        setRegionState(el, "ready", "");
+        emit("gosx:region:after", { element: el, url: url, html: html });
+        observeRegion("info", "region refresh completed", { url: url });
+      })
+      .catch(function (err) {
+        if (
+          record.disposed ||
+          (controller && controller.signal.aborted) ||
+          (err && String(err.name || "") === "AbortError")
+        ) return;
+        setRegionState(el, "error", "");
+        if (window.__gosx && typeof window.__gosx.reportFailure === "function") {
+          window.__gosx.reportFailure("region refresh", err, {
+            scope: "region",
+            type: "refresh",
+            source: url,
+            element: el,
+            fallback: "server",
+            telemetry: { url: url },
+          });
+        } else if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+          window.__gosx.reportIssue({
+            scope: "region",
+            type: "refresh",
+            source: url,
+            element: el,
+            error: err,
+            fallback: "server",
+          });
+        } else {
+          console.warn("[gosx] region refresh", url, err);
+        }
+        emit("gosx:region:error", { element: el, url: url, error: err });
+        observeRegion("error", "region refresh failed", { url: url });
+      });
+  }
+
   function bindRegion(el) {
+    if (!el || regionBindings.has(el)) return regionBindings.get(el) || null;
     var url = el.getAttribute("data-gosx-region-url");
-    if (!url) return;
+    if (!url) return null;
     var signalName = el.getAttribute("data-gosx-region-signal");
     var onEvents = splitEvents(el.getAttribute("data-gosx-region-on"));
     var field = el.getAttribute("data-gosx-region-field") || "";
@@ -110,65 +226,123 @@
     // suppresses the fetch (the default — avoids hitting e.g. /selection/ with a
     // blank id).
     var allowEmpty = el.hasAttribute("data-gosx-region-allow-empty");
-    var lastValue = "";
+    var record = {
+      element: el,
+      field: field,
+      signalName: signalName,
+      onEvents: onEvents,
+      transport: createRegionTransport(),
+      requestController: null,
+      unsubscribe: null,
+      hubListener: null,
+      disposed: false,
+      lastValue: "",
+    };
 
-    function refresh() {
-      var u = url;
-      if (u.indexOf("{value}") >= 0) {
-        if (!lastValue && !allowEmpty) return; // no value yet → nothing to fetch
-        u = u.replace("{value}", encodeURIComponent(lastValue || ""));
+    record.refresh = function () {
+      if (record.disposed) return Promise.resolve(false);
+      var requestURL = url;
+      if (requestURL.indexOf("{value}") >= 0) {
+        if (!record.lastValue && !allowEmpty) return Promise.resolve(false);
+        requestURL = requestURL.replace("{value}", encodeURIComponent(record.lastValue || ""));
       }
-      fetch(u, { headers: { Accept: field ? "application/json" : "text/html" } })
-        .then(function (r) { return r.ok ? (field ? r.json() : r.text()) : null; })
-        .then(function (data) {
-          if (data == null) return;
-          var html = field ? data[field] : data;
-          if (typeof html === "string") {
-            el.innerHTML = html;
-            applySceneCommandScripts(el);
-          }
-        })
-        .catch(function (err) { console.warn("[gosx] region refresh", u, err); });
-    }
+      return fetchRegion(record, requestURL).then(function () { return true; });
+    };
 
     if (signalName && typeof window.__gosx_subscribe_shared_signal === "function") {
-      window.__gosx_subscribe_shared_signal(
+      record.unsubscribe = window.__gosx_subscribe_shared_signal(
         signalName,
-        function (v) {
-          lastValue = v == null ? "" : String(v);
-          refresh();
+        function (value) {
+          record.lastValue = value == null ? "" : String(value);
+          record.refresh();
         },
         { immediate: false }
       );
     }
     if (onEvents.length) {
-      document.addEventListener("gosx:hub:event", function (e) {
-        var ev = e && e.detail && e.detail.event;
-        if (ev && onEvents.indexOf(ev) >= 0) refresh();
-      });
+      record.hubListener = function (event) {
+        var eventName = event && event.detail && event.detail.event;
+        if (eventName && onEvents.indexOf(eventName) >= 0) record.refresh();
+      };
+      document.addEventListener("gosx:hub:event", record.hubListener);
+    }
+    regionBindings.set(el, record);
+    setRegionState(el, "ready", "");
+    return record;
+  }
+
+  function inRoot(root, element, options) {
+    if (!root || root === document || root === document.body || root === document.documentElement) return true;
+    if (options && options.preserveRoot && root === element) return false;
+    return root === element || (typeof root.contains === "function" && root.contains(element));
+  }
+
+  function dispose(root, options) {
+    for (var entry of Array.from(regionBindings.entries())) {
+      var el = entry[0];
+      var record = entry[1];
+      if (!inRoot(root, el, options)) continue;
+      record.disposed = true;
+      if (record.requestController && typeof record.requestController.abort === "function") record.requestController.abort();
+      if (record.transport && typeof record.transport.dispose === "function") record.transport.dispose();
+      if (typeof record.unsubscribe === "function") record.unsubscribe();
+      if (record.hubListener) document.removeEventListener("gosx:hub:event", record.hubListener);
+      regionBindings.delete(el);
+      setRegionState(el, "disposed", "");
     }
   }
 
-  function scan() {
-    var nodes = document.querySelectorAll("[data-gosx-region]");
+  function scan(root) {
+    var host = root || document;
+    var nodes = [];
+    if (host && typeof host.hasAttribute === "function" && host.hasAttribute("data-gosx-region")) {
+      nodes.push(host);
+    }
+    if (host && typeof host.querySelectorAll === "function") {
+      for (var candidate of Array.from(host.querySelectorAll("[data-gosx-region]"))) {
+        if (nodes.indexOf(candidate) < 0) nodes.push(candidate);
+      }
+    }
     for (var i = 0; i < nodes.length; i++) bindRegion(nodes[i]);
 
     // Initial-load scene-command payloads (SSR-rendered, no swap involved).
     // A GoSXScene3D engine mounts asynchronously (WASM/program fetch), so this
     // synchronous pass is best-effort — it only reaches engines that happen to
-    // already be mounted (e.g. in tests, or a page with no WASM runtime at
-    // all). gosx:ready fires exactly once, after every manifest engine has
-    // finished mounting, and is the reliable pass for the common case; both
-    // are safe to run since commands are a create-or-replace by objectId.
-    applySceneCommandScripts(document);
-    document.addEventListener("gosx:ready", function () {
-      applySceneCommandScripts(document);
-    });
+    // already be mounted. gosx:ready is the reliable follow-up pass; both are
+    // safe because scene commands are create-or-replace by objectId.
+    applySceneCommandScripts(host === document ? document : host);
+    if (!readyListenerInstalled) {
+      readyListenerInstalled = true;
+      document.addEventListener("gosx:ready", function () {
+        applySceneCommandScripts(document);
+      });
+    }
+    return regionBindings;
   }
 
+  function refresh(element) {
+    var record = regionBindings.get(element) || bindRegion(element);
+    if (!record || typeof record.refresh !== "function") return Promise.resolve(false);
+    return record.refresh();
+  }
+
+  window.__gosx_mount_declarative_regions = scan;
+  window.__gosx_dispose_declarative_regions = dispose;
+  window.__gosx_apply_scene_command_scripts = applySceneCommandScripts;
+  var regionsAPI = {
+    mount: scan,
+    dispose: dispose,
+    refresh: refresh,
+    applySceneCommands: applySceneCommandScripts,
+    bindings: regionBindings,
+  };
+  window.__gosx_declarative_regions = regionsAPI;
+  window.__gosx = window.__gosx || {};
+  window.__gosx.regions = Object.assign(window.__gosx.regions || {}, regionsAPI);
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", scan);
+    document.addEventListener("DOMContentLoaded", function () { scan(document); });
   } else {
-    scan();
+    scan(document);
   }
 })();

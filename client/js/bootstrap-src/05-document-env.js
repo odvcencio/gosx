@@ -419,13 +419,16 @@
     installManagedMotionObserver(document.body || document.documentElement);
   }
 
-  function disposeManagedMotion() {
-    if (gosxManagedMotionObserver) {
+  function disposeManagedMotion(root) {
+    const scoped = root && root !== document && root !== document.body && root !== document.documentElement;
+    if (!scoped && gosxManagedMotionObserver) {
       gosxManagedMotionObserver.disconnect();
       gosxManagedMotionObserver = null;
     }
     for (const element of Array.from(gosxManagedMotionRecordsByElement.keys())) {
-      disposeManagedMotionElement(element);
+      if (!scoped || element === root || (root.contains && root.contains(element))) {
+        disposeManagedMotionElement(element);
+      }
     }
   }
 
@@ -433,6 +436,7 @@
     mountAll: mountManagedMotion,
     observe: observeManagedMotion,
     dispose: disposeManagedMotionElement,
+    disposeAll: disposeManagedMotion,
   };
 
   function gosxMediaQueryList(query) {
@@ -1550,7 +1554,9 @@
         layer,
         bootstrap: runtimeAssets.bootstrapMode !== "none" || Boolean(enhancement.bootstrap),
         runtime: runtimeAssets.bootstrapMode === "full" || layer === "runtime" || Boolean(enhancement.runtime),
-        navigation: Boolean(enhancement.navigation) || Boolean(window.__gosx_page_nav && typeof window.__gosx_page_nav.navigate === "function"),
+        navigation: Boolean(enhancement.navigation)
+          || Boolean(window.__gosx && window.__gosx.navigation && typeof window.__gosx.navigation.navigate === "function")
+          || Boolean(window.__gosx_page_nav && typeof window.__gosx_page_nav.navigate === "function"),
         ready: Boolean(window.__gosx && window.__gosx.ready),
       },
       enhancements,

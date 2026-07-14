@@ -48,21 +48,24 @@ type MotionProps struct {
 // Motion renders a DOM element opted into the shared bootstrap motion layer.
 func Motion(props MotionProps, args ...any) gosx.Node {
 	props = normalizeMotionProps(props)
+	attrs := gosx.Attrs(gosx.Attr("data-gosx-motion", ""))
+	attrs = append(attrs, gosx.ProgressiveEnhancementAttrs(gosx.ProgressiveEnhancementOptions{
+		Kind:     "motion",
+		Layer:    "bootstrap",
+		Fallback: "html",
+	})...)
+	attrs = append(attrs,
+		gosx.Attr("data-gosx-motion-preset", string(props.Preset)),
+		gosx.Attr("data-gosx-motion-trigger", string(props.Trigger)),
+		gosx.Attr("data-gosx-motion-duration", props.Duration),
+		gosx.Attr("data-gosx-motion-delay", props.Delay),
+		gosx.Attr("data-gosx-motion-easing", props.Easing),
+		gosx.Attr("data-gosx-motion-distance", formatMotionFloat(props.Distance)),
+		gosx.Attr("data-gosx-motion-respect-reduced", strconv.FormatBool(motionRespectReducedMotion(props))),
+		gosx.Attr("data-gosx-motion-state", "idle"),
+	)
 	renderArgs := []any{
-		gosx.Attrs(
-			gosx.Attr("data-gosx-motion", ""),
-			gosx.Attr("data-gosx-enhance", "motion"),
-			gosx.Attr("data-gosx-enhance-layer", "bootstrap"),
-			gosx.Attr("data-gosx-fallback", "html"),
-			gosx.Attr("data-gosx-motion-preset", string(props.Preset)),
-			gosx.Attr("data-gosx-motion-trigger", string(props.Trigger)),
-			gosx.Attr("data-gosx-motion-duration", props.Duration),
-			gosx.Attr("data-gosx-motion-delay", props.Delay),
-			gosx.Attr("data-gosx-motion-easing", props.Easing),
-			gosx.Attr("data-gosx-motion-distance", formatMotionFloat(props.Distance)),
-			gosx.Attr("data-gosx-motion-respect-reduced", strconv.FormatBool(motionRespectReducedMotion(props))),
-			gosx.Attr("data-gosx-motion-state", "idle"),
-		),
+		attrs,
 	}
 	renderArgs = append(renderArgs, args...)
 	return gosx.El(props.Tag, renderArgs...)

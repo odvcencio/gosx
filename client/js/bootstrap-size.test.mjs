@@ -197,9 +197,86 @@ const budgets = [
   // and atomic quality resource swaps. Measured: 1_226_483 / 326_008 / 262_876.
   // Water fixed-clock event queues, timing failure state, and allocation
   // retry telemetry add ~3.7KB raw while compressed output remains in budget.
-  { file: "bootstrap.js", raw: 1_234_000, gzip: 328_000, brotli: 264_000 },
-  { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
-  { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
+  // Bumped raw 1_234_000 -> 1_235_000, gzip 328_000 -> 329_000, brotli
+  // 264_000 -> 265_000 for the generic runtime-surface
+  // registry, which gives optional packages such as gosx/editor managed
+  // mount/dispose, navigation remounting, and scoped browser bridges.
+  // Bumped raw 1_242_000 -> 1_245_000, gzip 333_000 -> 334_000, brotli
+  // 269_000 -> 270_000 for lifecycle telemetry and navigation coordination.
+  // Bumped raw 1_245_000 -> 1_247_000 for the core request transport bridge
+  // (CSRF defaults, response JSON helper, and surface abort propagation).
+  // Bumped raw 1_247_000 -> 1_250_000 for surface latest-request
+  // coordination and editor response helpers. Measured: 1_247_767 /
+  // 331_948 / 267_500, plus rounding headroom.
+  // Bumped raw 1_250_000 -> 1_253_000 for the shared runtime DOM replacement
+  // lifecycle. Bumped raw 1_253_000 -> 1_257_000 for scoped motion/text-
+  // layout lifecycle disposal. Measured: 1_253_630 / 333_374 / 268_521.
+  // Bumped raw 1_257_000 -> 1_259_000 and gzip 334_000 -> 335_000 for the
+  // scoped DOM/event bridge. Measured: 1_257_293 / 334_411 / 269_585.
+  // Bumped raw to 1_262_000 and gzip to 336_000 for the lifecycle-aware DOM
+  // transaction (`window.__gosx.dom.reconcile`). Measured: 1_259_473 /
+  // 334_869 / 269_861. The service publication adds 9 bytes to gzip and
+  // 330 bytes to Brotli in the regenerated monolith.
+  // Bumped raw 1_262_000 -> 1_270_000 for the framework-owned scoped
+  // scheduler (keyed debounce and animation-frame cancellation). Measured:
+  // Bumped gzip 336_000 -> 338_000 and brotli 271_000 -> 272_000 for the
+  // shared failure-reporting policy. Measured: 1_265_227 / 336_292 /
+  // 271_136.
+  // Bumped raw 1_270_000 -> 1_275_000, gzip 338_000 -> 339_000, and Brotli
+  // 272_000 -> 273_000 after regenerating the aggregate runtime with the
+  // sampled Selena water-state bridge and physical-normal/topology contract.
+  // Measured: 1_272_545 / 338_205 / 272_527. Selective route budgets remain
+  // the deployment gate and are unchanged below.
+  { file: "bootstrap.js", raw: 1_275_000, gzip: 339_000, brotli: 273_000 },
+  // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
+  // 30_000 for the same generic region/action/stream contracts. Bumped raw
+  // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
+  // 129_000 -> 131_000 for latest-request coordination and response helpers.
+  // Bumped raw 131_000 -> 134_000 for the shared runtime DOM replacement
+  // lifecycle. Bumped raw 134_000 -> 137_000 and gzip 35_000 -> 36_000 for
+  // core keyed block reconciliation. Measured: 134_038 / 35_153 / 30_819.
+  // Bumped brotli 31_000 -> 32_000 for the core transport scope that owns
+  // latest-request cancellation and parent lifecycle abort composition.
+  // Measured: 136_788 / 35_895 / 31_387.
+  // Bumped raw 137_000 -> 140_000 and gzip 36_000 -> 37_000 for the scoped
+  // DOM/event bridge. Measured: 138_522 / 36_319 / 31_767.
+  // Bumped brotli 32_000 -> 33_000 for the public telemetry namespace.
+  // Measured: 139_617 / 36_585 / 32_004.
+  // Bumped raw to 144_000 and gzip to 38_000 for the shared surface failure
+  // reporting policy. Measured: 142_195 / 37_102 / 32_459.
+  // Bumped raw 144_000 -> 147_000 for the framework-owned scoped scheduler.
+  // Bumped gzip 38_000 -> 39_000 and brotli 33_000 -> 34_000 for the shared
+  // failure-reporting policy. Measured: 146_370 / 38_093 / 33_312.
+  // Bumped raw 147_000 -> 148_000 for fragment-aware streaming replacement,
+  // which routes marker swaps through the core DOM lifecycle. Measured:
+  // 147_702 / 38_506 / 33_521.
+  // Bumped raw 148_000 -> 149_000 for scoped portal ownership, which cleans
+  // up body-mounted overlays with their owning surface. Measured:
+  // 148_081 / 38_641 / 33_659.
+  // Bumped raw 149_000 -> 150_000 for lifecycle-aware keyed stream updates.
+  // Measured: 149_154 / 38_850 / 33_866.
+  { file: "bootstrap-runtime.js", raw: 150_000, gzip: 39_000, brotli: 34_000 },
+  // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
+  // 105_000 -> 107_000 for latest-request coordination. Bumped raw
+  // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
+  // Bumped raw 110_000 -> 113_000, gzip 28_000 -> 30_000, brotli 25_000 ->
+  // 27_000 for core keyed block reconciliation. Measured: 110_218 /
+  // 28_476 / 25_131.
+  // Bumped raw 113_000 -> 116_000 for the scoped DOM/event bridge. Measured:
+  // 114_701 / 29_611 / 26_117.
+  // Bumped raw to 120_000 and gzip to 31_000 for the shared surface failure
+  // reporting policy. Measured: 118_374 / 30_396 / 26_878.
+  // Bumped raw 120_000 -> 123_000 for the framework-owned scoped scheduler.
+  // Bumped gzip 31_000 -> 32_000 for the shared failure-reporting policy.
+  // Measured: 122_545 / 31_423 / 27_675.
+  // Bumped raw 123_000 -> 125_000 for fragment-aware streaming replacement.
+  // Measured: 123_877 / 31_803 / 27_965.
+  // Bumped raw 125_000 -> 126_000 and brotli 28_000 -> 29_000 for scoped
+  // portal ownership. Measured: 124_256 / 31_923 / 28_023.
+  // Bumped raw 126_000 -> 127_000 and gzip 32_000 -> 33_000 for
+  // lifecycle-aware keyed stream updates. Measured: 125_329 / 32_131 /
+  // 28_268.
+  { file: "bootstrap-lite.js", raw: 127_000, gzip: 33_000, brotli: 29_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -317,7 +394,10 @@ const budgets = [
   // 673_640 / 184_371 / 151_257.
   // Shared fixed clock plus WebGL adaptive resources/timer ring. Measured:
   // 689_945 / 189_731 / 155_635.
-  { file: "bootstrap-feature-scene3d.js", raw: 693_000, gzip: 191_000, brotli: 157_000 },
+  // Bumped raw 693_000 -> 696_000, gzip 191_000 -> 192_000, and Brotli
+  // 157_000 -> 157_500 for the typed water surface-resolution and linear-HDR
+  // contracts. Measured: 695_570 / 191_539 / 157_108.
+  { file: "bootstrap-feature-scene3d.js", raw: 696_000, gzip: 192_000, brotli: 157_500 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -384,7 +464,10 @@ const budgets = [
   // Measured: 331_872 / 76_994 / 64_334.
   // WebGPU fixed ticks plus timestamp ring and atomic adaptive RTT swaps.
   // Measured: 344_693 / 80_230 / 67_009.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 349_000, gzip: 81_500, brotli: 68_000 },
+  // Bumped raw 349_000 -> 351_000, gzip 81_500 -> 82_000, and Brotli 68_000
+  // -> 68_500 for sampled water-state mirrors and physical-cell normal uniforms. Measured:
+  // 350_203 / 81_776 / 68_108.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 351_000, gzip: 82_000, brotli: 68_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
@@ -496,9 +579,33 @@ const routeBudgets = [
     // 50_000: video-player-primitives folded into the engines surface,
     // merged with the runtime_api bridge + CSRF lines above. Measured:
     // 196_744 / 55_790 / 49_259, plus sub-1% rounding headroom.
-    raw: 198_000,
-    gzip: 56_500,
-    brotli: 50_000,
+    // Bumped raw 198_000 -> 211_000, gzip 56_500 -> 60_000, brotli 50_000 ->
+    // 50_500 for the generic runtime-surface lifecycle registry carried by
+    // bootstrap-runtime.js. The current measured total is 205_984 / 58_060 /
+    // 51_177, plus rounding headroom.
+    // Bumped raw 211_000 -> 213_000 for the same core request transport
+    // bridge carried by bootstrap-runtime.js. Bumped raw 213_000 -> 217_000,
+    // gzip 60_000 -> 62_000, brotli 53_000 -> 54_000 for the shared runtime
+    // DOM replacement lifecycle. Bumped raw 217_000 -> 220_000 for core
+    // keyed block reconciliation. Measured: 218_167 / 60_989 / 53_819.
+    // Bumped raw 220_000 -> 222_000, gzip 62_000 -> 62_500, brotli 54_000 ->
+    // 55_000 for the scoped core transport requester. Measured: 220_917 /
+    // 61_731 / 54_387.
+    // Bumped raw 222_000 -> 224_000 for the scoped DOM/event bridge. Measured:
+    // 222_651 / 62_155 / 54_767.
+    // Bumped brotli 55_000 -> 56_000 for the public telemetry namespace.
+    // Measured: 223_746 / 62_421 / 55_004.
+    // Bumped raw to 228_000 for the shared surface failure reporting policy.
+    // Bumped raw to 231_000 for the scoped surface scheduler. Measured:
+    // 228_459 / 62_938 / 55_459.
+    // Bumped brotli 56_000 -> 57_000 for the shared failure-reporting policy.
+    // Current measured total: 230_499 / 63_929 / 56_312.
+    // Bumped raw 231_000 -> 234_000 and gzip 64_000 -> 65_000 for the
+    // fragment-aware stream lifecycle shared by runtime and engines routes.
+    // Measured: 231_831 / 64_376 / 56_521.
+    raw: 234_000,
+    gzip: 65_000,
+    brotli: 57_000,
   },
 ];
 
