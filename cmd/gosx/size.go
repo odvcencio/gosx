@@ -157,6 +157,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "runtime.wasm", file: rt.WASM.File, role: "core wasm", coldStart: true},
 		{name: "runtime-islands.wasm", file: rt.WASMIslands.File, role: "islands wasm"},
 		{name: "wasm_exec.js", file: rt.WASMExec.File, role: "wasm loader", coldStart: true},
+		{name: "standard-go-wasm_exec.js", file: rt.StandardGoWASMExec.File, role: "standard-Go engine wasm loader"},
 		{name: "bootstrap.js", file: rt.Bootstrap.File, role: "full bootstrap"},
 		{name: "bootstrap-lite.js", file: rt.BootstrapLite.File, role: "lite bootstrap"},
 		{name: "bootstrap-runtime.js", file: rt.BootstrapRuntime.File, role: "runtime bootstrap", coldStart: true},
@@ -226,6 +227,7 @@ func sizeProfiles(assets []sizeReportFile) []sizeProfile {
 	}{
 		{name: "full-runtime", names: []string{"runtime.wasm", "wasm_exec.js", "bootstrap-runtime.js"}},
 		{name: "islands-runtime", names: []string{"runtime-islands.wasm", "wasm_exec.js", "bootstrap-runtime.js", "bootstrap-feature-islands.js"}},
+		{name: "go-wasm-engine", names: []string{"standard-go-wasm_exec.js", "bootstrap-runtime.js", "bootstrap-feature-engines.js"}},
 	}
 	profiles := make([]sizeProfile, 0, len(candidates))
 	for _, candidate := range candidates {

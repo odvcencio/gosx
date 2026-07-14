@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.29.5**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.31.4**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -230,11 +230,63 @@ For work that doesn't fit the island model — canvas rendering, WebGL, backgrou
 ctx.Engine(engine.Config{
     Name:                 "visualizer",
     Kind:                 engine.KindSurface,
+    Runtime:              engine.RuntimeGoWASM,
     Capabilities:         []engine.Capability{engine.CapCanvas, engine.CapAnimation},
     RequiredCapabilities: []engine.Capability{engine.CapCanvas, engine.CapWASM},
     WASMPath:             "/engines/visualizer.wasm",
 }, fallbackNode)
 ```
+
+The module is an ordinary `GOOS=js GOARCH=wasm` Go program. It may register one
+or more reusable components during synchronous startup:
+
+```go
+//go:build js && wasm
+
+package main
+
+import enginewasm "m31labs.dev/gosx/engine/wasm"
+
+func main() {
+    if err := enginewasm.Register("visualizer", func(ctx enginewasm.Context) (enginewasm.Handle, error) {
+        mount := ctx.Mount()
+        // Initialize this instance using ctx.Props(), ctx.Emit(), and the DOM mount.
+        return enginewasm.HandleFunc(func() {
+            // Release this instance's listeners and resources.
+            mount.Set("textContent", "")
+        }), nil
+    }); err != nil {
+        panic(err)
+    }
+    select {}
+}
+```
+
+GoSX fetches and boots each exact WASM URL once per browser document, then calls
+the selected factory separately for every manifest entry. A high-entropy boot
+capability binds registrations to the module instance that received it, so a
+late module cannot register into another URL's startup window. Register every
+component the module provides before `main` blocks; later page manifests may
+reuse any factory published by that first boot. `main` must remain alive (the
+example's `select {}` does that). If it exits, GoSX invalidates its factories
+and disposes its mounted instances.
+
+Loading uses `WebAssembly.instantiateStreaming` with a byte fallback from the
+same response. Serve modules as `application/wasm` to keep the streaming fast
+path. Failed or cancelled mounts restore their server-rendered fallback, and
+normal engine disposal restores it as well. Page cancellation aborts an
+in-flight fetch. A registration timeout permanently closes that boot
+capability; once a standard-Go instance has started, browsers provide no
+force-termination primitive, so a timed-out instance is quarantined from
+registration and mounting but may retain memory until the browser document
+unloads.
+
+The loader does not use JavaScript `eval` and does not require app-authored
+JavaScript. The isolated standard-Go `wasm_exec` shim is a DOM-loaded managed
+script on both initial loads and client-side navigations; it is never fetched
+and passed to indirect `eval`. Under a strict Content Security Policy,
+WebAssembly compilation still requires `script-src 'wasm-unsafe-eval'` (or the
+broader `'unsafe-eval'`) in browsers that enforce that directive.
 
 Engines come in three kinds:
 
@@ -273,6 +325,7 @@ Supported capability declarations today are:
 - `animation`
 - `storage`
 - `fetch`
+- `clipboard`
 - `audio`
 - `worker`
 - `gamepad`
@@ -654,6 +707,7 @@ Three tiers:
 | `embed` | Embedding provider abstraction |
 | `semantic` | Semantic router, similarity cache, content index |
 | `engine` | Worker/surface model with capability declarations |
+| `engine/wasm` | Standard-Go WASM engine registration, browser context, and instance lifecycle |
 | `editor` | Go-native text editor building blocks (textmodel, input, highlight, toolbar, vscode shim) |
 | `highlight` | Syntax highlighting for Go, GSX, JavaScript, JSON, and Bash |
 | `client/vm` | Expression VM, tree reconciler, patch generation |
@@ -722,7 +776,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.29.5**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.31.4**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

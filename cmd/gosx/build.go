@@ -480,6 +480,18 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("unable to locate wasm_exec.js")
 	}
 
+	standardGoWASMExec, err := readStandardGoWASMExec()
+	if err != nil {
+		return err
+	}
+	standardGoWASMExec = wrapStandardGoWASMExec(standardGoWASMExec)
+	standardGoWASMExecAsset, err := writeHashed(runtimeDir, "standard-go-wasm_exec", ".js", standardGoWASMExec)
+	if err != nil {
+		return fmt.Errorf("write standard-Go wasm_exec.js: %w", err)
+	}
+	manifest.Runtime.StandardGoWASMExec = standardGoWASMExecAsset
+	fmt.Printf("    %s (%d bytes, standard Go)\n", standardGoWASMExecAsset.File, standardGoWASMExecAsset.Size)
+
 	// bootstrap.js, patch.js, and the lazily loaded HLS runtime.
 	for _, js := range []struct {
 		name string
@@ -618,6 +630,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		manifest.Runtime.WASM.File,
 		manifest.Runtime.WASMIslands.File,
 		manifest.Runtime.WASMExec.File,
+		manifest.Runtime.StandardGoWASMExec.File,
 		manifest.Runtime.Bootstrap.File,
 		manifest.Runtime.BootstrapLite.File,
 		manifest.Runtime.BootstrapRuntime.File,
@@ -902,6 +915,48 @@ func runtimeJSAssetData(name string, data []byte) []byte {
 	return stripSourceMappingURLTrailer(data, "hls.min.js.map")
 }
 
+func readStandardGoWASMExec() ([]byte, error) {
+	goroot := getGOROOT()
+	for _, candidate := range []string{
+		filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"),
+		filepath.Join(goroot, "misc", "wasm", "wasm_exec.js"),
+	} {
+		data, err := os.ReadFile(candidate)
+		if err == nil {
+			return data, nil
+		}
+	}
+	return nil, fmt.Errorf("unable to locate standard-Go wasm_exec.js under %s", goroot)
+}
+
+// wrapStandardGoWASMExec isolates the standard toolchain's global Go
+// constructor from the TinyGo/shared-runtime shim. The wrapper captures the
+// constructor under a stable GoSX-owned name and restores the prior global in
+// a finally block, including when the toolchain script throws.
+func wrapStandardGoWASMExec(source []byte) []byte {
+	const prefix = `(function(global){
+"use strict";
+var hadGo = Object.prototype.hasOwnProperty.call(global, "Go");
+var previousGo = global.Go;
+var standardGo;
+try {
+`
+	const suffix = `
+standardGo = global.Go;
+} finally {
+if (hadGo) global.Go = previousGo; else delete global.Go;
+}
+if (typeof standardGo !== "function") throw new Error("standard-Go wasm_exec.js did not publish Go");
+Object.defineProperty(global, "__gosx_standard_go_wasm_ctor", {value: standardGo, writable: false, configurable: true});
+})(globalThis);
+`
+	out := make([]byte, 0, len(prefix)+len(source)+len(suffix))
+	out = append(out, prefix...)
+	out = append(out, source...)
+	out = append(out, suffix...)
+	return out
+}
+
 func stripSourceMappingURLTrailer(data []byte, mapName string) []byte {
 	if len(data) == 0 || strings.TrimSpace(mapName) == "" {
 		return data
@@ -945,6 +1000,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMIslands.File)
 	case "/gosx/wasm_exec.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMExec.File)
+	case "/gosx/standard-go-wasm_exec.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.StandardGoWASMExec.File)
 	case "/gosx/bootstrap.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.Bootstrap.File)
 	case "/gosx/bootstrap-lite.js":

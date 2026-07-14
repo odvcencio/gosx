@@ -200,10 +200,13 @@ const budgets = [
   // custom post-FX surviving applyCommands, MaxPixels render-target budget) add
   // only 183 raw / 67 gzip bytes on top of that — 11% of the scene3d breach.
   //
-  // New budgets = current measurements + a small, deliberate margin. The bundle is
-  // near its ceiling on every axis; the correct response to the NEXT breach is a
-  // diet (dead-code sweep, finer feature splitting) rather than another bump.
-  { file: "bootstrap.js", raw: 1_201_000, gzip: 318_000, brotli: 257_000 },
+  // Go-WASM engines add token-bound standard-Go module registration, reusable
+  // exact-URL component caches, per-module parallel boot, and page-generation
+  // ownership for cancellation/fallback-safe mounts. Measured monolith delta:
+  // +9_439 raw / +2_958 gzip / +2_620 brotli. This is framework plumbing needed
+  // to remove app-authored JS while preserving navigation safety; budgets include
+  // sub-1% rounding headroom.
+  { file: "bootstrap.js", raw: 1_211_000, gzip: 321_000, brotli: 260_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -507,7 +510,9 @@ const budgets = [
   // matches after a DOM-nesting change), and additionally observe that
   // ancestor so a later layout change re-triggers the fix. Measured:
   // 85_024 / 26_115 / 23_259; brotli unchanged.
-  { file: "bootstrap-feature-engines.js", raw: 86_000, gzip: 26_500, brotli: 23_400 },
+  // Bumped for the Go-WASM engine lifecycle described by the monolith budget
+  // above. Measured: 94_446 / 28_907 / 25_685.
+  { file: "bootstrap-feature-engines.js", raw: 95_000, gzip: 29_500, brotli: 26_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -557,9 +562,11 @@ const routeBudgets = [
     // 50_000: video-player-primitives folded into the engines surface,
     // merged with the runtime_api bridge + CSRF lines above. Measured:
     // 196_744 / 55_790 / 49_259, plus sub-1% rounding headroom.
-    raw: 198_000,
-    gzip: 56_500,
-    brotli: 50_000,
+    // Go-WASM lifecycle folded into the engines surface. Measured:
+    // 207_190 / 58_727 / 51_957.
+    raw: 209_000,
+    gzip: 59_500,
+    brotli: 52_500,
   },
 ];
 

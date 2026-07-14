@@ -42,11 +42,12 @@ func Stylesheet(href string, args ...any) gosx.Node {
 
 // Managed script roles consumed by the GoSX navigation/runtime layer.
 const (
-	ManagedScriptRoleWASMExec  = "wasm-exec"
-	ManagedScriptRolePatch     = "patch"
-	ManagedScriptRoleBootstrap = "bootstrap"
-	ManagedScriptRoleLifecycle = "lifecycle"
-	ManagedScriptRoleManaged   = "managed"
+	ManagedScriptRoleWASMExec           = "wasm-exec"
+	ManagedScriptRoleStandardGoWASMExec = "standard-go-wasm-exec"
+	ManagedScriptRolePatch              = "patch"
+	ManagedScriptRoleBootstrap          = "bootstrap"
+	ManagedScriptRoleLifecycle          = "lifecycle"
+	ManagedScriptRoleManaged            = "managed"
 
 	ManagedScriptLoadFetchEval = "fetch-eval"
 	ManagedScriptLoadDOM       = "dom"
@@ -111,6 +112,8 @@ func normalizeManagedScriptRole(role string) string {
 	switch strings.TrimSpace(strings.ToLower(role)) {
 	case ManagedScriptRoleWASMExec:
 		return ManagedScriptRoleWASMExec
+	case ManagedScriptRoleStandardGoWASMExec:
+		return ManagedScriptRoleStandardGoWASMExec
 	case ManagedScriptRolePatch:
 		return ManagedScriptRolePatch
 	case ManagedScriptRoleBootstrap:

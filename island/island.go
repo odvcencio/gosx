@@ -38,6 +38,7 @@ type Renderer struct {
 	programFormat                        string // "json" or "bin"
 	programAssets                        map[string]programAsset
 	wasmExecPath                         string
+	standardGoWASMExecPath               string
 	patchPath                            string
 	bootstrapPath                        string
 	bootstrapLitePath                    string
@@ -69,6 +70,7 @@ type Summary struct {
 	Manifest                    bool
 	RuntimePath                 string
 	WASMExecPath                string
+	StandardGoWASMExecPath      string
 	PatchPath                   string
 	BootstrapPath               string
 	BootstrapFeatureIslandsPath string
@@ -83,13 +85,14 @@ type Summary struct {
 }
 
 type clientRuntimePlan struct {
-	Bootstrap     bool
-	Mode          string
-	Manifest      bool
-	Selective     bool
-	SharedRuntime bool
-	WASMExec      bool
-	Patch         bool
+	Bootstrap          bool
+	Mode               string
+	Manifest           bool
+	Selective          bool
+	SharedRuntime      bool
+	WASMExec           bool
+	StandardGoWASMExec bool
+	Patch              bool
 	// PreviewRelay is true when the page should emit the cross-frame relay
 	// script (gosx/relay.js) alongside the standard bootstrap. Driven by
 	// the process-level previewBootstrapEnabled flag — see
@@ -140,6 +143,7 @@ func NewRenderer(bundleID string) *Renderer {
 		runtimeAssets: runtimeAssets,
 	}
 	renderer.wasmExecPath = renderer.versionCompatRuntimePath("/gosx/wasm_exec.js", strings.TrimSpace(runtimeAssets.WASMExec.Hash))
+	renderer.standardGoWASMExecPath = renderer.versionCompatRuntimePath("/gosx/standard-go-wasm_exec.js", strings.TrimSpace(runtimeAssets.StandardGoWASMExec.Hash))
 	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
 	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
@@ -304,6 +308,17 @@ func (r *Renderer) SetClientAssetPaths(wasmExecPath, patchPath, bootstrapPath st
 	}
 }
 
+// SetStandardGoWASMExecPath overrides the standard-Go wasm_exec loader used
+// only by RuntimeGoWASM engines. It is kept separate from the TinyGo/shared
+// runtime shim so mixed pages cannot replace one runtime's Go constructor with
+// the other.
+func (r *Renderer) SetStandardGoWASMExecPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.standardGoWASMExecPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapLitePath overrides the bootstrap-only runtime script URL used on
 // pages that only need document/presentation/text-layout enhancement.
 func (r *Renderer) SetBootstrapLitePath(path string) {
@@ -394,6 +409,8 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.WASMIslands.Hash)
 	case "/gosx/wasm_exec.js":
 		return strings.TrimSpace(r.runtimeAssets.WASMExec.Hash)
+	case "/gosx/standard-go-wasm_exec.js":
+		return strings.TrimSpace(r.runtimeAssets.StandardGoWASMExec.Hash)
 	case "/gosx/bootstrap.js":
 		return strings.TrimSpace(r.runtimeAssets.Bootstrap.Hash)
 	case "/gosx/bootstrap-lite.js":
@@ -433,7 +450,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -469,6 +486,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
+	r.SetStandardGoWASMExecPath(runtime.StandardGoWASMExec)
 	r.SetBootstrapLitePath(runtime.BootstrapLite)
 	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
@@ -625,6 +643,13 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"></script>`, html.EscapeString(r.relayPath)))
 		b.WriteByte('\n')
 	}
+	if plan.StandardGoWASMExec && r.standardGoWASMExecPath != "" {
+		// wasm_exec.js declares globals that must execute as a real script. Mark
+		// the wrapped standard-Go shim for DOM loading during managed navigation
+		// so strict-CSP pages never fall back to indirect eval.
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom" src="%s"></script>`, html.EscapeString(r.standardGoWASMExecPath)))
+		b.WriteByte('\n')
+	}
 	if plan.WASMExec && r.wasmExecPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"></script>`, html.EscapeString(r.wasmExecPath)))
 		b.WriteByte('\n')
@@ -725,6 +750,9 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	}
 	if !engine.KindSupported(cfg.Kind) {
 		return renderEngineError(fmt.Errorf("unsupported engine kind: %q", cfg.Kind))
+	}
+	if err := engine.ValidateRuntime(cfg.Runtime, cfg.WASMPath); err != nil {
+		return renderEngineError(err)
 	}
 	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
 		return renderEngineError(err)
@@ -1204,10 +1232,13 @@ func (r *Renderer) PreloadHints() gosx.Node {
 
 	for _, entry := range r.manifest.Engines {
 		if entry.ProgramRef != "" {
-			if strings.HasSuffix(entry.ProgramRef, ".wasm") {
-				b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, entry.ProgramRef))
+			href := html.EscapeString(entry.ProgramRef)
+			parsed, parseErr := neturl.Parse(entry.ProgramRef)
+			isWASM := parseErr == nil && strings.EqualFold(filepath.Ext(parsed.Path), ".wasm")
+			if isWASM {
+				b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, href))
 			} else {
-				b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s">`, entry.ProgramRef))
+				b.WriteString(fmt.Sprintf(`<link rel="prefetch" href="%s">`, href))
 			}
 			b.WriteByte('\n')
 		}
@@ -1308,14 +1339,15 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	// otherwise the iframe has no Bridge.DispatchInboundSignal target.
 	previewNeedsRuntime := previewRelay && mode == "preview"
 	return clientRuntimePlan{
-		Bootstrap:     bootstrap,
-		Mode:          mode,
-		Manifest:      bootstrap && mode != "lite" && mode != "preview",
-		Selective:     bootstrap && mode != "lite" && mode != "preview",
-		SharedRuntime: previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
-		WASMExec:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || r.hasWASMEngines() || sharedEngine,
-		Patch:         islands > 0,
-		PreviewRelay:  previewRelay,
+		Bootstrap:          bootstrap,
+		Mode:               mode,
+		Manifest:           bootstrap && mode != "lite" && mode != "preview",
+		Selective:          bootstrap && mode != "lite" && mode != "preview",
+		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
+		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
+		StandardGoWASMExec: r.hasGoWASMEngines(),
+		Patch:              islands > 0,
+		PreviewRelay:       previewRelay,
 	}
 }
 
@@ -1326,16 +1358,17 @@ func (r *Renderer) Summary() Summary {
 	}
 	plan := r.clientRuntimePlan()
 	summary := Summary{
-		Bootstrap:      plan.Bootstrap,
-		BootstrapMode:  plan.Mode,
-		Manifest:       plan.Manifest,
-		RuntimePath:    r.selectedRuntimePath(),
-		WASMExecPath:   r.selectedWASMExecPath(),
-		BootstrapPath:  r.selectedBootstrapPath(),
-		Islands:        len(r.manifest.Islands),
-		ComputeIslands: len(r.manifest.ComputeIslands),
-		Engines:        len(r.manifest.Engines),
-		Hubs:           len(r.manifest.Hubs),
+		Bootstrap:              plan.Bootstrap,
+		BootstrapMode:          plan.Mode,
+		Manifest:               plan.Manifest,
+		RuntimePath:            r.selectedRuntimePath(),
+		WASMExecPath:           r.selectedWASMExecPath(),
+		StandardGoWASMExecPath: r.selectedStandardGoWASMExecPath(),
+		BootstrapPath:          r.selectedBootstrapPath(),
+		Islands:                len(r.manifest.Islands),
+		ComputeIslands:         len(r.manifest.ComputeIslands),
+		Engines:                len(r.manifest.Engines),
+		Hubs:                   len(r.manifest.Hubs),
 	}
 	if plan.Patch {
 		summary.PatchPath = r.patchPath
@@ -1434,21 +1467,28 @@ func (r *Renderer) selectedWASMExecPath() string {
 	return ""
 }
 
+func (r *Renderer) selectedStandardGoWASMExecPath() string {
+	if r.clientRuntimePlan().StandardGoWASMExec {
+		return r.standardGoWASMExecPath
+	}
+	return ""
+}
+
+func (r *Renderer) hasGoWASMEngines() bool {
+	for _, entry := range r.manifest.Engines {
+		if entry.Runtime == string(engine.RuntimeGoWASM) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Renderer) usesSelectiveRuntimeBootstrap() bool {
 	return r.clientRuntimePlan().Selective
 }
 
 func (r *Renderer) needsSharedRuntime() bool {
 	return r.clientRuntimePlan().SharedRuntime
-}
-
-func (r *Renderer) hasWASMEngines() bool {
-	for _, entry := range r.manifest.Engines {
-		if entry.ProgramRef != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Renderer) hasVideoEngines() bool {
