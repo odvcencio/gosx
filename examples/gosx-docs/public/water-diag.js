@@ -96,6 +96,17 @@
         row("water passes", attr("webgpu-water-selena-surface-passes") + " surface / " +
           attr("webgpu-water-caustic-passes") + " caustic", false) +
         row("water verts", attr("webgpu-water-draw-vertices") || "-", false) +
+        // If the Selena surface pipeline fails validation the renderer silently falls back
+        // to the built-in shader, which draws the FULL simulation-resolution mesh and reads
+        // the heightfield from the storage buffer -- losing both optimisations at once and
+        // still paying for the state-texture copy. Silent means unmeasurable, so say it.
+        row("selena surface", (attr("webgpu-water-selena-surface-passes") || "0") + " passes",
+          num(attr("webgpu-water-selena-surface-passes")) === 0) +
+        row("surface FALLBACK", (attr("webgpu-water-authored-surface-fallbacks") || "0") +
+          (attr("webgpu-water-authored-surface-fallback-reason")
+            ? " · " + attr("webgpu-water-authored-surface-fallback-reason").slice(0, 40)
+            : ""),
+          num(attr("webgpu-water-authored-surface-fallbacks")) > 0) +
         row("mesh res (used)", attr("webgpu-water-surface-mesh-resolution") || "-",
           Boolean(q.get("meshRes")) && attr("webgpu-water-surface-mesh-resolution") !== q.get("meshRes")) +
         row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false) +
@@ -187,6 +198,10 @@
         // The EFFECTIVE value. These two disagreeing means the prop was dropped on the
         // way to the renderer -- a silent no-op knob, which already happened once.
         meshResUsed: attr("webgpu-water-surface-mesh-resolution"),
+        selenaSurfacePasses: attr("webgpu-water-selena-surface-passes"),
+        surfaceFallbacks: attr("webgpu-water-authored-surface-fallbacks"),
+        surfaceFallbackReason: attr("webgpu-water-authored-surface-fallback-reason"),
+        surfaceAboveVertices: attr("webgpu-water-surface-above-draw-vertices"),
         computeDispatches: attr("webgpu-water-compute-dispatches"),
         canvas: lastW + "x" + lastH,
         resizesPerSec: resizeWindow.length,

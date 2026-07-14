@@ -9989,10 +9989,10 @@
             }
             if (side === "below") {
               stats.waterSurfaceBelowDrawCalls += 1;
-              stats.waterSurfaceBelowDrawVertices += system.vertexCount;
+              stats.waterSurfaceBelowDrawVertices += system.surfaceVertexCount;
             } else {
               stats.waterSurfaceAboveDrawCalls += 1;
-              stats.waterSurfaceAboveDrawVertices += system.vertexCount;
+              stats.waterSurfaceAboveDrawVertices += system.surfaceVertexCount;
             }
             continue;
           }
