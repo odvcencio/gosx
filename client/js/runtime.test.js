@@ -20502,6 +20502,15 @@ function makeFakeGPUDevice(options) {
             throw new TypeError(
               "copyBufferToTexture: bytesPerRow must be a positive multiple of 256, got " + bytesPerRow);
           }
+          // The real device rejects a source buffer without COPY_SRC and then errors the
+          // whole device, so the page renders NOTHING -- not a subtly wrong frame. The fake
+          // recorded it happily, which is exactly how that shipped.
+          const COPY_SRC = 4; // GPUBufferUsage.COPY_SRC
+          const usage = source && source.buffer && source.buffer.usage;
+          if (!(usage & COPY_SRC)) {
+            throw new TypeError(
+              "copyBufferToTexture: source buffer is missing COPY_SRC usage (got " + usage + ")");
+          }
           state.bufferToTextureCopies.push({ source, destination, size });
         },
         finish() {

@@ -7450,8 +7450,11 @@
       var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
       var cellCount = resolution * resolution;
       var stateBytes = cellCount * 16;
-      var bufferA = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
-      var bufferB = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
+      // COPY_SRC: the active state buffer is mirrored into the state texture every frame
+      // (sceneWaterCopyStateToTexture), and copyBufferToTexture requires it on the source.
+      var stateUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+      var bufferA = wgpuCreateTrackedBuffer(stateUsage, stateBytes);
+      var bufferB = wgpuCreateTrackedBuffer(stateUsage, stateBytes);
       var uniformBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 256);
       var objectSphereBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, WATER_MAX_DISPLACEMENT_SPHERES * 16);
       var objectTextureMatrixBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 128);
