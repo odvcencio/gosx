@@ -772,7 +772,7 @@ func (e *Editor) renderAssetTags() []gosx.Node {
 			gosx.Attr("href", e.Options.StylesheetURL),
 		)))
 	}
-	if strings.TrimSpace(e.Options.DiagramScriptURL) != "" {
+	if e.Options.Surface != SurfaceCode && strings.TrimSpace(e.Options.DiagramScriptURL) != "" {
 		nodes = append(nodes, gosx.El("script", gosx.Attrs(
 			gosx.Attr("src", e.Options.DiagramScriptURL),
 			gosx.Attr("defer", "defer"),

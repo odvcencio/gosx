@@ -132,6 +132,10 @@
     const fromByte = offset => offsets[Math.max(0, Math.min(offsets.length - 1, Number(offset || 0)))];
     return {
       highlights: (analysis.highlights || []).map(range => ({
+		startByte: range.startByte,
+		endByte: range.endByte,
+		startUTF16: fromByte(range.startByte),
+		endUTF16: fromByte(range.endByte),
         start16: fromByte(range.startByte),
         end16: fromByte(range.endByte),
         capture: range.capture,
@@ -227,6 +231,7 @@
   function applyAnalysis(form, source, highlight, analysis) {
     form.dataset.codeIntelligenceLane = analysis.lane || "wasm";
     renderHighlights(highlight, source.value, analysis.highlights || []);
+	form.dispatchEvent(new CustomEvent("gosx:highlight-spans", {detail: {spans: analysis.highlights || []}}));
     renderOutline(form, source, analysis.tags || []);
     const diagnostics = form.querySelector("#editor-diagnostics");
     if (diagnostics && analysis.hasError) diagnostics.textContent = "Syntax tree contains an error node.";
@@ -237,8 +242,8 @@
     const fragment = document.createDocumentFragment();
     let cursor = 0;
     for (const range of ranges) {
-      const start = Math.max(cursor, Math.min(source.length, Number(range.start16 || 0)));
-      const end = Math.max(start, Math.min(source.length, Number(range.end16 || 0)));
+	  const start = Math.max(cursor, Math.min(source.length, Number(range.startUTF16 ?? range.start16 ?? 0)));
+	  const end = Math.max(start, Math.min(source.length, Number(range.endUTF16 ?? range.end16 ?? 0)));
       if (start > cursor) fragment.appendChild(document.createTextNode(source.slice(cursor, start)));
       if (end > start) {
         const span = document.createElement("span");

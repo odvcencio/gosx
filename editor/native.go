@@ -2,11 +2,64 @@ package editor
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx"
 )
+
+func (e *Editor) renderInitialHighlights() gosx.Node {
+	if e.Options.Surface != SurfaceCode || e.Options.Code == nil || len(e.Options.Code.Highlights) == 0 {
+		return gosx.Fragment()
+	}
+	source := e.doc.Content()
+	spans := append([]HighlightSpan(nil), e.Options.Code.Highlights...)
+	sort.SliceStable(spans, func(i, j int) bool {
+		if spans[i].StartByte != spans[j].StartByte {
+			return spans[i].StartByte < spans[j].StartByte
+		}
+		return spans[i].EndByte < spans[j].EndByte
+	})
+	nodes := make([]gosx.Node, 0, len(spans)*2+1)
+	cursor := 0
+	for _, span := range spans {
+		start := max(cursor, min(len(source), span.StartByte))
+		end := max(start, min(len(source), span.EndByte))
+		if start > cursor {
+			nodes = append(nodes, gosx.Text(source[cursor:start]))
+		}
+		if end > start {
+			nodes = append(nodes, gosx.El("span", gosx.Attrs(
+				gosx.Attr("class", "syntax-"+highlightCaptureClass(span.Capture)),
+				gosx.Attr("data-start-byte", strconv.Itoa(span.StartByte)),
+				gosx.Attr("data-end-byte", strconv.Itoa(span.EndByte)),
+				gosx.Attr("data-start-utf16", strconv.Itoa(span.StartUTF16)),
+				gosx.Attr("data-end-utf16", strconv.Itoa(span.EndUTF16)),
+			), gosx.Text(source[start:end])))
+		}
+		cursor = end
+	}
+	if cursor < len(source) {
+		nodes = append(nodes, gosx.Text(source[cursor:]))
+	}
+	return gosx.Fragment(nodes...)
+}
+
+func highlightCaptureClass(capture string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(capture)) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "plain"
+	}
+	return b.String()
+}
 
 func (e *Editor) renderNativeForm() gosx.Node {
 	children := []gosx.Node{
@@ -229,7 +282,7 @@ func (e *Editor) renderNativeBody() gosx.Node {
 						gosx.Attr("class", "editor-highlight-layer"),
 						gosx.Attr("aria-hidden", "true"),
 					),
-					gosx.El("code", gosx.Attrs(gosx.Attr("id", "editor-highlight-content"))),
+					gosx.El("code", gosx.Attrs(gosx.Attr("id", "editor-highlight-content")), e.renderInitialHighlights()),
 				),
 				gosx.El(
 					"textarea",

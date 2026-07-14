@@ -40,38 +40,46 @@ type Operation = textmodel.Operation
 type Command = input.Command
 
 const (
-	CmdBold        Command = input.CmdBold
-	CmdItalic      Command = input.CmdItalic
-	CmdStrike      Command = input.CmdStrike
-	CmdCode        Command = input.CmdCode
-	CmdLink        Command = input.CmdLink
-	CmdImage       Command = input.CmdImage
-	CmdEmoji       Command = input.CmdEmoji
-	CmdH1          Command = input.CmdH1
-	CmdH2          Command = input.CmdH2
-	CmdH3          Command = input.CmdH3
-	CmdList        Command = input.CmdList
-	CmdOrderedList Command = input.CmdOrderedList
-	CmdTaskList    Command = input.CmdTaskList
-	CmdBlockquote  Command = input.CmdBlockquote
-	CmdNote        Command = input.CmdNote
-	CmdWarning     Command = input.CmdWarning
-	CmdMath        Command = input.CmdMath
-	CmdFootnote    Command = input.CmdFootnote
-	CmdHR          Command = input.CmdHR
-	CmdScene3D     Command = input.CmdScene3D
-	CmdIsland      Command = input.CmdIsland
-	CmdDiagram     Command = input.CmdDiagram
-	CmdUndo        Command = input.CmdUndo
-	CmdRedo        Command = input.CmdRedo
-	CmdSave        Command = input.CmdSave
-	CmdIndent      Command = input.CmdIndent
-	CmdDedent      Command = input.CmdDedent
-	CmdNewline     Command = input.CmdNewline
-	CmdCopy        Command = input.CmdCopy
-	CmdCut         Command = input.CmdCut
-	CmdSelectAll   Command = input.CmdSelectAll
-	CmdEscape      Command = input.CmdEscape
+	CmdBold            Command = input.CmdBold
+	CmdItalic          Command = input.CmdItalic
+	CmdStrike          Command = input.CmdStrike
+	CmdCode            Command = input.CmdCode
+	CmdLink            Command = input.CmdLink
+	CmdImage           Command = input.CmdImage
+	CmdEmoji           Command = input.CmdEmoji
+	CmdH1              Command = input.CmdH1
+	CmdH2              Command = input.CmdH2
+	CmdH3              Command = input.CmdH3
+	CmdList            Command = input.CmdList
+	CmdOrderedList     Command = input.CmdOrderedList
+	CmdTaskList        Command = input.CmdTaskList
+	CmdBlockquote      Command = input.CmdBlockquote
+	CmdNote            Command = input.CmdNote
+	CmdWarning         Command = input.CmdWarning
+	CmdMath            Command = input.CmdMath
+	CmdFootnote        Command = input.CmdFootnote
+	CmdHR              Command = input.CmdHR
+	CmdScene3D         Command = input.CmdScene3D
+	CmdIsland          Command = input.CmdIsland
+	CmdDiagram         Command = input.CmdDiagram
+	CmdUndo            Command = input.CmdUndo
+	CmdRedo            Command = input.CmdRedo
+	CmdSave            Command = input.CmdSave
+	CmdIndent          Command = input.CmdIndent
+	CmdDedent          Command = input.CmdDedent
+	CmdToggleComment   Command = input.CmdToggleComment
+	CmdMatchBracket    Command = input.CmdMatchBracket
+	CmdAddCursorUp     Command = input.CmdAddCursorUp
+	CmdAddCursorDown   Command = input.CmdAddCursorDown
+	CmdBlockSelectUp   Command = input.CmdBlockSelectUp
+	CmdBlockSelectDown Command = input.CmdBlockSelectDown
+	CmdFind            Command = input.CmdFind
+	CmdReplace         Command = input.CmdReplace
+	CmdNewline         Command = input.CmdNewline
+	CmdCopy            Command = input.CmdCopy
+	CmdCut             Command = input.CmdCut
+	CmdSelectAll       Command = input.CmdSelectAll
+	CmdEscape          Command = input.CmdEscape
 )
 
 // Keymap aliases the editor keybinding map.
@@ -168,6 +176,29 @@ type Collaboration struct {
 	BinarySplices bool
 }
 
+const (
+	// RemoteCursorEvent is emitted on the editor form when another actor's
+	// element-anchored caret or selection changes.
+	RemoteCursorEvent = "gosx:remote-cursor"
+	// RemoteCursorLeaveEvent is emitted when a remote cursor is removed.
+	RemoteCursorLeaveEvent = "gosx:remote-cursor-leave"
+)
+
+// ElementAnchor identifies a position relative to a stable CRDT element. A
+// boundary value of "start" or "end" represents an empty-document edge.
+type ElementAnchor struct {
+	ElemID   string `json:"elemID,omitempty"`
+	Affinity string `json:"affinity,omitempty"`
+	Boundary string `json:"boundary,omitempty"`
+}
+
+// RemoteCursor is the payload delivered through RemoteCursorEvent.
+type RemoteCursor struct {
+	ActorID string        `json:"actorID"`
+	Start   ElementAnchor `json:"startAnchor"`
+	End     ElementAnchor `json:"endAnchor"`
+}
+
 // CodeIntelligence declaratively binds a code surface to a gotreesitter WASM
 // runtime and language resources. The browser runtime remains framework-owned;
 // applications only provide immutable asset URLs.
@@ -189,6 +220,18 @@ type CodeOptions struct {
 	Gutter          bool
 	HighlightSource string
 	ExternalUndo    bool
+	Highlights      []HighlightSpan
+}
+
+// HighlightSpan is a caller-supplied syntax decoration. Byte offsets make
+// server rendering exact while UTF-16 offsets map directly to browser text
+// controls without retokenizing source.
+type HighlightSpan struct {
+	StartByte  int
+	EndByte    int
+	StartUTF16 int
+	EndUTF16   int
+	Capture    string
 }
 
 // DefaultPanels is the standard panel set exposed by the editor shell.
@@ -297,7 +340,7 @@ func (o *Options) defaults() {
 	if o.StylesheetURL == "" {
 		o.StylesheetURL = DefaultStylesheetURL
 	}
-	if o.DiagramScriptURL == "" {
+	if o.DiagramScriptURL == "" && o.Surface != SurfaceCode {
 		o.DiagramScriptURL = DefaultDiagramScriptURL
 	}
 	if o.ScriptURL == "" {

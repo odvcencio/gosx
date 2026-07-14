@@ -331,9 +331,55 @@
     };
 
     const renderHighlight = () => {
-	  if (form.dataset.codeIntelligenceRuntime) return;
+	  if (form.dataset.codeHighlightSource === "external" || form.dataset.codeIntelligenceRuntime || form.dataset.codeIntelligenceServer) return;
       highlight.innerHTML = highlightMarkdownPP(textarea.value) + "\n";
     };
+
+    const byteToUTF16Offsets = (source) => {
+      const encoder = new TextEncoder();
+      const offsets = new Uint32Array(encoder.encode(source).length + 1);
+      let byteOffset = 0;
+      let utf16Offset = 0;
+      for (const character of source) {
+        byteOffset += encoder.encode(character).length;
+        utf16Offset += character.length;
+        offsets[byteOffset] = utf16Offset;
+      }
+      return offsets;
+    };
+
+    const renderExternalHighlights = (spans) => {
+      const source = textarea.value;
+      const byteOffsets = byteToUTF16Offsets(source);
+      const fromByte = offset => byteOffsets[Math.max(0, Math.min(byteOffsets.length - 1, Number(offset || 0)))];
+      const ranges = Array.from(spans || []).map(span => ({
+        start: Number.isFinite(Number(span.startUTF16)) ? Number(span.startUTF16) : fromByte(span.startByte),
+        end: Number.isFinite(Number(span.endUTF16)) ? Number(span.endUTF16) : fromByte(span.endByte),
+        capture: span.capture,
+      })).sort((a, b) => a.start - b.start || a.end - b.end);
+      const fragment = document.createDocumentFragment();
+      let cursor = 0;
+      for (const range of ranges) {
+        const start = Math.max(cursor, Math.min(source.length, range.start));
+        const end = Math.max(start, Math.min(source.length, range.end));
+        if (start > cursor) fragment.appendChild(document.createTextNode(source.slice(cursor, start)));
+        if (end > start) {
+          const span = document.createElement("span");
+          span.className = "syntax-" + String(range.capture || "plain").toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+          span.textContent = source.slice(start, end);
+          fragment.appendChild(span);
+        }
+        cursor = end;
+      }
+      if (cursor < source.length) fragment.appendChild(document.createTextNode(source.slice(cursor)));
+      fragment.appendChild(document.createTextNode("\n"));
+      highlight.replaceChildren(fragment);
+      form.dataset.highlightSpanCount = String(ranges.length);
+    };
+
+    form.addEventListener("gosx:highlight-spans", event => {
+      renderExternalHighlights(event.detail?.spans || event.detail || []);
+    });
 
     textarea.spellcheck = false;
     textarea.setAttribute("spellcheck", "false");
@@ -907,14 +953,20 @@
     };
 
     const handleTabKey = (event) => {
-      if (event.key !== "Tab" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+	  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault();
 
       const start = textarea.selectionStart || 0;
       const end = textarea.selectionEnd || start;
       const selection = textarea.value.slice(start, end);
       rememberLocalEdit();
-      if (start !== end && selection.includes("\n")) {
+	  if (event.shiftKey) {
+		const { blockStart, blockEnd } = selectedLineRange(start, end);
+		const block = textarea.value.slice(blockStart, blockEnd);
+		const lines = block.split("\n");
+		const dedented = lines.map(line => line.startsWith("\t") ? line.slice(1) : line.replace(/^ {1,4}/, "")).join("\n");
+		textarea.setRangeText(dedented, blockStart, blockEnd, "select");
+	  } else if (start !== end && selection.includes("\n")) {
         const { blockStart, blockEnd } = selectedLineRange(start, end);
         const block = textarea.value.slice(blockStart, blockEnd);
         const lineCount = block.split("\n").length;
@@ -1431,6 +1483,13 @@
         addAdjacentCursor(event.key === "ArrowDown" ? 1 : -1);
         return;
       }
+	  if (event.altKey && event.shiftKey &&
+		  (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+		event.preventDefault();
+		addAdjacentCursor(event.key === "ArrowDown" ? 1 : -1);
+		form.dataset.blockSelection = "true";
+		return;
+	  }
       handleTabKey(event);
     });
     findQuery?.addEventListener("input", () => selectFindMatch(0));

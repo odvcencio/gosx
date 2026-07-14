@@ -38,6 +38,11 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 	if strings.Contains(html, "Untitled field note") || strings.Contains(html, "Metadata") {
 		t.Fatalf("code surface leaked publishing chrome: %s", html)
 	}
+	for _, forbidden := range []string{"/editor/mdpp-diagrams.js", "/editor/prose-runtime.js", `data-command="bold"`, `data-metadata-action`} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("code surface leaked publishing payload %q: %s", forbidden, html)
+		}
+	}
 	if !strings.Contains(html, `class="editor-native-card editor-panel editor-panel-diagnostics"`) {
 		t.Fatalf("diagnostics panel must participate in panel selection: %s", html)
 	}
@@ -59,7 +64,7 @@ func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(asset)
-	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false", "grant.expiresAt", "capability rotation", "minimalSplice", "encodeSplice", "socket.send(encodeSplice(splice))", `message.event === "edit:reject"`} {
+	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false", "grant.expiresAt", "capability rotation", "minimalSplice", "encodeSplice", "socket.send(encodeSplice(splice))", `message.event === "edit:reject"`, "startAnchor", "endAnchor", "isElementAnchor", "gosx:remote-cursor", "gosx:remote-cursor-leave"} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("collaboration runtime missing %q", want)
 		}
@@ -102,9 +107,30 @@ func TestNativeEditorAssetProvidesCodeEditingChecklist(t *testing.T) {
 		`dataset.redoDepth`,
 		`event.key.toLowerCase() === "f"`,
 		`event.key.toLowerCase() === "h"`,
+		`event.shiftKey`,
+		`dataset.blockSelection`,
+		`gosx:highlight-spans`,
+		`startUTF16`,
+		`startByte`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("native editor asset missing %q", want)
+		}
+	}
+}
+
+func TestCodeSurfaceRendersCallerSuppliedHighlightSpans(t *testing.T) {
+	component := New("code", Options{
+		Surface: SurfaceCode,
+		Content: "package main\n",
+		Code: &CodeOptions{Language: "go", HighlightSource: "external", Highlights: []HighlightSpan{{
+			StartByte: 0, EndByte: 7, StartUTF16: 0, EndUTF16: 7, Capture: "keyword.control",
+		}}},
+	})
+	html := gosx.RenderHTML(component.Render())
+	for _, want := range []string{`class="syntax-keyword-control"`, `data-start-byte="0"`, `data-end-byte="7"`, `data-start-utf16="0"`, `data-end-utf16="7"`, `>package</span>`} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("external highlight contract missing %q in %s", want, html)
 		}
 	}
 }

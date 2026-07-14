@@ -62,6 +62,7 @@
         }
         if (message.event === cfg.collaborationUpdateEvent) applySnapshot(data);
         if (message.event === cfg.collaborationCursorEvent) applyCursor(data || {});
+		if (message.event === "cursor:leave") removeCursor(data || {});
       });
       socket.addEventListener("close", () => { status.textContent = "Collaborative · reconnecting"; clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, reconnect || 250); reconnect = Math.min((reconnect || 250) * 2, 8000); });
     };
@@ -124,12 +125,20 @@
       }
       return send(cfg.collaborationEditEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, content: source.value});
     };
-    const publishCursor = () => send(cfg.collaborationCursorEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, start: source.selectionStart, end: source.selectionEnd});
+	const publishCursor = () => send(cfg.collaborationCursorEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, start: source.selectionStart, end: source.selectionEnd, coordinateSpace: "utf16"});
     const applyCursor = data => {
       if (data.cellID !== cfg.collaborationCell || data.path !== cfg.collaborationPath || !data.clientID) return;
+	  if (!isElementAnchor(data.startAnchor) || !isElementAnchor(data.endAnchor)) return;
       cursors.set(data.clientID, data); status.textContent = "Collaborative · " + cursors.size + " remote cursor" + (cursors.size === 1 ? "" : "s");
       form.dispatchEvent(new CustomEvent("gosx:remote-cursor", {detail: data}));
     };
+	const isElementAnchor = anchor => Boolean(anchor &&
+	  ((typeof anchor.elemID === "string" && anchor.elemID !== "") || anchor.boundary === "start" || anchor.boundary === "end"));
+	const removeCursor = data => {
+	  if (!data.clientID || !cursors.delete(data.clientID)) return;
+	  status.textContent = "Collaborative · " + cursors.size + " remote cursor" + (cursors.size === 1 ? "" : "s");
+	  form.dispatchEvent(new CustomEvent("gosx:remote-cursor-leave", {detail: {clientID: data.clientID}}));
+	};
     source.addEventListener("input", () => { localDirty = true; clearTimeout(editTimer); editTimer = setTimeout(publishEdit, 60); });
     source.addEventListener("select", publishCursor); source.addEventListener("keyup", publishCursor); source.addEventListener("pointerup", publishCursor);
     source.addEventListener("focus", () => send(cfg.collaborationFocusEvent, {cellID: cfg.collaborationCell, path: cfg.collaborationPath, focused: true}));

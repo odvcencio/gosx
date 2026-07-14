@@ -24,3 +24,17 @@ func TestKeymap_MergeOverride(t *testing.T) {
 		t.Fatal("custom should override base")
 	}
 }
+
+func TestDefaultKeymapIncludesCodeCommands(t *testing.T) {
+	want := map[string]Command{
+		"Tab": CmdIndent, "Shift-Tab": CmdDedent, "Mod-/": CmdToggleComment,
+		"Mod-Shift-\\": CmdMatchBracket, "Mod-Alt-ArrowUp": CmdAddCursorUp,
+		"Mod-Alt-ArrowDown": CmdAddCursorDown, "Alt-Shift-ArrowUp": CmdBlockSelectUp,
+		"Alt-Shift-ArrowDown": CmdBlockSelectDown, "Mod-F": CmdFind, "Mod-H": CmdReplace,
+	}
+	for chord, command := range want {
+		if got := DefaultKeymap[chord]; got != command {
+			t.Errorf("DefaultKeymap[%q] = %q, want %q", chord, got, command)
+		}
+	}
+}
