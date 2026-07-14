@@ -84,6 +84,12 @@ fn normalFromState(info: vec4, scale: float) -> vec3 {
     return normalize(vec3f(sx, sqrt(max(0.001, 1.0 - lenSq)), sy))
 }
 
+fn roundedPoolDistance(point: vec2, halfSize: vec2, radius: float) -> float {
+    let r = clamp(radius, 0.0, max(0.0, min(halfSize.x, halfSize.y) - 0.001))
+    let q = abs(point) - max(halfSize - vec2f(r, r), vec2f(0.001, 0.001))
+    return length(max(q, vec2f(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r
+}
+
 fn boxNormal(point: vec3, center: vec3, half: vec3) -> vec3 {
     let local = (point - center) / max(half, vec3f(0.001, 0.001, 0.001))
     let axis  = abs(local)
@@ -172,6 +178,8 @@ material WaterSurfaceBelow {
     param poolWidth     : float = 1.5
     param poolLength    : float = 1.5
     param poolHeight    : float = 0.3
+    param cornerRadius  : float = 0.0
+    param poolShape     : float = 0.0
     param normalScale   : float = 1.0
     param objectRadius  : float = 0.3
     param opticsCaustic : float = 1.0
@@ -223,6 +231,10 @@ material WaterSurfaceBelow {
 
     surface(geo) -> color {
         let wp = geo.vWorldPos
+
+        if (poolShape > 0.5 && roundedPoolDistance(wp.xz, vec2f(poolWidth, poolLength), cornerRadius) > 0.0) {
+            discard
+        }
 
         var coord = clamp(geo.vUv, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
         var pinfo = stateAt(coord)

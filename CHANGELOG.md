@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.31.9 (2026-07-14)
+
+- Clipped Selena-authored above- and below-water surfaces to rounded pool
+  boundaries, keeping the WebGPU and generated WebGL material paths aligned.
+- Reused stationary complex-object reflection, refraction, clipped-reflection,
+  and shadow targets after input invalidation, removing the rubber duck's
+  persistent auxiliary-pass cost.
+- Restored the water performance diagnostic overlay through GoSX managed page
+  lifecycle loading at `?diag=1`, without adding page-authored JavaScript.
+
 ## v0.31.8 (2026-07-14)
 
 - Fixed Selena WebGPU water surface draws to use the canonical finite integer

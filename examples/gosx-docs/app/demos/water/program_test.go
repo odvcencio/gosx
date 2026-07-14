@@ -812,6 +812,11 @@ func TestWaterSelenaGLESSlots(t *testing.T) {
 	if !strings.Contains(string(surfaceSource), "meshTextureEnable") || !strings.Contains(string(surfaceSource), "objectRefractionTex") {
 		t.Fatal("surface shader lost the projected complex-object optics path")
 	}
+	for _, want := range []string{"param cornerRadius", "param poolShape", "roundedPoolDistance", "discard"} {
+		if !strings.Contains(string(surfaceSource), want) {
+			t.Fatalf("surface shader lost rounded-pool coverage %q", want)
+		}
+	}
 	normalFrag, _ := data["waterNormalFragmentGLES"].(string)
 	if !strings.Contains(normalFrag, "cellSizeX > 0.000001") || !strings.Contains(normalFrag, "0.0078125") {
 		t.Fatalf("normal fragment must keep legacy/unbound cell spacing finite")
