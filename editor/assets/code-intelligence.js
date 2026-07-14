@@ -7,7 +7,7 @@
   for (const form of forms) {
     // Keep code intelligence off the first-paint path. Two animation frames
     // let the server-rendered editor become visible before WASM is fetched.
-    requestAnimationFrame(() => requestAnimationFrame(() => mount(form)));
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => mount(form), 0)));
   }
 
   async function mount(form) {
