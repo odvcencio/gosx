@@ -368,6 +368,7 @@ material WaterSurface {
 
         var rfComp = 1000000.0
         for (var ci = 0i; ci < 32i; ci = ci + 1i) {
+            if (!(isCompound && float(ci) < objectCount)) { break }
             if (isCompound && float(ci) < objectCount) {
                 let soA = spheres[ci]
                 let scA = objC + vec3f(soA.x * poolWidth, soA.y, soA.z * poolLength)
@@ -384,6 +385,7 @@ material WaterSurface {
         var rfTorus = 1000000.0
         var rfDone  = max(traceOff, boundOff)
         for (var ts = 0i; ts < 30i; ts = ts + 1i) {
+            if (rfDone >= 0.5) { break }
             if (rfDone < 0.5) {
                 let pT     = wp + refractD * rfT
                 let posT   = (pT - objC) / radiusScale
@@ -417,6 +419,7 @@ material WaterSurface {
         var rfCompN   = normalize(rfObjP - objC)
         var rfCompS   = 1000000.0
         for (var di = 0i; di < 32i; di = di + 1i) {
+            if (!(isCompound && !isTorus && float(di) < objectCount)) { break }
             if (isCompound && !isTorus && float(di) < objectCount) {
                 let soB    = spheres[di]
                 let scB    = objC + vec3f(soB.x * poolWidth, soB.y, soB.z * poolLength)
