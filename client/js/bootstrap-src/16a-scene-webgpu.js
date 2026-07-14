@@ -582,6 +582,10 @@
     "  let q = abs(point) - max(halfSize - vec2f(r), vec2f(0.001));",
     "  return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;",
     "}",
+    "fn roundedWaterSDF(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {",
+    "  let inset = max(min(halfSize.x, halfSize.y) * 0.018, 0.012);",
+    "  return roundedPoolSDF(point, max(halfSize - vec2f(inset), vec2f(0.001)), max(radius - inset, 0.0));",
+    "}",
     "",
     "fn sampleWaterSky(direction: vec3f) -> vec3f {",
     "  let sky = textureSample(waterSkyTexture, causticSampler, normalize(direction)).rgb;",
@@ -653,7 +657,7 @@
     "  var shapeAlpha = 1.0;",
     "  if (params.poolShape > 0.5) {",
     "    let halfSize = vec2f(max(params.poolWidth, 0.001), max(params.poolLength, 0.001));",
-    "    let sdf = roundedPoolSDF(in.worldPos.xz, halfSize, params.cornerRadius);",
+    "    let sdf = roundedWaterSDF(in.worldPos.xz, halfSize, params.cornerRadius);",
     "    let edge = max(0.008, min(params.poolWidth, params.poolLength) / max(f32(params.resolution), 1.0));",
     "    shapeAlpha = smoothstep(edge, -edge, sdf);",
     "    if (shapeAlpha <= 0.001) { discard; }",
@@ -3910,6 +3914,7 @@
 
     if (typeof navigator === "undefined" || !navigator.gpu) return sceneWebGPUFactoryFailure("navigator-gpu-unavailable");
     if (!canvas || typeof canvas.getContext !== "function") return sceneWebGPUFactoryFailure("canvas-context-unavailable");
+    var telemetryMount = canvas.parentNode && typeof canvas.parentNode.setAttribute === "function" ? canvas.parentNode : null;
 
     // Device + adapter come from the main-bundle probe (16z). The
     // probe has already verified BOTH requestAdapter AND requestDevice
@@ -4229,7 +4234,10 @@
       var candidateBuffers = [];
       try {
         var supportsTimestamps = device && device.features && typeof device.features.has === "function" && device.features.has("timestamp-query");
-        if (!supportsTimestamps || typeof device.createQuerySet !== "function") return gpuTiming;
+        if (!supportsTimestamps || typeof device.createQuerySet !== "function") {
+          if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "unsupported");
+          return gpuTiming;
+        }
         candidateQuerySet = device.createQuerySet({ type: "timestamp", count: 6 });
         var slots = [];
         for (var i = 0; i < 3; i++) {
@@ -4251,6 +4259,7 @@
           timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
         gpuTimingFailed = false;
+        if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "pending");
       } catch (error) {
         if (candidateQuerySet && typeof candidateQuerySet.destroy === "function") candidateQuerySet.destroy();
         for (var candidateIndex = 0; candidateIndex < candidateBuffers.length; candidateIndex++) {
@@ -4260,6 +4269,7 @@
         gpuTiming = false;
         gpuTimingFailed = true;
         lastGPUPerformanceSample = null;
+        if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "failed");
       }
       return gpuTiming;
     }
@@ -4287,6 +4297,7 @@
       gpuTimingFailed = true;
       failedGPUTimings.push({ timing: timing, retireAfterFrame: gpuTimingFrameSeq + 3 });
       lastGPUPerformanceSample = null;
+      if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "failed");
     }
 
     function drainDeferredGPUResources(force) {
@@ -4332,6 +4343,10 @@
                 gpuMS: Number(values[1] - values[0]) * activeTiming.timestampPeriodNS / 1000000,
                 atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
               };
+              if (telemetryMount) {
+                telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPerformanceSample.gpuMS.toFixed(3));
+                telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured");
+              }
             }
             activeSlot.readback.unmap();
             activeSlot.pending = false;

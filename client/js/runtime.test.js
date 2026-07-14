@@ -8754,7 +8754,8 @@ test("Scene3D WebGPU water clips rounded box surfaces with a shader SDF", () => 
   assert.match(webgpu, /waterUniformScratchF\[14\] = cornerRadius/);
   assert.match(webgpu, /waterUniformScratchF\[15\] = rounded \? 1 : 0/);
   assert.match(webgpu, /fn roundedPoolSDF\(point: vec2f, halfSize: vec2f, radius: f32\)/);
-  assert.match(webgpu, /roundedPoolSDF\(in\.worldPos\.xz, halfSize, params\.cornerRadius\)/);
+  assert.match(webgpu, /fn roundedWaterSDF\(point: vec2f, halfSize: vec2f, radius: f32\)/);
+  assert.match(webgpu, /roundedWaterSDF\(in\.worldPos\.xz, halfSize, params\.cornerRadius\)/);
   assert.match(webgpu, /if \(shapeAlpha <= 0\.001\) \{ discard; \}/);
   assert.match(webgpu, /return vec4f\(mix\(refractedColor, reflectedColor, fresnel\), shapeAlpha\)/);
   assert.match(webgpu, /return vec4f\(mix\(reflectedColor, refractedColor, \(1\.0 - fresnel\) \* length\(refractDir\)\), shapeAlpha\)/);
@@ -22017,6 +22018,7 @@ test("Scene3D fake WebGPU quality transitions preserve simulation buffers and au
   assert.equal(stats.waterActiveObjectShadowResolution, 512, "full profile cannot exceed authored shadow cap");
   assert.ok(simulationBuffers.every((buffer) => !buffer.destroyed));
   assert.equal(harness.renderer.pollPerformanceSample(), null, "timestamp-unavailable devices must fall back safely without blocking");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "unsupported");
 });
 
 test("Scene3D fake WebGPU ignores supplied quality profiles when adaptive quality is disabled", async () => {
@@ -22074,6 +22076,8 @@ test("Scene3D fake WebGPU timestamp ring is supported and nonblocking", async ()
   const sample = harness.renderer.pollPerformanceSample();
   assert.equal(sample.source, "gpu-timestamp");
   assert.equal(sample.gpuMS, 4);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "measured");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-ms"), "4.000");
 });
 
 test("Scene3D fake WebGPU timing partial allocation failure destroys candidates and exposes CPU fallback", async () => {
@@ -22111,6 +22115,7 @@ test("Scene3D fake WebGPU timing partial allocation failure destroys candidates 
     { available: false, active: false, pending: false, failed: true, source: "gpu-timestamp" },
   );
   assert.equal(harness.renderer.pollPerformanceSample(), null, "failed GPU timing must fall back without blocking");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "failed");
 });
 
 test("Scene3D WebGL water binds the full Selena object contract", () => {

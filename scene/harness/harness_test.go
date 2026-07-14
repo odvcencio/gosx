@@ -46,7 +46,7 @@ material HarnessMaterial {
 		DeltaX: 12, DeltaY: 4, RotateMode: scene.ControlRotateModePixelDegrees,
 		RotateDirection: scene.ControlRotateDirectionGrab,
 	})
-	if drag.DeltaYaw >= 0 || drag.DeltaPitch >= 0 {
+	if drag.DeltaYaw >= 0 || drag.DeltaPitch <= 0 {
 		t.Fatalf("native interaction certificate detected inverted drag: %#v", drag)
 	}
 	objectDrag := session.ObjectDrag("selected sphere", scene.ObjectDragState{

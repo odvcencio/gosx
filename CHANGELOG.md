@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.31.11 (2026-07-14)
+
+- Terminated rounded water surfaces at the pool's inner wall boundary across
+  Selena WebGPU/WebGL output and the built-in WebGPU fallback, preventing
+  displaced water from revealing or overlapping outside the rounded shell.
+- Published WebGPU timestamp-query state and measurements to Scene3D
+  telemetry so diagnostics distinguish measured GPU work from unsupported,
+  pending, and failed timing rather than displaying a misleading dash.
+- Updated browser-free interaction certification for the corrected vertical
+  grab convention.
+
 ## v0.31.10 (2026-07-14)
 
 - Made the managed water diagnostic lifecycle asset reliable under static
