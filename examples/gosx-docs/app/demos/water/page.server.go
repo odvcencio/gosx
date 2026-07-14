@@ -6,6 +6,7 @@ import (
 	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
 )
 
 func init() {
@@ -15,6 +16,9 @@ func init() {
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				addWaterDemoPreloadHead(ctx)
+				if waterDiagBool(ctx, "diag", false) {
+					ctx.AddHead(server.LifecycleScript("/water-diag.js"))
+				}
 				data, err := WaterDemoData()
 				if err != nil {
 					return nil, err

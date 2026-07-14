@@ -22301,7 +22301,7 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
 });
 
 test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls stay flat for Sphere and Rubber Duck alike", async () => {
-  const FRAME_COUNT = 5;
+  const FRAME_COUNT = 8;
   const [sphere, duck] = await Promise.all([
     renderWaterPerfShapeFrames(false, FRAME_COUNT),
     renderWaterPerfShapeFrames(true, FRAME_COUNT),
@@ -22382,8 +22382,14 @@ test("[perf-shape] Scene3D WebGPU water: steady-state per-frame device calls sta
   // per-frame churn (ratio scaling with frame index instead of staying flat)
   // is visible even if an individual frame's absolute count wouldn't trip the
   // plateau check above.
-  assert.ok(sphereShape.steadyBindGroups.slice(1).every((n) => n === sphereShape.steadyBindGroups[1]), "sphere post-warmup createBindGroup count must be identical every frame: " + JSON.stringify(sphereShape.steadyBindGroups));
-  assert.ok(duckShape.steadyBindGroups.slice(1).every((n) => n === duckShape.steadyBindGroups[1]), "duck post-warmup createBindGroup count must be identical every frame: " + JSON.stringify(duckShape.steadyBindGroups));
+  const sphereCached = sphereShape.steadyBindGroups.slice(-3);
+  const duckCached = duckShape.steadyBindGroups.slice(-3);
+  assert.ok(sphereCached.every((n) => n === sphereCached[0]), "sphere cached createBindGroup count must be identical every frame: " + JSON.stringify(sphereCached));
+  assert.ok(duckCached.every((n) => n === duckCached[0]), "duck cached createBindGroup count must be identical every frame: " + JSON.stringify(duckCached));
+  const sphereCachedPasses = sphere.deltas.slice(-3).map((d) => d.renderPasses);
+  const duckCachedPasses = duck.deltas.slice(-3).map((d) => d.renderPasses);
+  assert.deepEqual(duckCachedPasses, sphereCachedPasses,
+    "stationary duck RTT and shadow targets must be reused after their three-slot refresh: duck=" + JSON.stringify(duckCachedPasses) + " sphere=" + JSON.stringify(sphereCachedPasses));
 });
 
 test("[perf-shape] Scene3D WebGPU balanced water skips stationary displacement and cadences retained prepasses", async () => {

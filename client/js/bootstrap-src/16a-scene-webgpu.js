@@ -8116,6 +8116,30 @@
       return selected;
     }
 
+    function sceneWaterObjectRenderSignature(system, entry, bundle, objectList, includeCamera) {
+      var center = (system && system.waterObjectCenter) || {};
+      var half = (system && system.waterObjectHalfSize) || {};
+      var light = (system && system.waterLightDir) || {};
+      var parts = [
+        sceneWaterActiveObjectID(entry), sceneWaterObjectKind(entry),
+        sceneNumber(center.x, 0), sceneNumber(center.y, 0), sceneNumber(center.z, 0),
+        sceneNumber(half.x, 0), sceneNumber(half.y, 0), sceneNumber(half.z, 0),
+        sceneNumber(system && system.waterObjectRadius, 0),
+        sceneNumber(light.x, 0), sceneNumber(light.y, 0), sceneNumber(light.z, 0),
+      ];
+      if (includeCamera) {
+        var camera = (bundle && bundle.camera) || {};
+        parts.push(camera.mode || "", sceneNumber(camera.x, 0), sceneNumber(camera.y, 0), sceneNumber(camera.z, 0),
+          sceneNumber(camera.targetX, 0), sceneNumber(camera.targetY, 0), sceneNumber(camera.targetZ, 0),
+          sceneNumber(camera.fov, 0), sceneNumber(camera.near, 0), sceneNumber(camera.far, 0));
+      }
+      for (var i = 0; i < objectList.length; i++) {
+        var obj = objectList[i] || {};
+        parts.push(sceneWaterMeshObjectID(obj), sceneNumber(obj.vertexOffset, 0), sceneNumber(obj.vertexCount, 0));
+      }
+      return parts.join("|");
+    }
+
     function bindWaterObjectMeshVertexBuffers(pass, obj, pbrBuffers) {
       if (!pass || !obj || !pbrBuffers) return false;
       var offset = obj.vertexOffset;
@@ -8715,13 +8739,21 @@
           continue;
         }
 
+        var textureSignature = sceneWaterObjectRenderSignature(system, entry, bundle, objectList, true);
+        if (system.waterObjectTextureSignature !== textureSignature) {
+          system.waterObjectTextureSignature = textureSignature;
+          system.waterObjectTextureRefreshRemaining = 3;
+        }
+        var refreshRemaining = Math.max(0, Math.floor(sceneNumber(system.waterObjectTextureRefreshRemaining, 0)));
+        if (refreshRemaining <= 0) continue;
+
         var targetWidth = Math.max(1, system.objectTextureWidth || system.objectTextureResolution || WATER_OBJECT_TEXTURE_SIZE);
         var targetHeight = Math.max(1, system.objectTextureHeight || system.objectTextureResolution || WATER_OBJECT_TEXTURE_SIZE);
         // Round-robin: render only one of the 3 mesh-target passes per frame.
         // Slots: 0=refraction, 1=reflection, 2=clipped-reflection. Textures
         // from previous frames are reused for the other two, keeping the duck
         // load to ~1/3 of its previous per-frame cost.
-        var passSlot = system.frameIndex % 3;
+        var passSlot = 3 - refreshRemaining;
         var emptyPass = { passes: 0, drawCalls: 0, selenaDrawCalls: 0 };
         // Always upload frame uniforms so objectViewProjectionMatrix stays
         // current for the water-surface shader even on skipped render frames.
@@ -8779,6 +8811,7 @@
         var drawCalls = refraction.drawCalls + reflection.drawCalls + clipped.drawCalls;
         var selenaDrawCalls = refraction.selenaDrawCalls + reflection.selenaDrawCalls + clipped.selenaDrawCalls;
         if (passCount > 0) addWaterObjectTextureStats(stats, system, passCount, passCount, drawCalls, 0, selenaDrawCalls);
+        system.waterObjectTextureRefreshRemaining = Math.max(0, refreshRemaining - 1);
       }
       if (restoredFrame) {
         uploadFrameUniforms(bundle && bundle.camera, width, height, toneMap);
@@ -9133,11 +9166,14 @@
         var expensiveCadenceBucket = Math.floor(Math.max(0, waterClock.tickSeq || 0) / expensivePassCadence);
         var refreshExpensivePasses = waterStateDirty || system.waterExpensiveCadenceBucket !== expensiveCadenceBucket;
         if (refreshExpensivePasses) system.waterExpensiveCadenceBucket = expensiveCadenceBucket;
-        if ((optics.object || optics.caustics) && refreshExpensivePasses) {
+        if (optics.object || optics.caustics) {
           var objectShadowPasses = 0;
           var meshShadow = { passes: 0, drawCalls: 0 };
           var hasShadowSubject = waterSystemHasObjectTextureSubject(system);
           var objectList = hasShadowSubject ? sceneWaterObjectMeshList(bundle, entry) : [];
+          var shadowSignature = sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false);
+          var refreshObjectShadow = system.waterObjectShadowSignature !== shadowSignature;
+          hasShadowSubject = hasShadowSubject && refreshObjectShadow;
           if (hasShadowSubject && objectList.length > 0 && pbrBuffers) {
             meshShadow = renderWaterObjectMeshShadowPass(encoder, system, objectList, pbrBuffers);
           }
@@ -9162,6 +9198,7 @@
           }
           stats.waterObjectShadowPasses += objectShadowPasses;
           if (objectShadowPasses > 0) {
+            system.waterObjectShadowSignature = shadowSignature;
             stats.waterObjectShadowTexturePixels += Math.max(0, system.objectShadowResolution || 0) * Math.max(0, system.objectShadowResolution || 0);
           }
         }
@@ -9559,6 +9596,8 @@
           poolWidth: sceneNumber(system && system.waterPoolWidth, 1),
           poolLength: sceneNumber(system && system.waterPoolLength, 1),
           poolHeight: sceneNumber(system && system.waterPoolHeight, 1),
+          cornerRadius: sceneNumber(system && system.waterCornerRadius, 0),
+          poolShape: sceneWaterPoolShapeRounded(entry) ? 1 : 0,
           // normalScale has a compiled descriptor default (1.0, matching
           // surface.sel's own `param normalScale : float = 1.0`), so this
           // omission was never a zeroing bug like waterColor -- but it DID
