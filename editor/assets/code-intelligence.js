@@ -4,7 +4,11 @@
   const runtimePromises = new Map();
   const languagePromises = new Map();
   const forms = Array.from(document.querySelectorAll("form[data-code-intelligence-runtime]"));
-  for (const form of forms) mount(form);
+  for (const form of forms) {
+    // Keep code intelligence off the first-paint path. Two animation frames
+    // let the server-rendered editor become visible before WASM is fetched.
+    requestAnimationFrame(() => requestAnimationFrame(() => mount(form)));
+  }
 
   async function mount(form) {
     const source = form.querySelector("textarea[name=content]");
