@@ -51,7 +51,14 @@ var waterDiagDefaults = map[string]any{
 	//
 	//	/demos/water?diag=1&meshRes=96   quarter the triangles, same sim
 	//	/demos/water?diag=1&meshRes=64   ninth the triangles, same sim
-	"meshRes":         0,
+	//
+	// 96 is the shipped default: the surface was tessellated to roughly one triangle per
+	// 1.4 screen pixels, and a GPU shades in 2x2 quads, so sub-pixel triangles billed a
+	// full four-lane quad each of the reflection/refraction shader. Dropping to 96 nearly
+	// doubled the frame rate with no visible change (the fragment stage samples the
+	// heightfield by normalized uv, so shading is identical at any mesh density).
+	// meshRes=0 restores a mesh matching the simulation, for comparison.
+	"meshRes":         96,
 	"causticsRes":     512,
 	"shadowRes":       512,
 	"caustics":        true,

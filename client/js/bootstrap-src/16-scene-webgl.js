@@ -2918,7 +2918,14 @@
     // Geometry sizes. The box pool is 5 faces (floor + 4 walls) * 6 vertices;
     // the rounded pool is pool.sel's 44*3 floor-fan + 44*6 wall-strip = 44*9
     // (see livePoolVertexCount in drawFrame for the live per-frame pick).
-    var gridResolution = Math.max(2, Math.min(160, sim.resolution));
+    // Surface tessellation, independent of the simulation grid (sim.resolution) -- this
+    // backend already capped it at 160 while the sim ran at 192, so the two were never the
+    // same axis. surfaceMeshResolution now names it explicitly and keeps WebGPU and WebGL2
+    // drawing the SAME mesh; 0 means match the simulation, and the 160 cap still applies.
+    var meshResolution = sceneWaterNum(entry.surfaceMeshResolution, 0) > 0
+      ? sceneWaterSimResolution(entry.surfaceMeshResolution)
+      : sim.resolution;
+    var gridResolution = Math.max(2, Math.min(160, meshResolution));
     var surfaceCells = gridResolution - 1;
     var surfaceVertexCount = surfaceCells * surfaceCells * 6;
     var emptyVAO = gl.createVertexArray();

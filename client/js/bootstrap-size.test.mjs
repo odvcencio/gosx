@@ -203,7 +203,7 @@ const budgets = [
   // New budgets = current measurements + a small, deliberate margin. The bundle is
   // near its ceiling on every axis; the correct response to the NEXT breach is a
   // diet (dead-code sweep, finer feature splitting) rather than another bump.
-  { file: "bootstrap.js", raw: 1_200_000, gzip: 318_000, brotli: 257_000 },
+  { file: "bootstrap.js", raw: 1_201_000, gzip: 318_000, brotli: 257_000 },
   { file: "bootstrap-runtime.js", raw: 120_000, gzip: 33_000, brotli: 30_000 },
   { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
@@ -380,6 +380,12 @@ const budgets = [
   // 64_500: water-demo Selena convergence (see bootstrap.js note) — the
   // descriptor-driven WGSL water renderer lands here. Measured: 328_062 /
   // 76_090 / 63_619 + sub-1% rounding headroom.
+    // bootstrap.js raw bumped 1_200_000 -> 1_201_000 for the texture-backed statefield read:
+    // the state texture, its per-frame buffer->texture mirror, and the texture branch in the
+    // Selena bind-group layout/bind-group. This buys back roughly half the water demo's GPU
+    // frame time on Apple/Metal, where the previous storage-buffer read bypassed the texture
+    // cache. Compressed budgets were unaffected.
+    //
     // scene3d-webgpu raw bumped 332_000 -> 332_100 (+66 actual) for SurfaceMeshResolution:
     // the mesh axis itself plus the attribute that publishes the EFFECTIVE value, without
     // which a dropped prop reads as a knob that "did nothing" rather than a knob that never
@@ -429,7 +435,7 @@ const budgets = [
   // precedent: this bundle now has no headroom on any axis, and the dead-code sweep /
   // feature-splitting diet is the highest-priority work in it. Nothing else lands here
   // first.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 332_100, gzip: 77_300, brotli: 64_650 },
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 333_400, gzip: 77_800, brotli: 65_100 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

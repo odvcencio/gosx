@@ -9478,6 +9478,22 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   // shows up as a disagreement instead of a mystery.
   assert.match(core, /surfaceMeshResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.surfaceMeshResolution/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-surface-mesh-resolution/);
+  // The heightfield is READ by render materials through a texture, not a storage buffer.
+  // Their stateAt() taps are dependent chains -- each coordinate derived from the value
+  // just read -- so through a raw buffer they bypass the texture cache and, past a certain
+  // grid size, the working set stops fitting. That cost the water demo ~16ms/frame on
+  // Apple/Metal while the SAME shader on WebGL2, which has no storage buffers and so always
+  // sampled a texture, never degraded. Selena's WGSLStateBinding.InKind drives this.
+  assert.match(webgpu, /stateWGSL\.inKind === "texture"/);
+  assert.match(webgpu, /texture: \{ sampleType: "unfilterable-float", viewDimension: "2d" \}/);
+  assert.match(webgpu, /function sceneSelenaLiveStateTextureView/);
+  // The sim still writes buffers, so the active one must be mirrored into that texture
+  // every frame, after the last compute stage and before anything samples it.
+  assert.match(webgpu, /sceneWaterCopyStateToTexture\(encoder, system\)/);
+  assert.match(webgpu, /copyBufferToTexture/);
+  // A state row is resolution * 16 bytes and copyBufferToTexture demands a 256-byte row,
+  // so the grid must stay a multiple of 16.
+  assert.match(webgpu, /Math\.round\(raw \/ 16\) \* 16/);
   assert.match(webgpu, /renderPass\.draw\(system\.surfaceVertexCount\)/);
   assert.match(webgpu, /renderPass\.draw\(system\.vertexCount\)/);
   assert.match(webgpu, /gridResolution: sceneNumber\(system && system\.surfaceMeshResolution/);
@@ -20287,6 +20303,7 @@ function makeFakeGPUDevice(options) {
     submitCount: 0,
     renderPasses: [],
     computePasses: [],
+    bufferToTextureCopies: [],
     renderPipelines: [],
     computePipelines: [],
     shaderModules: [],
@@ -20474,6 +20491,18 @@ function makeFakeGPUDevice(options) {
           const pass = makePass(descriptor, "compute");
           state.computePasses.push(pass);
           return pass;
+        },
+        // The water heightfield is mirrored buffer -> texture each frame so render
+        // materials read it through the texture cache. WebGPU requires bytesPerRow to be
+        // a multiple of 256 and rejects the copy otherwise, so the fake enforces it too:
+        // a mock that accepts what the real API rejects certifies broken frames.
+        copyBufferToTexture(source, destination, size) {
+          const bytesPerRow = source && source.bytesPerRow;
+          if (!Number.isInteger(bytesPerRow) || bytesPerRow <= 0 || bytesPerRow % 256 !== 0) {
+            throw new TypeError(
+              "copyBufferToTexture: bytesPerRow must be a positive multiple of 256, got " + bytesPerRow);
+          }
+          state.bufferToTextureCopies.push({ source, destination, size });
         },
         finish() {
           return { __kind: "commandBuffer" };

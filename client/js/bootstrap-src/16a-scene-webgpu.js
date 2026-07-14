@@ -5267,6 +5267,22 @@
       }
     }
 
+    // The render-side twin of sceneSelenaLiveBuffer: resolves the same
+    // gosx:water:<id>:state reference to the mirrored heightfield TEXTURE view.
+    function sceneSelenaLiveStateTextureView(material, stateDescriptor) {
+      var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, stateDescriptor));
+      if (!resolved || !resolved.system) return null;
+      switch (resolved.slot) {
+      case "state":
+      case "waterState":
+      case "height":
+      case "heightfield":
+        return resolved.system.stateTextureView || null;
+      default:
+        return null;
+      }
+    }
+
     function sceneSelenaLiveBuffer(material, bufferDescriptor) {
       var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, bufferDescriptor));
       if (!resolved || !resolved.system) return null;
@@ -5385,7 +5401,16 @@
       }
       for (var s = 0; s < states.length; s++) {
         var stateWGSL = states[s] && states[s].wgsl || {};
-        entries.push({
+        // Selena's WGSLStateBinding.InKind says what to bind. A RENDER statefield reads
+        // through textureLoad (rgba32float -> unfilterable-float, and textureLoad needs no
+        // sampler), because its taps are dependent chains that must hit the texture cache.
+        // A feedback statefield keeps the storage buffer its dispatch writes.
+        var stateIsTexture = stateWGSL.inKind === "texture";
+        entries.push(stateIsTexture ? {
+          binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + s),
+          visibility: visibility,
+          texture: { sampleType: "unfilterable-float", viewDimension: "2d" },
+        } : {
           binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + s),
           visibility: visibility,
           buffer: { type: "read-only-storage" },
@@ -5761,6 +5786,16 @@
       for (var st = 0; st < states.length; st++) {
         var stateDescriptor = states[st] || {};
         var stateWGSL = stateDescriptor.wgsl || {};
+        if (stateWGSL.inKind === "texture") {
+          var stateView = sceneSelenaLiveStateTextureView(material, stateDescriptor);
+          if (!stateView) return null;
+          entries.push({
+            binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + st),
+            resource: stateView,
+          });
+          cacheStorages.push(stateView);
+          continue;
+        }
         var stateBuffer = sceneSelenaLiveBuffer(material, stateDescriptor);
         if (!stateBuffer) return null;
         entries.push({
@@ -6434,7 +6469,11 @@
     function sceneWaterResolution(value) {
       var raw = Math.floor(sceneNumber(value, 256));
       if (!Number.isFinite(raw) || raw <= 0) raw = 256;
-      return Math.max(16, Math.min(512, raw));
+      raw = Math.max(16, Math.min(512, raw));
+      // The heightfield is mirrored into a texture each frame so render materials can
+      // read it through the texture cache, and copyBufferToTexture requires a 256-byte
+      // row: one row is resolution * 16 bytes, so the grid must be a multiple of 16.
+      return Math.max(16, Math.round(raw / 16) * 16);
     }
 
     // Tessellation of the surface mesh. Defaults to the simulation resolution, so
@@ -7366,9 +7405,43 @@
       return waterObjectMeshShadowUniformScratch;
     }
 
+    // The heightfield lives in a storage buffer because the simulation dispatches write it.
+    // Render materials, though, tap it through stateAt() in DEPENDENT chains -- each
+    // coordinate derived from the value just read -- and a storage buffer bypasses the
+    // texture cache, so on a large grid those scattered loads dominate the frame. Selena
+    // now lowers a render statefield read to textureLoad (see its WGSLStateBinding.InKind),
+    // which is what the WebGL backend has always done via a float texture -- and is why
+    // WebGL2 never degraded on the hardware where WebGPU did.
+    //
+    // So the sim keeps its buffers and we mirror the active one into a texture once per
+    // frame: one linear copy in exchange for cached reads in every fragment.
+    function sceneWaterCreateStateTexture(device, resolution) {
+      return device.createTexture({
+        label: "gosx-water-state",
+        size: { width: resolution, height: resolution, depthOrArrayLayers: 1 },
+        format: "rgba32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+    }
+
+    // Mirrors the CURRENT state buffer into the state texture. Must be encoded after the
+    // simulation passes for the frame and before anything samples it.
+    function sceneWaterCopyStateToTexture(encoder, system) {
+      if (!system || !system.stateTexture) return;
+      var src = system.activeIndex === 0 ? system.bufferA : system.bufferB;
+      if (!src) return;
+      var res = system.resolution;
+      encoder.copyBufferToTexture(
+        { buffer: src, offset: 0, bytesPerRow: res * 16, rowsPerImage: res },
+        { texture: system.stateTexture },
+        { width: res, height: res, depthOrArrayLayers: 1 }
+      );
+    }
+
     function createSceneWaterSystem(scopedDevice, entry, width, height) {
       var resolution = sceneWaterResolution(entry && entry.resolution);
       var surfaceMeshResolution = sceneWaterSurfaceMeshResolution(entry, resolution);
+      var stateTexture = sceneWaterCreateStateTexture(scopedDevice, resolution);
       var causticsResolution = sceneWaterCausticsResolution(entry);
       var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
       var objectTextureWidth = objectTextureSize.width;
@@ -7457,6 +7530,10 @@
         objectShadowTexture: objectShadowTexture,
         objectShadowView: objectShadowTexture.createView(),
         activeIndex: 0,
+        stateTexture: stateTexture,
+        // One view, not a ping-pong pair: the render side always reads the mirrored
+        // texture, so the bind group no longer varies with which sim buffer is active.
+        stateTextureView: stateTexture.createView(),
         frameIndex: 0,
         seeded: false,
         seedSalt: Number.isFinite(Number(entry && entry.seedSalt)) ? Number(entry.seedSalt) : Math.random() * 4096,
@@ -7465,6 +7542,11 @@
         dispose: function() {
           if (system._gosxDisposed) return;
           system._gosxDisposed = true;
+          if (system.stateTexture && typeof system.stateTexture.destroy === "function") {
+            system.stateTexture.destroy();
+            system.stateTexture = null;
+            system.stateTextureView = null;
+          }
           if (bufferA && typeof bufferA.destroy === "function") {
             pointsEntryGPUBuffers.delete(bufferA);
             bufferA.destroy();
@@ -8695,6 +8777,12 @@
         stats.waterSelenaComputeDispatches += normalResult.selena;
         stats.waterSelenaComputeFallbacks += normalResult.selenaFallback;
         if (normalCompute.authored && normalResult.selena === 0) stats.waterAuthoredComputeDispatches += normalDispatches;
+
+        // Every simulation stage above has now written the heightfield, so mirror the
+        // active buffer into the state texture that render materials sample. Encoded
+        // before any pass below reads it.
+        sceneWaterCopyStateToTexture(encoder, system);
+
         var expensivePassCadence = system.resolution === 128 ? 3 : (system.resolution === 192 ? 2 : 1);
         var refreshExpensivePasses = (system.frameIndex % expensivePassCadence) === 0;
         if ((optics.object || optics.caustics) && refreshExpensivePasses) {
