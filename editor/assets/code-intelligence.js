@@ -26,7 +26,6 @@
         if (entries.getEntries().some(entry => entry.name === "first-contentful-paint")) finish();
       });
       observer.observe({type: "paint", buffered: true});
-      setTimeout(finish, 1500);
     });
   }
 
