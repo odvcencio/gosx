@@ -52,13 +52,24 @@ var waterDiagDefaults = map[string]any{
 	//	/demos/water?diag=1&meshRes=96   quarter the triangles, same sim
 	//	/demos/water?diag=1&meshRes=64   ninth the triangles, same sim
 	//
-	// 96 is the shipped default: the surface was tessellated to roughly one triangle per
-	// 1.4 screen pixels, and a GPU shades in 2x2 quads, so sub-pixel triangles billed a
-	// full four-lane quad each of the reflection/refraction shader. Dropping to 96 nearly
-	// doubled the frame rate with no visible change (the fragment stage samples the
-	// heightfield by normalized uv, so shading is identical at any mesh density).
+	// 48 is the shipped default, measured on Apple/Metal:
+	//
+	//	mesh 192 (= sim)  17 fps     mesh 48   ~60 fps
+	//	mesh  96          30 fps     mesh 16   120 fps
+	//
+	// The cost is PER-TRIANGLE, not per-pixel. At mesh 192 the surface is ~72,000 triangles
+	// over ~100k screen pixels -- well under two pixels each -- and a GPU shades in 2x2
+	// quads, so every sliver still bills a full four-lane quad of a fragment shader that
+	// does six dependent heightfield taps plus normal reconstruction. Coarser triangles
+	// collapse that waste: same pixels, same shading, a fraction of the quad overdraw.
+	// Turning reflection/refraction off changes nothing, which is what proved the cost is
+	// the quad amplification rather than the optional lighting work.
+	//
+	// Shading is unaffected by mesh density: the fragment stage samples the heightfield by
+	// normalized uv at the full simulation resolution, so all visible ripple detail lives in
+	// the normal, not the geometry. The mesh only carries the low-frequency swell.
 	// meshRes=0 restores a mesh matching the simulation, for comparison.
-	"meshRes":         96,
+	"meshRes":         48,
 	"causticsRes":     512,
 	"shadowRes":       512,
 	"caustics":        true,
