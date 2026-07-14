@@ -4,10 +4,30 @@
   const runtimePromises = new Map();
   const languagePromises = new Map();
   const forms = Array.from(document.querySelectorAll("form[data-code-intelligence-runtime]"));
+  const firstPaint = waitForFirstContentfulPaint();
   for (const form of forms) {
-    // Keep code intelligence off the first-paint path. Two animation frames
-    // let the server-rendered editor become visible before WASM is fetched.
-    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => mount(form), 0)));
+    firstPaint.then(() => mount(form));
+  }
+
+  function waitForFirstContentfulPaint() {
+    if (performance.getEntriesByName("first-contentful-paint", "paint").length > 0) return Promise.resolve();
+    if (typeof PerformanceObserver !== "function") {
+      return new Promise(resolve => setTimeout(resolve, 1500));
+    }
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        resolve();
+      };
+      const observer = new PerformanceObserver(entries => {
+        if (entries.getEntries().some(entry => entry.name === "first-contentful-paint")) finish();
+      });
+      observer.observe({type: "paint", buffered: true});
+      setTimeout(finish, 1500);
+    });
   }
 
   async function mount(form) {
