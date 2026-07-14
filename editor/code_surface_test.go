@@ -97,6 +97,9 @@ func TestNativeEditorAssetProvidesCodeEditingChecklist(t *testing.T) {
 		`openFind`,
 		`replaceFindMatch`,
 		`replaceAllFindMatches`,
+		`restoreLocalHistory`,
+		`dataset.undoDepth`,
+		`dataset.redoDepth`,
 		`event.key.toLowerCase() === "f"`,
 		`event.key.toLowerCase() === "h"`,
 	} {

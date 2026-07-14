@@ -317,6 +317,9 @@
     const findStatus = form.querySelector(".editor-code-find-status");
     let findMatches = [];
     let findIndex = -1;
+    const localUndo = [];
+    const localRedo = [];
+    let historyApplying = false;
     const previewIdleDelay = 300;
     const metadataIdleDelay = 450;
     const autosaveDelay = 1800;
@@ -759,6 +762,43 @@
       }
     };
 
+    const historySnapshot = () => ({
+      value: textarea.value,
+      start: textarea.selectionStart || 0,
+      end: textarea.selectionEnd || textarea.selectionStart || 0,
+    });
+
+    const updateHistoryStatus = () => {
+      form.dataset.undoDepth = String(localUndo.length);
+      form.dataset.redoDepth = String(localRedo.length);
+    };
+
+    const rememberLocalEdit = () => {
+      if (historyApplying) return;
+      localUndo.push(historySnapshot());
+      if (localUndo.length > 512) localUndo.shift();
+      localRedo.length = 0;
+      updateHistoryStatus();
+    };
+
+    const restoreLocalHistory = (undo) => {
+      const source = undo ? localUndo : localRedo;
+      const destination = undo ? localRedo : localUndo;
+      const snapshot = source.pop();
+      if (!snapshot) return false;
+      destination.push(historySnapshot());
+      historyApplying = true;
+      textarea.value = snapshot.value;
+      textarea.setSelectionRange(snapshot.start, snapshot.end);
+      dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
+      historyApplying = false;
+      updateHistoryStatus();
+      textarea.focus();
+      return true;
+    };
+
+    updateHistoryStatus();
+
     const updateMultiCursorStatus = () => {
       const count = secondaryCursors.length + 1;
       form.dataset.multiCursorCount = String(count);
@@ -853,6 +893,7 @@
       if (!snippet) return;
       const start = textarea.selectionStart || 0;
       const end = textarea.selectionEnd || start;
+      rememberLocalEdit();
       textarea.setRangeText(snippet, start, end, "end");
       dispatchEditorInput();
       textarea.focus();
@@ -872,6 +913,7 @@
       const start = textarea.selectionStart || 0;
       const end = textarea.selectionEnd || start;
       const selection = textarea.value.slice(start, end);
+      rememberLocalEdit();
       if (start !== end && selection.includes("\n")) {
         const { blockStart, blockEnd } = selectedLineRange(start, end);
         const block = textarea.value.slice(blockStart, blockEnd);
@@ -905,6 +947,7 @@
         if (uncomment) return indent + body.slice(marker.length).replace(/^ /, "");
         return indent + marker + " " + body;
       }).join("\n");
+      rememberLocalEdit();
       textarea.setRangeText(changed, blockStart, blockEnd, "select");
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
       textarea.focus();
@@ -987,6 +1030,7 @@
 
     const replaceFindMatch = () => {
       if (!findQuery || !findReplacement || !selectFindMatch(0)) return;
+      rememberLocalEdit();
       textarea.setRangeText(findReplacement.value, textarea.selectionStart, textarea.selectionEnd, "end");
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
       rebuildFindMatches();
@@ -994,6 +1038,7 @@
 
     const replaceAllFindMatches = () => {
       if (!findQuery || !findReplacement || rebuildFindMatches() === 0) return;
+      rememberLocalEdit();
       textarea.value = textarea.value.split(findQuery.value).join(findReplacement.value);
       textarea.setSelectionRange(0, 0);
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
@@ -1334,8 +1379,22 @@
       scheduleAutosave();
       updateEmojiAutocomplete();
     });
+    textarea.addEventListener("beforeinput", (event) => {
+      if (event.inputType === "historyUndo" || event.inputType === "historyRedo") return;
+      rememberLocalEdit();
+    });
     textarea.addEventListener("keydown", (event) => {
       if (handleEmojiAutocompleteKeydown(event)) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        restoreLocalHistory(!event.shiftKey);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        restoreLocalHistory(false);
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
         openFind(false);
