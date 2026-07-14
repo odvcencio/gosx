@@ -71,6 +71,19 @@ func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
 	}
 }
 
+func TestCodeIntelligenceForwardsHostCapabilityField(t *testing.T) {
+	asset, err := embeddedAssets.ReadFile("assets/code-intelligence.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(asset)
+	for _, want := range []string{`"X-Mercutio-Capability"`, `form.querySelector("[name='capability']")`} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("server intelligence request missing %q", want)
+		}
+	}
+}
+
 func TestNativeEditorAssetProvidesMultiCursorEditing(t *testing.T) {
 	asset, err := embeddedAssets.ReadFile("assets/native-editor.js")
 	if err != nil {

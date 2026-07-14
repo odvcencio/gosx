@@ -122,6 +122,7 @@
       headers: {
         "Content-Type": "application/json",
         "X-CSRF-Token": form.querySelector("[name='csrf_token']")?.value || "",
+        "X-Mercutio-Capability": form.querySelector("[name='capability']")?.value || "",
       },
       body: JSON.stringify({path: path || "", content: source}),
     });
