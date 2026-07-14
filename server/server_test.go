@@ -1341,12 +1341,20 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap.3333.js"), []byte("console.log('hashed bootstrap');"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "standard-go-wasm_exec.4444.js"), []byte("window.__gosx_standard_go_wasm_ctor = class {};"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	manifest := buildmanifest.Manifest{
 		Runtime: buildmanifest.RuntimeAssets{
 			Bootstrap: buildmanifest.HashedAsset{
 				File: "bootstrap.3333.js",
 				Hash: "3333",
 				Size: 24,
+			},
+			StandardGoWASMExec: buildmanifest.HashedAsset{
+				File: "standard-go-wasm_exec.4444.js",
+				Hash: "4444",
+				Size: 52,
 			},
 		},
 	}
@@ -1374,6 +1382,19 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 	if body := w.Body.String(); !strings.Contains(body, "hashed bootstrap") {
 		t.Fatalf("unexpected built compat asset body %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gosx/standard-go-wasm_exec.js?v=4444", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected standard-Go runtime 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); !strings.Contains(got, "javascript") {
+		t.Fatalf("expected JavaScript MIME, got %q", got)
+	}
+	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("expected standard-Go runtime to be immutable, got %q", got)
 	}
 }
 

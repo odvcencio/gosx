@@ -4,6 +4,8 @@ package hydrate
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"m31labs.dev/gosx/engine"
 )
@@ -54,7 +56,7 @@ type EngineEntry struct {
 	// MountID is the DOM element ID the engine should attach to.
 	MountID string `json:"mountId,omitempty"`
 
-	// Runtime selects an optional shared GoSX client runtime for this engine.
+	// Runtime selects the GoSX client runtime for this engine.
 	Runtime string `json:"runtime,omitempty"`
 
 	// Props is the JSON-serialized props snapshot.
@@ -367,6 +369,21 @@ func (m *Manifest) AddEngineWithRuntime(component, kind, programRef, mountID, ru
 // mount, runtime selection, hard runtime capability requirements, and pixel
 // surface configuration.
 func (m *Manifest) AddEngineWithRuntimeRequirements(component, kind, programRef, mountID, runtime string, props any, capabilities, requiredCapabilities []string, pixelSurface *engine.PixelSurfaceConfig) (string, error) {
+	component = strings.TrimSpace(component)
+	kind = strings.TrimSpace(kind)
+	programRef = strings.TrimSpace(programRef)
+	mountID = strings.TrimSpace(mountID)
+	runtime = strings.TrimSpace(runtime)
+	if component == "" {
+		return "", fmt.Errorf("engine component is required")
+	}
+	engineKind := engine.Kind(kind)
+	if !engine.KindSupported(engineKind) {
+		return "", fmt.Errorf("unsupported engine kind: %q", kind)
+	}
+	if err := engine.ValidateRuntime(engine.Runtime(runtime), programRef); err != nil {
+		return "", err
+	}
 	propsJSON, err := json.Marshal(props)
 	if err != nil {
 		return "", err

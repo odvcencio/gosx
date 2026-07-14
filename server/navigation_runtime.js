@@ -233,6 +233,13 @@
       && !!node.getAttribute("href");
   }
 
+  function isDOMLoadedManagedScript(node) {
+    return isElement(node, "SCRIPT")
+      && node.hasAttribute(SCRIPT_ROLE)
+      && !!node.getAttribute("src")
+      && node.getAttribute("data-gosx-script-load") === "dom";
+  }
+
   function waitForStylesheet(node) {
     if (!isStylesheetLink(node)) {
       return Promise.resolve();
@@ -298,6 +305,13 @@
       const bucket = currentBuckets.get(signature);
       if (bucket && bucket.length > 0) {
         orderedNodes.push(bucket.shift());
+        continue;
+      }
+
+      // Scripts parsed through DOMParser are inert. DOM-owned managed scripts
+      // must be created by loadManagedScriptTag so CSP and browser execution
+      // semantics apply; do not leave an inert clone that looks preloaded.
+      if (isDOMLoadedManagedScript(node)) {
         continue;
       }
 
@@ -1036,7 +1050,17 @@
   async function ensureManagedScripts(nextDoc, baseURL) {
     const scripts = collectManagedScripts(nextDoc.head, baseURL).concat(collectManagedScripts(nextDoc.body, baseURL));
     scripts.sort(function(a, b) {
-      const order = { "wasm-exec": 0, patch: 1, bootstrap: 2, lifecycle: 3, managed: 4 };
+      // The wrapped standard-Go shim captures its Go constructor without
+      // replacing TinyGo's shared constructor. Load it first, then TinyGo,
+      // before any bootstrap can instantiate either runtime.
+      const order = {
+        "standard-go-wasm-exec": 0,
+        "wasm-exec": 1,
+        patch: 2,
+        bootstrap: 3,
+        lifecycle: 4,
+        managed: 5,
+      };
       const left = Object.prototype.hasOwnProperty.call(order, a.role) ? order[a.role] : 99;
       const right = Object.prototype.hasOwnProperty.call(order, b.role) ? order[b.role] : 99;
       return left - right;

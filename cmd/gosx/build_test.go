@@ -26,6 +26,20 @@ func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
 	}
 }
 
+func TestWrapStandardGoWASMExecCapturesAndRestoresConstructor(t *testing.T) {
+	wrapped := string(wrapStandardGoWASMExec([]byte(`globalThis.Go = function StandardGo() {};`)))
+	for _, contract := range []string{
+		`var previousGo = global.Go`,
+		`standardGo = global.Go`,
+		`if (hadGo) global.Go = previousGo; else delete global.Go`,
+		`Object.defineProperty(global, "__gosx_standard_go_wasm_ctor", {value: standardGo, writable: false, configurable: true})`,
+	} {
+		if !strings.Contains(wrapped, contract) {
+			t.Fatalf("standard-Go wrapper omitted %q:\n%s", contract, wrapped)
+		}
+	}
+}
+
 func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) {
 	projectDir := t.TempDir()
 	distDir := filepath.Join(t.TempDir(), "dist")
@@ -275,6 +289,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		filepath.Join(distDir, "assets", "runtime", "runtime.1111.wasm"):                 "wasm",
 		filepath.Join(distDir, "assets", "runtime", "runtime-islands.aaaa.wasm"):         "wasm-islands",
 		filepath.Join(distDir, "assets", "runtime", "wasm_exec.2222.js"):                 "wasm-exec",
+		filepath.Join(distDir, "assets", "runtime", "standard-go-wasm_exec.2a2a.js"):     "standard-go-wasm-exec",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap.3333.js"):                 "bootstrap",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-lite.4444.js"):            "bootstrap-lite",
 		filepath.Join(distDir, "assets", "runtime", "bootstrap-runtime.5555.js"):         "bootstrap-runtime",
@@ -298,6 +313,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 			WASM:                    HashedAsset{File: "runtime.1111.wasm"},
 			WASMIslands:             HashedAsset{File: "runtime-islands.aaaa.wasm"},
 			WASMExec:                HashedAsset{File: "wasm_exec.2222.js"},
+			StandardGoWASMExec:      HashedAsset{File: "standard-go-wasm_exec.2a2a.js"},
 			Bootstrap:               HashedAsset{File: "bootstrap.3333.js"},
 			BootstrapLite:           HashedAsset{File: "bootstrap-lite.4444.js"},
 			BootstrapRuntime:        HashedAsset{File: "bootstrap-runtime.5555.js"},
@@ -314,6 +330,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 
 	refs := []string{
 		"/gosx/assets/runtime/bootstrap-runtime.5555.js",
+		"/gosx/standard-go-wasm_exec.js",
 		"/gosx/bootstrap-feature-engines.js",
 		"/gosx/hls.min.js",
 		"/gosx/relay.js",
@@ -329,6 +346,7 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		"gosx/assets/runtime/bootstrap-runtime.5555.js.gz",
 		"gosx/assets/runtime/bootstrap-runtime.5555.js.br",
 		"gosx/bootstrap-feature-engines.js",
+		"gosx/standard-go-wasm_exec.js",
 		"gosx/hls.min.js",
 		"gosx/relay.js",
 		"gosx/islands/Counter.gxi",

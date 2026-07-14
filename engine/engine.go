@@ -46,6 +46,7 @@ const (
 	CapAnimation    Capability = "animation"
 	CapStorage      Capability = "storage"
 	CapFetch        Capability = "fetch"
+	CapClipboard    Capability = "clipboard"
 	CapAudio        Capability = "audio"
 	CapWorker       Capability = "worker"
 	CapGamepad      Capability = "gamepad"
@@ -222,7 +223,32 @@ type Runtime string
 const (
 	RuntimeNone   Runtime = ""
 	RuntimeShared Runtime = "shared"
+	// RuntimeGoWASM loads WASMPath as a standard Go WebAssembly module. The
+	// module registers a component factory through m31labs.dev/gosx/engine/wasm.
+	RuntimeGoWASM Runtime = "go-wasm"
 )
+
+// RuntimeSupported reports whether runtime is understood by the browser
+// bootstrap contract.
+func RuntimeSupported(runtime Runtime) bool {
+	switch runtime {
+	case RuntimeNone, RuntimeShared, RuntimeGoWASM:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateRuntime checks the runtime-specific part of an engine config.
+func ValidateRuntime(runtime Runtime, wasmPath string) error {
+	if !RuntimeSupported(runtime) {
+		return fmt.Errorf("unsupported engine runtime: %q", runtime)
+	}
+	if runtime == RuntimeGoWASM && strings.TrimSpace(wasmPath) == "" {
+		return fmt.Errorf("engine runtime %q requires a WASMPath", runtime)
+	}
+	return nil
+}
 
 // Config describes an engine instance for mounting.
 type Config struct {
@@ -253,8 +279,8 @@ type Config struct {
 	// instead of a silent downgrade.
 	RequiredCapabilities []Capability `json:"requiredCapabilities,omitempty"`
 
-	// Runtime selects an optional shared GoSX client runtime for program-driven
-	// engines. Empty means the engine is mounted entirely by its JS factory.
+	// Runtime selects the client runtime used to mount the engine. Empty means
+	// the engine is mounted by a bootstrap-registered JavaScript factory.
 	Runtime Runtime `json:"runtime,omitempty"`
 
 	// PixelSurface configures a managed pixel framebuffer when CapPixelSurface
@@ -318,6 +344,9 @@ func (c Config) Validate() error {
 	if KindNeedsMount(c.Kind) && c.MountID == "" {
 		return fmt.Errorf("engine kind %q requires a MountID", c.Kind)
 	}
+	if err := ValidateRuntime(c.Runtime, c.WASMPath); err != nil {
+		return err
+	}
 	if err := ValidateCapabilities(c.Capabilities); err != nil {
 		return err
 	}
@@ -368,7 +397,7 @@ func ClearFactories() {
 func ValidateCapabilities(requested []Capability) error {
 	supported := map[Capability]bool{
 		CapVideo: true, CapCanvas: true, CapWebGL: true, CapWebGL2: true, CapWebGPU: true, CapCompute: true, CapWASM: true, CapPixelSurface: true,
-		CapAnimation: true, CapStorage: true, CapFetch: true, CapAudio: true,
+		CapAnimation: true, CapStorage: true, CapFetch: true, CapClipboard: true, CapAudio: true,
 		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true, CapPointerLock: true, CapTextInput: true,
 	}
 	for _, cap := range requested {

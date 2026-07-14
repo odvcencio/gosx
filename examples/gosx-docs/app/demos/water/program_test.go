@@ -340,9 +340,9 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`lightDirectionZ={-1}`,
 		`waveSpeed={1.0}`,
 		`damping={0.995}`,
-		`causticsResolution={512}`,
+		`causticsResolution={data.diagCausticsRes}`,
 		`objectTextureResolutionMode="viewport"`,
-		`objectShadowResolution={512}`,
+		`objectShadowResolution={data.diagShadowRes}`,
 		// Selena-compiled combined-WGSL slots: the sole primary WGSL source
 		// for every water compute kernel/render pass now that the
 		// hand-written Elio/Selena *WGSL props have been retired.
@@ -881,5 +881,30 @@ func TestWaterSelenaGLESSlots(t *testing.T) {
 	}
 	if string(got.ShaderDescriptors["surface"]) != string(descriptors["surface"]) {
 		t.Fatalf("WaterSystemIR.ShaderDescriptors[surface] did not round-trip")
+	}
+}
+
+// The diag knobs must DEFAULT to the shipped values, so /demos/water with no query
+// parameters renders exactly what it rendered before the diagnostics existed. The
+// page.gsx contract above proves the props are bound to these; this proves the
+// values behind the bindings are the real ones.
+func TestWaterDiagDefaultsMatchShippedValues(t *testing.T) {
+	t.Parallel()
+
+	for name, want := range map[string]any{
+		"dpr":             1.0,
+		"maxPixels":       1200000,
+		"resolution":      192,
+		"causticsRes":     512,
+		"shadowRes":       512,
+		"caustics":        true,
+		"reflection":      true,
+		"refraction":      true,
+		"objectTexBudget": 786432,
+		"diag":            false,
+	} {
+		if got := waterDiagDefaults[name]; got != want {
+			t.Fatalf("waterDiagDefaults[%q] = %v, want %v", name, got, want)
+		}
 	}
 }

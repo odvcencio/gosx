@@ -217,22 +217,122 @@ func TestPageHeadWithEnginesOnly(t *testing.T) {
 	if !strings.Contains(head, "bootstrap-runtime.js") {
 		t.Fatal("missing selective bootstrap script for engine page")
 	}
-	if !strings.Contains(head, "wasm_exec.js") {
-		t.Fatal("missing wasm_exec for wasm-backed engine page")
+	if strings.Contains(head, "wasm_exec.js") {
+		t.Fatalf("plain JavaScript engine factories must not load a Go runtime shim: %s", head)
 	}
-	if !strings.Contains(head, `data-gosx-script="wasm-exec"`) {
-		t.Fatal("missing wasm_exec role marker")
-	}
-	for _, snippet := range []string{
-		`<script defer data-gosx-script="wasm-exec"`,
-		`<script defer data-gosx-script="bootstrap"`,
-	} {
-		if !strings.Contains(head, snippet) {
-			t.Fatalf("expected deferred runtime script %q in engine PageHead %s", snippet, head)
-		}
+	if !strings.Contains(head, `<script defer data-gosx-script="bootstrap"`) {
+		t.Fatalf("expected deferred bootstrap in engine PageHead %s", head)
 	}
 	if strings.Contains(head, "patch.js") {
 		t.Fatal("engine-only page should not load patch.js")
+	}
+}
+
+func TestGoWASMEngineSelectsDedicatedModuleAssets(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetRuntime("/gosx/shared-runtime.wasm", "", 0)
+	r.SetClientAssetPaths("/gosx/wasm_exec.js", "/gosx/patch.js", "/gosx/bootstrap.js")
+	r.SetStandardGoWASMExecPath("/gosx/standard-go-wasm_exec.js")
+
+	node := r.RenderEngine(engine.Config{
+		Name:                 "GoWASMFixture",
+		Kind:                 engine.KindSurface,
+		Runtime:              engine.RuntimeGoWASM,
+		WASMPath:             "/assets/engines/fixture.wasm",
+		RequiredCapabilities: []engine.Capability{engine.CapClipboard},
+	}, gosx.Text("server fallback"))
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, "data-gosx-engine=\"GoWASMFixture\"") {
+		t.Fatalf("expected Go-WASM mount, got %s", html)
+	}
+
+	entry := r.Manifest().Engines[0]
+	if entry.Runtime != string(engine.RuntimeGoWASM) {
+		t.Fatalf("unexpected runtime %q", entry.Runtime)
+	}
+	if entry.ProgramRef != "/assets/engines/fixture.wasm" {
+		t.Fatalf("unexpected program ref %q", entry.ProgramRef)
+	}
+	if got := strings.Join(entry.RequiredCapabilities, " "); got != "clipboard wasm" {
+		t.Fatalf("unexpected required capabilities %q", got)
+	}
+
+	head := gosx.RenderHTML(r.PageHead())
+	if !strings.Contains(head, "/gosx/standard-go-wasm_exec.js") {
+		t.Fatalf("Go-WASM engine must load the isolated standard-Go shim: %s", head)
+	}
+	if strings.Contains(head, `data-gosx-script="wasm-exec"`) {
+		t.Fatalf("Go-WASM-only route must not load the TinyGo/shared shim: %s", head)
+	}
+	if strings.Contains(head, "/gosx/shared-runtime.wasm") {
+		t.Fatalf("dedicated Go-WASM engine must not load shared runtime: %s", head)
+	}
+	preloads := gosx.RenderHTML(r.PreloadHints())
+	if !strings.Contains(preloads, "href=\"/assets/engines/fixture.wasm\"") {
+		t.Fatalf("expected dedicated module preload: %s", preloads)
+	}
+}
+
+func TestMixedIslandAndGoWASMEngineOrdersDistinctRuntimeShims(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetClientAssetPaths("/gosx/wasm_exec.js", "/gosx/patch.js", "/gosx/bootstrap.js")
+	r.SetStandardGoWASMExecPath("/gosx/standard-go-wasm_exec.js")
+	r.RenderIsland("Counter", nil, gosx.Text("0"))
+	r.RenderEngine(engine.Config{
+		Name:     "GoWASMFixture",
+		Kind:     engine.KindSurface,
+		Runtime:  engine.RuntimeGoWASM,
+		WASMPath: "/assets/fixture.wasm",
+	}, gosx.Text("fallback"))
+
+	head := gosx.RenderHTML(r.PageHead())
+	tinyGoAt := strings.Index(head, `data-gosx-script="wasm-exec"`)
+	standardGoAt := strings.Index(head, `data-gosx-script="standard-go-wasm-exec"`)
+	bootstrapAt := strings.Index(head, `data-gosx-script="bootstrap"`)
+	if tinyGoAt < 0 || standardGoAt < 0 || bootstrapAt < 0 || !(standardGoAt < tinyGoAt && tinyGoAt < bootstrapAt) {
+		t.Fatalf("runtime scripts must be standard Go, TinyGo, then bootstrap: %s", head)
+	}
+	if !strings.Contains(head, `data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom"`) {
+		t.Fatalf("standard-Go shim must use CSP-safe DOM loading: %s", head)
+	}
+	summary := r.Summary()
+	if summary.WASMExecPath == "" || summary.StandardGoWASMExecPath == "" {
+		t.Fatalf("mixed runtime summary omitted a loader: %#v", summary)
+	}
+}
+
+func TestRenderEngineRejectsGoWASMWithoutModule(t *testing.T) {
+	r := NewRenderer("main")
+	node := r.RenderEngine(engine.Config{
+		Name:    "MissingModule",
+		Kind:    engine.KindSurface,
+		Runtime: engine.RuntimeGoWASM,
+	}, gosx.Text("server fallback"))
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, "requires a WASMPath") {
+		t.Fatalf("expected Go-WASM path validation error, got %s", html)
+	}
+	if len(r.Manifest().Engines) != 0 {
+		t.Fatalf("invalid Go-WASM engine reached manifest: %#v", r.Manifest().Engines)
+	}
+}
+
+func TestGoWASMEnginePreloadRecognizesVersionedURLAndEscapesHref(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetClientAssetPaths("/gosx/wasm_exec.js", "/gosx/patch.js", "/gosx/bootstrap.js")
+	r.RenderEngine(engine.Config{
+		Name:     "VersionedGoWASM",
+		Kind:     engine.KindWorker,
+		Runtime:  engine.RuntimeGoWASM,
+		WASMPath: `/assets/engine.wasm?v=abc&mode=fast`,
+	}, gosx.Node{})
+
+	preloads := gosx.RenderHTML(r.PreloadHints())
+	if !strings.Contains(preloads, `rel="preload"`) || !strings.Contains(preloads, `type="application/wasm"`) {
+		t.Fatalf("expected a WASM preload for versioned URL: %s", preloads)
+	}
+	if !strings.Contains(preloads, `href="/assets/engine.wasm?v=abc&amp;mode=fast"`) {
+		t.Fatalf("expected escaped versioned href: %s", preloads)
 	}
 }
 
@@ -533,11 +633,12 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{
 		Runtime: buildmanifest.RuntimeAssets{
-			WASM:             buildmanifest.HashedAsset{File: "gosx-runtime.11111111.wasm", Hash: "11111111", Size: 10},
-			WASMExec:         buildmanifest.HashedAsset{File: "wasm_exec.22222222.js", Hash: "22222222", Size: 20},
-			Bootstrap:        buildmanifest.HashedAsset{File: "bootstrap.33333333.js", Hash: "33333333", Size: 30},
-			BootstrapRuntime: buildmanifest.HashedAsset{File: "bootstrap-runtime.44444444.js", Hash: "44444444", Size: 31},
-			Patch:            buildmanifest.HashedAsset{File: "patch.55555555.js", Hash: "55555555", Size: 40},
+			WASM:               buildmanifest.HashedAsset{File: "gosx-runtime.11111111.wasm", Hash: "11111111", Size: 10},
+			WASMExec:           buildmanifest.HashedAsset{File: "wasm_exec.22222222.js", Hash: "22222222", Size: 20},
+			StandardGoWASMExec: buildmanifest.HashedAsset{File: "standard-go-wasm_exec.2a2a2a2a.js", Hash: "2a2a2a2a", Size: 21},
+			Bootstrap:          buildmanifest.HashedAsset{File: "bootstrap.33333333.js", Hash: "33333333", Size: 30},
+			BootstrapRuntime:   buildmanifest.HashedAsset{File: "bootstrap-runtime.44444444.js", Hash: "44444444", Size: 31},
+			Patch:              buildmanifest.HashedAsset{File: "patch.55555555.js", Hash: "55555555", Size: 40},
 		},
 		Islands: []buildmanifest.IslandAsset{
 			{

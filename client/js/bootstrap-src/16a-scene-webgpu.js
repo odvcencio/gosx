@@ -481,6 +481,17 @@
     "  return y * params.resolution + x;",
     "}",
     "",
+    // The surface grid is drawn INDEXED. It used to be a non-indexed triangle list:
+    // six vertices per quad, so every interior grid point was transformed ~6 times and
+    // re-read `state[]` from the storage buffer ~6 times. At the shipped 192x192 grid
+    // that is 218,886 vertex invocations per pass, twice per frame (above + below
+    // surface) — and on Apple/Metal it dominated the frame: measured 200ms of GPU work
+    // for a scene occupying 0.1 megapixels, while the same scene minus the water cost
+    // 1.3ms. Immediate-mode desktop GPUs brute-force the duplication and show nothing.
+    //
+    // With an index buffer, vertex_index IS the grid vertex id (resolution^2 of them,
+    // 36,864 at the default), the post-transform cache does its job, and the geometry
+    // produced is identical.
     "@vertex fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {",
     "  let cellsPerSide = max(params.resolution - 1u, 1u);",
     "  let quad = vertexIndex / 6u;",
@@ -4007,8 +4018,44 @@
       return config;
     }
 
-    function configureWebGPUCanvas() {
+    // configuredSurfaceKey remembers the configuration currently applied to the
+    // canvas context, so we can skip a redundant reconfigure.
+    var configuredSurfaceKey = "";
+
+    function sceneWebGPUSurfaceKey(canvas) {
+      var p = activePresentation || {};
+      return [
+        canvas ? canvas.width : 0,
+        canvas ? canvas.height : 0,
+        targetFormat,
+        p.alphaMode,
+        p.colorSpace,
+        p.toneMappingMode || "",
+        device ? "d" : "",
+      ].join("|");
+    }
+
+    // configureWebGPUCanvas reconfigures the canvas swapchain ONLY when the surface
+    // it depends on actually changed (size, format, alpha mode, colour space, tone
+    // mapping, device).
+    //
+    // This used to be called unconditionally on every rendered frame, under a comment
+    // that claimed it reconfigured "if canvas resized" — there was no such check.
+    // GPUCanvasContext.configure() re-creates the drawable; on Metal that is an
+    // expensive, synchronising driver operation, so the water demo paid a fixed
+    // per-frame stall that no amount of reducing its workload could touch: disabling
+    // caustics, reflection, refraction, or cutting the mesh to a quarter of its
+    // vertices all changed the frame rate by nothing, because the cost was never in
+    // the work being drawn. It pinned frames to a multiple of the display refresh on
+    // Apple hardware while D3D12/NVIDIA drivers, which make a redundant configure()
+    // nearly free, showed no symptom at all.
+    function configureWebGPUCanvas(canvas) {
+      var target = canvas || (gpuCtx && gpuCtx.canvas) || null;
+      var key = sceneWebGPUSurfaceKey(target);
+      if (key === configuredSurfaceKey) return false;
       gpuCtx.configure(sceneWebGPUCanvasConfiguration());
+      configuredSurfaceKey = key;
+      return true;
     }
 
     // GPU resources (initialized after device is ready).
@@ -4520,6 +4567,8 @@
             window.__gosx_scene3d_webgpu_probe_invalidate(info);
           }
           device = null;
+      configuredSurfaceKey = "";
+          configuredSurfaceKey = "";
           initFailed = true;
           // Eagerly free per-device water-system GPU objects (buffers/textures)
           // and clear the waterSystems map. The probe-based recovery path
@@ -5218,6 +5267,22 @@
       }
     }
 
+    // The render-side twin of sceneSelenaLiveBuffer: resolves the same
+    // gosx:water:<id>:state reference to the mirrored heightfield TEXTURE view.
+    function sceneSelenaLiveStateTextureView(material, stateDescriptor) {
+      var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, stateDescriptor));
+      if (!resolved || !resolved.system) return null;
+      switch (resolved.slot) {
+      case "state":
+      case "waterState":
+      case "height":
+      case "heightfield":
+        return resolved.system.stateTextureView || null;
+      default:
+        return null;
+      }
+    }
+
     function sceneSelenaLiveBuffer(material, bufferDescriptor) {
       var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, bufferDescriptor));
       if (!resolved || !resolved.system) return null;
@@ -5336,7 +5401,16 @@
       }
       for (var s = 0; s < states.length; s++) {
         var stateWGSL = states[s] && states[s].wgsl || {};
-        entries.push({
+        // Selena's WGSLStateBinding.InKind says what to bind. A RENDER statefield reads
+        // through textureLoad (rgba32float -> unfilterable-float, and textureLoad needs no
+        // sampler), because its taps are dependent chains that must hit the texture cache.
+        // A feedback statefield keeps the storage buffer its dispatch writes.
+        var stateIsTexture = stateWGSL.inKind === "texture";
+        entries.push(stateIsTexture ? {
+          binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + s),
+          visibility: visibility,
+          texture: { sampleType: "unfilterable-float", viewDimension: "2d" },
+        } : {
           binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + s),
           visibility: visibility,
           buffer: { type: "read-only-storage" },
@@ -5712,6 +5786,16 @@
       for (var st = 0; st < states.length; st++) {
         var stateDescriptor = states[st] || {};
         var stateWGSL = stateDescriptor.wgsl || {};
+        if (stateWGSL.inKind === "texture") {
+          var stateView = sceneSelenaLiveStateTextureView(material, stateDescriptor);
+          if (!stateView) return null;
+          entries.push({
+            binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + st),
+            resource: stateView,
+          });
+          cacheStorages.push(stateView);
+          continue;
+        }
         var stateBuffer = sceneSelenaLiveBuffer(material, stateDescriptor);
         if (!stateBuffer) return null;
         entries.push({
@@ -6385,6 +6469,18 @@
     function sceneWaterResolution(value) {
       var raw = Math.floor(sceneNumber(value, 256));
       if (!Number.isFinite(raw) || raw <= 0) raw = 256;
+      raw = Math.max(16, Math.min(512, raw));
+      // The heightfield is mirrored into a texture each frame so render materials can
+      // read it through the texture cache, and copyBufferToTexture requires a 256-byte
+      // row: one row is resolution * 16 bytes, so the grid must be a multiple of 16.
+      return Math.max(16, Math.round(raw / 16) * 16);
+    }
+
+    // Tessellation of the surface mesh. Defaults to the simulation resolution, so
+    // an entry that does not set it is byte-identical to before this existed.
+    function sceneWaterSurfaceMeshResolution(entry, simResolution) {
+      var raw = Math.floor(sceneNumber(entry && entry.surfaceMeshResolution, 0));
+      if (!Number.isFinite(raw) || raw <= 0) return simResolution;
       return Math.max(16, Math.min(512, raw));
     }
 
@@ -6826,11 +6922,13 @@
     // SCENE_WATER_*_SOURCE fallback, neither of which is entry-authored.
     function sceneWaterSystemSignature(entry, width, height) {
       var resolution = sceneWaterResolution(entry && entry.resolution);
+      var surfaceMeshResolution = sceneWaterSurfaceMeshResolution(entry, resolution);
       var causticsResolution = sceneWaterCausticsResolution(entry);
       var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
       var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
       return [
         resolution,
+        surfaceMeshResolution,
         causticsResolution,
         objectTextureSize.mode,
         objectTextureSize.width,
@@ -7307,8 +7405,43 @@
       return waterObjectMeshShadowUniformScratch;
     }
 
+    // The heightfield lives in a storage buffer because the simulation dispatches write it.
+    // Render materials, though, tap it through stateAt() in DEPENDENT chains -- each
+    // coordinate derived from the value just read -- and a storage buffer bypasses the
+    // texture cache, so on a large grid those scattered loads dominate the frame. Selena
+    // now lowers a render statefield read to textureLoad (see its WGSLStateBinding.InKind),
+    // which is what the WebGL backend has always done via a float texture -- and is why
+    // WebGL2 never degraded on the hardware where WebGPU did.
+    //
+    // So the sim keeps its buffers and we mirror the active one into a texture once per
+    // frame: one linear copy in exchange for cached reads in every fragment.
+    function sceneWaterCreateStateTexture(device, resolution) {
+      return device.createTexture({
+        label: "gosx-water-state",
+        size: { width: resolution, height: resolution, depthOrArrayLayers: 1 },
+        format: "rgba32float",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+    }
+
+    // Mirrors the CURRENT state buffer into the state texture. Must be encoded after the
+    // simulation passes for the frame and before anything samples it.
+    function sceneWaterCopyStateToTexture(encoder, system) {
+      if (!system || !system.stateTexture) return;
+      var src = system.activeIndex === 0 ? system.bufferA : system.bufferB;
+      if (!src) return;
+      var res = system.resolution;
+      encoder.copyBufferToTexture(
+        { buffer: src, offset: 0, bytesPerRow: res * 16, rowsPerImage: res },
+        { texture: system.stateTexture },
+        { width: res, height: res, depthOrArrayLayers: 1 }
+      );
+    }
+
     function createSceneWaterSystem(scopedDevice, entry, width, height) {
       var resolution = sceneWaterResolution(entry && entry.resolution);
+      var surfaceMeshResolution = sceneWaterSurfaceMeshResolution(entry, resolution);
+      var stateTexture = sceneWaterCreateStateTexture(scopedDevice, resolution);
       var causticsResolution = sceneWaterCausticsResolution(entry);
       var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
       var objectTextureWidth = objectTextureSize.width;
@@ -7317,8 +7450,11 @@
       var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
       var cellCount = resolution * resolution;
       var stateBytes = cellCount * 16;
-      var bufferA = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
-      var bufferB = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
+      // COPY_SRC: the active state buffer is mirrored into the state texture every frame
+      // (sceneWaterCopyStateToTexture), and copyBufferToTexture requires it on the source.
+      var stateUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+      var bufferA = wgpuCreateTrackedBuffer(stateUsage, stateBytes);
+      var bufferB = wgpuCreateTrackedBuffer(stateUsage, stateBytes);
       var uniformBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 256);
       var objectSphereBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, WATER_MAX_DISPLACEMENT_SPHERES * 16);
       var objectTextureMatrixBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 128);
@@ -7372,6 +7508,8 @@
         objectShadowResolution: objectShadowResolution,
         cellCount: cellCount,
         vertexCount: Math.max(0, (resolution - 1) * (resolution - 1) * 6),
+        surfaceMeshResolution: surfaceMeshResolution,
+        surfaceVertexCount: Math.max(0, (surfaceMeshResolution - 1) * (surfaceMeshResolution - 1) * 6),
         bufferA: bufferA,
         bufferB: bufferB,
         uniformBuffer: uniformBuffer,
@@ -7395,6 +7533,10 @@
         objectShadowTexture: objectShadowTexture,
         objectShadowView: objectShadowTexture.createView(),
         activeIndex: 0,
+        stateTexture: stateTexture,
+        // One view, not a ping-pong pair: the render side always reads the mirrored
+        // texture, so the bind group no longer varies with which sim buffer is active.
+        stateTextureView: stateTexture.createView(),
         frameIndex: 0,
         seeded: false,
         seedSalt: Number.isFinite(Number(entry && entry.seedSalt)) ? Number(entry.seedSalt) : Math.random() * 4096,
@@ -7403,6 +7545,11 @@
         dispose: function() {
           if (system._gosxDisposed) return;
           system._gosxDisposed = true;
+          if (system.stateTexture && typeof system.stateTexture.destroy === "function") {
+            system.stateTexture.destroy();
+            system.stateTexture = null;
+            system.stateTextureView = null;
+          }
           if (bufferA && typeof bufferA.destroy === "function") {
             pointsEntryGPUBuffers.delete(bufferA);
             bufferA.destroy();
@@ -8633,6 +8780,12 @@
         stats.waterSelenaComputeDispatches += normalResult.selena;
         stats.waterSelenaComputeFallbacks += normalResult.selenaFallback;
         if (normalCompute.authored && normalResult.selena === 0) stats.waterAuthoredComputeDispatches += normalDispatches;
+
+        // Every simulation stage above has now written the heightfield, so mirror the
+        // active buffer into the state texture that render materials sample. Encoded
+        // before any pass below reads it.
+        sceneWaterCopyStateToTexture(encoder, system);
+
         var expensivePassCadence = system.resolution === 128 ? 3 : (system.resolution === 192 ? 2 : 1);
         var refreshExpensivePasses = (system.frameIndex % expensivePassCadence) === 0;
         if ((optics.object || optics.caustics) && refreshExpensivePasses) {
@@ -9065,7 +9218,8 @@
           normalScale: sceneNumber(entry.normalScale, 1.0),
           objectRadius: sceneNumber(system && system.waterObjectRadius, 0.3),
           opticsCaustic: optics.caustics ? 1 : 0,
-          gridResolution: sceneNumber(system && system.waterResolution, 256),
+          // Tessellation, not the simulation grid: read only by the shaders' vertex().
+          gridResolution: sceneNumber(system && system.surfaceMeshResolution, sceneNumber(system && system.waterResolution, 256)),
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
           objectSubtype: sceneNumber(system && system.waterObjectSubtype, 0),
           objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
@@ -9821,9 +9975,10 @@
             }
             renderPass.setBindGroup(0, selenaDraw.bindGroup);
             frameGroupBound = false;
-            renderPass.draw(system.vertexCount);
+            renderPass.draw(system.surfaceVertexCount);
             stats.waterDrawCalls += 1;
-            stats.waterDrawVertices += system.vertexCount;
+            stats.waterDrawVertices += system.surfaceVertexCount;
+            stats.waterSurfaceMeshResolution = system.surfaceMeshResolution;
             stats.waterSelenaSurfacePasses += 1;
             if (system.waterSkyCubeLoaded) {
               stats.waterSkyCubeTextureLoaded += 1;
@@ -9834,10 +9989,10 @@
             }
             if (side === "below") {
               stats.waterSurfaceBelowDrawCalls += 1;
-              stats.waterSurfaceBelowDrawVertices += system.vertexCount;
+              stats.waterSurfaceBelowDrawVertices += system.surfaceVertexCount;
             } else {
               stats.waterSurfaceAboveDrawCalls += 1;
-              stats.waterSurfaceAboveDrawVertices += system.vertexCount;
+              stats.waterSurfaceAboveDrawVertices += system.surfaceVertexCount;
             }
             continue;
           }
@@ -9905,6 +10060,7 @@
         waterDrawCalls: 0,
         waterDrawEntries: 0,
         waterDrawVertices: 0,
+        waterSurfaceMeshResolution: 0,
         waterSurfaceAboveDrawCalls: 0,
         waterSurfaceAboveDrawVertices: 0,
         waterSurfaceBelowDrawCalls: 0,
@@ -12538,6 +12694,7 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-water-selena-object-mesh-shadow-fallbacks", String(published.waterSelenaObjectMeshShadowFallbacks || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-entries", String(published.waterDrawEntries || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-vertices", String(published.waterDrawVertices || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-mesh-resolution", String(published.waterSurfaceMeshResolution || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-draw-calls", String(published.waterDrawCalls || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-above-draw-calls", String(published.waterSurfaceAboveDrawCalls || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-surface-above-draw-vertices", String(published.waterSurfaceAboveDrawVertices || 0));
@@ -13156,8 +13313,10 @@
         performance.mark("scene3d-render-start");
       }
 
-      // Reconfigure context if canvas resized.
-      configureWebGPUCanvas();
+      // Reconfigure the context ONLY if the surface actually changed (see
+      // configureWebGPUCanvas: an unconditional configure() here was a per-frame
+      // swapchain re-creation and a hard stall on Metal).
+      configureWebGPUCanvas(canvas);
 
       // Determine post-processing.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
@@ -13538,7 +13697,24 @@
         Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera));
       }
 
+      // GPU wall-clock, sampled cheaply. onSubmittedWorkDone() resolves when the
+      // queue has finished the work we just submitted, so submit->resolve is a close
+      // proxy for how long the GPU actually took. Without it there is NO honest GPU
+      // number anywhere in the runtime: the adaptive governor measures the JS render
+      // call (command encoding), which on WebGPU completes long before the GPU does,
+      // and that gap is how a scene delivering 70ms frames reported 3.6ms of cost.
+      // Sampled every 15th frame so the promise churn cannot itself distort the thing
+      // it is measuring.
+      var gpuT0 = (webGPUFrameSeq % 15) === 0 ? performance.now() : 0;
       device.queue.submit([encoder.finish()]);
+      if (gpuT0 && device.queue.onSubmittedWorkDone) {
+        var gpuMount = canvas && canvas.parentNode;
+        device.queue.onSubmittedWorkDone().then(function () {
+          if (gpuMount && gpuMount.setAttribute) {
+            gpuMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", (performance.now() - gpuT0).toFixed(1));
+          }
+        }).catch(function () {});
+      }
       publishWebGPUFrameStats(frameStats);
       if (scopedFrameErrors) endWebGPUErrorScope();
 
@@ -13608,6 +13784,7 @@
       }
 
       device = null;
+      configuredSurfaceKey = "";
     }
 
     // Device + GPU resources were already initialized synchronously

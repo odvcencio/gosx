@@ -83,6 +83,7 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"gosx-runtime.wasm":                      "wasm",
 		"gosx-runtime-islands.wasm":              "wasm-islands",
 		"wasm_exec.js":                           "wasm-exec",
+		"standard-go-wasm_exec.js":               "standard-go-wasm-exec",
 		"bootstrap.js":                           "bootstrap",
 		"bootstrap-lite.js":                      "bootstrap-lite",
 		"bootstrap-runtime.js":                   "bootstrap-runtime",
@@ -105,6 +106,7 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 
 	manifest := exportManifest{AssetRefs: []string{
 		"/gosx/bootstrap-runtime.js",
+		"/gosx/standard-go-wasm_exec.js",
 		"/gosx/bootstrap-feature-engines.js",
 		"/gosx/hls.min.js",
 		"/gosx/islands/Counter.gxi",
@@ -116,6 +118,7 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 
 	for _, rel := range []string{
 		"gosx/bootstrap-runtime.js",
+		"gosx/standard-go-wasm_exec.js",
 		"gosx/bootstrap-runtime.js.gz",
 		"gosx/bootstrap-runtime.js.br",
 		"gosx/bootstrap-feature-engines.js",

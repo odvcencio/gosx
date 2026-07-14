@@ -248,6 +248,7 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"runtime.wasm":                 filepath.Join(buildDir, "gosx-runtime.wasm"),
 		"runtime-islands.wasm":         filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
 		"wasm_exec.js":                 filepath.Join(buildDir, "wasm_exec.js"),
+		"standard-go-wasm_exec.js":     filepath.Join(buildDir, "standard-go-wasm_exec.js"),
 		"bootstrap.js":                 filepath.Join(buildDir, "bootstrap.js"),
 		"bootstrap-lite.js":            filepath.Join(buildDir, "bootstrap-lite.js"),
 		"bootstrap-runtime.js":         filepath.Join(buildDir, "bootstrap-runtime.js"),
@@ -319,6 +320,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMIslands.File)
 	case "wasm_exec.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMExec.File)
+	case "standard-go-wasm_exec.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.StandardGoWASMExec.File)
 	case "bootstrap.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Bootstrap.File)
 	case "bootstrap-lite.js":

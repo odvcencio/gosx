@@ -289,10 +289,28 @@ func TestWaterSelenaWGSLDescriptorMatchesBindings(t *testing.T) {
 				}
 			}
 
-			// Every descriptor feedback statefield must have a `read`
-			// storage buffer at its in-binding, and (when it ping-pongs) a
-			// `read_write` storage buffer at its out-binding.
+			// A statefield's in-binding depends on WGSLStateBinding.InKind:
+			//
+			//   "texture" (render materials) — a texture_2d<f32> read with textureLoad.
+			//     Their stateAt() taps are dependent chains, so the reads must go through
+			//     the texture cache; a flat storage-buffer index bypasses it entirely.
+			//     This is what the GL backend has always done via a sampler2D.
+			//   "storage" (feedback materials) — the read buffer paired with the
+			//     read_write out buffer the dispatch writes.
 			for _, state := range layout.States {
+				if state.WGSL.InKind == "texture" {
+					inTex, ok := findDeclAt(textureDecls, state.WGSL.Group, state.WGSL.InBinding)
+					if !ok {
+						t.Fatalf("%s: state %q expects a texture at @group(%d) @binding(%d) but WGSL has none", file, state.Name, state.WGSL.Group, state.WGSL.InBinding)
+					}
+					if inTex.Type != "texture_2d<f32>" {
+						t.Fatalf("%s: state %q in-texture at @group(%d) @binding(%d) is %q, want texture_2d<f32>", file, state.Name, state.WGSL.Group, state.WGSL.InBinding, inTex.Type)
+					}
+					if state.WGSL.OutBinding >= 0 {
+						t.Fatalf("%s: state %q is texture-backed (read-only) but declares out-binding %d", file, state.Name, state.WGSL.OutBinding)
+					}
+					continue
+				}
 				inDecl, ok := findDeclAt(storageDecls, state.WGSL.Group, state.WGSL.InBinding)
 				if !ok {
 					t.Fatalf("%s: state %q expects a read storage buffer at @group(%d) @binding(%d) but WGSL has none", file, state.Name, state.WGSL.Group, state.WGSL.InBinding)

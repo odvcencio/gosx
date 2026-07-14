@@ -10,7 +10,9 @@ func Page() Node {
 				<div class="hero__lockup">
 					<p class="hero__kicker kicker">Pure Go &middot; Zero JS toolchain</p>
 					<h1 class="hero__title chrome-text">GoSX</h1>
-					<p class="hero__tagline">The Go-native web platform. One language, full stack.</p>
+					<p class="hero__tagline">
+						The Go-native web platform. One language, full stack.
+					</p>
 					<div class="hero__actions">
 						<a href="/docs/getting-started" data-gosx-link="true" class="btn btn--gold">Get started</a>
 						<a href="/demos" data-gosx-link="true" class="btn btn--ghost">Explore demos</a>

@@ -106,6 +106,12 @@ func TestValidateCapabilities_TextInput(t *testing.T) {
 	}
 }
 
+func TestValidateCapabilities_Clipboard(t *testing.T) {
+	if err := ValidateCapabilities([]Capability{CapClipboard}); err != nil {
+		t.Fatalf("CapClipboard should be valid, got: %v", err)
+	}
+}
+
 func TestValidateCapabilities(t *testing.T) {
 	// Valid
 	err := ValidateCapabilities([]Capability{CapVideo, CapCanvas, CapWebGL, CapWebGL2, CapWebGPU, CapCompute, CapWASM, CapPixelSurface, CapPointer, CapPointerLock, CapKeyboard, CapGamepad, CapWebGPUTimestampQuery, CapWebGPUShaderF16, CapWebGPUTextureCompressionBC, CapWebGPUTextureCompressionBCSliced3D, CapWebGPUDualSourceBlending, CapWebGPUSubgroupsF16, "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxBufferSize>=1048576", "webgpu-feature:future-rendering-mode"})
@@ -222,5 +228,28 @@ func TestEngineConfig_Validate(t *testing.T) {
 	}
 	if err := badKind.Validate(); err == nil {
 		t.Fatal("expected error for unsupported engine kind, got nil")
+	}
+
+	goWASM := Config{
+		Name:     "GoWASM",
+		Kind:     KindWorker,
+		Runtime:  RuntimeGoWASM,
+		WASMPath: "/assets/engine.wasm",
+	}
+	if err := goWASM.Validate(); err != nil {
+		t.Fatalf("expected valid Go-WASM config, got %v", err)
+	}
+	goWASM.WASMPath = ""
+	if err := goWASM.Validate(); err == nil {
+		t.Fatal("expected Go-WASM runtime without WASMPath to fail")
+	}
+
+	unsupportedRuntime := Config{
+		Name:    "BadRuntime",
+		Kind:    KindWorker,
+		Runtime: Runtime("javascript-eval"),
+	}
+	if err := unsupportedRuntime.Validate(); err == nil {
+		t.Fatal("expected unsupported runtime to fail")
 	}
 }
