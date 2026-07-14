@@ -14240,14 +14240,18 @@ test("Scene3D adaptive config objects default enabled and disabled mode sends no
   assert.match(mountSource, /const qualityProfile = qualityEnabled && adaptiveQuality\.activeProfile[\s\S]{0,100}: null/);
 });
 
-test("Scene3D adaptive measurement locks to active renderer timing and respects authored frame caps", () => {
+test("Scene3D adaptive measurement escapes stale renderer timing and respects authored frame caps", () => {
   const locked = createAdaptiveQualityHarness();
   locked.renderer.pollPerformanceSample = function() { return null; };
   locked.renderer.getPerformanceTimingStatus = function() { return { available: true, active: true, pending: true, source: "gpu-test" }; };
   const before = locked.state.validSamples;
-  for (let i = 0; i < 24; i++) locked.sample(99, 34);
-  assert.equal(locked.state.validSamples, before, "null GPU samples must not mix in CPU-rAF while renderer timing is active");
-  assert.equal(locked.state.activeTier, "balanced");
+  for (let i = 0; i < 7; i++) locked.sample(99, 34);
+  assert.equal(locked.state.validSamples, before, "a healthy timestamp ring gets a bounded window to deliver a sample");
+  for (let i = 0; i < 3; i++) locked.sample(99, 34);
+  assert.ok(locked.state.validSamples > before, "a renderer timer that never resolves must fall back to display-frame timing");
+  assert.equal(locked.state.measurement, "cpu-raf-stale-renderer-timing");
+  assert.equal(locked.state.activeTier, "survival", "severely missed display frames must still downshift quality");
+  assert.equal(locked.mount.getAttribute("data-gosx-scene3d-quality-renderer-timing-misses"), "10");
 
   const capped = createAdaptiveQualityHarness({ maxFPS: 30 });
   capped.renderer.pollPerformanceSample = function() { return null; };
@@ -20573,6 +20577,7 @@ function gpuBindGroupLayoutEntryKind(entry) {
 function makeFakeGPUDevice(options) {
   const validateBindings = Boolean(options && options.validateBindings);
   const timestampQuery = Boolean(options && options.timestampQuery);
+  const timestampEncoder = !options || options.timestampEncoder !== false;
   function validateBindGroupLayoutDesc(desc) {
     if (!validateBindings) return;
     const entries = (desc && desc.entries) || [];
@@ -20884,7 +20889,7 @@ function makeFakeGPUDevice(options) {
       return buffer;
     },
     createCommandEncoder() {
-      return {
+      const encoder = {
         writeTimestamp() {},
         resolveQuerySet() {},
         copyBufferToBuffer(_source, _sourceOffset, destination) {
@@ -20911,6 +20916,12 @@ function makeFakeGPUDevice(options) {
           return { __kind: "commandBuffer" };
         },
       };
+      if (!timestampEncoder) {
+        delete encoder.writeTimestamp;
+        delete encoder.resolveQuerySet;
+        delete encoder.copyBufferToBuffer;
+      }
+      return encoder;
     },
     pushErrorScope() {},
     popErrorScope() {
@@ -21887,6 +21898,34 @@ async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
   return { harness, deltas };
 }
 
+test("Scene3D WebGPU submits only the water surface side facing the camera", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, true, 192);
+  state.waterSystems[0].seedDrops = 0;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  function renderAtCameraY(cameraY, nowMS) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000", { x: 0, y: cameraY, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
+    );
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS, active: true });
+    return harness.mount.__gosxScene3DWebGPUStats;
+  }
+
+  const above = renderAtCameraY(1, 0);
+  assert.equal(above.waterSurfaceAboveDrawCalls, 1);
+  assert.equal(above.waterSurfaceBelowDrawCalls, 0);
+  assert.equal(above.waterDrawVertices, above.waterVertices, "above-water cameras must submit the grid once");
+
+  const below = renderAtCameraY(-1, 17);
+  assert.equal(below.waterSurfaceAboveDrawCalls, 0);
+  assert.equal(below.waterSurfaceBelowDrawCalls, 1);
+  assert.equal(below.waterDrawVertices, below.waterVertices, "below-water cameras must submit the grid once");
+});
+
 test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events exactly", async () => {
   const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
   const api = harness.env.context.__gosx_scene3d_api;
@@ -22086,6 +22125,27 @@ test("Scene3D fake WebGPU timestamp ring is supported and nonblocking", async ()
   assert.equal(sample.gpuMS, 4);
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "measured");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-ms"), "4.000");
+});
+
+test("Scene3D WebGPU advertised timestamp queries fall back when encoder timestamps are absent", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    verboseTelemetry: false,
+    fakeDeviceOptions: { timestampQuery: true, timestampEncoder: false },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, true, 192);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000", { x: 0, y: 1, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
+  );
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(harness.renderer.getPerformanceTimingStatus())),
+    { available: false, active: false, pending: false, failed: false, source: "gpu-timestamp" },
+  );
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "timer-unavailable");
+  assert.equal(harness.renderer.pollPerformanceSample(), null);
 });
 
 test("Scene3D fake WebGPU timing partial allocation failure destroys candidates and exposes CPU fallback", async () => {
