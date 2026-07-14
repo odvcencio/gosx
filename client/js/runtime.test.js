@@ -8841,6 +8841,8 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.doesNotMatch(webgpu, /wgpuPopScopedErrorScope\(validationDevice\)\.then/);
   assert.doesNotMatch(webgpu, /waterAuthoredSurfacePipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
   assert.match(webgpu, /cullMode: side === "below" \? "back" : "front"/);
+  assert.match(webgpu, /label: side === "below" \? "gosx-water-render-below"[\s\S]*?depthWriteEnabled: true/);
+  assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ blendMode: "alpha", depthWrite: true, cullMode: "front" \}\)/);
   assert.match(webgpu, /function drawWaterSurfaceSide/);
   assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "above", stats, camera\)/);
   assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "below", stats, camera\)/);
@@ -8895,6 +8897,8 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /label: "gosx-water-pool-pass"/);
   assert.match(webgpu, /label: "gosx-water-pool-pass"[\s\S]*?primitive: \{ topology: "triangle-list", cullMode: "back" \}/);
   assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ cullMode: "back" \}\)/);
+  assert.match(webgpu, /corner == 1u \|\| corner == 2u \|\| corner == 4u/,
+    "box pool must retain upstream outward winding so the near exterior wall remains visible");
   assert.match(webgpu, /const WATER_POOL_ROUNDED_SEGMENTS: u32 = 44u/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryPoint/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryNormal/);
@@ -9653,7 +9657,9 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /surfaceResolution=\{201\}/);
   assert.match(waterPage, /causticsResolution=\{1024\}/);
   assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
-  assert.match(waterPage, /objectTexturePixelBudget=\{786432\}/);
+  assert.match(waterPage, /objectTexturePixelBudget=\{393216\}/);
+  assert.match(waterPage, /adaptiveQuality=\{true\}/);
+  assert.match(waterPage, /adaptiveTargetFrameMS=\{16\.7\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
   assert.match(waterPage, /objectShadowResolution=\{1024\}/);
   // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'

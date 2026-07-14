@@ -31,6 +31,16 @@ func TestWaterDemoPreloadHead(t *testing.T) {
 			t.Fatalf("preload head missing %s in %s", want, head)
 		}
 	}
+	for href, as := range map[string]string{
+		"/water/models/duck/Duck.gltf":  "fetch",
+		"/water/models/duck/Duck0.bin":  "fetch",
+		"/water/models/duck/DuckCM.png": "image",
+	} {
+		want := `rel="preload" as="` + as + `" href="` + href + `" crossorigin="anonymous"`
+		if !strings.Contains(head, want) {
+			t.Fatalf("duck preload head missing %s in %s", want, head)
+		}
+	}
 }
 
 func TestWaterDemoDataCompiles(t *testing.T) {
@@ -344,12 +354,15 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`lightDirectionZ={-1}`,
 		`waveSpeed={1.0}`,
 		`damping={0.995}`,
-		`adaptiveQuality={false}`,
+		`adaptiveQuality={true}`,
+		`adaptiveTargetFrameMS={16.7}`,
+		`adaptiveWarmupFrames={12}`,
 		`qualityTier="full"`,
 		`resolution={256}`,
 		`surfaceResolution={201}`,
 		`causticsResolution={1024}`,
 		`objectTextureResolutionMode="viewport"`,
+		`objectTexturePixelBudget={393216}`,
 		`objectShadowResolution={1024}`,
 		// Selena-compiled combined-WGSL slots: the sole primary WGSL source
 		// for every water compute kernel/render pass now that the

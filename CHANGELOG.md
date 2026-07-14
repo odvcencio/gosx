@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.31.13 (2026-07-14)
+
+- Restored the box pool's upstream outward wall winding while retaining the
+  rounded pool's inward-facing geometry, preventing the near box wall from
+  disappearing and exposing water through the shell.
+- Restored depth-writing water surfaces across Selena and built-in WebGPU
+  paths for stable object/water intersections.
+- Enabled adaptive water quality, reduced projected-object optical target
+  pressure, and preloaded duck assets to avoid the 26 FPS selection cliff.
+
 ## v0.31.12 (2026-07-14)
 
 - Restored upstream-style one-sided pool rendering across Selena and built-in

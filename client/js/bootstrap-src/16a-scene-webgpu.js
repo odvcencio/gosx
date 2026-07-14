@@ -869,10 +869,10 @@
     "  let corner = vertexIndex % 6u;",
     "  var u = 0.0;",
     "  var v = 0.0;",
-    // Clockwise quad order as viewed from outside: floor faces upward and
-    // walls face inward, matching the pool normals and enabling back culling.
-    "  if (corner == 1u || corner == 2u || corner == 5u) { u = 1.0; }",
-    "  if (corner == 1u || corner == 4u || corner == 5u) { v = 1.0; }",
+    // Box geometry intentionally faces outward like upstream THREE.BoxGeometry.
+    // Rounded geometry is separately authored inward-facing.
+    "  if (corner == 1u || corner == 2u || corner == 4u) { u = 1.0; }",
+    "  if (corner == 2u || corner == 4u || corner == 5u) { v = 1.0; }",
     "  var worldPos = vec3f(0.0);",
     "  var normal = vec3f(0.0, 1.0, 0.0);",
     "  var tileUV = vec2f(0.0);",
@@ -9658,20 +9658,20 @@
 
     // getWaterSurfaceSelenaDraw / getWaterSurfaceBelowSelenaDraw resolve the
     // {pipeline, bindGroup} pair for the "above"/"below" surface passes.
-    // Alpha-blended, no depth write, single-sided cull (opposite winding per
-    // side) -- exactly matching the hand-written getWaterRenderPipeline's
-    // descriptor (fragment blend:"alpha", depthWriteEnabled:false,
+    // Alpha-blended, depth-writing, single-sided cull (opposite winding per
+    // side) -- matching upstream WaterSurfacePass and the hand-written
+    // descriptor (fragment blend:"alpha", depthWriteEnabled:true,
     // cullMode: side==="below"?"back":"front").
     function getWaterSurfaceSelenaDraw(system, entry, camera) {
       var material = sceneWaterSurfaceSelenaMaterial(system, entry, "surfaceSelenaWGSL", "surface", "_selenaSurfaceMaterial");
       var renderContext = sceneWaterSurfaceSelenaRenderContext(system, camera, "water-surface");
-      return getWaterSelenaMeshDraw(material, renderContext, system, { blendMode: "alpha", depthWrite: false, cullMode: "front" });
+      return getWaterSelenaMeshDraw(material, renderContext, system, { blendMode: "alpha", depthWrite: true, cullMode: "front" });
     }
 
     function getWaterSurfaceBelowSelenaDraw(system, entry, camera) {
       var material = sceneWaterSurfaceSelenaMaterial(system, entry, "surfaceBelowSelenaWGSL", "surfaceBelow", "_selenaSurfaceBelowMaterial");
       var renderContext = sceneWaterSurfaceSelenaRenderContext(system, camera, "water-surface-below");
-      return getWaterSelenaMeshDraw(material, renderContext, system, { blendMode: "alpha", depthWrite: false, cullMode: "back" });
+      return getWaterSelenaMeshDraw(material, renderContext, system, { blendMode: "alpha", depthWrite: true, cullMode: "back" });
     }
 
     // --- Caustics pass -------------------------------------------------------
@@ -10372,7 +10372,7 @@
         multisample: { count: sampleCount },
         depthStencil: {
           format: "depth24plus",
-          depthWriteEnabled: false,
+          depthWriteEnabled: true,
           depthCompare: "less-equal",
         },
       };
