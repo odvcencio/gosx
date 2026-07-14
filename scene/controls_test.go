@@ -14,10 +14,10 @@ func TestApplyOrbitDragGrabMatchesWaterReferenceDirection(t *testing.T) {
 	if math.Abs(result.DeltaYaw-(-10*math.Pi/180)) > 1e-12 {
 		t.Fatalf("grab yaw = %v, want -10 degrees", result.DeltaYaw)
 	}
-	if math.Abs(result.DeltaPitch-(-5*math.Pi/180)) > 1e-12 {
-		t.Fatalf("grab pitch = %v, want -5 degrees", result.DeltaPitch)
+	if math.Abs(result.DeltaPitch-(5*math.Pi/180)) > 1e-12 {
+		t.Fatalf("grab pitch = %v, want +5 degrees", result.DeltaPitch)
 	}
-	if result.After.Yaw >= result.Before.Yaw || result.After.Pitch >= result.Before.Pitch {
+	if result.After.Yaw >= result.Before.Yaw || result.After.Pitch <= result.Before.Pitch {
 		t.Fatalf("grab drag is inverted: %#v", result)
 	}
 }
@@ -27,8 +27,8 @@ func TestApplyOrbitDragClampsPitch(t *testing.T) {
 		DeltaY: -1000, RotateMode: ControlRotateModePixelDegrees,
 		RotateDirection: ControlRotateDirectionGrab, PitchLimit: 0.75,
 	})
-	if result.After.Pitch != 0.75 {
-		t.Fatalf("pitch = %v, want 0.75", result.After.Pitch)
+	if result.After.Pitch != -0.75 {
+		t.Fatalf("pitch = %v, want -0.75", result.After.Pitch)
 	}
 }
 

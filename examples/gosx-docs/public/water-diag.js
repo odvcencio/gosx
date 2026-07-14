@@ -11,6 +11,8 @@
 (function () {
   "use strict";
 
+  if (new URLSearchParams(location.search).get("diag") !== "1") return;
+
   function ready(fn) {
     if (document.readyState !== "loading") fn();
     else document.addEventListener("DOMContentLoaded", fn);

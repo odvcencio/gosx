@@ -254,7 +254,7 @@ func waterControlDataJSON() (string, error) {
 				"model":                     true,
 				"src":                       "/water/models/duck/Duck.gltf",
 				"objectKind":                "compound",
-				"objectHitTest":             "sphere",
+				"objectHitTest":             "mesh",
 				"objectSubtype":             "duck",
 				"objectX":                   0.4,
 				"objectY":                   -0.735,

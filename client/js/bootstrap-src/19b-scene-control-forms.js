@@ -1234,7 +1234,19 @@
   function sceneManagedFluidObjectPoolHit(point, controls) {
     if (!point) return false;
     const pool = sceneManagedFluidObjectEffectivePoolControls(controls);
-    return Math.abs(sceneNumber(point.x, 0)) < Math.max(0.001, pool.poolWidth) && Math.abs(sceneNumber(point.z, 0)) < Math.max(0.001, pool.poolLength);
+    const x = Math.abs(sceneNumber(point.x, 0));
+    const z = Math.abs(sceneNumber(point.z, 0));
+    const halfWidth = Math.max(0.001, pool.poolWidth);
+    const halfLength = Math.max(0.001, pool.poolLength);
+    const rounded = String(controls && controls.poolShape || "").trim().toLowerCase().replace(/[\s_-]+/g, "") === "roundedbox";
+    const radius = rounded
+      ? sceneManagedFluidObjectClampCornerRadius(controls && controls.cornerRadius, halfWidth, halfLength)
+      : 0;
+    if (radius <= 0.0001) return x < halfWidth && z < halfLength;
+    const qx = x - Math.max(0.001, halfWidth - radius);
+    const qz = z - Math.max(0.001, halfLength - radius);
+    const outside = Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - radius;
+    return outside < -0.002;
   }
 
   function sceneManagedFluidObjectConsumePointerEvent(event) {

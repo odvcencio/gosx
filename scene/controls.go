@@ -108,12 +108,12 @@ func ApplyOrbitDrag(state OrbitState, input OrbitDragInput) OrbitDragResult {
 	if input.RotateMode == ControlRotateModePixelDegrees {
 		pixelRadians := math.Pi / 180 * speed
 		deltaYaw = input.DeltaX * pixelRadians * direction
-		deltaPitch = input.DeltaY * pixelRadians * direction
+		deltaPitch = input.DeltaY * pixelRadians
 	} else {
 		width := math.Max(1, input.ViewportWidth)
 		height := math.Max(1, input.ViewportHeight)
 		deltaYaw = input.DeltaX / width * math.Pi * speed * direction
-		deltaPitch = input.DeltaY / height * math.Pi * speed * direction
+		deltaPitch = input.DeltaY / height * math.Pi * speed
 	}
 
 	pitchLimit := input.PitchLimit
