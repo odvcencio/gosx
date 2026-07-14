@@ -63,6 +63,7 @@ func (e *Editor) renderNativeForm() gosx.Node {
 	}
 	if intelligence := e.Options.CodeIntelligence; intelligence != nil {
 		attrs = appendStringAttr(attrs, "data-code-intelligence-language", fallback(intelligence.Language, string(e.Options.Language)))
+		attrs = appendStringAttr(attrs, "data-code-intelligence-server", intelligence.ServerURL)
 		attrs = appendStringAttr(attrs, "data-code-intelligence-wasm-exec", intelligence.WasmExecURL)
 		attrs = appendStringAttr(attrs, "data-code-intelligence-runtime", intelligence.RuntimeURL)
 		attrs = appendStringAttr(attrs, "data-code-intelligence-grammar", intelligence.GrammarURL)

@@ -40,23 +40,48 @@
     let timer = 0;
     let runtime;
     let latestTags = [];
+    let serverFallback = false;
+    let requestSequence = 0;
 
     try {
-      runtime = await loadRuntime(cfg.codeIntelligenceWasmExec, cfg.codeIntelligenceRuntime);
-      await loadLanguage(runtime, cfg);
-      const initial = requireOK(runtime.open(cfg.codeIntelligenceLanguage, documentID, source.value));
+      let initial;
+      if (cfg.codeIntelligenceWasmExec && cfg.codeIntelligenceRuntime && cfg.codeIntelligenceGrammar && cfg.codeIntelligenceHighlights) {
+        runtime = await loadRuntime(cfg.codeIntelligenceWasmExec, cfg.codeIntelligenceRuntime);
+        await loadLanguage(runtime, cfg);
+        initial = requireOK(runtime.open(cfg.codeIntelligenceLanguage, documentID, source.value));
+      } else if (cfg.codeIntelligenceServer) {
+        serverFallback = true;
+        initial = await requestServerAnalysis(cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
+      } else {
+        throw new Error("Code intelligence has neither browser assets nor a server endpoint.");
+      }
       latestTags = initial.tags || [];
       applyAnalysis(form, source, highlight, initial);
     } catch (error) {
-      reportError(form, error);
-      return;
+      if (!cfg.codeIntelligenceServer) {
+        reportError(form, error);
+        return;
+      }
+      try {
+        serverFallback = true;
+        const initial = await requestServerAnalysis(cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
+        latestTags = initial.tags || [];
+        applyAnalysis(form, source, highlight, initial);
+      } catch (fallbackError) {
+        reportError(form, fallbackError);
+        return;
+      }
     }
 
     const update = () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
+      const sequence = ++requestSequence;
+      timer = window.setTimeout(async () => {
         try {
-          const analysis = requireOK(runtime.update(documentID, source.value));
+          const analysis = serverFallback
+            ? await requestServerAnalysis(cfg.codeIntelligenceServer, cfg.collaborationPath, source.value)
+            : requireOK(runtime.update(documentID, source.value));
+          if (sequence !== requestSequence) return;
           latestTags = analysis.tags || [];
           applyAnalysis(form, source, highlight, analysis);
         } catch (error) {
@@ -83,7 +108,51 @@
         source.setSelectionRange(tagStart(target), tagEnd(target));
       }
     });
-    window.addEventListener("pagehide", () => runtime.close(documentID), {once: true});
+    window.addEventListener("pagehide", () => {
+      if (runtime && !serverFallback) runtime.close(documentID);
+    }, {once: true});
+  }
+
+  async function requestServerAnalysis(url, path, source) {
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({path: path || "", content: source}),
+    });
+    if (!response.ok) throw new Error("Server code intelligence returned " + response.status + ".");
+    const analysis = await response.json();
+    if (analysis.error) throw new Error(analysis.error);
+    const offsets = byteToUTF16Offsets(source);
+    const fromByte = offset => offsets[Math.max(0, Math.min(offsets.length - 1, Number(offset || 0)))];
+    return {
+      highlights: (analysis.highlights || []).map(range => ({
+        start16: fromByte(range.startByte),
+        end16: fromByte(range.endByte),
+        capture: range.capture,
+      })),
+      tags: (analysis.symbols || []).map(symbol => ({
+        kind: symbol.kind,
+        name: symbol.name,
+        range: {start16: fromByte(symbol.range?.startByte), end16: fromByte(symbol.range?.endByte)},
+        nameRange: {start16: fromByte(symbol.nameRange?.startByte), end16: fromByte(symbol.nameRange?.endByte)},
+      })),
+      hasError: Boolean(analysis.hasErrors),
+      lane: "server",
+    };
+  }
+
+  function byteToUTF16Offsets(source) {
+    const encoder = new TextEncoder();
+    const offsets = new Uint32Array(encoder.encode(source).length + 1);
+    let byteOffset = 0;
+    let utf16Offset = 0;
+    for (const character of source) {
+      byteOffset += encoder.encode(character).length;
+      utf16Offset += character.length;
+      offsets[byteOffset] = utf16Offset;
+    }
+    return offsets;
   }
 
   function tagStart(tag) {

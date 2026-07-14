@@ -173,6 +173,7 @@ type Collaboration struct {
 // applications only provide immutable asset URLs.
 type CodeIntelligence struct {
 	Language          string
+	ServerURL         string
 	WasmExecURL       string
 	RuntimeURL        string
 	GrammarURL        string

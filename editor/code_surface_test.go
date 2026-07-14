@@ -120,6 +120,9 @@ func TestCodeIntelligenceAssetProvidesStructuralNavigation(t *testing.T) {
 		`event.altKey && event.shiftKey`,
 		`definitionAtCursor`,
 		`enclosingTag`,
+		`requestServerAnalysis`,
+		`byteToUTF16Offsets`,
+		`lane: "server"`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("code intelligence asset missing %q", want)
@@ -134,6 +137,7 @@ func TestCodeSurfaceRendersDeclarativeIntelligenceBinding(t *testing.T) {
 		Content:  "package main\n",
 		CodeIntelligence: &CodeIntelligence{
 			Language:          "go",
+			ServerURL:         "/api/analyze",
 			WasmExecURL:       "/intelligence/wasm_exec.js",
 			RuntimeURL:        "/intelligence/gotreesitter.wasm",
 			GrammarURL:        "/intelligence/go.bin",
@@ -144,6 +148,7 @@ func TestCodeSurfaceRendersDeclarativeIntelligenceBinding(t *testing.T) {
 	html := gosx.RenderHTML(component.Render())
 	for _, want := range []string{
 		`data-code-intelligence-language="go"`,
+		`data-code-intelligence-server="/api/analyze"`,
 		`data-code-intelligence-runtime="/intelligence/gotreesitter.wasm"`,
 		`data-code-intelligence-grammar="/intelligence/go.bin"`,
 		`data-code-intelligence-highlights="/intelligence/go-highlights.scm"`,
