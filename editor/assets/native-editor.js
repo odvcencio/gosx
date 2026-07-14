@@ -311,6 +311,12 @@
     let preserveWhitespaceOnlyLines = false;
     let secondaryCursors = [];
     let multiCursorStatus = null;
+    const findPanel = form.querySelector(".editor-code-find");
+    const findQuery = form.querySelector('[data-code-find="query"]');
+    const findReplacement = form.querySelector('[data-code-find="replacement"]');
+    const findStatus = form.querySelector(".editor-code-find-status");
+    let findMatches = [];
+    let findIndex = -1;
     const previewIdleDelay = 300;
     const metadataIdleDelay = 450;
     const autosaveDelay = 1800;
@@ -880,6 +886,120 @@
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
     };
 
+    const lineCommentMarker = () => {
+      const language = String(form.dataset.editorLanguage || "").toLowerCase();
+      return ["python", "py", "yaml", "yml", "toml", "hcl", "shell", "bash", "sh", "arb"].includes(language) ? "#" : "//";
+    };
+
+    const toggleLineComment = () => {
+      const marker = lineCommentMarker();
+      const start = textarea.selectionStart || 0;
+      const end = textarea.selectionEnd || start;
+      const { blockStart, blockEnd } = selectedLineRange(start, end);
+      const lines = textarea.value.slice(blockStart, blockEnd).split("\n");
+      const uncomment = lines.filter(line => line.trim() !== "").every(line => line.trimStart().startsWith(marker));
+      const changed = lines.map(line => {
+        if (line.trim() === "") return line;
+        const indent = line.match(/^\s*/)?.[0] || "";
+        const body = line.slice(indent.length);
+        if (uncomment) return indent + body.slice(marker.length).replace(/^ /, "");
+        return indent + marker + " " + body;
+      }).join("\n");
+      textarea.setRangeText(changed, blockStart, blockEnd, "select");
+      dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
+      textarea.focus();
+    };
+
+    const matchingBracket = () => {
+      const value = textarea.value;
+      const cursor = textarea.selectionStart || 0;
+      let at = cursor < value.length && "()[]{}".includes(value[cursor]) ? cursor : cursor - 1;
+      if (at < 0 || !"()[]{}".includes(value[at])) return null;
+      const pairs = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"};
+      const open = "([{".includes(value[at]);
+      const step = open ? 1 : -1;
+      let depth = 0;
+      for (let offset = at; offset >= 0 && offset < value.length; offset += step) {
+        if (value[offset] === value[at]) depth++;
+        if (value[offset] === pairs[value[at]] && --depth === 0) return {at, match: offset};
+      }
+      return null;
+    };
+
+    const goToMatchingBracket = () => {
+      const match = matchingBracket();
+      if (!match) {
+        delete form.dataset.bracketMatch;
+        return false;
+      }
+      form.dataset.bracketMatch = `${match.at}:${match.match}`;
+      textarea.setSelectionRange(match.match, match.match + 1);
+      textarea.focus();
+      return true;
+    };
+
+    const rebuildFindMatches = (preferredOffset = textarea.selectionStart || 0) => {
+      const query = String(findQuery?.value || "");
+      findMatches = [];
+      if (query !== "") {
+        for (let offset = 0; offset <= textarea.value.length - query.length;) {
+          const match = textarea.value.indexOf(query, offset);
+          if (match < 0) break;
+          findMatches.push(match);
+          offset = match + Math.max(1, query.length);
+        }
+      }
+      findIndex = findMatches.findIndex(offset => offset >= preferredOffset);
+      if (findIndex < 0 && findMatches.length > 0) findIndex = 0;
+      if (findStatus) findStatus.textContent = findMatches.length > 0 ? `${findIndex + 1} / ${findMatches.length}` : "0 / 0";
+      return findMatches.length;
+    };
+
+    const selectFindMatch = (direction = 0) => {
+      if (rebuildFindMatches(direction >= 0 ? textarea.selectionEnd || 0 : 0) === 0) return false;
+      if (direction !== 0) {
+        const current = findMatches.findIndex(offset => offset === textarea.selectionStart);
+        findIndex = current < 0 ? findIndex : (current + direction + findMatches.length) % findMatches.length;
+      }
+      const offset = findMatches[findIndex];
+      textarea.setSelectionRange(offset, offset + String(findQuery.value).length);
+      textarea.focus();
+      if (findStatus) findStatus.textContent = `${findIndex + 1} / ${findMatches.length}`;
+      return true;
+    };
+
+    const openFind = (replace = false) => {
+      if (!findPanel || !findQuery) return;
+      findPanel.hidden = false;
+      const selected = textarea.value.slice(textarea.selectionStart || 0, textarea.selectionEnd || 0);
+      if (selected && !selected.includes("\n")) findQuery.value = selected;
+      rebuildFindMatches();
+      const target = replace && findReplacement ? findReplacement : findQuery;
+      target.focus();
+      target.select();
+    };
+
+    const closeFind = () => {
+      if (!findPanel) return;
+      findPanel.hidden = true;
+      textarea.focus();
+    };
+
+    const replaceFindMatch = () => {
+      if (!findQuery || !findReplacement || !selectFindMatch(0)) return;
+      textarea.setRangeText(findReplacement.value, textarea.selectionStart, textarea.selectionEnd, "end");
+      dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
+      rebuildFindMatches();
+    };
+
+    const replaceAllFindMatches = () => {
+      if (!findQuery || !findReplacement || rebuildFindMatches() === 0) return;
+      textarea.value = textarea.value.split(findQuery.value).join(findReplacement.value);
+      textarea.setSelectionRange(0, 0);
+      dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
+      rebuildFindMatches();
+    };
+
     const filterEmojiItems = (query) => {
       const q = String(query || "").trim().replace(/^:/, "").toLowerCase();
       const matches = q === ""
@@ -1157,6 +1277,26 @@
         return;
       }
 
+      const codeCommand = event.target.closest("[data-code-command]");
+      if (codeCommand && form.contains(codeCommand)) {
+        const command = codeCommand.dataset.codeCommand;
+        if (command === "find") openFind(false);
+        if (command === "comment") toggleLineComment();
+        if (command === "bracket") goToMatchingBracket();
+        return;
+      }
+
+      const findAction = event.target.closest("[data-code-find-action]");
+      if (findAction && form.contains(findAction)) {
+        const action = findAction.dataset.codeFindAction;
+        if (action === "previous") selectFindMatch(-1);
+        if (action === "next") selectFindMatch(1);
+        if (action === "replace") replaceFindMatch();
+        if (action === "replace-all") replaceAllFindMatches();
+        if (action === "close") closeFind();
+        return;
+      }
+
       const metadataButton = event.target.closest("[data-metadata-action]");
       if (metadataButton && form.contains(metadataButton)) {
         void requestMetadata(metadataButton.dataset.metadataAction || "preview");
@@ -1196,6 +1336,31 @@
     });
     textarea.addEventListener("keydown", (event) => {
       if (handleEmojiAutocompleteKeydown(event)) return;
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        openFind(false);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "h") {
+        event.preventDefault();
+        openFind(true);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === "/") {
+        event.preventDefault();
+        toggleLineComment();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === "\\") {
+        event.preventDefault();
+        goToMatchingBracket();
+        return;
+      }
+      if (event.key === "F3") {
+        event.preventDefault();
+        selectFindMatch(event.shiftKey ? -1 : 1);
+        return;
+      }
       if (event.key === "Escape" && secondaryCursors.length > 0) {
         event.preventDefault();
         clearSecondaryCursors();
@@ -1208,6 +1373,27 @@
         return;
       }
       handleTabKey(event);
+    });
+    findQuery?.addEventListener("input", () => selectFindMatch(0));
+    findQuery?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        selectFindMatch(event.shiftKey ? -1 : 1);
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeFind();
+      }
+    });
+    findReplacement?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        replaceFindMatch();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeFind();
+      }
     });
     textarea.addEventListener("beforeinput", applyMultiCursorEdit);
     textarea.addEventListener("mousedown", (event) => {

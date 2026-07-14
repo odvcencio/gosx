@@ -239,7 +239,21 @@ func (e *Editor) renderNativeToolbar() gosx.Node {
 			gosx.Attr("id", "editor-toolbar"),
 			gosx.Attr("role", "toolbar"),
 			gosx.Attr("aria-label", "Code editing"),
-		))
+		),
+			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-command", "find"), gosx.Attr("aria-label", "Find and replace")), gosx.Text("Find")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-command", "comment"), gosx.Attr("aria-label", "Toggle line comment")), gosx.Text("Comment")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-command", "bracket"), gosx.Attr("aria-label", "Go to matching bracket")), gosx.Text("Bracket")),
+			gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-code-find"), gosx.Attr("role", "search"), gosx.BoolAttr("hidden")),
+				gosx.El("input", gosx.Attrs(gosx.Attr("type", "search"), gosx.Attr("data-code-find", "query"), gosx.Attr("aria-label", "Find"), gosx.Attr("placeholder", "Find"), gosx.Attr("autocomplete", "off"))),
+				gosx.El("input", gosx.Attrs(gosx.Attr("type", "text"), gosx.Attr("data-code-find", "replacement"), gosx.Attr("aria-label", "Replace"), gosx.Attr("placeholder", "Replace"), gosx.Attr("autocomplete", "off"))),
+				gosx.El("span", gosx.Attrs(gosx.Attr("class", "editor-code-find-status"), gosx.Attr("aria-live", "polite")), gosx.Text("0 / 0")),
+				gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-find-action", "previous"), gosx.Attr("aria-label", "Previous match")), gosx.Text("↑")),
+				gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-find-action", "next"), gosx.Attr("aria-label", "Next match")), gosx.Text("↓")),
+				gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-find-action", "replace")), gosx.Text("Replace")),
+				gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-find-action", "replace-all")), gosx.Text("All")),
+				gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-find-action", "close"), gosx.Attr("aria-label", "Close find and replace")), gosx.Text("×")),
+			),
+		)
 	}
 	groups := [][]Command{
 		{CmdBold, CmdItalic, CmdStrike, CmdCode, CmdLink, CmdImage, CmdEmoji},

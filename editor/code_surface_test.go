@@ -24,6 +24,12 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 		`data-diagnostics-url="/diagnostics"`,
 		`internal/api/api.go`,
 		`name="content"`,
+		`data-code-command="find"`,
+		`data-code-command="comment"`,
+		`data-code-command="bracket"`,
+		`data-code-find="query"`,
+		`data-code-find="replacement"`,
+		`data-code-find-action="replace-all"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("code surface missing %q in %s", want, html)
@@ -72,6 +78,27 @@ func TestNativeEditorAssetProvidesMultiCursorEditing(t *testing.T) {
 		`deleteContentBackward`,
 		`event.key === "ArrowDown"`,
 		`event.key === "Escape"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("native editor asset missing %q", want)
+		}
+	}
+}
+
+func TestNativeEditorAssetProvidesCodeEditingChecklist(t *testing.T) {
+	asset, err := embeddedAssets.ReadFile("assets/native-editor.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(asset)
+	for _, want := range []string{
+		`toggleLineComment`,
+		`goToMatchingBracket`,
+		`openFind`,
+		`replaceFindMatch`,
+		`replaceAllFindMatches`,
+		`event.key.toLowerCase() === "f"`,
+		`event.key.toLowerCase() === "h"`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("native editor asset missing %q", want)

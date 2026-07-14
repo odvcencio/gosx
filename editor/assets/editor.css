@@ -78,7 +78,39 @@
 }
 
 .editor-surface-code .editor-code-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow: visible;
+}
+
+.editor-code-find {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.editor-code-find[hidden] {
   display: none;
+}
+
+.editor-code-find input {
+  width: clamp(7rem, 12vw, 12rem);
+  min-width: 0;
+  border: 1px solid var(--editor-border-strong);
+  border-radius: 4px;
+  background: var(--editor-panel-strong);
+  color: var(--editor-text);
+  font: 0.72rem var(--editor-mono);
+  padding: 0.3rem 0.4rem;
+}
+
+.editor-code-find-status {
+  min-width: 3.5rem;
+  color: var(--editor-muted);
+  font: 0.68rem var(--editor-mono);
+  text-align: center;
 }
 
 .editor-native-topbar {
