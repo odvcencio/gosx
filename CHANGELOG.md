@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.31.14 (2026-07-14)
+
+- Made adaptive Scene3D quality fall back to display-frame timing when a
+  browser advertises timestamp queries but cannot encode or resolve them,
+  preventing permanent `pending` telemetry from pinning expensive scenes to
+  the full quality tier.
+- Submit only the camera-facing side of WebGPU water heightfields outside the
+  waterline crossing band, halving steady above-water surface vertex work
+  while preserving both Selena above/below material paths.
+
 ## v0.31.13 (2026-07-14)
 
 - Restored the box pool's upstream outward wall winding while retaining the

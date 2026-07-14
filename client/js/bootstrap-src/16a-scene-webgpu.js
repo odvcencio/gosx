@@ -4210,6 +4210,12 @@
     var webGPUFrameSeq = 0;
     var gpuTiming = null;
     var gpuTimingFailed = false;
+    // A device may advertise timestamp-query while its command encoder does
+    // not expose the encoder-level timestamp operations used by this ring.
+    // Keep feature discovery separate from an actually encodable timer so
+    // adaptive quality can fall back to display-frame timing instead of
+    // waiting forever on a query that can never be written.
+    var gpuTimingEncodingAvailable = null;
     var failedGPUTimings = [];
     var lastGPUPerformanceSample = null;
     var gpuTimingFrameSeq = 0;
@@ -4264,6 +4270,7 @@
           slots: slots,
           timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
         };
+        gpuTimingEncodingAvailable = null;
         gpuTimingFailed = false;
         if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "pending");
       } catch (error) {
@@ -4369,7 +4376,12 @@
     function beginGPUFrameTiming(encoder) {
       pollGPUTimingReadback();
       var timing = ensureGPUTiming();
-      if (!timing || !encoder || typeof encoder.writeTimestamp !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") return null;
+      if (!timing || !encoder) return null;
+      if (typeof encoder.writeTimestamp !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
+        gpuTimingEncodingAvailable = false;
+        if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
+        return null;
+      }
       var startIndex = gpuTimingFrameSeq % timing.slots.length;
       for (var i = 0; i < timing.slots.length; i++) {
         var slotIndex = (startIndex + i) % timing.slots.length;
@@ -4377,6 +4389,7 @@
         if (!slot || slot.pending || slot.mapping) continue;
         try {
           encoder.writeTimestamp(timing.querySet, slotIndex * 2);
+          gpuTimingEncodingAvailable = true;
           return { timing: timing, slot: slot, slotIndex: slotIndex };
         } catch (_timestampBeginError) {
           disableGPUTiming(timing);
@@ -4410,7 +4423,7 @@
 
     function getPerformanceTimingStatus() {
       var timing = ensureGPUTiming();
-      var active = Boolean(timing && timing !== false && Array.isArray(timing.slots));
+      var active = Boolean(timing && timing !== false && Array.isArray(timing.slots) && gpuTimingEncodingAvailable === true);
       var pending = active && gpuTiming.slots.some(function(slot) { return slot && (slot.pending || slot.mapping); });
       return { available: active, active: active, pending: pending, failed: gpuTimingFailed, source: "gpu-timestamp" };
     }
@@ -9386,9 +9399,9 @@
     // live resource -- state/texture/grid -- not being ready yet).
     // pipelineOptions is forwarded to getSelenaPipeline as-is (cullMode/
     // targetFormat/sampleCount/depthStencil/labelSuffix); blendMode/depthWrite
-    // default to "opaque"/true (every mesh-kind water pass except surface/
-    // surface-below uses these; pass them explicitly to override, matching
-    // the hand-written alpha-blended, no-depth-write surface pipeline).
+    // default to "opaque"/true; pass them explicitly to override. Water
+    // surfaces are alpha blended but deliberately retain depth writes so
+    // pool/object intersections remain stable.
     function getWaterSelenaMeshDraw(material, renderContext, system, pipelineOptions) {
       if (!material) return null;
       var opts = pipelineOptions || {};
@@ -10520,8 +10533,16 @@
         var system = records[i] && records[i].system;
         if (system && system.vertexCount > 0) stats.waterDrawEntries += 1;
       }
-      drawWaterSurfaceSide(renderPass, records, frameBindGroup, "above", stats, camera);
-      drawWaterSurfaceSide(renderPass, records, frameBindGroup, "below", stats, camera);
+      // A heightfield has no overhangs: from a camera clearly above or below
+      // its zero plane only one face can contribute. Previously both sides
+      // submitted the full tessellated grid and relied on face culling after
+      // vertex processing. That doubled the water vertex load precisely when
+      // compound objects (for example a glTF duck) also needed optical work.
+      // Keep both sides only in the narrow surface crossing band.
+      var waterCamera = sceneRenderCamera(camera);
+      var cameraY = sceneNumber(waterCamera && waterCamera.y, 0);
+      if (cameraY >= -0.025) drawWaterSurfaceSide(renderPass, records, frameBindGroup, "above", stats, camera);
+      if (cameraY <= 0.025) drawWaterSurfaceSide(renderPass, records, frameBindGroup, "below", stats, camera);
       return stats;
     }
 

@@ -4021,6 +4021,8 @@
       sampleCursor: 0,
       sampleScratch: new Array(120),
       lastRAFNowMS: null,
+      missingRendererSamples: 0,
+      rendererTimingFallbackFrames: Math.max(2, Math.floor(sceneNumber(props && props.adaptiveRendererTimingFallbackFrames, 8))),
       resumePending: true,
       cooldownMS: Math.max(5000, sceneNumber(props && props.adaptiveCooldownMS, 5000)),
       cooldownUntilMS: 0,
@@ -4057,6 +4059,7 @@
       ewmaFrameMS: state.ewmaFrameMS,
       p95FrameMS: state.p95FrameMS,
       measurement: state.measurement,
+      missingRendererSamples: state.missingRendererSamples,
       lastMeasurement: state.lastMeasurement,
       profile,
       postFXSuppressed: Boolean(state.postFXSuppressed),
@@ -4073,6 +4076,7 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-revision", String(Math.max(0, state.qualityRevision || 0)));
     setAttrValue(mount, "data-gosx-scene3d-quality-reason", state.transitionReason || "");
     setAttrValue(mount, "data-gosx-scene3d-quality-measurement", state.measurement || "none");
+    setAttrValue(mount, "data-gosx-scene3d-quality-renderer-timing-misses", String(Math.max(0, state.missingRendererSamples || 0)));
     setAttrValue(mount, "data-gosx-scene3d-quality-dpr-cap", state.currentMaxDevicePixelRatio > 0 ? state.currentMaxDevicePixelRatio.toFixed(3) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
@@ -4187,8 +4191,18 @@
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
     let sample = sceneAdaptiveRendererSample(renderer, now);
-    if (!sample && !rendererTimingLocked && rafIntervalMS > 0 && cpuDurationMS >= 0) {
-      sample = { durationMS: Math.max(rafIntervalMS, cpuDurationMS), source: "cpu-raf", atMS: now, rafIntervalMS, cpuDurationMS };
+    if (sample) state.missingRendererSamples = 0;
+    else if (rendererTimingLocked) state.missingRendererSamples += 1;
+    else state.missingRendererSamples = 0;
+    const rendererTimingStale = rendererTimingLocked && state.missingRendererSamples >= state.rendererTimingFallbackFrames;
+    if (!sample && (!rendererTimingLocked || rendererTimingStale) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
+      sample = {
+        durationMS: Math.max(rafIntervalMS, cpuDurationMS),
+        source: rendererTimingStale ? "cpu-raf-stale-renderer-timing" : "cpu-raf",
+        atMS: now,
+        rafIntervalMS,
+        cpuDurationMS,
+      };
     }
     if (state.resumePending || state.frameCount <= state.warmupFrames || !sample) {
       state.resumePending = false;
@@ -4210,7 +4224,7 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const target = Math.max(8, sceneNumber(sample.source === "cpu-raf" ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const target = Math.max(8, sceneNumber(sample.source.indexOf("cpu-raf") === 0 ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {
