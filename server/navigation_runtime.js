@@ -334,6 +334,9 @@
       }
 
       const clone = cloneIntoDocument(node, baseURL);
+      if (isElement(clone, "SCRIPT") && clone.hasAttribute(SCRIPT_ROLE) && clone.getAttribute("src")) {
+        clone.setAttribute("data-gosx-script-loaded", "pending");
+      }
       head.insertBefore(clone, currentMarkers.end);
       orderedNodes.push(clone);
       insertedNodes.push(clone);
@@ -1034,10 +1037,13 @@
     return found;
   }
 
-  function findLoadedScript(src) {
+  function findLoadedScript(src, includePending) {
     const scripts = document.querySelectorAll("script[src]");
     for (const script of scripts) {
       if (absolutizeURL(script.getAttribute("src"), windowLocationHref()) === src) {
+        if (!includePending && script.getAttribute("data-gosx-script-loaded") === "pending") {
+          continue;
+        }
         return script;
       }
     }
@@ -1095,6 +1101,8 @@
         }
         const source = await resp.text();
         (0, eval)(String(source) + "\n//# sourceURL=" + src);
+        const marker = findLoadedScript(src, true);
+        if (marker) marker.setAttribute("data-gosx-script-loaded", "true");
       })();
 
     scriptCache.set(cacheKey, promise);
@@ -1102,8 +1110,10 @@
     return role === "bootstrap";
   }
 
-  async function ensureManagedScripts(nextDoc, baseURL) {
-    const scripts = collectManagedScripts(nextDoc.head, baseURL).concat(collectManagedScripts(nextDoc.body, baseURL));
+  async function ensureManagedScripts(nextDoc, baseURL, collectedScripts) {
+    const scripts = Array.isArray(collectedScripts)
+      ? collectedScripts
+      : collectManagedScripts(nextDoc.head, baseURL).concat(collectManagedScripts(nextDoc.body, baseURL));
     scripts.sort(function(a, b) {
       // The wrapped standard-Go shim captures its Go constructor without
       // replacing TinyGo's shared constructor. Load it first, then TinyGo,
@@ -1591,11 +1601,16 @@
     if (isCurrent && !isCurrent()) return;
     await disposeCurrentPage();
     if (isCurrent && !isCurrent()) return;
+    // Head/body replacement adopts nodes out of the parsed document. Capture
+    // managed scripts first so head-owned patch/lifecycle chunks are not lost
+    // before the ordered loader sees them.
+    const managedScripts = collectManagedScripts(nextDoc.head, nextURL)
+      .concat(collectManagedScripts(nextDoc.body, nextURL));
     await replaceManagedHead(nextDoc, nextURL);
     if (isCurrent && !isCurrent()) return;
     replaceBody(nextDoc, nextURL);
     updateHistory(nextURL, !!replace);
-    const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
+    const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL, managedScripts);
     if (isCurrent && !isCurrent()) return;
     await bootstrapCurrentPage(bootstrapLoadedNow);
   }

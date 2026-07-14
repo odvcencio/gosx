@@ -593,6 +593,7 @@ type InstancedMeshIR struct {
 	Transforms           []float64            `json:"transforms"`
 	Colors               []string             `json:"colors,omitempty"`
 	Attributes           map[string][]float64 `json:"attributes,omitempty"`
+	Pickable             *bool                `json:"pickable,omitempty"`
 	CastShadow           bool                 `json:"castShadow,omitempty"`
 	ReceiveShadow        bool                 `json:"receiveShadow,omitempty"`
 	CompressedTransforms []CompressedArray    `json:"compressedTransforms,omitempty"`
@@ -1720,6 +1721,7 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 		record["previewTransforms"] = item.PreviewTransforms
 	}
 	setInt(record, "transformStride", item.TransformStride)
+	setBool(record, "pickable", item.Pickable)
 	if item.CastShadow {
 		record["castShadow"] = true
 	}

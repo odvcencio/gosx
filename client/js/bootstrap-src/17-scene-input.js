@@ -613,10 +613,106 @@
 
     var ray = sceneScreenToRay(pointerX, pointerY, width, height, camera);
     var closest = sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions, 0, bundle.worldMeshUVs);
-    if (closest) {
-      return closest;
+    closest = sceneNearestRaycastHit(closest, sceneRaycastPickInstancedMeshes(ray, bundle.instancedMeshes, 0));
+    return sceneNearestRaycastHit(closest, sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0, null));
+  }
+
+  function sceneNearestRaycastHit(current, candidate) {
+    if (!candidate) return current;
+    if (!current || candidate.distance < current.distance) return candidate;
+    return current;
+  }
+
+  function sceneInstancedPickRadius(mesh) {
+    var kind = normalizeSceneKind(mesh && mesh.kind);
+    if (kind === "sphere") return Math.max(0.0001, sceneNumber(mesh.radius, sceneNumber(mesh.size, 1) * 0.5));
+    if (kind === "torus") return Math.max(0.0001, sceneNumber(mesh.radius, 0.7) + sceneNumber(mesh.tube, 0.3));
+    if (kind === "cylinder" || kind === "cone") {
+      return Math.max(
+        sceneNumber(mesh.radius, 0),
+        sceneNumber(mesh.radiusTop, 0),
+        sceneNumber(mesh.radiusBottom, 0),
+        sceneNumber(mesh.height, sceneNumber(mesh.size, 1)) * 0.5,
+      );
     }
-    return sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0, null);
+    return Math.max(0.0001, Math.hypot(
+      sceneNumber(mesh.width, sceneNumber(mesh.size, 1)),
+      sceneNumber(mesh.height, sceneNumber(mesh.size, 1)),
+      sceneNumber(mesh.depth, sceneNumber(mesh.size, 1)),
+    ) * 0.5);
+  }
+
+  // Intersects the world-space ray with each transformed instance. The inverse
+  // basis projection preserves the ray parameter, so non-uniformly scaled
+  // spheres (the checkers sockets are flattened ellipsoids) remain exact.
+  function sceneRaycastPickInstancedMeshes(ray, meshes, indexOffset) {
+    if (!Array.isArray(meshes) || !meshes.length || !ray) return null;
+    var closest = null;
+    var safeIndexOffset = Math.max(0, Math.floor(sceneNumber(indexOffset, 0)));
+    for (var meshIndex = 0; meshIndex < meshes.length; meshIndex++) {
+      var mesh = meshes[meshIndex];
+      if (!sceneObjectAllowsPointerPick(mesh) || mesh.viewCulled) continue;
+      var transforms = mesh.transforms;
+      if (!transforms || typeof transforms.length !== "number") continue;
+      var count = Math.min(Math.max(0, Math.floor(sceneNumber(mesh.count, 0))), Math.floor(transforms.length / 16));
+      var radius = sceneInstancedPickRadius(mesh);
+      for (var instanceIndex = 0; instanceIndex < count; instanceIndex++) {
+        var base = instanceIndex * 16;
+        var cx = sceneNumber(transforms[base + 12], 0);
+        var cy = sceneNumber(transforms[base + 13], 0);
+        var cz = sceneNumber(transforms[base + 14], 0);
+        var ox = ray.origin.x - cx;
+        var oy = ray.origin.y - cy;
+        var oz = ray.origin.z - cz;
+        var localOrigin = [0, 0, 0];
+        var localDir = [0, 0, 0];
+        var valid = true;
+        for (var column = 0; column < 3; column++) {
+          var offset = base + column * 4;
+          var bx = sceneNumber(transforms[offset], 0);
+          var by = sceneNumber(transforms[offset + 1], 0);
+          var bz = sceneNumber(transforms[offset + 2], 0);
+          var scaleSquared = bx * bx + by * by + bz * bz;
+          if (scaleSquared <= 1e-12) { valid = false; break; }
+          localOrigin[column] = (ox * bx + oy * by + oz * bz) / scaleSquared;
+          localDir[column] = (ray.dir.x * bx + ray.dir.y * by + ray.dir.z * bz) / scaleSquared;
+        }
+        if (!valid) continue;
+        var a = localDir[0] * localDir[0] + localDir[1] * localDir[1] + localDir[2] * localDir[2];
+        var b = localOrigin[0] * localDir[0] + localOrigin[1] * localDir[1] + localOrigin[2] * localDir[2];
+        var c = localOrigin[0] * localOrigin[0] + localOrigin[1] * localOrigin[1] + localOrigin[2] * localOrigin[2] - radius * radius;
+        var discriminant = b * b - a * c;
+        if (a <= 1e-12 || discriminant < 0) continue;
+        var root = Math.sqrt(discriminant);
+        var distance = (-b - root) / a;
+        if (distance < 0) distance = (-b + root) / a;
+        if (distance < 0 || (closest && distance >= closest.distance)) continue;
+        var point = {
+          x: ray.origin.x + ray.dir.x * distance,
+          y: ray.origin.y + ray.dir.y * distance,
+          z: ray.origin.z + ray.dir.z * distance,
+        };
+        closest = {
+          index: safeIndexOffset + meshIndex,
+          object: mesh,
+          distance: distance,
+          inside: true,
+          depth: distance,
+          area: Math.PI * radius * radius,
+          point: point,
+          worldPosition: point,
+          localPosition: {
+            x: localOrigin[0] + localDir[0] * distance,
+            y: localOrigin[1] + localDir[1] * distance,
+            z: localOrigin[2] + localDir[2] * distance,
+          },
+          instanceIndex: instanceIndex,
+          primitiveIndex: -1,
+          triangleIndex: -1,
+        };
+      }
+    }
+    return closest;
   }
 
   function sceneRaycastPickGroup(ray, objects, positions, indexOffset, uvs) {
@@ -723,7 +819,7 @@
 
   function sceneBundlePointerPickTarget(bundle, point, width, height) {
     // Try raycast-based picking first when world positions are available.
-    if (bundle && bundle.camera && (bundle.worldMeshPositions || bundle.worldPositions)) {
+    if (bundle && bundle.camera && (bundle.worldMeshPositions || bundle.worldPositions || (bundle.instancedMeshes && bundle.instancedMeshes.length))) {
       var rayHit = sceneRaycastPick(point.x, point.y, width, height, bundle.camera, bundle);
       if (rayHit) {
         return rayHit;
@@ -1504,5 +1600,6 @@
   if (window.__gosx_scene3d_api) {
     window.__gosx_scene3d_api.sceneRaycastPick = sceneRaycastPick;
     window.__gosx_scene3d_api.sceneRaycastPickGroup = sceneRaycastPickGroup;
+    window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes = sceneRaycastPickInstancedMeshes;
   }
   window.__gosx_scene3d_raycast = sceneRaycastPick;

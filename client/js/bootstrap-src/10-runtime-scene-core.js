@@ -2857,6 +2857,9 @@
       transforms,
       colors,
       attributes,
+      pickable: Object.prototype.hasOwnProperty.call(item, "pickable")
+        ? sceneBool(item.pickable, true)
+        : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
       _transition: lifecycle.transition,

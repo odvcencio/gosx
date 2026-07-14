@@ -478,6 +478,7 @@ type InstancedMesh struct {
 	Scales        []Vector3
 	Colors        []string
 	Attributes    map[string][]float64
+	Pickable      *bool
 	CastShadow    bool
 	ReceiveShadow bool
 	Transition    Transition
@@ -2746,6 +2747,7 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		ID:              id,
 		Count:           im.Count,
 		Kind:            kind,
+		Pickable:        im.Pickable,
 		CastShadow:      im.CastShadow,
 		ReceiveShadow:   im.ReceiveShadow,
 		Transition:      lowerTransition(im.Transition),

@@ -178,6 +178,11 @@ func raycastInstancedMesh(mesh InstancedMesh, parent worldTransform, ray Ray, op
 	if count <= 0 {
 		count = len(mesh.Positions)
 	}
+	pickable := mesh.Pickable == nil || *mesh.Pickable
+	if opts.PickableOnly && !pickable {
+		trace.FilteredPrimitives += count
+		return
+	}
 	for i := 0; i < count; i++ {
 		position := vectorAt(mesh.Positions, i, Vector3{})
 		rotation := eulerAt(mesh.Rotations, i, Euler{})
@@ -188,7 +193,7 @@ func raycastInstancedMesh(mesh InstancedMesh, parent worldTransform, ray Ray, op
 		if hit, ok := raycastTransformedGeometry(mesh.Geometry, world, sanitizedScale(scale), ray); ok {
 			index := i
 			hit.ID = strings.TrimSpace(mesh.ID)
-			hit.Pickable = true
+			hit.Pickable = pickable
 			hit.InstanceIndex = &index
 			appendTraceHit(trace, hit, opts)
 		}

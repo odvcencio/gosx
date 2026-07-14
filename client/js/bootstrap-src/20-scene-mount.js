@@ -6572,6 +6572,9 @@
     }
 
     function onPointerDown(event) {
+      if (event && event.defaultPrevented) {
+        return;
+      }
       if (flyMode) {
         sceneFlyStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
       } else {
@@ -8124,16 +8127,6 @@
 	    }
 
 	    function installSceneCanvasInteractionHandles() {
-	      sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
-	        return viewport;
-	      }, readSceneSourceCamera, scheduleRender);
-	      dragHandle = sceneControlHandle.controller
-	        ? { dispose() {} }
-	        : setupSceneDragInteractions(canvas, props, function() {
-	          return viewport;
-	        }, function() {
-	          return latestBundle;
-	        });
 	      pickHandle = setupScenePickInteractions(canvas, props, function() {
 	        return viewport;
 	      }, function() {
@@ -8150,6 +8143,19 @@
 	          ctx.mount.dispatchEvent(inputEvent);
 	        }
 	      });
+	      // Picking owns pointer-down on authored targets. Register it before
+	      // orbit controls so preventDefault can reserve the gesture; background
+	      // drags still fall through to camera navigation.
+	      sceneControlHandle = setupSceneBuiltInControls(canvas, props, function() {
+	        return viewport;
+	      }, readSceneSourceCamera, scheduleRender);
+	      dragHandle = sceneControlHandle.controller
+	        ? { dispose() {} }
+	        : setupSceneDragInteractions(canvas, props, function() {
+	          return viewport;
+	        }, function() {
+	          return latestBundle;
+	        });
 	    }
 
 	    function reinstallSceneCanvasInteractionHandles(reason) {

@@ -37,6 +37,7 @@
     if (personalitySelect) personalitySelect.addEventListener("change", onSettingsChange);
     if (difficultySelect) difficultySelect.addEventListener("change", onSettingsChange);
     document.addEventListener("gosx:hub:event", onHubEvent);
+    document.addEventListener("gosx:scene3d:input", onSceneInput);
     document.addEventListener("gosx:navigate", teardown, { once: true });
   }
 
@@ -100,8 +101,32 @@
 
   function onBoardClick(event) {
     var button = event.target.closest("[data-checkers-hole]");
-    if (!button || !state || state.finished || state.thinking) return;
-    var hole = Number(button.getAttribute("data-checkers-hole"));
+    if (!button) return;
+    handleHole(Number(button.getAttribute("data-checkers-hole")));
+  }
+
+  function onSceneInput(event) {
+    var detail = event.detail;
+    var input = detail && detail.kind === "pick" ? detail.input : null;
+    if (!input || input.type !== "select") return;
+    var instance = Number(input.targetInstanceIndex);
+    if (!Number.isInteger(instance) || instance < 0) return;
+    if (input.targetID === "checkers-sockets") {
+      handleHole(instance);
+      return;
+    }
+    var match = /^checkers-player-([1-6])$/.exec(input.targetID || "");
+    if (!match || !state || !Array.isArray(state.board)) return;
+    var owner = Number(match[1]);
+    var occupied = [];
+    state.board.forEach(function (value, hole) {
+      if (Number(value) === owner) occupied.push(hole);
+    });
+    if (instance < occupied.length) handleHole(occupied[instance]);
+  }
+
+  function handleHole(hole) {
+    if (!state || state.finished || state.thinking || !Number.isInteger(hole) || hole < 0 || hole >= state.board.length) return;
     var owner = Number(state.board[hole] || 0);
     if (state.selected < 0 || owner === state.active + 1) {
       send("checkers:source", { hole: hole });
@@ -285,6 +310,7 @@
   function teardown() {
     stopMoveAnimation(false);
     document.removeEventListener("gosx:hub:event", onHubEvent);
+    document.removeEventListener("gosx:scene3d:input", onSceneInput);
     if (board) board.removeEventListener("click", onBoardClick);
     if (board) board.removeEventListener("keydown", onBoardKeydown);
     if (materialSelect) materialSelect.removeEventListener("change", onMaterialChange);

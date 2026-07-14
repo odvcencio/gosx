@@ -118,6 +118,24 @@ func TestRaycastGraphReturnsExactInstancedMeshIndex(t *testing.T) {
 	}
 }
 
+func TestRaycastGraphFiltersNonPickableInstancedMesh(t *testing.T) {
+	notPickable := false
+	graph := NewGraph(InstancedMesh{
+		ID:        "decorative-pieces",
+		Count:     2,
+		Geometry:  SphereGeometry{Radius: 0.5},
+		Positions: []Vector3{Vec3(0, 0, 0), Vec3(0, 0, -2)},
+		Pickable:  &notPickable,
+	})
+	trace := TraceGraph(graph, Ray{Origin: Vec3(0, 0, 3), Direction: Vec3(0, 0, -1)}, PickableOnly())
+	if trace.Closest != nil {
+		t.Fatalf("expected non-pickable instances to be filtered, got %#v", trace.Closest)
+	}
+	if trace.FilteredPrimitives != 2 || trace.PrimitivesTested != 0 || trace.InstancesTested != 0 {
+		t.Fatalf("unexpected filtered instance telemetry: %#v", trace)
+	}
+}
+
 func TestTraceGraphReportsSortedHitsAndWork(t *testing.T) {
 	graph := NewGraph(InstancedMesh{
 		ID:        "stack",

@@ -110,6 +110,7 @@ func ShowcaseSceneWithMaterial(value string) scene.Props {
 			Geometry:      scene.CylinderGeometry{RadiusTop: 4.15, RadiusBottom: 4.25, Height: 0.32, Segments: 48},
 			Material:      boardMaterial,
 			Position:      scene.Vec3(0, -0.22, 0),
+			Pickable:      scene.Bool(false),
 			CastShadow:    true,
 			ReceiveShadow: true,
 		},
@@ -125,11 +126,13 @@ func ShowcaseSceneWithMaterial(value string) scene.Props {
 	}
 
 	return scene.Props{
-		Background:    "#080b0f",
-		Responsive:    scene.Bool(true),
-		FillHeight:    scene.Bool(true),
-		Controls:      "orbit",
-		ControlTarget: scene.Vec3(0, 0, 0),
+		Background:             "#080b0f",
+		Responsive:             scene.Bool(true),
+		FillHeight:             scene.Bool(true),
+		Controls:               "orbit",
+		ControlRotateDirection: "grab",
+		ControlTarget:          scene.Vec3(0, 0, 0),
+		EventSignalNamespace:   "checkers.pick",
 		Camera: scene.PerspectiveCamera{
 			Position: scene.Vec3(0, 8.2, 10.4),
 			FOV:      45,
@@ -233,6 +236,7 @@ func socketInstances(holes []boardHole) scene.InstancedMesh {
 		Material:      scene.StandardMaterial{Color: "#121719", Roughness: 0.34, Metalness: 0.42, Clearcoat: 0.48, Iridescence: 0.06},
 		Positions:     positions,
 		Scales:        repeatedScale(len(positions), scene.Vec3(1, 0.34, 1)),
+		Pickable:      scene.Bool(true),
 		ReceiveShadow: true,
 	}
 }
@@ -282,6 +286,7 @@ func pieceInstances(player int, positions []scene.Vector3) scene.InstancedMesh {
 			Emissive:     0.025,
 		},
 		Positions:     positions,
+		Pickable:      scene.Bool(true),
 		CastShadow:    true,
 		ReceiveShadow: true,
 	}

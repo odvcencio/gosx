@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v0.31.7 (2026-07-14)
+
+- Fixed the WebGPU water runtime crash by removing a stale single-texture
+  sampled-state path, retaining the defined ping-pong Selena state textures,
+  and removing an undefined post-submit GPU timer reference.
+- Added exact browser ray intersection for transformed instanced meshes,
+  including stable instance IDs and typed pickability across Go, Scene IR,
+  native traces, WebGPU, and WebGL.
+- Made authored object picking take gesture priority over orbit controls and
+  connected the Chinese Checkers scene directly to standard Scene3D input.
+- Repaired the browser contract suite and managed-navigation script ordering so
+  inert parsed script markers cannot suppress required runtime chunks.
+
 ## v0.31.6 (2026-07-14)
 
 - Added framework-owned runtime surfaces, scoped DOM reconciliation, keyed
