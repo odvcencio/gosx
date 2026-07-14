@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 262144)
-Total output lines: 25202
-
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -16,6 +13,8 @@ const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstr
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
 const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
+const bootstrapScene3DMountSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
@@ -4261,7 +4260,7 @@ test("bootstrap batches keyboard and pointer input for capable engines", async (
   assert.equal(lastBatch["$input.pointer.buttons"], 0);
 
   env.context.__gosx_dispose_engine("gosx-engine-input");
-  assert.equal(env.document.eventListeners.get("keydown").length, 0);
+  assert.equal(env.document.eventListeners.get("keydown").length, 1, "framework declarative-action listener remains shared");
   assert.equal(env.document.eventListeners.get("pointermove").length, 0);
 });
 
@@ -9651,7 +9650,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /surfaceResolution=\{201\}/);
   assert.match(waterPage, /causticsResolution=\{1024\}/);
   assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
-  assert.match(waterPage, /objectTexturePixelBudget=\{data\.diagObjectTexBudget\}/);
+  assert.match(waterPage, /objectTexturePixelBudget=\{786432\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
   assert.match(waterPage, /objectShadowResolution=\{1024\}/);
   // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'
@@ -10002,45 +10001,10049 @@ test("Scene3D shared water clock is fixed-rate across display cadence and lifecy
   const api = loadSceneWaterClockAPI();
   const options = { simulationHz: 60, maxCatchUpTicks: 2, solverSubsteps: 2 };
 
-  function runCadence(di…62144 tokens truncated…;
+  function runCadence(displayHz, seconds) {
+    const clock = {};
+    api.sceneWaterAdvanceClock(clock, 0, true, false, options);
+    const frames = displayHz * seconds;
+    for (let frame = 1; frame <= frames; frame += 1) {
+      api.sceneWaterAdvanceClock(clock, frame * 1000 / displayHz, true, false, options);
+    }
+    return clock;
+  }
 
-  env.context.__gosx_hydrate = function() { return ""; };
+  for (const displayHz of [120, 60, 30]) {
+    const clock = runCadence(displayHz, 1);
+    assert.equal(clock.tickSeq, 60, displayHz + " Hz display must produce 60 simulation ticks/second");
+    assert.equal(clock.solverSubstepSeq, 120, displayHz + " Hz display must preserve two solver substeps/tick");
+    assert.equal(clock.droppedTicks, 0, displayHz + " Hz display must not drop healthy cadence");
+  }
 
-  const feature = enginesFactory({
-    engineFactories: {},
-    sceneNumber: (v, d) => (typeof v === "number" ? v : d),
-    sceneBool: (v, d) => (typeof v === "boolean" ? v : d),
+  const jitter = {};
+  const jitterTimes = [0, 4, 11, 19, 28, 35, 51, 67, 83, 100];
+  for (const now of jitterTimes) api.sceneWaterAdvanceClock(jitter, now, true, false, options);
+  assert.equal(jitter.tickSeq, 6, "jitter must accumulate elapsed time instead of tying ticks to display count");
+  assert.equal(jitter.solverSubstepSeq, 12);
+
+  const stalled = {};
+  api.sceneWaterAdvanceClock(stalled, 0, true, false, options);
+  api.sceneWaterAdvanceClock(stalled, 100, true, false, options);
+  assert.equal(stalled.ticks, 2, "catch-up must be capped");
+  assert.equal(stalled.substeps, 4);
+  assert.equal(stalled.dropped, 4, "six elapsed ticks minus two executed ticks must drop four");
+  assert.equal(stalled.droppedTicks, 4);
+  assert.ok(stalled.accumulatorMS >= 0 && stalled.accumulatorMS < stalled.tickMS);
+
+  api.sceneWaterAdvanceClock(stalled, 90, true, false, options);
+  assert.equal(stalled.ticks, 0, "clock rollback must not simulate");
+  assert.equal(stalled.reset, true);
+  api.sceneWaterAdvanceClock(stalled, 107, true, false, options);
+  assert.equal(stalled.ticks, 1, "rollback must re-anchor at the rollback timestamp");
+
+  api.sceneWaterAdvanceClock(stalled, 120, true, true, options);
+  assert.equal(stalled.ticks, 0);
+  assert.equal(stalled.anchored, false, "pause must unanchor the clock");
+  api.sceneWaterAdvanceClock(stalled, 5000, true, false, options);
+  assert.equal(stalled.ticks, 0, "first frame after unpause must never catch up hidden time");
+  assert.equal(stalled.reset, true);
+  api.sceneWaterAdvanceClock(stalled, 5017, true, false, options);
+  assert.equal(stalled.ticks, 1);
+  api.sceneWaterAdvanceClock(stalled, 9000, false, false, options);
+  api.sceneWaterAdvanceClock(stalled, 12000, true, false, options);
+  assert.equal(stalled.ticks, 0, "first frame after offscreen resume must never catch up");
+});
+
+test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event IDs while paused", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(webgl, /var pendingDropEvents = new Map\(\)/);
+  assert.match(webgl, /var pendingObjectDisplacementEvents = new Map\(\)/);
+  assert.match(webgl, /queueWaterEvents\(liveEntry\);\s*if \(clockFrame\.ticks > 0\) \{\s*drainWaterEvents\(\);/);
+  assert.match(webgl, /pendingDropEvents\.set\(dropEventID,[\s\S]*pendingObjectDisplacementEvents\.set\(displacementEventID, queuedEvent\)/);
+  assert.match(webgl, /waterSeedEventPending: !seeded,[\s\S]*waterDropEventsPending: pendingDropEvents\.size,[\s\S]*waterObjectDisplacementEventsPending: pendingObjectDisplacementEvents\.size/);
+  assert.match(webgl, /if \(clockFrame\.ticks > 0\) \{\s*drainWaterEvents\(\);\s*sim\.simulate\(clockFrame\.substeps\);\s*sim\.recomputeNormal\(\);\s*\}/);
+  assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
+  assert.doesNotMatch(webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/)[0], /requestAnimationFrame|cancelAnimationFrame/);
+
+  assert.match(webgpu, /var hasSimulationTick = canConsumeWaterState && waterClock\.ticks > 0/);
+  assert.match(webgpu, /if \(hasSimulationTick && !system\.seeded\)/);
+  assert.match(webgpu, /if \(hasSimulationTick && dropEventID > 0 && system\.lastDropEventID !== dropEventID\)/);
+  assert.match(webgpu, /hasSimulationTick\s*\? dispatchWaterObjectDisplacementEvents/);
+  assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*solverStep < 2/);
+  assert.match(webgpu, /if \(hasSimulationTick\) \{\s*var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal"/);
+  assert.match(webgpu, /Math\.floor\(Math\.max\(0, waterClock\.tickSeq \|\| 0\) \/ expensivePassCadence\)/);
+
+  assert.equal((mount.match(/renderer\.render\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
+    "every mount render seam must pass frame metadata");
+  assert.match(mount, /renderer\.setLifecycle\(\{\s*nowMS:[\s\S]*active:[\s\S]*paused:[\s\S]*disposed:[\s\S]*reason:/);
+  assert.match(mount, /if \(!active \|\| paused \|\| disposing\) lastSceneRenderNowMS = null/);
+});
+
+test("Scene3D WebGPU timing initialization failure unlocks CPU-rAF fallback", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const timingInit = webgpu.match(/function ensureGPUTiming\(\) \{[\s\S]*?\n    \}/);
+  assert.ok(timingInit, "WebGPU timing initialization seam should exist");
+  assert.match(timingInit[0], /catch \(error\) \{[\s\S]*candidateQuerySet\.destroy\(\)[\s\S]*candidateBuffer\.destroy\(\)[\s\S]*gpuTiming = false;\s*gpuTimingFailed = true;/);
+  assert.match(webgpu, /return \{ available: active, active: active, pending: pending, failed: gpuTimingFailed, source: "gpu-timestamp" \}/);
+
+  const fallback = createAdaptiveQualityHarness();
+  fallback.renderer.pollPerformanceSample = function() { return null; };
+  fallback.renderer.getPerformanceTimingStatus = function() {
+    return { available: false, active: false, pending: false, failed: true, source: "gpu-timestamp" };
+  };
+  fallback.sample(99, 34);
+  assert.equal(fallback.state.measurement, "cpu-raf");
+  assert.equal(fallback.state.validSamples, 1, "failed GPU timing must not leave adaptive quality sample-starved");
+});
+
+test("Scene3D WebGPU quality allocation retries with bounded backoff and publishes telemetry", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const applyQuality = webgpu.match(/function applySceneWaterQualityProfile\([\s\S]*?\n    \}\n\n    function retireWaterSystem/);
+  assert.ok(applyQuality, "WebGPU quality allocation seam should exist");
+  assert.match(applyQuality[0], /system\.qualityAllocationPending && webGPUFrameSeq < system\.qualityAllocationNextFrame/);
+  assert.match(applyQuality[0], /system\.qualityAllocationFailures \+= 1;[\s\S]*system\.qualityAllocationConsecutiveFailures \+= 1;/);
+  assert.match(applyQuality[0], /system\.qualityAllocationNextFrame = webGPUFrameSeq \+ Math\.min\(60,\s*Math\.pow\(2, Math\.min\(6, system\.qualityAllocationConsecutiveFailures - 1\)\)\)/);
+  assert.match(webgpu, /waterQualityAllocationPending: published\.waterQualityAllocationPending \|\| 0,[\s\S]*waterQualityAllocationFailures: published\.waterQualityAllocationFailures \|\| 0,[\s\S]*waterQualityAllocationRetryFrame: published\.waterQualityAllocationRetryFrame \|\| 0/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-pending/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-failures/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-retry-frame/);
+});
+
+test("Scene3D WebGL2 water caches uniform locations and bounds retained-pass work", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // Cache hits and misses per WebGLProgram. Weak keys plus explicit disposal
+  // keep renderer replacement from retaining deleted programs.
+  assert.match(webgl, /var sceneWaterUniformLocations = new WeakMap\(\)/);
+  assert.match(webgl, /if \(locations\.has\(name\)\) return locations\.get\(name\)/);
+  assert.match(webgl, /sceneWaterUniformLocations\.delete\(program\)/);
+  const applyUniforms = webgl.match(/function sceneWaterApplyPassUniforms[\s\S]*?\n  \}/)[0];
+  const renderUniforms = webgl.match(/function sceneWaterRenderSetUniforms[\s\S]*?\n  \}/)[0];
+  assert.doesNotMatch(applyUniforms, /gl\.getUniformLocation/);
+  assert.doesNotMatch(renderUniforms, /gl\.getUniformLocation/);
+  assert.match(applyUniforms, /sceneWaterUniformLocation\(gl, program,/);
+  assert.match(renderUniforms, /sceneWaterUniformLocation\(gl, program,/);
+
+  // Caustics retain their quality cadence, while the object-shadow RTT is
+  // refreshed only when its exact object/light/pool footprint changes.
+  assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
+  assert.match(webgl, /var shadowSignature = waterShadowSignature\(/);
+  assert.match(webgl, /var refreshShadowPass = shadowSignature !== lastShadowSignature/);
+  assert.match(webgl, /shadowTarget && \(useCompoundShadow \? compoundShadowProgram : shadowProgram\) && refreshShadowPass/);
+  assert.match(webgl, /lastShadowSignature = shadowSignature;\s*\n\s*shadowRefreshCount\+\+/);
+
+  // Match WebGPU's retained object-texture strategy: one mesh target update per
+  // frame, with the other two textures reused and matrices still updated.
+  assert.match(webgl, /var meshTexturePassSlot = meshTexturePassCursor % 3/);
+  assert.match(webgl, /if \(meshTexturePassSlot === 0\)[\s\S]{0,900}else if \(meshTexturePassSlot === 1\)[\s\S]{0,900}else \{/);
+  assert.match(webgl, /meshTexturePassCursor = \(meshTexturePassCursor \+ 1\) % 3/);
+  assert.match(webgl, /objectRefractionMatrix\.set\(mvp\)[\s\S]{0,160}objectReflectionMatrix\.set/);
+
+  // Balanced mode shades a smaller surface grid without changing the 192-cell
+  // simulation or its two integration substeps, and exposes the choice in stats.
+  assert.match(webgl, /activeSurfaceGrid = selectWaterSurfaceGrid\(adaptiveEnabled/);
+  assert.match(webgl, /waterSurfaceGridResolution: gridResolution/);
+  assert.match(webgl, /waterSurfaceVertices: surfaceVertexCount/);
+});
+
+test("Scene3D WebGL2 water seeds only the authored initial ripples", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const primeRipples = webgl.match(/function primeRipples\(\) \{[\s\S]*?\n    \}/);
+  assert.ok(primeRipples, "forced WebGL water renderer should prime authored state");
+
+  assert.match(primeRipples[0], /if \(!sim\.seed\(\)\) return false;/);
+  assert.doesNotMatch(primeRipples[0], /sim\.seed\(\{/);
+  assert.doesNotMatch(primeRipples[0], /sim\.drop\(/);
+});
+
+test("Scene3D WebGL2 water consumes live events and renderer inputs", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const forcedWater = webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/);
+  assert.ok(forcedWater, "forced WebGL water renderer should exist");
+
+  assert.match(forcedWater[0], /dropEventID > lastDropEventID/);
+  assert.match(forcedWater[0], /pendingDropEvents\.set\(dropEventID, \{[\s\S]{0,500}dropEventStrength/);
+  assert.match(forcedWater[0], /pendingObjectDisplacementEvents\.set\(displacementEventID, queuedEvent\)/);
+  assert.match(forcedWater[0], /sim\.displace\(pendingObjectDisplacementEvents\.get\(displacementID\)\)/);
+  assert.match(forcedWater[0], /var livePoolWidth = sceneWaterNum\(liveEntry\.poolWidth/);
+  assert.match(forcedWater[0], /var liveLightDir = \[[\s\S]{0,240}liveEntry\.lightDirectionZ/);
+  assert.match(forcedWater[0], /var liveOpticsEnable = \(liveEntry\.reflection \|\| liveEntry\.refraction\) \? 1 : 0/);
+  assert.match(forcedWater[0], /sceneWaterRenderHexColor\(liveEntry\.shallowColor/);
+  assert.match(forcedWater[0], /liveEntry\.aboveWaterColorB/);
+});
+
+test("Scene3D WebGL2 water refreshes analytic meshes by live transform signature", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  assert.match(webgl, /function refreshAnalyticMesh\(kind, center, radius, half, livePoolWidth, livePoolLength\)/);
+  assert.match(webgl, /signature !== analyticMeshSignature[\s\S]{0,220}deleteAnalyticMesh\(sphereMesh\);[\s\S]{0,120}deleteAnalyticMesh\(boxMesh\);/);
+  assert.match(webgl, /objectMesh = refreshAnalyticMesh\(liveKindNum, liveCenter, liveRadius, liveHalf, livePoolWidth, livePoolLength\)/);
+});
+
+test("Scene3D WebGL2 water pool pass wires the rounded-corner pool geometry (mirrors WebGPU)", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  // Mirrors 16a-scene-webgpu.js's sceneWaterPoolShapeRounded verbatim, keyed
+  // off entry.poolShape ("Rounded Box" / "rounded" / "roundbox").
+  assert.match(webgl, /function sceneWaterPoolShapeRounded\(entry\) \{[\s\S]{0,200}rounded box.*roundbox/);
+
+  // The clamp bound follows live dimensions instead of the construction entry.
+  assert.match(webgl, /var livePoolMaxCornerRadius = Math\.max\(0, Math\.min\(livePoolWidth, livePoolLength\) - 0\.001\);/);
+
+  // The rounded flag / clamped uniform value / draw-call vertex count are
+  // recomputed every drawFrame() from the LIVE bundle entry (liveEntry), not
+  // captured once from the construction-time `entry` -- this is the actual
+  // fix for runtime "Rounded Box" switches never affecting the WebGL2 draw.
+  assert.match(webgl, /var livePoolShapeRounded = sceneWaterPoolShapeRounded\(liveEntry\);/);
+  assert.match(webgl, /var livePoolCornerRadius = livePoolShapeRounded\s*\n\s*\? Math\.max\(0, Math\.min\(livePoolMaxCornerRadius, sceneWaterNum\(liveEntry\.cornerRadius, 0\)\)\)\s*\n\s*: 0;/);
+
+  // livePoolRounded (the draw-call vertex-count decision) reads the RAW,
+  // unclamped liveEntry.cornerRadius > 0.0001 -- same gate as WebGPU's
+  // `rounded = sceneWaterPoolShapeRounded(entry) && sceneNumber(entry.cornerRadius, 0) > 0.0001`.
+  assert.match(webgl, /var livePoolRounded = livePoolShapeRounded && sceneWaterNum\(liveEntry\.cornerRadius, 0\) > 0\.0001;/);
+
+  // Vertex count: 30 (5 faces * 6 verts) for the box, 44*9=396 for the
+  // rounded floor-fan + wall-strip geometry, exactly like WebGPU's
+  // roundedPoolVertexCount = 44 * 9.
+  assert.match(webgl, /var livePoolVertexCount = livePoolRounded \? 44 \* 9 : 30;/);
+  assert.match(webgl, /gl\.drawArrays\(gl\.TRIANGLES, 0, livePoolVertexCount\);/);
+
+  // Both live locals are derived inside drawFrame() from liveEntry (declared
+  // right before them), NOT from the construction-time `entry` -- guards
+  // against regressing back to a renderer-creation-time snapshot.
+  assert.match(webgl, /var liveEntry = \(lastBundle && Array\.isArray\(lastBundle\.waterSystems\) && lastBundle\.waterSystems\[0\]\) \|\| entry;/);
+  assert.match(webgl, /var livePoolShapeRounded = sceneWaterPoolShapeRounded\(liveEntry\);/);
+  assert.doesNotMatch(webgl, /var (poolShapeRounded|poolCornerRadius|poolRounded|poolVertexCount) = /);
+
+  // cornerRadius/poolShape are fed into the pool pass's uniform values object,
+  // where the descriptor-driven sceneWaterRenderSetUniforms applies them by
+  // field name only if pool.sel's compiled descriptor declares them.
+  assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, poolProgram, poolDesc, \{\s*\n\s*mvp: mvp, normalMatrix: identity3,\s*\n\s*poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,\s*\n\s*lightDir: liveLightDir,\s*\n[\s\S]{0,400}cornerRadius: livePoolCornerRadius, poolShape: livePoolShapeRounded \? 1 : 0,/);
+
+  // No other WebGL2 pool draw call hardcodes the 30-vertex box count anymore.
+  const poolDrawArraysCalls = webgl.match(/gl\.drawArrays\(gl\.TRIANGLES, 0, livePoolVertexCount\)/g) || [];
+  assert.equal(poolDrawArraysCalls.length, 1, "exactly one draw call should consume livePoolVertexCount");
+  assert.doesNotMatch(webgl, /gl\.drawArrays\(gl\.TRIANGLES, 0, 30\)/);
+});
+
+test("Scene3D WebGPU Selena materials can bind live water resources", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /function sceneSelenaResourceRef\(material, descriptor\)/);
+  assert.match(webgpu, /trimmed\.indexOf\("gosx:"\) === 0/);
+  assert.match(webgpu, /function sceneSelenaParseResourceRef\(ref\)/);
+  assert.match(webgpu, /parts\[0\] !== "water"/);
+  assert.match(webgpu, /function sceneSelenaLiveTextureView\(material, texture\)/);
+  assert.match(webgpu, /case "caustics":[\s\S]{0,120}return resolved\.system\.causticsView/);
+  assert.match(webgpu, /case "refraction":[\s\S]{0,160}return resolved\.system\.objectRefractionView/);
+  assert.match(webgpu, /function sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
+  assert.match(webgpu, /case "heightfield":[\s\S]{0,180}resolved\.system\.activeIndex === 0 \? resolved\.system\.bufferA : resolved\.system\.bufferB/);
+  assert.match(webgpu, /function sceneSelenaStorageBufferDescriptors\(layout\)/);
+  assert.match(webgpu, /buffer: \{ type: "read-only-storage" \}/);
+  assert.match(webgpu, /var liveView = sceneSelenaLiveTextureView\(material, tex\)/);
+  assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
+});
+
+test("Scene3D WebGPU Selena materials expose object matrices as auto-uniforms", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const resolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,900}/)[0];
+
+  assert.match(resolver, /if \(name === "viewProjectionMatrix"\) return scratchSelenaViewProjection;/);
+  assert.match(resolver, /if \(name === "modelMatrix"\) return webGPUSelenaObjectModelMatrix\(owner\);/);
+  assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)/);
+  assert.match(webgpu, /obj && obj\.directVertices === true[\s\S]{0,120}return webGPUObjectModelMatrix\(obj\)/);
+  assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)[\s\S]{0,220}return pointsIdentityMatrix;/);
+  assert.match(webgpu, /sceneSelenaUniformData\(material, cacheOwner, renderContext\)/);
+});
+
+test("Scene3D animation loop supports foreground frame caps", () => {
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(mount, /function sceneAnimationFrameIntervalMS\(\)/);
+  assert.match(mount, /props && props\.frameIntervalMS/);
+  assert.match(mount, /props && props\.maxFrameRate/);
+  assert.match(mount, /props && props\.maxFPS/);
+  assert.match(mount, /scheduleNextAnimationFrame\(\);\n\s+return;\n\s+\}/);
+  assert.match(mount, /lastAnimationFrameAt = typeof now === "number" \? now : 0;/);
+});
+
+test("Scene3D instanced meshes are WebGPU-native", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(webgpu, /var WGSL_PBR_INSTANCED_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_SHADOW_INSTANCED_VERTEX = \[/);
+  assert.match(webgpu, /stepMode: "instance"[\s\S]*shaderLocation: 4[\s\S]*shaderLocation: 7/);
+  assert.match(webgpu, /shaderLocation: 8/);
+  assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
+  assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials/);
+  assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
+  assert.match(webgpu, /function getShadowInstancedPipeline/);
+  assert.match(webgpu, /createMaterialBindGroup\(material, receiveShadow, cacheOwner\)/);
+  assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
+  assert.doesNotMatch(mount, /instanced-meshes/);
+});
+
+test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgpu, /function wgpuCreatePBRPipeline/);
+  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
+  assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
+  assert.match(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
+  assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+  assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+});
+
+test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(webgpu, /var WGSL_SCENE_WORLD_COLOR_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_SCENE_CLIP_COLOR_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_SURFACE_VERTEX = \[/);
+  assert.match(webgpu, /var WGSL_THICK_LINE_VERTEX = \[/);
+  assert.match(webgpu, /function wgpuCreateSceneColorPipeline/);
+  assert.match(webgpu, /primitive: \{ topology: topology \}/);
+  assert.match(webgpu, /function wgpuCreateSurfacePipeline/);
+  assert.match(webgpu, /function wgpuCreateThickLinePipeline/);
+  assert.match(webgpu, /function drawWorldLineEntries\(renderPass, entries, passName, frameBindGroup\)/);
+  assert.match(webgpu, /function drawThickWorldLineEntries\(renderPass, record, passName, frameBindGroup\)/);
+  assert.match(webgpu, /function drawScreenLines\(renderPass, bundle, frameBindGroup\)/);
+  assert.match(webgpu, /function drawSurfaceEntries\(renderPass, bundle, materials, passName, frameBindGroup\)/);
+  assert.match(webgpu, /buildSceneWorldDrawPlan\(bundle, worldDrawScratch\)/);
+  assert.match(webgpu, /expandSceneThickLineIntoScratch\(/);
+  assert.match(webgpu, /setIndexBuffer\(indexBuffer, "uint16"\)/);
+  assert.match(webgpu, /getSceneColorPipeline\(entry\.space === "clip" \? "clip" : "world", topology, blend, depthWrite\)/);
+  assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.surfaces\)[\s\S]{0,120}return false/);
+  assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.lines\)[\s\S]{0,120}return false/);
+  assert.doesNotMatch(mount, /sceneNumber\(entry\.lineWidth/);
+  assert.doesNotMatch(mount, /source && source\.worldLineWidths/);
+  assert.doesNotMatch(mount, /return "surfaces"/);
+  assert.doesNotMatch(mount, /return "lines"/);
+  assert.match(mount, /return "line-styles"/);
+});
+
+test("Scene3D WebGPU supports tiered MSAA render targets", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.js"), "utf8");
+
+  assert.match(webgpu, /function createSceneWebGPURenderer\(canvas, options\)/);
+  assert.match(webgpu, /function ensureMSAAColor\(width, height, sampleCount\)/);
+  assert.match(webgpu, /sampleCount: sampleCount/);
+  assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(sampleCount \|\| 1\)\) \}/);
+  assert.match(webgpu, /activeSampleCount = sampleCount/);
+  assert.match(webgpu, /mainColorAttachment\.resolveTarget = mainResolveView/);
+  assert.match(webgpu, /function sceneWebGPUCanvasConfiguration\(\)/);
+  assert.match(webgpu, /colorSpace: activePresentation\.colorSpace/);
+  assert.match(webgpu, /config\.toneMapping = \{ mode: activePresentation\.toneMappingMode \}/);
+  assert.match(mount, /function sceneWebGPUOptions\(props, capability\)/);
+  assert.match(mount, /msaaSamples: requestedSamples > 1 \? 4 : \(antialias \? 4 : 1\)/);
+  assert.match(mount, /powerPreference: sceneWebGPUPowerPreference/);
+  assert.match(mount, /presentation: sceneWebGPUPresentationOptions\(props\)/);
+  assert.match(probe, /sceneWebGPUProbeOptionsFromManifest/);
+  assert.match(probe, /sceneWebGPURequiredFeaturesFromManifest/);
+  assert.match(probe, /sceneWebGPURequiredLimitsFromManifest/);
+  assert.match(probe, /descriptor\.requiredLimits = Object\.assign/);
+  assert.match(probe, /requestAdapter\(adapterRequest\)/);
+  assert.match(probe, /WEBGPU_LOST_REPROBE_BACKOFF_MS/);
+  assert.match(probe, /function sceneWebGPURecordProbeLoss/);
+  assert.match(probe, /device lost repeatedly; reprobe backed off/);
+  assert.match(probe, /lostProbeBackoffUntil/);
+});
+
+test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics", async () => {
+  let requestedDescriptor = null;
+  let requestedAdapterOptions = null;
+  const deviceFeatures = new Set();
+  const adapterLimits = {
+    maxTextureDimension2D: 8192,
+    maxComputeWorkgroupSizeX: 256,
+    maxComputeWorkgroupsPerDimension: 65535,
+  };
+  const deviceLimits = {
+    maxTextureDimension2D: 4096,
+    maxComputeWorkgroupSizeX: 128,
+  };
+  const adapter = {
+    features: new Set([
+      "timestamp-query",
+      "indirect-first-instance",
+      "shader-f16",
+      "texture-compression-bc",
+      "texture-compression-bc-sliced-3d",
+      "texture-compression-astc-sliced-3d",
+      "subgroups",
+      "subgroups-f16",
+      "future-rendering-mode",
+    ]),
+    limits: adapterLimits,
+    info: {
+      vendor: "gosx-test",
+      architecture: "test-gpu",
+      subgroupMinSize: 4,
+      subgroupMaxSize: 32,
+    },
+    requestDevice: async (descriptor = {}) => {
+      requestedDescriptor = descriptor;
+      for (const feature of descriptor.requiredFeatures || []) {
+        deviceFeatures.add(feature);
+      }
+      return {
+        lost: new Promise(() => {}),
+        features: deviceFeatures,
+        limits: deviceLimits,
+      };
+    },
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async (options) => {
+        requestedAdapterOptions = options;
+        return adapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-probe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: [
+            "webgpu",
+            "webgpu:limit:maxComputeWorkgroupSizeX>=128",
+            "webgpu:device-limit:maxTextureDimension2D>=4096",
+            "webgpu:adapter-limit:maxTextureDimension2D>=8192",
+            "webgpu-feature:future-rendering-mode",
+          ],
+          props: {
+            webgpuPowerPreference: "high-performance",
+            webgpuOptionalFeatures: true,
+          },
+        },
+      ],
+    },
   });
 
-  await feature.runtimeReady({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+
+  assert.equal(requestedAdapterOptions.powerPreference, "high-performance");
+  assert.deepEqual(Array.from(requestedDescriptor.requiredFeatures), [
+    "timestamp-query",
+    "indirect-first-instance",
+    "shader-f16",
+    "texture-compression-bc",
+    "texture-compression-bc-sliced-3d",
+    "subgroups",
+    "subgroups-f16",
+    "future-rendering-mode",
+  ]);
+  assert.equal(requestedDescriptor.requiredLimits.maxComputeWorkgroupSizeX, 128);
+  assert.equal(requestedDescriptor.requiredLimits.maxTextureDimension2D, 4096);
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, true);
+  assert.equal(diagnostics.adapterAvailable, true);
+  assert.equal(diagnostics.deviceAvailable, true);
+  assert.ok(diagnostics.supportedFeatures.includes("texture-compression-astc-sliced-3d"));
+  assert.equal(diagnostics.requestedFeatures.includes("texture-compression-astc-sliced-3d"), false);
+  assert.ok(diagnostics.deviceFeatures.includes("timestamp-query"));
+  assert.equal(diagnostics.adapterLimits.maxTextureDimension2D, 8192);
+  assert.equal(diagnostics.deviceLimits.maxComputeWorkgroupSizeX, 128);
+  assert.equal(diagnostics.adapterInfo.vendor, "gosx-test");
+  assert.equal(diagnostics.adapterInfo.subgroupMaxSize, 32);
+  assert.equal(diagnostics.probeOptions.powerPreference, "high-performance");
+  assert.deepEqual(Array.from(diagnostics.requiredFeatures), ["future-rendering-mode"]);
+  assert.equal(diagnostics.requiredLimits.maxComputeWorkgroupSizeX, 128);
+  assert.equal(diagnostics.requiredLimits.maxTextureDimension2D, 4096);
+  assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
+  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.js
+  // (base scene3d bundle) but USED by the separate scene3d-webgpu chunk's
+  // instanced GPU cull. It MUST be exported on __gosx_scene3d_api so the webgpu
+  // chunk's prefix can bridge it; otherwise the webgpu render path throws
+  // "extractFrustumPlanesJS is not defined".
+  assert.equal(typeof env.context.__gosx_scene3d_api.extractFrustumPlanesJS, "function");
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), true);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu-feature:future-rendering-mode"), true);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:texture-compression-astc-sliced-3d"), false);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:adapter-limit:maxTextureDimension2D>=8192"), true);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:device-limit:maxTextureDimension2D>=8192"), false);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:limit:maxComputeWorkgroupSizeX>=128"), true);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:limit:maxComputeWorkgroupSizeX>128"), false);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:missing-feature"), false);
+});
+
+test("Scene3D WebGPU probe keeps optional features opt-in for headless devices", async () => {
+  let requestedDescriptor = null;
+  const adapter = {
+    features: new Set([
+      "timestamp-query",
+      "indirect-first-instance",
+      "texture-compression-bc",
+      "subgroups",
+    ]),
+    limits: {
+      maxTextureDimension2D: 8192,
+      maxComputeWorkgroupSizeX: 256,
+    },
+    requestDevice: async (descriptor) => {
+      requestedDescriptor = descriptor;
+      const requiredFeatures = descriptor && descriptor.requiredFeatures || [];
+      return {
+        lost: new Promise(() => {}),
+        features: new Set(requiredFeatures),
+        limits: {
+          maxTextureDimension2D: 8192,
+          maxComputeWorkgroupSizeX: 256,
+        },
+      };
+    },
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => adapter,
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-lean-probe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
   await flushAsyncWork();
 
-  // Mount alone must already recover — the walk runs unconditionally, not
-  // just on a later ResizeObserver fire — picking the largest-area real
-  // ancestor within reach, capped at the board's declared 1280x720.
-  assert.equal(canvas.width, 746, "backing store width must recover from the grandparent's real box");
-  assert.equal(canvas.height, 720, "backing store height must be capped at the board's declared height");
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(requestedDescriptor, undefined);
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, true);
+  assert.ok(diagnostics.supportedFeatures.includes("timestamp-query"));
+  assert.equal(diagnostics.requestedFeatures.length, 0);
+  assert.equal(diagnostics.deviceFeatures.length, 0);
+  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), false);
+});
 
-  // The fallback must also register the discovered ancestor with the SAME
-  // ResizeObserver, so a LATER layout change there (the canvas's own box never
-  // changes on its own) re-triggers the recovery. Real browsers deliver a
-  // ResizeObserver's first notification shortly after observe() is called
-  // (proven empirically against real Chromium — see the handoff report); the
-  // fake observer here requires an explicit trigger to model that first fire.
-  const ro = env.resizeObservers[0];
-  assert.ok(ro, "a ResizeObserver must have been created for the canvas2d board");
-  assert.ok(ro.targets.has(canvas), "the observer must still observe the canvas itself");
-  ro.trigger([canvas]);
-  assert.ok(ro.targets.has(grandparent), "the observer must ALSO observe the ancestor it fell back to");
+test("Scene3D adaptive WebGPU requests only supported timestamp-query", async () => {
+  let descriptor = null;
+  const adapter = {
+    features: new Set(["timestamp-query", "shader-f16", "subgroups"]),
+    limits: {},
+    requestDevice: async (next) => {
+      descriptor = next || {};
+      return { lost: new Promise(() => {}), features: new Set(descriptor.requiredFeatures || []), limits: {} };
+    },
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource } },
+    navigatorGPU: { requestAdapter: async () => adapter, getPreferredCanvasFormat: () => "rgba8unorm" },
+    manifest: { engines: [{ component: "GoSXScene3D", props: { adaptiveQuality: { tier: "balanced" } } }] },
+  });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d-adaptive-probe.js");
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.deepEqual(Array.from(descriptor.requiredFeatures || []), ["timestamp-query"]);
+  assert.deepEqual(Array.from(env.context.__gosx_scene3d_webgpu_diagnostics().requestedFeatures), ["timestamp-query"]);
+});
 
-  // Simulate the ancestor's box changing later (e.g. a rail collapse widens
-  // the workbench) — re-triggering the observer picks up the new size even
-  // though the canvas's own (still self-referential) box never moved.
-  grandparent.clientWidth = 900;
-  grandparent.clientHeight = 700;
-  ro.trigger([canvas]);
-  assert.equal(canvas.width, 900);
-  assert.equal(canvas.height, 700);
+test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter", async () => {
+  let adapterRequests = 0;
+  let deviceRequests = 0;
+  const failingAdapter = {
+    features: new Set(["timestamp-query"]),
+    limits: {
+      maxTextureDimension2D: 8192,
+    },
+    requestDevice: async (descriptor) => {
+      deviceRequests++;
+      assert.equal(descriptor, undefined);
+      throw new Error("A valid external Instance reference no longer exists.");
+    },
+  };
+  const retryAdapter = {
+    features: new Set(["timestamp-query"]),
+    limits: {
+      maxTextureDimension2D: 8192,
+    },
+    info: {
+      vendor: "retry-vendor",
+    },
+    requestDevice: async (descriptor) => {
+      deviceRequests++;
+      assert.equal(descriptor, undefined);
+      return {
+        lost: new Promise(() => {}),
+        features: new Set(),
+        limits: {
+          maxTextureDimension2D: 8192,
+        },
+      };
+    },
+  };
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests++;
+        return adapterRequests === 1 ? failingAdapter : retryAdapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-retry-probe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(adapterRequests, 2);
+  assert.equal(deviceRequests, 2);
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, true);
+  assert.equal(diagnostics.retryCount, 1);
+  assert.match(diagnostics.warnings[0], /external Instance/);
+  assert.equal(diagnostics.adapterInfo.vendor, "retry-vendor");
+  assert.equal(diagnostics.requestedFeatures.length, 0);
+  assert.equal(diagnostics.deviceFeatures.length, 0);
+});
+
+test("Scene3D WebGPU probe invalidates lost device and reacquires a fresh device", async () => {
+  let adapterRequests = 0;
+  let deviceRequests = 0;
+  let resolveFirstLost = null;
+  function makeDevice(name) {
+    let resolveLost = null;
+    const device = {
+      name,
+      lost: new Promise((resolve) => {
+        resolveLost = resolve;
+      }),
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+    };
+    if (name === "first") {
+      resolveFirstLost = resolveLost;
+    }
+    return device;
+  }
+  function makeAdapter(name, vendor) {
+    return {
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+      info: {
+        vendor,
+      },
+      requestDevice: async (descriptor) => {
+        deviceRequests++;
+        assert.equal(descriptor, undefined);
+        return makeDevice(name);
+      },
+    };
+  }
+  const adapters = [
+    makeAdapter("first", "initial-vendor"),
+    makeAdapter("second", "recovered-vendor"),
+  ];
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests++;
+        return adapters[Math.min(adapterRequests - 1, adapters.length - 1)];
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-loss-reprobe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  let probe = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(adapterRequests, 1);
+  assert.equal(deviceRequests, 1);
+  assert.equal(probe.ready, true);
+  assert.equal(probe.device.name, "first");
+
+  resolveFirstLost({ reason: "destroyed", message: "device gone" });
+  await flushAsyncWork();
+
+  const readyAfterLoss = await env.context.__gosx_scene3d_webgpu_probe_ready();
+  probe = env.context.__gosx_scene3d_webgpu_probe();
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(readyAfterLoss, true, "probe should reacquire WebGPU after the cached device is lost");
+  assert.equal(adapterRequests, 2);
+  assert.equal(deviceRequests, 2);
+  assert.equal(probe.ready, true);
+  assert.equal(probe.device.name, "second");
+  assert.equal(probe.lost, null);
+  assert.equal(diagnostics.adapterInfo.vendor, "recovered-vendor");
+});
+
+test("Scene3D WebGPU probe retries null adapter after lost-device reprobe", async () => {
+  let now = 0;
+  let adapterRequests = 0;
+  let deviceRequests = 0;
+  let resolveFirstLost = null;
+  function makeDevice(name) {
+    let resolveLost = null;
+    const device = {
+      name,
+      lost: new Promise((resolve) => {
+        resolveLost = resolve;
+      }),
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+    };
+    if (name === "first") {
+      resolveFirstLost = resolveLost;
+    }
+    return device;
+  }
+  function makeAdapter(name, vendor) {
+    return {
+      features: new Set(),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+      info: {
+        vendor,
+      },
+      requestDevice: async (descriptor) => {
+        deviceRequests++;
+        assert.equal(descriptor, undefined);
+        return makeDevice(name);
+      },
+    };
+  }
+  const firstAdapter = makeAdapter("first", "initial-vendor");
+  const recoveredAdapter = makeAdapter("recovered", "late-vendor");
+  const env = createContext({
+    enableWebGPU: true,
+    performanceNow: () => now,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests++;
+        if (adapterRequests === 1) {
+          return firstAdapter;
+        }
+        if (adapterRequests === 2) {
+          return null;
+        }
+        return recoveredAdapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-late-reprobe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: ["webgpu"],
+          props: {},
+        },
+      ],
+    },
+  });
+  let probeReadyEvents = 0;
+  env.context.addEventListener("gosx:scene3d:webgpu-probe-ready", () => {
+    probeReadyEvents++;
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(adapterRequests, 1);
+  assert.equal(deviceRequests, 1);
+
+  resolveFirstLost({ reason: "destroyed", message: "device gone" });
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), false);
+  let diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(adapterRequests, 2);
+  assert.equal(deviceRequests, 1);
+  assert.equal(diagnostics.ready, false);
+  assert.equal(diagnostics.error, "requestAdapter returned null");
+
+  now = 1500;
+  diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, false);
+  assert.equal(adapterRequests, 3);
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  const probe = env.context.__gosx_scene3d_webgpu_probe();
+  diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(deviceRequests, 2);
+  assert.equal(probe.device.name, "recovered");
+  assert.equal(probe.lost, null);
+  assert.equal(diagnostics.adapterInfo.vendor, "late-vendor");
+  assert.equal(probeReadyEvents, 1);
+});
+
+test("bootstrap normalizes orthographic Scene3D cameras, LOD, lights, and custom line materials", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const camera = api.sceneRenderCamera({
+    kind: "orthographic",
+    x: 1,
+    y: 2,
+    z: 8,
+    left: -4,
+    right: 4,
+    top: 3,
+    bottom: -3,
+    zoom: 2,
+    near: 0.1,
+    far: 90,
+  });
+
+  assert.equal(camera.kind, "orthographic");
+  assert.equal(camera.left, -4);
+  assert.equal(camera.zoom, 2);
+
+  const object = api.normalizeSceneObject({
+    id: "path",
+    kind: "lines",
+    materialKind: "line-dashed",
+    color: "#ffffff",
+    lineDash: true,
+    dashSize: 6,
+    gapSize: 2,
+    lineWidth: 3,
+    points: [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }],
+    lineSegments: [[0, 1]],
+  }, 0, null);
+  const nearLOD = api.normalizeSceneObject({
+    id: "near-lod",
+    kind: "box",
+    lodGroup: "ship-lod",
+    lodLevel: 0,
+    lodMinDistance: 0,
+    lodMaxDistance: 4,
+    clearcoat: 0.6,
+    sheen: 0.3,
+  }, 1, null);
+  const farLOD = api.normalizeSceneObject({
+    id: "far-lod",
+    kind: "box",
+    lodGroup: "ship-lod",
+    lodLevel: 1,
+    lodMinDistance: 4,
+    lodMaxDistance: 0,
+    transmission: 0.25,
+    iridescence: 0.5,
+    anisotropy: -0.2,
+  }, 2, null);
+  const rectLight = api.normalizeSceneLight({ kind: "rect-area", width: 3, height: 2, intensity: 1.2 }, 0, null);
+  const probe = api.normalizeSceneLight({ kind: "light-probe", color: "#ddeeff", intensity: 0.4 }, 1, null);
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    camera,
+    [object, nearLOD, farLOD],
+    [],
+    [],
+    [],
+    [rectLight, probe],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    [{ kind: "dof", focusDistance: 8, aperture: 0.05, maxBlur: 7 }],
+    0,
+  );
+
+  assert.equal(bundle.camera.kind, "orthographic");
+  assert.equal(bundle.materials[0].kind, "line-dashed");
+  assert.equal(bundle.materials[0].lineDash, true);
+  assert.equal(bundle.materials.some((material) => material.clearcoat === 0.6), false);
+  assert.equal(bundle.materials.some((material) => material.transmission === 0.25), true);
+  assert.equal(bundle.worldLineWidths[0], 3);
+  assert.equal(bundle.worldLineDashes[0], true);
+  assert.equal(rectLight.kind, "rect-area");
+  assert.equal(rectLight.width, 3);
+  assert.equal(probe.kind, "light-probe");
+  assert.equal(bundle.objects.some((entry) => entry.id === "near-lod"), false);
+  assert.equal(bundle.objects.some((entry) => entry.id === "far-lod"), true);
+  assert.deepEqual(bundle.postEffects, [{ kind: "dof", focusDistance: 8, aperture: 0.05, maxBlur: 7 }]);
+});
+
+test("bootstrap applies named Scene3D materials to point layers", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneStatePointsWithMaterials, "function");
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        { name: "core", color: "var(--galaxy-core-inner)", opacity: "var(--galaxy-core-opacity)" },
+      ],
+      points: [
+        { id: "galaxy", count: 1, material: "core", color: "#ffffff", opacity: 0.1, blendMode: "additive" },
+      ],
+    },
+  });
+  const points = api.sceneStatePointsWithMaterials(state);
+  const again = api.sceneStatePointsWithMaterials(state);
+
+  assert.equal(points[0].color, "var(--galaxy-core-inner)");
+  assert.equal(points[0].opacity, "var(--galaxy-core-opacity)");
+  assert.equal(points[0].blendMode, "additive");
+  assert.equal(again[0], points[0]);
+});
+
+test("bootstrap selects Scene3D material variants from capability tier", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const props = {
+    scene: {
+      materials: [
+        {
+          name: "core",
+          color: "#77c6ff",
+          opacity: 0.9,
+          variants: {
+            constrained: {
+              color: "#cbd5e1",
+              opacity: 0.35,
+            },
+          },
+        },
+      ],
+      points: [
+        { id: "galaxy", count: 1, material: "core", color: "#ffffff", opacity: 0.1 },
+      ],
+    },
+  };
+
+  const constrained = api.createSceneState(props, { tier: "constrained" });
+  const constrainedPoints = api.sceneStatePointsWithMaterials(constrained);
+  assert.equal(constrained.materials[0].variantKey, "constrained");
+  assert.equal(constrainedPoints[0].color, "#cbd5e1");
+  assert.equal(constrainedPoints[0].opacity, 0.35);
+
+  const full = api.createSceneState(props, { tier: "full" });
+  const fullPoints = api.sceneStatePointsWithMaterials(full);
+  assert.equal(full.materials[0].variantKey, "");
+  assert.equal(fullPoints[0].color, "#77c6ff");
+  assert.equal(fullPoints[0].opacity, 0.9);
+});
+
+test("bootstrap preserves named Scene3D custom WGSL materials through object bundles", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneStateObjectsWithMaterials, "function");
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "shader-card",
+          kind: "custom",
+          color: "#f5c76b",
+          customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
+          customUniforms: { pulse: 0.75 },
+          shaderBackend: "selena",
+          shaderLayout: { schemaVersion: "selena.descriptor.v1", material: "ShaderCard" },
+          variants: {
+            constrained: {
+              color: "#94a3b8",
+            },
+          },
+        },
+      ],
+      objects: [
+        { id: "hero", kind: "box", material: "shader-card", size: 1 },
+      ],
+    },
+  }, { tier: "constrained" });
+
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  assert.equal(objects[0].materialKind, "custom");
+  assert.equal(objects[0].color, "#94a3b8");
+  assert.equal(objects[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(1.0); }");
+  assert.equal(objects[0].customUniforms.pulse, 0.75);
+  assert.equal(objects[0].shaderBackend, "selena");
+  assert.equal(objects[0].shaderLayout.material, "ShaderCard");
+
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    objects,
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(bundle.materials[0].kind, "custom");
+  assert.equal(bundle.materials[0].color, "#94a3b8");
+  assert.equal(bundle.materials[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(1.0); }");
+  assert.equal(bundle.materials[0].customUniforms.pulse, 0.75);
+  assert.equal(bundle.materials[0].shaderBackend, "selena");
+  assert.equal(bundle.materials[0].shaderLayout.schemaVersion, "selena.descriptor.v1");
+});
+
+test("bootstrap applies named Scene3D materials to instanced mesh bundles", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneStateInstancedMeshesWithMaterials, "function");
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [
+        {
+          name: "batch-shader",
+          kind: "custom",
+          color: "#f5c76b",
+          opacity: 0.7,
+          customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(0.4); }",
+          customUniforms: { heat: 0.42 },
+          variants: {
+            constrained: {
+              color: "#94a3b8",
+              opacity: 0.35,
+            },
+          },
+        },
+      ],
+      instancedMeshes: [
+        {
+          id: "debris",
+          kind: "box",
+          count: 2,
+          material: "batch-shader",
+          transforms: new Array(32).fill(0),
+          colors: ["#ffcc66", "#66ccff"],
+        },
+      ],
+    },
+  }, { tier: "constrained" });
+
+  const meshes = api.sceneStateInstancedMeshesWithMaterials(state);
+  assert.equal(meshes[0].materialKind, "custom");
+  assert.equal(meshes[0].color, "#94a3b8");
+  assert.equal(meshes[0].opacity, 0.35);
+  assert.equal(meshes[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(0.4); }");
+  assert.equal(meshes[0].customUniforms.heat, 0.42);
+  assert.deepEqual(meshes[0].colors, ["#ffcc66", "#66ccff"]);
+
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    meshes,
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(bundle.instancedMeshes[0].materialIndex, 0);
+  assert.equal(bundle.materials[0].kind, "custom");
+  assert.equal(bundle.materials[0].color, "#94a3b8");
+  assert.equal(bundle.materials[0].opacity, 0.35);
+  assert.equal(bundle.materials[0].customFragmentWGSL, "fn gosx_fragment() -> vec4f { return vec4f(0.4); }");
+  assert.equal(bundle.materials[0].customUniforms.heat, 0.42);
+});
+
+test("bootstrap registers Scene3D material profiles through the shared API", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.registerSceneMaterialProfile, "function");
+  assert.equal(typeof api.unregisterSceneMaterialProfile, "function");
+
+  const registered = api.registerSceneMaterialProfile("cloth", {
+    opacity: 0.64,
+    emissive: 0.19,
+    blendMode: "alpha",
+    shaderData: [7, 0.19, 0.44],
+    key: "cloth-v1",
+  });
+  assert.equal(registered.kind, "cloth");
+  assert.equal(api.listSceneMaterialProfiles().some((profile) => profile.kind === "cloth"), true);
+
+  const object = api.normalizeSceneObject({
+    id: "panel",
+    kind: "box",
+    materialKind: "cloth",
+    color: "#d8b4fe",
+    size: 1,
+  }, 0, null);
+  const bundle = api.createSceneRenderBundle(
+    320,
+    180,
+    "#08151f",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [object],
+    [],
+    [],
+    [],
+    [],
+    {},
+    0,
+    [],
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  const material = bundle.materials.find((entry) => entry.kind === "cloth");
+  assert.ok(material, JSON.stringify(bundle.materials));
+  assert.equal(material.opacity, 0.64);
+  assert.equal(material.blendMode, "alpha");
+  assert.equal(material.renderPass, "alpha");
+  assert.equal(material.emissive, 0.19);
+  assert.deepEqual(Array.from(material.shaderData), [7, 0.19, 0.44]);
+
+  assert.equal(api.unregisterSceneMaterialProfile("cloth"), true);
+});
+
+test("bootstrap registers Scene3D CPU particle force handlers through the shared API", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.registerSceneParticleForce, "function");
+  assert.equal(typeof api.createSceneParticleSystem, "function");
+
+  assert.equal(api.registerSceneParticleForce("lift", (ctx) => ({ y: ctx.force.strength * ctx.deltaTime })), true);
+  const system = api.createSceneParticleSystem(null, {
+    id: "spark",
+    count: 1,
+    emitter: { kind: "point", lifetime: 10 },
+    forces: [{ kind: "lift", strength: 2 }],
+    material: {},
+  });
+  system.update(1, 1);
+
+  assert.ok(system.positions[1] > 1.9, Array.from(system.positions).join(","));
+  assert.equal(api.listSceneParticleForces().some((force) => force.kind === "lift" && force.handler), true);
+  assert.equal(api.unregisterSceneParticleForce("lift"), true);
+});
+
+test("selective Scene3D bootstrap exposes CPU compute particles for WebGL", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneComputeSystemSignature, "function");
+  assert.equal(typeof api.createSceneParticleSystem, "function");
+
+  const system = api.createSceneParticleSystem(null, {
+    id: "selective-sparks",
+    count: 1,
+    emitter: { kind: "point", lifetime: 1 },
+    forces: [{ kind: "wind", x: 1, strength: 1 }],
+    material: {},
+  });
+  system.update(0.016, 0.016);
+
+  assert.equal(system.positions.length, 3);
+});
+
+test("Scene3D CPU compute particles use a soft lifetime opacity envelope", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const system = api.createSceneParticleSystem(null, {
+    id: "soft-birth",
+    count: 1,
+    emitter: { kind: "point", lifetime: 10 },
+    forces: [],
+    material: { opacity: 1, opacityEnd: 0 },
+  });
+
+  system.update(0.01, 0.01);
+  assert.ok(system.opacities[0] < 0.04, String(system.opacities[0]));
+
+  system.update(1.2, 1.21);
+  assert.ok(system.opacities[0] > 0.75, String(system.opacities[0]));
+});
+
+test("Scene3D CPU compute particles can emit a one-shot burst", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const system = api.createSceneParticleSystem(null, {
+    id: "one-shot",
+    count: 1,
+    emitter: { kind: "point", lifetime: 0.4, once: true },
+    forces: [{ kind: "wind", x: 1, strength: 1 }],
+    material: { opacity: 1, opacityEnd: 0 },
+  });
+
+  system.update(0.02, 0.02);
+  assert.ok(system.opacities[0] > 0, String(system.opacities[0]));
+
+  system.update(1.0, 1.02);
+  assert.equal(system.opacities[0], 0);
+
+  system.update(1.0, 2.02);
+  assert.equal(system.opacities[0], 0);
+  assert.equal(system.positions[0], 0);
+});
+
+test("Scene3D CPU one-shot particles retire when leaving bounds", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const system = api.createSceneParticleSystem(null, {
+    id: "one-shot-bounds",
+    count: 1,
+    bounds: 0.02,
+    emitter: { kind: "point", lifetime: 10, once: true },
+    forces: [{ kind: "wind", x: 1, strength: 3 }],
+    material: { opacity: 1, opacityEnd: 0 },
+  });
+
+  system.update(0.02, 0.02);
+  assert.ok(system.opacities[0] > 0, String(system.opacities[0]));
+
+  system.update(0.1, 0.12);
+  assert.equal(system.opacities[0], 0);
+  assert.equal(system.positions[0], 0);
+
+  system.update(1.0, 1.12);
+  assert.equal(system.opacities[0], 0);
+});
+
+test("bootstrap applies Scene3D live point buffers outside update tweens", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 2,
+          positions: [0, 0, 0, 1, 0, 0],
+          sizes: [1, 1],
+          colors: ["#000000", "#111111"],
+          opacity: 0.5,
+          live: ["galaxy:node:galaxy"],
+          transition: { update: { duration: 1200, easing: "linear" } },
+        },
+      ],
+    },
+  });
+  const entry = state.points[0];
+  entry._cachedColors = new Float32Array([0, 0, 0, 1, 0.1, 0.1, 0.1, 1]);
+
+  const changed = api.sceneApplyLiveEvent(state, "galaxy:node:galaxy", {
+    colors: ["#ff0000", "#00ff00"],
+  }, false, 10);
+
+  assert.equal(changed, true);
+  assert.deepEqual(entry.colors, ["#ff0000", "#00ff00"]);
+  assert.equal(entry._cachedColors, null);
+  assert.equal(state._transitions.length, 0);
+});
+
+test("bootstrap keeps Scene3D live point buffers out of scalar update transitions", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 2,
+          positions: [0, 0, 0, 1, 0, 0],
+          sizes: [1, 1],
+          colors: ["#000000", "#111111"],
+          opacity: 0.5,
+          live: ["galaxy:node:galaxy"],
+          transition: { update: { duration: 1200, easing: "linear" } },
+        },
+      ],
+    },
+  });
+  const entry = state.points[0];
+  entry._cachedColors = new Float32Array([0, 0, 0, 1, 0.1, 0.1, 0.1, 1]);
+  const payload = {
+    colors: ["#ff0000", "#00ff00"],
+    opacity: 0.9,
+  };
+
+  const changed = api.sceneApplyLiveEvent(state, "galaxy:node:galaxy", payload, false, 10);
+
+  assert.equal(changed, true);
+  assert.deepEqual(entry.colors, ["#ff0000", "#00ff00"]);
+  assert.equal(entry._cachedColors, null);
+  assert.equal(entry.opacity, 0.5);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "__eventName"), false);
+  assert.equal(state._transitions.length, 1);
+  const transition = state._transitions[0];
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "colors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "sizes"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "_cachedColors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "colors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "sizes"), false);
+  assert.equal(transition.delta.opacity.__from, 0.5);
+  assert.equal(transition.delta.opacity.__to, 0.9);
+  assert.equal(transition.delta.opacity.__key, "opacity");
+
+  api.sceneAdvanceTransitions(state, 1210);
+  assert.equal(entry.opacity, 0.9);
+  assert.deepEqual(entry.colors, ["#ff0000", "#00ff00"]);
+});
+
+test("bootstrap treats explicit zero Scene3D update timing as instant", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 1,
+          positions: [0, 0, 0],
+          colors: ["#ffffff"],
+          opacity: 0.2,
+          live: ["galaxy:node:galaxy"],
+          transition: {
+            in: { duration: 3200, easing: "ease-in-out" },
+            update: { easing: "ease-in-out" },
+          },
+        },
+      ],
+    },
+  });
+
+  const changed = api.sceneApplyLiveEvent(state, "galaxy:node:galaxy", {
+    opacity: 0.8,
+  }, false, 10);
+
+  assert.equal(changed, true);
+  assert.equal(state._transitions.length, 0);
+  assert.equal(state.points[0].opacity, 0.8);
+});
+
+test("bootstrap keeps Scene3D initial point buffers out of entry transitions", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "galaxy",
+          count: 2,
+          positions: [0, 0, 0, 1, 0, 0],
+          sizes: [1, 2],
+          colors: ["#000000", "#111111"],
+          opacity: 0.5,
+          transition: { in: { duration: 1200, easing: "linear" } },
+          inState: { opacity: 0 },
+        },
+      ],
+    },
+  });
+
+  const entry = state.points[0];
+  api.scenePrimeInitialTransitions(state, false, 0);
+
+  assert.equal(state._transitions.length, 1);
+  assert.deepEqual(entry.positions, [0, 0, 0, 1, 0, 0]);
+  assert.deepEqual(entry.sizes, [1, 2]);
+  assert.deepEqual(entry.colors, ["#000000", "#111111"]);
+  const transition = state._transitions[0];
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "sizes"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.target, "colors"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "positions"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "sizes"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(transition.delta, "colors"), false);
+  assert.equal(transition.delta.opacity.__from, 0);
+  assert.equal(transition.delta.opacity.__to, 0.5);
+});
+
+test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+
+  assert.match(source, /function sceneCSSDebugLog\(\)/);
+  assert.match(source, /__gosx_scene3d_css_debug/);
+  assert.doesNotMatch(source, /console\.log\("\[gosx:css-transition\]/);
+});
+
+test("bootstrap observes inherited root CSS var mutations for Scene3D", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(source, /observer\.observe\(document\.documentElement,\s*\{/);
+  assert.match(source, /attributeOldValue:\s*true/);
+  assert.match(source, /sceneCSSMutationShouldInvalidate\(records\)/);
+  assert.match(source, /name\.indexOf\("--gosx-"\)\s*===\s*0/);
+  assert.match(source, /sceneCSSTransitionWindowMillis\(document && document\.documentElement\)/);
+});
+
+test("bootstrap gates Scene3D viewport refreshes to viewport-shaped environment changes", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+
+  assert.match(source, /function sceneViewportEnvironmentSignature\(environment\)/);
+  assert.match(source, /sceneNumber\(environment\.devicePixelRatio,\s*1\)/);
+  assert.match(source, /Math\.round\(sceneNumber\(environment\.visualViewportHeight,\s*0\)\)/);
+  assert.doesNotMatch(source, /environment\.visualViewportOffsetTop/);
+  assert.match(source, /if \(environmentSignature === nextSignature\) \{\s*return;\s*\}/);
+});
+
+test("bootstrap skips redundant runtime style and attribute writes", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.js"), "utf8");
+
+  assert.match(source, /style\.getPropertyValue\(name\) === next/);
+  assert.match(source, /style\.setProperty\(name,\s*next\)/);
+  assert.match(source, /element\.getAttribute\(name\) === next/);
+  assert.match(source, /element\.setAttribute\(name,\s*next\)/);
+});
+
+test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
+  const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
+
+  assert.match(builder, /sourceExtract\(runtimeSceneCoreFile,\s*"runtime-utils"/);
+  assert.doesNotMatch(builder, /10a-runtime-utils/);
+  assert.doesNotMatch(core, /function sceneBool\(/);
+  assert.doesNotMatch(core, /function clearChildren\(/);
+  assert.match(primitives, /function sceneBool\(/);
+  assert.match(primitives, /function clearChildren\(/);
+  assert.equal(
+    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    1,
+  );
+  assert.equal(
+    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    1,
+  );
+});
+
+test("bootstrap keeps WebGL and WebGPU Scene3D command logs in parity", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneWebGLCommandSequence, "function");
+  assert.equal(typeof api.sceneWebGPUCommandSequence, "function");
+  assert.equal(typeof api.sceneRaycastPick, "function");
+  assert.equal(env.context.__gosx_scene3d_raycast, api.sceneRaycastPick);
+
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    materials: [
+      { kind: "flat", opacity: 1, renderPass: "opaque" },
+      { kind: "glass", opacity: 0.5, renderPass: "alpha" },
+      { kind: "glow", opacity: 0.7, renderPass: "additive" },
+    ],
+    meshObjects: [
+      { id: "near", kind: "box", materialIndex: 1, vertexOffset: 0, vertexCount: 3, depthCenter: 4 },
+      { id: "far", kind: "box", materialIndex: 1, vertexOffset: 3, vertexCount: 3, depthCenter: 8 },
+      { id: "solid", kind: "sphere", materialIndex: 0, vertexOffset: 6, vertexCount: 3, depthCenter: 6 },
+      { id: "spark", kind: "plane", materialIndex: 2, vertexOffset: 9, vertexCount: 3, depthCenter: 7 },
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(36),
+    worldMeshNormals: new Float32Array(36),
+    points: [
+      { id: "stars", count: 5 },
+    ],
+    instancedMeshes: [
+      { id: "debris", kind: "box", count: 3 },
+    ],
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const expected = api.scenePreparedCommandSequence(api.prepareScene(bundle, bundle.camera, viewport, null));
+
+  assert.deepEqual(api.sceneWebGLCommandSequence(bundle, viewport), expected);
+  assert.deepEqual(api.sceneWebGPUCommandSequence(bundle, viewport), expected);
+  assert.deepEqual(api.sceneWebGPUCommandSequence(bundle, viewport), api.sceneWebGLCommandSequence(bundle, viewport));
+});
+
+test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const positions = new Float32Array([
+    -1, -1, 0,
+    1, -1, 0,
+    0, 1, 0,
+    -1, -1, 2,
+    1, -1, 2,
+    0, 1, 2,
+  ]);
+  const uvs = new Float32Array([
+    0, 0,
+    1, 0,
+    0.5, 1,
+    0, 0,
+    1, 0,
+    0.5, 1,
+  ]);
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 90, near: 0.1, far: 100 },
+    meshObjects: [
+      {
+        id: "far-triangle",
+        kind: "mesh",
+        pickable: true,
+        vertexOffset: 3,
+        vertexCount: 3,
+        bounds: { minX: -1, minY: -1, minZ: 1.9, maxX: 1, maxY: 1, maxZ: 2.1 },
+      },
+      {
+        id: "near-triangle",
+        kind: "mesh",
+        pickable: true,
+        vertexOffset: 0,
+        vertexCount: 3,
+        bounds: { minX: -1, minY: -1, minZ: -0.1, maxX: 1, maxY: 1, maxZ: 0.1 },
+      },
+    ],
+    worldMeshPositions: positions,
+    worldMeshUVs: uvs,
+    objects: [],
+    worldPositions: new Float32Array(0),
+  };
+
+  const hit = api.sceneRaycastPick(100, 100, 200, 200, bundle.camera, bundle);
+  assert.ok(hit, "expected raycast hit");
+  assert.equal(hit.object.id, "near-triangle");
+  assert.equal(hit.index, 1);
+  assert.ok(Math.abs(hit.distance - 6) < 1e-6, "expected near triangle distance, got " + hit.distance);
+  assert.equal(hit.point.x, 0);
+  assert.equal(hit.point.y, 0);
+  assert.equal(hit.point.z, 0);
+  assert.equal(hit.worldPosition.x, 0);
+  assert.equal(hit.localPosition.z, 0);
+  assert.equal(hit.triangleIndex, 0);
+  assert.equal(hit.primitiveIndex, 0);
+  assert.equal(hit.instanceIndex, -1);
+  assert.ok(Math.abs(hit.uv.x - 0.5) < 1e-6, "expected interpolated hit uv.x, got " + hit.uv.x);
+  assert.ok(Math.abs(hit.uv.y - 0.5) < 1e-6, "expected interpolated hit uv.y, got " + hit.uv.y);
+});
+
+test("bootstrap projects Scene3D pointer rays onto horizontal planes", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(typeof api.sceneScreenToRay, "function");
+  assert.equal(typeof api.sceneRayIntersectYPlane, "function");
+  assert.equal(typeof api.sceneRayIntersectPlane, "function");
+  assert.equal(typeof api.sceneRayIntersectSphere, "function");
+  assert.equal(typeof api.sceneRayIntersectAABB, "function");
+
+  const screenRay = api.sceneScreenToRay(100, 100, 200, 200, { x: 0, y: 2, z: 6, rotationX: -0.4, fov: 90, near: 0.1, far: 100 });
+  assert.ok(screenRay && Number.isFinite(screenRay.origin.x) && Number.isFinite(screenRay.dir.z));
+
+  const ray = { origin: { x: 0, y: 2, z: 6 }, dir: { x: 0.2, y: -1, z: -0.4 } };
+  const hit = api.sceneRayIntersectYPlane(ray, 0);
+  assert.ok(hit, "expected ray-plane hit");
+  assert.ok(hit.distance > 0, "expected positive hit distance");
+  assert.ok(Math.abs(hit.y) < 1e-9, "expected y=0 plane hit, got " + hit.y);
+  assert.ok(Number.isFinite(hit.x));
+  assert.ok(Number.isFinite(hit.z));
+  const tiltedHit = api.sceneRayIntersectPlane(ray, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 1 });
+  assert.ok(tiltedHit, "expected arbitrary ray-plane hit");
+  assert.ok(tiltedHit.distance > 0, "expected positive arbitrary plane hit distance");
+  assert.ok(Number.isFinite(tiltedHit.x));
+  assert.ok(Number.isFinite(tiltedHit.y));
+  assert.ok(Number.isFinite(tiltedHit.z));
+  const sphereHit = api.sceneRayIntersectSphere(ray, { x: 0, y: 0, z: 5.2 }, 1);
+  assert.ok(sphereHit, "expected ray-sphere hit");
+  const boxHit = api.sceneRayIntersectAABB(ray, { x: -1, y: -1, z: 4 }, { x: 1, y: 1, z: 8 });
+  assert.ok(boxHit, "expected ray-AABB hit");
+});
+
+test("bootstrap preserves Scene3D instanced colors and custom attributes", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      instancedMeshes: [
+        {
+          id: "muzzle-flashes",
+          kind: "sphere",
+          count: 2,
+          transforms: new Array(32).fill(0),
+          colors: ["#ffcc66", "#66ccff"],
+          attributes: { heat: [1, 0.35] },
+        },
+      ],
+    },
+  });
+
+  assert.equal(state.instancedMeshes.length, 1);
+  assert.deepEqual(state.instancedMeshes[0].colors, ["#ffcc66", "#66ccff"]);
+  assert.deepEqual(state.instancedMeshes[0].attributes.heat, [1, 0.35]);
+});
+
+test("bootstrap preserves Scene3D instanced primitive parameters", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      instancedMeshes: [
+        {
+          id: "native-torus",
+          kind: "TorusGeometry",
+          count: 1,
+          radius: 1.25,
+          tube: 0.2,
+          radialSegments: 40,
+          tubularSegments: 12,
+        },
+        {
+          id: "native-cone",
+          kind: "ConeGeometry",
+          count: 1,
+          radiusBottom: 0.75,
+          height: 2.5,
+          segments: 28,
+        },
+      ],
+    },
+  });
+
+  assert.equal(state.instancedMeshes[0].kind, "torus");
+  assert.equal(state.instancedMeshes[0].radius, 1.25);
+  assert.equal(state.instancedMeshes[0].tube, 0.2);
+  assert.equal(state.instancedMeshes[0].radialSegments, 40);
+  assert.equal(state.instancedMeshes[0].tubularSegments, 12);
+  assert.equal(state.instancedMeshes[1].kind, "cone");
+  assert.equal(state.instancedMeshes[1].radiusBottom, 0.75);
+  assert.equal(state.instancedMeshes[1].height, 2.5);
+  assert.equal(state.instancedMeshes[1].segments, 28);
+
+  const torus = api.generateInstancedGeometry("torusGeometry", {
+    radius: 1.25,
+    tube: 0.2,
+    radialSegments: 20,
+    tubularSegments: 10,
+  });
+  const cylinder = api.generateInstancedGeometry("cylinderGeometry", {
+    radiusTop: 0.4,
+    radiusBottom: 0.8,
+    height: 2,
+    segments: 12,
+  });
+  const cone = api.generateInstancedGeometry("coneGeometry", {
+    radiusBottom: 0.8,
+    height: 2,
+    segments: 12,
+  });
+
+  assert.equal(torus.vertexCount, 20 * 10 * 6);
+  assert.equal(cylinder.vertexCount, 12 * 12);
+  assert.equal(cone.vertexCount, 12 * 6);
+  assert.equal(torus.positions.length, torus.vertexCount * 3);
+  assert.equal(cylinder.normals.length, cylinder.vertexCount * 3);
+  assert.equal(cone.uvs.length, cone.vertexCount * 2);
+});
+
+test("bootstrap registers and selects Scene3D backends through registry", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const registry = env.context.__gosx_scene3d_api.sceneBackendRegistry;
+  assert.equal(typeof registry.register, "function");
+  assert.ok(registry.list().some((entry) => entry.kind === "webgl"));
+  assert.ok(registry.list().some((entry) => entry.kind === "canvas2d"));
+
+  const custom = registry.register("foo", {
+    capabilities: ["foo"],
+    create: () => ({ kind: "foo", render() {}, dispose() {} }),
+  });
+  assert.equal(registry.select({ foo: true, canvas2d: false, canvas: false, webgl: false, webgpu: false }).kind, custom.kind);
+  registry.dispose("foo");
+  assert.equal(registry.list().some((entry) => entry.kind === "foo"), false);
+  assert.equal(registry.select({ canvas: false, canvas2d: false, webgl: false, webgl2: false, webgpu: false }), null);
+});
+
+test("selective Scene3D bootstrap prefers WebGPU before first renderer selection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-default";
+  let requestedAdapterOptions = null;
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    navigatorGPU: {
+      requestAdapter: async (options) => {
+        requestedAdapterOptions = options;
+        return {
+          requestDevice: async () => ({
+            lost: new Promise(() => {}),
+            features: new Set(["timestamp-query"]),
+            limits: {
+              maxTextureDimension2D: 4096,
+              maxComputeWorkgroupSizeX: 128,
+            },
+          }),
+        };
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas, options) {
+              window.__gosx_scene3d_webgpu_options = options;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  var presentation = options && options.presentation || {};
+                  return {
+                    requestedFeatures: ["timestamp-query", "shader-f16"],
+                    requiredFeatures: ["shader-f16"],
+                    deviceFeatures: ["timestamp-query"],
+                    requiredLimits: {
+                      maxTextureDimension2D: 4096,
+                      maxComputeWorkgroupSizeX: 128
+                    },
+                    activeSampleCount: 4,
+                    targetFormat: "rgba16float",
+                    presentationAlphaMode: presentation.alphaMode,
+                    presentationColorSpace: presentation.colorSpace,
+                    presentationToneMappingMode: presentation.toneMappingMode,
+                    powerPreference: options && options.powerPreference,
+                    adapterLimits: {
+                      maxTextureDimension2D: 8192,
+                      maxBufferSize: 268435456,
+                      maxComputeWorkgroupSizeX: 256,
+                      maxComputeWorkgroupsPerDimension: 65535
+                    },
+                    deviceLimits: {
+                      maxTextureDimension2D: 4096,
+                      maxBufferSize: 134217728,
+                      maxComputeWorkgroupSizeX: 128,
+                      maxComputeWorkgroupsPerDimension: 32768
+                    },
+                    adapterInfo: { vendor: "gosx-test", architecture: "unit" }
+                  };
+                },
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+          window.__gosx_scene3d_webgpu_loaded = true;
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-default",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-default",
+          jsExport: "GoSXScene3D",
+          requiredCapabilities: [
+            "webgpu",
+            "webgpu:limit:maxComputeWorkgroupSizeX>=128",
+            "webgpu:device-limit:maxTextureDimension2D>=4096",
+          ],
+          props: {
+            width: 360,
+            height: 220,
+            autoRotate: false,
+            webgpuAlphaMode: "opaque",
+            webgpuColorSpace: "display-p3",
+            webgpuToneMapping: "extended",
+            webgpuPowerPreference: "high-performance",
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "prefer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", JSON.stringify({
+    fetchCalls: env.fetchCalls,
+    hasWebGPUAPI: Boolean(env.context.__gosx_scene3d_webgpu_api),
+    webgpuProbe: env.context.__gosx_scene3d_webgpu_probe && env.context.__gosx_scene3d_webgpu_probe(),
+    backends: env.context.__gosx_scene3d_api.sceneBackendRegistry.list().map((entry) => entry.kind),
+  }));
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-features"), "timestamp-query,shader-f16");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-required-features"), "shader-f16");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-features"), "timestamp-query");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-required-limits"), "maxComputeWorkgroupSizeX=128,maxTextureDimension2D=4096");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "4");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-target-format"), "rgba16float");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-presentation-alpha-mode"), "opaque");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-presentation-color-space"), "display-p3");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-presentation-tone-mapping"), "extended");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-power-preference"), "high-performance");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-limits"), "maxBufferSize=268435456,maxComputeWorkgroupSizeX=256,maxComputeWorkgroupsPerDimension=65535,maxTextureDimension2D=8192");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-limits"), "maxBufferSize=134217728,maxComputeWorkgroupSizeX=128,maxComputeWorkgroupsPerDimension=32768,maxTextureDimension2D=4096");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-texture-2d"), "8192");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-texture-2d"), "4096");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-buffer-size"), "268435456");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-buffer-size"), "134217728");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-compute-workgroup-size-x"), "256");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-compute-workgroup-size-x"), "128");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter-max-compute-workgroups-per-dimension"), "65535");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-max-compute-workgroups-per-dimension"), "32768");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-adapter"), "gosx-test unit");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.presentation.alphaMode, "opaque");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.presentation.colorSpace, "display-p3");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.presentation.toneMappingMode, "extended");
+  assert.equal(env.context.__gosx_scene3d_webgpu_options.powerPreference, "high-performance");
+  assert.equal(requestedAdapterOptions.powerPreference, "high-performance");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
+    true,
+  );
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), false);
+});
+
+test("Scene3D WebGPU render watchdog recreates stalled animated renderer", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-watchdog";
+  let now = 0;
+  let createCount = 0;
+  let disposeCount = 0;
+  let renderCount = 0;
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function() {
+              createCount += 1;
+              return {
+                kind: "webgpu",
+                diagnostics: function() { return { ready: true }; },
+                render: function() { renderCount += 1; },
+                dispose: function() { disposeCount += 1; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-watchdog",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-watchdog",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.createCount = createCount;
+  env.context.disposeCount = disposeCount;
+  env.context.renderCount = renderCount;
+  Object.defineProperty(env.context, "createCount", {
+    configurable: true,
+    get: () => createCount,
+    set: (value) => { createCount = value; },
+  });
+  Object.defineProperty(env.context, "disposeCount", {
+    configurable: true,
+    get: () => disposeCount,
+    set: (value) => { disposeCount = value; },
+  });
+  Object.defineProperty(env.context, "renderCount", {
+    configurable: true,
+    get: () => renderCount,
+    set: (value) => { renderCount = value; },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(createCount, 1);
+  assert.equal(renderCount, 1);
+  assert.equal(raf.count(), 1);
+
+  now = 8000;
+  assert.equal(timers.runInterval(2000), 1);
+  now = 16000;
+  assert.equal(timers.runInterval(2000), 1);
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "recovering");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-reason"), "webgpu-render-not-started");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-recoveries"), "1");
+  assert.equal(createCount, 2);
+  assert.equal(disposeCount, 1);
+});
+
+test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-device-lost";
+  let now = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testWebGPUCreateCount = 0;
+          window.__testWebGPUDisposeCount = 0;
+          window.__testWebGPURenderCount = 0;
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              window.__testWebGPUCreateCount += 1;
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  return {
+                    ready: window.__testWebGPUDeviceLost !== true,
+                    deviceLost: window.__testWebGPUDeviceLost === true
+                  };
+                },
+                render: function() { window.__testWebGPURenderCount += 1; },
+                dispose: function() { window.__testWebGPUDisposeCount += 1; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-device-lost",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-device-lost",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__testWebGPUDeviceLost = false;
+  const originalCreateElement = env.document.createElement.bind(env.document);
+  env.document.createElement = function(tagName) {
+    const element = originalCreateElement(tagName);
+    if (String(tagName || "").toLowerCase() === "canvas") {
+      const originalGetContext = element.getContext.bind(element);
+      element.getContext = function(kind, options) {
+        const contextKind = String(kind || "");
+        if (
+          this.__webgpuClaimed &&
+          (contextKind === "2d" || contextKind === "webgl" || contextKind === "webgl2" || contextKind === "experimental-webgl")
+        ) {
+          this.contextCalls = this.contextCalls || [];
+          this.contextCalls.push({ kind, options: options || null, blockedByWebGPU: true });
+          return null;
+        }
+        return originalGetContext(kind, options);
+      };
+    }
+    return element;
+  };
+
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+
+  const firstCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(firstCanvas.getAttribute("data-gosx-scene3d-canvas"), "true");
+  assert.equal(env.context.__testWebGPUCreateCount, 1);
+  assert.equal(env.context.__testWebGPURenderCount, 1);
+
+  env.context.__testWebGPUDeviceLost = true;
+  now = 4000;
+  assert.equal(timers.runInterval(2000), 1);
+  await flushAsyncWork();
+
+  const replacementCanvas = mount.children[0];
+  assert.notEqual(replacementCanvas, firstCanvas);
+  assert.equal(firstCanvas.parentNode, null);
+  assert.equal(replacementCanvas.getAttribute("data-gosx-scene3d-canvas"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "recovering");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-reason"), "webgpu-device-lost");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-recoveries"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-fallbacks"), "1");
+  assert.equal(env.context.__testWebGPUDisposeCount, 1);
+  assert.equal((firstCanvas.contextCalls || []).some((call) => call.blockedByWebGPU), false);
+  assert.ok((replacementCanvas.contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+  assert.ok(replacementCanvas.children.some((child) => child.getAttribute("data-gosx-scene-node-layer") === "true"));
+  assert.equal(events.some((event) => event.msg === "render-watchdog-recovery" && event.fields.reason === "webgpu-device-lost"), true);
+  assert.equal(events.some((event) => event.msg === "renderer-canvas-replaced"), true);
+  assert.equal(events.some((event) => event.msg === "renderer-swap" && event.fields.to === "webgl"), true);
+  assert.equal(events.some((event) => event.msg === "renderer-fallback-unavailable"), false);
+});
+
+test("selective Scene3D bootstrap honors explicit WebGPU preference when WebGL is disabled", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-explicit";
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    createWebGLContext: () => new FakeWebGLContext({
+      vendor: "Mesa",
+      renderer: "llvmpipe (LLVM 18.1.0, 256 bits)",
+    }),
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function() {
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  return {};
+                },
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-explicit",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-explicit",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            preferWebGL: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "disabled");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-preference"), "prefer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
+    true,
+  );
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), false);
+});
+
+test("selective Scene3D bootstrap uses WebGL when WebGPU cannot cover scene features", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-feature-gap";
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              canvas.getContext("webgpu");
+              return {
+                kind: "webgpu",
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+          window.__gosx_scene3d_webgpu_loaded = true;
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-feature-gap",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-feature-gap",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 360,
+            height: 220,
+            autoRotate: false,
+            scene: {
+              objects: [
+                {
+                  id: "wide-grid",
+                  kind: "lines",
+                  lineDash: true,
+                  points: [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                  ],
+                  segments: [[0, 1]],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-feature-gap");
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
+    false,
+  );
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgpu"), false);
+  assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), true);
+});
+
+test("bootstrap releases replaced static point WebGL buffers on live updates", async () => {
+  const env = createContext({
+    enableWebGL2: true,
+    disableCanvas2D: true,
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const registry = api.sceneBackendRegistry;
+  const backend = registry.select({
+    webgl: true,
+    webgl2: true,
+    webgpu: false,
+    canvas: false,
+    canvas2d: false,
+  });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  assert.equal(renderer && renderer.type, "webgl-pbr");
+
+  const point = {
+    id: "stars",
+    count: 2,
+    positions: [0, 0, 0, 1, 0, 0],
+    sizes: [1, 1],
+    colors: ["#ffffff", "#88ccff"],
+    style: "focus",
+    size: 1,
+    opacity: 1,
+    blendMode: "additive",
+    depthWrite: false,
+    attenuation: true,
+  };
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    background: "#000000",
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [point],
+    instancedMeshes: [],
+    computeParticles: [],
+    objects: [],
+    meshObjects: [],
+    materials: [],
+    labels: [],
+    sprites: [],
+    lights: [],
+    positions: new Float32Array(0),
+    colors: new Float32Array(0),
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0,
+    worldVertexCount: 0,
+    postEffects: [],
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  renderer.render(bundle, viewport);
+  point.colors = ["#ff6677", "#66ffee"];
+  point._cachedColors = null;
+  renderer.render(bundle, viewport);
+
+  const colorUploads = canvas.getContext("webgl2").ops.filter((entry) => (
+    entry[0] === "bufferData" &&
+    entry[3] === 8 &&
+    entry[4] === canvas.getContext("webgl2").STATIC_DRAW
+  ));
+  const deletes = canvas.getContext("webgl2").ops.filter((entry) => entry[0] === "deleteBuffer");
+  assert.equal(colorUploads.length, 2);
+  assert.ok(deletes.some((entry) => entry[1] === colorUploads[0][2]));
+
+  renderer.dispose();
+});
+
+test("bootstrap reuses static point WebGL buffers across transient point records", async () => {
+  const env = createContext({
+    enableWebGL2: true,
+    disableCanvas2D: true,
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const registry = api.sceneBackendRegistry;
+  const backend = registry.select({
+    webgl: true,
+    webgl2: true,
+    webgpu: false,
+    canvas: false,
+    canvas2d: false,
+  });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  assert.equal(renderer && renderer.type, "webgl-pbr");
+
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0]);
+  const sizes = new Float32Array([1, 1]);
+  const colors = new Float32Array([1, 1, 1, 1, 0.5, 0.8, 1, 1]);
+  const nextColors = new Float32Array([1, 0.4, 0.5, 1, 0.4, 1, 0.9, 1]);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  function bundleWith(pointColors) {
+    return {
+      bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+      background: "#000000",
+      camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+      environment: {},
+      points: [{
+        id: "stars",
+        count: 2,
+        positions,
+        sizes,
+        colors: pointColors || colors,
+        style: "focus",
+        size: 1,
+        opacity: 1,
+        blendMode: "additive",
+        depthWrite: false,
+        attenuation: true,
+      }],
+      instancedMeshes: [],
+      computeParticles: [],
+      objects: [],
+      meshObjects: [],
+      materials: [],
+      labels: [],
+      sprites: [],
+      lights: [],
+      positions: new Float32Array(0),
+      colors: new Float32Array(0),
+      worldPositions: new Float32Array(0),
+      worldColors: new Float32Array(0),
+      worldLineWidths: new Float32Array(0),
+      worldMeshPositions: new Float32Array(0),
+      worldMeshColors: new Float32Array(0),
+      worldMeshNormals: new Float32Array(0),
+      worldMeshUVs: new Float32Array(0),
+      worldMeshTangents: new Float32Array(0),
+      vertexCount: 0,
+      worldVertexCount: 0,
+      postEffects: [],
+    };
+  }
+
+  const gl = canvas.getContext("webgl2");
+  const staticUploadCount = () => gl.ops.filter((entry) => entry[0] === "bufferData" && entry[4] === gl.STATIC_DRAW).length;
+  const colorUploads = () => gl.ops.filter((entry) => (
+    entry[0] === "bufferData" &&
+    entry[3] === 8 &&
+    entry[4] === gl.STATIC_DRAW
+  ));
+
+  renderer.render(bundleWith(colors), viewport);
+  const firstUploadCount = staticUploadCount();
+  const firstColorBufferID = colorUploads()[0][2];
+
+  renderer.render(bundleWith(colors), viewport);
+  renderer.render(bundleWith(colors), viewport);
+  assert.equal(staticUploadCount(), firstUploadCount);
+
+  renderer.render(bundleWith(nextColors), viewport);
+  assert.equal(staticUploadCount(), firstUploadCount + 1);
+  assert.ok(gl.ops.some((entry) => entry[0] === "deleteBuffer" && entry[1] === firstColorBufferID));
+
+  const afterPaletteUploadCount = staticUploadCount();
+  renderer.render(bundleWith(nextColors), viewport);
+  assert.equal(staticUploadCount(), afterPaletteUploadCount);
+
+  renderer.dispose();
+});
+
+test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime updates", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-cache-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-static-cache-program.json": { text: '{"name":"StaticCache"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-static-cache",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-cache-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-static-cache-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      const shieldZ = renderIndex === 1 ? 1 : 1.5;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          -2, 0, 0, 2, 0, 0,
+          -1, 0.5, shieldZ, 1, 0.5, shieldZ,
+        ],
+        worldColors: [
+          0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+          0.8, 0.95, 1, 1, 0.8, 0.95, 1, 1,
+        ],
+        worldVertexCount: 4,
+        materials: [
+          { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+          { kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "alpha", emissive: 0.05 },
+        ],
+        objects: [
+          {
+            id: "floor",
+            kind: "plane",
+            materialIndex: 0,
+            vertexOffset: 0,
+            vertexCount: 2,
+            static: true,
+            bounds: { minX: -2, minY: 0, minZ: 0, maxX: 2, maxY: 0, maxZ: 0 },
+            depthNear: 6,
+            depthFar: 6,
+            depthCenter: 6,
+            viewCulled: false,
+          },
+          {
+            id: "shield",
+            kind: "plane",
+            materialIndex: 1,
+            vertexOffset: 2,
+            vertexCount: 2,
+            static: false,
+            bounds: { minX: -1, minY: 0.5, minZ: shieldZ, maxX: 1, maxY: 0.5, maxZ: shieldZ },
+            depthNear: 6 + shieldZ,
+            depthFar: 6 + shieldZ,
+            depthCenter: 6 + shieldZ,
+            viewCulled: false,
+          },
+        ],
+        objectCount: 2,
+      });
+    },
+  });
+
+  let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 2) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 1);
+});
+
+test("bootstrap invalidates static opaque Scene3D buffers when camera clip state changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-camera-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-static-camera-program.json": { text: '{"name":"StaticCamera"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-static-camera",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-camera-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-static-camera-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      const cameraZ = renderIndex === 1 ? 6 : 5.5;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: cameraZ, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          -2, 0, 0, 2, 0, 0,
+        ],
+        worldColors: [
+          0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+        ],
+        worldVertexCount: 2,
+        materials: [
+          { key: "flat|#35556a|1.000|true|opaque|opaque|0.000", kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", renderPass: "opaque", emissive: 0 },
+        ],
+        objects: [
+          {
+            id: "floor",
+            kind: "plane",
+            materialIndex: 0,
+            vertexOffset: 0,
+            vertexCount: 2,
+            static: true,
+            bounds: { minX: -2, minY: 0, minZ: 0, maxX: 2, maxY: 0, maxZ: 0 },
+            depthNear: cameraZ,
+            depthFar: cameraZ,
+            depthCenter: cameraZ,
+            viewCulled: false,
+          },
+        ],
+        objectCount: 1,
+      });
+    },
+  });
+
+  let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 2) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 2);
+});
+
+test("bootstrap invalidates static opaque Scene3D buffers when shared-runtime lighting changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-lighting-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-static-lighting-program.json": { text: '{"name":"StaticLighting"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-static-lighting",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-lighting-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-static-lighting-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      const warm = renderIndex === 1 ? 0.35 : 0.92;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          -2, 0, 0, 2, 0, 0,
+        ],
+        worldColors: [
+          warm, 0.42, 0.5, 1, warm, 0.42, 0.5, 1,
+        ],
+        worldVertexCount: 2,
+        materials: [
+          { key: "flat|#808080|1.000|true|opaque|opaque|0.000", kind: "flat", color: "#808080", opacity: 1, wireframe: true, blendMode: "opaque", renderPass: "opaque", emissive: 0 },
+        ],
+        objects: [
+          {
+            id: "hero",
+            kind: "box",
+            materialIndex: 0,
+            vertexOffset: 0,
+            vertexCount: 2,
+            static: true,
+            bounds: { minX: -2, minY: 0, minZ: 0, maxX: 2, maxY: 0, maxZ: 0 },
+            depthNear: 6,
+            depthFar: 6,
+            depthCenter: 6,
+            viewCulled: false,
+          },
+        ],
+        objectCount: 1,
+      });
+    },
+  });
+
+  let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 2) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "bufferData" && entry[2] === 4).length, 2);
+});
+
+test("bootstrap prefers engine-batched Scene3D pass payloads when present", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-pass-bundle-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-pass-bundle-program.json": { text: '{"name":"PassBundle"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-pass-bundle",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-pass-bundle-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-pass-bundle-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -9, 0, 0, -8, 0, 0,
+      ],
+      worldColors: [
+        1, 0, 0, 1, 1, 0, 0, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [
+        { key: "flat|#35556a|1.000|true|opaque|opaque|0.000", kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", renderPass: "opaque", emissive: 0, shaderData: [0, 0, 1] },
+      ],
+      objects: [
+        { id: "floor", kind: "plane", materialIndex: 0, renderPass: "opaque", vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 6, viewCulled: false },
+      ],
+      passes: [
+        {
+          name: "staticOpaque",
+          blend: "opaque",
+          depth: "opaque",
+          static: true,
+          cacheKey: "engine-pass-key",
+          positions: [1, 0, 0, 2, 0, 0],
+          colors: [0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1],
+          materials: [0, 0, 1, 0, 0, 1],
+          vertexCount: 2,
+        },
+      ],
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.deepEqual(gl.bufferUploads.get(4), [1, 0, 0, 2, 0, 0]);
+});
+
+test("bootstrap keeps static Scene3D bundle-pass caches isolated per pass", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-pass-cache-root";
+  let renderIndex = 0;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-pass-cache-program.json": { text: '{"name":"PassCache"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-pass-cache",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-pass-cache-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-pass-cache-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => {
+      renderIndex += 1;
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [
+          1, 0, 0, 2, 0, 0,
+        ],
+        worldColors: [
+          0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+        ],
+        worldVertexCount: 2,
+        materials: [],
+        objects: [],
+        objectCount: 0,
+        passes: [
+          {
+            name: "staticOpaque",
+            blend: "opaque",
+            depth: "opaque",
+            static: true,
+            cacheKey: "shared-engine-pass-key",
+            positions: [1, 0, 0, 2, 0, 0],
+            colors: [0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1],
+            materials: [0, 0, 1, 0, 0, 1],
+            vertexCount: 2,
+          },
+          {
+            name: "alpha",
+            blend: "alpha",
+            depth: "translucent",
+            static: true,
+            cacheKey: "shared-engine-pass-key",
+            positions: [-4, 0, 2, -3, 0, 2],
+            colors: [0.9, 0.8, 0.5, 1, 0.9, 0.8, 0.5, 1],
+            materials: [2, 0.05, 0.7, 2, 0.05, 0.7],
+            vertexCount: 2,
+          },
+        ],
+      });
+    },
+  });
+
+  let rafCount = 0;
+  // Allow two frames so the test can observe buffer reuse across a
+  // second render. The scene mount defers its first render to rAF for
+  // LCP; bounding at one rAF here used to match an older sync-mount
+  // path that no longer exists, leaving the test stuck at a single
+  // engineRenderCalls entry while the assertion wants >= 2.
+  env.context.requestAnimationFrame = (callback) => {
+    if (rafCount >= 2) return 0;
+    rafCount += 1;
+    return setTimeout(() => callback(rafCount * 16), 0);
+  };
+  env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(env.engineRenderCalls.length >= 2);
+  assert.deepEqual(gl.bufferUploads.get(4), [1, 0, 0, 2, 0, 0]);
+  assert.deepEqual(gl.bufferUploads.get(7), [-4, 0, 2, -3, 0, 2]);
+  assert.equal(
+    gl.ops.filter((entry) => entry[0] === "bufferData" && entry[4] === gl.STATIC_DRAW && (entry[2] === 4 || entry[2] === 7)).length,
+    2,
+  );
+});
+
+test("bootstrap clamps engine-batched Scene3D pass vertex counts to uploaded geometry", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-pass-clamp-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-pass-clamp-program.json": { text: '{"name":"PassClamp"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-pass-clamp",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-pass-clamp-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-pass-clamp-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        1, 0, 0, 2, 0, 0,
+      ],
+      worldColors: [
+        0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [],
+      objects: [],
+      objectCount: 0,
+      passes: [
+        {
+          name: "dynamicOpaque",
+          blend: "opaque",
+          depth: "opaque",
+          positions: [1, 0, 0, 2, 0, 0],
+          colors: [0.3, 0.4, 0.5, 1, 0.3, 0.4, 0.5, 1],
+          materials: [0, 0, 1, 0, 0, 1],
+          vertexCount: 99,
+        },
+      ],
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 2));
+  assert.ok(!gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 99));
+});
+
+test("bootstrap reuses opaque Scene3D WebGL state transitions within a frame", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-opaque-state-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-opaque-state-program.json": { text: '{"name":"OpaqueState"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-opaque-state",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-opaque-state-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-opaque-state-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -2, 0, 0, 2, 0, 0,
+      ],
+      worldColors: [
+        0.4, 0.5, 0.6, 1, 0.4, 0.5, 0.6, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [
+        { kind: "flat", color: "#35556a", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        { id: "floor", kind: "plane", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 6, viewCulled: false },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.equal(gl.ops.filter((entry) => entry[0] === "disable" && entry[1] === gl.BLEND).length, 1);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "enable" && entry[1] === gl.DEPTH_TEST).length, 1);
+  assert.equal(gl.ops.filter((entry) => entry[0] === "depthMask" && entry[1] === true).length, 1);
+});
+
+test("bootstrap depth-sorts alpha Scene3D objects before upload", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-alpha-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-alpha-program.json": { text: '{"name":"AlphaDepth"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-alpha",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-alpha-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-alpha-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        4, 0, -2, 3, 0, -2,
+        -4, 0, 2, -3, 0, 2,
+      ],
+      worldColors: [
+        0.3, 0.6, 0.9, 1, 0.3, 0.6, 0.9, 1,
+        0.9, 0.8, 0.5, 1, 0.9, 0.8, 0.5, 1,
+      ],
+      worldVertexCount: 4,
+      materials: [
+        { key: "glass|#c7f0ff|0.450|true|alpha|alpha|0.050", kind: "glass", color: "#c7f0ff", opacity: 0.45, wireframe: true, blendMode: "opaque", emissive: 0.05, shaderData: [2, 0.05, 0.7] },
+      ],
+      objects: [
+        { id: "near-static", kind: "plane", materialIndex: 0, renderPass: "alpha", vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 4 },
+        { id: "far-dynamic", kind: "plane", materialIndex: 0, renderPass: "alpha", vertexOffset: 2, vertexCount: 2, static: false, depthCenter: 8 },
+      ],
+      objectCount: 2,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.deepEqual(gl.bufferUploads.get(7), [
+    -4, 0, 2, -3, 0, 2,
+    4, 0, -2, 3, 0, -2,
+  ]);
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 4));
+});
+
+test("bootstrap uploads engine-clipped Scene3D segments directly", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-clip-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-clip-program.json": { text: '{"name":"NearClip"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-clip",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-clip-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-clip-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -1.475, 0, -5.95, 2, 0, 1,
+      ],
+      worldColors: [
+        0.7, 0.9, 1, 1, 0.7, 0.9, 1, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        { id: "clip-line", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, depthCenter: 3.5 },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  const clipped = gl.bufferUploads.get(4);
+  assert.equal(clipped.length, 6);
+  assert.ok(Math.abs(clipped[0] + 1.475) < 0.001);
+  assert.ok(Math.abs(clipped[1]) < 0.001);
+  assert.ok(Math.abs(clipped[2] + 5.95) < 0.001);
+  assert.deepEqual(clipped.slice(3), [2, 0, 1]);
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] === 2));
+});
+
+test("bootstrap honors engine-side Scene3D view-cull metadata", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-metadata-cull-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-metadata-cull-program.json": { text: '{"name":"MetadataCull"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-metadata-cull",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-metadata-cull-root",
+          runtime: "shared",
+          props: { width: 640, height: 360, background: "#08151f" },
+          programRef: "/scene-metadata-cull-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+      positions: [],
+      colors: [],
+      vertexCount: 0,
+      worldPositions: [
+        -1, 0, 0.5, 1, 0, 0.5,
+      ],
+      worldColors: [
+        0.7, 0.9, 1, 1, 0.7, 0.9, 1, 1,
+      ],
+      worldVertexCount: 2,
+      materials: [
+        { kind: "flat", color: "#8de1ff", opacity: 1, wireframe: true, blendMode: "opaque", emissive: 0 },
+      ],
+      objects: [
+        { id: "metadata-hidden", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: true, viewCulled: true, depthCenter: 6.5 },
+      ],
+      objectCount: 1,
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.deepEqual(gl.bufferUploads.get(4), []);
+  assert.equal(gl.ops.some((entry) => entry[0] === "drawArrays"), false);
+});
+
+test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-root";
+  mount.appendChild(new FakeElement("p", null));
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-2",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-root",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "cube", size: 1.5, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.children.length, 2);
+  assert.equal(mount.firstElementChild.tagName, "CANVAS");
+  assert.equal(mount.firstElementChild.getAttribute("width"), "640");
+  assert.equal(mount.firstElementChild.getAttribute("height"), "360");
+  assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(mount.children[1].children.length, 0);
+
+  env.context.__gosx_dispose_engine("gosx-engine-2");
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.children.length, 0);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap renders mixed native Scene3D primitives", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-primitives";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-3",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-primitives",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.8, height: 1.2, depth: 1.1, x: -1.6, y: 0.1, z: -0.2, color: "#8de1ff" },
+                { kind: "sphere", radius: 0.8, x: 0.2, y: 0.15, z: 0.6, color: "#ffd48f", segments: 10 },
+                { kind: "pyramid", width: 1.4, height: 1.8, depth: 1.4, x: 1.9, y: -0.2, z: 0.4, color: "#b8ffb0" },
+                { kind: "plane", width: 5.2, depth: 3.8, y: -1.6, z: 0.3, color: "#35556a" },
+              ],
+              labels: [
+                {
+                  id: "zoo-label",
+                  text: "Geometry zoo\nBrowser-measured overlay copy",
+                  x: 0.2,
+                  y: 1.4,
+                  z: 0.9,
+                  maxWidth: 120,
+                  whiteSpace: "pre-wrap",
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(mount.children.length, 2);
+  const canvas = mount.firstElementChild;
+  assert.equal(canvas.tagName, "CANVAS");
+
+  const ctx2d = canvas.getContext("2d");
+  const strokeCount = ctx2d.ops.filter((entry) => entry[0] === "stroke").length;
+  const lineCount = ctx2d.ops.filter((entry) => entry[0] === "lineTo").length;
+  const labelLayer = mount.children[1];
+  assert.equal(canvas.getAttribute("width"), "520");
+  assert.equal(canvas.getAttribute("height"), "320");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene3d-label-layer"), "true");
+  assert.equal(labelLayer.children.length, 1);
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-text-layout-role"), "label");
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-text-layout-surface"), "scene3d");
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-text-layout-state"), "ready");
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-scene-label-visibility"), "visible");
+  assert.equal(labelLayer.children[0].children.length >= 2, true);
+  assert.equal(labelLayer.children[0].textContent, "Geometry zooBrowser-measured overlay copy");
+  assert.equal(env.context.__gosx.textLayout.read(labelLayer.children[0]).lineCount >= 2, true);
+  assert.ok(lineCount >= 12);
+  assert.ok(strokeCount >= 1);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap exposes read-only Scene3D debug API for mounted surfaces", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-debug-root";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-debug",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-debug-root",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { id: "debug-cube", kind: "cube", size: 1, color: "#8de1ff" },
+              ],
+              html: [
+                {
+                  id: "debug-panel",
+                  target: "debug-cube",
+                  mode: "texture",
+                  html: "<p>Debug</p>",
+                  fallback: "Debug",
+                  textureWidth: 64,
+                  textureHeight: 64,
+                },
+              ],
+              lights: [
+                { id: "debug-sun", kind: "directional", intensity: 1 },
+              ],
+              postEffects: [
+                { kind: "bloom", threshold: 0.9 },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  env.context.__gosx_scene3d_inspector = true;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_debug;
+  assert.ok(api, "expected Scene3D debug API");
+  assert.equal(api.schema, "gosx.scene3d.debug.v1");
+
+  const surfaces = api.listSurfaces();
+  assert.equal(surfaces.length, 1);
+  assert.equal(surfaces[0].id, "scene-debug-root");
+  assert.equal(surfaces[0].engineID, "gosx-engine-debug");
+  assert.equal(surfaces[0].renderer, mount.getAttribute("data-gosx-scene3d-renderer"));
+  assert.equal(surfaces[0].ready, true);
+  assert.ok(surfaces[0].features["geometry.cube"] >= 1);
+  assert.equal(surfaces[0].features["html.texture"], 1);
+  assert.equal(surfaces[0].features["postfx.bloom"], 1);
+
+  const report = api.inspect("gosx-engine-debug");
+  assert.equal(report.mountID, "scene-debug-root");
+  assert.equal(report.counts.html, 1);
+  assert.equal(report.gpuResources.canvas.width, 480);
+  assert.equal(report.gpuResources.canvas.height, 300);
+  assert.deepEqual(JSON.parse(JSON.stringify(report.waterShaderSources)), { sceneState: [], bundle: [] });
+  assert.equal(report.diagnostics[0].code, "scene.backend.selected");
+  assert.equal(report.renderLoop.active, false);
+  assert.equal(report.renderLoop.reason, "static");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop"), "stopped");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "static");
+
+  assert.deepEqual(api.getFeatureMatrix("scene-debug-root"), report.features);
+  assert.equal(api.getGPUResources("scene-debug-root").canvas.width, 480);
+  assert.equal(api.getDiagnostics("scene-debug-root")[0].code, "scene.backend.selected");
+  assert.equal(api.getLastPick("scene-debug-root"), null);
+  assert.equal(api.captureFrame("scene-debug-root").reason, "capture-unavailable");
+
+  const inspector = mount.children.find((child) => child.getAttribute("data-gosx-scene3d-inspector") === "true");
+  assert.ok(inspector, "expected opt-in Scene3D inspector overlay");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-inspector-enabled"), "true");
+  assert.match(inspector.textContent, /Scene3D/);
+  assert.match(inspector.textContent, /backend/);
+  assert.match(inspector.textContent, /loop stopped/);
+  assert.match(inspector.textContent, /draw/);
+  assert.match(inspector.textContent, /html 1/);
+
+  env.context.__gosx_dispose_engine("gosx-engine-debug");
+  assert.equal(api.listSurfaces().length, 0);
+  assert.equal(mount.children.some((child) => child.getAttribute("data-gosx-scene3d-inspector") === "true"), false);
+});
+
+test("bootstrap routes native Scene3D material profiles through WebGL pass planning", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-native-materials";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-native-materials",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-native-materials",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            camera: { x: 0, y: 0, z: 6, near: 0.05, far: 128, fov: 72 },
+            scene: {
+              objects: [
+                {
+                  id: "floor",
+                  kind: "plane",
+                  width: 6.2,
+                  depth: 4.8,
+                  y: -1.8,
+                  z: 0.3,
+                  color: "#35556a",
+                  materialKind: "flat",
+                },
+                {
+                  id: "glass-orb",
+                  kind: "sphere",
+                  radius: 0.82,
+                  x: -1.35,
+                  y: 0.2,
+                  z: 0.85,
+                  color: "#c7f0ff",
+                  materialKind: "glass",
+                  opacity: 0.45,
+                  emissive: 0.05,
+                },
+                {
+                  id: "glow-orb",
+                  kind: "sphere",
+                  radius: 0.74,
+                  x: 1.45,
+                  y: 0.46,
+                  z: 1.62,
+                  color: "#8de1ff",
+                  materialKind: "glow",
+                  opacity: 0.72,
+                  emissive: 0.4,
+                },
+              ],
+            },
+          },
+          capabilities: ["webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  assert.ok(!gl.bufferUploads.has(1));
+  assert.ok(Array.isArray(gl.bufferUploads.get(4)) && gl.bufferUploads.get(4).length > 0);
+  assert.ok(Array.isArray(gl.bufferUploads.get(7)) && gl.bufferUploads.get(7).length > 0);
+  assert.ok(Array.isArray(gl.bufferUploads.get(10)) && gl.bufferUploads.get(10).length > 0);
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE_MINUS_SRC_ALPHA));
+  assert.ok(gl.ops.some((entry) => entry[0] === "blendFunc" && entry[1] === gl.SRC_ALPHA && entry[2] === gl.ONE));
+  assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays" && entry[3] > 0).length >= 3);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap tints native Scene3D geometry with declarative lights and environment", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-native-lighting";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-native-lighting",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-native-lighting",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            camera: { x: 0, y: 0, z: 6, near: 0.05, far: 128, fov: 72 },
+            scene: {
+              environment: {
+                ambientColor: "#f4fbff",
+                ambientIntensity: 0.14,
+                skyColor: "#b9deff",
+                skyIntensity: 0.12,
+                groundColor: "#102030",
+                groundIntensity: 0.04,
+              },
+              lights: [
+                {
+                  id: "sun",
+                  kind: "directional",
+                  color: "#fff1d6",
+                  intensity: 1.25,
+                  directionX: 0.3,
+                  directionY: -1,
+                  directionZ: -0.35,
+                },
+              ],
+              objects: [
+                {
+                  id: "hero",
+                  kind: "box",
+                  width: 1.8,
+                  height: 1.2,
+                  depth: 1.2,
+                  color: "#808080",
+                  materialKind: "flat",
+                },
+              ],
+            },
+          },
+          capabilities: ["webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const gl = mount.children[0].getContext("webgl");
+  const uploadedColors = gl.bufferUploads.get(5);
+  assert.ok(Array.isArray(uploadedColors) && uploadedColors.length > 0);
+  assert.ok(uploadedColors[0] > uploadedColors[2]);
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap respects static Scene3D camera clip props for label projection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-camera-clip";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-camera-clip",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-camera-clip",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            camera: { x: 0, y: 0, z: 6, fov: 72, near: 7, far: 8 },
+            scene: {
+              labels: [
+                {
+                  id: "clipped-label",
+                  text: "Too near",
+                  x: -0.5,
+                  y: 0.3,
+                  z: 0,
+                  maxWidth: 96,
+                },
+                {
+                  id: "visible-label",
+                  text: "Visible depth",
+                  x: 0.5,
+                  y: 0.6,
+                  z: 1.5,
+                  maxWidth: 120,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  assert.equal(labelLayer.children.length, 1);
+  assert.equal(labelLayer.children[0].getAttribute("data-gosx-scene-label"), "visible-label");
+  assert.equal(labelLayer.children[0].textContent, "Visible depth");
+});
+
+test("bootstrap gives Scene3D labels a shared text-layout CSS contract and custom classes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-label-contract";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-label-contract",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-label-contract",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              labels: [
+                {
+                  id: "hero-chip",
+                  className: "hero-chip tone-accent",
+                  text: "supercalifragilisticgosx",
+                  x: 0,
+                  y: 0.8,
+                  z: 0.2,
+                  maxWidth: 72,
+                  maxLines: 1,
+                  overflow: "ellipsis",
+                  priority: 3,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const label = mount.children[1].children[0];
+  assert.equal(label.getAttribute("class"), "gosx-scene-label hero-chip tone-accent");
+  assert.equal(label.getAttribute("data-gosx-text-layout-role"), "label");
+  assert.equal(label.getAttribute("data-gosx-text-layout-surface"), "scene3d");
+  assert.equal(label.getAttribute("data-gosx-scene-label-priority"), "3");
+  assert.equal(label.getAttribute("data-gosx-scene-label-collision"), "avoid");
+  assert.equal(label.getAttribute("data-gosx-scene-label-visibility"), "visible");
+  assert.equal(label.getAttribute("data-gosx-text-layout-overflow"), "ellipsis");
+  assert.equal(typeof env.context.__gosx.textLayout.read(label).lineCount, "number");
+});
+
+test("bootstrap hides lower-priority Scene3D labels when collision avoidance overlaps", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-label-collision";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-label-collision",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-label-collision",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              labels: [
+                {
+                  id: "primary-label",
+                  text: "Primary label",
+                  x: 0,
+                  y: 0.4,
+                  z: 0.2,
+                  maxWidth: 132,
+                  priority: 5,
+                },
+                {
+                  id: "secondary-label",
+                  text: "Secondary label",
+                  x: 0,
+                  y: 0.4,
+                  z: 0.2,
+                  maxWidth: 132,
+                  priority: 1,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  assert.equal(labelLayer.children.length, 2);
+  const primary = labelLayer.children[0].getAttribute("data-gosx-scene-label") === "primary-label" ? labelLayer.children[0] : labelLayer.children[1];
+  const secondary = primary === labelLayer.children[0] ? labelLayer.children[1] : labelLayer.children[0];
+  assert.equal(primary.getAttribute("data-gosx-scene-label-visibility"), "visible");
+  assert.equal(secondary.getAttribute("data-gosx-scene-label-visibility"), "hidden");
+});
+
+test("bootstrap marks occluded Scene3D labels when scene geometry covers their anchor", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-label-occlusion";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-label-occlusion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-label-occlusion",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 2.8, height: 2.2, depth: 2.2, x: 0, y: 0, z: 0.2, color: "#8de1ff" },
+              ],
+              labels: [
+                {
+                  id: "occluded-label",
+                  text: "Covered label",
+                  x: 0,
+                  y: 0,
+                  z: 0.2,
+                  maxWidth: 140,
+                  offsetY: 0,
+                  occlude: true,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const label = mount.children[1].children[0];
+  assert.equal(label.getAttribute("data-gosx-scene-label-occluded"), "true");
+  assert.equal(label.getAttribute("data-gosx-scene-label-visibility"), "hidden");
+});
+
+test("bootstrap prefers WebGL Scene3D rendering when available", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: -0.8, y: 0, z: 0, color: "#8de1ff" },
+                { kind: "sphere", radius: 0.7, x: 1.1, y: 0.2, z: 0.8, color: "#ffd48f" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.firstElementChild;
+  assert.equal(canvas.tagName, "CANVAS");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+
+  const gl = canvas.getContext("webgl");
+  assert.ok(gl.ops.some((entry) => entry[0] === "bufferData" && entry[3] > 0));
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] > 0));
+  assert.equal(env.consoleLogs.warn.length, 0);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap prefers canvas Scene3D rendering on software WebGL backends", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-software-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-software-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-software-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+    createWebGLContext: () => new FakeWebGLContext({
+      vendor: "Google Inc. (Google)",
+      renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-capability-tier"), "constrained");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-low-power"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-software-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "avoid");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
+});
+
+test("bootstrap requires WebGL for Scene3D when requested", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-required-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-required-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-required-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            requireWebGL: true,
+            unsupportedMessage: "Update your browser or enable hardware acceleration.",
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-require-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgl-required");
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children[0].getAttribute("data-gosx-scene3d-unsupported"), "true");
+  assert.equal(mount.children[0].textContent, "Update your browser or enable hardware acceleration.");
+});
+
+test("bootstrap honors required WebGL over software-renderer canvas preference", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-required-software-webgl";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-required-software-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-required-software-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            requireWebGL: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+    createWebGLContext: () => new FakeWebGLContext({
+      vendor: "Google Inc. (Google)",
+      renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    }),
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-software-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-require-webgl"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "force");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+});
+
+test("Scene3D defers postfx until idle delay", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-deferred-postfx";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-deferred-postfx",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-deferred-postfx",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            deferPostFX: true,
+            deferPostFXDelayMS: 40,
+            scene: {
+              postEffects: [
+                { kind: "bloom", threshold: 0.7, intensity: 0.5 },
+                { kind: "toneMapping", mode: "aces", exposure: 1 },
+              ],
+              points: [
+                {
+                  id: "stars",
+                  count: 3,
+                  positions: [0, 0, 0, 1, 1, 0, -1, 1, 0],
+                  color: "#ffffff",
+                  size: 1,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+  env.context.requestIdleCallback = () => 1;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "deferred");
+
+  assert.equal(timers.runDelay(40), 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "deferred");
+  assert.equal(timers.runDelay(1200), 1);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
+});
+
+function loadSceneAdaptiveQualityAPI() {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const start = source.indexOf("function createSceneAdaptiveQualityState");
+  const end = source.indexOf("function applyScenePostFXState", start);
+  assert.notEqual(start, -1, "adaptive controller start anchor missing");
+  assert.notEqual(end, -1, "adaptive controller end anchor missing");
+  const clock = { now: 0 };
+  const context = { __clock: clock };
+  vm.runInNewContext(`
+    function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+    function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
+    function setAttrValue(mount, name, value) { const next = String(value == null ? "" : value); if (mount.getAttribute(name) !== next) mount.setAttribute(name, next); }
+    function applyScenePostFXState() {}
+    function gosxSceneEmit() {}
+    const performance = { now: () => __clock.now };
+  ` + source.slice(start, end) + `
+    globalThis.adaptiveAPI = { createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality };
+  `, context, { filename: "scene-adaptive-quality.js" });
+  return { api: context.adaptiveAPI, clock };
+}
+
+function createAdaptiveQualityHarness(extraProps) {
+  const loaded = loadSceneAdaptiveQualityAPI();
+  const props = Object.assign({
+    adaptiveQuality: true,
+    qualityTier: "balanced",
+    adaptiveTargetFrameMS: 16,
+    adaptiveWarmupFrames: 0,
+    adaptiveCooldownMS: 5000,
+    adaptivePostFX: true,
+  }, extraProps || {});
+  const state = loaded.api.createSceneAdaptiveQualityState(props, { explicitMaxDevicePixelRatio: 1.6 }, { tier: "full" });
+  const mount = new FakeElement("div", null);
+  const bloom = { kind: "bloom" };
+  const sceneState = { _adaptiveSourcePostEffects: [bloom], postEffects: [bloom] };
+  const renderer = {
+    sample: null,
+    pollPerformanceSample() { const sample = this.sample; this.sample = null; return sample; },
+  };
+  let frameNowMS = 0;
+  function sample(durationMS, advanceMS) {
+    const advance = advanceMS == null ? 16 : advanceMS;
+    loaded.clock.now += advance;
+    frameNowMS += advance;
+    renderer.sample = { source: "gpu-test", gpuMS: durationMS, atMS: loaded.clock.now };
+    return loaded.api.sceneUpdateAdaptiveQuality(state, mount, sceneState, {}, loaded.clock.now - 1, frameNowMS, renderer);
+  }
+  loaded.api.applySceneAdaptiveQualityState(mount, state, 0, true);
+  sample(1); // resume/initial anchor is deliberately excluded
+  return { ...loaded, state, mount, sceneState, renderer, sample };
+}
+
+test("Scene3D adaptive profiles start balanced and expose exact frame contract", () => {
+  const { state, mount } = createAdaptiveQualityHarness();
+  assert.equal(state.requestedTier, "balanced");
+  assert.equal(state.activeTier, "balanced");
+  assert.deepEqual(JSON.parse(JSON.stringify(state.activeProfile)), {
+    tier: "balanced", dprCap: 1.25, surfaceResolution: 128,
+    causticsResolution: 384, objectShadowResolution: 384,
+    objectTextureMaxSide: 384, objectTexturePixelBudget: 442368,
+    expensivePassCadence: 2,
+  });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-requested"), "balanced");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-active"), "balanced");
+  assert.equal(mount.__gosxScene3DQualityState.profile, state.activeProfile);
+  const mountSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(mountSource, /qualityEnabled: qualityEnabled,[\s\S]{0,320}qualityProfile: qualityProfile,[\s\S]{0,320}performanceMeasurement: adaptiveQuality\.lastMeasurement/);
+});
+
+test("Scene3D adaptive config objects default enabled and disabled mode sends no profile override", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const enabled = api.createSceneAdaptiveQualityState({ adaptiveQuality: { tier: "balanced" } }, {}, {});
+  const disabled = api.createSceneAdaptiveQualityState({ adaptiveQuality: { enabled: false }, qualityTier: "balanced" }, {}, {});
+  assert.equal(enabled.enabled, true);
+  assert.equal(disabled.enabled, false);
+  const mountSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(mountSource, /const qualityProfile = qualityEnabled && adaptiveQuality\.activeProfile[\s\S]{0,100}: null/);
+});
+
+test("Scene3D adaptive measurement locks to active renderer timing and respects authored frame caps", () => {
+  const locked = createAdaptiveQualityHarness();
+  locked.renderer.pollPerformanceSample = function() { return null; };
+  locked.renderer.getPerformanceTimingStatus = function() { return { available: true, active: true, pending: true, source: "gpu-test" }; };
+  const before = locked.state.validSamples;
+  for (let i = 0; i < 24; i++) locked.sample(99, 34);
+  assert.equal(locked.state.validSamples, before, "null GPU samples must not mix in CPU-rAF while renderer timing is active");
+  assert.equal(locked.state.activeTier, "balanced");
+
+  const capped = createAdaptiveQualityHarness({ maxFPS: 30 });
+  capped.renderer.pollPerformanceSample = function() { return null; };
+  capped.renderer.getPerformanceTimingStatus = function() { return { available: false, active: false, pending: false, source: "none" }; };
+  for (let i = 0; i < 24; i++) capped.sample(99, 34);
+  assert.equal(capped.state.measurement, "cpu-raf");
+  assert.equal(capped.state.activeTier, "balanced", "authored 30 FPS rAF cadence must not trigger a false downshift");
+});
+
+test("Scene3D adaptive controller is hysteretic, cooldown-safe, and recovers one tier", () => {
+  const sustained = createAdaptiveQualityHarness();
+  for (let i = 0; i < 19; i++) sustained.sample(20);
+  assert.equal(sustained.state.activeTier, "balanced");
+  sustained.sample(20);
+  assert.equal(sustained.state.activeTier, "survival");
+  assert.equal(sustained.state.qualityRevision, 1);
+  assert.equal(sustained.state.postFXSuppressed, false, "postFX must remain until after survival");
+  for (let i = 0; i < 300; i++) sustained.sample(5);
+  assert.equal(sustained.state.activeTier, "survival", "cooldown must prevent oscillation");
+  sustained.sample(5, 5001);
+  assert.equal(sustained.state.activeTier, "balanced", "recovery is one tier and never above requested balanced");
+
+  const severe = createAdaptiveQualityHarness();
+  severe.sample(40); severe.sample(40);
+  assert.equal(severe.state.activeTier, "balanced");
+  severe.sample(40);
+  assert.equal(severe.state.activeTier, "survival", "three >2x samples must severe-downshift");
+});
+
+test("Scene3D adaptive controller sheds postFX last and bounds DOM telemetry", () => {
+  const harness = createAdaptiveQualityHarness({ qualityTier: "full" });
+  let writes = 0;
+  const originalSet = harness.mount.setAttribute.bind(harness.mount);
+  harness.mount.setAttribute = function(name, value) { writes += 1; originalSet(name, value); };
+  for (let i = 0; i < 20; i++) harness.sample(20);
+  assert.equal(harness.state.activeTier, "balanced");
+  assert.equal(harness.state.postFXSuppressed, false);
+  harness.sample(20, 5001);
+  for (let i = 1; i < 20; i++) harness.sample(20);
+  assert.equal(harness.state.activeTier, "survival");
+  assert.equal(harness.state.postFXSuppressed, false);
+  harness.sample(20, 5001);
+  for (let i = 1; i < 20; i++) harness.sample(20);
+  assert.equal(harness.state.activeTier, "survival");
+  assert.equal(harness.state.postFXSuppressed, true);
+  assert.ok(writes < 180, "quality attrs must publish at <=4Hz or transitions, got " + writes);
+  assert.equal(harness.mount.__gosxScene3DQualityState.validSamples, harness.state.validSamples);
+  assert.equal(harness.mount.__gosxScene3DQualityState.measurement, "gpu-test");
+});
+
+test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-responsive";
+  mount.width = 520;
+
+  const env = createContext({
+    elements: [mount],
+    devicePixelRatio: 1,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-responsive",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-responsive",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 520,
+            height: 320,
+            autoRotate: false,
+            scene: {
+              labels: [
+                {
+                  id: "center-label",
+                  text: "Center label",
+                  x: 0,
+                  y: 0,
+                  z: 0.5,
+                  offsetY: 0,
+                  maxWidth: 140,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.firstElementChild;
+  const label = mount.children[1].children[0];
+  const initialLeft = label.style["--gosx-scene-label-left"];
+  assert.equal(canvas.getAttribute("width"), "520");
+  assert.equal(canvas.style.width, "100%");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1");
+
+  mount.width = 260;
+  env.context.devicePixelRatio = 2;
+  env.resizeObservers[0].trigger([mount]);
+  await flushAsyncWork();
+
+  assert.equal(canvas.getAttribute("width"), "520");
+  assert.equal(canvas.getAttribute("height"), "320");
+  assert.equal(canvas.style.width, "100%");
+  assert.equal(canvas.style.height, "auto");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-css-width"), "260");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-css-height"), "160");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "2");
+  assert.notEqual(label.style["--gosx-scene-label-left"], initialLeft);
+});
+
+test("bootstrap prefers canvas Scene3D rendering on constrained coarse-pointer devices", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-constrained-mobile";
+
+  const env = createContext({
+    elements: [mount],
+    devicePixelRatio: 3,
+    deviceMemory: 4,
+    hardwareConcurrency: 4,
+    enableWebGL: true,
+    matchMedia: {
+      "(pointer: coarse)": true,
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-constrained-mobile",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-constrained-mobile",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-capability-tier"), "constrained");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-coarse-pointer"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-low-power"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "avoid");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-pixel-ratio"), "1.25");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
+});
+
+test("bootstrap reconfigures Scene3D renderer when environment constraints change", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-capability-reconfigure";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-capability-reconfigure",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-capability-reconfigure",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+
+  env.matchMedia("(prefers-reduced-data: reduce)").dispatch(true);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-data"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "avoid");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
+
+  env.matchMedia("(prefers-reduced-data: reduce)").dispatch(false);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-data"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "prefer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+});
+
+test("bootstrap falls back from WebGL and restores Scene3D rendering after context events", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-fallback";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-fallback",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-fallback",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  const ctx2d = canvas.getContext("2d");
+  let prevented = false;
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  canvas.dispatchEvent({
+    type: "webglcontextlost",
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgl-context-lost");
+  assert.ok(ctx2d.ops.some((entry) => entry[0] === "fillRect"));
+
+  const lostGl = canvas.getContext("webgl");
+  canvas._webglContext = null;
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  const restoredGl = canvas.getContext("webgl");
+
+  assert.notEqual(restoredGl, lostGl);
+  assert.ok(
+    restoredGl.ops.some((entry) => entry[0] === "bufferData" && entry[3] > 0),
+    "restored renderer must upload geometry buffers to the new GL context",
+  );
+  assert.ok(
+    restoredGl.ops.some((entry) => entry[0] === "drawArrays" && entry[3] > 0),
+    "restored renderer must draw against the new GL context",
+  );
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+});
+
+function telemetryPostBodies(env) {
+  return env.fetchCalls
+    .filter((call) => call.url === "/_gosx/client-events" && call.init && call.init.method === "POST")
+    .map((call) => JSON.parse(call.init.body));
+}
+
+function telemetryEvents(env) {
+  const bodies = telemetryPostBodies(env);
+  const events = [];
+  for (const body of bodies) {
+    if (body && Array.isArray(body.events)) {
+      for (const event of body.events) {
+        events.push(event);
+      }
+    }
+  }
+  return events;
+}
+
+test("bootstrap installs a client-event telemetry emitter that POSTs to /_gosx/client-events", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(typeof env.context.__gosx_emit, "function", "__gosx_emit should be installed");
+  assert.equal(typeof env.context.__gosx.telemetry.emit, "function");
+  assert.equal(typeof env.context.__gosx.telemetry.flush, "function");
+  assert.equal(env.context.__gosx.telemetry.session(), env.context.__gosx_telemetry_session());
+  assert.equal(env.context.__gosx.telemetry.enabled, true);
+
+  env.context.__gosx_emit("warn", "test", "hello world", { k: "v" });
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  assert.equal(events.length, 1, "expected one event, got: " + JSON.stringify(events));
+  assert.equal(events[0].cat, "test");
+  assert.equal(events[0].msg, "hello world");
+  assert.equal(events[0].lvl, "warn");
+  assert.deepEqual(events[0].fields, { k: "v" });
+  assert.ok(events[0].ua, "first batch should include userAgent");
+
+  const bodies = telemetryPostBodies(env);
+  assert.ok(bodies[0].sid && bodies[0].sid.startsWith("s_"), "sid should be generated");
+});
+
+test("bootstrap telemetry flushes on scheduled timer", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 10 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("info", "timer-test", "tick", {});
+
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  assert.equal(events.length, 1, "expected one event after timer fired, got: " + JSON.stringify(events));
+  assert.equal(events[0].cat, "timer-test");
+});
+
+test("bootstrap telemetry drops into no-op when disabled via config", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { enabled: false, flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("warn", "x", "should-not-ship", {});
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  assert.equal(telemetryEvents(env).length, 0, "disabled telemetry must not POST");
+  assert.equal(env.context.__gosx.telemetry.enabled, false);
+  assert.equal(env.context.__gosx.telemetry.session(), "");
+});
+
+test("bootstrap telemetry captures uncaught window errors", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.dispatchEvent({
+    type: "error",
+    message: "Test uncaught",
+    filename: "app.js",
+    lineno: 7,
+    colno: 3,
+    error: { stack: "Error: Test uncaught\n    at app.js:7:3" },
+  });
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].cat, "runtime");
+  assert.equal(events[0].lvl, "error");
+  assert.equal(events[0].msg, "Test uncaught");
+  assert.equal(events[0].fields.filename, "app.js");
+  assert.equal(events[0].fields.lineno, 7);
+});
+
+test("bootstrap scene3d emits telemetry for webgl context-lost and context-restored", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-telemetry-ctx";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-telemetry-ctx",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-telemetry-ctx",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  canvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  await flushAsyncWork();
+
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  const scene3dMsgs = events.filter((ev) => ev.cat === "scene3d").map((ev) => ev.msg);
+  assert.ok(
+    scene3dMsgs.some((msg) => msg === "webgl-context-lost"),
+    "expected scene3d/webgl-context-lost telemetry, got: " + scene3dMsgs.join(", "),
+  );
+  assert.ok(
+    scene3dMsgs.some((msg) => msg === "webgl-context-restored"),
+    "expected scene3d/webgl-context-restored telemetry, got: " + scene3dMsgs.join(", "),
+  );
+  const restored = events.find((ev) => ev.cat === "scene3d" && ev.msg === "webgl-context-restored");
+  assert.equal(restored && restored.fields && restored.fields.swapped, true, "context-restored should report swapped=true");
+
+  const renderEmpty = events.find((ev) => ev.cat === "scene3d" && ev.msg === "render-empty");
+  assert.equal(
+    renderEmpty,
+    undefined,
+    "restored renderer must produce non-empty bundle (render-empty should not fire), got: " + JSON.stringify(renderEmpty),
+  );
+
+  const warmup = events.find((ev) => ev.cat === "scene3d" && ev.msg === "renderer-warmup");
+  assert.ok(warmup, "renderer-warmup should fire after restore, events: " + JSON.stringify(events));
+  assert.equal(warmup.fields.rendererKind, "webgl");
+  assert.ok(warmup.fields.bundleMeshObjects >= 0, "warmup reports mesh object count");
+});
+
+test("bootstrap keeps hidden Scene3D WebGL contexts alive instead of voluntary loss", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-hidden-webgl";
+  let canvas = null;
+  let lost = false;
+  let loseCalls = 0;
+  let restoreCalls = 0;
+  const extension = {
+    loseContext() {
+      loseCalls += 1;
+      lost = true;
+      canvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+    },
+    restoreContext() {
+      restoreCalls += 1;
+      lost = false;
+      canvas._webglContext = null;
+    },
+  };
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    createWebGLContext: () => {
+      const gl = new FakeWebGLContext();
+      gl.getExtension = (name) => {
+        if (name !== "WEBGL_lose_context") {
+          return null;
+        }
+        return lost ? null : extension;
+      };
+      return gl;
+    },
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-hidden-webgl",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-hidden-webgl",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+  const timers = installManualTimers(env.context);
+  installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  canvas = mount.children[0];
+
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+  assert.equal(timers.runDelay(30000), 0, "hidden scenes should not schedule voluntary WebGL loss");
+  await flushAsyncWork();
+
+  assert.equal(loseCalls, 0);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+
+  env.document.visibilityState = "visible";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(restoreCalls, 0);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+  const requested = telemetryEvents(env).find((ev) => ev.cat === "scene3d" && ev.msg === "webgl-voluntary-restore-requested");
+  assert.equal(requested, undefined);
+});
+
+test("scene3d render-empty does NOT fire on restore when bundle has meshObjects (modern PBR path)", async () => {
+  // Regression: the pre-alpha.21 detector only inspected legacy vertex/surface
+  // fields on the bundle. If the PBR path populated only meshObjects (no
+  // legacy verts), the detector fell through, counted sceneState objects, and
+  // fired a FALSE POSITIVE render-empty. After alpha.21 the early-return
+  // also considers bundle.meshObjects and bundle.instancedMeshes.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-modern-pbr-probe";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-modern-pbr",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-modern-pbr-probe",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, x: 0, y: 0, z: 0, color: "#fff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 0 };
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  // Simulate the PBR-only bundle shape by stripping the legacy vertex fields
+  // from every bundle the runtime hands the renderer. The bundle will still
+  // carry meshObjects (populated from sceneState.objects). Post-restore the
+  // detector must treat that as "geometry is present" and skip render-empty.
+  const api = env.context.__gosx_scene3d_api;
+  const origCreateBundle = api.createSceneRenderBundle;
+  api.createSceneRenderBundle = function (...args) {
+    const bundle = origCreateBundle.apply(this, args);
+    return Object.assign({}, bundle, {
+      vertexCount: 0,
+      worldVertexCount: 0,
+      surfaces: [],
+      meshObjects: bundle.meshObjects && bundle.meshObjects.length > 0
+        ? bundle.meshObjects
+        : [{ id: "synthetic-pbr-box", material: "pbr", transform: null, geometry: { vertexCount: 36 } }],
+    });
+  };
+
+  const canvas = mount.children[0];
+  canvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  canvas.dispatchEvent({ type: "webglcontextrestored" });
+  await flushAsyncWork();
+
+  env.context.__gosx_telemetry_flush();
+  await flushAsyncWork();
+
+  const events = telemetryEvents(env);
+  const renderEmpty = events.find((ev) => ev.cat === "scene3d" && ev.msg === "render-empty");
+  assert.equal(
+    renderEmpty,
+    undefined,
+    "render-empty must not fire when bundle has meshObjects (modern PBR), got: " + JSON.stringify(renderEmpty),
+  );
+  const warmup = events.find((ev) => ev.cat === "scene3d" && ev.msg === "renderer-warmup");
+  assert.ok(warmup, "renderer-warmup should fire after restore, events: " + JSON.stringify(events));
+  assert.equal(warmup.fields.rendererKind, "webgl");
+});
+
+test("bootstrap telemetry flushes via sendBeacon on visibility hidden", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  const beaconCalls = [];
+  env.context.navigator.sendBeacon = function (url, body) {
+    beaconCalls.push({ url, body });
+    return true;
+  };
+  env.context.__gosx_telemetry_config = { flushInterval: 30000 };
+  const timers = installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("info", "visibility-test", "bye", {});
+  assert.equal(timers.count(), 1, "telemetry emit should schedule one delayed flush");
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(timers.count(), 0, "visibility beacon flush should clear the delayed flush timer");
+  assert.equal(beaconCalls.length, 1, "expected one beacon call, got: " + JSON.stringify(beaconCalls));
+  assert.equal(beaconCalls[0].url, "/_gosx/client-events");
+  const parsed = JSON.parse(beaconCalls[0].body);
+  assert.equal(parsed.events[0].cat, "visibility-test");
+  assert.equal(telemetryPostBodies(env).length, 0, "should prefer beacon over fetch when available");
+});
+
+test("bootstrap keeps Scene3D static when autoRotate is omitted", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-static-default";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-static-default",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-static-default",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(mount.firstElementChild.tagName, "CANVAS");
+  assert.equal(raf.count(), 0, "omitted autoRotate should not start a continuous animation loop");
+});
+
+test("bootstrap respects prefers-reduced-motion for Scene3D animation loops", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-reduced-motion";
+
+  const env = createContext({
+    elements: [mount],
+    prefersReducedMotion: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-reduced-motion",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-reduced-motion",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-motion"), "true");
+  assert.equal(raf.count(), 0);
+
+  env.matchMedia("(prefers-reduced-motion: reduce)").dispatch(false);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-motion"), "false");
+  assert.equal(raf.count(), 1);
+});
+
+test("animated Scene3D scroll camera renders immediately on scroll input", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-scroll-camera-active";
+  mount.width = 640;
+  mount.height = 360;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    visualViewport: false,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-scroll-camera-active",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-scroll-camera-active",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: true,
+            scrollCameraStart: 10,
+            scrollCameraEnd: 4,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  env.context.__gosx_scene3d_perf = true;
+  env.context.innerHeight = 1000;
+  env.document.documentElement.scrollHeight = 2000;
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const canvas = mount.children[0];
+  const gl = canvas.getContext("webgl");
+  const cameraZ = () => {
+    const calls = gl.ops.filter((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera");
+    return calls[calls.length - 1][4];
+  };
+  assert.equal(cameraZ(), 10);
+
+  env.context.scrollY = 900;
+  env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
+
+  raf.flush(32);
+  await flushAsyncWork();
+
+  assert.ok(cameraZ() < 5, "scroll camera should jump near target instead of easing slowly; z=" + cameraZ());
+});
+
+test("bootstrap rerenders shared-runtime Scene3D with responsive viewport dimensions", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-runtime-responsive";
+  mount.width = 640;
+  const renderArgs = [];
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-responsive-runtime.json": { text: '{"name":"ResponsiveScene"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-runtime-responsive",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-runtime-responsive",
+          runtime: "shared",
+          programRef: "/scene-responsive-runtime.json",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            background: "#08151f",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: (...args) => {
+      renderArgs.push(args);
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [],
+        worldColors: [],
+        worldVertexCount: 0,
+        objects: [],
+        labels: [],
+      });
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.deepEqual(renderArgs[0].slice(2, 4), [640, 360]);
+
+  mount.width = 320;
+  env.resizeObservers[0].trigger([mount]);
+  await flushAsyncWork();
+
+  const last = renderArgs[renderArgs.length - 1];
+  assert.deepEqual(last.slice(2, 4), [320, 180]);
+});
+
+test("bootstrap rerenders shared-runtime Scene3D on visual viewport scroll changes", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-runtime-viewport-scroll";
+  mount.width = 640;
+  const renderArgs = [];
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-viewport-scroll.json": { text: '{"name":"ViewportScrollScene"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-viewport-scroll",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-runtime-viewport-scroll",
+          runtime: "shared",
+          programRef: "/scene-viewport-scroll.json",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            background: "#08151f",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: (...args) => {
+      renderArgs.push(args);
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [],
+        worldColors: [],
+        worldVertexCount: 0,
+        objects: [],
+        labels: [],
+      });
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const initialRenderCount = renderArgs.length;
+  assert.equal(initialRenderCount > 0, true);
+  assert.equal(env.visualViewport.listenerCount("scroll") >= 1, true);
+
+  env.visualViewport.dispatchEvent({ type: "scroll" });
+  await flushAsyncWork();
+
+  assert.equal(renderArgs.length > initialRenderCount, true);
+});
+
+test("bootstrap pauses animated Scene3D when the page is hidden and resumes on visibilitychange", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-page-visibility";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-page-visibility",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-page-visibility",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.6, height: 1.2, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "animation"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-page-visible"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "true");
+  assert.equal(raf.count(), 1);
+
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-page-visible"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "false");
+  assert.equal(raf.count(), 0);
+
+  env.document.visibilityState = "visible";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-page-visible"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "true");
+  assert.equal(raf.count(), 1);
+
+  raf.flush(16);
+  assert.equal(raf.count(), 1);
+});
+
+test("bootstrap defers offscreen shared-runtime Scene3D rerenders until the mount re-enters the viewport", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-intersection-runtime";
+  mount.width = 640;
+  const renderArgs = [];
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-intersection-runtime.json": { text: '{"name":"IntersectionScene"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-intersection-runtime",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-intersection-runtime",
+          runtime: "shared",
+          programRef: "/scene-intersection-runtime.json",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            background: "#08151f",
+          },
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: (...args) => {
+      renderArgs.push(args);
+      return JSON.stringify({
+        background: "#08151f",
+        camera: { x: 0, y: 0, z: 6, fov: 72 },
+        positions: [],
+        colors: [],
+        vertexCount: 0,
+        worldPositions: [],
+        worldColors: [],
+        worldVertexCount: 0,
+        objects: [],
+        labels: [],
+      });
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(renderArgs.length, 1);
+  assert.equal(env.intersectionObservers.length, 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-in-viewport"), "true");
+  assert.equal(raf.count(), 1);
+
+  env.intersectionObservers[0].trigger([
+    { target: mount, isIntersecting: false, intersectionRatio: 0 },
+  ]);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-in-viewport"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "false");
+  assert.equal(raf.count(), 0);
+
+  mount.width = 320;
+  env.resizeObservers[0].trigger([mount]);
+  await flushAsyncWork();
+
+  assert.equal(renderArgs.length, 1);
+
+  env.intersectionObservers[0].trigger([
+    { target: mount, isIntersecting: true, intersectionRatio: 1 },
+  ]);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-in-viewport"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "true");
+  assert.equal(raf.count(), 1);
+
+  raf.flush(16);
+  await flushAsyncWork();
+
+  const last = renderArgs[renderArgs.length - 1];
+  assert.deepEqual(last.slice(2, 4), [320, 180]);
+});
+
+test("bootstrap does not load engine JS via jsRef (eval escape-hatch removed)", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "escape-root";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-1",
+          component: "SpecialCanvas",
+          kind: "surface",
+          mountId: "escape-root",
+          props: { mode: "escape" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  // Engine does not mount because no factory is registered for "SpecialCanvas".
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.deepEqual(env.engineMounts, []);
+});
+
+test("bootstrap connects hubs and forwards events into shared signals", async () => {
+  function makeSocket(url) {
+    return {
+      url,
+      closeCalled: false,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "presence",
+          path: "/gosx/hub/presence",
+          bindings: [
+            { event: "snapshot", signal: "$presence" },
+          ],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.context.__gosx.hubs.size, 1);
+  assert.equal(env.sockets.length, 1);
+  assert.equal(env.sockets[0].url, "ws://localhost:3000/gosx/hub/presence");
+
+  env.sockets[0].onmessage({
+    data: JSON.stringify({ event: "snapshot", data: { count: 2 } }),
+  });
+
+  assert.deepEqual(env.sharedSignalCalls, [
+    ["$presence", '{"count":2}'],
+  ]);
+  assert.equal(env.sockets[0].binaryType, "arraybuffer");
+
+  env.sockets[0].onmessage({
+    data: {
+      text: async () => JSON.stringify({ event: "snapshot", data: { count: 3 } }),
+    },
+  });
+  await flushAsyncWork();
+
+  env.sockets[0].onmessage({
+    data: new Uint8Array([1, 2, 3]).buffer,
+  });
+  await flushAsyncWork();
+
+  assert.deepEqual(env.sharedSignalCalls, [
+    ["$presence", '{"count":2}'],
+    ["$presence", '{"count":3}'],
+  ]);
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.context.__gosx.hubs.size, 0);
+  assert.equal(env.sockets[0].closeCalled, true);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap hub input sends fighting game snapshots", async () => {
+  const sent = [];
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    getGamepads: () => [{
+      connected: true,
+      axes: [1, 0, 0, 0],
+      buttons: [{ pressed: true }, { pressed: false }, { pressed: false }, { pressed: false }],
+    }],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "fight",
+          path: "/ws/fight/abc",
+          bindings: [],
+          input: {
+            mode: "fighting",
+            event: "input",
+            readyEvent: "ready",
+            signal: "$fightInput",
+            player: 1,
+            slotToken: "slot-one",
+            sendEveryMs: 16,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(sent[0].event, "ready");
+  assert.deepEqual(sent[0].data, { player: 1, slotToken: "slot-one" });
+  const input = sent.find((message) => message.event === "input");
+  assert.ok(input, "expected an input message");
+  assert.equal(input.data.dir, 3);
+  assert.equal(input.data.btn, 1);
+  assert.equal(input.data.player, 1);
+  assert.equal(input.data.slotToken, "slot-one");
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$fightInput" && call[1].includes("GAMEPAD LINKED")));
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
+test("bootstrap hub input spectator mode readies without sending fighter inputs", async () => {
+  const sent = [];
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    getGamepads: () => [{
+      connected: true,
+      axes: [1, 0, 0, 0],
+      buttons: [{ pressed: true }, { pressed: false }, { pressed: false }, { pressed: false }],
+    }],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "fight",
+          path: "/ws/fight/cpu-duel",
+          bindings: [],
+          input: {
+            mode: "fighting",
+            event: "input",
+            readyEvent: "ready",
+            signal: "$fightInput",
+            player: 1,
+            slotToken: "spectator-slot",
+            spectator: true,
+            sendEveryMs: 16,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.deepEqual(sent, [{ event: "ready", data: { player: 1, slotToken: "spectator-slot" } }]);
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$fightInput" && call[1].includes("CPU DUEL")));
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
+test("bootstrap hub input turns fight events into bounded gamepad feedback", async () => {
+  const sent = [];
+  const effects = [];
+  let audioStarts = 0;
+  let forcedStops = 0;
+  const panValues = [];
+  class FakeAudioNode {
+    constructor(kind) {
+      this.kind = kind;
+      this.connections = [];
+    }
+
+    connect(target) {
+      this.connections.push(target);
+      return target;
+    }
+
+    disconnect() {}
+  }
+  class FakeArcadeAudioContext {
+    constructor() {
+      this.currentTime = 0;
+      this.destination = new FakeAudioNode("destination");
+    }
+
+    resume() {
+      return Promise.resolve();
+    }
+
+    createOscillator() {
+      const source = new FakeAudioNode("oscillator");
+      source.frequency = { value: 0 };
+      source.start = () => {
+        audioStarts++;
+      };
+      source.stop = (when) => {
+        if (when === 0) forcedStops++;
+      };
+      return source;
+    }
+
+    createGain() {
+      const gain = new FakeAudioNode("gain");
+      gain.gain = { value: 1 };
+      return gain;
+    }
+
+    createStereoPanner() {
+      const panner = new FakeAudioNode("panner");
+      let value = 0;
+      panner.pan = {};
+      Object.defineProperty(panner.pan, "value", {
+        get() {
+          return value;
+        },
+        set(next) {
+          value = next;
+          panValues.push(next);
+        },
+      });
+      return panner;
+    }
+  }
+  const pad = {
+    connected: true,
+    axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })),
+    vibrationActuator: {
+      playEffect(type, options) {
+        effects.push({ type, options });
+        return Promise.resolve();
+      },
+    },
+  };
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    AudioContext: FakeArcadeAudioContext,
+    createWebSocket: makeSocket,
+    getGamepads: () => [pad],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "fight",
+          path: "/ws/fight/abc",
+          bindings: [],
+          input: {
+            mode: "fighting",
+            event: "input",
+            readyEvent: "ready",
+            signal: "$fightInput",
+            player: 1,
+            sendEveryMs: 16,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.sockets[0].onmessage({
+    data: JSON.stringify({
+      event: "tick",
+      data: {
+        event: { seq: 1, kind: "hit", damage: 120, counter: true, attacker: 1, defender: 2 },
+        audio: { seq: 1, cue: "counter", intensity: 0.95, pan: 0.5, depth: 0.2, phaseCue: "fight" },
+      },
+    }),
+  });
+  await flushAsyncWork();
+
+  assert.equal(effects.length, 1);
+  assert.equal(effects[0].type, "dual-rumble");
+  assert.ok(effects[0].options.duration <= 160);
+  assert.ok(effects[0].options.strongMagnitude > effects[0].options.weakMagnitude);
+  assert.ok(audioStarts > 0, "expected fight audio to start voices");
+  assert.ok(panValues.some((value) => Math.abs(value - 0.5) < 0.000001), "expected server-provided pan to drive audio");
+  const startsAfterFirst = audioStarts;
+
+  env.sockets[0].onmessage({
+    data: JSON.stringify({
+      event: "tick",
+      data: {
+        event: { seq: 1, kind: "hit", damage: 120, counter: true },
+        audio: { seq: 1, cue: "counter", intensity: 0.95, pan: 0.5, phaseCue: "fight" },
+      },
+    }),
+  });
+  await flushAsyncWork();
+  assert.equal(effects.length, 1, "same server event seq should not replay haptics");
+  assert.equal(audioStarts, startsAfterFirst, "same server event seq should not replay audio");
+
+  env.sockets[0].onmessage({
+    data: JSON.stringify({ event: "tick", data: { event: { seq: 2, kind: "block", damage: 0, blocked: true } } }),
+  });
+  await flushAsyncWork();
+  assert.equal(effects.length, 2);
+  assert.ok(effects[1].options.weakMagnitude >= effects[1].options.strongMagnitude * 0.8);
+
+  for (let seq = 3; seq < 18; seq += 1) {
+    env.sockets[0].onmessage({
+      data: JSON.stringify({
+        event: "tick",
+        data: {
+          event: { seq, kind: "hit", damage: 140, punish: true },
+          audio: { seq, cue: "punish", intensity: 1, pan: -0.35 },
+        },
+      }),
+    });
+  }
+  await flushAsyncWork();
+  assert.ok(forcedStops > 0, "audio voice cap should cull older arcade voices");
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
+test("bootstrap hub arcade-select owns lobby identity and menu state", async () => {
+  const sent = [];
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      clientIdentity: {
+        storageKey: "feralsurge.clientId",
+        cookieName: "fs_client_id",
+        headerName: "X-Feral-Surge-Client-ID",
+        prefix: "fs-",
+      },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "lobby",
+          path: "/ws/lobby",
+          bindings: [{ event: "lobby_state", signal: "$lobby" }],
+          input: {
+            mode: "arcade-select",
+            event: "queue",
+            readyEvent: "join",
+            trainingEvent: "dequeue",
+            signal: "$landing",
+            attractSignal: "$attract",
+            lobbySignal: "$lobby",
+            vsSignal: "$vs",
+            username: "Ada",
+            sendEveryMs: 90,
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(sent[0].event, "join");
+  assert.equal(sent[0].data.name, "Ada");
+  assert.match(sent[0].data.clientId, /^fs-/);
+  assert.equal(env.context.__gosx.identity.headerName, "X-Feral-Surge-Client-ID");
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$landing" && call[1].includes("PICK A FIGHTER")));
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$attract" && call[1].includes("title")));
+
+  env.sockets[0].onmessage({ data: JSON.stringify({ event: "queued", data: { queueSize: 2 } }) });
+  await flushAsyncWork();
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$landing" && call[1].includes("MATCHMAKING")));
+  assert.ok(env.sharedSignalCalls.some((call) => call[0] === "$lobby" && call[1].includes('"size":2')));
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+  assert.equal(env.sockets[0].closeCalled, true);
+});
+
+test("patch applier updates text nodes and treats setHTML as text", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  const counter = new FakeElement("span", null);
+  const htmlSink = new FakeElement("pre", null);
+
+  wrapper.id = "gosx-island-patch";
+  counter.textContent = "0";
+  htmlSink.textContent = "";
+  componentRoot.appendChild(counter);
+  componentRoot.appendChild(htmlSink);
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+  });
+
+  runScript(patchSource, env.context, "patch.js");
+  env.context.__gosx_apply_patches(
+    "gosx-island-patch",
+    JSON.stringify([
+      { kind: 0, path: "0", text: "1" },
+      { kind: 9, path: "1", text: "<strong>safe</strong>" },
+    ]),
+  );
+
+  assert.equal(counter.textContent, "1");
+  assert.equal(htmlSink.textContent, "<strong>safe</strong>");
+  assert.equal(htmlSink.children.length, 0);
+});
+
+test("patch applier recreates missing empty text targets", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  const chip = new FakeElement("div", null);
+
+  wrapper.id = "gosx-island-empty-text";
+  componentRoot.appendChild(chip);
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+  });
+
+  runScript(patchSource, env.context, "patch.js");
+  env.context.__gosx_apply_patches(
+    "gosx-island-empty-text",
+    JSON.stringify([{ kind: 0, path: "0/0", text: "THROW" }]),
+  );
+
+  assert.equal(chip.textContent, "THROW");
+  assert.equal(chip.childNodes.length, 1);
+  assert.equal(chip.childNodes[0].nodeType, TEXT_NODE);
+  assert.equal(env.consoleLogs.warn.length, 0);
+});
+
+test("bootstrap exposes page lifecycle hooks and can re-bootstrap after disposal", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+
+  wrapper.id = "gosx-island-2";
+  componentRoot.appendChild(new FakeElement("span", null));
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/counter.json": { text: '{"name":"Counter"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-2",
+          component: "Counter",
+          props: {},
+          programRef: "/counter.json",
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(typeof env.context.__gosx_bootstrap_page, "function");
+  assert.equal(typeof env.context.__gosx_dispose_page, "function");
+  assert.equal(env.context.__gosx.islands.size, 1);
+
+  await env.context.__gosx_dispose_page();
+  assert.equal(env.context.__gosx.islands.size, 0);
+
+  await env.context.__gosx_bootstrap_page();
+  await flushAsyncWork();
+  assert.equal(env.hydrateCalls.length, 2);
+  assert.equal(env.context.__gosx.islands.size, 1);
+});
+
+test("navigation runtime swaps managed head/body and calls page lifecycle hooks", async () => {
+  const oldMeta = new FakeElement("meta", null);
+  oldMeta.setAttribute("name", "description");
+  oldMeta.setAttribute("content", "old");
+
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Docs";
+
+  const oldBody = new FakeElement("div", null);
+  oldBody.id = "old-page";
+  oldBody.textContent = "old-page";
+
+  const disposeCalls = [];
+  const bootstrapCalls = [];
+  const parsedDocs = new Map();
+
+  const env = createContext({
+    elements: [link, oldBody],
+    fetchRoutes: {
+      "http://localhost:3000/docs": {
+        text: "__PAGE_DOC__",
+        url: "http://localhost:3000/docs",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.document.title = "Old";
+  appendManagedHead(env.document, [oldMeta]);
+  env.context.__gosx_dispose_page = async function() {
+    disposeCalls.push("dispose");
+  };
+  env.context.__gosx_bootstrap_page = async function() {
+    bootstrapCalls.push("bootstrap");
+  };
+
+  const nextMeta = new FakeElement("meta", null);
+  nextMeta.setAttribute("name", "description");
+  nextMeta.setAttribute("content", "new");
+  const nextBody = new FakeElement("main", null);
+  nextBody.id = "new-page";
+  nextBody.textContent = "new-page";
+
+  parsedDocs.set("__PAGE_DOC__", buildNavigatedDocument({
+    title: "Docs",
+    headNodes: [nextMeta],
+    bodyNodes: [nextBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(env.context.__gosx.navigation, env.context.__gosx_page_nav);
+  assert.equal(typeof env.context.__gosx.navigation.navigate, "function");
+  const clickListener = env.document.eventListeners.get("click")[0];
+  let prevented = false;
+  clickListener({
+    type: "click",
+    button: 0,
+    target: link,
+    defaultPrevented: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.deepEqual(disposeCalls, ["dispose"]);
+  assert.deepEqual(bootstrapCalls, ["bootstrap"]);
+  assert.equal(env.document.title, "Docs");
+  assert.equal(env.context.location.href, "http://localhost:3000/docs");
+  assert.equal(env.document.getElementById("new-page").textContent, "new-page");
+  assert.equal(env.document.head.childNodes[1].getAttribute("content"), "new");
+  assert.equal(env.fetchCalls[0].init.headers["X-GoSX-Navigation"], "1");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:navigate");
+  assert.equal(env.document.activeElement, env.document.getElementById("new-page"));
+  assert.equal(env.document.activeElement.getAttribute("tabindex"), "-1");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "new-page");
+  assert.equal(env.document.body.childNodes.at(-1).textContent, "Docs");
+  assert.equal(env.scrollCalls.length, 1);
+  assert.equal(env.scrollCalls[0].length, 1);
+  assert.equal(env.scrollCalls[0][0].top, 0);
+  assert.equal(env.scrollCalls[0][0].left, 0);
+  assert.equal(env.scrollCalls[0][0].behavior, "instant");
+});
+
+test("navigation runtime aborts stale fetches and lets the newest navigation win", async () => {
+  class TestAbortSignal {
+    constructor() {
+      this.aborted = false;
+      this.listeners = [];
+    }
+
+    addEventListener(type, listener) {
+      if (type === "abort") this.listeners.push(listener);
+    }
+  }
+
+  class TestAbortController {
+    constructor() {
+      this.signal = new TestAbortSignal();
+    }
+
+    abort() {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      for (const listener of this.signal.listeners) listener();
+    }
+  }
+
+  const slowDoc = buildNavigatedDocument({
+    title: "Slow",
+    bodyNodes: [new FakeElement("main", null)],
+  });
+  slowDoc.body.firstChild.id = "slow-page";
+  slowDoc.body.firstChild.textContent = "slow";
+  const fastDoc = buildNavigatedDocument({
+    title: "Fast",
+    bodyNodes: [new FakeElement("main", null)],
+  });
+  fastDoc.body.firstChild.id = "fast-page";
+  fastDoc.body.firstChild.textContent = "fast";
+
+  const parsedDocs = new Map([
+    ["__SLOW_PAGE__", slowDoc],
+    ["__FAST_PAGE__", fastDoc],
+  ]);
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/slow": (url, init) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve({ text: "__SLOW_PAGE__", url }), 30);
+        init.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          const error = new Error("navigation aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+      "http://localhost:3000/fast": { text: "__FAST_PAGE__", url: "http://localhost:3000/fast" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.AbortController = TestAbortController;
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const slow = env.context.__gosx_page_nav.navigate("http://localhost:3000/slow");
+  const fast = env.context.__gosx_page_nav.navigate("http://localhost:3000/fast");
+  const results = await Promise.all([slow, fast]);
+
+  assert.deepEqual(results, [false, true]);
+  assert.equal(env.context.location.href, "http://localhost:3000/fast");
+  assert.equal(env.document.getElementById("fast-page").textContent, "fast");
+  assert.equal(env.document.getElementById("slow-page"), null);
+});
+
+test("navigation runtime reports failures through the shared diagnostics policy", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/broken": {
+        ok: false,
+        status: 503,
+        text: "unavailable",
+        url: "http://localhost:3000/broken",
+      },
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  await assert.rejects(
+    env.context.__gosx_page_nav.navigate("http://localhost:3000/broken"),
+    /navigation fetch failed with status 503/
+  );
+  const issue = env.context.__gosx.listIssues().find((entry) => entry.scope === "navigation");
+  assert.ok(issue);
+  assert.equal(issue.type, "navigation");
+  assert.equal(issue.severity, "warning");
+  assert.equal(issue.phase, "navigation");
+  assert.equal(issue.source, "http://localhost:3000/broken");
+});
+
+test("navigation runtime loads patch, lifecycle, and managed scripts before page bootstrap", async () => {
+  const parsedDocs = new Map();
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs/runtime");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Runtime";
+
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/docs/runtime": {
+        text: "__SCRIPT_DOC__",
+        url: "http://localhost:3000/docs/runtime",
+      },
+      "http://localhost:3000/patch.js": {
+        text: "window.__scriptOrder.push('patch');",
+        url: "http://localhost:3000/patch.js",
+      },
+      "http://localhost:3000/lifecycle.js": {
+        text: "window.__scriptOrder.push('lifecycle');",
+        url: "http://localhost:3000/lifecycle.js",
+      },
+      "http://localhost:3000/managed.js": {
+        text: "window.__scriptOrder.push('managed');",
+        url: "http://localhost:3000/managed.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__scriptOrder = [];
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const originalBootstrap = env.context.__gosx_bootstrap_page;
+  env.context.__gosx_bootstrap_page = async function() {
+    env.context.__scriptOrder.push("bootstrap");
+    return originalBootstrap();
+  };
+  env.context.__gosx_dispose_page = async function() {
+    env.context.__scriptOrder.push("dispose");
+  };
+
+  const patchScript = new FakeElement("script", null);
+  patchScript.setAttribute("data-gosx-script", "patch");
+  patchScript.setAttribute("src", "/patch.js");
+
+  const lifecycleScript = new FakeElement("script", null);
+  lifecycleScript.setAttribute("data-gosx-script", "lifecycle");
+  lifecycleScript.setAttribute("src", "/lifecycle.js");
+
+  const managedScript = new FakeElement("script", null);
+  managedScript.id = "managed-script";
+  managedScript.setAttribute("data-gosx-script", "managed");
+  managedScript.setAttribute("src", "/managed.js");
+
+  const nextBody = new FakeElement("main", null);
+  nextBody.id = "runtime-page";
+  nextBody.textContent = "Runtime page";
+
+  parsedDocs.set("__SCRIPT_DOC__", buildNavigatedDocument({
+    title: "Runtime",
+    headNodes: [patchScript, lifecycleScript],
+    bodyNodes: [nextBody, managedScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/runtime");
+  await flushAsyncWork();
+
+  assert.deepEqual(env.context.__scriptOrder, [
+    "dispose",
+    "patch",
+    "lifecycle",
+    "managed",
+    "bootstrap",
+  ]);
+  assert.equal(env.document.getElementById("runtime-page").textContent, "Runtime page");
+  assert.equal(env.document.getElementById("managed-script"), null);
+  assert.deepEqual(
+    Array.from(env.context.__gosx.document.get().assets.scripts, (entry) => entry.role),
+    ["patch", "lifecycle"],
+  );
+});
+
+test("navigation runtime caches lifecycle scripts across page transitions", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/a": {
+        text: "__DOC_A__",
+        url: "http://localhost:3000/docs/a",
+      },
+      "http://localhost:3000/docs/b": {
+        text: "__DOC_B__",
+        url: "http://localhost:3000/docs/b",
+      },
+      "http://localhost:3000/shared-lifecycle.js": {
+        text: "window.__sharedLifecycleLoads = (window.__sharedLifecycleLoads || 0) + 1;",
+        url: "http://localhost:3000/shared-lifecycle.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let bootstrapCount = 0;
+  const originalBootstrap = env.context.__gosx_bootstrap_page;
+  env.context.__gosx_bootstrap_page = async function() {
+    bootstrapCount += 1;
+    return originalBootstrap();
+  };
+  env.context.__gosx_dispose_page = async function() {};
+
+  function lifecycleDoc(title, id) {
+    const script = new FakeElement("script", null);
+    script.setAttribute("data-gosx-script", "lifecycle");
+    script.setAttribute("src", "/shared-lifecycle.js");
+
+    const page = new FakeElement("main", null);
+    page.id = id;
+    page.textContent = title;
+
+    return buildNavigatedDocument({
+      title,
+      headNodes: [script],
+      bodyNodes: [page],
+    });
+  }
+
+  parsedDocs.set("__DOC_A__", lifecycleDoc("Page A", "page-a"));
+  parsedDocs.set("__DOC_B__", lifecycleDoc("Page B", "page-b"));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a");
+  await flushAsyncWork();
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/b");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__sharedLifecycleLoads, 1);
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "http://localhost:3000/shared-lifecycle.js").length,
+    1,
+  );
+  assert.equal(bootstrapCount, 2);
+  assert.equal(env.document.getElementById("page-b").textContent, "Page B");
+});
+
+test("navigation runtime marks current and ancestor links and exposes navigation state", async () => {
+  const docsLink = new FakeElement("a", null);
+  docsLink.setAttribute("href", "/docs");
+  docsLink.setAttribute("data-gosx-link", "");
+  docsLink.textContent = "Docs";
+
+  const formsLink = new FakeElement("a", null);
+  formsLink.setAttribute("href", "/docs/forms");
+  formsLink.setAttribute("data-gosx-link", "");
+  formsLink.textContent = "Forms";
+
+  const blogLink = new FakeElement("a", null);
+  blogLink.setAttribute("href", "/blog");
+  blogLink.setAttribute("data-gosx-link", "");
+  blogLink.textContent = "Blog";
+
+  const env = createContext({
+    elements: [docsLink, formsLink, blogLink],
+  });
+  env.context.location.href = "http://localhost:3000/docs/forms";
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(docsLink.getAttribute("data-gosx-link-current-policy"), "auto");
+  assert.equal(docsLink.getAttribute("data-gosx-link-current"), "ancestor");
+  assert.equal(formsLink.getAttribute("data-gosx-link-current-policy"), "auto");
+  assert.equal(formsLink.getAttribute("data-gosx-link-current"), "page");
+  assert.equal(formsLink.getAttribute("aria-current"), "page");
+  assert.equal(blogLink.getAttribute("data-gosx-link-current-policy"), "auto");
+  assert.equal(blogLink.getAttribute("data-gosx-link-current"), "none");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-navigation-state"), "idle");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-navigation-current-path"), "/docs/forms");
+  assert.equal(env.context.__gosx_page_nav.getState().currentPath, "/docs/forms");
+});
+
+test("navigation runtime honors explicit link current policy", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs/forms");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-link-current-policy", "none");
+  link.setAttribute("data-gosx-link-current", "none");
+  link.textContent = "Forms";
+
+  const env = createContext({
+    elements: [link],
+  });
+  env.context.location.href = "http://localhost:3000/docs/forms";
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(link.getAttribute("data-gosx-link-current-policy"), "none");
+  assert.equal(link.getAttribute("data-gosx-link-current"), "none");
+  assert.equal(link.hasAttribute("aria-current"), false);
+});
+
+test("navigation runtime prefetches marked links and reuses cached HTML", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/prefetch");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Prefetch";
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/prefetch": {
+        text: "__PREFETCH_DOC__",
+        url: "http://localhost:3000/prefetch",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  parsedDocs.set("__PREFETCH_DOC__", buildNavigatedDocument({
+    title: "Prefetched",
+    bodyNodes: [new FakeElement("div", null)],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "ready");
+
+  const clickListener = env.document.eventListeners.get("click")[0];
+  clickListener({
+    type: "click",
+    button: 0,
+    target: link,
+    defaultPrevented: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(env.document.title, "Prefetched");
+});
+
+test("navigation runtime eagerly prefetches render-marked links", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/prefetch");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-prefetch", "render");
+  link.textContent = "Prefetch";
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/prefetch": {
+        text: "__PREFETCH_RENDER_DOC__",
+        url: "http://localhost:3000/prefetch",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  parsedDocs.set("__PREFETCH_RENDER_DOC__", buildNavigatedDocument({
+    title: "Prefetched",
+    bodyNodes: [new FakeElement("div", null)],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "ready");
+});
+
+test("navigation runtime skips intent prefetch under reduced-data conditions", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/prefetch");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Prefetch";
+
+  const env = createContext({
+    elements: [link],
+    matchMedia: {
+      "(prefers-reduced-data: reduce)": true,
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 0);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "idle");
+});
+
+test("navigation runtime leaves non-interceptable links to native handling", async () => {
+  const hashLink = new FakeElement("a", null);
+  hashLink.setAttribute("href", "#details");
+  hashLink.setAttribute("data-gosx-link", "");
+
+  const externalLink = new FakeElement("a", null);
+  externalLink.setAttribute("href", "https://example.com/docs");
+  externalLink.setAttribute("data-gosx-link", "");
+
+  const downloadLink = new FakeElement("a", null);
+  downloadLink.setAttribute("href", "/download");
+  downloadLink.setAttribute("data-gosx-link", "");
+  downloadLink.setAttribute("download", "");
+
+  const targetLink = new FakeElement("a", null);
+  targetLink.setAttribute("href", "/target");
+  targetLink.setAttribute("data-gosx-link", "");
+  targetLink.setAttribute("target", "_blank");
+
+  const modifiedLink = new FakeElement("a", null);
+  modifiedLink.setAttribute("href", "/modified");
+  modifiedLink.setAttribute("data-gosx-link", "");
+
+  const env = createContext({
+    elements: [hashLink, externalLink, downloadLink, targetLink, modifiedLink],
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const clickListener = env.document.eventListeners.get("click")[0];
+  for (const [link, overrides] of [
+    [hashLink, {}],
+    [externalLink, {}],
+    [downloadLink, {}],
+    [targetLink, {}],
+    [modifiedLink, { ctrlKey: true }],
+  ]) {
+    let prevented = false;
+    clickListener({
+      type: "click",
+      target: link,
+      button: 0,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault() {
+        prevented = true;
+        this.defaultPrevented = true;
+      },
+      ...overrides,
+    });
+    await flushAsyncWork();
+    assert.equal(prevented, false);
+  }
+
+  assert.equal(env.fetchCalls.length, 0);
+});
+
+test("navigation runtime absolutizes managed asset URLs during navigation", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/runtime/index.html": {
+        text: "__ASSET_DOC__",
+        url: "http://localhost:3000/docs/runtime/index.html",
+      },
+      "http://localhost:3000/docs/runtime/runtime.js": {
+        text: "window.__navScriptLoaded = (window.__navScriptLoaded || 0) + 1;",
+        url: "http://localhost:3000/docs/runtime/runtime.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.location.href = "http://localhost:3000/docs/";
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const favicon = new FakeElement("link", null);
+  favicon.setAttribute("rel", "icon");
+  favicon.setAttribute("href", "./favicon.svg");
+
+  const patchScript = new FakeElement("script", null);
+  patchScript.setAttribute("data-gosx-script", "patch");
+  patchScript.setAttribute("src", "./runtime.js");
+
+  const image = new FakeElement("img", null);
+  image.id = "hero";
+  image.setAttribute("src", "./hero.png");
+  image.setAttribute("srcset", "./hero.png 1x, ./hero@2x.png 2x");
+
+  const form = new FakeElement("form", null);
+  form.id = "signup";
+  form.setAttribute("action", "./signup");
+
+  const video = new FakeElement("video", null);
+  video.id = "promo";
+  video.setAttribute("poster", "./poster.jpg");
+
+  parsedDocs.set("__ASSET_DOC__", buildNavigatedDocument({
+    title: "Assets",
+    headNodes: [favicon, patchScript],
+    bodyNodes: [image, form, video],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/runtime/index.html");
+
+  assert.equal(env.document.head.childNodes[1].getAttribute("href"), "http://localhost:3000/docs/runtime/favicon.svg");
+  assert.equal(env.document.getElementById("hero").getAttribute("src"), "http://localhost:3000/docs/runtime/hero.png");
+  assert.equal(
+    env.document.getElementById("hero").getAttribute("srcset"),
+    "http://localhost:3000/docs/runtime/hero.png 1x, http://localhost:3000/docs/runtime/hero@2x.png 2x",
+  );
+  assert.equal(env.document.getElementById("signup").getAttribute("action"), "http://localhost:3000/docs/runtime/signup");
+  assert.equal(env.document.getElementById("promo").getAttribute("poster"), "http://localhost:3000/docs/runtime/poster.jpg");
+  assert.equal(env.fetchCalls[1].url, "http://localhost:3000/docs/runtime/runtime.js");
+  assert.equal(env.context.__navScriptLoaded, 1);
+});
+
+test("navigation runtime honors explicit a11y markers and hash targets", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/a11y#details": {
+        text: "__A11Y_DOC__",
+        url: "http://localhost:3000/docs/a11y#details",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const main = new FakeElement("section", null);
+  main.id = "main-shell";
+  main.setAttribute("data-gosx-main", "");
+  main.textContent = "Main shell";
+
+  const announce = new FakeElement("p", null);
+  announce.setAttribute("data-gosx-announce", "Accessibility docs");
+  announce.textContent = "Ignored body copy";
+  main.appendChild(announce);
+
+  const target = new FakeElement("section", null);
+  target.id = "details";
+  target.textContent = "Deep details";
+  main.appendChild(target);
+
+  parsedDocs.set("__A11Y_DOC__", buildNavigatedDocument({
+    title: "A11y",
+    bodyNodes: [main],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a11y#details");
+  await flushAsyncWork();
+
+  const renderedTarget = env.document.getElementById("details");
+  assert.equal(env.document.activeElement, renderedTarget);
+  assert.equal(renderedTarget.getAttribute("tabindex"), "-1");
+  assert.equal(renderedTarget.scrollIntoViewCalls.length, 1);
+  assert.equal(renderedTarget.scrollIntoViewCalls[0].length, 1);
+  assert.equal(renderedTarget.scrollIntoViewCalls[0][0].behavior, "instant");
+  assert.deepEqual(env.scrollCalls, []);
+  assert.equal(env.document.body.childNodes.at(-1).textContent, "Accessibility docs");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.announcement, "Accessibility docs");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "details");
+});
+
+test("navigation runtime preserves scroll when requested and still focuses the target", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/a11y#details": {
+        text: "__PRESERVE_SCROLL_DOC__",
+        url: "http://localhost:3000/docs/a11y#details",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const main = new FakeElement("section", null);
+  main.id = "main-shell";
+  main.setAttribute("data-gosx-main", "");
+  main.textContent = "Main shell";
+
+  const target = new FakeElement("section", null);
+  target.id = "details";
+  target.textContent = "Deep details";
+  main.appendChild(target);
+
+  parsedDocs.set("__PRESERVE_SCROLL_DOC__", buildNavigatedDocument({
+    title: "Preserve Scroll",
+    bodyNodes: [main],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a11y#details", {
+    preserveScroll: true,
+    replace: true,
+  });
+  await flushAsyncWork();
+
+  const renderedTarget = env.document.getElementById("details");
+  assert.equal(renderedTarget.scrollIntoViewCalls.length, 0);
+  assert.deepEqual(env.scrollCalls, []);
+  assert.equal(env.document.activeElement, renderedTarget);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:navigate");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.replace, true);
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.focusTargetId, "details");
+});
+
+test("navigation runtime intercepts managed form submissions and forwards action data", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+
+  const input = new FakeElement("input", null);
+  input.setAttribute("name", "title");
+  input.value = "hello";
+  form.appendChild(input);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "publish");
+  form.appendChild(submitter);
+
+  const inputBatchCalls = [];
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/save": {
+        text: '{"data":{"$draft.title":"hello"},"redirect":"/done"}',
+        url: "http://localhost:3000/save",
+      },
+      "http://localhost:3000/done": {
+        text: "__DONE_DOC__",
+        url: "http://localhost:3000/done",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_set_input_batch = function(payload) {
+    inputBatchCalls.push(payload);
+    return null;
+  };
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const doneBody = new FakeElement("main", null);
+  doneBody.id = "done";
+  doneBody.textContent = "done";
+  parsedDocs.set("__DONE_DOC__", buildNavigatedDocument({
+    title: "Done",
+    bodyNodes: [doneBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-form-mode"), "post");
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/save");
+  assert.equal(env.fetchCalls[0].init.method, "POST");
+  assert.equal(env.fetchCalls[0].init.headers.Accept, "application/json");
+  assert.equal(env.fetchCalls[0].init.body instanceof FakeFormData, true);
+  assert.equal(env.fetchCalls[0].init.body.has("title"), true);
+  assert.equal(env.fetchCalls[0].init.body.has("intent"), true);
+  assert.deepEqual(inputBatchCalls, ['{"$draft.title":"hello"}']);
+  assert.equal(env.context.location.href, "http://localhost:3000/done");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
+  assert.equal(form.getAttribute("data-gosx-pending"), null);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime exposes programmatic managed action submission", async () => {
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-main", "");
+  main.setAttribute("data-gosx-csrf-token", "root-token");
+
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      "http://localhost:3000/play/__actions/pilot": {
+        text: '{"ok":true}',
+        url: "http://localhost:3000/play/__actions/pilot",
+      },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(typeof env.context.__gosx_submit_action, "function");
+  assert.equal(typeof env.context.__gosx_page_nav.submitAction, "function");
+
+  const form = env.context.__gosx_submit_action("/play/__actions/pilot", {
+    unitId: "robot-1",
+    mode: "manual",
+  }, { root: main, keepForm: true });
+  await form.__gosxSubmitPromise;
+
+  assert.equal(form.parentNode, main);
+  assert.equal(form.getAttribute("action"), "/play/__actions/pilot");
+  assert.equal(form.getAttribute("method"), "post");
+  assert.equal(form.getAttribute("data-gosx-form"), "");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/play/__actions/pilot");
+  assert.equal(env.fetchCalls[0].init.method, "POST");
+  assert.equal(env.fetchCalls[0].init.headers["X-CSRF-Token"], "root-token");
+  assert.deepEqual(env.fetchCalls[0].init.body.values, [
+    ["unitId", "robot-1"],
+    ["mode", "manual"],
+    ["csrf_token", "root-token"],
+  ]);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
+});
+
+test("navigation runtime intercepts managed GET forms and navigates with query params", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "scene labels";
+  form.appendChild(query);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "view");
+  submitter.setAttribute("value", "list");
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/search?q=scene+labels&view=list": {
+        text: "__SEARCH_DOC__",
+        url: "http://localhost:3000/search?q=scene+labels&view=list",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const results = new FakeElement("main", null);
+  results.id = "results";
+  results.textContent = "results";
+  parsedDocs.set("__SEARCH_DOC__", buildNavigatedDocument({
+    title: "Search",
+    bodyNodes: [results],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-form-mode"), "get");
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/search?q=scene+labels&view=list");
+  assert.equal(env.fetchCalls[0].init.headers.Accept, "text/html");
+  assert.equal(env.context.location.href, "http://localhost:3000/search?q=scene+labels&view=list");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:navigate");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
+  assert.equal(form.getAttribute("data-gosx-pending"), null);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime restores prior managed form lifecycle attrs after submit", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "validating");
+  form.setAttribute("data-gosx-pending", "queued");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "scene labels";
+  form.appendChild(query);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "view");
+  submitter.setAttribute("value", "list");
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/search?q=scene+labels&view=list": {
+        text: "__RESTORE_FORM_DOC__",
+        url: "http://localhost:3000/search?q=scene+labels&view=list",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const results = new FakeElement("main", null);
+  results.id = "results";
+  results.textContent = "results";
+  parsedDocs.set("__RESTORE_FORM_DOC__", buildNavigatedDocument({
+    title: "Search",
+    bodyNodes: [results],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-pending"), "queued");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "validating");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:navigate");
+});
+
+test("navigation runtime honors submitter overrides and falls back with native semantics", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const title = new FakeElement("input", null);
+  title.setAttribute("name", "title");
+  title.value = "hello";
+  form.appendChild(title);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "preview");
+  submitter.setAttribute("formaction", "/preview");
+  submitter.setAttribute("formmethod", "get");
+  submitter.formAction = "http://localhost:3000/preview";
+  submitter.formMethod = "get";
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/preview?title=hello&intent=preview": {
+        text: "__PREVIEW_DOC__",
+        url: "http://localhost:3000/preview?title=hello&intent=preview",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const preview = new FakeElement("main", null);
+  preview.id = "preview";
+  preview.textContent = "preview";
+  parsedDocs.set("__PREVIEW_DOC__", buildNavigatedDocument({
+    title: "Preview",
+    bodyNodes: [preview],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/preview?title=hello&intent=preview");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
+
+  env.fetchCalls.length = 0;
+  submitter.setAttribute("formmethod", "post");
+  submitter.setAttribute("formaction", "/missing");
+  submitter.formMethod = "post";
+  submitter.formAction = "http://localhost:3000/missing";
+
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.requestSubmitCalls.length, 1);
+  assert.equal(form.requestSubmitCalls[0][0], submitter);
+  assert.equal(form.hasAttribute("data-gosx-form"), true);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("navigation runtime ignores default submitter action property when no override attribute exists", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const title = new FakeElement("input", null);
+  title.setAttribute("name", "title");
+  title.value = "hello";
+  form.appendChild(title);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "publish");
+  submitter.formAction = "http://localhost:3000/";
+  form.appendChild(submitter);
+
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/save": {
+        text: '{"ok":true,"message":"saved"}',
+        url: "http://localhost:3000/save",
+      },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/save");
+  assert.equal(env.fetchCalls[0].init.method, "POST");
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.action, "http://localhost:3000/save");
+});
+
+test("navigation runtime honors submitter override attributes without reflected props", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const title = new FakeElement("input", null);
+  title.setAttribute("name", "title");
+  title.value = "hello";
+  form.appendChild(title);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "preview");
+  submitter.setAttribute("formaction", "/preview-attr");
+  submitter.setAttribute("formmethod", "get");
+  form.appendChild(submitter);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/preview-attr?title=hello&intent=preview": {
+        text: "__PREVIEW_ATTR_DOC__",
+        url: "http://localhost:3000/preview-attr?title=hello&intent=preview",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const preview = new FakeElement("main", null);
+  preview.id = "preview-attr";
+  preview.textContent = "preview";
+  parsedDocs.set("__PREVIEW_ATTR_DOC__", buildNavigatedDocument({
+    title: "Preview Attr",
+    bodyNodes: [preview],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/preview-attr?title=hello&intent=preview");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.method, "GET");
+
+  env.fetchCalls.length = 0;
+  submitter.setAttribute("formtarget", "_blank");
+  let prevented = false;
+
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, false);
+  assert.equal(form.requestSubmitCalls.length, 0);
+  assert.equal(env.fetchCalls.length, 0);
+});
+
+test("bootstrap mounts builtin video engines and bridges shared signals", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-root";
+  mount.width = 640;
+  mount.height = 360;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            volume: 0.5,
+            subtitleTracks: [{ id: "en", language: "en", title: "English" }],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.context.__gosx.engines.size, 1);
+
+  const video = mount.firstChild;
+  assert.ok(video);
+  assert.equal(video.tagName, "VIDEO");
+  assert.equal(video.volume, 0.5);
+  assert.ok(video.loadCalls.length >= 1);
+
+  video.duration = 120;
+  video.readyState = 4;
+  video.currentTime = 10;
+  video.buffered = {
+    length: 1,
+    start() {
+      return 0;
+    },
+    end() {
+      return 25;
+    },
+  };
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.equal(sharedSignalValue(env, "$video.position"), 10);
+  assert.equal(sharedSignalValue(env, "$video.duration"), 120);
+  assert.equal(sharedSignalValue(env, "$video.buffered"), 15);
+  assert.deepEqual(sharedSignalValue(env, "$video.viewport"), [640, 360]);
+  assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
+    { id: "en", language: "en", srclang: "en", title: "English", kind: "subtitles", src: "", default: false, forced: false },
+  ]);
+
+  video.setAttribute("data-gosx-video-duration", "7200");
+  video.duration = 120;
+  video.dispatchEvent({ type: "durationchange", target: video });
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.duration"), 7200);
+
+  video.duration = 7300;
+  video.dispatchEvent({ type: "durationchange", target: video });
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.duration"), 7300);
+
+  let rectCalls = 0;
+  const originalGetBoundingClientRect = mount.getBoundingClientRect.bind(mount);
+  mount.getBoundingClientRect = function() {
+    rectCalls += 1;
+    return originalGetBoundingClientRect();
+  };
+  const callsAfterFirstOutputUpdate = env.sharedSignalCalls.length;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+  assert.equal(env.sharedSignalCalls.length, callsAfterFirstOutputUpdate);
+  assert.equal(rectCalls, 0);
+
+  mount.width = 800;
+  mount.height = 450;
+  env.resizeObservers.at(-1).trigger([mount]);
+  await flushAsyncWork();
+  assert.deepEqual(sharedSignalValue(env, "$video.viewport"), [800, 450]);
+  assert.ok(rectCalls >= 1);
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("play"));
+  await flushAsyncWork();
+  assert.equal(video.playCalls.length, 1);
+  assert.equal(video.paused, false);
+
+  env.context.__gosx_notify_shared_signal("$video.seek", JSON.stringify(42));
+  await flushAsyncWork();
+  assert.equal(video.currentTime, 42);
+});
+
+test("bootstrap registers audio manifests and plays clips", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "audio-root";
+  const audioGraph = { sources: [], gains: [], stereoPanners: [], panners: [], starts: 0 };
+  class FakeAudioNode {
+    constructor(kind) {
+      this.kind = kind;
+      this.connections = [];
+    }
+
+    connect(target) {
+      this.connections.push(target);
+      return target;
+    }
+  }
+  class FakeAudioContext {
+    constructor() {
+      this.destination = new FakeAudioNode("destination");
+    }
+
+    createBufferSource() {
+      const source = new FakeAudioNode("source");
+      source.playbackRate = { value: 1 };
+      source.start = () => {
+        audioGraph.starts++;
+      };
+      source.stop = () => {};
+      audioGraph.sources.push(source);
+      return source;
+    }
+
+    createGain() {
+      const gain = new FakeAudioNode("gain");
+      gain.gain = { value: 1 };
+      audioGraph.gains.push(gain);
+      return gain;
+    }
+
+    createStereoPanner() {
+      const panner = new FakeAudioNode("stereo");
+      panner.pan = { value: 0 };
+      audioGraph.stereoPanners.push(panner);
+      return panner;
+    }
+
+    createPanner() {
+      const panner = new FakeAudioNode("spatial");
+      panner.positionX = { value: 0 };
+      panner.positionY = { value: 0 };
+      panner.positionZ = { value: 0 };
+      audioGraph.panners.push(panner);
+      return panner;
+    }
+
+    async decodeAudioData(data) {
+      return { byteLength: data.byteLength };
+    }
+  }
+
+  const env = createContext({
+    elements: [mount],
+    AudioContext: FakeAudioContext,
+    fetchRoutes: {
+      "/audio/hit.ogg": { bytes: [1, 2, 3, 4] },
+    },
+    engineFactories: {
+      AudioProbe: () => ({}),
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-audio",
+          component: "AudioProbe",
+          kind: "surface",
+          mountId: "audio-root",
+          capabilities: ["audio"],
+          props: {
+            audio: {
+              masterVolume: 0.5,
+              buses: [{ id: "sfx", volume: 0.8 }],
+              clips: [
+                { id: "hit", uri: "/audio/hit.ogg", bus: "sfx", volume: 0.75, rate: 1.1 },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const audio = env.context.__gosx.audio;
+  assert.equal(typeof audio.play, "function");
+  let snapshot = audio.snapshot();
+  assert.equal(snapshot.clips.length, 1);
+  assert.equal(snapshot.clips[0].id, "hit");
+  assert.equal(snapshot.clips[0].bus, "sfx");
+  assert.ok(snapshot.buses.some((bus) => bus.id === "master" && bus.volume === 0.5));
+  assert.ok(snapshot.buses.some((bus) => bus.id === "sfx" && bus.volume === 0.8));
+
+  const handle = await audio.play("hit", {
+    handle: "hit-1",
+    volume: 0.5,
+    position: { x: 2, y: 1.5, z: -4 },
+    refDistance: 2,
+    maxDistance: 64,
+    rolloffFactor: 0.75,
+  });
+  assert.equal(handle, "hit-1");
+  assert.equal(audioGraph.starts, 1);
+  assert.ok(Math.abs(audioGraph.gains[0].gain.value - 0.15) < 0.000001);
+  assert.equal(audioGraph.stereoPanners.length, 0);
+  assert.equal(audioGraph.panners.length, 1);
+  assert.equal(audioGraph.panners[0].positionX.value, 2);
+  assert.equal(audioGraph.panners[0].positionY.value, 1.5);
+  assert.equal(audioGraph.panners[0].positionZ.value, -4);
+  assert.equal(audioGraph.panners[0].refDistance, 2);
+  assert.equal(audioGraph.panners[0].maxDistance, 64);
+  assert.equal(audioGraph.panners[0].rolloffFactor, 0.75);
+  snapshot = audio.snapshot();
+  assert.deepEqual(snapshot.handles, ["hit-1"]);
+  assert.equal(audio.stop("hit"), true);
+  assert.deepEqual(audio.snapshot().handles, []);
+});
+
+test("bootstrap mounts only the first video engine on a page", async () => {
+  const firstMount = new FakeElement("div", null);
+  firstMount.id = "video-root-a";
+  const secondMount = new FakeElement("div", null);
+  secondMount.id = "video-root-b";
+
+  const env = createContext({
+    elements: [firstMount, secondMount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideoA",
+          kind: "video",
+          mountId: "video-root-a",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/a.mp4" },
+        },
+        {
+          id: "gosx-engine-1",
+          component: "PromoVideoB",
+          kind: "video",
+          mountId: "video-root-b",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/b.mp4" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(firstMount.firstChild && firstMount.firstChild.tagName, "VIDEO");
+  assert.equal(secondMount.firstChild, null);
+  assert.ok(env.consoleLogs.error.some((entry) => entry.includes("only one video engine is supported per page")));
+  const issues = env.context.__gosx.listIssues();
+  assert.equal(issues.some((issue) => issue.scope === "engine" && issue.source === "gosx-engine-1"), true);
+});
+
+test("bootstrap upgrades server-rendered video fallbacks in place and loads explicit subtitle track URLs", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-fallback-root";
+  mount.width = 960;
+  mount.height = 540;
+
+  const fallback = new FakeElement("video", null);
+  fallback.setAttribute("poster", "/media/poster.jpg");
+  fallback.setCanPlayType("video/webm", "probably");
+
+  const source = new FakeElement("source", null);
+  source.setAttribute("src", "/media/promo.webm");
+  source.setAttribute("type", "video/webm");
+  fallback.appendChild(source);
+
+  const track = new FakeElement("track", null);
+  track.setAttribute("src", "/subs/en-custom.vtt");
+  track.setAttribute("kind", "captions");
+  track.setAttribute("srclang", "en");
+  track.setAttribute("label", "English");
+  fallback.appendChild(track);
+
+  mount.appendChild(fallback);
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/en-custom.vtt": {
+        text: "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello from track",
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-fallback-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            poster: "/media/poster.jpg",
+            sources: [
+              { src: "/media/promo.webm", type: "video/webm" },
+              { src: "/media/promo.mp4", type: "video/mp4" },
+            ],
+            subtitleTrack: "en",
+            subtitleTracks: [
+              { id: "en", language: "en", title: "English", kind: "captions", src: "/subs/en-custom.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.equal(video, fallback);
+  assert.equal(video.tagName, "VIDEO");
+  assert.equal(video.getAttribute("data-gosx-video"), "true");
+  assert.equal(video.getAttribute("poster"), "/media/poster.jpg");
+  assert.equal(video.getAttribute("src"), null);
+  assert.equal(video.children.length, 3);
+  assert.equal(video.children[0], source);
+  assert.equal(video.children[1], track);
+  assert.equal(video.children[2].tagName, "TRACK");
+  assert.equal(video.children[2].getAttribute("src"), "/subs/en-custom.vtt");
+  assert.ok(video.loadCalls.length >= 1);
+  assert.ok(env.fetchCalls.some((call) => call.url === "/subs/en-custom.vtt"));
+  assert.deepEqual(sharedSignalValue(env, "$video.subtitleTracks"), [
+    {
+      id: "en",
+      language: "en",
+      srclang: "en",
+      title: "English",
+      kind: "captions",
+      src: "/subs/en-custom.vtt",
+      default: false,
+      forced: false,
+    },
+  ]);
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "ready");
+});
+
+test("bootstrap video engines retry warming subtitle tracks with Retry-After", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-subtitle-root";
+
+  let subtitleFetches = 0;
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/en.vtt": () => {
+        subtitleFetches += 1;
+        if (subtitleFetches === 1) {
+          return { status: 202, headers: { "Retry-After": "0.5" } };
+        }
+        return {
+          text: "WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nLong span\n\n00:00:01.000 --> 00:00:01.500\nExpired overlap\n\n00:00:03.000 --> 00:00:04.000\nHello after warmup",
+        };
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-subtitle-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            subtitleTrack: "en",
+            subtitleTracks: [
+              { id: "en", language: "en", title: "English", kind: "subtitles", src: "/subs/en.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "warming");
+  assert.equal(subtitleFetches, 1);
+
+  assert.equal(timers.runDelay(500), 1);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(subtitleFetches, 2);
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "ready");
+
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-subtitles") === "true");
+  assert.ok(overlay, "expected managed subtitle overlay");
+  const nativeTrack = video.children.find((child) => child.tagName === "TRACK" && child.getAttribute("src") === "/subs/en.vtt");
+  assert.ok(nativeTrack, "expected native subtitle mirror");
+  assert.equal(nativeTrack.getAttribute("src"), "/subs/en.vtt");
+  assert.equal(nativeTrack.mode, "hidden");
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.equal(overlay.children[0].innerHTML, "Long span");
+  env.document.pictureInPictureElement = video;
+  video.dispatchEvent({ type: "enterpictureinpicture", target: video });
+  assert.equal(nativeTrack.mode, "showing");
+  env.document.pictureInPictureElement = null;
+  video.dispatchEvent({ type: "leavepictureinpicture", target: video });
+  assert.equal(nativeTrack.mode, "hidden");
+  video.currentTime = 3.2;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+  assert.deepEqual(sharedSignalValue(env, "$video.activeCues"), [{ text: "Long span" }, { text: "Hello after warmup" }]);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.equal(overlay.children[0].getAttribute("class"), "gosx-video-subtitle-cue subtitle-cue");
+  assert.equal(overlay.children[0].innerHTML, "Long span");
+  assert.equal(overlay.children[1].innerHTML, "Hello after warmup");
+});
+
+test("bootstrap video engines render bitmap WebVTT cues as positioned images", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-bitmap-subtitle-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/bitmap.vtt": {
+        text: "WEBVTT\n\n00:00:02.000 --> 00:00:05.000\n/subs/frame-001.png#xywh=100,720,1720,220&canvas=1920,1080",
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "BitmapVideo",
+          kind: "video",
+          mountId: "video-bitmap-subtitle-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            subtitleTrack: "pgs",
+            subtitleTracks: [
+              { id: "pgs", language: "eng", title: "English PGS", kind: "metadata", src: "/subs/bitmap.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-subtitles") === "true");
+  assert.ok(overlay, "expected managed subtitle overlay");
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "ready");
+
+  video.currentTime = 2.5;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.deepEqual(sharedSignalValue(env, "$video.activeCues"), [
+    {
+      text: "/subs/frame-001.png#xywh=100,720,1720,220&amp;canvas=1920,1080",
+      image: {
+        src: "/subs/frame-001.png",
+        x: 100,
+        y: 720,
+        w: 1720,
+        h: 220,
+        canvasW: 1920,
+        canvasH: 1080,
+      },
+    },
+  ]);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.equal(overlay.children.length, 1);
+  assert.equal(overlay.children[0].tagName, "IMG");
+  assert.equal(overlay.children[0].getAttribute("class"), "subtitle-image");
+  assert.equal(overlay.children[0].getAttribute("src"), "/subs/frame-001.png");
+  assert.equal(overlay.children[0].style.left, "5.208333333333334%");
+  assert.equal(overlay.children[0].style.top, "66.66666666666666%");
+  assert.equal(overlay.children[0].style.width, "89.58333333333334%");
+});
+
+// Memoryless legacy nudge: 0.92 behind / 1.08 ahead, snap past 5s drift. This
+// behavior now lives behind syncStrategy "nudge-legacy"; the default "nudge"
+// path routes through the parity-locked JS/WASM drift engine.
+test("bootstrap video follow sync nudges both ahead and behind without repeated play calls", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-sync-root";
+  let socket = null;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-sync-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge-legacy",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  video.paused = false;
+  video.ended = false;
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync", position: 10, playing: true, rate: 1, sentAtMS: 0 }) });
+  video.currentTime = 12;
+  socket.onmessage({ data: JSON.stringify({ type: "sync", position: 10, playing: true, rate: 1, sentAtMS: 0 }) });
+  assert.equal(video.playbackRate, 0.92);
+  assert.equal(video.playCalls.length, 0);
+
+  video.currentTime = 8;
+  socket.onmessage({ data: JSON.stringify({ type: "sync", position: 10, playing: true, rate: 1, sentAtMS: 0 }) });
+  assert.equal(video.playbackRate, 1.08);
+  assert.equal(video.playCalls.length, 0);
+});
+
+// Uses syncStrategy "nudge-legacy" to assert the memoryless 0.92 nudge; the
+// binary heartbeat/ping plumbing it also exercises is strategy-independent.
+test("bootstrap video follow sync consumes binary heartbeats and answers pings", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-binary-sync-root";
+  let socket = null;
+  let env;
+
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-binary-sync-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge-legacy",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  assert.equal(socket.binaryType, "arraybuffer");
+
+  const video = mount.firstChild;
+  video.paused = false;
+  video.ended = false;
+  video.currentTime = 22;
+  socket.onmessage({ data: theatreSyncHeartbeat({ position: 20, playing: true, viewerCount: 7 }) });
+  assert.equal(video.playbackRate, 0.92);
+  assert.equal(sharedSignalValue(env, "$video.viewerCount"), 7);
+
+  const ping = theatrePing(1706000000000);
+  socket.onmessage({ data: ping });
+  assert.equal(socket.sent.length, 1);
+  const pong = new Uint8Array(socket.sent[0]);
+  assert.equal(pong[0], 0x04);
+  assert.deepEqual(Array.from(pong.slice(1)), Array.from(new Uint8Array(ping).slice(1)));
+});
+
+test("video sync binary decode parses a 0x04 pong frame into an echoedTimestamp", () => {
+  // Extract the module-private decode helpers from the unminified source so we
+  // can exercise the new 0x04 case directly without a full DOM/brain mount.
+  const videoSource = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "30-tail.js"),
+    "utf8",
+  );
+  function extractFn(name) {
+    const marker = "function " + name + "(";
+    const start = videoSource.indexOf(marker);
+    assert.notEqual(start, -1, "missing source function " + name);
+    let depth = 0;
+    let seenBody = false;
+    for (let i = start; i < videoSource.length; i += 1) {
+      const ch = videoSource[i];
+      if (ch === "{") {
+        depth += 1;
+        seenBody = true;
+      } else if (ch === "}") {
+        depth -= 1;
+        if (seenBody && depth === 0) {
+          return videoSource.slice(start, i + 1);
+        }
+      }
+    }
+    throw new Error("unterminated source function " + name);
+  }
+
+  const factory = new Function(
+    extractFn("videoBytesFromRaw") +
+      "\n" +
+      extractFn("videoReadU32BE") +
+      "\n" +
+      "function videoReadFloat32BE() { return 0; }\n" +
+      "function videoEncodePong() { return null; }\n" +
+      extractFn("videoDecodeBinarySyncMessage") +
+      "\nreturn videoDecodeBinarySyncMessage;",
+  );
+  const decode = factory();
+
+  // Craft a 9-byte 0x04 frame carrying a u64 big-endian timestamp.
+  const timestamp = 1706000000000;
+  const buffer = new ArrayBuffer(9);
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  bytes[0] = 0x04;
+  view.setUint32(1, Math.floor(timestamp / 4294967296), false);
+  view.setUint32(5, timestamp % 4294967296, false);
+
+  const decoded = decode(buffer);
+  assert.deepEqual(decoded, { type: "pong", echoedTimestamp: timestamp });
+
+  // A short (sub-9-byte) 0x04 frame is rejected.
+  assert.equal(decode(new Uint8Array([0x04, 0x00, 0x00]).buffer), null);
+});
+
+test("bootstrap video follow sync honors prepare countdown before server play", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-countdown-root";
+  let socket = null;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-countdown-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-sync-overlay") === "true");
+  assert.ok(overlay);
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync_prepare", position: 14, start_at: Date.now() + 3000, countdown_ms: 3000 }) });
+  assert.equal(video.currentTime, 14);
+  assert.equal(video.paused, true);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.match(overlay.textContent, /Starting in/);
+  assert.equal(sharedSignalValue(env, "$video.syncPhase"), "countdown");
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync_play", position: 14, rate: 1, sentAtMS: 0 }) });
+  assert.equal(video.playCalls.length, 1);
+  assert.equal(video.paused, false);
+  assert.equal(overlay.hasAttribute("hidden"), true);
+});
+
+test("bootstrap video follow sync falls back to muted autoplay", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-muted-autoplay-root";
+  let socket = null;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-muted-autoplay-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            syncStrategy: "nudge-legacy",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  let firstPlay = true;
+  video.play = function() {
+    this.playCalls.push([]);
+    if (firstPlay) {
+      firstPlay = false;
+      this.paused = true;
+      return Promise.reject(new Error("autoplay blocked"));
+    }
+    this.paused = false;
+    return Promise.resolve();
+  };
+
+  socket.onmessage({ data: JSON.stringify({ type: "sync_play", position: 14, rate: 1, sentAtMS: 0 }) });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(video.playCalls.length, 2);
+  assert.equal(video.muted, true);
+  assert.equal(video.getAttribute("muted"), "true");
+  assert.equal(video.paused, false);
+  assert.equal(sharedSignalValue(env, "$video.muted"), true);
+  assert.equal(sharedSignalValue(env, "$video.error"), "");
+});
+
+test("bootstrap video follow sync shows cache progress and blocks local play", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-cache-wait-root";
+  let socket = null;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-cache-wait-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const video = mount.firstChild;
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-sync-overlay") === "true");
+  assert.ok(overlay);
+
+  socket.onmessage({
+    data: JSON.stringify({
+      type: "channel_status",
+      state: {
+        cache_paused: true,
+        transcode_progress: 42,
+        transcode_segments_finished: 123,
+      },
+    }),
+  });
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.match(overlay.textContent, /42%/);
+  assert.equal(sharedSignalValue(env, "$video.cacheWaiting"), true);
+
+  video.paused = false;
+  video.dispatchEvent({ type: "play", target: video });
+  assert.equal(video.paused, true);
+  assert.ok(video.pauseCalls.length >= 1);
+  assert.equal(sharedSignalValue(env, "$video.syncPhase"), "buffering");
+});
+
+test("bootstrap video follow sync treats bare cache waiting attributes as active", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-initial-cache-wait-root";
+  const fallback = new FakeElement("video", null);
+  fallback.setAttribute("data-gosx-video-cache-waiting", "");
+  fallback.setAttribute("data-gosx-video-cache-progress", "37");
+  fallback.setAttribute("data-gosx-video-cache-segments", "55");
+  mount.appendChild(fallback);
+  let socket = null;
+  let env;
+
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-initial-cache-wait-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket);
+  const overlay = mount.children.find((child) => child.getAttribute("data-gosx-video-sync-overlay") === "true");
+  assert.ok(overlay);
+  assert.equal(overlay.hasAttribute("hidden"), false);
+  assert.match(overlay.textContent, /37%/);
+  assert.equal(sharedSignalValue(env, "$video.cacheWaiting"), true);
+});
+
+test("bootstrap video subtitle warmup does not block sync connection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-subtitle-sync-root";
+  let socket = null;
+  let subtitleFetches = 0;
+  let env;
+
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/subs/en.vtt": () => {
+        subtitleFetches += 1;
+        return { status: 202, headers: { "Retry-After": "5" } };
+      },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SyncedSubtitleVideo",
+          kind: "video",
+          mountId: "video-subtitle-sync-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+            subtitleTrack: "en",
+            subtitleTracks: [
+              { id: "en", language: "en", title: "English", kind: "subtitles", src: "/subs/en.vtt" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.ok(socket, "expected websocket to connect before subtitle warmup finishes");
+  assert.equal(socket.binaryType, "arraybuffer");
+  assert.ok(subtitleFetches >= 1);
+  assert.equal(sharedSignalValue(env, "$video.subtitleStatus"), "warming");
+});
+
+test("bootstrap video engine owns hover interaction state", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hover-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "HoverVideo",
+          kind: "video",
+          mountId: "video-hover-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4" },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.equal(mount.getAttribute("data-gosx-video-interaction"), "active");
+  assert.equal(video.getAttribute("data-gosx-video-interaction"), "active");
+
+  video.paused = false;
+  video.ended = false;
+  mount.dispatchEvent({ type: "pointermove", target: mount });
+  assert.equal(sharedSignalValue(env, "$video.interaction"), "active");
+  assert.equal(timers.runDelay(2400), 1);
+  assert.equal(mount.getAttribute("data-gosx-video-interaction"), "idle");
+  assert.equal(video.getAttribute("data-gosx-video-interaction"), "idle");
+
+  mount.dispatchEvent({ type: "pointerenter", target: mount });
+  assert.equal(mount.getAttribute("data-gosx-video-interaction"), "active");
+  assert.equal(sharedSignalValue(env, "$video.interaction"), "active");
+});
+
+test("bootstrap video engines load HLS.js from the document runtime contract", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hls-root";
+  mount.width = 1280;
+  mount.height = 720;
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/runtime/vendor/hls.min.js": {
+        text: `window.__hlsLoads = [];
+window.Hls = function FakeHls() {
+  this.attachMedia = function(video) { this.video = video; };
+  this.loadSource = function(src) { window.__hlsLoads.push(src); };
+  this.on = function() {};
+  this.destroy = function() {};
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = {};`,
+      },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-hls-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.m3u8",
+          },
+        },
+      ],
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-video",
+      pattern: "GET /video",
+      path: "/video",
+      title: "Video",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: true,
+      navigation: false,
+    },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      runtimePath: "/runtime.wasm",
+      wasmExecPath: "/wasm_exec.js",
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.fetchCalls.some((call) => call.url === "/runtime/vendor/hls.min.js"), true);
+  assert.deepEqual(Array.from(env.context.__hlsLoads || []), ["/media/promo.m3u8"]);
+
+  const mounted = env.context.__gosx.engines.get("gosx-engine-0");
+  assert.ok(mounted);
+  assert.equal(mounted.handle.video.tagName, "VIDEO");
+  assert.equal(
+    mounted.handle.video.children.some((child) => child.tagName === "SOURCE" && String(child.getAttribute("src") || "").endsWith(".m3u8")),
+    false,
+  );
+});
+
+test("bootstrap video engines recover fatal HLS network and media errors", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hls-recovery-root";
+  mount.width = 1280;
+  mount.height = 720;
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/runtime/vendor/hls.min.js": {
+        text: `window.__hlsInstances = [];
+window.Hls = function FakeHls() {
+  this.handlers = {};
+  this.startLoadCalls = 0;
+  this.recoverMediaErrorCalls = 0;
+  this.attachMedia = function(video) { this.video = video; };
+  this.loadSource = function(src) { this.src = src; };
+  this.on = function(event, handler) { this.handlers[event] = handler; };
+  this.startLoad = function() { this.startLoadCalls += 1; };
+  this.recoverMediaError = function() { this.recoverMediaErrorCalls += 1; };
+  this.destroy = function() {};
+  window.__hlsInstances.push(this);
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = { ERROR: "hlsError" };
+window.Hls.ErrorTypes = { NETWORK_ERROR: "networkError", MEDIA_ERROR: "mediaError" };`,
+      },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PromoVideo",
+          kind: "video",
+          mountId: "video-hls-recovery-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.m3u8",
+          },
+        },
+      ],
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: {
+      id: "gosx-doc-video",
+      pattern: "GET /video",
+      path: "/video",
+      title: "Video",
+      status: 200,
+    },
+    enhancement: {
+      bootstrap: true,
+      runtime: true,
+      navigation: false,
+    },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      runtimePath: "/runtime.wasm",
+      wasmExecPath: "/wasm_exec.js",
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const hls = env.context.__hlsInstances[0];
+  assert.ok(hls, "expected fake hls instance");
+  assert.equal(typeof hls.handlers.hlsError, "function");
+
+  hls.handlers.hlsError(null, { fatal: true, type: "networkError", details: "manifestLoadError" });
+  await flushAsyncWork();
+  assert.equal(hls.startLoadCalls, 1);
+  assert.equal(hls.recoverMediaErrorCalls, 0);
+  assert.equal(sharedSignalValue(env, "$video.error"), "manifestLoadError");
+
+  hls.handlers.hlsError(null, { fatal: true, type: "mediaError", details: "bufferAppendError" });
+  await flushAsyncWork();
+  assert.equal(hls.startLoadCalls, 1);
+  assert.equal(hls.recoverMediaErrorCalls, 1);
+  assert.equal(sharedSignalValue(env, "$video.error"), "bufferAppendError");
+
+  hls.handlers.hlsError(null, { fatal: true, type: "otherError", details: "levelLoadError" });
+  await flushAsyncWork();
+  assert.equal(hls.startLoadCalls, 1);
+  assert.equal(hls.recoverMediaErrorCalls, 1);
+  assert.equal(sharedSignalValue(env, "$video.error"), "levelLoadError");
+});
+
+const VIDEO_PRIMITIVES_FAKE_HLS_SCRIPT = `window.__hlsInstances = [];
+window.Hls = function FakeHls(config) {
+  const self = this;
+  self.config = config;
+  self.handlers = {};
+  self.audioTracks = [];
+  self.levels = [];
+  self.audioTrackSets = [];
+  self.nextLevelSets = [];
+  self._audioTrack = -1;
+  self._currentLevel = -1;
+  self._nextLevel = -1;
+  self.attachMedia = function(video) { self.video = video; };
+  self.loadSource = function(src) { self.src = src; };
+  self.on = function(event, handler) { self.handlers[event] = handler; };
+  self.destroy = function() {};
+  Object.defineProperty(self, "audioTrack", {
+    get: function() { return self._audioTrack; },
+    set: function(value) { self._audioTrack = value; self.audioTrackSets.push(value); },
+  });
+  Object.defineProperty(self, "currentLevel", {
+    get: function() { return self._currentLevel; },
+    set: function(value) { self._currentLevel = value; },
+  });
+  Object.defineProperty(self, "nextLevel", {
+    get: function() { return self._nextLevel; },
+    set: function(value) { self._nextLevel = value; self.nextLevelSets.push(value); },
+  });
+  window.__hlsInstances.push(self);
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = {
+  MANIFEST_PARSED: "hlsManifestParsed",
+  SUBTITLE_TRACKS_UPDATED: "hlsSubtitleTracksUpdated",
+  ERROR: "hlsError",
+  AUDIO_TRACKS_UPDATED: "hlsAudioTracksUpdated",
+  AUDIO_TRACK_SWITCHED: "hlsAudioTrackSwitched",
+  LEVELS_UPDATED: "hlsLevelsUpdated",
+  LEVEL_SWITCHED: "hlsLevelSwitched",
+  LEVEL_LOADED: "hlsLevelLoaded",
+};`;
+
+test("bootstrap video engine exposes HLS audio tracks and applies audioTrack selection", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-audio-tracks-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime/vendor/hls.min.js": { text: VIDEO_PRIMITIVES_FAKE_HLS_SCRIPT },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "AudioTracksVideo",
+          kind: "video",
+          mountId: "video-audio-tracks-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.m3u8", audioTrack: "1" },
+        },
+      ],
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: { id: "gosx-doc-video", pattern: "GET /video", path: "/video", title: "Video", status: 200 },
+    enhancement: { bootstrap: true, runtime: true, navigation: false },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const hls = env.context.__hlsInstances[0];
+  assert.ok(hls, "expected fake hls instance");
+  const tracks = [
+    { id: 0, name: "English", lang: "en" },
+    { id: 1, name: "Spanish", lang: "es" },
+  ];
+  hls.audioTracks = tracks;
+  hls.handlers.hlsAudioTracksUpdated(null, { audioTracks: tracks });
+  await flushAsyncWork();
+
+  // The engine-side subscribeVideoSignal("audioTrack", ...) applies the
+  // island's requested track once it's known which index the requested id
+  // maps to.
+  assert.deepEqual(Array.from(hls.audioTrackSets), [1]);
+  assert.deepEqual(sharedSignalValue(env, "$video.audioTracks"), [
+    { id: "0", index: 0, label: "English", language: "en", active: false },
+    { id: "1", index: 1, label: "Spanish", language: "es", active: true },
+  ]);
+
+  env.context.__gosx_notify_shared_signal("$video.audioTrack", JSON.stringify("0"));
+  await flushAsyncWork();
+  assert.deepEqual(Array.from(hls.audioTrackSets), [1, 0]);
+  assert.deepEqual(sharedSignalValue(env, "$video.audioTracks"), [
+    { id: "0", index: 0, label: "English", language: "en", active: true },
+    { id: "1", index: 1, label: "Spanish", language: "es", active: false },
+  ]);
+});
+
+test("bootstrap video engine exposes HLS quality levels and switches via nextLevel", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-quality-levels-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/runtime/vendor/hls.min.js": { text: VIDEO_PRIMITIVES_FAKE_HLS_SCRIPT },
+    },
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "QualityLevelsVideo",
+          kind: "video",
+          mountId: "video-quality-levels-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.m3u8" },
+        },
+      ],
+    },
+  });
+
+  const contract = env.document.createElement("script");
+  contract.id = "gosx-document";
+  contract.setAttribute("type", "application/json");
+  contract.setAttribute("data-gosx-document-contract", "");
+  contract.textContent = JSON.stringify({
+    version: 1,
+    page: { id: "gosx-doc-video", pattern: "GET /video", path: "/video", title: "Video", status: 200 },
+    enhancement: { bootstrap: true, runtime: true, navigation: false },
+    assets: {
+      bootstrapMode: "full",
+      manifest: true,
+      bootstrapPath: "/bootstrap.js",
+      hlsPath: "/runtime/vendor/hls.min.js",
+      engines: 1,
+    },
+  });
+  appendManagedHead(env.document, [contract]);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const hls = env.context.__hlsInstances[0];
+  assert.ok(hls, "expected fake hls instance");
+  const levels = [
+    { height: 480, width: 854, bitrate: 800000, name: "480p" },
+    { height: 1080, width: 1920, bitrate: 3000000, name: "1080p" },
+  ];
+  hls.levels = levels;
+  hls.handlers.hlsLevelsUpdated(null, { levels });
+  await flushAsyncWork();
+
+  assert.deepEqual(sharedSignalValue(env, "$video.qualityLevels"), [
+    { index: 0, height: 480, width: 854, bitrate: 800000, name: "480p", active: false },
+    { index: 1, height: 1080, width: 1920, bitrate: 3000000, name: "1080p", active: false },
+  ]);
+  assert.equal(sharedSignalValue(env, "$video.qualityLevel"), -1);
+
+  env.context.__gosx_notify_shared_signal("$video.qualityLevel", JSON.stringify(1));
+  await flushAsyncWork();
+  // nextLevel (not currentLevel) must be used so a manual quality switch
+  // doesn't force an immediate buffer flush/stall.
+  assert.deepEqual(Array.from(hls.nextLevelSets), [1]);
+
+  hls._currentLevel = 1;
+  hls.handlers.hlsLevelSwitched(null, { level: 1 });
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.qualityLevel"), 1);
+  assert.deepEqual(sharedSignalValue(env, "$video.qualityLevels"), [
+    { index: 0, height: 480, width: 854, bitrate: 800000, name: "480p", active: false },
+    { index: 1, height: 1080, width: 1920, bitrate: 3000000, name: "1080p", active: true },
+  ]);
+});
+
+test("bootstrap video engine reports seekable range, live state, and live edge lag", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-seekable-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "SeekableVideo",
+          kind: "video",
+          mountId: "video-seekable-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.ok(video);
+  video.seekable = {
+    length: 1,
+    start() { return 5; },
+    end() { return 95; },
+  };
+  video.currentTime = 40;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.deepEqual(sharedSignalValue(env, "$video.seekable"), [5, 95]);
+  assert.equal(sharedSignalValue(env, "$video.isLive"), false);
+  assert.equal(sharedSignalValue(env, "$video.liveEdgeLag"), null);
+
+  video.duration = Infinity;
+  video.dispatchEvent({ type: "timeupdate", target: video });
+  await flushAsyncWork();
+
+  assert.equal(sharedSignalValue(env, "$video.isLive"), true);
+  assert.equal(sharedSignalValue(env, "$video.liveEdgeLag"), 55);
+});
+
+test("bootstrap video engine enters and exits picture-in-picture via command signal", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-pip-root";
+
+  let env;
+  env = createContext({
+    elements: [mount],
+    onSetSharedSignal(name, payload) {
+      if (env && typeof env.context.__gosx_notify_shared_signal === "function") {
+        env.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "PiPVideo",
+          kind: "video",
+          mountId: "video-pip-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.ok(video);
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("enter-pip"));
+  await flushAsyncWork();
+  assert.equal(sharedSignalValue(env, "$video.error"), "picture-in-picture unsupported");
+  assert.equal(sharedSignalValue(env, "$video.pip"), false);
+
+  env.document.pictureInPictureEnabled = true;
+  video.requestPictureInPicture = function() {
+    video.requestPictureInPictureCalls = (video.requestPictureInPictureCalls || 0) + 1;
+    env.document.pictureInPictureElement = video;
+    return Promise.resolve();
+  };
+  env.document.exitPictureInPicture = function() {
+    env.document.pictureInPictureElement = null;
+    return Promise.resolve();
+  };
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("enter-pip"));
+  await flushAsyncWork();
+  assert.equal(video.requestPictureInPictureCalls, 1);
+  assert.equal(sharedSignalValue(env, "$video.pip"), true);
+
+  env.context.__gosx_notify_shared_signal("$video.command", JSON.stringify("toggle-pip"));
+  await flushAsyncWork();
+  assert.equal(env.document.pictureInPictureElement, null);
+  assert.equal(sharedSignalValue(env, "$video.pip"), false);
+});
+
+test("bootstrap video engine lockInput swallows click/keyboard transport interaction and hides native controls", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-lock-root";
+
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-0",
+          component: "LockedVideo",
+          kind: "video",
+          mountId: "video-lock-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4", controls: true, lockInput: true },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const video = mount.firstChild;
+  assert.ok(video);
+  assert.equal(video.hasAttribute("controls"), false);
+  assert.equal(sharedSignalValue(env, "$video.inputLocked"), true);
+
+  let clickPrevented = false;
+  let clickStopped = false;
+  video.dispatchEvent({
+    type: "click",
+    target: video,
+    preventDefault() { clickPrevented = true; },
+    stopPropagation() { clickStopped = true; },
+  });
+  assert.equal(clickPrevented, true);
+  assert.equal(clickStopped, true);
+
+  let spacePrevented = false;
+  video.dispatchEvent({
+    type: "keydown",
+    target: video,
+    key: " ",
+    preventDefault() { spacePrevented = true; },
+    stopPropagation() {},
+  });
+  assert.equal(spacePrevented, true);
+
+  let letterPrevented = false;
+  video.dispatchEvent({
+    type: "keydown",
+    target: video,
+    key: "a",
+    preventDefault() { letterPrevented = true; },
+    stopPropagation() {},
+  });
+  assert.equal(letterPrevented, false);
+});
+
+test("bootstrap video engine persists and restores playback preferences when persistPrefs is set", async () => {
+  class FakeLocalStorage {
+    constructor() {
+      this.map = new Map();
+    }
+
+    getItem(key) {
+      return this.map.has(key) ? this.map.get(key) : null;
+    }
+
+    setItem(key, value) {
+      this.map.set(key, String(value));
+    }
+
+    removeItem(key) {
+      this.map.delete(key);
+    }
+  }
+
+  const storage = new FakeLocalStorage();
+  const mountA = new FakeElement("div", null);
+  mountA.id = "video-persist-root-a";
+
+  let envA;
+  envA = createContext({
+    elements: [mountA],
+    onSetSharedSignal(name, payload) {
+      if (envA && typeof envA.context.__gosx_notify_shared_signal === "function") {
+        envA.context.__gosx_notify_shared_signal(name, payload);
+      }
+      return null;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-persist",
+          component: "PersistVideoA",
+          kind: "video",
+          mountId: "video-persist-root-a",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4", persistPrefs: true },
+        },
+      ],
+    },
+  });
+  envA.context.localStorage = storage;
+
+  runScript(bootstrapSource, envA.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  envA.context.__gosx_notify_shared_signal("$video.volume", JSON.stringify(0.3));
+  await flushAsyncWork();
+  envA.context.__gosx_notify_shared_signal("$video.mute", JSON.stringify(true));
+  await flushAsyncWork();
+
+  const stored = JSON.parse(storage.getItem("gosx:video:gosx-engine-persist:prefs"));
+  assert.equal(stored.volume, 0.3);
+  assert.equal(stored.mute, true);
+
+  // A fresh mount (simulating a page reload) with the same persistKey
+  // namespace (defaulted from the engine id) restores the saved prefs
+  // through the normal $video.volume / $video.mute signal path.
+  const mountB = new FakeElement("div", null);
+  mountB.id = "video-persist-root-b";
+
+  const envB = createContext({
+    elements: [mountB],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-persist",
+          component: "PersistVideoB",
+          kind: "video",
+          mountId: "video-persist-root-b",
+          capabilities: ["video", "fetch", "audio"],
+          props: { src: "/media/promo.mp4", persistPrefs: true },
+        },
+      ],
+    },
+  });
+  envB.context.localStorage = storage;
+
+  runScript(bootstrapSource, envB.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const videoB = mountB.firstChild;
+  assert.ok(videoB);
+  assert.equal(videoB.volume, 0.3);
+  assert.equal(sharedSignalValue(envB, "$video.muted"), true);
+});
+
+test("bootstrap decompresses compressedPositions for Scene3D points", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-decompress-root";
+
+  // Create a compressedPositions payload matching Go's scalar quantization format.
+  // 6 floats: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+  // min=1.0, max=6.0, 2-bit quantization (4 levels: 0,1,2,3)
+  // Indices: 0, floor((2-1)/(6-1)*3+0.5)=1, 1, 2, 2, 3
+  // step = (6-1)/3 = 1.6667
+  // Packed 2-bit: indices [0,1,1,2,2,3] → byte layout
+  // byte 0: idx0(00) | idx1(01) | idx2(01) | idx3(10) = 0b10010100 = 0x94
+  // byte 1: idx4(10) | idx5(11) | pad      | pad      = 0b00001110 = 0x0E
+  const packed = Buffer.from([0x94, 0x0E]).toString("base64");
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-decompress",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-decompress-root",
+          props: {
+            width: 200,
+            height: 200,
+            background: "#000",
+            camera: { x: 0, y: 0, z: 5, fov: 72 },
+            scene: {
+              points: [
+                {
+                  id: "compressed-cloud",
+                  count: 2,
+                  color: "#fff",
+                  size: 2,
+                  compressedPositions: [
+                    {
+                      packed: packed,
+                      norm: 1.0,    // min value
+                      maxVal: 6.0,  // max value
+                      dim: 6,
+                      bitWidth: 2,
+                      count: 6,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  // The decompressor should have replaced compressedPositions with positions.
+  // Verify the engine mounted and the scene rendered without errors.
+  assert.equal(env.consoleLogs.error.length, 0, "expected no errors, got: " + JSON.stringify(env.consoleLogs.error));
+  const engineState = env.context.__gosx.engines.get("gosx-engine-decompress");
+  assert.ok(engineState, "expected engine to mount");
+});
+
+test("selective runtime loads islands feature and shared wasm only when islands are declared", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  wrapper.id = "gosx-island-runtime";
+  componentRoot.appendChild(new FakeTextNode("0", null));
+  wrapper.appendChild(componentRoot);
+
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/counter.json": { text: '{"name":"Counter"}' },
+      "/gosx/bootstrap-feature-islands.js": { text: bootstrapFeatureIslandsSource },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-runtime",
+          component: "Counter",
+          props: { initial: 1 },
+          programRef: "/counter.json",
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-islands.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
+  assert.equal(env.context.__gosx.islands.size, 1);
+});
+
+test("selective runtime loads islands feature for compute islands", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/fight-controller.json": { text: '{"name":"FightController"}' },
+      "/gosx/bootstrap-feature-islands.js": { text: bootstrapFeatureIslandsSource },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      computeIslands: [
+        {
+          id: "gosx-compute-runtime",
+          component: "FightController",
+          props: { match: "abc" },
+          programRef: "/fight-controller.json",
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.computeHydrateCalls.length, 1);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-islands.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), false);
+  assert.equal(env.context.__gosx.computeIslands.size, 1);
+});
+
+test("selective runtime mounts native JS engines without loading the shared wasm runtime", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "engine-root";
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      Painter(context) {
+        context.mount.setAttribute("data-mounted", "true");
+        return {
+          dispose() {
+            context.mount.setAttribute("data-disposed", "true");
+          },
+        };
+      },
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-runtime",
+          component: "Painter",
+          kind: "surface",
+          mountId: "engine-root",
+          jsExport: "Painter",
+          props: { color: "#8de1ff" },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  const enginesScript = env.document.head.children.find((child) =>
+    child.tagName === "SCRIPT" && child.src === "/gosx/bootstrap-feature-engines.js"
+  );
+  assert.equal(enginesScript?.getAttribute("data-gosx-script"), "feature-engines");
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.getAttribute("data-mounted"), "true");
+
+  await env.context.__gosx_dispose_page();
+  assert.equal(mount.getAttribute("data-disposed"), "true");
+});
+
+// Regression test for the split feature-bundle build: bootstrap-feature-engines.js
+// runs in its own IIFE (see 26b-feature-engines-prefix.js), separate from the
+// runtime bundle's closure. normalizeEngineRenderBundle (concatenated in from
+// 30-tail.js's "engine mounting" section) normalizes the camera/label/html/
+// surface fields of ANY runtime:"shared" engine's render bundle — not just
+// GoSXScene3D's — via sceneRenderCamera, sceneLabelClassName,
+// normalizeTextLayoutOverflow, normalizeSceneLabelCollision,
+// normalizeSceneLabelWhiteSpace, normalizeSceneLabelAlign,
+// normalizeSceneHTMLMode, normalizeSceneHTMLPointerEvents, and clamp01 — all
+// of which live in 00-textlayout.js / 10-runtime-scene-core.js /
+// 11-scene-math.js, none of which bootstrap-feature-engines.js carries.
+//
+// Before the fix, a page whose ONLY shared-runtime engine is a non-Scene3D
+// surface (so bootstrap-feature-scene3d.js never loads — manifestFeatureNames
+// only requests "scene3d" for a GoSXScene3D component) threw
+// "ReferenceError: sceneRenderCamera is not defined" (or one of the sibling
+// normalizers) the first time that engine's render bundle carried a camera,
+// label, or html entry. decodeEngineRenderBundle's try/catch silently
+// swallowed it and returned null, dropping the entire render bundle every
+// frame with no visible error to the app.
+test("shared-runtime engine render bundle normalizes camera/labels/html/surfaces under the split runtime+engines-only bundles (no scene3d)", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "shared-surface-root";
+
+  const renderedBundles = [];
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      // A custom (non-Scene3D) runtime:"shared" engine factory, mirroring how
+      // a third-party //gosx:engine that opts into the shared WASM runtime
+      // would drive its own render loop via ctx.runtime.renderFrame().
+      TestSharedSurface(context) {
+        context.mount.setAttribute("data-mounted", "true");
+        const bundle = context.runtime.renderFrame(0, 320, 180);
+        renderedBundles.push(bundle);
+        return { dispose() {} };
+      },
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-shared-surface",
+          component: "TestSharedSurface",
+          kind: "surface",
+          mountId: "shared-surface-root",
+          runtime: "shared",
+          jsExport: "TestSharedSurface",
+          props: { width: 320, height: 180 },
+        },
+      ],
+    },
+    onRenderEngine: () => JSON.stringify({
+      camera: { kind: "orthographic", x: 1, y: 2, z: 3, zoom: 2 },
+      labels: [
+        {
+          id: "lbl-1",
+          text: "Hi",
+          position: { x: 1, y: 2 },
+          overflow: "ellipsis",
+          collision: "allow",
+          whiteSpace: "pre",
+          textAlign: "left",
+        },
+      ],
+      html: [
+        {
+          id: "html-1",
+          target: "t1",
+          mode: "texture",
+          html: "<b>hi</b>",
+          pointerEvents: "auto",
+          opacity: 1.4, // out-of-range on purpose — exercises clamp01
+        },
+      ],
+      positions: [0, 1, 2],
+      colors: [1, 1, 1, 1],
+      surfaces: [{ id: "surf-1", sourceKind: "video", textureKey: "tex-1" }],
+    }),
+  });
+
+  const uncaughtErrors = [];
+  env.context.addEventListener("error", (event) => {
+    uncaughtErrors.push(event && event.error ? event.error : event);
+  });
+
+  // The split-bundle combo that reproduces the bug: the runtime chunk plus
+  // the "engines" feature chunk ONLY. bootstrap-feature-scene3d.js never
+  // loads (no GoSXScene3D entry in the manifest), so anything that used to
+  // rely on Scene3D's chunk having already populated window.__gosx_runtime_api
+  // must resolve on its own.
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.deepEqual(uncaughtErrors, [], "mounting the shared-runtime surface must not throw");
+  assert.equal(env.consoleLogs.error.length, 0, "expected no console.error, got: " + JSON.stringify(env.consoleLogs.error));
+  assert.equal(mount.getAttribute("data-mounted"), "true");
+  assert.equal(renderedBundles.length, 1);
+
+  const bundle = renderedBundles[0];
+  assert.ok(bundle, "renderFrame must return a normalized bundle, not null");
+  assert.equal(bundle.camera.kind, "orthographic");
+  assert.equal(bundle.camera.zoom, 2);
+  assert.equal(bundle.labels.length, 1);
+  assert.equal(bundle.labels[0].overflow, "ellipsis");
+  assert.equal(bundle.labels[0].collision, "allow");
+  assert.equal(bundle.labels[0].whiteSpace, "pre");
+  assert.equal(bundle.labels[0].textAlign, "left");
+  assert.equal(bundle.html.length, 1);
+  assert.equal(bundle.html[0].mode, "texture");
+  assert.equal(bundle.html[0].pointerEvents, "auto");
+  assert.equal(bundle.html[0].opacity, 1, "clamp01 must clamp opacity to 1");
+  assert.equal(bundle.surfaces.length, 1);
+  assert.equal(bundle.surfaces[0].sourceKind, "video");
+
+  await env.context.__gosx_dispose_page();
+});
+
+test("selective runtime mounts builtin video sync without the hub feature chunk", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-runtime-root";
+  let socket = null;
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    createWebSocket(url) {
+      socket = {
+        url,
+        readyState: 1,
+        sent: [],
+        closeCalls: 0,
+        send(payload) {
+          this.sent.push(payload);
+        },
+        close() {
+          this.closeCalls += 1;
+          this.readyState = 3;
+        },
+      };
+      return socket;
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-video",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-runtime-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.mp4",
+            sync: "/api/theatre/ROOM01/ws",
+            syncMode: "follow",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.firstChild && mount.firstChild.tagName, "VIDEO");
+  assert.ok(socket, "expected video sync websocket to connect");
+  assert.equal(socket.url, "ws://localhost:3000/api/theatre/ROOM01/ws");
+  assert.equal(
+    env.consoleLogs.error.some((entry) => entry.includes("failed to mount engine gosx-engine-video")),
+    false,
+  );
+});
+
+test("selective runtime video engines load HLS.js through the feature API", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "video-hls-runtime-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/hls.min.js": {
+        text: `window.__hlsLoads = [];
+window.Hls = function FakeHls() {
+  this.attachMedia = function(video) { this.video = video; };
+  this.loadSource = function(src) { window.__hlsLoads.push(src); };
+  this.on = function() {};
+  this.destroy = function() {};
+};
+window.Hls.isSupported = function() { return true; };
+window.Hls.Events = {};`,
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-video-hls",
+          component: "SyncedVideo",
+          kind: "video",
+          mountId: "video-hls-runtime-root",
+          capabilities: ["video", "fetch", "audio"],
+          props: {
+            src: "/media/promo.m3u8",
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/hls.min.js"), true);
+  assert.deepEqual(Array.from(env.context.__hlsLoads || []), ["/media/promo.m3u8"]);
+  assert.equal(env.context.__gosx.engines.size, 1);
+  const mounted = env.context.__gosx.engines.get("gosx-engine-video-hls");
+  assert.ok(mounted);
+  assert.equal(
+    mounted.handle.video.children.some((child) => child.tagName === "SOURCE" && String(child.getAttribute("src") || "").endsWith(".m3u8")),
+    false,
+  );
+  assert.equal(
+    env.consoleLogs.error.some((entry) => entry.includes("failed to mount engine gosx-engine-video-hls")),
+    false,
+  );
+});
+
+test("bootstrap blocks engines when required browser capabilities are missing", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "strict-engine-root";
+  let factoryCalls = 0;
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      StrictRenderer() {
+        factoryCalls += 1;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-strict",
+          component: "StrictRenderer",
+          kind: "surface",
+          mountId: "strict-engine-root",
+          props: {},
+          capabilities: ["canvas", "webgl"],
+          requiredCapabilities: ["webgl"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(factoryCalls, 0);
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.getAttribute("data-gosx-engine-capability-state"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-engine-required-capabilities"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-engine-missing-capabilities"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-runtime-issue"), "capability");
+  assert.equal(mount.getAttribute("data-gosx-fallback-active"), "unsupported");
+  assert.equal(mount.children.length, 1);
+  assert.equal(mount.children[0].getAttribute("data-gosx-engine-unsupported"), "true");
+  assert.ok(mount.children[0].textContent.includes("current browser"));
+
+  const issues = env.context.__gosx.listIssues();
+  assert.equal(issues.some((issue) => issue.scope === "engine" && issue.type === "capability" && issue.source === "gosx-engine-strict"), true);
+});
+
+test("bootstrap exposes required capability status to mounted engines", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "strict-ready-root";
+  const captured = {};
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    engineFactories: {
+      StrictReady(ctx) {
+        captured.requiredCapabilities = ctx.requiredCapabilities.slice();
+        captured.capabilityStatus = ctx.capabilityStatus;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-strict-ready",
+          component: "StrictReady",
+          kind: "surface",
+          mountId: "strict-ready-root",
+          props: {},
+          capabilities: ["canvas", "webgl"],
+          requiredCapabilities: ["webgl"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.getAttribute("data-gosx-engine-capability-state"), "ready");
+  assert.equal(mount.getAttribute("data-gosx-engine-supported-capabilities"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-engine-missing-capabilities"), null);
+  assert.deepEqual(Array.from(captured.requiredCapabilities), ["webgl"]);
+  assert.deepEqual(Array.from(captured.capabilityStatus.required), ["webgl"]);
+  assert.deepEqual(Array.from(captured.capabilityStatus.missing), []);
+  assert.deepEqual(Array.from(env.context.__gosx.engines.get("gosx-engine-strict-ready").requiredCapabilities), ["webgl"]);
+});
+
+test("bootstrap gates engines on negotiated WebGPU feature capabilities", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "webgpu-feature-root";
+  const captured = {};
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    webgpuAdapter: {
+      features: new Set(["timestamp-query", "shader-f16"]),
+      limits: {
+        maxTextureDimension2D: 8192,
+      },
+      requestDevice: async (descriptor = {}) => ({
+        lost: new Promise(() => {}),
+        features: new Set(descriptor.requiredFeatures || []),
+        limits: {
+          maxTextureDimension2D: 4096,
+        },
+      }),
+    },
+    engineFactories: {
+      WebGPUFeatureEngine(ctx) {
+        captured.status = ctx.capabilityStatus;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-feature",
+          component: "WebGPUFeatureEngine",
+          kind: "surface",
+          mountId: "webgpu-feature-root",
+          requiredCapabilities: ["webgpu", "webgpu:timestamp-query", "webgpu:limit:maxTextureDimension2D>=4096", "webgpu:adapter-limit:maxTextureDimension2D>=8192"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(mount.getAttribute("data-gosx-engine-capability-state"), "ready");
+  assert.equal(mount.getAttribute("data-gosx-engine-supported-capabilities"), "webgpu webgpu:timestamp-query webgpu:limit:maxtexturedimension2d>=4096 webgpu:adapter-limit:maxtexturedimension2d>=8192");
+  assert.deepEqual(Array.from(captured.status.required), ["webgpu", "webgpu:timestamp-query", "webgpu:limit:maxtexturedimension2d>=4096", "webgpu:adapter-limit:maxtexturedimension2d>=8192"]);
+  assert.deepEqual(Array.from(captured.status.missing), []);
+});
+
+test("selective runtime connects hubs without loading the shared wasm runtime", async () => {
+  const sockets = [];
+  const fetchRoutes = {
+    "/gosx/assets/runtime/bootstrap-feature-hubs.hashed.js": { text: bootstrapFeatureHubsSource },
+  };
+  const env = createContext({
+    createWebSocket(url) {
+      const socket = {
+        url,
+        closeCalled: false,
+        close() {
+          this.closeCalled = true;
+        },
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    fetchRoutes,
+    manifest: {
+      hubs: [
+        {
+          id: "gosx-hub-runtime",
+          name: "presence",
+          path: "/gosx/hub/presence",
+          bindings: [{ event: "snapshot", signal: "$presence" }],
+        },
+      ],
+    },
+  });
+  const preload = env.document.createElement("link");
+  preload.setAttribute("rel", "preload");
+  preload.setAttribute("as", "script");
+  preload.setAttribute("href", "/gosx/assets/runtime/bootstrap-feature-hubs.hashed.js");
+  env.document.head.appendChild(preload);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/assets/runtime/bootstrap-feature-hubs.hashed.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
+  assert.equal(sockets.length, 1);
+  assert.equal(String(sockets[0].url).includes("/gosx/hub/presence"), true);
+});
+
+test("engine factory context does not receive window or document", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scope-test-root";
+
+  const capturedCtx = {};
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      ScopeTest(ctx) {
+        capturedCtx.hasWindow = "window" in ctx;
+        capturedCtx.hasDocument = "document" in ctx;
+        capturedCtx.windowValue = ctx.window;
+        capturedCtx.documentValue = ctx.document;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-scope",
+          component: "ScopeTest",
+          kind: "surface",
+          mountId: "scope-test-root",
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(capturedCtx.hasWindow, false, "ctx must not expose window");
+  assert.equal(capturedCtx.hasDocument, false, "ctx must not expose document");
+  assert.equal(capturedCtx.windowValue, undefined, "ctx.window must be undefined");
+  assert.equal(capturedCtx.documentValue, undefined, "ctx.document must be undefined");
+});
+
+test("engine factory context does not receive activateInputProviders", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "input-scope-root";
+
+  const capturedCtx = {};
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      InputScopeTest(ctx) {
+        capturedCtx.hasActivateInputProviders = "activateInputProviders" in ctx;
+        capturedCtx.hasReleaseInputProviders = "releaseInputProviders" in ctx;
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-input-scope",
+          component: "InputScopeTest",
+          kind: "surface",
+          mountId: "input-scope-root",
+          capabilities: [],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(capturedCtx.hasActivateInputProviders, false, "ctx must not expose activateInputProviders");
+  assert.equal(capturedCtx.hasReleaseInputProviders, false, "ctx must not expose releaseInputProviders");
+});
+
+test("engine factory context does not receive activateInputProviders even with input capabilities", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "input-cap-root";
+
+  const capturedCtx = {};
+
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      InputCapTest(ctx) {
+        capturedCtx.hasActivateInputProviders = "activateInputProviders" in ctx;
+        capturedCtx.capabilities = ctx.capabilities.slice();
+        return { dispose() {} };
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-input-cap",
+          component: "InputCapTest",
+          kind: "surface",
+          mountId: "input-cap-root",
+          capabilities: ["keyboard", "pointer", "gamepad"],
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 1);
+  assert.equal(raf.count(), 1, "gamepad input provider should poll while the engine is mounted");
+  assert.deepEqual(capturedCtx.capabilities, ["keyboard", "pointer", "gamepad"]);
+  assert.equal(capturedCtx.hasActivateInputProviders, false, "ctx must not expose activateInputProviders even with input capabilities");
+  await env.context.__gosx_dispose_page();
+  assert.equal(raf.count(), 0, "page disposal should release the gamepad input provider RAF");
+});
+
+// chooseSceneBackend — backendCaps verdict tests
+// The helper is exposed on window.__gosx_choose_scene_backend after running the
+// main bootstrap script (which includes 20-scene-mount.js).
+
+test("chooseSceneBackend selects webgl when backendCaps.capable==[webgl] despite preferWebGPU", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgl"],
+    degraded: {},
+    reasons: [{ feature: "skinning", excludes: "webgpu" }],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, "webgl", "backend should be webgl (webgpu excluded by backendCaps)");
+  assert.ok(result.fallbackReason.length > 0, "fallbackReason should be non-empty when downgraded from webgpu");
+  assert.equal(result.fallbackReason, "skinning", "fallbackReason should be derived from the exclusion reason");
+});
+
+test("chooseSceneBackend selects webgpu and records degraded features when ibl is listed", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgpu", "webgl"],
+    degraded: { webgpu: ["ibl"] },
+    reasons: [{ feature: "ibl", degrades: "webgpu" }],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, "webgpu", "backend should be webgpu (it is in capable[])");
+  assert.equal(result.fallbackReason, "", "no fallbackReason when webgpu is selected");
+  assert.deepEqual(result.degraded, ["ibl"], "ibl should be listed in degraded features");
+});
+
+test("chooseSceneBackend falls back to webgl when webgpu is capable but unavailable at runtime", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgpu", "webgl"],
+    degraded: {},
+    reasons: [],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: false, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, "webgl", "backend should be webgl when webgpu is unavailable at runtime");
+  assert.equal(result.fallbackReason, "webgpu-unavailable", "fallbackReason should be webgpu-unavailable");
+});
+
+test("chooseSceneBackend does not invent webgl for webgpu-only backendCaps", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const backendCaps = {
+    capable: ["webgpu"],
+    degraded: {},
+    reasons: [{ feature: "water-simulation", excludes: "webgl" }],
+  };
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: false, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null, "result should not be null");
+  assert.equal(result.backend, null, "backend must stay unavailable when only webgpu is capable");
+  assert.equal(result.fallbackReason, "no-capable-backend", "fallbackReason should report that no capable backend is available");
+});
+
+test("Scene3D renderer recovery respects backendCaps fallbacks", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(source, /function restoreSceneWebGLRenderer\(reason\) \{[\s\S]*sceneBackendCapsAllowsKind\(sceneBackendCapsOf\(props\), "webgl"\)/);
+  assert.match(source, /const allowWebGLFallback = sceneBackendCapsAllowsKind\(backendCaps, "webgl"\)/);
+  assert.match(source, /const allowCanvasFallback = sceneBackendCapsAllowsKind\(backendCaps, "canvas2d"\)/);
+  assert.match(source, /if \(!allowWebGLFallback && !allowCanvasFallback\) \{[\s\S]*renderer-fallback-disallowed/);
+  assert.match(source, /if \(!allowCanvasFallback\) \{[\s\S]*renderer-canvas-fallback-disallowed/);
+});
+
+test("Scene3D WebGPU water debug gates isolate update and draw stages", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  assert.match(source, /new URLSearchParams\(window\.location\.search\)\.get\("gosx-water-debug"\)/);
+  assert.match(source, /function sceneWebGPUWaterDebugSkipsUpdate\(mode\) \{[\s\S]*no-water[\s\S]*no-update/);
+  assert.match(source, /function sceneWebGPUWaterDebugSkipsDraw\(mode\) \{[\s\S]*compute-only[\s\S]*no-draw/);
+  assert.match(source, /sceneWebGPUWaterDebugSkipsUpdate\(waterDebugMode\)[\s\S]*updateWaterSystems\(\[\]/);
+  assert.match(source, /hasWaterData && !sceneWebGPUWaterDebugSkipsDraw\(waterDebugMode\)/);
+});
+
+test("chooseSceneBackend returns null (backward-compat) when backendCaps is absent", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const result = choose(null, { preferWebGPU: true }, { webgpu: true, webgl: true });
+  assert.equal(result, null, "null backendCaps must return null so caller uses legacy path");
+});
+
+test("chooseSceneBackend honours forceWebGL override even when webgpu is in capable[]", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+
+  const backendCaps = { capable: ["webgpu", "webgl"], degraded: {}, reasons: [] };
+  const prefs = { forceWebGL: true, requireWebGL: false, preferWebGPU: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+
+  const result = choose(backendCaps, prefs, availability);
+
+  assert.ok(result !== null);
+  assert.equal(result.backend, "webgl", "forceWebGL must override capable verdict");
+  assert.equal(result.fallbackReason, "");
+});
+
+// read-path regression: sceneBackendCapsOf must extract backendCaps from props.scene
+// This test proves that passing a props-shaped object (with backendCaps nested under
+// props.scene) correctly routes to webgl via the skinning exclusion reason.
+test("sceneBackendCapsOf extracts backendCaps from props.scene and honesty gate takes effect", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const choose = env.context.__gosx_choose_scene_backend;
+  assert.ok(typeof choose === "function", "__gosx_choose_scene_backend must be exposed");
+
+  const capsOf = env.context.__gosx_scene_backend_caps_of;
+  assert.ok(typeof capsOf === "function", "__gosx_scene_backend_caps_of must be exposed");
+
+  // props-shaped object: backendCaps nested under props.scene (as Go serializes it)
+  const props = {
+    preferWebGPU: true,
+    scene: {
+      backendCaps: {
+        capable: ["webgl"],
+        reasons: [{ feature: "skinning", excludes: "webgpu" }],
+      },
+    },
+  };
+
+  const extracted = capsOf(props);
+  assert.ok(extracted !== null, "sceneBackendCapsOf must extract backendCaps from props.scene");
+  assert.deepEqual(extracted.capable, ["webgl"], "extracted.capable should be [webgl]");
+
+  const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
+  const availability = { webgpu: true, webgl: true };
+  const result = choose(extracted, prefs, availability);
+
+  assert.ok(result !== null, "chooseSceneBackend result must not be null");
+  assert.equal(result.backend, "webgl", "backend must be webgl — skinning excludes webgpu");
+  assert.equal(result.fallbackReason, "skinning", "fallbackReason must be skinning from reasons[]");
+});
+
+// ---------------------------------------------------------------------------
+// Video drift engine: JS fallback ↔ Go golden parity.
+//
+// 28-video-sync-fallback.js is a pure-JS port of the Go videosync engine
+// (client/videosync). The committed golden vector — produced by the Go
+// Engine — is replayed through a fresh JS engine; the decision stream MUST
+// match. kind/preloadPhase/ready/stalled/resetRate are exact; rate/seekTo/
+// actualRate within 1e-3. If this diverges, the JS port is wrong (the Go side
+// is the source of truth) — do NOT edit the golden to fit the JS.
+// ---------------------------------------------------------------------------
+function loadVideoSyncJSEngineFactory() {
+  // Extract the factory from the UNMINIFIED 28- source (mirrors how the other
+  // source-extraction tests read bootstrap-src/*.js directly), eval it in an
+  // isolated context whose only global is `window`, and pull the factory off.
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.js"),
+    "utf8",
+  );
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.js" });
+  const factory = sandbox.window.__gosx_video_sync_js_create;
+  assert.equal(
+    typeof factory,
+    "function",
+    "28-video-sync-fallback.js must install window.__gosx_video_sync_js_create",
+  );
+  return factory;
+}
+
+test("video sync JS fallback engine matches the Go golden parity vector", () => {
+  const factory = loadVideoSyncJSEngineFactory();
+  const golden = JSON.parse(
+    fs.readFileSync(
+      path.join(__dirname, "..", "videosync", "testdata", "parity_basic.json"),
+      "utf8",
+    ),
+  );
+
+  const engine = factory({});
+  const got = [];
+  for (const event of golden.events) {
+    if (event.t === "ingest") {
+      engine.ingest(
+        event.serverTimeMs,
+        event.position,
+        event.playing,
+        event.recvPerfMs == null ? 0 : event.recvPerfMs,
+      );
+    } else if (event.t === "rtt") {
+      engine.rtt(event.rttMs);
+    } else if (event.t === "tick") {
+      // The golden ticks are all playing (paused=false); the engine derives
+      // isPlaying internally from the last ingested heartbeat for projection.
+      got.push(engine.tick(event.currentTime, event.perfNowMs, event.bufferedAhead, false));
+    } else if (event.t === "playbackStart") {
+      engine.onPlaybackStart(event.perfNowMs);
+    }
+  }
+
+  const expected = golden.expected;
+  assert.equal(
+    got.length,
+    expected.length,
+    `expected ${expected.length} tick decisions, got ${got.length}`,
+  );
+
+  const EPS = 1e-3;
+  for (let i = 0; i < expected.length; i += 1) {
+    const e = expected[i];
+    const g = got[i];
+    const where = `tick ${i} (go reason="${e.reason}", js reason="${g.reason}")`;
+    // Exact fields.
+    assert.equal(g.kind, e.kind, `${where}: kind`);
+    assert.equal(g.preloadPhase, e.preloadPhase, `${where}: preloadPhase`);
+    assert.equal(Boolean(g.ready), Boolean(e.ready), `${where}: ready`);
+    assert.equal(Boolean(g.stalled), Boolean(e.stalled), `${where}: stalled`);
+    assert.equal(Boolean(g.resetRate), Boolean(e.resetRate), `${where}: resetRate`);
+    // Near fields (1e-3).
+    assert.ok(
+      Math.abs(g.rate - e.rate) <= EPS,
+      `${where}: rate expected ${e.rate} got ${g.rate}`,
+    );
+    assert.ok(
+      Math.abs(g.seekTo - e.seekTo) <= EPS,
+      `${where}: seekTo expected ${e.seekTo} got ${g.seekTo}`,
+    );
+    assert.ok(
+      Math.abs(g.actualRate - e.actualRate) <= EPS,
+      `${where}: actualRate expected ${e.actualRate} got ${g.actualRate}`,
+    );
+  }
+});
+
+// -----------------------------------------------------------------------------
+// Canvas2D surface-kind discovery + dispatch (gosx.CanvasBoard hydration)
+//
+// The FakeDocument harness drives island/engine hydration through the manifest
+// rather than DOM querySelectorAll, so DOM-discovery code paths (both the
+// bytecode mountAllEngineSurfaces and the new mountAllSurfaceKinds) are guarded
+// at the source level — mirroring the existing bootstrap-src/*.js source
+// assertions. These lock the wiring contract: surface-kind placeholders are
+// discovered separately from the bytecode path and dispatched through the
+// unified Phase 1d __gosx_hydrate with a valid-empty program.
+// -----------------------------------------------------------------------------
+
+test("bootstrap discovers canvas2d surface-kind placeholders without touching the bytecode path", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.js"),
+    "utf8",
+  );
+
+  // The surface-kind discovery query must exclude the bytecode path so the two
+  // never double-mount the same element.
+  assert.match(
+    source,
+    /querySelectorAll\("\[data-gosx-surface-kind\]:not\(\[data-gosx-engine-bytecode\]\)"\)/,
+  );
+
+  // Dispatch goes through the unified 6-arg __gosx_hydrate(surfaceKind, id,
+  // componentName, propsJSON, programData, format) with a valid-empty program.
+  assert.match(source, /window\.__gosx_hydrate;/);
+  assert.match(
+    source,
+    /hydrateFn\(surfaceKind,\s*id,\s*component,\s*propsJSON,\s*"\{\}",\s*"json"\)/,
+  );
+
+  // Raw-JSON-first, base64-fallback props decoding (gosx.CanvasBoard emits raw
+  // HTML-escaped JSON; the engine/surface renderer base64-encodes).
+  assert.match(source, /function decodeSurfaceProps\(/);
+
+  // The bytecode discovery query stays byte-for-byte unchanged.
+  assert.match(source, /querySelectorAll\("\[data-gosx-engine-bytecode\]"\)/);
+});
+
+test("bootstrap engines feature runs canvas2d surface-kind mount on runtime ready", () => {
+  const suffix = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-suffix.js"),
+    "utf8",
+  );
+
+  // runtimeReady must fan out to the surface-kind mount alongside the existing
+  // engine + engine-surface mounts.
+  assert.match(suffix, /mountAllEngines\(manifest\)/);
+  assert.match(suffix, /mountAllEngineSurfaces\(\)/);
+  assert.match(suffix, /mountAllSurfaceKinds\(\)/);
+});
+
+test("bootstrap starts a canvas2d paint loop (tick + render + paint) only for the canvas2d surface kind", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.js"),
+    "utf8",
+  );
+
+  // The canvas2d branch starts a dedicated RAF render loop after a successful
+  // hydrate, gated on surfaceKind === "canvas2d" so the bytecode/GPU
+  // engine-surface path is untouched.
+  assert.match(source, /surfaceKind === "canvas2d"/);
+  assert.match(source, /function _startCanvasSurfaceRAF\(/);
+
+  // The loop drives the three canvas WASM globals (dispose is routed by kind
+  // through window[disposeName], so it appears as a bare global name).
+  assert.match(source, /window\.__gosx_tick_canvas/);
+  assert.match(source, /window\.__gosx_render_canvas/);
+  assert.match(source, /__gosx_dispose_canvas/);
+
+  // It paints through the shared painter on the canvas's 2D context.
+  assert.match(source, /window\.__gosx_paint_canvas_bundle/);
+  assert.match(source, /getContext\("2d"\)/);
 });
 
 // -----------------------------------------------------------------------------
@@ -10696,7 +20699,6 @@ function makeFakeGPUDevice(options) {
     submitCount: 0,
     renderPasses: [],
     computePasses: [],
-    bufferToTextureCopies: [],
     renderPipelines: [],
     computePipelines: [],
     shaderModules: [],
@@ -10729,31 +20731,6 @@ function makeFakeGPUDevice(options) {
       },
       setVertexBuffer(slot, buffer, offset, size) {
         pass.vertexBuffers.push({ slot, buffer, offset, size });
-      },
-      // The water surface grid is drawn INDEXED (one transform per grid vertex instead
-      // of six per quad), so the fake device has to model the indexed path too. Indexed
-      // draws are recorded into pass.draws alongside plain ones — every existing
-      // assertion about which pipeline drew, and how many draws a frame issues, keeps
-      // working without knowing which form was used.
-      setIndexBuffer(buffer, format, offset, size) {
-        pass.indexBuffers = pass.indexBuffers || [];
-        pass.indexBuffers.push({ buffer, format, offset, size });
-      },
-      drawIndexed(indexCount, instanceCount) {
-        // The real GPURenderPassEncoder throws a TypeError on a non-integer count
-        // ("value is not of type 'unsigned long'"). A stale field reference produced
-        // exactly that in the browser while the fake device recorded it happily, so the
-        // fake must be as strict as the real one or it certifies broken frames.
-        if (!Number.isInteger(indexCount) || indexCount < 0) {
-          throw new TypeError("drawIndexed: indexCount is not an unsigned long: " + indexCount);
-        }
-        pass.draws.push({
-          vertexCount: indexCount,
-          indexCount,
-          indexed: true,
-          instanceCount: instanceCount == null ? 1 : instanceCount,
-          pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
-        });
       },
       draw(vertexCount, instanceCount) {
         pass.draws.push({
@@ -10909,27 +20886,6 @@ function makeFakeGPUDevice(options) {
           const pass = makePass(descriptor, "compute");
           state.computePasses.push(pass);
           return pass;
-        },
-        // The water heightfield is mirrored buffer -> texture each frame so render
-        // materials read it through the texture cache. WebGPU requires bytesPerRow to be
-        // a multiple of 256 and rejects the copy otherwise, so the fake enforces it too:
-        // a mock that accepts what the real API rejects certifies broken frames.
-        copyBufferToTexture(source, destination, size) {
-          const bytesPerRow = source && source.bytesPerRow;
-          if (!Number.isInteger(bytesPerRow) || bytesPerRow <= 0 || bytesPerRow % 256 !== 0) {
-            throw new TypeError(
-              "copyBufferToTexture: bytesPerRow must be a positive multiple of 256, got " + bytesPerRow);
-          }
-          // The real device rejects a source buffer without COPY_SRC and then errors the
-          // whole device, so the page renders NOTHING -- not a subtly wrong frame. The fake
-          // recorded it happily, which is exactly how that shipped.
-          const COPY_SRC = 4; // GPUBufferUsage.COPY_SRC
-          const usage = source && source.buffer && source.buffer.usage;
-          if (!(usage & COPY_SRC)) {
-            throw new TypeError(
-              "copyBufferToTexture: source buffer is missing COPY_SRC usage (got " + usage + ")");
-          }
-          state.bufferToTextureCopies.push({ source, destination, size });
         },
         finish() {
           return { __kind: "commandBuffer" };
@@ -14770,6 +24726,7 @@ test("normalizeSceneInstancedMeshEntry preserves cullKernelWGSL/cullKernelEntry/
           cullKernelEntry: "cullMain",
           cullRadius: 4.5,
           cullBackend: "WebGPU",
+          pickable: false,
           thisFieldDoesNotExist: "should be dropped by the whitelist",
         },
       ],
@@ -14793,7 +24750,50 @@ test("normalizeSceneInstancedMeshEntry preserves cullKernelWGSL/cullKernelEntry/
   assert.equal(mesh.cullKernelEntry, "cullMain", "cullKernelEntry must survive normalization");
   assert.equal(mesh.cullRadius, 4.5, "cullRadius must survive normalization");
   assert.equal(mesh.cullBackend, "webgpu", "cullBackend must survive normalization (lowercased, like shaderBackend)");
+  assert.equal(mesh.pickable, false, "explicit instanced-mesh pickability must survive normalization");
   assert.equal(mesh.thisFieldDoesNotExist, undefined, "unknown fields must still be dropped by the whitelist");
+});
+
+test("WebGPU water sampled state only uses the defined ping-pong textures", () => {
+  assert.doesNotMatch(bootstrapScene3DWebGPUSourceFile, /stateTexture:\s*stateTexture[,\n]/);
+  assert.doesNotMatch(bootstrapScene3DWebGPUSourceFile, /system\.stateTexture(?![A-Z])/);
+  assert.match(bootstrapScene3DWebGPUSourceFile, /stateTextureA:\s*stateTextureA/);
+  assert.match(bootstrapScene3DWebGPUSourceFile, /stateTextureB:\s*stateTextureB/);
+  assert.match(bootstrapScene3DWebGPUSourceFile, /function syncWaterSampledState\(/);
+});
+
+test("Scene3D raycast returns the exact nearest non-uniformly scaled instance", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const identity = [
+    1, 0, 0, 0,
+    0, 0.5, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ];
+  const translated = identity.slice();
+  translated[12] = 3;
+  const hit = env.context.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes(
+    { origin: { x: 0, y: 3, z: 0 }, dir: { x: 0, y: -1, z: 0 } },
+    [{ id: "pieces", count: 2, kind: "sphere", radius: 0.5, pickable: true, transforms: identity.concat(translated) }],
+    0,
+  );
+
+  assert.ok(hit, "expected the flattened sphere instance to be hit");
+  assert.equal(hit.object.id, "pieces");
+  assert.equal(hit.instanceIndex, 0);
+  assert.ok(Math.abs(hit.distance - 2.75) < 1e-9, "expected exact ellipsoid surface distance");
+  assert.ok(Math.abs(hit.worldPosition.y - 0.25) < 1e-9, "expected exact world-space hit point");
+});
+
+test("Scene3D authored picks reserve pointer gestures before orbit controls", () => {
+  const pickInstall = bootstrapScene3DMountSourceFile.indexOf("pickHandle = setupScenePickInteractions");
+  const controlsInstall = bootstrapScene3DMountSourceFile.indexOf("sceneControlHandle = setupSceneBuiltInControls", pickInstall);
+  assert.ok(pickInstall >= 0 && controlsInstall > pickInstall, "pick listener must be registered before controls");
+  assert.match(bootstrapScene3DMountSourceFile, /function onPointerDown\(event\) \{\s+if \(event && event\.defaultPrevented\)/);
+  assert.match(bootstrapScene3DInputSourceFile, /sceneRaycastPickInstancedMeshes\(ray, bundle\.instancedMeshes/);
 });
 
 // -------------------------------------------------------------------------

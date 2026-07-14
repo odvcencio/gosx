@@ -42,7 +42,11 @@ func TestBoardCompositionShape(t *testing.T) {
 }
 
 func TestShowcaseSceneUsesBoundedInstancing(t *testing.T) {
-	ir := ShowcaseScene().SceneIR()
+	props := ShowcaseScene()
+	ir := props.SceneIR()
+	if props.EventSignalNamespace != "checkers.pick" || props.ControlRotateDirection != "grab" {
+		t.Fatalf("scene input contract is not enabled: namespace=%q rotate=%q", props.EventSignalNamespace, props.ControlRotateDirection)
+	}
 	if got := len(ir.InstancedMeshes); got != 3 {
 		t.Fatalf("instanced mesh batches = %d, want 3 (sockets + two active camps)", got)
 	}
@@ -50,6 +54,11 @@ func TestShowcaseSceneUsesBoundedInstancing(t *testing.T) {
 		t.Fatalf("socket instances = %d, want %d", got, boardHoleCount)
 	}
 	total := 0
+	for _, batch := range ir.InstancedMeshes {
+		if batch.Pickable == nil || !*batch.Pickable {
+			t.Fatalf("instanced batch %q must be explicitly pickable", batch.ID)
+		}
+	}
 	for _, batch := range ir.InstancedMeshes[1:] {
 		total += batch.Count
 	}
