@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.31.5 (2026-07-14)
+
+- Added the code-focused editor surface, externally supplied syntax spans,
+  code navigation and multi-selection commands, CRDT-backed documents,
+  actor-scoped history, and element-anchored remote cursor rendering.
+- Added run-encoded text splicing, stable change-group identities, element-ID
+  deletion and revival, and change-aware binary authorization for collaborative
+  editing without whole-buffer replacement.
+- Hardened collaboration reconnects with authoritative state reconciliation,
+  capability refresh, authenticated binary splices, and host capability/CSRF
+  forwarding for server-side code intelligence.
+- Kept code-surface payloads isolated from prose, CMS, and diagram assets while
+  preserving the existing Markdown++ editor behavior.
+
 ## v0.31.4 (2026-07-13)
 
 - Added dedicated standard-Go WebAssembly engines with
