@@ -1113,8 +1113,18 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 	}
 	material := r.activeMaterial()
 	lighting := r.activeLighting()
+	instanceStride := 64
+	instanceSlot := 4
+	if label == "bundle.shadow" {
+		instanceSlot = 1
+	}
+	if instanceBuf != nil && instanceSlot < len(r.pipeline.desc.Vertex.Buffers) {
+		if stride := r.pipeline.desc.Vertex.Buffers[instanceSlot].ArrayStride; stride >= 64 {
+			instanceStride = stride
+		}
+	}
 	for inst := firstInstance; inst < firstInstance+instanceCount; inst++ {
-		model, ok := readMat4(instanceBuf, inst)
+		model, ok := readMat4Stride(instanceBuf, inst, instanceStride)
 		if !ok {
 			model = identityMat4()
 		}
@@ -1733,12 +1743,12 @@ func (l sceneLighting) pickCascade(worldPos [3]float32) int {
 	return 0
 }
 
-func readMat4(buf *Buffer, index int) ([16]float32, bool) {
+func readMat4Stride(buf *Buffer, index, stride int) ([16]float32, bool) {
 	var out [16]float32
-	if buf == nil || index < 0 {
+	if buf == nil || index < 0 || stride < 64 {
 		return out, false
 	}
-	offset := index * 64
+	offset := index * stride
 	if offset < 0 || offset+64 > len(buf.data) {
 		return out, false
 	}

@@ -1,0 +1,14 @@
+material CarvedWood {
+    param darkWalnut : color = rgb(0.16, 0.07, 0.035)
+    param warmWalnut : color = rgb(0.48, 0.25, 0.12)
+    param satinLift  : float = 0.08
+    surface(geo) -> color {
+        let grainLine = sin(geo.uv.x * 92.0 + sin(geo.uv.y * 11.0) * 2.2)
+        let grain     = grainLine * 0.5 + 0.5
+        let endGrain  = sin((geo.uv.x + geo.uv.y) * 17.0) * 0.04
+        let holeUV    = geo.uv - vec2f(0.5, 0.5)
+        let carved    = smoothstep(0.34, 0.04, length(holeUV)) * 0.18
+        let body      = mix(darkWalnut.rgb, warmWalnut.rgb, grain * 0.52 + endGrain)
+        return vec4f(body * (1.0 - carved) + vec3f(satinLift, satinLift, satinLift), 1.0)
+    }
+}

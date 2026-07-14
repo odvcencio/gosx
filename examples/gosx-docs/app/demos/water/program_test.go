@@ -299,6 +299,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`Press SPACEBAR to pause and unpause`,
 		`controlTargetY={-0.5}`,
 		`controlRotateMode="pixel-degrees"`,
+		`controlRotateDirection="grab"`,
 		`controlMinDistance={2}`,
 		`controlMaxDistance={10}`,
 		`controlPitchLimit={1.5707788735}`,
@@ -335,14 +336,21 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`cubeMap="/water/"`,
 		`shallowColor="#7ad1eb"`,
 		`deepColor="#082e57"`,
+		`aboveWaterColorR={0.25}`,
+		`aboveWaterColorG={1.0}`,
+		`aboveWaterColorB={1.25}`,
 		`lightDirectionX={2}`,
 		`lightDirectionY={2}`,
 		`lightDirectionZ={-1}`,
 		`waveSpeed={1.0}`,
 		`damping={0.995}`,
-		`causticsResolution={data.diagCausticsRes}`,
+		`adaptiveQuality={false}`,
+		`qualityTier="full"`,
+		`resolution={256}`,
+		`surfaceResolution={201}`,
+		`causticsResolution={1024}`,
 		`objectTextureResolutionMode="viewport"`,
-		`objectShadowResolution={data.diagShadowRes}`,
+		`objectShadowResolution={1024}`,
 		// Selena-compiled combined-WGSL slots: the sole primary WGSL source
 		// for every water compute kernel/render pass now that the
 		// hand-written Elio/Selena *WGSL props have been retired.
@@ -454,6 +462,9 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	}
 	if strings.Contains(page, `src="/water-controls.js"`) {
 		t.Fatalf("page.gsx still references route-specific water-controls.js")
+	}
+	if strings.Contains(page, `<script`) {
+		t.Fatalf("page.gsx still contains bespoke JavaScript; the water demo must be authored entirely through GoSX")
 	}
 	for _, bad := range []string{
 		`name="gravity" checked={true}`,
@@ -791,6 +802,20 @@ func TestWaterSelenaGLESSlots(t *testing.T) {
 	if !strings.HasPrefix(strings.TrimSpace(surfaceFrag), "#version 300 es") || !strings.Contains(surfaceFrag, "void main") {
 		t.Fatalf("surface fragment GLES is invalid")
 	}
+	surfaceSource, err := waterSelenaFS.ReadFile("shaders/jeantimex-water.selena/surface.sel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(surfaceSource), "var knot : array") || strings.Contains(string(surfaceSource), "var rfTorus") {
+		t.Fatal("surface shader regressed to per-fragment analytic torus construction; complex objects must use projected mesh targets")
+	}
+	if !strings.Contains(string(surfaceSource), "meshTextureEnable") || !strings.Contains(string(surfaceSource), "objectRefractionTex") {
+		t.Fatal("surface shader lost the projected complex-object optics path")
+	}
+	normalFrag, _ := data["waterNormalFragmentGLES"].(string)
+	if !strings.Contains(normalFrag, "cellSizeX > 0.000001") || !strings.Contains(normalFrag, "0.0078125") {
+		t.Fatalf("normal fragment must keep legacy/unbound cell spacing finite")
+	}
 
 	descriptors, ok := data["waterShaderDescriptors"].(map[string]json.RawMessage)
 	if !ok {
@@ -881,30 +906,5 @@ func TestWaterSelenaGLESSlots(t *testing.T) {
 	}
 	if string(got.ShaderDescriptors["surface"]) != string(descriptors["surface"]) {
 		t.Fatalf("WaterSystemIR.ShaderDescriptors[surface] did not round-trip")
-	}
-}
-
-// The diag knobs must DEFAULT to the shipped values, so /demos/water with no query
-// parameters renders exactly what it rendered before the diagnostics existed. The
-// page.gsx contract above proves the props are bound to these; this proves the
-// values behind the bindings are the real ones.
-func TestWaterDiagDefaultsMatchShippedValues(t *testing.T) {
-	t.Parallel()
-
-	for name, want := range map[string]any{
-		"dpr":             1.0,
-		"maxPixels":       1200000,
-		"resolution":      192,
-		"causticsRes":     512,
-		"shadowRes":       512,
-		"caustics":        true,
-		"reflection":      true,
-		"refraction":      true,
-		"objectTexBudget": 786432,
-		"diag":            false,
-	} {
-		if got := waterDiagDefaults[name]; got != want {
-			t.Fatalf("waterDiagDefaults[%q] = %v, want %v", name, got, want)
-		}
 	}
 }

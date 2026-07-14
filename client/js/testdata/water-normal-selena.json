@@ -1,5 +1,5 @@
 {
-  "_comment": "Generated fixture: real Selena-compiled normal.sel WGSL + host binding descriptor (bindings.Layout), used by client/js/runtime.test.js to drive the normal feedback-compute kernel through the generic descriptor-driven Selena WebGPU compute path against a validating fake GPUDevice. Regenerate by re-running selena.Compile on shaders/jeantimex-water.selena/normal.sel (TargetWGSL) if normal.sel changes. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/normal.sel",
+  "_comment": "Generated fixture: real Selena-compiled normal.sel WGSL + host binding descriptor (bindings.Layout). Regenerate with `go run ./examples/gosx-docs/app/demos/water/cmd/generate-selena-fixtures`. Source: examples/gosx-docs/app/demos/water/shaders/jeantimex-water.selena/normal.sel",
   "layout": {
     "schemaVersion": "selena.descriptor.v1",
     "languageVersion": "selena.lang.v1",
@@ -11,8 +11,37 @@
       "compute": "computeMain"
     },
     "uniformBlock": {
-      "size": 0,
-      "fields": []
+      "size": 16,
+      "fields": [
+        {
+          "name": "cellSizeX",
+          "type": "float",
+          "offset": 0,
+          "size": 4
+        },
+        {
+          "name": "cellSizeZ",
+          "type": "float",
+          "offset": 4,
+          "size": 4
+        }
+      ],
+      "defaults": [
+        {
+          "name": "cellSizeX",
+          "type": "float",
+          "values": [
+            0.0078125
+          ]
+        },
+        {
+          "name": "cellSizeZ",
+          "type": "float",
+          "values": [
+            0.0078125
+          ]
+        }
+      ]
     },
     "attributes": [],
     "textures": [],
@@ -29,7 +58,8 @@
         "wgsl": {
           "group": 0,
           "inBinding": 1,
-          "outBinding": 2
+          "outBinding": 2,
+          "inKind": "storage"
         },
         "gl": {
           "uniform": "stateTex",
@@ -52,5 +82,5 @@
       "glTexelUniform": "texelSize"
     }
   },
-  "wgsl": "struct GridUniforms {\n  gridWidth : u32,\n  gridLen   : u32,\n};\n@group(0) @binding(0) var\u003cuniform\u003e _grid : GridUniforms;\n@group(0) @binding(1) var\u003cstorage, read\u003e inState : array\u003cvec4\u003cf32\u003e\u003e;\n@group(0) @binding(2) var\u003cstorage, read_write\u003e outState : array\u003cvec4\u003cf32\u003e\u003e;\n\n@compute @workgroup_size(64)\nfn computeMain(@builtin(global_invocation_id) gid : vec3\u003cu32\u003e) {\n  let cellIndex = gid.x;\n  if (cellIndex \u003e= _grid.gridLen) { return; }\n  let here = inState[clamp(i32(cellIndex) + (0) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)];\n  let h_east = inState[clamp(i32(cellIndex) + (1) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)].x;\n  let h_north = inState[clamp(i32(cellIndex) + (0) + (1) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)].x;\n  let dx = vec3\u003cf32\u003e(1.0, (h_east - here.x), 0.0);\n  let dz = vec3\u003cf32\u003e(0.0, (h_north - here.x), 1.0);\n  let norm = normalize(cross(dz, dx));\n  outState[cellIndex] = vec4\u003cf32\u003e(here.x, here.y, norm.x, norm.z);\n}\n"
+  "wgsl": "struct GridUniforms {\n  gridWidth : u32,\n  gridLen   : u32,\n};\n@group(0) @binding(0) var<uniform> _grid : GridUniforms;\n@group(0) @binding(1) var<storage, read> inState : array<vec4<f32>>;\n@group(0) @binding(2) var<storage, read_write> outState : array<vec4<f32>>;\n\nstruct UserUniforms {\n  cellSizeX : f32,\n  cellSizeZ : f32,\n};\n@group(0) @binding(3) var<uniform> u : UserUniforms;\n\n@compute @workgroup_size(64)\nfn computeMain(@builtin(global_invocation_id) gid : vec3<u32>) {\n  let cellIndex = gid.x;\n  if (cellIndex >= _grid.gridLen) { return; }\n  let here = inState[clamp(i32(cellIndex) + (0) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)];\n  let h_east = inState[clamp(i32(cellIndex) + (1) + (0) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)].x;\n  let h_north = inState[clamp(i32(cellIndex) + (0) + (1) * i32(_grid.gridWidth), 0, i32(_grid.gridLen) - 1)].x;\n  let safeX = select(0.0078125, u.cellSizeX, (u.cellSizeX > 0.000001));\n  let safeZ = select(0.0078125, u.cellSizeZ, (u.cellSizeZ > 0.000001));\n  let dx = vec3<f32>(safeX, (h_east - here.x), 0.0);\n  let dz = vec3<f32>(0.0, (h_north - here.x), safeZ);\n  let norm = normalize(cross(dz, dx));\n  outState[cellIndex] = vec4<f32>(here.x, here.y, norm.x, norm.z);\n}\n"
 }

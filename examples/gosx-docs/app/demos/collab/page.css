@@ -67,6 +67,53 @@
   color: var(--demo-accent);
 }
 
+/* One-shot flash when a remote update lands — layered over the ambient
+   connected-pulse above; declared after it so the cascade prefers this
+   animation for the flash's short duration. */
+@keyframes collab-dot-flash {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--demo-accent) 65%, transparent); transform: scale(1); }
+  35%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--demo-accent) 0%, transparent); transform: scale(1.4); }
+  100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
+}
+
+.collab__status-dot.collab__status-dot--flash {
+  background: var(--demo-accent);
+  animation: collab-dot-flash 650ms ease-out;
+}
+
+/* ── Presence + self identity ───────────────────────────────────────────── */
+
+.collab__presence {
+  transition: color 0.3s;
+}
+
+.collab--crowded .collab__presence {
+  color: var(--demo-accent);
+}
+
+.collab__self {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.6875rem;
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  color: var(--demo-muted);
+}
+
+.collab__self:empty {
+  display: none;
+}
+
+.collab__self::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--collab-self-color, var(--demo-accent));
+  flex-shrink: 0;
+}
+
 /* ── Body — two-pane grid ───────────────────────────────────────────────── */
 
 .collab__body {
@@ -102,6 +149,13 @@
 
 /* ── Editor textarea ─────────────────────────────────────────────────────── */
 
+.collab__editor-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .collab__source {
   flex: 1;
   width: 100%;
@@ -130,6 +184,44 @@
   outline: none;
 }
 
+/* ── Remote cursors — overlay mirrors the textarea's metrics ───────────────── */
+
+.collab__cursor-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.collab__cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 1.4em;
+  border-radius: 1px;
+  background: var(--cursor-color, var(--demo-accent));
+  opacity: 0.95;
+  transition: top 120ms ease, left 120ms ease, opacity 200ms ease;
+}
+
+.collab__cursor::after {
+  content: attr(data-label);
+  position: absolute;
+  top: -1.4em;
+  left: -2px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #0b0b0d;
+  background: var(--cursor-color, var(--demo-accent));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
 /* ── Preview pane ────────────────────────────────────────────────────────── */
 
 .collab__preview {
@@ -141,6 +233,19 @@
   line-height: 1.65;
   color: var(--demo-fg);
   word-break: break-word;
+}
+
+/* Remote-convergence highlight: a cheap line-level diff against the
+   previous document tags the top-level element(s) that changed with
+   .collab__block, and briefly flashes them when a remote update lands. */
+@keyframes collab-block-flash {
+  0%   { background: color-mix(in srgb, var(--demo-accent) 30%, transparent); }
+  100% { background: transparent; }
+}
+
+.collab__preview .collab__block--flash {
+  animation: collab-block-flash 1s ease-out;
+  border-radius: 3px;
 }
 
 .collab__preview h1,
@@ -250,5 +355,23 @@
 
   .collab__source {
     font-size: 0.8125rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collab--connected .collab__status-dot {
+    animation: none;
+  }
+
+  .collab__status-dot.collab__status-dot--flash {
+    animation: none;
+  }
+
+  .collab__preview .collab__block--flash {
+    animation: none;
+  }
+
+  .collab__cursor {
+    transition: none;
   }
 }

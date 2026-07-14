@@ -1434,7 +1434,7 @@
     if (!path) {
       return null;
     }
-    await loadScriptTag(path);
+    await loadScriptTag(path, "hls");
     return typeof window.Hls === "function" ? window.Hls : null;
   }
 

@@ -54,6 +54,7 @@ function runModule(regions, payload, opts) {
   const readyListeners = [];
   const fetches = [];
   const warnings = [];
+  const telemetry = [];
   const engines = opts.engines || new Map();
   const initialCommandScripts = opts.initialCommandScripts || [];
   const ctx = {
@@ -78,16 +79,24 @@ function runModule(regions, payload, opts) {
         if (type === "gosx:hub:event") hubListeners.push(fn);
         if (type === "gosx:ready") readyListeners.push(fn);
       },
+      removeEventListener: () => {},
     },
     window: {
       __gosx_subscribe_shared_signal: (name, fn, opts) => { subs.push({ name, fn, opts }); return () => {}; },
-      __gosx: { engines },
+      __gosx_emit: (level, category, message, fields) => telemetry.push({ level, category, message, fields }),
+      __gosx: {
+        engines,
+        ...(opts.transport ? { transport: opts.transport } : {}),
+      },
+      ...(opts.replaceRuntimeContent ? {
+        __gosx_replace_runtime_content: opts.replaceRuntimeContent,
+      } : {}),
     },
   };
   ctx.window.document = ctx.document;
   vm.createContext(ctx);
   vm.runInContext(moduleSrc, ctx);
-  return { subs, hubListeners, readyListeners, fetches, warnings, engines };
+  return { subs, hubListeners, readyListeners, fetches, warnings, telemetry, engines, context: ctx };
 }
 
 // makeEngineHandle returns a fake mounted-engine record + its handle's
@@ -113,7 +122,7 @@ test("signal-triggered region fetches {value}-substituted URL and injects the JS
     "data-gosx-region-signal": "$sel",
     "data-gosx-region-field": "html_field",
   });
-  const { subs, fetches } = runModule([region], { json: { html_field: "<b>hi</b>" } });
+  const { subs, fetches, telemetry } = runModule([region], { json: { html_field: "<b>hi</b>" } });
   assert.equal(subs.length, 1);
   assert.equal(subs[0].name, "$sel");
   assert.equal(subs[0].opts.immediate, false);
@@ -124,6 +133,55 @@ test("signal-triggered region fetches {value}-substituted URL and injects the JS
   await tick();
   await tick();
   assert.equal(region.innerHTML, "<b>hi</b>");
+  assert.equal(telemetry.some((event) => event.message === "region refresh started"), true);
+  assert.equal(telemetry.some((event) => event.message === "region refresh completed"), true);
+});
+
+test("declarative regions publish a core refresh and lifecycle API", async () => {
+  const region = makeRegion({ "data-gosx-region-url": "/tree" });
+  const { context, fetches } = runModule([region], { text: "<p>tree</p>" });
+  assert.equal(typeof context.window.__gosx.regions.mount, "function");
+  assert.equal(typeof context.window.__gosx.regions.dispose, "function");
+  assert.equal(typeof context.window.__gosx.regions.refresh, "function");
+  assert.equal(context.window.__gosx.regions.bindings, context.window.__gosx_declarative_regions.bindings);
+  await context.window.__gosx.regions.refresh(region);
+  assert.equal(fetches.length, 1);
+  assert.equal(region.innerHTML, "<p>tree</p>");
+});
+
+test("declarative regions delegate latest-request cancellation to the core transport scope", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/tree",
+    "data-gosx-region-on": "change",
+  });
+  const requests = [];
+  let disposed = 0;
+  const transport = {
+    scope() {
+      return {
+        requestLatest(key, url, init) {
+          requests.push({ key, url, init });
+          return Promise.resolve({ ok: true, text: () => Promise.resolve("<p>core transport</p>") });
+        },
+        dispose() {
+          disposed += 1;
+        },
+      };
+    },
+  };
+  const { context, hubListeners, fetches } = runModule([region], { text: "<p>fallback</p>" }, { transport });
+  hubListeners[0]({ detail: { event: "change" } });
+  await tick();
+  await tick();
+
+  assert.equal(fetches.length, 0, "core transport should replace the direct fetch path");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].key, "refresh");
+  assert.equal(requests[0].url, "/tree");
+  assert.equal(region.innerHTML, "<p>core transport</p>");
+
+  context.window.__gosx_dispose_declarative_regions(context.document);
+  assert.equal(disposed, 1, "region disposal must dispose its transport scope");
 });
 
 test("empty signal value suppresses the {value} fetch", () => {
@@ -170,6 +228,49 @@ test("hub-event region refetches static URL and injects raw body; ignores other 
   await tick();
   await tick();
   assert.equal(region.innerHTML, "<ul>tree</ul>");
+});
+
+test("regions delegate fragment replacement to the core runtime DOM lifecycle", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/tree",
+    "data-gosx-region-on": "change",
+  });
+  const replacements = [];
+  const { hubListeners } = runModule([region], { text: "<ul>tree</ul>" }, {
+    replaceRuntimeContent(target, html) {
+      replacements.push({ target, html });
+      target.innerHTML = html;
+      return true;
+    },
+  });
+  hubListeners[0]({ detail: { event: "change" } });
+  await tick();
+  await tick();
+  assert.deepEqual(replacements, [{ target: region, html: "<ul>tree</ul>" }]);
+  assert.equal(region.innerHTML, "<ul>tree</ul>");
+});
+
+test("regions remount on a new page root and dispose their signal bindings", () => {
+  const first = makeRegion({
+    "data-gosx-region-url": "/first",
+    "data-gosx-region-signal": "$page",
+  });
+  const second = makeRegion({
+    "data-gosx-region-url": "/second",
+    "data-gosx-region-signal": "$page",
+  });
+  const regions = [first];
+  const { context, subs, fetches } = runModule(regions, { text: "<p>ok</p>" });
+  assert.equal(subs.length, 1);
+
+  regions.push(second);
+  context.window.__gosx_mount_declarative_regions(context.document);
+  assert.equal(subs.length, 2, "the second navigation root must bind exactly once");
+
+  context.window.__gosx_dispose_declarative_regions(context.document);
+  subs[0].fn("stale");
+  subs[1].fn("stale");
+  assert.equal(fetches.length, 0, "disposed regions must ignore late signal callbacks");
 });
 
 // -----------------------------------------------------------------------

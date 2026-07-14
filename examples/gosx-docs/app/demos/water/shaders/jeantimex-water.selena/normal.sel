@@ -3,18 +3,26 @@
 // neighbours to form the finite-difference tangents, computes their cross
 // product and stores normal.x / normal.z in the state's z/w channels.
 //
-// Note: the elio uses delta = 1/resolution so each tangent vector has a
-// horizontal component equal to the cell spacing.  Because normalize(cross(...))
-// is scale-invariant, delta cancels out; we use 1.0 and get identical normals.
+// The horizontal tangent components must remain in the same physical units as
+// the height difference. Replacing them with 1.0 flattens slopes by roughly
+// resolution/(2*poolExtent), erasing reflection distortion and caustics.
 material WaterSimNormal kind feedback {
+    param cellSizeX : float = 0.0078125
+    param cellSizeZ : float = 0.0078125
     state water
 
     feedback(cell) -> vec4 {
         let here    = state(0, 0)
         let h_east  = state(1, 0).x
         let h_north = state(0, 1).x
-        let dx      = vec3f(1.0, h_east - here.x, 0.0)
-        let dz      = vec3f(0.0, h_north - here.x, 1.0)
+        // A zero/unbound legacy-host value must not turn normalize(cross())
+        // into normalize(0) and contaminate the shared state with NaNs. Modern
+        // WaterSystem hosts always bind the physical spacing; the fallback is
+        // the authored 256-cell grid spacing and keeps older artifacts finite.
+        let safeX   = cellSizeX > 0.000001 ? cellSizeX : 0.0078125
+        let safeZ   = cellSizeZ > 0.000001 ? cellSizeZ : 0.0078125
+        let dx      = vec3f(safeX, h_east - here.x, 0.0)
+        let dz      = vec3f(0.0, h_north - here.x, safeZ)
         let norm    = normalize(cross(dz, dx))
         return vec4f(here.x, here.y, norm.x, norm.z)
     }

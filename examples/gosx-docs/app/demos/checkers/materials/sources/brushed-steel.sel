@@ -1,0 +1,13 @@
+material BrushedSteel {
+    param steelDark  : color = rgb(0.28, 0.32, 0.34)
+    param steelLight : color = rgb(0.72, 0.77, 0.79)
+    param brushGain  : float = 0.14
+    surface(geo) -> color {
+        let n       = normalize(geo.normal)
+        let brush   = sin(geo.uv.y * 180.0) * brushGain
+        let tangent = pow(abs(n.x), 2.0) * 0.24
+        let stamped = smoothstep(0.32, 0.06, length(geo.uv - vec2f(0.5, 0.5))) * 0.16
+        let body    = mix(steelDark.rgb, steelLight.rgb, 0.52 + brush + tangent)
+        return vec4f(body * (1.0 - stamped), 1.0)
+    }
+}

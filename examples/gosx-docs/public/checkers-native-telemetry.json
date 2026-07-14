@@ -1,0 +1,148 @@
+{
+  "schema": "gosx.scene3d.harness/v1",
+  "backend": "pure-go-headless",
+  "scene": {
+    "objects": 11,
+    "instancedMeshes": 3,
+    "instances": 141,
+    "lights": 4
+  },
+  "selenaMaterials": [
+    {
+      "materialIndex": 0,
+      "material": "CarvedWood",
+      "backend": "selena",
+      "validation": "compiled-artifact-transport",
+      "wgslVertexSHA256": "994d5adde20bd3f1a6acd2391b52e684edc2c16e882bc48e6f0dc069dc85cdf3",
+      "wgslFragmentSHA256": "994d5adde20bd3f1a6acd2391b52e684edc2c16e882bc48e6f0dc069dc85cdf3",
+      "glslVertexSHA256": "34629f39b489d33f6d1a51f62a803576d0bb70c57a75ff40e0eb5258639a3830",
+      "glslFragmentSHA256": "7952f6aedadb49587cd64274f1d3ce5aacae9889818654a2a8f9ad14f98fad11",
+      "uniforms": [
+        "darkWalnut",
+        "satinLift",
+        "warmWalnut"
+      ],
+      "valid": true
+    }
+  ],
+  "events": [
+    {
+      "sequence": 1,
+      "kind": "frame",
+      "frame": {
+        "time": 0,
+        "width": 960,
+        "height": 600,
+        "pngSHA256": "b2d22dfdb140da11e39ca9d6fd95bfba6f491af08f7601db88026e274f1014d9",
+        "coverage": 0.20684027777777778,
+        "changedPixels": 119140,
+        "visibleBounds": {
+          "minX": 244,
+          "minY": 182,
+          "maxX": 714,
+          "maxY": 507
+        },
+        "uniqueColors": 4664,
+        "batches": 14,
+        "instances": 152,
+        "materials": 14,
+        "deviceLost": false
+      }
+    },
+    {
+      "sequence": 2,
+      "kind": "raytrace",
+      "trace": {
+        "label": "center socket",
+        "trace": {
+          "ray": {
+            "origin": {
+              "y": 5
+            },
+            "direction": {
+              "y": -1
+            }
+          },
+          "options": {
+            "pickableOnly": true
+          },
+          "nodesVisited": 18,
+          "primitivesTested": 142,
+          "instancesTested": 141,
+          "filteredPrimitives": 10,
+          "hits": [
+            {
+              "id": "checkers-sockets",
+              "kind": "sphere",
+              "distance": 4.96569999999999,
+              "point": {
+                "y": 0.03430000000001013
+              },
+              "normal": {
+                "y": 1
+              },
+              "pickable": true,
+              "instanceIndex": 60,
+              "method": "analytic-sphere"
+            },
+            {
+              "id": "checkers-board-base",
+              "kind": "cylinder",
+              "distance": 5.06,
+              "point": {
+                "y": -0.05999999999999986
+              },
+              "normal": {
+                "y": 1
+              },
+              "pickable": true,
+              "method": "analytic-frustum"
+            }
+          ],
+          "closest": {
+            "id": "checkers-sockets",
+            "kind": "sphere",
+            "distance": 4.96569999999999,
+            "point": {
+              "y": 0.03430000000001013
+            },
+            "normal": {
+              "y": 1
+            },
+            "pickable": true,
+            "instanceIndex": 60,
+            "method": "analytic-sphere"
+          }
+        }
+      }
+    },
+    {
+      "sequence": 3,
+      "kind": "raytrace",
+      "trace": {
+        "label": "round-board corner rejection",
+        "trace": {
+          "ray": {
+            "origin": {
+              "x": 4.2,
+              "y": 5,
+              "z": 4.2
+            },
+            "direction": {
+              "y": -1
+            }
+          },
+          "options": {
+            "pickableOnly": true
+          },
+          "nodesVisited": 18,
+          "primitivesTested": 142,
+          "instancesTested": 141,
+          "filteredPrimitives": 10,
+          "hits": []
+        }
+      }
+    }
+  ],
+  "valid": true
+}

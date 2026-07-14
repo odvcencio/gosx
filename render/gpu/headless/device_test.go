@@ -851,6 +851,29 @@ func TestDeviceLostOnHeadlessIsNoOp(t *testing.T) {
 	}
 }
 
+func TestReadMat4StrideSkipsInstancePickMetadata(t *testing.T) {
+	const stride = 80
+	buf := &Buffer{data: make([]byte, stride*2)}
+	for matrixIndex, translation := range []float32{3, 9} {
+		offset := matrixIndex * stride
+		for _, diagonal := range []int{0, 5, 10, 15} {
+			writeFloat32(buf.data, offset+diagonal*4, 1)
+		}
+		writeFloat32(buf.data, offset+12*4, translation)
+		// Pick metadata deliberately resembles bad float data. Reading the
+		// second matrix at 64 bytes would consume this as its first column.
+		binary.LittleEndian.PutUint32(buf.data[offset+64:offset+68], 0xffffffff)
+	}
+	first, ok := readMat4Stride(buf, 0, stride)
+	if !ok || first[12] != 3 {
+		t.Fatalf("first instance matrix = %#v, ok=%v", first, ok)
+	}
+	second, ok := readMat4Stride(buf, 1, stride)
+	if !ok || second[0] != 1 || second[5] != 1 || second[10] != 1 || second[15] != 1 || second[12] != 9 {
+		t.Fatalf("second instance matrix = %#v, ok=%v", second, ok)
+	}
+}
+
 func float32Bytes(values []float32) []byte {
 	out := make([]byte, len(values)*4)
 	for i, v := range values {

@@ -39,9 +39,31 @@
     currentURL: String(window.location && window.location.href || ""),
     pendingURL: "",
   };
+  let navigationSequence = 0;
+  let activeNavigationController = null;
   let announceSeq = 0;
+  let navigationFrameSequence = 0;
   window.__gosx_loaded_scripts = scriptCache;
   window.__gosx_page_cache = pageCache;
+
+  function gosxRuntimeRequest(input, init) {
+    if (window.__gosx && typeof window.__gosx.request === "function") {
+      return window.__gosx.request(input, init);
+    }
+    return fetch(input, init);
+  }
+
+  function gosxRuntimeFrame(callback) {
+    const scheduler = window.__gosx && window.__gosx.scheduler;
+    if (scheduler && typeof scheduler.frame === "function") {
+      navigationFrameSequence += 1;
+      return scheduler.frame("navigation:" + navigationFrameSequence, callback);
+    }
+    if (typeof requestAnimationFrame === "function") {
+      return requestAnimationFrame(callback);
+    }
+    return setTimeout(callback, 16);
+  }
 
   function toArray(listLike) {
     return Array.prototype.slice.call(listLike || []);
@@ -274,11 +296,7 @@
         resolve();
       };
 
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(finalizeIfReady);
-      } else {
-        setTimeout(finalizeIfReady, 16);
-      }
+      gosxRuntimeFrame(finalizeIfReady);
     });
   }
 
@@ -506,6 +524,35 @@
       return;
     }
     document.dispatchEvent(new CustomEvent(type, init || {}));
+  }
+
+  function observeNavigation(level, message, fields) {
+    if (typeof window.__gosx_emit !== "function") return;
+    window.__gosx_emit(level, "navigation", message, fields || {});
+  }
+
+  function reportNavigationFailure(operation, error, fields) {
+    if (error && String(error.name || "") === "AbortError") return null;
+    const options = fields || {};
+    if (window.__gosx && typeof window.__gosx.reportFailure === "function") {
+      return window.__gosx.reportFailure(operation, error, Object.assign({
+        scope: "navigation",
+        type: "navigation",
+        severity: "warning",
+        fallback: "native",
+        telemetry: options.telemetry || {},
+      }, options));
+    }
+    if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+      return window.__gosx.reportIssue(Object.assign({
+        scope: "navigation",
+        type: "navigation",
+        severity: "warning",
+        error,
+        fallback: "native",
+      }, options));
+    }
+    return null;
   }
 
   function linkPrefetchMode(anchor) {
@@ -1026,6 +1073,14 @@
       return false;
     }
     const cacheKey = (load === "dom" ? "dom:" : "eval:") + src;
+    // The initial document already executed its deferred runtime chunks, but
+    // the navigation cache starts empty. Reusing the exact same chunk on the
+    // next route must not fetch+eval it again: Scene3D deliberately publishes
+    // several non-writable globals and is not a re-entrant module body.
+    if (findLoadedScript(src)) {
+      scriptCache.set(cacheKey, Promise.resolve());
+      return false;
+    }
     if (scriptCache.has(cacheKey)) {
       await scriptCache.get(cacheKey);
       return false;
@@ -1034,7 +1089,7 @@
     const promise = load === "dom"
       ? loadManagedScriptTag(role, src)
       : (async function() {
-        const resp = await fetch(src);
+        const resp = await gosxRuntimeRequest(src);
         if (!resp.ok) {
           throw new Error("script fetch failed: " + src + " (" + resp.status + ")");
         }
@@ -1282,6 +1337,9 @@
   }
 
   async function parseJSONResponse(response) {
+    if (window.__gosx && window.__gosx.transport && typeof window.__gosx.transport.json === "function") {
+      return window.__gosx.transport.json(response);
+    }
     try {
       return await response.json();
     } catch (_) {
@@ -1302,7 +1360,7 @@
 
   async function submitManagedActionForm(url, method, formData) {
     const csrfToken = formCSRFToken(formData);
-    const response = await fetch(url.href, {
+    const response = await gosxRuntimeRequest(url.href, {
       method: method,
       headers: {
         Accept: "application/json",
@@ -1339,6 +1397,10 @@
       await submitManagedActionForm(url, method, formData);
     } catch (err) {
       console.error("[gosx] form action failed:", err);
+      reportNavigationFailure("form action", err, {
+        source: url.href,
+        telemetry: { url: url.href, method: method },
+      });
       nativeSubmitForm(form, submitter);
       return;
     } finally {
@@ -1393,19 +1455,21 @@
     return new DOMParser().parseFromString(html, "text/html");
   }
 
-  async function fetchPage(url) {
+  async function fetchPage(url, signal) {
     const key = String(url);
     if (pageCache.has(key)) {
       return pageCache.get(key);
     }
 
     const request = (async function() {
-      const response = await fetch(url, {
+      const request = {
         headers: {
           Accept: "text/html",
           "X-GoSX-Navigation": "1",
         },
-      });
+      };
+      if (signal) request.signal = signal;
+      const response = await gosxRuntimeRequest(url, request);
       if (!response.ok) {
         throw new Error("navigation fetch failed with status " + response.status);
       }
@@ -1439,17 +1503,48 @@
     });
   }
 
+  function navigationIsCurrent(sequence) {
+    return sequence === navigationSequence;
+  }
+
+  function navigationAbortError(error) {
+    return !!error && String(error.name || "") === "AbortError";
+  }
+
   async function navigate(url, options) {
     const opts = options || {};
+    const sequence = ++navigationSequence;
+    if (activeNavigationController && typeof activeNavigationController.abort === "function") {
+      activeNavigationController.abort();
+    }
+    activeNavigationController = typeof AbortController === "function" ? new AbortController() : null;
+    const signal = activeNavigationController ? activeNavigationController.signal : null;
     startNavigation(url);
     try {
-      const page = await resolveNavigationPage(url);
-      await applyNavigatedPage(page.nextDoc, page.nextURL, !!opts.replace);
+      const page = await resolveNavigationPage(url, signal);
+      if (!navigationIsCurrent(sequence)) {
+        observeNavigation("debug", "navigation superseded", { url: String(url || "") });
+        return false;
+      }
+      await applyNavigatedPage(
+        page.nextDoc,
+        page.nextURL,
+        !!opts.replace,
+        () => navigationIsCurrent(sequence),
+      );
+      if (!navigationIsCurrent(sequence)) {
+        observeNavigation("debug", "navigation superseded", { url: String(url || "") });
+        return false;
+      }
       completeNavigation(page.nextURL);
       finalizeNavigation(page.nextURL, opts, resolveNavigationA11y(page.nextURL));
+      return true;
     } catch (err) {
-      failNavigation();
+      if (!navigationIsCurrent(sequence) || navigationAbortError(err)) return false;
+      failNavigation(err, url);
       throw err;
+    } finally {
+      if (navigationIsCurrent(sequence)) activeNavigationController = null;
     }
   }
 
@@ -1458,6 +1553,7 @@
       phase: "pending",
       pendingURL: String(url || ""),
     }, "navigate:start");
+    observeNavigation("info", "navigation started", { url: String(url || "") });
   }
 
   function completeNavigation(url) {
@@ -1466,18 +1562,24 @@
       currentURL: String(url),
       pendingURL: "",
     }, "navigate:complete");
+    observeNavigation("info", "navigation completed", { url: String(url || "") });
     prefetchManagedLinks("render");
   }
 
-  function failNavigation() {
+  function failNavigation(error, url) {
     setNavigationState({
       phase: "idle",
       pendingURL: "",
     }, "navigate:error");
+    reportNavigationFailure("navigation", error, {
+      source: String(url || ""),
+      telemetry: { url: String(url || "") },
+    });
+    observeNavigation("error", "navigation failed", {});
   }
 
-  async function resolveNavigationPage(url) {
-    const page = await fetchPage(url);
+  async function resolveNavigationPage(url, signal) {
+    const page = await fetchPage(url, signal);
     const nextURL = page.url || url;
     return {
       nextURL: nextURL,
@@ -1485,12 +1587,16 @@
     };
   }
 
-  async function applyNavigatedPage(nextDoc, nextURL, replace) {
+  async function applyNavigatedPage(nextDoc, nextURL, replace, isCurrent) {
+    if (isCurrent && !isCurrent()) return;
     await disposeCurrentPage();
+    if (isCurrent && !isCurrent()) return;
     await replaceManagedHead(nextDoc, nextURL);
+    if (isCurrent && !isCurrent()) return;
     replaceBody(nextDoc, nextURL);
     updateHistory(nextURL, !!replace);
     const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL);
+    if (isCurrent && !isCurrent()) return;
     await bootstrapCurrentPage(bootstrapLoadedNow);
   }
 
@@ -1578,7 +1684,7 @@
   }, "init");
   prefetchManagedLinks("render");
 
-  window.__gosx_page_nav = {
+  const navigationAPI = {
     navigate: navigate,
     submitAction: submitAction,
     getState: currentNavigationSnapshot,
@@ -1587,5 +1693,12 @@
       return currentNavigationSnapshot();
     },
   };
+  // Keep the original global for compatibility while publishing the
+  // navigation runtime through the shared GoSX namespace. This lets optional
+  // surfaces observe or initiate navigation without depending on a private
+  // global name.
+  window.__gosx_page_nav = navigationAPI;
+  window.__gosx = window.__gosx || {};
+  window.__gosx.navigation = navigationAPI;
   window.__gosx_submit_action = submitAction;
 })();

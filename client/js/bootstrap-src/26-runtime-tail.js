@@ -119,7 +119,7 @@
       if (!jsRef) {
         return null;
       }
-      await loadScriptTag(jsRef);
+      await loadScriptTag(jsRef, "feature-" + name);
       factory = bootstrapFeatureFactories[name];
     }
 
@@ -260,13 +260,23 @@
   };
 
   async function disposePage() {
+    if (typeof window.__gosx_dispose_runtime_content === "function") {
+      window.__gosx_dispose_runtime_content(document.body || document.documentElement);
+    } else {
+      if (typeof window.__gosx_dispose_declarative_regions === "function") {
+        window.__gosx_dispose_declarative_regions(document.body || document.documentElement);
+      }
+      if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
+        window.__gosx_dispose_runtime_surfaces(document.body || document.documentElement);
+      }
+      disposeManagedMotion();
+      disposeManagedTextLayouts();
+    }
     for (const feature of Array.from(activeBootstrapFeatures.values())) {
       if (feature && typeof feature.disposePage === "function") {
         feature.disposePage();
       }
     }
-    disposeManagedMotion();
-    disposeManagedTextLayouts();
     pendingManifest = null;
     pendingFeatureLoad = Promise.resolve([]);
     window.__gosx.ready = false;
@@ -275,8 +285,21 @@
   async function bootstrapPage() {
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
-    mountManagedMotion(document.body || document.documentElement);
-    mountManagedTextLayouts(document.body || document.documentElement);
+    if (typeof window.__gosx_mount_runtime_content === "function") {
+      window.__gosx_mount_runtime_content(document.body || document.documentElement);
+    } else {
+      mountManagedMotion(document.body || document.documentElement);
+      mountManagedTextLayouts(document.body || document.documentElement);
+      if (typeof window.__gosx_mount_runtime_surfaces === "function") {
+        window.__gosx_mount_runtime_surfaces(document.body || document.documentElement);
+      }
+      if (typeof window.__gosx_mount_stream_templates === "function") {
+        window.__gosx_mount_stream_templates(document.body || document.documentElement);
+      }
+      if (typeof window.__gosx_mount_declarative_regions === "function") {
+        window.__gosx_mount_declarative_regions(document.body || document.documentElement);
+      }
+    }
 
     const manifest = loadManifest();
     if (!manifest) {

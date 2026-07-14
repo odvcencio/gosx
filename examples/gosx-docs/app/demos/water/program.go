@@ -43,16 +43,21 @@ const (
 // declared `state water` name (see waterShaderDescriptors["objectMaterial"].states[0].name).
 var waterObjectMaterialSelenaUniforms = map[string]any{
 	"poolHeight":      1.0,
+	"poolWidth":       1.0,
+	"poolLength":      1.0,
 	"baseColor":       []float64{0.52, 0.54, 0.56, 1},
 	"isTexturePass":   0.0,
 	"texturePassMode": 0.0,
 	"lightDir":        []float64{2, 3, -1},
 	"grid":            256.0,
 	"water":           "gosx:water:water-main:state",
+	"causticTexture":  "gosx:water:water-main:caustics",
 }
 
 var waterDuckMaterialSelenaUniforms = map[string]any{
 	"poolHeight":      1.0,
+	"poolWidth":       1.0,
+	"poolLength":      1.0,
 	"baseColor":       []float64{1, 1, 1, 1},
 	"isTexturePass":   0.0,
 	"texturePassMode": 0.0,
@@ -60,6 +65,7 @@ var waterDuckMaterialSelenaUniforms = map[string]any{
 	"lightDir":        []float64{2, 3, -1},
 	"grid":            256.0,
 	"water":           "gosx:water:water-main:state",
+	"causticTexture":  "gosx:water:water-main:caustics",
 }
 
 func WaterDemoData() (map[string]any, error) {

@@ -62,6 +62,30 @@ func TestRunSceneSchemaCommand(t *testing.T) {
 	}
 }
 
+func TestRunSceneRenderCommandWritesNativePNG(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "preview.scene.json")
+	output := filepath.Join(dir, "preview.png")
+	mustWriteFile(t, input, `{
+		"objects":[{"id":"cube","kind":"cube","size":2,"color":"#69e3c7"}],
+		"lights":[{"id":"sun","kind":"directional","color":"#ffffff","intensity":1,"directionZ":-1}]
+	}`)
+	var out bytes.Buffer
+	if err := runSceneCommand([]string{"render", "--out", output, "--width", "96", "--height", "64", input}, &out); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
+		t.Fatalf("scene render output is not PNG: %x", data[:min(8, len(data))])
+	}
+	if !strings.Contains(out.String(), "Rendered Scene3D preview") {
+		t.Fatalf("missing render summary: %s", out.String())
+	}
+}
+
 func TestRunSceneValidateCommandJSON(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "demo.scene.json"), `{

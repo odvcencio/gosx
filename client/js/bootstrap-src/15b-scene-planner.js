@@ -377,10 +377,11 @@
     ]);
     hash = sceneCSSHashComputeParticles(hash, bundle && bundle.computeParticles);
     hash = sceneCSSHashCollection(hash, bundle && bundle.waterSystems, [
-      "id", "resolution", "poolShape", "poolWidth", "poolHeight", "poolLength",
+      "id", "resolution", "surfaceResolution", "poolShape", "poolWidth", "poolHeight", "poolLength",
       "cornerRadius", "waveSpeed", "damping", "normalScale", "seedDrops",
       "dropRadius", "dropStrength", "dropEventID", "dropX", "dropZ",
-      "dropEventRadius", "dropEventStrength", "tileTexture", "cubeMap", "caustics",
+      "dropEventRadius", "dropEventStrength", "tileTexture", "cubeMap", "shallowColor", "deepColor",
+      "aboveWaterColorR", "aboveWaterColorG", "aboveWaterColorB", "caustics",
       "reflection", "refraction", "followCamera", "activeObject",
       "objectKind", "objectX", "objectY", "objectZ", "objectRadius",
       "objectHalfSizeX", "objectHalfSizeY", "objectHalfSizeZ",

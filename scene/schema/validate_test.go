@@ -126,7 +126,7 @@ func TestValidateJSONAcceptsAllMajorRecordsAndUnknownFields(t *testing.T) {
 		"instancedMeshes":[{"id":"batch-1","count":1,"kind":"cube","transforms":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"colors":["#fff"]}],
 		"instancedGLBMeshes":[{"id":"glb-batch-1","src":"/part.glb","instances":[{"id":"glb-instance-1","x":1,"scaleX":1,"scaleY":1,"scaleZ":1}]}],
 		"computeParticles":[{"id":"particles-1","count":8,"emitter":{"kind":"sphere","radius":1,"rate":2,"lifetime":3},"material":{"size":2,"opacity":1},"bounds":10}],
-		"waterSystems":[{"id":"water-1","interactionProfile":"water-object-drop-orbit","interactionTarget":"water-1","interactionObject":"Sphere","resolution":256,"poolShape":"Box","poolWidth":7.2,"poolHeight":1.1,"poolLength":4.4,"seedDrops":20,"dropRadius":0.03,"dropEventID":1,"dropX":-0.1,"dropZ":0.2,"dropEventRadius":0.03,"dropEventStrength":0.01,"shallowColor":"#7ad1eb","deepColor":"#082e57","objectKind":"compound","objectX":-1.28,"objectY":0.22,"objectZ":0.1,"objectRadius":0.44,"objectBobAmplitude":0.08,"objectBobSpeed":1.55,"objectDisplacementScale":1,"objectDisplacementSpheres":[{"offsetX":0,"offsetY":0,"offsetZ":0,"radius":0.15},{"offsetX":0.1,"offsetY":0.05,"offsetZ":-0.02,"radius":0.08}],"computeBackend":"elio","materialBackend":"selena"}],
+		"waterSystems":[{"id":"water-1","interactionProfile":"water-object-drop-orbit","interactionTarget":"water-1","interactionObject":"Sphere","resolution":256,"surfaceResolution":201,"poolShape":"Box","poolWidth":7.2,"poolHeight":1.1,"poolLength":4.4,"seedDrops":20,"dropRadius":0.03,"dropEventID":1,"dropX":-0.1,"dropZ":0.2,"dropEventRadius":0.03,"dropEventStrength":0.01,"shallowColor":"#7ad1eb","deepColor":"#082e57","objectKind":"compound","objectX":-1.28,"objectY":0.22,"objectZ":0.1,"objectRadius":0.44,"objectBobAmplitude":0.08,"objectBobSpeed":1.55,"objectDisplacementScale":1,"objectDisplacementSpheres":[{"offsetX":0,"offsetY":0,"offsetZ":0,"radius":0.15},{"offsetX":0.1,"offsetY":0.05,"offsetZ":-0.02,"radius":0.08}],"computeBackend":"elio","materialBackend":"selena"}],
 		"animations":[{"name":"move","duration":1,"channels":[{"targetNode":0,"property":"translation","times":[0,1],"values":[0,0,0,1,1,1]}]}],
 		"labels":[{"id":"label-1","text":"Ready","maxWidth":160,"maxLines":2}],
 		"sprites":[{"id":"sprite-1","src":"/sprite.png","width":24,"height":24,"scale":1,"opacity":1}],
@@ -155,7 +155,7 @@ func TestValidateJSONWarnsUnknownWaterInteractionProfile(t *testing.T) {
 
 func TestValidateJSONRejectsInvalidWaterSystem(t *testing.T) {
 	report := ValidateJSON([]byte(`{
-		"waterSystems":[{"id":"bad-water","resolution":-1,"seedDrops":-2,"dropEventID":-1,"poolWidth":-1,"dropRadius":-0.1,"dropEventRadius":-0.1,"causticsResolution":-1,"objectTextureResolution":-1,"objectTexturePixelBudget":-1,"objectShadowResolution":-1,"objectRadius":-1,"objectHalfSizeX":-0.1,"objectBobSpeed":-1,"objectDisplacementSpheres":[{"radius":-0.1}]}]
+		"waterSystems":[{"id":"bad-water","resolution":-1,"surfaceResolution":-1,"seedDrops":-2,"dropEventID":-1,"poolWidth":-1,"dropRadius":-0.1,"dropEventRadius":-0.1,"causticsResolution":-1,"objectTextureResolution":-1,"objectTexturePixelBudget":-1,"objectShadowResolution":-1,"objectRadius":-1,"objectHalfSizeX":-0.1,"objectBobSpeed":-1,"objectDisplacementSpheres":[{"radius":-0.1}]}]
 	}`), Options{})
 	if report.Valid {
 		t.Fatal("expected invalid water system to fail")
@@ -170,6 +170,13 @@ func TestValidateJSONRejectsInvalidWaterSystem(t *testing.T) {
 		if !hasCode(report, code) {
 			t.Fatalf("expected diagnostic %s: %+v", code, report.Diagnostics)
 		}
+	}
+}
+
+func TestValidateJSONRejectsNegativeHDRWaterColor(t *testing.T) {
+	report := ValidateJSON([]byte(`{"waterSystems":[{"id":"bad-water-color","aboveWaterColorB":-0.1}]}`), Options{})
+	if report.Valid || !hasCode(report, "scene.numeric.negative") {
+		t.Fatalf("expected negative HDR water color diagnostic: %+v", report.Diagnostics)
 	}
 }
 

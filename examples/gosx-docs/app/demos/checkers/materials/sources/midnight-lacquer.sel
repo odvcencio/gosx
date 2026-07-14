@@ -1,0 +1,16 @@
+material MidnightLacquer {
+    param lacquerBlack : color = rgb(0.025, 0.018, 0.024)
+    param cinnabar     : color = rgb(0.42, 0.035, 0.028)
+    param goldLeaf    : color = rgb(0.95, 0.66, 0.20)
+    surface(geo) -> color {
+        let n       = normalize(geo.normal)
+        let cloudA  = sin(geo.uv.x * 31.0 + sin(geo.uv.y * 9.0) * 3.0)
+        let cloudB  = sin(geo.uv.y * 47.0 + sin(geo.uv.x * 13.0) * 2.0)
+        let cloud   = clamp((cloudA + cloudB) * 0.18 + 0.34, 0.0, 1.0)
+        let flake   = smoothstep(0.985, 0.94, abs(sin(geo.uv.x * 173.0) * sin(geo.uv.y * 149.0)))
+        let body    = mix(lacquerBlack.rgb, cinnabar.rgb, cloud)
+        let gilded  = mix(body, goldLeaf.rgb, flake * 0.38)
+        let clear   = pow(1.0 - abs(n.z), 4.0) * 0.16
+        return vec4f(gilded + vec3f(clear, clear, clear), 1.0)
+    }
+}

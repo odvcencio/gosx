@@ -13,9 +13,11 @@ import (
 
 	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/internal/version"
+	"m31labs.dev/gosx/scene"
 	"m31labs.dev/gosx/scene/capability"
 	"m31labs.dev/gosx/scene/cert"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
+	"m31labs.dev/gosx/scene/preview"
 	sceneschema "m31labs.dev/gosx/scene/schema"
 )
 
@@ -67,6 +69,8 @@ func runSceneCommand(args []string, stdout io.Writer) error {
 		return runSceneCertifyCommand(args[1:], stdout)
 	case "inspect":
 		return runSceneInspectCommand(args[1:], stdout)
+	case "render":
+		return runSceneRenderCommand(args[1:], stdout)
 	case "schema":
 		return runSceneSchemaCommand(args[1:], stdout)
 	case "validate":
@@ -77,6 +81,91 @@ func runSceneCommand(args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unknown scene subcommand %q\nrun 'gosx scene help' for usage", args[0])
 	}
+}
+
+func runSceneRenderCommand(args []string, stdout io.Writer) error {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		sceneRenderUsage(stdout)
+		return nil
+	}
+	fs := flag.NewFlagSet("gosx scene render", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	outPath := fs.String("out", "", "output PNG path")
+	width := fs.Int("width", 1280, "preview width in pixels")
+	height := fs.Int("height", 720, "preview height in pixels")
+	timeSeconds := fs.Float64("time", 0, "animation time in seconds")
+	background := fs.String("background", "", "override scene background color")
+	fast := fs.Bool("fast", false, "skip shadows/post-FX and cap curved geometry for quick thumbnails")
+	maxSegments := fs.Int("max-segments", 0, "cap curved primitive tessellation (0 preserves authored values)")
+	cameraX := fs.Float64("camera-x", 0, "override camera X")
+	cameraY := fs.Float64("camera-y", 0, "override camera Y")
+	cameraZ := fs.Float64("camera-z", 0, "override camera Z")
+	fov := fs.Float64("fov", 0, "override vertical field of view in degrees")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("scene render requires exactly one SceneIR or Scene3D props JSON file")
+	}
+	if *width <= 0 || *height <= 0 {
+		return errors.New("scene render width and height must be positive")
+	}
+	inputPath := fs.Arg(0)
+	data, err := os.ReadFile(inputPath)
+	if err != nil {
+		return fmt.Errorf("read scene preview input %s: %w", inputPath, err)
+	}
+	segmentLimit := *maxSegments
+	if *fast && segmentLimit == 0 {
+		segmentLimit = 12
+	}
+	opts := preview.Options{Width: *width, Height: *height, Time: *timeSeconds, Background: *background,
+		DisableShadows: *fast, DisablePostFX: *fast, MaxSegments: segmentLimit}
+	if *cameraX != 0 || *cameraY != 0 || *cameraZ != 0 || *fov != 0 {
+		cameraFOV := *fov
+		if cameraFOV == 0 {
+			cameraFOV = 50
+		}
+		opts.Camera = &scene.PerspectiveCamera{Position: scene.Vec3(*cameraX, *cameraY, *cameraZ), FOV: cameraFOV, Near: 0.1, Far: 100}
+	}
+	result, err := preview.RenderJSON(data, opts)
+	if err != nil {
+		return err
+	}
+	destination := strings.TrimSpace(*outPath)
+	if destination == "" {
+		ext := filepath.Ext(inputPath)
+		destination = strings.TrimSuffix(inputPath, ext) + ".png"
+	}
+	if parent := filepath.Dir(destination); parent != "." {
+		if err := os.MkdirAll(parent, 0755); err != nil {
+			return fmt.Errorf("create scene preview directory: %w", err)
+		}
+	}
+	file, err := os.Create(destination)
+	if err != nil {
+		return fmt.Errorf("create scene preview %s: %w", destination, err)
+	}
+	encodeErr := preview.WritePNG(file, result)
+	closeErr := file.Close()
+	if encodeErr != nil {
+		return fmt.Errorf("encode scene preview: %w", encodeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close scene preview: %w", closeErr)
+	}
+	fmt.Fprintf(stdout, "Rendered Scene3D preview: %s\n", destination)
+	fmt.Fprintf(stdout, "  %dx%d · %d objects · %d instanced batches · %d materials · %.2f ms\n",
+		*width, *height, result.Bundle.ObjectCount, len(result.Bundle.InstancedMeshes),
+		len(result.Bundle.Materials), result.Stats.LastFrameMS)
+	for _, diagnostic := range result.Bundle.Diagnostics {
+		fmt.Fprintf(stdout, "  %s %s", diagnostic.Severity, diagnostic.Code)
+		if diagnostic.Target != "" {
+			fmt.Fprintf(stdout, " [%s]", diagnostic.Target)
+		}
+		fmt.Fprintf(stdout, ": %s\n", diagnostic.Message)
+	}
+	return nil
 }
 
 func runSceneInspectCommand(args []string, stdout io.Writer) error {
@@ -730,10 +819,27 @@ func sceneUsage(w io.Writer) {
 Usage:
   gosx scene certify [--json] [--strict] [--backend webgpu|webgl|canvas2d <scene-file>]
   gosx scene inspect [--json] [--strict] [--cert] [--budget file] [--assets root] <file-or-dir>...
+  gosx scene render [--out image.png] [--width N] [--height N] <scene-file>
   gosx scene schema [--out path]
   gosx scene validate [--json] [--strict] [--max-texture-pixels N] <file-or-dir>...
 
 	`)
+}
+
+func sceneRenderUsage(w io.Writer) {
+	fmt.Fprintf(w, `gosx scene render - Render Scene3D to PNG entirely in Go
+
+Usage:
+  gosx scene render [--out image.png] [--width 1280] [--height 720] [--time seconds] [--fast]
+                    [--background color] [--camera-x N --camera-y N --camera-z N --fov degrees]
+					[--max-segments N]
+                    <scene-file>
+
+The input may be a bare SceneIR document or the runtime props JSON emitted by
+scene.Props. Rendering uses the deterministic CPU backend: no browser, WebGPU
+adapter, display server, or graphics driver is required.
+
+`)
 }
 
 func sceneInspectUsage(w io.Writer) {

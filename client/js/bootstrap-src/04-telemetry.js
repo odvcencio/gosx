@@ -73,6 +73,7 @@
     if (!cfg.enabled) {
       window.__gosx_emit = function () {};
       window.__gosx_telemetry_flush = function () {};
+      window.__gosx_telemetry_session = function () { return ""; };
       return;
     }
 
@@ -151,14 +152,19 @@
       }
 
       try {
-        if (typeof window.fetch === "function") {
-          const result = window.fetch(cfg.endpoint, {
+        const coreRequest = window.__gosx && typeof window.__gosx.request === "function"
+          ? window.__gosx.request
+          : (typeof window.fetch === "function" ? window.fetch.bind(window) : null);
+        if (coreRequest) {
+          const request = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: body,
             keepalive: true,
             credentials: "omit",
-          });
+          };
+          if (window.__gosx && coreRequest === window.__gosx.request) request.csrf = false;
+          const result = coreRequest(cfg.endpoint, request);
           if (result && typeof result.catch === "function") {
             result.catch(function () { /* swallow — telemetry must never surface to users */ });
           }
@@ -213,4 +219,26 @@
     };
   }
 
+  function gosxPublishTelemetryAPI() {
+    if (typeof window === "undefined") return;
+    window.__gosx = window.__gosx || {};
+    var telemetry = window.__gosx.telemetry && typeof window.__gosx.telemetry === "object"
+      ? window.__gosx.telemetry
+      : {};
+    telemetry.emit = function (level, category, message, fields) {
+      return window.__gosx_emit(level, category, message, fields);
+    };
+    telemetry.flush = function (options) {
+      return window.__gosx_telemetry_flush(options);
+    };
+    telemetry.session = function () {
+      return typeof window.__gosx_telemetry_session === "function"
+        ? window.__gosx_telemetry_session()
+        : "";
+    };
+    telemetry.enabled = !((window.__gosx_telemetry_config || {}).enabled === false);
+    window.__gosx.telemetry = telemetry;
+  }
+
   gosxInstallTelemetry();
+  gosxPublishTelemetryAPI();

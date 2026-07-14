@@ -55,6 +55,7 @@ type SceneIR struct {
 	Lights             []LightIR            `json:"lights,omitempty"`
 	Environment        EnvironmentIR        `json:"environment,omitzero"`
 	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
+	RenderGraph        *RenderGraphIR       `json:"renderGraph,omitempty"`
 	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
 	// BackendCaps is the honesty-gate verdict: which rendering backends can
@@ -91,6 +92,40 @@ type SceneIR struct {
 	// MotionProgram (transforms) so material packets route independently in the
 	// JS runtime.
 	MaterialMotionProgram []byte `json:"materialMotionProgram,omitempty"`
+}
+
+// RenderGraphIR is the backend-neutral retained render/resource schedule.
+// Authoring tools may retain richer editing data, but runtime and headless
+// consumers share this exact ordered plan.
+type RenderGraphIR struct {
+	Resources   []RenderResourceIR   `json:"resources"`
+	Passes      []RenderGraphPassIR  `json:"passes"`
+	Allocations []RenderAllocationIR `json:"allocations,omitempty"`
+}
+
+type RenderResourceIR struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Ownership string `json:"ownership"`
+	Format    string `json:"format,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	Bytes     int64  `json:"bytes,omitempty"`
+}
+
+type RenderGraphPassIR struct {
+	ID      string   `json:"id"`
+	Kind    string   `json:"kind"`
+	Reads   []string `json:"reads,omitempty"`
+	Writes  []string `json:"writes,omitempty"`
+	Depends []string `json:"depends,omitempty"`
+}
+
+type RenderAllocationIR struct {
+	Resource string `json:"resource"`
+	Slot     int    `json:"slot"`
+	FirstUse int    `json:"firstUse"`
+	LastUse  int    `json:"lastUse"`
 }
 
 // InteractionProfileIR declares a named client-side Scene3D interaction
@@ -546,6 +581,15 @@ type InstancedMeshIR struct {
 	RoughnessMap         string               `json:"roughnessMap,omitempty"`
 	MetalnessMap         string               `json:"metalnessMap,omitempty"`
 	EmissiveMap          string               `json:"emissiveMap,omitempty"`
+	CustomVertex         string               `json:"customVertex,omitempty"`
+	CustomFragment       string               `json:"customFragment,omitempty"`
+	CustomVertexWGSL     string               `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL   string               `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms       map[string]any       `json:"customUniforms,omitempty"`
+	ShaderBackend        string               `json:"shaderBackend,omitempty"`
+	ShaderLayout         map[string]any       `json:"shaderLayout,omitempty"`
+	ShaderSource         string               `json:"shaderSource,omitempty"`
+	ShaderSourceFiles    map[string]string    `json:"shaderSourceFiles,omitempty"`
 	Transforms           []float64            `json:"transforms"`
 	Colors               []string             `json:"colors,omitempty"`
 	Attributes           map[string][]float64 `json:"attributes,omitempty"`
@@ -619,6 +663,7 @@ type WaterSystemIR struct {
 	InteractionTarget           string                           `json:"interactionTarget,omitempty"`
 	InteractionObject           string                           `json:"interactionObject,omitempty"`
 	Resolution                  int                              `json:"resolution,omitempty"`
+	SurfaceResolution           int                              `json:"surfaceResolution,omitempty"`
 	SurfaceMeshResolution       int                              `json:"surfaceMeshResolution,omitempty"`
 	PoolShape                   string                           `json:"poolShape,omitempty"`
 	PoolWidth                   float64                          `json:"poolWidth,omitempty"`
@@ -640,6 +685,9 @@ type WaterSystemIR struct {
 	CubeMap                     string                           `json:"cubeMap,omitempty"`
 	ShallowColor                string                           `json:"shallowColor,omitempty"`
 	DeepColor                   string                           `json:"deepColor,omitempty"`
+	AboveWaterColorR            float64                          `json:"aboveWaterColorR,omitempty"`
+	AboveWaterColorG            float64                          `json:"aboveWaterColorG,omitempty"`
+	AboveWaterColorB            float64                          `json:"aboveWaterColorB,omitempty"`
 	CausticsResolution          int                              `json:"causticsResolution,omitempty"`
 	ObjectTextureResolution     int                              `json:"objectTextureResolution,omitempty"`
 	ObjectTextureResolutionMode string                           `json:"objectTextureResolutionMode,omitempty"`
@@ -1866,6 +1914,7 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "interactionTarget", item.InteractionTarget)
 	setString(record, "interactionObject", item.InteractionObject)
 	setInt(record, "resolution", item.Resolution)
+	setInt(record, "surfaceResolution", item.SurfaceResolution)
 	setInt(record, "surfaceMeshResolution", item.SurfaceMeshResolution)
 	setString(record, "poolShape", item.PoolShape)
 	setNumeric(record, "poolWidth", item.PoolWidth)
@@ -1887,6 +1936,9 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "cubeMap", item.CubeMap)
 	setString(record, "shallowColor", item.ShallowColor)
 	setString(record, "deepColor", item.DeepColor)
+	setNumeric(record, "aboveWaterColorR", item.AboveWaterColorR)
+	setNumeric(record, "aboveWaterColorG", item.AboveWaterColorG)
+	setNumeric(record, "aboveWaterColorB", item.AboveWaterColorB)
 	setInt(record, "causticsResolution", item.CausticsResolution)
 	setInt(record, "objectTextureResolution", item.ObjectTextureResolution)
 	setString(record, "objectTextureResolutionMode", item.ObjectTextureResolutionMode)
