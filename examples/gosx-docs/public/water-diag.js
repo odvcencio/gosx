@@ -13,6 +13,11 @@
 
   if (new URLSearchParams(location.search).get("diag") !== "1") return;
 
+  // Diagnostics are explicitly requested, so keep the renderer's broad
+  // per-frame proof surface live instead of waiting for the production
+  // telemetry throttle. This is observation-only and scoped to ?diag=1.
+  window.__gosx_scene3d_webgpu_telemetry = true;
+
   function ready(fn) {
     if (document.readyState !== "loading") fn();
     else document.addEventListener("DOMContentLoaded", fn);
@@ -111,6 +116,14 @@
           num(attr("webgpu-water-authored-surface-fallbacks")) > 0) +
         row("mesh res (used)", attr("webgpu-water-surface-mesh-resolution") || "-",
           Boolean(q.get("meshRes")) && attr("webgpu-water-surface-mesh-resolution") !== q.get("meshRes")) +
+        row("duck RTT", (attr("webgpu-water-object-texture-mesh-passes") || "0") + " pass · " +
+          (attr("webgpu-water-object-texture-mesh-draw-calls") || "0") + " draw", false) +
+        row("duck RTT size", (attr("webgpu-water-object-texture-width") || "0") + "x" +
+          (attr("webgpu-water-object-texture-height") || "0"), false) +
+        row("retained cadence", "1 / " + (attr("webgpu-water-expensive-pass-cadence") || "1") + " frames", false) +
+        row("duck Selena", (attr("webgpu-water-object-texture-selena-draw-calls") || "0") + " draw", false) +
+        row("duck RTT fallback", attr("webgpu-water-object-texture-fallback-passes") || "0",
+          num(attr("webgpu-water-object-texture-fallback-passes")) > 0) +
         row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false) +
         '<div style="height:6px"></div>' +
         row("canvas", lastW + "x" + lastH, false) +
@@ -208,6 +221,12 @@
         surfaceFallbacks: attr("webgpu-water-authored-surface-fallbacks"),
         surfaceFallbackReason: attr("webgpu-water-authored-surface-fallback-reason"),
         surfaceAboveVertices: attr("webgpu-water-surface-above-draw-vertices"),
+        objectTexturePasses: attr("webgpu-water-object-texture-mesh-passes"),
+        objectTextureDrawCalls: attr("webgpu-water-object-texture-mesh-draw-calls"),
+        objectTextureSelenaDrawCalls: attr("webgpu-water-object-texture-selena-draw-calls"),
+        objectTextureFallbackPasses: attr("webgpu-water-object-texture-fallback-passes"),
+        objectTextureSize: (attr("webgpu-water-object-texture-width") || "0") + "x" + (attr("webgpu-water-object-texture-height") || "0"),
+        expensivePassCadence: num(attr("webgpu-water-expensive-pass-cadence")) || 1,
         computeDispatches: attr("webgpu-water-compute-dispatches"),
         canvas: lastW + "x" + lastH,
         resizesPerSec: resizeWindow.length,

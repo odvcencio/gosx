@@ -869,10 +869,13 @@
     "  let corner = vertexIndex % 6u;",
     "  var u = 0.0;",
     "  var v = 0.0;",
-    // Box geometry intentionally faces outward like upstream THREE.BoxGeometry.
-    // Rounded geometry is separately authored inward-facing.
-    "  if (corner == 1u || corner == 2u || corner == 4u) { u = 1.0; }",
-    "  if (corner == 2u || corner == 4u || corner == 5u) { v = 1.0; }",
+    // The pool is an open vessel, not a solid box: floor faces upward and
+    // walls face inward. This matches the rounded path and lets ordinary back
+    // culling hide the large exterior shell without making the water
+    // double-sided. The water surface itself keeps depth writes enabled, so
+    // the overlap fix is independent from this presentation winding.
+    "  if (corner == 1u || corner == 2u || corner == 5u) { u = 1.0; }",
+    "  if (corner == 1u || corner == 4u || corner == 5u) { v = 1.0; }",
     "  var worldPos = vec3f(0.0);",
     "  var normal = vec3f(0.0, 1.0, 0.0);",
     "  var tileUV = vec2f(0.0);",
@@ -7729,6 +7732,7 @@
         waterClock: {},
         waterNormalDispatchSeq: 0,
         waterExpensiveCadenceBucket: null,
+        waterObjectTextureFrameSeq: 0,
         seeded: false,
         seedSalt: Number.isFinite(Number(entry && entry.seedSalt)) ? Number(entry.seedSalt) : Math.random() * 4096,
         lastDropEventID: 0,
@@ -8410,6 +8414,16 @@
       return waterSystemUsesProjectedObjectTextures(system);
     }
 
+    function sceneWaterObjectTextureTargetSlots(system) {
+      var subtype = Math.max(0, Math.floor(sceneNumber(system && system.waterObjectSubtype, 0)));
+      // Match the upstream optical contract: torus uses refraction + reflected
+      // camera, glTF/mesh (duck) uses refraction + clipped reflection. Unknown
+      // compound subjects retain all three targets as the conservative path.
+      if (subtype === 1) return [0, 1];
+      if (subtype === 2) return [0, 2];
+      return [0, 1, 2];
+    }
+
     function renderWaterObjectTexturePass(encoder, system) {
       if (!encoder || !system || !waterObjectTexturePipeline || !system.objectTextureBindGroup) return 0;
       if (!system.objectReflectionView || !system.objectClippedReflectionView || !system.objectRefractionView) return 0;
@@ -8759,8 +8773,6 @@
         });
         if (!optics.object && !optics.reflection && !optics.refraction) continue;
         var objectList = sceneWaterObjectMeshList(bundle, entry);
-        system.objectViewProjectionReady = false;
-        system.objectReflectionViewProjectionReady = false;
         stats.waterObjectTextureCandidateObjects += Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
         stats.waterObjectTextureSelectedObjects += objectList.length;
         if (!stats.waterObjectTextureCandidateProfile) {
@@ -8775,77 +8787,104 @@
         }
 
         var textureSignature = sceneWaterObjectRenderSignature(system, entry, bundle, objectList, true);
+        var targetSlots = sceneWaterObjectTextureTargetSlots(system);
         if (system.waterObjectTextureSignature !== textureSignature) {
           system.waterObjectTextureSignature = textureSignature;
-          system.waterObjectTextureRefreshRemaining = 3;
+          system.waterObjectTextureRefreshRemaining = targetSlots.length;
         }
         var refreshRemaining = Math.max(0, Math.floor(sceneNumber(system.waterObjectTextureRefreshRemaining, 0)));
         if (refreshRemaining <= 0) continue;
 
+        // The adaptive profile already cadences caustics/shadow work; apply
+        // that same contract to projected mesh targets. A stressed GPU at
+        // balanced/survival quality must not keep paying a viewport-sized duck
+        // RTT on every display frame. This sequence is independent from the
+        // changing render signature, otherwise motion would bypass cadence by
+        // marking the target dirty every frame.
+        var objectTextureFrameSeq = Math.max(0, Math.floor(sceneNumber(system.waterObjectTextureFrameSeq, 0)));
+        system.waterObjectTextureFrameSeq = objectTextureFrameSeq + 1;
+        var objectTextureCadence = Math.max(1, Math.floor(sceneNumber(system.expensivePassCadence, 1)));
+        if (objectTextureFrameSeq % objectTextureCadence !== 0) continue;
+
         var targetWidth = Math.max(1, system.objectTextureWidth || system.objectTextureResolution || WATER_OBJECT_TEXTURE_SIZE);
         var targetHeight = Math.max(1, system.objectTextureHeight || system.objectTextureResolution || WATER_OBJECT_TEXTURE_SIZE);
-        // Round-robin: render only one of the 3 mesh-target passes per frame.
-        // Slots: 0=refraction, 1=reflection, 2=clipped-reflection. Textures
-        // from previous frames are reused for the other two, keeping the duck
-        // load to ~1/3 of its previous per-frame cost.
-        var passSlot = 3 - refreshRemaining;
+        // Round-robin independently from refreshRemaining. Continuous object
+        // or camera movement changes the signature every frame; deriving the
+        // slot from refreshRemaining used to reset moving ducks to refraction
+        // forever. The persistent cursor keeps all subtype-required targets
+        // fresh while still rendering at most one RTT per frame.
+        var refreshCursor = Math.max(0, Math.floor(sceneNumber(system.waterObjectTextureRefreshCursor, 0)));
+        var passSlot = targetSlots[refreshCursor % targetSlots.length];
         var emptyPass = { passes: 0, drawCalls: 0, selenaDrawCalls: 0 };
-        // Always upload frame uniforms so objectViewProjectionMatrix stays
-        // current for the water-surface shader even on skipped render frames.
-        uploadFrameUniforms(bundle && bundle.camera, targetWidth, targetHeight, false);
-        if (system.objectViewProjectionMatrix) {
-          system.objectViewProjectionMatrix.set(scratchSelenaViewProjection);
-          system.objectViewProjectionReady = true;
+        // A retained texture must stay paired with the projection matrix used
+        // to render it. Update only the matrix for the target issued this
+        // frame; skipped/alternating targets keep both their pixels and their
+        // matching matrix instead of falling through to the current scratch
+        // camera and visibly swimming across the water.
+        var refraction = emptyPass;
+        var reflection = emptyPass;
+        var clipped = emptyPass;
+        if (passSlot === 0) {
+          uploadFrameUniforms(bundle && bundle.camera, targetWidth, targetHeight, false);
+          if (system.objectViewProjectionMatrix) {
+            system.objectViewProjectionMatrix.set(scratchSelenaViewProjection);
+            system.objectViewProjectionReady = true;
+          }
+          refraction = renderWaterObjectMeshTargetPass(
+            encoder,
+            system,
+            system.objectRefractionView,
+            objectList,
+            bundle,
+            materials,
+            frameBindGroup,
+            pbrBuffers,
+            1,
+            "gosx-water-object-mesh-refraction-pass",
+            "refraction"
+          );
+        } else {
+          uploadWaterReflectionFrameUniforms(bundle && bundle.camera, targetWidth, targetHeight, false);
+          if (system.objectReflectionViewProjectionMatrix) {
+            system.objectReflectionViewProjectionMatrix.set(scratchSelenaViewProjection);
+            system.objectReflectionViewProjectionReady = true;
+          }
+          if (passSlot === 1) {
+            reflection = renderWaterObjectMeshTargetPass(
+              encoder,
+              system,
+              system.objectReflectionView,
+              objectList,
+              bundle,
+              materials,
+              frameBindGroup,
+              pbrBuffers,
+              1,
+              "gosx-water-object-mesh-reflection-pass",
+              "reflection"
+            );
+          } else {
+            clipped = renderWaterObjectMeshTargetPass(
+              encoder,
+              system,
+              system.objectClippedReflectionView,
+              objectList,
+              bundle,
+              materials,
+              frameBindGroup,
+              pbrBuffers,
+              2,
+              "gosx-water-object-mesh-clipped-reflection-pass",
+              "clipped-reflection"
+            );
+          }
         }
-        var refraction = passSlot === 0 ? renderWaterObjectMeshTargetPass(
-          encoder,
-          system,
-          system.objectRefractionView,
-          objectList,
-          bundle,
-          materials,
-          frameBindGroup,
-          pbrBuffers,
-          1,
-          "gosx-water-object-mesh-refraction-pass",
-          "refraction"
-        ) : emptyPass;
-        uploadWaterReflectionFrameUniforms(bundle && bundle.camera, targetWidth, targetHeight, false);
-        if (system.objectReflectionViewProjectionMatrix) {
-          system.objectReflectionViewProjectionMatrix.set(scratchSelenaViewProjection);
-          system.objectReflectionViewProjectionReady = true;
-        }
-        var reflection = passSlot === 1 ? renderWaterObjectMeshTargetPass(
-          encoder,
-          system,
-          system.objectReflectionView,
-          objectList,
-          bundle,
-          materials,
-          frameBindGroup,
-          pbrBuffers,
-          1,
-          "gosx-water-object-mesh-reflection-pass",
-          "reflection"
-        ) : emptyPass;
-        var clipped = passSlot === 2 ? renderWaterObjectMeshTargetPass(
-          encoder,
-          system,
-          system.objectClippedReflectionView,
-          objectList,
-          bundle,
-          materials,
-          frameBindGroup,
-          pbrBuffers,
-          2,
-          "gosx-water-object-mesh-clipped-reflection-pass",
-          "clipped-reflection"
-        ) : emptyPass;
         restoredFrame = true;
         var passCount = refraction.passes + reflection.passes + clipped.passes;
         var drawCalls = refraction.drawCalls + reflection.drawCalls + clipped.drawCalls;
         var selenaDrawCalls = refraction.selenaDrawCalls + reflection.selenaDrawCalls + clipped.selenaDrawCalls;
         if (passCount > 0) addWaterObjectTextureStats(stats, system, passCount, passCount, drawCalls, 0, selenaDrawCalls);
+        system.waterObjectTextureRefreshCursor = (refreshCursor + 1) % targetSlots.length;
         system.waterObjectTextureRefreshRemaining = Math.max(0, refreshRemaining - 1);
       }
       if (restoredFrame) {
@@ -13161,6 +13200,7 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-width", String(published.waterObjectTextureWidth || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-height", String(published.waterObjectTextureHeight || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-object-texture-pixel-budget", String(published.waterObjectTexturePixelBudget || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-expensive-pass-cadence", String(published.waterExpensivePassCadence || 1));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-quality-allocation-pending", String(published.waterQualityAllocationPending || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-quality-allocation-failures", String(published.waterQualityAllocationFailures || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-quality-allocation-retry-frame", String(published.waterQualityAllocationRetryFrame || 0));

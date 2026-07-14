@@ -229,7 +229,10 @@ const budgets = [
   // the deployment gate and are unchanged below.
   // v0.31.6 combines the Go-WASM lifecycle already on main with the scoped
   // runtime-surface modules. Measured: 1_291_115 / 342_587 / 276_762.
-  { file: "bootstrap.js", raw: 1_295_000, gzip: 344_000, brotli: 278_000 },
+  // Bumped raw 1_295_000 -> 1_296_000 for v0.31.15's subtype-aware duck RTT
+  // scheduler and retained projection-matrix contract. Measured: 1_295_043 /
+  // 343_699 / 277_538; compressed budgets retain their prior ceilings.
+  { file: "bootstrap.js", raw: 1_296_000, gzip: 344_000, brotli: 278_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -399,7 +402,10 @@ const budgets = [
   // Bumped raw 693_000 -> 696_000, gzip 191_000 -> 192_000, and Brotli
   // 157_000 -> 157_500 for the typed water surface-resolution and linear-HDR
   // contracts. Measured: 695_570 / 191_539 / 157_108.
-  { file: "bootstrap-feature-scene3d.js", raw: 700_000, gzip: 192_000, brotli: 159_000 },
+  // Bumped raw 700_000 -> 701_000 and gzip 192_000 -> 193_000 for the
+  // target-aware water RTT scheduler and retained projection matrices.
+  // Measured: 700_047 / 192_112 / 158_295.
+  { file: "bootstrap-feature-scene3d.js", raw: 701_000, gzip: 193_000, brotli: 159_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
