@@ -123,6 +123,8 @@ func TestCodeIntelligenceAssetProvidesStructuralNavigation(t *testing.T) {
 		`requestServerAnalysis`,
 		`byteToUTF16Offsets`,
 		`lane: "server"`,
+		`form[data-code-intelligence-server]`,
+		`dataset.codeIntelligenceLane`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("code intelligence asset missing %q", want)

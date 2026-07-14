@@ -3,7 +3,9 @@
 
   const runtimePromises = new Map();
   const languagePromises = new Map();
-  const forms = Array.from(document.querySelectorAll("form[data-code-intelligence-runtime]"));
+  const forms = Array.from(document.querySelectorAll(
+    "form[data-code-intelligence-runtime], form[data-code-intelligence-server]"
+  ));
   const firstPaint = waitForFirstContentfulPaint();
   for (const form of forms) {
     firstPaint.then(() => mount(form));
@@ -220,6 +222,7 @@
   }
 
   function applyAnalysis(form, source, highlight, analysis) {
+    form.dataset.codeIntelligenceLane = analysis.lane || "wasm";
     renderHighlights(highlight, source.value, analysis.highlights || []);
     renderOutline(form, source, analysis.tags || []);
     const diagnostics = form.querySelector("#editor-diagnostics");
