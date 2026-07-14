@@ -20732,7 +20732,18 @@ function makeFakeGPUDevice(options) {
       setVertexBuffer(slot, buffer, offset, size) {
         pass.vertexBuffers.push({ slot, buffer, offset, size });
       },
-      draw(vertexCount, instanceCount) {
+      draw(vertexCount, instanceCount, firstVertex, firstInstance) {
+        const values = [
+          ["vertexCount", vertexCount],
+          ["instanceCount", instanceCount == null ? 1 : instanceCount],
+          ["firstVertex", firstVertex == null ? 0 : firstVertex],
+          ["firstInstance", firstInstance == null ? 0 : firstInstance],
+        ];
+        for (const [name, value] of values) {
+          if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+            throw new TypeError("[gosx-test fake GPURenderPassEncoder] draw " + name + " must be an unsigned long, got " + String(value));
+          }
+        }
         pass.draws.push({
           vertexCount,
           instanceCount: instanceCount == null ? 1 : instanceCount,
