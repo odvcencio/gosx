@@ -25,9 +25,9 @@ func Page() Node {
   		controlPitchLimit={1.5707788735}
   		preferWebGPU={true}
   		maxDevicePixelRatio={1.6}
-		adaptiveQuality={true}
-		adaptiveTargetFrameMS={16.7}
-		adaptiveWarmupFrames={12}
+  		adaptiveQuality={true}
+  		adaptiveTargetFrameMS={16.7}
+  		adaptiveWarmupFrames={12}
   		qualityTier="full"
   		canvasAlpha={false}
   	>
@@ -76,7 +76,7 @@ func Page() Node {
   			aboveWaterColorB={1.25}
   			causticsResolution={1024}
   			objectTextureResolutionMode="viewport"
-			objectTexturePixelBudget={393216}
+  			objectTexturePixelBudget={393216}
   			objectShadowResolution={1024}
   			caustics={true}
   			reflection={true}
