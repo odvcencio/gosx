@@ -25,7 +25,9 @@ func Page() Node {
 			<details class="scene3d-showcase__proof">
 				<summary>What GoSX owns</summary>
 				<ul>
-					<li>Typed scene graph, stable mesh IDs, and per-mesh declarative spin</li>
+					<li>
+						Typed scene graph, stable mesh IDs, and per-mesh declarative spin
+					</li>
 					<li>
 						PBR materials and a three-point lighting rig
 					</li>
