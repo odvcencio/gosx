@@ -7,83 +7,29 @@ import (
 func init() {
 	RegisterStaticDocsPage(
 		"GoSX",
-		"Go-native web platform. One language, full stack, zero JavaScript toolchain.",
+		"Build server-rendered apps, interactive tools, realtime systems, and GPU scenes in Go without a JavaScript app toolchain.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
 					"heroScene": HeroScene(),
-					"pitchStatements": []map[string]string{
-						{
-							"num":      "01",
-							"headline": "One language. Full stack.",
-							"body":     "Server rendering, reactive islands, 3D scenes, real-time collaboration \u2014 all in Go. No second language required.",
-						},
-						{
-							"num":      "02",
-							"headline": "Zero JavaScript toolchain.",
-							"body":     "No webpack. No npm. No bundler. One go build produces a deployable binary with everything included.",
-						},
-						{
-							"num":      "03",
-							"headline": "Accessible by design.",
-							"body":     "Semantic landmarks, named controls, reduced-motion support, server-measured text, and CI checks for duplicate IDs and ARIA references.",
-						},
+					"runtimeSurfaces": []map[string]string{
+						{"num": "01", "name": "Server", "purpose": "Pages, layouts, loaders, metadata, and streamed HTML.", "cost": "Browser cost: none"},
+						{"num": "02", "name": "Action", "purpose": "Typed mutations, validation, CSRF, redirects, and form state.", "cost": "Browser cost: native HTML"},
+						{"num": "03", "name": "Island", "purpose": "Focused reactive DOM behavior compiled from constrained Go.", "cost": "Browser cost: shared Go VM"},
+						{"num": "04", "name": "Engine", "purpose": "Canvas, Scene3D, simulation, media, workers, and GPU work.", "cost": "Browser cost: managed runtime"},
+						{"num": "05", "name": "Hub", "purpose": "Presence, fanout, CRDT documents, and shared realtime state.", "cost": "Browser cost: WebSocket"},
+					},
+					"paths": []map[string]string{
+						{"num": "01", "title": "Web applications", "body": "Ship fast HTML first, then add typed mutations, sessions, auth, streaming, and caching where needed.", "tools": "Server · Action", "href": "/docs/getting-started"},
+						{"num": "02", "title": "Interactive interfaces", "body": "Hydrate only the reactive regions. Signals and islands keep ordinary content out of the client runtime.", "tools": "Island · Signal", "href": "/docs/islands"},
+						{"num": "03", "title": "Realtime workspaces", "body": "Coordinate users and agents through hubs, presence, shared state, and conflict-free documents.", "tools": "Hub · CRDT", "href": "/docs/hubs"},
+						{"num": "04", "title": "Visual computing", "body": "Author 3D scenes, materials, simulations, and GPU workloads in Go with managed backend fallback.", "tools": "Engine · Scene3D · Selena", "href": "/docs/scene3d"},
 					},
 					"proofPoints": []map[string]string{
-						{"value": "5", "label": "External dependencies"},
-						{"value": "79K", "label": "Lines of Go"},
-						{"value": "0", "label": "CGo required"},
-						{"value": "2 weeks", "label": "From zero to here"},
-					},
-					"showcases": []map[string]any{
-						{
-							"num":   "01",
-							"title": "File Routes & SSR",
-							"body":  "Pages are files. Layouts nest. Everything renders on the server first.",
-							"href":  "/docs/routing",
-						},
-						{
-							"num":   "02",
-							"title": "Islands & Signals",
-							"body":  "Reactive DOM regions powered by a Go expression VM. Shared signals sync across islands.",
-							"href":  "/docs/islands",
-						},
-						{
-							"num":   "03",
-							"title": "3D Engine",
-							"body":  "PBR renderer with WebGPU and WebGL2. Declare scenes in Go structs, not JavaScript.",
-							"href":  "/docs/scene3d",
-						},
-						{
-							"num":   "04",
-							"title": "Forms & Actions",
-							"body":  "HTML form posts with server validation, CSRF protection, and flash messages.",
-							"href":  "/docs/forms",
-						},
-						{
-							"num":   "05",
-							"title": "Auth",
-							"body":  "Magic links, passkeys, and OAuth. Sessions and CSRF built in.",
-							"href":  "/docs/auth",
-						},
-						{
-							"num":   "06",
-							"title": "Real-time & CRDT",
-							"body":  "WebSocket hubs with conflict-free replicated data types. Sync state across clients.",
-							"href":  "/docs/hubs",
-						},
-						{
-							"num":   "07",
-							"title": "GPU Compute",
-							"body":  "100K particles at 60fps via WGSL compute shaders. CPU fallback for WebGL2.",
-							"href":  "/docs/engines",
-						},
-						{
-							"num":   "08",
-							"title": "Build & Deploy",
-							"body":  "One binary. Static export, SSR, or edge. ISR with background revalidation.",
-							"href":  "/docs/deployment",
-						},
+						{"value": "5", "label": "Execution surfaces"},
+						{"value": "2", "label": "GPU backends"},
+						{"value": "1", "label": "Deployable binary"},
+						{"value": "0", "label": "JS app toolchains"},
 					},
 				}, nil
 			},

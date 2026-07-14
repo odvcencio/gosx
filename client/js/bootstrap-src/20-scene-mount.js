@@ -5767,6 +5767,18 @@
     return "viewport";
   }
 
+  function sceneControlsRotateDirection(props) {
+    const direction = String(props && props.controlRotateDirection || "").trim().toLowerCase();
+    switch (direction) {
+      case "grab":
+      case "track":
+      case "direct":
+        return -1;
+      default:
+        return 1;
+    }
+  }
+
   function sceneControlsPitchLimit(props) {
     return sceneOrbitPitchLimit(props && props.controlPitchLimit);
   }
@@ -5972,6 +5984,7 @@
       lastX: 0,
       lastY: 0,
       rotateMode: sceneControlsRotateMode(props),
+      rotateDirection: sceneControlsRotateDirection(props),
       rotateSpeed: sceneControlsRotateSpeed(props),
       zoomSpeed: sceneControlsZoomSpeed(props),
       lookSpeed: sceneControlsLookSpeed(props),
@@ -6208,13 +6221,14 @@
     const now = sceneNumber(event && event.timeStamp, sceneNowMilliseconds());
     const seconds = Math.max((now - sceneNumber(controls.orbitLastMoveMS, now)) / 1000, 1 / 240);
     const rotateSpeed = sceneNumber(controls.rotateSpeed, 1);
+    const rotateDirection = sceneNumber(controls.rotateDirection, 1) < 0 ? -1 : 1;
     const pixelRadians = (Math.PI / 180) * rotateSpeed;
     const deltaYaw = controls.rotateMode === "pixel-degrees"
-      ? sample.deltaX * pixelRadians
-      : (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * rotateSpeed;
+      ? sample.deltaX * pixelRadians * rotateDirection
+      : (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * rotateSpeed * rotateDirection;
     const deltaPitch = controls.rotateMode === "pixel-degrees"
-      ? sample.deltaY * pixelRadians
-      : (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * rotateSpeed;
+      ? sample.deltaY * pixelRadians * rotateDirection
+      : (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * rotateSpeed * rotateDirection;
     const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
     controls.orbit.yaw += deltaYaw;
     controls.orbit.pitch = sceneClamp(
@@ -6720,6 +6734,12 @@
       } catch (_e) {}
     }
 
+    var liveTelemetry = null;
+    var liveHandle = mount.__gosxScene3DHandle;
+    if (liveHandle && typeof liveHandle.getTelemetry === "function") {
+      try { liveTelemetry = liveHandle.getTelemetry(); } catch (_e) {}
+    }
+
     return {
       backend: attr("backend"),
       ready: boolAttr("ready"),
@@ -6738,6 +6758,11 @@
       hardwareConcurrency: numAttr("hardware-concurrency"),
       cullSurvivors: cullSurvivors,
       webgpu: wgpuDiag,
+      camera: liveTelemetry && liveTelemetry.camera || null,
+      orbit: liveTelemetry && liveTelemetry.orbit || null,
+      selectionID: liveTelemetry && liveTelemetry.selectionID || "",
+      lastPick: liveTelemetry && liveTelemetry.lastPick || null,
+      rendererStats: liveTelemetry && liveTelemetry.rendererStats || null,
     };
   };
 
@@ -9117,6 +9142,15 @@
       },
       getCamera() {
         return currentMountedSceneCamera();
+      },
+      getTelemetry() {
+        return {
+          camera: currentMountedSceneCamera(),
+          orbit: currentMountedSceneOrbitState(),
+          selectionID: lastAppliedSelectionID || "",
+          lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
+          rendererStats: renderer && typeof renderer.getStats === "function" ? renderer.getStats() : null,
+        };
       },
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");

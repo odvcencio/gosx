@@ -93,6 +93,23 @@ test("water renderer presents real frames, responds to controls, and obeys lifec
     const response = await page.goto(`${baseURL}/demos/water`, { waitUntil: "domcontentloaded" });
     assert.ok(response.ok(), `/demos/water returned ${response.status()}\n\nLogs:\n${logs}`);
 
+    const scriptProvenance = await page.locator("script").evaluateAll((scripts) => scripts.map((script) => ({
+      src: script.getAttribute("src") || "",
+      role: script.getAttribute("data-gosx-script") || "",
+      navigation: script.getAttribute("data-gosx-navigation") || "",
+      manifest: script.id === "gosx-manifest",
+      devReload: script.getAttribute("data-gosx-dev-reload") || "",
+    })));
+    const unownedScripts = scriptProvenance.filter((script) => !(
+      script.role || script.navigation === "true" || script.manifest || script.devReload === "true"
+    ));
+    assert.deepEqual(unownedScripts, [], `water route executed scripts without GoSX provenance: ${JSON.stringify(unownedScripts)}`);
+    assert.equal(
+      scriptProvenance.some((script) => /(?:demos-dock|reveal|water-controls)\.js(?:\?|$)/.test(script.src)),
+      false,
+      "water route loaded a bespoke demo-shell or water script",
+    );
+
     const mountSelector = "[data-gosx-scene3d-mounted]";
     await page.waitForSelector(`${mountSelector}[data-gosx-scene3d-water-renderer]`, { timeout: 45000 });
     const canvas = page.locator("canvas[data-gosx-scene3d-canvas]");
@@ -110,12 +127,10 @@ test("water renderer presents real frames, responds to controls, and obeys lifec
     assert.equal(initial.activeObject, "Sphere");
     assert.equal(initial.poolShape, "Box");
 
-    const proof = await waterProofSnapshot(page);
-    assert.equal(proof.backend.toLowerCase(), initial.backend, diagnostics("GoSX proof backend disagrees with mount", proof));
-    assert.equal(proof.tier.toLowerCase(), proof.mountTier, diagnostics("GoSX proof tier disagrees with mount", proof));
-    assert.equal(proof.dpr, proof.mountDpr, diagnostics("GoSX proof DPR disagrees with mount", proof));
-    assert.equal(proof.model, "Duck glTF · deferred");
-    assert.equal(proof.modelState, "deferred");
+    const quality = await waterQualitySnapshot(page);
+    assert.equal(quality.backend, initial.backend, diagnostics("GoSX quality telemetry disagrees with mount", quality));
+    assert.ok(quality.tier, diagnostics("GoSX quality tier is missing", quality));
+    assert.ok(Number(quality.dpr) > 0, diagnostics("GoSX DPR telemetry is missing", quality));
 
     const advanced = await waitForWaterAdvance(page, initial.frameSeq, initial.simulationSeq);
     assert.ok(advanced.frameSeq > initial.frameSeq, diagnostics("water presentation counter did not advance", advanced));
@@ -173,36 +188,22 @@ test("water renderer presents real frames, responds to controls, and obeys lifec
     await Promise.all([duckModelRequest, gltfFeatureRequest]);
     assert.ok(requestURLs.some(isDuckAsset), "Duck selection did not request its glTF assets");
     assert.ok(requestURLs.some(isGLTFFeature), "Duck selection did not request the glTF feature chunk");
-    await page.waitForFunction(() => document.getElementById("water-proof-model")?.dataset.state === "loaded");
+    await page.waitForFunction(
+      () => (window.__waterModelStatuses || []).some((entry) => entry?.status === "loaded"),
+      { timeout: 30000 },
+    );
     const modelProof = await page.evaluate(() => ({
       statuses: (window.__waterModelStatuses || []).map((entry) => entry.status),
-      text: document.getElementById("water-proof-model")?.textContent,
-      state: document.getElementById("water-proof-model")?.dataset.state,
     }));
     assert.deepEqual(modelProof.statuses, ["loading", "loaded"]);
-    assert.equal(modelProof.text, "Duck glTF · loaded on demand");
-    assert.equal(modelProof.state, "loaded");
-
-    const storyOpen = page.locator("#water-story-open");
-    await storyOpen.focus();
-    await page.keyboard.press("Enter");
-    await page.waitForFunction(() => document.getElementById("water-story")?.open === true);
-    assert.equal(await page.locator("#water-story-title").textContent(), "A native GoSX water system");
-    assert.ok((await page.locator(".water-demo__story-source").textContent()).includes("<WaterSystem"));
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => document.getElementById("water-story")?.open === false);
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "water-story-open");
 
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileLayout = await page.evaluate(() => {
-      const proofRect = document.querySelector(".water-demo__proof")?.getBoundingClientRect();
       const controlsRect = document.querySelector(".water-demo__controls")?.getBoundingClientRect();
-      return { proofRect, controlsRect, width: window.innerWidth, height: window.innerHeight };
+      return { controlsRect, width: window.innerWidth, height: window.innerHeight };
     });
-    assert.ok(mobileLayout.proofRect.left >= 0 && mobileLayout.proofRect.right <= mobileLayout.width);
-    assert.ok(mobileLayout.proofRect.top >= 0 && mobileLayout.proofRect.bottom <= mobileLayout.height);
-    assert.ok(mobileLayout.proofRect.top >= mobileLayout.controlsRect.bottom,
-      `mobile GoSX proof overlaps settings (${JSON.stringify(mobileLayout)})`);
+    assert.ok(mobileLayout.controlsRect.left >= 0 && mobileLayout.controlsRect.right <= mobileLayout.width);
+    assert.ok(mobileLayout.controlsRect.top >= 0 && mobileLayout.controlsRect.bottom <= mobileLayout.height);
     await page.setViewportSize({ width: 1280, height: 800 });
 
     await setControlValue(page, 'select[name="object"]', "Sphere");
@@ -309,18 +310,13 @@ async function waterSnapshot(targetPage) {
   });
 }
 
-async function waterProofSnapshot(targetPage) {
+async function waterQualitySnapshot(targetPage) {
   return targetPage.evaluate(() => {
     const mount = document.getElementById("water-demo-scene");
-    const text = (id) => document.getElementById(id)?.textContent?.trim() || "";
     return {
-      backend: text("water-proof-backend"),
-      tier: text("water-proof-tier"),
-      dpr: text("water-proof-dpr"),
-      model: text("water-proof-model"),
-      modelState: document.getElementById("water-proof-model")?.dataset.state || "",
-      mountTier: mount?.getAttribute("data-gosx-scene3d-quality-active") || "",
-      mountDpr: String(Number(mount?.getAttribute("data-gosx-scene3d-quality-dpr-cap") || 0).toFixed(2)).replace(/0+$/, "").replace(/\.$/, ""),
+      backend: mount?.getAttribute("data-gosx-scene3d-renderer") || "",
+      tier: mount?.getAttribute("data-gosx-scene3d-quality-active") || "",
+      dpr: mount?.getAttribute("data-gosx-scene3d-quality-dpr-cap") || "",
     };
   });
 }

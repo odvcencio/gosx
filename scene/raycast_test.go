@@ -63,6 +63,18 @@ func TestRaycastGraphPickableOnlyAndMaxDistance(t *testing.T) {
 	}
 }
 
+func TestRaycastPickableChildSurvivesNonPickableParent(t *testing.T) {
+	notPickable := false
+	graph := NewGraph(Mesh{
+		ID: "decoration", Geometry: BoxGeometry{Width: 4, Height: 4, Depth: 0.2}, Pickable: &notPickable,
+		Children: []Node{Mesh{ID: "control", Geometry: SphereGeometry{Radius: 0.5}, Position: Vec3(0, 0, -1)}},
+	})
+	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, 3), Direction: Vec3(0, 0, -1)}, PickableOnly())
+	if !ok || hit.ID != "control" {
+		t.Fatalf("pickable child was hidden by non-pickable parent: %#v ok=%v", hit, ok)
+	}
+}
+
 func TestRaycastGraphUsesGroupTransforms(t *testing.T) {
 	graph := NewGraph(Group{
 		Position: Vec3(3, 0, 0),
@@ -83,6 +95,71 @@ func TestRaycastGraphUsesGroupTransforms(t *testing.T) {
 	}
 	if math.Abs(hit.Point.X-3) > 1e-9 {
 		t.Fatalf("expected world-space hit point to include group transform, got %#v", hit.Point)
+	}
+}
+
+func TestRaycastGraphReturnsExactInstancedMeshIndex(t *testing.T) {
+	graph := NewGraph(InstancedMesh{
+		ID:        "pieces",
+		Count:     3,
+		Geometry:  SphereGeometry{Radius: 0.5},
+		Positions: []Vector3{Vec3(-2, 0, 0), Vec3(0, 0, 0), Vec3(2, 0, 0)},
+		Scales:    []Vector3{Vec3(1, 0.5, 1), Vec3(1, 0.5, 1), Vec3(1, 0.5, 1)},
+	})
+	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 0), Direction: Vec3(0, -1, 0)}, PickableOnly())
+	if !ok {
+		t.Fatal("expected instanced sphere hit")
+	}
+	if hit.ID != "pieces" || hit.InstanceIndex == nil || *hit.InstanceIndex != 1 {
+		t.Fatalf("expected pieces instance 1, got %#v", hit)
+	}
+	if hit.Method != "analytic-sphere" || math.Abs(hit.Point.Y-0.25) > 1e-9 {
+		t.Fatalf("expected exact scaled sphere surface, got %#v", hit)
+	}
+}
+
+func TestTraceGraphReportsSortedHitsAndWork(t *testing.T) {
+	graph := NewGraph(InstancedMesh{
+		ID:        "stack",
+		Count:     2,
+		Geometry:  SphereGeometry{Radius: 0.5},
+		Positions: []Vector3{Vec3(0, 0, -2), Vec3(0, 0, -5)},
+	})
+	trace := TraceGraph(graph, Ray{Origin: Vec3(0, 0, 2), Direction: Vec3(0, 0, -1)})
+	if trace.NodesVisited != 1 || trace.PrimitivesTested != 2 || trace.InstancesTested != 2 {
+		t.Fatalf("unexpected traversal telemetry: %#v", trace)
+	}
+	if len(trace.Hits) != 2 || trace.Closest == nil || *trace.Closest.InstanceIndex != 0 {
+		t.Fatalf("expected two sorted instance hits, got %#v", trace)
+	}
+	if trace.Hits[0].Distance >= trace.Hits[1].Distance {
+		t.Fatalf("hits are not nearest-first: %#v", trace.Hits)
+	}
+}
+
+func TestCylinderRaycastRejectsBoundingBoxCorner(t *testing.T) {
+	graph := NewGraph(Mesh{
+		ID:       "round-board",
+		Geometry: CylinderGeometry{RadiusTop: 1, RadiusBottom: 1, Height: 0.5},
+	})
+	// This ray crosses the old AABB top face but is outside the circular cap.
+	if hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0.9, 2, 0.9), Direction: Vec3(0, -1, 0)}); ok {
+		t.Fatalf("expected cylinder corner miss, got %#v", hit)
+	}
+	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0.5, 2, 0.5), Direction: Vec3(0, -1, 0)})
+	if !ok || hit.Method != "analytic-frustum" || math.Abs(hit.Point.Y-0.25) > 1e-9 {
+		t.Fatalf("expected exact cap hit, got %#v ok=%v", hit, ok)
+	}
+}
+
+func TestCylinderRaycastPreservesZeroRadiusConeTip(t *testing.T) {
+	graph := NewGraph(Mesh{ID: "cone", Geometry: CylinderGeometry{RadiusTop: 0, RadiusBottom: 1, Height: 1}})
+	if hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0.2, 0.49, 2), Direction: Vec3(0, 0, -1)}); ok {
+		t.Fatalf("ray above cone envelope should miss, got %#v", hit)
+	}
+	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0.49, 2), Direction: Vec3(0, 0, -1)})
+	if !ok || hit.Method != "analytic-frustum" {
+		t.Fatalf("ray through cone axis should hit, got %#v ok=%v", hit, ok)
 	}
 }
 

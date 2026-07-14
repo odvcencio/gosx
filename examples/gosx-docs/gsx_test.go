@@ -97,10 +97,10 @@ func TestDemosLayoutStructure(t *testing.T) {
 
 	// 6. Metadata affordance and accessible dialog must be real and wired.
 	detailsAttrs := []string{
-		`data-demo-details-open`,
+		`data-gosx-disclosure-target="#demo-details"`,
 		`role="dialog"`,
 		`aria-modal="true"`,
-		`data-demo-details-source`,
+		`data-gosx-bind-attr="href:data-demo-source"`,
 	}
 	for _, attr := range detailsAttrs {
 		if !strings.Contains(src, attr) {

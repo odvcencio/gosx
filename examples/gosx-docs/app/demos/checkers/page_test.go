@@ -23,6 +23,9 @@ func TestCheckersPageCompilesWithSemanticFallback(t *testing.T) {
 	text := string(source)
 	for _, required := range []string{
 		"<Scene3D",
+		"/checkers-native-preview.png",
+		"/checkers-native-telemetry.json",
+		"Pure-Go native preview",
 		"Keyboard board · 121 holes",
 		"data-checkers-hole",
 		"checkers-status",
@@ -50,7 +53,7 @@ func TestCheckersClientProvidesRovingKeyboardAndMaterialSelection(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(source)
-	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", "syncMaterialFromURL", `"imperial-jade": true`, `"carved-wood": true`, `"brushed-steel": true`, `data-checkers-material`, `searchParams.set("material"`, "state.sceneCommands", "gosx:scene3d:commands", "revision: state.revision", "prefers-reduced-motion", "requestAnimationFrame", "state.lastMove", "data-last-from", "data-last-to", "checkers-search-depth"} {
+	for _, required := range []string{"onBoardKeydown", "ArrowRight", "moveBoardFocus", "onMaterialChange", "syncMaterialFromURL", `"imperial-jade": true`, `"carved-wood": true`, `"brushed-steel": true`, `"midnight-lacquer": true`, `"moon-porcelain": true`, `data-checkers-material`, `searchParams.set("material"`, "state.sceneCommands", "gosx:scene3d:commands", "revision: state.revision", "prefers-reduced-motion", "requestAnimationFrame", "state.lastMove", "data-last-from", "data-last-to", "checkers-search-depth"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("checkers-client.js missing %q", required)
 		}
@@ -59,11 +62,13 @@ func TestCheckersClientProvidesRovingKeyboardAndMaterialSelection(t *testing.T) 
 
 func TestValidatedMaterialCoversURLContract(t *testing.T) {
 	tests := map[string]string{
-		"imperial-jade": "imperial-jade",
-		"carved-wood":   "carved-wood",
-		"brushed-steel": "brushed-steel",
-		"":              "carved-wood",
-		"unknown":       "carved-wood",
+		"imperial-jade":    "imperial-jade",
+		"carved-wood":      "carved-wood",
+		"brushed-steel":    "brushed-steel",
+		"midnight-lacquer": "midnight-lacquer",
+		"moon-porcelain":   "moon-porcelain",
+		"":                 "carved-wood",
+		"unknown":          "carved-wood",
 	}
 	for input, want := range tests {
 		if got := string(validatedMaterial(input)); got != want {

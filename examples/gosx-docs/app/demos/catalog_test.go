@@ -71,22 +71,71 @@ func contains(values []string, want string) bool {
 	return false
 }
 
-func TestDemoDetailsClientKeyboardContract(t *testing.T) {
-	client, err := os.ReadFile(repoPath(t, "examples/gosx-docs/public/demos-dock.js"))
+func TestDemoShellUsesGoSXManagedInteractions(t *testing.T) {
+	layout, err := os.ReadFile(repoPath(t, "examples/gosx-docs/app/demos/layout.gsx"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := string(client)
+	source := string(layout)
 	for _, required := range []string{
-		`event.key === "Escape"`,
-		`event.key !== "Tab"`,
-		`event.shiftKey`,
-		`previousFocus.focus()`,
-		`aria-expanded`,
-		`data-demo-details-source`,
+		`data-gosx-bind-source`,
+		`data-gosx-toggle-target`,
+		`data-gosx-disclosure-target`,
+		`data-gosx-disclosure-close`,
 	} {
 		if !strings.Contains(source, required) {
-			t.Errorf("demos-dock.js missing keyboard/details behavior %q", required)
+			t.Errorf("demo layout missing GoSX-managed behavior %q", required)
+		}
+	}
+	if strings.Contains(source, `<script`) {
+		t.Error("demo layout must not ship bespoke script elements")
+	}
+}
+
+func TestBespokeDemoScriptDebtDoesNotGrow(t *testing.T) {
+	// These predate the no-escape-hatch invariant. Keep the list exact: a new
+	// script fails immediately, and deleting one requires deleting its entry so
+	// the debt can only move toward zero.
+	legacy := map[string]bool{
+		"checkers/page.gsx":      true,
+		"cms/page.gsx":           true,
+		"collab/page.gsx":        true,
+		"fluid/page.gsx":         true,
+		"livesim/page.gsx":       true,
+		"playground/page.gsx":    true,
+		"scene3d/page.gsx":       true,
+		"scene3d-bench/page.gsx": true,
+	}
+	root := repoPath(t, "examples/gosx-docs/app/demos")
+	found := map[string]bool{}
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || filepath.Ext(path) != ".gsx" {
+			return err
+		}
+		source, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if !strings.Contains(string(source), `<script`) {
+			return nil
+		}
+		relative, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		relative = filepath.ToSlash(relative)
+		found[relative] = true
+		if !legacy[relative] {
+			t.Errorf("new bespoke demo script in %s; add the behavior to GoSX instead", relative)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for relative := range legacy {
+		if !found[relative] {
+			t.Errorf("legacy script debt %s was removed; delete its exception too", relative)
 		}
 	}
 }

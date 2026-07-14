@@ -292,7 +292,7 @@
 
   const loadedScriptTags = new Map();
 
-  function loadScriptTag(src) {
+  function loadScriptTag(src, role) {
     if (!src) return Promise.resolve();
     if (loadedScriptTags.has(src)) {
       return loadedScriptTags.get(src);
@@ -300,6 +300,7 @@
     const promise = new Promise(function(resolve, reject) {
       const script = document.createElement("script");
       script.src = src;
+      script.setAttribute("data-gosx-script", role || "managed-runtime");
       script.onload = resolve;
       script.onerror = function() {
         reject(new Error("failed to load script: " + src));
@@ -3052,13 +3053,14 @@
       interactionTarget: typeof item.interactionTarget === "string" ? item.interactionTarget : (typeof current.interactionTarget === "string" ? current.interactionTarget : ""),
       interactionObject: typeof item.interactionObject === "string" ? item.interactionObject : (typeof current.interactionObject === "string" ? current.interactionObject : ""),
       resolution: Math.max(1, Math.floor(sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))),
+      surfaceResolution: Math.max(2, Math.floor(sceneNumber(item.surfaceResolution, sceneNumber(current.surfaceResolution, sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))))),
       poolShape: typeof item.poolShape === "string" && item.poolShape ? item.poolShape : (typeof current.poolShape === "string" ? current.poolShape : "Box"),
       poolWidth: Math.max(0.001, sceneNumber(item.poolWidth, sceneNumber(current.poolWidth, 1))),
       poolHeight: Math.max(0.001, sceneNumber(item.poolHeight, sceneNumber(current.poolHeight, 1))),
       poolLength: Math.max(0.001, sceneNumber(item.poolLength, sceneNumber(current.poolLength, 1))),
       cornerRadius: Math.max(0, sceneNumber(item.cornerRadius, sceneNumber(current.cornerRadius, 0))),
-      waveSpeed: sceneNumber(item.waveSpeed, sceneNumber(current.waveSpeed, 0.995)),
-      damping: sceneNumber(item.damping, sceneNumber(current.damping, 0.985)),
+      waveSpeed: sceneNumber(item.waveSpeed, sceneNumber(current.waveSpeed, 1)),
+      damping: sceneNumber(item.damping, sceneNumber(current.damping, 0.995)),
       normalScale: sceneNumber(item.normalScale, sceneNumber(current.normalScale, 1)),
       seedDrops: Math.max(0, Math.floor(sceneNumber(item.seedDrops, sceneNumber(current.seedDrops, 0)))),
       dropRadius: Math.max(0, sceneNumber(item.dropRadius, sceneNumber(current.dropRadius, 0.03))),
@@ -3072,6 +3074,9 @@
       cubeMap: typeof item.cubeMap === "string" ? item.cubeMap : (typeof current.cubeMap === "string" ? current.cubeMap : ""),
       shallowColor: typeof item.shallowColor === "string" ? item.shallowColor : (typeof current.shallowColor === "string" ? current.shallowColor : ""),
       deepColor: typeof item.deepColor === "string" ? item.deepColor : (typeof current.deepColor === "string" ? current.deepColor : ""),
+      aboveWaterColorR: sceneNumber(item.aboveWaterColorR, sceneNumber(current.aboveWaterColorR, 0)),
+      aboveWaterColorG: sceneNumber(item.aboveWaterColorG, sceneNumber(current.aboveWaterColorG, 0)),
+      aboveWaterColorB: sceneNumber(item.aboveWaterColorB, sceneNumber(current.aboveWaterColorB, 0)),
       causticsResolution: Math.max(0, Math.floor(sceneNumber(item.causticsResolution, sceneNumber(current.causticsResolution, 0)))),
       objectTextureResolution: Math.max(0, Math.floor(sceneNumber(item.objectTextureResolution, sceneNumber(current.objectTextureResolution, 0)))),
       objectTextureResolutionMode: typeof item.objectTextureResolutionMode === "string" ? item.objectTextureResolutionMode : (typeof current.objectTextureResolutionMode === "string" ? current.objectTextureResolutionMode : ""),

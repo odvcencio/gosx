@@ -19,13 +19,14 @@ func Page() Node {
 		controlTargetY={-0.5}
 		controlTargetZ={0}
 		controlRotateMode="pixel-degrees"
+		controlRotateDirection="grab"
 		controlMinDistance={2}
 		controlMaxDistance={10}
 		controlPitchLimit={1.5707788735}
 		preferWebGPU={true}
 		maxDevicePixelRatio={1.6}
-		adaptiveQuality={true}
-		qualityTier="balanced"
+		adaptiveQuality={false}
+		qualityTier="full"
 		canvasAlpha={false}
 	>
 		<Camera
@@ -51,7 +52,8 @@ func Page() Node {
 			interactionProfile="water-object-drop-orbit"
 			interactionTarget="water-main"
 			interactionObject="Sphere"
-			resolution={192}
+			resolution={256}
+			surfaceResolution={201}
 			poolShape="Box"
 			poolWidth={1.0}
 			poolHeight={1.0}
@@ -67,10 +69,13 @@ func Page() Node {
 			cubeMap="/water/"
 			shallowColor="#7ad1eb"
 			deepColor="#082e57"
-			causticsResolution={512}
+			aboveWaterColorR={0.25}
+			aboveWaterColorG={1.0}
+			aboveWaterColorB={1.25}
+			causticsResolution={1024}
 			objectTextureResolutionMode="viewport"
 			objectTexturePixelBudget={786432}
-			objectShadowResolution={512}
+			objectShadowResolution={1024}
 			caustics={true}
 			reflection={true}
 			refraction={true}
@@ -232,50 +237,6 @@ func Page() Node {
 			bobSpeed={0}
 		 />
 		</Scene3D>
-		<section class="water-demo__proof" aria-label="Live GoSX runtime proof">
-			<p class="water-demo__proof-line">
-				<strong>GoSX Scene3D</strong>
-				<span aria-hidden="true">·</span>
-				<output id="water-proof-backend" aria-live="polite">starting</output>
-				<span aria-hidden="true">·</span>
-				<output id="water-proof-tier">balanced</output>
-				<span aria-hidden="true">·</span>
-				<span>60 Hz sim</span>
-				<span aria-hidden="true">·</span>
-				<span>DPR <output id="water-proof-dpr">1.25</output></span>
-				<span aria-hidden="true">·</span>
-				<span>Grid <output id="water-proof-grid">128²</output></span>
-			</p>
-			<div class="water-demo__proof-actions">
-				<output id="water-proof-model" class="water-demo__model-proof" data-state="deferred">Duck glTF · deferred</output>
-				<button id="water-story-open" class="water-demo__story-open" type="button">How this is GoSX</button>
-			</div>
-		</section>
-		<dialog id="water-story" class="water-demo__story" aria-labelledby="water-story-title">
-			<div class="water-demo__story-head">
-				<div>
-					<p class="water-demo__story-kicker">Framework proof</p>
-					<h2 id="water-story-title">A native GoSX water system</h2>
-				</div>
-				<button id="water-story-close" class="water-demo__story-close" type="button" aria-label="Close GoSX story">Close</button>
-			</div>
-			<pre class="water-demo__story-source" tabindex="0"><code>{`<Scene3D preferWebGPU={true} adaptiveQuality={true}>
-  <WaterSystem
-    computeBackend="elio"
-    materialBackend="selena"
-    caustics={true}
-    reflection={true}
-    refraction={true}
-  />
-</Scene3D>`}</code></pre>
-			<ul class="water-demo__story-facts">
-				<li>Typed .gsx lowers to GoSX SceneIR.</li>
-				<li>Selena emits WGSL and GLES from one shader source.</li>
-				<li>GoSX selects its WebGPU or WebGL2 renderer at runtime.</li>
-				<li>Adaptive quality and offscreen suspension protect frame time.</li>
-			</ul>
-			<a class="water-demo__source-link" href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/demos/water/page.gsx" target="_blank" rel="noopener noreferrer">View GoSX source</a>
-		</dialog>
 	<aside
 		id="water-demo-help"
 		class="water-demo__help"
@@ -427,64 +388,5 @@ func Page() Node {
 			</fieldset>
 		</div>
 		</form>
-		<script>
-			{`
-(function () {
-  if (typeof document === "undefined") return;
-  var root = document.querySelector(".water-demo");
-  var mount = document.getElementById("water-demo-scene");
-  var backend = document.getElementById("water-proof-backend");
-  var tier = document.getElementById("water-proof-tier");
-  var dpr = document.getElementById("water-proof-dpr");
-  var grid = document.getElementById("water-proof-grid");
-  var model = document.getElementById("water-proof-model");
-  var dialog = document.getElementById("water-story");
-  var open = document.getElementById("water-story-open");
-  var close = document.getElementById("water-story-close");
-  if (!root || !mount) return;
-
-  function attr(name, fallback) {
-    var value = mount.getAttribute(name);
-    return value ? value : fallback;
-  }
-  function title(value) {
-    value = String(value || "");
-    return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
-  }
-  function updateProof() {
-    if (backend) backend.textContent = title(attr("data-gosx-scene3d-renderer", "starting"));
-    if (tier) tier.textContent = title(attr("data-gosx-scene3d-quality-active", "balanced"));
-    if (dpr) dpr.textContent = String(Number(attr("data-gosx-scene3d-quality-dpr-cap", "1.25")).toFixed(2)).replace(/0+$/, "").replace(/\.$/, "");
-    if (grid) grid.textContent = String(Math.max(0, Math.floor(Number(attr("data-gosx-scene3d-quality-surface-resolution", "128"))))) + "²";
-  }
-  function updateModel(detail) {
-    if (!model || !detail || !/\/water\/models\/duck\/Duck\.gltf(?:\?|$)/i.test(detail.asset || "")) return;
-    var status = detail.status || "deferred";
-    var labels = {
-      loading: "Duck glTF · loading",
-      loaded: "Duck glTF · loaded on demand",
-      cached: "Duck glTF · cached",
-      error: "Duck glTF · unavailable"
-    };
-    model.dataset.state = status;
-    model.textContent = labels[status] || "Duck glTF · deferred";
-  }
-  mount.addEventListener("gosx:scene3d:model-status", function (event) {
-    updateModel(event.detail || {});
-  });
-  updateProof();
-  var proofTimer = window.setInterval(updateProof, 250);
-  window.addEventListener("pagehide", function () { window.clearInterval(proofTimer); }, { once: true });
-
-  if (dialog && open && close && typeof dialog.showModal === "function") {
-    open.addEventListener("click", function () { dialog.showModal(); });
-    close.addEventListener("click", function () { dialog.close(); });
-    dialog.addEventListener("click", function (event) {
-      if (event.target === dialog) dialog.close();
-    });
-  }
-})();
-			`}
-		</script>
 	</main>
 }

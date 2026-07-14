@@ -34,25 +34,17 @@
 //    with arithmetic. Nothing samples inside an if/for.
 //
 //  * fn = expression-only (let-chain + one return). The analytic sphere / box /
-//    pool intersections and the per-hit colour math ARE pure expressions, so
-//    they are real selena `fn`s. The loop-bearing helpers (the 5-tap parallax
-//    march, the compound-sphere scan, and the torus-knot SDF sphere-trace)
-//    CANNOT be fns — selena fns silently drop var/if/for — so they are inlined
-//    as for-loops in surface(). The torus polyline is precomputed once into a
-//    local array and the trace reads it.
-//
-//  * No `break` — the sphere-trace runs its full fixed bound and gates each
-//    step on a `done` flag (the raw `if (d<eps) return t; if (t>bound) break`).
+//    pool intersections and per-hit colour math are pure expressions. Complex
+//    mesh objects use their real projected refraction/reflection targets rather
+//    than a second approximate SDF/compound-sphere raymarch in this shader.
 //
 //  GAPS reported (not silently approximated):
 //   1. (RESOLVED) waterSkyTexture is a texture_cube<f32>. selena now has the
 //      textureCube param type + sampleCube(tex, dir), so the sky is sampled as a
 //      real cube by the reflected/refracted direction (sampleCube(sky, dir).rgb),
 //      exactly like the raw shader. The sun-glint term is added on top.
-//   2. Reflections raytrace the sphere/box analytic objects (objectHitSimple);
-//      the compound-sphere and torus-knot are raytraced for the REFRACTION ray
-//      only (where the object is actually seen through the water). Reflected
-//      compound/torus would just duplicate the same inline loops.
+//   2. Reflections and refractions raytrace sphere/box analytic objects. Torus
+//      and glTF assets use the projected real-mesh targets described below.
 //   3. Rounded-corner pool walls (the arc-length UV branch) and the analytic
 //      object wall-occlusion term are omitted; this port models the rectangular
 //      pool walls (the raw `else` branch) faithfully.
@@ -303,98 +295,19 @@ material WaterSurface {
         let objH      = vec3f(objectHalf.x * poolWidth, objectHalf.y, objectHalf.z * poolLength)
         let objR      = max(objectRadius * poolLength, 0.001)
         let objActive    = opticsEnable > 0.0 && objectKind > 0.5
-        let isTorus   = objectSubtype > 0.5 && objectSubtype < 1.5
-        let isCompound= objectKind >= 2.5
         let hw        = max(poolWidth, 0.001)
         let hl        = max(poolLength, 0.001)
         let ph        = max(poolHeight, 0.001)
 
-        let radiusScale = max(objR / 0.42, 0.25)
-        var knot : array<vec4, 65>
-        for (var ki = 0i; ki <= 64i; ki = ki + 1i) {
-            let theta = float(ki) / 64.0 * 6.283185307
-            let rad   = 0.17 * (2.0 + cos(3.0 * theta)) * 0.5
-            knot[ki]  = vec4f(rad * cos(2.0 * theta), -0.17 * sin(3.0 * theta) * 0.5, rad * sin(2.0 * theta), 0.0)
-        }
-
         let rfSimple = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
-
-        var rfComp = 1000000.0
-        for (var ci = 0i; ci < 32i; ci = ci + 1i) {
-            if (isCompound && float(ci) < objectCount) {
-                let soA = spheres[ci]
-                let scA = objC + vec3f(soA.x * poolWidth, soA.y, soA.z * poolLength)
-                let srA = max(soA.w * poolLength, 0.001)
-                let dA  = raySphere(wp, refractD, scA, srA)
-                if (dA < rfComp) { rfComp = dA }
-            }
-        }
-
-        let rfBound = raySphereBounds(wp, refractD, objC, max(objR, 0.31))
-        let traceOff = isTorus ? 0.0 : 1.0
-        let boundOff = rfBound > 100000.0 ? 1.0 : 0.0
-        var rfT     = rfBound
-        var rfTorus = 1000000.0
-        var rfDone  = max(traceOff, boundOff)
-        for (var ts = 0i; ts < 30i; ts = ts + 1i) {
-            if (rfDone < 0.5) {
-                let pT     = wp + refractD * rfT
-                let posT   = (pT - objC) / radiusScale
-                let boundT = length(posT) - 0.31
-                var mdT    = 1000000.0
-                for (var sj = 1i; sj <= 64i; sj = sj + 1i) {
-                    let aT = knot[sj - 1i].xyz
-                    let bT = knot[sj].xyz
-                    let paT = posT - aT
-                    let baT = bT - aT
-                    let hT  = clamp(dot(paT, baT) / max(dot(baT, baT), 0.000001), 0.0, 1.0)
-                    mdT = min(mdT, length(paT - baT * hT))
-                }
-                let dist = boundT > 0.08 ? boundT * radiusScale : (mdT - 0.045) * radiusScale
-                if (dist < 0.001) { rfTorus = rfT
-                                    rfDone = 1.0 }
-                rfT = rfT + dist
-                if (rfT > rfBound + 0.5) { rfDone = 1.0 }
-            }
-        }
-
-        let rfCompound = isTorus ? rfTorus : rfComp
-        let rfObjDist0 = isCompound ? rfCompound : rfSimple.x
-        let rfObjDist  = objActive ? rfObjDist0 : 1000000.0
-        let rfObjKind  = isCompound ? 3.0 : rfSimple.y
+        let rfObjDist  = objActive && objectKind < 2.5 ? rfSimple.x : 1000000.0
+        let rfObjKind  = rfSimple.y
         let rfHitObj   = rfObjDist < 1000000.0
         let rfObjP     = wp + refractD * rfObjDist
 
         let rfSphereN = normalize(rfObjP - objC)
         let rfBoxN    = boxNormal(rfObjP, objC, objH)
-        var rfCompN   = normalize(rfObjP - objC)
-        var rfCompS   = 1000000.0
-        for (var di = 0i; di < 32i; di = di + 1i) {
-            if (isCompound && !isTorus && float(di) < objectCount) {
-                let soB    = spheres[di]
-                let scB    = objC + vec3f(soB.x * poolWidth, soB.y, soB.z * poolLength)
-                let srB    = max(soB.w * poolLength, 0.001)
-                let toPB   = rfObjP - scB
-                let scoreB = abs(length(toPB) - srB)
-                if (scoreB < rfCompS) { rfCompS = scoreB
-                                        rfCompN = normalize(toPB) }
-            }
-        }
-        let rfPosH  = (rfObjP - objC) / radiusScale
-        var rfTorN  = normalize(rfPosH)
-        var rfTorS  = 1000000.0
-        for (var nj = 1i; nj <= 64i; nj = nj + 1i) {
-            let aN = knot[nj - 1i].xyz
-            let bN = knot[nj].xyz
-            let paN = rfPosH - aN
-            let baN = bN - aN
-            let hN  = clamp(dot(paN, baN) / max(dot(baN, baN), 0.000001), 0.0, 1.0)
-            let cpN = aN + baN * hN
-            let ddN = length(rfPosH - cpN)
-            if (ddN < rfTorS) { rfTorS = ddN
-                                rfTorN = normalize(rfPosH - cpN) }
-        }
-        let rfObjN = rfObjKind < 1.5 ? rfSphereN : rfObjKind < 2.5 ? rfBoxN : isTorus ? rfTorN : rfCompN
+        let rfObjN = rfObjKind < 1.5 ? rfSphereN : rfBoxN
 
         let rfObjWaterH   = stateAt(pointToWaterUV(rfObjP, poolWidth, poolLength)).x
         let rfObjSub      = rfObjP.y < rfObjWaterH ? 1.0 : 0.0

@@ -1,8 +1,8 @@
-// water-caustics.sel — selena port of the JeantimeX fullscreen caustics pass
-// (caustics.sel). Authored as a fullscreen MESH material: a screen-covering
-// quad is generated from vertexIndex in vertex(), and surface() reads the LIVE
-// water heightfield/slope via stateAt(uv) — the same source the raw shader
-// samples from its `state : array<vec4f>` storage buffer.
+// water-caustics.sel — Selena port of the JeantimeX projected-grid caustics
+// pass. The vertex stage projects the authored water topology through the live
+// heightfield; the fragment stage measures the projected area ratio. This
+// preserves the physical algorithm while avoiding a fullscreen five-tap
+// heightfield reconstruction on every caustics texel.
 //
 // The caustic RTT refracts the sun through the water surface onto the pool
 // floor and accumulates the focusing intensity: it projects a flat floor
@@ -90,6 +90,7 @@ material WaterCaustics {
     param opticsEnable: float = 1.0
 
     context {
+        gridResolution  : float = 64.0
         resolution      : float = 64.0
         time            : float = 0.0
         objectKind      : float = 0.0
@@ -102,49 +103,54 @@ material WaterCaustics {
 
     state height
 
-    varying vUv : vec2
+    varying vUv     : vec2
+    varying vOldPos : vec3
+    varying vNewPos : vec3
 
     vertex() -> vec4 {
-        let fi  = float(vertexIndex)
-        let ox  = fi == 1.0 || fi == 2.0 || fi == 4.0 ? 1.0 : 0.0
-        let oy  = fi == 2.0 || fi == 4.0 || fi == 5.0 ? 1.0 : 0.0
-        vUv     = vec2f(ox, oy)
-        return vec4f(ox * 2.0 - 1.0, oy * 2.0 - 1.0, 0.0, 1.0)
+        let fi       = float(vertexIndex)
+        let res      = max(gridResolution, 1.0)
+        let cells    = max(res - 1.0, 1.0)
+        let quad     = floor(fi / 6.0)
+        let corn     = fi - quad * 6.0
+        let cellY    = floor(quad / cells)
+        let cellX    = quad - cellY * cells
+        let ox       = corn == 1.0 || corn == 2.0 || corn == 4.0 ? 1.0 : 0.0
+        let oy       = corn == 2.0 || corn == 4.0 || corn == 5.0 ? 1.0 : 0.0
+        let uv       = vec2f(min(cellX + ox, res - 1.0) / cells, min(cellY + oy, res - 1.0) / cells)
+        let info     = stateAt(uv)
+        let ldir     = normalize(lightDir)
+        let slope    = clamp(info.zw * normalScale * 0.5, vec2f(-0.999, -0.999), vec2f(0.999, 0.999))
+        let nrm      = normalize(vec3f(slope.x, sqrt(max(0.001, 1.0 - min(dot(slope, slope), 0.999))), slope.y))
+        let flatRay  = refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+        let waveRay  = refract(-ldir, nrm, 1.0 / 1.333)
+        let origin   = vec3f((uv.x - 0.5) * poolWidth * 2.0, 0.0, (uv.y - 0.5) * poolLength * 2.0)
+        let flatY    = abs(flatRay.y) > 0.0001 ? flatRay.y : -0.0001
+        let waveY    = abs(waveRay.y) > 0.0001 ? waveRay.y : -0.0001
+        let oldPos   = origin + flatRay * ((-poolHeight - origin.y) / flatY)
+        let raised   = vec3f(origin.x, info.x * poolHeight, origin.z)
+        let newPos   = raised + waveRay * ((-poolHeight - raised.y) / waveY)
+        let safeY    = abs(flatRay.y) > 0.0001 ? flatRay.y : -0.0001
+        let projected = vec2f((newPos.x + flatRay.x / safeY) / max(poolWidth, 0.0001), (newPos.z + flatRay.z / safeY) / max(poolLength, 0.0001))
+        vUv          = uv
+        vOldPos      = oldPos
+        vNewPos      = newPos
+        return vec4f(projected * 0.75, 0.0, 1.0)
     }
 
     surface(geo) -> color {
         let uv    = clamp(geo.vUv, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
-        let texel = 1.0 / max(resolution, 1.0)
-
-        let c  = stateAt(uv)
-        let e  = stateAt(uv + vec2f(texel, 0.0))
-        let wv = stateAt(uv - vec2f(texel, 0.0))
-        let nn = stateAt(uv + vec2f(0.0, texel))
-        let ss = stateAt(uv - vec2f(0.0, texel))
-
         let ldir          = normalize(lightDir)
-        let waterNormal   = normalize(vec3f(c.z * normalScale, 1.0, c.w * normalScale))
-        let causticNormal = normalize(vec3f(c.z * normalScale * 0.5, 1.0, c.w * normalScale * 0.5))
-        let refracted     = refract(-ldir, waterNormal, 1.0 / 1.333)
-        let causticRay    = refract(-ldir, causticNormal, 1.0 / 1.333)
         let flatRay       = refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
 
-        let origin  = vec3f((uv.x - 0.5) * poolWidth * 2.0, 0.0, (uv.y - 0.5) * poolLength * 2.0)
-        let originH = vec3f(origin.x, c.x * poolHeight, origin.z)
-        let oldPos  = projectFloor(origin, flatRay, poolHeight)
-        let newPos  = projectFloor(originH, causticRay, poolHeight)
+        let oldPos  = geo.vOldPos
+        let newPos  = geo.vNewPos
 
         let oldArea = max(length(dpdx(oldPos)) * length(dpdy(oldPos)), 0.000001)
         let newArea = max(length(dpdx(newPos)) * length(dpdy(newPos)), 0.000001)
 
-        let convergence = abs((e.x + wv.x + nn.x + ss.x) - c.x * 4.0)
-        let slopeRay    = normalize(vec3f(-refracted.x, max(refracted.y, 0.05), -refracted.z))
-        let slopeFocus  = max(0.0, dot(slopeRay, waterNormal))
-        let shimmer     = 0.5 + 0.5 * sin(uv.x * 41.0 + uv.y * 37.0 + time * 2.4 + c.x * 180.0)
         let areaFocus   = clamp(oldArea / newArea * 0.2, 0.0, 4.0)
-        let slopeMag    = length(c.zw)
-        var intensity   = areaFocus * (0.68 + 0.32 * smoothstep(0.001, 0.028, convergence * 0.72 + slopeMag * 0.035))
-        intensity = intensity * (0.52 + 0.48 * shimmer) * (0.58 + 0.42 * slopeFocus)
+        let intensity   = areaFocus
 
         let centerUV = vec2f(objectCenter.x * 0.5 + 0.5, objectCenter.z * 0.5 + 0.5)
         let aspect   = vec2f(max(poolWidth / max(poolLength, 0.001), 0.001), 1.0)
@@ -187,9 +193,7 @@ material WaterCaustics {
 
         let shadow = max(max(shadowMask, sphereShadow), cubeShadow)
 
-        let lit  = intensity * (1.0 - shadow * 0.82)
-        let warm = vec3f(1.0, 0.78, 0.42)
-        let cool = vec3f(0.44, 0.95, 1.0)
-        return vec4f(mix(cool, warm, clamp(lit * 1.8, 0.0, 1.0)) * lit, 1.0)
+        let shadowFactor = 1.0 - clamp(shadow, 0.0, 1.0)
+        return vec4f(intensity, shadowFactor, 0.0, 1.0)
     }
 }

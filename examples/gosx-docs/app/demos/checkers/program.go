@@ -97,6 +97,14 @@ func ShowcaseSceneWithMaterial(value string) scene.Props {
 			Range:     16,
 			Decay:     2,
 		},
+		scene.PointLight{
+			ID:        "checkers-fill",
+			Color:     "#ffb66f",
+			Intensity: 0.48,
+			Position:  scene.Vec3(-4.5, 2.6, 3.2),
+			Range:     13,
+			Decay:     2,
+		},
 		scene.Mesh{
 			ID:            "checkers-board-base",
 			Geometry:      scene.CylinderGeometry{RadiusTop: 4.15, RadiusBottom: 4.25, Height: 0.32, Segments: 48},
@@ -105,8 +113,9 @@ func ShowcaseSceneWithMaterial(value string) scene.Props {
 			CastShadow:    true,
 			ReceiveShadow: true,
 		},
-		socketInstances(holes),
 	}
+	graph = append(graph, boardDetailNodes(value)...)
+	graph = append(graph, socketInstances(holes))
 
 	for player, positions := range initialPieceCamps(holes) {
 		if player != 0 && player != 3 {
@@ -122,8 +131,8 @@ func ShowcaseSceneWithMaterial(value string) scene.Props {
 		Controls:      "orbit",
 		ControlTarget: scene.Vec3(0, 0, 0),
 		Camera: scene.PerspectiveCamera{
-			Position: scene.Vec3(0, 6.8, 7.6),
-			FOV:      43,
+			Position: scene.Vec3(0, 8.2, 10.4),
+			FOV:      45,
 			Near:     0.1,
 			Far:      80,
 		},
@@ -135,11 +144,64 @@ func ShowcaseSceneWithMaterial(value string) scene.Props {
 		PostFX: scene.PostFX{
 			MaxPixels: scene.PostFXMaxPixels1080p,
 			Effects: []scene.PostEffect{
+				scene.SSAO{Radius: 4, Intensity: 0.34, Bias: 0.025},
+				scene.Bloom{Threshold: 0.88, Strength: 0.24, Radius: 5, Scale: 0.5},
 				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.05},
 				scene.Vignette{Intensity: 0.34},
 			},
 		},
 		Graph: scene.NewGraph(graph...),
+	}
+}
+
+func boardDetailNodes(family string) []scene.Node {
+	accent, glow := boardAccentPalette(family)
+	notPickable := scene.Bool(false)
+	nodes := []scene.Node{
+		scene.Mesh{
+			ID: "checkers-pedestal", Geometry: scene.CylinderGeometry{RadiusTop: 3.76, RadiusBottom: 3.98, Height: 0.42, Segments: 48},
+			Material: scene.StandardMaterial{Color: "#111518", Roughness: 0.3, Metalness: 0.78, Clearcoat: 0.38},
+			Position: scene.Vec3(0, -0.52, 0), CastShadow: true, ReceiveShadow: true, Pickable: notPickable,
+		},
+		scene.Mesh{
+			ID: "checkers-outer-rim", Geometry: scene.TorusGeometry{Radius: 4.06, Tube: 0.115, RadialSegments: 12, TubularSegments: 64},
+			Material: scene.StandardMaterial{Color: accent, Roughness: 0.2, Metalness: 0.88, Clearcoat: 0.66, Anisotropy: 0.3},
+			Position: scene.Vec3(0, -0.035, 0), CastShadow: true, ReceiveShadow: true, Pickable: notPickable,
+		},
+		scene.Mesh{
+			ID: "checkers-inner-fillet", Geometry: scene.TorusGeometry{Radius: 3.72, Tube: 0.035, RadialSegments: 8, TubularSegments: 64},
+			Material: scene.StandardMaterial{Color: "#1d2426", Roughness: 0.24, Metalness: 0.62, Clearcoat: 0.5},
+			Position: scene.Vec3(0, 0.005, 0), ReceiveShadow: true, Pickable: notPickable,
+		},
+		scene.Mesh{
+			ID: "checkers-underglow", Geometry: scene.TorusGeometry{Radius: 3.86, Tube: 0.055, RadialSegments: 8, TubularSegments: 48},
+			Material: scene.StandardMaterial{Color: glow, Roughness: 0.42, Emissive: 0.68},
+			Position: scene.Vec3(0, -0.69, 0), Pickable: notPickable,
+		},
+	}
+	for index := 0; index < 6; index++ {
+		angle := -math.Pi/2 + float64(index)*math.Pi/3
+		nodes = append(nodes, scene.Mesh{
+			ID: "checkers-compass-gem-" + string(rune('1'+index)), Geometry: scene.SphereGeometry{Radius: 0.09, Segments: 12},
+			Material: scene.StandardMaterial{Color: playerColors[index], Roughness: 0.13, Clearcoat: 0.9, Transmission: 0.12, Emissive: 0.08},
+			Position: scene.Vec3(math.Cos(angle)*3.88, 0.04, math.Sin(angle)*3.88), CastShadow: true, Pickable: notPickable,
+		})
+	}
+	return nodes
+}
+
+func boardAccentPalette(family string) (accent, glow string) {
+	switch checkermaterials.Family(family) {
+	case checkermaterials.ImperialJade:
+		return "#d7b767", "#4fe0a3"
+	case checkermaterials.BrushedSteel:
+		return "#b7c9d0", "#73b8d2"
+	case checkermaterials.MidnightLacquer:
+		return "#d6a33d", "#c42f31"
+	case checkermaterials.MoonPorcelain:
+		return "#446da9", "#91c9e8"
+	default:
+		return "#b98b52", "#7bd1af"
 	}
 }
 
@@ -168,7 +230,7 @@ func socketInstances(holes []boardHole) scene.InstancedMesh {
 		ID:            "checkers-sockets",
 		Count:         len(positions),
 		Geometry:      scene.SphereGeometry{Radius: 0.145, Segments: 16},
-		Material:      scene.StandardMaterial{Color: "#161a1d", Roughness: 0.58, Metalness: 0.16},
+		Material:      scene.StandardMaterial{Color: "#121719", Roughness: 0.34, Metalness: 0.42, Clearcoat: 0.48, Iridescence: 0.06},
 		Positions:     positions,
 		Scales:        repeatedScale(len(positions), scene.Vec3(1, 0.34, 1)),
 		ReceiveShadow: true,
@@ -215,6 +277,9 @@ func pieceInstances(player int, positions []scene.Vector3) scene.InstancedMesh {
 			Metalness:    0.08,
 			Clearcoat:    0.68,
 			Transmission: 0.04,
+			Sheen:        0.18,
+			Iridescence:  0.08,
+			Emissive:     0.025,
 		},
 		Positions:     positions,
 		CastShadow:    true,

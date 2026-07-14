@@ -1,6 +1,11 @@
 package checkers
 
-import "testing"
+import (
+	"testing"
+
+	checkermaterials "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers/materials"
+	"m31labs.dev/gosx/scene"
+)
 
 func TestBoardCompositionShape(t *testing.T) {
 	holes := boardHoles()
@@ -54,10 +59,38 @@ func TestShowcaseSceneUsesBoundedInstancing(t *testing.T) {
 }
 
 func TestShowcaseSceneMaterialSelectorCompilesRealSelenaFamilies(t *testing.T) {
-	for _, family := range []string{"imperial-jade", "carved-wood", "brushed-steel"} {
-		ir := ShowcaseSceneWithMaterial(family).SceneIR()
+	for _, family := range checkermaterials.Families() {
+		ir := ShowcaseSceneWithMaterial(string(family)).SceneIR()
 		if len(ir.Objects) == 0 || ir.Objects[0].ShaderBackend != "selena" || ir.Objects[0].CustomVertexWGSL == "" || ir.Objects[0].CustomFragment == "" {
 			t.Fatalf("%s board is not an active Selena material: %+v", family, ir.Objects)
 		}
+	}
+}
+
+func TestShowcaseSceneHasLayeredBoardDetail(t *testing.T) {
+	ir := ShowcaseScene().SceneIR()
+	ids := make(map[string]bool, len(ir.Objects))
+	for _, object := range ir.Objects {
+		ids[object.ID] = true
+	}
+	for _, id := range []string{"checkers-board-base", "checkers-pedestal", "checkers-outer-rim", "checkers-inner-fillet", "checkers-underglow"} {
+		if !ids[id] {
+			t.Errorf("layered board detail missing %q", id)
+		}
+	}
+	if len(ir.Lights) < 4 || len(ir.PostEffects) < 4 {
+		t.Fatalf("showcase lighting/post stack is too thin: lights=%d post=%d", len(ir.Lights), len(ir.PostEffects))
+	}
+}
+
+func TestShowcaseNativePickingHitsSocketAndRejectsRoundCorner(t *testing.T) {
+	props := ShowcaseScene()
+	trace := scene.TraceGraph(props.Graph, scene.Ray{Origin: scene.Vec3(0, 5, 0), Direction: scene.Vec3(0, -1, 0)}, scene.PickableOnly())
+	if trace.Closest == nil || trace.Closest.ID != "checkers-sockets" || trace.Closest.InstanceIndex == nil || *trace.Closest.InstanceIndex != 60 || trace.Closest.Method != "analytic-sphere" {
+		t.Fatalf("center socket trace = %#v", trace)
+	}
+	corner := scene.TraceGraph(props.Graph, scene.Ray{Origin: scene.Vec3(4.2, 5, 4.2), Direction: scene.Vec3(0, -1, 0)}, scene.PickableOnly())
+	if corner.Closest != nil {
+		t.Fatalf("round-board corner produced false hit: %#v", corner.Closest)
 	}
 }

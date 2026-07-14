@@ -1,0 +1,15 @@
+material MoonPorcelain {
+    param porcelain : color = rgb(0.82, 0.88, 0.91)
+    param cobalt    : color = rgb(0.035, 0.15, 0.42)
+    param pearl     : color = rgb(0.72, 0.88, 0.96)
+    surface(geo) -> color {
+        let n       = normalize(geo.normal)
+        let veinA   = abs(sin(geo.uv.x * 29.0 + sin(geo.uv.y * 17.0) * 1.8))
+        let veinB   = abs(sin(geo.uv.y * 37.0 + sin(geo.uv.x * 11.0) * 2.1))
+        let crackle = smoothstep(0.08, 0.015, veinA * veinB)
+        let wash    = sin((geo.uv.x - geo.uv.y) * 8.0) * 0.06 + 0.10
+        let body    = mix(porcelain.rgb, cobalt.rgb, crackle * 0.62 + wash)
+        let rim     = pow(1.0 - abs(n.z), 3.0) * 0.24
+        return vec4f(mix(body, pearl.rgb, rim), 1.0)
+    }
+}

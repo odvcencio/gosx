@@ -439,23 +439,6 @@ pre code {
 }
 
 /* ------------------------------------------------------------
-   Reveal animation
-   ------------------------------------------------------------ */
-
-.reveal {
-  opacity: 0;
-  transform: translateY(30px);
-  transition:
-    opacity var(--duration-slow) var(--ease-out-expo),
-    transform var(--duration-slow) var(--ease-out-expo);
-}
-
-.reveal.visible {
-  opacity: 1;
-  transform: none;
-}
-
-/* ------------------------------------------------------------
    Reduced motion
    ------------------------------------------------------------ */
 
@@ -525,8 +508,4 @@ button:active, .btn:active, [type="submit"]:active {
     scroll-behavior: auto !important;
   }
 
-  .reveal {
-    opacity: 1;
-    transform: none;
-  }
 }

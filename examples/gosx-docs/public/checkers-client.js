@@ -42,7 +42,7 @@
 
   function syncMaterialFromURL() {
 	var requested = new URL(window.location.href).searchParams.get("material") || "carved-wood";
-	var valid = { "imperial-jade": true, "carved-wood": true, "brushed-steel": true };
+	var valid = { "imperial-jade": true, "carved-wood": true, "brushed-steel": true, "midnight-lacquer": true, "moon-porcelain": true };
 	var active = valid[requested] ? requested : "carved-wood";
 	if (materialSelect) materialSelect.value = active;
 	root.setAttribute("data-checkers-material", active);

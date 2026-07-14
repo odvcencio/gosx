@@ -32,6 +32,8 @@ func TestFamiliesHaveDistinctOpticalContracts(t *testing.T) {
 	jade, _ := Compile(ImperialJade)
 	wood, _ := Compile(CarvedWood)
 	steel, _ := Compile(BrushedSteel)
+	lacquer, _ := Compile(MidnightLacquer)
+	porcelain, _ := Compile(MoonPorcelain)
 	if jade.Selena.Transmission <= 0 || jade.Selena.Clearcoat <= 0 {
 		t.Fatalf("jade optical envelope = %+v", jade.Selena.StandardMaterial)
 	}
@@ -40,6 +42,12 @@ func TestFamiliesHaveDistinctOpticalContracts(t *testing.T) {
 	}
 	if steel.Selena.Metalness < 0.8 || steel.Selena.Anisotropy <= 0 {
 		t.Fatalf("steel optical envelope = %+v", steel.Selena.StandardMaterial)
+	}
+	if lacquer.Selena.Clearcoat < 0.9 || lacquer.Selena.Roughness >= wood.Selena.Roughness {
+		t.Fatalf("lacquer optical envelope = %+v", lacquer.Selena.StandardMaterial)
+	}
+	if porcelain.Selena.Iridescence <= 0 || porcelain.Selena.Metalness >= 0.1 {
+		t.Fatalf("porcelain optical envelope = %+v", porcelain.Selena.StandardMaterial)
 	}
 }
 

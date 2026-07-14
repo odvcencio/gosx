@@ -761,18 +761,19 @@ func TestPropsSceneIRLowersLODDecalsAndProbeLights(t *testing.T) {
 
 func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	props := Props{
-		Controls:           ControlFirstPerson,
-		ControlTarget:      Vec3(1.5, 0.25, 0.8),
-		ControlRotateMode:  "pixel-degrees",
-		ControlRotateSpeed: 1.4,
-		ControlZoomSpeed:   0.85,
-		ControlLookSpeed:   1.2,
-		ControlMoveSpeed:   6.5,
-		ControlMinDistance: 2,
-		ControlMaxDistance: 10,
-		ControlPitchLimit:  1.5707788735,
-		PointerLock:        Bool(true),
-		MSAASamples:        4,
+		Controls:               ControlFirstPerson,
+		ControlTarget:          Vec3(1.5, 0.25, 0.8),
+		ControlRotateMode:      "pixel-degrees",
+		ControlRotateDirection: "grab",
+		ControlRotateSpeed:     1.4,
+		ControlZoomSpeed:       0.85,
+		ControlLookSpeed:       1.2,
+		ControlMoveSpeed:       6.5,
+		ControlMinDistance:     2,
+		ControlMaxDistance:     10,
+		ControlPitchLimit:      1.5707788735,
+		PointerLock:            Bool(true),
+		MSAASamples:            4,
 		Camera: PerspectiveCamera{
 			Position: Vec3(0.2, 0.6, 6),
 			Rotation: Rotate(0.18, -0.32, 0.05),
@@ -798,6 +799,9 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	}
 	if got := legacy["controlRotateMode"]; got != "pixel-degrees" {
 		t.Fatalf("expected rotate mode pixel-degrees, got %#v", got)
+	}
+	if got := legacy["controlRotateDirection"]; got != "grab" {
+		t.Fatalf("expected rotate direction grab, got %#v", got)
 	}
 	if got := legacy["controlRotateSpeed"]; got != 1.4 {
 		t.Fatalf("expected rotate speed 1.4, got %#v", got)
@@ -2637,6 +2641,7 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 				InteractionTarget:           "water-main",
 				InteractionObject:           "Sphere",
 				Resolution:                  256,
+				SurfaceResolution:           201,
 				PoolShape:                   "Rounded Box",
 				PoolWidth:                   7.2,
 				PoolHeight:                  1.1,
@@ -2654,6 +2659,7 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 				CubeMap:                     "/water/",
 				ShallowColor:                "#7ad1eb",
 				DeepColor:                   "#082e57",
+				AboveWaterColor:             Vec3(0.25, 1, 1.25),
 				CausticsResolution:          1024,
 				ObjectTextureResolution:     512,
 				ObjectTextureResolutionMode: "viewport",
@@ -2766,8 +2772,14 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 	if water.CubeMap != "/water/" {
 		t.Fatalf("cubemap field did not lower: %+v", water)
 	}
+	if water.Resolution != 256 || water.SurfaceResolution != 201 {
+		t.Fatalf("water simulation/surface resolutions did not lower: %+v", water)
+	}
 	if water.ShallowColor != "#7ad1eb" || water.DeepColor != "#082e57" {
 		t.Fatalf("water colors did not lower: shallow=%q deep=%q", water.ShallowColor, water.DeepColor)
+	}
+	if water.AboveWaterColorR != 0.25 || water.AboveWaterColorG != 1 || water.AboveWaterColorB != 1.25 {
+		t.Fatalf("HDR water color did not lower: %+v", water)
 	}
 	if water.CausticsResolution != 1024 || water.ObjectTextureResolution != 512 || water.ObjectTextureResolutionMode != "viewport" || water.ObjectTexturePixelBudget != 3145728 || water.ObjectShadowResolution != 1024 {
 		t.Fatalf("water texture target resolution fields did not lower: %+v", water)
@@ -2897,8 +2909,14 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 	if got := systems[0]["deepColor"]; got != "#082e57" {
 		t.Fatalf("legacy deepColor = %#v, want #082e57", got)
 	}
+	if got := systems[0]["aboveWaterColorB"]; got != 1.25 {
+		t.Fatalf("legacy aboveWaterColorB = %#v, want 1.25", got)
+	}
 	if got := systems[0]["causticsResolution"]; got != 1024 {
 		t.Fatalf("legacy causticsResolution = %#v, want 1024", got)
+	}
+	if got := systems[0]["surfaceResolution"]; got != 201 {
+		t.Fatalf("legacy surfaceResolution = %#v, want 201", got)
 	}
 	if got := systems[0]["objectTextureResolution"]; got != 512 {
 		t.Fatalf("legacy objectTextureResolution = %#v, want 512", got)

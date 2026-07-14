@@ -409,7 +409,7 @@ func init() {
 func validatedMaterial(value string) checkermaterials.Family {
 	material := checkermaterials.Family(value)
 	switch material {
-	case checkermaterials.ImperialJade, checkermaterials.CarvedWood, checkermaterials.BrushedSteel:
+	case checkermaterials.ImperialJade, checkermaterials.CarvedWood, checkermaterials.BrushedSteel, checkermaterials.MidnightLacquer, checkermaterials.MoonPorcelain:
 		return material
 	default:
 		return checkermaterials.CarvedWood

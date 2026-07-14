@@ -74,6 +74,12 @@ func main() {
 	}
 
 	app := server.New()
+	// Keep page-generated hashed runtime URLs and the runtime file server on the
+	// same application root. Without this, `go run ./examples/gosx-docs` from
+	// the repository root can read the repository's dist/build.json while
+	// serving the docs app's build output, leaving Scene3D and navigation chunks
+	// as 404s.
+	app.SetRuntimeRoot(root)
 	router.SetRevalidator(app.Revalidator())
 	app.EnableISR()
 	app.EnableNavigation()

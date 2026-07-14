@@ -50,7 +50,7 @@
   --demo-hair-strong: var(--color-border-strong);
   --demo-accent: #9fffa5;
 
-  /* Per-demo accent palette — applied via data-demo-slug (set by inline script) */
+  /* Per-demo accent palette — active link metadata is projected by GoSX. */
   --demo-accent-playground: #9fffa5;
   --demo-accent-fluid:      #7aa2ff;
   --demo-accent-water:      #69e3c7;
@@ -71,7 +71,7 @@
   flex-direction: column;
 }
 
-/* Per-demo accent override via data attribute (set by inline script at runtime) */
+/* Per-demo accent override via the runtime-managed navigation context. */
 .demos-shell[data-demo-slug="playground"] { --demo-accent: #9fffa5; }
 .demos-shell[data-demo-slug="fluid"]      { --demo-accent: #7aa2ff; }
 .demos-shell[data-demo-slug="water"]      { --demo-accent: #69e3c7; }
@@ -340,6 +340,15 @@
   background: var(--demo-bg);
 }
 
+/* A missing/empty catalog must never steal viewport width from a demo. */
+.demos-body:not(:has(.demo-dock__item)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.demos-body:not(:has(.demo-dock__item)) .demo-dock {
+  display: none;
+}
+
 /* Individual demos own their own padding */
 .demo-viewport > :not(.demo-meta) {
   flex: 1;
@@ -533,10 +542,7 @@
     overflow-y: auto;
   }
 
-  /* JS toggles aria-expanded on the menu button; CSS reads it via sibling/body class.
-     The drawer open state is driven by the [data-dock-open] attribute on .demos-body,
-     toggled by the same inline wiring future task 14 will add.
-     For now the selector matches when the button has aria-expanded="true". */
+  /* GoSX's declarative toggle owns the drawer's attribute and ARIA state. */
   .demos-body[data-dock-open] .demo-dock {
     transform: translateX(0);
   }

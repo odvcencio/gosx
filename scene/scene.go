@@ -137,43 +137,47 @@ type Props struct {
 	// reload / re-render trip needed. Meshes opted into gizmo-mode-driven
 	// visibility via Mesh.GizmoRing are shown only while the signal matches
 	// "rotate"; everything else is untouched.
-	GizmoInputSignal      string       `json:"gizmoInputSignal,omitempty"`
-	CapabilityTier        string       `json:"capabilityTier,omitempty"`
-	Compression           *Compression `json:"compression,omitempty"`
-	ControlTarget         Vector3
-	ControlRotateMode     string  `json:"controlRotateMode,omitempty"`
-	ControlRotateSpeed    float64 `json:"controlRotateSpeed,omitempty"`
-	ControlZoomSpeed      float64 `json:"controlZoomSpeed,omitempty"`
-	ControlLookSpeed      float64 `json:"controlLookSpeed,omitempty"`
-	ControlMoveSpeed      float64 `json:"controlMoveSpeed,omitempty"`
-	ControlMinDistance    float64 `json:"controlMinDistance,omitempty"`
-	ControlMaxDistance    float64 `json:"controlMaxDistance,omitempty"`
-	ControlPitchLimit     float64 `json:"controlPitchLimit,omitempty"`
-	ScrollCameraStart     float64 `json:"scrollCameraStart,omitempty"`
-	ScrollCameraEnd       float64 `json:"scrollCameraEnd,omitempty"`
-	MaxFrameRate          float64 `json:"maxFrameRate,omitempty"`
-	MaxFPS                float64 `json:"maxFPS,omitempty"`
-	FrameIntervalMS       float64 `json:"frameIntervalMS,omitempty"`
-	MaxDevicePixelRatio   float64 `json:"maxDevicePixelRatio,omitempty"`
-	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
-	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
-	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
-	AdaptiveWarmupFrames  int     `json:"adaptiveWarmupFrames,omitempty"`
-	AdaptivePostFX        *bool   `json:"adaptivePostFX,omitempty"`
-	MSAASamples           int     `json:"msaaSamples,omitempty"`
-	WebGPUAlphaMode       string  `json:"webgpuAlphaMode,omitempty"`
-	WebGPUColorSpace      string  `json:"webgpuColorSpace,omitempty"`
-	WebGPUToneMapping     string  `json:"webgpuToneMapping,omitempty"`
-	WebGPUPowerPreference string  `json:"webgpuPowerPreference,omitempty"`
-	Camera                PerspectiveCamera
-	OrthographicCamera    *OrthographicCamera
-	Stats                 *bool `json:"stats,omitempty"`
-	Inspector             *bool `json:"inspector,omitempty"`
-	Environment           Environment
-	PostFX                PostFX
-	Shadows               Shadows
-	Physics               PhysicsWorld
-	Graph                 Graph
+	GizmoInputSignal  string       `json:"gizmoInputSignal,omitempty"`
+	CapabilityTier    string       `json:"capabilityTier,omitempty"`
+	Compression       *Compression `json:"compression,omitempty"`
+	ControlTarget     Vector3
+	ControlRotateMode string `json:"controlRotateMode,omitempty"`
+	// ControlRotateDirection selects how orbit pointer deltas map to camera
+	// motion. "orbit" preserves the historical camera-following direction;
+	// "grab" makes the viewport track the pointer like a grabbed scene.
+	ControlRotateDirection string  `json:"controlRotateDirection,omitempty"`
+	ControlRotateSpeed     float64 `json:"controlRotateSpeed,omitempty"`
+	ControlZoomSpeed       float64 `json:"controlZoomSpeed,omitempty"`
+	ControlLookSpeed       float64 `json:"controlLookSpeed,omitempty"`
+	ControlMoveSpeed       float64 `json:"controlMoveSpeed,omitempty"`
+	ControlMinDistance     float64 `json:"controlMinDistance,omitempty"`
+	ControlMaxDistance     float64 `json:"controlMaxDistance,omitempty"`
+	ControlPitchLimit      float64 `json:"controlPitchLimit,omitempty"`
+	ScrollCameraStart      float64 `json:"scrollCameraStart,omitempty"`
+	ScrollCameraEnd        float64 `json:"scrollCameraEnd,omitempty"`
+	MaxFrameRate           float64 `json:"maxFrameRate,omitempty"`
+	MaxFPS                 float64 `json:"maxFPS,omitempty"`
+	FrameIntervalMS        float64 `json:"frameIntervalMS,omitempty"`
+	MaxDevicePixelRatio    float64 `json:"maxDevicePixelRatio,omitempty"`
+	MinDevicePixelRatio    float64 `json:"minDevicePixelRatio,omitempty"`
+	AdaptiveQuality        *bool   `json:"adaptiveQuality,omitempty"`
+	AdaptiveTargetFrameMS  float64 `json:"adaptiveTargetFrameMS,omitempty"`
+	AdaptiveWarmupFrames   int     `json:"adaptiveWarmupFrames,omitempty"`
+	AdaptivePostFX         *bool   `json:"adaptivePostFX,omitempty"`
+	MSAASamples            int     `json:"msaaSamples,omitempty"`
+	WebGPUAlphaMode        string  `json:"webgpuAlphaMode,omitempty"`
+	WebGPUColorSpace       string  `json:"webgpuColorSpace,omitempty"`
+	WebGPUToneMapping      string  `json:"webgpuToneMapping,omitempty"`
+	WebGPUPowerPreference  string  `json:"webgpuPowerPreference,omitempty"`
+	Camera                 PerspectiveCamera
+	OrthographicCamera     *OrthographicCamera
+	Stats                  *bool `json:"stats,omitempty"`
+	Inspector              *bool `json:"inspector,omitempty"`
+	Environment            Environment
+	PostFX                 PostFX
+	Shadows                Shadows
+	Physics                PhysicsWorld
+	Graph                  Graph
 	// Audio optionally declares a gosxAudio manifest (buses + clips) for
 	// this scene's engine. It lowers under the "audio" prop key, which the
 	// client's mountEngine already forwards to
@@ -572,31 +576,38 @@ type ComputeParticles struct {
 // WebGPU-first; the Scene3D backend capability verdict treats it as a
 // fidelity-gated feature.
 type WaterSystem struct {
-	ID                          string
-	InteractionProfile          string
-	InteractionTarget           string
-	InteractionObject           string
-	Resolution                  int
-	PoolShape                   string
-	PoolWidth                   float64
-	PoolHeight                  float64
-	PoolLength                  float64
-	CornerRadius                float64
-	WaveSpeed                   float64
-	Damping                     float64
-	NormalScale                 float64
-	SeedDrops                   int
-	DropRadius                  float64
-	DropStrength                float64
-	DropEventID                 int
-	DropX                       float64
-	DropZ                       float64
-	DropEventRadius             float64
-	DropEventStrength           float64
-	TileTexture                 string
-	CubeMap                     string
-	ShallowColor                string
-	DeepColor                   string
+	ID                 string
+	InteractionProfile string
+	InteractionTarget  string
+	InteractionObject  string
+	Resolution         int
+	// SurfaceResolution is the water boundary topology along one axis. It is
+	// independent from the simulation grid so authors can match a reference
+	// mesh budget without paying for the same density in compute state.
+	SurfaceResolution int
+	PoolShape         string
+	PoolWidth         float64
+	PoolHeight        float64
+	PoolLength        float64
+	CornerRadius      float64
+	WaveSpeed         float64
+	Damping           float64
+	NormalScale       float64
+	SeedDrops         int
+	DropRadius        float64
+	DropStrength      float64
+	DropEventID       int
+	DropX             float64
+	DropZ             float64
+	DropEventRadius   float64
+	DropEventStrength float64
+	TileTexture       string
+	CubeMap           string
+	ShallowColor      string
+	DeepColor         string
+	// AboveWaterColor is a linear HDR absorption tint. Components may exceed
+	// one, unlike the display-referred ShallowColor fallback.
+	AboveWaterColor             Vector3
 	CausticsResolution          int
 	ObjectTextureResolution     int
 	ObjectTextureResolutionMode string
@@ -1689,6 +1700,7 @@ func (p Props) legacyBaseProps() map[string]any {
 		}
 	}
 	setString(out, "controlRotateMode", p.ControlRotateMode)
+	setString(out, "controlRotateDirection", p.ControlRotateDirection)
 	setNumeric(out, "controlRotateSpeed", p.ControlRotateSpeed)
 	setNumeric(out, "controlZoomSpeed", p.ControlZoomSpeed)
 	setNumeric(out, "controlLookSpeed", p.ControlLookSpeed)
@@ -2797,6 +2809,33 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if emissiveMap, ok := mapStringValue(materialProps["emissiveMap"]); ok {
 			record.EmissiveMap = emissiveMap
 		}
+		if customVertex, ok := mapStringValue(materialProps["customVertex"]); ok {
+			record.CustomVertex = customVertex
+		}
+		if customFragment, ok := mapStringValue(materialProps["customFragment"]); ok {
+			record.CustomFragment = customFragment
+		}
+		if customVertexWGSL, ok := mapStringValue(materialProps["customVertexWGSL"]); ok {
+			record.CustomVertexWGSL = customVertexWGSL
+		}
+		if customFragmentWGSL, ok := mapStringValue(materialProps["customFragmentWGSL"]); ok {
+			record.CustomFragmentWGSL = customFragmentWGSL
+		}
+		if uniforms, ok := materialProps["customUniforms"].(map[string]any); ok {
+			record.CustomUniforms = cloneSceneAnyMap(uniforms)
+		}
+		if backend, ok := mapStringValue(materialProps["shaderBackend"]); ok {
+			record.ShaderBackend = backend
+		}
+		if layout, ok := materialProps["shaderLayout"].(map[string]any); ok {
+			record.ShaderLayout = cloneSceneAnyMap(layout)
+		}
+		if source, ok := mapStringValue(materialProps["shaderSource"]); ok {
+			record.ShaderSource = source
+		}
+		if files, ok := materialProps["shaderSourceFiles"].(map[string]string); ok {
+			record.ShaderSourceFiles = cloneSceneStringMap(files)
+		}
 	}
 
 	// Pre-compute per-instance column-major 4x4 transforms.
@@ -2917,6 +2956,10 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 	if resolution <= 0 {
 		resolution = 256
 	}
+	surfaceResolution := w.SurfaceResolution
+	if surfaceResolution <= 0 {
+		surfaceResolution = resolution
+	}
 	poolShape := strings.TrimSpace(w.PoolShape)
 	if poolShape == "" {
 		poolShape = "Box"
@@ -2992,6 +3035,7 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 		InteractionTarget:            strings.TrimSpace(w.InteractionTarget),
 		InteractionObject:            strings.TrimSpace(w.InteractionObject),
 		Resolution:                   resolution,
+		SurfaceResolution:            surfaceResolution,
 		PoolShape:                    poolShape,
 		PoolWidth:                    poolWidth,
 		PoolHeight:                   poolHeight,
@@ -3012,6 +3056,9 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 		CubeMap:                      strings.TrimSpace(w.CubeMap),
 		ShallowColor:                 strings.TrimSpace(w.ShallowColor),
 		DeepColor:                    strings.TrimSpace(w.DeepColor),
+		AboveWaterColorR:             w.AboveWaterColor.X,
+		AboveWaterColorG:             w.AboveWaterColor.Y,
+		AboveWaterColorB:             w.AboveWaterColor.Z,
 		CausticsResolution:           w.CausticsResolution,
 		ObjectTextureResolution:      w.ObjectTextureResolution,
 		ObjectTextureResolutionMode:  strings.TrimSpace(w.ObjectTextureResolutionMode),

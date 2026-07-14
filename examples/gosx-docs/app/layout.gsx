@@ -13,6 +13,8 @@ func Layout() Node {
 			</div>
 			<button
 				class="pill-toggle"
+				type="button"
+				data-gosx-disclosure-target="#nav-overlay"
 				aria-expanded="false"
 				aria-controls="nav-overlay"
 				aria-label="Toggle navigation menu"
@@ -25,6 +27,7 @@ func Layout() Node {
 		<div
 			id="nav-overlay"
 			class="nav-overlay"
+			data-gosx-disclosure
 			role="dialog"
 			aria-modal="true"
 			aria-label="Site navigation"
@@ -33,31 +36,31 @@ func Layout() Node {
 			<div class="nav-overlay__inner">
 				<div class="nav-group">
 					<span class="nav-group__label">Start</span>
-					<a href="/" data-gosx-link="true" class="nav-link">Overview</a>
-					<a href="/docs/getting-started" data-gosx-link="true" class="nav-link">Getting Started</a>
+					<a href="/" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Overview</a>
+					<a href="/docs/getting-started" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Getting Started</a>
 				</div>
 				<div class="nav-group">
 					<span class="nav-group__label">Reference</span>
-					<a href="/docs/routing" data-gosx-link="true" class="nav-link">Routing</a>
-					<a href="/docs/forms" data-gosx-link="true" class="nav-link">Forms</a>
-					<a href="/docs/auth" data-gosx-link="true" class="nav-link">Auth</a>
-					<a href="/docs/islands" data-gosx-link="true" class="nav-link">Islands</a>
-					<a href="/docs/signals" data-gosx-link="true" class="nav-link">Signals</a>
-					<a href="/docs/engines" data-gosx-link="true" class="nav-link">Engines</a>
-					<a href="/docs/scene3d" data-gosx-link="true" class="nav-link">3D Engine</a>
-					<a href="/docs/hubs" data-gosx-link="true" class="nav-link">Hubs & CRDT</a>
-					<a href="/docs/runtime" data-gosx-link="true" class="nav-link">Runtime</a>
-					<a href="/docs/images" data-gosx-link="true" class="nav-link">Images</a>
-					<a href="/docs/text-layout" data-gosx-link="true" class="nav-link">Text Layout</a>
-					<a href="/docs/motion" data-gosx-link="true" class="nav-link">Motion</a>
-					<a href="/docs/streaming" data-gosx-link="true" class="nav-link">Streaming</a>
-					<a href="/docs/compiler" data-gosx-link="true" class="nav-link">Compiler</a>
-					<a href="/docs/deployment" data-gosx-link="true" class="nav-link">Deployment</a>
+					<a href="/docs/routing" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Routing</a>
+					<a href="/docs/forms" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Forms</a>
+					<a href="/docs/auth" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Auth</a>
+					<a href="/docs/islands" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Islands</a>
+					<a href="/docs/signals" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Signals</a>
+					<a href="/docs/engines" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Engines</a>
+					<a href="/docs/scene3d" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">3D Engine</a>
+					<a href="/docs/hubs" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Hubs & CRDT</a>
+					<a href="/docs/runtime" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Runtime</a>
+					<a href="/docs/images" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Images</a>
+					<a href="/docs/text-layout" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Text Layout</a>
+					<a href="/docs/motion" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Motion</a>
+					<a href="/docs/streaming" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Streaming</a>
+					<a href="/docs/compiler" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Compiler</a>
+					<a href="/docs/deployment" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Deployment</a>
 				</div>
 				<div class="nav-group">
 					<span class="nav-group__label">Demos</span>
-					<a href="/demos" data-gosx-link="true" class="nav-link">Explore all demos</a>
-					<a href="/demos/water" data-gosx-link="true" class="nav-link">Water Lab</a>
+					<a href="/demos" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Explore all demos</a>
+					<a href="/demos/water" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Water Lab</a>
 				</div>
 			</div>
 		</div>
@@ -80,6 +83,5 @@ func Layout() Node {
 				</div>
 			</div>
 		</footer>
-		<script src="/reveal.js" defer></script>
 	</div>
 }

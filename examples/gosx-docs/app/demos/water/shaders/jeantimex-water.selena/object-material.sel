@@ -24,12 +24,19 @@
 // after `{`, or after `}`.
 material WaterObjectMaterial {
     param poolHeight      : float = 0.3
+    param poolWidth       : float = 1.0
+    param poolLength      : float = 1.0
     param baseColor       : vec4
     param isTexturePass   : float = 0.0
     param texturePassMode : float = 0.0
+    param causticTexture  : texture2d
 
     context {
-        lightDir : vec3
+        lightDir     : vec3
+        modelMatrix  : mat4
+        objectCenter : vec3
+        objectRadius : float
+        objectKind   : float
     }
 
     state water
@@ -39,30 +46,43 @@ material WaterObjectMaterial {
     varying vNormal  : vec3
 
     vertex(geo) -> vec4 {
-        worldPos = geo.position
+        let world = modelMatrix * vec4f(geo.position, 1.0)
+        worldPos = world.xyz
         vUv      = geo.uv
         vNormal  = normalize(normalMatrix * geo.normal)
-        return mvp * vec4f(geo.position, 1.0)
+        return mvp * world
     }
 
     surface(geo) -> color {
-        let info        = stateAt(geo.vUv)
-        let waterHeight = info.x * poolHeight
-        let caustic     = info.y
+        let waterUV     = geo.worldPos.xz * vec2f(0.5 / poolWidth, 0.5 / poolLength) + vec2f(0.5, 0.5)
+        let info        = stateAt(waterUV)
+        let waterHeight = info.x
         let belowWater  = geo.worldPos.y < waterHeight
         if (isTexturePass > 0.5 && texturePassMode == 2.0 && belowWater) {
             discard
         }
         let lightN    = normalize(lightDir)
         let refr      = refract(-lightN, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
-        let n         = normalize(geo.vNormal)
+        let causticUV = 0.75 * (geo.worldPos.xz - geo.worldPos.y * refr.xz / refr.y) * vec2f(0.5 / poolWidth, 0.5 / poolLength) + vec2f(0.5, 0.5)
+        let caustic   = sample(causticTexture, causticUV).x
+        let meshN     = normalize(geo.vNormal)
+        let sphereN   = normalize(geo.worldPos - objectCenter)
+        let n         = objectKind < 1.5 ? sphereN : meshN
         let submerged = geo.worldPos.y < waterHeight
-        var diffuse   = max(dot(-refr, n), 0.0) * 0.5
+        let litFactor = max(dot(n, -refr), 0.0)
+        let radius    = max(objectRadius, 0.0001)
+        let aoPower   = 0.6 * (1.0 - litFactor)
+        let xGap      = max((poolWidth + radius - abs(geo.worldPos.x)) / radius, 0.001)
+        let zGap      = max((poolLength + radius - abs(geo.worldPos.z)) / radius, 0.001)
+        let floorGap  = max((geo.worldPos.y + poolHeight + radius) / radius, 0.001)
+        let sphereAO  = (1.0 - aoPower / pow(xGap, 3.0)) * (1.0 - aoPower / pow(zGap, 3.0)) * (1.0 - aoPower / pow(floorGap, 3.0))
+        let ao        = objectKind < 1.5 ? clamp(sphereAO, 0.05, 1.0) : 1.0
+        var diffuse   = litFactor * 0.5
         if (submerged) {
-            diffuse = (diffuse + 0.06) * caustic * 4.0
+            diffuse = diffuse * caustic * 4.0
         }
         let underwater = vec3f(0.4, 0.9, 1.0)
-        var col = baseColor.rgb + vec3f(diffuse, diffuse, diffuse)
+        var col = baseColor.rgb * ao + vec3f(diffuse, diffuse, diffuse)
         if (submerged) {
             col = col * underwater * 1.2
         }

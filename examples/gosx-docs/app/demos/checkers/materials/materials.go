@@ -15,9 +15,11 @@ import (
 type Family string
 
 const (
-	ImperialJade Family = "imperial-jade"
-	CarvedWood   Family = "carved-wood"
-	BrushedSteel Family = "brushed-steel"
+	ImperialJade    Family = "imperial-jade"
+	CarvedWood      Family = "carved-wood"
+	BrushedSteel    Family = "brushed-steel"
+	MidnightLacquer Family = "midnight-lacquer"
+	MoonPorcelain   Family = "moon-porcelain"
 )
 
 //go:embed sources/imperial-jade.sel
@@ -28,6 +30,12 @@ var carvedWoodSource []byte
 
 //go:embed sources/brushed-steel.sel
 var brushedSteelSource []byte
+
+//go:embed sources/midnight-lacquer.sel
+var midnightLacquerSource []byte
+
+//go:embed sources/moon-porcelain.sel
+var moonPorcelainSource []byte
 
 // Profile keeps authored source, compiled artifacts, and honest fallback together.
 type Profile struct {
@@ -57,7 +65,7 @@ type Active struct {
 }
 
 func Families() []Family {
-	return []Family{ImperialJade, CarvedWood, BrushedSteel}
+	return []Family{ImperialJade, CarvedWood, BrushedSteel, MidnightLacquer, MoonPorcelain}
 }
 
 func Compile(family Family) (Profile, error) {
@@ -128,6 +136,16 @@ func definitionFor(family Family) (definition, error) {
 			standard:    scene.StandardMaterial{Color: "#aeb8bd", Roughness: 0.3, Metalness: 0.92, Anisotropy: 0.72},
 			fallback:    scene.StandardMaterial{Color: "#939da3", Roughness: 0.38, Metalness: 0.88},
 			fallbackFor: "metallic PBR with tangent-aligned brush contrast baked by Selena"}, nil
+	case MidnightLacquer:
+		return definition{name: "Midnight Lacquer", material: "MidnightLacquer", source: midnightLacquerSource,
+			standard:    scene.StandardMaterial{Color: "#230c0d", Roughness: 0.12, Metalness: 0.16, Clearcoat: 0.96, Sheen: 0.14},
+			fallback:    scene.StandardMaterial{Color: "#2b0d0f", Roughness: 0.16, Metalness: 0.12, Clearcoat: 0.9},
+			fallbackFor: "deep cinnabar lacquer without procedural clouding and gold-leaf flecks"}, nil
+	case MoonPorcelain:
+		return definition{name: "Moon Porcelain", material: "MoonPorcelain", source: moonPorcelainSource,
+			standard:    scene.StandardMaterial{Color: "#cbd9df", Roughness: 0.22, Metalness: 0.01, Clearcoat: 0.76, Iridescence: 0.18},
+			fallback:    scene.StandardMaterial{Color: "#b8cbd3", Roughness: 0.28, Metalness: 0.01, Clearcoat: 0.68},
+			fallbackFor: "glazed porcelain without procedural cobalt crackle and pearlescent rim"}, nil
 	default:
 		return definition{}, fmt.Errorf("unknown checkers material family %q", strings.TrimSpace(string(family)))
 	}

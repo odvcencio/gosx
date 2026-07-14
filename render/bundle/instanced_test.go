@@ -32,6 +32,7 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 			VertexCount:   36,
 			InstanceCount: 3,
 			Transforms:    transforms,
+			CastShadow:    true,
 		}},
 	}
 
@@ -84,6 +85,30 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	}
 	if got := len(d.buffers) - buffersBefore; got != 0 {
 		t.Errorf("cached frame should not allocate new buffers, got %d new", got)
+	}
+}
+
+func TestFrameInstancedMeshHonorsCastShadow(t *testing.T) {
+	d := newFakeDevice()
+	r, err := New(Config{Device: d, Surface: fakeSurface{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer r.Destroy()
+
+	b := engine.RenderBundle{
+		Camera: engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		InstancedMeshes: []engine.RenderInstancedMesh{{
+			Kind: "sphere", InstanceCount: 1, Transforms: identityTransform(), CastShadow: false,
+		}},
+	}
+	if err := r.Frame(b, 320, 180, 0); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	for cascade := 0; cascade < 3; cascade++ {
+		if got := len(d.encoders[0].passes[cascade].draws); got != 0 {
+			t.Fatalf("shadow cascade %d drew non-shadow-casting mesh %d times", cascade, got)
+		}
 	}
 }
 

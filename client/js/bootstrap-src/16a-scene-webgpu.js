@@ -418,9 +418,10 @@
     "  let eastX = min(x + 1u, res - 1u);",
     "  let northY = min(y + 1u, res - 1u);",
     "  var info = inState[i];",
-    "  let delta = 1.0 / max(f32(res), 1.0);",
-    "  let dx = vec3f(delta, inState[waterIndex(eastX, y)].x - info.x, 0.0);",
-    "  let dz = vec3f(0.0, inState[waterIndex(x, northY)].x - info.x, delta);",
+    "  let deltaX = 2.0 * max(params.poolWidth, 0.0001) / max(f32(res), 1.0);",
+    "  let deltaZ = 2.0 * max(params.poolLength, 0.0001) / max(f32(res), 1.0);",
+    "  let dx = vec3f(deltaX, inState[waterIndex(eastX, y)].x - info.x, 0.0);",
+    "  let dz = vec3f(0.0, inState[waterIndex(x, northY)].x - info.x, deltaZ);",
     "  let normal = normalize(cross(dz, dx));",
     "  info.z = normal.x;",
     "  info.w = normal.z;",
@@ -5394,6 +5395,13 @@
       var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, texture));
       if (!resolved || !resolved.system) return null;
       switch (resolved.slot) {
+      case "state":
+      case "waterState":
+      case "height":
+      case "heightfield":
+        return resolved.system.activeIndex === 0
+          ? resolved.system.stateTextureViewA || null
+          : resolved.system.stateTextureViewB || null;
       case "caustics":
       case "caustic":
         return resolved.system.causticsView || null;
@@ -5514,12 +5522,12 @@
         });
       }
       // Selena `state` statefield support (mesh+state kind, e.g. water pool's
-      // `state height`): a StateGrid uniform (gridWidth/gridHeight) followed by
-      // one read-only storage buffer per statefield (mesh render passes only
-      // ever READ state; ping-pong write-back is the feedback/compute kind,
-      // out of scope here). Both are additive bindings appended after the
-      // uniform block/textures/storage buffers above, matching Selena's own
-      // emission order (StateGrid immediately before the state buffer).
+      // `state height`): a StateGrid uniform followed by the resource kind the
+      // compiler descriptor declares. Render materials currently emit
+      // stateAt(uv) as textureLoad(_inState, ...), while feedback materials use
+      // storage buffers. Treating both as storage made otherwise-valid Selena
+      // WGSL fail WebGPU bind-group validation and silently erased refraction,
+      // displaced surfaces, and caustics.
       var grid = layout && layout.grid;
       var states = sceneSelenaStateDescriptors(layout);
       var afterCoreBindingCount = 1 + textures.length * 2 + storageBuffers.length;
@@ -5532,11 +5540,16 @@
       }
       for (var s = 0; s < states.length; s++) {
         var stateWGSL = states[s] && states[s].wgsl || {};
-        entries.push({
+        var stateEntry = {
           binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + s),
           visibility: visibility,
-          buffer: { type: "read-only-storage" },
-        });
+        };
+        if (String(stateWGSL.inKind || "storage").toLowerCase() === "texture") {
+          stateEntry.texture = { sampleType: "unfilterable-float", viewDimension: "2d" };
+        } else {
+          stateEntry.buffer = { type: "read-only-storage" };
+        }
+        entries.push(stateEntry);
         var outBinding = sceneNumber(stateWGSL.outBinding, -1);
         if (outBinding >= 0) {
           entries.push({
@@ -5908,13 +5921,18 @@
       for (var st = 0; st < states.length; st++) {
         var stateDescriptor = states[st] || {};
         var stateWGSL = stateDescriptor.wgsl || {};
-        var stateBuffer = sceneSelenaLiveBuffer(material, stateDescriptor);
-        if (!stateBuffer) return null;
-        entries.push({
-          binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + st),
-          resource: { buffer: stateBuffer },
-        });
-        cacheStorages.push(stateBuffer);
+        var stateBinding = sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + st);
+        if (String(stateWGSL.inKind || "storage").toLowerCase() === "texture") {
+          var stateView = sceneSelenaLiveTextureView(material, stateDescriptor);
+          if (!stateView) return null;
+          entries.push({ binding: stateBinding, resource: stateView });
+          cacheViews.push(stateView);
+        } else {
+          var stateBuffer = sceneSelenaLiveBuffer(material, stateDescriptor);
+          if (!stateBuffer) return null;
+          entries.push({ binding: stateBinding, resource: { buffer: stateBuffer } });
+          cacheStorages.push(stateBuffer);
+        }
       }
       // Memoize the bind group. GPUBindGroups have no destroy() (GC-only), so
       // creating one per frame causes allocation and GC pressure. The uniform
@@ -6581,7 +6599,16 @@
     function sceneWaterResolution(value) {
       var raw = Math.floor(sceneNumber(value, 256));
       if (!Number.isFinite(raw) || raw <= 0) raw = 256;
-      return Math.max(16, Math.min(512, raw));
+      // A sampled render-state texture is refreshed with copyBufferToTexture.
+      // rgba32float rows are 16 bytes/texel and WebGPU requires bytesPerRow to
+      // be 256-byte aligned, so GPU water grids use 16-texel increments.
+      return Math.max(16, Math.min(512, Math.ceil(raw / 16) * 16));
+    }
+
+    function sceneWaterSurfaceResolution(entry, simulationResolution) {
+      var raw = Math.floor(sceneNumber(entry && entry.surfaceResolution, simulationResolution));
+      if (!Number.isFinite(raw) || raw < 2) raw = simulationResolution;
+      return Math.max(2, Math.min(512, raw));
     }
 
     function sceneWaterCausticsResolution(entry) {
@@ -7022,8 +7049,10 @@
     // SCENE_WATER_*_SOURCE fallback, neither of which is entry-authored.
     function sceneWaterSystemSignature(entry, width, height) {
       var resolution = sceneWaterResolution(entry && entry.resolution);
+      var authoredSurfaceResolution = sceneWaterSurfaceResolution(entry, resolution);
       return [
         resolution,
+        authoredSurfaceResolution,
         Math.max(0, Math.floor(sceneNumber(entry && entry.seedDrops, 7))),
         sceneNumber(entry && entry.dropRadius, 0.03).toFixed(5),
         sceneNumber(entry && entry.dropStrength, 0.01).toFixed(5),
@@ -7495,6 +7524,7 @@
 
     function createSceneWaterSystem(scopedDevice, entry, width, height) {
       var resolution = sceneWaterResolution(entry && entry.resolution);
+      var authoredSurfaceResolution = sceneWaterSurfaceResolution(entry, resolution);
       var causticsResolution = sceneWaterCausticsResolution(entry);
       var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
       var objectTextureWidth = objectTextureSize.width;
@@ -7503,8 +7533,22 @@
       var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
       var cellCount = resolution * resolution;
       var stateBytes = cellCount * 16;
-      var bufferA = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
-      var bufferB = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, stateBytes);
+      var stateBufferUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+      var bufferA = wgpuCreateTrackedBuffer(stateBufferUsage, stateBytes);
+      var bufferB = wgpuCreateTrackedBuffer(stateBufferUsage, stateBytes);
+      var stateTextureUsage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
+      var stateTextureA = scopedDevice.createTexture({
+        label: "gosx-water-state-sampled-a",
+        size: [resolution, resolution, 1],
+        format: "rgba32float",
+        usage: stateTextureUsage,
+      });
+      var stateTextureB = scopedDevice.createTexture({
+        label: "gosx-water-state-sampled-b",
+        size: [resolution, resolution, 1],
+        format: "rgba32float",
+        usage: stateTextureUsage,
+      });
       var uniformBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 256);
       var objectSphereBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, WATER_MAX_DISPLACEMENT_SPHERES * 16);
       var objectTextureMatrixBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 128);
@@ -7557,7 +7601,8 @@
         qualityAllocationConsecutiveFailures: 0,
         qualityAllocationNextFrame: 0,
         qualityAllocationDesiredKey: "",
-        surfaceResolution: resolution,
+        authoredSurfaceResolution: authoredSurfaceResolution,
+        surfaceResolution: authoredSurfaceResolution,
         expensivePassCadence: 1,
         causticsResolution: causticsResolution,
         objectTextureResolution: objectTextureResolution,
@@ -7567,9 +7612,14 @@
         objectTexturePixelBudget: objectTextureSize.pixelBudget,
         objectShadowResolution: objectShadowResolution,
         cellCount: cellCount,
-        vertexCount: Math.max(0, (resolution - 1) * (resolution - 1) * 6),
+        vertexCount: Math.max(0, (authoredSurfaceResolution - 1) * (authoredSurfaceResolution - 1) * 6),
         bufferA: bufferA,
         bufferB: bufferB,
+        stateTextureA: stateTextureA,
+        stateTextureB: stateTextureB,
+        stateTextureViewA: stateTextureA.createView(),
+        stateTextureViewB: stateTextureB.createView(),
+        stateTextureSyncSeq: 0,
         uniformBuffer: uniformBuffer,
         objectSphereBuffer: objectSphereBuffer,
         objectTextureMatrixBuffer: objectTextureMatrixBuffer,
@@ -7610,6 +7660,8 @@
             pointsEntryGPUBuffers.delete(bufferB);
             bufferB.destroy();
           }
+          if (stateTextureA && typeof stateTextureA.destroy === "function") stateTextureA.destroy();
+          if (stateTextureB && typeof stateTextureB.destroy === "function") stateTextureB.destroy();
           if (uniformBuffer && typeof uniformBuffer.destroy === "function") {
             pointsEntryGPUBuffers.delete(uniformBuffer);
             uniformBuffer.destroy();
@@ -7686,7 +7738,8 @@
       if (!system) return;
       var source = profile && typeof profile === "object" ? profile : {};
       var tier = source.tier === "survival" || source.tier === "balanced" ? source.tier : "full";
-      var surfaceResolution = Math.max(2, Math.min(system.resolution, Math.floor(sceneNumber(source.surfaceResolution, tier === "survival" ? 96 : tier === "balanced" ? 128 : 160))));
+      var authoredSurfaceResolution = Math.max(2, Math.floor(sceneNumber(system.authoredSurfaceResolution, system.resolution)));
+      var surfaceResolution = Math.max(2, Math.min(authoredSurfaceResolution, Math.floor(sceneNumber(source.surfaceResolution, tier === "survival" ? 96 : tier === "balanced" ? 128 : authoredSurfaceResolution))));
       var authoredCausticsResolution = sceneWaterCausticsResolution(system.entry);
       var authoredObjectShadowResolution = sceneWaterObjectShadowResolution(system.entry);
       var causticsResolution = Math.max(64, Math.min(authoredCausticsResolution, Math.floor(sceneNumber(source.causticsResolution, authoredCausticsResolution))));
@@ -7887,10 +7940,9 @@
           });
           selenaPass.setPipeline(selenaDraw.pipeline);
           selenaPass.setBindGroup(0, selenaDraw.bindGroup);
-          // caustics.sel's own vertex() convention is a 6-vertex fullscreen
-          // quad (vertexIndex 0-5), DIFFERENT from the hand-written path's
-          // 3-vertex fullscreen-triangle trick below.
-          selenaPass.draw(6);
+          // Selena caustics projects the same authored water topology as the
+          // visible surface, matching the reference's tessellated light grid.
+          selenaPass.draw(system.vertexCount);
           selenaPass.end();
           return { passes: 1, authored: false, failed: false, sourceBytes: 0, selena: 1, selenaFallback: 0 };
         }
@@ -8713,10 +8765,13 @@
         waterSolverSubsteps: 0,
         waterDroppedTicks: 0,
         waterDroppedTicksThisFrame: 0,
+        waterSimulationCatchUpCap: 1,
         waterSimulationTickSeq: 0,
         waterSolverSubstepSeq: 0,
         waterNormalDispatches: 0,
         waterNormalDispatchSeq: 0,
+        waterSampledStateCopies: 0,
+        waterSampledStateSyncSeq: 0,
         waterQualityTier: "full",
         waterQualityRevision: 0,
         waterSurfaceResolution: 0,
@@ -8899,7 +8954,9 @@
         var waterPaused = sceneBool(entry && entry.paused, false);
         var waterClock = waterClockAPI.sceneWaterAdvanceClock(system.waterClock, currentNowMS, waterLifecycleActive, waterPaused, {
           simulationHz: 60,
-          maxCatchUpTicks: 2,
+          // Bound each present to the reference model's two solver passes.
+          // Any elapsed excess remains visible as dropped-tick telemetry.
+          maxCatchUpTicks: 1,
           solverSubsteps: 2,
         });
         var canConsumeWaterState = waterLifecycleActive && !waterPaused;
@@ -9018,6 +9075,10 @@
           system.waterNormalDispatchSeq += normalDispatches;
           if (normalCompute.authored && normalResult.selena === 0) stats.waterAuthoredComputeDispatches += normalDispatches;
         }
+        if (hasSimulationTick || system.stateTextureSyncSeq === 0) {
+          stats.waterSampledStateCopies += syncWaterSampledState(encoder, system);
+        }
+        stats.waterSampledStateSyncSeq += Math.max(0, Math.floor(sceneNumber(system.stateTextureSyncSeq, 0)));
         stats.waterNormalDispatchSeq += Math.max(0, system.waterNormalDispatchSeq || 0);
         var expensivePassCadence = Math.max(1, system.expensivePassCadence || 1);
         var expensiveCadenceBucket = Math.floor(Math.max(0, waterClock.tickSeq || 0) / expensivePassCadence);
@@ -9410,7 +9471,11 @@
       var camPos = sceneWaterCameraPosFromCam(camera);
       var refractionMatrix = (system && system.objectViewProjectionReady) ? system.objectViewProjectionMatrix : scratchSelenaViewProjection;
       var reflectionMatrix = (system && system.objectReflectionViewProjectionReady) ? system.objectReflectionViewProjectionMatrix : scratchSelenaViewProjection;
-      var waterColor = sceneColorRGBA(entry.shallowColor, [0.48, 0.82, 0.92, 1]);
+      var fallbackWaterColor = sceneColorRGBA(entry.shallowColor, [0.48, 0.82, 0.92, 1]);
+      var hasHDRWaterColor = sceneNumber(entry.aboveWaterColorR, 0) !== 0 || sceneNumber(entry.aboveWaterColorG, 0) !== 0 || sceneNumber(entry.aboveWaterColorB, 0) !== 0;
+      var waterColor = hasHDRWaterColor
+        ? [sceneNumber(entry.aboveWaterColorR, 0.25), sceneNumber(entry.aboveWaterColorG, 1), sceneNumber(entry.aboveWaterColorB, 1.25)]
+        : fallbackWaterColor;
       return {
         uniformSlotSuffix: uniformSlotName + "-" + String((system && system.id) || "water"),
         uniforms: {
@@ -9511,6 +9576,7 @@
           poolHeight: sceneNumber(system && system.waterPoolHeight, 1),
           normalScale: sceneNumber(entry.normalScale, 1.0),
           opticsEnable: optics.caustics ? 1 : 0,
+          gridResolution: sceneNumber(system && system.surfaceResolution, 201),
           resolution: sceneNumber(system && system.waterResolution, 256),
           time: sceneSelenaFrameTime,
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
@@ -9528,10 +9594,8 @@
       return sceneWaterSelenaUsesPass(entry, "causticsSelenaWGSL", "caustics");
     }
 
-    // getWaterCausticsSelenaDraw draws a 6-vertex fullscreen quad (2
-    // triangles, vertexIndex 0-5) -- caustics.sel's own vertex() convention,
-    // DIFFERENT from pool's 30-vertex box or the post kind's 3-vertex
-    // fullscreen triangle. See drawCount usage in renderWaterCausticsPass.
+    // getWaterCausticsSelenaDraw projects the authored water grid into the
+    // caustics target. See drawCount usage in renderWaterCausticsPass.
     function getWaterCausticsSelenaDraw(system, entry) {
       var material = sceneWaterCausticsSelenaMaterial(system, entry);
       var renderContext = sceneWaterCausticsSelenaRenderContext(system);
@@ -9878,14 +9942,19 @@
       };
     }
 
-    // sceneWaterNormalSelenaRenderContext: normal kernel declares no params or
-    // context (neighbour taps only, normal.sel) -- only the grid uniform and
-    // in/out state buffers are bound; createSelenaComputeBindGroup's
-    // hasUniforms gate skips the (nonexistent) UserUniforms binding entirely.
+    // Physical cell spacing is part of the normal contract: height deltas are
+    // world-space values, so unit-length X/Z tangents would flatten the water
+    // by resolution/(2*poolExtent) and suppress both optics and caustics.
     function sceneWaterNormalSelenaRenderContext(system) {
+      var resolution = Math.max(1, sceneNumber(system && system.resolution, 256));
+      var poolWidth = Math.max(0.0001, sceneNumber(system && system.waterPoolWidth, 1));
+      var poolLength = Math.max(0.0001, sceneNumber(system && system.waterPoolLength, 1));
       return {
         uniformSlotSuffix: "water-normal-" + String((system && system.id) || "water"),
-        uniforms: {},
+        uniforms: {
+          cellSizeX: 2 * poolWidth / resolution,
+          cellSizeZ: 2 * poolLength / resolution,
+        },
       };
     }
 
@@ -9963,6 +10032,26 @@
         return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline), selena: 0, selenaFallback: 1 };
       }
       return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline), selena: 0, selenaFallback: 0 };
+    }
+
+    // Selena render materials lower stateAt(uv) to textureLoad so vertex and
+    // fragment reads share the texture cache. The simulation itself remains a
+    // storage-buffer compute pipeline. Refresh the sampled mirror after the
+    // final normal pass, in the same command encoder, so all following
+    // caustic/pool/surface passes observe the exact active ping-pong state.
+    function syncWaterSampledState(encoder, system) {
+      if (!encoder || typeof encoder.copyBufferToTexture !== "function" || !system) return 0;
+      var resolution = Math.max(16, Math.floor(sceneNumber(system.resolution, 16)));
+      var source = system.activeIndex === 0 ? system.bufferA : system.bufferB;
+      var destination = system.activeIndex === 0 ? system.stateTextureA : system.stateTextureB;
+      if (!source || !destination) return 0;
+      encoder.copyBufferToTexture(
+        { buffer: source, bytesPerRow: resolution * 16, rowsPerImage: resolution },
+        { texture: destination },
+        [resolution, resolution, 1]
+      );
+      system.stateTextureSyncSeq = Math.max(0, Math.floor(sceneNumber(system.stateTextureSyncSeq, 0))) + 1;
+      return 1;
     }
 
     // getWaterPoolPipeline: builtin-only now. The hand-written
@@ -12787,6 +12876,7 @@
         waterSolverSubstepSeq: published.waterSolverSubstepSeq || 0,
         waterDroppedTicks: published.waterDroppedTicks || 0,
         waterNormalDispatchSeq: published.waterNormalDispatchSeq || 0,
+        waterSampledStateSyncSeq: published.waterSampledStateSyncSeq || 0,
         waterQualityTier: published.waterQualityTier || "full",
         waterQualityRevision: published.waterQualityRevision || 0,
         waterSurfaceResolution: published.waterSurfaceResolution || 0,
@@ -12818,6 +12908,7 @@
       setEssentialAttribute("data-gosx-scene3d-webgpu-water-substep-seq", String(published.waterSolverSubstepSeq || 0));
       setEssentialAttribute("data-gosx-scene3d-webgpu-water-dropped-ticks", String(published.waterDroppedTicks || 0));
       setEssentialAttribute("data-gosx-scene3d-webgpu-water-normal-seq", String(published.waterNormalDispatchSeq || 0));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-water-state-sync-seq", String(published.waterSampledStateSyncSeq || 0));
       if (published.lastError) {
         setEssentialAttribute("data-gosx-scene3d-webgpu-last-error", String(published.lastError));
       } else if (webGPUEssentialAttributeCache["data-gosx-scene3d-webgpu-last-error"] !== null) {
@@ -13802,10 +13893,13 @@
         waterSolverSubsteps: waterUpdateStats.waterSolverSubsteps,
         waterDroppedTicks: waterUpdateStats.waterDroppedTicks,
         waterDroppedTicksThisFrame: waterUpdateStats.waterDroppedTicksThisFrame,
+        waterSimulationCatchUpCap: waterUpdateStats.waterSimulationCatchUpCap,
         waterSimulationTickSeq: waterUpdateStats.waterSimulationTickSeq,
         waterSolverSubstepSeq: waterUpdateStats.waterSolverSubstepSeq,
         waterNormalDispatches: waterUpdateStats.waterNormalDispatches,
         waterNormalDispatchSeq: waterUpdateStats.waterNormalDispatchSeq,
+        waterSampledStateCopies: waterUpdateStats.waterSampledStateCopies,
+        waterSampledStateSyncSeq: waterUpdateStats.waterSampledStateSyncSeq,
         waterQualityTier: waterUpdateStats.waterQualityTier,
         waterQualityRevision: waterUpdateStats.waterQualityRevision,
         waterSurfaceResolution: waterUpdateStats.waterSurfaceResolution,
@@ -14141,6 +14235,7 @@
       out.waterSolverSubstepSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSolverSubstepSeq || 0;
       out.waterDroppedTicks = lastWebGPUFrameStats && lastWebGPUFrameStats.waterDroppedTicks || 0;
       out.waterNormalDispatchSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
+      out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
       out.postProcessing = !!postProcessor;
       out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
       out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";

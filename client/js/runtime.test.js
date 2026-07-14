@@ -2584,6 +2584,72 @@ test("bootstrap records island hydration failures and keeps the server fallback 
   assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:error"), true);
 });
 
+test("bootstrap exposes subscribable diagnostics with scoped clearing", () => {
+  const env = createContext({ elements: [] });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const root = new FakeElement("section", env.document);
+  const child = new FakeElement("div", env.document);
+  root.appendChild(child);
+  const changes = [];
+  const unsubscribe = env.context.__gosx.diagnostics.subscribe((change) => changes.push(change));
+
+  env.context.__gosx.diagnostics.report({
+    scope: "surface",
+    type: "preview",
+    element: child,
+    message: "preview failed",
+  });
+  env.context.__gosx.diagnostics.report({
+    scope: "surface",
+    type: "upload",
+    element: root,
+    message: "upload failed",
+  });
+
+  assert.equal(env.context.__gosx.diagnostics.list().length, 2);
+  assert.equal(changes.map((change) => change.type).join(","), "report,report");
+  assert.equal(child.getAttribute("data-gosx-runtime-state"), "error");
+
+  const cleared = env.context.__gosx.diagnostics.clearFor(root);
+  assert.equal(cleared.length, 2);
+  assert.equal(env.context.__gosx.diagnostics.list().length, 0);
+  assert.equal(child.getAttribute("data-gosx-runtime-state"), "ready");
+  assert.equal(root.getAttribute("data-gosx-runtime-state"), "ready");
+  assert.equal(changes.map((change) => change.type).join(","), "report,report,clear,clear");
+
+  unsubscribe();
+  env.context.__gosx.diagnostics.report({ scope: "surface", type: "later", element: root });
+  assert.equal(changes.length, 4);
+});
+
+test("bootstrap shares request failure reporting across runtime features", () => {
+  const env = createContext({ elements: [] });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const root = new FakeElement("section", env.document);
+  const issue = env.context.__gosx.reportFailure(
+    "preview",
+    new Error("preview unavailable"),
+    {
+      scope: "runtime-surface",
+      component: "editor",
+      element: root,
+      telemetry: { name: "editor", mode: "preview" },
+    }
+  );
+
+  assert.equal(issue.scope, "runtime-surface");
+  assert.equal(issue.type, "request");
+  assert.equal(issue.severity, "warning");
+  assert.equal(issue.phase, "preview");
+  assert.equal(issue.component, "editor");
+  assert.equal(issue.elementID, "");
+  assert.equal(env.context.__gosx.listIssues().length, 1);
+  assert.equal(env.context.__gosx.reportFailure("preview", { name: "AbortError" }), null);
+  assert.equal(env.context.__gosx.listIssues().length, 1);
+});
+
 test("bootstrap forwards click target value to delegated island handlers", async () => {
   const wrapper = new FakeElement("div", null);
   const componentRoot = new FakeElement("div", null);
@@ -4988,6 +5054,7 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
             controls: "orbit",
             controlTarget: { x: 0, y: 0.2, z: 0.8 },
             controlRotateMode: "pixel-degrees",
+            controlRotateDirection: "grab",
             controlMinDistance: 2,
             controlMaxDistance: 10,
             controlPitchLimit: Math.PI / 2 - (Math.PI / 180) * 0.001,
@@ -5128,6 +5195,8 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
     Math.abs(draggedCamera.x - initialCamera.x) > 0.01 ||
     Math.abs(draggedCamera.z - initialCamera.z) > 0.01,
   );
+  assert.ok(draggedCamera.x < orbitTarget.x, `grab-right must orbit camera left, got ${JSON.stringify(draggedCamera)}`);
+  assert.ok(draggedCamera.y > orbitTarget.y, `grab-up must orbit camera up, got ${JSON.stringify(draggedCamera)}`);
 
   const cameraBeforeZoom = mounted.handle.getCamera();
   canvas.dispatchEvent({
@@ -9104,6 +9173,9 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   assert.doesNotMatch(waterPage, /Selena Surface/);
   assert.match(waterPage, /shallowColor="#7ad1eb"/);
   assert.match(waterPage, /deepColor="#082e57"/);
+  assert.match(waterPage, /aboveWaterColorR=\{0\.25\}/);
+  assert.match(waterPage, /aboveWaterColorG=\{1\.0\}/);
+  assert.match(waterPage, /aboveWaterColorB=\{1\.25\}/);
   // The hand-written Elio/Selena *WGSL props have been retired -- Selena is
   // the sole primary WGSL source now (see the *SelenaWGSL props below).
   assert.doesNotMatch(waterPage, /displacementWGSL=\{data\.waterDisplacementWGSL\}/);
@@ -9141,15 +9213,18 @@ test("Scene3D orbit controls keep upstream-style release inertia", () => {
   assert.match(mount, /orbitVelocityPitch: 0/);
   assert.match(mount, /orbitLastMoveMS: 0/);
   assert.match(mount, /rotateMode: sceneControlsRotateMode\(props\)/);
+	assert.match(mount, /rotateDirection: sceneControlsRotateDirection\(props\)/);
   assert.match(mount, /minDistance,\n\s+maxDistance,\n\s+pitchLimit: sceneControlsPitchLimit\(props\)/);
   assert.match(mount, /function sceneControlsRotateMode\(props\)/);
+	assert.match(mount, /function sceneControlsRotateDirection\(props\)/);
+	assert.match(mount, /case "grab":/);
   assert.match(mount, /return "pixel-degrees";/);
   assert.match(mount, /function sceneControlsMinDistance\(props\)/);
   assert.match(mount, /function sceneControlsMaxDistance\(props, minDistance\)/);
   assert.match(mount, /function sceneControlsPitchLimit\(props\)/);
   assert.match(mount, /controls\.rotateMode === "pixel-degrees"/);
-  assert.match(mount, /sample\.deltaX \* pixelRadians/);
-  assert.match(mount, /sample\.deltaY \* pixelRadians/);
+	assert.match(mount, /sample\.deltaX \* pixelRadians \* rotateDirection/);
+	assert.match(mount, /sample\.deltaY \* pixelRadians \* rotateDirection/);
   assert.match(mount, /SCENE_ORBIT_MAX_PITCH_LIMIT = Math\.PI \/ 2 - \(Math\.PI \/ 180\) \* 0\.001/);
   assert.match(mount, /function sceneOrbitStopInertia\(controls\)/);
   assert.match(mount, /function sceneOrbitInertiaActive\(controls\)/);
@@ -9406,7 +9481,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
   assert.doesNotMatch(webgpu, /uploadFrameUniforms\(sceneWaterReflectionCamera\(bundle && bundle\.camera\), targetWidth, targetHeight, false\)/);
   assert.match(webgpu, /var objectShadowResolution = sceneWaterObjectShadowResolution\(entry\)/);
-  assert.match(webgpu, /qualityTier: "full",[\s\S]*surfaceResolution: resolution,[\s\S]*causticsResolution: causticsResolution,[\s\S]*objectTexturePixelBudget: objectTextureSize\.pixelBudget,[\s\S]*objectShadowResolution: objectShadowResolution/);
+  assert.match(webgpu, /qualityTier: "full",[\s\S]*surfaceResolution: authoredSurfaceResolution,[\s\S]*causticsResolution: causticsResolution,[\s\S]*objectTexturePixelBudget: objectTextureSize\.pixelBudget,[\s\S]*objectShadowResolution: objectShadowResolution/);
   assert.match(core, /causticsResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.causticsResolution/);
   assert.match(core, /objectTextureResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.objectTextureResolution/);
   assert.match(core, /objectTextureResolutionMode: typeof item\.objectTextureResolutionMode === "string"/);
@@ -9547,12 +9622,13 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /id="float-sphere"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-cube"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-torus"[\s\S]*wireframe=\{false\}/);
-  assert.match(waterPage, /resolution=\{192\}/);
-  assert.match(waterPage, /causticsResolution=\{512\}/);
+  assert.match(waterPage, /resolution=\{256\}/);
+  assert.match(waterPage, /surfaceResolution=\{201\}/);
+  assert.match(waterPage, /causticsResolution=\{1024\}/);
   assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
   assert.match(waterPage, /objectTexturePixelBudget=\{786432\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
-  assert.match(waterPage, /objectShadowResolution=\{512\}/);
+  assert.match(waterPage, /objectShadowResolution=\{1024\}/);
   // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'
   // generic shaderSource/shaderSourceFiles) have been retired -- Selena is
   // the sole primary WGSL source now.
@@ -9862,16 +9938,23 @@ test("Scene3D water renderers use one scheduler and bounded balanced-quality wor
   assert.ok(forcedWater, "forced WebGL water renderer should exist");
   assert.doesNotMatch(forcedWater[0], /requestAnimationFrame|cancelAnimationFrame/);
   assert.match(forcedWater[0], /function render\(bundle, viewport, frameMeta\)[\s\S]*drawFrame\(frameMeta\)/);
+  assert.match(forcedWater[0], /maxCatchUpTicks: 1/);
+  assert.doesNotMatch(forcedWater[0], /waterClockOptions\.maxCatchUpTicks\s*=/);
+  assert.match(webgpu, /sceneWaterAdvanceClock\(system\.waterClock[\s\S]*?maxCatchUpTicks: 1,[\s\S]*?solverSubsteps: 2/);
 
   // Balanced/survival modes preserve simulation substeps and cadence retained
   // texture work. WebGPU also avoids stationary displacement.
   assert.match(webgl, /if \(clockFrame\.ticks > 0\) \{\s*drainWaterEvents\(\);\s*sim\.simulate\(clockFrame\.substeps\);\s*sim\.recomputeNormal\(\);\s*\}/);
+  assert.match(webgl, /gl\.drawArrays\(gl\.TRIANGLES, 0, surfaceVertexCount\)/,
+    "WebGL Selena caustics must project the authored water topology");
   assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
   assert.match(webgl, /meshUploadSource === mesh && meshUploadProgram === prog/);
   assert.match(webgpu, /var expensivePassCadence = Math\.max\(1, system\.expensivePassCadence \|\| 1\)/);
   assert.match(webgpu, /system\.waterObjectMoved = objectMoved/);
   assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*var stepResult = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline\)/);
   assert.match(webgpu, /optics\.caustics && refreshExpensivePasses/);
+  assert.match(webgpu, /selenaPass\.draw\(system\.vertexCount\)/,
+    "WebGPU Selena caustics must project the authored water topology");
 });
 
 function loadSceneWaterClockAPI() {
@@ -10063,6 +10146,7 @@ test("Scene3D WebGL2 water consumes live events and renderer inputs", () => {
   assert.match(forcedWater[0], /var liveLightDir = \[[\s\S]{0,240}liveEntry\.lightDirectionZ/);
   assert.match(forcedWater[0], /var liveOpticsEnable = \(liveEntry\.reflection \|\| liveEntry\.refraction\) \? 1 : 0/);
   assert.match(forcedWater[0], /sceneWaterRenderHexColor\(liveEntry\.shallowColor/);
+  assert.match(forcedWater[0], /liveEntry\.aboveWaterColorB/);
 });
 
 test("Scene3D WebGL2 water refreshes analytic meshes by live transform signature", () => {
@@ -14449,6 +14533,10 @@ test("bootstrap installs a client-event telemetry emitter that POSTs to /_gosx/c
   await flushAsyncWork();
 
   assert.equal(typeof env.context.__gosx_emit, "function", "__gosx_emit should be installed");
+  assert.equal(typeof env.context.__gosx.telemetry.emit, "function");
+  assert.equal(typeof env.context.__gosx.telemetry.flush, "function");
+  assert.equal(env.context.__gosx.telemetry.session(), env.context.__gosx_telemetry_session());
+  assert.equal(env.context.__gosx.telemetry.enabled, true);
 
   env.context.__gosx_emit("warn", "test", "hello world", { k: "v" });
   env.context.__gosx_telemetry_flush();
@@ -14503,6 +14591,8 @@ test("bootstrap telemetry drops into no-op when disabled via config", async () =
   await flushAsyncWork();
 
   assert.equal(telemetryEvents(env).length, 0, "disabled telemetry must not POST");
+  assert.equal(env.context.__gosx.telemetry.enabled, false);
+  assert.equal(env.context.__gosx.telemetry.session(), "");
 });
 
 test("bootstrap telemetry captures uncaught window errors", async () => {
@@ -15847,6 +15937,8 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   }));
 
   runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(env.context.__gosx.navigation, env.context.__gosx_page_nav);
+  assert.equal(typeof env.context.__gosx.navigation.navigate, "function");
   const clickListener = env.document.eventListeners.get("click")[0];
   let prevented = false;
   clickListener({
@@ -15883,6 +15975,107 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.equal(env.scrollCalls[0][0].top, 0);
   assert.equal(env.scrollCalls[0][0].left, 0);
   assert.equal(env.scrollCalls[0][0].behavior, "instant");
+});
+
+test("navigation runtime aborts stale fetches and lets the newest navigation win", async () => {
+  class TestAbortSignal {
+    constructor() {
+      this.aborted = false;
+      this.listeners = [];
+    }
+
+    addEventListener(type, listener) {
+      if (type === "abort") this.listeners.push(listener);
+    }
+  }
+
+  class TestAbortController {
+    constructor() {
+      this.signal = new TestAbortSignal();
+    }
+
+    abort() {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      for (const listener of this.signal.listeners) listener();
+    }
+  }
+
+  const slowDoc = buildNavigatedDocument({
+    title: "Slow",
+    bodyNodes: [new FakeElement("main", null)],
+  });
+  slowDoc.body.firstChild.id = "slow-page";
+  slowDoc.body.firstChild.textContent = "slow";
+  const fastDoc = buildNavigatedDocument({
+    title: "Fast",
+    bodyNodes: [new FakeElement("main", null)],
+  });
+  fastDoc.body.firstChild.id = "fast-page";
+  fastDoc.body.firstChild.textContent = "fast";
+
+  const parsedDocs = new Map([
+    ["__SLOW_PAGE__", slowDoc],
+    ["__FAST_PAGE__", fastDoc],
+  ]);
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/slow": (url, init) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve({ text: "__SLOW_PAGE__", url }), 30);
+        init.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          const error = new Error("navigation aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+      "http://localhost:3000/fast": { text: "__FAST_PAGE__", url: "http://localhost:3000/fast" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.AbortController = TestAbortController;
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const slow = env.context.__gosx_page_nav.navigate("http://localhost:3000/slow");
+  const fast = env.context.__gosx_page_nav.navigate("http://localhost:3000/fast");
+  const results = await Promise.all([slow, fast]);
+
+  assert.deepEqual(results, [false, true]);
+  assert.equal(env.context.location.href, "http://localhost:3000/fast");
+  assert.equal(env.document.getElementById("fast-page").textContent, "fast");
+  assert.equal(env.document.getElementById("slow-page"), null);
+});
+
+test("navigation runtime reports failures through the shared diagnostics policy", async () => {
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      "http://localhost:3000/broken": {
+        ok: false,
+        status: 503,
+        text: "unavailable",
+        url: "http://localhost:3000/broken",
+      },
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  await assert.rejects(
+    env.context.__gosx_page_nav.navigate("http://localhost:3000/broken"),
+    /navigation fetch failed with status 503/
+  );
+  const issue = env.context.__gosx.listIssues().find((entry) => entry.scope === "navigation");
+  assert.ok(issue);
+  assert.equal(issue.type, "navigation");
+  assert.equal(issue.severity, "warning");
+  assert.equal(issue.phase, "navigation");
+  assert.equal(issue.source, "http://localhost:3000/broken");
 });
 
 test("navigation runtime loads patch, lifecycle, and managed scripts before page bootstrap", async () => {
@@ -18929,6 +19122,10 @@ test("selective runtime mounts native JS engines without loading the shared wasm
 
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  const enginesScript = env.document.head.children.find((child) =>
+    child.tagName === "SCRIPT" && child.src === "/gosx/bootstrap-feature-engines.js"
+  );
+  assert.equal(enginesScript?.getAttribute("data-gosx-script"), "feature-engines");
   assert.equal(env.context.__gosx.engines.size, 1);
   assert.equal(mount.getAttribute("data-mounted"), "true");
 
@@ -20489,6 +20686,7 @@ function makeFakeGPUDevice(options) {
     textures: [],
     writeTextureCalls: [],
     copyExternalCalls: [],
+    copyBufferToTextureCalls: [],
   };
   var textureSeq = 0;
   function makePass(descriptor, kind) {
@@ -20651,6 +20849,9 @@ function makeFakeGPUDevice(options) {
             values[0] = 0n;
             values[1] = 4_000_000n;
           }
+        },
+        copyBufferToTexture(source, destination, size) {
+          state.copyBufferToTextureCalls.push({ source, destination, size });
         },
         beginRenderPass(descriptor) {
           const pass = makePass(descriptor, "render");
@@ -20892,7 +21093,8 @@ test("Scene3D WebGPU pool pass routes through the generic Selena render path wit
 
   const waterEntry = {
     id: "water-main",
-    resolution: 4,
+    resolution: 16,
+    surfaceResolution: 3,
     poolShape: "Box",
     poolWidth: 1,
     poolLength: 1,
@@ -21071,14 +21273,17 @@ test("Scene3D WebGPU water surface/surface-below/caustics passes route through t
   // passes (which require an active kind===3 object) untouched -- those are
   // covered by the next test.
   //
-  // shallowColor/tileTexture/cubeMap/activeObject are set to non-default,
-  // asserted-against values below (the values-level gate): shallowColor feeds
-  // WaterSurface's `param waterColor` (see sceneWaterSurfaceSelenaRenderContext
+  // HDR water color/tileTexture/cubeMap/activeObject are set to non-default,
+  // asserted-against values below: the linear HDR color feeds WaterSurface's
+  // `param waterColor` without display-referred hex clamping
   // in 16a-scene-webgpu.js); tileTexture/cubeMap exercise the
   // literal-URL-texture path (as opposed to a gosx:water:* live resource ref);
   // the active Sphere object drives opticsEnable to 1.
   const waterEntry = waterSelenaFrameEntry({
     shallowColor: "#224466",
+    aboveWaterColorR: 0.25,
+    aboveWaterColorG: 1,
+    aboveWaterColorB: 1.25,
     tileTexture: "/water/tiles.jpg",
     cubeMap: "/water/",
     activeObject: "Sphere",
@@ -21120,11 +21325,15 @@ test("Scene3D WebGPU water surface/surface-below/caustics passes route through t
   assert.deepEqual(surfaceBindings, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], "surface bind group layout must expose uniform(0) + 6 textures/samplers(1-12) + grid(13) + state(14)");
   const skyEntry = surfaceBGL.desc.entries.find((e) => e.binding === 5);
   assert.ok(skyEntry && skyEntry.texture && skyEntry.texture.viewDimension === "cube", "the sky texture binding must be viewDimension:\"cube\"");
+  const stateEntry = surfaceBGL.desc.entries.find((e) => e.binding === 14);
+  assert.ok(stateEntry && stateEntry.texture && stateEntry.texture.sampleType === "unfilterable-float", "stateAt must bind the Selena-declared rgba32float sampled texture, not a storage buffer");
 
   const surfaceBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === surfaceBGL);
   assert.ok(surfaceBindGroup, "expected a bind group built against the surface bind group layout");
   const surfaceBoundBindings = Array.from(surfaceBindGroup.desc.entries, (e) => e.binding).sort((a, b) => a - b);
   assert.deepEqual(surfaceBoundBindings, surfaceBindings, "the surface bind group's actual entries must match its layout's declared bindings exactly");
+  const boundState = surfaceBindGroup.desc.entries.find((e) => e.binding === 14);
+  assert.equal(boundState && boundState.resource && boundState.resource.__kind, "textureView", "stateAt texture binding must receive the live sampled state view");
 
   // Caustics renders into its own offscreen (no depth attachment) target:
   // the compiled pipeline must NOT carry a depthStencil state.
@@ -21148,11 +21357,10 @@ test("Scene3D WebGPU water surface/surface-below/caustics passes route through t
   // assertion catches it.
   const surfaceFloats = waterSelenaLastUniformWrite(harness.fake, surfaceBindGroup);
   const waterColor = waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "waterColor", 3);
-  // #224466 -> (0x22/255, 0x44/255, 0x66/255) = (0.13333, 0.26667, 0.4).
   assert.ok(waterColor.some((c) => c > 0.01), "waterColor must not be packed as (0,0,0) -- surface.sel's `param waterColor` was left unwired, blacking out the refracted branch");
-  assert.ok(Math.abs(waterColor[0] - 34 / 255) < 1e-5, "waterColor.r must match entry.shallowColor (#224466), not a zero/default fallback");
-  assert.ok(Math.abs(waterColor[1] - 68 / 255) < 1e-5, "waterColor.g must match entry.shallowColor (#224466), not a zero/default fallback");
-  assert.ok(Math.abs(waterColor[2] - 102 / 255) < 1e-5, "waterColor.b must match entry.shallowColor (#224466), not a zero/default fallback");
+  assert.ok(Math.abs(waterColor[0] - 0.25) < 1e-5, "waterColor.r must preserve the linear HDR contract");
+  assert.ok(Math.abs(waterColor[1] - 1) < 1e-5, "waterColor.g must preserve the linear HDR contract");
+  assert.ok(Math.abs(waterColor[2] - 1.25) < 1e-5, "waterColor.b must remain above 1 instead of being clamped through a hex color");
 
   const lightDir = waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "lightDir", 3);
   const lightLen = Math.sqrt(lightDir[0] * lightDir[0] + lightDir[1] * lightDir[1] + lightDir[2] * lightDir[2]);
@@ -21353,12 +21561,15 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
           shaderLayout: waterObjectMaterialSelenaFixture.layout,
           customUniforms: {
             poolHeight: 1,
+            poolWidth: 1,
+            poolLength: 1,
             baseColor: [0.5, 0.5, 0.5, 1],
             isTexturePass: 0,
             texturePassMode: 0,
             lightDir: [2, 3, -1],
             grid: 4,
             water: "gosx:water:water-main:state",
+            causticTexture: "gosx:water:water-main:caustics",
           },
         },
         {
@@ -21370,6 +21581,8 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
           shaderLayout: waterDuckMaterialSelenaFixture.layout,
           customUniforms: {
             poolHeight: 1,
+            poolWidth: 1,
+            poolLength: 1,
             baseColor: [1, 1, 1, 1],
             isTexturePass: 0,
             texturePassMode: 0,
@@ -21377,6 +21590,7 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
             modelTexture: "/water/models/duck/DuckCM.png",
             grid: 4,
             water: "gosx:water:water-main:state",
+            causticTexture: "gosx:water:water-main:caustics",
           },
         },
       ],
@@ -21415,16 +21629,15 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   );
   assert.ok(duckMatPipeline, "expected a compiled gosx-selena-*-WaterDuckMaterial-* render pipeline");
 
-  // object-material has NO textures (uniform + grid + state only); duck-material
-  // has ONE (modelTexture) -- confirms the mesh+state grid/state binding
-  // support applies with and without textures present.
+  // Object material samples the real caustic target; duck adds its albedo
+  // texture. Both then bind the state grid and sampled height texture.
   const objectMatBGL = objectMatPipeline.desc.layout.desc.bindGroupLayouts[0];
   const objectMatBindings = Array.from(objectMatBGL.desc.entries, (e) => e.binding).sort((a, b) => a - b);
-  assert.deepEqual(objectMatBindings, [0, 1, 2], "object-material bind group layout must expose uniform(0) + grid(1) + state(2)");
+  assert.deepEqual(objectMatBindings, [0, 1, 2, 3, 4], "object-material bind group layout must expose uniform(0) + caustic(1-2) + grid(3) + state(4)");
 
   const duckMatBGL = duckMatPipeline.desc.layout.desc.bindGroupLayouts[0];
   const duckMatBindings = Array.from(duckMatBGL.desc.entries, (e) => e.binding).sort((a, b) => a - b);
-  assert.deepEqual(duckMatBindings, [0, 1, 2, 3, 4], "duck-material bind group layout must expose uniform(0) + modelTexture(1-2) + grid(3) + state(4)");
+  assert.deepEqual(duckMatBindings, [0, 1, 2, 3, 4, 5, 6], "duck-material bind group layout must expose uniform(0) + model/caustic textures(1-4) + grid(5) + state(6)");
 
   const objectMatBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === objectMatBGL);
   assert.ok(objectMatBindGroup, "expected a bind group built against the object-material bind group layout");
@@ -21466,6 +21679,8 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   // stronger "resolves to a live, non-placeholder view" assertion).
   const modelTexEntry = duckMatBindGroup.desc.entries.find((e) => e.binding === 1);
   assert.ok(modelTexEntry && modelTexEntry.resource && modelTexEntry.resource.__kind === "textureView", "expected duck-material's modelTexture entry at binding 1 to be a texture view");
+  const objectCausticEntry = objectMatBindGroup.desc.entries.find((e) => e.binding === 1);
+  assert.ok(objectCausticEntry && objectCausticEntry.resource && objectCausticEntry.resource.__kind === "textureView", "object material must sample the live caustic texture instead of treating a water-slope channel as caustic intensity");
 });
 
 // waterPerfShapeEntry builds a full <WaterSystem> entry (every render-pass
@@ -21661,20 +21876,27 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
   assert.equal(stats.waterSurfaceResolution, 192, "adaptive-disabled frame metadata must preserve authored WebGPU topology");
   assert.equal(stats.waterSolverSubsteps, 0);
   assert.equal(stats.waterNormalDispatches, 0, "zero ticks must not recompute normals");
+  assert.equal(stats.waterSampledStateCopies, 1, "first frame must initialize the sampled Selena state mirror");
+  assert.equal(stats.waterSampledStateSyncSeq, 1);
+  assert.equal(harness.fake.state.copyBufferToTextureCalls.length, 1);
 
   stats = renderAt(8);
   assert.equal(stats.waterSimulationTicks, 0, "120Hz display-only frame must not advance 60Hz simulation");
   assert.equal(stats.waterNormalDispatches, 0);
+  assert.equal(stats.waterSampledStateCopies, 0, "display-only frames must reuse the sampled state texture");
 
   stats = renderAt(17);
   assert.equal(stats.waterSimulationTicks, 1);
   assert.equal(stats.waterSolverSubsteps, 2, "one fixed tick must execute two solver substeps");
   assert.equal(stats.waterNormalDispatches, 1, "N ticks must batch into one normal recompute");
+  assert.equal(stats.waterSampledStateCopies, 1, "a simulation tick must refresh sampled state exactly once after normals");
 
   stats = renderAt(51);
-  assert.equal(stats.waterSimulationTicks, 2);
-  assert.equal(stats.waterSolverSubsteps, 4, "two catch-up ticks must execute four solver substeps");
-  assert.equal(stats.waterNormalDispatches, 1, "catch-up still recomputes normals once");
+  assert.equal(stats.waterSimulationCatchUpCap, 1);
+  assert.equal(stats.waterSimulationTicks, 1);
+  assert.equal(stats.waterSolverSubsteps, 2, "a slow frame must remain bounded to two solver substeps");
+  assert.equal(stats.waterDroppedTicksThisFrame, 1, "elapsed excess must remain observable instead of becoming more GPU work");
+  assert.equal(stats.waterNormalDispatches, 1, "a slow frame still recomputes normals once");
 
   entry.paused = true;
   entry.dropEventID = 7;
@@ -21856,6 +22078,16 @@ test("Scene3D fake WebGPU timing partial allocation failure destroys candidates 
   assert.equal(harness.renderer.pollPerformanceSample(), null, "failed GPU timing must fall back without blocking");
 });
 
+test("Scene3D WebGL water binds the full Selena object contract", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  assert.match(source, /mvp: mvp, modelMatrix: identity4, normalMatrix: identity3/,
+    "direct analytic objects must receive an identity model matrix when their vertices are already world-baked");
+  assert.match(source, /name: "causticTexture", target: gl\.TEXTURE_2D, tex: causticTex/,
+    "direct and projected objects must sample the live caustic target rather than aliasing the state texture");
+  assert.match(source, /poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight/,
+    "object shading must receive live pool dimensions for refraction and caustic projection");
+});
+
 test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events exactly", () => {
   const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
@@ -21929,7 +22161,7 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
     objectShadowResolution: 512,
     objectTextureResolution: 512,
     objectTexturePixelBudget: 786432,
-    shaderDescriptors: {},
+    shaderDescriptors: { normal: waterNormalSelenaFixture.layout },
   };
   const renderer = createWaterRenderer(gl, canvas, entry);
   assert.ok(renderer, "fake WebGL water renderer must initialize");
@@ -21953,12 +22185,16 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
   assert.equal(stats.waterSimulationTicksLastFrame, 1);
   assert.equal(stats.waterSimulationPasses, 2);
   assert.equal(stats.waterNormalPasses, 1);
+  assert.ok(gl.ops.some((op) => op[0] === "uniform1f" && op[1] === "cellSizeX" && Math.abs(op[2] - 2 / 192) < 1e-7), "WebGL normal pass must receive physical X cell spacing");
+  assert.ok(gl.ops.some((op) => op[0] === "uniform1f" && op[1] === "cellSizeZ" && Math.abs(op[2] - 2 / 192) < 1e-7), "WebGL normal pass must receive physical Z cell spacing");
 
   renderer.render(bundle, viewport, { nowMS: 51, active: true });
   stats = renderer.getStats();
-  assert.equal(stats.waterSimulationTicksLastFrame, 2);
-  assert.equal(stats.waterSimulationPasses, 6, "two catch-up ticks add four solver passes");
-  assert.equal(stats.waterNormalPasses, 2, "catch-up adds one normal pass");
+  assert.equal(stats.waterSimulationCatchUpCap, 1);
+  assert.equal(stats.waterSimulationTicksLastFrame, 1);
+  assert.equal(stats.waterDroppedSimulationTicksLastFrame, 1);
+  assert.equal(stats.waterSimulationPasses, 4, "a slow frame remains bounded to two solver passes");
+  assert.equal(stats.waterNormalPasses, 2, "a slow frame adds one normal pass");
 
   entry.paused = true;
   entry.dropEventID = 7;
@@ -21966,7 +22202,7 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
   renderer.setLifecycle({ nowMS: 60, active: true, paused: true });
   renderer.render(bundle, viewport, { nowMS: 1000, active: true });
   stats = renderer.getStats();
-  assert.equal(stats.waterSimulationPasses, 6);
+  assert.equal(stats.waterSimulationPasses, 4);
   assert.equal(stats.waterNormalPasses, 2);
   assert.equal(stats.waterLastDropEventID, 0, "paused WebGL drop ID must remain unconsumed");
   assert.equal(stats.waterLastObjectDisplacementEventID, 0, "paused WebGL object event ID must remain unconsumed");
@@ -22023,7 +22259,7 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
     qualityProfile: { tier: "full", dprCap: 2, surfaceResolution: 320, causticsResolution: 1024, objectShadowResolution: 1024, objectTextureMaxSide: 1024, objectTexturePixelBudget: 3_145_728, expensivePassCadence: 1 },
   });
   stats = renderer.getStats();
-  assert.equal(stats.waterSurfaceGridResolution, 160, "full profile must remain bounded by the procedural authored grid");
+  assert.equal(stats.waterSurfaceGridResolution, 192, "full profile must remain bounded by the authored surface topology");
   assert.equal(stats.waterCausticsResolution, 512, "full profile must not exceed authored caustics resolution");
   assert.equal(stats.waterObjectShadowResolution, 512, "full profile must not exceed authored shadow resolution");
   renderer.dispose();
@@ -22289,7 +22525,8 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
 
   const waterEntry = {
     id: "water-main",
-    resolution: 4,
+    resolution: 16,
+    surfaceResolution: 3,
     poolShape: "Box",
     poolWidth: 1,
     poolLength: 1,
@@ -22342,6 +22579,7 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
   const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
   assert.equal(sceneState.waterSystems.length, 1);
   const normalized = sceneState.waterSystems[0];
+  assert.equal(normalized.surfaceResolution, 3, "surface topology must remain independent from the simulation grid");
   assert.equal(normalized.seedSelenaWGSL, waterSeedSelenaFixture.wgsl, "seedSelenaWGSL must survive normalizeSceneWaterSystemEntry");
   assert.equal(normalized.dropSelenaWGSL, waterDropSelenaFixture.wgsl, "dropSelenaWGSL must survive normalizeSceneWaterSystemEntry");
   assert.equal(normalized.displacementSelenaWGSL, waterDisplacementSelenaFixture.wgsl, "displacementSelenaWGSL must survive normalizeSceneWaterSystemEntry");
@@ -22374,14 +22612,23 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
 
   // Structural corroboration per kernel: the compiled pipeline's bind group
   // layout carries EXACTLY the descriptor's bindings (grid=0, inState=1,
-  // outState=2, UserUniforms=3 when the kernel has any param/context field;
-  // normal has none, so its layout stops at binding 2), and a real bind group
+  // outState=2, UserUniforms=3 when the kernel has any param/context field),
+  // and a real bind group
   // was built against that exact layout.
   assertWaterComputeKernelBindings(harness.fake, "WaterSimSeed", [0, 1, 2, 3]);
   assertWaterComputeKernelBindings(harness.fake, "WaterSimDrop", [0, 1, 2, 3]);
   assertWaterComputeKernelBindings(harness.fake, "WaterSimDisplace", [0, 1, 2, 3]);
   assertWaterComputeKernelBindings(harness.fake, "WaterSimStep", [0, 1, 2, 3]);
-  assertWaterComputeKernelBindings(harness.fake, "WaterSimNormal", [0, 1, 2]);
+  assertWaterComputeKernelBindings(harness.fake, "WaterSimNormal", [0, 1, 2, 3]);
+  const normalPipeline = waterComputeKernelPipeline(harness.fake, "WaterSimNormal");
+  const normalLayout = normalPipeline.desc.layout.desc.bindGroupLayouts[0];
+  const normalGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === normalLayout);
+  const normalUniform = normalGroup.desc.entries.find((entry) => entry.binding === 3).resource.buffer;
+  const normalUniformWrite = harness.fake.state.writeBufferCalls.find((call) => call.buffer === normalUniform);
+  assert.ok(normalUniformWrite, "physical water-cell spacing must be uploaded to the Selena normal kernel");
+  assert.ok(Math.abs(normalUniformWrite.data[0] - 0.125) < 1e-7, "cellSizeX must be 2*poolWidth/resolution");
+  assert.ok(Math.abs(normalUniformWrite.data[1] - 0.125) < 1e-7, "cellSizeZ must be 2*poolLength/resolution");
+  assert.equal(mount.__gosxScene3DWebGPUStats.waterSurfaceResolution, 3, "render topology must use authored surfaceResolution, not simulation resolution");
 });
 
 test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rect quads (zero-copy seam)", async () => {
@@ -26011,6 +26258,17 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
   mount.setAttribute("data-gosx-scene3d-hardware-concurrency", "12");
   mount.setAttribute("data-gosx-scene3d-cull-survivors",
     JSON.stringify({"cull-lab-left-culled": {"instanceCount": 108, "survivors": 72}}));
+  mount.__gosxScene3DHandle = {
+    getTelemetry() {
+      return {
+        camera: { x: 1, y: 2, z: 3 },
+        orbit: { yaw: 0.25, pitch: -0.5, radius: 4 },
+        selectionID: "sphere",
+        lastPick: { entityID: "sphere", triangleIndex: 12 },
+        rendererStats: { waterSimulationTickSeq: 42 },
+      };
+    },
+  };
 
   // Run the telemetry function extracted from 20-scene-mount.js source in an
   // isolated vm context. We extract the function body and wrap it so it assigns
@@ -26055,6 +26313,11 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
   assert.ok(typeof snap.cullSurvivors === "object", "cullSurvivors must be an object");
   assert.equal(snap.cullSurvivors["cull-lab-left-culled"].instanceCount, 108);
   assert.equal(snap.cullSurvivors["cull-lab-left-culled"].survivors, 72);
+  assert.equal(snap.camera.x, 1, "interactive telemetry must expose the live camera");
+  assert.equal(snap.orbit.yaw, 0.25, "interactive telemetry must expose orbit state");
+  assert.equal(snap.selectionID, "sphere", "interactive telemetry must expose selection state");
+  assert.equal(snap.lastPick.triangleIndex, 12, "interactive telemetry must expose the exact last pick");
+  assert.equal(snap.rendererStats.waterSimulationTickSeq, 42, "interactive telemetry must expose renderer evidence");
   // webgpu diagnostics: absent (no diagnostics fn registered in this env).
   assert.equal(snap.webgpu, null, "webgpu diagnostics must be null when unavailable");
 });
