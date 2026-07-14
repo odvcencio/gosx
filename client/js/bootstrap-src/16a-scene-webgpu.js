@@ -869,8 +869,10 @@
     "  let corner = vertexIndex % 6u;",
     "  var u = 0.0;",
     "  var v = 0.0;",
-    "  if (corner == 1u || corner == 2u || corner == 4u) { u = 1.0; }",
-    "  if (corner == 2u || corner == 4u || corner == 5u) { v = 1.0; }",
+    // Clockwise quad order as viewed from outside: floor faces upward and
+    // walls face inward, matching the pool normals and enabling back culling.
+    "  if (corner == 1u || corner == 2u || corner == 5u) { u = 1.0; }",
+    "  if (corner == 1u || corner == 4u || corner == 5u) { v = 1.0; }",
     "  var worldPos = vec3f(0.0);",
     "  var normal = vec3f(0.0, 1.0, 0.0);",
     "  var tileUV = vec2f(0.0);",
@@ -4235,7 +4237,11 @@
       try {
         var supportsTimestamps = device && device.features && typeof device.features.has === "function" && device.features.has("timestamp-query");
         if (!supportsTimestamps || typeof device.createQuerySet !== "function") {
-          if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "unsupported");
+          // timestamp-query is optional in WebGPU and Edge/D3D commonly omits
+          // it even while the renderer is submitting healthy GPU work. Keep
+          // the timing capability distinct from renderer activity so a
+          // missing hardware timer is never reported as "GPU unsupported".
+          if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
           return gpuTiming;
         }
         candidateQuerySet = device.createQuerySet({ type: "timestamp", count: 6 });
@@ -5664,9 +5670,10 @@
       var pipelineLabelSuffix = options && options.labelSuffix ? String(options.labelSuffix) + "-" : "";
       // cullMode defaults to "back" (every existing caller relies on this
       // default and never passes the option, so behavior there is unchanged).
-      // The water pool pass overrides it to "none": pool.sel's procedural box
-      // faces are not consistently wound for single-sided culling (the
-      // hand-written WGSL pool pipeline has always used cullMode:"none" too).
+      // Water pool geometry is authored with inward-facing wall triangles so
+      // it can use the same back-face culling contract as upstream. This is
+      // important visually: drawing both sides turns the pool into an opaque
+      // exterior shell instead of an open vessel viewed through its rim.
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
       // depthStencil defaults to true (every existing caller relies on this
       // default and never passes the option, so behavior there is unchanged):
@@ -9504,7 +9511,7 @@
     function getWaterPoolSelenaDraw(system, entry) {
       var material = sceneWaterPoolSelenaMaterial(system, entry);
       var renderContext = sceneWaterPoolSelenaRenderContext(system);
-      return getWaterSelenaMeshDraw(material, renderContext, system, { cullMode: "none" });
+      return getWaterSelenaMeshDraw(material, renderContext, system, { cullMode: "back" });
     }
 
     // --- Surface / surface-below passes -------------------------------------
@@ -10210,7 +10217,7 @@
             entryPoint: "fragmentMain",
             targets: [{ format: targetFormat }],
           },
-          primitive: { topology: "triangle-list", cullMode: "none" },
+          primitive: { topology: "triangle-list", cullMode: "back" },
           multisample: { count: sampleCount },
           depthStencil: {
             format: "depth24plus",

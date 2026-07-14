@@ -8893,6 +8893,8 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.doesNotMatch(webgpu, /waterAuthoredPoolPipelineCache = new Map/);
   assert.doesNotMatch(webgpu, /waterAuthoredPoolPipelineFailures = new Set/);
   assert.match(webgpu, /label: "gosx-water-pool-pass"/);
+  assert.match(webgpu, /label: "gosx-water-pool-pass"[\s\S]*?primitive: \{ topology: "triangle-list", cullMode: "back" \}/);
+  assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ cullMode: "back" \}\)/);
   assert.match(webgpu, /const WATER_POOL_ROUNDED_SEGMENTS: u32 = 44u/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryPoint/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryNormal/);
@@ -22018,7 +22020,7 @@ test("Scene3D fake WebGPU quality transitions preserve simulation buffers and au
   assert.equal(stats.waterActiveObjectShadowResolution, 512, "full profile cannot exceed authored shadow cap");
   assert.ok(simulationBuffers.every((buffer) => !buffer.destroyed));
   assert.equal(harness.renderer.pollPerformanceSample(), null, "timestamp-unavailable devices must fall back safely without blocking");
-  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "unsupported");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "timer-unavailable");
 });
 
 test("Scene3D fake WebGPU ignores supplied quality profiles when adaptive quality is disabled", async () => {

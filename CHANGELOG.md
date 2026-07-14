@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.31.12 (2026-07-14)
+
+- Restored upstream-style one-sided pool rendering across Selena and built-in
+  WebGPU paths, hiding exterior wall backs while preserving the open interior.
+- Distinguished active WebGPU rendering from optional timestamp-query support
+  so Edge reports `active · timer unavailable` instead of `unsupported`.
+
 ## v0.31.11 (2026-07-14)
 
 - Terminated rounded water surfaces at the pool's inner wall boundary across

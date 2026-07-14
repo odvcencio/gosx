@@ -122,7 +122,9 @@
         '<div style="height:6px"></div>' +
         row("GPU work", attr("webgpu-gpu-ms")
           ? attr("webgpu-gpu-ms") + " ms"
-          : (attr("webgpu-gpu-timing") || "unavailable"), num(attr("webgpu-gpu-ms")) > 20) +
+          : (attr("webgpu-gpu-timing") === "timer-unavailable"
+            ? "active · timer unavailable"
+            : (attr("webgpu-gpu-timing") || "unavailable")), num(attr("webgpu-gpu-ms")) > 20) +
         (knobs.length
           ? '<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:.7">' +
             knobs.join(" · ") + "</div>"
