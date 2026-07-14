@@ -173,6 +173,33 @@ func TestHubSyncDocBootstrapsAndAppliesBinaryChanges(t *testing.T) {
 	}
 }
 
+func TestUnsyncDocReleasesBindingPrefixAndPeerState(t *testing.T) {
+	h := New("lifecycle")
+	client := &Client{syncStates: newPeerSyncState()}
+	h.clients["client"] = client
+	for i := 0; i < 255; i++ {
+		h.SyncDoc(fmt.Sprintf("doc-%03d", i), crdt.NewDoc())
+	}
+	if len(h.syncDocs) != 255 {
+		t.Fatalf("registered docs=%d", len(h.syncDocs))
+	}
+	prefix := h.syncDocName["doc-100"]
+	client.syncStates.docState(prefix)
+	if !h.UnsyncDoc("doc-100") {
+		t.Fatal("registered document was not removed")
+	}
+	if _, ok := client.syncStates.state[prefix]; ok {
+		t.Fatal("peer state survived document teardown")
+	}
+	h.SyncDoc("replacement", crdt.NewDoc())
+	if got := h.syncDocName["replacement"]; got != prefix {
+		t.Fatalf("replacement prefix=%d, want released %d", got, prefix)
+	}
+	if len(h.syncDocs) != 255 || h.UnsyncDoc("missing") {
+		t.Fatalf("binding count=%d or missing removal succeeded", len(h.syncDocs))
+	}
+}
+
 func TestApplicationBinaryHandlerConsumesRecognizedFrame(t *testing.T) {
 	h := New("application-binary")
 	client := &Client{metadata: ConnectionMetadata{"cell": "cell-1"}}

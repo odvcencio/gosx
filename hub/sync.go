@@ -72,6 +72,12 @@ func (p *peerSyncState) docState(prefix byte) *crdtsync.State {
 	return value
 }
 
+func (p *peerSyncState) delete(prefix byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.state, prefix)
+}
+
 // SetBinaryAuthorizer installs fn as the hub's inbound binary sync gate (see
 // BinaryAuthorizer). Passing nil removes any previously installed authorizer,
 // reverting to allow-all for inbound sync. Safe to call at any time,
@@ -105,8 +111,11 @@ func (h *Hub) SyncDoc(name string, doc *crdt.Doc) {
 	h.syncMu.Lock()
 	prefix, ok := h.syncDocName[name]
 	if !ok {
-		h.nextSyncDoc++
-		prefix = h.nextSyncDoc
+		prefix, ok = h.nextFreeSyncPrefixLocked()
+		if !ok {
+			h.syncMu.Unlock()
+			return
+		}
 		h.syncDocName[name] = prefix
 	}
 	binding := &syncedDoc{name: name, prefix: prefix, doc: doc}
@@ -116,6 +125,49 @@ func (h *Hub) SyncDoc(name string, doc *crdt.Doc) {
 	doc.OnChange(func(_ []crdt.Patch) {
 		h.broadcastSyncDoc(prefix)
 	})
+}
+
+func (h *Hub) nextFreeSyncPrefixLocked() (byte, bool) {
+	for offset := 0; offset < 255; offset++ {
+		candidate := byte((int(h.nextSyncDoc)+offset)%255 + 1)
+		if _, used := h.syncDocs[candidate]; used {
+			continue
+		}
+		h.nextSyncDoc = candidate
+		return candidate, true
+	}
+	return 0, false
+}
+
+// UnsyncDoc removes a document from binary synchronization and releases its
+// wire prefix for reuse. Existing clients also forget the prefix's peer state,
+// so a later document cannot inherit stale heads or Bloom filters.
+func (h *Hub) UnsyncDoc(name string) bool {
+	if name == "" {
+		return false
+	}
+	h.syncMu.Lock()
+	prefix, ok := h.syncDocName[name]
+	if ok {
+		delete(h.syncDocName, name)
+		delete(h.syncDocs, prefix)
+	}
+	h.syncMu.Unlock()
+	if !ok {
+		return false
+	}
+	h.mu.RLock()
+	clients := make([]*Client, 0, len(h.clients))
+	for _, client := range h.clients {
+		clients = append(clients, client)
+	}
+	h.mu.RUnlock()
+	for _, client := range clients {
+		if client.syncStates != nil {
+			client.syncStates.delete(prefix)
+		}
+	}
+	return true
 }
 
 func (h *Hub) hasSyncDocs() bool {
