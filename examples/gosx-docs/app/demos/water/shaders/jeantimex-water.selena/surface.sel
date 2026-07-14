@@ -120,6 +120,11 @@ fn roundedPoolDistance(point: vec2, halfSize: vec2, radius: float) -> float {
     return length(max(q, vec2f(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r
 }
 
+fn roundedWaterDistance(point: vec2, halfSize: vec2, radius: float) -> float {
+    let inset = max(min(halfSize.x, halfSize.y) * 0.018, 0.012)
+    return roundedPoolDistance(point, max(halfSize - vec2f(inset, inset), vec2f(0.001, 0.001)), max(radius - inset, 0.0))
+}
+
 fn boxNormal(point: vec3, center: vec3, half: vec3) -> vec3 {
     let local = (point - center) / max(half, vec3f(0.001, 0.001, 0.001))
     let axis  = abs(local)
@@ -285,7 +290,7 @@ material WaterSurface {
     surface(geo) -> color {
         let wp = geo.vWorldPos
 
-        if (poolShape > 0.5 && roundedPoolDistance(wp.xz, vec2f(poolWidth, poolLength), cornerRadius) > 0.0) {
+        if (poolShape > 0.5 && roundedWaterDistance(wp.xz, vec2f(poolWidth, poolLength), cornerRadius) > 0.0) {
             discard
         }
 
