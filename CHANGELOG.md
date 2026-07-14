@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.31.10 (2026-07-14)
+
+- Made the managed water diagnostic lifecycle asset reliable under static
+  route caching; the instrument now self-activates only for `?diag=1`.
+- Corrected grab-mode vertical orbit direction so the scene tracks up/down
+  pointer motion as directly as it already tracks left/right motion.
+- Tightened water gesture arbitration with exact duck mesh picking and rounded
+  pool coverage, keeping object movement, ripple painting, and pool orbiting
+  distinct for the lifetime of each captured gesture.
+
 ## v0.31.9 (2026-07-14)
 
 - Clipped Selena-authored above- and below-water surfaces to rounded pool

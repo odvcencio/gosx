@@ -6235,13 +6235,17 @@
     const seconds = Math.max((now - sceneNumber(controls.orbitLastMoveMS, now)) / 1000, 1 / 240);
     const rotateSpeed = sceneNumber(controls.rotateSpeed, 1);
     const rotateDirection = sceneNumber(controls.rotateDirection, 1) < 0 ? -1 : 1;
+    // Horizontal camera orbit is opposite a grabbed scene. Vertical camera
+    // pitch is the inverse projection: moving the camera down makes the
+    // grabbed scene track upward with the pointer.
+    const pitchDirection = rotateDirection < 0 ? 1 : rotateDirection;
     const pixelRadians = (Math.PI / 180) * rotateSpeed;
     const deltaYaw = controls.rotateMode === "pixel-degrees"
       ? sample.deltaX * pixelRadians * rotateDirection
       : (sample.deltaX / Math.max(metrics.width, 1)) * Math.PI * rotateSpeed * rotateDirection;
     const deltaPitch = controls.rotateMode === "pixel-degrees"
-      ? sample.deltaY * pixelRadians * rotateDirection
-      : (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * rotateSpeed * rotateDirection;
+      ? sample.deltaY * pixelRadians * pitchDirection
+      : (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * rotateSpeed * pitchDirection;
     const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
     controls.orbit.yaw += deltaYaw;
     controls.orbit.pitch = sceneClamp(

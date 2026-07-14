@@ -5220,7 +5220,7 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
     Math.abs(draggedCamera.z - initialCamera.z) > 0.01,
   );
   assert.ok(draggedCamera.x < orbitTarget.x, `grab-right must orbit camera left, got ${JSON.stringify(draggedCamera)}`);
-  assert.ok(draggedCamera.y > orbitTarget.y, `grab-up must orbit camera up, got ${JSON.stringify(draggedCamera)}`);
+  assert.ok(draggedCamera.y < orbitTarget.y, `grab-up must move the camera down so the grabbed scene tracks upward, got ${JSON.stringify(draggedCamera)}`);
 
   const cameraBeforeZoom = mounted.handle.getCamera();
   canvas.dispatchEvent({
@@ -9248,7 +9248,7 @@ test("Scene3D orbit controls keep upstream-style release inertia", () => {
   assert.match(mount, /function sceneControlsPitchLimit\(props\)/);
   assert.match(mount, /controls\.rotateMode === "pixel-degrees"/);
 	assert.match(mount, /sample\.deltaX \* pixelRadians \* rotateDirection/);
-	assert.match(mount, /sample\.deltaY \* pixelRadians \* rotateDirection/);
+	assert.match(mount, /sample\.deltaY \* pixelRadians \* pitchDirection/);
   assert.match(mount, /SCENE_ORBIT_MAX_PITCH_LIMIT = Math\.PI \/ 2 - \(Math\.PI \/ 180\) \* 0\.001/);
   assert.match(mount, /function sceneOrbitStopInertia\(controls\)/);
   assert.match(mount, /function sceneOrbitInertiaActive\(controls\)/);
@@ -27478,7 +27478,7 @@ test("Scene3D managed fluid object hit policy matches upstream water objects", (
         label: "Rubber Duck",
         objectKind: "compound",
         objectSubtype: "duck",
-        objectHitTest: "sphere",
+        objectHitTest: "mesh",
         objectX: 0.4,
         objectY: -0.735,
         objectZ: -0.2,
@@ -27521,13 +27521,11 @@ test("Scene3D managed fluid object hit policy matches upstream water objects", (
   pickReturn = { x: 9, y: 8, z: 7 };
   calls.pick = 0;
   calls.sphere = 0;
-  assert.equal(api.mode(profile.objects["Rubber Duck"]), "sphere");
+  assert.equal(api.mode(profile.objects["Rubber Duck"]), "mesh");
   const duckHit = api.active(form, canvas, sceneState, { object: "Rubber Duck" }, profile, event, { getBundle() { return bundle; } });
-  assert.equal(duckHit.point.x, 0.4);
-  assert.equal(duckHit.point.y, -0.735);
-  assert.ok(Math.abs(duckHit.point.z - 0.05) < 0.000001, "duck hit z=" + duckHit.point.z);
-  assert.equal(calls.sphere, 1);
-  assert.equal(calls.pick, 0, "duck uses the upstream bounding-sphere hit test instead of mesh picking");
+  assert.deepEqual(duckHit.point, { x: 9, y: 8, z: 7 });
+  assert.equal(calls.sphere, 0);
+  assert.equal(calls.pick, 1, "duck must use exact mesh picking so nearby water remains paintable");
 });
 
 

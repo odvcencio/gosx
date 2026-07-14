@@ -155,7 +155,7 @@ func TestWaterDemoDataCompiles(t *testing.T) {
 		"Sphere":      "sphere",
 		"Cube":        "box",
 		"TorusKnot":   "mesh",
-		"Rubber Duck": "sphere",
+		"Rubber Duck": "mesh",
 	} {
 		object := objects[name].(map[string]any)
 		if got := object["objectHitTest"]; got != want {

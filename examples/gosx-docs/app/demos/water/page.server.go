@@ -16,9 +16,7 @@ func init() {
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				addWaterDemoPreloadHead(ctx)
-				if waterDiagBool(ctx, "diag", false) {
-					ctx.AddHead(server.LifecycleScript("/water-diag.js"))
-				}
+				ctx.AddHead(server.LifecycleScript("/water-diag.js"))
 				data, err := WaterDemoData()
 				if err != nil {
 					return nil, err
