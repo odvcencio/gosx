@@ -53,7 +53,7 @@
         initial = requireOK(runtime.open(cfg.codeIntelligenceLanguage, documentID, source.value));
       } else if (cfg.codeIntelligenceServer) {
         serverFallback = true;
-        initial = await requestServerAnalysis(cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
+        initial = await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
       } else {
         throw new Error("Code intelligence has neither browser assets nor a server endpoint.");
       }
@@ -66,7 +66,7 @@
       }
       try {
         serverFallback = true;
-        const initial = await requestServerAnalysis(cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
+        const initial = await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
         latestTags = initial.tags || [];
         applyAnalysis(form, source, highlight, initial);
       } catch (fallbackError) {
@@ -81,7 +81,7 @@
       timer = window.setTimeout(async () => {
         try {
           const analysis = serverFallback
-            ? await requestServerAnalysis(cfg.codeIntelligenceServer, cfg.collaborationPath, source.value)
+            ? await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, source.value)
             : requireOK(runtime.update(documentID, source.value));
           if (sequence !== requestSequence) return;
           latestTags = analysis.tags || [];
@@ -115,11 +115,14 @@
     }, {once: true});
   }
 
-  async function requestServerAnalysis(url, path, source) {
+  async function requestServerAnalysis(form, url, path, source) {
     const response = await fetch(url, {
       method: "POST",
       credentials: "same-origin",
-      headers: {"Content-Type": "application/json"},
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": form.querySelector("[name='csrf_token']")?.value || "",
+      },
       body: JSON.stringify({path: path || "", content: source}),
     });
     if (!response.ok) throw new Error("Server code intelligence returned " + response.status + ".");

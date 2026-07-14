@@ -121,6 +121,8 @@ func TestCodeIntelligenceAssetProvidesStructuralNavigation(t *testing.T) {
 		`definitionAtCursor`,
 		`enclosingTag`,
 		`requestServerAnalysis`,
+		`"X-CSRF-Token"`,
+		`form.querySelector("[name='csrf_token']")`,
 		`byteToUTF16Offsets`,
 		`lane: "server"`,
 		`form[data-code-intelligence-server]`,
