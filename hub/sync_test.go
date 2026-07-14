@@ -200,6 +200,52 @@ func TestUnsyncDocReleasesBindingPrefixAndPeerState(t *testing.T) {
 	}
 }
 
+func TestBinaryReadAuthorizerScopesBootstrapAndBroadcast(t *testing.T) {
+	h := New("read-scope")
+	docA := crdt.NewDoc()
+	docB := crdt.NewDoc()
+	for name, doc := range map[string]*crdt.Doc{"cell-a:main.go": docA, "cell-b:main.go": docB} {
+		if err := doc.Put(crdt.Root, "body", crdt.StringValue(name)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := doc.Commit("seed"); err != nil {
+			t.Fatal(err)
+		}
+		h.SyncDoc(name, doc)
+	}
+	h.SetBinaryReadAuthorizer(func(client *Client, name string) bool {
+		cellID, _ := client.Metadata("cellID")
+		return strings.HasPrefix(name, cellID+":")
+	})
+	client := &Client{metadata: ConnectionMetadata{"cellID": "cell-a"}, binarySend: make(chan []byte, 8), syncStates: newPeerSyncState()}
+	h.initClientSync(client)
+	select {
+	case payload := <-client.binarySend:
+		if len(payload) == 0 || payload[0] != h.syncDocName["cell-a:main.go"] {
+			t.Fatalf("bootstrap prefix=%v", payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("authorized bootstrap was not queued")
+	}
+	select {
+	case payload := <-client.binarySend:
+		t.Fatalf("unauthorized bootstrap leaked: %v", payload)
+	default:
+	}
+	h.clients["a"] = client
+	if err := docB.Put(crdt.Root, "body", crdt.StringValue("secret-b")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := docB.Commit("broadcast"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case payload := <-client.binarySend:
+		t.Fatalf("unauthorized broadcast leaked: %v", payload)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestApplicationBinaryHandlerConsumesRecognizedFrame(t *testing.T) {
 	h := New("application-binary")
 	client := &Client{metadata: ConnectionMetadata{"cell": "cell-1"}}

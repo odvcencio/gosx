@@ -50,6 +50,7 @@ type Hub struct {
 	syncDocName            map[string]byte
 	nextSyncDoc            byte
 	binaryAuthorizer       BinaryAuthorizer
+	binaryReadAuthorizer   BinaryReadAuthorizer
 	binaryChangeAuthorizer BinaryChangeAuthorizer
 	binaryMessageHandler   BinaryMessageHandler
 

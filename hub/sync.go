@@ -35,6 +35,11 @@ type syncedDoc struct {
 // time — see m31labs.dev/kiln/collab.Session's CanWrite wiring).
 type BinaryAuthorizer func(client *Client, docName string) bool
 
+// BinaryReadAuthorizer decides whether a client may receive a registered
+// document during bootstrap and subsequent server-to-client broadcasts. A nil
+// authorizer preserves the historical allow-all behavior.
+type BinaryReadAuthorizer func(client *Client, docName string) bool
+
 // BinaryChangeAuthorizer validates the concrete CRDT changes carried by an
 // inbound sync frame before the document merges them. It is intended for
 // actor binding, capability checks, and per-change audit policy that cannot be
@@ -86,6 +91,12 @@ func (h *Hub) SetBinaryAuthorizer(fn BinaryAuthorizer) {
 	h.syncMu.Lock()
 	defer h.syncMu.Unlock()
 	h.binaryAuthorizer = fn
+}
+
+func (h *Hub) SetBinaryReadAuthorizer(fn BinaryReadAuthorizer) {
+	h.syncMu.Lock()
+	defer h.syncMu.Unlock()
+	h.binaryReadAuthorizer = fn
 }
 
 // SetBinaryChangeAuthorizer installs the pre-merge change-level sync gate.
@@ -191,6 +202,12 @@ func (h *Hub) initClientSync(client *Client) {
 
 func (h *Hub) queueSyncMessage(client *Client, binding *syncedDoc) {
 	if client == nil || binding == nil || client.syncStates == nil {
+		return
+	}
+	h.syncMu.RLock()
+	authorizer := h.binaryReadAuthorizer
+	h.syncMu.RUnlock()
+	if authorizer != nil && !authorizer(client, binding.name) {
 		return
 	}
 	state := client.syncStates.docState(binding.prefix)
