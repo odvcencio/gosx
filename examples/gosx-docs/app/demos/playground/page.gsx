@@ -32,8 +32,14 @@ func Page() Node {
 					title="Ctrl+Enter compiles immediately"
 				>{data.source}</textarea>
 				<div class="play__editor-meta">
-					<span class="play__editor-meta-item" data-editor-stat="lines">{data.initialLines} lines</span>
-					<span class="play__editor-meta-item" data-editor-stat="chars">{data.initialChars} chars</span>
+					<span class="play__editor-meta-item" data-editor-stat="lines">
+						{data.initialLines}
+						lines
+					</span>
+					<span class="play__editor-meta-item" data-editor-stat="chars">
+						{data.initialChars}
+						chars
+					</span>
 					<span class="play__editor-meta-item play__editor-meta-hint">Ctrl+Enter compiles now</span>
 				</div>
 				<div class="play__errors" aria-live="polite"></div>
@@ -53,7 +59,10 @@ func Page() Node {
 					</div>
 					<div class="play__stat">
 						<span class="play__stat-label">Program</span>
-						<b class="play__stat-value" data-stat="bytes">{data.initialProgramBytes} bytes</b>
+						<b class="play__stat-value" data-stat="bytes">
+							{data.initialProgramBytes}
+							bytes
+						</b>
 					</div>
 					<div class="play__stat">
 						<span class="play__stat-label">Nodes</span>

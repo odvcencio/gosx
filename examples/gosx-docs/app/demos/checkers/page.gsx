@@ -11,10 +11,12 @@ func Page() Node {
 				height="600"
 				decoding="async"
 				fetchpriority="high"
-			/>
+			 />
 			<Scene3D {...data.scene} />
 			<p class="checkers-showcase__render-note">
-				Pure-Go native preview · <a href="/checkers-native-telemetry.json">inspect telemetry</a> · live Scene3D when available
+				Pure-Go native preview ·
+				<a href="/checkers-native-telemetry.json">inspect telemetry</a>
+				· live Scene3D when available
 			</p>
 		</div>
 		<section class="checkers-showcase__intro" data-checkers-root>

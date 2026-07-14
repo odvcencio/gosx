@@ -137,7 +137,7 @@ func BenchOverlayScript() Node {
 	(function() {
 	  if (typeof window === "undefined") return;
 	  window.__gosx_scene3d_perf = true;
-
+	
 	  var BUF_LEN = 240;
 	  var buf = new Float64Array(BUF_LEN);
 	  var bufIdx = 0;
@@ -149,12 +149,12 @@ func BenchOverlayScript() Node {
 	  var lastRAF = 0;
 	  var detectedGPU = "unavailable";
 	  var selectedBackend = "starting";
-
+	
 	  // 16.7ms == one frame at 60fps. Used only to colour-code the p95/max/
 	  // rAF-p95 readouts; CPU submit is a fraction of a frame so this is a
 	  // guide, not a claim that the whole frame missed its budget.
 	  var FRAME_BUDGET_MS = 1000 / 60;
-
+	
 	  // FPS sparkline: a separate, longer ring buffer than rafBuf (which is
 	  // sized for the 240-sample / ~4s CPU submit window) so the sparkline can
 	  // cover roughly the last 10 seconds of rAF cadence regardless of display
@@ -166,13 +166,13 @@ func BenchOverlayScript() Node {
 	  var fpsTimeBuf = new Float64Array(FPS_BUF_LEN);
 	  var fpsIdx = 0;
 	  var fpsCount = 0;
-
+	
 	  // sessionStorage key used to hand a snapshot of this tab's CPU submit
 	  // stats to the next full-page load when the operator clicks a workload
 	  // link. Never blended into the live ring buffer — only ever shown as a
 	  // labeled "prev workload" comparison row.
 	  var PREV_SNAPSHOT_KEY = "gosx-scene3d-bench:prev-snapshot";
-
+	
 	  function push(duration) {
 	    buf[bufIdx] = duration;
 	    bufIdx = (bufIdx + 1) % BUF_LEN;
@@ -209,7 +209,7 @@ func BenchOverlayScript() Node {
 	      mean: sum / count,
 	    };
 	  }
-
+	
 	  var els = {};
 	  function mountOverlay() {
 	    els.current  = document.getElementById("bench3d-current");
@@ -247,13 +247,13 @@ func BenchOverlayScript() Node {
 	    var download = document.getElementById("bench3d-download");
 	    if (download) download.addEventListener("click", downloadSnapshot);
 	  }
-
+	
 	  function fmt(ms) {
 	    if (typeof ms !== "number" || !isFinite(ms)) return "—";
 	    if (ms < 1) return (ms * 1000).toFixed(0) + "µs";
 	    return ms.toFixed(2) + "ms";
 	  }
-
+	
 	  // barClass returns the CSS class suffix for a frame time value.
 	  function barClass(ms) {
 	    if (ms <= 8)  return "healthy";
@@ -261,7 +261,7 @@ func BenchOverlayScript() Node {
 	    if (ms <= 33) return "stretched";
 	    return "dropping";
 	  }
-
+	
 	  // budgetClass colour-codes a millisecond value against FRAME_BUDGET_MS
 	  // (16.7ms / 60fps): "calm" comfortably under budget, "warning"
 	  // approaching it, "hot" over it. Used for the p95/max/rAF-p95 stat text,
@@ -272,7 +272,7 @@ func BenchOverlayScript() Node {
 	    if (ms <= FRAME_BUDGET_MS) return "warning";
 	    return "hot";
 	  }
-
+	
 	  // fpsBarClass returns the CSS class suffix for an instantaneous fps
 	  // sample in the sparkline. Thresholds mirror the 60fps budget: healthy
 	  // near/above 60fps, sliding down through dropped-frame territory.
@@ -283,7 +283,7 @@ func BenchOverlayScript() Node {
 	    if (fps >= 24) return "stretched";
 	    return "dropping";
 	  }
-
+	
 	  // paintHistogram renders up to 60 bars into the SVG element.
 	  function paintHistogram(svg) {
 	    if (!svg || bufCount === 0) return;
@@ -292,7 +292,7 @@ func BenchOverlayScript() Node {
 	    var viewH = 40;
 	    var gap   = 1;
 	    var barW  = (viewW - (BARS - 1) * gap) / BARS;
-
+	
 	    // Collect the most-recent min(bufCount, BARS) samples in chronological order.
 	    var count = Math.min(bufCount, BARS);
 	    var samples = [];
@@ -301,18 +301,18 @@ func BenchOverlayScript() Node {
 	      var idx = ((bufIdx - 1 - i) % BUF_LEN + BUF_LEN) % BUF_LEN;
 	      samples.push(buf[idx]);
 	    }
-
+	
 	    // Find max for scaling (floor at 1ms to avoid divide-by-zero).
 	    var maxVal = 1;
 	    for (var k = 0; k < samples.length; k++) {
 	      if (samples[k] > maxVal) maxVal = samples[k];
 	    }
-
+	
 	    // Build SVG rects as a string to do a single innerHTML assignment.
 	    var svgNS = "http://www.w3.org/2000/svg";
 	    // Remove old children.
 	    while (svg.firstChild) svg.removeChild(svg.firstChild);
-
+	
 	    for (var b = 0; b < samples.length; b++) {
 	      var val = samples[b];
 	      var h   = Math.max(2, Math.round((val / maxVal) * viewH));
@@ -327,7 +327,7 @@ func BenchOverlayScript() Node {
 	      svg.appendChild(rect);
 	    }
 	  }
-
+	
 	  // paintFPSSparkline renders the last ~FPS_WINDOW_MS of instantaneous
 	  // rAF-derived fps samples as a bar sparkline, aria-hidden — the
 	  // adjacent "rAF cadence" / "rAF p95" stat rows are its text
@@ -340,7 +340,7 @@ func BenchOverlayScript() Node {
 	    var viewW = 240;
 	    var viewH = 32;
 	    var gap   = 1;
-
+	
 	    // Walk backwards from the most recent sample, stopping at the window
 	    // edge or once we run out of buffered samples.
 	    var windowSamples = [];
@@ -351,21 +351,21 @@ func BenchOverlayScript() Node {
 	    }
 	    if (windowSamples.length === 0) return;
 	    windowSamples.reverse(); // chronological order, oldest first
-
+	
 	    // Cap the bar count for render cost; keep only the most recent BARS.
 	    var samples = windowSamples.length > BARS
 	      ? windowSamples.slice(windowSamples.length - BARS)
 	      : windowSamples;
 	    var barW = (viewW - (samples.length - 1) * gap) / samples.length;
-
+	
 	    var maxVal = 1;
 	    for (var k = 0; k < samples.length; k++) {
 	      if (samples[k] > maxVal) maxVal = samples[k];
 	    }
-
+	
 	    var svgNS = "http://www.w3.org/2000/svg";
 	    while (svg.firstChild) svg.removeChild(svg.firstChild);
-
+	
 	    for (var b = 0; b < samples.length; b++) {
 	      var val = samples[b];
 	      var h   = Math.max(2, Math.round((val / maxVal) * viewH));
@@ -380,7 +380,7 @@ func BenchOverlayScript() Node {
 	      svg.appendChild(rect);
 	    }
 	  }
-
+	
 	  function updateOverlay() {
 	    var stats = computeStats();
 	    var rafStats = computeRAFStats();
@@ -401,7 +401,7 @@ func BenchOverlayScript() Node {
 	    }
 	    paintFPSSparkline(els.spark, performance.now());
 	  }
-
+	
 	  function sampleRAF(now) {
 	    if (lastRAF) {
 	      var interval = now - lastRAF;
@@ -413,7 +413,7 @@ func BenchOverlayScript() Node {
 	    lastRAF = now;
 	    requestAnimationFrame(sampleRAF);
 	  }
-
+	
 	  function snapshot() {
 	    var overlay = document.getElementById("bench3d-overlay");
 	    return {
@@ -429,13 +429,13 @@ func BenchOverlayScript() Node {
 	      userAgent: navigator.userAgent,
 	    };
 	  }
-
+	
 	  function setActionStatus(message) {
 	    if (!els.status) return;
 	    els.status.textContent = message;
 	    setTimeout(function() { if (els.status) els.status.textContent = ""; }, 1800);
 	  }
-
+	
 	  function copySnapshot() {
 	    var text = JSON.stringify(snapshot(), null, 2);
 	    if (!navigator.clipboard || !navigator.clipboard.writeText) {
@@ -446,7 +446,7 @@ func BenchOverlayScript() Node {
 	      setActionStatus("JSON copied");
 	    }, function() { setActionStatus("Copy failed"); });
 	  }
-
+	
 	  function downloadSnapshot() {
 	    var blob = new Blob([JSON.stringify(snapshot(), null, 2) + "\n"], { type: "application/json" });
 	    var url = URL.createObjectURL(blob);
@@ -457,7 +457,7 @@ func BenchOverlayScript() Node {
 	    setTimeout(function() { URL.revokeObjectURL(url); }, 0);
 	    setActionStatus("JSON downloaded");
 	  }
-
+	
 	  function onEntries(entries) {
 	    for (var i = 0; i < entries.length; i++) {
 	      var entry = entries[i];
@@ -471,7 +471,7 @@ func BenchOverlayScript() Node {
 	      performance.clearMeasures("scene3d-render");
 	    }
 	  }
-
+	
 	  function installObserver() {
 	    if (typeof PerformanceObserver !== "function") {
 	      console.warn("[bench3d] PerformanceObserver unavailable; overlay disabled");
@@ -484,17 +484,17 @@ func BenchOverlayScript() Node {
 	      console.warn("[bench3d] PerformanceObserver.observe failed:", err);
 	    }
 	  }
-
+	
 	  // detectGPU uses the renderer selected by the mounted Scene3D runtime.
 	  // A separate WebGL probe is used only for an optional renderer label.
 	  function detectGPU() {
 	    var gpuEl = document.getElementById("bench3d-gpu");
 	    var apiEl = document.getElementById("bench3d-api");
 	    if (!gpuEl && !apiEl) return;
-
+	
 	    var apiStr = "starting";
 	    var gpuStr = "unavailable";
-
+	
 	    // WebGL2 fallback — also the primary source of renderer info.
 	    var canvas = document.createElement("canvas");
 	    var gl2 = null;
@@ -519,7 +519,7 @@ func BenchOverlayScript() Node {
 	        }
 	      }
 	    }
-
+	
 	    detectedGPU = gpuStr;
 	    if (gpuEl) gpuEl.textContent = gpuStr;
 	    function syncBackend() {
@@ -541,7 +541,7 @@ func BenchOverlayScript() Node {
 	      }, 100);
 	    }
 	  }
-
+	
 	  function markActiveWorkload() {
 	    var overlay = document.getElementById("bench3d-overlay");
 	    var active = overlay ? overlay.getAttribute("data-workload") : "mixed";
@@ -552,7 +552,7 @@ func BenchOverlayScript() Node {
 	      else links[i].removeAttribute("aria-current");
 	    }
 	  }
-
+	
 	  // restorePrevSnapshot reads the CPU submit snapshot (if any) that was
 	  // saved to sessionStorage right before the operator clicked a workload
 	  // link on a previous load of this page, and shows it as a labeled
@@ -583,7 +583,7 @@ func BenchOverlayScript() Node {
 	      " (" + prev.samples + " samples)";
 	    els.prevRow.hidden = false;
 	  }
-
+	
 	  // wireWorkloadNav saves this tab's current CPU submit snapshot to
 	  // sessionStorage right before a workload link navigates away, so the
 	  // next full page load can show it via restorePrevSnapshot. This is the
@@ -611,7 +611,7 @@ func BenchOverlayScript() Node {
 	      });
 	    }
 	  }
-
+	
 	  function boot() {
 	    mountOverlay();
 	    installObserver();
@@ -622,7 +622,7 @@ func BenchOverlayScript() Node {
 	    requestAnimationFrame(sampleRAF);
 	    setInterval(updateOverlay, 250);
 	  }
-
+	
 	  if (document.readyState === "loading") {
 	    document.addEventListener("DOMContentLoaded", boot);
 	  } else {
