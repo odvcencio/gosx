@@ -27,14 +27,15 @@ type Op struct {
 }
 
 type Change struct {
-	Hash    ChangeHash   `json:"-"`
-	ActorID string       `json:"actorId"`
-	Seq     uint64       `json:"seq"`
-	Deps    []ChangeHash `json:"deps,omitempty"`
-	StartOp uint64       `json:"startOp"`
-	Time    time.Time    `json:"time"`
-	Message string       `json:"message,omitempty"`
-	Ops     []Op         `json:"ops"`
+	Hash          ChangeHash   `json:"-"`
+	ActorID       string       `json:"actorId"`
+	Seq           uint64       `json:"seq"`
+	Deps          []ChangeHash `json:"deps,omitempty"`
+	StartOp       uint64       `json:"startOp"`
+	Time          time.Time    `json:"time"`
+	Message       string       `json:"message,omitempty"`
+	ChangeGroupID string       `json:"changeGroupId,omitempty"`
+	Ops           []Op         `json:"ops"`
 }
 
 type Patch struct {

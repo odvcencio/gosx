@@ -480,7 +480,15 @@ func (d *Doc) ListLen(list ObjID) (int, error) {
 }
 
 func (d *Doc) Commit(msg string) (ChangeHash, error) {
-	hooks, patches, hash, err := d.commitPending(msg)
+	return d.CommitWithGroup(msg, "")
+}
+
+// CommitWithGroup records pending operations with a stable logical edit
+// identity. Reusing changeGroupID across commits lets actor-scoped history
+// treat a multi-change edit as one undo group without relying on list indexes.
+// An empty ID receives a deterministic actor-and-sequence identity.
+func (d *Doc) CommitWithGroup(msg, changeGroupID string) (ChangeHash, error) {
+	hooks, patches, hash, err := d.commitPending(msg, changeGroupID)
 	if err != nil {
 		return ChangeHash{}, err
 	}
@@ -659,25 +667,29 @@ func (d *Doc) ActorID() ActorID {
 }
 
 func (d *Doc) flushPendingForSnapshot() ([]func([]Patch), []Patch, error) {
-	hooks, patches, _, err := d.commitPending("")
+	hooks, patches, _, err := d.commitPending("", "")
 	return hooks, patches, err
 }
 
-func (d *Doc) commitPending(msg string) ([]func([]Patch), []Patch, ChangeHash, error) {
+func (d *Doc) commitPending(msg, changeGroupID string) ([]func([]Patch), []Patch, ChangeHash, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.pending) == 0 {
 		return nil, nil, ChangeHash{}, nil
 	}
 
+	if changeGroupID == "" {
+		changeGroupID = fmt.Sprintf("%s:%d", d.actorID.String(), d.seq+1)
+	}
 	change := Change{
-		ActorID: d.actorID.String(),
-		Seq:     d.seq + 1,
-		Deps:    append([]ChangeHash(nil), d.deps...),
-		StartOp: d.pending[0].ID.Counter,
-		Time:    time.Now().UTC(),
-		Message: msg,
-		Ops:     append([]Op(nil), d.pending...),
+		ActorID:       d.actorID.String(),
+		Seq:           d.seq + 1,
+		Deps:          append([]ChangeHash(nil), d.deps...),
+		StartOp:       d.pending[0].ID.Counter,
+		Time:          time.Now().UTC(),
+		Message:       msg,
+		ChangeGroupID: changeGroupID,
+		Ops:           append([]Op(nil), d.pending...),
 	}
 	_, hash, err := EncodeChangeChunk(change)
 	if err != nil {
