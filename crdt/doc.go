@@ -396,22 +396,24 @@ func (d *Doc) SpliceText(text ObjID, index, deleteCount uint64, insert string) (
 		after = visible[index-1].ID.String()
 	}
 	for _, elem := range visible[index : index+deleteCount] {
-		if err := d.setElementVisibilityLocked(text, elem.ID, true); err != nil {
-			return inserted, deleted, err
-		}
 		deleted = append(deleted, elem.ID)
 	}
-	for _, runeValue := range []rune(insert) {
-		op := d.newLocalOpLocked("insert", text, "", StringValue(string(runeValue)))
-		op.After = after
-		patch, err := d.applyOpLocked(op)
-		if err != nil {
-			return inserted, deleted, err
-		}
-		d.pending = append(d.pending, op)
-		d.pendingPatches = append(d.pendingPatches, patch)
-		inserted = append(inserted, op.ID)
-		after = op.ID.String()
+	insertRunes := []rune(insert)
+	if len(deleted) == 0 && len(insertRunes) == 0 {
+		return nil, nil, nil
+	}
+	op := d.newLocalRunOpLocked("splice", text, len(insertRunes))
+	op.After = after
+	op.Run = insert
+	op.DeleteRuns = compressOpIDRuns(deleted)
+	patch, err := d.applyOpLocked(op)
+	if err != nil {
+		return nil, nil, err
+	}
+	d.pending = append(d.pending, op)
+	d.pendingPatches = append(d.pendingPatches, patch)
+	for i := range insertRunes {
+		inserted = append(inserted, OpID{Counter: op.ID.Counter + uint64(i), Actor: op.ID.Actor})
 	}
 	return inserted, deleted, nil
 }
@@ -724,8 +726,14 @@ func (d *Doc) applyRemoteChangeLocked(change Change) ([]Patch, error) {
 			return nil, err
 		}
 		patches = append(patches, patch)
-		if op.ID.Counter > d.maxOp {
-			d.maxOp = op.ID.Counter
+		maxCounter := op.ID.Counter
+		if op.Action == "splice" {
+			if runLength := uint64(len([]rune(op.Run))); runLength > 1 {
+				maxCounter += runLength - 1
+			}
+		}
+		if maxCounter > d.maxOp {
+			d.maxOp = maxCounter
 		}
 	}
 	d.changes = append(d.changes, change)
@@ -781,6 +789,44 @@ func (d *Doc) newLocalOpLocked(action string, obj ObjID, prop Prop, value Value)
 	}
 }
 
+func (d *Doc) newLocalRunOpLocked(action string, obj ObjID, runLength int) Op {
+	width := runLength
+	if width < 1 {
+		width = 1
+	}
+	start := d.maxOp + 1
+	d.maxOp += uint64(width)
+	return Op{ID: OpID{Counter: start, Actor: d.actorID.String()}, Action: action, Obj: obj}
+}
+
+func compressOpIDRuns(ids []OpID) []OpIDRun {
+	if len(ids) == 0 {
+		return nil
+	}
+	runs := make([]OpIDRun, 0, len(ids))
+	for _, id := range ids {
+		if len(runs) > 0 {
+			last := &runs[len(runs)-1]
+			if last.Actor == id.Actor && last.Start+last.Count == id.Counter {
+				last.Count++
+				continue
+			}
+		}
+		runs = append(runs, OpIDRun{Actor: id.Actor, Start: id.Counter, Count: 1})
+	}
+	return runs
+}
+
+func expandOpIDRuns(runs []OpIDRun) []OpID {
+	var ids []OpID
+	for _, run := range runs {
+		for i := uint64(0); i < run.Count; i++ {
+			ids = append(ids, OpID{Counter: run.Start + i, Actor: run.Actor})
+		}
+	}
+	return ids
+}
+
 func (d *Doc) newObjectIDLocked() ObjID {
 	d.maxOp++
 	return ObjID(fmt.Sprintf("%s-%d", d.actorID.String(), d.maxOp))
@@ -829,9 +875,52 @@ func (d *Doc) applyOpLocked(op Op) (Patch, error) {
 		return d.applyIncrementLocked(target, op)
 	case "insert":
 		return d.applyInsertLocked(target, op)
+	case "splice":
+		return d.applySpliceLocked(target, op)
 	default:
 		return Patch{}, fmt.Errorf("unknown op action %q", op.Action)
 	}
+}
+
+func (d *Doc) applySpliceLocked(target *object, op Op) (Patch, error) {
+	if target.Kind != objectKindText {
+		return Patch{}, fmt.Errorf("splice is only supported on text objects")
+	}
+	indexes := make(map[string]int, len(target.List))
+	for i := range target.List {
+		indexes[target.List[i].ID.String()] = i
+	}
+	for _, id := range expandOpIDRuns(op.DeleteRuns) {
+		index, ok := indexes[id.String()]
+		if !ok {
+			return Patch{}, fmt.Errorf("splice element %s not found", id.String())
+		}
+		visibilityID := target.List[index].VisibilityID
+		if visibilityID.Actor == "" {
+			visibilityID = target.List[index].ID
+		}
+		if op.ID.Greater(visibilityID) {
+			target.List[index].Deleted = true
+			target.List[index].VisibilityID = op.ID
+		}
+	}
+	after := op.After
+	for i, runeValue := range []rune(op.Run) {
+		id := OpID{Counter: op.ID.Counter + uint64(i), Actor: op.ID.Actor}
+		if _, exists := indexes[id.String()]; exists {
+			after = id.String()
+			continue
+		}
+		target.List = append(target.List, listElem{ID: id, After: after, Value: StringValue(string(runeValue)), VisibilityID: id})
+		indexes[id.String()] = len(target.List) - 1
+		after = id.String()
+	}
+	normalizeListOrder(target)
+	index := 0
+	if op.Run != "" {
+		index = d.visibleIndexLocked(target, op.ID.String())
+	}
+	return Patch{Obj: op.Obj, Prop: Prop(strconv.Itoa(index)), Action: "splice", Value: StringValue(op.Run)}, nil
 }
 
 func (d *Doc) applyPutLocked(target *object, op Op) (Patch, error) {

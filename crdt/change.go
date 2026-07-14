@@ -17,13 +17,22 @@ type OpID struct {
 	Actor   string `json:"actor"`
 }
 
+// OpIDRun compactly identifies consecutive element IDs from one actor.
+type OpIDRun struct {
+	Actor string `json:"actor"`
+	Start uint64 `json:"start"`
+	Count uint64 `json:"count"`
+}
+
 type Op struct {
-	ID     OpID   `json:"id"`
-	Action string `json:"action"`
-	Obj    ObjID  `json:"obj"`
-	Prop   Prop   `json:"prop,omitempty"`
-	Value  Value  `json:"value,omitempty"`
-	After  string `json:"after,omitempty"`
+	ID         OpID      `json:"id"`
+	Action     string    `json:"action"`
+	Obj        ObjID     `json:"obj"`
+	Prop       Prop      `json:"prop,omitempty"`
+	Value      Value     `json:"value,omitempty"`
+	After      string    `json:"after,omitempty"`
+	Run        string    `json:"run,omitempty"`
+	DeleteRuns []OpIDRun `json:"deleteRuns,omitempty"`
 }
 
 type Change struct {

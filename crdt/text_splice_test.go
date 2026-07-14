@@ -1,10 +1,58 @@
 package crdt
 
 import (
+	"strings"
 	"testing"
 
 	crdtsync "m31labs.dev/gosx/crdt/sync"
 )
+
+func TestSpliceTextRunEncodesProductionSizedEditBelowHubFrameBudget(t *testing.T) {
+	doc := NewDoc()
+	textID, err := doc.MakeText(Root, "content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := doc.Commit("text object"); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("func generated() { return }\n", 700)
+	inserted, deleted, err := doc.SpliceText(textID, 0, 0, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inserted) != len([]rune(content)) || len(deleted) != 0 {
+		t.Fatalf("inserted=%d deleted=%d", len(inserted), len(deleted))
+	}
+	if len(doc.pending) != 1 || doc.pending[0].Action != "splice" || doc.pending[0].Run != content {
+		t.Fatalf("splice expanded into %#v", doc.pending)
+	}
+	if _, err := doc.Commit("agent write"); err != nil {
+		t.Fatal(err)
+	}
+	state := crdtsync.NewState()
+	message, ok := doc.GenerateSyncMessage(state)
+	if !ok {
+		t.Fatal("expected sync message")
+	}
+	if len(message) >= 64*1024 {
+		t.Fatalf("run-encoded sync frame=%d bytes, want below 64 KiB", len(message))
+	}
+	replica := NewDoc()
+	if err := replica.ReceiveSyncMessage(crdtsync.NewState(), message); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := replica.TextToString(textID); err != nil || got != content {
+		t.Fatalf("replica length=%d err=%v", len(got), err)
+	}
+
+	if _, _, err := doc.SpliceText(textID, 100, 10000, "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.pending) != 1 || len(doc.pending[0].DeleteRuns) != 1 {
+		t.Fatalf("large deletion was not one compact ID run: %#v", doc.pending)
+	}
+}
 
 func TestSpliceTextReturnsStableElementIdentities(t *testing.T) {
 	doc := NewDoc()
