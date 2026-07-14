@@ -3,8 +3,8 @@ package textmodel
 import "strings"
 
 // Document is the interface for a mutable text document.
-// Two implementations exist: LocalDocument (direct line array)
-// and CRDTDocument (wraps gosx/crdt, built in a later phase).
+// LocalDocument provides local-only storage; CRDTDocument is driven by an
+// external sequence-CRDT operation source.
 type Document interface {
 	Insert(pos Position, text string)
 	Delete(rng Range)

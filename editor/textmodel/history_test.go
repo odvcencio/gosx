@@ -1,6 +1,10 @@
 package textmodel
 
-import "testing"
+import (
+	"fmt"
+	"math/rand"
+	"testing"
+)
 
 func TestHistory_UndoRedo(t *testing.T) {
 	h := NewHistory()
@@ -96,5 +100,53 @@ func TestHistory_NewEditClearsOnlySameActorRedo(t *testing.T) {
 	}
 	if op, ok := h.RedoActor("agent"); !ok || string(op.Content) != "b" {
 		t.Fatalf("other actor redo was cleared: %#v, ok=%v", op, ok)
+	}
+}
+
+func TestHistoryActorIsolationRandomInterleavings(t *testing.T) {
+	random := rand.New(rand.NewSource(188))
+	history := NewHistory()
+	actors := []string{"operator", "agent"}
+	undo := map[string][]string{"operator": {}, "agent": {}}
+	redo := map[string][]string{"operator": {}, "agent": {}}
+	next := 0
+	for step := 0; step < 2000; step++ {
+		actor := actors[random.Intn(len(actors))]
+		switch random.Intn(3) {
+		case 0:
+			value := fmt.Sprintf("%s-%d", actor, next)
+			next++
+			history.Push(Operation{Kind: OpInsert, Content: []byte(value), Origin: "toolbar", Actor: actor})
+			undo[actor] = append(undo[actor], value)
+			redo[actor] = nil
+		case 1:
+			op, ok := history.UndoActor(actor)
+			if len(undo[actor]) == 0 {
+				if ok {
+					t.Fatalf("step %d: undo for %s returned another actor's op %#v", step, actor, op)
+				}
+				continue
+			}
+			want := undo[actor][len(undo[actor])-1]
+			undo[actor] = undo[actor][:len(undo[actor])-1]
+			redo[actor] = append(redo[actor], want)
+			if !ok || op.Actor != actor || string(op.Content) != want {
+				t.Fatalf("step %d: undo for %s = %#v, ok=%t, want %q", step, actor, op, ok, want)
+			}
+		case 2:
+			op, ok := history.RedoActor(actor)
+			if len(redo[actor]) == 0 {
+				if ok {
+					t.Fatalf("step %d: redo for %s returned another actor's op %#v", step, actor, op)
+				}
+				continue
+			}
+			want := redo[actor][len(redo[actor])-1]
+			redo[actor] = redo[actor][:len(redo[actor])-1]
+			undo[actor] = append(undo[actor], want)
+			if !ok || op.Actor != actor || string(op.Content) != want {
+				t.Fatalf("step %d: redo for %s = %#v, ok=%t, want %q", step, actor, op, ok, want)
+			}
+		}
 	}
 }
