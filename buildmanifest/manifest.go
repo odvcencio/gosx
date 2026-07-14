@@ -20,6 +20,7 @@ type RuntimeAssets struct {
 	WASM                             HashedAsset `json:"wasm"`
 	WASMIslands                      HashedAsset `json:"wasmIslands,omitempty"`
 	WASMExec                         HashedAsset `json:"wasmExec"`
+	StandardGoWASMExec               HashedAsset `json:"standardGoWasmExec,omitempty"`
 	Bootstrap                        HashedAsset `json:"bootstrap"`
 	BootstrapLite                    HashedAsset `json:"bootstrapLite,omitempty"`
 	BootstrapRuntime                 HashedAsset `json:"bootstrapRuntime,omitempty"`
@@ -67,6 +68,7 @@ type RuntimePaths struct {
 	WASM                             string
 	WASMIslands                      string
 	WASMExec                         string
+	StandardGoWASMExec               string
 	Bootstrap                        string
 	BootstrapLite                    string
 	BootstrapRuntime                 string
@@ -103,6 +105,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		WASM:                             AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
 		WASMIslands:                      AssetURL(assetBaseURL, "runtime", m.Runtime.WASMIslands.File),
 		WASMExec:                         AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
+		StandardGoWASMExec:               AssetURL(assetBaseURL, "runtime", m.Runtime.StandardGoWASMExec.File),
 		Bootstrap:                        AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
 		BootstrapLite:                    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
 		BootstrapRuntime:                 AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapRuntime.File),

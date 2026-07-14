@@ -26,6 +26,7 @@ type PageRuntimeSummary struct {
 	Manifest                    bool
 	RuntimePath                 string
 	WASMExecPath                string
+	StandardGoWASMExecPath      string
 	PatchPath                   string
 	BootstrapPath               string
 	BootstrapFeatureIslandsPath string
@@ -232,6 +233,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		Manifest:                    summary.Manifest,
 		RuntimePath:                 summary.RuntimePath,
 		WASMExecPath:                summary.WASMExecPath,
+		StandardGoWASMExecPath:      summary.StandardGoWASMExecPath,
 		PatchPath:                   summary.PatchPath,
 		BootstrapPath:               summary.BootstrapPath,
 		BootstrapFeatureIslandsPath: summary.BootstrapFeatureIslandsPath,

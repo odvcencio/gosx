@@ -503,6 +503,13 @@
       case "canvas2d":
       case "pixel-surface":
         return canCreateCanvasContext("2d");
+      case "clipboard":
+        return Boolean(
+          typeof navigator !== "undefined" &&
+          navigator &&
+          navigator.clipboard &&
+          typeof navigator.clipboard.writeText === "function"
+        );
       case "compute":
         return browserCapabilitySupported("webgpu") || browserCapabilitySupported("webgl2");
       case "fetch":

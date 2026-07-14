@@ -167,6 +167,13 @@ func prepareDevAssets(dir string) error {
 	); err != nil {
 		return fmt.Errorf("stage wasm_exec.js: %w", err)
 	}
+	standardGoWASMExec, err := readStandardGoWASMExec()
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "standard-go-wasm_exec.js"), wrapStandardGoWASMExec(standardGoWASMExec), 0644); err != nil {
+		return fmt.Errorf("stage standard-Go wasm_exec.js: %w", err)
+	}
 	if err := copyFile(filepath.Join(buildDir, "bootstrap.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap.js")); err != nil {
 		return fmt.Errorf("stage bootstrap.js: %w", err)
 	}

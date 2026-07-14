@@ -169,6 +169,461 @@
 
   const pendingEngineRuntimes = new Map();
 
+  const goWASMEngineModules = new Map();
+  const goWASMEngineRegistrationTokens = new Map();
+  const goWASMEngineRegistrationTokenEnv = "GOSX_GO_WASM_REGISTRATION_TOKEN";
+  let goWASMEnginePageGeneration = 0;
+
+  function engineUsesGoWASMRuntime(entry) {
+    return Boolean(entry && entry.runtime === "go-wasm");
+  }
+
+  function goWASMEngineError(code, message, entry, cause) {
+    const error = new Error(message);
+    error.name = "GoSXGoWASMEngineError";
+    error.code = code;
+    if (entry) {
+      error.component = String(entry.component || "");
+      error.engineID = String(entry.id || "");
+      error.programRef = String(entry.programRef || "");
+    }
+    if (cause) {
+      error.cause = cause;
+    }
+    return error;
+  }
+
+  function goWASMEngineRegistrationToken() {
+    if (
+      typeof crypto === "undefined" ||
+      !crypto ||
+      typeof crypto.getRandomValues !== "function" ||
+      typeof Uint32Array !== "function"
+    ) {
+      throw goWASMEngineError(
+        "go-wasm-secure-random-missing",
+        "secure random values are required to boot a Go-WASM engine",
+      );
+    }
+    const words = new Uint32Array(4);
+    crypto.getRandomValues(words);
+    return Array.from(words, function(word) {
+      return Number(word).toString(16).padStart(8, "0");
+    }).join("");
+  }
+
+  window.__gosx_register_go_wasm_engine_factory = function(token, name, factory) {
+    const registrationToken = String(token || "").trim();
+    const component = String(name || "").trim();
+    const active = goWASMEngineRegistrationTokens.get(registrationToken);
+    if (!active || active.state !== "registering" || !component || typeof factory !== "function") {
+      console.error("[gosx] rejected Go-WASM engine factory registration:", component || "<empty>");
+      return false;
+    }
+    if (active.factories.has(component)) {
+      console.error("[gosx] duplicate Go-WASM engine factory registration:", component);
+      return false;
+    }
+    active.factories.set(component, factory);
+    if (!active.registrationSettleScheduled) {
+      active.registrationSettleScheduled = true;
+      queueMicrotask(function() {
+        active.registrationSettleScheduled = false;
+        if (active.state === "registering" && active.factories.size > 0 && typeof active.resolveReady === "function") {
+          active.resolveReady();
+        }
+      });
+    }
+    return true;
+  };
+
+  function goWASMEngineFactoryTimeoutMS() {
+    const configured = Number(window.__gosx_go_wasm_factory_timeout_ms);
+    if (Number.isFinite(configured) && configured > 0) {
+      return Math.min(60000, Math.max(1, Math.floor(configured)));
+    }
+    return 10000;
+  }
+
+  async function instantiateGoWASMEngine(response, importObject) {
+    if (typeof WebAssembly.instantiateStreaming === "function") {
+      try {
+        return await WebAssembly.instantiateStreaming(response.clone(), importObject);
+      } catch (_streamError) {
+        // Incorrect or stripped application/wasm content types are common in
+        // static hosting. Fall back to bytes without issuing a second fetch.
+      }
+    }
+    const bytes = await response.arrayBuffer();
+    return WebAssembly.instantiate(bytes, importObject);
+  }
+
+  function invalidateGoWASMEngineModule(record, cause, state) {
+    if (!record || record.state === "failed" || record.state === "exited") return;
+    record.state = state || "failed";
+    record.error = cause || goWASMEngineError(
+      "go-wasm-module-invalidated",
+      "Go-WASM engine module was invalidated",
+      { programRef: record.programRef },
+    );
+    goWASMEngineRegistrationTokens.delete(record.token);
+    if (goWASMEngineModules.get(record.programRef) === record) {
+      goWASMEngineModules.delete(record.programRef);
+    }
+    if (record.controller && typeof record.controller.abort === "function") {
+      try {
+        record.controller.abort();
+      } catch (_abortError) {
+        // AbortController.abort is idempotent; tolerate incomplete shims.
+      }
+    }
+    if (typeof record.rejectReady === "function") {
+      record.rejectReady(record.error);
+    }
+    if (typeof record.rejectCancellation === "function") {
+      record.rejectCancellation(record.error);
+    }
+    record.factories.clear();
+
+    if (record.mountedIDs.size > 0 && typeof window.__gosx_dispose_engine === "function") {
+      for (const engineID of Array.from(record.mountedIDs)) {
+        const mounted = window.__gosx && window.__gosx.engines
+          ? window.__gosx.engines.get(engineID)
+          : null;
+        if (mounted && mounted.moduleRecord === record) {
+          window.__gosx_dispose_engine(engineID);
+        }
+      }
+    }
+  }
+
+  function cancelGoWASMEngineModuleIfUnused(record) {
+    if (!record || record.state !== "booting" && record.state !== "registering") return;
+    if (record.waiters.size > 0) return;
+    invalidateGoWASMEngineModule(record, goWASMEngineError(
+      "go-wasm-boot-cancelled",
+      "Go-WASM engine module boot was cancelled because no mounts still need it",
+      { programRef: record.programRef },
+    ));
+  }
+
+  function attachGoWASMEngineWaiter(record, pending) {
+    if (!record || !pending || pending.closed) return;
+    if (pending.moduleWaiter === record) return;
+    releaseGoWASMEngineWaiter(pending);
+    pending.moduleWaiter = record;
+    pending.moduleRecord = record;
+    record.waiters.add(pending);
+  }
+
+  function releaseGoWASMEngineWaiter(pending) {
+    if (!pending || !pending.moduleWaiter) return;
+    const record = pending.moduleWaiter;
+    pending.moduleWaiter = null;
+    record.waiters.delete(pending);
+    cancelGoWASMEngineModuleIfUnused(record);
+  }
+
+  async function bootGoWASMEngineModule(record) {
+    const programRef = record.programRef;
+    const StandardGo = window.__gosx_standard_go_wasm_ctor;
+    if (typeof StandardGo !== "function") {
+      throw goWASMEngineError(
+        "go-wasm-runtime-missing",
+        "the isolated standard-Go wasm_exec asset must be loaded before a Go-WASM engine",
+        { programRef: programRef },
+      );
+    }
+    let response;
+    try {
+      response = await Promise.race([
+        fetch(programRef, record.controller ? { signal: record.controller.signal } : {}),
+        record.cancellation,
+      ]);
+    } catch (cause) {
+      throw goWASMEngineError(
+        "go-wasm-fetch-failed",
+        "failed to fetch Go-WASM engine module " + programRef,
+        { programRef: programRef },
+        cause,
+      );
+    }
+    if (!response.ok) {
+      throw goWASMEngineError(
+        "go-wasm-fetch-status",
+        "Go-WASM engine fetch failed with status " + response.status,
+        { programRef: programRef },
+      );
+    }
+
+    const go = new StandardGo();
+    if (!go.env || typeof go.env !== "object") go.env = {};
+    go.env[goWASMEngineRegistrationTokenEnv] = record.token;
+    let result;
+    try {
+      result = await Promise.race([
+        instantiateGoWASMEngine(response, go.importObject),
+        record.cancellation,
+      ]);
+    } catch (cause) {
+      throw goWASMEngineError(
+        "go-wasm-instantiate-failed",
+        "failed to instantiate Go-WASM engine module " + programRef,
+        { programRef: programRef },
+        cause,
+      );
+    }
+
+    const ready = new Promise(function(resolve, reject) {
+      record.resolveReady = resolve;
+      record.rejectReady = reject;
+    });
+    record.timeout = setTimeout(function() {
+      record.rejectReady(goWASMEngineError(
+        "go-wasm-factory-timeout",
+        "timed out waiting for Go-WASM engine factory registration",
+        { programRef: programRef },
+      ));
+    }, goWASMEngineFactoryTimeoutMS());
+
+    record.state = "registering";
+    goWASMEngineRegistrationTokens.set(record.token, record);
+    let runResult;
+    try {
+      runResult = go.run(result.instance);
+      const exited = runResult && typeof runResult.then === "function"
+        ? Promise.resolve(runResult).then(function() {
+            return goWASMEngineError(
+              "go-wasm-module-exited",
+              "Go-WASM engine module exited",
+              { programRef: programRef },
+            );
+          }, function(cause) {
+            return goWASMEngineError(
+              "go-wasm-run-failed",
+              "Go-WASM engine module failed",
+              { programRef: programRef },
+              cause,
+            );
+          })
+        : new Promise(function() {});
+      record.exitSignal = exited;
+      const startup = await Promise.race([
+        ready.then(function() { return null; }),
+        exited,
+        record.cancellation,
+      ]);
+      if (startup) throw startup;
+
+      // A standard-Go main that returns immediately leaves syscall/js factory
+      // wrappers behind, but those wrappers can no longer resume the runtime.
+      // Give the run promise one macrotask to report that terminal state before
+      // publishing the module as ready.
+      const immediateExit = await Promise.race([
+        new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 0); }),
+        exited,
+        record.cancellation,
+      ]);
+      if (immediateExit) throw immediateExit;
+      record.state = "ready";
+      exited.then(function(exitError) {
+        if (record.state === "ready") {
+          invalidateGoWASMEngineModule(record, exitError, "exited");
+        }
+      });
+    } catch (cause) {
+      if (cause && cause.name === "GoSXGoWASMEngineError") throw cause;
+      throw goWASMEngineError(
+        "go-wasm-run-failed",
+        "Go-WASM engine module failed while starting",
+        { programRef: programRef },
+        cause,
+      );
+    } finally {
+      clearTimeout(record.timeout);
+      goWASMEngineRegistrationTokens.delete(record.token);
+    }
+    return record;
+  }
+
+  function loadGoWASMEngineModule(programRef, pending) {
+    let record = goWASMEngineModules.get(programRef);
+    if (!record) {
+      let rejectCancellation;
+      record = {
+        programRef,
+        token: goWASMEngineRegistrationToken(),
+        state: "booting",
+        error: null,
+        factories: new Map(),
+        waiters: new Set(),
+        mountedIDs: new Set(),
+        controller: typeof AbortController === "function" ? new AbortController() : null,
+        cancellation: new Promise(function(_resolve, reject) { rejectCancellation = reject; }),
+        rejectCancellation: null,
+        resolveReady: null,
+        rejectReady: null,
+        timeout: 0,
+        exitSignal: null,
+        registrationSettleScheduled: false,
+        boot: null,
+      };
+      record.rejectCancellation = rejectCancellation;
+      goWASMEngineModules.set(programRef, record);
+      record.boot = bootGoWASMEngineModule(record).catch(function(cause) {
+        invalidateGoWASMEngineModule(record, cause, record.state === "exited" ? "exited" : "failed");
+        throw cause;
+      });
+    }
+    attachGoWASMEngineWaiter(record, pending);
+    return record;
+  }
+
+  async function resolveGoWASMEngineFactory(entry, pending) {
+    const programRef = String(entry && entry.programRef || "").trim();
+    if (!programRef) {
+      throw goWASMEngineError(
+        "go-wasm-program-ref-missing",
+        "Go-WASM engine requires a WASM programRef",
+        entry,
+      );
+    }
+    const record = loadGoWASMEngineModule(programRef, pending);
+    try {
+      await record.boot;
+    } finally {
+      releaseGoWASMEngineWaiter(pending);
+    }
+    if (record.state !== "ready") {
+      throw record.error || goWASMEngineError(
+        "go-wasm-module-unavailable",
+        "Go-WASM engine module is unavailable",
+        entry,
+      );
+    }
+    const component = String(entry.component || "").trim();
+    const factory = record.factories.get(component);
+    if (typeof factory !== "function") {
+      throw goWASMEngineError(
+        "go-wasm-factory-missing",
+        "Go-WASM engine module did not register component " + component,
+        entry,
+      );
+    }
+    return { factory, moduleRecord: record };
+  }
+
+  function validateGoWASMEngineEntry(entry, seenIDs) {
+    if (!engineUsesGoWASMRuntime(entry)) return null;
+    if (!entry || typeof entry !== "object") {
+      return goWASMEngineError("go-wasm-manifest-entry-invalid", "Go-WASM engine manifest entry must be an object", entry);
+    }
+    const engineID = String(entry.id || "").trim();
+    const component = String(entry.component || "").trim();
+    const programRef = String(entry.programRef || "").trim();
+    const kind = String(entry.kind || "").trim();
+    if (!engineID) {
+      return goWASMEngineError("go-wasm-engine-id-missing", "Go-WASM engine requires an id", entry);
+    }
+    if (seenIDs && seenIDs.has(engineID)) {
+      return goWASMEngineError("go-wasm-engine-id-duplicate", "Go-WASM engine id is duplicated: " + engineID, entry);
+    }
+    if (!component) {
+      return goWASMEngineError("go-wasm-component-missing", "Go-WASM engine requires a component", entry);
+    }
+    if (!programRef) {
+      return goWASMEngineError("go-wasm-program-ref-missing", "Go-WASM engine requires a WASM programRef", entry);
+    }
+    if (kind !== "worker" && kind !== "surface" && kind !== "video") {
+      return goWASMEngineError("go-wasm-kind-invalid", "Go-WASM engine kind is invalid: " + kind, entry);
+    }
+    if (engineKindNeedsMount(kind) && !String(entry.mountId || entry.id || "").trim()) {
+      return goWASMEngineError("go-wasm-mount-id-missing", "Go-WASM engine kind " + kind + " requires a mount id", entry);
+    }
+    if (seenIDs) seenIDs.add(engineID);
+    return null;
+  }
+
+  function snapshotGoWASMEngineFallback(mount) {
+    if (!mount || !mount.childNodes) return null;
+    return Array.from(mount.childNodes, function(child) {
+      return child && typeof child.cloneNode === "function" ? child.cloneNode(true) : null;
+    }).filter(Boolean);
+  }
+
+  function restoreGoWASMEngineFallback(mount, snapshot) {
+    if (!mount || !Array.isArray(snapshot)) return;
+    clearChildren(mount);
+    for (const child of snapshot) {
+      mount.appendChild(typeof child.cloneNode === "function" ? child.cloneNode(true) : child);
+    }
+  }
+
+  function pendingEngineOwned(pending) {
+    return Boolean(
+      pending &&
+      !pending.closed &&
+      pending.generation === goWASMEnginePageGeneration &&
+      pendingEngineRuntimes.get(pending.id) === pending
+    );
+  }
+
+  function disposePendingEngine(pending, restoreFallback) {
+    if (!pending || pending.closed) return;
+    pending.closed = true;
+    if (pendingEngineRuntimes.get(pending.id) === pending) {
+      pendingEngineRuntimes.delete(pending.id);
+    }
+    releaseGoWASMEngineWaiter(pending);
+    if (!pending.runtimeDisposed && pending.runtime && typeof pending.runtime.dispose === "function") {
+      pending.runtimeDisposed = true;
+      try {
+        pending.runtime.dispose();
+      } catch (disposeError) {
+        console.error("[gosx] runtime dispose error for engine " + pending.id + ":", disposeError);
+      }
+    }
+    if (restoreFallback && pending.fallbackSnapshot) {
+      restoreGoWASMEngineFallback(pending.mount, pending.fallbackSnapshot);
+    }
+  }
+
+  function transferPendingEngine(pending) {
+    if (!pending || pending.closed) return false;
+    if (!pendingEngineOwned(pending)) return false;
+    pending.closed = true;
+    pendingEngineRuntimes.delete(pending.id);
+    releaseGoWASMEngineWaiter(pending);
+    return true;
+  }
+
+  function reportGoWASMEngineModuleFailure(entry, mount, error) {
+    console.error(`[gosx] failed to load engine module ${entry && entry.id || "<unknown>"}:`, error);
+    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+      window.__gosx_emit("error", "engine", "failed to load engine module", {
+        component: String(entry && entry.component || ""),
+        engineID: String(entry && entry.id || ""),
+        programRef: String(entry && entry.programRef || ""),
+        code: error && error.code ? String(error.code) : "engine-module-load-failed",
+        error: error && error.message ? String(error.message) : String(error),
+      });
+    }
+    if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
+      window.__gosx.reportIssue({
+        scope: "engine",
+        type: "module",
+        component: entry && entry.component,
+        source: entry && entry.id,
+        ref: entry && (entry.programRef || entry.component),
+        element: mount,
+        code: error && error.code ? String(error.code) : "engine-module-load-failed",
+        message: error && error.message ? String(error.message) : `failed to load engine module ${entry && entry.id || "<unknown>"}`,
+        error,
+        fallback: "server",
+      });
+    }
+  }
+
   function pixelSurfaceCapabilityEnabled(entry) {
     return Boolean(entry && Array.isArray(entry.capabilities) && entry.capabilities.includes("pixel-surface"));
   }
@@ -3691,32 +4146,77 @@
     };
   }
 
-  async function mountEngine(entry) {
+  async function mountEngine(entry, preflightError) {
     const existing = window.__gosx.engines.get(entry.id);
     if (existing) {
       window.__gosx_dispose_engine(entry.id);
     }
+    const existingPending = pendingEngineRuntimes.get(entry.id);
+    if (existingPending) {
+      disposePendingEngine(existingPending, true);
+    }
 
     const mount = resolveEngineMount(entry);
     if (engineKindNeedsMount(entry.kind) && !mount) return;
+    if (preflightError) {
+      reportGoWASMEngineModuleFailure(entry, mount, preflightError);
+      return;
+    }
+
+    // Claim this engine id and page generation before the first asynchronous
+    // capability probe. A dispose/rebootstrap can then revoke the claim while
+    // the probe is pending instead of allowing the older mount to publish into
+    // the new page generation.
+    const pending = {
+      id: entry.id,
+      generation: goWASMEnginePageGeneration,
+      runtime: null,
+      mount,
+      fallbackSnapshot: engineUsesGoWASMRuntime(entry) ? snapshotGoWASMEngineFallback(mount) : null,
+      moduleWaiter: null,
+      moduleRecord: null,
+      runtimeDisposed: false,
+      closed: false,
+    };
+    pendingEngineRuntimes.set(entry.id, pending);
     await prepareRuntimeCapabilityProbe(entry);
+    if (!pendingEngineOwned(pending)) {
+      disposePendingEngine(pending, true);
+      return;
+    }
     const capabilityStatus = engineCapabilityStatus(entry);
     applyRuntimeCapabilityState(mount, "engine", capabilityStatus);
     if (!capabilityStatus.ok) {
+      disposePendingEngine(pending, true);
       showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
       reportMissingEngineCapabilities(entry, mount, capabilityStatus);
       return;
     }
     const runtime = createEngineRuntime(entry, mount);
+    pending.runtime = runtime;
     const ctx = createEngineContext(entry, mount, runtime, capabilityStatus);
     if (entry.props && entry.props.audio && window.__gosx && window.__gosx.audio && typeof window.__gosx.audio.registerManifest === "function") {
       window.__gosx.audio.registerManifest(entry.props.audio);
     }
-    pendingEngineRuntimes.set(entry.id, runtime);
-
-    const factory = await resolveMountedEngineFactory(entry);
+    let factory;
+    let moduleRecord = null;
+    try {
+      const resolved = await resolveMountedEngineFactory(entry, pending);
+      factory = resolved.factory;
+      moduleRecord = resolved.moduleRecord;
+    } catch (e) {
+      const owned = pendingEngineOwned(pending);
+      disposePendingEngine(pending, true);
+      if (!owned) return;
+      reportGoWASMEngineModuleFailure(entry, mount, e);
+      return;
+    }
+    if (!pendingEngineOwned(pending)) {
+      disposePendingEngine(pending, true);
+      return;
+    }
     if (typeof factory !== "function") {
-      pendingEngineRuntimes.delete(entry.id);
+      disposePendingEngine(pending, true);
       console.warn(`[gosx] no engine factory registered for ${entry.component}`);
       if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
         window.__gosx_emit("warn", "engine", "no engine factory registered", {
@@ -3741,13 +4241,37 @@
 
     try {
       const mounted = await runEngineFactory(factory, ctx);
-      pendingEngineRuntimes.delete(entry.id);
-      rememberMountedEngine(entry, mount, mounted.context, mounted.handle);
-    } catch (e) {
-      pendingEngineRuntimes.delete(entry.id);
-      if (runtime && typeof runtime.dispose === "function") {
-        runtime.dispose();
+      if (!pendingEngineOwned(pending)) {
+        if (mounted.handle && typeof mounted.handle.dispose === "function") {
+          try {
+            mounted.handle.dispose();
+          } catch (disposeError) {
+            console.error("[gosx] dispose error for stale engine " + entry.id + ":", disposeError);
+          }
+        }
+        disposePendingEngine(pending, true);
+        return;
       }
+      if (moduleRecord && moduleRecord.state !== "ready") {
+        if (mounted.handle && typeof mounted.handle.dispose === "function") {
+          mounted.handle.dispose();
+        }
+        throw moduleRecord.error || goWASMEngineError(
+          "go-wasm-module-unavailable",
+          "Go-WASM engine module became unavailable before mount publication",
+          entry,
+        );
+      }
+      if (!transferPendingEngine(pending)) {
+        if (mounted.handle && typeof mounted.handle.dispose === "function") mounted.handle.dispose();
+        disposePendingEngine(pending, true);
+        return;
+      }
+      rememberMountedEngine(entry, mount, mounted.context, mounted.handle, moduleRecord, pending.fallbackSnapshot);
+    } catch (e) {
+      const owned = pendingEngineOwned(pending);
+      disposePendingEngine(pending, true);
+      if (!owned) return;
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
       if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
         window.__gosx_emit("error", "engine", "failed to mount engine", {
@@ -3797,8 +4321,11 @@
     return mount;
   }
 
-  async function resolveMountedEngineFactory(entry) {
-    return resolveEngineFactory(entry);
+  async function resolveMountedEngineFactory(entry, pending) {
+    if (engineUsesGoWASMRuntime(entry)) {
+      return resolveGoWASMEngineFactory(entry, pending);
+    }
+    return { factory: resolveEngineFactory(entry), moduleRecord: null };
   }
 
   async function runEngineFactory(factory, ctx) {
@@ -3812,12 +4339,12 @@
     };
   }
 
-  function rememberMountedEngine(entry, mount, context, handle) {
+  function rememberMountedEngine(entry, mount, context, handle, moduleRecord, fallbackSnapshot) {
     if (window.__gosx && typeof window.__gosx.clearIssueState === "function") {
       window.__gosx.clearIssueState(mount);
     }
     activateInputProviders(entry);
-    window.__gosx.engines.set(entry.id, {
+    const record = {
       component: entry.component,
       kind: entry.kind,
       capabilities: capabilityList(entry),
@@ -3826,11 +4353,34 @@
       runtime: context.runtime,
       mount: mount,
       handle: handle,
-    });
+      moduleRecord,
+      fallbackSnapshot,
+      disposed: false,
+    };
+    window.__gosx.engines.set(entry.id, record);
+    if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
   async function mountAllEngines(manifest) {
     if (!manifest.engines || manifest.engines.length === 0) return;
+
+    const invalidEntries = new Map();
+    const seenIDs = new Set();
+    for (const entry of manifest.engines) {
+      if (!entry || typeof entry !== "object") continue;
+      const engineID = String(entry.id || "").trim();
+      if (seenIDs.has(engineID) && engineID) {
+        invalidEntries.set(entry, goWASMEngineError(
+          "go-wasm-engine-id-duplicate",
+          "engine id is duplicated: " + engineID,
+          entry,
+        ));
+        continue;
+      }
+      if (engineID) seenIDs.add(engineID);
+      const validationError = validateGoWASMEngineEntry(entry, null);
+      if (validationError) invalidEntries.set(entry, validationError);
+    }
 
     const videoEngines = manifest.engines.filter(function(entry) {
       return entry && entry.kind === "video";
@@ -3852,10 +4402,11 @@
       }
     }
 
-    const promises = manifest.engines.filter(function(entry, index) {
-      return entry.kind !== "video" || videoEngines.indexOf(entry) === 0;
+    const promises = manifest.engines.filter(function(entry) {
+      return entry && typeof entry === "object" &&
+        (entry.kind !== "video" || videoEngines.indexOf(entry) === 0);
     }).map(function(entry) {
-      return mountEngine(entry).catch(function(e) {
+      return mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });
     });
@@ -5958,17 +6509,14 @@
 
   window.__gosx_dispose_engine = function(engineID) {
     const pending = pendingEngineRuntimes.get(engineID);
-    if (pending && typeof pending.dispose === "function") {
-      try {
-        pending.dispose();
-      } catch (e) {
-        console.error(`[gosx] pending runtime dispose error for engine ${engineID}:`, e);
-      }
-    }
-    pendingEngineRuntimes.delete(engineID);
+    if (pending) disposePendingEngine(pending, true);
 
     const record = window.__gosx.engines.get(engineID);
     if (!record) return;
+    window.__gosx.engines.delete(engineID);
+    if (record.disposed) return;
+    record.disposed = true;
+    if (record.moduleRecord) record.moduleRecord.mountedIDs.delete(engineID);
 
     releaseInputProviders(record);
 
@@ -5987,14 +6535,15 @@
         console.error(`[gosx] dispose error for engine ${engineID}:`, e);
       }
     }
-
-    window.__gosx.engines.delete(engineID);
+    if (record.fallbackSnapshot) {
+      restoreGoWASMEngineFallback(record.mount, record.fallbackSnapshot);
+    }
   };
 
   window.__gosx_engine_frame = function(engineID) {
     const pending = pendingEngineRuntimes.get(engineID);
-    if (pending && typeof pending.frame === "function") {
-      return pending.frame();
+    if (pending && pending.runtime && typeof pending.runtime.frame === "function") {
+      return pending.runtime.frame();
     }
     const record = window.__gosx.engines.get(engineID);
     if (!record || !record.runtime || typeof record.runtime.frame !== "function") {
@@ -6031,6 +6580,10 @@
   };
 
   async function disposePage() {
+    goWASMEnginePageGeneration += 1;
+    for (const pending of Array.from(pendingEngineRuntimes.values())) {
+      disposePendingEngine(pending, true);
+    }
     for (const islandID of Array.from(window.__gosx.islands.keys())) {
       window.__gosx_dispose_island(islandID);
     }

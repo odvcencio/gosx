@@ -35,10 +35,10 @@ import (
 // waterDiagDefaults are the shipped values. A knob absent from the URL keeps its
 // default, so /demos/water is byte-identical to what it was without diag.
 var waterDiagDefaults = map[string]any{
-	"diag":            false,
-	"dpr":             1.0, // hard-capped: see page.gsx (Apple cliff)
-	"maxPixels":       1200000,
-	"resolution":      192,
+	"diag":       false,
+	"dpr":        1.0, // hard-capped: see page.gsx (Apple cliff)
+	"maxPixels":  1200000,
+	"resolution": 192,
 	// meshRes tessellates the surface INDEPENDENTLY of the simulation. 0 = match
 	// resolution, i.e. exactly what shipped. The surface is currently drawn at
 	// roughly one triangle per 1.4 screen pixels; a GPU shades in 2x2 quads, so

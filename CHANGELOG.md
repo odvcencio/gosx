@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.31.4 (2026-07-13)
+
+- Added dedicated standard-Go WebAssembly engines with
+  `engine.RuntimeGoWASM` and the browser-only `engine/wasm` registration,
+  context, and lifecycle API. The client runtime boots each exact module URL
+  once per document, capability-binds factories to that boot, supports reusable
+  multi-component modules, creates independent mounts, and restores server
+  fallback on failure or disposal.
+- Added streaming WebAssembly instantiation with byte fallback, bounded
+  factory-registration waits, page-generation cancellation, module-exit
+  invalidation, structured load errors, and exact-once instance disposal across
+  monolithic and selective bootstrap bundles.
+- Production builds now emit a separate content-hashed standard-Go
+  `wasm_exec` shim for Go-WASM engines, preserving the TinyGo constructor on
+  mixed pages and omitting the TinyGo loader on Go-WASM-only routes. Managed
+  navigation loads that shim through a CSP-safe DOM script before TinyGo and
+  before runtime bootstrap.
+- Added the `clipboard` engine capability, including server validation and a
+  browser gate for `navigator.clipboard.writeText`.
+
 ## v0.29.5 (2026-07-11)
 
 Production Scene3D, audio, collaboration hardening, and deployable content

@@ -140,6 +140,9 @@ class FakeCanvasContext2D {
   }
 
   beginPath() { this.ops.push(["beginPath"]); }
+  arc(x, y, radius, startAngle, endAngle) {
+    this.ops.push(["arc", x, y, radius, startAngle, endAngle]);
+  }
   clearRect(x, y, width, height) { this.ops.push(["clearRect", x, y, width, height]); }
   closePath() { this.ops.push(["closePath"]); }
   fill() { this.ops.push(["fill"]); }
@@ -1922,6 +1925,7 @@ function createContext(options) {
   const intersectionObservers = [];
   const mutationObservers = [];
   const mediaQueries = new Map();
+  let cryptoWord = 1;
   const visualViewport = options.visualViewport === false ? null : new FakeListenerTarget();
   if (visualViewport) {
     visualViewport.offsetLeft = numberOr(options.visualViewportOffsetLeft, 0);
@@ -1946,9 +1950,27 @@ function createContext(options) {
     Set,
     Uint8Array,
     Uint8ClampedArray,
+    Uint32Array,
+    AbortController: class AbortController {
+      constructor() {
+        this.signal = { aborted: false };
+      }
+
+      abort() {
+        this.signal.aborted = true;
+      }
+    },
     clearTimeout,
     clearInterval,
     console: consoleSpy.console,
+    crypto: {
+      getRandomValues(words) {
+        for (let i = 0; i < words.length; i += 1) {
+          words[i] = cryptoWord++;
+        }
+        return words;
+      },
+    },
     CustomEvent: class CustomEvent {
       constructor(type, init = {}) {
         this.type = type;
@@ -15702,6 +15724,74 @@ test("navigation runtime loads patch, lifecycle, and managed scripts before page
   );
 });
 
+test("navigation runtime loads the standard-Go shim through the DOM before TinyGo and bootstrap", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/docs/mixed-runtime": {
+        text: "__MIXED_RUNTIME_DOC__",
+        url: "http://localhost:3000/docs/mixed-runtime",
+      },
+      "http://localhost:3000/standard-go-wasm_exec.js": {
+        text: "window.__mixedRuntimeOrder.push('standard-go');",
+        url: "http://localhost:3000/standard-go-wasm_exec.js",
+      },
+      "http://localhost:3000/wasm_exec.js": {
+        text: "window.__mixedRuntimeOrder.push('tinygo');",
+        url: "http://localhost:3000/wasm_exec.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__mixedRuntimeOrder = [];
+  env.context.__gosx_dispose_page = async function() {
+    env.context.__mixedRuntimeOrder.push("dispose");
+  };
+  env.context.__gosx_bootstrap_page = async function() {
+    env.context.__mixedRuntimeOrder.push("bootstrap");
+  };
+
+  const standardGoScript = new FakeElement("script", null);
+  standardGoScript.setAttribute("data-gosx-script", "standard-go-wasm-exec");
+  standardGoScript.setAttribute("data-gosx-script-load", "dom");
+  standardGoScript.setAttribute("src", "/standard-go-wasm_exec.js");
+
+  const tinyGoScript = new FakeElement("script", null);
+  tinyGoScript.setAttribute("data-gosx-script", "wasm-exec");
+  tinyGoScript.setAttribute("src", "/wasm_exec.js");
+
+  const bootstrapScript = new FakeElement("script", null);
+  bootstrapScript.setAttribute("data-gosx-script", "bootstrap");
+  bootstrapScript.setAttribute("src", "/bootstrap.js");
+
+  const nextBody = new FakeElement("main", null);
+  nextBody.id = "mixed-runtime-page";
+  parsedDocs.set("__MIXED_RUNTIME_DOC__", buildNavigatedDocument({
+    title: "Mixed runtime",
+    headNodes: [bootstrapScript, tinyGoScript, standardGoScript],
+    bodyNodes: [nextBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/mixed-runtime");
+  await flushAsyncWork();
+
+  assert.deepEqual(env.context.__mixedRuntimeOrder, [
+    "dispose",
+    "standard-go",
+    "tinygo",
+    "bootstrap",
+  ]);
+  const loadedStandardGo = env.document.querySelector(
+    'script[data-gosx-script="standard-go-wasm-exec"][data-gosx-script-loaded="true"]',
+  );
+  assert.ok(loadedStandardGo);
+  assert.equal(loadedStandardGo.getAttribute("data-gosx-script-load"), "dom");
+});
+
 test("navigation runtime caches lifecycle scripts across page transitions", async () => {
   const parsedDocs = new Map();
   const env = createContext({
@@ -18663,6 +18753,801 @@ test("selective runtime mounts native JS engines without loading the shared wasm
 
   await env.context.__gosx_dispose_page();
   assert.equal(mount.getAttribute("data-disposed"), "true");
+});
+
+async function exerciseGoWASMEngineRuntime(mode) {
+  const first = new FakeElement("div", null);
+  first.id = "go-wasm-first";
+  first.appendChild(new FakeTextNode("first fallback", null));
+  const second = new FakeElement("div", null);
+  second.id = "go-wasm-second";
+  second.appendChild(new FakeTextNode("second fallback", null));
+
+  let boots = 0;
+  let streamingAttempts = 0;
+  let byteInstantiations = 0;
+  const disposeCounts = new Map();
+  const env = createContext({
+    elements: [first, second],
+    fetchRoutes: {
+      "/engines/counter.wasm": { bytes: [0, 97, 115, 109] },
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "go-wasm-engine-a",
+          component: "GoCounter",
+          kind: "surface",
+          mountId: "go-wasm-first",
+          runtime: "go-wasm",
+          programRef: "/engines/counter.wasm",
+          props: { start: 2 },
+          requiredCapabilities: ["wasm"],
+        },
+        {
+          id: "go-wasm-engine-b",
+          component: "GoCounter",
+          kind: "surface",
+          mountId: "go-wasm-second",
+          runtime: "go-wasm",
+          programRef: "/engines/counter.wasm",
+          props: { start: 7 },
+          requiredCapabilities: ["wasm"],
+        },
+      ],
+    },
+  });
+  env.context.WebAssembly.instantiateStreaming = async function() {
+    streamingAttempts += 1;
+    throw new Error("test content-type rejection");
+  };
+  env.context.WebAssembly.instantiate = async function() {
+    byteInstantiations += 1;
+    return { instance: {} };
+  };
+  env.context.__gosx_standard_go_wasm_ctor = function GoWASMEngine() {
+    this.importObject = {};
+    this.env = {};
+    this.run = function() {
+      boots += 1;
+      const accepted = env.context.__gosx_register_go_wasm_engine_factory(
+        this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+        "GoCounter",
+        function(ctx) {
+        let value = Number(ctx.props && ctx.props.start || 0);
+        ctx.mount.setAttribute("data-value", String(value));
+        return {
+          increment() {
+            value += 1;
+            ctx.mount.setAttribute("data-value", String(value));
+            return value;
+          },
+          dispose() {
+            const count = (disposeCounts.get(ctx.id) || 0) + 1;
+            disposeCounts.set(ctx.id, count);
+            ctx.mount.setAttribute("data-dispose-count", String(count));
+          },
+        };
+        },
+      );
+      assert.equal(accepted, true);
+      return new Promise(function() {});
+    };
+  };
+
+  runScript(mode === "split" ? bootstrapRuntimeSource : bootstrapSource, env.context, mode + "-bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  return {
+    env,
+    first,
+    second,
+    disposeCounts,
+    boots: () => boots,
+    streamingAttempts: () => streamingAttempts,
+    byteInstantiations: () => byteInstantiations,
+  };
+}
+
+test("Go-WASM engine boots once per exact URL and creates independent disposable mounts", async () => {
+  for (const mode of ["monolithic", "split"]) {
+    const result = await exerciseGoWASMEngineRuntime(mode);
+    const env = result.env;
+    assert.equal(result.boots(), 1, mode + ": expected one standard-Go boot");
+    assert.equal(result.streamingAttempts(), 1, mode + ": expected streaming first");
+    assert.equal(result.byteInstantiations(), 1, mode + ": expected byte fallback");
+    assert.equal(
+      env.fetchCalls.filter((entry) => entry.url === "/engines/counter.wasm").length,
+      1,
+      mode + ": expected one exact-URL fetch",
+    );
+    assert.equal(env.context.__gosx.engines.size, 2);
+    assert.equal(result.first.getAttribute("data-value"), "2");
+    assert.equal(result.second.getAttribute("data-value"), "7");
+
+    const firstRecord = env.context.__gosx.engines.get("go-wasm-engine-a");
+    const secondRecord = env.context.__gosx.engines.get("go-wasm-engine-b");
+    assert.equal(firstRecord.handle.increment(), 3);
+    assert.equal(secondRecord.handle.increment(), 8);
+    assert.equal(result.first.getAttribute("data-value"), "3");
+    assert.equal(result.second.getAttribute("data-value"), "8");
+
+    env.context.__gosx_dispose_engine("go-wasm-engine-a");
+    env.context.__gosx_dispose_engine("go-wasm-engine-a");
+    env.context.__gosx_dispose_engine("go-wasm-engine-b");
+    assert.equal(result.disposeCounts.get("go-wasm-engine-a"), 1);
+    assert.equal(result.disposeCounts.get("go-wasm-engine-b"), 1);
+
+    assert.equal(
+      env.context.__gosx_register_go_wasm_engine_factory("invalid-token", "LateFactory", function() {}),
+      false,
+      mode + ": late arbitrary registration must be rejected",
+    );
+  }
+});
+
+test("Go-WASM engine timeout preserves server fallback and reports a structured error", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-timeout";
+  mount.appendChild(new FakeTextNode("server fallback", null));
+  let timeoutSignal = null;
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/engines/timeout.wasm": function(_url, init) {
+        timeoutSignal = init.signal;
+        return { bytes: [0, 97, 115, 109] };
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "go-wasm-timeout-engine",
+        component: "NeverRegisters",
+        kind: "surface",
+        mountId: "go-wasm-timeout",
+        runtime: "go-wasm",
+        programRef: "/engines/timeout.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_go_wasm_factory_timeout_ms = 1;
+  env.context.__gosx_standard_go_wasm_ctor = function GoWASMTimeout() {
+    this.importObject = {};
+    this.env = {};
+    this.run = function() {
+      return new Promise(function() {});
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.textContent, "server fallback");
+  assert.equal(timeoutSignal && timeoutSignal.aborted, true, "timeout must abort the module fetch controller");
+  const structured = env.consoleLogs.error.some((line) =>
+    line.includes("timed out waiting for Go-WASM engine factory registration"));
+  assert.equal(structured, true, "expected structured go-wasm-factory-timeout error");
+  assert.equal(
+    env.context.__gosx_register_go_wasm_engine_factory("invalid-token", "NeverRegisters", function() {}),
+    false,
+    "registration window must close after timeout",
+  );
+});
+
+test("Go-WASM fetch failure is evicted atomically and a later page can retry the URL", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-fetch-error";
+  mount.appendChild(new FakeTextNode("server fallback", null));
+  let boots = 0;
+  let fetchAttempts = 0;
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/engines/missing.wasm": function() {
+        fetchAttempts += 1;
+        return fetchAttempts === 1
+          ? { ok: false, status: 503 }
+          : { bytes: [0, 97, 115, 109] };
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "go-wasm-fetch-error-engine",
+        component: "Unavailable",
+        kind: "surface",
+        mountId: "go-wasm-fetch-error",
+        runtime: "go-wasm",
+        programRef: "/engines/missing.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_standard_go_wasm_ctor = function GoWASMFetchError() {
+    this.importObject = {};
+    this.env = {};
+    this.run = function() {
+      boots += 1;
+      assert.equal(env.context.__gosx_register_go_wasm_engine_factory(
+        this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+        "Unavailable",
+        function(ctx) {
+          ctx.mount.textContent = "retry mounted";
+          return {};
+        },
+      ), true);
+      return new Promise(function() {});
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(boots, 0);
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.textContent, "server fallback");
+  assert.equal(
+    env.consoleLogs.error.some((line) => line.includes("fetch failed with status 503")),
+    true,
+  );
+
+  await env.context.__gosx_dispose_page();
+  await env.context.__gosx_bootstrap_page();
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(fetchAttempts, 2);
+  assert.equal(boots, 1);
+  assert.equal(env.context.__gosx.engines.has("go-wasm-fetch-error-engine"), true);
+  assert.equal(mount.textContent, "retry mounted");
+});
+
+test("Go-WASM engine boots independent module URLs without global head-of-line blocking", async () => {
+  const slowMount = new FakeElement("div", null);
+  slowMount.id = "go-wasm-slow";
+  slowMount.textContent = "slow fallback";
+  const fastMount = new FakeElement("div", null);
+  fastMount.id = "go-wasm-fast";
+  fastMount.textContent = "fast fallback";
+  const env = createContext({
+    elements: [slowMount, fastMount],
+    fetchRoutes: {
+      "/engines/slow.wasm": { bytes: [0, 97, 115, 109] },
+      "/engines/fast.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "go-wasm-slow-engine",
+          component: "Slow",
+          kind: "surface",
+          mountId: "go-wasm-slow",
+          runtime: "go-wasm",
+          programRef: "/engines/slow.wasm",
+          requiredCapabilities: ["wasm"],
+        },
+        {
+          id: "go-wasm-fast-engine",
+          component: "Fast",
+          kind: "surface",
+          mountId: "go-wasm-fast",
+          runtime: "go-wasm",
+          programRef: "/engines/fast.wasm",
+          requiredCapabilities: ["wasm"],
+        },
+      ],
+    },
+  });
+  env.context.WebAssembly.instantiateStreaming = async function(response) {
+    return { instance: { programRef: response.url } };
+  };
+  env.context.__gosx_standard_go_wasm_ctor = function ParallelGoWASM() {
+    this.importObject = {};
+    this.env = {};
+    this.run = (instance) => {
+      if (instance.programRef === "/engines/fast.wasm") {
+        assert.equal(env.context.__gosx_register_go_wasm_engine_factory(
+          this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+          "Fast",
+          function(ctx) {
+            ctx.mount.textContent = "fast mounted";
+            return {};
+          },
+        ), true);
+      }
+      return new Promise(function() {});
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(fastMount.textContent, "fast mounted");
+  assert.equal(env.context.__gosx.engines.has("go-wasm-fast-engine"), true);
+  assert.equal(env.context.__gosx.engines.has("go-wasm-slow-engine"), false);
+});
+
+test("Go-WASM module publishes reusable components for later page manifests", async () => {
+  const first = new FakeElement("div", null);
+  first.id = "go-wasm-component-a";
+  first.textContent = "A fallback";
+  let boots = 0;
+  const env = createContext({
+    elements: [first],
+    fetchRoutes: {
+      "/engines/tools.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      engines: [{
+        id: "go-wasm-a",
+        component: "ToolA",
+        kind: "surface",
+        mountId: "go-wasm-component-a",
+        runtime: "go-wasm",
+        programRef: "/engines/tools.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_standard_go_wasm_ctor = function ReusableGoWASM() {
+    this.importObject = {};
+    this.env = {};
+    this.run = () => {
+      boots += 1;
+      const token = this.env.GOSX_GO_WASM_REGISTRATION_TOKEN;
+      for (const component of ["ToolA", "ToolB"]) {
+        assert.equal(env.context.__gosx_register_go_wasm_engine_factory(token, component, function(ctx) {
+          ctx.mount.textContent = component + " mounted";
+          return {};
+        }), true);
+      }
+      return new Promise(function() {});
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(first.textContent, "ToolA mounted");
+  assert.equal(boots, 1);
+
+  await env.context.__gosx_dispose_page();
+  assert.equal(first.textContent, "A fallback", "dispose restores the server fallback");
+
+  const second = new FakeElement("div", env.context.document);
+  second.id = "go-wasm-component-b";
+  second.textContent = "B fallback";
+  env.context.document.body.appendChild(second);
+  env.context.document.getElementById("gosx-manifest").textContent = JSON.stringify({
+    engines: [{
+      id: "go-wasm-b",
+      component: "ToolB",
+      kind: "surface",
+      mountId: "go-wasm-component-b",
+      runtime: "go-wasm",
+      programRef: "/engines/tools.wasm",
+      requiredCapabilities: ["wasm"],
+    }],
+  });
+  await env.context.__gosx_bootstrap_page();
+  await flushAsyncWork();
+
+  assert.equal(second.textContent, "ToolB mounted");
+  assert.equal(boots, 1, "the exact module URL should remain a document-lifetime cache hit");
+});
+
+test("Go-WASM page disposal cancels stale same-ID work without corrupting the next mount", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-navigation";
+  mount.textContent = "server fallback";
+  let resolveOldFetch;
+  let oldFetchSignal = null;
+  const oldFetch = new Promise(function(resolve) { resolveOldFetch = resolve; });
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/engines/old.wasm": async function(_url, init) {
+        oldFetchSignal = init.signal;
+        return oldFetch;
+      },
+      "/engines/new.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-0",
+        component: "Old",
+        kind: "surface",
+        mountId: "go-wasm-navigation",
+        runtime: "go-wasm",
+        programRef: "/engines/old.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_standard_go_wasm_ctor = function NavigationGoWASM() {
+    this.importObject = {};
+    this.env = {};
+    this.run = () => {
+      assert.equal(env.context.__gosx_register_go_wasm_engine_factory(
+        this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+        "New",
+        function(ctx) {
+          ctx.mount.textContent = "new mounted";
+          return {};
+        },
+      ), true);
+      return new Promise(function() {});
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await env.context.__gosx_dispose_page();
+  assert.equal(oldFetchSignal && oldFetchSignal.aborted, true);
+
+  env.context.document.getElementById("gosx-manifest").textContent = JSON.stringify({
+    engines: [{
+      id: "gosx-engine-0",
+      component: "New",
+      kind: "surface",
+      mountId: "go-wasm-navigation",
+      runtime: "go-wasm",
+      programRef: "/engines/new.wasm",
+      requiredCapabilities: ["wasm"],
+    }],
+  });
+  await env.context.__gosx_bootstrap_page();
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(mount.textContent, "new mounted");
+  assert.equal(env.context.__gosx.engines.has("gosx-engine-0"), true);
+
+  resolveOldFetch({ bytes: [0, 97, 115, 109] });
+  await flushAsyncWork();
+  assert.equal(mount.textContent, "new mounted");
+  assert.equal(env.context.__gosx.engines.has("gosx-engine-0"), true);
+});
+
+test("engine ownership is reserved across a held WebGPU probe and same-ID rebootstrap", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "webgpu-probe-navigation";
+  let resolveFirstProbe;
+  let resolveSecondProbe;
+  let probeCalls = 0;
+  let oldMounts = 0;
+  let newMounts = 0;
+  const env = createContext({
+    elements: [mount],
+    engineFactories: {
+      OldProbeEngine() {
+        oldMounts += 1;
+        return {};
+      },
+      NewProbeEngine() {
+        newMounts += 1;
+        return {};
+      },
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      engines: [{
+        id: "probe-engine",
+        component: "OldProbeEngine",
+        kind: "surface",
+        mountId: "webgpu-probe-navigation",
+        requiredCapabilities: ["webgpu:probe-ready"],
+      }],
+    },
+  });
+  env.context.__gosx_scene3d_webgpu_probe_ready = function() {
+    probeCalls += 1;
+    return new Promise(function(resolve) {
+      if (probeCalls === 1) resolveFirstProbe = resolve;
+      else resolveSecondProbe = resolve;
+    });
+  };
+  env.context.navigator.gpu = {};
+  env.context.__gosx_scene3d_webgpu_diagnostics = function() {
+    return { ready: true, deviceFeatures: ["probe-ready"], requestedFeatures: [] };
+  };
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  assert.equal(typeof resolveFirstProbe, "function");
+
+  await env.context.__gosx_dispose_page();
+  env.context.document.getElementById("gosx-manifest").textContent = JSON.stringify({
+    engines: [{
+      id: "probe-engine",
+      component: "NewProbeEngine",
+      kind: "surface",
+      mountId: "webgpu-probe-navigation",
+      requiredCapabilities: ["webgpu:probe-ready"],
+    }],
+  });
+  const nextBootstrap = env.context.__gosx_bootstrap_page();
+  await flushAsyncWork();
+  assert.equal(typeof resolveSecondProbe, "function");
+
+  resolveFirstProbe(true);
+  await flushAsyncWork();
+  assert.equal(oldMounts, 0, "the disposed generation must not mount after its probe resolves");
+  assert.equal(env.context.__gosx.engines.has("probe-engine"), false);
+
+  resolveSecondProbe(true);
+  await nextBootstrap;
+  await flushAsyncWork();
+  assert.equal(newMounts, 1);
+  assert.equal(env.context.__gosx.engines.get("probe-engine").component, "NewProbeEngine");
+});
+
+test("Go-WASM immediate module exit invalidates factories and preserves fallback", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-exit";
+  mount.textContent = "server fallback";
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/engines/exits.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      engines: [{
+        id: "go-wasm-exit-engine",
+        component: "Exits",
+        kind: "surface",
+        mountId: "go-wasm-exit",
+        runtime: "go-wasm",
+        programRef: "/engines/exits.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_standard_go_wasm_ctor = function ExitingGoWASM() {
+    this.importObject = {};
+    this.env = {};
+    this.run = () => {
+      assert.equal(env.context.__gosx_register_go_wasm_engine_factory(
+        this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+        "Exits",
+        function() { return {}; },
+      ), true);
+      return Promise.resolve();
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.textContent, "server fallback");
+  assert.equal(env.consoleLogs.error.some((line) => line.includes("Go-WASM engine module exited")), true);
+});
+
+test("Go-WASM later module exit disposes live mounts and restores fallback", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-later-exit";
+  mount.textContent = "server fallback";
+  let resolveRun;
+  let disposeCount = 0;
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/engines/later-exit.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      engines: [{
+        id: "go-wasm-later-exit-engine",
+        component: "LaterExit",
+        kind: "surface",
+        mountId: "go-wasm-later-exit",
+        runtime: "go-wasm",
+        programRef: "/engines/later-exit.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_standard_go_wasm_ctor = function LaterExitingGoWASM() {
+    this.importObject = {};
+    this.env = {};
+    this.run = () => {
+      assert.equal(env.context.__gosx_register_go_wasm_engine_factory(
+        this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+        "LaterExit",
+        function(ctx) {
+          ctx.mount.textContent = "client mount";
+          return { dispose() { disposeCount += 1; } };
+        },
+      ), true);
+      return new Promise(function(resolve) { resolveRun = resolve; });
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(env.context.__gosx.engines.has("go-wasm-later-exit-engine"), true);
+  assert.equal(mount.textContent, "client mount");
+
+  resolveRun();
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(disposeCount, 1);
+  assert.equal(mount.textContent, "server fallback");
+});
+
+test("Go-WASM module invalidation during an async factory cannot publish a stale mount", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-factory-race";
+  mount.textContent = "server fallback";
+  let resolveExit;
+  let resolveFactory;
+  let factoryStarted;
+  let handleDisposals = 0;
+  const started = new Promise(function(resolve) { factoryStarted = resolve; });
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/engines/factory-race.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      engines: [{
+        id: "go-wasm-factory-race-engine",
+        component: "FactoryRace",
+        kind: "surface",
+        mountId: "go-wasm-factory-race",
+        runtime: "go-wasm",
+        programRef: "/engines/factory-race.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_standard_go_wasm_ctor = function FactoryRaceGoWASM() {
+    this.importObject = {};
+    this.env = {};
+    this.run = () => {
+      assert.equal(env.context.__gosx_register_go_wasm_engine_factory(
+        this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+        "FactoryRace",
+        function() {
+          factoryStarted();
+          return new Promise(function(resolve) {
+            resolveFactory = function() {
+              resolve({ dispose() { handleDisposals += 1; } });
+            };
+          });
+        },
+      ), true);
+      return new Promise(function(resolve) { resolveExit = resolve; });
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await started;
+  resolveExit();
+  await flushAsyncWork();
+  resolveFactory();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.engines.has("go-wasm-factory-race-engine"), false);
+  assert.equal(handleDisposals, 1, "the unpublished handle must be disposed exactly once");
+  assert.equal(mount.textContent, "server fallback");
+});
+
+test("Go-WASM factory failure restores fallback after partial DOM mutation", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-factory-failure";
+  mount.textContent = "server fallback";
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/engines/factory-failure.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      engines: [{
+        id: "go-wasm-factory-failure-engine",
+        component: "FailsAfterMutation",
+        kind: "surface",
+        mountId: "go-wasm-factory-failure",
+        runtime: "go-wasm",
+        programRef: "/engines/factory-failure.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+  env.context.__gosx_standard_go_wasm_ctor = function FailingFactoryGoWASM() {
+    this.importObject = {};
+    this.env = {};
+    this.run = () => {
+      assert.equal(env.context.__gosx_register_go_wasm_engine_factory(
+        this.env.GOSX_GO_WASM_REGISTRATION_TOKEN,
+        "FailsAfterMutation",
+        function(ctx) {
+          ctx.mount.textContent = "partial client mount";
+          return Promise.reject(new Error("factory failed"));
+        },
+      ), true);
+      return new Promise(function() {});
+    };
+  };
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.textContent, "server fallback");
+});
+
+test("malformed Go-WASM manifest entries fail closed before fetch", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "go-wasm-invalid-manifest";
+  mount.textContent = "server fallback";
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [{
+        id: "go-wasm-invalid-engine",
+        component: "",
+        kind: "surface",
+        mountId: "go-wasm-invalid-manifest",
+        runtime: "go-wasm",
+        programRef: "/engines/invalid.wasm",
+        requiredCapabilities: ["wasm"],
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 0);
+  assert.equal(env.context.__gosx.engines.size, 0);
+  assert.equal(mount.textContent, "server fallback");
+  assert.equal(env.consoleLogs.error.some((line) => line.includes("requires a component")), true);
+});
+
+test("clipboard capability gates engine mounting on navigator.clipboard.writeText", async () => {
+  async function run(supported) {
+    const mount = new FakeElement("div", null);
+    mount.id = supported ? "clipboard-supported" : "clipboard-missing";
+    const env = createContext({
+      elements: [mount],
+      engineFactories: {
+        ClipboardEngine(ctx) {
+          ctx.mount.setAttribute("data-mounted", "true");
+          return {};
+        },
+      },
+      manifest: {
+        engines: [{
+          id: supported ? "clipboard-engine-supported" : "clipboard-engine-missing",
+          component: "ClipboardEngine",
+          kind: "surface",
+          mountId: mount.id,
+          requiredCapabilities: ["clipboard"],
+        }],
+      },
+    });
+    if (supported) {
+      env.context.navigator.clipboard = { writeText() { return Promise.resolve(); } };
+    }
+    runScript(bootstrapSource, env.context, "bootstrap.js");
+    await flushAsyncWork();
+    return { env, mount };
+  }
+
+  const missing = await run(false);
+  assert.equal(missing.mount.getAttribute("data-mounted"), null);
+  assert.equal(missing.env.context.__gosx.engines.size, 0);
+
+  const supported = await run(true);
+  assert.equal(supported.mount.getAttribute("data-mounted"), "true");
+  assert.equal(supported.env.context.__gosx.engines.size, 1);
 });
 
 // Regression test for the split feature-bundle build: bootstrap-feature-engines.js

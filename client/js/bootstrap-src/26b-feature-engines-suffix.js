@@ -8,6 +8,10 @@
         ]);
       },
       disposePage() {
+        goWASMEnginePageGeneration += 1;
+        for (const pending of Array.from(pendingEngineRuntimes.values())) {
+          disposePendingEngine(pending, true);
+        }
         for (const engineID of Array.from(window.__gosx.engines.keys())) {
           window.__gosx_dispose_engine(engineID);
         }

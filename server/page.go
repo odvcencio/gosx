@@ -176,6 +176,7 @@ type documentContractAssets struct {
 	Manifest                    bool   `json:"manifest"`
 	RuntimePath                 string `json:"runtimePath,omitempty"`
 	WASMExecPath                string `json:"wasmExecPath,omitempty"`
+	StandardGoWASMExecPath      string `json:"standardGoWasmExecPath,omitempty"`
 	PatchPath                   string `json:"patchPath,omitempty"`
 	BootstrapPath               string `json:"bootstrapPath,omitempty"`
 	BootstrapFeatureIslandsPath string `json:"bootstrapFeatureIslandsPath,omitempty"`
@@ -213,6 +214,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			Manifest:                    doc.Runtime.Manifest,
 			RuntimePath:                 doc.Runtime.RuntimePath,
 			WASMExecPath:                doc.Runtime.WASMExecPath,
+			StandardGoWASMExecPath:      doc.Runtime.StandardGoWASMExecPath,
 			PatchPath:                   doc.Runtime.PatchPath,
 			BootstrapPath:               doc.Runtime.BootstrapPath,
 			BootstrapFeatureIslandsPath: doc.Runtime.BootstrapFeatureIslandsPath,

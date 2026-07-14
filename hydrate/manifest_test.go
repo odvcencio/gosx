@@ -395,3 +395,20 @@ func TestManifestAddEngineWithRequiredCapabilities(t *testing.T) {
 		t.Fatalf("unexpected required capabilities: %#v", got)
 	}
 }
+
+func TestManifestAddEngineRejectsMalformedGoWASMRuntime(t *testing.T) {
+	m := NewManifest()
+	if _, err := m.AddEngineWithRuntimeRequirements(
+		"GoSurface", "surface", "", "go-root", string(engine.RuntimeGoWASM), nil, nil, nil, nil,
+	); err == nil {
+		t.Fatal("expected a Go-WASM engine without a program reference to fail")
+	}
+	if _, err := m.AddEngineWithRuntimeRequirements(
+		"GoSurface", "surface", "/engines/surface.wasm", "go-root", "javascript-eval", nil, nil, nil, nil,
+	); err == nil {
+		t.Fatal("expected an unsupported runtime to fail")
+	}
+	if len(m.Engines) != 0 {
+		t.Fatalf("invalid engines must not reach the manifest: %#v", m.Engines)
+	}
+}
