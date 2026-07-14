@@ -177,3 +177,20 @@ func TestCodeSurfaceDefaults(t *testing.T) {
 		t.Fatalf("code surface must not inherit Markdown toolbar: %#v", ed.Options.Toolbar.Items)
 	}
 }
+
+func TestCodeOptionsRenderTypedRuntimeContract(t *testing.T) {
+	ed := New("code", Options{Surface: SurfaceCode, Code: &CodeOptions{Language: "go", InsertSpaces: true, Gutter: true, ExternalUndo: true}})
+	html := gosx.RenderHTML(ed.Render())
+	for _, want := range []string{
+		`data-editor-language="go"`,
+		`data-code-tab-width="4"`,
+		`data-code-highlight-source="external"`,
+		`data-code-insert-spaces`,
+		`data-code-gutter`,
+		`data-code-external-undo`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("CodeOptions missing %q in %s", want, html)
+		}
+	}
+}

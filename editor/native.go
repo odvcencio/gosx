@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx"
@@ -69,6 +70,21 @@ func (e *Editor) renderNativeForm() gosx.Node {
 		attrs = appendStringAttr(attrs, "data-code-intelligence-grammar", intelligence.GrammarURL)
 		attrs = appendStringAttr(attrs, "data-code-intelligence-highlights", intelligence.HighlightQueryURL)
 		attrs = appendStringAttr(attrs, "data-code-intelligence-tags", intelligence.TagsQueryURL)
+	}
+	if code := e.Options.Code; e.Options.Surface == SurfaceCode && code != nil {
+		attrs = append(attrs,
+			gosx.Attr("data-code-tab-width", strconv.Itoa(code.TabWidth)),
+			gosx.Attr("data-code-highlight-source", code.HighlightSource),
+		)
+		if code.InsertSpaces {
+			attrs = append(attrs, gosx.BoolAttr("data-code-insert-spaces"))
+		}
+		if code.Gutter {
+			attrs = append(attrs, gosx.BoolAttr("data-code-gutter"))
+		}
+		if code.ExternalUndo {
+			attrs = append(attrs, gosx.BoolAttr("data-code-external-undo"))
+		}
 	}
 
 	return gosx.El("form", attrs, gosx.Fragment(children...))

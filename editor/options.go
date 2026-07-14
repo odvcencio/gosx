@@ -181,6 +181,16 @@ type CodeIntelligence struct {
 	TagsQueryURL      string
 }
 
+// CodeOptions configures the additive source-code editing profile.
+type CodeOptions struct {
+	Language        string
+	TabWidth        int
+	InsertSpaces    bool
+	Gutter          bool
+	HighlightSource string
+	ExternalUndo    bool
+}
+
 // DefaultPanels is the standard panel set exposed by the editor shell.
 var DefaultPanels = []Panel{
 	PanelPreview,
@@ -242,6 +252,7 @@ type Options struct {
 	ReadOnly                  bool
 	Collaboration             *Collaboration
 	CodeIntelligence          *CodeIntelligence
+	Code                      *CodeOptions
 }
 
 func (o *Options) defaults() {
@@ -250,9 +261,21 @@ func (o *Options) defaults() {
 	}
 	if o.Language == "" {
 		if o.Surface == SurfaceCode {
-			o.Language = PlainText
+			if o.Code != nil && o.Code.Language != "" {
+				o.Language = Lang(o.Code.Language)
+			} else {
+				o.Language = PlainText
+			}
 		} else {
 			o.Language = MarkdownPP
+		}
+	}
+	if o.Surface == SurfaceCode && o.Code != nil {
+		if o.Code.TabWidth <= 0 {
+			o.Code.TabWidth = 4
+		}
+		if o.Code.HighlightSource == "" {
+			o.Code.HighlightSource = "external"
 		}
 	}
 	if o.Theme == "" {
