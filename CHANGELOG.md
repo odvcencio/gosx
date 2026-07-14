@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.31.8 (2026-07-14)
+
+- Fixed Selena WebGPU water surface draws to use the canonical finite integer
+  vertex count instead of an undefined legacy property.
+- Tightened the browser-free fake GPU harness to enforce WebGPU unsigned-long
+  draw arguments, catching undefined, fractional, negative, and overflowing
+  vertex or instance counts before deployment.
+
 ## v0.31.7 (2026-07-14)
 
 - Fixed the WebGPU water runtime crash by removing a stale single-texture

@@ -10348,9 +10348,9 @@
             }
             renderPass.setBindGroup(0, selenaDraw.bindGroup);
             frameGroupBound = false;
-            renderPass.draw(system.surfaceVertexCount);
+            renderPass.draw(system.vertexCount);
             stats.waterDrawCalls += 1;
-            stats.waterDrawVertices += system.surfaceVertexCount;
+            stats.waterDrawVertices += system.vertexCount;
             stats.waterSurfaceMeshResolution = system.surfaceMeshResolution;
             stats.waterSelenaSurfacePasses += 1;
             if (system.waterSkyCubeLoaded) {
@@ -10362,10 +10362,10 @@
             }
             if (side === "below") {
               stats.waterSurfaceBelowDrawCalls += 1;
-              stats.waterSurfaceBelowDrawVertices += system.surfaceVertexCount;
+              stats.waterSurfaceBelowDrawVertices += system.vertexCount;
             } else {
               stats.waterSurfaceAboveDrawCalls += 1;
-              stats.waterSurfaceAboveDrawVertices += system.surfaceVertexCount;
+              stats.waterSurfaceAboveDrawVertices += system.vertexCount;
             }
             continue;
           }
