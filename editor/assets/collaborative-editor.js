@@ -60,11 +60,17 @@
           status.textContent = "Collaborative · resynchronizing";
           return;
         }
+        if (message.event === "state") applyState(data);
         if (message.event === cfg.collaborationUpdateEvent) applySnapshot(data);
         if (message.event === cfg.collaborationCursorEvent) applyCursor(data || {});
 		if (message.event === "cursor:leave") removeCursor(data || {});
       });
       socket.addEventListener("close", () => { status.textContent = "Collaborative · reconnecting"; clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, reconnect || 250); reconnect = Math.min((reconnect || 250) * 2, 8000); });
+    };
+    const applyState = state => {
+      if (!state || !Array.isArray(state.cells)) return;
+      const snapshot = state.cells.find(item => item && item.id === cfg.collaborationCell);
+      if (snapshot) applySnapshot(snapshot);
     };
     const applySnapshot = snapshot => {
       if (!snapshot || snapshot.id !== cfg.collaborationCell || Number(snapshot.revision || 0) < revision) return;

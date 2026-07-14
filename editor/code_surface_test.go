@@ -64,7 +64,7 @@ func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(asset)
-	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false", "grant.expiresAt", "capability rotation", "minimalSplice", "encodeSplice", "socket.send(encodeSplice(splice))", `message.event === "edit:reject"`, "startAnchor", "endAnchor", "isElementAnchor", "gosx:remote-cursor", "gosx:remote-cursor-leave"} {
+	for _, want := range []string{"localDirty = true", "if (localDirty) return", "localDirty = false", "grant.expiresAt", "capability rotation", "minimalSplice", "encodeSplice", "socket.send(encodeSplice(splice))", `message.event === "edit:reject"`, `message.event === "state"`, "applyState", "state.cells.find", "startAnchor", "endAnchor", "isElementAnchor", "gosx:remote-cursor", "gosx:remote-cursor-leave"} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("collaboration runtime missing %q", want)
 		}
