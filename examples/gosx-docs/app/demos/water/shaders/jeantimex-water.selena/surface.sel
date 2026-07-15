@@ -27,11 +27,11 @@
 //    comparisons are scalar-only. The safe-ray / safe-divide guards are done
 //    component-wise (per-axis ternary, then rebuild the vector).
 //
-//  * Texture sampling: selena `sample()` emits WGSL textureSample (implicit
-//    LOD), which naga only accepts in UNIFORM control flow. The raw shader uses
-//    textureSampleLevel inside conditionals; here every tile/caustic/sky sample
-//    is HOISTED to a top-level `let` and the sampled value is then selected
-//    with arithmetic. Nothing samples inside an if/for.
+//  * Texture sampling: general wall/sky samples use `sample()` in uniform
+//    control flow. Conditional analytic-object caustics and projected mesh
+//    targets use `sampleLevel(..., 0.0)`, which Selena lowers to
+//    textureSampleLevel and therefore permits hit/subtype branches to avoid
+//    fetching work that the active object cannot use.
 //
 //  * fn = expression-only (let-chain + one return). The analytic sphere / box /
 //    pool intersections and per-hit colour math are pure expressions. Complex
@@ -222,7 +222,7 @@ fn projectMeshTexel(tex: texture2d, m: mat4, point: vec3) -> vec4 {
     let ndc     = clip.xyz / safeW
     let uv      = clamp(ndc.xy * vec2f(0.5, -0.5) + vec2f(0.5, 0.5), vec2f(0.0, 0.0), vec2f(1.0, 1.0))
     let inFront = step(0.0001, clip.w)
-    return sample(tex, uv) * inFront
+    return sampleLevel(tex, uv, 0.0) * inFront
 }
 
 material WaterSurface {
@@ -315,20 +315,28 @@ material WaterSurface {
         let hl        = max(poolLength, 0.001)
         let ph        = max(poolHeight, 0.001)
 
-        let rfSimple = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
-        let rfObjDist  = objActive && objectKind < 2.5 ? rfSimple.x : 1000000.0
-        let rfObjKind  = rfSimple.y
-        let rfHitObj   = rfObjDist < 1000000.0
-        let rfObjP     = wp + refractD * rfObjDist
-
-        let rfSphereN = normalize(rfObjP - objC)
-        let rfBoxN    = boxNormal(rfObjP, objC, objH)
-        let rfObjN = rfObjKind < 1.5 ? rfSphereN : rfBoxN
-
-        let rfObjWaterH   = stateAt(pointToWaterUV(rfObjP, poolWidth, poolLength)).x
-        let rfObjSub      = rfObjP.y < rfObjWaterH ? 1.0 : 0.0
-        let rfObjCaustic  = sample(causticTexture, objectCausticUV(rfObjP, ldir, poolWidth, poolLength)).x
-        let rfObjColor    = objectColorSB(rfObjN, rfObjKind, ldir, rfObjCaustic, rfObjSub, opticsCaustic)
+        // Analytic sphere/box shading is irrelevant for projected meshes. Keep
+        // its ray test, state lookup, normal work, and caustic fetch out of the
+        // duck/torus fragment path entirely; before this branch those values
+        // were evaluated across every water pixel and then selected away.
+        var rfHitObj  = 0.0
+        var rfObjColor = vec3f(0.0, 0.0, 0.0)
+        if (objActive && objectKind < 2.5) {
+            let rfSimple  = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
+            let rfObjDist = rfSimple.x
+            let rfObjKind = rfSimple.y
+            if (rfObjDist < 1000000.0) {
+                let rfObjP        = wp + refractD * rfObjDist
+                let rfSphereN     = normalize(rfObjP - objC)
+                let rfBoxN        = boxNormal(rfObjP, objC, objH)
+                let rfObjN        = rfObjKind < 1.5 ? rfSphereN : rfBoxN
+                let rfObjWaterH   = stateAt(pointToWaterUV(rfObjP, poolWidth, poolLength)).x
+                let rfObjSub      = rfObjP.y < rfObjWaterH ? 1.0 : 0.0
+                let rfObjCaustic  = sampleLevel(causticTexture, objectCausticUV(rfObjP, ldir, poolWidth, poolLength), 0.0).x
+                rfObjColor = objectColorSB(rfObjN, rfObjKind, ldir, rfObjCaustic, rfObjSub, opticsCaustic)
+                rfHitObj = 1.0
+            }
+        }
 
         let rfPool        = poolBox(wp, refractD, hw, ph, hl)
         let rfWallP       = wp + refractD * max(rfPool.y, 0.0)
@@ -341,19 +349,25 @@ material WaterSurface {
 
         let rfSky      = sampleCube(sky, refractD).rgb + sunGlint(refractD, ldir)
         let rfHitWall  = refractD.y < 0.0 || rfWallP.y < 2.0 / 12.0
-        let rfBase     = rfHitObj ? rfObjColor : rfHitWall ? rfWallColor : rfSky
+        let rfBase     = rfHitObj > 0.5 ? rfObjColor : rfHitWall ? rfWallColor : rfSky
         let refracted  = refractD.y < 0.0 ? rfBase * waterColor : rfBase
 
-        let rlSimple      = objectHitSimple(wp, reflectD, objectKind, objC, objR, objH)
-        let rlObjDist     = objActive ? rlSimple.x : 1000000.0
-        let rlObjKind     = rlSimple.y
-        let rlHitObj      = rlObjDist < 1000000.0
-        let rlObjP        = wp + reflectD * rlObjDist
-        let rlObjN        = rlObjKind < 1.5 ? normalize(rlObjP - objC) : boxNormal(rlObjP, objC, objH)
-        let rlObjWaterH   = stateAt(pointToWaterUV(rlObjP, poolWidth, poolLength)).x
-        let rlObjSub      = rlObjP.y < rlObjWaterH ? 1.0 : 0.0
-        let rlObjCaustic  = sample(causticTexture, objectCausticUV(rlObjP, ldir, poolWidth, poolLength)).x
-        let rlObjColor    = objectColorSB(rlObjN, rlObjKind, ldir, rlObjCaustic, rlObjSub, opticsCaustic)
+        var rlHitObj   = 0.0
+        var rlObjColor = vec3f(0.0, 0.0, 0.0)
+        if (objActive && objectKind < 2.5) {
+            let rlSimple  = objectHitSimple(wp, reflectD, objectKind, objC, objR, objH)
+            let rlObjDist = rlSimple.x
+            let rlObjKind = rlSimple.y
+            if (rlObjDist < 1000000.0) {
+                let rlObjP        = wp + reflectD * rlObjDist
+                let rlObjN        = rlObjKind < 1.5 ? normalize(rlObjP - objC) : boxNormal(rlObjP, objC, objH)
+                let rlObjWaterH   = stateAt(pointToWaterUV(rlObjP, poolWidth, poolLength)).x
+                let rlObjSub      = rlObjP.y < rlObjWaterH ? 1.0 : 0.0
+                let rlObjCaustic  = sampleLevel(causticTexture, objectCausticUV(rlObjP, ldir, poolWidth, poolLength), 0.0).x
+                rlObjColor = objectColorSB(rlObjN, rlObjKind, ldir, rlObjCaustic, rlObjSub, opticsCaustic)
+                rlHitObj = 1.0
+            }
+        }
 
         let rlPool        = poolBox(wp, reflectD, hw, ph, hl)
         let rlWallP       = wp + reflectD * max(rlPool.y, 0.0)
@@ -366,35 +380,37 @@ material WaterSurface {
 
         let rlSky      = sampleCube(sky, reflectD).rgb + sunGlint(reflectD, ldir)
         let rlHitWall  = reflectD.y < 0.0 || rlWallP.y < 2.0 / 12.0
-        let rlBase     = rlHitObj ? rlObjColor : rlHitWall ? rlWallColor : rlSky
+        let rlBase     = rlHitObj > 0.5 ? rlObjColor : rlHitWall ? rlWallColor : rlSky
         let reflected  = reflectD.y < 0.0 ? rlBase * waterColor : rlBase
 
-        // Projected real-mesh object textures (A2-refine-2). For mesh objects
-        // (the glTF duck / torus-knot) the analytic raytrace above can't see the
-        // true geometry, so we blend in the offscreen mesh targets rendered this
-        // frame. REFRACTION follows the refracted ray to the object's bounds
-        // sphere and samples the refraction target there (the duck seen THROUGH
-        // the water). REFLECTION samples the mirror-ray bounds hit + the clipped
-        // (above-water) silhouette projected at the surface point. Each blend is
-        // gated by the target's alpha (mesh coverage) * meshTextureEnable, so the
-        // analytic path is untouched when no mesh object is active.
-        let meshBoundR    = max(objR, 0.31)
-        let meshRefrHit   = raySphereBounds(wp, refractD, objC, meshBoundR)
-        let meshRefrP     = wp + refractD * (meshRefrHit < 100000.0 ? meshRefrHit : 0.0)
-        let meshRefrTexel = projectMeshTexel(objectRefractionTex, refractionMatrix, meshRefrP)
-        let meshRefrMask  = (meshRefrHit < 100000.0 ? meshTextureEnable : 0.0) * meshRefrTexel.a
-
-        let meshReflHit   = raySphereBounds(wp, reflectD, objC, meshBoundR)
-        let meshReflP     = wp + reflectD * (meshReflHit < 100000.0 ? meshReflHit : 0.0)
-        let meshReflTexel = projectMeshTexel(objectReflectionTex, reflectionMatrix, meshReflP)
-        let meshReflMask  = (meshReflHit < 100000.0 ? meshTextureEnable : 0.0) * meshReflTexel.a
-
-        let meshClipTexel = projectMeshTexel(objectClippedReflectionTex, reflectionMatrix, wp)
-        let meshClipMask  = meshTextureEnable * meshClipTexel.a
-
-        let refractedM = mix(refracted, meshRefrTexel.rgb, clamp(meshRefrMask, 0.0, 1.0))
-        let reflected1 = mix(reflected, meshReflTexel.rgb, clamp(meshReflMask, 0.0, 1.0))
-        let reflectedM = mix(reflected1, meshClipTexel.rgb, clamp(meshClipMask, 0.0, 1.0))
+        // Projected real-mesh optics follow upstream's subtype-specific path.
+        // Both torus and duck sample refraction only when the ray intersects
+        // the object's bounds. Torus then samples its reflected-camera target;
+        // glTF meshes such as the duck sample only the clipped reflection at
+        // the surface point. This avoids the previous three unconditional RTT
+        // fetches across the entire water surface.
+        var refractedM = refracted
+        var reflectedM = reflected
+        if (meshTextureEnable > 0.0 && objActive) {
+            let meshBoundR  = max(objR, 0.31)
+            let meshRefrHit = raySphereBounds(wp, refractD, objC, meshBoundR)
+            if (meshRefrHit < 100000.0) {
+                let meshRefrP     = wp + refractD * meshRefrHit
+                let meshRefrTexel = projectMeshTexel(objectRefractionTex, refractionMatrix, meshRefrP)
+                refractedM = mix(refractedM, meshRefrTexel.rgb, clamp(meshRefrTexel.a * meshTextureEnable, 0.0, 1.0))
+            }
+            if (objectSubtype > 0.5 && objectSubtype < 1.5) {
+                let meshReflHit = raySphereBounds(wp, reflectD, objC, meshBoundR)
+                if (meshReflHit < 100000.0) {
+                    let meshReflP     = wp + reflectD * meshReflHit
+                    let meshReflTexel = projectMeshTexel(objectReflectionTex, reflectionMatrix, meshReflP)
+                    reflectedM = mix(reflectedM, meshReflTexel.rgb, clamp(meshReflTexel.a * meshTextureEnable, 0.0, 1.0))
+                }
+            } else {
+                let meshClipTexel = projectMeshTexel(objectClippedReflectionTex, reflectionMatrix, wp)
+                reflectedM = mix(reflectedM, meshClipTexel.rgb, clamp(meshClipTexel.a * meshTextureEnable, 0.0, 1.0))
+            }
+        }
 
         return vec4f(mix(refractedM, reflectedM, fresnel), 1.0)
     }

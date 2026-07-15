@@ -377,20 +377,29 @@ func TestWaterRendererLifecycle(t *testing.T) {
 
 	isDuckAsset := func(url string) bool { return duckAssetRe.MatchString(url) }
 	isGLTFFeature := func(url string) bool { return gltfFeatureRe.MatchString(url) }
-	if page.anyRequest(isDuckAsset) {
-		t.Fatal("Duck assets loaded before Duck selection")
+	matchingRequests := func(match func(string) bool) []string {
+		var matched []string
+		for _, url := range page.Requests() {
+			if match(url) {
+				matched = append(matched, url)
+			}
+		}
+		return matched
 	}
-	if page.anyRequest(isGLTFFeature) {
-		t.Fatal("glTF feature chunk loaded before Duck selection")
+	if requested := matchingRequests(isDuckAsset); len(requested) > 0 {
+		t.Fatalf("Duck assets loaded before Duck selection: %v", requested)
+	}
+	if requested := matchingRequests(isGLTFFeature); len(requested) > 0 {
+		t.Fatalf("glTF feature chunk loaded before Duck selection: %v", requested)
 	}
 
 	setControlValue(t, page, `select[name="object"]`, "TorusKnot")
 	waitActiveObject("TorusKnot")
-	if page.anyRequest(isDuckAsset) {
-		t.Fatal("TorusKnot selection loaded Duck assets")
+	if requested := matchingRequests(isDuckAsset); len(requested) > 0 {
+		t.Fatalf("TorusKnot selection loaded Duck assets: %v", requested)
 	}
-	if page.anyRequest(isGLTFFeature) {
-		t.Fatal("TorusKnot selection loaded the glTF feature chunk")
+	if requested := matchingRequests(isGLTFFeature); len(requested) > 0 {
+		t.Fatalf("TorusKnot selection loaded the glTF feature chunk: %v", requested)
 	}
 
 	setControlValue(t, page, `select[name="object"]`, "Rubber Duck")

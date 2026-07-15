@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.31.15 (2026-07-14)
+
+- Restored one inward-facing open-vessel winding for box and rounded water
+  pools while retaining depth-writing surfaces, hiding the exterior shell
+  without bringing back overlapping water at the rim.
+- Removed unused analytic sphere/box shading and unconditional projected
+  texture samples from the Selena duck path; mesh optics now fetch only on
+  ray hits and select the two targets required by the active mesh subtype.
+- Made moving duck targets alternate independently from invalidation and obey
+  adaptive retained-pass cadence, so balanced and survival tiers issue at
+  most one projected target every two or three eligible frames.
+- Expanded `?diag=1` with live duck RTT size, pass, draw, Selena, fallback,
+  and cadence evidence for browser-side performance verification.
+- Restored the duck's lazy-load boundary by removing eager glTF, binary, and
+  texture preloads; those assets now transfer only after Duck selection.
+
 ## v0.31.14 (2026-07-14)
 
 - Made adaptive Scene3D quality fall back to display-frame timing when a

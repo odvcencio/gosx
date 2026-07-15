@@ -8822,7 +8822,10 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.match(webgpu, /system\.objectViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/);
   assert.match(webgpu, /system\.objectReflectionViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/);
   assert.match(webgpu, /var viewMatrix = system\.objectViewProjectionReady \? system\.objectViewProjectionMatrix : null/);
-  assert.match(webgpu, /system\.objectReflectionViewProjectionReady = false/);
+  assert.doesNotMatch(webgpu, /system\.objectViewProjectionReady = false;[\s\S]*system\.objectReflectionViewProjectionReady = false/,
+    "retained duck targets must keep the projection matrices they were rendered with across cadence skips");
+  assert.match(webgpu, /if \(passSlot === 0\) \{[\s\S]*system\.objectViewProjectionMatrix\.set\(scratchSelenaViewProjection\)[\s\S]*\} else \{[\s\S]*system\.objectReflectionViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/,
+    "each alternating target must update only its matching retained projection matrix");
   assert.match(webgpu, /function getWaterRenderPipeline\(system, surfaceSide, forceBuiltin\)/);
   assert.doesNotMatch(webgpu, /var entry = forceBuiltin \? \{\} : \(system && system\.entry \|\| \{\}\)/);
   assert.doesNotMatch(webgpu, /var vertexSource = forceBuiltin \? "" : sceneWaterAuthoredSurfaceVertexSource\(entry\)/);
@@ -8897,8 +8900,10 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /label: "gosx-water-pool-pass"/);
   assert.match(webgpu, /label: "gosx-water-pool-pass"[\s\S]*?primitive: \{ topology: "triangle-list", cullMode: "back" \}/);
   assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ cullMode: "back" \}\)/);
-  assert.match(webgpu, /corner == 1u \|\| corner == 2u \|\| corner == 4u/,
-    "box pool must retain upstream outward winding so the near exterior wall remains visible");
+  assert.match(webgpu, /corner == 1u \|\| corner == 2u \|\| corner == 5u/,
+    "box pool must face inward so back-face culling hides the exterior shell");
+  assert.match(webgpu, /corner == 1u \|\| corner == 4u \|\| corner == 5u/,
+    "box pool floor and walls must share the open-vessel winding contract");
   assert.match(webgpu, /const WATER_POOL_ROUNDED_SEGMENTS: u32 = 44u/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryPoint/);
   assert.match(webgpu, /fn waterPoolRoundedBoundaryNormal/);
@@ -21120,6 +21125,32 @@ const waterObjectShadowSelenaFixture = waterSelenaFixture("object-shadow");
 const waterCompoundShadowSelenaFixture = waterSelenaFixture("compound-shadow");
 const waterObjectMeshShadowSelenaFixture = waterSelenaFixture("object-mesh-shadow");
 
+test("Selena water surface samples only the projected texture required by each mesh subtype", () => {
+  const wgsl = waterSurfaceSelenaFixture.wgsl;
+  assert.equal((wgsl.match(/if \(\(objActive && \(u\.objectKind < 2\.5\)\)\) \{/g) || []).length, 2,
+    "analytic refraction and reflection work must both be excluded from the duck/torus path");
+  assert.equal((wgsl.match(/textureSampleLevel\(causticTexture/g) || []).length, 2,
+    "analytic object caustics must remain hit-conditional explicit-LOD samples");
+  assert.doesNotMatch(wgsl, /textureSample\(object(?:Refraction|Reflection|ClippedReflection)Tex/,
+    "projected mesh targets must use explicit LOD so Selena may keep them in nonuniform hit/subtype branches");
+  assert.match(wgsl, /if \(\(meshRefrHit < 100000\.0\)\) \{[\s\S]*?textureSampleLevel\(objectRefractionTex/,
+    "refraction target fetch must be guarded by the mesh bounds hit");
+  assert.match(wgsl, /if \(\(\(u\.objectSubtype > 0\.5\) && \(u\.objectSubtype < 1\.5\)\)\) \{[\s\S]*?textureSampleLevel\(objectReflectionTex/,
+    "torus reflection target fetch must live only in the torus subtype branch");
+  assert.match(wgsl, /\} else \{[\s\S]*?textureSampleLevel\(objectClippedReflectionTex/,
+    "duck/glTF clipped-reflection fetch must live only in the non-torus branch");
+  assert.equal((wgsl.match(/textureSampleLevel\(object(?:Refraction|Reflection|ClippedReflection)Tex/g) || []).length, 3,
+    "compiled surface must contain exactly one guarded fetch for each projected target");
+});
+
+test("compiled Selena pool keeps box and rounded geometry on the same open-vessel winding", () => {
+  const wgsl = waterPoolSelenaFixture.wgsl;
+  assert.match(wgsl, /let uf = select\(select\(select\(0\.0, 1\.0, \(cu == 5\.0\)\), 1\.0, \(cu == 2\.0\)\), 1\.0, \(cu == 1\.0\)\)/,
+    "compiled box U corners must reverse the old exterior-facing triangle order");
+  assert.match(wgsl, /let vf = select\(select\(select\(0\.0, 1\.0, \(cu == 5\.0\)\), 1\.0, \(cu == 4\.0\)\), 1\.0, \(cu == 1\.0\)\)/,
+    "compiled box V corners must make the floor face up and walls face inward");
+});
+
 // waterSelenaFixture also loads the five feedback-COMPUTE kernel fixtures
 // (seed/drop/displacement/simulation/normal), generated the same way via
 // `selena.Compile(<file>, {Targets:[selena.TargetWGSL]})` -- the exact call
@@ -21897,6 +21928,124 @@ async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
   }
   return { harness, deltas };
 }
+
+test("[perf-shape] moving duck alternates only its two required RTT targets", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    verboseTelemetry: false,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, true, 192);
+  state.waterSystems[0].seedDrops = 0;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const objectTargetLabels = [];
+  // The first frame hydrates the water resources; the following six frames
+  // exercise the continuously-invalidated scheduler.
+  for (let frame = 0; frame < 7; frame += 1) {
+    // Camera motion changes the RTT signature every frame, reproducing the
+    // continuously-moving/gravity duck failure mode without relying on a
+    // browser or asynchronous model animation.
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: frame * 0.01, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
+    );
+    const passStart = harness.fake.state.renderPasses.length;
+    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+      nowMS: frame * 17,
+      displayDeltaMS: frame === 0 ? 0 : 17,
+      active: true,
+      qualityTier: "balanced",
+      qualityRevision: 0,
+    });
+    for (const pass of harness.fake.state.renderPasses.slice(passStart)) {
+      const label = pass && pass.descriptor && pass.descriptor.label;
+      if (label && String(label).indexOf("gosx-water-object-mesh-") === 0 && String(label).indexOf("shadow") < 0) {
+        objectTargetLabels.push(label);
+      }
+    }
+  }
+
+  assert.deepEqual(objectTargetLabels, [
+    "gosx-water-object-mesh-refraction-pass",
+    "gosx-water-object-mesh-clipped-reflection-pass",
+    "gosx-water-object-mesh-refraction-pass",
+    "gosx-water-object-mesh-clipped-reflection-pass",
+    "gosx-water-object-mesh-refraction-pass",
+    "gosx-water-object-mesh-clipped-reflection-pass",
+  ], "a changing signature must not reset the duck to refraction or render its unused full-reflection target");
+});
+
+test("[perf-shape] adaptive survival quality cadences moving duck RTT work", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, true, 192);
+  state.waterSystems[0].seedDrops = 0;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  const labels = [];
+  const labelFrames = [];
+  const refractionMatrices = [];
+  const reflectionMatrices = [];
+  const survival = {
+    tier: "survival",
+    dprCap: 1,
+    surfaceResolution: 96,
+    causticsResolution: 256,
+    objectShadowResolution: 256,
+    objectTextureMaxSide: 256,
+    objectTexturePixelBudget: 196608,
+    expensivePassCadence: 3,
+  };
+
+  for (let frame = 0; frame < 10; frame += 1) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: frame * 0.01, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
+    );
+    const start = harness.fake.state.renderPasses.length;
+    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+      nowMS: frame * 17,
+      displayDeltaMS: frame === 0 ? 0 : 17,
+      active: true,
+      qualityEnabled: true,
+      qualityRevision: 1,
+      qualityProfile: survival,
+    });
+    const surfacePipeline = harness.fake.state.renderPipelines.find(
+      (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterSurface-") >= 0 && String(p.desc.label).indexOf("WaterSurfaceBelow") < 0,
+    );
+    assert.ok(surfacePipeline, "expected the Selena surface pipeline by frame " + frame);
+    const surfaceBGL = surfacePipeline.desc.layout.desc.bindGroupLayouts[0];
+    const surfaceBindGroup = harness.fake.state.bindGroups.slice().reverse().find((bg) => bg.desc && bg.desc.layout === surfaceBGL);
+    assert.ok(surfaceBindGroup, "expected the Selena surface bind group by frame " + frame);
+    const surfaceFloats = waterSelenaLastUniformWrite(harness.fake, surfaceBindGroup);
+    refractionMatrices.push(waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "refractionMatrix", 16));
+    reflectionMatrices.push(waterSelenaFieldFloats(waterSurfaceSelenaFixture.layout, surfaceFloats, "reflectionMatrix", 16));
+    for (const pass of harness.fake.state.renderPasses.slice(start)) {
+      const label = pass && pass.descriptor && pass.descriptor.label;
+      if (label === "gosx-water-object-mesh-refraction-pass" || label === "gosx-water-object-mesh-clipped-reflection-pass") {
+        labels.push(label);
+        labelFrames.push(frame);
+      }
+    }
+  }
+
+  assert.deepEqual(labels, [
+    "gosx-water-object-mesh-refraction-pass",
+    "gosx-water-object-mesh-clipped-reflection-pass",
+    "gosx-water-object-mesh-refraction-pass",
+  ], "survival cadence=3 must retain only one duck RTT every third eligible frame while preserving target alternation");
+  assert.deepEqual(labelFrames, [1, 4, 7], "RTT cadence must be independent from the every-frame moving-camera signature");
+  assert.deepEqual(refractionMatrices[2], refractionMatrices[1], "a skipped frame must retain the matrix paired with the refraction texture");
+  assert.deepEqual(refractionMatrices[4], refractionMatrices[1], "rendering clipped reflection must not overwrite the retained refraction matrix");
+  assert.deepEqual(reflectionMatrices[5], reflectionMatrices[4], "a skipped frame must retain the matrix paired with the clipped-reflection texture");
+  assert.deepEqual(reflectionMatrices[6], reflectionMatrices[4], "all cadence skips must preserve the retained clipped-reflection matrix");
+});
 
 test("Scene3D WebGPU submits only the water surface side facing the camera", async () => {
   const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });

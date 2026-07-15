@@ -39,11 +39,10 @@
       ]
     },
     "water-ci": {
-      "description": "Water route under CI software rasterization. Gates load and payload stability, not frame performance; real-GPU cadence is certified separately.",
+      "description": "Water route under CI software rasterization. Gates load, payload, and total blocking time; long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary. Real-GPU cadence is certified separately.",
       "assertions": [
         "network_kb <= 1600",
         "lcp <= 2000",
-        "long_tasks <= 20",
         "tbt <= 18000"
       ]
     }

@@ -52,19 +52,4 @@ func addWaterDemoPreloadHead(ctx *route.RouteContext) {
 			gosx.Attr("crossorigin", "anonymous"),
 		)))
 	}
-	for _, asset := range []struct {
-		href string
-		as   string
-	}{
-		{href: "/water/models/duck/Duck.gltf", as: "fetch"},
-		{href: "/water/models/duck/Duck0.bin", as: "fetch"},
-		{href: "/water/models/duck/DuckCM.png", as: "image"},
-	} {
-		ctx.AddHead(gosx.El("link", gosx.Attrs(
-			gosx.Attr("rel", "preload"),
-			gosx.Attr("as", asset.as),
-			gosx.Attr("href", asset.href),
-			gosx.Attr("crossorigin", "anonymous"),
-		)))
-	}
 }

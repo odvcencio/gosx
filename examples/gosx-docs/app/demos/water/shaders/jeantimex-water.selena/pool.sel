@@ -211,12 +211,12 @@ material WaterPool {
                 faceOut = 5.0
             }
         } else {
-            // --- box: 5 faces x 6 vertices, upstream outward winding ---
+            // --- box: 5 faces x 6 vertices, wound toward the pool interior ---
             let fv    = floor(fi / 6.0)
             let faceF = min(fv, 4.0)
             let cu    = fi - fv * 6.0
-            let uf    = cu == 1.0 ? 1.0 : cu == 2.0 ? 1.0 : cu == 4.0 ? 1.0 : 0.0
-            let vf    = cu == 2.0 ? 1.0 : cu == 4.0 ? 1.0 : cu == 5.0 ? 1.0 : 0.0
+            let uf    = cu == 1.0 ? 1.0 : cu == 2.0 ? 1.0 : cu == 5.0 ? 1.0 : 0.0
+            let vf    = cu == 1.0 ? 1.0 : cu == 4.0 ? 1.0 : cu == 5.0 ? 1.0 : 0.0
             wx = faceF == 2.0 ? mix(hw, -hw, uf) : faceF == 3.0 ? hw : faceF == 4.0 ? -hw : mix(-hw, hw, uf)
             wy = faceF == 0.0 ? flY : mix(flY, rimY, vf)
             wz = faceF == 1.0 ? hl : faceF == 2.0 ? -hl : faceF == 3.0 ? mix(hl, -hl, uf) : faceF == 4.0 ? mix(-hl, hl, uf) : mix(-hl, hl, vf)
