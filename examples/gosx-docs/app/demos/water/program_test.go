@@ -31,14 +31,13 @@ func TestWaterDemoPreloadHead(t *testing.T) {
 			t.Fatalf("preload head missing %s in %s", want, head)
 		}
 	}
-	for href, as := range map[string]string{
-		"/water/models/duck/Duck.gltf":  "fetch",
-		"/water/models/duck/Duck0.bin":  "fetch",
-		"/water/models/duck/DuckCM.png": "image",
+	for _, href := range []string{
+		"/water/models/duck/Duck.gltf",
+		"/water/models/duck/Duck0.bin",
+		"/water/models/duck/DuckCM.png",
 	} {
-		want := `rel="preload" as="` + as + `" href="` + href + `" crossorigin="anonymous"`
-		if !strings.Contains(head, want) {
-			t.Fatalf("duck preload head missing %s in %s", want, head)
+		if strings.Contains(head, href) {
+			t.Fatalf("duck asset %s must remain lazy until Duck selection: %s", href, head)
 		}
 	}
 }

@@ -15,6 +15,8 @@
   most one projected target every two or three eligible frames.
 - Expanded `?diag=1` with live duck RTT size, pass, draw, Selena, fallback,
   and cadence evidence for browser-side performance verification.
+- Restored the duck's lazy-load boundary by removing eager glTF, binary, and
+  texture preloads; those assets now transfer only after Duck selection.
 
 ## v0.31.14 (2026-07-14)
 
