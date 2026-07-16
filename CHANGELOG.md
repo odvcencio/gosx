@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v0.31.18 (2026-07-16)
+
+- Added leaf (non-hierarchical) `Scale` to `scene.Mesh`: lowered as
+  `ObjectIR.scaleX/Y/Z`, honored by the JS renderers (which already applied
+  object scale), the native/wasm vertex path (with inverse-scale renormalized
+  normals), CPU raycasting, and the strict IR schema. The zero value means
+  unit scale, so existing scenes are byte-identical. Group hierarchical scale
+  remains deliberately unsupported (worldTransform stays TRS-without-S).
+- Made the native/headless path orthographic-aware: `engine.RenderCamera`
+  gains ortho projection bounds (`left/right/top/bottom/zoom`) populated from
+  authored orthographic cameras, and GPU pick rays use a parallel-ray
+  orthographic branch instead of the perspective-only math.
+
 ## v0.31.17 (2026-07-16)
 
 - Made TransformControls gizmos interactive: a pointer drag near an active

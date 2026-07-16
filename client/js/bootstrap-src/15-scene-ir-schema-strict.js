@@ -39,6 +39,7 @@
         checkSceneStrictID(diagnostics, seenIDs, knownIDs, object && object.id, path + ".id", strict || !!(object && object.pickable));
         validateSceneStrictPrimitive(diagnostics, object || {}, path);
         validateSceneStrictMaterialScalars(diagnostics, object || {}, path);
+        validateSceneStrictFiniteScalars(diagnostics, object || {}, path, ["scaleX", "scaleY", "scaleZ"], "scene.objects.non_finite", "Object scale scalar must be finite", object && object.id);
         validateSceneStrictLiveFields(diagnostics, object && object.live, path, object && object.id);
       });
       models.forEach(function(model, index) {

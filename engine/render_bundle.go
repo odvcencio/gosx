@@ -90,6 +90,12 @@ type RenderCamera struct {
 	FOV       float64 `json:"fov,omitempty"`
 	Near      float64 `json:"near,omitempty"`
 	Far       float64 `json:"far,omitempty"`
+	// Orthographic projection bounds; meaningful when Mode is "orthographic".
+	Left   float64 `json:"left,omitempty"`
+	Right  float64 `json:"right,omitempty"`
+	Top    float64 `json:"top,omitempty"`
+	Bottom float64 `json:"bottom,omitempty"`
+	Zoom   float64 `json:"zoom,omitempty"`
 }
 
 // RenderLight is a resolved scene light record.

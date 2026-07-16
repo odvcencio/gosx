@@ -249,6 +249,9 @@ type ObjectIR struct {
 	RotationX      float64        `json:"rotationX,omitempty"`
 	RotationY      float64        `json:"rotationY,omitempty"`
 	RotationZ      float64        `json:"rotationZ,omitempty"`
+	ScaleX         float64        `json:"scaleX,omitempty"`
+	ScaleY         float64        `json:"scaleY,omitempty"`
+	ScaleZ         float64        `json:"scaleZ,omitempty"`
 	SpinX          float64        `json:"spinX,omitempty"`
 	SpinY          float64        `json:"spinY,omitempty"`
 	SpinZ          float64        `json:"spinZ,omitempty"`
@@ -1466,6 +1469,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "rotationX", item.RotationX)
 	setNumeric(record, "rotationY", item.RotationY)
 	setNumeric(record, "rotationZ", item.RotationZ)
+	setNumeric(record, "scaleX", item.ScaleX)
+	setNumeric(record, "scaleY", item.ScaleY)
+	setNumeric(record, "scaleZ", item.ScaleZ)
 	setNumeric(record, "spinX", item.SpinX)
 	setNumeric(record, "spinY", item.SpinY)
 	setNumeric(record, "spinZ", item.SpinZ)

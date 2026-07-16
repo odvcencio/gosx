@@ -300,6 +300,10 @@ type Mesh struct {
 	Material Material
 	Position Vector3
 	Rotation Euler
+	// Scale is a leaf (non-hierarchical) scale applied to this mesh's own
+	// geometry. The zero value means unit scale so existing scenes are
+	// unaffected. Group transforms deliberately remain scale-free.
+	Scale    Vector3
 	Pickable *bool
 	Visible  *bool
 	Selected bool
@@ -2644,6 +2648,11 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.RotationX = rotation.X
 	record.RotationY = rotation.Y
 	record.RotationZ = rotation.Z
+	if mesh.Scale != (Vector3{}) && mesh.Scale != (Vector3{X: 1, Y: 1, Z: 1}) {
+		record.ScaleX = mesh.Scale.X
+		record.ScaleY = mesh.Scale.Y
+		record.ScaleZ = mesh.Scale.Z
+	}
 	record.SpinX = mesh.Spin.X
 	record.SpinY = mesh.Spin.Y
 	record.SpinZ = mesh.Spin.Z

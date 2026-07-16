@@ -163,7 +163,7 @@ func raycastMesh(mesh Mesh, parent worldTransform, ray Ray, opts RaycastOptions,
 		return
 	}
 	trace.PrimitivesTested++
-	if hit, ok := raycastTransformedGeometry(mesh.Geometry, world, sceneUnitScale(), ray); ok {
+	if hit, ok := raycastTransformedGeometry(mesh.Geometry, world, meshScaleOrUnit(mesh.Scale), ray); ok {
 		hit.ID = strings.TrimSpace(mesh.ID)
 		hit.Pickable = pickable
 		appendTraceHit(trace, hit, opts)
@@ -503,6 +503,15 @@ func normalizeVector(value Vector3) Vector3 {
 }
 
 func sceneUnitScale() Vector3 { return Vector3{X: 1, Y: 1, Z: 1} }
+
+// meshScaleOrUnit treats the Mesh.Scale zero value as unit scale so scenes
+// authored before leaf scale existed keep their behavior.
+func meshScaleOrUnit(scale Vector3) Vector3 {
+	if scale == (Vector3{}) {
+		return sceneUnitScale()
+	}
+	return scale
+}
 
 func sanitizedScale(scale Vector3) Vector3 {
 	if scale.X == 0 {

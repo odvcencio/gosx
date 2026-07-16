@@ -515,6 +515,30 @@ func enrichSurfacePickTargetsWithRay(targets map[uint32]PickResult, b engine.Ren
 }
 
 func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay {
+	nxNorm := (float32(x)+0.5)/float32(max(1, width))*2 - 1
+	nyNorm := 1 - (float32(y)+0.5)/float32(max(1, height))*2
+	if cam.Mode == "orthographic" {
+		zoom := float32(cam.Zoom)
+		if zoom <= 0 {
+			zoom = 1
+		}
+		halfWidth := float32(cam.Right-cam.Left) / 2 / zoom
+		halfHeight := float32(cam.Top-cam.Bottom) / 2 / zoom
+		if halfWidth <= 0 {
+			halfWidth = 1
+		}
+		if halfHeight <= 0 {
+			halfHeight = 1
+		}
+		invRot := mat4Mul(mat4RotateY(-float32(cam.RotationY)), mat4RotateX(-float32(cam.RotationX)))
+		offset := transformVector(invRot, [3]float32{nxNorm * halfWidth, nyNorm * halfHeight, 0})
+		forward := transformVector(invRot, [3]float32{0, 0, -1})
+		forward = normalize3(forward[0], forward[1], forward[2])
+		return pickRay{
+			origin: [3]float32{float32(cam.X) + offset[0], float32(cam.Y) + offset[1], float32(cam.Z) + offset[2]},
+			dir:    forward,
+		}
+	}
 	fov := float32(cam.FOV)
 	if fov <= 0 {
 		fov = float32(math.Pi / 3)
@@ -523,10 +547,8 @@ func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay 
 	if height > 0 {
 		aspect = float32(width) / float32(height)
 	}
-	nx := (float32(x)+0.5)/float32(max(1, width))*2 - 1
-	ny := 1 - (float32(y)+0.5)/float32(max(1, height))*2
 	tanHalf := float32(math.Tan(float64(fov) / 2))
-	dir := [3]float32{nx * aspect * tanHalf, ny * tanHalf, -1}
+	dir := [3]float32{nxNorm * aspect * tanHalf, nyNorm * tanHalf, -1}
 	invRot := mat4Mul(mat4RotateY(-float32(cam.RotationY)), mat4RotateX(-float32(cam.RotationX)))
 	dir = transformVector(invRot, dir)
 	dir = normalize3(dir[0], dir[1], dir[2])

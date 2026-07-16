@@ -151,6 +151,7 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 	}
 	environment := resolveSceneEnvironment(props, len(lights) > 0)
 	bundle.Camera = rootengine.RenderCamera{
+		Mode:      cameraModeForKind(camera.Kind),
 		X:         camera.X,
 		Y:         camera.Y,
 		Z:         camera.Z,
@@ -160,6 +161,11 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 		FOV:       camera.FOV,
 		Near:      camera.Near,
 		Far:       camera.Far,
+		Left:      camera.Left,
+		Right:     camera.Right,
+		Top:       camera.Top,
+		Bottom:    camera.Bottom,
+		Zoom:      camera.Zoom,
 	}
 	bundle.Environment = renderSceneEnvironment(environment)
 	if len(lights) > 0 {
@@ -1365,9 +1371,27 @@ func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool
 func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat, clip clipTRS) point3 {
 	normal := sceneObjectLocalNormal(object, point)
 	// Base orientation, then clip rotation, then spin quaternion. Normals are
-	// directions: no scale (per the existing simple normal path), no translation,
+	// directions: static leaf scale applies as the inverse-scale (then
+	// renormalized) so non-uniform scale keeps lighting correct; no translation
 	// and no drift offset is applied. Rotation composition mirrors translatePoint
 	// (base -> clipR -> spin) so lit normals stay consistent with vertex positions.
+	if object.ScaleX != 0 || object.ScaleY != 0 || object.ScaleZ != 0 {
+		sx, sy, sz := object.ScaleX, object.ScaleY, object.ScaleZ
+		if sx == 0 {
+			sx = 1
+		}
+		if sy == 0 {
+			sy = 1
+		}
+		if sz == 0 {
+			sz = 1
+		}
+		normal = point3{X: normal.X / sx, Y: normal.Y / sy, Z: normal.Z / sz}
+		length := math.Sqrt(normal.X*normal.X + normal.Y*normal.Y + normal.Z*normal.Z)
+		if length > 0 {
+			normal = point3{X: normal.X / length, Y: normal.Y / length, Z: normal.Z / length}
+		}
+	}
 	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
@@ -1795,7 +1819,7 @@ func sceneObjectRotTrig(object sceneObject, timeSeconds float64) rotTrig {
 // path (bakeSceneObjectWorld). For a bake-eligible object (SpinX/Y/Z == 0, no
 // drift, no clip) this is bit-identical to translatePoint with identityQuat+emptyClip.
 func translatePointTrig(point point3, object sceneObject, timeSeconds float64, objTrig rotTrig) point3 {
-	rotated := rotatePointTrig(point, objTrig)
+	rotated := rotatePointTrig(applySceneObjectScale(point, object), objTrig)
 	offset := sceneMotionOffset(object, timeSeconds)
 	return point3{
 		X: rotated.X + object.X + offset.X,
@@ -1809,6 +1833,7 @@ func translatePointTrig(point point3, object sceneObject, timeSeconds float64, o
 // (T*R*S left-multiply on the raw transform). These are different renderer/bundle
 // structures — not a parity pair — so the divergence is by design.
 func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) point3 {
+	local := point
 	// Composition order (local vertex -> world position):
 	//   1. clip scale (local, pre-rotation): multiply the LOCAL vertex by clip.S.
 	//   2. base orientation: the existing intrinsic Euler rotation.
@@ -1817,7 +1842,7 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	//   5. translation: object position + drift offset + clip translation.
 	// When the object has no clip targeting it (the common case) clip is the zero
 	// value (all Has* false) and this path is byte-identical to the pre-clip code.
-	local := point
+	local = applySceneObjectScale(local, object)
 	if clip.HasS {
 		local = point3{X: point.X * clip.S[0], Y: point.Y * clip.S[1], Z: point.Z * clip.S[2]}
 	}
@@ -1842,6 +1867,35 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 		Y: sy + object.Y + offset.Y + ty,
 		Z: sz + object.Z + offset.Z + tz,
 	}
+}
+
+// applySceneObjectScale applies the static leaf scale (ObjectIR scaleX/Y/Z)
+// to a local vertex. Zero components mean "unset" and keep unit scale so
+// pre-scale scenes are byte-identical.
+func applySceneObjectScale(point point3, object sceneObject) point3 {
+	if object.ScaleX == 0 && object.ScaleY == 0 && object.ScaleZ == 0 {
+		return point
+	}
+	sx, sy, sz := object.ScaleX, object.ScaleY, object.ScaleZ
+	if sx == 0 {
+		sx = 1
+	}
+	if sy == 0 {
+		sy = 1
+	}
+	if sz == 0 {
+		sz = 1
+	}
+	return point3{X: point.X * sx, Y: point.Y * sy, Z: point.Z * sz}
+}
+
+// cameraModeForKind maps the authored camera kind onto the RenderCamera mode
+// so native picking can select the orthographic ray branch.
+func cameraModeForKind(kind string) string {
+	if kind == "orthographic" {
+		return "orthographic"
+	}
+	return ""
 }
 
 func sceneMotionOffset(object sceneObject, timeSeconds float64) point3 {

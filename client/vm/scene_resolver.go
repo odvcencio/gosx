@@ -21,6 +21,12 @@ type sceneCamera struct {
 	FOV       float64
 	Near      float64
 	Far       float64
+	Kind      string
+	Left      float64
+	Right     float64
+	Top       float64
+	Bottom    float64
+	Zoom      float64
 }
 
 type sceneObject struct {
@@ -43,6 +49,9 @@ type sceneObject struct {
 	RotationX          float64
 	RotationY          float64
 	RotationZ          float64
+	ScaleX             float64
+	ScaleY             float64
+	ScaleZ             float64
 	SpinX              float64
 	SpinY              float64
 	SpinZ              float64
@@ -611,6 +620,12 @@ func normalizeSceneCameraMap(raw map[string]any, fallback sceneCamera) sceneCame
 		FOV:       numberFromAny(rawValue(raw, "fov"), fallback.FOV),
 		Near:      numberFromAny(rawValue(raw, "near"), fallback.Near),
 		Far:       numberFromAny(rawValue(raw, "far"), fallback.Far),
+		Kind:      stringFromAny(rawValue(raw, "kind"), fallback.Kind),
+		Left:      numberFromAny(rawValue(raw, "left"), fallback.Left),
+		Right:     numberFromAny(rawValue(raw, "right"), fallback.Right),
+		Top:       numberFromAny(rawValue(raw, "top"), fallback.Top),
+		Bottom:    numberFromAny(rawValue(raw, "bottom"), fallback.Bottom),
+		Zoom:      numberFromAny(rawValue(raw, "zoom"), fallback.Zoom),
 	}
 }
 
@@ -914,6 +929,9 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		RotationX:          numberFromAny(propValue(node.Props, "rotationX"), 0),
 		RotationY:          numberFromAny(propValue(node.Props, "rotationY"), 0),
 		RotationZ:          numberFromAny(propValue(node.Props, "rotationZ"), 0),
+		ScaleX:             numberFromAny(propValue(node.Props, "scaleX"), 0),
+		ScaleY:             numberFromAny(propValue(node.Props, "scaleY"), 0),
+		ScaleZ:             numberFromAny(propValue(node.Props, "scaleZ"), 0),
 		SpinX:              numberFromAny(propValue(node.Props, "spinX"), 0),
 		SpinY:              numberFromAny(propValue(node.Props, "spinY"), 0),
 		SpinZ:              numberFromAny(propValue(node.Props, "spinZ"), 0),
