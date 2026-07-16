@@ -124,3 +124,36 @@ func TestWaterObjectDragMatchesLiveRuntimeSampleWithoutBrowser(t *testing.T) {
 func vectorDistance(a, b Vector3) float64 {
 	return math.Hypot(math.Hypot(a.X-b.X, a.Y-b.Y), a.Z-b.Z)
 }
+
+func TestAxisDragParameterFindsClosestPointAlongAxis(t *testing.T) {
+	// Axis along +X from origin; ray points straight down onto x=2.
+	ray := Ray{Origin: Vector3{X: 2, Y: 5, Z: 0}, Direction: Vector3{Y: -1}}
+	got, ok := AxisDragParameter(ray, Vector3{}, Vector3{X: 1})
+	if !ok || math.Abs(got-2) > 1e-9 {
+		t.Fatalf("axis parameter = %v ok=%v, want 2", got, ok)
+	}
+	// Parallel ray cannot resolve a parameter.
+	if _, ok := AxisDragParameter(Ray{Origin: Vector3{Y: 1}, Direction: Vector3{X: 1}}, Vector3{}, Vector3{X: 1}); ok {
+		t.Fatal("parallel ray must not resolve an axis parameter")
+	}
+}
+
+func TestRingDragAngleMeasuresRotationAboutNormal(t *testing.T) {
+	// Ring at origin, normal +Z; a ray hitting (1,0) is angle 0, (0,1) is +90°.
+	at := func(x, y float64) float64 {
+		angle, ok := RingDragAngle(Ray{Origin: Vector3{X: x, Y: y, Z: 5}, Direction: Vector3{Z: -1}}, Vector3{}, Vector3{Z: 1})
+		if !ok {
+			t.Fatalf("ray at (%v,%v) must intersect the ring plane", x, y)
+		}
+		return angle
+	}
+	if math.Abs(at(1, 0)) > 1e-9 {
+		t.Fatalf("angle at +X = %v, want 0", at(1, 0))
+	}
+	if math.Abs(at(0, 1)-math.Pi/2) > 1e-9 {
+		t.Fatalf("angle at +Y = %v, want pi/2", at(0, 1))
+	}
+	if _, ok := RingDragAngle(Ray{Origin: Vector3{Z: 5}, Direction: Vector3{X: 1}}, Vector3{}, Vector3{Z: 1}); ok {
+		t.Fatal("ray parallel to the ring plane must not resolve")
+	}
+}

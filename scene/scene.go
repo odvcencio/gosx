@@ -138,6 +138,11 @@ type Props struct {
 	// visibility via Mesh.GizmoRing are shown only while the signal matches
 	// "rotate"; everything else is untouched.
 	GizmoInputSignal  string       `json:"gizmoInputSignal,omitempty"`
+	// GizmoOutputSignal: when set, the client gizmo drag controller publishes
+	// each drag phase ({target, mode, axis, phase, position, rotation, scale})
+	// into this shared signal, in addition to dispatching the
+	// "gosx:scene3d:input" mount event with kind "gizmo-commit".
+	GizmoOutputSignal string       `json:"gizmoOutputSignal,omitempty"`
 	CapabilityTier    string       `json:"capabilityTier,omitempty"`
 	Compression       *Compression `json:"compression,omitempty"`
 	ControlTarget     Vector3
@@ -1698,6 +1703,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "cameraOutputSignal", p.CameraOutputSignal)
 	setString(out, "cursorOutputSignal", p.CursorOutputSignal)
 	setString(out, "gizmoInputSignal", p.GizmoInputSignal)
+	setString(out, "gizmoOutputSignal", p.GizmoOutputSignal)
 	setString(out, "capabilityTier", p.CapabilityTier)
 	if p.ControlTarget != (Vector3{}) {
 		out["controlTarget"] = map[string]any{

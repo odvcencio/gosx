@@ -247,3 +247,50 @@ func rotateControlPoint(point Vector3, rotation Euler) Vector3 {
 	point.X, point.Y = point.X*cosZ-point.Y*sinZ, point.X*sinZ+point.Y*cosZ
 	return point
 }
+
+// AxisDragParameter returns the parameter t along an axis line (origin +
+// t*direction) of the point closest to the pointer ray — the core of a
+// translate/scale gizmo drag. It reports false when the ray is parallel to
+// the axis and no unique parameter exists. Mirrored by the client gizmo drag
+// controller so interactive drags and headless tests share one definition.
+func AxisDragParameter(ray Ray, axisOrigin, axisDirection Vector3) (float64, bool) {
+	axis := normalizeVector(axisDirection)
+	dir := normalizeVector(ray.Direction)
+	if vectorLength(axis) == 0 || vectorLength(dir) == 0 {
+		return 0, false
+	}
+	// Closest points between two lines: solve for t on the axis line.
+	w := subVectors(ray.Origin, axisOrigin)
+	b := dotVector(axis, dir)
+	denominator := 1 - b*b
+	if math.Abs(denominator) < 1e-12 {
+		return 0, false
+	}
+	d := dotVector(axis, w)
+	e := dotVector(dir, w)
+	return (b*e - d) / denominator * -1, true
+}
+
+// RingDragAngle intersects the pointer ray with the ring's plane and returns
+// the angle of the hit around the plane normal, measured from the plane's
+// reference X direction. Reports false when the ray is parallel to the plane.
+func RingDragAngle(ray Ray, center, normal Vector3) (float64, bool) {
+	hit, ok := IntersectRayPlane(ray, center, normal)
+	if !ok {
+		return 0, false
+	}
+	point := hit.Point
+	n := normalizeVector(normal)
+	reference := Vector3{X: 1}
+	if math.Abs(dotVector(reference, n)) > 0.999 {
+		reference = Vector3{Y: 1}
+	}
+	tangentX := normalizeVector(subVectors(reference, scaleVector(n, dotVector(reference, n))))
+	tangentY := Vector3{
+		X: n.Y*tangentX.Z - n.Z*tangentX.Y,
+		Y: n.Z*tangentX.X - n.X*tangentX.Z,
+		Z: n.X*tangentX.Y - n.Y*tangentX.X,
+	}
+	local := subVectors(point, center)
+	return math.Atan2(dotVector(local, tangentY), dotVector(local, tangentX)), true
+}
