@@ -204,6 +204,7 @@
 #editor-panel-metadata:checked ~ .editor-native-topbar .editor-segment-metadata,
 #editor-panel-images:checked ~ .editor-native-topbar .editor-segment-images,
 #editor-panel-outline:checked ~ .editor-native-topbar .editor-segment-outline,
+#editor-panel-diagnostics:checked ~ .editor-native-topbar .editor-segment-diagnostics,
 #editor-panel-scratch:checked ~ .editor-native-topbar .editor-segment-scratch,
 #editor-panel-history:checked ~ .editor-native-topbar .editor-segment-history {
   background: rgba(240, 200, 106, 0.18);
@@ -618,6 +619,7 @@
 #editor-panel-metadata:checked ~ .editor-native-body .editor-panel-metadata,
 #editor-panel-images:checked ~ .editor-native-body .editor-panel-images,
 #editor-panel-outline:checked ~ .editor-native-body .editor-panel-outline,
+#editor-panel-diagnostics:checked ~ .editor-native-body .editor-panel-diagnostics,
 #editor-panel-scratch:checked ~ .editor-native-body .editor-panel-scratch,
 #editor-panel-history:checked ~ .editor-native-body .editor-panel-history {
   display: flex;
@@ -782,11 +784,11 @@
   height: 1rem;
 }
 
-.editor-preview-content :first-child {
+.editor-preview-content:not(.gosx-prose) :first-child {
   margin-top: 0;
 }
 
-.editor-preview-content :last-child {
+.editor-preview-content:not(.gosx-prose) :last-child {
   margin-bottom: 0;
 }
 
@@ -932,10 +934,6 @@
   font-family: var(--editor-mono);
   font-size: 0.78rem;
   font-weight: 900;
-}
-
-.editor-preview-content .mdpp-table tr:last-child td {
-  border-bottom: 0;
 }
 
 .editor-preview-content dl {
@@ -1396,6 +1394,67 @@
   margin-left: 1.5rem;
 }
 
+.editor-diagnostics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.editor-diagnostic {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  width: 100%;
+  border: 1px solid var(--editor-border);
+  border-left: 3px solid var(--editor-accent);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--editor-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0.58rem 0.68rem;
+  text-align: left;
+}
+
+.editor-diagnostic:hover,
+.editor-diagnostic:focus-visible {
+  border-color: var(--editor-border-strong);
+  background: rgba(255, 255, 255, 0.07);
+  outline: 0;
+}
+
+.editor-diagnostic-error {
+  border-left-color: var(--editor-danger);
+}
+
+.editor-diagnostic-warning {
+  border-left-color: var(--editor-admonition-warning);
+}
+
+.editor-diagnostic-info {
+  border-left-color: var(--editor-accent);
+}
+
+.editor-diagnostic-message {
+  color: var(--editor-text);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.editor-diagnostic-meta {
+  color: var(--editor-muted);
+  font-family: var(--editor-mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.editor-diagnostic-location {
+  color: var(--editor-faint);
+  font-family: var(--editor-mono);
+  font-size: 0.68rem;
+}
+
 .editor-preview-content code,
 .editor-preview-content pre {
   font-family: var(--editor-mono);
@@ -1534,4 +1593,18 @@
   .editor-native-actions {
     justify-content: flex-start;
   }
+}
+
+/* Editor-specific overrides for the shared prose surface. */
+.editor-preview-content.gosx-prose > :where(*) {
+  margin-block-end: 0;
+}
+
+.editor-preview-content.gosx-prose > :where(*) + :where(*) {
+  margin-block-start: var(--gosx-prose-flow);
+}
+
+.toolbar-extension {
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--editor-accent) 7%, transparent);
 }

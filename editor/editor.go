@@ -8,6 +8,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/editor/textmodel"
+	"m31labs.dev/gosx/server"
 )
 
 // Editor is the component descriptor returned by New.
@@ -21,8 +22,10 @@ type Editor struct {
 
 // New creates an editor component with the given options.
 func New(name string, opts Options) *Editor {
+	opts.applyProfiles()
 	opts.applyFrontMatter()
 	opts.defaults()
+	opts.syncProfiles()
 
 	var doc Document = textmodel.NewDocument(opts.Content)
 
@@ -183,6 +186,8 @@ func (e *Editor) renderAppShell() gosx.Node {
 			gosx.Attr("data-editor-theme", string(e.Theme)),
 			gosx.Attr("data-color-scheme", theme.ColorScheme),
 			gosx.Attr("data-editor-label", e.ariaLabel()),
+			gosx.Attr("data-editor-surface", string(e.Options.Surface)),
+			gosx.Attr("data-gosx-editor-extensions", e.extensionIDs()),
 		),
 		e.renderFullscreen(),
 	)
@@ -222,6 +227,9 @@ func (e *Editor) renderFullscreen() gosx.Node {
 	}
 	if e.hasPanel(PanelOutline) {
 		children = append(children, e.renderOutlinePanel())
+	}
+	if e.hasPanel(PanelDiagnostics) {
+		children = append(children, e.renderDiagnosticsPanel())
 	}
 	if e.hasPanel(PanelScratch) {
 		children = append(children, e.renderScratchPanel())
@@ -325,6 +333,22 @@ func (e *Editor) renderToolbar() gosx.Node {
 		}
 		children = append(children, groupNode)
 	}
+	for _, group := range e.extensionToolbarGroups() {
+		if len(children) > 0 {
+			children = append(children, gosx.El(
+				"div",
+				gosx.Attrs(gosx.Attr("class", "toolbar-sep")),
+			))
+		}
+		children = append(children, gosx.El(
+			"div",
+			gosx.Attrs(
+				gosx.Attr("class", "toolbar-group toolbar-extension"),
+				gosx.Attr("data-gosx-extension", group.id),
+			),
+			gosx.Fragment(e.renderToolbarButtonsForExtension(group.items, group.id)...),
+		))
+	}
 
 	return gosx.El(
 		"div",
@@ -390,6 +414,17 @@ func (e *Editor) renderPanelButtons() []gosx.Node {
 }
 
 func (e *Editor) renderPreviewPanel() gosx.Node {
+	previewAttrs := gosx.Attrs(
+		gosx.Attr("class", "editor-preview-content gosx-prose"),
+		gosx.Attr("id", "editor-preview-content"),
+		gosx.Attr("data-gosx-prose-streaming", "stable"),
+		gosx.Attr("style", e.Options.Prose.CSSVariables()),
+	)
+	previewAttrs = append(previewAttrs, gosx.RuntimeSurfaceAttrs(gosx.RuntimeSurfaceOptions{
+		Name:     "mdpp-diagrams",
+		Version:  "1",
+		Fallback: "html",
+	})...)
 	return gosx.El(
 		"div",
 		gosx.Attrs(
@@ -398,10 +433,7 @@ func (e *Editor) renderPreviewPanel() gosx.Node {
 		),
 		gosx.El(
 			"div",
-			gosx.Attrs(
-				gosx.Attr("class", "editor-preview-content"),
-				gosx.Attr("id", "editor-preview-content"),
-			),
+			previewAttrs,
 		),
 	)
 }
@@ -547,6 +579,28 @@ func (e *Editor) renderOutlinePanel() gosx.Node {
 			gosx.El("p",
 				gosx.Attrs(gosx.Attr("class", "outline-empty")),
 				gosx.Text("Start writing to see your outline."),
+			),
+		),
+	)
+}
+
+func (e *Editor) renderDiagnosticsPanel() gosx.Node {
+	return gosx.El("div",
+		gosx.Attrs(
+			gosx.Attr("id", "editor-diagnostics-panel"),
+			gosx.Attr("class", "editor-diagnostics-panel"),
+			gosx.Attr("role", "complementary"),
+			gosx.Attr("aria-label", "Markdown++ diagnostics"),
+		),
+		e.renderPanelHeader("Diagnostics", "btn-diagnostics-close"),
+		gosx.El("div",
+			gosx.Attrs(
+				gosx.Attr("id", "diagnostics-list"),
+				gosx.Attr("class", "editor-diagnostics-list"),
+			),
+			gosx.El("p",
+				gosx.Attrs(gosx.Attr("class", "diagnostics-empty")),
+				gosx.Text("Check your Markdown++ source for diagnostics."),
 			),
 		),
 	)
@@ -758,25 +812,40 @@ func (e *Editor) renderPublishControls() []gosx.Node {
 
 func (e *Editor) renderAssetTags() []gosx.Node {
 	var nodes []gosx.Node
+	if strings.TrimSpace(e.Options.ProseStylesheetURL) != "" {
+		nodes = append(nodes, server.Stylesheet(e.Options.ProseStylesheetURL))
+	}
 	if strings.TrimSpace(e.Options.StylesheetURL) != "" {
-		nodes = append(nodes, gosx.El("link", gosx.Attrs(
-			gosx.Attr("rel", "stylesheet"),
-			gosx.Attr("href", e.Options.StylesheetURL),
-		)))
+		nodes = append(nodes, server.Stylesheet(e.Options.StylesheetURL))
+	}
+	if strings.TrimSpace(e.Options.ProseScriptURL) != "" {
+		nodes = append(nodes, managedEditorScript(e.Options.ProseScriptURL))
 	}
 	if strings.TrimSpace(e.Options.DiagramScriptURL) != "" {
-		nodes = append(nodes, gosx.El("script", gosx.Attrs(
-			gosx.Attr("src", e.Options.DiagramScriptURL),
-			gosx.Attr("defer", "defer"),
-		)))
+		nodes = append(nodes, managedEditorScript(e.Options.DiagramScriptURL))
+	}
+	for _, extension := range e.Options.Extensions {
+		if strings.TrimSpace(extension.ID) == "" {
+			continue
+		}
+		if strings.TrimSpace(extension.StylesheetURL) != "" {
+			nodes = append(nodes, server.Stylesheet(extension.StylesheetURL))
+		}
+		if strings.TrimSpace(extension.ScriptURL) != "" {
+			nodes = append(nodes, managedEditorScript(extension.ScriptURL))
+		}
 	}
 	if strings.TrimSpace(e.Options.ScriptURL) != "" {
-		nodes = append(nodes, gosx.El("script", gosx.Attrs(
-			gosx.Attr("src", e.Options.ScriptURL),
-			gosx.Attr("defer", "defer"),
-		)))
+		nodes = append(nodes, managedEditorScript(e.Options.ScriptURL))
 	}
 	return nodes
+}
+
+func managedEditorScript(src string) gosx.Node {
+	return server.ManagedScript(src, server.ManagedScriptOptions{
+		Role: server.ManagedScriptRoleManaged,
+		Load: server.ManagedScriptLoadDOM,
+	}, gosx.Attr("defer", "defer"))
 }
 
 func (e *Editor) titleValue() string {
@@ -898,6 +967,8 @@ func panelTitle(panel Panel) string {
 		return "History"
 	case PanelOutline:
 		return "Outline"
+	case PanelDiagnostics:
+		return "Diagnostics"
 	case PanelScratch:
 		return "Scratch"
 	default:

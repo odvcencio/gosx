@@ -8,6 +8,18 @@
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
+  // Mermaid and zoom behavior stay editor-owned, while GoSX owns listener
+  // lifetime for a mounted surface. Standalone pages use the local fallback;
+  // the normal path receives surface.listen from the core DOM scope.
+  const bindListener = (listen, target, type, listener, options) => {
+    if (!target || typeof target.addEventListener !== "function") return () => {};
+    if (typeof listen === "function") {
+      return listen(target, type, listener, options) || (() => {});
+    }
+    target.addEventListener(type, listener, options);
+    return () => target.removeEventListener(type, listener, options);
+  };
+
   const ready = (fn) => {
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", fn, { once: true });
@@ -44,7 +56,10 @@
     return `${kind} diagram`;
   };
 
-  const render = async (root = document) => {
+  const render = async (root = document, options = {}) => {
+    const signal = options.signal;
+    const listen = options.listen;
+    if (signal?.aborted) return;
     if (!root) return;
     const figures = Array.from(root.querySelectorAll('.mdpp-diagram[data-diagram-syntax="mermaid"]:not([data-mdpp-diagram-state])'));
     const pending = figures.filter((figure) => diagramSource(figure) !== "");
@@ -59,12 +74,14 @@
     if (!mermaid || typeof mermaid.render !== "function") return;
 
     for (const [index, figure] of pending.entries()) {
+      if (signal?.aborted) return;
       const source = diagramSource(figure);
       if (source === "") continue;
       const id = `mdpp-mermaid-${Date.now()}-${index}`;
       figure.dataset.mdppDiagramState = "rendering";
       try {
         const result = await mermaid.render(id, source);
+        if (signal?.aborted) return;
         const svg = typeof result === "string" ? result : result && result.svg;
         if (!svg) throw new Error("Mermaid returned no SVG");
         figure.innerHTML = [
@@ -81,11 +98,19 @@
         if (rendered) {
           const label = `Open ${diagramLabel(figure)}`;
           rendered.setAttribute("aria-label", label);
-          rendered.addEventListener("click", () => openZoom(figure));
-          rendered.addEventListener("keydown", (event) => {
+          bindListener(listen, rendered, "click", () => openZoom(figure, {
+            listen,
+            dom: options.dom,
+            owner: options.owner,
+          }));
+          bindListener(listen, rendered, "keydown", (event) => {
             if (event.key !== "Enter" && event.key !== " ") return;
             event.preventDefault();
-            openZoom(figure);
+            openZoom(figure, {
+              listen,
+              dom: options.dom,
+              owner: options.owner,
+            });
           });
         }
         if (result && typeof result.bindFunctions === "function") {
@@ -100,7 +125,7 @@
     }
   };
 
-  const openZoom = (figure) => {
+  const openZoom = (figure, options = {}) => {
     const rendered = figure?.querySelector(".mdpp-diagram-rendered");
     const svg = rendered?.querySelector("svg");
     if (!svg) return;
@@ -138,9 +163,17 @@
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    activeDialog = { dialog, previousOverflow, opener: rendered };
 
     const viewport = dialog.querySelector(".mdpp-diagram-zoom-viewport");
+    const cleanups = [];
+    const bind = (target, type, listener, listenerOptions) => {
+      const cleanup = bindListener(options.listen, target, type, listener, listenerOptions);
+      cleanups.push(cleanup);
+      return cleanup;
+    };
+    const portalCleanup = options.dom && typeof options.dom.portal === "function"
+      ? options.dom.portal(dialog)
+      : null;
     const state = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
     const clampScale = (value) => Math.max(0.4, Math.min(4, value));
     const apply = () => {
@@ -161,14 +194,14 @@
       apply();
     };
 
-    viewport.addEventListener("wheel", (event) => {
+    bind(viewport, "wheel", (event) => {
       event.preventDefault();
       const rect = viewport.getBoundingClientRect();
       const factor = event.deltaY < 0 ? 1.12 : 0.89;
       zoomBy(factor, event.clientX - rect.left, event.clientY - rect.top);
     }, { passive: false });
 
-    viewport.addEventListener("pointerdown", (event) => {
+    bind(viewport, "pointerdown", (event) => {
       if (event.button !== 0) return;
       state.dragging = true;
       state.startX = event.clientX;
@@ -178,7 +211,7 @@
       viewport.setPointerCapture(event.pointerId);
       viewport.classList.add("is-panning");
     });
-    viewport.addEventListener("pointermove", (event) => {
+    bind(viewport, "pointermove", (event) => {
       if (!state.dragging) return;
       state.x = state.originX + event.clientX - state.startX;
       state.y = state.originY + event.clientY - state.startY;
@@ -192,10 +225,10 @@
         viewport.releasePointerCapture(event.pointerId);
       }
     };
-    viewport.addEventListener("pointerup", endPan);
-    viewport.addEventListener("pointercancel", endPan);
+    bind(viewport, "pointerup", endPan);
+    bind(viewport, "pointercancel", endPan);
 
-    dialog.addEventListener("click", (event) => {
+    bind(dialog, "click", (event) => {
       const closeTarget = event.target.closest("[data-diagram-close]");
       const zoomTarget = event.target.closest("[data-diagram-zoom]");
       if (closeTarget) {
@@ -250,18 +283,32 @@
         reset();
       }
     };
-    dialog._diagramKeyHandler = keyHandler;
-    document.addEventListener("keydown", keyHandler);
+    bind(document, "keydown", keyHandler);
+    activeDialog = {
+      dialog,
+      previousOverflow,
+      opener: rendered,
+      cleanups,
+      portalCleanup,
+      owner: options.owner || null,
+    };
     dialog.querySelector("button[data-diagram-close]")?.focus();
     apply();
   };
 
   const closeZoom = () => {
     if (!activeDialog) return;
-    const { dialog, previousOverflow, opener } = activeDialog;
-    if (dialog._diagramKeyHandler) document.removeEventListener("keydown", dialog._diagramKeyHandler);
+    const {
+      dialog,
+      previousOverflow,
+      opener,
+      cleanups = [],
+      portalCleanup,
+    } = activeDialog;
+    for (const cleanup of cleanups) cleanup();
     document.body.style.overflow = previousOverflow;
-    dialog.remove();
+    if (typeof portalCleanup === "function") portalCleanup();
+    if (dialog && typeof dialog.remove === "function") dialog.remove();
     activeDialog = null;
     if (opener && document.contains(opener)) {
       try {
@@ -273,5 +320,38 @@
   };
 
   window.M31Diagrams = { render, closeZoom };
-  ready(() => { void render(document); });
+
+  const mountDiagramSurface = (surface = {}) => {
+    const root = surface.root || document;
+    const signal = surface.signal || null;
+    const listen = surface.listen || (surface.dom && surface.dom.listen);
+    void render(root, { signal, listen, dom: surface.dom, owner: surface });
+    return {
+      dispose() {
+        if (activeDialog && (
+          activeDialog.owner === surface ||
+          (root.contains && root.contains(activeDialog.opener))
+        )) {
+          closeZoom();
+        }
+      },
+    };
+  };
+
+  const registerRuntimeSurface = () => {
+    const runtime = window.__gosx && window.__gosx.runtimeSurfaceAPI;
+    if (runtime && typeof runtime.register === "function") {
+      runtime.register("mdpp-diagrams", mountDiagramSurface);
+      return true;
+    }
+    if (typeof window.__gosx_register_runtime_surface === "function") {
+      window.__gosx_register_runtime_surface("mdpp-diagrams", mountDiagramSurface);
+      return true;
+    }
+    return false;
+  };
+
+  if (!registerRuntimeSurface()) {
+    ready(() => { void render(document); });
+  }
 })();

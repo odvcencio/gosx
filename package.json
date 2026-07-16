@@ -11,7 +11,7 @@
   "scripts": {
     "build:bootstrap": "node client/js/build-bootstrap.mjs",
     "test": "npm run test:js",
-    "test:js": "node client/js/build-bootstrap.mjs --check && node --test client/js/bootstrap-size.test.mjs client/js/06-declarative-actions.test.mjs client/js/07-declarative-regions.test.mjs client/js/runtime.test.js",
+    "test:js": "node client/js/build-bootstrap.mjs --check && node --test client/js/bootstrap-size.test.mjs client/js/06-declarative-actions.test.mjs client/js/07-declarative-regions.test.mjs client/js/26-runtime-surfaces.test.mjs client/js/26-runtime-stream.test.mjs client/js/26-runtime-dom.test.mjs client/js/26-runtime-blocks.test.mjs prose/assets/prose-runtime.test.mjs editor/assets/prose-runtime.test.mjs editor/assets/mdpp-diagrams.test.mjs client/js/runtime.test.js",
     "test:e2e": "node --test e2e/gosx_docs_e2e.test.mjs e2e/webgpu_honesty_gate_e2e.test.mjs e2e/motion-spin.test.mjs e2e/motion-material.test.mjs e2e/water_demo_e2e.test.mjs"
   },
   "repository": {

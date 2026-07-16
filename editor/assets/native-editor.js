@@ -257,8 +257,8 @@
     }
   };
 
-  const selectedPanel = () => {
-    const checked = document.querySelector(".editor-panel-radio:checked");
+  const selectedPanel = (root = document) => {
+    const checked = root.querySelector(".editor-panel-radio:checked");
     return checked ? checked.value : "preview";
   };
 
@@ -273,25 +273,174 @@
     return window.M31Diagrams.render(root);
   };
 
-  ready(() => {
-    const form = document.querySelector("form[data-editor-native='true']");
-    const textarea = document.getElementById("editor-content");
-    const highlight = document.getElementById("editor-highlight-content");
-    const lineNumbers = document.getElementById("editor-line-numbers");
-    const saveStatus = document.getElementById("editor-save-status");
-    if (!form || !textarea || !highlight) return;
+  const reconcilePreview = (surface, root, update) => {
+    if (surface && typeof surface.reconcile === "function") {
+      return surface.reconcile(root, update);
+    }
+    return update(root);
+  };
 
-    const page = document.querySelector(".editor-page-native");
+  const ensurePreviewEnhancements = (surface, root) => {
+    if (!surface || typeof surface.reconcile !== "function") {
+      void renderPreviewDiagrams(root);
+    }
+  };
+
+  const reconcilePreviewHTML = (surface, root, html) => {
+    return reconcilePreview(surface, root, () => {
+      const prose = surface?.prose || window.GosxProse;
+      if (prose && typeof prose.reconcileHTML === "function") {
+        return prose.reconcileHTML(root, html);
+      }
+      if (root) root.innerHTML = String(html || "");
+      return { firstChanged: 0, changed: true };
+    });
+  };
+
+  const reconcilePreviewBlocks = (surface, root, blocks) => {
+    return reconcilePreview(surface, root, () => {
+      const prose = surface?.prose || window.GosxProse;
+      if (prose && typeof prose.reconcileBlocks === "function") {
+        return prose.reconcileBlocks(root, blocks);
+      }
+      if (root) root.innerHTML = (blocks || []).map((block) => (block && block.html) || "").join("");
+      return { firstChanged: 0, changed: true };
+    });
+  };
+
+  const mountEditorSurface = (surface = {}) => {
+    const root = surface.root || document;
+    const form = root.matches?.("form[data-editor-native='true']")
+      ? root
+      : root.querySelector?.("form[data-editor-native='true']");
+    if (!form) return { dispose() {} };
+
+    const localController = surface.signal ? null : (typeof AbortController === "function" ? new AbortController() : null);
+    const signal = surface.signal || localController?.signal;
+    const listen = typeof surface.listen === "function"
+      ? surface.listen
+      : (target, type, listener, options) => {
+        const config = typeof options === "boolean" ? { capture: options } : Object.assign({}, options || {});
+        if (signal) config.signal = signal;
+        target.addEventListener(type, listener, config);
+      };
+    const surfaceFetch = surface.fetch || window.fetch.bind(window);
+    const surfaceJSON = typeof surface.json === "function"
+      ? surface.json
+      : (response) => response.json();
+    const scheduler = surface.scheduler && typeof surface.scheduler.schedule === "function"
+      ? surface.scheduler
+      : null;
+    const fallbackTimers = new Map();
+    const fallbackFrames = new Map();
+    const scheduleTask = (key, callback, delay) => {
+      if (scheduler) return scheduler.schedule(key, callback, delay);
+      const scheduleKey = String(key || "default");
+      const previous = fallbackTimers.get(scheduleKey);
+      if (previous) clearTimeout(previous);
+      const timer = setTimeout(() => {
+        if (fallbackTimers.get(scheduleKey) !== timer) return;
+        fallbackTimers.delete(scheduleKey);
+        callback();
+      }, Math.max(0, Number(delay) || 0));
+      fallbackTimers.set(scheduleKey, timer);
+      return () => {
+        if (fallbackTimers.get(scheduleKey) !== timer) return;
+        fallbackTimers.delete(scheduleKey);
+        clearTimeout(timer);
+      };
+    };
+    const cancelTask = (key) => {
+      if (scheduler && typeof scheduler.cancelSchedule === "function") {
+        scheduler.cancelSchedule(key);
+        return;
+      }
+      const scheduleKey = String(key || "default");
+      const timer = fallbackTimers.get(scheduleKey);
+      if (!timer) return;
+      fallbackTimers.delete(scheduleKey);
+      clearTimeout(timer);
+    };
+    const scheduleFrame = (key, callback) => {
+      if (scheduler && typeof scheduler.frame === "function") return scheduler.frame(key, callback);
+      const frameKey = String(key || "default");
+      const previous = fallbackFrames.get(frameKey);
+      if (previous) {
+        if (previous.raf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(previous.id);
+        else clearTimeout(previous.id);
+      }
+      const raf = typeof requestAnimationFrame === "function";
+      const record = { raf, id: null };
+      record.id = raf
+        ? requestAnimationFrame((timestamp) => {
+          if (fallbackFrames.get(frameKey) !== record) return;
+          fallbackFrames.delete(frameKey);
+          callback(timestamp);
+        })
+        : setTimeout(() => {
+          if (fallbackFrames.get(frameKey) !== record) return;
+          fallbackFrames.delete(frameKey);
+          callback(Date.now());
+        }, 16);
+      fallbackFrames.set(frameKey, record);
+      return () => cancelFrame(frameKey);
+    };
+    const cancelFrame = (key) => {
+      if (scheduler && typeof scheduler.cancelFrame === "function") {
+        scheduler.cancelFrame(key);
+        return;
+      }
+      const frameKey = String(key || "default");
+      const record = fallbackFrames.get(frameKey);
+      if (!record) return;
+      fallbackFrames.delete(frameKey);
+      if (record.raf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(record.id);
+      else clearTimeout(record.id);
+    };
+    const followRedirect = (url) => {
+      if (typeof surface.navigate === "function") {
+        void surface.navigate(url);
+        return;
+      }
+      if (window.location) window.location.href = String(url || "");
+    };
+    const reportOperationalFailure = (operation, error, fields = {}) => {
+      if (typeof surface.reportFailure === "function") {
+        surface.reportFailure(operation, error, fields);
+      }
+    };
+    const surfaceRequest = (key, url, options = {}) => {
+      const requestOptions = Object.assign({}, options);
+      if (typeof surface.requestLatest === "function") {
+        return surface.requestLatest(key, url, requestOptions);
+      }
+      if (signal && !requestOptions.signal) requestOptions.signal = signal;
+      return surfaceFetch(url, requestOptions);
+    };
+    const byID = (id) => form.querySelector(`#${id}`);
+    const textarea = byID("editor-content");
+    const highlight = byID("editor-highlight-content");
+    const lineNumbers = byID("editor-line-numbers");
+    const saveStatus = byID("editor-save-status");
+    if (!textarea || !highlight) return { dispose() {} };
+
+    const page = form.closest(".editor-page-native") || document.querySelector(".editor-page-native");
     page?.classList.add("editor-highlight-ready");
+    const extensionIDs = (form.dataset.editorExtensions || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    let editorKeymap = {};
+    try {
+      editorKeymap = JSON.parse(form.dataset.editorKeymap || "{}");
+    } catch (_) {
+      editorKeymap = {};
+    }
 
-    let previewTimer = null;
-    let previewRequest = 0;
     let previewInFlight = false;
     let previewPending = false;
-    let metadataTimer = null;
-    let metadataRequest = 0;
     let metadataInFlight = false;
-    let autosaveTimer = null;
+    let diagnosticsInFlight = false;
     let autosaveInFlight = false;
     let autosavePending = false;
     let lastAutosaveFingerprint = "";
@@ -304,7 +453,7 @@
     let galleryLoaded = false;
     let lastPreviewSource = null;
     let lineMeasure = null;
-    let renderFrame = 0;
+    let renderFramePending = false;
     let visualRowToLine = [];
     let visualRowMapSource = null;
     let visualRowMapWidth = 0;
@@ -496,13 +645,33 @@
     };
 
     const rebuildOutline = () => {
-      const nav = document.getElementById("editor-outline-headings");
+      const nav = byID("editor-outline-headings");
       if (!nav) return;
       const headings = [];
-      const re = /^(#{1,6})\s+(.+)$/gm;
-      let match;
-      while ((match = re.exec(textarea.value)) !== null) {
-        headings.push({ depth: match[1].length, text: match[2].trim(), offset: match.index });
+      let offset = 0;
+      let fenceMarker = null;
+      for (const line of textarea.value.split("\n")) {
+        const fence = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+        if (fence) {
+          const marker = fence[1];
+          if (!fenceMarker) {
+            fenceMarker = { char: marker[0], length: marker.length };
+          } else if (marker[0] === fenceMarker.char && marker.length >= fenceMarker.length) {
+            fenceMarker = null;
+          }
+          offset += line.length + 1;
+          continue;
+        }
+        if (fenceMarker) {
+          offset += line.length + 1;
+          continue;
+        }
+        const heading = line.match(/^\s{0,3}(#{1,6})(?:[ \t]+(.+?)\s*|[ \t]*)$/);
+        if (heading) {
+          const text = String(heading[2] || "").replace(/[ \t]+#+[ \t]*$/, "").trim();
+          if (text) headings.push({ depth: heading[1].length, text, offset });
+        }
+        offset += line.length + 1;
       }
       if (headings.length === 0) {
         nav.innerHTML = '<p class="editor-preview-empty">Start writing to see your outline.</p>';
@@ -514,18 +683,16 @@
     };
 
     const flushPreview = async () => {
-      previewTimer = null;
       if (!previewPending || previewInFlight) return;
-      const preview = document.getElementById("editor-preview-content");
+      const preview = byID("editor-preview-content");
       const url = form.dataset.previewUrl;
       if (!preview || !url) return;
       const source = textarea.value;
       previewPending = false;
       if (source === lastPreviewSource) return;
-      const request = ++previewRequest;
       previewInFlight = true;
       try {
-        const res = await fetch(url, {
+        const res = await surfaceRequest("preview", url, {
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -534,30 +701,36 @@
           },
           body: formDataWithSource(form, source),
         });
-        if (!res.ok || request !== previewRequest) return;
-        const json = await res.json();
+        if (!res.ok) throw new Error(`preview request failed (${res.status})`);
+        const json = await surfaceJSON(res) || {};
         const data = json.data || json;
         if (data && typeof data.redirect === "string" && data.redirect !== "") {
-          window.location.href = data.redirect;
+          followRedirect(data.redirect);
           return;
         }
         const html = data ? data.html : "";
-        if (typeof html === "string" && source === textarea.value) {
-          preview.innerHTML = html || '<p class="editor-preview-empty">No content yet.</p>';
-          void renderPreviewDiagrams(preview);
+        const blocks = data && Array.isArray(data.blocks) ? data.blocks : null;
+        if ((blocks || typeof html === "string") && source === textarea.value) {
+          if (blocks) {
+            reconcilePreviewBlocks(surface, preview, blocks);
+          } else {
+            reconcilePreviewHTML(surface, preview, html || '<p class="editor-preview-empty">No content yet.</p>');
+          }
+          ensurePreviewEnhancements(surface, preview);
           lastPreviewSource = source;
           if (data && data.saved === true) {
-            clearTimeout(autosaveTimer);
+            cancelTask("autosave");
             autosavePending = false;
             lastAutosaveFingerprint = autosaveFingerprint();
             setSaveStatus("saved", "Saved");
           }
         }
-      } catch (_) {
+      } catch (error) {
         // Keep the current server-rendered preview if the request fails.
+        reportOperationalFailure("preview", error);
       } finally {
         previewInFlight = false;
-        if (selectedPanel() === "preview" && textarea.value !== lastPreviewSource) {
+        if (selectedPanel(form) === "preview" && textarea.value !== lastPreviewSource) {
           updatePreview();
         }
       }
@@ -567,8 +740,7 @@
       if (textarea.value === lastPreviewSource) return;
       previewPending = true;
       if (previewInFlight) return;
-      clearTimeout(previewTimer);
-      previewTimer = setTimeout(flushPreview, previewIdleDelay);
+      scheduleTask("preview", flushPreview, previewIdleDelay);
     };
 
     const metadataField = (name) => form.querySelector(`[name="${name}"]`);
@@ -595,7 +767,7 @@
     };
 
     const updateExcerptPreview = (html) => {
-      const preview = document.getElementById("editor-excerpt-preview");
+      const preview = byID("editor-excerpt-preview");
       if (!preview || typeof html !== "string") return;
       preview.innerHTML = html;
     };
@@ -603,10 +775,9 @@
     const requestMetadata = async (mode = "preview") => {
       const url = form.dataset.metadataUrl;
       if (!url || metadataInFlight) return;
-      const request = ++metadataRequest;
       metadataInFlight = true;
       try {
-        const res = await fetch(url, {
+        const res = await surfaceRequest("metadata", url, {
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -615,8 +786,8 @@
           },
           body: formDataWithSource(form, textarea.value),
         });
-        if (!res.ok || request !== metadataRequest) return;
-        const json = await res.json();
+        if (!res.ok) throw new Error(`metadata request failed (${res.status})`);
+        const json = await surfaceJSON(res) || {};
         const data = json.data || json;
         updateExcerptPreview(data.excerpt_html || "");
         if (mode === "excerpt" && data.excerpt) {
@@ -630,8 +801,9 @@
         if (mode === "mood" && data.suggestedMood) {
           setMetadataField("mood", data.suggestedMood);
         }
-      } catch (_) {
+      } catch (error) {
         // Metadata helpers are advisory; keep editing responsive on failure.
+        reportOperationalFailure("metadata", error, { mode });
       } finally {
         metadataInFlight = false;
       }
@@ -639,9 +811,116 @@
 
     const scheduleMetadataPreview = () => {
       if (!form.dataset.metadataUrl) return;
-      clearTimeout(metadataTimer);
-      metadataTimer = setTimeout(() => {
+      scheduleTask("metadata", () => {
         void requestMetadata("preview");
+      }, metadataIdleDelay);
+    };
+
+    const diagnosticsList = () => {
+      return byID("editor-diagnostics-list") || byID("diagnostics-list");
+    };
+
+    const diagnosticSeverity = (diagnostic) => {
+      const value = String(diagnostic?.severity ?? "").toLowerCase();
+      if (value === "1" || value.includes("error")) return "error";
+      if (value === "2" || value.includes("warning")) return "warning";
+      return "info";
+    };
+
+    const diagnosticPosition = (position) => {
+      const line = Number(position?.line ?? position?.Line ?? 0);
+      const character = Number(position?.character ?? position?.Character ?? 0);
+      return {
+        line: Number.isFinite(line) ? Math.max(0, Math.floor(line)) : 0,
+        character: Number.isFinite(character) ? Math.max(0, Math.floor(character)) : 0,
+      };
+    };
+
+    const diagnosticRange = (diagnostic) => {
+      const range = diagnostic?.range || diagnostic?.Range || {};
+      const start = diagnosticPosition(range.start || range.Start);
+      return {
+        start,
+        end: range.end || range.End ? diagnosticPosition(range.end || range.End) : start,
+      };
+    };
+
+    const renderDiagnosticsMessage = (message, countText = "—", className = "editor-preview-empty") => {
+      const list = diagnosticsList();
+      const count = byID("editor-diagnostics-count");
+      if (list) list.innerHTML = `<p class="${className}">${escapeHTML(message)}</p>`;
+      if (count) count.textContent = countText;
+    };
+
+    const renderDiagnostics = (diagnostics) => {
+      const list = diagnosticsList();
+      const count = byID("editor-diagnostics-count");
+      if (!list) return;
+      const items = Array.isArray(diagnostics) ? diagnostics.filter((item) => item && typeof item === "object") : [];
+      if (count) count.textContent = items.length ? `${items.length} ${items.length === 1 ? "issue" : "issues"}` : "Clean";
+      if (!items.length) {
+        list.innerHTML = '<p class="editor-preview-empty">No Markdown++ diagnostics.</p>';
+        return;
+      }
+      list.innerHTML = items.map((diagnostic) => {
+        const severity = diagnosticSeverity(diagnostic);
+        const range = diagnosticRange(diagnostic);
+        const line = range.start.line + 1;
+        const character = range.start.character + 1;
+        const endLine = range.end.line + 1;
+        const endCharacter = range.end.character + 1;
+        const message = String(diagnostic.message ?? diagnostic.Message ?? "Markdown++ diagnostic");
+        const offset = Number(diagnostic.offset ?? diagnostic.Offset);
+        const offsetAttribute = Number.isFinite(offset) && offset >= 0 ? ` data-offset="${Math.floor(offset)}"` : "";
+        return `<button type="button" class="editor-diagnostic editor-diagnostic-${severity}" data-line="${range.start.line}" data-character="${range.start.character}" data-end-line="${range.end.line}" data-end-character="${range.end.character}"${offsetAttribute}>
+          <span class="editor-diagnostic-meta">${severity}</span>
+          <span class="editor-diagnostic-message">${escapeHTML(message)}</span>
+          <span class="editor-diagnostic-location">${line}:${character}${endLine !== line || endCharacter !== character ? `–${endLine}:${endCharacter}` : ""}</span>
+        </button>`;
+      }).join("");
+    };
+
+    const requestDiagnostics = async () => {
+      const url = form.dataset.diagnosticsUrl;
+      const list = diagnosticsList();
+      if (!list) return;
+      if (!url) {
+        renderDiagnosticsMessage("Diagnostics are not configured for this editor.", "Not configured");
+        return;
+      }
+      if (diagnosticsInFlight) return;
+      diagnosticsInFlight = true;
+      const source = textarea.value;
+      const count = byID("editor-diagnostics-count");
+      if (count) count.textContent = "Checking…";
+      try {
+        const res = await surfaceRequest("diagnostics", url, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-CSRF-Token": form.querySelector("[name='csrf_token']")?.value || "",
+          },
+          body: formDataWithSource(form, source),
+        });
+        if (!res.ok) throw new Error("diagnostics request failed");
+        const json = await surfaceJSON(res) || {};
+        const data = json.data || json;
+        const diagnostics = Array.isArray(data) ? data : (data?.diagnostics || data?.items || []);
+        if (source === textarea.value) renderDiagnostics(diagnostics);
+      } catch (error) {
+        reportOperationalFailure("diagnostics", error);
+        renderDiagnosticsMessage("Diagnostics could not be loaded.", "Unavailable");
+      } finally {
+        diagnosticsInFlight = false;
+        if (selectedPanel(form) === "diagnostics" && source !== textarea.value) scheduleDiagnostics();
+      }
+    };
+
+    const scheduleDiagnostics = () => {
+      if (!form.dataset.diagnosticsUrl) return;
+      scheduleTask("diagnostics", () => {
+        void requestDiagnostics();
       }, metadataIdleDelay);
     };
 
@@ -655,8 +934,7 @@
     };
 
     const queueAutosaveTimer = () => {
-      clearTimeout(autosaveTimer);
-      autosaveTimer = setTimeout(flushAutosave, autosaveDelay);
+      scheduleTask("autosave", flushAutosave, autosaveDelay);
     };
 
     const scheduleAutosave = () => {
@@ -671,7 +949,6 @@
     };
 
     async function flushAutosave() {
-      autosaveTimer = null;
       if (!autosavePending || autosaveInFlight) return;
       const url = form.dataset.autosaveUrl;
       if (!url) return;
@@ -687,7 +964,7 @@
       autosaveInFlight = true;
       setSaveStatus("saving", "Saving...");
       try {
-        const res = await fetch(url, {
+        const res = await surfaceRequest("autosave", url, {
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -697,14 +974,15 @@
           body: autosaveFormData(),
         });
         if (!res.ok) throw new Error("autosave failed");
-        const json = await res.json().catch(() => ({}));
+        const json = await surfaceJSON(res) || {};
         const data = json.data || json;
         lastAutosaveFingerprint = fingerprint;
         setSaveStatus("saved", "Saved");
         if (data && typeof data.redirect === "string" && data.redirect !== "") {
-          window.location.href = data.redirect;
+          followRedirect(data.redirect);
         }
-      } catch (_) {
+      } catch (error) {
+        reportOperationalFailure("autosave", error);
         autosavePending = autosaveFingerprint() !== fingerprint;
         setSaveStatus("error", navigator.onLine === false ? "Offline" : "Save failed");
       } finally {
@@ -714,10 +992,10 @@
     }
 
     const updateEditorStats = () => {
-      const wordCount = document.getElementById("editor-word-count");
-      const wordLabel = document.getElementById("editor-word-label");
-      const readingTime = document.getElementById("editor-reading-time");
-      const readingLabel = document.getElementById("editor-reading-label");
+      const wordCount = byID("editor-word-count");
+      const wordLabel = byID("editor-word-label");
+      const readingTime = byID("editor-reading-time");
+      const readingLabel = byID("editor-reading-label");
       if (!wordCount && !readingTime) return;
 
       const stats = computeEditorStats(textarea.value);
@@ -728,7 +1006,7 @@
     };
 
     const renderEditorFrame = () => {
-      renderFrame = 0;
+      renderFramePending = false;
       renderHighlight();
       renderLineNumbers();
       syncScroll();
@@ -737,8 +1015,9 @@
     };
 
     const scheduleEditorRender = () => {
-      if (renderFrame) return;
-      renderFrame = requestAnimationFrame(renderEditorFrame);
+      if (renderFramePending) return;
+      renderFramePending = true;
+      scheduleFrame("editor-render", renderEditorFrame);
     };
 
     const dispatchEditorInput = (options = {}) => {
@@ -759,6 +1038,136 @@
       textarea.focus();
     };
 
+    const dispatchEditorCommand = (command, toolbarButton) => {
+      const start = textarea.selectionStart || 0;
+      const end = textarea.selectionEnd || start;
+      const detail = {
+        command,
+        extension: toolbarButton?.dataset?.gosxExtension || "",
+        range: { from: start, to: end },
+        selection: textarea.value.slice(start, end),
+        textarea,
+        form,
+        insert: (value) => insertAtSelection(String(value || "")),
+        replace: (value) => {
+          textarea.setRangeText(String(value || ""), start, end, "end");
+          dispatchEditorInput();
+          textarea.focus();
+        },
+        source: () => textarea.value,
+        handled: false,
+      };
+      const event = new CustomEvent("gosx:editor:command", {
+        bubbles: true,
+        cancelable: true,
+        detail,
+      });
+      form.dispatchEvent(event);
+      return event.defaultPrevented || detail.handled === true;
+    };
+
+    const commandForKey = (event) => {
+      if (event.isComposing) return "";
+      const modifiers = [];
+      if (event.ctrlKey || event.metaKey) modifiers.push("Mod");
+      if (event.shiftKey) modifiers.push("Shift");
+      if (event.altKey) modifiers.push("Alt");
+      const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+      const chord = [...modifiers, key].join("-");
+      return typeof editorKeymap[chord] === "string" ? editorKeymap[chord] : "";
+    };
+
+    const executeEditorCommand = (command) => {
+      if (!command) return false;
+      if (dispatchEditorCommand(command)) return true;
+      const selection = textarea.value.slice(textarea.selectionStart || 0, textarea.selectionEnd || 0);
+      switch (command) {
+        case "bold":
+        case "italic":
+        case "strike":
+        case "code":
+        case "inlinecode":
+        case "link":
+        case "h1":
+        case "h2":
+        case "h3":
+        case "list":
+        case "ordered_list":
+        case "task_list":
+        case "blockquote":
+        case "note":
+        case "warning":
+        case "math":
+        case "diagram":
+        case "footnote":
+        case "hr":
+        case "scene3d":
+        case "island":
+          insertAtSelection(commandSnippet(command, selection));
+          return true;
+        case "image":
+          chooseImage();
+          return true;
+        case "emoji":
+          openEmojiPicker({ anchor: textarea, focusSearch: true });
+          return true;
+        case "undo":
+        case "redo":
+          textarea.focus();
+          document.execCommand(command);
+          return true;
+        case "save":
+          form.requestSubmit();
+          return true;
+        case "indent":
+        case "dedent":
+          handleTabKey({
+            key: "Tab",
+            shiftKey: command === "dedent",
+            altKey: false,
+            ctrlKey: false,
+            metaKey: false,
+            preventDefault: () => {},
+          });
+          return true;
+        case "newline":
+          insertAtSelection("\n");
+          return true;
+        case "copy":
+          textarea.focus();
+          document.execCommand("copy");
+          return true;
+        case "cut":
+          textarea.focus();
+          document.execCommand("cut");
+          return true;
+        case "select_all":
+          textarea.focus();
+          textarea.select();
+          return true;
+        case "escape":
+          closeEmojiPicker({ restoreFocus: true });
+          return true;
+        default:
+          return false;
+      }
+    };
+
+    const editorLifecycleDetail = () => ({
+      form,
+      page,
+      runtimeSurface: surface.name || "editor",
+      textarea,
+      extensions: extensionIDs.slice(),
+      insert: (value) => insertAtSelection(String(value || "")),
+      source: () => textarea.value,
+      selection: () => {
+        const from = textarea.selectionStart || 0;
+        const to = textarea.selectionEnd || from;
+        return { from, to, text: textarea.value.slice(from, to) };
+      },
+    });
+
     const selectedLineRange = (start, end) => {
       const value = textarea.value;
       const blockStart = start <= 0 ? 0 : value.lastIndexOf("\n", start - 1) + 1;
@@ -767,7 +1176,7 @@
     };
 
     const handleTabKey = (event) => {
-      if (event.key !== "Tab" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault();
 
       const start = textarea.selectionStart || 0;
@@ -776,12 +1185,24 @@
       if (start !== end && selection.includes("\n")) {
         const { blockStart, blockEnd } = selectedLineRange(start, end);
         const block = textarea.value.slice(blockStart, blockEnd);
-        const lineCount = block.split("\n").length;
-        const indented = block.split("\n").map((line) => `\t${line}`).join("\n");
-        textarea.setRangeText(indented, blockStart, blockEnd, "preserve");
-        textarea.setSelectionRange(start + 1, end + lineCount);
+        if (event.shiftKey) {
+          const dedented = block.split("\n").map((line) => line.replace(/^(?:\t| {1,4})/, "")).join("\n");
+          textarea.setRangeText(dedented, blockStart, blockEnd, "preserve");
+          textarea.setSelectionRange(blockStart, blockStart + dedented.length);
+        } else {
+          const lineCount = block.split("\n").length;
+          const indented = block.split("\n").map((line) => `\t${line}`).join("\n");
+          textarea.setRangeText(indented, blockStart, blockEnd, "preserve");
+          textarea.setSelectionRange(start + 1, end + lineCount);
+        }
       } else {
-        textarea.setRangeText("\t", start, end, "end");
+        if (event.shiftKey) {
+          const lineStart = start <= 0 ? 0 : textarea.value.lastIndexOf("\n", start - 1) + 1;
+          const prefix = textarea.value.slice(lineStart).match(/^(?:\t| {1,4})/);
+          if (prefix) textarea.setRangeText("", lineStart, lineStart + prefix[0].length, "end");
+        } else {
+          textarea.setRangeText("\t", start, end, "end");
+        }
       }
 
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
@@ -813,11 +1234,11 @@
 
       emojiSearch = emojiPicker.querySelector("#editor-emoji-search");
       emojiGrid = emojiPicker.querySelector(".editor-emoji-grid");
-      emojiSearch.addEventListener("input", () => {
+      listen(emojiSearch, "input", () => {
         emojiActiveIndex = 0;
         renderEmojiPicker(emojiSearch.value);
       });
-      emojiSearch.addEventListener("keydown", (event) => {
+      listen(emojiSearch, "keydown", (event) => {
         if (event.key === "ArrowDown") {
           event.preventDefault();
           moveEmojiSelection(1);
@@ -832,13 +1253,13 @@
           closeEmojiPicker({ restoreFocus: true });
         }
       });
-      emojiGrid.addEventListener("mousemove", (event) => {
+      listen(emojiGrid, "mousemove", (event) => {
         const option = event.target.closest("[data-emoji-index]");
         if (!option) return;
         emojiActiveIndex = Number(option.dataset.emojiIndex || 0);
         renderEmojiPicker(emojiSearch.value);
       });
-      emojiGrid.addEventListener("click", (event) => {
+      listen(emojiGrid, "click", (event) => {
         const option = event.target.closest("[data-emoji-index]");
         if (!option) return;
         const item = emojiResults[Number(option.dataset.emojiIndex || 0)];
@@ -969,35 +1390,39 @@
 
     const uploadImage = async (file) => {
       if (!file || !form.dataset.uploadUrl) return;
-      const body = new FormData();
-      body.append("file", file);
-      const res = await fetch(form.dataset.uploadUrl, {
-        method: "POST",
-        headers: { "X-CSRF-Token": form.querySelector("[name='csrf_token']")?.value || "" },
-        body,
-      });
-      if (!res.ok) return;
-      const json = await res.json();
-      const url = json.data ? json.data.url : json.url;
-      if (url) insertAtSelection(`![${file.name}](${url})`);
-      galleryLoaded = false;
-      if (selectedPanel() === "images") void loadGallery();
+      try {
+        const body = new FormData();
+        body.append("file", file);
+        const res = await surfaceRequest("upload", form.dataset.uploadUrl, {
+          method: "POST",
+          headers: { "X-CSRF-Token": form.querySelector("[name='csrf_token']")?.value || "" },
+          body,
+        });
+        if (!res.ok) throw new Error(`upload request failed (${res.status})`);
+        const json = await surfaceJSON(res) || {};
+        const url = json.data ? json.data.url : json.url;
+        if (url) insertAtSelection(`![${file.name}](${url})`);
+        galleryLoaded = false;
+        if (selectedPanel(form) === "images") void loadGallery();
+      } catch (error) {
+        reportOperationalFailure("upload", error);
+      }
     };
 
     const chooseImage = () => {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
-      input.addEventListener("change", () => uploadImage(input.files && input.files[0]));
+      listen(input, "change", () => uploadImage(input.files && input.files[0]));
       input.click();
     };
 
     const loadGallery = async () => {
-      const grid = document.getElementById("editor-gallery-grid");
+      const grid = byID("editor-gallery-grid");
       if (!grid || !form.dataset.imagesUrl || galleryLoaded) return;
       grid.innerHTML = '<p class="editor-preview-empty">Loading images...</p>';
       try {
-        const res = await fetch(form.dataset.imagesUrl, {
+        const res = await surfaceRequest("gallery", form.dataset.imagesUrl, {
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -1005,7 +1430,7 @@
           },
         });
         if (!res.ok) throw new Error("image list failed");
-        const json = await res.json();
+        const json = await surfaceJSON(res) || {};
         const images = (json.data && json.data.images) || json.images || [];
         galleryLoaded = true;
         if (!images.length) {
@@ -1020,12 +1445,13 @@
             <span>${name}</span>
           </button>`;
         }).join("");
-      } catch (_) {
+      } catch (error) {
+        reportOperationalFailure("gallery", error);
         grid.innerHTML = '<p class="editor-preview-empty">Failed to load images.</p>';
       }
     };
 
-    document.addEventListener("click", (event) => {
+    listen(document, "click", (event) => {
       if (
         emojiPicker &&
         !emojiPicker.hidden &&
@@ -1037,8 +1463,8 @@
 
       const segment = event.target.closest(".editor-segment[for]");
       if (segment && form.contains(segment)) {
-        const target = document.getElementById(segment.getAttribute("for"));
-        const none = document.getElementById("editor-panel-none");
+        const target = byID(segment.getAttribute("for"));
+        const none = byID("editor-panel-none");
         if (target && none && target.checked) {
           event.preventDefault();
           none.checked = true;
@@ -1050,6 +1476,7 @@
       const toolbarButton = event.target.closest("[data-command]");
       if (toolbarButton && form.contains(toolbarButton)) {
         const command = toolbarButton.dataset.command || "";
+        if (dispatchEditorCommand(command, toolbarButton)) return;
         if (command === "emoji") {
           openEmojiPicker({ anchor: toolbarButton, focusSearch: true });
           return;
@@ -1078,36 +1505,67 @@
         return;
       }
 
+      const diagnosticItem = event.target.closest(".editor-diagnostic");
+      if (diagnosticItem) {
+        const sourceLength = textarea.value.length;
+        const offset = diagnosticItem.dataset.offset;
+        const start = diagnosticPosition({
+          line: diagnosticItem.dataset.line,
+          character: diagnosticItem.dataset.character,
+        });
+        const end = diagnosticPosition({
+          line: diagnosticItem.dataset.endLine,
+          character: diagnosticItem.dataset.endCharacter,
+        });
+        const offsets = lineStartOffsets();
+        const startOffset = offset !== undefined
+          ? Math.min(sourceLength, Math.max(0, Number(offset)))
+          : Math.min(sourceLength, (offsets[start.line] ?? sourceLength) + start.character);
+        const endOffset = offset !== undefined
+          ? startOffset
+          : Math.min(sourceLength, (offsets[end.line] ?? startOffset) + end.character);
+        textarea.focus();
+        textarea.setSelectionRange(Math.min(startOffset, endOffset), Math.max(startOffset, endOffset));
+        return;
+      }
+
       const galleryThumb = event.target.closest(".editor-gallery-thumb");
       if (galleryThumb) {
         insertAtSelection(`![${galleryThumb.dataset.name || "image"}](${galleryThumb.dataset.url || ""})`);
       }
     });
 
-    document.querySelectorAll(".editor-panel-radio").forEach((radio) => {
-      radio.addEventListener("change", () => {
+    form.querySelectorAll(".editor-panel-radio").forEach((radio) => {
+      listen(radio, "change", () => {
         if (radio.checked && radio.value === "preview") updatePreview();
         if (radio.checked && radio.value === "metadata") void requestMetadata("preview");
         if (radio.checked && radio.value === "images") void loadGallery();
         if (radio.checked && radio.value === "outline") rebuildOutline();
+        if (radio.checked && radio.value === "diagnostics") void requestDiagnostics();
       });
     });
 
-    textarea.addEventListener("input", () => {
+    listen(textarea, "input", () => {
       if (!preserveWhitespaceOnlyLines) normalizeWhitespaceOnlyLines();
       scheduleEditorRender();
-      if (selectedPanel() === "preview") updatePreview();
-      if (selectedPanel() === "metadata") scheduleMetadataPreview();
+      if (selectedPanel(form) === "preview") updatePreview();
+      if (selectedPanel(form) === "metadata") scheduleMetadataPreview();
+      if (selectedPanel(form) === "diagnostics") scheduleDiagnostics();
       scheduleAutosave();
       updateEmojiAutocomplete();
     });
-    textarea.addEventListener("keydown", (event) => {
+    listen(textarea, "keydown", (event) => {
       if (handleEmojiAutocompleteKeydown(event)) return;
+      const command = commandForKey(event);
+      if (command && executeEditorCommand(command)) {
+        event.preventDefault();
+        return;
+      }
       handleTabKey(event);
     });
-    textarea.addEventListener("mousedown", focusBlankVisualRow);
-    textarea.addEventListener("scroll", syncScroll);
-    textarea.addEventListener("paste", (event) => {
+    listen(textarea, "mousedown", focusBlankVisualRow);
+    listen(textarea, "scroll", syncScroll);
+    listen(textarea, "paste", (event) => {
       const items = event.clipboardData && event.clipboardData.items;
       if (!items) return;
       for (const item of items) {
@@ -1121,27 +1579,27 @@
         }
       }
     });
-    textarea.addEventListener("drop", (event) => {
+    listen(textarea, "drop", (event) => {
       const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
       if (file && file.type && file.type.startsWith("image/")) {
         event.preventDefault();
         void uploadImage(file);
       }
     });
-    textarea.addEventListener("dragover", (event) => event.preventDefault());
-    form.addEventListener("input", (event) => {
+    listen(textarea, "dragover", (event) => event.preventDefault());
+    listen(form, "input", (event) => {
       if (event.target === textarea || event.target?.classList?.contains("editor-panel-radio")) return;
       if (event.target?.name === "excerpt") scheduleMetadataPreview();
       scheduleAutosave();
     });
-    form.addEventListener("change", (event) => {
+    listen(form, "change", (event) => {
       if (event.target === textarea || event.target?.classList?.contains("editor-panel-radio")) return;
       scheduleAutosave();
     });
-    window.addEventListener("online", () => {
+    listen(window, "online", () => {
       if (autosavePending) queueAutosaveTimer();
     });
-    window.addEventListener("resize", () => {
+    listen(window, "resize", () => {
       visualRowMapWidth = 0;
       scheduleEditorRender();
       if (emojiPicker && !emojiPicker.hidden) positionEmojiPicker();
@@ -1151,17 +1609,64 @@
     lastAutosaveFingerprint = autosaveFingerprint();
     setSaveStatus("saved", "Saved");
     renderEditorFrame();
-    const initialPreview = document.getElementById("editor-preview-content");
+    const initialPreview = byID("editor-preview-content");
     const initialPreviewIsPlaceholder = !!initialPreview?.querySelector(".editor-preview-empty");
     const initialPreviewHasHTML = !!initialPreview && !initialPreviewIsPlaceholder && initialPreview.innerHTML.trim() !== "";
     if (initialPreviewHasHTML) {
-      void renderPreviewDiagrams(initialPreview);
+      ensurePreviewEnhancements(surface, initialPreview);
     }
-    if (selectedPanel() === "preview" && textarea.value.trim() !== "") {
+    if (selectedPanel(form) === "preview" && textarea.value.trim() !== "") {
       updatePreview();
     }
-    if (document.getElementById("editor-excerpt-preview")) {
+    if (byID("editor-excerpt-preview")) {
       void requestMetadata("preview");
     }
-  });
+    if (selectedPanel(form) === "diagnostics") {
+      void requestDiagnostics();
+    }
+
+    form.dispatchEvent(new CustomEvent("gosx:editor:mount", {
+      bubbles: true,
+      detail: editorLifecycleDetail(),
+    }));
+    return {
+      dispose() {
+        cancelTask("preview");
+        cancelTask("metadata");
+        cancelTask("diagnostics");
+        cancelTask("autosave");
+        cancelFrame("editor-render");
+        renderFramePending = false;
+        fallbackTimers.clear();
+        fallbackFrames.clear();
+        if (emojiPicker && emojiPicker.parentNode) emojiPicker.parentNode.removeChild(emojiPicker);
+        if (lineMeasure && lineMeasure.parentNode) lineMeasure.parentNode.removeChild(lineMeasure);
+        if (localController) localController.abort();
+        form.dispatchEvent(new CustomEvent("gosx:editor:unmount", {
+          bubbles: true,
+          detail: editorLifecycleDetail(),
+        }));
+      },
+    };
+  };
+
+  const registerEditorSurface = () => {
+    const runtime = window.__gosx && window.__gosx.runtimeSurfaceAPI;
+    if (runtime && typeof runtime.register === "function") {
+      runtime.register("editor", mountEditorSurface);
+      return true;
+    }
+    if (typeof window.__gosx_register_runtime_surface === "function") {
+      window.__gosx_register_runtime_surface("editor", mountEditorSurface);
+      return true;
+    }
+    return false;
+  };
+
+  if (!registerEditorSurface()) {
+    ready(() => {
+      const form = document.querySelector("form[data-editor-native='true']");
+      if (form) mountEditorSurface({ root: form });
+    });
+  }
 })();

@@ -1,0 +1,135 @@
+/* GoSX shared prose surface. Keep this file usable outside the editor shell. */
+.gosx-prose {
+  --gosx-prose-size: 1rem;
+  --gosx-prose-leading: 1.65;
+  --gosx-prose-flow: 1rem;
+  --gosx-prose-text: currentColor;
+  --gosx-prose-muted: color-mix(in oklab, currentColor 72%, transparent);
+  --gosx-prose-border: color-mix(in oklab, currentColor 18%, transparent);
+  font-size: var(--gosx-prose-size);
+  line-height: var(--gosx-prose-leading);
+  color: var(--gosx-prose-text);
+}
+
+.gosx-prose > :where(*) {
+  margin-block: 0;
+}
+
+.gosx-prose > :where(*) + :where(*) {
+  margin-block-start: var(--gosx-prose-flow);
+}
+
+.gosx-prose :where(h1, h2, h3, h4, h5, h6) {
+  margin-block: 0;
+  font-weight: 800;
+  line-height: 1.2;
+  text-wrap: balance;
+  scroll-margin-block-start: 5rem;
+}
+
+.gosx-prose :where(h1) {
+  font-size: clamp(1.8rem, 1.5rem + 1vw, 2.7rem);
+}
+
+.gosx-prose :where(h2) {
+  font-size: clamp(1.45rem, 1.25rem + 0.55vw, 2rem);
+}
+
+.gosx-prose :where(h3) {
+  font-size: 1.2rem;
+}
+
+.gosx-prose :where(p, li, blockquote, dd) {
+  text-wrap: pretty;
+}
+
+.gosx-prose :where(a) {
+  color: var(--gosx-prose-link, currentColor);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.16em;
+}
+
+.gosx-prose :where(strong) {
+  font-weight: 750;
+}
+
+.gosx-prose :where(ul, ol) {
+  padding-inline-start: 1.5rem;
+}
+
+.gosx-prose :where(li) + :where(li) {
+  margin-block-start: 0.35em;
+}
+
+.gosx-prose :where(blockquote) {
+  margin-inline: 0;
+  padding-inline-start: 1rem;
+  border-inline-start: 0.2rem solid var(--gosx-prose-border);
+  color: var(--gosx-prose-muted);
+}
+
+.gosx-prose :where(hr) {
+  border: 0;
+  border-block-start: 1px solid var(--gosx-prose-border);
+}
+
+.gosx-prose :where(code) {
+  padding: 0.12em 0.35em;
+  border-radius: 0.35em;
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.gosx-prose :where(pre) {
+  overflow-x: auto;
+  padding: 1rem;
+  border: 1px solid var(--gosx-prose-border);
+  border-radius: 0.6rem;
+  background: color-mix(in oklab, currentColor 7%, transparent);
+}
+
+.gosx-prose :where(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.gosx-prose :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.gosx-prose :where(th, td) {
+  padding: 0.65rem 0.75rem;
+  border-block-start: 1px solid var(--gosx-prose-border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.gosx-prose :where(th) {
+  font-weight: 750;
+  text-align: start;
+}
+
+.gosx-prose :where(img, video, svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.gosx-prose :where(figure) {
+  margin-inline: 0;
+}
+
+.gosx-prose :where(figcaption) {
+  color: var(--gosx-prose-muted);
+  font-size: 0.9em;
+}
+
+.gosx-prose :where(dt) {
+  font-weight: 750;
+}
+
+.gosx-prose :where(dd) {
+  margin-inline-start: 1.5rem;
+  color: var(--gosx-prose-muted);
+}

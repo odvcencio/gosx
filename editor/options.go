@@ -5,6 +5,7 @@ import (
 	"m31labs.dev/gosx/editor/textmodel"
 	"m31labs.dev/gosx/editor/toolbar"
 	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/prose"
 )
 
 // MoodChoice is one option in the mood dropdown.
@@ -89,6 +90,12 @@ type Toolbar = toolbar.Toolbar
 // ToolbarAction aliases a toolbar command payload.
 type ToolbarAction = toolbar.Action
 
+// ProseStyle aliases the shared rendered-content rhythm contract.
+type ProseStyle = prose.Style
+
+// DefaultProseStyle is the default rhythm used by editor previews.
+var DefaultProseStyle = prose.DefaultStyle
+
 // DefaultToolbar is the standard markdown++ toolbar.
 var DefaultToolbar = cloneToolbar(toolbar.DefaultToolbar)
 
@@ -108,16 +115,27 @@ const (
 	ThemeLight Theme = "light"
 )
 
+// Surface selects the product shell around the editor document.
+type Surface string
+
+const (
+	// SurfacePublishing keeps the legacy publishing/CMS shell behavior.
+	SurfacePublishing Surface = "publishing"
+	// SurfaceDocument is the reusable editor surface without publishing metadata panels.
+	SurfaceDocument Surface = "document"
+)
+
 // Panel identifies a side panel.
 type Panel string
 
 const (
-	PanelPreview  Panel = "preview"
-	PanelMetadata Panel = "metadata"
-	PanelImages   Panel = "images"
-	PanelHistory  Panel = "history"
-	PanelOutline  Panel = "outline"
-	PanelScratch  Panel = "scratch"
+	PanelPreview     Panel = "preview"
+	PanelMetadata    Panel = "metadata"
+	PanelImages      Panel = "images"
+	PanelHistory     Panel = "history"
+	PanelOutline     Panel = "outline"
+	PanelDiagnostics Panel = "diagnostics"
+	PanelScratch     Panel = "scratch"
 )
 
 // Status identifies the publication state shown in the editor chrome.
@@ -143,13 +161,31 @@ var DefaultPanels = []Panel{
 	PanelMetadata,
 	PanelImages,
 	PanelOutline,
+	PanelDiagnostics,
 	PanelScratch,
 	PanelHistory,
 }
 
+// DefaultDocumentPanels is the generic editor panel set. Publishing metadata
+// and scheduling stay out of this surface.
+var DefaultDocumentPanels = []Panel{
+	PanelPreview,
+	PanelImages,
+	PanelOutline,
+	PanelDiagnostics,
+}
+
 // Options configures the editor.
 type Options struct {
-	Content                   string
+	Content string
+	// Editor is the preferred reusable editor configuration surface. The
+	// flattened fields below remain for source compatibility with older apps.
+	Editor EditorOptions
+	// Metadata contains publishing/post-specific fields. It is intentionally
+	// separate from the generic editor surface.
+	Metadata                  MetadataOptions
+	Runtime                   RuntimeOptions
+	Surface                   Surface
 	Label                     string
 	Title                     string
 	Slug                      string
@@ -163,9 +199,12 @@ type Options struct {
 	FormAction                string
 	AutoSaveURL               string
 	PreviewURL                string
+	DiagnosticsURL            string
 	UploadURL                 string
 	ImagesURL                 string
 	StylesheetURL             string
+	ProseStylesheetURL        string
+	ProseScriptURL            string
 	DiagramScriptURL          string
 	ScriptURL                 string
 	CSRFToken                 string
@@ -178,6 +217,8 @@ type Options struct {
 	Theme                     Theme
 	Toolbar                   Toolbar
 	Keymap                    Keymap
+	Prose                     ProseStyle
+	Extensions                []Extension
 	Panels                    []Panel
 	Buttons                   []FormButton
 	ScheduleButtons           []FormButton
@@ -194,6 +235,13 @@ type Options struct {
 }
 
 func (o *Options) defaults() {
+	if o.Surface == "" {
+		if hasEditorProfile(o.Editor) && !hasMetadataProfile(o.Metadata) {
+			o.Surface = SurfaceDocument
+		} else {
+			o.Surface = SurfacePublishing
+		}
+	}
 	if o.Language == "" {
 		o.Language = MarkdownPP
 	}
@@ -211,6 +259,12 @@ func (o *Options) defaults() {
 	}
 	if o.StylesheetURL == "" {
 		o.StylesheetURL = DefaultStylesheetURL
+	}
+	if o.ProseStylesheetURL == "" {
+		o.ProseStylesheetURL = DefaultProseStylesheetURL
+	}
+	if o.ProseScriptURL == "" {
+		o.ProseScriptURL = DefaultProseScriptURL
 	}
 	if o.DiagramScriptURL == "" {
 		o.DiagramScriptURL = DefaultDiagramScriptURL
@@ -230,8 +284,14 @@ func (o *Options) defaults() {
 	if o.Keymap == nil {
 		o.Keymap = cloneKeymap(DefaultKeymap)
 	}
+	o.Prose = o.Prose.Normalize()
+	o.Extensions = cloneExtensions(o.Extensions)
 	if o.Panels == nil {
-		o.Panels = clonePanels(DefaultPanels)
+		if o.Surface == SurfaceDocument {
+			o.Panels = clonePanels(DefaultDocumentPanels)
+		} else {
+			o.Panels = clonePanels(DefaultPanels)
+		}
 	}
 	if len(o.Buttons) == 0 {
 		o.Buttons = []FormButton{{

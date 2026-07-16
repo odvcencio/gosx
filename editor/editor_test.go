@@ -32,6 +32,64 @@ func TestNew_WithContent(t *testing.T) {
 	}
 }
 
+func TestNew_ProfileOptionsPopulateLegacyCompatibilityFields(t *testing.T) {
+	ed := New("profiled", Options{
+		Editor: EditorOptions{
+			Content: "# Profiled",
+			Label:   "Document",
+			Prose:   ProseStyle{Size: "1.1rem"},
+		},
+		Metadata: MetadataOptions{
+			Title:  "Profiled title",
+			Status: StatusPublished,
+		},
+		Runtime: RuntimeOptions{
+			PreviewURL:     "/preview",
+			DiagnosticsURL: "/diagnostics",
+		},
+	})
+	if ed.Options.Content != "# Profiled" || ed.Options.Editor.Content != "# Profiled" {
+		t.Fatalf("profile content did not normalize: %#v", ed.Options)
+	}
+	if ed.Options.Title != "Profiled title" || ed.Options.Metadata.Title != "Profiled title" {
+		t.Fatalf("metadata did not normalize: %#v", ed.Options)
+	}
+	if ed.Options.Prose.Size != "1.1rem" || ed.Options.Editor.Prose.Size != "1.1rem" {
+		t.Fatalf("prose settings did not normalize: %#v", ed.Options)
+	}
+	if ed.Options.PreviewURL != "/preview" || ed.Options.Runtime.PreviewURL != "/preview" {
+		t.Fatalf("runtime did not normalize: %#v", ed.Options)
+	}
+	if ed.Options.DiagnosticsURL != "/diagnostics" || ed.Options.Runtime.DiagnosticsURL != "/diagnostics" {
+		t.Fatalf("diagnostics runtime did not normalize: %#v", ed.Options)
+	}
+	if ed.Options.Surface != SurfacePublishing {
+		t.Fatalf("profile with metadata surface = %q, want %q", ed.Options.Surface, SurfacePublishing)
+	}
+}
+
+func TestNew_EditorProfileDefaultsToDocumentSurface(t *testing.T) {
+	ed := New("document", Options{Editor: EditorOptions{Content: "# Document"}})
+	if ed.Options.Surface != SurfaceDocument {
+		t.Fatalf("editor-only surface = %q, want %q", ed.Options.Surface, SurfaceDocument)
+	}
+	html := gosx.RenderHTML(ed.Render())
+	if strings.Contains(html, `id="editor-panel-metadata"`) {
+		t.Fatal("document surface should not render publishing metadata")
+	}
+}
+
+func TestNew_LegacyOptionsKeepPublishingSurface(t *testing.T) {
+	ed := New("legacy", Options{Content: "# Legacy"})
+	if ed.Options.Surface != SurfacePublishing {
+		t.Fatalf("legacy surface = %q, want %q", ed.Options.Surface, SurfacePublishing)
+	}
+	html := gosx.RenderHTML(ed.Render())
+	if !strings.Contains(html, `id="editor-panel-metadata"`) {
+		t.Fatal("legacy surface should retain publishing metadata")
+	}
+}
+
 func TestNew_DefaultsCloneMutableOptions(t *testing.T) {
 	ed := New("test", Options{})
 
@@ -52,22 +110,31 @@ func TestNew_DefaultsCloneMutableOptions(t *testing.T) {
 
 func TestRender_ProducesShell(t *testing.T) {
 	ed := New("post-editor", Options{
-		Content:  "# Hello",
-		Label:    "Post Editor",
-		Theme:    ThemeLight,
-		ReadOnly: true,
+		Content:        "# Hello",
+		Label:          "Post Editor",
+		Theme:          ThemeLight,
+		DiagnosticsURL: "/diagnostics",
+		ReadOnly:       true,
 	})
 
 	html := gosx.RenderHTML(ed.Render())
 
 	for _, want := range []string{
 		`class="editor-page editor-page-native"`,
+		`href="/editor/prose.css"`,
+		`src="/editor/prose-runtime.js"`,
 		`id="post-editor"`,
 		`href="/editor/editor.css"`,
 		`src="/editor/mdpp-diagrams.js"`,
 		`src="/editor/native-editor.js"`,
 		`id="editor-native-form"`,
 		`data-editor-native="true"`,
+		`data-editor-surface="publishing"`,
+		`data-diagnostics-url="/diagnostics"`,
+		`data-editor-keymap=`,
+		`data-gosx-runtime-surface="editor"`,
+		`data-gosx-editor="true"`,
+		`data-gosx-script="managed"`,
 		`data-gosx-enhance="form"`,
 		`id="editor-panel-preview"`,
 		`class="editor-topbar editor-native-topbar"`,
@@ -86,6 +153,7 @@ func TestRender_ProducesShell(t *testing.T) {
 		`id="editor-preview-content"`,
 		`id="editor-gallery-grid"`,
 		`id="editor-outline-headings"`,
+		`id="editor-diagnostics-list"`,
 		`id="editor-scratch"`,
 		`Read only`,
 		`id="editor-word-count">2</strong>`,
@@ -119,9 +187,47 @@ func TestRender_ComputesContentStatsAndStatuses(t *testing.T) {
 	}
 }
 
+func TestRender_ProseContractAndExtensions(t *testing.T) {
+	ed := New("prose-editor", Options{
+		Content: "# Hello",
+		Prose: ProseStyle{
+			Size:    "clamp(1rem, 2vw, 1.25rem)",
+			Leading: "1.7",
+			Flow:    "1.1rem",
+		},
+		Extensions: []Extension{{
+			ID:            "citations",
+			StylesheetURL: "/extensions/citations.css",
+			ScriptURL:     "/extensions/citations.js",
+			Toolbar: Toolbar{Items: []ToolbarItem{{
+				Command: Command("citation"),
+				Label:   "Citation",
+			}}},
+		}},
+	})
+
+	html := gosx.RenderHTML(ed.Render())
+	for _, want := range []string{
+		`class="editor-preview-content gosx-prose"`,
+		`data-gosx-prose-streaming="stable"`,
+		`data-gosx-runtime-surface="mdpp-diagrams"`,
+		`data-gosx-fallback="html"`,
+		`--gosx-prose-size:clamp(1rem, 2vw, 1.25rem)`,
+		`data-editor-extensions="citations"`,
+		`href="/extensions/citations.css"`,
+		`src="/extensions/citations.js"`,
+		`data-command="citation"`,
+		`data-gosx-extension="citations"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("rendered html missing %q: %s", want, html)
+		}
+	}
+}
+
 func TestAssetHandlerServesNativeAssets(t *testing.T) {
 	handler := AssetHandler()
-	for _, path := range []string{"/editor.css", "/mdpp-diagrams.js", "/native-editor.js"} {
+	for _, path := range []string{"/editor.css", "/prose.css", "/prose-runtime.js", "/mdpp-diagrams.js", "/native-editor.js"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -130,6 +236,36 @@ func TestAssetHandlerServesNativeAssets(t *testing.T) {
 		}
 		if strings.TrimSpace(w.Body.String()) == "" {
 			t.Fatalf("%s returned an empty body", path)
+		}
+	}
+}
+
+func TestAssetHandlerServesProseRuntimeContract(t *testing.T) {
+	handler := AssetHandler()
+	req := httptest.NewRequest(http.MethodGet, "/prose-runtime.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("prose-runtime.js returned %d", w.Code)
+	}
+	for _, want := range []string{"GoSX standalone prose runtime", "reconcileHTML", "reconcileBlocks", "createBlockStream", "data-gosx-prose-key"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("prose-runtime.js missing %q", want)
+		}
+	}
+}
+
+func TestAssetHandlerServesDiagnosticsRuntimeContract(t *testing.T) {
+	handler := AssetHandler()
+	req := httptest.NewRequest(http.MethodGet, "/native-editor.js", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("native-editor.js returned %d", w.Code)
+	}
+	for _, want := range []string{"diagnosticsUrl", "requestDiagnostics", "editor-diagnostic", "reportOperationalFailure", "runtimeSurfaceAPI", "scheduler", "scheduleTask", "No Markdown++ diagnostics"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("native-editor.js missing %q", want)
 		}
 	}
 }

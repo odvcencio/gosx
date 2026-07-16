@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -31,22 +32,38 @@ func (e *Editor) renderNativeForm() gosx.Node {
 		gosx.Attr("method", "POST"),
 		gosx.Attr("action", e.Options.FormAction),
 		gosx.Attr("data-editor-native", "true"),
-		gosx.Attr("data-gosx-form", "true"),
-		gosx.Attr("data-gosx-form-state", "idle"),
-		gosx.Attr("data-gosx-enhance", "form"),
-		gosx.Attr("data-gosx-enhance-layer", "bootstrap"),
-		gosx.Attr("data-gosx-fallback", "native-form"),
+		gosx.Attr("data-gosx-editor", "true"),
 		gosx.Attr("data-gosx-loading", e.Options.LoadingText),
 	)
+	attrs = append(attrs, gosx.ManagedFormAttrs(gosx.ManagedFormOptions{
+		State:    "idle",
+		Layer:    "bootstrap",
+		Fallback: "native-form",
+	})...)
 	attrs = appendStringAttr(attrs, "data-autosave-url", e.Options.AutoSaveURL)
 	attrs = appendStringAttr(attrs, "data-preview-url", e.Options.PreviewURL)
+	attrs = appendStringAttr(attrs, "data-diagnostics-url", e.Options.DiagnosticsURL)
 	attrs = appendStringAttr(attrs, "data-upload-url", e.Options.UploadURL)
 	attrs = appendStringAttr(attrs, "data-images-url", e.Options.ImagesURL)
+	attrs = appendStringAttr(attrs, "data-editor-surface", string(e.Options.Surface))
+	attrs = appendStringAttr(attrs, "data-editor-extensions", e.extensionIDs())
+	attrs = appendStringAttr(attrs, "data-editor-keymap", e.keymapJSON())
 	if e.Options.ReadOnly {
 		attrs = append(attrs, gosx.BoolAttr("data-readonly"))
 	}
 
-	return gosx.El("form", attrs, gosx.Fragment(children...))
+	return gosx.RuntimeSurface("form", gosx.RuntimeSurfaceOptions{
+		Name:    "editor",
+		Version: "1",
+	}, attrs, gosx.Fragment(children...))
+}
+
+func (e *Editor) keymapJSON() string {
+	encoded, err := json.Marshal(e.Options.Keymap)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }
 
 func (e *Editor) renderNativePanelRadios() []gosx.Node {
@@ -205,6 +222,19 @@ func (e *Editor) renderNativeToolbar() gosx.Node {
 			gosx.Fragment(e.renderToolbarButtons(items)...),
 		))
 	}
+	for _, group := range e.extensionToolbarGroups() {
+		if len(children) > 0 {
+			children = append(children, gosx.El("div", gosx.Attrs(gosx.Attr("class", "toolbar-sep"))))
+		}
+		children = append(children, gosx.El(
+			"div",
+			gosx.Attrs(
+				gosx.Attr("class", "toolbar-group toolbar-extension"),
+				gosx.Attr("data-gosx-extension", group.id),
+			),
+			gosx.Fragment(e.renderToolbarButtonsForExtension(group.items, group.id)...),
+		))
+	}
 	return gosx.El(
 		"div",
 		gosx.Attrs(
@@ -229,6 +259,8 @@ func (e *Editor) renderNativePanels() []gosx.Node {
 			nodes = append(nodes, e.renderNativeImagesPanel())
 		case PanelOutline:
 			nodes = append(nodes, e.renderNativeOutlinePanel())
+		case PanelDiagnostics:
+			nodes = append(nodes, e.renderNativeDiagnosticsPanel())
 		case PanelScratch:
 			nodes = append(nodes, e.renderNativeScratchPanel())
 		case PanelHistory:
@@ -239,6 +271,17 @@ func (e *Editor) renderNativePanels() []gosx.Node {
 }
 
 func (e *Editor) renderNativePreviewPanel() gosx.Node {
+	previewAttrs := gosx.Attrs(
+		gosx.Attr("class", "editor-preview-content gosx-prose"),
+		gosx.Attr("id", "editor-preview-content"),
+		gosx.Attr("data-gosx-prose-streaming", "stable"),
+		gosx.Attr("style", e.Options.Prose.CSSVariables()),
+	)
+	previewAttrs = append(previewAttrs, gosx.RuntimeSurfaceAttrs(gosx.RuntimeSurfaceOptions{
+		Name:     "mdpp-diagrams",
+		Version:  "1",
+		Fallback: "html",
+	})...)
 	content := []gosx.Node{}
 	switch {
 	case strings.TrimSpace(e.Options.InitialPreviewHTML) != "":
@@ -263,10 +306,7 @@ func (e *Editor) renderNativePreviewPanel() gosx.Node {
 		),
 		gosx.El(
 			"div",
-			gosx.Attrs(
-				gosx.Attr("class", "editor-preview-content"),
-				gosx.Attr("id", "editor-preview-content"),
-			),
+			previewAttrs,
 			gosx.Fragment(content...),
 		),
 	)
@@ -363,6 +403,44 @@ func (e *Editor) renderNativeOutlinePanel() gosx.Node {
 				gosx.Attr("aria-label", "Document outline"),
 			),
 			gosx.El("p", gosx.Attrs(gosx.Attr("class", "editor-preview-empty")), gosx.Text("Start writing to see your outline.")),
+		),
+	)
+}
+
+func (e *Editor) renderNativeDiagnosticsPanel() gosx.Node {
+	status := "Ready"
+	message := "Diagnostics are loaded after editing."
+	if e.Options.DiagnosticsURL == "" {
+		status = "Not configured"
+		message = "Diagnostics are not configured for this editor."
+	}
+	return gosx.El(
+		"section",
+		gosx.Attrs(gosx.Attr("class", "editor-native-card editor-panel editor-panel-diagnostics")),
+		gosx.El(
+			"div",
+			gosx.Attrs(gosx.Attr("class", "editor-native-heading-row")),
+			gosx.El("h2", nil, gosx.Text("Diagnostics")),
+			gosx.El(
+				"span",
+				gosx.Attrs(
+					gosx.Attr("id", "editor-diagnostics-count"),
+					gosx.Attr("class", "meta-status-badge meta-status-draft"),
+				),
+				gosx.Text(status),
+			),
+		),
+		gosx.El(
+			"div",
+			gosx.Attrs(
+				gosx.Attr("id", "editor-diagnostics-list"),
+				gosx.Attr("class", "editor-diagnostics-list"),
+			),
+			gosx.El(
+				"p",
+				gosx.Attrs(gosx.Attr("class", "editor-preview-empty")),
+				gosx.Text(message),
+			),
 		),
 	)
 }
