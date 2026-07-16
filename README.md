@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.31.15**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.31.16**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -222,6 +222,8 @@ count    // local to the declaring island
 
 **Managed Motion** — `server.Motion`, `ctx.Motion`, and the `.gsx` `<Motion />` builtin expose server-authored motion presets that run on the shared bootstrap layer. Preset, trigger, duration, delay, easing, reduced-motion policy, and distance all stay in one declarative contract.
 
+**Runtime Surfaces** — `gosx.RuntimeSurface`, `gosx.Action`, and `gosx.Region` describe progressive-enhancement contracts in server HTML (`data-gosx-runtime-surface`), and the shared bootstrap owns discovery, navigation remounting, scoped DOM/query/fetch/listen access, stream-template consumption, and disposal — so rich pages register framework-managed behavior instead of shipping bespoke script tags.
+
 ## Engines
 
 For work that doesn't fit the island model — canvas rendering, WebGL, background computation:
@@ -409,14 +411,16 @@ scene.Props{
 - **Instancing** — `InstancedMesh` renders repeated geometry through WebGPU instance-rate vertex buffers and WebGL2 `drawArraysInstanced`, with per-instance transforms, colors, material passes, receive shadows, and WebGPU instanced shadow casters
 - **World primitives** — helper lines, thick world lines, wire overlays, grids, axes, clip-space guides, and textured plane surfaces render on WebGPU through dedicated color, screen-space line-expansion, and surface-texture pipelines; dashed line styles remain the explicit WebGL2 compatibility escape hatch
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
+- **Water** — `WaterSystem` GPU heightfield simulation with box/rounded pool shapes, caustics, reflection, refraction, projected object optics, drop/orbit/object-drag interaction, independent surface mesh topology, and adaptive quality profiles — WebGPU-first with a WebGL path rendered from the same authored Selena sources
 - **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
 - **WebGPU presentation** — tier-aware 4x MSAA render targets with resolve-to-canvas/post-FX targets, adapter feature/limit negotiation for timestamp queries, shader-f16, indirect first-instance, compressed textures, subgroups, manifest-driven `requiredFeatures` / `requiredLimits` negotiation, opt-in adapter `powerPreference`, opt-in canvas `alphaMode` / `colorSpace` / `toneMapping`, and diagnostics exposed for tooling through `data-gosx-scene3d-webgpu-*` mount attributes, plus shared SceneIR parity across WebGPU, WebGL2, and headless backends
 - **Post-processing** — `SSAO`, `DOF`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, with backend-specific passes skipped gracefully when unavailable
 - **Editor/debug surfaces** — `AxesHelper`, `GridHelper`, `BoxHelper`, `BoundingBoxHelper`, `SkeletonHelper`, visual `TransformControls`, selected mesh outline styling, dashed/solid line materials, and opt-in `Stats` overlay
+- **Native preview & certification** — `scene/preview` renders typed scenes to PNG with no browser or GPU (thumbnails, docs images, deterministic visual tests), and `scene/harness` certifies contract evidence — frame hashes, coverage, Selena artifact hashes, exact BVH ray/drag traces — into schema-versioned JSON reports suitable for agent-operated authoring workflows
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
 - **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`, plus conventional discrete mesh/model swaps via `scene.LODGroup`
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
-- **Camera controls** — `orbit`, `first-person`, `fly`, pointer lock, drag-to-rotate, focus targets, pick signals, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
+- **Camera controls** — `orbit`, `first-person`, `fly`, pointer lock, drag-to-rotate, focus targets, pick signals (including the world-space click ray as `$surface.event.rayOriginX/Y/Z` + `rayDirX/Y/Z`), drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
 - **Shared IR across backends** — the JS WebGL backend, the pure-Go WebGPU pipeline, and the headless test backend consume the same SceneIR, with feature parity gated by what each target surface actually supports
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
@@ -524,6 +528,15 @@ gosx build --msix [app]               # Stage and package Windows MSIX output
 gosx build --sign --msix [app]        # Sign MSIX via signtool
 gosx build --appinstaller <uri> [app] # Emit AppInstaller update feed XML
 gosx assets plan [path...]            # Inspect 3D/game assets and planned build optimizations
+gosx scene render [--out image.png] <scene-file>
+                                      # Render a typed scene natively to PNG (no browser or GPU)
+gosx scene inspect [--cert] [--budget file] <file-or-dir>...
+                                      # Authoring report: surface, assets, memory, fallbacks, budgets
+gosx scene validate [--strict] <file-or-dir>...
+                                      # Structured schema diagnostics for scene documents
+gosx scene certify [--backend webgpu|webgl|canvas2d] <scene-file>
+                                      # Backend capability certification report
+gosx scene schema [--out path]        # Emit the SceneIR JSON schema
 gosx export [app]                     # Pre-render static pages to dist/static/
 gosx compile [file.gsx]               # Compile .gsx to IR
 gosx check [file.gsx]                 # Parse and validate
@@ -776,7 +789,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.31.15**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.31.16**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

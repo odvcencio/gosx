@@ -119,6 +119,12 @@
       uvX: sceneNumber(uv && uv.x, 0),
       uvY: sceneNumber(uv && uv.y, 0),
       depth: sceneNumber(target && target.depth, 0),
+      rayOriginX: sceneNumber(target && target.ray && target.ray.origin && target.ray.origin.x, 0),
+      rayOriginY: sceneNumber(target && target.ray && target.ray.origin && target.ray.origin.y, 0),
+      rayOriginZ: sceneNumber(target && target.ray && target.ray.origin && target.ray.origin.z, 0),
+      rayDirX: sceneNumber(target && target.ray && target.ray.direction && target.ray.direction.x, 0),
+      rayDirY: sceneNumber(target && target.ray && target.ray.direction && target.ray.direction.y, 0),
+      rayDirZ: sceneNumber(target && target.ray && target.ray.direction && target.ray.direction.z, 0),
     };
   }
 
@@ -252,6 +258,12 @@
     pick.uvX = sceneNumber(state.eventTargetUVX, 0);
     pick.uvY = sceneNumber(state.eventTargetUVY, 0);
     pick.depth = sceneNumber(state.eventTargetDepth, 0);
+    pick.rayOriginX = sceneNumber(state.eventTargetRayOriginX, 0);
+    pick.rayOriginY = sceneNumber(state.eventTargetRayOriginY, 0);
+    pick.rayOriginZ = sceneNumber(state.eventTargetRayOriginZ, 0);
+    pick.rayDirX = sceneNumber(state.eventTargetRayDirX, 0);
+    pick.rayDirY = sceneNumber(state.eventTargetRayDirY, 0);
+    pick.rayDirZ = sceneNumber(state.eventTargetRayDirZ, 0);
     pick.hoverKind = state.hoverKind || "";
     pick.downKind = state.downKind || "";
     pick.selectedKind = state.selectedKind || "";
@@ -614,7 +626,9 @@
     var ray = sceneScreenToRay(pointerX, pointerY, width, height, camera);
     var closest = sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions, 0, bundle.worldMeshUVs);
     closest = sceneNearestRaycastHit(closest, sceneRaycastPickInstancedMeshes(ray, bundle.instancedMeshes, 0));
-    return sceneNearestRaycastHit(closest, sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0, null));
+    closest = sceneNearestRaycastHit(closest, sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0, null));
+    if (closest) closest.ray = ray;
+    return closest;
   }
 
   function sceneNearestRaycastHit(current, candidate) {
@@ -877,6 +891,12 @@
       eventTargetPrimitiveIndex: -1,
       eventTargetTriangleIndex: -1,
       eventTargetWorldX: 0,
+      eventTargetRayOriginX: 0,
+      eventTargetRayOriginY: 0,
+      eventTargetRayOriginZ: 0,
+      eventTargetRayDirX: 0,
+      eventTargetRayDirY: 0,
+      eventTargetRayDirZ: 0,
       eventTargetWorldY: 0,
       eventTargetWorldZ: 0,
       eventTargetLocalX: 0,
@@ -1037,6 +1057,12 @@
     state.eventTargetUVX = hit.uvX;
     state.eventTargetUVY = hit.uvY;
     state.eventTargetDepth = hit.depth;
+    state.eventTargetRayOriginX = hit.rayOriginX;
+    state.eventTargetRayOriginY = hit.rayOriginY;
+    state.eventTargetRayOriginZ = hit.rayOriginZ;
+    state.eventTargetRayDirX = hit.rayDirX;
+    state.eventTargetRayDirY = hit.rayDirY;
+    state.eventTargetRayDirZ = hit.rayDirZ;
   }
 
   function sceneApplyPickTarget(state, sample) {
@@ -1215,6 +1241,12 @@
       uvX: detail.uvX,
       uvY: detail.uvY,
       depth: detail.depth,
+      rayOriginX: detail.rayOriginX,
+      rayOriginY: detail.rayOriginY,
+      rayOriginZ: detail.rayOriginZ,
+      rayDirX: detail.rayDirX,
+      rayDirY: detail.rayDirY,
+      rayDirZ: detail.rayDirZ,
       hovered: detail.hovered,
       hoverIndex: detail.hoverIndex,
       hoverID: detail.hoverID,
