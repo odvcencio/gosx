@@ -50,6 +50,12 @@ type SceneEventSignals struct {
 	UVX                  islandprogram.ExprID
 	UVY                  islandprogram.ExprID
 	Depth                islandprogram.ExprID
+	RayOriginX           islandprogram.ExprID
+	RayOriginY           islandprogram.ExprID
+	RayOriginZ           islandprogram.ExprID
+	RayDirX              islandprogram.ExprID
+	RayDirY              islandprogram.ExprID
+	RayDirZ              islandprogram.ExprID
 	Hovered              islandprogram.ExprID
 	HoverIndex           islandprogram.ExprID
 	HoverID              islandprogram.ExprID
@@ -177,6 +183,12 @@ func (b *Builder) DeclareSceneEventSignals(namespace string) SceneEventSignals {
 		UVX:                  b.DeclareSignal(namespace+".uvX", islandprogram.TypeFloat, b.Float(0)),
 		UVY:                  b.DeclareSignal(namespace+".uvY", islandprogram.TypeFloat, b.Float(0)),
 		Depth:                b.DeclareSignal(namespace+".depth", islandprogram.TypeFloat, b.Float(0)),
+		RayOriginX:           b.DeclareSignal(namespace+".rayOriginX", islandprogram.TypeFloat, b.Float(0)),
+		RayOriginY:           b.DeclareSignal(namespace+".rayOriginY", islandprogram.TypeFloat, b.Float(0)),
+		RayOriginZ:           b.DeclareSignal(namespace+".rayOriginZ", islandprogram.TypeFloat, b.Float(0)),
+		RayDirX:              b.DeclareSignal(namespace+".rayDirX", islandprogram.TypeFloat, b.Float(0)),
+		RayDirY:              b.DeclareSignal(namespace+".rayDirY", islandprogram.TypeFloat, b.Float(0)),
+		RayDirZ:              b.DeclareSignal(namespace+".rayDirZ", islandprogram.TypeFloat, b.Float(0)),
 		Hovered:              b.DeclareSignal(namespace+".hovered", islandprogram.TypeBool, b.Bool(false)),
 		HoverIndex:           b.DeclareSignal(namespace+".hoverIndex", islandprogram.TypeFloat, b.Float(-1)),
 		HoverID:              b.DeclareSignal(namespace+".hoverID", islandprogram.TypeString, b.String("")),

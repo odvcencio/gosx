@@ -25,6 +25,12 @@ type PickResult struct {
 	WorldPosition  [3]float32
 	UV             [2]float32
 	Depth          float32
+	// RayOrigin and RayDirection are the world-space click ray computed from
+	// the live bundle camera at pick time. They are set for hits AND
+	// background clicks so editors can run exact CPU confirmation against
+	// the same ray the GPU picker saw.
+	RayOrigin    [3]float32
+	RayDirection [3]float32
 }
 
 // PickCallback receives the numeric object ID under the requested pixel. ID 0
@@ -228,6 +234,11 @@ func backgroundPickResult() PickResult {
 
 func pickResultForID(targets map[uint32]PickResult, id uint32) PickResult {
 	if id == 0 {
+		// The enrichment pass stores a ray-stamped background result at ID 0
+		// so no-hit clicks still report the click ray.
+		if background, ok := targets[0]; ok {
+			return background
+		}
 		return backgroundPickResult()
 	}
 	if result, ok := targets[id]; ok {
@@ -404,10 +415,21 @@ type primitiveHit struct {
 }
 
 func enrichPickTargetsWithRay(targets map[uint32]PickResult, b engine.RenderBundle, bases, objectBases, surfaceBases []uint32, x, y, width, height int) {
-	if len(targets) == 0 || width <= 0 || height <= 0 {
+	if targets == nil || width <= 0 || height <= 0 {
 		return
 	}
 	ray := pickRayForCamera(b.Camera, x, y, width, height)
+	defer func() {
+		for id, target := range targets {
+			target.RayOrigin = ray.origin
+			target.RayDirection = ray.dir
+			targets[id] = target
+		}
+		background := backgroundPickResult()
+		background.RayOrigin = ray.origin
+		background.RayDirection = ray.dir
+		targets[0] = background
+	}()
 	for objectIndex, mesh := range b.InstancedMeshes {
 		if objectIndex >= len(bases) || bases[objectIndex] == 0 || mesh.InstanceCount <= 0 {
 			continue

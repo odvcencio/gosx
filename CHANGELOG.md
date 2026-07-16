@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Exposed the world-space click ray on Scene3D pick results across both
+  render paths: `PickResult` gains `RayOrigin`/`RayDirection` (set for hits
+  and background clicks), the native path publishes
+  `$surface.event.rayOriginX/Y/Z` and `rayDirX/Y/Z`, and the JS pick
+  interaction detail carries the same six fields for hits. Editors can now
+  run exact CPU pick confirmation against the same ray the live interactive
+  camera used. JS-path background clicks do not yet carry a ray (named
+  follow-up).
+
 ## v0.31.15 (2026-07-14)
 
 - Restored one inward-facing open-vessel winding for box and rounded water

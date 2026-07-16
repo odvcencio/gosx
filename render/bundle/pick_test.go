@@ -178,3 +178,32 @@ func TestInstanceRecordBytesPacksMatrixAndPickID(t *testing.T) {
 		t.Fatalf("second translation = (%v,%v,%v)", x, y, z)
 	}
 }
+
+func TestEnrichPickTargetsWithRayExposesClickRayOnHitsAndBackground(t *testing.T) {
+	b := engine.RenderBundle{
+		Camera: engine.RenderCamera{Z: 6, FOV: math.Pi / 2, Near: 0.1, Far: 100},
+		InstancedMeshes: []engine.RenderInstancedMesh{{
+			ID:            "hero",
+			Kind:          "box",
+			InstanceCount: 1,
+			Transforms:    identityTransform(),
+		}},
+	}
+	bases, targets := buildPickTargets(b.InstancedMeshes)
+	enrichPickTargetsWithRay(targets, b, bases, nil, nil, 100, 100, 201, 201)
+
+	got := targets[1]
+	if math.Abs(float64(got.RayOrigin[0])) > 0.001 || math.Abs(float64(got.RayOrigin[1])) > 0.001 || math.Abs(float64(got.RayOrigin[2]-6)) > 0.001 {
+		t.Fatalf("ray origin = %#v, want camera position (0,0,6)", got.RayOrigin)
+	}
+	if math.Abs(float64(got.RayDirection[0])) > 0.001 || math.Abs(float64(got.RayDirection[1])) > 0.001 || math.Abs(float64(got.RayDirection[2]+1)) > 0.001 {
+		t.Fatalf("ray direction = %#v, want straight -Z for the center pixel", got.RayDirection)
+	}
+	background := pickResultForID(targets, 0)
+	if background.ObjectIndex != -1 {
+		t.Fatalf("background result = %#v", background)
+	}
+	if background.RayOrigin != got.RayOrigin || background.RayDirection != got.RayDirection {
+		t.Fatalf("background click must still carry the ray: %#v", background)
+	}
+}

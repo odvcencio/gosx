@@ -219,6 +219,12 @@ func pushPickToSignals(b *bridge.Bridge, engineID, eventType string, x, y int, r
 	set("$surface.event.uvX", float64(result.UV[0]))
 	set("$surface.event.uvY", float64(result.UV[1]))
 	set("$surface.event.depth", float64(result.Depth))
+	set("$surface.event.rayOriginX", float64(result.RayOrigin[0]))
+	set("$surface.event.rayOriginY", float64(result.RayOrigin[1]))
+	set("$surface.event.rayOriginZ", float64(result.RayOrigin[2]))
+	set("$surface.event.rayDirX", float64(result.RayDirection[0]))
+	set("$surface.event.rayDirY", float64(result.RayDirection[1]))
+	set("$surface.event.rayDirZ", float64(result.RayDirection[2]))
 	set("$surface.event.revision", float64(nextPickRevision()))
 
 	// Event-type-specific projections.
