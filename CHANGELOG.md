@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.31.17 (2026-07-16)
+
+- Made TransformControls gizmos interactive: a pointer drag near an active
+  translate/rotate/scale form reserves the gesture ahead of camera controls,
+  runs axis-constrained drag math shared with the new pure-Go
+  `scene.AxisDragParameter`/`scene.RingDragAngle` helpers, live-previews
+  translate drags, and emits `gosx:scene3d:input` events with kind
+  `"gizmo-commit"` ({target, mode, axis, phase, position/scaleFactor/
+  angleDelta}) plus the new optional `Props.GizmoOutputSignal`. Editors apply
+  the committed transform back through the existing
+  `gosx:scene3d:commands` seam.
+- Raised the bootstrap and scene3d bundle size budgets ~1% for the gizmo
+  drag controller.
+
 ## v0.31.16 (2026-07-16)
 
 - Exposed the world-space click ray on Scene3D pick results across both

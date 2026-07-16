@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.31.16**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.31.17**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -420,7 +420,7 @@ scene.Props{
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
 - **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`, plus conventional discrete mesh/model swaps via `scene.LODGroup`
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
-- **Camera controls** — `orbit`, `first-person`, `fly`, pointer lock, drag-to-rotate, focus targets, pick signals (including the world-space click ray as `$surface.event.rayOriginX/Y/Z` + `rayDirX/Y/Z`), drag signals, event signals exposed as `$`-signals consumable by surrounding islands
+- **Camera controls** — `orbit`, `first-person`, `fly`, pointer lock, drag-to-rotate, focus targets, pick signals (including the world-space click ray as `$surface.event.rayOriginX/Y/Z` + `rayDirX/Y/Z`), interactive TransformControls gizmo drags that emit `gosx:scene3d:input` `kind:"gizmo-commit"` events and an optional `GizmoOutputSignal`, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
 - **Shared IR across backends** — the JS WebGL backend, the pure-Go WebGPU pipeline, and the headless test backend consume the same SceneIR, with feature parity gated by what each target surface actually supports
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
@@ -789,7 +789,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.31.16**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.31.17**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

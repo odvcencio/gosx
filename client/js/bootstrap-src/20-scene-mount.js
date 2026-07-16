@@ -7516,6 +7516,7 @@
 	    let sceneRendererLastSwapReason = "";
 	    let sceneControlHandle = null;
 	    let dragHandle = null;
+	    let gizmoDragHandle = null;
 	    let pickHandle = null;
 	    let latestScenePickDetail = null;
 
@@ -8141,6 +8142,10 @@
 	      }
 	      sceneControlHandle = null;
 	      dragHandle = null;
+	      if (gizmoDragHandle && typeof gizmoDragHandle.dispose === "function") {
+	        gizmoDragHandle.dispose();
+	      }
+	      gizmoDragHandle = null;
 	      pickHandle = null;
 	    }
 
@@ -8159,6 +8164,40 @@
 	            ? new CustomEvent("gosx:scene3d:input", { detail: inputDetail, bubbles: true })
 	            : { type: "gosx:scene3d:input", detail: inputDetail };
 	          ctx.mount.dispatchEvent(inputEvent);
+	        }
+	      });
+	      // Gizmo drags own pointer-down near an active TransformControls form.
+	      // Registered before the camera controls so stopImmediatePropagation can
+	      // reserve the gesture; presses away from the gizmo fall through.
+	      gizmoDragHandle = setupSceneGizmoDragInteractions(canvas, props, function() {
+	        return viewport;
+	      }, function() {
+	        return latestBundle;
+	      }, function() {
+	        if (!lastAppliedSelectionID || !lastAppliedGizmoMode) return null;
+	        const objects = sceneStateObjects(sceneState);
+	        let target = null;
+	        for (let i = 0; i < objects.length; i++) {
+	          if (objects[i].id === lastAppliedSelectionID) { target = objects[i]; break; }
+	        }
+	        if (!target) return null;
+	        const anchor = sceneGizmoTargetAnchor(target);
+	        return { targetID: lastAppliedSelectionID, mode: lastAppliedGizmoMode, anchor: anchor };
+	      }, function(payload) {
+	        if (payload && payload.phase !== "start" && payload.mode === "translate" && payload.position) {
+	          applySceneObjectPatch(sceneState, payload.target, { x: payload.position.x, y: payload.position.y, z: payload.position.z });
+	          syncMountedSceneGizmoHelpers();
+	          scheduleRender("gizmo-drag");
+	        }
+	        if (typeof props.gizmoOutputSignal === "string" && props.gizmoOutputSignal) {
+	          queueInputSignal(props.gizmoOutputSignal, payload);
+	        }
+	        if (ctx.mount && typeof ctx.mount.dispatchEvent === "function") {
+	          const gizmoDetail = { kind: "gizmo-commit", input: payload };
+	          const gizmoEvent = typeof CustomEvent === "function"
+	            ? new CustomEvent("gosx:scene3d:input", { detail: gizmoDetail, bubbles: true })
+	            : { type: "gosx:scene3d:input", detail: gizmoDetail };
+	          ctx.mount.dispatchEvent(gizmoEvent);
 	        }
 	      });
 	      // Picking owns pointer-down on authored targets. Register it before

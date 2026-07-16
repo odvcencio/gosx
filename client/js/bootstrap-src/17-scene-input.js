@@ -1344,6 +1344,203 @@
     return true;
   }
 
+
+  // --- TransformControls gizmo drag commit ------------------------------
+  // Mirrors the pure-Go helpers in scene/controls.go (AxisDragParameter,
+  // RingDragAngle) so interactive drags and headless tests share one
+  // definition. The controller reserves the pointer gesture when the press
+  // lands near an active gizmo form; background presses fall through to the
+  // camera controls registered after it.
+
+  function sceneGizmoAxisParameter(ray, axisOrigin, axisDir) {
+    var axis = sceneNormalizeVec(axisDir);
+    var dir = sceneNormalizeVec(ray.dir);
+    if (!axis || !dir) return null;
+    var w = { x: ray.origin.x - axisOrigin.x, y: ray.origin.y - axisOrigin.y, z: ray.origin.z - axisOrigin.z };
+    var b = axis.x * dir.x + axis.y * dir.y + axis.z * dir.z;
+    var denom = 1 - b * b;
+    if (Math.abs(denom) < 1e-12) return null;
+    var d = axis.x * w.x + axis.y * w.y + axis.z * w.z;
+    var e = dir.x * w.x + dir.y * w.y + dir.z * w.z;
+    return -((b * e - d) / denom);
+  }
+
+  function sceneGizmoRayPointDistance(ray, point) {
+    var dir = sceneNormalizeVec(ray.dir);
+    if (!dir) return Infinity;
+    var w = { x: point.x - ray.origin.x, y: point.y - ray.origin.y, z: point.z - ray.origin.z };
+    var t = Math.max(0, w.x * dir.x + w.y * dir.y + w.z * dir.z);
+    var c = { x: ray.origin.x + dir.x * t, y: ray.origin.y + dir.y * t, z: ray.origin.z + dir.z * t };
+    return Math.hypot(point.x - c.x, point.y - c.y, point.z - c.z);
+  }
+
+  function sceneGizmoRingAngle(ray, center, normal) {
+    var n = sceneNormalizeVec(normal);
+    var dir = sceneNormalizeVec(ray.dir);
+    if (!n || !dir) return null;
+    var denom = n.x * dir.x + n.y * dir.y + n.z * dir.z;
+    if (Math.abs(denom) < 1e-9) return null;
+    var t = ((center.x - ray.origin.x) * n.x + (center.y - ray.origin.y) * n.y + (center.z - ray.origin.z) * n.z) / denom;
+    if (t < 0) return null;
+    var hit = { x: ray.origin.x + dir.x * t, y: ray.origin.y + dir.y * t, z: ray.origin.z + dir.z * t };
+    var reference = Math.abs(n.x) > 0.999 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+    var refDot = reference.x * n.x + reference.y * n.y + reference.z * n.z;
+    var tx = sceneNormalizeVec({ x: reference.x - n.x * refDot, y: reference.y - n.y * refDot, z: reference.z - n.z * refDot });
+    if (!tx) return null;
+    var ty = { x: n.y * tx.z - n.z * tx.y, y: n.z * tx.x - n.x * tx.z, z: n.x * tx.y - n.y * tx.x };
+    var local = { x: hit.x - center.x, y: hit.y - center.y, z: hit.z - center.z };
+    return {
+      angle: Math.atan2(local.x * ty.x + local.y * ty.y + local.z * ty.z, local.x * tx.x + local.y * tx.y + local.z * tx.z),
+      radius: Math.hypot(local.x, local.y, local.z),
+    };
+  }
+
+  function sceneNormalizeVec(v) {
+    if (!v) return null;
+    var length = Math.hypot(sceneNumber(v.x, 0), sceneNumber(v.y, 0), sceneNumber(v.z, 0));
+    if (!(length > 1e-12)) return null;
+    return { x: sceneNumber(v.x, 0) / length, y: sceneNumber(v.y, 0) / length, z: sceneNumber(v.z, 0) / length };
+  }
+
+  var SCENE_GIZMO_AXES = { x: { x: 1, y: 0, z: 0 }, y: { x: 0, y: 1, z: 0 }, z: { x: 0, y: 0, z: 1 } };
+
+  function setupSceneGizmoDragInteractions(canvas, props, readViewport, readSceneBundle, readGizmoContext, emitGizmo) {
+    if (!canvas || typeof readGizmoContext !== "function") {
+      return { dispose: function() {} };
+    }
+    var size = 1.25;
+    var drag = null;
+
+    function pointerRay(event) {
+      var bundle = typeof readSceneBundle === "function" ? readSceneBundle() : null;
+      if (!bundle || !bundle.camera) return null;
+      var metrics = sceneDragViewportMetrics(readViewport, sceneNumber(props.width, 720), sceneNumber(props.height, 420));
+      var rect = canvas.getBoundingClientRect();
+      var px = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * metrics.width;
+      var py = ((event.clientY - rect.top) / Math.max(rect.height, 1)) * metrics.height;
+      return sceneScreenToRay(px, py, metrics.width, metrics.height, bundle.camera);
+    }
+
+    function payloadFor(phase) {
+      var out = { target: drag.target, mode: drag.mode, axis: drag.axis, phase: phase };
+      if (drag.position) out.position = { x: drag.position.x, y: drag.position.y, z: drag.position.z };
+      if (drag.mode === "scale") out.scaleFactor = drag.scaleFactor;
+      if (drag.mode === "rotate") out.angleDelta = drag.angleDelta;
+      return out;
+    }
+
+    function onPointerDown(event) {
+      if (event.button !== 0 || drag) return;
+      var context = readGizmoContext();
+      if (!context || !context.targetID || !context.mode || !context.anchor) return;
+      var ray = pointerRay(event);
+      if (!ray) return;
+      var anchor = context.anchor;
+      var mode = context.mode;
+      var reserve = null;
+      if (mode === "translate" || mode === "scale") {
+        var bestAxis = "";
+        var bestDistance = size * 0.18;
+        for (var key in SCENE_GIZMO_AXES) {
+          var axis = SCENE_GIZMO_AXES[key];
+          var t = sceneGizmoAxisParameter(ray, anchor, axis);
+          if (t == null || t < -size * 0.1 || t > size * 1.2) continue;
+          var onAxis = { x: anchor.x + axis.x * t, y: anchor.y + axis.y * t, z: anchor.z + axis.z * t };
+          var distance = sceneGizmoRayPointDistance(ray, onAxis);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestAxis = key;
+            reserve = { axis: key, t0: t };
+          }
+        }
+        if (!reserve) return;
+      } else if (mode === "rotate") {
+        var ring = sceneGizmoRingAngle(ray, anchor, SCENE_GIZMO_AXES.z);
+        if (!ring || Math.abs(ring.radius - size) > size * 0.3) return;
+        reserve = { axis: "z", angle0: ring.angle };
+      } else {
+        return;
+      }
+      drag = {
+        pointerId: event.pointerId,
+        target: context.targetID,
+        mode: mode,
+        axis: reserve.axis,
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        t0: reserve.t0,
+        angle0: reserve.angle0,
+        position: null,
+        scaleFactor: 1,
+        angleDelta: 0,
+      };
+      event.preventDefault();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
+        try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
+      }
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
+      document.addEventListener("pointercancel", onPointerUp);
+      if (typeof emitGizmo === "function") emitGizmo(payloadFor("start"));
+    }
+
+    function applyPointer(event) {
+      var ray = pointerRay(event);
+      if (!ray || !drag) return false;
+      var axis = SCENE_GIZMO_AXES[drag.axis];
+      if (drag.mode === "rotate") {
+        var ring = sceneGizmoRingAngle(ray, drag.anchor, SCENE_GIZMO_AXES.z);
+        if (!ring) return false;
+        drag.angleDelta = ring.angle - drag.angle0;
+        return true;
+      }
+      var t = sceneGizmoAxisParameter(ray, drag.anchor, axis);
+      if (t == null) return false;
+      if (drag.mode === "translate") {
+        var delta = t - drag.t0;
+        drag.position = { x: drag.anchor.x + axis.x * delta, y: drag.anchor.y + axis.y * delta, z: drag.anchor.z + axis.z * delta };
+        return true;
+      }
+      if (drag.mode === "scale") {
+        if (Math.abs(drag.t0) < 1e-9) return false;
+        drag.scaleFactor = Math.max(0.01, t / drag.t0);
+        return true;
+      }
+      return false;
+    }
+
+    function onPointerMove(event) {
+      if (!drag || (drag.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      if (applyPointer(event) && typeof emitGizmo === "function") emitGizmo(payloadFor("move"));
+    }
+
+    function onPointerUp(event) {
+      if (!drag || (drag.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      applyPointer(event);
+      var payload = payloadFor("end");
+      var pointerId = drag.pointerId;
+      drag = null;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerUp);
+      if (typeof canvas.releasePointerCapture === "function" && pointerId != null) {
+        try { canvas.releasePointerCapture(pointerId); } catch (_) {}
+      }
+      if (typeof emitGizmo === "function") emitGizmo(payload);
+    }
+
+    canvas.addEventListener("pointerdown", onPointerDown);
+    return {
+      dispose: function() {
+        canvas.removeEventListener("pointerdown", onPointerDown);
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        document.removeEventListener("pointercancel", onPointerUp);
+        drag = null;
+      },
+    };
+  }
+
   function setupSceneDragInteractions(canvas, props, readViewport, readSceneBundle) {
     if (!canvas || !sceneBool(props.dragToRotate, false)) {
       return { dispose() {} };
