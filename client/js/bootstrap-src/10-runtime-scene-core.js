@@ -3053,7 +3053,11 @@
       interactionTarget: typeof item.interactionTarget === "string" ? item.interactionTarget : (typeof current.interactionTarget === "string" ? current.interactionTarget : ""),
       interactionObject: typeof item.interactionObject === "string" ? item.interactionObject : (typeof current.interactionObject === "string" ? current.interactionObject : ""),
       resolution: Math.max(1, Math.floor(sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))),
-      surfaceResolution: Math.max(2, Math.floor(sceneNumber(item.surfaceResolution, sceneNumber(current.surfaceResolution, sceneNumber(item.resolution, sceneNumber(current.resolution, 256)))))),
+      // Tessellation of the surface mesh, independent of the simulation grid above.
+      // 0 means "match resolution". This normalizer is a WHITELIST -- a field absent
+      // here is silently dropped before the renderer ever sees it, which is how a
+      // custom postfx pass got destroyed once already.
+      surfaceMeshResolution: Math.max(0, Math.floor(sceneNumber(item.surfaceMeshResolution, sceneNumber(current.surfaceMeshResolution, 0)))),
       poolShape: typeof item.poolShape === "string" && item.poolShape ? item.poolShape : (typeof current.poolShape === "string" ? current.poolShape : "Box"),
       poolWidth: Math.max(0.001, sceneNumber(item.poolWidth, sceneNumber(current.poolWidth, 1))),
       poolHeight: Math.max(0.001, sceneNumber(item.poolHeight, sceneNumber(current.poolHeight, 1))),
@@ -3264,7 +3268,15 @@
     if (!kind) {
       return null;
     }
-    return {
+    // Custom (shader-authored) post passes carry fields this normalizer knows
+    // nothing about: the shader source, its layout, stage, backend and uniforms.
+    // createSceneState() stores post effects RAW, so those fields survive the
+    // mount path — but rebuilding an effect from the built-in whitelist below
+    // silently stripped them, so any custom pass re-applied through
+    // applyCommands (a progressive post-FX upgrade, say) arrived at the renderer
+    // with no shader and rendered nothing. Preserve everything the caller
+    // supplied, then overlay the normalized built-in knobs.
+    const normalized = {
       kind,
       threshold: sceneNumberOrCSSVar(item.threshold, sceneNumber(current.threshold, 0)),
       intensity: sceneNumberOrCSSVar(item.intensity, sceneNumber(current.intensity, 0)),
@@ -3280,6 +3292,7 @@
       mode: typeof item.mode === "string" ? item.mode : (typeof current.mode === "string" ? current.mode : ""),
       id: typeof item.id === "string" && item.id ? item.id : (typeof current.id === "string" ? current.id : ("scene-postfx-" + index)),
     };
+    return Object.assign({}, current, item, normalized);
   }
 
   function scenePostEffects(props) {

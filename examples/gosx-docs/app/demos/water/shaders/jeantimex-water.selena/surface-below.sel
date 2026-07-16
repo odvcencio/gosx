@@ -19,6 +19,12 @@
 // flips. Same selena gaps as water-surface.sel apply (cube sky now native via
 // the textureCube param + sampleCube(sky, dir); compound/torus raytraced for the
 // refraction ray; rectangular walls; no projected-mesh object textures).
+//
+// PERF INVESTIGATION: see the PERF INVESTIGATION note in water-surface.sel's
+// header — the same object/wall hit-test gating restructure was attempted
+// here too and could not be proven safe (verification-environment noise, not
+// a confirmed logic bug — see that note). Only the branch-free wallRL CSE
+// below is shipped.
 
 fn raySphere(origin: vec3, ray: vec3, center: vec3, radius: float) -> float {
     let toC  = origin - center
@@ -181,6 +187,7 @@ material WaterSurfaceBelow {
         objectCenter  : vec3
         objectHalf    : vec3
         spheres       : array<vec4, 32>
+        knot          : array<vec4, 65>
     }
 
     param tileTexture   : texture2d
@@ -225,6 +232,13 @@ material WaterSurfaceBelow {
         }
         let n         = -normalFromState(pinfo, normalScale)
         let ldir      = normalize(lightDir)
+        // wallRL is the light ray refracted at the (flat, y-up) water
+        // plane, used by wallShade/poolBox for both rays below. It depends
+        // only on ldir, so both rays used one copy each of the identical
+        // expression (formerly rfWallRL / rlWallRL) — computed once here.
+        // Pure ALU CSE, no control-flow change, no sampling touched — see
+        // the PERF INVESTIGATION note in water-surface.sel's header.
+        let wallRL    = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
         let viewDir   = normalize(cameraPos - wp)
         let reflectD  = reflect(-viewDir, n)
         let refractD  = refract(-viewDir, n, 1.333 / 1.0)
@@ -240,18 +254,17 @@ material WaterSurfaceBelow {
         let hl        = max(poolLength, 0.001)
         let ph        = max(poolHeight, 0.001)
 
+        // knot (the 65-point trefoil polyline the torus-knot SDF trace below
+        // reads) is a pure constant of ki — bound as the `knot` context
+        // uniform array (packed once by the host runtime), NOT rebuilt per
+        // fragment. See water-surface.sel for the perf rationale.
         let radiusScale = max(objR / 0.42, 0.25)
-        var knot : array<vec4, 65>
-        for (var ki = 0i; ki <= 64i; ki = ki + 1i) {
-            let theta = float(ki) / 64.0 * 6.283185307
-            let rad   = 0.17 * (2.0 + cos(3.0 * theta)) * 0.5
-            knot[ki]  = vec4f(rad * cos(2.0 * theta), -0.17 * sin(3.0 * theta) * 0.5, rad * sin(2.0 * theta), 0.0)
-        }
 
         let rfSimple = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
 
         var rfComp = 1000000.0
         for (var ci = 0i; ci < 32i; ci = ci + 1i) {
+            if (!(isCompound && float(ci) < objectCount)) { break }
             if (isCompound && float(ci) < objectCount) {
                 let soA = spheres[ci]
                 let scA = objC + vec3f(soA.x * poolWidth, soA.y, soA.z * poolLength)
@@ -268,6 +281,7 @@ material WaterSurfaceBelow {
         var rfTorus = 1000000.0
         var rfDone  = max(traceOff, boundOff)
         for (var ts = 0i; ts < 30i; ts = ts + 1i) {
+            if (rfDone >= 0.5) { break }
             if (rfDone < 0.5) {
                 let pT     = wp + refractD * rfT
                 let posT   = (pT - objC) / radiusScale
@@ -301,6 +315,7 @@ material WaterSurfaceBelow {
         var rfCompN   = normalize(rfObjP - objC)
         var rfCompS   = 1000000.0
         for (var di = 0i; di < 32i; di = di + 1i) {
+            if (!(isCompound && !isTorus && float(di) < objectCount)) { break }
             if (isCompound && !isTorus && float(di) < objectCount) {
                 let soB    = spheres[di]
                 let scB    = objC + vec3f(soB.x * poolWidth, soB.y, soB.z * poolLength)
@@ -336,8 +351,7 @@ material WaterSurfaceBelow {
         let rfWallP       = wp + refractD * max(rfPool.y, 0.0)
         let rfWallTile    = sample(tileTexture, fract(wallUVRect(rfWallP, hw, hl, ph))).xyz
         let rfWallCaustic = sample(causticTexture, wallCausticUV(rfWallP, ldir, poolWidth, poolLength))
-        let rfWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
-        let rfWallPool    = poolBox(rfWallP, rfWallRL, hw, ph, hl)
+        let rfWallPool    = poolBox(rfWallP, wallRL, hw, ph, hl)
         let rfWallSub     = rfWallP.y < stateAt(pointToWaterUV(rfWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
         let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic)
 
@@ -361,8 +375,7 @@ material WaterSurfaceBelow {
         let rlWallP       = wp + reflectD * max(rlPool.y, 0.0)
         let rlWallTile    = sample(tileTexture, fract(wallUVRect(rlWallP, hw, hl, ph))).xyz
         let rlWallCaustic = sample(causticTexture, wallCausticUV(rlWallP, ldir, poolWidth, poolLength))
-        let rlWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
-        let rlWallPool    = poolBox(rlWallP, rlWallRL, hw, ph, hl)
+        let rlWallPool    = poolBox(rlWallP, wallRL, hw, ph, hl)
         let rlWallSub     = rlWallP.y < stateAt(pointToWaterUV(rlWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
         let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic)
 

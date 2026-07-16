@@ -1030,6 +1030,35 @@
     return null;
   }
 
+  // The very first document already executed its own deferred runtime chunks
+  // natively (patch/lifecycle/managed <script src> tags emitted by the
+  // server), but the navigation script cache starts empty. Seed it once, up
+  // front, from whatever managed scripts are already sitting in the boot
+  // document so the first navigation to a route sharing the same chunk does
+  // not fetch+eval it a second time: Scene3D deliberately publishes several
+  // non-writable globals and is not a re-entrant module body.
+  //
+  // This must run before replaceManagedHead() ever clones a route's head
+  // scripts into the live document, because that head diff (run once per
+  // navigation) also leaves matching-src <script> tags sitting in the DOM
+  // for bookkeeping (see gosxDocumentHeadAssets) without having executed
+  // them. A live findLoadedScript() query performed after that clone would
+  // therefore misidentify never-executed navigation-time script tags as
+  // already loaded, permanently starving patch/lifecycle scripts of their
+  // fetch+eval pass. Seeding a snapshot once, up front, keeps the "already
+  // executed on initial load" check from being confused by later head diffs.
+  function seedLoadedManagedScripts() {
+    const scripts = document.querySelectorAll("script[" + SCRIPT_ROLE + "][src]");
+    for (const script of scripts) {
+      const src = absolutizeURL(script.getAttribute("src"), windowLocationHref());
+      const load = script.getAttribute("data-gosx-script-load") || "";
+      const cacheKey = (load === "dom" ? "dom:" : "eval:") + src;
+      if (!scriptCache.has(cacheKey)) {
+        scriptCache.set(cacheKey, Promise.resolve());
+      }
+    }
+  }
+
   function loadManagedScriptTag(role, src) {
     const existing = findLoadedScript(src);
     if (existing) {
@@ -1059,14 +1088,6 @@
       return false;
     }
     const cacheKey = (load === "dom" ? "dom:" : "eval:") + src;
-    // The initial document already executed its deferred runtime chunks, but
-    // the navigation cache starts empty. Reusing the exact same chunk on the
-    // next route must not fetch+eval it again: Scene3D deliberately publishes
-    // several non-writable globals and is not a re-entrant module body.
-    if (findLoadedScript(src)) {
-      scriptCache.set(cacheKey, Promise.resolve());
-      return false;
-    }
     if (scriptCache.has(cacheKey)) {
       await scriptCache.get(cacheKey);
       return false;
@@ -1644,6 +1665,8 @@
       console.error("[gosx] popstate navigation failed:", err);
     });
   }
+
+  seedLoadedManagedScripts();
 
   document.addEventListener("click", onClick);
   document.addEventListener("mouseover", onMouseOver);

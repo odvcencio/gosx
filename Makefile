@@ -23,7 +23,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-water-prod test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-water-prod test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -99,8 +99,22 @@ test-fuzz-smoke:
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./physics -run '^$$' -fuzz FuzzDanmujiRaycastHandlesBoundedNumericInputs -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./route -run '^$$' -fuzz FuzzDanmujiRouterHandlesArbitraryEscapedPaths -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 
+# build-bootstrap regenerates the client bootstrap bundles (pure Go — no npm, no
+# node_modules; see cmd/buildbootstrap).
+#
+# cmd/buildbootstrap is its OWN module on purpose. It needs a JS minifier
+# (esbuild's Go API) and compressors, and gosx advertises a small external
+# dependency surface — five runtime deps. A build tool must not spend that
+# budget: nesting it keeps those requires out of the library's go.mod and out of
+# every consumer's module graph. It is invoked from its own directory for the
+# same reason.
+build-bootstrap:
+	cd cmd/buildbootstrap && $(GO) run .
+
+# test-js needs only a bare Node runtime for `node --test` (stdlib-only unit
+# tests); the bundle staleness check is pure Go.
 test-js:
-	$(NODE) ./client/js/build-bootstrap.mjs --check
+	cd cmd/buildbootstrap && $(GO) run . --check
 	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
 
 test-wasm:
@@ -124,8 +138,7 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 test-e2e:
-	$(NODE) --test e2e/gosx_docs_e2e.test.mjs e2e/webgpu_honesty_gate_e2e.test.mjs e2e/motion-spin.test.mjs e2e/motion-material.test.mjs e2e/water_demo_e2e.test.mjs
-	$(GO) test ./e2e
+	$(GO) test -tags e2e -timeout 30m ./e2e
 
 # Build the deployable docs bundle and prove the production server can serve
 # the water route and its content-addressed Scene3D runtime assets.

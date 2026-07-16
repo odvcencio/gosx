@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.29.5 (2026-07-11)
+
+Production Scene3D, audio, collaboration hardening, and deployable content
+collections. This release banks the full post-v0.29.4 range and makes the
+gotreesitter documentation bundle self-contained in production.
+
+- Shipped the performant Scene3D water demo with honest WebGPU/WebGL backend
+  behavior, one lifecycle-aware scheduler, bounded simulation/caustics work,
+  lazy Duck/glTF loading, production bundle gates, visual baselines, and
+  hardware frame-time certification.
+- Added the `scene.GameplayPostFX()` preset, real FXAA in both browser
+  renderers, GPU-skinned Selena materials on WebGL, and typed scene audio,
+  bus, clip, cue, and synth-patch authoring surfaces.
+- Added live per-frame Selena context uniforms for camera, directional light,
+  and ambient state, plus the `scene.Props.Audio` manifest seam used by the
+  mounted client audio engine.
+- Added inbound CRDT binary authorization while preserving authorized sync and
+  read-only broadcast behavior.
+- Stabilized hub, scheduler, and canvas lifecycle tests around protocol and
+  completion barriers instead of sleeps or scheduler-yield assumptions.
+- Fixed deployment bundles to stage a conventional project-level `content/`
+  tree beside `app/` and `public/`, so server-rendered and prerendered content
+  routes resolve from the same app-root layout in development and production.
+
 ## v0.29.4 (2026-07-06)
 
 Fix: Scene3D client bootstrap dropped instanced-mesh cull fields —

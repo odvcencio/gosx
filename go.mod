@@ -22,8 +22,8 @@ require (
 	github.com/odvcencio/mdpp v0.2.5
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
-	golang.org/x/sys v0.42.0
-	m31labs.dev/selena v0.3.2
+	golang.org/x/sys v0.43.0
+	m31labs.dev/selena v0.4.0
 )
 
 require (

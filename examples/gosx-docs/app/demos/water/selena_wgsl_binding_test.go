@@ -292,27 +292,34 @@ func TestWaterSelenaWGSLDescriptorMatchesBindings(t *testing.T) {
 				}
 			}
 
-			// Every statefield must use the input resource kind advertised by
-			// its descriptor. Render materials lower stateAt(uv) to an exact
-			// textureLoad and therefore declare InKind="texture"; feedback
-			// compute materials retain read/read_write storage buffers.
+			// A statefield's in-binding depends on WGSLStateBinding.InKind:
+			//
+			//   "texture" (render materials) — a texture_2d<f32> read with textureLoad.
+			//     Their stateAt() taps are dependent chains, so the reads must go through
+			//     the texture cache; a flat storage-buffer index bypasses it entirely.
+			//     This is what the GL backend has always done via a sampler2D.
+			//   "storage" (feedback materials) — the read buffer paired with the
+			//     read_write out buffer the dispatch writes.
 			for _, state := range layout.States {
 				if state.WGSL.InKind == "texture" {
-					inDecl, ok := findDeclAt(textureDecls, state.WGSL.Group, state.WGSL.InBinding)
+					inTex, ok := findDeclAt(textureDecls, state.WGSL.Group, state.WGSL.InBinding)
 					if !ok {
 						t.Fatalf("%s: state %q expects a texture at @group(%d) @binding(%d) but WGSL has none", file, state.Name, state.WGSL.Group, state.WGSL.InBinding)
 					}
-					if inDecl.Name != "_inState" || !strings.HasPrefix(inDecl.Type, "texture_2d") {
-						t.Fatalf("%s: state %q input is %q : %q, want _inState : texture_2d", file, state.Name, inDecl.Name, inDecl.Type)
+					if inTex.Type != "texture_2d<f32>" {
+						t.Fatalf("%s: state %q in-texture at @group(%d) @binding(%d) is %q, want texture_2d<f32>", file, state.Name, state.WGSL.Group, state.WGSL.InBinding, inTex.Type)
 					}
-				} else {
-					inDecl, ok := findDeclAt(storageDecls, state.WGSL.Group, state.WGSL.InBinding)
-					if !ok {
-						t.Fatalf("%s: state %q expects a read storage buffer at @group(%d) @binding(%d) but WGSL has none", file, state.Name, state.WGSL.Group, state.WGSL.InBinding)
+					if state.WGSL.OutBinding >= 0 {
+						t.Fatalf("%s: state %q is texture-backed (read-only) but declares out-binding %d", file, state.Name, state.WGSL.OutBinding)
 					}
-					if inDecl.Access != "read" {
-						t.Fatalf("%s: state %q in-buffer at @group(%d) @binding(%d) has access %q, want read", file, state.Name, state.WGSL.Group, state.WGSL.InBinding, inDecl.Access)
-					}
+					continue
+				}
+				inDecl, ok := findDeclAt(storageDecls, state.WGSL.Group, state.WGSL.InBinding)
+				if !ok {
+					t.Fatalf("%s: state %q expects a read storage buffer at @group(%d) @binding(%d) but WGSL has none", file, state.Name, state.WGSL.Group, state.WGSL.InBinding)
+				}
+				if inDecl.Access != "read" {
+					t.Fatalf("%s: state %q in-buffer at @group(%d) @binding(%d) has access %q, want read", file, state.Name, state.WGSL.Group, state.WGSL.InBinding, inDecl.Access)
 				}
 				if state.WGSL.OutBinding >= 0 {
 					outDecl, ok := findDeclAt(storageDecls, state.WGSL.Group, state.WGSL.OutBinding)

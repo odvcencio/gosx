@@ -110,8 +110,14 @@ func (s *Session) CertifyWater(label string, contract WaterContract) WaterTeleme
 	}
 	evidence.SystemID = water.ID
 	evidence.SimulationResolution = water.Resolution
-	evidence.SurfaceResolution = water.SurfaceResolution
-	evidence.SurfaceVertices = max(0, (water.SurfaceResolution-1)*(water.SurfaceResolution-1)*6)
+	// SurfaceMeshResolution follows the runtime's "zero means match the
+	// simulation grid" contract, so the harness reports the effective value.
+	surfaceResolution := water.SurfaceMeshResolution
+	if surfaceResolution <= 0 {
+		surfaceResolution = water.Resolution
+	}
+	evidence.SurfaceResolution = surfaceResolution
+	evidence.SurfaceVertices = max(0, (surfaceResolution-1)*(surfaceResolution-1)*6)
 	if water.Resolution > 0 {
 		evidence.CellSizeX = 2 * water.PoolWidth / float64(water.Resolution)
 		evidence.CellSizeZ = 2 * water.PoolLength / float64(water.Resolution)
@@ -125,7 +131,7 @@ func (s *Session) CertifyWater(label string, contract WaterContract) WaterTeleme
 	evidence.Optics = WaterOptics{Caustics: water.Caustics, Reflection: water.Reflection, Refraction: water.Refraction}
 
 	compareWaterInt(&evidence, "simulation resolution", contract.SimulationResolution, water.Resolution)
-	compareWaterInt(&evidence, "surface resolution", contract.SurfaceResolution, water.SurfaceResolution)
+	compareWaterInt(&evidence, "surface resolution", contract.SurfaceResolution, surfaceResolution)
 	compareWaterInt(&evidence, "caustics resolution", contract.CausticsResolution, water.CausticsResolution)
 	compareWaterInt(&evidence, "object shadow resolution", contract.ObjectShadowResolution, water.ObjectShadowResolution)
 	if contract.RequireCaustics && !water.Caustics {
@@ -187,7 +193,7 @@ func (s *Session) CertifyWater(label string, contract WaterContract) WaterTeleme
 	if contract.RequireObjectDrag && evidence.Interaction.AppliedObjectDrags == 0 {
 		evidence.Problems = append(evidence.Problems, "missing applied native object drag evidence")
 	}
-	if water.Resolution <= 0 || water.SurfaceResolution < 2 || evidence.CellSizeX <= 0 || evidence.CellSizeZ <= 0 {
+	if water.Resolution <= 0 || evidence.SurfaceResolution < 2 || evidence.CellSizeX <= 0 || evidence.CellSizeZ <= 0 {
 		evidence.Problems = append(evidence.Problems, "invalid physical water topology")
 	}
 	evidence.Valid = len(evidence.Problems) == 0

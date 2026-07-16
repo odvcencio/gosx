@@ -39,6 +39,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Node is only needed as a bare runtime for `node --test` (stdlib-only
+      # JS unit tests). There are no npm dependencies to install.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -47,9 +49,6 @@ jobs:
       - name: Set up Chrome
         id: chrome
         uses: browser-actions/setup-chrome@v1
-
-      - name: Install Node dependencies
-        run: npm ci
 
       - name: Install Danmuji
         run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
@@ -93,13 +92,12 @@ jobs:
 
       - name: Browser docs E2E gate
         env:
-          PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: make test-e2e
 
       - name: Perf budget gate
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
       - name: Production water bundle smoke test
@@ -129,16 +127,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Node dependencies
-        run: npm ci
-
       - name: Certify water on hardware WebGPU
         env:
           GOSX_WATER_E2E_REQUIRE_WEBGPU: "1"
-          PLAYWRIGHT_CHROMIUM_EXECUTABLE: ${{ vars.WATER_WEBGPU_CHROME }}
-        run: node --test e2e/water_demo_e2e.test.mjs
+          GOSX_E2E_CHROME: ${{ vars.WATER_WEBGPU_CHROME }}
+        run: go test -tags e2e -timeout 30m -run 'TestWater' ./e2e

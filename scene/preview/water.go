@@ -18,7 +18,7 @@ func appendNativeWaterPreview(frame *engine.RenderBundle, materials map[string]i
 	width := positiveWaterValue(water.PoolWidth, 1)
 	length := positiveWaterValue(water.PoolLength, 1)
 	depth := positiveWaterValue(water.PoolHeight, 1)
-	grid := water.SurfaceResolution
+	grid := water.SurfaceMeshResolution
 	if grid < 2 {
 		grid = water.Resolution
 	}

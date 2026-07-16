@@ -470,7 +470,7 @@ func validateWaterSystem(report *Report, water scene.WaterSystemIR, path string)
 		report.add(Error, "scene.water.invalid_drop_event_id", "Water simulation dropEventID must not be negative", path+".dropEventID", water.ID, nil)
 	}
 	for field, value := range map[string]int{
-		"surfaceResolution":        water.SurfaceResolution,
+		"surfaceMeshResolution":    water.SurfaceMeshResolution,
 		"causticsResolution":       water.CausticsResolution,
 		"objectTextureResolution":  water.ObjectTextureResolution,
 		"objectTexturePixelBudget": water.ObjectTexturePixelBudget,

@@ -159,25 +159,33 @@ type Props struct {
 	MaxFPS                 float64 `json:"maxFPS,omitempty"`
 	FrameIntervalMS        float64 `json:"frameIntervalMS,omitempty"`
 	MaxDevicePixelRatio    float64 `json:"maxDevicePixelRatio,omitempty"`
-	MinDevicePixelRatio    float64 `json:"minDevicePixelRatio,omitempty"`
-	AdaptiveQuality        *bool   `json:"adaptiveQuality,omitempty"`
-	AdaptiveTargetFrameMS  float64 `json:"adaptiveTargetFrameMS,omitempty"`
-	AdaptiveWarmupFrames   int     `json:"adaptiveWarmupFrames,omitempty"`
-	AdaptivePostFX         *bool   `json:"adaptivePostFX,omitempty"`
-	MSAASamples            int     `json:"msaaSamples,omitempty"`
-	WebGPUAlphaMode        string  `json:"webgpuAlphaMode,omitempty"`
-	WebGPUColorSpace       string  `json:"webgpuColorSpace,omitempty"`
-	WebGPUToneMapping      string  `json:"webgpuToneMapping,omitempty"`
-	WebGPUPowerPreference  string  `json:"webgpuPowerPreference,omitempty"`
-	Camera                 PerspectiveCamera
-	OrthographicCamera     *OrthographicCamera
-	Stats                  *bool `json:"stats,omitempty"`
-	Inspector              *bool `json:"inspector,omitempty"`
-	Environment            Environment
-	PostFX                 PostFX
-	Shadows                Shadows
-	Physics                PhysicsWorld
-	Graph                  Graph
+	// MaxPixels caps the render target by TOTAL backing pixels (width*height
+	// after the device pixel ratio is applied). MaxDevicePixelRatio alone cannot
+	// express this: a ratio is blind to how large the display is, so identical
+	// props cost ~3x more fill on a Retina laptop than on a 1080p monitor and any
+	// fill-bound scene falls off a cliff there. The runtime derives an effective
+	// DPR from this budget, so the cap is resolution-aware. Zero means unbounded
+	// (the ratio cap alone applies).
+	MaxPixels             int     `json:"maxPixels,omitempty"`
+	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
+	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
+	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
+	AdaptiveWarmupFrames  int     `json:"adaptiveWarmupFrames,omitempty"`
+	AdaptivePostFX        *bool   `json:"adaptivePostFX,omitempty"`
+	MSAASamples           int     `json:"msaaSamples,omitempty"`
+	WebGPUAlphaMode       string  `json:"webgpuAlphaMode,omitempty"`
+	WebGPUColorSpace      string  `json:"webgpuColorSpace,omitempty"`
+	WebGPUToneMapping     string  `json:"webgpuToneMapping,omitempty"`
+	WebGPUPowerPreference string  `json:"webgpuPowerPreference,omitempty"`
+	Camera                PerspectiveCamera
+	OrthographicCamera    *OrthographicCamera
+	Stats                 *bool `json:"stats,omitempty"`
+	Inspector             *bool `json:"inspector,omitempty"`
+	Environment           Environment
+	PostFX                PostFX
+	Shadows               Shadows
+	Physics               PhysicsWorld
+	Graph                 Graph
 	// Audio optionally declares a gosxAudio manifest (buses + clips) for
 	// this scene's engine. It lowers under the "audio" prop key, which the
 	// client's mountEngine already forwards to
@@ -581,30 +589,35 @@ type WaterSystem struct {
 	InteractionTarget  string
 	InteractionObject  string
 	Resolution         int
-	// SurfaceResolution is the water boundary topology along one axis. It is
-	// independent from the simulation grid so authors can match a reference
-	// mesh budget without paying for the same density in compute state.
-	SurfaceResolution int
-	PoolShape         string
-	PoolWidth         float64
-	PoolHeight        float64
-	PoolLength        float64
-	CornerRadius      float64
-	WaveSpeed         float64
-	Damping           float64
-	NormalScale       float64
-	SeedDrops         int
-	DropRadius        float64
-	DropStrength      float64
-	DropEventID       int
-	DropX             float64
-	DropZ             float64
-	DropEventRadius   float64
-	DropEventStrength float64
-	TileTexture       string
-	CubeMap           string
-	ShallowColor      string
-	DeepColor         string
+	// SurfaceMeshResolution tessellates the surface mesh independently of
+	// Resolution, which sizes the simulation heightfield. Zero means "match
+	// Resolution". The surface shaders sample the heightfield by normalized uv and
+	// never read the grid size in their fragment stage, so a coarser mesh shades
+	// identically -- it only carries the vertical displacement on fewer vertices.
+	// The surface is otherwise tessellated to roughly one triangle per screen
+	// pixel, and a GPU shades in 2x2 quads, so sub-pixel triangles bill a full
+	// four-lane quad each: cost tracks triangle count, not pixels.
+	SurfaceMeshResolution int
+	PoolShape             string
+	PoolWidth             float64
+	PoolHeight            float64
+	PoolLength            float64
+	CornerRadius          float64
+	WaveSpeed             float64
+	Damping               float64
+	NormalScale           float64
+	SeedDrops             int
+	DropRadius            float64
+	DropStrength          float64
+	DropEventID           int
+	DropX                 float64
+	DropZ                 float64
+	DropEventRadius       float64
+	DropEventStrength     float64
+	TileTexture           string
+	CubeMap               string
+	ShallowColor          string
+	DeepColor             string
 	// AboveWaterColor is a linear HDR absorption tint. Components may exceed
 	// one, unlike the display-referred ShallowColor fallback.
 	AboveWaterColor             Vector3
@@ -1714,6 +1727,9 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
+	if p.MaxPixels > 0 {
+		out["maxPixels"] = p.MaxPixels
+	}
 	setNumeric(out, "minDevicePixelRatio", p.MinDevicePixelRatio)
 	setBool(out, "adaptiveQuality", p.AdaptiveQuality)
 	setNumeric(out, "adaptiveTargetFrameMS", p.AdaptiveTargetFrameMS)
@@ -2956,10 +2972,6 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 	if resolution <= 0 {
 		resolution = 256
 	}
-	surfaceResolution := w.SurfaceResolution
-	if surfaceResolution <= 0 {
-		surfaceResolution = resolution
-	}
 	poolShape := strings.TrimSpace(w.PoolShape)
 	if poolShape == "" {
 		poolShape = "Box"
@@ -3035,7 +3047,7 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 		InteractionTarget:            strings.TrimSpace(w.InteractionTarget),
 		InteractionObject:            strings.TrimSpace(w.InteractionObject),
 		Resolution:                   resolution,
-		SurfaceResolution:            surfaceResolution,
+		SurfaceMeshResolution:        w.SurfaceMeshResolution,
 		PoolShape:                    poolShape,
 		PoolWidth:                    poolWidth,
 		PoolHeight:                   poolHeight,

@@ -2641,7 +2641,7 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 				InteractionTarget:           "water-main",
 				InteractionObject:           "Sphere",
 				Resolution:                  256,
-				SurfaceResolution:           201,
+				SurfaceMeshResolution:       201,
 				PoolShape:                   "Rounded Box",
 				PoolWidth:                   7.2,
 				PoolHeight:                  1.1,
@@ -2772,7 +2772,7 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 	if water.CubeMap != "/water/" {
 		t.Fatalf("cubemap field did not lower: %+v", water)
 	}
-	if water.Resolution != 256 || water.SurfaceResolution != 201 {
+	if water.Resolution != 256 || water.SurfaceMeshResolution != 201 {
 		t.Fatalf("water simulation/surface resolutions did not lower: %+v", water)
 	}
 	if water.ShallowColor != "#7ad1eb" || water.DeepColor != "#082e57" {
@@ -2915,8 +2915,8 @@ func TestPropsSceneIRLowersWaterSystem(t *testing.T) {
 	if got := systems[0]["causticsResolution"]; got != 1024 {
 		t.Fatalf("legacy causticsResolution = %#v, want 1024", got)
 	}
-	if got := systems[0]["surfaceResolution"]; got != 201 {
-		t.Fatalf("legacy surfaceResolution = %#v, want 201", got)
+	if got := systems[0]["surfaceMeshResolution"]; got != 201 {
+		t.Fatalf("legacy surfaceMeshResolution = %#v, want 201", got)
 	}
 	if got := systems[0]["objectTextureResolution"]; got != 512 {
 		t.Fatalf("legacy objectTextureResolution = %#v, want 512", got)

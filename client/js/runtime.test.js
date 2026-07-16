@@ -4208,6 +4208,13 @@ test("bootstrap batches keyboard and pointer input for capable engines", async (
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
+  // 06-declarative-actions.js installs its own always-on, page-lifetime
+  // "keydown" listener on `document` (Escape-to-close + Tab focus trap for
+  // data-gosx-disclosure panels), independent of any engine. By this point
+  // bootstrap + the input-capable engine have both mounted, so `document`
+  // carries that one plus the engine's own keyboard-provider listener.
+  const keydownListenersAfterMount = env.document.eventListeners.get("keydown").length;
+
   env.document.dispatchEvent({ type: "keydown", key: "W" });
   env.document.dispatchEvent({
     type: "pointermove",
@@ -4236,7 +4243,9 @@ test("bootstrap batches keyboard and pointer input for capable engines", async (
   assert.equal(lastBatch["$input.pointer.buttons"], 0);
 
   env.context.__gosx_dispose_engine("gosx-engine-input");
-  assert.equal(env.document.eventListeners.get("keydown").length, 0);
+  // Only the engine's own keyboard-provider listener should be torn down;
+  // the page-lifetime declarative-actions listener stays registered.
+  assert.equal(env.document.eventListeners.get("keydown").length, keydownListenersAfterMount - 1);
   assert.equal(env.document.eventListeners.get("pointermove").length, 0);
 });
 
@@ -8890,7 +8899,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
 });
 
 test("Scene3D managed control forms replace the route water-controls bridge", () => {
-  const build = fs.readFileSync(path.join(__dirname, "build-bootstrap.mjs"), "utf8");
+  const build = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
   const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
   const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.js"), "utf8");
   const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
@@ -9588,6 +9597,50 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /renderWaterObjectSceneTexturePasses\(/);
   assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
   assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH\)/);
+
+  // The water surface's vertex stage does NOT come from the built-in WGSL shader:
+  // the Selena pipeline builds the vertex AND fragment stage from one module, so
+  // surface.sel / surface-below.sel supply it, and they expand vertexIndex into
+  // (cell, corner) using their gridResolution param. The draw count and that param
+  // therefore have to describe the SAME mesh. v0.30.6 changed one without the other
+  // -- an index buffer against a corner-expanding shader -- which scrambled the
+  // geometry into oversized triangles and made the frame 2.5x more expensive.
+  //
+  // So: the Selena draw is sized by surfaceVertexCount, gridResolution is fed from
+  // the matching surfaceMeshResolution, and the built-in fallback (which expands
+  // params.resolution, the simulation grid) keeps drawing the full-resolution mesh.
+  // normalizeSceneWaterSystemEntry returns an object LITERAL: any field not named
+  // there is silently dropped before the renderer sees it. surfaceMeshResolution was,
+  // which made the knob a no-op that still reported the requested value back. The
+  // renderer therefore also publishes the EFFECTIVE mesh resolution, so a dropped prop
+  // shows up as a disagreement instead of a mystery.
+  assert.match(core, /surfaceMeshResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.surfaceMeshResolution/);
+  assert.match(webgpu, /data-gosx-scene3d-webgpu-water-surface-mesh-resolution/);
+  // The heightfield is READ by render materials through a texture, not a storage buffer.
+  // Their stateAt() taps are dependent chains -- each coordinate derived from the value
+  // just read -- so through a raw buffer they bypass the texture cache and, past a certain
+  // grid size, the working set stops fitting. That cost the water demo ~16ms/frame on
+  // Apple/Metal while the SAME shader on WebGL2, which has no storage buffers and so always
+  // sampled a texture, never degraded. Selena's WGSLStateBinding.InKind drives this.
+  assert.match(webgpu, /stateWGSL\.inKind === "texture"/);
+  assert.match(webgpu, /texture: \{ sampleType: "unfilterable-float", viewDimension: "2d" \}/);
+  assert.match(webgpu, /function sceneSelenaLiveStateTextureView/);
+  // The sim still writes buffers, so the active one must be mirrored into that texture
+  // every frame, after the last compute stage and before anything samples it.
+  assert.match(webgpu, /sceneWaterCopyStateToTexture\(encoder, system\)/);
+  assert.match(webgpu, /copyBufferToTexture/);
+  // A state row is resolution * 16 bytes and copyBufferToTexture demands a 256-byte row,
+  // so the grid must stay a multiple of 16.
+  assert.match(webgpu, /Math\.round\(raw \/ 16\) \* 16/);
+  assert.match(webgpu, /renderPass\.draw\(system\.surfaceVertexCount\)/);
+  assert.match(webgpu, /renderPass\.draw\(system\.vertexCount\)/);
+  assert.match(webgpu, /gridResolution: sceneNumber\(system && system\.surfaceMeshResolution/);
+  assert.match(webgpu, /surfaceVertexCount: Math\.max\(0, \(surfaceMeshResolution - 1\) \* \(surfaceMeshResolution - 1\) \* 6\)/);
+  // Mesh resolution changes the vertex count, so it must key the system signature
+  // or a change to it would silently reuse the old system's buffers.
+  assert.match(webgpu, /return \[\s*resolution,\s*surfaceMeshResolution,/);
+  // The surface must not be drawn indexed: no index buffer may be bound to it.
+  assert.doesNotMatch(webgpu, /sceneWaterCreateSurfaceIndexBuffer/);
   assert.match(webgpu, /waterObjectTexturePasses/);
   assert.match(webgpu, /waterObjectTextureTargets/);
   assert.match(webgpu, /waterObjectTextureMeshPasses/);
@@ -9622,13 +9675,20 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /id="float-sphere"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-cube"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-torus"[\s\S]*wireframe=\{false\}/);
-  assert.match(waterPage, /resolution=\{256\}/);
-  assert.match(waterPage, /surfaceResolution=\{201\}/);
-  assert.match(waterPage, /causticsResolution=\{1024\}/);
+  // These props are URL-overridable for perf diagnostics (see the water demo's
+  // diag.go), so page.gsx binds them instead of hardcoding literals. The DEFAULTS are
+  // still the shipped values — that contract is pinned by
+  // TestWaterDiagDefaultsMatchShippedValues in the demo's Go tests.
+  assert.match(waterPage, /resolution=\{data\.diagResolution\}/);
+  assert.match(waterPage, /causticsResolution=\{data\.diagCausticsRes\}/);
+  // surfaceResolution was renamed surfaceMeshResolution (see
+  // 10-runtime-scene-core.js); page.gsx binds it to the same URL-overridable
+  // diag.go knob (out["meshRes"] -> data.diagMeshRes) as the props above.
+  assert.match(waterPage, /surfaceMeshResolution=\{data\.diagMeshRes\}/);
   assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
-  assert.match(waterPage, /objectTexturePixelBudget=\{786432\}/);
+  assert.match(waterPage, /objectTexturePixelBudget=\{data\.diagObjectTexBudget\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
-  assert.match(waterPage, /objectShadowResolution=\{1024\}/);
+  assert.match(waterPage, /objectShadowResolution=\{data\.diagShadowRes\}/);
   // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'
   // generic shaderSource/shaderSourceFiles) have been retired -- Selena is
   // the sole primary WGSL source now.
@@ -11515,11 +11575,11 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
 });
 
 test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
-  const builder = fs.readFileSync(path.join(__dirname, "build-bootstrap.mjs"), "utf8");
+  const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
   const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
 
-  assert.match(builder, /sourceExtract\(RUNTIME_SCENE_CORE_FILE,\s*"runtime-utils"/);
+  assert.match(builder, /sourceExtract\(runtimeSceneCoreFile,\s*"runtime-utils"/);
   assert.doesNotMatch(builder, /10a-runtime-utils/);
   assert.doesNotMatch(core, /function sceneBool\(/);
   assert.doesNotMatch(core, /function clearChildren\(/);
@@ -20022,6 +20082,103 @@ test("bootstrap starts a canvas2d paint loop (tick + render + paint) only for th
   assert.match(source, /getContext\("2d"\)/);
 });
 
+// Regression test for the "hidden-at-hydration" CanvasBoard defect: a
+// <canvas> with no CSS width/height override renders at its OWN width/height
+// CONTENT ATTRIBUTES — the very attributes _initEngineSurfaceCanvasSize
+// writes. Once mounted while its box is collapsed (host CSS never gives the
+// canvas OR a close ancestor a real box — whether it hydrated behind a
+// display:none workbench panel, or a host CSS selector no longer matches
+// after an upstream DOM-nesting change), a bare getBoundingClientRect()
+// measurement is a stable 1x1 fixed point: ResizeObserver still fires
+// correctly on every subsequent layout change, but it keeps re-measuring the
+// same self-referential 1x1 box forever. _measuredCanvasCSSBox must walk up
+// to the first real-boxed ancestor instead, capped at the board's declared
+// size, and keep observing that ancestor for later layout changes.
+test("canvas2d surface recovers from a self-referential 1x1 backing store by sizing from the nearest real-boxed ancestor", async () => {
+  const env = createContext({});
+  installManualRAF(env.context);
+
+  // Mirrors the real regression: the immediate parent (.studio-site-map-canvas)
+  // is ALSO still collapsed (a broken host CSS selector never gave it a real
+  // height either), but the grandparent (.studio-advanced-canvas-board) has a
+  // real box — the fix must walk past the degenerate parent to find it.
+  const grandparent = new FakeElement("section", env.context.document);
+  grandparent.clientWidth = 746;
+  grandparent.clientHeight = 738;
+
+  const parent = new FakeElement("section", env.context.document);
+  parent.clientWidth = 746;
+  parent.clientHeight = 20;
+  grandparent.appendChild(parent);
+  parent.parentElement = grandparent;
+
+  const canvas = new FakeElement("canvas", env.context.document);
+  canvas.setAttribute("data-gosx-surface-kind", "canvas2d");
+  canvas.setAttribute("width", "1280");
+  canvas.setAttribute("height", "720");
+  canvas.width = 1280;
+  canvas.height = 720;
+  canvas.isConnected = true;
+  canvas.focus = () => {};
+  // The canvas's own box is stuck at 1x1 — the self-referential collapse this
+  // fix must recover from (unaffected by anything this test does to the
+  // ancestors above).
+  canvas.getBoundingClientRect = () => ({ width: 1, height: 1, left: 0, top: 0 });
+  parent.appendChild(canvas);
+  canvas.parentElement = parent;
+  env.context.document.body.appendChild(grandparent);
+
+  env.context.document.querySelectorAll = function(selector) {
+    if (selector === "[data-gosx-surface-kind]:not([data-gosx-engine-bytecode])") {
+      return canvas.hasAttribute("data-gosx-engine-bytecode") ? [] : [canvas];
+    }
+    return [];
+  };
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureEnginesSource, env.context, "bootstrap-feature-engines.js");
+  const enginesFactory = env.context.__gosx_bootstrap_features && env.context.__gosx_bootstrap_features.engines;
+  assert.equal(typeof enginesFactory, "function", "engines feature factory must be registered");
+
+  env.context.__gosx_hydrate = function() { return ""; };
+
+  const feature = enginesFactory({
+    engineFactories: {},
+    sceneNumber: (v, d) => (typeof v === "number" ? v : d),
+    sceneBool: (v, d) => (typeof v === "boolean" ? v : d),
+  });
+
+  await feature.runtimeReady({});
+  await flushAsyncWork();
+
+  // Mount alone must already recover — the walk runs unconditionally, not
+  // just on a later ResizeObserver fire — picking the largest-area real
+  // ancestor within reach, capped at the board's declared 1280x720.
+  assert.equal(canvas.width, 746, "backing store width must recover from the grandparent's real box");
+  assert.equal(canvas.height, 720, "backing store height must be capped at the board's declared height");
+
+  // The fallback must also register the discovered ancestor with the SAME
+  // ResizeObserver, so a LATER layout change there (the canvas's own box never
+  // changes on its own) re-triggers the recovery. Real browsers deliver a
+  // ResizeObserver's first notification shortly after observe() is called
+  // (proven empirically against real Chromium — see the handoff report); the
+  // fake observer here requires an explicit trigger to model that first fire.
+  const ro = env.resizeObservers[0];
+  assert.ok(ro, "a ResizeObserver must have been created for the canvas2d board");
+  assert.ok(ro.targets.has(canvas), "the observer must still observe the canvas itself");
+  ro.trigger([canvas]);
+  assert.ok(ro.targets.has(grandparent), "the observer must ALSO observe the ancestor it fell back to");
+
+  // Simulate the ancestor's box changing later (e.g. a rail collapse widens
+  // the workbench) — re-triggering the observer picks up the new size even
+  // though the canvas's own (still self-referential) box never moved.
+  grandparent.clientWidth = 900;
+  grandparent.clientHeight = 700;
+  ro.trigger([canvas]);
+  assert.equal(canvas.width, 900);
+  assert.equal(canvas.height, 700);
+});
+
 // -----------------------------------------------------------------------------
 // Canvas2D painter — paintCanvasBundle(ctx, bundle, cssWidth, cssHeight, dpr)
 //
@@ -20675,6 +20832,7 @@ function makeFakeGPUDevice(options) {
     submitCount: 0,
     renderPasses: [],
     computePasses: [],
+    bufferToTextureCopies: [],
     renderPipelines: [],
     computePipelines: [],
     shaderModules: [],
@@ -20686,7 +20844,6 @@ function makeFakeGPUDevice(options) {
     textures: [],
     writeTextureCalls: [],
     copyExternalCalls: [],
-    copyBufferToTextureCalls: [],
   };
   var textureSeq = 0;
   function makePass(descriptor, kind) {
@@ -20707,6 +20864,31 @@ function makeFakeGPUDevice(options) {
       },
       setVertexBuffer(slot, buffer, offset, size) {
         pass.vertexBuffers.push({ slot, buffer, offset, size });
+      },
+      // The water surface grid is drawn INDEXED (one transform per grid vertex instead
+      // of six per quad), so the fake device has to model the indexed path too. Indexed
+      // draws are recorded into pass.draws alongside plain ones — every existing
+      // assertion about which pipeline drew, and how many draws a frame issues, keeps
+      // working without knowing which form was used.
+      setIndexBuffer(buffer, format, offset, size) {
+        pass.indexBuffers = pass.indexBuffers || [];
+        pass.indexBuffers.push({ buffer, format, offset, size });
+      },
+      drawIndexed(indexCount, instanceCount) {
+        // The real GPURenderPassEncoder throws a TypeError on a non-integer count
+        // ("value is not of type 'unsigned long'"). A stale field reference produced
+        // exactly that in the browser while the fake device recorded it happily, so the
+        // fake must be as strict as the real one or it certifies broken frames.
+        if (!Number.isInteger(indexCount) || indexCount < 0) {
+          throw new TypeError("drawIndexed: indexCount is not an unsigned long: " + indexCount);
+        }
+        pass.draws.push({
+          vertexCount: indexCount,
+          indexCount,
+          indexed: true,
+          instanceCount: instanceCount == null ? 1 : instanceCount,
+          pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
+        });
       },
       draw(vertexCount, instanceCount) {
         pass.draws.push({
@@ -20850,9 +21032,6 @@ function makeFakeGPUDevice(options) {
             values[1] = 4_000_000n;
           }
         },
-        copyBufferToTexture(source, destination, size) {
-          state.copyBufferToTextureCalls.push({ source, destination, size });
-        },
         beginRenderPass(descriptor) {
           const pass = makePass(descriptor, "render");
           state.renderPasses.push(pass);
@@ -20862,6 +21041,27 @@ function makeFakeGPUDevice(options) {
           const pass = makePass(descriptor, "compute");
           state.computePasses.push(pass);
           return pass;
+        },
+        // The water heightfield is mirrored buffer -> texture each frame so render
+        // materials read it through the texture cache. WebGPU requires bytesPerRow to be
+        // a multiple of 256 and rejects the copy otherwise, so the fake enforces it too:
+        // a mock that accepts what the real API rejects certifies broken frames.
+        copyBufferToTexture(source, destination, size) {
+          const bytesPerRow = source && source.bytesPerRow;
+          if (!Number.isInteger(bytesPerRow) || bytesPerRow <= 0 || bytesPerRow % 256 !== 0) {
+            throw new TypeError(
+              "copyBufferToTexture: bytesPerRow must be a positive multiple of 256, got " + bytesPerRow);
+          }
+          // The real device rejects a source buffer without COPY_SRC and then errors the
+          // whole device, so the page renders NOTHING -- not a subtly wrong frame. The fake
+          // recorded it happily, which is exactly how that shipped.
+          const COPY_SRC = 4; // GPUBufferUsage.COPY_SRC
+          const usage = source && source.buffer && source.buffer.usage;
+          if (!(usage & COPY_SRC)) {
+            throw new TypeError(
+              "copyBufferToTexture: source buffer is missing COPY_SRC usage (got " + usage + ")");
+          }
+          state.bufferToTextureCopies.push({ source, destination, size });
         },
         finish() {
           return { __kind: "commandBuffer" };
@@ -21094,7 +21294,7 @@ test("Scene3D WebGPU pool pass routes through the generic Selena render path wit
   const waterEntry = {
     id: "water-main",
     resolution: 16,
-    surfaceResolution: 3,
+    surfaceMeshResolution: 32,
     poolShape: "Box",
     poolWidth: 1,
     poolLength: 1,
@@ -21878,7 +22078,7 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
   assert.equal(stats.waterNormalDispatches, 0, "zero ticks must not recompute normals");
   assert.equal(stats.waterSampledStateCopies, 1, "first frame must initialize the sampled Selena state mirror");
   assert.equal(stats.waterSampledStateSyncSeq, 1);
-  assert.equal(harness.fake.state.copyBufferToTextureCalls.length, 1);
+  assert.equal(harness.fake.state.bufferToTextureCopies.length, 1);
 
   stats = renderAt(8);
   assert.equal(stats.waterSimulationTicks, 0, "120Hz display-only frame must not advance 60Hz simulation");
@@ -22526,7 +22726,12 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
   const waterEntry = {
     id: "water-main",
     resolution: 16,
-    surfaceResolution: 3,
+    // surfaceMeshResolution (renamed from surfaceResolution) is bounded below at 16
+    // by sceneWaterSurfaceMeshResolution (WGSL bytesPerRow texel-alignment reasoning
+    // shared with the simulation resolution clamp), so this must stay >= 16 to
+    // survive unclamped and actually differ from `resolution` above -- unlike the
+    // old surfaceResolution's min-2 clamp.
+    surfaceMeshResolution: 32,
     poolShape: "Box",
     poolWidth: 1,
     poolLength: 1,
@@ -22579,7 +22784,7 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
   const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
   assert.equal(sceneState.waterSystems.length, 1);
   const normalized = sceneState.waterSystems[0];
-  assert.equal(normalized.surfaceResolution, 3, "surface topology must remain independent from the simulation grid");
+  assert.equal(normalized.surfaceMeshResolution, 32, "surface topology must remain independent from the simulation grid");
   assert.equal(normalized.seedSelenaWGSL, waterSeedSelenaFixture.wgsl, "seedSelenaWGSL must survive normalizeSceneWaterSystemEntry");
   assert.equal(normalized.dropSelenaWGSL, waterDropSelenaFixture.wgsl, "dropSelenaWGSL must survive normalizeSceneWaterSystemEntry");
   assert.equal(normalized.displacementSelenaWGSL, waterDisplacementSelenaFixture.wgsl, "displacementSelenaWGSL must survive normalizeSceneWaterSystemEntry");
@@ -22628,7 +22833,7 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
   assert.ok(normalUniformWrite, "physical water-cell spacing must be uploaded to the Selena normal kernel");
   assert.ok(Math.abs(normalUniformWrite.data[0] - 0.125) < 1e-7, "cellSizeX must be 2*poolWidth/resolution");
   assert.ok(Math.abs(normalUniformWrite.data[1] - 0.125) < 1e-7, "cellSizeZ must be 2*poolLength/resolution");
-  assert.equal(mount.__gosxScene3DWebGPUStats.waterSurfaceResolution, 3, "render topology must use authored surfaceResolution, not simulation resolution");
+  assert.equal(mount.__gosxScene3DWebGPUStats.waterSurfaceResolution, 32, "render topology must use authored surfaceMeshResolution, not simulation resolution");
 });
 
 test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rect quads (zero-copy seam)", async () => {

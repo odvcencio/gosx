@@ -156,6 +156,7 @@ material WaterCaustics {
         let aspect   = vec2f(max(poolWidth / max(poolLength, 0.001), 0.001), 1.0)
         var compMask = 0.0
         for (var i = 0i; i < 32i; i = i + 1i) {
+            if (!(objectKind >= 2.5 && float(i) < objectCount)) { break }
             if (objectKind >= 2.5 && float(i) < objectCount) {
                 let sp  = spheres[i]
                 let suv = centerUV + vec2f(sp.x * 0.5, sp.z * 0.5)

@@ -63,7 +63,7 @@ func TestRenderWaterProducesAnimatedNativeVisualEvidence(t *testing.T) {
 		Camera:      scene.PerspectiveCamera{Position: scene.Vec3(1.2695827068526726, 1.1904730469627978, 3.395653196065958), FOV: 45, Near: 0.01, Far: 100},
 		Environment: scene.Environment{AmbientColor: "#d8edf2", AmbientIntensity: 0.2},
 		Graph: scene.NewGraph(scene.WaterSystem{
-			ID: "water-main", Resolution: 256, SurfaceResolution: 201,
+			ID: "water-main", Resolution: 256, SurfaceMeshResolution: 201,
 			PoolWidth: 1, PoolHeight: 1, PoolLength: 1, SeedDrops: 20, DropStrength: 0.01,
 			ShallowColor: "#7ad1eb", DeepColor: "#082e57", AboveWaterColor: scene.Vec3(0.25, 1, 1.25),
 			Caustics: true, Reflection: true, Refraction: true,

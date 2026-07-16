@@ -93,7 +93,7 @@ func TestSessionCertifiesWaterSemanticsWithoutBrowser(t *testing.T) {
 		Background: "#02070b", Controls: scene.ControlOrbit, ControlTarget: scene.Vec3(0, -0.5, 0),
 		Camera: scene.PerspectiveCamera{Position: scene.Vec3(1.2695827068526726, 1.1904730469627978, 3.395653196065958), FOV: 45, Near: 0.01, Far: 100},
 		Graph: scene.NewGraph(scene.WaterSystem{
-			ID: "water-main", Resolution: 256, SurfaceResolution: 201,
+			ID: "water-main", Resolution: 256, SurfaceMeshResolution: 201,
 			PoolWidth: 1, PoolHeight: 1, PoolLength: 1,
 			AboveWaterColor:    scene.Vec3(0.25, 1, 1.25),
 			CausticsResolution: 1024, ObjectShadowResolution: 1024,

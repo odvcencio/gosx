@@ -227,7 +227,27 @@ const budgets = [
   // sampled Selena water-state bridge and physical-normal/topology contract.
   // Measured: 1_272_545 / 338_205 / 272_527. Selective route budgets remain
   // the deployment gate and are unchanged below.
-  { file: "bootstrap.js", raw: 1_275_000, gzip: 339_000, brotli: 273_000 },
+  //
+  // Post-merge re-baseline (main -> codex/chinese-checkers-showcase): main's
+  // water/Selena convergence (v0.4.0 shader adaptation, headless render CLI,
+  // WebGPU vertex-count/fallback metrics) merged with this branch's
+  // declarative-actions disclosure/toggle/bind-source primitives (Escape +
+  // Tab focus trap, data-gosx-toggle-*, data-gosx-bind-*) and the new
+  // 26-runtime-{surfaces,stream,dom,blocks}.js modules (window.__gosx.dom
+  // lifecycle API, stream template mounting) folded into the full bundle.
+  // Bumped raw 1_275_000 -> 1_283_000, gzip 339_000 -> 340_000, brotli
+  // 273_000 -> 275_000. Measured: 1_281_202 / 339_450 / 274_151, plus
+  // rounding headroom.
+  { file: "bootstrap.js", raw: 1_283_000, gzip: 340_000, brotli: 275_000 },
+  // main independently re-baselined bootstrap.js/-runtime.js/-lite.js (these gates
+  // were already red on main before this merge: bootstrap.js measured 1_196_898 raw
+  // / 317_328 gzip against a 1_196_000 / 317_000 budget). Its v0.30.1/v0.30.2
+  // correctness fixes (order-independent feature registration, custom post-FX
+  // surviving applyCommands, MaxPixels render-target budget) added only ~183 raw /
+  // ~67 gzip bytes on top of that -- small next to this branch's accumulated
+  // feature growth above, so the union below keeps this branch's larger,
+  // already-inclusive numbers rather than main's smaller re-baseline; main's fixes
+  // land within this headroom.
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -255,7 +275,13 @@ const budgets = [
   // 148_081 / 38_641 / 33_659.
   // Bumped raw 149_000 -> 150_000 for lifecycle-aware keyed stream updates.
   // Measured: 149_154 / 38_850 / 33_866.
-  { file: "bootstrap-runtime.js", raw: 150_000, gzip: 39_000, brotli: 34_000 },
+  //
+  // Post-merge re-baseline (see bootstrap.js note above): declarative-actions
+  // disclosure/toggle/bind-source primitives folded into this bundle's
+  // shared 06/07 sources. Bumped raw 150_000 -> 154_000, gzip 39_000 ->
+  // 40_000, brotli 34_000 -> 35_000. Measured: 153_413 / 39_758 / 34_827,
+  // plus rounding headroom.
+  { file: "bootstrap-runtime.js", raw: 154_000, gzip: 40_000, brotli: 35_000 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -276,7 +302,13 @@ const budgets = [
   // Bumped raw 126_000 -> 127_000 and gzip 32_000 -> 33_000 for
   // lifecycle-aware keyed stream updates. Measured: 125_329 / 32_131 /
   // 28_268.
-  { file: "bootstrap-lite.js", raw: 127_000, gzip: 33_000, brotli: 29_000 },
+  //
+  // Post-merge re-baseline (see bootstrap.js note above): declarative-actions
+  // disclosure/toggle/bind-source primitives folded into this bundle's
+  // shared 06/07 sources. Bumped raw 127_000 -> 130_000, gzip 33_000 ->
+  // 33_500, brotli 29_000 -> 29_500. Measured: 129_517 / 33_082 / 29_259,
+  // plus rounding headroom.
+  { file: "bootstrap-lite.js", raw: 130_000, gzip: 33_500, brotli: 29_500 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -397,7 +429,16 @@ const budgets = [
   // Bumped raw 693_000 -> 696_000, gzip 191_000 -> 192_000, and Brotli
   // 157_000 -> 157_500 for the typed water surface-resolution and linear-HDR
   // contracts. Measured: 695_570 / 191_539 / 157_108.
-  { file: "bootstrap-feature-scene3d.js", raw: 696_000, gzip: 192_000, brotli: 157_500 },
+  // main's re-baseline for this file (676_000 / 185_000 / 152_000, alongside its
+  // v0.30.1/v0.30.2 correctness fixes) is smaller than this branch's
+  // feature-inclusive total above; the union keeps the larger number.
+  //
+  // Post-merge re-baseline: main's Selena v0.4.0 water shader adaptation
+  // (jeantimex-water.selena caustics/surface passes) landed on top of this
+  // branch's total above. Bumped raw 696_000 -> 698_000, brotli 157_500 ->
+  // 158_000; gzip headroom unchanged. Measured: 697_769 / 191_357 / 157_617,
+  // plus rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 698_000, gzip: 192_000, brotli: 158_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
@@ -467,7 +508,24 @@ const budgets = [
   // Bumped raw 349_000 -> 351_000, gzip 81_500 -> 82_000, and Brotli 68_000
   // -> 68_500 for sampled water-state mirrors and physical-cell normal uniforms. Measured:
   // 350_203 / 81_776 / 68_108.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 351_000, gzip: 82_000, brotli: 68_500 },
+  //
+  // main independently tracked this same file through its own sequence of
+  // raw/gzip/brotli bumps (texture-backed statefield read, SurfaceMeshResolution's
+  // effective-value attribute, the torus-knot uniform, the GPU wall-clock probe, the
+  // indexed water surface grid), converging on 333_400 / 77_800 / 65_100 -- smaller
+  // than this branch's total above on every axis. The union keeps this branch's
+  // larger, feature-inclusive numbers; main's specific deltas land within that
+  // headroom. Its running theme applies regardless of which number wins: this bundle
+  // has little headroom left on any axis, and the honest fix is a dead-code sweep /
+  // finer feature splitting rather than another bump.
+  //
+  // Post-merge re-baseline: main's WebGPU water vertex-count stat + fallback
+  // metrics (8b11e0c) landed on top of this branch's total above. Bumped raw
+  // 351_000 -> 352_000, gzip 82_000 -> 82_500; brotli headroom unchanged.
+  // Measured: 351_616 / 82_113 / 68_456, plus rounding headroom. Same
+  // caveat as above: little headroom left, next bump should come with a
+  // dead-code sweep.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 352_000, gzip: 82_500, brotli: 68_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
@@ -529,7 +587,17 @@ const budgets = [
   // the video engine factory (30-tail.js), merged with the runtime_api
   // bridge line above. Measured: 84_129 / 25_836 / 23_000 + sub-1%
   // rounding headroom.
-  { file: "bootstrap-feature-engines.js", raw: 85_000, gzip: 26_000, brotli: 23_300 },
+  //
+  // Bumped raw 85_000 -> 86_000, gzip 26_000 -> 26_500: hidden-at-hydration
+  // canvas2d backing-store recovery in _initEngineSurfaceCanvasSize
+  // (26b-feature-engines-prefix.js) — _canvasDeclaredSize +
+  // _measuredCanvasCSSBox walk up the ancestor chain for a real (>1px) box
+  // when the canvas's own getBoundingClientRect() is still self-referentially
+  // collapsed (hydrated while hidden, or a host CSS selector that no longer
+  // matches after a DOM-nesting change), and additionally observe that
+  // ancestor so a later layout change re-triggers the fix. Measured:
+  // 85_024 / 26_115 / 23_259; brotli unchanged.
+  { file: "bootstrap-feature-engines.js", raw: 86_000, gzip: 26_500, brotli: 23_400 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -603,9 +671,15 @@ const routeBudgets = [
     // Bumped raw 231_000 -> 234_000 and gzip 64_000 -> 65_000 for the
     // fragment-aware stream lifecycle shared by runtime and engines routes.
     // Measured: 231_831 / 64_376 / 56_521.
-    raw: 234_000,
-    gzip: 65_000,
-    brotli: 57_000,
+    //
+    // Post-merge re-baseline (see bootstrap-runtime.js note above):
+    // declarative-actions disclosure/toggle/bind-source primitives folded
+    // into bootstrap-runtime.js. Bumped raw 234_000 -> 239_000, gzip
+    // 65_000 -> 66_000, brotli 57_000 -> 58_500. Measured: 238_555 / 65_810
+    // / 58_149, plus rounding headroom.
+    raw: 239_000,
+    gzip: 66_000,
+    brotli: 58_500,
   },
 ];
 

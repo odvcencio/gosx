@@ -1,3 +1,29 @@
+//go:build !tinygo
+
+// Lower (this file) is the CST-to-IR compiler step: it is host/build-time
+// -only tooling (its only callers are compile.go's gosx.Compile and
+// lsp/symbols.go — never client/wasm at runtime, which only ever hydrates
+// already-lowered IR/bytecode). It is excluded from TinyGo builds for the
+// same reason compile.go/grammar.go/grammargen_aliases.go/gsx_attr_scanner.go
+// are (see compile_stub_tinygo.go): its gotreesitter dependency is not
+// TinyGo-clean. Specifically, gotreesitter transitively pulls in
+// encoding/gob (via its embedded-grammar loader), and TinyGo's
+// internal/reflectlite has a known, unimplemented gap —
+// `AssignableTo`/`Implements` against a non-empty interface panics
+// ("reflect: unimplemented: AssignableTo with interface") — that gob's
+// type-info machinery (mustGetTypeInfo -> userType -> implementsInterface)
+// trips during WASM boot. Before this fix, this file had NO build
+// constraint, so importing the `ir` package for its data types (Program,
+// etc. — needed by client/wasm's dependency graph via engine/surface) also
+// linked gotreesitter into every TinyGo build of client/wasm, regardless of
+// whether Lower() was ever called. Combined with the production build's
+// `-panic=trap` TinyGo flag, that panic silently traps as a bare WASM
+// `unreachable` on every /admin/editor load, before any hydrate call.
+// The standard (non-TinyGo) `go build GOOS=js GOARCH=wasm` test/dev build is
+// unaffected either way — it keeps the real compiler (64-bit int, so
+// grammargen compiles) as client/wasm's own tests rely on genuinely
+// compiling .gsx snippets.
+
 package ir
 
 import (
@@ -1005,34 +1031,6 @@ func (l *lowerer) lowerEngineSurface(comp *Component) {
 
 	comp.EngineSurface = true
 	comp.SurfaceHandlers = handlers
-}
-
-// isValidGoIdent reports whether s is a valid (non-empty) Go identifier.
-// It does not check for reserved keywords — that is fine at this stage.
-func isValidGoIdent(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, r := range s {
-		if i == 0 {
-			if !isGoIdentStart(r) {
-				return false
-			}
-		} else {
-			if !isGoIdentContinue(r) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func isGoIdentStart(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
-}
-
-func isGoIdentContinue(r rune) bool {
-	return isGoIdentStart(r) || (r >= '0' && r <= '9')
 }
 
 // findGSXReturn searches a function body for a return statement containing GSX.

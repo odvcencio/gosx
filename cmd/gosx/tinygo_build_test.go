@@ -136,6 +136,51 @@ func TestTinyGoWASMDependencyClosurePrunesHostShaderCompiler(t *testing.T) {
 	}
 }
 
+// TestTinyGoWASMDependencyClosureExcludesGoTreeSitterAndGob is a regression
+// pin for the R2 "unreachable" trap that fired on every /admin/editor load
+// in production (sassafras / handoff-26-wasm-trap investigation).
+//
+// Root cause: engine/surface/lowering.go and ir/lower.go had no build
+// constraint excluding them from the WASM client, even though both are
+// host/build-time-only (their only callers — engine/surface/discover.go,
+// compile.go, lsp/symbols.go — are all already `!js`/`!tinygo`). Importing
+// either pulled github.com/odvcencio/gotreesitter (and its encoding/gob
+// dependency, used by its embedded-grammar loader) into every TinyGo build
+// of client/wasm. TinyGo's internal/reflectlite has a known gap —
+// AssignableTo/Implements against a non-empty interface panics
+// ("reflect: unimplemented: AssignableTo with interface") — that gob's
+// type-info machinery (mustGetTypeInfo -> userType -> implementsInterface)
+// trips during WASM boot, before any hydrate call. Combined with this
+// build's `-panic=trap` TinyGo flag, that unrecoverable panic silently
+// compiled to a bare `unreachable` WASM trap on every production page load.
+//
+// This test would have failed red before the fix (gotreesitter present as
+// an external module dependency of the TinyGo client/wasm closure) and is
+// green after (see engine/surface/lowering.go and ir/lower.go's
+// `!js`/`!tinygo` tags). tinyGoWASMDependencyClosure separates in-module
+// gosx packages from external modules — gotreesitter is a third-party
+// module (github.com/odvcencio/gotreesitter), so it shows up in the
+// `modules` return value, not `packages` (which only reflects packages
+// within m31labs.dev/gosx itself — see TestTinyGoWASMDependencyClosure
+// PrunesHostShaderCompiler's m31labs.dev/selena check for the same
+// pattern). encoding/gob is Go standard library, which
+// tinyGoWASMDependencyClosure filters out of both return values entirely
+// (`pkg.Standard` short-circuit) — gotreesitter's absence is what actually
+// matters here, since gob only entered the graph transitively through it.
+func TestTinyGoWASMDependencyClosureExcludesGoTreeSitterAndGob(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+
+	_, modules, err := tinyGoWASMDependencyClosure(".", tinyGoWASMTags()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, module := range modules {
+		if module.Path == "github.com/odvcencio/gotreesitter" {
+			t.Fatalf("TinyGo WASM closure unexpectedly includes gotreesitter (R2 unreachable-trap regression — it drags in encoding/gob, which trips TinyGo's internal/reflectlite AssignableTo-with-interface gap): %+v", module)
+		}
+	}
+}
+
 func TestStandardGoWASMOptIsOptIn(t *testing.T) {
 	t.Setenv("GOSX_GO_WASM_OPT", "")
 	if standardGoWASMOptEnabled() {

@@ -4025,7 +4025,11 @@
       cooldownMS: Math.max(5000, sceneNumber(props && props.adaptiveCooldownMS, 5000)),
       cooldownUntilMS: 0,
       transitionReason: enabled ? "initial" : "disabled",
-      currentMaxDevicePixelRatio: profiles[requestedTier].dprCap,
+      lastFrameNowMS: 0,
+      lastFrameCPUMS: 0,
+      lastFrameIntervalMS: 0,
+      lastFrameSource: "",
+      currentMaxDevicePixelRatio: 0,
       postFXSuppressed: false,
       tier: enabled ? requestedTier : "fixed",
       qualityRevision: 0,
@@ -4083,6 +4087,12 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-object-texture-max-side", String(profile.objectTextureMaxSide || 0));
     setAttrValue(mount, "data-gosx-scene3d-quality-object-texture-pixel-budget", String(profile.objectTexturePixelBudget || 0));
     setAttrValue(mount, "data-gosx-scene3d-quality-expensive-pass-cadence", String(profile.expensivePassCadence || 1));
+    // Publish BOTH halves. A single "frame ms" hid a 15x gap between what the render
+    // loop cost on the CPU and what the browser actually delivered; anyone debugging
+    // a slow scene needs to see that gap immediately.
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-cpu-ms", state.lastFrameCPUMS > 0 ? state.lastFrameCPUMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-interval-ms", state.lastFrameIntervalMS > 0 ? state.lastFrameIntervalMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-source", state.lastFrameSource || "");
     setAttrValue(mount, "data-gosx-scene3d-quality-postfx-suppressed", state.postFXSuppressed ? "true" : "false");
   }
 
@@ -4180,15 +4190,48 @@
     }
     const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
-    const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
     const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
     state.lastRAFNowMS = rafNow;
     state.frameCount += 1;
+    const cpuMS = Math.max(0, now - sceneNumber(frameStart, now));
+
+    // cpuMS is the duration of the JS render call. On WebGPU that is command
+    // ENCODING — the GPU executes asynchronously afterwards — so a GPU-bound scene
+    // reports a tiny cpuMS while the browser delivers frames many times slower.
+    // Measured in the wild: a water scene reporting 3.8ms/frame while actually
+    // running at 17fps (58ms frames). The governor believed cpuMS, held the "full"
+    // tier and never stepped anything down: it was structurally blind to exactly
+    // the scenes it exists to protect.
+    //
+    // The DELIVERED frame interval is ground truth for whether frames are being met.
+    // It cannot simply replace cpuMS — a cheap scene is vsync-locked, so its interval
+    // is idle time, not work — so it is only trusted once it says frames are being
+    // missed (past ~40fps). Below that, behaviour is exactly as before.
+    const prevNow = sceneNumber(state.lastFrameNowMS, 0);
+    const intervalMS = prevNow > 0 ? Math.max(0, now - prevNow) : 0;
+    state.lastFrameNowMS = now;
+    const missingFrames = intervalMS > 24;
+
+    // Precise path first: per-backend hardware GPU timing (WebGPU timestamp-query,
+    // or the WebGL2 equivalent), when the backend has one ready. Only trusted once
+    // "locked" (rendererTimingLocked) so we don't race a still-resolving async
+    // readback with the interval/cpu fallback below on the same frame.
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
     let sample = sceneAdaptiveRendererSample(renderer, now);
-    if (!sample && !rendererTimingLocked && rafIntervalMS > 0 && cpuDurationMS >= 0) {
-      sample = { durationMS: Math.max(rafIntervalMS, cpuDurationMS), source: "cpu-raf", atMS: now, rafIntervalMS, cpuDurationMS };
+    if (!sample && !rendererTimingLocked) {
+      // Fallback: the interval-aware cpuMS heuristic above, which fixes the
+      // "3.8ms/frame at 17fps" GPU-bound blind spot cpuMS alone has. Named
+      // "cpu-raf" (not "interval"/"cpu") so the pre-existing budget-selection
+      // check below (sample.source === "cpu-raf") keeps using the more lenient
+      // cpuRAFBudgetMS for every fallback measurement, precise-signal or not.
+      sample = {
+        durationMS: missingFrames ? Math.max(cpuMS, intervalMS) : cpuMS,
+        source: "cpu-raf",
+        atMS: now,
+        rafIntervalMS,
+        cpuDurationMS: cpuMS,
+      };
     }
     if (state.resumePending || state.frameCount <= state.warmupFrames || !sample) {
       state.resumePending = false;
@@ -4200,6 +4243,12 @@
     state.measurement = sample.source;
     state.lastMeasurement = sample;
     state.validSamples += 1;
+    state.lastFrameCPUMS = cpuMS;
+    state.lastFrameIntervalMS = intervalMS;
+    // Finer-grained than sample.source (which collapses every fallback frame to
+    // "cpu-raf" for budget selection above): distinguishes cpu-bound from
+    // interval-bound fallback frames for the debug DOM attribute.
+    state.lastFrameSource = sample.source !== "cpu-raf" ? sample.source : (missingFrames ? "interval" : "cpu");
     state.ewmaFrameMS = state.ewmaFrameMS > 0
       ? state.ewmaFrameMS * 0.84 + frameMS * 0.16
       : frameMS;
@@ -4465,6 +4514,19 @@
         1,
         Math.min(maxDevicePixelRatio, adaptiveQuality.currentMaxDevicePixelRatio),
       );
+    }
+    // maxPixels caps the render target by TOTAL backing pixels, which
+    // maxDevicePixelRatio cannot: a ratio knows nothing about how large the
+    // display is. The same props that push ~2 MP on a 1080p/DPR-1 screen push
+    // ~6 MP on a Retina laptop, so any fill-bound scene (large soft sprites,
+    // a big water surface, a multi-pass post-FX chain) silently costs 3x more
+    // there and falls off a cliff. Deriving the ratio from a pixel budget makes
+    // the cap resolution-aware. Opt-in: unset means the old behaviour exactly.
+    const maxPixels = sceneNumber(props && (props.maxPixels || props.maxRenderPixels), 0);
+    if (maxPixels > 0) {
+      const cssPixels = Math.max(1, cssWidth * cssHeight);
+      const budgetRatio = Math.sqrt(maxPixels / cssPixels);
+      maxDevicePixelRatio = Math.max(1, Math.min(maxDevicePixelRatio, budgetRatio));
     }
     const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
     return {
@@ -9130,6 +9192,11 @@
     const handle = {
       applyCommands(commands) {
         const result = applySceneCommands(sceneState, commands);
+        // Commands can change the post-FX chain (CommandSetPostEffects). Without
+        // this the data-gosx-scene3d-postfx attribute keeps reporting the state
+        // at mount time, so a scene whose post-FX was restored by a progressive
+        // upgrade still reads "none" — a diagnostic that actively misleads.
+        applyScenePostFXState(ctx.mount, sceneState);
         publishSceneWaterStateSnapshot(ctx.mount, sceneState);
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
         notifySceneRendererLifecycle("commands", false, false);
