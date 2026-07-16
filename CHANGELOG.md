@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.31.16 (2026-07-16)
+
 - Exposed the world-space click ray on Scene3D pick results across both
   render paths: `PickResult` gains `RayOrigin`/`RayDirection` (set for hits
   and background clicks), the native path publishes
