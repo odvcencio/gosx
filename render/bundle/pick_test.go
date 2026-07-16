@@ -207,3 +207,21 @@ func TestEnrichPickTargetsWithRayExposesClickRayOnHitsAndBackground(t *testing.T
 		t.Fatalf("background click must still carry the ray: %#v", background)
 	}
 }
+
+func TestPickRayForOrthographicCameraIsParallel(t *testing.T) {
+	cam := engine.RenderCamera{Mode: "orthographic", Z: 10, Left: -4, Right: 4, Top: 3, Bottom: -3, Zoom: 1, Near: 0.1, Far: 100}
+	center := pickRayForCamera(cam, 100, 100, 201, 201)
+	if math.Abs(float64(center.dir[0])) > 1e-6 || math.Abs(float64(center.dir[1])) > 1e-6 || math.Abs(float64(center.dir[2]+1)) > 1e-6 {
+		t.Fatalf("ortho center dir = %#v, want -Z", center.dir)
+	}
+	if math.Abs(float64(center.origin[2]-10)) > 1e-6 || math.Abs(float64(center.origin[0])) > 1e-4 {
+		t.Fatalf("ortho center origin = %#v", center.origin)
+	}
+	edge := pickRayForCamera(cam, 201, 100, 201, 201)
+	if edge.dir != center.dir {
+		t.Fatalf("ortho rays must be parallel: %#v vs %#v", edge.dir, center.dir)
+	}
+	if float64(edge.origin[0]) < 3.5 {
+		t.Fatalf("ortho edge origin must offset along +X by ~half width, got %#v", edge.origin)
+	}
+}

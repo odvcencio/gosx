@@ -206,3 +206,17 @@ func TestSceneIRPropagatesDeepHierarchyTransforms(t *testing.T) {
 		t.Fatalf("deep hierarchy world transform = (%v,%v,%v), want near (2,0,-3)", obj.X, obj.Y, obj.Z)
 	}
 }
+
+func TestRaycastMeshHonorsLeafScale(t *testing.T) {
+	// A unit box at origin misses a ray at x=1.5; scaled 2x it must hit.
+	ray := Ray{Origin: Vector3{X: 1.5, Y: 0, Z: 6}, Direction: Vector3{Z: -1}}
+	unit := Mesh{ID: "unit", Geometry: BoxGeometry{Width: 2, Height: 2, Depth: 2}}
+	scaled := Mesh{ID: "scaled", Geometry: BoxGeometry{Width: 2, Height: 2, Depth: 2}, Scale: Vector3{X: 2, Y: 2, Z: 2}}
+	if trace := TraceGraph(Graph{Nodes: []Node{unit}}, ray); trace.Closest != nil {
+		t.Fatalf("unit box unexpectedly hit: %+v", trace.Closest)
+	}
+	trace := TraceGraph(Graph{Nodes: []Node{scaled}}, ray)
+	if trace.Closest == nil || trace.Closest.ID != "scaled" {
+		t.Fatalf("scaled box must hit, got %+v", trace.Closest)
+	}
+}

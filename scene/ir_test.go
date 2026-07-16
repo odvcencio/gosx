@@ -361,3 +361,18 @@ func TestIRMaterialCapabilityVariantsRoundTrip(t *testing.T) {
 		t.Fatalf("encoded IR lost material variants: %s", encoded)
 	}
 }
+
+func TestLowerMeshEmitsLeafScaleToObjectIR(t *testing.T) {
+	ir := Props{Graph: NewGraph(Mesh{ID: "scaled", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}, Scale: Vector3{X: 2, Y: 3, Z: 4}})}.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("objects=%d", len(ir.Objects))
+	}
+	got := ir.Objects[0]
+	if got.ScaleX != 2 || got.ScaleY != 3 || got.ScaleZ != 4 {
+		t.Fatalf("scale = %v,%v,%v", got.ScaleX, got.ScaleY, got.ScaleZ)
+	}
+	unit := Props{Graph: NewGraph(Mesh{ID: "unit", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}})}.SceneIR()
+	if unit.Objects[0].ScaleX != 0 {
+		t.Fatalf("unit scale must stay omitted, got %v", unit.Objects[0].ScaleX)
+	}
+}
