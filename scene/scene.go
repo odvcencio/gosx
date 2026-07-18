@@ -137,7 +137,7 @@ type Props struct {
 	// reload / re-render trip needed. Meshes opted into gizmo-mode-driven
 	// visibility via Mesh.GizmoRing are shown only while the signal matches
 	// "rotate"; everything else is untouched.
-	GizmoInputSignal  string       `json:"gizmoInputSignal,omitempty"`
+	GizmoInputSignal string `json:"gizmoInputSignal,omitempty"`
 	// GizmoOutputSignal: when set, the client gizmo drag controller publishes
 	// each drag phase ({target, mode, axis, phase, position, rotation, scale})
 	// into this shared signal, in addition to dispatching the
