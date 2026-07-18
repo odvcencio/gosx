@@ -32,11 +32,25 @@
 //    cube soft shadow's 3x3 PCF loop is inlined in surface() (selena fns are
 //    expression-only and cannot carry var/if/for), like the surface port.
 //
-//  GAP — meshShadowTextureOcclusion (the 9-tap soft shadow sampled from the
-//    rendered mesh-object shadow RTT) is still dropped: it reads a runtime
-//    texture (objectShadowTexture) that this self-contained material has no
-//    binding for. That is the only remaining caustic-shadow term not modeled.
-//
+//  RESOLVED — meshShadowTextureOcclusion (M2). objectShadowTexture (the
+//    top-down object-silhouette RTT rendered by object-shadow.sel/
+//    compound-shadow.sel/object-mesh-shadow.sel, "gosx:water:<id>:shadow" —
+//    the SAME resource-ref slot water-pool.sel already binds as
+//    `shadowTexture`) is now bound here too and 9-tap soft-sampled (3x3 box
+//    filter at objectShadowTexelSize spacing) at the caustic ray's pool-floor
+//    landing point (newPos, projected to water-plane UV), then max'd into the
+//    existing analytic shadow term below. This is the ONLY shadow source for
+//    torus/duck mesh objects (no closed-form intersection exists for them,
+//    unlike the analytic sphere/box/compound masks above), so it's sampled
+//    unconditionally (not gated by objectKind) exactly like the hand-written
+//    fallback fragment (SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE in
+//    16a-scene-webgpu.js) does with its own single-tap
+//    `textureSample(objectShadowTexture, objectShadowSampler, uv)` — this
+//    port uses a 3x3 soft average instead of one hard tap since this is the
+//    higher-fidelity primary (non-fallback) path. Every tap uses
+//    sampleLevel(...,0.0), consistent with this codebase's rule (see
+//    water-surface.sel's port notes) that any texture sample inside
+//    conditional/loop control flow must use the explicit-LOD form.
 //  RESOLVED — rim/edge attenuation (formerly listed as "rounded-pool caustic
 //    mask", dropped). Ported verbatim from jeantimex/webgpu-water's
 //    caustics.frag.wgsl:38-42 as `rimShadow`: it is a wall-proximity vignette
@@ -124,7 +138,14 @@ material WaterCaustics {
         objectCenter    : vec3
         objectHalfRadius: vec4
         spheres         : array<vec4, 32>
+        // Texel spacing for the objectShadowTexture 9-tap soft sample below.
+        // 1/objectShadowResolution (default 1/256, matches 16a-scene-webgpu.js
+        // WATER_OBJECT_SHADOW_TEXTURE_SIZE's default), forwarded live so a
+        // resized shadow RTT keeps the soft-shadow footprint texel-correct.
+        objectShadowTexelSize: float = 0.00390625
     }
+
+    param objectShadowTexture: texture2d
 
     state height
 
@@ -226,7 +247,28 @@ material WaterCaustics {
         }
         let cubeShadow = cubeActive ? cubeOcc / 9.0 : 0.0
 
-        let shadow = max(max(shadowMask, sphereShadow), cubeShadow)
+        // objectShadowTexture 9-tap soft sample (M2 — see the RESOLVED
+        // meshShadowTextureOcclusion note above). Sampled at newPos (the
+        // caustic ray's pool-floor landing point) projected to water-plane
+        // UV, matching pointToWaterUV's convention elsewhere in this shader
+        // set. Unconditional (not gated on objectKind): this texture is the
+        // only shadow source for mesh objects (torus/duck) that have no
+        // analytic term above, and it is a harmless no-op max() reinforcement
+        // for the analytic sphere/box/compound cases.
+        let shadowUV = clamp(vec2f(newPos.x / max(poolWidth * 2.0, 0.0001) + 0.5, newPos.z / max(poolLength * 2.0, 0.0001) + 0.5), vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+        var meshShadow = 0.0
+        if (opticsEnable > 0.0) {
+            for (var sx = 0i; sx < 3i; sx = sx + 1i) {
+                for (var sy = 0i; sy < 3i; sy = sy + 1i) {
+                    let tapOffset = vec2f((float(sx) - 1.0) * objectShadowTexelSize, (float(sy) - 1.0) * objectShadowTexelSize)
+                    let tapUV     = clamp(shadowUV + tapOffset, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
+                    meshShadow = meshShadow + sampleLevel(objectShadowTexture, tapUV, 0.0).x
+                }
+            }
+            meshShadow = meshShadow / 9.0
+        }
+
+        let shadow = max(max(max(shadowMask, sphereShadow), cubeShadow), meshShadow)
 
         let shadowFactor = 1.0 - clamp(shadow, 0.0, 1.0)
         return vec4f(intensity, shadowFactor, 0.0, 1.0)

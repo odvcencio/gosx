@@ -9736,8 +9736,14 @@
     function sceneWaterCausticsSelenaMaterial(system, entry) {
       var material = sceneWaterSelenaMaterial(system, entry, "causticsSelenaWGSL", "caustics", "_selenaCausticsMaterial");
       if (!material) return null;
+      // objectShadowTexture: the SAME "gosx:water:<id>:shadow" resource-ref
+      // slot water-pool.sel already binds as `shadowTexture` (resolves to
+      // system.objectShadowView, sceneSelenaLiveTextureView's "shadow"/
+      // "objectShadow" case). Closes M2's meshShadowTextureOcclusion gap --
+      // see caustics.sel's header RESOLVED note.
       material.customUniforms = {
         height: sceneWaterSelenaResourceRef(system, "state"),
+        objectShadowTexture: sceneWaterSelenaResourceRef(system, "shadow"),
       };
       return material;
     }
@@ -9776,6 +9782,12 @@
           objectCenter: [sceneNumber(center.x, 0), sceneNumber(center.y, 0), sceneNumber(center.z, 0)],
           objectHalfRadius: [sceneNumber(half.x, 0), sceneNumber(half.y, 0), sceneNumber(half.z, 0), sceneNumber(system && system.waterObjectRadius, 0)],
           spheres: sceneWaterSpheresContextArray(system),
+          // Texel spacing for caustics.sel's objectShadowTexture 9-tap soft
+          // sample (M2), forwarded live so a resized shadow RTT
+          // (system.objectShadowResolution, WaterSystem's objectShadowResolution
+          // prop) keeps the soft-shadow footprint texel-correct instead of
+          // silently pinning to the shader's own compiled default.
+          objectShadowTexelSize: 1.0 / Math.max(1, sceneNumber(system && system.objectShadowResolution, WATER_OBJECT_SHADOW_TEXTURE_SIZE)),
         },
         grid: sceneNumber(system && system.waterResolution, 256),
       };
