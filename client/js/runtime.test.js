@@ -10100,7 +10100,7 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
   assert.match(webgpu, /if \(hasSimulationTick && dropEventID > 0 && system\.lastDropEventID !== dropEventID\)/);
   assert.match(webgpu, /hasSimulationTick\s*\? dispatchWaterObjectDisplacementEvents/);
   assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*solverStep < 2/);
-  assert.match(webgpu, /if \(hasSimulationTick\) \{\s*var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal"/);
+  assert.match(webgpu, /if \(hasSimulationTick && runWaterSim\) \{\s*var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal"/);
   assert.match(webgpu, /Math\.floor\(Math\.max\(0, waterClock\.tickSeq \|\| 0\) \/ expensivePassCadence\)/);
 
   assert.equal((mount.match(/renderer\.render\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
