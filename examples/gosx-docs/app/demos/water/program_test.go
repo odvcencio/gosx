@@ -780,6 +780,45 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	}
 }
 
+// TestWaterObjectShadowSignatureExcludesCamera is the M4 (water-parity-campaign)
+// regression lock: sceneWaterObjectRenderSignature's two call sites in
+// 16a-scene-webgpu.js MUST disagree on includeCamera. The object-shadow RTT
+// (renderWaterObjectShadowPass / renderWaterObjectMeshShadowPass) is a
+// light-space projection -- light direction + object transform + pool extents
+// only, see sceneWaterObjectMeshShadowUniformData, which packs no eye/view/
+// projection field -- so it must call with includeCamera=false, or orbiting
+// the camera would invalidate the cache and re-render a 1024x1024-class RTT
+// every frame for zero visual benefit. The object-texture (reflection/
+// refraction) pass's RTTs, by contrast, render the mesh FROM the camera's own
+// eye position and legitimately need includeCamera=true. This test greps the
+// literal call-site source rather than executing JS (this repo has no JS
+// runtime test harness for 16a); see program_test.go's existing
+// TestWaterDemoControlsContract for the same string-assertion convention.
+func TestWaterObjectShadowSignatureExcludesCamera(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
+	if err != nil {
+		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
+	}
+	webgpuSource := string(webgpuBytes)
+
+	shadowCall := "sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false)"
+	if !strings.Contains(webgpuSource, shadowCall) {
+		t.Fatalf("Scene3D WebGPU water runtime missing camera-free shadow signature call %q -- "+
+			"the object-shadow RTT is light-space and must not re-render every frame while the camera orbits", shadowCall)
+	}
+
+	textureCall := "sceneWaterObjectRenderSignature(system, entry, bundle, objectList, true)"
+	if !strings.Contains(webgpuSource, textureCall) {
+		t.Fatalf("Scene3D WebGPU water runtime missing camera-aware object-texture signature call %q -- "+
+			"the reflection/refraction RTTs render from the camera's eye and must re-render when it moves", textureCall)
+	}
+}
+
 // TestWaterSelenaGLESSlots verifies the demo compiles its Selena-authored water
 // shaders only to the WebGL2 dialect, that those slots flow end-to-end into a
 // WaterSystemIR, and that the per-shader Selena

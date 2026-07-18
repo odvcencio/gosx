@@ -8155,6 +8155,22 @@
       return selected;
     }
 
+    // includeCamera (M4 audit): the two callers below deliberately disagree.
+    // The object-shadow pass (renderWaterObjectShadowPass /
+    // renderWaterObjectMeshShadowPass) calls this with includeCamera=false --
+    // the shadow it caches is a LIGHT-space projection (light direction +
+    // object transform + pool extents only, see
+    // sceneWaterObjectMeshShadowUniformData below: light/poolWidth/poolLength,
+    // no eye/view/projection field at all), so it is camera-independent by
+    // construction and re-rendering a 1024x1024-class RTT every frame while
+    // only the camera orbits would be pure waste. The object-texture
+    // (reflection/refraction) pass at its OTHER call site legitimately passes
+    // includeCamera=true: those RTTs render the mesh's reflection FROM the
+    // camera's own eye position (getWaterObjectTextureRenderContext feeds
+    // cameraPos/viewProjection), so they must re-render whenever the camera
+    // moves. Do not "simplify" this to one shared value -- see
+    // TestWaterObjectShadowSignatureExcludesCamera (program_test.go) for the
+    // regression lock.
     function sceneWaterObjectRenderSignature(system, entry, bundle, objectList, includeCamera) {
       var center = (system && system.waterObjectCenter) || {};
       var half = (system && system.waterObjectHalfSize) || {};
@@ -9245,6 +9261,9 @@
           var meshShadow = { passes: 0, drawCalls: 0 };
           var hasShadowSubject = waterSystemHasObjectTextureSubject(system);
           var objectList = hasShadowSubject ? sceneWaterObjectMeshList(bundle, entry) : [];
+          // M4: includeCamera=false -- the object-shadow RTT is a light-space
+          // projection (see sceneWaterObjectRenderSignature's comment above),
+          // so orbiting the camera must NOT invalidate this cache.
           var shadowSignature = sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false);
           var refreshObjectShadow = system.waterObjectShadowSignature !== shadowSignature;
           hasShadowSubject = hasShadowSubject && refreshObjectShadow;
