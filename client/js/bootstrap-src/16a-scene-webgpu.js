@@ -4502,6 +4502,12 @@
     var waterUniformScratch = new ArrayBuffer(256);
     var waterUniformScratchF = new Float32Array(waterUniformScratch);
     var waterUniformScratchU = new Uint32Array(waterUniformScratch);
+    // M6 per-frame churn audit -- see waterUniformSnapshotChanged's comment
+    // below (near sceneWaterUniformData). Word indices [0, this) in
+    // waterUniformScratch are resolution/cellCount/seedDrops/frameIndex/
+    // deltaTime/timeSeconds and are excluded from the "did anything
+    // meaningful change" comparison.
+    var WATER_UNIFORM_VOLATILE_WORDS = 6;
     var waterObjectSphereScratch = new Float32Array(WATER_MAX_DISPLACEMENT_SPHERES * 4);
     var waterObjectMeshShadowUniformScratch = new Float32Array(8);
     var waterObjectTextureMatrixScratch = new Float32Array(32);
@@ -7134,6 +7140,21 @@
       return { dispatches: dispatches, selena: selenaDispatches, selenaFallback: selenaFallbacks, lastID: nextLastID };
     }
 
+    // M6 per-frame churn audit (water-parity-campaign), noted but NOT fixed
+    // here: like the uniform "commit" write (see waterUniformSnapshotChanged),
+    // this re-uploads objectSphereBuffer unconditionally on EVERY
+    // sceneWaterUniformData call (both the per-frame {transientObject:true}
+    // pack and the per-tick "commit" pack, i.e. up to twice a tick) even when
+    // the compound-sphere layout hasn't moved. Deferring a dedup here rather
+    // than bolting on a second ad hoc snapshot comparator: this buffer is
+    // consumed as a STORAGE binding (sceneSelenaLiveBuffer's "objectSpheres"
+    // case) by more than one pass with different freshness requirements (the
+    // continuous per-frame object-displacement dispatch above legitimately
+    // needs it live while dragging), and getting that gating wrong silently
+    // corrupts a live displacement compute run rather than just staling a
+    // cosmetic shimmer term the way the uniform-block skip's fallback-only
+    // tradeoff does. Worth a follow-up with dedicated verification, not a
+    // same-pass copy-paste of this file's other dedup.
     function sceneWaterWriteObjectSphereBuffer(system, spheres) {
       if (!system || !system.objectSphereBuffer) return;
       waterObjectSphereScratch.fill(0);
@@ -7439,6 +7460,61 @@
       waterUniformScratchF[52] = Math.max(0, sceneNumber(system && system.seedSalt, 0));
       sceneWaterWriteObjectSphereBuffer(system, objectState.spheres);
       return waterUniformScratch;
+    }
+
+    // M6 per-frame churn audit (water-parity-campaign). The "commit" write in
+    // updateWaterSystems (device.queue.writeBuffer(system.uniformBuffer, 0,
+    // sceneWaterUniformData(...)), inside its `if (hasSimulationTick)` block)
+    // re-packs and re-uploads this 256-byte WaterUniforms block every
+    // simulation tick, even when the only thing that changed is the header:
+    // word indices [0,6) are resolution/cellCount/seedDrops/frameIndex/
+    // deltaTime/timeSeconds (WATER_UNIFORM_VOLATILE_WORDS), which are either
+    // near-static or -- frameIndex/deltaTime/timeSeconds -- LITERALLY always
+    // different every tick by construction. waterUniformSnapshotChanged
+    // compares everything FROM word index 6 onward (waveSpeed, damping, drop
+    // params, pool/light/shallow/deep-color/object/optics/drop-event fields,
+    // seedSalt, plus any future field appended to the struct) against the
+    // system's last-written snapshot using raw Uint32 bit comparison (NaN-safe,
+    // no float-equality edge cases), and the caller skips the GPU writeBuffer
+    // call entirely when nothing in that range moved -- which, per M5's
+    // at-rest gating, is the common case once a system settles (config/object
+    // state stays put for many consecutive ticks even though the clock keeps
+    // advancing).
+    //
+    // Deliberately NOT applied to the OTHER writeBuffer call at this same call
+    // site's sibling (the `{transientObject: true}` pack immediately above the
+    // hasSimulationTick block): that write primes uniforms a one-shot drop/
+    // displacement compute dispatch reads in the SAME frame it's issued, so
+    // it's write-then-immediately-consumed, not a steady-state re-upload.
+    //
+    // Tradeoff, documented rather than silently accepted: system.uniformBuffer
+    // is read ONLY by the hand-written fallback compute/render pipelines
+    // (createWaterComputeBindGroup/createWaterRenderBindGroup/
+    // createWaterCausticsBindGroup bind binding 0 to it) -- every Selena
+    // render pass gets its own uniform buffer via sceneSelenaUniformData with
+    // its own live `time` context field (sceneSelenaFrameTime), unaffected by
+    // this skip. Selena is the sole primary path (the demo's own tests assert
+    // zero authored/fallback occurrences in the golden path), so skipping this
+    // upload is a no-op almost always; IF a backend ever falls all the way
+    // through to the hand-written pipelines, a skipped tick leaves that
+    // fallback's params.time-driven effects (e.g. the caustics fallback
+    // fragment's shimmer term) one tick stale until the next real change --
+    // a minor cosmetic staleness in an already-degraded emergency tier, not a
+    // functional break.
+    function waterUniformSnapshotChanged(system) {
+      if (!system) return true;
+      var last = system.waterUniformLastWords;
+      if (!last || last.length !== waterUniformScratchU.length) {
+        system.waterUniformLastWords = new Uint32Array(waterUniformScratchU.length);
+        system.waterUniformLastWords.set(waterUniformScratchU);
+        return true;
+      }
+      var changed = false;
+      for (var i = WATER_UNIFORM_VOLATILE_WORDS; i < waterUniformScratchU.length; i++) {
+        if (last[i] !== waterUniformScratchU[i]) { changed = true; break; }
+      }
+      if (changed) last.set(waterUniformScratchU);
+      return changed;
     }
 
     function createWaterComputeBindGroup(system, readBuffer, writeBuffer) {
@@ -8981,6 +9057,13 @@
         // because their system was at rest -- the direct measure of the win.
         waterAtRestSystems: 0,
         waterRestSubstepsSkipped: 0,
+        // M6 per-frame churn audit -- see waterUniformSnapshotChanged's
+        // comment (near sceneWaterUniformData). Direct measure of the
+        // uniform-upload dedup: how many "commit" writeBuffer calls actually
+        // hit the GPU (waterUniformUploads) vs were skipped because nothing
+        // but the volatile time/frameIndex header changed (waterUniformUploadsSkipped).
+        waterUniformUploads: 0,
+        waterUniformUploadsSkipped: 0,
         waterQualityTier: "full",
         waterQualityRevision: 0,
         waterSurfaceResolution: 0,
@@ -9248,8 +9331,16 @@
           // Commit current/previous object state exactly once per simulation
           // tick frame, after transient one-shot event uniforms are consumed.
           // Zero-tick display frames leave the previous center untouched.
-          device.queue.writeBuffer(system.uniformBuffer, 0,
-            sceneWaterUniformData(system, entry, fixedDeltaSeconds, currentTime));
+          // M6: pack once, then skip the actual GPU upload when nothing but
+          // the volatile time/frameIndex header changed -- see
+          // waterUniformSnapshotChanged's comment (near sceneWaterUniformData).
+          var commitUniformData = sceneWaterUniformData(system, entry, fixedDeltaSeconds, currentTime);
+          if (waterUniformSnapshotChanged(system)) {
+            device.queue.writeBuffer(system.uniformBuffer, 0, commitUniformData);
+            stats.waterUniformUploads += 1;
+          } else {
+            stats.waterUniformUploadsSkipped += 1;
+          }
           if ((system.waterObjectActive || (system.waterObjectKind || 0) > 0) && system.waterObjectMoved) {
             stats.waterObjectSystems += 1;
             stats.waterObjectSpheres += Math.max(0, system.waterObjectSphereCount || 0);
@@ -13287,6 +13378,8 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-y", String(published.waterLightDirY || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-z", String(published.waterLightDirZ || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-systems", String(published.waterCausticSystems || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-passes", String(published.waterCausticPasses || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-texture-pixels", String(published.waterCausticTexturePixels || 0));

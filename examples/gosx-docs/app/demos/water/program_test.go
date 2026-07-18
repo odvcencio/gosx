@@ -857,6 +857,40 @@ func TestWaterAtRestGatingEmitsStatsAttr(t *testing.T) {
 	}
 }
 
+// TestWaterUniformUploadDedupSkipsUnchangedFrames is the M6 (water-parity-
+// campaign) per-frame churn audit's regression lock. It asserts (a) the
+// "commit" writeBuffer call is gated by waterUniformSnapshotChanged rather
+// than firing unconditionally every simulation tick, (b) the comparator scope
+// is documented (word indices before WATER_UNIFORM_VOLATILE_WORDS are
+// excluded, since frameIndex/deltaTime/timeSeconds are always different), and
+// (c) the skip/upload counts are published on the DOM for diag/e2e
+// observability, matching TestWaterAtRestGatingEmitsStatsAttr's convention.
+// It also locks in that configureWebGPUCanvas's swapchain reconfigure is
+// still dirty-checked (the M6 audit's item (b): verified already fixed, not a
+// fresh change -- see that function's own comment for the Metal-stall
+// history).
+func TestWaterUniformUploadDedupSkipsUnchangedFrames(t *testing.T) {
+	webgpuSource := readWaterWebGPURuntimeSource(t)
+
+	for _, want := range []string{
+		"function waterUniformSnapshotChanged(system) {",
+		"var WATER_UNIFORM_VOLATILE_WORDS = 6;",
+		"if (waterUniformSnapshotChanged(system)) {",
+		"device.queue.writeBuffer(system.uniformBuffer, 0, commitUniformData);",
+		"stats.waterUniformUploads += 1;",
+		"stats.waterUniformUploadsSkipped += 1;",
+		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
+		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
+		// (b): the swapchain-reconfigure dirty check this audit verified
+		// (rather than needing to add).
+		"function configureWebGPUCanvas(canvas) {\n      var target = canvas || (gpuCtx && gpuCtx.canvas) || null;\n      var key = sceneWebGPUSurfaceKey(target);\n      if (key === configuredSurfaceKey) return false;",
+	} {
+		if !strings.Contains(webgpuSource, want) {
+			t.Fatalf("Scene3D WebGPU water runtime missing uniform-upload churn-audit source %q", want)
+		}
+	}
+}
+
 // TestWaterSelenaGLESSlots verifies the demo compiles its Selena-authored water
 // shaders only to the WebGL2 dialect, that those slots flow end-to-end into a
 // WaterSystemIR, and that the per-shader Selena
