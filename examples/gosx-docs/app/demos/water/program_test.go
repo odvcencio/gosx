@@ -1043,3 +1043,86 @@ func TestWaterSelenaGLESSlots(t *testing.T) {
 		t.Fatalf("WaterSystemIR.ShaderDescriptors[surface] did not round-trip")
 	}
 }
+
+// TestWaterObjectShadowIsAnalyticSoftShadow is the P2 (water-parity-campaign)
+// regression lock for object-shadow.sel's rewrite from a flat UV-space
+// smoothstep disc into a real projected soft shadow: it must reconstruct a
+// world-space floor point from uv (not just index into a UV-space disc),
+// run caustics.sel's analytic sphere/box occlusion terms (not a crude
+// smoothstep-only footprint), and its compiled descriptor must expose the
+// new poolHeight/objectHalfY params and objectCenterY context field the
+// world-space reconstruction needs (16a's sceneWaterObjectShadowSelenaMaterial
+// /...RenderContext must forward live values for these, not just the
+// compiled defaults).
+func TestWaterObjectShadowIsAnalyticSoftShadow(t *testing.T) {
+	src, err := waterSelenaFS.ReadFile("shaders/jeantimex-water.selena/object-shadow.sel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(src)
+	for _, want := range []string{
+		// World-space floor reconstruction (not a UV-only disc).
+		"floorPoint", "poolHeight", "objectCenterY",
+		// Analytic sphere occlusion (sphereSoftShadow's umbra/penumbra sigmoid).
+		"cross(dirS, flatRay)", "exp(-s1)",
+		// Analytic box occlusion (ray-box PCF, 3x3 jitter loop).
+		"cubeMin", "cubeMax", "cx < 3i", "cy < 3i",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("object-shadow.sel lost analytic soft-shadow term %q", want)
+		}
+	}
+	if strings.Contains(source, "smoothstep(radius, radius + max(radius * 1.2, 0.02), dd)") {
+		t.Fatal("object-shadow.sel regressed to the old flat UV-space smoothstep disc mask")
+	}
+
+	data, err := WaterDemoData()
+	if err != nil {
+		t.Fatalf("WaterDemoData returned error: %v", err)
+	}
+	descriptors, ok := data["waterShaderDescriptors"].(map[string]json.RawMessage)
+	if !ok {
+		t.Fatalf("waterShaderDescriptors = %T, want map[string]json.RawMessage", data["waterShaderDescriptors"])
+	}
+	objectShadowRaw, ok := descriptors["objectShadow"]
+	if !ok {
+		t.Fatalf("waterShaderDescriptors missing objectShadow entry")
+	}
+	var objectShadowLayout bindings.Layout
+	if err := json.Unmarshal(objectShadowRaw, &objectShadowLayout); err != nil {
+		t.Fatalf("decode objectShadow descriptor: %v", err)
+	}
+	if objectShadowLayout.Kind != bindings.SurfaceKindPost {
+		t.Fatalf("objectShadow descriptor kind = %q, want post", objectShadowLayout.Kind)
+	}
+	wantFields := map[string]bool{"poolHeight": false, "objectHalfY": false, "objectCenterY": false}
+	for _, f := range objectShadowLayout.UniformBlock.Fields {
+		if _, tracked := wantFields[f.Name]; tracked {
+			wantFields[f.Name] = true
+		}
+	}
+	for name, found := range wantFields {
+		if !found {
+			t.Fatalf("objectShadow descriptor missing %s uniform (world-space reconstruction needs it): %+v", name, objectShadowLayout.UniformBlock.Fields)
+		}
+	}
+}
+
+// TestWaterObjectShadowSelenaWiringForwardsWorldSpaceParams locks 16a-scene-
+// webgpu.js's object-shadow context/material builders forward the new
+// poolHeight/objectCenterY/objectHalfY fields object-shadow.sel's analytic
+// rewrite needs as LIVE system state (not just the compiled shader defaults):
+// without this wiring the RTT would silently keep rendering at the default
+// pool size/object height regardless of the live WaterSystem configuration.
+func TestWaterObjectShadowSelenaWiringForwardsWorldSpaceParams(t *testing.T) {
+	webgpuSource := readWaterWebGPURuntimeSource(t)
+	for _, want := range []string{
+		"poolHeight: sceneNumber(system && system.waterPoolHeight",
+		"objectCenterY: sceneNumber(center.y",
+		"objectHalfY: sceneNumber(half.y",
+	} {
+		if !strings.Contains(webgpuSource, want) {
+			t.Fatalf("Scene3D WebGPU water runtime missing object-shadow world-space wiring %q", want)
+		}
+	}
+}
