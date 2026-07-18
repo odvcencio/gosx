@@ -3833,6 +3833,7 @@
         gl.bindVertexArray(emptyVAO);
         sceneWaterRenderBindSamplers(gl, causticsProgram, [
           { name: sceneWaterRenderStateUniform(causticsDesc), target: gl.TEXTURE_2D, tex: stateTex },
+          { name: "objectShadowTexture", target: gl.TEXTURE_2D, tex: shadowTex },
         ]);
         sceneWaterRenderSetUniforms(gl, causticsProgram, causticsDesc, {
           mvp: mvp, normalMatrix: identity3,
@@ -3840,6 +3841,25 @@
           normalScale: liveNormalScale, gridResolution: gridResolution, resolution: sim.resolution, time: timeSec,
           objectKind: liveKindNum, objectCount: 0, opticsEnable: liveOpticsEnable,
           lightDir: liveLightDir, objectCenter: liveCenter, objectHalfRadius: liveHalfRadius,
+          // caustics.sel declares both as `param`s with compiled defaults
+          // (causticIntensity=0.2, matching jeantimex/webgpu-water's tunable
+          // water.causticIntensity) that WebGPU's generic Selena uniform
+          // resolver (sceneSelenaUniformValue) falls back to automatically
+          // when the render context omits them. WebGL2's hand-rolled
+          // sceneWaterRenderSetUniforms has no such fallback -- any field not
+          // present in this values map stays at the GL uniform's zero
+          // link-time default. Leaving causticIntensity unset therefore
+          // multiplied the ENTIRE caustic pattern (areaFocus = oldArea/
+          // newArea*causticIntensity) by zero every frame, which in turn
+          // zeroed the "wet" diffuse term surface.sel's wallShade/
+          // objectColorSB add for every submerged surface -- the direct
+          // cause of the washed-out, low-contrast "opaque lid" water this
+          // milestone fixes. objectShadowTexelSize is a `context` field (no
+          // compiled-default fallback even on WebGPU) that caustics.sel's
+          // 9-tap soft shadow read needs to stay texel-correct; forward it
+          // explicitly like the WebGPU render context does.
+          causticIntensity: sceneWaterNum(liveEntry.causticIntensity, 0.2),
+          objectShadowTexelSize: 1 / Math.max(1, shadowTarget ? shadowTarget.size : authoredShadowSize),
         });
         gl.drawArrays(gl.TRIANGLES, 0, surfaceVertexCount);
         lastCausticsTickSeq = logicalCausticsTickSeq;
