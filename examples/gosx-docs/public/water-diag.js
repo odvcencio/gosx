@@ -125,6 +125,15 @@
         row("duck RTT fallback", attr("webgpu-water-object-texture-fallback-passes") || "0",
           num(attr("webgpu-water-object-texture-fallback-passes")) > 0) +
         row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false) +
+        // M5/M6 (water-parity-campaign): at-rest gating retains the last
+        // rendered sim/normal/state-copy/caustics textures once the
+        // heightfield settles instead of recomputing a steady state every
+        // frame, and the uniform-upload dedup skips the GPU writeBuffer call
+        // when nothing but the volatile time/frameIndex header changed.
+        row("water at rest", (Number(attr("webgpu-water-at-rest-systems")) > 0 ? "yes" : "no") +
+          " · " + (attr("webgpu-water-rest-substeps-skipped") || "0") + " substeps skipped", false) +
+        row("uniform uploads", (attr("webgpu-water-uniform-uploads") || "0") + " sent / " +
+          (attr("webgpu-water-uniform-uploads-skipped") || "0") + " skipped", false) +
         '<div style="height:6px"></div>' +
         row("canvas", lastW + "x" + lastH, false) +
         row("resizes/sec", String(resizeWindow.length), resizeWindow.length > 0) +
@@ -144,13 +153,25 @@
           : '<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:.5">stock settings</div>');
     }
 
-    // Canvas-size churn. Toggling every expensive knob in the water system moved the
-    // frame rate by nothing at all, which means the cost is not a workload — it is a
-    // stall. The prime suspect is a swapchain reconfiguration every frame: a canvas
-    // whose backing store and CSS box disagree by a rounding step at fractional DPR
-    // can oscillate forever, and reconfiguring a Metal drawable per frame costs tens
-    // of milliseconds no matter how little you ask it to draw. If resizes/sec is
-    // anything but 0, that is the bug.
+    // Canvas-size churn. This overlay was written while chasing a stall where
+    // toggling every expensive water knob (caustics/reflection/refraction/mesh
+    // vertices) moved the frame rate by nothing, which meant the cost was not a
+    // workload — it was a per-frame swapchain reconfiguration
+    // (GPUCanvasContext.configure(), tens of milliseconds on a Metal drawable
+    // no matter how little you ask it to draw). That root cause is fixed:
+    // configureWebGPUCanvas (16a-scene-webgpu.js) now dirty-checks
+    // width/height/format/alphaMode/colorSpace/toneMapping/device against a
+    // remembered surface key and skips a redundant configure() (M6,
+    // water-parity-campaign audit; see also commit "optimize(webgpu): skip
+    // redundant WebGPU canvas surface reconfiguration"). This "resizes/sec"
+    // counter is KEPT as a regression guard for the harder residual case that
+    // fix does NOT cover on its own: a canvas whose backing store and CSS box
+    // disagree by a rounding step at fractional DPR can still make
+    // canvas.width/height themselves genuinely oscillate frame to frame, which
+    // would defeat the dirty check (the key legitimately changes every frame).
+    // If resizes/sec is anything but 0, that residual bug is present; nothing
+    // observed here has diagnosed it (deeper engine surgery than this
+    // audit/JS-side dedup pass -- documenting, not fixing).
     var lastW = 0, lastH = 0, resizeCount = 0, resizeWindow = [];
     function sampleCanvasSize(now) {
       var c = mount.querySelector("canvas");

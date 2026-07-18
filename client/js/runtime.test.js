@@ -10100,7 +10100,7 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
   assert.match(webgpu, /if \(hasSimulationTick && dropEventID > 0 && system\.lastDropEventID !== dropEventID\)/);
   assert.match(webgpu, /hasSimulationTick\s*\? dispatchWaterObjectDisplacementEvents/);
   assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*solverStep < 2/);
-  assert.match(webgpu, /if \(hasSimulationTick\) \{\s*var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal"/);
+  assert.match(webgpu, /if \(hasSimulationTick && runWaterSim\) \{\s*var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal"/);
   assert.match(webgpu, /Math\.floor\(Math\.max\(0, waterClock\.tickSeq \|\| 0\) \/ expensivePassCadence\)/);
 
   assert.equal((mount.match(/renderer\.render\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
@@ -22358,6 +22358,12 @@ test("Scene3D WebGL water binds the full Selena object contract", () => {
     "direct and projected objects must sample the live caustic target rather than aliasing the state texture");
   assert.match(source, /poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight/,
     "object shading must receive live pool dimensions for refraction and caustic projection");
+  assert.match(source, /name: "objectShadowTexture", target: gl\.TEXTURE_2D, tex: shadowTex/,
+    "the caustics pass must bind objectShadowTexture to the live shadow RTT, not leave it aliased to texture unit 0 (the state texture)");
+  assert.match(source, /causticIntensity: sceneWaterNum\(liveEntry\.causticIntensity, 0\.2\)/,
+    "the caustics pass must explicitly upload causticIntensity (compiled default 0.2) -- WebGL2's uniform application has no automatic default fallback the way WebGPU's generic Selena resolver does, so omitting it here zeros the entire caustic pattern");
+  assert.match(source, /objectShadowTexelSize: 1 \/ Math\.max\(1, shadowTarget \? shadowTarget\.size : authoredShadowSize\)/,
+    "the caustics pass must forward a live, nonzero objectShadowTexelSize for its soft-shadow tap sampling");
 });
 
 test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events exactly", () => {
@@ -22433,7 +22439,12 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
     objectShadowResolution: 512,
     objectTextureResolution: 512,
     objectTexturePixelBudget: 786432,
-    shaderDescriptors: { normal: waterNormalSelenaFixture.layout },
+    // caustics uses the REAL Selena-compiled layout (not a bare stub) so its
+    // uniformBlock.defaults (causticIntensity=0.2) and context fields
+    // (objectShadowTexelSize) are present, exercising the same
+    // sceneWaterRenderSetUniforms path the causticIntensity/
+    // objectShadowTexture regression assertions below depend on.
+    shaderDescriptors: { normal: waterNormalSelenaFixture.layout, caustics: waterCausticsSelenaFixture.layout },
   };
   const renderer = createWaterRenderer(gl, canvas, entry);
   assert.ok(renderer, "fake WebGL water renderer must initialize");
@@ -22459,6 +22470,19 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
   assert.equal(stats.waterNormalPasses, 1);
   assert.ok(gl.ops.some((op) => op[0] === "uniform1f" && op[1] === "cellSizeX" && Math.abs(op[2] - 2 / 192) < 1e-7), "WebGL normal pass must receive physical X cell spacing");
   assert.ok(gl.ops.some((op) => op[0] === "uniform1f" && op[1] === "cellSizeZ" && Math.abs(op[2] - 2 / 192) < 1e-7), "WebGL normal pass must receive physical Z cell spacing");
+  // P1.5 regression: causticIntensity (a `param` with a compiled default of
+  // 0.2 in caustics.sel) has no automatic default-fallback in WebGL2's
+  // hand-rolled sceneWaterRenderSetUniforms (unlike WebGPU's generic Selena
+  // uniform resolver). Leaving it unset zeroed the caustic pattern
+  // (areaFocus = oldArea/newArea*causticIntensity) every frame, crushing the
+  // "wet" diffuse term surface.sel adds for every submerged surface -- the
+  // root cause of the washed-out WebGL water this milestone fixes. Assert
+  // the WebGL caustics pass explicitly uploads it (and the objectShadowTexelSize
+  // context field + objectShadowTexture sampler caustics.sel's soft-shadow
+  // read needs) so this cannot silently regress to zero again.
+  assert.ok(gl.ops.some((op) => op[0] === "uniform1f" && op[1] === "causticIntensity" && Math.abs(op[2] - 0.2) < 1e-6), "WebGL caustics pass must upload the compiled causticIntensity default, not leave it at the GL zero default");
+  assert.ok(gl.ops.some((op) => op[0] === "uniform1f" && op[1] === "objectShadowTexelSize" && op[2] > 0), "WebGL caustics pass must upload a nonzero objectShadowTexelSize");
+  assert.ok(gl.ops.some((op) => op[0] === "uniform1i" && op[1] === "objectShadowTexture"), "WebGL caustics pass must bind the objectShadowTexture sampler instead of leaving it aliased to unit 0");
 
   renderer.render(bundle, viewport, { nowMS: 51, active: true });
   stats = renderer.getStats();

@@ -475,7 +475,11 @@ const budgets = [
   // Bumped raw 349_000 -> 351_000, gzip 81_500 -> 82_000, and Brotli 68_000
   // -> 68_500 for sampled water-state mirrors and physical-cell normal uniforms. Measured:
   // 350_203 / 81_776 / 68_108.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 354_000, gzip: 83_000, brotli: 69_000 },
+  // Bumped raw 354_000 -> 356_000, gzip 83_000 -> 83_500, and Brotli 69_000
+  // -> 69_500 for water at-rest gating (energy proxy + pass skips), uniform
+  // upload dedup counters, and world-space soft-shadow wiring. Measured:
+  // 355_149 / 82_988 / 69_192.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 356_000, gzip: 83_500, brotli: 69_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

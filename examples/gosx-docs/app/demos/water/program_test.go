@@ -780,6 +780,117 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	}
 }
 
+// TestWaterObjectShadowSignatureExcludesCamera is the M4 (water-parity-campaign)
+// regression lock: sceneWaterObjectRenderSignature's two call sites in
+// 16a-scene-webgpu.js MUST disagree on includeCamera. The object-shadow RTT
+// (renderWaterObjectShadowPass / renderWaterObjectMeshShadowPass) is a
+// light-space projection -- light direction + object transform + pool extents
+// only, see sceneWaterObjectMeshShadowUniformData, which packs no eye/view/
+// projection field -- so it must call with includeCamera=false, or orbiting
+// the camera would invalidate the cache and re-render a 1024x1024-class RTT
+// every frame for zero visual benefit. The object-texture (reflection/
+// refraction) pass's RTTs, by contrast, render the mesh FROM the camera's own
+// eye position and legitimately need includeCamera=true. This test greps the
+// literal call-site source rather than executing JS (this repo has no JS
+// runtime test harness for 16a); see program_test.go's existing
+// TestWaterDemoControlsContract for the same string-assertion convention.
+func TestWaterObjectShadowSignatureExcludesCamera(t *testing.T) {
+	webgpuSource := readWaterWebGPURuntimeSource(t)
+
+	shadowCall := "sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false)"
+	if !strings.Contains(webgpuSource, shadowCall) {
+		t.Fatalf("Scene3D WebGPU water runtime missing camera-free shadow signature call %q -- "+
+			"the object-shadow RTT is light-space and must not re-render every frame while the camera orbits", shadowCall)
+	}
+
+	textureCall := "sceneWaterObjectRenderSignature(system, entry, bundle, objectList, true)"
+	if !strings.Contains(webgpuSource, textureCall) {
+		t.Fatalf("Scene3D WebGPU water runtime missing camera-aware object-texture signature call %q -- "+
+			"the reflection/refraction RTTs render from the camera's eye and must re-render when it moves", textureCall)
+	}
+}
+
+// readWaterWebGPURuntimeSource reads 16a-scene-webgpu.js, the shared source
+// TestWaterObjectShadowSignatureExcludesCamera / TestWaterAtRestGatingEmitsStatsAttr
+// grep for their milestone regression assertions.
+func readWaterWebGPURuntimeSource(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
+	if err != nil {
+		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
+	}
+	return string(webgpuBytes)
+}
+
+// TestWaterAtRestGatingEmitsStatsAttr is the M5 (water-parity-campaign)
+// regression lock: an at-rest water system must (a) actually skip its
+// simulation substeps/normal/state-copy/caustics passes, and (b) publish that
+// state on the DOM so diag overlays and e2e waitFor() polls can observe a
+// rest/wake transition. String-asserts the runtime source rather than
+// executing JS, matching TestWaterObjectShadowSignatureExcludesCamera's
+// convention above.
+func TestWaterAtRestGatingEmitsStatsAttr(t *testing.T) {
+	webgpuSource := readWaterWebGPURuntimeSource(t)
+
+	for _, want := range []string{
+		// The gate itself: substeps/normal-pass/state-copy read runWaterSim
+		// (false while system.waterAtRest is true and nothing woke it this
+		// frame), not the raw hasSimulationTick clock signal alone.
+		"var runWaterSim = !system.waterAtRest;",
+		"if (hasSimulationTick && runWaterSim) {",
+		"if ((hasSimulationTick && runWaterSim) || system.stateTextureSyncSeq === 0) {",
+		// Any disturbance (seed/drop/queued object event/continuous drag, all
+		// folded into waterStateDirty) must wake the system instantly.
+		"if (waterStateDirty) {\n            system.waterRestEnergy = 1.0;\n            system.waterLastDisturbanceMS = currentNowMS;\n            system.waterAtRest = false;\n          }",
+		// The DOM/stats surface diag overlays and e2e tests observe.
+		`setEssentialAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
+		`mount.setAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
+	} {
+		if !strings.Contains(webgpuSource, want) {
+			t.Fatalf("Scene3D WebGPU water runtime missing at-rest gating source %q", want)
+		}
+	}
+}
+
+// TestWaterUniformUploadDedupSkipsUnchangedFrames is the M6 (water-parity-
+// campaign) per-frame churn audit's regression lock. It asserts (a) the
+// "commit" writeBuffer call is gated by waterUniformSnapshotChanged rather
+// than firing unconditionally every simulation tick, (b) the comparator scope
+// is documented (word indices before WATER_UNIFORM_VOLATILE_WORDS are
+// excluded, since frameIndex/deltaTime/timeSeconds are always different), and
+// (c) the skip/upload counts are published on the DOM for diag/e2e
+// observability, matching TestWaterAtRestGatingEmitsStatsAttr's convention.
+// It also locks in that configureWebGPUCanvas's swapchain reconfigure is
+// still dirty-checked (the M6 audit's item (b): verified already fixed, not a
+// fresh change -- see that function's own comment for the Metal-stall
+// history).
+func TestWaterUniformUploadDedupSkipsUnchangedFrames(t *testing.T) {
+	webgpuSource := readWaterWebGPURuntimeSource(t)
+
+	for _, want := range []string{
+		"function waterUniformSnapshotChanged(system) {",
+		"var WATER_UNIFORM_VOLATILE_WORDS = 6;",
+		"if (waterUniformSnapshotChanged(system)) {",
+		"device.queue.writeBuffer(system.uniformBuffer, 0, commitUniformData);",
+		"stats.waterUniformUploads += 1;",
+		"stats.waterUniformUploadsSkipped += 1;",
+		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
+		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
+		// (b): the swapchain-reconfigure dirty check this audit verified
+		// (rather than needing to add).
+		"function configureWebGPUCanvas(canvas) {\n      var target = canvas || (gpuCtx && gpuCtx.canvas) || null;\n      var key = sceneWebGPUSurfaceKey(target);\n      if (key === configuredSurfaceKey) return false;",
+	} {
+		if !strings.Contains(webgpuSource, want) {
+			t.Fatalf("Scene3D WebGPU water runtime missing uniform-upload churn-audit source %q", want)
+		}
+	}
+}
+
 // TestWaterSelenaGLESSlots verifies the demo compiles its Selena-authored water
 // shaders only to the WebGL2 dialect, that those slots flow end-to-end into a
 // WaterSystemIR, and that the per-shader Selena
@@ -930,5 +1041,88 @@ func TestWaterSelenaGLESSlots(t *testing.T) {
 	}
 	if string(got.ShaderDescriptors["surface"]) != string(descriptors["surface"]) {
 		t.Fatalf("WaterSystemIR.ShaderDescriptors[surface] did not round-trip")
+	}
+}
+
+// TestWaterObjectShadowIsAnalyticSoftShadow is the P2 (water-parity-campaign)
+// regression lock for object-shadow.sel's rewrite from a flat UV-space
+// smoothstep disc into a real projected soft shadow: it must reconstruct a
+// world-space floor point from uv (not just index into a UV-space disc),
+// run caustics.sel's analytic sphere/box occlusion terms (not a crude
+// smoothstep-only footprint), and its compiled descriptor must expose the
+// new poolHeight/objectHalfY params and objectCenterY context field the
+// world-space reconstruction needs (16a's sceneWaterObjectShadowSelenaMaterial
+// /...RenderContext must forward live values for these, not just the
+// compiled defaults).
+func TestWaterObjectShadowIsAnalyticSoftShadow(t *testing.T) {
+	src, err := waterSelenaFS.ReadFile("shaders/jeantimex-water.selena/object-shadow.sel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(src)
+	for _, want := range []string{
+		// World-space floor reconstruction (not a UV-only disc).
+		"floorPoint", "poolHeight", "objectCenterY",
+		// Analytic sphere occlusion (sphereSoftShadow's umbra/penumbra sigmoid).
+		"cross(dirS, flatRay)", "exp(-s1)",
+		// Analytic box occlusion (ray-box PCF, 3x3 jitter loop).
+		"cubeMin", "cubeMax", "cx < 3i", "cy < 3i",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("object-shadow.sel lost analytic soft-shadow term %q", want)
+		}
+	}
+	if strings.Contains(source, "smoothstep(radius, radius + max(radius * 1.2, 0.02), dd)") {
+		t.Fatal("object-shadow.sel regressed to the old flat UV-space smoothstep disc mask")
+	}
+
+	data, err := WaterDemoData()
+	if err != nil {
+		t.Fatalf("WaterDemoData returned error: %v", err)
+	}
+	descriptors, ok := data["waterShaderDescriptors"].(map[string]json.RawMessage)
+	if !ok {
+		t.Fatalf("waterShaderDescriptors = %T, want map[string]json.RawMessage", data["waterShaderDescriptors"])
+	}
+	objectShadowRaw, ok := descriptors["objectShadow"]
+	if !ok {
+		t.Fatalf("waterShaderDescriptors missing objectShadow entry")
+	}
+	var objectShadowLayout bindings.Layout
+	if err := json.Unmarshal(objectShadowRaw, &objectShadowLayout); err != nil {
+		t.Fatalf("decode objectShadow descriptor: %v", err)
+	}
+	if objectShadowLayout.Kind != bindings.SurfaceKindPost {
+		t.Fatalf("objectShadow descriptor kind = %q, want post", objectShadowLayout.Kind)
+	}
+	wantFields := map[string]bool{"poolHeight": false, "objectHalfY": false, "objectCenterY": false}
+	for _, f := range objectShadowLayout.UniformBlock.Fields {
+		if _, tracked := wantFields[f.Name]; tracked {
+			wantFields[f.Name] = true
+		}
+	}
+	for name, found := range wantFields {
+		if !found {
+			t.Fatalf("objectShadow descriptor missing %s uniform (world-space reconstruction needs it): %+v", name, objectShadowLayout.UniformBlock.Fields)
+		}
+	}
+}
+
+// TestWaterObjectShadowSelenaWiringForwardsWorldSpaceParams locks 16a-scene-
+// webgpu.js's object-shadow context/material builders forward the new
+// poolHeight/objectCenterY/objectHalfY fields object-shadow.sel's analytic
+// rewrite needs as LIVE system state (not just the compiled shader defaults):
+// without this wiring the RTT would silently keep rendering at the default
+// pool size/object height regardless of the live WaterSystem configuration.
+func TestWaterObjectShadowSelenaWiringForwardsWorldSpaceParams(t *testing.T) {
+	webgpuSource := readWaterWebGPURuntimeSource(t)
+	for _, want := range []string{
+		"poolHeight: sceneNumber(system && system.waterPoolHeight",
+		"objectCenterY: sceneNumber(center.y",
+		"objectHalfY: sceneNumber(half.y",
+	} {
+		if !strings.Contains(webgpuSource, want) {
+			t.Fatalf("Scene3D WebGPU water runtime missing object-shadow world-space wiring %q", want)
+		}
 	}
 }

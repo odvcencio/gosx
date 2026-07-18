@@ -25,6 +25,13 @@
 // here too and could not be proven safe (verification-environment noise, not
 // a confirmed logic bug — see that note). Only the branch-free wallRL CSE
 // below is shipped.
+//
+// M3: wallShade's object-proximity wall-AO term (surface.sel's GAP #3 note)
+// is ported here too, verbatim (same fn body/signature — this file duplicates
+// every helper fn from water-surface.sel already, see the top of this
+// header), since the wall-AO applies identically looking up through the
+// surface. Rounded-corner wall UVs remain unported for the same reason noted
+// there.
 
 fn raySphere(origin: vec3, ray: vec3, center: vec3, radius: float) -> float {
     let toC  = origin - center
@@ -161,9 +168,13 @@ fn objectColorSB(normal: vec3, kind: float, lightDir: vec3, caustic: float, subm
     return vec3f(0.5, 0.5, 0.5) + vec3f(diffuse, diffuse, diffuse)
 }
 
-fn wallShade(point: vec3, hw: float, hl: float, ph: float, lightDir: vec3, tileRGB: vec3, caustic: vec4, submerged: float, poolNear: float, poolFar: float, opticsCaustic: float) -> vec3 {
+// See water-surface.sel's wallShade for the M3 wall-AO param/formula notes.
+fn wallShade(point: vec3, hw: float, hl: float, ph: float, lightDir: vec3, tileRGB: vec3, caustic: vec4, submerged: float, poolNear: float, poolFar: float, opticsCaustic: float, objActive: float, objC: vec3, objR: float, objKind: float, objH: vec3) -> vec3 {
     let nrm      = wallNormalRect(point, hw, hl, ph)
-    let scale0   = 0.5 / max(length(point), 0.1)
+    let effR     = max(objKind > 1.5 ? max(max(objH.x, objH.z), objH.y) * 1.2 : objR, 0.001)
+    let aoRatio  = max(length(point - objC) / effR, 0.15)
+    let wallAO   = max(1.0 - 0.9 / pow(aoRatio, 4.0), 0.0)
+    let scale0   = (0.5 / max(length(point), 0.1)) * (objActive > 0.0 ? wallAO : 1.0)
     let rl       = -refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
     let diffuse  = max(dot(rl, nrm), 0.0)
     let span     = max(poolFar - poolNear, 0.0001)
@@ -370,7 +381,7 @@ material WaterSurfaceBelow {
         let rfWallCaustic = sample(causticTexture, wallCausticUV(rfWallP, ldir, poolWidth, poolLength))
         let rfWallPool    = poolBox(rfWallP, wallRL, hw, ph, hl)
         let rfWallSub     = rfWallP.y < stateAt(pointToWaterUV(rfWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
-        let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic)
+        let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic, objActive ? 1.0 : 0.0, objC, objR, objectKind, objH)
 
         let rfSky      = sampleCube(sky, refractD).rgb + sunGlint(refractD, ldir)
         let rfHitWall  = refractD.y < 0.0 || rfWallP.y < 2.0 / 12.0
@@ -394,7 +405,7 @@ material WaterSurfaceBelow {
         let rlWallCaustic = sample(causticTexture, wallCausticUV(rlWallP, ldir, poolWidth, poolLength))
         let rlWallPool    = poolBox(rlWallP, wallRL, hw, ph, hl)
         let rlWallSub     = rlWallP.y < stateAt(pointToWaterUV(rlWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
-        let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic)
+        let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic, objActive ? 1.0 : 0.0, objC, objR, objectKind, objH)
 
         let rlSky      = sampleCube(sky, reflectD).rgb + sunGlint(reflectD, ldir)
         let rlHitWall  = reflectD.y < 0.0 || rlWallP.y < 2.0 / 12.0

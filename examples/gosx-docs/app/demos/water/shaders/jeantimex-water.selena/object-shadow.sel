@@ -1,48 +1,133 @@
 // water-object-shadow.sel — selena post-kind port of the object-shadow RTT.
 //
-// Renders the projected shadow of the water object onto the pool floor surface.
-// A fullscreen pass: computes a 2D footprint mask from the object UV position.
+// Renders the projected soft shadow of the water object (sphere/box, objectKind
+// ~1/~2) onto the pool floor. A fullscreen pass reconstructs the world-space
+// floor point under each texel and runs the SAME analytic occlusion terms
+// caustics.sel already uses for its own per-pixel object-shadow darkening
+// (sphereSoftShadow's umbra/penumbra sigmoid and the 3x3-jittered
+// cubeOcclusion ray-box PCF) instead of a flat UV-space smoothstep disc, so
+// this RTT (sampled cheaply by pool.sel/surface.sel/the caustics mesh-shadow
+// term) carries real distance-based penumbra and correct light-direction
+// offset rather than an ad hoc UV nudge.
 //
-// Only the sphere (objectKind ~1) and cube (objectKind ~2) cases are supported.
-// The compound-sphere path (objectKind ~3) from object-shadow.fragment.sel
-// requires param spheres : array<vec4, 32> which post-kind materials do not yet
-// support (CodeUnsupportedType is returned for array params in post). When
-// objectKind >= 2.5, no shadow is produced.
+// PART 1 STATUS (water-parity-campaign P2): Selena's `post` kind has
+// supported fixed-size array params/context fields
+// (`array<vec4,N>`-style) since v0.3.1 (selena/lower/lower.go's lowerPost
+// paramArrays path, exercised end-to-end by every emit target — see
+// selena's TestPostArrayParamCompilesAllTargets and the
+// testdata/conformance/water-compound-shadow.sel golden). This material does
+// NOT need one: it renders exactly one occluder (a single sphere or box) with
+// only scalar/vector data. The compound cluster case (objectKind ~3, up to 32
+// displacement spheres) already has its own array-param home in the sibling
+// WaterCompoundShadow material (compound-shadow.sel, `context { spheres :
+// array<vec4,32> }`), which 16a-scene-webgpu.js's getWaterObjectShadowSelenaDraw
+// already dispatches to for objectKind >= 2.5 — this material is simply never
+// invoked for that case, so it stays scoped to the single-occluder kinds it
+// owns rather than duplicating unreachable compound-handling code (and the
+// WGSL/GLSL/GLES/Metal bytes that would ship with it).
 //
-// Light offset: the shadow UV is shifted by the light projection to place the
-// shadow ahead of the object relative to the light direction.
+// Coordinate reconstruction: geo.uv is the ONLY geo field a post pass exposes,
+// so the floor point is rebuilt in world space from uv using the SAME mapping
+// pool.sel's vWaterUV uses in reverse (wuv.x = worldX/(2*poolWidth)+0.5), and
+// compared directly against objectCenter (also world units, unnormalized) --
+// this avoids the previous version's implicit assumption that the pool spans
+// exactly [-1,1] regardless of poolWidth/poolLength (a real position/scale
+// bug once poolWidth/poolLength strayed from 1.0, silently harmless only
+// because the demo default keeps the object near pool center).
+//
+// objectTop/clipped preserves the reference's "object mostly submerged below
+// the rim -> fade the shadow out" gate (now computed locally from
+// objectCenterY + max half/radius instead of a separately-host-computed
+// param, since objectCenterY is already threaded through for the 3D floor
+// math).
 material WaterObjectShadow kind post {
     param objectKind    : float = 0.0
     param objectEnabled : float = 1.0
     param poolWidth     : float = 1.5
     param poolLength    : float = 1.5
+    param poolHeight    : float = 0.3
     param objectRadius  : float = 0.1
     param objectHalfX   : float = 0.1
+    param objectHalfY   : float = 0.1
     param objectHalfZ   : float = 0.1
 
     context {
         lightDir      : vec3
         objectCenterX : float = 0.0
+        objectCenterY : float = 0.0
         objectCenterZ : float = 0.0
     }
 
     surface(geo) -> color {
-        let lnorm     = normalize(lightDir)
-        let uvX       = clamp(geo.uv.x - lnorm.x * 0.025, 0.0, 1.0)
-        let uvY       = clamp(geo.uv.y + lnorm.z * 0.025, 0.0, 1.0)
-        let centerUV  = vec2f(objectCenterX * 0.5 + 0.5, objectCenterZ * 0.5 + 0.5)
-        let aspect    = vec2f(max(poolWidth / max(poolLength, 0.001), 0.001), 1.0)
-        let dd        = length(vec2f(uvX - centerUV.x, uvY - centerUV.y) * aspect)
-        let sphR      = max(objectRadius * 0.55, 0.018)
-        let cubeR     = max(max(objectHalfX, objectHalfZ) * 0.6, sphR)
-        let radius    = objectKind > 1.5 ? cubeR : sphR
-        var mask      = 0.0
-        var core      = 0.0
-        if (objectKind >= 0.5 && objectEnabled > 0.0) {
-            mask = 1.0 - smoothstep(radius, radius + max(radius * 1.2, 0.02), dd)
-            core = 1.0 - smoothstep(radius * 0.38, radius, dd)
+        let objectCenter = vec3f(objectCenterX, objectCenterY, objectCenterZ)
+        let ldir       = normalize(lightDir)
+        let flatRay    = refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
+
+        // Reconstruct the pool-floor world position under this texel (top-down
+        // orthographic over [-poolWidth,poolWidth]x[-poolLength,poolLength] at
+        // y = -poolHeight), inverse of pool.sel's vWaterUV mapping.
+        let worldX     = (geo.uv.x * 2.0 - 1.0) * max(poolWidth, 0.0001)
+        let worldZ     = (geo.uv.y * 2.0 - 1.0) * max(poolLength, 0.0001)
+        let floorPoint = vec3f(worldX, -max(poolHeight, 0.0001), worldZ)
+
+        // Analytic single-sphere soft shadow (sphereSoftShadow, ported
+        // verbatim from caustics.sel): projects the point-to-center direction
+        // against the refracted light ray and sigmoids the penumbra width by
+        // how far "behind" the surface point sits relative to the light, so
+        // the umbra core is hard and the edge softens with distance -- real
+        // penumbra, not a fixed-width smoothstep ring.
+        let r      = max(objectRadius, 0.0001)
+        let dirS   = (objectCenter - floorPoint) / r
+        let areaS  = cross(dirS, flatRay)
+        let s0     = dot(areaS, areaS)
+        let distS  = dot(dirS, -flatRay)
+        let s1     = 1.0 + (s0 - 1.0) / max(0.05 + distS * 0.025, 0.0001)
+        let softS  = clamp(1.0 / (1.0 + exp(-s1)), 0.0, 1.0)
+        let litS   = mix(1.0, softS, clamp(distS * 2.0, 0.0, 1.0))
+        let sphereOn     = objectKind >= 0.5 && objectKind < 1.5 && objectEnabled > 0.0
+        let sphereShadow = sphereOn ? 1.0 - litS : 0.0
+
+        // Analytic box shadow: 3x3-jittered ray-box occlusion test (the same
+        // cubeOcclusion/intersectCube PCF caustics.sel inlines), casting a ray
+        // from a small basis-jittered offset of the floor point back toward
+        // the light and testing for a valid box intersection. Averaging 9
+        // taps over a 0.025-world-unit jitter disc softens the box's hard
+        // umbra edge.
+        let shadowRay  = -flatRay
+        let sright     = normalize(cross(shadowRay, vec3f(0.0, 1.0, 0.0)))
+        let sup        = normalize(cross(sright, shadowRay))
+        let cubeActive = objectKind >= 1.5 && objectKind < 2.5 && objectEnabled > 0.0
+        let cubeHalf   = vec3f(max(objectHalfX, 0.0001), max(objectHalfY, 0.0001), max(objectHalfZ, 0.0001))
+        let cubeMin    = objectCenter - cubeHalf
+        let cubeMax    = objectCenter + cubeHalf
+        var cubeOcc    = 0.0
+        for (var cx = 0i; cx < 3i; cx = cx + 1i) {
+            for (var cy = 0i; cy < 3i; cy = cy + 1i) {
+                let fx  = float(cx) - 1.0
+                let fy  = float(cy) - 1.0
+                let so  = floorPoint + sright * fx * 0.025 + sup * fy * 0.025
+                let sx  = abs(shadowRay.x) > 0.000001 ? shadowRay.x : 0.000001
+                let sy  = abs(shadowRay.y) > 0.000001 ? shadowRay.y : 0.000001
+                let sz  = abs(shadowRay.z) > 0.000001 ? shadowRay.z : 0.000001
+                let inv = vec3f(1.0 / sx, 1.0 / sy, 1.0 / sz)
+                let t0  = (cubeMin - so) * inv
+                let t1  = (cubeMax - so) * inv
+                let near3 = min(t0, t1)
+                let far3  = max(t0, t1)
+                let tNear = max(max(near3.x, near3.y), near3.z)
+                let tFar  = min(min(far3.x, far3.y), far3.z)
+                cubeOcc = cubeOcc + step(0.0, tFar) * step(tNear, tFar)
+            }
         }
-        let shadow    = mask * (0.42 + core * 0.58)
+        let cubeShadow = cubeActive ? cubeOcc / 9.0 : 0.0
+
+        // Reference "clipped" gate: fade the shadow out once the object has
+        // sunk mostly below the pool rim (objectTop is derived locally, not a
+        // separate host-computed param, since objectCenterY is already here).
+        let objectTop = objectCenterY + max(max(objectHalfX, objectHalfY), objectRadius)
+        let clipped   = smoothstep(-0.08, 0.16, objectTop)
+
+        let shadow = max(sphereShadow, cubeShadow) * clipped
         return rgb(shadow, shadow, shadow)
     }
 }
