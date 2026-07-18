@@ -8097,13 +8097,23 @@
       return records;
     }
 
-    function dispatchWaterPass(encoder, system, pipeline) {
-      if (!encoder || !system || !pipeline) return 0;
-      var pass = encoder.beginComputePass({ label: "gosx-water-pass" });
+    // sharedPass (optional): when provided, the dispatch is recorded into an
+    // ALREADY-OPEN GPUComputePassEncoder instead of opening/closing its own --
+    // used to fuse the per-tick simulation substeps and the trailing normal
+    // reconstruction into one compute pass (see the water-sim/normal fusion
+    // block below). WebGPU auto-synchronizes storage-buffer read-after-write
+    // hazards between successive dispatchWorkgroups() calls in program order,
+    // whether they're in the same pass or different passes, so batching
+    // dispatches into a shared pass changes nothing about visibility -- only
+    // the number of beginComputePass/end() calls encoded.
+    function dispatchWaterPass(encoder, system, pipeline, sharedPass) {
+      if (!system || !pipeline) return 0;
+      var pass = sharedPass || (encoder && encoder.beginComputePass({ label: "gosx-water-pass" }));
+      if (!pass) return 0;
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, system.computeBindGroups[system.activeIndex]);
       pass.dispatchWorkgroups(Math.ceil(system.cellCount / 64));
-      pass.end();
+      if (!sharedPass) pass.end();
       system.activeIndex = system.activeIndex === 0 ? 1 : 0;
       return 1;
     }
@@ -9368,9 +9378,23 @@
           }
           var runWaterSim = !system.waterAtRest;
           if (runWaterSim) {
+            // P3 fusion (water-parity-campaign): batch the tick's simulation
+            // substeps AND the trailing normal reconstruction into ONE
+            // compute pass instead of 3 separate beginComputePass/end()
+            // sequences (2 substeps + 1 normal). This only cuts command-
+            // encoding overhead, not GPU work or visibility: WebGPU
+            // auto-synchronizes storage-buffer read-after-write hazards
+            // between dispatchWorkgroups() calls in submission order
+            // regardless of pass boundaries, so the normal dispatch -- issued
+            // after every substep dispatch in program order, sharing this
+            // same pass -- still observes exactly the post-final-substep
+            // height field it did as a separate pass. copyBufferToTexture
+            // (syncWaterSampledState) cannot be recorded while a pass is
+            // open, so it stays its own encoder step after this pass ends.
+            var waterSimPass = encoder.beginComputePass({ label: "gosx-water-sim-normal-pass" });
             for (var waterTick = 0; waterTick < waterClock.ticks; waterTick++) {
               for (var solverStep = 0; solverStep < 2; solverStep++) {
-                var stepResult = dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline);
+                var stepResult = dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline, waterSimPass);
                 stats.waterComputeDispatches += stepResult.dispatches;
                 stats.waterSelenaComputeDispatches += stepResult.selena;
                 stats.waterSelenaComputeFallbacks += stepResult.selenaFallback;
@@ -9389,6 +9413,20 @@
             if (!waterStateDirty && system.waterRestEnergy <= WATER_REST_ENERGY_EPSILON && quietMS >= WATER_REST_MIN_QUIET_MS) {
               system.waterAtRest = true;
             }
+            // hasSimulationTick is guaranteed true here (runWaterSim is only
+            // ever assigned inside the hasSimulationTick branch above), so
+            // this folds the normal dispatch into the SAME pass unconditionally
+            // -- equivalent to the former separate `if (hasSimulationTick &&
+            // runWaterSim)` gate, now with a shared pass instead of its own.
+            var normalResult = dispatchWaterComputeStage(encoder, system, entry, "normal", normalCompute.pipeline, waterSimPass);
+            waterSimPass.end();
+            var normalDispatches = normalResult.dispatches;
+            stats.waterComputeDispatches += normalDispatches;
+            stats.waterSelenaComputeDispatches += normalResult.selena;
+            stats.waterSelenaComputeFallbacks += normalResult.selenaFallback;
+            stats.waterNormalDispatches += normalDispatches;
+            system.waterNormalDispatchSeq += normalDispatches;
+            if (normalCompute.authored && normalResult.selena === 0) stats.waterAuthoredComputeDispatches += normalDispatches;
           } else {
             stats.waterRestSubstepsSkipped += Math.max(0, waterClock.ticks) * 2;
           }
@@ -9396,16 +9434,6 @@
           var runWaterSim = false;
         }
         if (system.waterAtRest) stats.waterAtRestSystems += 1;
-        if (hasSimulationTick && runWaterSim) {
-          var normalResult = dispatchWaterComputeStage(encoder, system, entry, "normal", normalCompute.pipeline);
-          var normalDispatches = normalResult.dispatches;
-          stats.waterComputeDispatches += normalDispatches;
-          stats.waterSelenaComputeDispatches += normalResult.selena;
-          stats.waterSelenaComputeFallbacks += normalResult.selenaFallback;
-          stats.waterNormalDispatches += normalDispatches;
-          system.waterNormalDispatchSeq += normalDispatches;
-          if (normalCompute.authored && normalResult.selena === 0) stats.waterAuthoredComputeDispatches += normalDispatches;
-        }
         if ((hasSimulationTick && runWaterSim) || system.stateTextureSyncSeq === 0) {
           stats.waterSampledStateCopies += syncWaterSampledState(encoder, system);
         }
@@ -10399,14 +10427,16 @@
     // system.activeIndex toggling 0<->1 after the pass), but binds an
     // explicit {pipeline,bindGroup} pair (built fresh per kernel per frame from
     // the live renderContext) instead of the hardcoded
-    // system.computeBindGroups[system.activeIndex] pair.
-    function dispatchWaterPassSelena(encoder, system, draw) {
-      if (!encoder || !system || !draw || !draw.pipeline || !draw.bindGroup) return 0;
-      var pass = encoder.beginComputePass({ label: "gosx-water-selena-compute-pass" });
+    // system.computeBindGroups[system.activeIndex] pair. sharedPass mirrors
+    // dispatchWaterPass's sharedPass parameter -- see its comment.
+    function dispatchWaterPassSelena(encoder, system, draw, sharedPass) {
+      if (!system || !draw || !draw.pipeline || !draw.bindGroup) return 0;
+      var pass = sharedPass || (encoder && encoder.beginComputePass({ label: "gosx-water-selena-compute-pass" }));
+      if (!pass) return 0;
       pass.setPipeline(draw.pipeline);
       pass.setBindGroup(0, draw.bindGroup);
       pass.dispatchWorkgroups(Math.ceil(system.cellCount / 64));
-      pass.end();
+      if (!sharedPass) pass.end();
       system.activeIndex = system.activeIndex === 0 ? 1 : 0;
       return 1;
     }
@@ -10422,19 +10452,26 @@
     // fold all three into the existing waterComputeDispatches/
     // waterAuthoredComputeDispatches stats plus the new
     // waterSelenaComputeDispatches/waterSelenaComputeFallbacks counters.
-    function dispatchWaterComputeStage(encoder, system, entry, stage, fallbackPipeline) {
-      if (!encoder || !system) return { dispatches: 0, selena: 0, selenaFallback: 0 };
+    // sharedPass (optional) mirrors dispatchWaterPass/dispatchWaterPassSelena's
+    // parameter of the same name: when set, this stage's dispatch is recorded
+    // into that already-open compute pass instead of opening/closing its own.
+    // The P3 water-sim/normal fusion (see the runWaterSim block below) is the
+    // sole caller that passes sharedPass, batching the tick's 2 simulation
+    // substeps plus the trailing normal reconstruction into one pass.
+    function dispatchWaterComputeStage(encoder, system, entry, stage, fallbackPipeline, sharedPass) {
+      if (!encoder && !sharedPass) return { dispatches: 0, selena: 0, selenaFallback: 0 };
+      if (!system) return { dispatches: 0, selena: 0, selenaFallback: 0 };
       if (sceneWaterComputeStageUsesSelena(entry, stage)) {
         var readBuffer = system.activeIndex === 0 ? system.bufferA : system.bufferB;
         var writeBuffer = system.activeIndex === 0 ? system.bufferB : system.bufferA;
         var draw = getWaterComputeStageSelenaDraw(system, entry, stage, readBuffer, writeBuffer);
         if (draw) {
-          var n = dispatchWaterPassSelena(encoder, system, draw);
+          var n = dispatchWaterPassSelena(encoder, system, draw, sharedPass);
           return { dispatches: n, selena: n, selenaFallback: 0 };
         }
-        return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline), selena: 0, selenaFallback: 1 };
+        return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline, sharedPass), selena: 0, selenaFallback: 1 };
       }
-      return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline), selena: 0, selenaFallback: 0 };
+      return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline, sharedPass), selena: 0, selenaFallback: 0 };
     }
 
     // Selena render materials lower stateAt(uv) to textureLoad so vertex and

@@ -840,9 +840,13 @@ func TestWaterAtRestGatingEmitsStatsAttr(t *testing.T) {
 	for _, want := range []string{
 		// The gate itself: substeps/normal-pass/state-copy read runWaterSim
 		// (false while system.waterAtRest is true and nothing woke it this
-		// frame), not the raw hasSimulationTick clock signal alone.
+		// frame), not the raw hasSimulationTick clock signal alone. P3 fusion
+		// (water-parity-campaign) batches the substeps AND the trailing normal
+		// reconstruction into one compute pass, both now gated by the single
+		// "if (runWaterSim) {" (hasSimulationTick is already implied true
+		// wherever runWaterSim is assigned -- see 16a's comment at that gate).
 		"var runWaterSim = !system.waterAtRest;",
-		"if (hasSimulationTick && runWaterSim) {",
+		"if (runWaterSim) {",
 		"if ((hasSimulationTick && runWaterSim) || system.stateTextureSyncSeq === 0) {",
 		// Any disturbance (seed/drop/queued object event/continuous drag, all
 		// folded into waterStateDirty) must wake the system instantly.

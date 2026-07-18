@@ -8702,7 +8702,7 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
   // when Selena's WGSL+descriptor aren't present on the entry.
   assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "seed", seedCompute\.pipeline\)/);
   assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "drop", dropCompute\.pipeline\)/);
-  assert.match(webgpu, /return \{ dispatches: dispatchWaterPass\(encoder, system, fallbackPipeline\), selena: 0, selenaFallback: 0 \};/);
+  assert.match(webgpu, /return \{ dispatches: dispatchWaterPass\(encoder, system, fallbackPipeline, sharedPass\), selena: 0, selenaFallback: 0 \};/);
   assert.match(webgpu, /if \(dropDispatches > 0\) \{\s*system\.lastDropEventID = dropEventID;/s);
   assert.match(webgpu, /system\.dropDispatchCount = Math\.max/);
   assert.match(webgpu, /entry\.dropEventID/);
@@ -10004,7 +10004,7 @@ test("Scene3D water renderers use one scheduler and bounded balanced-quality wor
   assert.match(webgl, /meshUploadSource === mesh && meshUploadProgram === prog/);
   assert.match(webgpu, /var expensivePassCadence = Math\.max\(1, system\.expensivePassCadence \|\| 1\)/);
   assert.match(webgpu, /system\.waterObjectMoved = objectMoved/);
-  assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*var stepResult = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline\)/);
+  assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*var stepResult = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline, waterSimPass\)/);
   assert.match(webgpu, /optics\.caustics && refreshExpensivePasses/);
   assert.match(webgpu, /selenaPass\.draw\(system\.vertexCount\)/,
     "WebGPU Selena caustics must project the authored water topology");
@@ -10099,8 +10099,19 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
   assert.match(webgpu, /if \(hasSimulationTick && !system\.seeded\)/);
   assert.match(webgpu, /if \(hasSimulationTick && dropEventID > 0 && system\.lastDropEventID !== dropEventID\)/);
   assert.match(webgpu, /hasSimulationTick\s*\? dispatchWaterObjectDisplacementEvents/);
+  // P3 fusion (water-parity-campaign): the tick's simulation substeps and the
+  // trailing normal reconstruction are batched into ONE compute pass
+  // (waterSimPass) instead of 3 separate beginComputePass/end() sequences,
+  // still gated by runWaterSim so fused work skips identically at rest.
+  assert.match(webgpu, /var waterSimPass = encoder\.beginComputePass\(\{ label: "gosx-water-sim-normal-pass" \}\);/);
   assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*solverStep < 2/);
-  assert.match(webgpu, /if \(hasSimulationTick && runWaterSim\) \{\s*var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal"/);
+  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline, waterSimPass\)/);
+  assert.match(webgpu, /var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal", normalCompute\.pipeline, waterSimPass\);\s*\n\s*waterSimPass\.end\(\);/);
+  // The substep loop, the rest-energy decay, AND the normal dispatch/pass-end
+  // all live inside `if (runWaterSim) {` -- i.e. one gate, one pass, no
+  // separate `if (hasSimulationTick && runWaterSim)` gate for normal anymore.
+  assert.match(webgpu, /if \(runWaterSim\) \{[\s\S]*var waterSimPass = encoder\.beginComputePass[\s\S]*waterSimPass\.end\(\);[\s\S]{0,800}\} else \{\s*\n\s*stats\.waterRestSubstepsSkipped/);
+  assert.doesNotMatch(webgpu, /if \(hasSimulationTick && runWaterSim\) \{\s*var normalResult/);
   assert.match(webgpu, /Math\.floor\(Math\.max\(0, waterClock\.tickSeq \|\| 0\) \/ expensivePassCadence\)/);
 
   assert.equal((mount.match(/renderer\.render\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
@@ -22657,11 +22668,16 @@ test("[perf-shape] Scene3D WebGPU balanced water skips stationary displacement a
   const { deltas } = await renderWaterPerfShapeFrames(false, 3, 192);
   // Frame 0 anchors the fixed clock and establishes the footprint. Each later
   // 60 Hz tick needs only two integration stages plus one normal pass; a
-  // stationary displacement pass would make this four.
-  assert.equal(deltas[1].computePasses, 4,
-    "first fixed tick should include the one-time authored seed plus two integration stages and normals");
-  assert.equal(deltas[2].computePasses, 3,
-    "steady stationary ticks should drop to two integration stages plus normals");
+  // stationary displacement pass would make this four. P3 fusion
+  // (water-parity-campaign) batches the two integration substeps plus the
+  // trailing normal reconstruction into ONE compute pass (was 3 separate
+  // passes), so the one-time seed dispatch (its own, unfused, pass) plus the
+  // fused sim+normal pass is 2 passes on the seeding tick, and just the fused
+  // pass (1) on every steady stationary tick after that.
+  assert.equal(deltas[1].computePasses, 2,
+    "first fixed tick should include the one-time authored seed pass plus one fused (2 integration substeps + normal) pass");
+  assert.equal(deltas[2].computePasses, 1,
+    "steady stationary ticks should drop to the single fused (2 integration substeps + normal) pass");
   // The fake sphere has no mesh RTT resources, so retained prepass work stays
   // absent and the render shape remains flat across the cadence boundary.
   assert.equal(deltas[2].renderPasses, deltas[1].renderPasses,
