@@ -357,12 +357,19 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`adaptiveTargetFrameMS={16.7}`,
 		`adaptiveWarmupFrames={12}`,
 		`qualityTier="full"`,
-		`resolution={256}`,
-		`surfaceResolution={201}`,
-		`causticsResolution={1024}`,
+		// Every cost knob binds to the diag-resolved data value so the
+		// waterDiagDefaults table in diag.go is the single source of truth
+		// for shipped configuration. Hardcoded literals here regressed once
+		// (the v0.31.6 water merge shipped mesh 201 — the measured 17 fps
+		// cliff — and dead diag knobs); these assertions pin the binding.
+		`resolution={data.diagResolution}`,
+		`surfaceResolution={data.diagMeshRes}`,
+		`causticsResolution={data.diagCausticsRes}`,
 		`objectTextureResolutionMode="viewport"`,
-		`objectTexturePixelBudget={393216}`,
-		`objectShadowResolution={1024}`,
+		`objectTexturePixelBudget={data.diagObjectTexBudget}`,
+		`objectShadowResolution={data.diagShadowRes}`,
+		`maxDevicePixelRatio={data.diagDpr}`,
+		`maxPixels={data.diagMaxPixels}`,
 		// Selena-compiled combined-WGSL slots: the sole primary WGSL source
 		// for every water compute kernel/render pass now that the
 		// hand-written Elio/Selena *WGSL props have been retired.

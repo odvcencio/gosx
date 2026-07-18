@@ -34,11 +34,23 @@ import (
 
 // waterDiagDefaults are the shipped values. A knob absent from the URL keeps its
 // default, so /demos/water is byte-identical to what it was without diag.
+//
+// These defaults ARE the shipped configuration: page.gsx binds every knob to
+// the resolved diag value, so this table is the single source of truth. That
+// binding regressed once — the v0.31.6 water merge replaced the data.diag*
+// bindings with hardcoded literals (sim 256 / mesh 201 / caustics 1024), which
+// silently shipped the surface at the tessellation this file's own fps table
+// identifies as the 17 fps cliff, and turned every knob below into a dead
+// no-op. If page.gsx and this table ever disagree again, page.gsx is wrong.
 var waterDiagDefaults = map[string]any{
-	"diag":       false,
-	"dpr":        1.0, // hard-capped: see page.gsx (Apple cliff)
-	"maxPixels":  1200000,
-	"resolution": 192,
+	"diag":      false,
+	"dpr":       1.6,
+	"maxPixels": 1200000,
+	// 256 matches the reference implementation's simulation grid. Simulation,
+	// normals and shading sample the heightfield by uv at this resolution
+	// regardless of mesh density, and the sim passes are cheap (fixed 256^2
+	// compute), so ripple fidelity is preserved even with a coarse mesh.
+	"resolution": 256,
 	// meshRes tessellates the surface INDEPENDENTLY of the simulation. 0 = match
 	// resolution, i.e. exactly what shipped. The surface is currently drawn at
 	// roughly one triangle per 1.4 screen pixels; a GPU shades in 2x2 quads, so
@@ -70,12 +82,12 @@ var waterDiagDefaults = map[string]any{
 	// the normal, not the geometry. The mesh only carries the low-frequency swell.
 	// meshRes=0 restores a mesh matching the simulation, for comparison.
 	"meshRes":         48,
-	"causticsRes":     512,
-	"shadowRes":       512,
+	"causticsRes":     1024,
+	"shadowRes":       1024,
 	"caustics":        true,
 	"reflection":      true,
 	"refraction":      true,
-	"objectTexBudget": 786432,
+	"objectTexBudget": 393216,
 	// water=0 removes the WaterSystem from the scene graph entirely. It is the
 	// coarsest bisection there is: the cost is either inside the water system or it
 	// is not. Everything finer (caustics, reflection, refraction, resolution) failed
