@@ -45,8 +45,30 @@
 //      exactly like the raw shader. The sun-glint term is added on top.
 //   2. Reflections and refractions raytrace sphere/box analytic objects. Torus
 //      and glTF assets use the projected real-mesh targets described below.
-//   3. Rounded-corner wall UVs and the analytic object wall-occlusion term are
-//      omitted; surface coverage itself is exact and clips to the rounded pool.
+//   3. (PARTIAL, M3) The analytic object wall-occlusion term is now ported:
+//      jeantimex/webgpu-water's surface-above.frag.wgsl:78-81 multiplies the
+//      wall's ambient scale by
+//      `mix(1.0, 1.0 - 0.9/pow(length(point-sphere.center)/sphere.radius,4.0),
+//      shadows.sphere)` — the object darkens nearby pool walls. wallShade
+//      below now takes the object center/radius/kind/half-extent and applies
+//      the SAME falloff (box/compound kinds substitute an effective radius
+//      from their half-extent, same style as caustics.sel's singleR0/singleRC
+//      per-kind radius pick), with a max(...,0.0) floor this port adds since
+//      the raw formula can go negative at very close range (unguarded in the
+//      reference; walls never get that close to the object in its scene, but
+//      gosx's box/compound objects can have a larger effective footprint).
+//      Rounded-corner wall UVs remain UNPORTED: wallUVRect/wallNormalRect
+//      below assume a rectangular pool (matching the reference exactly, which
+//      only ever has a box pool); gosx additionally supports poolShape=Rounded
+//      (see water-pool.sel), and this shader's wall tile UV/normal do not
+//      bend to match a rounded wall in that mode. Surface COVERAGE is still
+//      exact (roundedWaterDistance discards the water mesh correctly at the
+//      curved edge above), only the WALL shading a refracted/reflected ray
+//      lands on past the water edge keeps the rectangular mapping. Left
+//      unported: a correct rounded-wall parameterization needs the same
+//      per-corner arc-length math water-pool.sel's vertex() inlines (four
+//      corner cases x wall/floor split), which is a substantially larger,
+//      separate change from the point-fix this milestone scoped.
 //   4. (RESOLVED) The projected real-mesh object textures (sampleObjectRefraction
 //      / sampleProjectedTexture, the raw objectParams.x>=2.5 mix block) are now
 //      ported: projectMeshTexel(tex, mat4, worldPoint) projects through the
@@ -191,9 +213,19 @@ fn objectColorSB(normal: vec3, kind: float, lightDir: vec3, caustic: float, subm
     return vec3f(0.5, 0.5, 0.5) + vec3f(diffuse, diffuse, diffuse)
 }
 
-fn wallShade(point: vec3, hw: float, hl: float, ph: float, lightDir: vec3, tileRGB: vec3, caustic: vec4, submerged: float, poolNear: float, poolFar: float, opticsCaustic: float) -> vec3 {
+// wallShade's objActive/objC/objR/objKind/objH params carry the M3 wall-AO
+// term (surface-above.frag.wgsl:78-81): the object darkens nearby pool walls
+// via a proximity falloff on the wall's ambient `scale0`, gated off (mix ->
+// 1.0) when no object is active, matching `mix(1.0, wallAO, shadows.sphere)`.
+// objKind >= 1.5 (box/compound) substitutes an effective radius from the
+// object's half-extent since the reference formula is written for a sphere
+// radius; sphere/default kinds use objR directly.
+fn wallShade(point: vec3, hw: float, hl: float, ph: float, lightDir: vec3, tileRGB: vec3, caustic: vec4, submerged: float, poolNear: float, poolFar: float, opticsCaustic: float, objActive: float, objC: vec3, objR: float, objKind: float, objH: vec3) -> vec3 {
     let nrm      = wallNormalRect(point, hw, hl, ph)
-    let scale0   = 0.5 / max(length(point), 0.1)
+    let effR     = max(objKind > 1.5 ? max(max(objH.x, objH.z), objH.y) * 1.2 : objR, 0.001)
+    let aoRatio  = max(length(point - objC) / effR, 0.15)
+    let wallAO   = max(1.0 - 0.9 / pow(aoRatio, 4.0), 0.0)
+    let scale0   = (0.5 / max(length(point), 0.1)) * (objActive > 0.0 ? wallAO : 1.0)
     let rl       = -refract(-lightDir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
     let diffuse  = max(dot(rl, nrm), 0.0)
     let span     = max(poolFar - poolNear, 0.0001)
@@ -345,7 +377,7 @@ material WaterSurface {
         let rfWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
         let rfWallPool    = poolBox(rfWallP, rfWallRL, hw, ph, hl)
         let rfWallSub     = rfWallP.y < stateAt(pointToWaterUV(rfWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
-        let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic)
+        let rfWallColor   = wallShade(rfWallP, hw, hl, ph, ldir, rfWallTile, rfWallCaustic, rfWallSub, rfWallPool.x, rfWallPool.y, opticsCaustic, objActive ? 1.0 : 0.0, objC, objR, objectKind, objH)
 
         let rfSky      = sampleCube(sky, refractD).rgb + sunGlint(refractD, ldir)
         let rfHitWall  = refractD.y < 0.0 || rfWallP.y < 2.0 / 12.0
@@ -376,7 +408,7 @@ material WaterSurface {
         let rlWallRL      = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
         let rlWallPool    = poolBox(rlWallP, rlWallRL, hw, ph, hl)
         let rlWallSub     = rlWallP.y < stateAt(pointToWaterUV(rlWallP, poolWidth, poolLength)).x ? 1.0 : 0.0
-        let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic)
+        let rlWallColor   = wallShade(rlWallP, hw, hl, ph, ldir, rlWallTile, rlWallCaustic, rlWallSub, rlWallPool.x, rlWallPool.y, opticsCaustic, objActive ? 1.0 : 0.0, objC, objR, objectKind, objH)
 
         let rlSky      = sampleCube(sky, reflectD).rgb + sunGlint(reflectD, ldir)
         let rlHitWall  = reflectD.y < 0.0 || rlWallP.y < 2.0 / 12.0
