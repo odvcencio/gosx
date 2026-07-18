@@ -4478,6 +4478,27 @@
     var WATER_OBJECT_TEXTURE_MAX_SIZE = 2048;
     var WATER_OBJECT_TEXTURE_TARGET_COUNT = 3;
     var WATER_OBJECT_SHADOW_TEXTURE_SIZE = 256;
+    // M5 at-rest gating (water-parity-campaign). waterRestEnergy is a CHEAP
+    // (CPU-only, no GPU readback) proxy for the simulation's kinetic energy:
+    // it starts at 1.0 on any disturbance and is multiplied by the SAME
+    // `damping` coefficient the simulation kernel itself applies to velocity
+    // every substep it actually runs (see WGSL_COMMON... "info.y = (info.y +
+    // ...) * params.damping" and sceneWaterUniformData's damping field), so it
+    // tracks the real physical decay rate rather than an arbitrary timer.
+    // WATER_REST_ENERGY_EPSILON is the threshold below which the residual
+    // ripple is visually and physically negligible (with the demo's default
+    // damping=0.995 this is ~1300 substeps, ~11s of undisturbed real time --
+    // deliberately calm, not twitchy, since resting is a background
+    // GPU-cost win, not a latency-sensitive UI state). If an author's
+    // `damping` is tuned close to 1.0 (near-lossless), energy decays too
+    // slowly to ever cross this threshold and the system correctly never
+    // rests (a genuinely undamped simulation should not visually freeze).
+    // WATER_REST_MIN_QUIET_MS is a defense-in-depth floor alongside the
+    // energy check: even if a future damping/authoring change made the
+    // energy estimate decay unexpectedly fast, a system cannot rest sooner
+    // than this many real milliseconds after its last disturbance.
+    var WATER_REST_ENERGY_EPSILON = 0.001;
+    var WATER_REST_MIN_QUIET_MS = 1200;
     var waterUniformScratch = new ArrayBuffer(256);
     var waterUniformScratchF = new Float32Array(waterUniformScratch);
     var waterUniformScratchU = new Uint32Array(waterUniformScratch);
@@ -7737,6 +7758,14 @@
         seedSalt: Number.isFinite(Number(entry && entry.seedSalt)) ? Number(entry.seedSalt) : Math.random() * 4096,
         lastDropEventID: 0,
         dropDispatchCount: 0,
+        // M5 at-rest gating -- see WATER_REST_ENERGY_EPSILON's comment above.
+        // A freshly created system starts AWAKE (energy 1.0, no quiet time
+        // banked yet): seedDrops (default 20) fires on the first tick below,
+        // so it should decay/settle like any other disturbance rather than
+        // being born already "at rest".
+        waterRestEnergy: 1.0,
+        waterLastDisturbanceMS: 0,
+        waterAtRest: false,
         dispose: function() {
           if (system._gosxDisposed) return;
           system._gosxDisposed = true;
@@ -8944,6 +8973,14 @@
         waterNormalDispatchSeq: 0,
         waterSampledStateCopies: 0,
         waterSampledStateSyncSeq: 0,
+        // M5 at-rest gating (water-parity-campaign) -- see
+        // WATER_REST_ENERGY_EPSILON's comment above for the mechanism.
+        // waterAtRestSystems: how many systems are parked (skipping sim
+        // substeps/normal/state-copy/caustics THIS frame) right now.
+        // waterRestSubstepsSkipped: cumulative solver substeps NOT dispatched
+        // because their system was at rest -- the direct measure of the win.
+        waterAtRestSystems: 0,
+        waterRestSubstepsSkipped: 0,
         waterQualityTier: "full",
         waterQualityRevision: 0,
         waterSurfaceResolution: 0,
@@ -9225,19 +9262,50 @@
             waterStateDirty = waterStateDirty || objectDispatches > 0;
             if (displacementCompute.authored && objectResult.selena === 0) stats.waterAuthoredComputeDispatches += objectDispatches;
           }
-          for (var waterTick = 0; waterTick < waterClock.ticks; waterTick++) {
-            for (var solverStep = 0; solverStep < 2; solverStep++) {
-              var stepResult = dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline);
-              stats.waterComputeDispatches += stepResult.dispatches;
-              stats.waterSelenaComputeDispatches += stepResult.selena;
-              stats.waterSelenaComputeFallbacks += stepResult.selenaFallback;
-              if (simulationCompute.authored && stepResult.selena === 0) {
-                stats.waterAuthoredComputeDispatches += stepResult.dispatches;
+          // M5 at-rest gating (water-parity-campaign): decide whether to
+          // actually run this tick's substeps/normal/state-copy/caustics, or
+          // to retain the last-rendered textures. waterStateDirty is fully
+          // finalized as of this line (seed/drop/queued object event/
+          // continuous drag all landed above), so a disturbance dispatched
+          // EARLIER in this same frame wakes the system immediately -- no
+          // one-frame lag. See WATER_REST_ENERGY_EPSILON's comment for the
+          // energy-proxy mechanism and WATER_REST_MIN_QUIET_MS for the floor.
+          if (waterStateDirty) {
+            system.waterRestEnergy = 1.0;
+            system.waterLastDisturbanceMS = currentNowMS;
+            system.waterAtRest = false;
+          }
+          var runWaterSim = !system.waterAtRest;
+          if (runWaterSim) {
+            for (var waterTick = 0; waterTick < waterClock.ticks; waterTick++) {
+              for (var solverStep = 0; solverStep < 2; solverStep++) {
+                var stepResult = dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline);
+                stats.waterComputeDispatches += stepResult.dispatches;
+                stats.waterSelenaComputeDispatches += stepResult.selena;
+                stats.waterSelenaComputeFallbacks += stepResult.selenaFallback;
+                if (simulationCompute.authored && stepResult.selena === 0) {
+                  stats.waterAuthoredComputeDispatches += stepResult.dispatches;
+                }
               }
             }
+            // Decay the cheap energy proxy by exactly the damping the
+            // simulation kernel itself just applied, once per substep
+            // actually dispatched this frame.
+            var restDamping = Math.max(0, Math.min(1, sceneNumber(entry && entry.damping, 0.995)));
+            var substepsRun = Math.max(0, waterClock.ticks) * 2;
+            system.waterRestEnergy = Math.max(0, sceneNumber(system.waterRestEnergy, 1)) * Math.pow(restDamping, substepsRun);
+            var quietMS = currentNowMS - Math.max(0, sceneNumber(system.waterLastDisturbanceMS, 0));
+            if (!waterStateDirty && system.waterRestEnergy <= WATER_REST_ENERGY_EPSILON && quietMS >= WATER_REST_MIN_QUIET_MS) {
+              system.waterAtRest = true;
+            }
+          } else {
+            stats.waterRestSubstepsSkipped += Math.max(0, waterClock.ticks) * 2;
           }
+        } else {
+          var runWaterSim = false;
         }
-        if (hasSimulationTick) {
+        if (system.waterAtRest) stats.waterAtRestSystems += 1;
+        if (hasSimulationTick && runWaterSim) {
           var normalResult = dispatchWaterComputeStage(encoder, system, entry, "normal", normalCompute.pipeline);
           var normalDispatches = normalResult.dispatches;
           stats.waterComputeDispatches += normalDispatches;
@@ -9247,14 +9315,19 @@
           system.waterNormalDispatchSeq += normalDispatches;
           if (normalCompute.authored && normalResult.selena === 0) stats.waterAuthoredComputeDispatches += normalDispatches;
         }
-        if (hasSimulationTick || system.stateTextureSyncSeq === 0) {
+        if ((hasSimulationTick && runWaterSim) || system.stateTextureSyncSeq === 0) {
           stats.waterSampledStateCopies += syncWaterSampledState(encoder, system);
         }
         stats.waterSampledStateSyncSeq += Math.max(0, Math.floor(sceneNumber(system.stateTextureSyncSeq, 0)));
         stats.waterNormalDispatchSeq += Math.max(0, system.waterNormalDispatchSeq || 0);
         var expensivePassCadence = Math.max(1, system.expensivePassCadence || 1);
         var expensiveCadenceBucket = Math.floor(Math.max(0, waterClock.tickSeq || 0) / expensivePassCadence);
-        var refreshExpensivePasses = waterStateDirty || system.waterExpensiveCadenceBucket !== expensiveCadenceBucket;
+        // M5: while at rest and not freshly disturbed this frame, do not let
+        // the cadence bucket's natural drift (it advances off the wall clock
+        // regardless of whether we chose to consume ticks) force a caustics
+        // refresh -- system.waterExpensiveCadenceBucket is deliberately left
+        // stale below so the very next refresh (on wake) is unconditional.
+        var refreshExpensivePasses = waterStateDirty || (!system.waterAtRest && system.waterExpensiveCadenceBucket !== expensiveCadenceBucket);
         if (refreshExpensivePasses) system.waterExpensiveCadenceBucket = expensiveCadenceBucket;
         if (optics.object || optics.caustics) {
           var objectShadowPasses = 0;
@@ -13109,6 +13182,7 @@
         waterDroppedTicks: published.waterDroppedTicks || 0,
         waterNormalDispatchSeq: published.waterNormalDispatchSeq || 0,
         waterSampledStateSyncSeq: published.waterSampledStateSyncSeq || 0,
+        waterAtRestSystems: published.waterAtRestSystems || 0,
         waterQualityTier: published.waterQualityTier || "full",
         waterQualityRevision: published.waterQualityRevision || 0,
         waterSurfaceResolution: published.waterSurfaceResolution || 0,
@@ -13141,6 +13215,13 @@
       setEssentialAttribute("data-gosx-scene3d-webgpu-water-dropped-ticks", String(published.waterDroppedTicks || 0));
       setEssentialAttribute("data-gosx-scene3d-webgpu-water-normal-seq", String(published.waterNormalDispatchSeq || 0));
       setEssentialAttribute("data-gosx-scene3d-webgpu-water-state-sync-seq", String(published.waterSampledStateSyncSeq || 0));
+      // M5 at-rest gating (water-parity-campaign): a per-frame count of water
+      // systems currently parked (skipping sim substeps/normal/state-copy/
+      // caustics, retaining last-rendered textures). Essential-tier (not
+      // throttled behind the diagnostic interval) so diag overlays and e2e
+      // waitFor() polls observe a rest/wake transition promptly -- see
+      // WATER_REST_ENERGY_EPSILON's comment above updateWaterSystems.
+      setEssentialAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));
       if (published.lastError) {
         setEssentialAttribute("data-gosx-scene3d-webgpu-last-error", String(published.lastError));
       } else if (webGPUEssentialAttributeCache["data-gosx-scene3d-webgpu-last-error"] !== null) {
@@ -13205,6 +13286,7 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-x", String(published.waterLightDirX || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-y", String(published.waterLightDirY || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-light-dir-z", String(published.waterLightDirZ || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-systems", String(published.waterCausticSystems || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-passes", String(published.waterCausticPasses || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-caustic-texture-pixels", String(published.waterCausticTexturePixels || 0));

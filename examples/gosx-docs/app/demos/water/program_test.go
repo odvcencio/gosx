@@ -795,16 +795,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 // runtime test harness for 16a); see program_test.go's existing
 // TestWaterDemoControlsContract for the same string-assertion convention.
 func TestWaterObjectShadowSignatureExcludesCamera(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	dir := filepath.Dir(file)
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
-	if err != nil {
-		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
-	}
-	webgpuSource := string(webgpuBytes)
+	webgpuSource := readWaterWebGPURuntimeSource(t)
 
 	shadowCall := "sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false)"
 	if !strings.Contains(webgpuSource, shadowCall) {
@@ -816,6 +807,53 @@ func TestWaterObjectShadowSignatureExcludesCamera(t *testing.T) {
 	if !strings.Contains(webgpuSource, textureCall) {
 		t.Fatalf("Scene3D WebGPU water runtime missing camera-aware object-texture signature call %q -- "+
 			"the reflection/refraction RTTs render from the camera's eye and must re-render when it moves", textureCall)
+	}
+}
+
+// readWaterWebGPURuntimeSource reads 16a-scene-webgpu.js, the shared source
+// TestWaterObjectShadowSignatureExcludesCamera / TestWaterAtRestGatingEmitsStatsAttr
+// grep for their milestone regression assertions.
+func readWaterWebGPURuntimeSource(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(file)
+	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
+	if err != nil {
+		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
+	}
+	return string(webgpuBytes)
+}
+
+// TestWaterAtRestGatingEmitsStatsAttr is the M5 (water-parity-campaign)
+// regression lock: an at-rest water system must (a) actually skip its
+// simulation substeps/normal/state-copy/caustics passes, and (b) publish that
+// state on the DOM so diag overlays and e2e waitFor() polls can observe a
+// rest/wake transition. String-asserts the runtime source rather than
+// executing JS, matching TestWaterObjectShadowSignatureExcludesCamera's
+// convention above.
+func TestWaterAtRestGatingEmitsStatsAttr(t *testing.T) {
+	webgpuSource := readWaterWebGPURuntimeSource(t)
+
+	for _, want := range []string{
+		// The gate itself: substeps/normal-pass/state-copy read runWaterSim
+		// (false while system.waterAtRest is true and nothing woke it this
+		// frame), not the raw hasSimulationTick clock signal alone.
+		"var runWaterSim = !system.waterAtRest;",
+		"if (hasSimulationTick && runWaterSim) {",
+		"if ((hasSimulationTick && runWaterSim) || system.stateTextureSyncSeq === 0) {",
+		// Any disturbance (seed/drop/queued object event/continuous drag, all
+		// folded into waterStateDirty) must wake the system instantly.
+		"if (waterStateDirty) {\n            system.waterRestEnergy = 1.0;\n            system.waterLastDisturbanceMS = currentNowMS;\n            system.waterAtRest = false;\n          }",
+		// The DOM/stats surface diag overlays and e2e tests observe.
+		`setEssentialAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
+		`mount.setAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
+	} {
+		if !strings.Contains(webgpuSource, want) {
+			t.Fatalf("Scene3D WebGPU water runtime missing at-rest gating source %q", want)
+		}
 	}
 }
 
