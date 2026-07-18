@@ -9670,11 +9670,14 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /id="float-sphere"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-cube"[\s\S]*wireframe=\{false\}/);
   assert.match(waterPage, /id="float-torus"[\s\S]*wireframe=\{false\}/);
-  assert.match(waterPage, /resolution=\{256\}/);
-  assert.match(waterPage, /surfaceResolution=\{201\}/);
-  assert.match(waterPage, /causticsResolution=\{1024\}/);
+  // Cost knobs bind to the diag-resolved data values (waterDiagDefaults in
+  // diag.go is the single source of truth for shipped configuration) — see
+  // the matching Go-side assertions in demos/water/program_test.go.
+  assert.match(waterPage, /resolution=\{data\.diagResolution\}/);
+  assert.match(waterPage, /surfaceResolution=\{data\.diagMeshRes\}/);
+  assert.match(waterPage, /causticsResolution=\{data\.diagCausticsRes\}/);
   assert.match(waterPage, /objectTextureResolutionMode="viewport"/);
-  assert.match(waterPage, /objectTexturePixelBudget=\{393216\}/);
+  assert.match(waterPage, /objectTexturePixelBudget=\{data\.diagObjectTexBudget\}/);
   assert.match(waterPage, /adaptiveQuality=\{true\}/);
   assert.match(waterPage, /adaptiveTargetFrameMS=\{16\.7\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
