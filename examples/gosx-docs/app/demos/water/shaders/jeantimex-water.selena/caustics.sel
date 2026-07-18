@@ -36,8 +36,30 @@
 //    rendered mesh-object shadow RTT) is still dropped: it reads a runtime
 //    texture (objectShadowTexture) that this self-contained material has no
 //    binding for. That is the only remaining caustic-shadow term not modeled.
-//    The rounded-pool caustic mask + edge attenuation are also omitted
-//    (rectangular pool, mask = 1), consistent with the surface port.
+//
+//  RESOLVED — rim/edge attenuation (formerly listed as "rounded-pool caustic
+//    mask", dropped). Ported verbatim from jeantimex/webgpu-water's
+//    caustics.frag.wgsl:38-42 as `rimShadow`: it is a wall-proximity vignette
+//    (intersectCube against the pool box, sigmoid falloff), not a rounded-
+//    corner mask, and it is not shape-conditional — it applies unchanged to
+//    this port's rectangular Box pool, same as the identical exponent already
+//    used by water-surface.sel's wallShade for the above-water walls.
+//
+//  RESOLVED — areaFocus convergence damping (M1). The upstream fragment
+//    shader (caustics.frag.wgsl:19) is `intensity = oldArea / newArea *
+//    water.causticIntensity`, UNCLAMPED, where causticIntensity defaults to
+//    0.2 (jeantimex/webgpu-water main.ts:273) — the exact same constant this
+//    port hardcoded, so the 0.2 itself was never the flattening term. The
+//    real divergence was the `clamp(..., 0.0, 4.0)` ceiling: this material's
+//    caustic RTT is rgba8unorm (16a-scene-webgpu.js WATER_CAUSTICS_TEXTURE_
+//    FORMAT) and the upstream demo's own caustic texture is an untyped
+//    (UNSIGNED_BYTE) GL.Texture — both formats saturate fragment writes to
+//    [0,1] in hardware, so neither needs (or has) a shader-side ceiling.
+//    causticIntensity is now a `param` (matching the upstream tunable
+//    uniform) and the clamp is gone; the underlying ratio is already
+//    non-negative and finite (both dpdx/dpdy areas are floored at 1e-6), so
+//    nothing is lost by trusting the render-target format the way upstream
+//    does.
 //
 //  Other selena rewrites: select -> ternary, no parenthesised ternaries, no
 //    bool literals (float 0/1 flags), scalar-only comparisons, flat local scope
@@ -88,6 +110,9 @@ material WaterCaustics {
     param poolHeight  : float = 0.3
     param normalScale : float = 1.0
     param opticsEnable: float = 1.0
+    // Matches jeantimex/webgpu-water's tunable `water.causticIntensity`
+    // uniform (default 0.2, main.ts:273) — see the RESOLVED note above.
+    param causticIntensity: float = 0.2
 
     context {
         gridResolution  : float = 64.0
@@ -149,8 +174,17 @@ material WaterCaustics {
         let oldArea = max(length(dpdx(oldPos)) * length(dpdy(oldPos)), 0.000001)
         let newArea = max(length(dpdx(newPos)) * length(dpdy(newPos)), 0.000001)
 
-        let areaFocus   = clamp(oldArea / newArea * 0.2, 0.0, 4.0)
-        let intensity   = areaFocus
+        // caustics.frag.wgsl:19 — unclamped; see RESOLVED note above.
+        let areaFocus = oldArea / newArea * causticIntensity
+
+        // caustics.frag.wgsl:38-42 — rim/edge attenuation: proximity vignette
+        // against the pool box, reusing the same box + exponent shape as
+        // water-surface.sel's wallShade dryness falloff.
+        let rimT        = intersectCube(newPos, -flatRay, vec3f(-poolWidth, -poolHeight, -poolLength), vec3f(poolWidth, 2.0, poolLength))
+        let rimSpan     = max(rimT.y - rimT.x, 0.0001)
+        let rimExponent = -200.0 / (1.0 + 10.0 * rimSpan) * (newPos.y - flatRay.y * rimT.y - 2.0 / 12.0)
+        let rimShadow   = 1.0 / (1.0 + exp(rimExponent))
+        let intensity   = areaFocus * rimShadow
 
         let centerUV = vec2f(objectCenter.x * 0.5 + 0.5, objectCenter.z * 0.5 + 0.5)
         let aspect   = vec2f(max(poolWidth / max(poolLength, 0.001), 0.001), 1.0)
