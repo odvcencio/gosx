@@ -9681,7 +9681,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(waterPage, /adaptiveQuality=\{true\}/);
   assert.match(waterPage, /adaptiveTargetFrameMS=\{16\.7\}/);
   assert.doesNotMatch(waterPage, /objectTextureResolution=\{512\}/);
-  assert.match(waterPage, /objectShadowResolution=\{1024\}/);
+  assert.match(waterPage, /objectShadowResolution=\{data\.diagShadowRes\}/);
   // The hand-written Elio/Selena *WGSL props (and the two <Material> blocks'
   // generic shaderSource/shaderSourceFiles) have been retired -- Selena is
   // the sole primary WGSL source now.
