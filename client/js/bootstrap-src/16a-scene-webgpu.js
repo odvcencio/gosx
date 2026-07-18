@@ -10004,12 +10004,21 @@
     // and WaterCompoundShadow for kind>=2.5 -- the up-to-32-sphere compound
     // proxy), so the HOST selects the material by kind instead.
 
+    // objectCenterY joined the shared context base for object-shadow.sel's P2
+    // (water-parity-campaign) analytic rewrite, which reconstructs a 3D
+    // world-space floor point and needs the object's full 3D center (not just
+    // X/Z) for the sphereSoftShadow/cubeOcclusion terms. compound-shadow.sel's
+    // compiled layout has no "objectCenterY" uniform field, so sharing this
+    // base with sceneWaterCompoundShadowSelenaRenderContext is harmless --
+    // sceneSelenaUniformData only reads uniforms.* keys that are actually
+    // present in the COMPILED layout's fields (extra keys are ignored).
     function sceneWaterObjectShadowSelenaContextBase(system) {
       var light = (system && system.waterLightDir) || { x: 0.3, y: 0.9, z: 0.45 };
       var center = (system && system.waterObjectCenter) || { x: 0, y: 0, z: 0 };
       return {
         lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
         objectCenterX: sceneNumber(center.x, 0),
+        objectCenterY: sceneNumber(center.y, 0),
         objectCenterZ: sceneNumber(center.z, 0),
       };
     }
@@ -10023,8 +10032,16 @@
         objectEnabled: (system && system.waterObjectActive) ? 1 : 0,
         poolWidth: sceneNumber(system && system.waterPoolWidth, 1.5),
         poolLength: sceneNumber(system && system.waterPoolLength, 1.5),
+        // poolHeight: the P2 analytic rewrite reconstructs a 3D floor point at
+        // y = -poolHeight (matching caustics.sel's own floor-plane convention,
+        // including its identical sceneNumber(...,1) fallback -- see
+        // sceneWaterCausticsSelenaRenderContext above) instead of working
+        // purely in UV space, so the live pool depth must reach the shader
+        // instead of pinning to the compiled default.
+        poolHeight: sceneNumber(system && system.waterPoolHeight, 1),
         objectRadius: sceneNumber(system && system.waterObjectRadius, 0.1),
         objectHalfX: sceneNumber(half.x, 0.1),
+        objectHalfY: sceneNumber(half.y, 0.1),
         objectHalfZ: sceneNumber(half.z, 0.1),
       };
       return material;
