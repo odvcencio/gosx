@@ -4571,14 +4571,33 @@
   // postEffects, layer-group visibility has no sceneState.* field to mutate;
   // the render loop just re-reads the active rung fresh every frame, which
   // is "instant, no transitions" by construction). Returns null when no
-  // ladder governs (back-compat: sceneFilterObjectsByQualityGroups treats
-  // null as "no filtering").
+  // ladder governs OR the active rung has no LayerGroups authored (back-
+  // compat: sceneFilterObjectsByQualityGroups/sceneFilterPointsByQualityGroups
+  // both treat null as "no filtering, admit everything").
+  //
+  // v0.33.1 fix: normalizeSceneQualityRung always materializes `layerGroups`
+  // as an array — `[]` for a rung with no LayerGroups authored, never
+  // undefined. An empty array is truthy in JS, so returning it verbatim (as
+  // this function used to) made the filter functions' `!admittedGroups`
+  // back-compat check false — they'd proceed to filter, and since
+  // `[].indexOf(anything)` is always -1, EVERY tagged (non-empty
+  // qualityGroup) entry got rejected instead of admitted. This reproduced
+  // on ANY frame the active rung had empty/absent LayerGroups — most
+  // visibly when QualityStartRung pointed straight at such a rung, so
+  // authored-but-tagged points vanished from frame one. Explicitly
+  // collapsing an empty layerGroups array to null here fixes it uniformly
+  // for every rung regardless of whether it's reached via QualityStartRung
+  // (init) or promotion/demotion (transition) — same function, same value,
+  // every frame.
   function sceneQualityLadderAdmittedGroups(adaptiveQuality) {
     if (!adaptiveQuality || adaptiveQuality.mode !== "ladder" || !Array.isArray(adaptiveQuality.ladder)) {
       return null;
     }
     const rung = adaptiveQuality.ladder[adaptiveQuality.rungIndex];
-    return rung ? rung.layerGroups : null;
+    if (!rung || !Array.isArray(rung.layerGroups) || rung.layerGroups.length === 0) {
+      return null;
+    }
+    return rung.layerGroups;
   }
 
   // sceneFilterObjectsByQualityGroups drops objects tagged with a
