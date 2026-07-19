@@ -14871,6 +14871,80 @@ test("Scene3D QualityLadder: Points LayerGroups filter — untagged always drawn
   assert.equal(noFilterNeeded.qualitySkippedCount, 0);
 });
 
+// --- v0.33.1: empty/absent LayerGroups at the QualityStartRung must admit
+// everything from frame one, exactly like it does when the same empty-
+// LayerGroups rung is reached later via promotion/demotion ---
+//
+// Bug: sceneQualityLadderAdmittedGroups returned the active rung's
+// normalized `layerGroups` array verbatim. normalizeSceneQualityRung always
+// materializes that field as an array — `[]` for a rung with none authored,
+// never undefined — and `[]` is truthy in JS. The filter functions'
+// `!admittedGroups` back-compat check therefore saw "filtering is active"
+// instead of "no filtering", and since `[].indexOf(anything)` is always -1,
+// every TAGGED (non-empty qualityGroup) entry was rejected while untagged
+// entries still passed — so a scene whose QualityStartRung pointed straight
+// at an empty-LayerGroups rung lost every tagged mesh/points entry from the
+// very first frame, before any promotion/demotion had a chance to run.
+const RAW_TO_GLOW_LADDER = [
+  { name: "raw" }, // no LayerGroups authored -> must admit everything
+  { name: "glow", layerGroups: ["particles"] },
+];
+
+test("Scene3D QualityLadder: QualityStartRung on a rung with empty/absent LayerGroups admits everything from frame one", () => {
+  const { state, api } = createQualityLadderHarness(RAW_TO_GLOW_LADDER, {
+    qualityStartRung: 0,
+  });
+  // No transition (promotion/demotion) has happened yet — this is the raw
+  // init-time rung, exactly as QualityStartRung configured it.
+  assert.equal(state.rungIndex, 0);
+  assert.equal(state.rungReason, "initial");
+
+  const admitted = api.sceneQualityLadderAdmittedGroups(state);
+  assert.equal(admitted, null,
+    "an active rung with no LayerGroups authored must yield the admit-all sentinel (null), not an empty-but-truthy array");
+
+  const untagged = { id: "hero" };
+  const tagged = { id: "far-star", qualityGroup: "particles" };
+  const objects = [untagged, tagged];
+  assert.deepEqual(api.sceneFilterObjectsByQualityGroups(objects, admitted), objects,
+    "both untagged and tagged mesh objects must draw when the active rung has no LayerGroups, from frame one");
+
+  const heroDust = { id: "hero-dust" };
+  const farDust = { id: "far-dust", qualityGroup: "particles" };
+  const points = [heroDust, farDust];
+  const filteredPoints = api.sceneFilterPointsByQualityGroups(points, admitted, new Map());
+  assert.deepEqual(Array.from(filteredPoints), [heroDust, farDust],
+    "tagged points must also draw when the active rung has no LayerGroups, from frame one");
+  assert.equal(filteredPoints.qualitySkippedCount, 0);
+});
+
+test("Scene3D QualityLadder: QualityStartRung on a rung WITH explicit LayerGroups still filters correctly from frame one", () => {
+  const { state, api } = createQualityLadderHarness(RAW_TO_GLOW_LADDER, {
+    qualityStartRung: 1,
+  });
+  assert.equal(state.rungIndex, 1);
+  assert.equal(state.rungReason, "initial");
+
+  const admitted = api.sceneQualityLadderAdmittedGroups(state);
+  assert.deepEqual(admitted, ["particles"]);
+
+  const untagged = { id: "hero" };
+  const admittedTag = { id: "far-star", qualityGroup: "particles" };
+  const rejectedTag = { id: "decor", qualityGroup: "far-decor" };
+  const objects = [untagged, admittedTag, rejectedTag];
+  assert.deepEqual(api.sceneFilterObjectsByQualityGroups(objects, admitted), [untagged, admittedTag],
+    "an explicit-LayerGroups start rung must still gate tagged objects not in the admitted set");
+
+  const heroDust = { id: "hero-dust" };
+  const farDust = { id: "far-dust", qualityGroup: "particles" };
+  const decorDust = { id: "decor-dust", qualityGroup: "far-decor" };
+  const points = [heroDust, farDust, decorDust];
+  const filteredPoints = api.sceneFilterPointsByQualityGroups(points, admitted, new Map());
+  assert.deepEqual(Array.from(filteredPoints), [heroDust, farDust],
+    "an explicit-LayerGroups start rung must still gate tagged points not in the admitted set");
+  assert.equal(filteredPoints.qualitySkippedCount, 1);
+});
+
 // --- adaptiveQuality+QualityLadder warning fix ---
 test("Scene3D adaptiveQuality+QualityLadder warning fires only for explicit tier config, silent on plain framework defaults", async () => {
   async function mountWithProps(id, sceneProps, extraProps) {

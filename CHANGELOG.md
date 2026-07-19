@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v0.33.1 (2026-07-19)
+
+- Fixed `sceneQualityLadderAdmittedGroups` returning the active QualityLadder
+  rung's `layerGroups` array verbatim instead of the documented admit-all
+  sentinel when that rung had no LayerGroups authored. `normalizeSceneQualityRung`
+  always materializes `layerGroups` as an array (`[]` when none is authored,
+  never `undefined`), and an empty array is truthy in JS, so
+  `sceneFilterObjectsByQualityGroups`/`sceneFilterPointsByQualityGroups`'s
+  `!admittedGroups` back-compat check treated it as "filtering is active" —
+  and since `[].indexOf(anything)` is always `-1`, every tagged
+  (non-empty `qualityGroup`) mesh/points entry was rejected while untagged
+  entries still passed. Most visible when `QualityStartRung` pointed
+  straight at an empty-LayerGroups rung: tagged entries vanished from frame
+  one, before any promotion/demotion had run. Fixed at the source so init
+  and promoted/demoted rungs behave identically, matching the documented
+  "empty LayerGroups admits everything" semantics.
+
 ## v0.33.0 (2026-07-19)
 
 - Fixed the QualityLadder governor (`sceneUpdateQualityLadder`) being
