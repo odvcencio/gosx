@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## v0.32.0 (2026-07-19)
+
+- Reached water-demo parity with the evanw/jeantimex reference and beyond:
+  restored the measured surface-mesh default (48) with every `?diag=1` cost
+  knob live and test-pinned, unclamped caustic convergence with rim
+  attenuation, object silhouettes darkening the caustics, sphere-wall
+  contact AO, analytic soft object shadows (umbra/penumbra + PCF) replacing
+  the flat disc, and batched sim+normal compute passes (3 -> 1 per tick).
+- Added water at-rest gating: a settled pool skips simulation, normals,
+  state copies, and caustics refresh entirely (energy-proxy + quiet-time
+  hysteresis, instant wake on interaction) — a steady-state cost profile the
+  always-simulating reference cannot match. Stats wiring fixed so the
+  at-rest counters publish honestly.
+- Fixed the WebGL water path rendering an opaque lid: hand-rolled uniform
+  application now falls back to compiled Selena param defaults
+  (causticIntensity) and binds the object-shadow sampler, restoring
+  transparent, caustic-lit water on the GL backend.
+- Removed a per-vertex CPU lighting pass that fed an unread buffer,
+  unlocking glTF mesh objects (Rubber Duck: ~40 -> ~153 fps on reference
+  hardware); all mesh objects benefit.
+- Made water pointer interaction event-faithful: bounded multi-drop queue
+  drains every pointer-move ripple per frame (fast strokes paint continuous
+  trails) and fixed a pass-through gap that silently dropped object
+  displacement events.
+- Added the Scene3D quality ladder: `Props.QualityLadder` — bidirectional,
+  work-based adaptive quality (post-effect sets, layer groups, budgets,
+  cadence) that never reduces resolution; rung state published via
+  `data-gosx-scene3d-quality-rung*` and `quality-rung-transition` events.
+  Legacy adaptive tiers unchanged when no ladder is authored.
+- Made `postFXMaxPixels` live-patchable via `updateSceneProps` without
+  destroying compiled custom post passes; the live value publishes as
+  `data-gosx-scene3d-postfx-max-pixels`.
+- Added `scripts/water-visual-smoke.go`: a cross-platform (Linux/Dozen and
+  Windows/D3D12) real-GPU visual + fps harness that renders the demo and
+  the upstream reference side by side.
+
 ## v0.31.18 (2026-07-16)
 
 - Added leaf (non-hierarchical) `Scale` to `scene.Mesh`: lowered as
