@@ -14279,6 +14279,99 @@ test("Scene3D handle.updateSceneProps({postFXMaxPixels}) live-patches non-destru
   assert.equal(state.postFXMaxPixels, 518400);
 });
 
+// --- SCENE_CMD_SET_POST_UNIFORMS: non-destructive per-frame uniform patching ---
+test("Scene3D SCENE_CMD_SET_POST_UNIFORMS patches named CustomPost uniforms non-destructively: values change, shader payload untouched, counters bump; unknown name is a safe no-op with a miss counter", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-post-uniforms";
+  const customVertexGLSL = "attribute vec2 a_position; void main() { gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const customFragmentGLSL = "precision mediump float; uniform float uIntensity; void main() { gl_FragColor = vec4(vec3(uIntensity), 1.0); }";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-post-uniforms",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-post-uniforms",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              postEffects: [
+                {
+                  kind: "customPost",
+                  name: "test-lens",
+                  vertexGLSL: customVertexGLSL,
+                  fragmentGLSL: customFragmentGLSL,
+                  stage: "beforeTonemap",
+                  uniforms: { uIntensity: 0.25 },
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let mounted = env.context.__gosx.engines.get("gosx-engine-post-uniforms");
+  for (let attempt = 0; attempt < 5 && !mounted; attempt += 1) {
+    await flushAsyncWork();
+    mounted = env.context.__gosx.engines.get("gosx-engine-post-uniforms");
+  }
+  assert.ok(mounted, "expected the scene3d engine to mount");
+  assert.equal(typeof mounted.handle.applyCommands, "function");
+
+  const state = mount.__gosxScene3DState;
+  assert.ok(state, "expected the sceneState back-door on the mount");
+  assert.equal(state.postEffects.length, 1);
+  const passBefore = state.postEffects[0];
+  assert.equal(passBefore.name, "test-lens");
+  assert.equal(passBefore.uniforms.uIntensity, 0.25);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patches"), "0");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patch-misses"), "0");
+
+  // Kind 14: SCENE_CMD_SET_POST_UNIFORMS (see the const in 10-runtime-scene-core.js —
+  // 11 is already SCENE_CMD_SET_INSTANCED_GLB_MESHES so this new command could
+  // not reuse it without colliding with the existing wire protocol).
+  const SCENE_CMD_SET_POST_UNIFORMS = 14;
+  mounted.handle.applyCommands([
+    { kind: SCENE_CMD_SET_POST_UNIFORMS, data: { effects: [{ name: "test-lens", uniforms: { uIntensity: 0.9, uNew: 3 } }] } },
+  ]);
+
+  // (a) same array, same pass object — non-destructive; only .uniforms changed.
+  assert.equal(state.postEffects.length, 1, "no pass added/removed");
+  assert.strictEqual(state.postEffects[0], passBefore, "pass object identity preserved (non-destructive patch)");
+  assert.equal(state.postEffects[0].uniforms.uIntensity, 0.9, "existing uniform patched");
+  assert.equal(state.postEffects[0].uniforms.uNew, 3, "new uniform key merged in");
+  assert.equal(state.postEffects[0].vertexGLSL, customVertexGLSL, "shader payload (vertexGLSL) untouched");
+  assert.equal(state.postEffects[0].fragmentGLSL, customFragmentGLSL, "shader payload (fragmentGLSL) untouched");
+  assert.equal(state.postEffects[0].stage, "beforeTonemap", "non-uniform field untouched");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patches"), "1", "applied counter bumped");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patch-misses"), "0");
+
+  // (b) unknown name is a safe no-op with a miss counter — no pass touched.
+  mounted.handle.applyCommands([
+    { kind: SCENE_CMD_SET_POST_UNIFORMS, data: { effects: [{ name: "does-not-exist", uniforms: { x: 1 } }] } },
+  ]);
+  assert.equal(state.postEffects.length, 1);
+  assert.strictEqual(state.postEffects[0], passBefore, "unmatched patch must not touch the existing pass");
+  assert.equal(state.postEffects[0].uniforms.uIntensity, 0.9, "unmatched patch leaves prior uniforms alone");
+  assert.equal(state.postEffects[0].uniforms.x, undefined, "unmatched patch's uniforms never land anywhere");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patches"), "1", "applied counter unchanged on a miss");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patch-misses"), "1", "miss counter bumped");
+});
+
 // sceneCoreSourceRange extracts a [startAnchor, endAnchor) slice from
 // 10-runtime-scene-core.js — used to pull the REAL G2 QualityLadder
 // normalizer (sceneQualityLadder et al.) and its two small dependencies
@@ -14319,6 +14412,7 @@ function loadSceneAdaptiveQualityAPI() {
     globalThis.adaptiveAPI = {
       createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
+      sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
       scenePrimeAdaptiveQuality,
     };
   `, context, { filename: "scene-adaptive-quality.js" });
@@ -14492,6 +14586,40 @@ const THREE_RUNG_LADDER = [
   { name: "full", postEffects: ["bloom", "toneMapping", "test-lens"], layerGroups: ["particles", "far-decor"] },
 ];
 
+// createQualityLadderRAFHarness is createQualityLadderHarness's cpu-raf
+// counterpart: renderer.pollPerformanceSample() always returns null (no
+// GPU timestamp-query support — the common case on regular Chrome stable)
+// and there is no getPerformanceTimingStatus, so sceneUpdateQualityLadder
+// falls through to the cpu-raf sample built from the rAF interval, exactly
+// like a real un-timed browser session. sample(intervalMS) drives both the
+// wall clock and the rAF timestamp by the same amount, so a constant
+// intervalMS simulates a steady vsync-locked frame cadence.
+function createQualityLadderRAFHarness(qualityLadder, extraProps) {
+  const loaded = loadSceneAdaptiveQualityAPI();
+  const props = Object.assign({
+    scene: { qualityLadder },
+    adaptiveTargetFrameMS: 16,
+    adaptiveWarmupFrames: 0,
+    adaptiveCooldownMS: 5000,
+  }, extraProps || {});
+  const state = loaded.api.createSceneAdaptiveQualityState(props, { explicitMaxDevicePixelRatio: 1.6 }, { tier: "full" });
+  const mount = new FakeElement("div", null);
+  const sceneState = { _adaptiveSourcePostEffects: [], postEffects: [] };
+  const renderer = {
+    pollPerformanceSample() { return null; }, // no GPU timing available
+  };
+  let frameNowMS = 0;
+  function sample(intervalMS) {
+    const advance = intervalMS == null ? 16.7 : intervalMS;
+    loaded.clock.now += advance;
+    frameNowMS += advance;
+    return loaded.api.sceneUpdateAdaptiveQuality(state, mount, sceneState, {}, loaded.clock.now - 1, frameNowMS, renderer);
+  }
+  loaded.api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+  sample(1); // resume/initial anchor is deliberately excluded, mirrors createQualityLadderHarness
+  return { ...loaded, state, mount, sceneState, renderer, sample };
+}
+
 test("Scene3D QualityLadder: no ladder authored leaves mode=tier (back-compat)", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const noLadder = api.createSceneAdaptiveQualityState({ adaptiveQuality: true, qualityTier: "balanced" }, {}, {});
@@ -14614,6 +14742,64 @@ test("Scene3D QualityLadder: hysteresis/cooldown prevent oscillation and recover
   assert.equal(state.rungIndex, 2, "recovery promotes exactly one rung once the cooldown elapses");
 });
 
+// --- Promotion rule must differ by measurement source (cpu-raf vs GPU timing) ---
+//
+// Bug: on a real browser without GPU timestamp-query support (regular Chrome
+// stable — the common case), the measurement source is cpu-raf and the rAF
+// interval on a vsync-locked display floors at ~1/refreshRate (~16.7ms @60Hz)
+// even on a perfectly healthy page — it can never read below
+// state.rungPromoteThreshold (0.7) × target, so the ladder could never
+// promote past the boot rung in production (observed: postfx stayed "none"
+// after 13k+ frames at a locked 60fps). The headless test harness always
+// grants gpu timing, which is why this never surfaced in CI.
+test("Scene3D QualityLadder: cpu-raf measurement promotes on sustained clean cadence (frameMS <= 1.06x target), not GPU headroom", () => {
+  const { state, sample, mount } = createQualityLadderRAFHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 0,
+  });
+  assert.equal(state.rungPromoteFrames, 120);
+  // A perfectly healthy vsync-locked 60Hz page: frameMS ~16.7 against a
+  // target of 16 never has "headroom" below 0.7x (11.2ms) — the OLD rule
+  // would stay stuck here forever. The raf-cadence rule only requires not
+  // exceeding target by more than 6% (<= 16.96ms), which 16.7 satisfies.
+  for (let i = 0; i < 119; i++) sample(16.7);
+  assert.equal(state.rungIndex, 0, "must not promote before rungPromoteFrames consecutive clean-cadence frames");
+  assert.equal(state.measurement, "cpu-raf", "must be measuring via the cpu-raf fallback, not GPU timing");
+  sample(16.7);
+  assert.equal(state.rungIndex, 1, "must promote exactly one rung after rungPromoteFrames clean-cadence frames");
+  assert.equal(state.rungReason, "recovered");
+  assert.equal(state.rungPromoteRule, "raf-cadence", "the raf-cadence rule, not gpu-headroom, must have driven this promotion");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-promote-rule"), "raf-cadence");
+});
+
+test("Scene3D QualityLadder: cpu-raf measurement does NOT promote when frames exceed the clean-cadence ceiling", () => {
+  const { state, sample } = createQualityLadderRAFHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 0,
+  });
+  // 25ms frames on a 16ms target exceed the 1.06x (16.96ms) clean-cadence
+  // ceiling every frame — this must never accumulate goodFrames toward a
+  // promotion (already at the floor rung, so any spurious demote attempt is
+  // also a safe no-op — this asserts the ladder simply never climbs).
+  for (let i = 0; i < 200; i++) sample(25);
+  assert.equal(state.rungIndex, 0, "must not promote when cpu-raf frames consistently exceed the clean-cadence ceiling");
+  assert.equal(state.measurement, "cpu-raf");
+  assert.equal(state.rungPromoteRule, "raf-cadence");
+});
+
+test("Scene3D QualityLadder: GPU-measured samples still use the original headroom rule (unchanged)", () => {
+  const { state, sample, mount } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 0,
+  });
+  // 5ms GPU-measured frames against a 16ms target have real headroom well
+  // below 0.7x (11.2ms) — the original rule.
+  for (let i = 0; i < 119; i++) sample(5);
+  assert.equal(state.rungIndex, 0);
+  sample(5);
+  assert.equal(state.rungIndex, 1, "GPU-headroom rule must still promote exactly as before");
+  assert.equal(state.measurement, "gpu-test");
+  assert.equal(state.rungPromoteRule, "gpu-headroom", "GPU-measured samples must report the gpu-headroom promote rule");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-promote-rule"), "gpu-headroom");
+});
+
 test("Scene3D QualityLadder: LayerGroups filter — untagged objects always visible, tagged objects gated by the active rung", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const noLadderState = { mode: "tier" };
@@ -14638,6 +14824,119 @@ test("Scene3D QualityLadder: LayerGroups filter — untagged objects always visi
   const admittedOnly = [hero, farStar];
   const noFilterNeeded = api.sceneFilterObjectsByQualityGroups(admittedOnly, admitted);
   assert.strictEqual(noFilterNeeded, admittedOnly, "nothing dropped -> same array reference, no allocation on the hot per-frame path");
+});
+
+test("Scene3D QualityLadder: Points LayerGroups filter — untagged always drawn, tagged gated by rung, name-mapped GLB layers gated via pointQualityGroups", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const ladderState = { mode: "ladder", ladder: THREE_RUNG_LADDER.map(function(r, i) {
+    return { name: r.name, layerGroups: r.layerGroups || [], postEffects: r.postEffects || [] };
+  }), rungIndex: 1 };
+  const admitted = api.sceneQualityLadderAdmittedGroups(ladderState);
+  assert.deepEqual(admitted, ["particles"]);
+
+  const heroDust = { id: "hero-dust" }; // untagged Points node
+  const farDust = { id: "far-dust", qualityGroup: "particles" }; // tagged Points node, admitted
+  const decorDust = { id: "decor-dust", qualityGroup: "far-decor" }; // tagged Points node, not admitted at rung 1
+  // GLB-extracted point layer: no authored qualityGroup, identified by the
+  // SAME `material` field the named-material binding path matches by.
+  const nebulaLayer = { id: "nebula-layer-03-points-0", material: "nebula-layer-03" };
+  const spareLayer = { id: "spare-layer-points-0", material: "spare-layer" };
+  const points = [heroDust, farDust, decorDust, nebulaLayer, spareLayer];
+  const pointQualityGroups = new Map([
+    ["nebula-layer-03", "particles"], // admitted at rung 1
+    ["spare-layer", "far-decor"], // not admitted at rung 1
+  ]);
+
+  // No ladder governing -> zero-cost back-compat, same array reference, everything drawn.
+  assert.strictEqual(api.sceneFilterPointsByQualityGroups(points, null, pointQualityGroups), points,
+    "no ladder -> same array reference, zero-cost back-compat");
+
+  const filtered = api.sceneFilterPointsByQualityGroups(points, admitted, pointQualityGroups);
+  assert.deepEqual(Array.from(filtered), [heroDust, farDust, nebulaLayer],
+    "untagged points always survive; own qualityGroup gates far-dust/decor-dust; name-mapped nebula layer admitted, spare layer dropped");
+  assert.equal(filtered.qualitySkippedCount, 2, "decor-dust and spare-layer were both dropped by the group filter");
+
+  // Own qualityGroup wins over the name-mapped fallback when both are present.
+  const overridden = { id: "override", qualityGroup: "particles", material: "spare-layer" };
+  assert.equal(api.sceneEffectivePointQualityGroup(overridden, pointQualityGroups), "particles",
+    "authored qualityGroup takes precedence over the pointQualityGroups name mapping");
+
+  // Entries with no own tag and no name mapping are untagged (always visible).
+  const unmapped = { id: "unmapped", material: "unrelated-layer" };
+  assert.equal(api.sceneEffectivePointQualityGroup(unmapped, pointQualityGroups), "");
+
+  const admittedOnly = [heroDust, farDust, nebulaLayer];
+  const noFilterNeeded = api.sceneFilterPointsByQualityGroups(admittedOnly, admitted, pointQualityGroups);
+  assert.strictEqual(noFilterNeeded, admittedOnly, "nothing dropped -> same array reference, no allocation on the hot per-frame path");
+  assert.equal(noFilterNeeded.qualitySkippedCount, 0);
+});
+
+// --- adaptiveQuality+QualityLadder warning fix ---
+test("Scene3D adaptiveQuality+QualityLadder warning fires only for explicit tier config, silent on plain framework defaults", async () => {
+  async function mountWithProps(id, sceneProps, extraProps) {
+    const mount = new FakeElement("div", null);
+    mount.id = id;
+    const env = createContext({
+      elements: [mount],
+      enableWebGL: true,
+      disableCanvas2D: true,
+      manifest: {
+        engines: [
+          {
+            id: "engine-" + id,
+            component: "GoSXScene3D",
+            kind: "surface",
+            mountId: id,
+            jsExport: "GoSXScene3D",
+            props: Object.assign({ width: 320, height: 240, autoRotate: false, scene: sceneProps }, extraProps || {}),
+            capabilities: ["canvas", "webgl", "animation"],
+          },
+        ],
+      },
+    });
+    const warnLog = [];
+    const origWarn = env.context.console.warn;
+    env.context.console.warn = function() {
+      warnLog.push(Array.from(arguments).join(" "));
+      if (typeof origWarn === "function") origWarn.apply(env.context.console, arguments);
+    };
+    runScript(bootstrapSource, env.context, "bootstrap.js");
+    await flushAsyncWork();
+    return { env, mount, warnLog };
+  }
+
+  function ladderWarnings(warnLog) {
+    return warnLog.filter(function(w) { return w.indexOf("QualityLadder is authored alongside adaptiveQuality") !== -1; });
+  }
+
+  const ladder = [{ name: "raw" }, { name: "glow", postEffects: ["bloom"] }];
+
+  // Plain adaptiveQuality:true is every scene's framework-default opt-in
+  // (built-in full/balanced/survival presets, no author-configured tier
+  // substance) — authoring it alongside a ladder must stay silent.
+  const plain = await mountWithProps("scene-ladder-warn-plain", { qualityLadder: ladder }, { adaptiveQuality: true });
+  assert.equal(ladderWarnings(plain.warnLog).length, 0,
+    "plain adaptiveQuality:true (framework defaults) + ladder must NOT warn");
+
+  // An explicitly requested tier is real authored substance the ladder
+  // strands — this must warn.
+  const explicitTier = await mountWithProps("scene-ladder-warn-tier", { qualityLadder: ladder }, { adaptiveQuality: true, adaptiveQualityTier: "balanced" });
+  assert.equal(ladderWarnings(explicitTier.warnLog).length, 1,
+    "explicit adaptiveQualityTier alongside a ladder must warn exactly once");
+
+  // An explicit profile override is likewise real authored substance.
+  const explicitProfiles = await mountWithProps("scene-ladder-warn-profiles", { qualityLadder: ladder }, {
+    adaptiveQuality: true,
+    qualityProfiles: { full: { dprCap: 2 } },
+  });
+  assert.equal(ladderWarnings(explicitProfiles.warnLog).length, 1,
+    "explicit qualityProfiles override alongside a ladder must warn exactly once");
+
+  // No adaptiveQuality authored at all + a ladder must also stay silent
+  // (back-compat: nothing to strand).
+  const noAdaptive = await mountWithProps("scene-ladder-warn-none", { qualityLadder: ladder }, {});
+  assert.equal(ladderWarnings(noAdaptive.warnLog).length, 0,
+    "no adaptiveQuality authored + ladder must NOT warn");
 });
 
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {

@@ -2732,6 +2732,16 @@
       spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
       spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
       spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
+      // qualityGroup: G2 QualityLadder layer tagging (see scene.Points.QualityGroup
+      // / QualityRung.LayerGroups). Empty means unconditionally visible at
+      // every rung — a ladder only gates points layers that opted in. Read by
+      // the mount layer's per-frame points filter (sceneFilterPointsByQualityGroups
+      // in 20-scene-mount.js), never here — this normalizer only carries the
+      // tag through. Same trim/default-"" pattern as the mesh normalizer's
+      // qualityGroup field above.
+      qualityGroup: typeof item.qualityGroup === "string" && item.qualityGroup.trim()
+        ? item.qualityGroup.trim()
+        : (typeof current.qualityGroup === "string" ? current.qualityGroup : ""),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,
@@ -3416,6 +3426,41 @@
     return { rungs: rungs, startRung: startRung };
   }
 
+  // scenePointQualityGroups normalizes Props.PointQualityGroups
+  // (scene.pointQualityGroups, lowered from Go) or a directly-authored
+  // top-level pointQualityGroups prop into a plain layer-name -> group Map.
+  // This is the scene-level fallback the points draw filter consults for
+  // point entries that cannot carry Points.QualityGroup directly — most
+  // notably GLB-baked point layers extracted at runtime, which expose their
+  // layer name on the SAME `material` field the named-material binding path
+  // (sceneApplyNamedMaterialToPoints / sceneNamedMaterialForRecord) already
+  // matches by. Same props.scene.* vs top-level props.* dual-path convention
+  // as sceneQualityLadder above.
+  function rawScenePointQualityGroups(props) {
+    const scene = sceneProps(props);
+    if (scene && sceneIsPlainObject(scene.pointQualityGroups)) {
+      return scene.pointQualityGroups;
+    }
+    return props && sceneIsPlainObject(props.pointQualityGroups) ? props.pointQualityGroups : null;
+  }
+
+  function scenePointQualityGroups(props) {
+    const raw = rawScenePointQualityGroups(props);
+    const out = new Map();
+    if (!raw) {
+      return out;
+    }
+    for (const key of Object.keys(raw)) {
+      const name = typeof key === "string" ? key.trim() : "";
+      const group = typeof raw[key] === "string" ? raw[key].trim() : "";
+      if (!name || !group) {
+        continue;
+      }
+      out.set(name, group);
+    }
+    return out;
+  }
+
   function sceneCamera(props) {
     const raw = props && props.camera && typeof props.camera === "object" ? props.camera : {};
     return normalizeSceneCamera(raw, {
@@ -3584,6 +3629,7 @@
       lights: new Map(),
       models: sceneModels(props),
       points: scenePoints(props),
+      pointQualityGroups: scenePointQualityGroups(props),
       instancedMeshes: sceneInstancedMeshes(props),
       instancedGLBMeshes: sceneInstancedGLBMeshes(props),
       computeParticles: sceneComputeParticles(props),
@@ -4472,6 +4518,14 @@
   const SCENE_CMD_SET_INSTANCED_GLB_MESHES = 11;
   const SCENE_CMD_SET_ANIMATIONS = 12;
   const SCENE_CMD_SET_ENVIRONMENT = 13;
+  // SCENE_CMD_SET_POST_UNIFORMS: non-destructive per-frame uniform patching
+  // for named CustomPost passes (see applyScenePostUniformsCommand below).
+  // NOTE: 11 is already SCENE_CMD_SET_INSTANCED_GLB_MESHES and the run
+  // continues unbroken through 13 — this intentionally does NOT reuse 11
+  // despite older planning notes assuming SET_MODELS(10) was still the last
+  // command; every existing value here is load-bearing wire protocol and
+  // must never be renumbered.
+  const SCENE_CMD_SET_POST_UNIFORMS = 14;
 
   function applySceneCommands(state, commands) {
     if (!state || !Array.isArray(commands) || commands.length === 0) return;
@@ -4532,6 +4586,9 @@
         return;
       case SCENE_CMD_SET_ENVIRONMENT:
         applySceneEnvironmentCommand(state, command.data);
+        return;
+      case SCENE_CMD_SET_POST_UNIFORMS:
+        applyScenePostUniformsCommand(state, command.data);
         return;
       default:
         return;
@@ -4675,6 +4732,70 @@
     state._deferredPostEffects = null;
     if (Object.prototype.hasOwnProperty.call(payload, "postFXMaxPixels")) {
       state.postFXMaxPixels = Math.max(0, Math.floor(sceneNumber(payload.postFXMaxPixels, 0)));
+    }
+  }
+
+  // applyScenePostUniformsCommand (SCENE_CMD_SET_POST_UNIFORMS): patches
+  // per-frame uniform overrides onto already-installed named CustomPost
+  // passes WITHOUT rebuilding the post chain. This exists precisely because
+  // SCENE_CMD_SET_POST_EFFECTS (applyScenePostEffectsCommand) replaces
+  // state.postEffects wholesale — fine for built-in effects, but destructive
+  // to a compiled custom pass's shader/pipeline identity (fragmentWGSL/
+  // vertexWGSL/shaderLayout etc. all get re-normalized from scratch, and any
+  // cached pipeline keyed by those fields has to recompile). A pure uniform
+  // tweak (e.g. an app animating a shader param on a signal) should never
+  // pay that cost or risk it.
+  //
+  // Payload shape: { effects: [{ name: "<CustomPost.Name>", uniforms: { key: value, ... } }] }
+  //
+  // For each entry, every state.postEffects item whose .name matches is
+  // found and ONLY its .uniforms map is shallow-merged with the patch — the
+  // pass object itself, its position in the array, and every other field
+  // (fragmentWGSL/vertexWGSL/shaderBackend/shaderLayout/stage/...) are left
+  // completely untouched. No pass is added, removed, or reordered.
+  //
+  // Uniform propagation needs no separate "mark dirty" step: both render
+  // backends already re-read effect.uniforms and re-upload it fresh every
+  // frame with no value-equality caching — ensureCustomPostUniformBuffer's
+  // per-name GPUBuffer in 16a-scene-webgpu.js only caches the BUFFER
+  // (reallocated on size growth) and unconditionally calls
+  // device.queue.writeBuffer with the current uniforms on every call;
+  // applyCustomPost's uniform upload loop in 16-scene-webgl.js reads
+  // effect.uniforms directly every call. Mutating the SAME uniforms object
+  // reference (or swapping it, since callers only ever read it) is
+  // sufficient for a patch to reach the GPU next frame on both backends.
+  //
+  // Stats: bumps state.postUniformPatches once per matched pass, and
+  // state.postUniformPatchMisses once per entry whose name matched nothing
+  // — published as the post-uniform-patches / post-uniform-patch-misses
+  // mount attributes by applyScenePostFXState in 20-scene-mount.js.
+  function applyScenePostUniformsCommand(state, data) {
+    if (!state) return;
+    state.postUniformPatches = Math.max(0, Math.floor(sceneNumber(state.postUniformPatches, 0)));
+    state.postUniformPatchMisses = Math.max(0, Math.floor(sceneNumber(state.postUniformPatchMisses, 0)));
+    const payload = sceneIsPlainObject(data) ? data : {};
+    const rawEntries = Array.isArray(data)
+      ? data
+      : (Array.isArray(payload.effects) ? payload.effects : []);
+    const postEffects = Array.isArray(state.postEffects) ? state.postEffects : [];
+    for (let index = 0; index < rawEntries.length; index += 1) {
+      const entry = rawEntries[index];
+      if (!sceneIsPlainObject(entry)) continue;
+      const name = typeof entry.name === "string" ? entry.name.trim() : "";
+      const patch = sceneIsPlainObject(entry.uniforms) ? entry.uniforms : null;
+      if (!name || !patch) continue;
+      let matched = 0;
+      for (let i = 0; i < postEffects.length; i += 1) {
+        const pass = postEffects[i];
+        if (!pass || typeof pass.name !== "string" || pass.name !== name) continue;
+        pass.uniforms = Object.assign({}, pass.uniforms, patch);
+        matched += 1;
+      }
+      if (matched > 0) {
+        state.postUniformPatches += matched;
+      } else {
+        state.postUniformPatchMisses += 1;
+      }
     }
   }
 

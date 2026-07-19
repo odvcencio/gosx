@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+## v0.33.0 (2026-07-19)
+
+- Fixed the QualityLadder governor (`sceneUpdateQualityLadder`) being
+  effectively unpromotable on real browsers without GPU timestamp-query
+  support (regular Chrome stable — the common case): the promote check
+  required frame time below 0.7x the target, but the cpu-raf fallback's
+  frame time floors at the display's refresh interval (~16.7ms @60Hz) even
+  on a perfectly healthy page, so a vsync-locked session could never show
+  "headroom" and stayed stuck at the boot rung forever (observed in
+  production: post-FX stayed off after 13k+ frames at a locked 60fps; the
+  headless test harness always granted GPU timing, masking the bug in CI).
+  The governor now uses a source-aware promote rule: GPU-measured samples
+  keep the original headroom check, while cpu-raf samples promote on
+  sustained clean cadence instead (frame time not exceeding the target by
+  more than 6% for the promote window) — demotion is unchanged for either
+  source. The active rule publishes as
+  `data-gosx-scene3d-quality-promote-rule` (`"gpu-headroom"` |
+  `"raf-cadence"`).
+- Extended the Scene3D quality ladder's layer-group gating to particle
+  systems: `scene.Points` gains `QualityGroup` (mirrors `Mesh.QualityGroup`,
+  lowered to `PointsIR.QualityGroup`/`qualityGroup`), and a new scene-level
+  `Props.PointQualityGroups` (`pointQualityGroups`) maps a runtime-extracted
+  points-layer NAME to a `QualityRung.LayerGroups` tag for point layers that
+  cannot carry the field directly — most notably GLB-baked point layers
+  extracted at runtime, matched by the same `material` field the
+  named-material binding path already uses. The client filter (untagged
+  always visible; no ladder or a rung with empty `layerGroups` draws
+  everything; per-frame, no remount needed for a rung transition) now
+  applies identically to points on both the WebGPU and WebGL backends. Added
+  a `point-quality-skipped` stat (`data-gosx-scene3d-point-quality-skipped`)
+  for entries the group filter dropped this frame; the existing
+  point-draw-entries/instances/calls and point-authored-draw-* counters now
+  reflect the post-filter set while continuing to report the authored-shader
+  subset within it.
+- Added `SCENE_CMD_SET_POST_UNIFORMS` (kind 14): a non-destructive escape
+  hatch through the existing `handle.applyCommands([...])` dispatcher that
+  shallow-merges `{ effects: [{ name, uniforms }] }` uniform patches onto
+  already-installed named `CustomPost` passes without rebuilding the post
+  chain — unlike `SCENE_CMD_SET_POST_EFFECTS`, it never touches
+  `fragmentWGSL`/`vertexWGSL`/`shaderLayout` or reorders/drops passes.
+  Patched values reach the GPU next frame on both backends automatically
+  (neither the WebGPU nor the WebGL custom-post uniform upload path caches
+  by value equality). Added `post-uniform-patches` and
+  `post-uniform-patch-misses` stats (`data-gosx-scene3d-post-uniform-patches`
+  / `-post-uniform-patch-misses`).
+- Fixed the adaptiveQuality+QualityLadder console warning firing on every
+  scene that authors a ladder alongside the ordinary `adaptiveQuality: true`
+  opt-in (the framework's built-in full/balanced/survival presets, with no
+  author-configured tier substance to actually strand). It now fires only
+  when the author explicitly configured dprCap-tier profile overrides or an
+  explicit requested tier alongside a ladder; otherwise it stays silent.
+
 ## v0.32.0 (2026-07-19)
 
 - Reached water-demo parity with the evanw/jeantimex reference and beyond:

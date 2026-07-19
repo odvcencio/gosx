@@ -64,6 +64,11 @@ type SceneIR struct {
 	// adaptiveQuality behavior is unchanged in that case.
 	QualityLadder    []QualityRungIR `json:"qualityLadder,omitempty"`
 	QualityStartRung int             `json:"qualityStartRung,omitempty"`
+	// PointQualityGroups: see Props.PointQualityGroups (scene/quality_ladder.go
+	// doc / scene.go). Maps a runtime-extracted points-layer name (e.g. a
+	// GLB-baked layer) to a QualityRung.LayerGroups tag, for point layers
+	// that cannot carry PointsIR.QualityGroup directly.
+	PointQualityGroups map[string]string `json:"pointQualityGroups,omitempty"`
 	// BackendCaps is the honesty-gate verdict: which rendering backends can
 	// faithfully render this scene, plus per-backend feature degradations. It
 	// is computed once during Props.SceneIR() and ships to the JS runtime.
@@ -555,6 +560,9 @@ type PointsIR struct {
 	InState               map[string]any    `json:"inState,omitempty"`
 	OutState              map[string]any    `json:"outState,omitempty"`
 	Live                  []string          `json:"live,omitempty"`
+	// QualityGroup: see scene.Points.QualityGroup and QualityRung.LayerGroups
+	// (scene/quality_ladder.go). Empty means unconditionally visible.
+	QualityGroup string `json:"qualityGroup,omitempty"`
 }
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
@@ -1036,6 +1044,20 @@ func (p Props) SceneIR() SceneIR {
 	if len(ir.QualityLadder) > 0 {
 		ir.QualityStartRung = resolveQualityStartRung(p.QualityLadder, p.QualityStartRung)
 	}
+	if len(p.PointQualityGroups) > 0 {
+		groups := make(map[string]string, len(p.PointQualityGroups))
+		for name, group := range p.PointQualityGroups {
+			name = strings.TrimSpace(name)
+			group = strings.TrimSpace(group)
+			if name == "" || group == "" {
+				continue
+			}
+			groups[name] = group
+		}
+		if len(groups) > 0 {
+			ir.PointQualityGroups = groups
+		}
+	}
 	if p.Compression != nil && p.Compression.BitWidth > 0 {
 		previewBW := 0
 		if p.Compression.Progressive || p.Compression.LOD {
@@ -1269,7 +1291,7 @@ func (ir *SceneIR) UnmarshalJSON(data []byte) error {
 }
 
 func (ir SceneIR) isZero() bool {
-	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.WaterSystems) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0 && len(ir.QualityLadder) == 0
+	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.WaterSystems) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0 && len(ir.QualityLadder) == 0 && len(ir.PointQualityGroups) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -1347,6 +1369,13 @@ func (ir SceneIR) legacyProps() map[string]any {
 		if ir.QualityStartRung != 0 {
 			out["qualityStartRung"] = ir.QualityStartRung
 		}
+	}
+	if len(ir.PointQualityGroups) > 0 {
+		groups := make(map[string]string, len(ir.PointQualityGroups))
+		for name, group := range ir.PointQualityGroups {
+			groups[name] = group
+		}
+		out["pointQualityGroups"] = groups
 	}
 	if ir.BackendCaps != nil {
 		out["backendCaps"] = ir.BackendCaps
@@ -1684,6 +1713,7 @@ func (item PointsIR) legacyProps() map[string]any {
 	if len(item.ShaderSourceFiles) > 0 {
 		record["shaderSourceFiles"] = cloneSceneStringMap(item.ShaderSourceFiles)
 	}
+	setString(record, "qualityGroup", item.QualityGroup)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }

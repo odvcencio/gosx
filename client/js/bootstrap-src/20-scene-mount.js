@@ -4008,7 +4008,16 @@
     const ladder = sceneQualityLadder(props);
     const hasLadder = ladder.rungs.length > 0;
     const tierEnabled = hasLadder ? false : enabled;
-    if (hasLadder && enabled && typeof console !== "undefined" && console.warn) {
+    // hasExplicitAdaptiveTierConfig: true only when the author configured
+    // actual dprCap-tier substance beyond the plain `adaptiveQuality: true`
+    // opt-in every scene carries as its framework default (adaptiveQuality
+    // defaults to enabled with the built-in full/balanced/survival presets —
+    // see `defaults` above). A bare boolean toggle strands nothing worth
+    // warning about since there is no author-authored tier config to lose;
+    // only a non-default profile override or an explicit requested tier
+    // means AdaptiveQuality's tier/profile behavior is actually superseded.
+    const hasExplicitAdaptiveTierConfig = Object.keys(profileOverrides).length > 0 || Boolean(requestedValue);
+    if (hasLadder && enabled && hasExplicitAdaptiveTierConfig && typeof console !== "undefined" && console.warn) {
       // Go-side authors get the equivalent Props.QualityLadderWarnings()
       // warning at build time; this covers directly JS-authored scenes too.
       console.warn("[gosx] Scene3D: QualityLadder is authored alongside adaptiveQuality (dprCap tiers) — " +
@@ -4066,6 +4075,11 @@
       // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
       state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
       state.rungPromoteThreshold = Math.max(0.05, Math.min(0.95, sceneNumber(props && props.qualityLadderPromoteThreshold, 0.7)));
+      // rungPromoteRule: which promotion rule the last measurement used —
+      // "gpu-headroom" (real GPU timing) or "raf-cadence" (cpu-raf fallback,
+      // no timestamp-query support). Set fresh every sampled frame in
+      // sceneUpdateQualityLadder; this is just the pre-first-sample default.
+      state.rungPromoteRule = "gpu-headroom";
     }
     return state;
   }
@@ -4402,18 +4416,38 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const target = Math.max(8, sceneNumber(sample.source.indexOf("cpu-raf") === 0 ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    // isRAFMeasured: true when this sample comes from the cpu-raf fallback
+    // (no GPU timestamp-query support — the common case on regular Chrome
+    // stable) rather than real GPU timing.
+    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    const target = Math.max(8, sceneNumber(isRAFMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
+    // rungPromoteRule: which promotion rule this frame's measurement source
+    // uses — published on data-gosx-scene3d-quality-promote-rule below.
+    state.rungPromoteRule = isRAFMeasured ? "raf-cadence" : "gpu-headroom";
+    // Promote-eligible check differs by measurement source:
+    //   - GPU-measured (real timestamp-query): frameMS has actual headroom
+    //     below state.rungPromoteThreshold (default 0.7) × target — the
+    //     original rule.
+    //   - cpu-raf fallback: rAF interval on a vsync-locked display floors at
+    //     ~1/refreshRate (~16.7ms @60Hz) even on a perfectly healthy page,
+    //     so it can NEVER read below 0.7×target — that condition would keep
+    //     every real session (no GPU timing) stuck at the boot rung forever
+    //     (observed in production: webgpuPostEffects stayed 0 after 13k+
+    //     frames at a locked 60fps). Promote instead on sustained
+    //     vsync-CLEAN cadence: frameMS not exceeding target by more than a
+    //     small (6%) margin, for rungPromoteFrames consecutive frames — "not
+    //     missing cadence" rather than "has spare headroom", since rAF alone
+    //     cannot observe spare headroom past the display's refresh floor.
+    //     Demotion (below) is unchanged for either source.
+    const promoteEligible = isRAFMeasured
+      ? frameMS <= target * 1.06
+      : frameMS < target * state.rungPromoteThreshold;
     if (missesBudget) {
       state.badFrames += 1;
       state.goodFrames = 0;
-    } else if (frameMS < target * state.rungPromoteThreshold) {
-      // Promote headroom check: state.rungPromoteThreshold (default 0.7) is
-      // the ladder's own configurable threshold — distinct from the
-      // dprCap-tier controller's hardcoded 0.72, since ladder promote
-      // cadence (default ~120 frames) differs from the tier controller's
-      // 300-sample gate too (see the promote branch below).
+    } else if (promoteEligible) {
       state.goodFrames += 1;
       state.badFrames = 0;
     } else {
@@ -4571,6 +4605,66 @@
     return filtered || objects;
   }
 
+  // sceneEffectivePointQualityGroup resolves the QualityRung.LayerGroups tag
+  // a points entry gates on: the entry's own authored qualityGroup (see
+  // normalizeScenePointsEntry) when non-empty, else a scene-level name-based
+  // fallback via Props.PointQualityGroups (scene.pointQualityGroups) keyed
+  // by the SAME `material` field the named-material binding path already
+  // matches by (sceneNamedMaterialForRecord / sceneApplyNamedMaterialToPoints)
+  // — this is how GLB-baked point layers extracted at runtime by layer name
+  // (which cannot carry Points.QualityGroup directly) opt into ladder
+  // gating. Returns "" when neither source tags the entry (unconditionally
+  // visible).
+  function sceneEffectivePointQualityGroup(point, pointQualityGroups) {
+    const own = point && typeof point.qualityGroup === "string" ? point.qualityGroup : "";
+    if (own) {
+      return own;
+    }
+    if (!pointQualityGroups || typeof pointQualityGroups.get !== "function") {
+      return "";
+    }
+    const name = point && typeof point.material === "string" ? point.material : "";
+    if (!name) {
+      return "";
+    }
+    const mapped = pointQualityGroups.get(name);
+    return typeof mapped === "string" ? mapped : "";
+  }
+
+  // sceneFilterPointsByQualityGroups is sceneFilterObjectsByQualityGroups's
+  // Points counterpart — same admitted-groups semantics (untagged always
+  // visible; no ladder / rung with no layerGroups draws everything;
+  // per-frame, no remount needed for a rung transition to take effect), plus
+  // the pointQualityGroups name-based fallback for GLB-extracted layers (see
+  // sceneEffectivePointQualityGroup). The returned array carries a
+  // `qualitySkippedCount` own property (0 when nothing was authored/no
+  // ladder active) so callers can surface a point-quality-skipped stat
+  // without a second pass over the array.
+  function sceneFilterPointsByQualityGroups(points, admittedGroups, pointQualityGroups) {
+    if (!admittedGroups || !Array.isArray(points) || points.length === 0) {
+      if (Array.isArray(points) && points.qualitySkippedCount == null) {
+        points.qualitySkippedCount = 0;
+      }
+      return points;
+    }
+    let filtered = null;
+    let skipped = 0;
+    for (let i = 0; i < points.length; i += 1) {
+      const point = points[i];
+      const group = sceneEffectivePointQualityGroup(point, pointQualityGroups);
+      const admitted = !group || admittedGroups.indexOf(group) !== -1;
+      if (!admitted) {
+        skipped += 1;
+        if (!filtered) filtered = points.slice(0, i);
+      } else if (filtered) {
+        filtered.push(point);
+      }
+    }
+    const result = filtered || points;
+    result.qualitySkippedCount = skipped;
+    return result;
+  }
+
   // applySceneQualityLadderState is applySceneAdaptiveQualityState's ladder
   // counterpart — same publish-throttle shape (force / 250ms / revision-
   // changed gate via lastPublishedAtMS/lastPublishedRevision, reused
@@ -4595,6 +4689,7 @@
       measurement: state.measurement,
       missingRendererSamples: state.missingRendererSamples,
       lastMeasurement: state.lastMeasurement,
+      promoteRule: state.rungPromoteRule,
       rung,
     };
     const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
@@ -4612,6 +4707,13 @@
     // attribute set (data-gosx-scene3d-quality-frame-ms et al).
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-count", String(state.ladder ? state.ladder.length : 0));
     setAttrValue(mount, "data-gosx-scene3d-quality-measurement", state.measurement || "none");
+    // promote-rule: which promotion condition the last sample evaluated
+    // under — "gpu-headroom" (real GPU timing, the original 0.7×-target
+    // headroom rule) or "raf-cadence" (cpu-raf fallback: sustained
+    // not-missing-cadence, since rAF alone floors at the display refresh
+    // interval and can never show headroom below 0.7×target). See
+    // sceneUpdateQualityLadder's promoteEligible branch.
+    setAttrValue(mount, "data-gosx-scene3d-quality-promote-rule", state.rungPromoteRule || "gpu-headroom");
     setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-p95-ms", state.p95FrameMS > 0 ? state.p95FrameMS.toFixed(2) : "");
@@ -4639,6 +4741,12 @@
     // whatever was true at mount time. See handle.updateSceneProps's
     // postFXMaxPixels branch, the only non-mount/non-command mutator.
     setAttrValue(mount, "data-gosx-scene3d-postfx-max-pixels", String(Math.max(0, Math.floor(sceneNumber(state.postFXMaxPixels, 0)))));
+    // post-uniform-patches / post-uniform-patch-misses: cumulative counts
+    // from SCENE_CMD_SET_POST_UNIFORMS (see applyScenePostUniformsCommand in
+    // 10-runtime-scene-core.js) — how many named-pass uniform patches have
+    // applied vs. targeted a name with no matching CustomPost pass.
+    setAttrValue(mount, "data-gosx-scene3d-post-uniform-patches", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatches, 0)))));
+    setAttrValue(mount, "data-gosx-scene3d-post-uniform-patch-misses", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatchMisses, 0)))));
   }
 
   function createSceneStatsOverlay(mount, enabled) {
@@ -9287,7 +9395,7 @@
         sceneStateLights(sceneState),
         sceneState.environment,
         timeSeconds,
-        sceneStatePointsWithMaterials(sceneState),
+        sceneFilterPointsByQualityGroups(sceneStatePointsWithMaterials(sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality), sceneState.pointQualityGroups),
         sceneStateInstancedMeshesWithMaterials(sceneState),
         sceneState.computeParticles,
         sceneState.waterSystems,
@@ -9298,6 +9406,12 @@
       latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
+      // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups
+      // this frame (0 when no ladder is active or nothing was tagged). Same
+      // filtered bundle.points array both the WebGPU (16a-scene-webgpu.js
+      // drawPointsEntries) and WebGL (16-scene-webgl.js drawPointsEntries)
+      // backends draw from, so this single attribute covers both.
+      setAttrValue(ctx.mount, "data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
