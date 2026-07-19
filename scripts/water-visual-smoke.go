@@ -50,6 +50,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
 	cdppage "github.com/chromedp/cdproto/page"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
@@ -192,6 +193,259 @@ const viewportStateJS = `(function(){
 		canvasH: c ? c.height : 0,
 	});
 })()`
+
+// waterDropCountersJS reads the cumulative WebGPU drop-dispatch counters
+// (data-gosx-scene3d-webgpu-water-drop-dispatch-total / -drop-event) plus,
+// when the WebGL2 backend is forced (WATER_SMOKE_FORCE_WEBGL=1, the WSL/Dozen
+// default), the equivalent WebGL renderer.getStats() fields surfaced through
+// window.__gosx_scene3d_telemetry().rendererStats (waterEventsQueued/
+// waterEventsDrained/waterLastDropEventID) -- see 16-scene-webgl.js's
+// getStats() and 20-scene-mount.js's __gosx_scene3d_telemetry. Used as a
+// before/after baseline around the drag-burst phase below (water-parity/p6
+// Fix 1 evidence): the multi-drop-per-frame queue should show the FULL burst
+// size landing in one drain instead of coalescing to one drop.
+const waterDropCountersJS = `(function(){
+	var m = document.querySelector("[data-gosx-scene3d-renderer]");
+	var out = {
+		dropDispatchTotal: m ? Number(m.getAttribute("data-gosx-scene3d-webgpu-water-drop-dispatch-total") || 0) : 0,
+		dropDispatches: m ? Number(m.getAttribute("data-gosx-scene3d-webgpu-water-drop-dispatches") || 0) : 0,
+		lastDropEvent: m ? Number(m.getAttribute("data-gosx-scene3d-webgpu-water-drop-event") || 0) : 0,
+	};
+	try {
+		var t = typeof window.__gosx_scene3d_telemetry === "function" ? window.__gosx_scene3d_telemetry(m) : null;
+		var rs = t && t.rendererStats;
+		if (rs) {
+			out.webglEventsQueued = rs.waterEventsQueued || 0;
+			out.webglEventsDrained = rs.waterEventsDrained || 0;
+			out.webglLastDropEventID = rs.waterLastDropEventID || 0;
+		}
+	} catch (e) {}
+	return JSON.stringify(out);
+})()`
+
+// dragBurstJS fires a synthetic PointerEvent burst (one pointerdown + N
+// pointermoves + one pointerup, ALL dispatched synchronously in a single
+// tight loop, so every move lands before the browser gets a chance to paint
+// a frame) directly at the water canvas -- exactly the "fast stroke, many
+// pointermove events between two rendered frames" scenario Fix 1 targets
+// (see sceneManagedFluidObjectQueueDrop in 19b-scene-control-forms.js and
+// its bounded controlState.dropEvents queue). dispatchEvent() invokes
+// listeners synchronously and untrusted (isTrusted:false) synthetic events
+// still reach addEventListener callbacks, so this reliably reproduces "many
+// drops queued before the next render" without racing real OS mouse-move
+// coalescing. steps=1 pointerdown position is deliberately off the fluid
+// object (see callers) so sceneManagedFluidObjectStartInteraction resolves
+// "AddDrops" mode, not "MoveObject".
+const dragBurstJS = `(function(startX, startY, endX, endY, steps){
+	return new Promise(function(resolve){
+		var mount = document.querySelector("[data-gosx-scene3d-renderer]");
+		var canvas = mount ? mount.querySelector("canvas") : document.querySelector("canvas");
+		if (!canvas) { resolve("error:no-canvas"); return; }
+		function fire(type, x, y, buttons){
+			var ev = new PointerEvent(type, {
+				bubbles: true, cancelable: true, composed: true,
+				pointerId: 1, pointerType: "mouse", isPrimary: true,
+				button: 0, buttons: buttons, clientX: x, clientY: y,
+			});
+			canvas.dispatchEvent(ev);
+		}
+		fire("pointerdown", startX, startY, 1);
+		var moved = 0;
+		for (var i = 1; i <= steps; i++) {
+			var t = i / steps;
+			fire("pointermove", startX + (endX - startX) * t, startY + (endY - startY) * t, 1);
+			moved++;
+		}
+		fire("pointerup", endX, endY, 0);
+		// The WebGPU water sim ticks at a fixed 60Hz cadence (see
+		// waterClockOptions in 16a-scene-webgpu.js), decoupled from the
+		// display's actual refresh rate (240Hz on this rig, ~4ms/frame) -- two
+		// rAFs is NOT enough wall-clock time to guarantee even one tick has
+		// run, which would make the "after" drop-dispatch counters read as
+		// stale/undrained even though the burst was queued correctly. Wait a
+		// real ~150ms (9+ ticks at 60Hz) so drain is unambiguous before the
+		// caller reads counters/screenshots.
+		setTimeout(function(){
+			resolve(JSON.stringify({ moved: moved }));
+		}, 150);
+	});
+})(%d, %d, %d, %d, %d)`
+
+// runDragBurstPhase drives dragBurstJS across the water canvas and reports
+// the moved-event count plus before/after cumulative drop-dispatch counters
+// (waterDropCountersJS: consumed/dispatched) and the queued-event counter
+// (dropEventCounterJS: controlState.dropEventID, bumped on EVERY queued drop
+// regardless of whether the sim has drained it yet), screenshotting before
+// and after so a human can compare ripple-trail density directly.
+// startX/startY/endX/endY are deliberately chosen off the default Sphere
+// object's screen footprint (see the water demo's default camera + object
+// position) so the whole drag stays in "AddDrops" pointer mode.
+func runDragBurstPhase(ctx context.Context, saveDir string, startX, startY, endX, endY, steps int) (before, after, queuedBefore, queuedAfter, result string) {
+	_ = evalAwait(ctx, waterDropCountersJS, &before)
+	_ = evalAwait(ctx, dropEventCounterJS, &queuedBefore)
+	shot(ctx, saveDir, "gosx-drag-burst-before")
+	if err := evalAwait(ctx, fmt.Sprintf(dragBurstJS, startX, startY, endX, endY, steps), &result); err != nil {
+		result = "error:" + err.Error()
+	}
+	// dragBurstJS's own internal wait guarantees at least one simulation tick
+	// has RUN, but the mount's data-gosx-scene3d-webgpu-water-drop-dispatch-*
+	// diagnostic attributes are published on a separate cadence from the
+	// dispatch itself -- an extra real sleep here avoids reading them mid-
+	// publish and reporting a stale pre-drain snapshot.
+	_ = chromedp.Run(ctx, chromedp.Sleep(300*time.Millisecond))
+	_ = evalAwait(ctx, waterDropCountersJS, &after)
+	_ = evalAwait(ctx, dropEventCounterJS, &queuedAfter)
+	shot(ctx, saveDir, "gosx-drag-burst-after")
+	return before, after, queuedBefore, queuedAfter, result
+}
+
+// sphereScreenPositionJS forward-projects a world point (default: the water
+// demo's Sphere at -0.4,-0.75,0.2) to canvas-relative viewport (clientX,
+// clientY) using the LIVE pick camera (window.__gosx_scene3d_telemetry()
+// .camera, backed by currentMountedSceneCamera() in 20-scene-mount.js -- the
+// SAME function sceneManagedControlCamera/options.getCamera() calls for hit
+// testing, see 19b-scene-control-forms.js:870-876). Mirrors
+// sceneProjectPoint's exact math (11-scene-math.js:120-181): camera-local
+// translate, inverse Z/Y/X rotation, fovY-based perspective divide -- so a
+// coordinate this reports as "on the sphere" is provably where the CURRENT
+// pick camera also believes the sphere to be. It is deliberately NOT an
+// independent check of pick-vs-render camera coherence (see the p6 Fix 2
+// report for why that's proven identical by construction once orbit
+// controls are touched: sceneCurrentControlCamera's orbit branch derives
+// position/rotation solely from the shared, mutable controls.orbit object,
+// not from whatever "source camera" happens to be passed in) -- it exists so
+// runGrabAttemptPhase can locate a moving target after each orbit step.
+const sphereScreenPositionJS = `(function(wx, wy, wz){
+	var mount = document.querySelector("[data-gosx-scene3d-renderer]");
+	var t = typeof window.__gosx_scene3d_telemetry === "function" ? window.__gosx_scene3d_telemetry(mount) : null;
+	var cam = t && t.camera;
+	if (!cam) return JSON.stringify({ error: "no-camera" });
+	var canvas = mount ? mount.querySelector("canvas") : document.querySelector("canvas");
+	if (!canvas) return JSON.stringify({ error: "no-canvas" });
+	var rect = canvas.getBoundingClientRect();
+	var width = rect.width, height = rect.height;
+	var lx = wx - cam.x, ly = wy - cam.y, lz = wz + cam.z;
+	var sinZ = Math.sin(-cam.rotationZ), cosZ = Math.cos(-cam.rotationZ);
+	var nx = lx * cosZ - ly * sinZ, ny = lx * sinZ + ly * cosZ;
+	lx = nx; ly = ny;
+	var sinY = Math.sin(-cam.rotationY), cosY = Math.cos(-cam.rotationY);
+	nx = lx * cosY + lz * sinY; var nz = -lx * sinY + lz * cosY;
+	lx = nx; lz = nz;
+	var sinX = Math.sin(-cam.rotationX), cosX = Math.cos(-cam.rotationX);
+	ny = ly * cosX - lz * sinX; nz = ly * sinX + lz * cosX;
+	ly = ny; lz = nz;
+	if (lz <= (cam.near || 0.01) || lz >= (cam.far || 1000)) return JSON.stringify({ error: "clipped", lz: lz });
+	var focal = (height / 2) / Math.tan((cam.fov * Math.PI) / 360);
+	var sx = width / 2 + (lx * focal) / lz;
+	var sy = height / 2 - (ly * focal) / lz;
+	return JSON.stringify({ clientX: rect.left + sx, clientY: rect.top + sy, lz: lz });
+})(%f, %f, %f)`
+
+// dropEventCounterJS reads the fluid-object form's reflected LATEST drop
+// event id (sceneManagedFluidObjectReflectDropEvent's
+// data-gosx-scene3d-fluid-drop-events). Used as a grab-success PROXY: a
+// pointerdown that hits the sphere resolves "MoveObject"
+// (sceneManagedFluidObjectStartInteraction) and queues no drop; one that
+// misses falls through to "AddDrops" and queues a new drop, bumping this id.
+// NOT pointerModeJS/data-gosx-scene3d-fluid-pointer-mode: that attribute is
+// only reflected on pointer END (sceneManagedFluidObjectReflectPointerMode's
+// two call sites are both in the release/pinch-cancel paths, see
+// 19b-scene-control-forms.js), never at pointerdown when the mode is first
+// resolved -- reading it here would always observe the stale "" from the
+// previous interaction's cleanup, not the just-resolved mode.
+const dropEventCounterJS = `(function(){
+	var root = document.querySelector('[data-gosx-scene3d-control-form="fluid-object"]');
+	return root ? (root.getAttribute("data-gosx-scene3d-fluid-drop-events") || "0") : "error:no-form";
+})()`
+
+// grabAttemptResult is one pick-coherence trial: the analytically-expected
+// sphere screen position for the resulting live camera immediately after a
+// scripted orbit step, and whether the grab (pointerdown at that position)
+// left the drop-event counter unchanged (hit -- the ray found the sphere) or
+// bumped it (miss -- fell through to a drop).
+type grabAttemptResult struct {
+	Trial       int    `json:"trial"`
+	ClientX     string `json:"clientX"`
+	ClientY     string `json:"clientY"`
+	DropsBefore string `json:"dropsBefore"`
+	DropsAfter  string `json:"dropsAfter"`
+	Hit         bool   `json:"hit"`
+}
+
+// dispatchMouse issues one real (CDP-trusted) mouse event of the given type
+// at (x,y). Used to build genuine press/move/release sequences for the
+// orbit-drag steps below -- NOT synthetic dispatchEvent() calls -- so the
+// SAME orbit-control code path (and its setPointerCapture/inertia machinery)
+// a real user's drag would exercise gets exercised here too.
+func dispatchMouse(ctx context.Context, typ input.MouseType, x, y float64, buttons int64) error {
+	p := &input.DispatchMouseEventParams{Type: typ, X: x, Y: y, Buttons: buttons}
+	if typ == input.MousePressed || typ == input.MouseReleased {
+		p.Button = input.Left
+		p.ClickCount = 1
+	}
+	return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error { return p.Do(ctx) }))
+}
+
+// runGrabAttemptPhase is the water-parity/p6 Fix 2 A/B: N trials, each a
+// real scripted orbit drag (anchored OUTSIDE the pool -- orbitAnchorX/Y --
+// so the fluid-object's own capture-phase pointerdown handler resolves
+// "OrbitCamera" and lets the drag reach the underlying orbit controls,
+// instead of "AddDrops"/"MoveObject" swallowing it) immediately followed by
+// ONE grab attempt at the sphere's freshly-recomputed screen position
+// (sphereScreenPositionJS, against the SAME default Sphere world position
+// -0.4,-0.75,0.2 the completed investigation used), reporting the hit rate
+// via dropEventCounterJS's before/after proxy. Each trial drags the SAME
+// anchor->delta vector again (like a real user flicking further in the same
+// direction each time): orbit yaw/pitch are absolute state accumulated by
+// per-pixel delta during an active drag, not by the drag's absolute screen
+// coordinates, so repeating the same relative drag keeps rotating further.
+func runGrabAttemptPhase(ctx context.Context, trials int, orbitAnchorX, orbitAnchorY float64, dxPerTrial, dyPerTrial float64, orbitSteps int) []grabAttemptResult {
+	results := make([]grabAttemptResult, 0, trials)
+	for i := 1; i <= trials; i++ {
+		var dropsBeforeOrbit string
+		_ = evalAwait(ctx, dropEventCounterJS, &dropsBeforeOrbit)
+
+		ex, ey := orbitAnchorX+dxPerTrial, orbitAnchorY+dyPerTrial
+		_ = dispatchMouse(ctx, input.MousePressed, orbitAnchorX, orbitAnchorY, 1)
+		for step := 1; step <= orbitSteps; step++ {
+			t := float64(step) / float64(orbitSteps)
+			_ = dispatchMouse(ctx, input.MouseMoved, orbitAnchorX+(ex-orbitAnchorX)*t, orbitAnchorY+(ey-orbitAnchorY)*t, 1)
+		}
+		_ = dispatchMouse(ctx, input.MouseReleased, ex, ey, 0)
+
+		var dropsAfterOrbit string
+		_ = evalAwait(ctx, dropEventCounterJS, &dropsAfterOrbit)
+		if dropsAfterOrbit != dropsBeforeOrbit {
+			fmt.Printf("  grab trial %d: WARNING orbit anchor (%.0f,%.0f) fell inside the pool (drops %s->%s) -- not a clean orbit-only drag\n", i, orbitAnchorX, orbitAnchorY, dropsBeforeOrbit, dropsAfterOrbit)
+		}
+
+		var posJSON string
+		_ = evalAwait(ctx, fmt.Sprintf(sphereScreenPositionJS, -0.4, -0.75, 0.2), &posJSON)
+		var pos struct {
+			ClientX float64 `json:"clientX"`
+			ClientY float64 `json:"clientY"`
+			Error   string  `json:"error"`
+		}
+		_ = json.Unmarshal([]byte(posJSON), &pos)
+		res := grabAttemptResult{Trial: i, ClientX: fmt.Sprintf("%.1f", pos.ClientX), ClientY: fmt.Sprintf("%.1f", pos.ClientY)}
+		if pos.Error != "" {
+			res.DropsBefore, res.DropsAfter = "error:"+pos.Error, "error:"+pos.Error
+			results = append(results, res)
+			continue
+		}
+		var dropsBefore string
+		_ = evalAwait(ctx, dropEventCounterJS, &dropsBefore)
+		_ = dispatchMouse(ctx, input.MousePressed, pos.ClientX, pos.ClientY, 1)
+		var dropsAfter string
+		_ = evalAwait(ctx, dropEventCounterJS, &dropsAfter)
+		_ = dispatchMouse(ctx, input.MouseReleased, pos.ClientX, pos.ClientY, 0)
+		res.DropsBefore = dropsBefore
+		res.DropsAfter = dropsAfter
+		res.Hit = dropsBefore == dropsAfter
+		results = append(results, res)
+	}
+	return results
+}
 
 // objectTexturePassCountersJS reads just the two cumulative counters
 // switchFluidObject needs as a wait baseline, cheaply (no JSON.stringify of
@@ -393,21 +647,25 @@ func sampleUnderLoad(ctx context.Context, x, y, seconds, clickIntervalMS int) (f
 // scenarioResult is one demo's full report for one run: idle, light-active,
 // and (if requested) stress-phase fps samples plus renderer identity.
 type scenarioResult struct {
-	Name       string          `json:"name"`
-	GLRenderer string          `json:"glRenderer,omitempty"`
-	ObjectReq  string          `json:"objectRequested,omitempty"`
-	ObjectGot  string          `json:"objectSelected,omitempty"`
-	ObjectWait json.RawMessage `json:"objectSwitchWait,omitempty"`
-	State      json.RawMessage `json:"state,omitempty"`
-	Idle       json.RawMessage `json:"idle,omitempty"`
-	Active     json.RawMessage `json:"active,omitempty"`
-	RestState  json.RawMessage `json:"restState,omitempty"`
-	Rest       json.RawMessage `json:"rest,omitempty"`
-	Stress     json.RawMessage `json:"stress,omitempty"`
-	StressView json.RawMessage `json:"stressViewport,omitempty"`
-	StressReq  string          `json:"stressRequested,omitempty"`
-	Clicks     int             `json:"stressClicks,omitempty"`
-	Err        string          `json:"err,omitempty"`
+	Name            string              `json:"name"`
+	GLRenderer      string              `json:"glRenderer,omitempty"`
+	ObjectReq       string              `json:"objectRequested,omitempty"`
+	ObjectGot       string              `json:"objectSelected,omitempty"`
+	ObjectWait      json.RawMessage     `json:"objectSwitchWait,omitempty"`
+	State           json.RawMessage     `json:"state,omitempty"`
+	Idle            json.RawMessage     `json:"idle,omitempty"`
+	Active          json.RawMessage     `json:"active,omitempty"`
+	RestState       json.RawMessage     `json:"restState,omitempty"`
+	Rest            json.RawMessage     `json:"rest,omitempty"`
+	Stress          json.RawMessage     `json:"stress,omitempty"`
+	StressView      json.RawMessage     `json:"stressViewport,omitempty"`
+	StressReq       string              `json:"stressRequested,omitempty"`
+	Clicks          int                 `json:"stressClicks,omitempty"`
+	DragBurstBefore json.RawMessage     `json:"dragBurstBefore,omitempty"`
+	DragBurstAfter  json.RawMessage     `json:"dragBurstAfter,omitempty"`
+	DragBurstResult string              `json:"dragBurstResult,omitempty"`
+	GrabAttempts    []grabAttemptResult `json:"grabAttempts,omitempty"`
+	Err             string              `json:"err,omitempty"`
 }
 
 func rawOrNil(s string) json.RawMessage {
@@ -484,6 +742,56 @@ func runGosxScenario(root context.Context, saveDir, gosxURL, object string, stre
 	shot(ctx, saveDir, "gosx-active")
 	_ = evalAwait(ctx, gosxStateJS, &state)
 	fmt.Println("  state(after):", state)
+
+	// water-parity/p6 Fix 1 evidence: a fast drag burst (many pointermove
+	// events dispatched synchronously before the next paint) must land ALL
+	// its drops, not coalesce to the single latest one. Coordinates avoid the
+	// default Sphere object's screen footprint (same water region the
+	// "poke the water" clicks above already use) so the whole stroke stays in
+	// AddDrops mode.
+	if getenv("WATER_SMOKE_DRAG_BURST", "0") == "1" {
+		if getenv("WATER_SMOKE_DROP_DIAG", "0") == "1" {
+			var diagResult string
+			_ = evalAwait(ctx, `(function(){window.__gosx_water_drop_diag = true; return "on";})()`, &diagResult)
+		}
+		steps := getenvInt("WATER_SMOKE_DRAG_BURST_STEPS", 24)
+		before, after, queuedBefore, queuedAfter, result := runDragBurstPhase(ctx, saveDir, 560, 360, 760, 460, steps)
+		fmt.Println("  dragBurst queued (before->after):", queuedBefore, "->", queuedAfter)
+		fmt.Println("  dragBurst before:", before)
+		fmt.Println("  dragBurst result:", result)
+		fmt.Println("  dragBurst after: ", after)
+		res.DragBurstBefore = rawOrNil(before)
+		res.DragBurstAfter = rawOrNil(after)
+		res.DragBurstResult = result
+	}
+
+	// water-parity/p6 Fix 2 A/B: N scripted orbit-drag + immediate-grab
+	// trials against the default Sphere (-0.4,-0.75,0.2) -- see
+	// runGrabAttemptPhase's doc comment for why this is a self-consistency
+	// confirmation (the pick-vs-render camera coherence question is already
+	// resolved by code: sceneCurrentControlCamera's orbit branch reads the
+	// shared, mutable controls.orbit object once touched, independent of
+	// whatever "source camera" is passed), not an independent measurement.
+	if getenv("WATER_SMOKE_GRAB_AB", "0") == "1" {
+		trials := getenvInt("WATER_SMOKE_GRAB_TRIALS", 10)
+		orbitSteps := getenvInt("WATER_SMOKE_GRAB_ORBIT_STEPS", 6)
+		dx := getenvFloat("WATER_SMOKE_GRAB_ORBIT_DX", 18)
+		dy := getenvFloat("WATER_SMOKE_GRAB_ORBIT_DY", 9)
+		// Anchor OUTSIDE the pool (top-right sky/background area at 1280x800)
+		// so the drag resolves "OrbitCamera" in
+		// sceneManagedFluidObjectStartInteraction, not "AddDrops".
+		attempts := runGrabAttemptPhase(ctx, trials, 1180, 70, dx, dy, orbitSteps)
+		hits := 0
+		for _, a := range attempts {
+			fmt.Printf("  grab trial %d: (%s,%s) drops %s->%s hit=%v\n", a.Trial, a.ClientX, a.ClientY, a.DropsBefore, a.DropsAfter, a.Hit)
+			if a.Hit {
+				hits++
+			}
+		}
+		fmt.Printf("  grab hit rate: %d/%d\n", hits, len(attempts))
+		res.GrabAttempts = attempts
+		shot(ctx, saveDir, "gosx-grab-ab-final")
+	}
 
 	// M1 rest verification (water-parity-campaign): the at-rest gate needs
 	// the CPU-only energy proxy to decay below WATER_REST_ENERGY_EPSILON AND
