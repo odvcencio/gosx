@@ -14365,6 +14365,22 @@
         waterNormalDispatchSeq: waterUpdateStats.waterNormalDispatchSeq,
         waterSampledStateCopies: waterUpdateStats.waterSampledStateCopies,
         waterSampledStateSyncSeq: waterUpdateStats.waterSampledStateSyncSeq,
+        // P4-M1 fix (water-parity-campaign): waterAtRestSystems/
+        // waterRestSubstepsSkipped (M5 at-rest gating) and waterUniformUploads/
+        // waterUniformUploadsSkipped (M6 uniform-upload dedup) were computed
+        // and incremented on updateWaterSystems' returned stats object (see
+        // WATER_REST_ENERGY_EPSILON's comment above updateWaterSystems) but
+        // were never copied into this frameStats literal that
+        // publishWebGPUFrameStats actually reads -- so
+        // data-gosx-scene3d-webgpu-water-at-rest-systems (and the sibling
+        // rest/dedup counters) always published the `|| 0` fallback and never
+        // reflected real state, regardless of whether the underlying gating
+        // logic fired correctly. Wiring the four fields through here is the
+        // fix; the gating logic itself was already correct.
+        waterAtRestSystems: waterUpdateStats.waterAtRestSystems,
+        waterRestSubstepsSkipped: waterUpdateStats.waterRestSubstepsSkipped,
+        waterUniformUploads: waterUpdateStats.waterUniformUploads,
+        waterUniformUploadsSkipped: waterUpdateStats.waterUniformUploadsSkipped,
         waterQualityTier: waterUpdateStats.waterQualityTier,
         waterQualityRevision: waterUpdateStats.waterQualityRevision,
         waterSurfaceResolution: waterUpdateStats.waterSurfaceResolution,

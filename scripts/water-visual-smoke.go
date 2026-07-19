@@ -75,6 +75,20 @@ const gosxStateJS = `(function(){
 			return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : "";
 		} catch (err) { return String(err); }
 	})();
+	// P4-M2 (water-parity-campaign): dump EVERY data-gosx-scene3d-webgpu-*
+	// attribute the mount currently carries (not just a hand-picked subset) so
+	// the gpu-ms/water pass-count/dedup counters are attributable frame cost
+	// evidence rather than assertions. webgpuAll is keyed by the attribute's
+	// suffix after "data-gosx-scene3d-webgpu-".
+	var webgpuAll = {};
+	if (m) {
+		for (var i = 0; i < m.attributes.length; i++) {
+			var attr = m.attributes[i];
+			if (attr.name.indexOf("data-gosx-scene3d-webgpu-") === 0) {
+				webgpuAll[attr.name.slice("data-gosx-scene3d-webgpu-".length)] = attr.value;
+			}
+		}
+	}
 	return JSON.stringify({
 		renderer: a("renderer"),
 		ready: a("ready"),
@@ -89,7 +103,10 @@ const gosxStateJS = `(function(){
 		// a future WebGPU-capable run of this harness picks them up for free.
 		waterAtRest: a("webgpu-water-at-rest-systems"),
 		restSkipped: a("webgpu-water-rest-substeps-skipped"),
+		gpuMS: a("webgpu-gpu-ms"),
+		gpuTiming: a("webgpu-gpu-timing"),
 		glRenderer: gl,
+		webgpuAll: webgpuAll,
 	});
 })()`
 
@@ -234,6 +251,8 @@ type scenarioResult struct {
 	State      json.RawMessage `json:"state,omitempty"`
 	Idle       json.RawMessage `json:"idle,omitempty"`
 	Active     json.RawMessage `json:"active,omitempty"`
+	RestState  json.RawMessage `json:"restState,omitempty"`
+	Rest       json.RawMessage `json:"rest,omitempty"`
 	Stress     json.RawMessage `json:"stress,omitempty"`
 	StressView json.RawMessage `json:"stressViewport,omitempty"`
 	StressReq  string          `json:"stressRequested,omitempty"`
@@ -297,6 +316,28 @@ func runGosxScenario(root context.Context, saveDir, gosxURL string, stress bool,
 	shot(ctx, saveDir, "gosx-active")
 	_ = evalAwait(ctx, gosxStateJS, &state)
 	fmt.Println("  state(after):", state)
+
+	// M1 rest verification (water-parity-campaign): the at-rest gate needs
+	// the CPU-only energy proxy to decay below WATER_REST_ENERGY_EPSILON AND
+	// quietMS to clear WATER_REST_MIN_QUIET_MS since the LAST disturbance --
+	// with the demo's default damping=0.995 that is ~11.5s of undisturbed sim
+	// time (see WATER_REST_ENERGY_EPSILON's comment in 16a-scene-webgpu.js).
+	// The active-phase clicks just above reset that timer, so wait clearly
+	// past the decay window for a clean, unambiguously-rested sample instead
+	// of racing the crossover the way the original 12s settle + 4s idle
+	// sample did (that window sampled right AT the crossover, ~0.001 vs the
+	// 0.001 threshold -- see the P4-M1 report).
+	var restState, restFPS string
+	if err := chromedp.Run(ctx, chromedp.Sleep(13*time.Second)); err == nil {
+		_ = evalAwait(ctx, gosxStateJS, &restState)
+		fmt.Println("  state(rest):", restState)
+		res.RestState = rawOrNil(restState)
+		shot(ctx, saveDir, "gosx-rested")
+		if err := evalAwait(ctx, fmt.Sprintf(fpsSampleJS, 4), &restFPS); err == nil {
+			fmt.Println("  fps(rest):", restFPS)
+			res.Rest = rawOrNil(restFPS)
+		}
+	}
 
 	if stress {
 		res.StressReq = fmt.Sprintf("%dx%d@%dx", stressW, stressH, stressDPR)
