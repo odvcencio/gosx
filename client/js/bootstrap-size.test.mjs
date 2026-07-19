@@ -237,7 +237,10 @@ const budgets = [
   // admitted-set filtering, layer-group visibility filter) plus G1's
   // live-patchable postFXMaxPixels escape hatch. gzip/brotli headroom
   // unchanged. Measured: 1_310_466 / 347_360 / 280_648.
-  { file: "bootstrap.js", raw: 1_311_000, gzip: 348_000, brotli: 281_000 },
+  // Rebased onto main (water-parity/p6-interaction merged in the interim).
+  // Bumped raw 1_311_000 -> 1_314_000 and brotli 281_000 -> 282_000; gzip
+  // headroom unchanged. Measured: 1_313_230 / 347_786 / 281_009.
+  { file: "bootstrap.js", raw: 1_314_000, gzip: 348_000, brotli: 282_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -415,7 +418,10 @@ const budgets = [
   // bootstrap.js monolith above — this chunk carries the same Scene3D mount
   // source). gzip/brotli headroom unchanged. Measured: 713_428 / 195_299 /
   // 160_687.
-  { file: "bootstrap-feature-scene3d.js", raw: 714_000, gzip: 196_000, brotli: 162_000 },
+  // Rebased onto main (water-parity/p6-interaction merged in the interim).
+  // Bumped raw 714_000 -> 715_000; gzip/brotli headroom unchanged. Measured:
+  // 714_469 / 195_532 / 160_964.
+  { file: "bootstrap-feature-scene3d.js", raw: 715_000, gzip: 196_000, brotli: 162_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
