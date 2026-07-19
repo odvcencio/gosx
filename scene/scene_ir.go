@@ -58,6 +58,12 @@ type SceneIR struct {
 	RenderGraph        *RenderGraphIR       `json:"renderGraph,omitempty"`
 	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
+	// QualityLadder / QualityStartRung: see Props.QualityLadder and
+	// Props.QualityStartRung (scene/quality_ladder.go). Omitted (nil/zero)
+	// when no ladder is authored — the client governor's legacy dprCap-tier
+	// adaptiveQuality behavior is unchanged in that case.
+	QualityLadder    []QualityRungIR `json:"qualityLadder,omitempty"`
+	QualityStartRung int             `json:"qualityStartRung,omitempty"`
 	// BackendCaps is the honesty-gate verdict: which rendering backends can
 	// faithfully render this scene, plus per-backend feature degradations. It
 	// is computed once during Props.SceneIR() and ships to the JS runtime.
@@ -223,6 +229,9 @@ type ObjectIR struct {
 	// scene.Mesh.GizmoFormMode.
 	GizmoHelper    bool           `json:"gizmoHelper,omitempty"`
 	GizmoFormMode  string         `json:"gizmoFormMode,omitempty"`
+	// QualityGroup: see scene.Mesh.QualityGroup and QualityRung.LayerGroups
+	// (scene/quality_ladder.go). Empty means unconditionally visible.
+	QualityGroup   string         `json:"qualityGroup,omitempty"`
 	OutlineColor   string         `json:"outlineColor,omitempty"`
 	OutlineWidth   float64        `json:"outlineWidth,omitempty"`
 	CastShadow     bool           `json:"castShadow,omitempty"`
@@ -1023,6 +1032,10 @@ func (p Props) SceneIR() SceneIR {
 	}
 	ir.PostFXMaxPixels = p.PostFX.resolveMaxPixels()
 	ir.ShadowMaxPixels = p.Shadows.resolveMaxPixels()
+	ir.QualityLadder = qualityLadderSceneIR(p.QualityLadder)
+	if len(ir.QualityLadder) > 0 {
+		ir.QualityStartRung = resolveQualityStartRung(p.QualityLadder, p.QualityStartRung)
+	}
 	if p.Compression != nil && p.Compression.BitWidth > 0 {
 		previewBW := 0
 		if p.Compression.Progressive || p.Compression.LOD {
@@ -1256,7 +1269,7 @@ func (ir *SceneIR) UnmarshalJSON(data []byte) error {
 }
 
 func (ir SceneIR) isZero() bool {
-	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.WaterSystems) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0
+	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.WaterSystems) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0 && len(ir.QualityLadder) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -1324,6 +1337,16 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if ir.ShadowMaxPixels != 0 {
 		out["shadowMaxPixels"] = ir.ShadowMaxPixels
+	}
+	if len(ir.QualityLadder) > 0 {
+		rungs := make([]map[string]any, 0, len(ir.QualityLadder))
+		for _, r := range ir.QualityLadder {
+			rungs = append(rungs, r.legacyProps())
+		}
+		out["qualityLadder"] = rungs
+		if ir.QualityStartRung != 0 {
+			out["qualityStartRung"] = ir.QualityStartRung
+		}
 	}
 	if ir.BackendCaps != nil {
 		out["backendCaps"] = ir.BackendCaps
@@ -1437,6 +1460,7 @@ func (item ObjectIR) legacyProps() map[string]any {
 		record["gizmoHelper"] = true
 	}
 	setString(record, "gizmoFormMode", item.GizmoFormMode)
+	setString(record, "qualityGroup", item.QualityGroup)
 	setString(record, "outlineColor", item.OutlineColor)
 	setNumeric(record, "outlineWidth", item.OutlineWidth)
 	if item.CastShadow {

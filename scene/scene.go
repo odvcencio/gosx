@@ -186,6 +186,20 @@ type Props struct {
 	Shadows               Shadows
 	Physics               PhysicsWorld
 	Graph                 Graph
+	// QualityLadder declares a bidirectional work-based ABR (adaptive bit
+	// rate) ladder — see scene/quality_ladder.go for the design law this
+	// schema enforces by construction (no resolution/DPR/postFX-pixel-budget
+	// knob exists on QualityRung). When non-empty, the client governor
+	// (20-scene-mount.js sceneUpdateAdaptiveQuality) replaces its legacy
+	// dprCap-tier behavior with rung promotion/demotion driven off delivered
+	// frame time. Empty (the default): existing adaptiveQuality dprCap-tier
+	// behavior is unchanged.
+	QualityLadder []QualityRung
+	// QualityStartRung selects the index into QualityLadder the governor
+	// starts at. Defaults to 0 (the crisp raw-composite floor rung) and is
+	// clamped to a valid index at lowering time. Ignored when QualityLadder
+	// is empty.
+	QualityStartRung int
 	// Audio optionally declares a gosxAudio manifest (buses + clips) for
 	// this scene's engine. It lowers under the "audio" prop key, which the
 	// client's mountEngine already forwards to
@@ -355,6 +369,13 @@ type Mesh struct {
 	// are serialized into a SEPARATE wire program (SceneIR.MaterialMotionProgram)
 	// so material packets route independently of transform motion in the runtime.
 	MaterialAnims []MaterialUniformAnim
+	// QualityGroup optionally tags this mesh as an author-defined visibility
+	// layer that a Props.QualityLadder rung can admit or withhold — see
+	// QualityRung.LayerGroups (scene/quality_ladder.go). Empty (the default)
+	// means the mesh is unconditionally visible at every rung; a ladder only
+	// gates meshes that opt in. Toggling is instant (no transition) — the
+	// app choreographs any visual blending itself.
+	QualityGroup string
 }
 
 // MaterialUniformAnim is a flat keyframe spec for one animated material uniform,
@@ -2683,6 +2704,7 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.InState = mesh.InState.legacyProps()
 	record.OutState = mesh.OutState.legacyProps()
 	record.Live = normalizeLive(mesh.Live)
+	record.QualityGroup = strings.TrimSpace(mesh.QualityGroup)
 	l.objects = append(l.objects, record)
 	l.anchors[id] = world
 	for _, child := range mesh.Children {
