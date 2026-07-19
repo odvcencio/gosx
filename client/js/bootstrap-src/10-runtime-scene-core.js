@@ -5583,6 +5583,38 @@
     const objectPassString = sceneWorldObjectRenderPass(object, material);
     const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
     const emitWireSegments = !sceneMaterialSuppressesGeneratedWireSegments(material) && Boolean(material && material.wireframe || outlineWidth > 0);
+    // bundle.worldMeshColors is a CPU-baked per-vertex LIT color (ambient +
+    // sky/ground + every scene light, via sceneLitColorRGBA) that historically
+    // fed the legacy immediate-mode WebGL mesh fallback
+    // (renderSceneWebGLMeshObject, reached only through
+    // renderSceneWebGLWorldBundle when the bundle also carries world LINE
+    // segments -- e.g. a debug grid or gizmo helper -- AND the object's
+    // material has no texture). Neither the modern WebGL2 PBR path
+    // (drawPBRObjectList/buildPBRDrawList in 16-scene-webgl.js) nor the
+    // WebGPU renderer (16a-scene-webgpu.js) ever reads worldMeshColors --
+    // both compute lighting in the GPU fragment shader from
+    // worldMeshPositions/Normals/UVs/Tangents instead (grep confirms zero
+    // references in either file). Computing the full per-vertex analytic
+    // light loop for every triangle corner of every mesh object, every
+    // frame, was therefore pure waste for the overwhelming majority of
+    // scenes: a duck/torus-class glTF or procedural mesh with 10k+ vertices
+    // paid tens of milliseconds/frame in sceneLitColorRGBA (regex-based hex
+    // color parsing + a light-array loop, repeated per triangle corner) for
+    // an array nothing on the hot render path ever reads -- see the
+    // water-parity/p5-duck PR description for the profiled evidence (~30%+
+    // of total CPU time, capping a 12k-vertex glTF object's frame rate at
+    // ~1/4 of an equivalent low-poly object's).
+    //
+    // The one case where the computed lighting genuinely matters: wire
+    // segments (wireframe fill or the "selected object" outline highlight,
+    // appendSceneMeshWireSegment below) ARE drawn through the shared
+    // world-line path both backends actually render, so `lighting` is still
+    // computed with full fidelity whenever emitWireSegments is true. In the
+    // (far more common) non-wireframe case, worldMeshColors gets the
+    // material's flat base color instead -- computed ONCE per object here,
+    // not per vertex corner -- which keeps the rare legacy fallback's output
+    // plausible without paying per-vertex lighting cost nothing displays.
+    const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     if (object.skin && vertices.joints && vertices.weights) {
       const bounds = vertices._skinnedLocalBounds || object.bounds || { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
       bundle.meshObjects.push({
@@ -5640,11 +5672,18 @@
         sceneMeshWorldNormal(object, vertices, tri + 1, timeSeconds),
         sceneMeshWorldNormal(object, vertices, tri + 2, timeSeconds),
       ];
-      const lighting = [
-        sceneLitColorRGBA(material, points[0], normals[0], lights, environment),
-        sceneLitColorRGBA(material, points[1], normals[1], lights, environment),
-        sceneLitColorRGBA(material, points[2], normals[2], lights, environment),
-      ];
+      // Full per-vertex analytic lighting is only computed when its result
+      // is actually visible (wire segments) -- see flatMeshColor's comment
+      // above. Otherwise reuse the one flat base color computed once for
+      // the whole object; worldMeshColors' only consumer (the legacy
+      // untextured-WebGL fallback) doesn't need per-vertex fidelity.
+      const lighting = emitWireSegments
+        ? [
+          sceneLitColorRGBA(material, points[0], normals[0], lights, environment),
+          sceneLitColorRGBA(material, points[1], normals[1], lights, environment),
+          sceneLitColorRGBA(material, points[2], normals[2], lights, environment),
+        ]
+        : null;
       const uvs = [
         sceneMeshVertexUV(vertices, tri),
         sceneMeshVertexUV(vertices, tri + 1),
@@ -5661,7 +5700,7 @@
         const normal = normals[index];
         const uv = uvs[index];
         const tangent = tangents[index];
-        const color = lighting[index];
+        const color = lighting ? lighting[index] : flatMeshColor;
         bundle.worldMeshPositions.push(point.x, point.y, point.z);
         bundle.worldMeshColors.push(color[0], color[1], color[2], color[3]);
         bundle.worldMeshNormals.push(normal.x, normal.y, normal.z);
