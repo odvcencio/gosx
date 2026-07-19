@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -111,15 +112,23 @@ func newCtx(parent context.Context) (context.Context, context.CancelFunc) {
 		chromedp.Flag("headless", "new"),
 		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("use-vulkan", "native"),
-		chromedp.Flag("enable-features", "Vulkan"),
+		chromedp.Flag("enable-unsafe-webgpu", true),
 		chromedp.Flag("ignore-gpu-blocklist", true),
 		chromedp.Flag("enable-webgl", true),
 		chromedp.Flag("hide-scrollbars", true),
-		chromedp.Env("VK_DRIVER_FILES="+dznICD),
-		chromedp.Env("VK_ICD_FILENAMES="+dznICD),
 		chromedp.WindowSize(1280, 800),
 	)
+	if runtime.GOOS != "windows" {
+		// Linux/WSL: route Chrome's Vulkan onto the real GPU via Mesa Dozen.
+		// On Windows, Dawn uses D3D12 natively — no flags needed, and real
+		// WebGPU (not SwiftShader) is available in headless.
+		opts = append(opts,
+			chromedp.Flag("use-vulkan", "native"),
+			chromedp.Flag("enable-features", "Vulkan"),
+			chromedp.Env("VK_DRIVER_FILES="+dznICD),
+			chromedp.Env("VK_ICD_FILENAMES="+dznICD),
+		)
+	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, opts...)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
 	return ctx, func() { cancelCtx(); cancelAlloc() }
@@ -247,6 +256,10 @@ func runGosxScenario(root context.Context, saveDir, gosxURL string, stress bool,
 	var state, fps1, fps2 string
 	err := chromedp.Run(ctx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
+			forceWebGL := getenv("WATER_SMOKE_FORCE_WEBGL", map[bool]string{true: "1", false: "0"}[runtime.GOOS != "windows"])
+			if forceWebGL != "1" {
+				return nil
+			}
 			_, err := cdppage.AddScriptToEvaluateOnNewDocument("window.__gosx_scene3d_force_webgl = true;").Do(ctx)
 			return err
 		}),
