@@ -4,6 +4,22 @@
 
 ## v0.33.0 (2026-07-19)
 
+- Fixed the QualityLadder governor (`sceneUpdateQualityLadder`) being
+  effectively unpromotable on real browsers without GPU timestamp-query
+  support (regular Chrome stable — the common case): the promote check
+  required frame time below 0.7x the target, but the cpu-raf fallback's
+  frame time floors at the display's refresh interval (~16.7ms @60Hz) even
+  on a perfectly healthy page, so a vsync-locked session could never show
+  "headroom" and stayed stuck at the boot rung forever (observed in
+  production: post-FX stayed off after 13k+ frames at a locked 60fps; the
+  headless test harness always granted GPU timing, masking the bug in CI).
+  The governor now uses a source-aware promote rule: GPU-measured samples
+  keep the original headroom check, while cpu-raf samples promote on
+  sustained clean cadence instead (frame time not exceeding the target by
+  more than 6% for the promote window) — demotion is unchanged for either
+  source. The active rule publishes as
+  `data-gosx-scene3d-quality-promote-rule` (`"gpu-headroom"` |
+  `"raf-cadence"`).
 - Extended the Scene3D quality ladder's layer-group gating to particle
   systems: `scene.Points` gains `QualityGroup` (mirrors `Mesh.QualityGroup`,
   lowered to `PointsIR.QualityGroup`/`qualityGroup`), and a new scene-level

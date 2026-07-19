@@ -4075,6 +4075,11 @@
       // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
       state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
       state.rungPromoteThreshold = Math.max(0.05, Math.min(0.95, sceneNumber(props && props.qualityLadderPromoteThreshold, 0.7)));
+      // rungPromoteRule: which promotion rule the last measurement used —
+      // "gpu-headroom" (real GPU timing) or "raf-cadence" (cpu-raf fallback,
+      // no timestamp-query support). Set fresh every sampled frame in
+      // sceneUpdateQualityLadder; this is just the pre-first-sample default.
+      state.rungPromoteRule = "gpu-headroom";
     }
     return state;
   }
@@ -4411,18 +4416,38 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const target = Math.max(8, sceneNumber(sample.source.indexOf("cpu-raf") === 0 ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    // isRAFMeasured: true when this sample comes from the cpu-raf fallback
+    // (no GPU timestamp-query support — the common case on regular Chrome
+    // stable) rather than real GPU timing.
+    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    const target = Math.max(8, sceneNumber(isRAFMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
+    // rungPromoteRule: which promotion rule this frame's measurement source
+    // uses — published on data-gosx-scene3d-quality-promote-rule below.
+    state.rungPromoteRule = isRAFMeasured ? "raf-cadence" : "gpu-headroom";
+    // Promote-eligible check differs by measurement source:
+    //   - GPU-measured (real timestamp-query): frameMS has actual headroom
+    //     below state.rungPromoteThreshold (default 0.7) × target — the
+    //     original rule.
+    //   - cpu-raf fallback: rAF interval on a vsync-locked display floors at
+    //     ~1/refreshRate (~16.7ms @60Hz) even on a perfectly healthy page,
+    //     so it can NEVER read below 0.7×target — that condition would keep
+    //     every real session (no GPU timing) stuck at the boot rung forever
+    //     (observed in production: webgpuPostEffects stayed 0 after 13k+
+    //     frames at a locked 60fps). Promote instead on sustained
+    //     vsync-CLEAN cadence: frameMS not exceeding target by more than a
+    //     small (6%) margin, for rungPromoteFrames consecutive frames — "not
+    //     missing cadence" rather than "has spare headroom", since rAF alone
+    //     cannot observe spare headroom past the display's refresh floor.
+    //     Demotion (below) is unchanged for either source.
+    const promoteEligible = isRAFMeasured
+      ? frameMS <= target * 1.06
+      : frameMS < target * state.rungPromoteThreshold;
     if (missesBudget) {
       state.badFrames += 1;
       state.goodFrames = 0;
-    } else if (frameMS < target * state.rungPromoteThreshold) {
-      // Promote headroom check: state.rungPromoteThreshold (default 0.7) is
-      // the ladder's own configurable threshold — distinct from the
-      // dprCap-tier controller's hardcoded 0.72, since ladder promote
-      // cadence (default ~120 frames) differs from the tier controller's
-      // 300-sample gate too (see the promote branch below).
+    } else if (promoteEligible) {
       state.goodFrames += 1;
       state.badFrames = 0;
     } else {
@@ -4664,6 +4689,7 @@
       measurement: state.measurement,
       missingRendererSamples: state.missingRendererSamples,
       lastMeasurement: state.lastMeasurement,
+      promoteRule: state.rungPromoteRule,
       rung,
     };
     const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
@@ -4681,6 +4707,13 @@
     // attribute set (data-gosx-scene3d-quality-frame-ms et al).
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-count", String(state.ladder ? state.ladder.length : 0));
     setAttrValue(mount, "data-gosx-scene3d-quality-measurement", state.measurement || "none");
+    // promote-rule: which promotion condition the last sample evaluated
+    // under — "gpu-headroom" (real GPU timing, the original 0.7×-target
+    // headroom rule) or "raf-cadence" (cpu-raf fallback: sustained
+    // not-missing-cadence, since rAF alone floors at the display refresh
+    // interval and can never show headroom below 0.7×target). See
+    // sceneUpdateQualityLadder's promoteEligible branch.
+    setAttrValue(mount, "data-gosx-scene3d-quality-promote-rule", state.rungPromoteRule || "gpu-headroom");
     setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-p95-ms", state.p95FrameMS > 0 ? state.p95FrameMS.toFixed(2) : "");

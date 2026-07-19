@@ -14586,6 +14586,40 @@ const THREE_RUNG_LADDER = [
   { name: "full", postEffects: ["bloom", "toneMapping", "test-lens"], layerGroups: ["particles", "far-decor"] },
 ];
 
+// createQualityLadderRAFHarness is createQualityLadderHarness's cpu-raf
+// counterpart: renderer.pollPerformanceSample() always returns null (no
+// GPU timestamp-query support — the common case on regular Chrome stable)
+// and there is no getPerformanceTimingStatus, so sceneUpdateQualityLadder
+// falls through to the cpu-raf sample built from the rAF interval, exactly
+// like a real un-timed browser session. sample(intervalMS) drives both the
+// wall clock and the rAF timestamp by the same amount, so a constant
+// intervalMS simulates a steady vsync-locked frame cadence.
+function createQualityLadderRAFHarness(qualityLadder, extraProps) {
+  const loaded = loadSceneAdaptiveQualityAPI();
+  const props = Object.assign({
+    scene: { qualityLadder },
+    adaptiveTargetFrameMS: 16,
+    adaptiveWarmupFrames: 0,
+    adaptiveCooldownMS: 5000,
+  }, extraProps || {});
+  const state = loaded.api.createSceneAdaptiveQualityState(props, { explicitMaxDevicePixelRatio: 1.6 }, { tier: "full" });
+  const mount = new FakeElement("div", null);
+  const sceneState = { _adaptiveSourcePostEffects: [], postEffects: [] };
+  const renderer = {
+    pollPerformanceSample() { return null; }, // no GPU timing available
+  };
+  let frameNowMS = 0;
+  function sample(intervalMS) {
+    const advance = intervalMS == null ? 16.7 : intervalMS;
+    loaded.clock.now += advance;
+    frameNowMS += advance;
+    return loaded.api.sceneUpdateAdaptiveQuality(state, mount, sceneState, {}, loaded.clock.now - 1, frameNowMS, renderer);
+  }
+  loaded.api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+  sample(1); // resume/initial anchor is deliberately excluded, mirrors createQualityLadderHarness
+  return { ...loaded, state, mount, sceneState, renderer, sample };
+}
+
 test("Scene3D QualityLadder: no ladder authored leaves mode=tier (back-compat)", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const noLadder = api.createSceneAdaptiveQualityState({ adaptiveQuality: true, qualityTier: "balanced" }, {}, {});
@@ -14706,6 +14740,64 @@ test("Scene3D QualityLadder: hysteresis/cooldown prevent oscillation and recover
   assert.equal(state.rungIndex, 1, "cooldown must prevent an immediate re-promote");
   sample(5, 5001); // advance past cooldownMS (5000)
   assert.equal(state.rungIndex, 2, "recovery promotes exactly one rung once the cooldown elapses");
+});
+
+// --- Promotion rule must differ by measurement source (cpu-raf vs GPU timing) ---
+//
+// Bug: on a real browser without GPU timestamp-query support (regular Chrome
+// stable — the common case), the measurement source is cpu-raf and the rAF
+// interval on a vsync-locked display floors at ~1/refreshRate (~16.7ms @60Hz)
+// even on a perfectly healthy page — it can never read below
+// state.rungPromoteThreshold (0.7) × target, so the ladder could never
+// promote past the boot rung in production (observed: postfx stayed "none"
+// after 13k+ frames at a locked 60fps). The headless test harness always
+// grants gpu timing, which is why this never surfaced in CI.
+test("Scene3D QualityLadder: cpu-raf measurement promotes on sustained clean cadence (frameMS <= 1.06x target), not GPU headroom", () => {
+  const { state, sample, mount } = createQualityLadderRAFHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 0,
+  });
+  assert.equal(state.rungPromoteFrames, 120);
+  // A perfectly healthy vsync-locked 60Hz page: frameMS ~16.7 against a
+  // target of 16 never has "headroom" below 0.7x (11.2ms) — the OLD rule
+  // would stay stuck here forever. The raf-cadence rule only requires not
+  // exceeding target by more than 6% (<= 16.96ms), which 16.7 satisfies.
+  for (let i = 0; i < 119; i++) sample(16.7);
+  assert.equal(state.rungIndex, 0, "must not promote before rungPromoteFrames consecutive clean-cadence frames");
+  assert.equal(state.measurement, "cpu-raf", "must be measuring via the cpu-raf fallback, not GPU timing");
+  sample(16.7);
+  assert.equal(state.rungIndex, 1, "must promote exactly one rung after rungPromoteFrames clean-cadence frames");
+  assert.equal(state.rungReason, "recovered");
+  assert.equal(state.rungPromoteRule, "raf-cadence", "the raf-cadence rule, not gpu-headroom, must have driven this promotion");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-promote-rule"), "raf-cadence");
+});
+
+test("Scene3D QualityLadder: cpu-raf measurement does NOT promote when frames exceed the clean-cadence ceiling", () => {
+  const { state, sample } = createQualityLadderRAFHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 0,
+  });
+  // 25ms frames on a 16ms target exceed the 1.06x (16.96ms) clean-cadence
+  // ceiling every frame — this must never accumulate goodFrames toward a
+  // promotion (already at the floor rung, so any spurious demote attempt is
+  // also a safe no-op — this asserts the ladder simply never climbs).
+  for (let i = 0; i < 200; i++) sample(25);
+  assert.equal(state.rungIndex, 0, "must not promote when cpu-raf frames consistently exceed the clean-cadence ceiling");
+  assert.equal(state.measurement, "cpu-raf");
+  assert.equal(state.rungPromoteRule, "raf-cadence");
+});
+
+test("Scene3D QualityLadder: GPU-measured samples still use the original headroom rule (unchanged)", () => {
+  const { state, sample, mount } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 0,
+  });
+  // 5ms GPU-measured frames against a 16ms target have real headroom well
+  // below 0.7x (11.2ms) — the original rule.
+  for (let i = 0; i < 119; i++) sample(5);
+  assert.equal(state.rungIndex, 0);
+  sample(5);
+  assert.equal(state.rungIndex, 1, "GPU-headroom rule must still promote exactly as before");
+  assert.equal(state.measurement, "gpu-test");
+  assert.equal(state.rungPromoteRule, "gpu-headroom", "GPU-measured samples must report the gpu-headroom promote rule");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-promote-rule"), "gpu-headroom");
 });
 
 test("Scene3D QualityLadder: LayerGroups filter — untagged objects always visible, tagged objects gated by the active rung", () => {
