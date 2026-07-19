@@ -249,3 +249,145 @@ func TestMeshQualityGroupLowersToObjectIR(t *testing.T) {
 		t.Errorf("legacy objects[0].qualityGroup = %v, want %q", legacy["qualityGroup"], "particles")
 	}
 }
+
+// --- Layer tagging (Points.QualityGroup / PointsIR.QualityGroup) ---
+
+func TestPointsQualityGroupLowersToPointsIR(t *testing.T) {
+	g := Graph{Nodes: []Node{
+		Points{ID: "far-dust", Count: 3, Positions: []Vector3{{}, {}, {}}, QualityGroup: "particles"},
+		Points{ID: "hero-dust", Count: 1, Positions: []Vector3{{}}}, // untagged
+	}}
+	ir := g.SceneIR()
+	if len(ir.Points) != 2 {
+		t.Fatalf("ir.Points len = %d, want 2", len(ir.Points))
+	}
+	if ir.Points[0].QualityGroup != "particles" {
+		t.Errorf("points[0].QualityGroup = %q, want %q", ir.Points[0].QualityGroup, "particles")
+	}
+	if ir.Points[1].QualityGroup != "" {
+		t.Errorf("untagged points QualityGroup = %q, want empty", ir.Points[1].QualityGroup)
+	}
+
+	payload, err := json.Marshal(ir.Points[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"qualityGroup":"particles"`) {
+		t.Fatalf("expected qualityGroup in wire JSON: %s", payload)
+	}
+	payload2, err := json.Marshal(ir.Points[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload2), "qualityGroup") {
+		t.Fatalf("untagged points must not emit qualityGroup key: %s", payload2)
+	}
+
+	legacy := ir.Points[0].legacyProps()
+	if legacy["qualityGroup"] != "particles" {
+		t.Errorf("legacy points[0].qualityGroup = %v, want %q", legacy["qualityGroup"], "particles")
+	}
+	legacy2 := ir.Points[1].legacyProps()
+	if _, exists := legacy2["qualityGroup"]; exists {
+		t.Errorf("untagged points must not emit qualityGroup key in legacy bundle, got %v", legacy2["qualityGroup"])
+	}
+}
+
+func TestPointsQualityGroupTrimmedAtLowering(t *testing.T) {
+	g := Graph{Nodes: []Node{
+		Points{ID: "trimmed", Count: 1, Positions: []Vector3{{}}, QualityGroup: "  particles  "},
+	}}
+	ir := g.SceneIR()
+	if ir.Points[0].QualityGroup != "particles" {
+		t.Errorf("Points[0].QualityGroup = %q, want trimmed %q", ir.Points[0].QualityGroup, "particles")
+	}
+}
+
+// --- Scene-level name mapping for GLB-extracted point layers
+// (Props.PointQualityGroups / SceneIR.PointQualityGroups) ---
+
+func TestPointQualityGroupsEmptyEmitsNothing(t *testing.T) {
+	p := Props{}
+	ir := p.SceneIR()
+	if len(ir.PointQualityGroups) != 0 {
+		t.Errorf("empty PointQualityGroups should produce empty ir.PointQualityGroups, got %v", ir.PointQualityGroups)
+	}
+	payload, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "pointQualityGroups") {
+		t.Errorf("empty PointQualityGroups must not appear in the wire JSON: %s", payload)
+	}
+	bundle := ir.legacyProps()
+	if bundle != nil {
+		if _, exists := bundle["pointQualityGroups"]; exists {
+			t.Errorf("empty PointQualityGroups must not emit pointQualityGroups key in legacy bundle")
+		}
+	}
+}
+
+func TestPointQualityGroupsRoundTrip(t *testing.T) {
+	p := Props{
+		PointQualityGroups: map[string]string{
+			"nebula-layer-03": "particles",
+			"  spare  ":       "  far-decor  ",
+			"blank-group":     "   ",
+			"  ":              "particles",
+		},
+	}
+	ir := p.SceneIR()
+	if len(ir.PointQualityGroups) != 2 {
+		t.Fatalf("ir.PointQualityGroups len = %d, want 2 (blank name/group and untrimmed keys handled), got %v", len(ir.PointQualityGroups), ir.PointQualityGroups)
+	}
+	if ir.PointQualityGroups["nebula-layer-03"] != "particles" {
+		t.Errorf(`ir.PointQualityGroups["nebula-layer-03"] = %q, want "particles"`, ir.PointQualityGroups["nebula-layer-03"])
+	}
+	if ir.PointQualityGroups["spare"] != "far-decor" {
+		t.Errorf(`ir.PointQualityGroups["spare"] = %q, want "far-decor" (trimmed)`, ir.PointQualityGroups["spare"])
+	}
+
+	// JSON wire shape (manifest JSON round trip via SceneIR.MarshalJSON).
+	payload, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"pointQualityGroups":{`) {
+		t.Fatalf("expected pointQualityGroups in wire JSON: %s", payload)
+	}
+	if !strings.Contains(string(payload), `"nebula-layer-03":"particles"`) {
+		t.Fatalf("expected nebula-layer-03 mapping in wire JSON: %s", payload)
+	}
+
+	// Round trip back through UnmarshalJSON.
+	var decoded SceneIR
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.PointQualityGroups["nebula-layer-03"] != "particles" {
+		t.Errorf("decoded PointQualityGroups[nebula-layer-03] = %q, want %q", decoded.PointQualityGroups["nebula-layer-03"], "particles")
+	}
+	if decoded.PointQualityGroups["spare"] != "far-decor" {
+		t.Errorf("decoded PointQualityGroups[spare] = %q, want %q", decoded.PointQualityGroups["spare"], "far-decor")
+	}
+
+	// legacyProps map-tree path must stay in sync with the JSON path.
+	bundle := ir.legacyProps()
+	groups, ok := bundle["pointQualityGroups"].(map[string]string)
+	if !ok {
+		t.Fatalf("bundle.pointQualityGroups type = %T, want map[string]string", bundle["pointQualityGroups"])
+	}
+	if groups["nebula-layer-03"] != "particles" {
+		t.Errorf(`legacy pointQualityGroups["nebula-layer-03"] = %v, want "particles"`, groups["nebula-layer-03"])
+	}
+
+	// Full Props LegacyProps() path nests it under "scene".
+	full := p.LegacyProps()
+	sceneMap, ok := full["scene"].(map[string]any)
+	if !ok {
+		t.Fatalf("LegacyProps()[scene] type = %T, want map[string]any", full["scene"])
+	}
+	if _, exists := sceneMap["pointQualityGroups"]; !exists {
+		t.Errorf("LegacyProps()[scene] missing pointQualityGroups key: %v", sceneMap)
+	}
+}

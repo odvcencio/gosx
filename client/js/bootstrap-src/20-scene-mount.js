@@ -4008,7 +4008,16 @@
     const ladder = sceneQualityLadder(props);
     const hasLadder = ladder.rungs.length > 0;
     const tierEnabled = hasLadder ? false : enabled;
-    if (hasLadder && enabled && typeof console !== "undefined" && console.warn) {
+    // hasExplicitAdaptiveTierConfig: true only when the author configured
+    // actual dprCap-tier substance beyond the plain `adaptiveQuality: true`
+    // opt-in every scene carries as its framework default (adaptiveQuality
+    // defaults to enabled with the built-in full/balanced/survival presets —
+    // see `defaults` above). A bare boolean toggle strands nothing worth
+    // warning about since there is no author-authored tier config to lose;
+    // only a non-default profile override or an explicit requested tier
+    // means AdaptiveQuality's tier/profile behavior is actually superseded.
+    const hasExplicitAdaptiveTierConfig = Object.keys(profileOverrides).length > 0 || Boolean(requestedValue);
+    if (hasLadder && enabled && hasExplicitAdaptiveTierConfig && typeof console !== "undefined" && console.warn) {
       // Go-side authors get the equivalent Props.QualityLadderWarnings()
       // warning at build time; this covers directly JS-authored scenes too.
       console.warn("[gosx] Scene3D: QualityLadder is authored alongside adaptiveQuality (dprCap tiers) — " +
@@ -4571,6 +4580,66 @@
     return filtered || objects;
   }
 
+  // sceneEffectivePointQualityGroup resolves the QualityRung.LayerGroups tag
+  // a points entry gates on: the entry's own authored qualityGroup (see
+  // normalizeScenePointsEntry) when non-empty, else a scene-level name-based
+  // fallback via Props.PointQualityGroups (scene.pointQualityGroups) keyed
+  // by the SAME `material` field the named-material binding path already
+  // matches by (sceneNamedMaterialForRecord / sceneApplyNamedMaterialToPoints)
+  // — this is how GLB-baked point layers extracted at runtime by layer name
+  // (which cannot carry Points.QualityGroup directly) opt into ladder
+  // gating. Returns "" when neither source tags the entry (unconditionally
+  // visible).
+  function sceneEffectivePointQualityGroup(point, pointQualityGroups) {
+    const own = point && typeof point.qualityGroup === "string" ? point.qualityGroup : "";
+    if (own) {
+      return own;
+    }
+    if (!pointQualityGroups || typeof pointQualityGroups.get !== "function") {
+      return "";
+    }
+    const name = point && typeof point.material === "string" ? point.material : "";
+    if (!name) {
+      return "";
+    }
+    const mapped = pointQualityGroups.get(name);
+    return typeof mapped === "string" ? mapped : "";
+  }
+
+  // sceneFilterPointsByQualityGroups is sceneFilterObjectsByQualityGroups's
+  // Points counterpart — same admitted-groups semantics (untagged always
+  // visible; no ladder / rung with no layerGroups draws everything;
+  // per-frame, no remount needed for a rung transition to take effect), plus
+  // the pointQualityGroups name-based fallback for GLB-extracted layers (see
+  // sceneEffectivePointQualityGroup). The returned array carries a
+  // `qualitySkippedCount` own property (0 when nothing was authored/no
+  // ladder active) so callers can surface a point-quality-skipped stat
+  // without a second pass over the array.
+  function sceneFilterPointsByQualityGroups(points, admittedGroups, pointQualityGroups) {
+    if (!admittedGroups || !Array.isArray(points) || points.length === 0) {
+      if (Array.isArray(points) && points.qualitySkippedCount == null) {
+        points.qualitySkippedCount = 0;
+      }
+      return points;
+    }
+    let filtered = null;
+    let skipped = 0;
+    for (let i = 0; i < points.length; i += 1) {
+      const point = points[i];
+      const group = sceneEffectivePointQualityGroup(point, pointQualityGroups);
+      const admitted = !group || admittedGroups.indexOf(group) !== -1;
+      if (!admitted) {
+        skipped += 1;
+        if (!filtered) filtered = points.slice(0, i);
+      } else if (filtered) {
+        filtered.push(point);
+      }
+    }
+    const result = filtered || points;
+    result.qualitySkippedCount = skipped;
+    return result;
+  }
+
   // applySceneQualityLadderState is applySceneAdaptiveQualityState's ladder
   // counterpart — same publish-throttle shape (force / 250ms / revision-
   // changed gate via lastPublishedAtMS/lastPublishedRevision, reused
@@ -4639,6 +4708,12 @@
     // whatever was true at mount time. See handle.updateSceneProps's
     // postFXMaxPixels branch, the only non-mount/non-command mutator.
     setAttrValue(mount, "data-gosx-scene3d-postfx-max-pixels", String(Math.max(0, Math.floor(sceneNumber(state.postFXMaxPixels, 0)))));
+    // post-uniform-patches / post-uniform-patch-misses: cumulative counts
+    // from SCENE_CMD_SET_POST_UNIFORMS (see applyScenePostUniformsCommand in
+    // 10-runtime-scene-core.js) — how many named-pass uniform patches have
+    // applied vs. targeted a name with no matching CustomPost pass.
+    setAttrValue(mount, "data-gosx-scene3d-post-uniform-patches", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatches, 0)))));
+    setAttrValue(mount, "data-gosx-scene3d-post-uniform-patch-misses", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatchMisses, 0)))));
   }
 
   function createSceneStatsOverlay(mount, enabled) {
@@ -9287,7 +9362,7 @@
         sceneStateLights(sceneState),
         sceneState.environment,
         timeSeconds,
-        sceneStatePointsWithMaterials(sceneState),
+        sceneFilterPointsByQualityGroups(sceneStatePointsWithMaterials(sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality), sceneState.pointQualityGroups),
         sceneStateInstancedMeshesWithMaterials(sceneState),
         sceneState.computeParticles,
         sceneState.waterSystems,
@@ -9298,6 +9373,12 @@
       latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
+      // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups
+      // this frame (0 when no ladder is active or nothing was tagged). Same
+      // filtered bundle.points array both the WebGPU (16a-scene-webgpu.js
+      // drawPointsEntries) and WebGL (16-scene-webgl.js drawPointsEntries)
+      // backends draw from, so this single attribute covers both.
+      setAttrValue(ctx.mount, "data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");

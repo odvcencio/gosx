@@ -200,6 +200,16 @@ type Props struct {
 	// clamped to a valid index at lowering time. Ignored when QualityLadder
 	// is empty.
 	QualityStartRung int
+	// PointQualityGroups maps a points-layer NAME to a QualityRung.LayerGroups
+	// tag, for points layers that cannot carry Points.QualityGroup directly —
+	// most notably GLB-baked point layers extracted at runtime by layer name
+	// (the same name the named-material binding path uses). The client draw
+	// filter computes each point entry's effective group as: the entry's own
+	// authored qualityGroup if non-empty, else PointQualityGroups[entry.name]
+	// if present, else "" (unconditionally visible). Entries whose name has
+	// no mapping here and no authored qualityGroup are unconditionally
+	// visible at every rung, same as an untagged Points node.
+	PointQualityGroups map[string]string
 	// Audio optionally declares a gosxAudio manifest (buses + clips) for
 	// this scene's engine. It lowers under the "audio" prop key, which the
 	// client's mountEngine already forwards to
@@ -495,6 +505,13 @@ type Points struct {
 	//         u_viewportHeight/u_minPixelSize/u_maxPixelSize/u_hasFog/
 	//         u_fogDensity/u_fogColor/u_opacity plus author-defined uniforms.
 	Material *CustomMaterial
+	// QualityGroup optionally tags this points layer as an author-defined
+	// visibility layer that a Props.QualityLadder rung can admit or withhold
+	// — see QualityRung.LayerGroups (scene/quality_ladder.go). Empty (the
+	// default) means the points layer is unconditionally visible at every
+	// rung; a ladder only gates layers that opt in. Toggling is instant (no
+	// transition) — the app choreographs any visual blending itself.
+	QualityGroup string
 }
 
 // InstancedMesh renders N copies of one geometry with per-instance transforms.
@@ -2738,6 +2755,7 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		InState:      pts.InState.legacyProps(),
 		OutState:     pts.OutState.legacyProps(),
 		Live:         normalizeLive(pts.Live),
+		QualityGroup: strings.TrimSpace(pts.QualityGroup),
 	}
 	rotation := eulerFromQuaternion(world.Rotation)
 	record.RotationX = rotation.X

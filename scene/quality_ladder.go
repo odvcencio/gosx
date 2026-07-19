@@ -44,11 +44,14 @@ type QualityRung struct {
 	// resolution.
 	PostEffects []string
 
-	// LayerGroups lists the author-tagged Mesh.QualityGroup values visible
-	// at this rung. A mesh with no QualityGroup is unconditionally visible
-	// at every rung; LayerGroups only gates meshes that opted in. Toggling
-	// is instant (no transition) — the app choreographs any visual
-	// blending itself.
+	// LayerGroups lists the author-tagged Mesh.QualityGroup and
+	// Points.QualityGroup values visible at this rung (including points
+	// layers gated indirectly via Props.PointQualityGroups, e.g. GLB-baked
+	// layers extracted by name). A mesh or points layer with no QualityGroup
+	// (and no PointQualityGroups mapping, for name-extracted points) is
+	// unconditionally visible at every rung; LayerGroups only gates
+	// meshes/points that opted in. Toggling is instant (no transition) — the
+	// app choreographs any visual blending itself.
 	LayerGroups []string
 
 	// ComputeBudgetScale scales particle/compute counts at this rung where

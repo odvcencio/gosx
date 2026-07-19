@@ -240,7 +240,13 @@ const budgets = [
   // Rebased onto main (water-parity/p6-interaction merged in the interim).
   // Bumped raw 1_311_000 -> 1_314_000 and brotli 281_000 -> 282_000; gzip
   // headroom unchanged. Measured: 1_313_230 / 347_786 / 281_009.
-  { file: "bootstrap.js", raw: 1_314_000, gzip: 348_000, brotli: 282_000 },
+  // v0.33.0: bumped raw 1_314_000 -> 1_317_000 and gzip 348_000 -> 349_000
+  // for the Points QualityLadder gating (Points.QualityGroup + scene-level
+  // PointQualityGroups name mapping + per-frame draw filter), the
+  // non-destructive SCENE_CMD_SET_POST_UNIFORMS command, and the
+  // adaptiveQuality+ladder warning fix. Brotli headroom unchanged. Measured:
+  // 1_315_391 / 348_289 / 281_535.
+  { file: "bootstrap.js", raw: 1_317_000, gzip: 349_000, brotli: 282_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -421,7 +427,12 @@ const budgets = [
   // Rebased onto main (water-parity/p6-interaction merged in the interim).
   // Bumped raw 714_000 -> 715_000; gzip/brotli headroom unchanged. Measured:
   // 714_469 / 195_532 / 160_964.
-  { file: "bootstrap-feature-scene3d.js", raw: 715_000, gzip: 196_000, brotli: 162_000 },
+  // v0.33.0: bumped raw 715_000 -> 718_000 and gzip 196_000 -> 197_000 for
+  // the same Points QualityLadder gating + SCENE_CMD_SET_POST_UNIFORMS +
+  // adaptiveQuality warning fix as the bootstrap.js monolith above (this
+  // chunk carries the same Scene3D mount source). Brotli headroom unchanged.
+  // Measured: 716_627 / 196_059 / 161_446.
+  { file: "bootstrap-feature-scene3d.js", raw: 718_000, gzip: 197_000, brotli: 162_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
