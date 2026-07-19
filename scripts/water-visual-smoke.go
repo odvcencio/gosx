@@ -20,6 +20,23 @@
 //	see the P3 water-parity-campaign shootout gate), WATER_SMOKE_STRESS_WIDTH /
 //	WATER_SMOKE_STRESS_HEIGHT (default 2560x1440), WATER_SMOKE_STRESS_DPR
 //	(default 2), WATER_SMOKE_STRESS_SECONDS (default 10).
+//
+// WATER_SMOKE_OBJECT (default "", meaning leave the demo on its boot default
+// -- "Sphere"): when set to one of the fluid-object <select> option values
+// ("None", "Sphere", "Cube", "TorusKnot", "Rubber Duck"), the harness drives
+// the SAME settings-panel <select name="object"> a real user would use (see
+// examples/gosx-docs/app/demos/water/page.gsx's
+// data-gosx-scene3d-control-form="fluid-object" form and
+// sceneManagedFluidObjectBindForm/sceneManagedFluidObjectReadControls in
+// client/js/bootstrap-src/19b-scene-control-forms.js): it sets the select's
+// value via the native value setter (bypassing React-style property
+// shadowing) and dispatches bubbling "input"+"change" events, which is
+// exactly what the form's own `form.addEventListener("change", schedule)`
+// listens for. Selection is verified by re-reading the <select>'s resolved
+// value AND polling the mount's data-gosx-scene3d-webgpu-water-object-* diag
+// attributes (see gosxStateJS's webgpuAll dump) until the duck/mesh-target
+// counters go nonzero, since object switch + first glTF-backed RTT render is
+// async (form's rAF-scheduled apply, then a network fetch for Duck.gltf).
 package main
 
 import (
@@ -62,6 +79,58 @@ const fpsSampleJS = `(function(seconds){
 		requestAnimationFrame(tick);
 	});
 })(%d)`
+
+// selectFluidObjectJS drives the water demo's settings-panel object <select>
+// the way a real user's change event would: native-setter the value (so it
+// survives even if some framework layer shadows the plain DOM property),
+// then dispatch bubbling "input" and "change" so
+// sceneManagedFluidObjectBindForm's `form.addEventListener("change",
+// schedule)` (19b-scene-control-forms.js) picks it up on its next rAF and
+// calls sceneManagedFluidObjectApply. Returns the select's resolved value
+// (or an "error:..." string) so the caller can confirm the DOM accepted it
+// before waiting on the async duck-attrs poll.
+const selectFluidObjectJS = `(function(name){
+	var root = document.querySelector('[data-gosx-scene3d-control-form="fluid-object"]');
+	if (!root) return "error:no-form";
+	var select = root.querySelector('select[name="object"]');
+	if (!select) return "error:no-select";
+	var setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value") ||
+		Object.getOwnPropertyDescriptor(Object.getPrototypeOf(select), "value");
+	if (setter && typeof setter.set === "function") {
+		setter.set.call(select, name);
+	} else {
+		select.value = name;
+	}
+	select.dispatchEvent(new Event("input", { bubbles: true }));
+	select.dispatchEvent(new Event("change", { bubbles: true }));
+	return select.value;
+})(%q)`
+
+// waitForFluidObjectJS polls (via a short internal loop, resolved as a
+// Promise so evalAwait's WithAwaitPromise(true) blocks on it) until the
+// mount's data-gosx-scene3d-webgpu-water-object-texture-passes /
+// water-object-shadow-passes counters have moved off zero at least once
+// (cumulative counters, so "moved" = current > the baseline snapshotted
+// right after dispatching the change event) or the timeout elapses -- proof
+// the async object switch (rAF apply -> glTF mesh resolution for the duck ->
+// first mesh-target RTT render) actually completed, not just that the
+// <select>'s DOM value changed.
+const waitForFluidObjectJS = `(function(baselinePasses, baselineShadow, timeoutMS){
+	return new Promise(function(resolve){
+		var start = performance.now();
+		function poll(){
+			var m = document.querySelector("[data-gosx-scene3d-renderer]");
+			var passes = m ? Number(m.getAttribute("data-gosx-scene3d-webgpu-water-object-texture-passes") || 0) : 0;
+			var shadow = m ? Number(m.getAttribute("data-gosx-scene3d-webgpu-water-object-shadow-passes") || 0) : 0;
+			if (passes > baselinePasses || shadow > baselineShadow || performance.now() - start > timeoutMS) {
+				resolve(JSON.stringify({ passes: passes, shadow: shadow, waitedMS: Math.round(performance.now() - start) }));
+				return;
+			}
+			requestAnimationFrame(poll);
+		}
+		requestAnimationFrame(poll);
+	});
+})(%d, %d, %d)`
 
 const gosxStateJS = `(function(){
 	var m = document.querySelector("[data-gosx-scene3d-renderer]");
@@ -124,6 +193,48 @@ const viewportStateJS = `(function(){
 	});
 })()`
 
+// objectTexturePassCountersJS reads just the two cumulative counters
+// switchFluidObject needs as a wait baseline, cheaply (no JSON.stringify of
+// the whole attribute set).
+const objectTexturePassCountersJS = `(function(){
+	var m = document.querySelector("[data-gosx-scene3d-renderer]");
+	if (!m) return "0,0";
+	var passes = m.getAttribute("data-gosx-scene3d-webgpu-water-object-texture-passes") || "0";
+	var shadow = m.getAttribute("data-gosx-scene3d-webgpu-water-object-shadow-passes") || "0";
+	return passes + "," + shadow;
+})()`
+
+// switchFluidObject drives the water demo's settings-panel object <select>
+// to name (e.g. "Rubber Duck") and waits for evidence the switch actually
+// took effect on the render side (not just in the DOM): the cumulative
+// water-object-texture-passes/water-object-shadow-passes counters moving off
+// their pre-switch baseline. See selectFluidObjectJS/waitForFluidObjectJS's
+// doc comments for the full mechanism. Returns the select's resolved value,
+// the wait-poll result JSON, and an error only for hard failures (missing
+// form/select) -- a wait timeout is reported in the result JSON, not as an
+// error, since some objects (e.g. "None") legitimately never touch those
+// counters.
+func switchFluidObject(ctx context.Context, name string, timeoutMS int) (selected, waitResult string, err error) {
+	var baseline string
+	if err = evalAwait(ctx, objectTexturePassCountersJS, &baseline); err != nil {
+		return "", "", fmt.Errorf("read baseline counters: %w", err)
+	}
+	var basePasses, baseShadow int
+	fmt.Sscanf(baseline, "%d,%d", &basePasses, &baseShadow)
+
+	if err = evalAwait(ctx, fmt.Sprintf(selectFluidObjectJS, name), &selected); err != nil {
+		return "", "", fmt.Errorf("dispatch select change: %w", err)
+	}
+	if len(selected) >= 6 && selected[:6] == "error:" {
+		return selected, "", fmt.Errorf("fluid-object select not found: %s", selected)
+	}
+
+	if err = evalAwait(ctx, fmt.Sprintf(waitForFluidObjectJS, basePasses, baseShadow, timeoutMS), &waitResult); err != nil {
+		return selected, "", fmt.Errorf("wait for object-texture counters: %w", err)
+	}
+	return selected, waitResult, nil
+}
+
 func newCtx(parent context.Context) (context.Context, context.CancelFunc) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", "new"),
@@ -149,6 +260,42 @@ func newCtx(parent context.Context) (context.Context, context.CancelFunc) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, opts...)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
 	return ctx, func() { cancelCtx(); cancelAlloc() }
+}
+
+// startConsoleCapture listens for browser-side console.error/warn calls and
+// uncaught exceptions for the lifetime of ctx and prints them immediately
+// (prefixed so they're easy to grep out of the harness's own log). This is
+// the harness's error-visibility gap closer: a silently-thrown/caught
+// exception inside the WebGPU render loop (e.g. a bad bind group in the
+// duck's mesh-target RTT path) would otherwise show up ONLY as an attribute
+// that mysteriously never increments, with zero clue why -- see the duck
+// investigation in the water-parity/p5-duck PR description for a case that
+// actually mattered.
+func startConsoleCapture(ctx context.Context) {
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
+		switch e := ev.(type) {
+		case *cdpruntime.EventExceptionThrown:
+			if e.ExceptionDetails != nil {
+				fmt.Println("  [console] exception:", e.ExceptionDetails.Error())
+			}
+		case *cdpruntime.EventConsoleAPICalled:
+			if e.Type != "error" && e.Type != "warning" {
+				return
+			}
+			parts := make([]string, 0, len(e.Args))
+			for _, a := range e.Args {
+				if a == nil {
+					continue
+				}
+				if a.Value != nil {
+					parts = append(parts, string(a.Value))
+				} else if a.Description != "" {
+					parts = append(parts, a.Description)
+				}
+			}
+			fmt.Println("  [console]", e.Type+":", fmt.Sprint(parts))
+		}
+	})
 }
 
 func evalAwait(ctx context.Context, js string, out *string) error {
@@ -248,6 +395,9 @@ func sampleUnderLoad(ctx context.Context, x, y, seconds, clickIntervalMS int) (f
 type scenarioResult struct {
 	Name       string          `json:"name"`
 	GLRenderer string          `json:"glRenderer,omitempty"`
+	ObjectReq  string          `json:"objectRequested,omitempty"`
+	ObjectGot  string          `json:"objectSelected,omitempty"`
+	ObjectWait json.RawMessage `json:"objectSwitchWait,omitempty"`
 	State      json.RawMessage `json:"state,omitempty"`
 	Idle       json.RawMessage `json:"idle,omitempty"`
 	Active     json.RawMessage `json:"active,omitempty"`
@@ -267,13 +417,15 @@ func rawOrNil(s string) json.RawMessage {
 	return json.RawMessage(s)
 }
 
-func runGosxScenario(root context.Context, saveDir, gosxURL string, stress bool, stressW, stressH int, stressDPR, stressSeconds int) scenarioResult {
+func runGosxScenario(root context.Context, saveDir, gosxURL, object string, stress bool, stressW, stressH int, stressDPR, stressSeconds int) scenarioResult {
 	res := scenarioResult{Name: "gosx"}
 	fmt.Println("== gosx water (WebGL on Dozen) ==")
 	ctx, cancel := newCtx(root)
 	defer cancel()
+	startConsoleCapture(ctx)
 	var state, fps1, fps2 string
 	err := chromedp.Run(ctx,
+		cdpruntime.Enable(),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			forceWebGL := getenv("WATER_SMOKE_FORCE_WEBGL", map[bool]string{true: "1", false: "0"}[runtime.GOOS != "windows"])
 			if forceWebGL != "1" {
@@ -292,6 +444,22 @@ func runGosxScenario(root context.Context, saveDir, gosxURL string, stress bool,
 		fmt.Println("gosx nav error:", err)
 		res.Err = err.Error()
 		return res
+	}
+	if object != "" {
+		res.ObjectReq = object
+		selected, waitJSON, switchErr := switchFluidObject(ctx, object, 8000)
+		res.ObjectGot = selected
+		res.ObjectWait = rawOrNil(waitJSON)
+		if switchErr != nil {
+			fmt.Println("  object switch error:", switchErr)
+			res.Err = switchErr.Error()
+		} else {
+			fmt.Println("  object switched to:", selected, " wait:", waitJSON)
+		}
+		// glTF-backed objects (duck) fetch+parse a mesh asynchronously; give the
+		// buoyancy sim a couple seconds to settle onto the water surface before
+		// the idle sample so "idle" isn't secretly sampling a falling-in splash.
+		_ = chromedp.Run(ctx, chromedp.Sleep(3*time.Second))
 	}
 	_ = evalAwait(ctx, gosxStateJS, &state)
 	fmt.Println("  state:", state)
@@ -429,6 +597,7 @@ func main() {
 	gosxURL := getenv("WATER_SMOKE_URL", "http://127.0.0.1:8890/demos/water")
 	refURL := getenv("WATER_SMOKE_REF_URL", "https://madebyevan.com/webgl-water/")
 	runID := getenv("WATER_SMOKE_RUN_ID", "1")
+	object := getenv("WATER_SMOKE_OBJECT", "")
 	stress := getenv("WATER_SMOKE_STRESS", "0") == "1"
 	stressW := getenvInt("WATER_SMOKE_STRESS_WIDTH", 2560)
 	stressH := getenvInt("WATER_SMOKE_STRESS_HEIGHT", 1440)
@@ -439,7 +608,7 @@ func main() {
 	root, cancelRoot := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancelRoot()
 
-	gosx := runGosxScenario(root, saveDir, gosxURL, stress, stressW, stressH, stressDPR, stressSeconds)
+	gosx := runGosxScenario(root, saveDir, gosxURL, object, stress, stressW, stressH, stressDPR, stressSeconds)
 	ref := runReferenceScenario(root, saveDir, refURL, stress, stressW, stressH, stressDPR, stressSeconds)
 
 	summary := struct {
