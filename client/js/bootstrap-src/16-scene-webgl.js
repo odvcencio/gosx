@@ -3250,15 +3250,42 @@
       return true;
     }
     function queueWaterEvents(liveEntry) {
-      var dropEventID = Math.max(0, Math.floor(sceneWaterNum(liveEntry && liveEntry.dropEventID, 0)));
-      if (dropEventID > lastDropEventID) {
-        if (!pendingDropEvents.has(dropEventID)) queuedWaterEventCount++;
-        pendingDropEvents.set(dropEventID, {
-          x: sceneWaterNum(liveEntry.dropX, 0),
-          z: sceneWaterNum(liveEntry.dropZ, 0),
-          radius: sceneWaterNum(liveEntry.dropEventRadius, sceneWaterNum(liveEntry.dropRadius, 0.05)),
-          strength: sceneWaterNum(liveEntry.dropEventStrength, sceneWaterNum(liveEntry.dropStrength, 0.05)),
-        });
+      // Queued multi-drop trail: liveEntry.dropEvents carries every drop
+      // queued since the last consumed id (see sceneManagedFluidObjectQueueDrop
+      // in 19b-scene-control-forms.js) -- a fast pointer stroke fires several
+      // drops between two rendered frames, and the single-slot scalar fields
+      // below (dropEventID/dropX/dropZ) only ever held the latest one. Queue
+      // every entry into pendingDropEvents (same Map drainWaterEvents already
+      // drains id-ascending, mirroring pendingObjectDisplacementEvents below)
+      // so the whole burst survives into the sim instead of thinning to one
+      // drop per frame.
+      var queuedDropEvents = Array.isArray(liveEntry && liveEntry.dropEvents) ? liveEntry.dropEvents : null;
+      if (queuedDropEvents && queuedDropEvents.length > 0) {
+        for (var queueIndex = 0; queueIndex < queuedDropEvents.length; queueIndex++) {
+          var queuedDrop = queuedDropEvents[queueIndex];
+          var queuedDropID = Math.max(0, Math.floor(sceneWaterNum(queuedDrop && queuedDrop.id, 0)));
+          if (!queuedDrop || queuedDropID <= lastDropEventID) continue;
+          if (!pendingDropEvents.has(queuedDropID)) queuedWaterEventCount++;
+          pendingDropEvents.set(queuedDropID, {
+            x: sceneWaterNum(queuedDrop.x, 0),
+            z: sceneWaterNum(queuedDrop.z, 0),
+            radius: sceneWaterNum(queuedDrop.radius, sceneWaterNum(liveEntry.dropRadius, 0.05)),
+            strength: sceneWaterNum(queuedDrop.strength, sceneWaterNum(liveEntry.dropStrength, 0.05)),
+          });
+        }
+      } else {
+        // Legacy single-shot fallback for any caller still only supplying
+        // the scalar fields (no dropEvents array on the entry).
+        var dropEventID = Math.max(0, Math.floor(sceneWaterNum(liveEntry && liveEntry.dropEventID, 0)));
+        if (dropEventID > lastDropEventID) {
+          if (!pendingDropEvents.has(dropEventID)) queuedWaterEventCount++;
+          pendingDropEvents.set(dropEventID, {
+            x: sceneWaterNum(liveEntry.dropX, 0),
+            z: sceneWaterNum(liveEntry.dropZ, 0),
+            radius: sceneWaterNum(liveEntry.dropEventRadius, sceneWaterNum(liveEntry.dropRadius, 0.05)),
+            strength: sceneWaterNum(liveEntry.dropEventStrength, sceneWaterNum(liveEntry.dropStrength, 0.05)),
+          });
+        }
       }
       var displacementEvents = Array.isArray(liveEntry && liveEntry.objectDisplacementEvents)
         ? liveEntry.objectDisplacementEvents : [];

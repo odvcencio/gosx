@@ -308,6 +308,7 @@
         lastStepTime: 0,
         dropEventID: 0,
         dropEvent: null,
+        dropEvents: [],
         objectEventID: 0,
         objectDisplacementEvents: [],
         settingLightDirection: false,
@@ -646,6 +647,17 @@
       next.dropZ = dropEvent.z;
       next.dropEventRadius = dropEvent.radius;
       next.dropEventStrength = dropEvent.strength;
+    }
+    // dropEvents carries every queued drop since the last consumed id (see
+    // sceneManagedFluidObjectQueueDrop), so a fast stroke's whole burst
+    // survives into one SET_PARTICLES command instead of only the latest
+    // (scalar dropEventID/dropX/dropZ above stay in sync with the newest
+    // entry for any consumer still reading the single-shot fields).
+    const dropEvents = controlState && Array.isArray(controlState.dropEvents) ? controlState.dropEvents : [];
+    if (dropEvents.length > 0) {
+      next.dropEvents = dropEvents.map(sceneManagedFluidObjectClone);
+    } else if (Object.prototype.hasOwnProperty.call(next, "dropEvents")) {
+      delete next.dropEvents;
     }
     const objectEvents = controlState && Array.isArray(controlState.objectDisplacementEvents) ? controlState.objectDisplacementEvents : [];
     if (objectEvents.length > 0) {
@@ -1375,6 +1387,24 @@
       radius: interaction.dropRadius,
       strength: interaction.dropStrength,
     };
+    // Queue every drop, not just the latest: a fast pointer stroke fires many
+    // pointermove events between two rendered frames (evanw's reference
+    // injects one drop per DOM event), and a single-slot scalar overwrite
+    // would silently discard all but the last one, thinning the ripple
+    // trail. Mirrors the objectDisplacementEvents bounded-queue pattern
+    // above (sceneManagedFluidObjectQueueObjectDisplacementEvent) so every
+    // consumer (WebGL/WebGPU) drains the full burst in one frame.
+    if (!Array.isArray(controlState.dropEvents)) controlState.dropEvents = [];
+    controlState.dropEvents.push({
+      id: controlState.dropEvent.id,
+      x: controlState.dropEvent.x,
+      z: controlState.dropEvent.z,
+      radius: controlState.dropEvent.radius,
+      strength: controlState.dropEvent.strength,
+    });
+    if (controlState.dropEvents.length > 16) {
+      controlState.dropEvents = controlState.dropEvents.slice(controlState.dropEvents.length - 16);
+    }
     sceneManagedFluidObjectReflectDropEvent(form, controlState.dropEvent);
     sceneManagedFluidObjectApply(form, sceneState, applyCommands, options);
     return true;

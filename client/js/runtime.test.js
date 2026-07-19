@@ -22193,6 +22193,58 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
   assert.equal(stats.waterLastObjectDisplacementEventID, 9, "queued object event must process once after resume");
 });
 
+test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one tick, not just the latest (water-parity/p6 Fix 1)", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const { state, objects } = waterPerfShapeScene(api, false, 192);
+  const entry = state.waterSystems[0];
+  entry.seedDrops = 0;
+  entry.activeObject = "None";
+  entry.objectKind = "none";
+  entry.objectDisplacementScale = 0;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  function renderAt(nowMS) {
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
+    );
+    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+      nowMS, displayDeltaMS: 0, active: true, qualityTier: "balanced", qualityRevision: 0,
+    });
+    return harness.mount.__gosxScene3DWebGPUStats;
+  }
+
+  renderAt(0); // anchor the fixed clock
+
+  // Simulate a fast drag: 5 drops queued between two rendered frames, the
+  // shape sceneManagedFluidObjectQueueDrop's bounded controlState.dropEvents
+  // array produces (19b-scene-control-forms.js). Before Fix 1 this would
+  // have coalesced to a single scalar dropEventID/dropX/dropZ and only the
+  // LAST drop would ever reach the simulation.
+  entry.dropEvents = [
+    { id: 1, x: -0.6, z: -0.6, radius: 0.03, strength: 0.01 },
+    { id: 2, x: -0.3, z: -0.3, radius: 0.03, strength: 0.01 },
+    { id: 3, x: 0.0, z: 0.0, radius: 0.03, strength: 0.01 },
+    { id: 4, x: 0.3, z: 0.3, radius: 0.03, strength: 0.01 },
+    { id: 5, x: 0.6, z: 0.6, radius: 0.03, strength: 0.01 },
+  ];
+  const stats = renderAt(17); // one 60Hz tick past the anchor
+  assert.equal(stats.waterSimulationTicks, 1, "must actually tick to drain events");
+  assert.equal(stats.waterLastDropEventID, 5, "every queued id must be consumed, not just the first");
+  assert.equal(stats.waterDropDispatches, 5, "every one of the 5 queued drops must get its own compute dispatch this frame");
+
+  // A second frame with no new events must be a no-op: already-consumed ids
+  // must not redispatch (the array is re-supplied unchanged every command,
+  // per normalizeSceneWaterOneShotEvents's fallback -- see
+  // 10-runtime-scene-core.js).
+  const stats2 = renderAt(34);
+  assert.equal(stats2.waterDropDispatches, 0, "already-consumed ids must not redispatch");
+  assert.equal(stats2.waterLastDropEventID, 5);
+});
+
 test("Scene3D fake WebGPU quality transitions preserve simulation buffers and authored caps", async () => {
   const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false });
   const api = harness.env.context.__gosx_scene3d_api;
@@ -22569,6 +22621,27 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
   assert.equal(stats.waterSurfaceGridResolution, 192, "full profile must remain bounded by the authored surface topology");
   assert.equal(stats.waterCausticsResolution, 512, "full profile must not exceed authored caustics resolution");
   assert.equal(stats.waterObjectShadowResolution, 512, "full profile must not exceed authored shadow resolution");
+
+  // water-parity/p6 Fix 1: a fast drag queues MULTIPLE drops between two
+  // rendered frames (entry.dropEvents, see sceneManagedFluidObjectQueueDrop
+  // in 19b-scene-control-forms.js) -- the WebGL queueWaterEvents/
+  // drainWaterEvents Map-based drain (16-scene-webgl.js) must consume every
+  // one of them in the same tick, not just entry.dropEventID's scalar
+  // latest. Appended at the end (a fresh, later nowMS not reused anywhere
+  // above) rather than interleaved earlier, so it can't perturb this test's
+  // existing delta-from-previous-nowMS tick-timing assertions.
+  entry.dropEvents = [
+    { id: 8, x: -0.5, z: -0.5, radius: 0.03, strength: 0.01 },
+    { id: 9, x: -0.25, z: -0.25, radius: 0.03, strength: 0.01 },
+    { id: 10, x: 0, z: 0, radius: 0.03, strength: 0.01 },
+    { id: 11, x: 0.25, z: 0.25, radius: 0.03, strength: 0.01 },
+    { id: 12, x: 0.5, z: 0.5, radius: 0.03, strength: 0.01 },
+  ];
+  renderer.render(bundle, viewport, { nowMS: 1168, active: true });
+  stats = renderer.getStats();
+  assert.equal(stats.waterLastDropEventID, 12, "every queued drop id must be consumed, not just the first (8) or none");
+  assert.equal(stats.waterDropEventsPending, 0, "the whole burst must drain in one tick, leaving nothing pending");
+
   renderer.dispose();
 });
 
@@ -27571,6 +27644,104 @@ test("Scene3D managed fluid dragging threads the pre-drag position into the wate
   );
   const dragMag = Math.hypot(delta.x, delta.y, delta.z);
   assert.ok(capturedMag > dragMag * 0.9, `captured ${capturedMag} of drag ${dragMag}`);
+});
+
+
+test("Scene3D managed fluid controls queue every drop event in a fast pointer burst (water-parity/p6 Fix 1)", () => {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+
+  // Source-shape guard: the queue must be a bounded ARRAY push (mirroring
+  // the existing objectDisplacementEvents 12-entry pattern at
+  // sceneManagedFluidObjectQueueObjectDisplacementEvent), not the old
+  // single-slot scalar overwrite -- a fast pointer stroke fires one
+  // pointermove DOM event per intermediate position, and a scalar slot
+  // would silently discard all but the last one.
+  assert.match(controlsSource, /controlState\.dropEvents\.push\(/);
+  assert.match(controlsSource, /controlState\.dropEvents = controlState\.dropEvents\.slice\(controlState\.dropEvents\.length - 16\)/);
+  assert.match(controlsSource, /next\.dropEvents = dropEvents\.map\(sceneManagedFluidObjectClone\)/);
+
+  const document = {
+    documentElement: { setAttribute() {} },
+    getElementById() { return null; },
+    querySelector() { return null; },
+  };
+  const context = vm.createContext({
+    Date,
+    JSON,
+    Math,
+    Number,
+    SCENE_CMD_SET_TRANSFORM: 2,
+    SCENE_CMD_SET_PARTICLES: 6,
+    SCENE_CMD_SET_MODELS: 10,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    window: { document },
+  });
+  vm.runInContext(
+    controlsSource + "\nwindow.__managedFluidDropBurstTest = { queueDrop: sceneManagedFluidObjectQueueDrop };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+
+  const canvas = {
+    tagName: "canvas",
+    getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 600 }; },
+  };
+  const form = {
+    dataset: {},
+    elements: {
+      paused: { checked: false, disabled: false },
+      object: { value: "None", disabled: false },
+      poolShape: { value: "Box", disabled: false },
+      cornerRadius: { value: "0", max: "1", disabled: false },
+      poolWidth: { value: "1", disabled: false },
+      poolHeight: { value: "1", disabled: false },
+      poolLength: { value: "1", disabled: false },
+      followCamera: { checked: false, disabled: false },
+    },
+    getAttribute(name) {
+      if (name === "data-gosx-scene3d-control-data") return JSON.stringify({});
+      if (name === "data-gosx-scene3d-control-subject") return "water-main";
+      return "";
+    },
+    setAttribute(name, value) { this.dataset[name] = String(value); },
+    querySelector() { return null; },
+    closest() { return null; },
+  };
+  const sceneState = { waterSystems: [{ id: "water-main" }], models: [] };
+  let applied = [];
+  const applyCommands = commands => { applied = commands; };
+  const waterPayload = () => applied.find(command => command.kind === 6).data.waterSystems[0];
+
+  const queueDrop = context.window.__managedFluidDropBurstTest.queueDrop;
+  // Fire 20 pointermove-shaped events in one tight synchronous burst --
+  // more than a fast drag needs, and enough to exercise the 16-entry cap.
+  for (let i = 0; i < 20; i++) {
+    const event = { clientX: 100 + i, clientY: 200 };
+    assert.equal(queueDrop(form, canvas, sceneState, applyCommands, event, {}), true, `queueDrop must succeed for event ${i}`);
+  }
+
+  const water = waterPayload();
+  assert.ok(Array.isArray(water.dropEvents), "a burst must emit a dropEvents array");
+  assert.equal(water.dropEvents.length, 16, "the queue must cap at 16 like objectDisplacementEvents");
+  // Sliding window: the oldest 4 of 20 pushes (ids 1-4) must have been
+  // evicted, leaving ids 5-20 -- every one of them, not just the latest.
+  assert.equal(water.dropEvents[0].id, 5);
+  assert.equal(water.dropEvents[water.dropEvents.length - 1].id, 20);
+  for (let i = 0; i < water.dropEvents.length; i++) {
+    assert.equal(water.dropEvents[i].id, i + 5, "every queued id in the window must be present and in order");
+  }
+  // Scalar back-compat fields (still consumed by any caller reading the
+  // single-shot dropEventID/dropX/dropZ fields) must mirror the LATEST
+  // event, not the first or a stale one.
+  const latest = water.dropEvents[water.dropEvents.length - 1];
+  assert.equal(water.dropEventID, 20);
+  assert.equal(water.dropX, latest.x);
+  assert.equal(water.dropZ, latest.z);
 });
 
 

@@ -479,7 +479,13 @@ const budgets = [
   // -> 69_500 for water at-rest gating (energy proxy + pass skips), uniform
   // upload dedup counters, and world-space soft-shadow wiring. Measured:
   // 355_149 / 82_988 / 69_192.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 356_000, gzip: 83_500, brotli: 69_500 },
+  // Bumped raw 356_000 -> 358_000, gzip 83_500 -> 83_800, and Brotli 69_500
+  // -> 70_000 (water-parity/p6 Fix 1): the queued multi-drop-per-frame drain
+  // (dispatchWaterDropEvents + sceneWaterDropEvents/EventID/EventEntry
+  // helpers, mirroring dispatchWaterObjectDisplacementEvents) so a fast
+  // pointer stroke's whole drop burst lands in one frame instead of
+  // coalescing to the single latest drop. Measured: 357_196 / 83_302 / 69_503.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 358_000, gzip: 83_800, brotli: 70_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also

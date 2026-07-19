@@ -7140,6 +7140,72 @@
       return { dispatches: dispatches, selena: selenaDispatches, selenaFallback: selenaFallbacks, lastID: nextLastID };
     }
 
+    // dispatchWaterDropEvents mirrors dispatchWaterObjectDisplacementEvents
+    // immediately above, but for the queued-drop trail (see
+    // sceneManagedFluidObjectQueueDrop in 19b-scene-control-forms.js): a fast
+    // pointer stroke can fire several drops between two rendered frames, and
+    // upstream (evanw) injects one per DOM event, so a single-slot scalar
+    // (entry.dropEventID/dropX/dropZ) would silently coalesce a burst into
+    // one ripple. entry.dropEvents carries every drop queued since the last
+    // consumed id; each gets its own per-event uniform write + "drop" compute
+    // dispatch, same shape as the per-event displacement path. The legacy
+    // scalar dispatch below (entry.dropEventID) stays intact as the fallback
+    // for any caller that still only supplies the single-shot fields.
+    function sceneWaterDropEvents(entry) {
+      var source = entry && Array.isArray(entry.dropEvents) ? entry.dropEvents : [];
+      return source.filter(function(event) { return event && typeof event === "object"; });
+    }
+
+    function sceneWaterDropEventID(event) {
+      return Math.max(0, Math.floor(sceneNumber(event && event.id, 0)));
+    }
+
+    // sceneWaterDropEventEntry: unlike sceneWaterObjectDisplacementEventEntry,
+    // a queued drop's field names ({id,x,z,radius,strength}) don't line up
+    // 1:1 with the entry's drop fields (dropX/dropZ/dropEventRadius/
+    // dropEventStrength), so this maps them explicitly instead of a blind
+    // Object.assign merge.
+    function sceneWaterDropEventEntry(entry, event) {
+      var next = Object.assign({}, entry || {});
+      next.dropX = Math.max(-1, Math.min(1, sceneNumber(event && event.x, sceneNumber(entry && entry.dropX, 0))));
+      next.dropZ = Math.max(-1, Math.min(1, sceneNumber(event && event.z, sceneNumber(entry && entry.dropZ, 0))));
+      next.dropEventRadius = Math.max(0.0001, sceneNumber(event && event.radius, sceneNumber(entry && entry.dropEventRadius, sceneNumber(entry && entry.dropRadius, 0.03))));
+      next.dropEventStrength = sceneNumber(event && event.strength, sceneNumber(entry && entry.dropEventStrength, sceneNumber(entry && entry.dropStrength, 0.01)));
+      return next;
+    }
+
+    function dispatchWaterDropEvents(system, entry, encoder, pipeline, currentTime) {
+      if (!system || !encoder || !pipeline) {
+        return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system && system.lastDropEventID, 0))) };
+      }
+      var events = sceneWaterDropEvents(entry);
+      if (!events.length) {
+        return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system.lastDropEventID, 0))) };
+      }
+      var lastID = Math.max(0, Math.floor(sceneNumber(system.lastDropEventID, 0)));
+      var nextLastID = lastID;
+      var dispatches = 0;
+      var selenaDispatches = 0;
+      var selenaFallbacks = 0;
+      for (var i = 0; i < events.length; i++) {
+        var event = events[i];
+        var id = sceneWaterDropEventID(event);
+        if (id <= lastID) continue;
+        var eventEntry = sceneWaterDropEventEntry(entry, event);
+        device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, eventEntry, 0, currentTime, { transientObject: true }));
+        var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "drop", pipeline);
+        var eventDispatches = eventResult.dispatches;
+        selenaDispatches += eventResult.selena;
+        selenaFallbacks += eventResult.selenaFallback;
+        if (eventDispatches > 0) {
+          dispatches += eventDispatches;
+          nextLastID = Math.max(nextLastID, id);
+        }
+      }
+      if (nextLastID > lastID) system.lastDropEventID = nextLastID;
+      return { dispatches: dispatches, selena: selenaDispatches, selenaFallback: selenaFallbacks, lastID: nextLastID };
+    }
+
     // M6 per-frame churn audit (water-parity-campaign), noted but NOT fixed
     // here: like the uniform "commit" write (see waterUniformSnapshotChanged),
     // this re-uploads objectSphereBuffer unconditionally on EVERY
@@ -9305,6 +9371,27 @@
             waterStateDirty = waterStateDirty || seedResult.dispatches > 0;
             if (seedCompute.authored && seedResult.selena === 0) stats.waterAuthoredComputeDispatches += seedResult.dispatches;
           }
+        }
+        // Queued multi-drop trail (see dispatchWaterDropEvents above): drains
+        // every drop queued since the last consumed id, one uniform write +
+        // compute dispatch each, so a fast stroke's whole burst lands in this
+        // one frame instead of thinning to the single latest drop. Runs
+        // BEFORE the legacy scalar block below so its system.lastDropEventID
+        // update makes that block's `!== dropEventID` check a no-op on the
+        // same frame (entry.dropEventID mirrors the newest queued event id),
+        // avoiding a double dispatch of the same drop.
+        var dropEventsResult = hasSimulationTick
+          ? dispatchWaterDropEvents(system, entry, encoder, dropCompute.pipeline, currentTime)
+          : { dispatches: 0, selena: 0, selenaFallback: 0 };
+        stats.waterSelenaComputeDispatches += dropEventsResult.selena;
+        stats.waterSelenaComputeFallbacks += dropEventsResult.selenaFallback;
+        if (dropEventsResult.dispatches > 0) {
+          system.dropDispatchCount = Math.max(0, Math.floor(sceneNumber(system.dropDispatchCount, 0))) + dropEventsResult.dispatches;
+          stats.waterLastDropEventID = Math.max(stats.waterLastDropEventID, dropEventsResult.lastID || 0);
+          stats.waterDropDispatches += dropEventsResult.dispatches;
+          stats.waterComputeDispatches += dropEventsResult.dispatches;
+          waterStateDirty = true;
+          if (dropCompute.authored && dropEventsResult.selena === 0) stats.waterAuthoredComputeDispatches += dropEventsResult.dispatches;
         }
         var dropEventID = Math.max(0, Math.floor(sceneNumber(entry.dropEventID, 0)));
         if (hasSimulationTick && dropEventID > 0 && system.lastDropEventID !== dropEventID) {

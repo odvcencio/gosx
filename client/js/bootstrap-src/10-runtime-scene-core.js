@@ -3120,6 +3120,16 @@
       objectBobSpeed: Math.max(0, sceneNumber(item.objectBobSpeed, sceneNumber(current.objectBobSpeed, 0))),
       objectDisplacementScale: Math.max(0, sceneNumber(item.objectDisplacementScale, sceneNumber(current.objectDisplacementScale, 1))),
       objectDisplacementSpheres: normalizeSceneWaterDisplacementSpheres(item.objectDisplacementSpheres, current.objectDisplacementSpheres),
+      // objectDisplacementEvents/dropEvents: bounded one-shot event queues
+      // (id-tagged) consumed by the WebGL/WebGPU water renderers to replay
+      // every queued splash/swept-volume-wake this frame instead of only the
+      // latest scalar. Passed through here (not just carried on the raw
+      // SET_PARTICLES command payload) so they survive
+      // applySceneParticlesCommand -> normalizeSceneWaterSystemEntry, the
+      // path every managed-control-forms drop/object-switch command
+      // actually takes at runtime.
+      objectDisplacementEvents: normalizeSceneWaterOneShotEvents(item.objectDisplacementEvents, current.objectDisplacementEvents),
+      dropEvents: normalizeSceneWaterOneShotEvents(item.dropEvents, current.dropEvents),
       computeBackend: typeof item.computeBackend === "string" && item.computeBackend ? item.computeBackend : (typeof current.computeBackend === "string" ? current.computeBackend : "elio"),
       materialBackend: typeof item.materialBackend === "string" && item.materialBackend ? item.materialBackend : (typeof current.materialBackend === "string" ? current.materialBackend : "selena"),
       computeSource: typeof item.computeSource === "string" ? item.computeSource : (typeof current.computeSource === "string" ? current.computeSource : ""),
@@ -3189,6 +3199,27 @@
         offsetZ: offsetZ,
         radius: Math.max(0, radius),
       });
+    }
+    return out;
+  }
+
+  // normalizeSceneWaterOneShotEvents: clones a bounded id-tagged one-shot
+  // event queue array (objectDisplacementEvents / dropEvents) through the
+  // command pipeline. Prefers the incoming command's array when present
+  // (even if empty -- an explicit [] means "nothing new queued this frame");
+  // only falls back to the prior normalized entry's array when the field is
+  // entirely absent from the command payload, matching how every other
+  // optional water field here treats item vs. current. Consumers dedupe by
+  // monotonic id (see dispatchWaterObjectDisplacementEvents/
+  // dispatchWaterDropEvents and their WebGL queueWaterEvents counterpart),
+  // so replaying already-consumed ids from the fallback is harmless.
+  function normalizeSceneWaterOneShotEvents(value, fallback) {
+    const source = Array.isArray(value) ? value : (Array.isArray(fallback) ? fallback : []);
+    const out = [];
+    for (let i = 0; i < source.length && out.length < 32; i++) {
+      const raw = source[i];
+      if (!sceneIsPlainObject(raw)) continue;
+      out.push(sceneCloneData(raw));
     }
     return out;
   }
