@@ -227,8 +227,8 @@ type ObjectIR struct {
 	GizmoRing bool `json:"gizmoRing,omitempty"`
 	// GizmoHelper / GizmoFormMode: see scene.Mesh.GizmoHelper and
 	// scene.Mesh.GizmoFormMode.
-	GizmoHelper    bool           `json:"gizmoHelper,omitempty"`
-	GizmoFormMode  string         `json:"gizmoFormMode,omitempty"`
+	GizmoHelper   bool   `json:"gizmoHelper,omitempty"`
+	GizmoFormMode string `json:"gizmoFormMode,omitempty"`
 	// QualityGroup: see scene.Mesh.QualityGroup and QualityRung.LayerGroups
 	// (scene/quality_ladder.go). Empty means unconditionally visible.
 	QualityGroup   string         `json:"qualityGroup,omitempty"`
