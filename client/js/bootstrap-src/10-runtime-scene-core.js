@@ -1865,6 +1865,15 @@
       _modelHidden: Object.prototype.hasOwnProperty.call(item, "_modelHidden")
         ? sceneBool(item._modelHidden, false)
         : sceneBool(current._modelHidden, false),
+      // qualityGroup: G2 QualityLadder layer tagging (see scene.Mesh.QualityGroup
+      // / QualityRung.LayerGroups). Empty means unconditionally visible at
+      // every rung — a ladder only gates objects that opted in. Read by the
+      // mount layer's per-frame object filter (sceneFilterObjectsByQualityGroups
+      // in 20-scene-mount.js), never here — this normalizer only carries the
+      // tag through.
+      qualityGroup: typeof item.qualityGroup === "string" && item.qualityGroup.trim()
+        ? item.qualityGroup.trim()
+        : (typeof current.qualityGroup === "string" ? current.qualityGroup : ""),
       outlineColor: typeof item.outlineColor === "string" && item.outlineColor ? item.outlineColor : (typeof current.outlineColor === "string" ? current.outlineColor : ""),
       outlineWidth: sceneNumber(item.outlineWidth, sceneNumber(current.outlineWidth, 0)),
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
@@ -3342,6 +3351,69 @@
       }
     }
     return out;
+  }
+
+  // --------------------------------------------------------------------------
+  // G2 QualityLadder — bidirectional work-based ABR (see scene/quality_ladder.go
+  // for the Go-side schema and the PRIME DIRECTIVE this shape enforces by
+  // construction: no resolution/DPR/postFX-pixel-budget knob exists on a rung).
+  // Mirrors the props.scene.* vs top-level props.* dual-path convention used by
+  // rawScenePostEffects above, so both Go-authored (props.scene.qualityLadder,
+  // lowered from Props.QualityLadder) and directly JS-authored scenes work.
+  // --------------------------------------------------------------------------
+
+  function rawSceneQualityLadder(props) {
+    const scene = sceneProps(props);
+    if (scene && Array.isArray(scene.qualityLadder)) {
+      return scene.qualityLadder;
+    }
+    return props && Array.isArray(props.qualityLadder) ? props.qualityLadder : [];
+  }
+
+  function sceneQualityLadderStartRungRaw(props) {
+    const scene = sceneProps(props);
+    if (scene && scene.qualityStartRung != null) {
+      return scene.qualityStartRung;
+    }
+    return props && props.qualityStartRung;
+  }
+
+  function normalizeSceneQualityRung(raw, index) {
+    const item = sceneIsPlainObject(raw) ? raw : {};
+    const postEffects = Array.isArray(item.postEffects)
+      ? item.postEffects.filter(function(v) { return typeof v === "string" && v.trim() !== ""; }).map(function(v) { return v.trim(); })
+      : [];
+    const layerGroups = Array.isArray(item.layerGroups)
+      ? item.layerGroups.filter(function(v) { return typeof v === "string" && v.trim() !== ""; }).map(function(v) { return v.trim(); })
+      : [];
+    return {
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : ("rung-" + index),
+      postEffects: postEffects,
+      layerGroups: layerGroups,
+      // Zero/unset means the full authored budget (1.0) — the same "zero
+      // means unset, gets the sane default" idiom the Go IR uses (see
+      // resolveQualityRung in scene/quality_ladder.go).
+      computeBudgetScale: (function() {
+        const scale = sceneNumber(item.computeBudgetScale, 0);
+        if (scale === 0) return 1;
+        return Math.max(0, Math.min(1, scale));
+      })(),
+      expensivePassCadence: Math.max(1, Math.floor(sceneNumber(item.expensivePassCadence, 1))),
+    };
+  }
+
+  // sceneQualityLadder normalizes Props.QualityLadder (scene.qualityLadder,
+  // lowered from Go) or a directly-authored top-level qualityLadder prop
+  // into { rungs, startRung }. An empty rungs array means "no ladder
+  // authored" — callers MUST preserve legacy dprCap-tier adaptiveQuality
+  // behavior unchanged (back-compat; see G2 spec).
+  function sceneQualityLadder(props) {
+    const raw = rawSceneQualityLadder(props);
+    const rungs = raw.map(function(entry, index) { return normalizeSceneQualityRung(entry, index); });
+    const startRung = rungs.length > 0
+      ? Math.max(0, Math.min(rungs.length - 1, Math.floor(sceneNumber(sceneQualityLadderStartRungRaw(props), 0))))
+      : 0;
+    return { rungs: rungs, startRung: startRung };
   }
 
   function sceneCamera(props) {

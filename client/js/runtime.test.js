@@ -14192,12 +14192,120 @@ test("Scene3D defers postfx until idle delay", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
 });
 
+// --- G1: live-patchable postFXMaxPixels ---
+test("Scene3D handle.updateSceneProps({postFXMaxPixels}) live-patches non-destructively: custom pass source survives, the live value changes, a no-op update is cheap", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-postfx-max-pixels";
+  const customVertexGLSL = "attribute vec2 a_position; void main() { gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const customFragmentGLSL = "precision mediump float; void main() { gl_FragColor = vec4(1.0); }";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-postfx-max-pixels",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-postfx-max-pixels",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              postFXMaxPixels: 921600, // 720p
+              postEffects: [
+                {
+                  kind: "customPost",
+                  name: "test-lens",
+                  vertexGLSL: customVertexGLSL,
+                  fragmentGLSL: customFragmentGLSL,
+                  stage: "beforeTonemap",
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  let mounted = env.context.__gosx.engines.get("gosx-engine-postfx-max-pixels");
+  for (let attempt = 0; attempt < 5 && !mounted; attempt += 1) {
+    await flushAsyncWork();
+    mounted = env.context.__gosx.engines.get("gosx-engine-postfx-max-pixels");
+  }
+  assert.ok(mounted, "expected the scene3d engine to mount");
+  assert.equal(typeof mounted.handle.updateSceneProps, "function");
+
+  const state = mount.__gosxScene3DState;
+  assert.ok(state, "expected the sceneState back-door on the mount");
+  assert.equal(state.postFXMaxPixels, 921600);
+  const effectsBefore = state.postEffects;
+  assert.equal(effectsBefore.length, 1);
+  assert.equal(effectsBefore[0].vertexGLSL, customVertexGLSL);
+  assert.equal(effectsBefore[0].fragmentGLSL, customFragmentGLSL);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx-max-pixels"), "921600");
+
+  // (b) the live value changes.
+  mounted.handle.updateSceneProps({ postFXMaxPixels: 518400 }); // 540p
+  assert.equal(state.postFXMaxPixels, 518400, "sceneState.postFXMaxPixels must update live");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx-max-pixels"), "518400", "the confirmation attr must reflect the live value");
+
+  // (a) the compiled custom Selena pass source survives — same array
+  // reference (non-destructive), GLSL untouched. applyScenePostEffectsCommand
+  // (the CommandSetPostEffects path) would have rebuilt this array from a
+  // caller-supplied raw effects payload and, absent one, dropped it entirely
+  // — updateSceneProps's postFXMaxPixels branch never calls that path.
+  assert.strictEqual(state.postEffects, effectsBefore, "postFXMaxPixels update must be non-destructive to postEffects");
+  assert.equal(state.postEffects[0].vertexGLSL, customVertexGLSL);
+  assert.equal(state.postEffects[0].fragmentGLSL, customFragmentGLSL);
+
+  // (c) a no-op update (same value) is cheap: no DOM write, no postEffects churn.
+  let writes = 0;
+  const originalSet = mount.setAttribute.bind(mount);
+  mount.setAttribute = function(name, value) { writes += 1; originalSet(name, value); };
+  const effectsRefBeforeNoop = state.postEffects;
+  mounted.handle.updateSceneProps({ postFXMaxPixels: 518400 });
+  assert.equal(writes, 0, "a same-value postFXMaxPixels update must not touch the DOM");
+  assert.strictEqual(state.postEffects, effectsRefBeforeNoop);
+  assert.equal(state.postFXMaxPixels, 518400);
+});
+
+// sceneCoreSourceRange extracts a [startAnchor, endAnchor) slice from
+// 10-runtime-scene-core.js — used to pull the REAL G2 QualityLadder
+// normalizer (sceneQualityLadder et al.) and its two small dependencies
+// into the adaptive-quality VM harness below, instead of stubbing them out,
+// so ladder-driven harness tests exercise the exact same normalization the
+// full bootstrap bundle runs.
+function sceneCoreSourceRange(startAnchor, endAnchor) {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const start = source.indexOf(startAnchor);
+  const end = source.indexOf(endAnchor, start);
+  assert.notEqual(start, -1, "10-runtime-scene-core.js anchor missing: " + startAnchor);
+  assert.notEqual(end, -1, "10-runtime-scene-core.js anchor missing: " + endAnchor);
+  return source.slice(start, end);
+}
+
 function loadSceneAdaptiveQualityAPI() {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
   const start = source.indexOf("function createSceneAdaptiveQualityState");
   const end = source.indexOf("function applyScenePostFXState", start);
   assert.notEqual(start, -1, "adaptive controller start anchor missing");
   assert.notEqual(end, -1, "adaptive controller end anchor missing");
+  const sceneProps = sceneCoreSourceRange("function sceneProps(props)", "function sceneObjectList");
+  const sceneIsPlainObject = sceneCoreSourceRange("function sceneIsPlainObject(value)", "function normalizeSceneMaterialCapabilityTier");
+  const qualityLadderCore = sceneCoreSourceRange(
+    "// G2 QualityLadder — bidirectional work-based ABR",
+    "function sceneCamera(props)",
+  );
   const clock = { now: 0 };
   const context = { __clock: clock };
   vm.runInNewContext(`
@@ -14207,8 +14315,12 @@ function loadSceneAdaptiveQualityAPI() {
     function applyScenePostFXState() {}
     function gosxSceneEmit() {}
     const performance = { now: () => __clock.now };
-  ` + source.slice(start, end) + `
-    globalThis.adaptiveAPI = { createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality };
+  ` + sceneProps + sceneIsPlainObject + qualityLadderCore + source.slice(start, end) + `
+    globalThis.adaptiveAPI = {
+      createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
+      sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
+      scenePrimeAdaptiveQuality,
+    };
   `, context, { filename: "scene-adaptive-quality.js" });
   return { api: context.adaptiveAPI, clock };
 }
@@ -14331,6 +14443,201 @@ test("Scene3D adaptive controller sheds postFX last and bounds DOM telemetry", (
   assert.ok(writes < 180, "quality attrs must publish at <=4Hz or transitions, got " + writes);
   assert.equal(harness.mount.__gosxScene3DQualityState.validSamples, harness.state.validSamples);
   assert.equal(harness.mount.__gosxScene3DQualityState.measurement, "gpu-test");
+});
+
+// --- G2 QualityLadder governor (bidirectional work-based ABR) ---
+//
+// Same fake-clock/renderer-sample harness pattern as createAdaptiveQualityHarness
+// above, but authors a scene.qualityLadder prop (the Go-lowered wire shape —
+// see scene/quality_ladder.go) so createSceneAdaptiveQualityState takes the
+// mode: "ladder" branch. loadSceneAdaptiveQualityAPI splices in the REAL
+// sceneQualityLadder normalizer from 10-runtime-scene-core.js (not a stub),
+// so this exercises the exact same rung normalization the full bootstrap
+// bundle runs.
+function createQualityLadderHarness(qualityLadder, extraProps) {
+  const loaded = loadSceneAdaptiveQualityAPI();
+  const props = Object.assign({
+    scene: { qualityLadder },
+    adaptiveTargetFrameMS: 16,
+    adaptiveWarmupFrames: 0,
+    adaptiveCooldownMS: 5000,
+  }, extraProps || {});
+  const state = loaded.api.createSceneAdaptiveQualityState(props, { explicitMaxDevicePixelRatio: 1.6 }, { tier: "full" });
+  const mount = new FakeElement("div", null);
+  const bloom = { kind: "bloom" };
+  const tonemap = { kind: "toneMapping" };
+  const customLens = { kind: "customPost", name: "test-lens", vertexGLSL: "attribute vec2 a;", fragmentGLSL: "void main(){}" };
+  const sourceEffects = [bloom, tonemap, customLens];
+  const sceneState = { _adaptiveSourcePostEffects: sourceEffects, postEffects: sourceEffects.slice() };
+  const renderer = {
+    sample: null,
+    pollPerformanceSample() { const sample = this.sample; this.sample = null; return sample; },
+  };
+  let frameNowMS = 0;
+  function sample(durationMS, advanceMS) {
+    const advance = advanceMS == null ? 16 : advanceMS;
+    loaded.clock.now += advance;
+    frameNowMS += advance;
+    renderer.sample = { source: "gpu-test", gpuMS: durationMS, atMS: loaded.clock.now };
+    return loaded.api.sceneUpdateAdaptiveQuality(state, mount, sceneState, {}, loaded.clock.now - 1, frameNowMS, renderer);
+  }
+  loaded.api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+  sample(1); // resume/initial anchor is deliberately excluded, mirrors createAdaptiveQualityHarness
+  return { ...loaded, state, mount, sceneState, renderer, sample, bloom, tonemap, customLens, sourceEffects };
+}
+
+const THREE_RUNG_LADDER = [
+  { name: "raw" },
+  { name: "glow", postEffects: ["bloom"], layerGroups: ["particles"] },
+  { name: "full", postEffects: ["bloom", "toneMapping", "test-lens"], layerGroups: ["particles", "far-decor"] },
+];
+
+test("Scene3D QualityLadder: no ladder authored leaves mode=tier (back-compat)", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const noLadder = api.createSceneAdaptiveQualityState({ adaptiveQuality: true, qualityTier: "balanced" }, {}, {});
+  assert.equal(noLadder.mode, "tier");
+  assert.equal(noLadder.enabled, true, "no ladder authored must leave the dprCap-tier governor's enabled flag untouched");
+
+  const emptyLadder = api.createSceneAdaptiveQualityState({ adaptiveQuality: true, scene: { qualityLadder: [] } }, {}, {});
+  assert.equal(emptyLadder.mode, "tier", "an empty qualityLadder array must be treated as no ladder authored");
+});
+
+test("Scene3D QualityLadder: authoring a ladder switches mode and disables the dprCap-tier gate (never touches DPR)", () => {
+  const { state } = createQualityLadderHarness(THREE_RUNG_LADDER);
+  assert.equal(state.mode, "ladder");
+  // sceneViewportFromMount's DPR clamp is gated on `adaptiveQuality.enabled`
+  // — false here means a ladder-governed mount NEVER restricts DPR via the
+  // adaptive-quality path, per the PRIME DIRECTIVE.
+  assert.equal(state.enabled, false);
+});
+
+test("Scene3D QualityLadder: QualityStartRung is primed before the first render (postEffects admitted-set, not the full authored list)", () => {
+  const { sceneState, mount, bloom, tonemap, customLens } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 1,
+  });
+  // Rung 1 ("glow") admits only "bloom".
+  assert.deepEqual(sceneState.postEffects, [bloom]);
+  assert.notEqual(sceneState.postEffects.indexOf(bloom), -1);
+  assert.equal(sceneState.postEffects.indexOf(tonemap), -1);
+  assert.equal(sceneState.postEffects.indexOf(customLens), -1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-rung"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-rung-name"), "glow");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-quality-ladder"), "true");
+});
+
+test("Scene3D QualityLadder: PROMOTE after N consecutive headroom frames admits the next rung's effects, custom pass source survives verbatim", () => {
+  const { state, sceneState, sample, bloom, tonemap, customLens } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 1,
+  });
+  assert.equal(state.rungIndex, 1);
+  assert.equal(state.rungPromoteFrames, 120);
+  // Headroom frames: target=16, promoteThreshold=0.7 -> need frameMS < 11.2.
+  for (let i = 0; i < 119; i++) sample(5);
+  assert.equal(state.rungIndex, 1, "must not promote before rungPromoteFrames consecutive headroom frames");
+  sample(5);
+  assert.equal(state.rungIndex, 2, "must promote exactly one rung after rungPromoteFrames");
+  assert.equal(state.rungReason, "recovered");
+  assert.equal(state.rungRevision, 1);
+  // Rung 2 ("full") admits all three — the custom pass object is the SAME
+  // reference as the author's original source array entry, proving the
+  // rung-change filter never rebuilds/clones effect records (compiled
+  // Selena pass source, e.g. vertexGLSL/fragmentGLSL, survives verbatim).
+  assert.equal(sceneState.postEffects.length, 3);
+  assert.notEqual(sceneState.postEffects.indexOf(bloom), -1);
+  assert.notEqual(sceneState.postEffects.indexOf(tonemap), -1);
+  const survived = sceneState.postEffects[sceneState.postEffects.indexOf(customLens)];
+  assert.strictEqual(survived, customLens, "custom pass must be the exact same object reference, not a rebuilt clone");
+  assert.equal(survived.vertexGLSL, customLens.vertexGLSL);
+  assert.equal(survived.fragmentGLSL, customLens.fragmentGLSL);
+});
+
+test("Scene3D QualityLadder: promote is a no-op at the top rung (saturated ladder does not spam transitions)", () => {
+  const { state, sample } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 2,
+  });
+  assert.equal(state.rungIndex, 2);
+  for (let i = 0; i < 400; i++) sample(5);
+  assert.equal(state.rungIndex, 2, "already at the top rung; must stay put");
+  assert.equal(state.rungRevision, 0, "no-op promote attempts must not bump the revision");
+});
+
+test("Scene3D QualityLadder: DEMOTE on the dprCap-tier controller's sustained-miss condition (badFrames >= 20), floor rung is raw (postFX off)", () => {
+  const { state, sceneState, sample } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 1,
+  });
+  for (let i = 0; i < 19; i++) sample(20);
+  assert.equal(state.rungIndex, 1, "19 bad frames must not yet demote");
+  sample(20);
+  assert.equal(state.rungIndex, 0, "20th sustained-bad frame must demote exactly one rung");
+  assert.equal(state.rungReason, "sustained");
+  assert.equal(state.rungRevision, 1);
+  // .length check, not deepEqual against a literal [] — the empty-admission
+  // branch constructs its array literal inside the vm-sandboxed harness
+  // realm (a real cross-realm artifact of THIS test harness only; the
+  // production bundle runs in a single realm), which trips
+  // assert.deepStrictEqual's realm-sensitive comparison despite both sides
+  // printing identically as [].
+  assert.equal(sceneState.postEffects.length, 0, "rung 0 (raw) admits no postEffects — the crisp floor, never a blurred low-res composite");
+});
+
+test("Scene3D QualityLadder: three severe (>2x budget) frames force an immediate demote", () => {
+  const { state, sample } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 2,
+  });
+  sample(40); sample(40);
+  assert.equal(state.rungIndex, 2);
+  sample(40);
+  assert.equal(state.rungIndex, 1, "three >2x samples must severe-downshift one rung");
+  assert.equal(state.rungReason, "severe");
+});
+
+test("Scene3D QualityLadder: demote is a no-op at rung 0 (raw floor already reached)", () => {
+  const { state, sample } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 0,
+  });
+  for (let i = 0; i < 200; i++) sample(40);
+  assert.equal(state.rungIndex, 0, "already at the raw floor; must stay put");
+  assert.equal(state.rungRevision, 0, "no-op demote attempts must not bump the revision");
+});
+
+test("Scene3D QualityLadder: hysteresis/cooldown prevent oscillation and recovery promotes exactly one rung", () => {
+  const { state, sample } = createQualityLadderHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 2,
+  });
+  for (let i = 0; i < 20; i++) sample(20);
+  assert.equal(state.rungIndex, 1, "sustained bad frames demote from the top rung");
+  // Cooldown must suppress further transitions even under continued good
+  // frames (the dprCap-tier controller's cooldownMS is reused verbatim).
+  for (let i = 0; i < 300; i++) sample(5);
+  assert.equal(state.rungIndex, 1, "cooldown must prevent an immediate re-promote");
+  sample(5, 5001); // advance past cooldownMS (5000)
+  assert.equal(state.rungIndex, 2, "recovery promotes exactly one rung once the cooldown elapses");
+});
+
+test("Scene3D QualityLadder: LayerGroups filter — untagged objects always visible, tagged objects gated by the active rung", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const noLadderState = { mode: "tier" };
+  assert.equal(api.sceneQualityLadderAdmittedGroups(noLadderState), null, "no ladder governing -> back-compat, no filtering");
+
+  const ladderState = { mode: "ladder", ladder: THREE_RUNG_LADDER.map(function(r, i) {
+    return { name: r.name, layerGroups: r.layerGroups || [], postEffects: r.postEffects || [] };
+  }), rungIndex: 1 };
+  const admitted = api.sceneQualityLadderAdmittedGroups(ladderState);
+  assert.deepEqual(admitted, ["particles"]);
+
+  const hero = { id: "hero" }; // untagged
+  const farStar = { id: "far-star", qualityGroup: "particles" };
+  const decor = { id: "decor", qualityGroup: "far-decor" };
+  const objects = [hero, farStar, decor];
+
+  assert.strictEqual(api.sceneFilterObjectsByQualityGroups(objects, null), objects, "no ladder -> same array reference, zero-cost back-compat");
+
+  const filtered = api.sceneFilterObjectsByQualityGroups(objects, admitted);
+  assert.deepEqual(filtered, [hero, farStar], "untagged hero always survives; far-decor is not admitted at rung 1");
+
+  const admittedOnly = [hero, farStar];
+  const noFilterNeeded = api.sceneFilterObjectsByQualityGroups(admittedOnly, admitted);
+  assert.strictEqual(noFilterNeeded, admittedOnly, "nothing dropped -> same array reference, no allocation on the hot per-frame path");
 });
 
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {

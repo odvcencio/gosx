@@ -232,7 +232,12 @@ const budgets = [
   // Bumped raw 1_295_000 -> 1_296_000 for v0.31.15's subtype-aware duck RTT
   // scheduler and retained projection-matrix contract. Measured: 1_295_043 /
   // 343_699 / 277_538; compressed budgets retain their prior ceilings.
-  { file: "bootstrap.js", raw: 1_310_000, gzip: 348_000, brotli: 281_000 }, // +gizmo drag-commit controller (v0.31.17)
+  // Bumped raw 1_310_000 -> 1_311_000 for the G2 QualityLadder governor
+  // (bidirectional work-based ABR: rung promote/demote, postEffects
+  // admitted-set filtering, layer-group visibility filter) plus G1's
+  // live-patchable postFXMaxPixels escape hatch. gzip/brotli headroom
+  // unchanged. Measured: 1_310_466 / 347_360 / 280_648.
+  { file: "bootstrap.js", raw: 1_311_000, gzip: 348_000, brotli: 281_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -405,7 +410,12 @@ const budgets = [
   // Bumped raw 700_000 -> 701_000 and gzip 192_000 -> 193_000 for the
   // target-aware water RTT scheduler and retained projection matrices.
   // Measured: 700_047 / 192_112 / 158_295.
-  { file: "bootstrap-feature-scene3d.js", raw: 712_000, gzip: 196_000, brotli: 162_000 }, // +gizmo drag-commit controller (v0.31.17)
+  // Bumped raw 712_000 -> 714_000 for the G2 QualityLadder governor and G1's
+  // live-patchable postFXMaxPixels escape hatch (same delta as the
+  // bootstrap.js monolith above — this chunk carries the same Scene3D mount
+  // source). gzip/brotli headroom unchanged. Measured: 713_428 / 195_299 /
+  // 160_687.
+  { file: "bootstrap-feature-scene3d.js", raw: 714_000, gzip: 196_000, brotli: 162_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

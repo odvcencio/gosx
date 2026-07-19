@@ -3996,8 +3996,27 @@
     });
     const requestedValue = (props && (props.requestedQualityTier || props.adaptiveQualityTier || props.qualityTier)) || adaptiveConfig.tier;
     const requestedTier = requestedValue === "balanced" || requestedValue === "survival" ? requestedValue : "full";
-    return {
-      enabled,
+    // G2: QualityLadder, when authored, supersedes the dprCap-tier governor
+    // built above entirely — see sceneUpdateQualityLadder/
+    // applySceneQualityLadderState. `tierEnabled` (NOT `enabled`) gates every
+    // dprCap-tier field below so a ladder-governed mount reads as "tier
+    // disabled" throughout (in particular sceneViewportFromMount's DPR clamp
+    // at `adaptiveQuality.enabled`, which must stay false so a ladder NEVER
+    // touches DPR — the PRIME DIRECTIVE's resolution axis is forbidden for
+    // ladder degradation). No ladder authored: tierEnabled === enabled,
+    // zero behavior change (back-compat).
+    const ladder = sceneQualityLadder(props);
+    const hasLadder = ladder.rungs.length > 0;
+    const tierEnabled = hasLadder ? false : enabled;
+    if (hasLadder && enabled && typeof console !== "undefined" && console.warn) {
+      // Go-side authors get the equivalent Props.QualityLadderWarnings()
+      // warning at build time; this covers directly JS-authored scenes too.
+      console.warn("[gosx] Scene3D: QualityLadder is authored alongside adaptiveQuality (dprCap tiers) — " +
+        "the ladder supersedes the dprCap-tier governor; adaptiveQuality's tier/profile behavior will not run. " +
+        "Remove adaptiveQuality or the QualityLadder to avoid ambiguity.");
+    }
+    const state = {
+      enabled: tierEnabled,
       targetFrameMS,
       cpuRAFBudgetMS,
       minDevicePixelRatio,
@@ -4026,15 +4045,29 @@
       resumePending: true,
       cooldownMS: Math.max(5000, sceneNumber(props && props.adaptiveCooldownMS, 5000)),
       cooldownUntilMS: 0,
-      transitionReason: enabled ? "initial" : "disabled",
+      transitionReason: tierEnabled ? "initial" : "disabled",
       currentMaxDevicePixelRatio: profiles[requestedTier].dprCap,
       postFXSuppressed: false,
-      tier: enabled ? requestedTier : "fixed",
+      tier: tierEnabled ? requestedTier : "fixed",
       qualityRevision: 0,
       lastPublishedAtMS: 0,
       lastPublishedRevision: -1,
       baseExplicitMaxDevicePixelRatio: sceneNumber(base && base.explicitMaxDevicePixelRatio, 0),
+      mode: hasLadder ? "ladder" : "tier",
     };
+    if (hasLadder) {
+      state.ladder = ladder.rungs;
+      state.rungIndex = ladder.startRung;
+      state.rungRevision = 0;
+      state.rungReason = "initial";
+      // PROMOTE after N (default 120) consecutive frames with headroom below
+      // promoteThreshold (default 0.7) × the frame budget. DEMOTE reuses the
+      // dprCap-tier governor's sustained-miss condition verbatim (badFrames
+      // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
+      state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
+      state.rungPromoteThreshold = Math.max(0.05, Math.min(0.95, sceneNumber(props && props.qualityLadderPromoteThreshold, 0.7)));
+    }
+    return state;
   }
 
   function sceneAdaptivePostFXSource(sceneState) {
@@ -4045,6 +4078,10 @@
 
   function applySceneAdaptiveQualityState(mount, state, nowMS, force) {
     if (!mount || !state) {
+      return;
+    }
+    if (state.mode === "ladder") {
+      applySceneQualityLadderState(mount, state, nowMS, force);
       return;
     }
     const profile = state.activeProfile || (state.profiles && state.profiles.full) || {};
@@ -4090,7 +4127,18 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-postfx-suppressed", state.postFXSuppressed ? "true" : "false");
   }
 
-  function scenePrimeAdaptiveQuality(state, viewport, mount) {
+  function scenePrimeAdaptiveQuality(state, viewport, mount, sceneState) {
+    if (state && state.mode === "ladder") {
+      // Prime the STARTING rung's postEffects admitted-set before the first
+      // render — without this, the scene would render with the author's
+      // full postEffects list (whatever createSceneState built from props)
+      // until the governor's first promote/demote transition, ignoring
+      // QualityStartRung entirely.
+      sceneApplyQualityLadderRung(sceneState, state);
+      applyScenePostFXState(mount, sceneState);
+      applySceneAdaptiveQualityState(mount, state, 0, true);
+      return;
+    }
     if (!state || !state.enabled) {
       applySceneAdaptiveQualityState(mount, state, 0, true);
       return;
@@ -4179,6 +4227,9 @@
   }
 
   function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
+    if (state && state.mode === "ladder") {
+      return sceneUpdateQualityLadder(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer);
+    }
     if (!state || !state.enabled) {
       return false;
     }
@@ -4285,6 +4336,293 @@
     return false;
   }
 
+  // --------------------------------------------------------------------------
+  // G2 QualityLadder governor — bidirectional work-based ABR.
+  //
+  // Runs INSTEAD of the dprCap-tier body above whenever state.mode ===
+  // "ladder" (see createSceneAdaptiveQualityState, which sets state.enabled
+  // = false in that case so every dprCap-tier-gated code path elsewhere —
+  // sceneViewportFromMount's DPR clamp in particular — goes inert; a ladder
+  // NEVER touches DPR/resolution, per the PRIME DIRECTIVE).
+  //
+  // The frame-sampling block below is a deliberate near-duplicate of the
+  // dprCap-tier body's sampling block (same helpers: sceneAdaptiveRendererSample,
+  // sceneAdaptiveRendererTimingStatus, sceneAdaptiveP95; same warmup/resume/
+  // renderer-timing-fallback handling) rather than a shared extraction, so
+  // this milestone cannot regress the existing, heavily-tested dprCap-tier
+  // controller by construction — the two bodies are fully independent code
+  // paths that happen to read/write the same state fields (mutually
+  // exclusive per mount: a mount is either in "tier" or "ladder" mode, never
+  // both), reusing the "honest gpu-ms/interval sampling" the spec calls for.
+  // --------------------------------------------------------------------------
+
+  function sceneUpdateQualityLadder(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
+    if (!state || state.mode !== "ladder" || !Array.isArray(state.ladder) || state.ladder.length === 0) {
+      return false;
+    }
+    const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
+    const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
+    const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
+    state.lastRAFNowMS = rafNow;
+    state.frameCount += 1;
+    const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
+    const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
+    let sample = sceneAdaptiveRendererSample(renderer, now);
+    if (sample) state.missingRendererSamples = 0;
+    else if (rendererTimingLocked) state.missingRendererSamples += 1;
+    else state.missingRendererSamples = 0;
+    const rendererTimingStale = rendererTimingLocked && state.missingRendererSamples >= state.rendererTimingFallbackFrames;
+    if (!sample && (!rendererTimingLocked || rendererTimingStale) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
+      sample = {
+        durationMS: Math.max(rafIntervalMS, cpuDurationMS),
+        source: rendererTimingStale ? "cpu-raf-stale-renderer-timing" : "cpu-raf",
+        atMS: now,
+        rafIntervalMS,
+        cpuDurationMS,
+      };
+    }
+    if (state.resumePending || state.frameCount <= state.warmupFrames || !sample) {
+      state.resumePending = false;
+      applySceneAdaptiveQualityState(mount, state, now, false);
+      return false;
+    }
+    const frameMS = sample.durationMS;
+    state.lastFrameMS = frameMS;
+    state.measurement = sample.source;
+    state.lastMeasurement = sample;
+    state.validSamples += 1;
+    state.ewmaFrameMS = state.ewmaFrameMS > 0
+      ? state.ewmaFrameMS * 0.84 + frameMS * 0.16
+      : frameMS;
+    if (state.sampleWindow.length < 120) state.sampleWindow.push(frameMS);
+    else {
+      state.sampleWindow[state.sampleCursor] = frameMS;
+      state.sampleCursor = (state.sampleCursor + 1) % 120;
+    }
+    if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
+
+    const target = Math.max(8, sceneNumber(sample.source.indexOf("cpu-raf") === 0 ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
+    const severeMiss = frameMS > target * 2;
+    if (missesBudget) {
+      state.badFrames += 1;
+      state.goodFrames = 0;
+    } else if (frameMS < target * state.rungPromoteThreshold) {
+      // Promote headroom check: state.rungPromoteThreshold (default 0.7) is
+      // the ladder's own configurable threshold — distinct from the
+      // dprCap-tier controller's hardcoded 0.72, since ladder promote
+      // cadence (default ~120 frames) differs from the tier controller's
+      // 300-sample gate too (see the promote branch below).
+      state.goodFrames += 1;
+      state.badFrames = 0;
+    } else {
+      state.badFrames = 0;
+      state.goodFrames = 0;
+    }
+    state.severeFrames = severeMiss ? state.severeFrames + 1 : 0;
+
+    let changed = false;
+    if (now >= state.cooldownUntilMS && (state.badFrames >= 20 || state.severeFrames >= 3)) {
+      // DEMOTE: the SAME sustained-miss condition the dprCap-tier controller
+      // uses (badFrames >= 20 || severeFrames >= 3).
+      changed = sceneQualityLadderSetRung(state, state.rungIndex - 1, severeMiss ? "severe" : "sustained", now);
+    } else if (now >= state.cooldownUntilMS && state.goodFrames >= state.rungPromoteFrames) {
+      // PROMOTE: N (default ~120) consecutive headroom frames — NOT gated on
+      // a 300-sample floor like the dprCap-tier controller, since the ladder
+      // has no postFX-suppression secondary shed step to reserve budget for.
+      changed = sceneQualityLadderSetRung(state, state.rungIndex + 1, "recovered", now);
+    }
+    if (changed) {
+      sceneApplyQualityLadderRung(sceneState, state);
+      applyScenePostFXState(mount, sceneState);
+      applySceneAdaptiveQualityState(mount, state, now, true);
+      const rung = state.ladder[state.rungIndex];
+      // "quality-rung-transition" mirrors the existing
+      // "adaptive-quality-transition" event pattern above verbatim (same
+      // gosxSceneEmit("warn", ...) call shape).
+      gosxSceneEmit("warn", "quality-rung-transition", {
+        reason: state.rungReason,
+        rungIndex: state.rungIndex,
+        rungName: rung ? rung.name : "",
+        rungRevision: state.rungRevision,
+        frameMS,
+        ewmaFrameMS: state.ewmaFrameMS,
+        p95FrameMS: state.p95FrameMS,
+        targetFrameMS: target,
+      });
+      return true;
+    }
+    applySceneAdaptiveQualityState(mount, state, now, false);
+    return false;
+  }
+
+  // sceneQualityLadderSetRung clamps to [0, ladder.length-1] and mirrors
+  // sceneAdaptiveSetTier's shape/semantics: a genuine rung change resets the
+  // hysteresis counters and starts a cooldown window; a no-op at either
+  // boundary (promote past the top rung, demote past rung 0) leaves
+  // everything untouched and returns false, exactly like
+  // sceneAdaptiveSetTier's `state.activeTier === tier` guard — so a
+  // saturated ladder at the floor doesn't spam cooldown/counter resets every
+  // frame.
+  function sceneQualityLadderSetRung(state, nextIndexRaw, reason, nowMS) {
+    const nextIndex = Math.max(0, Math.min(state.ladder.length - 1, nextIndexRaw));
+    if (nextIndex === state.rungIndex) {
+      return false;
+    }
+    state.rungIndex = nextIndex;
+    state.rungRevision += 1;
+    state.rungReason = reason;
+    state.cooldownUntilMS = nowMS + state.cooldownMS;
+    state.badFrames = 0;
+    state.goodFrames = 0;
+    state.severeFrames = 0;
+    return true;
+  }
+
+  // sceneApplyQualityLadderRung composes with G1's non-destructive
+  // postFXMaxPixels mechanism: it swaps sceneState.postEffects between
+  // subsets of the AUTHOR'S FULL postEffects list
+  // (sceneAdaptivePostFXSource(sceneState) — the same source-of-truth field
+  // the dprCap-tier controller's postFX suppression reads) based on which
+  // effect kinds/names the active rung admits. An effect is either present
+  // at full postFX resolution or entirely ABSENT — never resolution-scaled
+  // (PRIME DIRECTIVE) — so this never touches sceneState.postFXMaxPixels.
+  // Returns true when sceneState.postEffects actually changed.
+  function sceneApplyQualityLadderRung(sceneState, ladderState) {
+    if (!sceneState || !ladderState || !Array.isArray(ladderState.ladder)) {
+      return false;
+    }
+    const rung = ladderState.ladder[ladderState.rungIndex];
+    if (!rung) {
+      return false;
+    }
+    const source = sceneAdaptivePostFXSource(sceneState);
+    const admitted = rung.postEffects && rung.postEffects.length > 0
+      ? source.filter(function(effect) { return sceneQualityLadderEffectAdmitted(effect, rung.postEffects); })
+      : [];
+    const current = Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
+    const same = current.length === admitted.length && current.every(function(effect, index) { return effect === admitted[index]; });
+    if (same) {
+      return false;
+    }
+    sceneState.postEffects = admitted;
+    return true;
+  }
+
+  // sceneQualityLadderEffectAdmitted matches a post-effect against a rung's
+  // admitted list by "kind" (built-in effect kinds like "bloom",
+  // "toneMapping" — case-insensitive) or by "name"/"id" (CustomPost passes,
+  // matched case-sensitively since author-chosen names are opaque
+  // identifiers, unlike the built-in kinds).
+  function sceneQualityLadderEffectAdmitted(effect, admittedList) {
+    if (!effect || !Array.isArray(admittedList) || admittedList.length === 0) {
+      return false;
+    }
+    const kind = typeof effect.kind === "string" ? effect.kind.trim().toLowerCase() : "";
+    const name = typeof effect.name === "string" ? effect.name.trim() : "";
+    const id = typeof effect.id === "string" ? effect.id.trim() : "";
+    for (let i = 0; i < admittedList.length; i += 1) {
+      const admitted = admittedList[i];
+      if (!admitted) continue;
+      if (kind && admitted.toLowerCase() === kind) return true;
+      if (name && admitted === name) return true;
+      if (id && admitted === id) return true;
+    }
+    return false;
+  }
+
+  // sceneQualityLadderAdmittedGroups reads the CURRENT rung's LayerGroups
+  // straight off the governor state — no cached/applied step needed (unlike
+  // postEffects, layer-group visibility has no sceneState.* field to mutate;
+  // the render loop just re-reads the active rung fresh every frame, which
+  // is "instant, no transitions" by construction). Returns null when no
+  // ladder governs (back-compat: sceneFilterObjectsByQualityGroups treats
+  // null as "no filtering").
+  function sceneQualityLadderAdmittedGroups(adaptiveQuality) {
+    if (!adaptiveQuality || adaptiveQuality.mode !== "ladder" || !Array.isArray(adaptiveQuality.ladder)) {
+      return null;
+    }
+    const rung = adaptiveQuality.ladder[adaptiveQuality.rungIndex];
+    return rung ? rung.layerGroups : null;
+  }
+
+  // sceneFilterObjectsByQualityGroups drops objects tagged with a
+  // Mesh.QualityGroup (see normalizeSceneObject's qualityGroup field) that
+  // the active rung does not admit. Untagged objects (qualityGroup === "")
+  // are unconditionally visible — a ladder only gates objects that opted
+  // in. Avoids allocating when nothing is actually filtered (hot per-frame
+  // path).
+  function sceneFilterObjectsByQualityGroups(objects, admittedGroups) {
+    if (!admittedGroups || !Array.isArray(objects) || objects.length === 0) {
+      return objects;
+    }
+    let filtered = null;
+    for (let i = 0; i < objects.length; i += 1) {
+      const object = objects[i];
+      const group = object && typeof object.qualityGroup === "string" ? object.qualityGroup : "";
+      const admitted = !group || admittedGroups.indexOf(group) !== -1;
+      if (!admitted) {
+        if (!filtered) filtered = objects.slice(0, i);
+      } else if (filtered) {
+        filtered.push(object);
+      }
+    }
+    return filtered || objects;
+  }
+
+  // applySceneQualityLadderState is applySceneAdaptiveQualityState's ladder
+  // counterpart — same publish-throttle shape (force / 250ms / revision-
+  // changed gate via lastPublishedAtMS/lastPublishedRevision, reused
+  // directly from the shared state object), different attribute set.
+  function applySceneQualityLadderState(mount, state, nowMS, force) {
+    if (!mount || !state) {
+      return;
+    }
+    const rung = (state.ladder && state.ladder[state.rungIndex]) || null;
+    mount.__gosxScene3DQualityState = {
+      enabled: true,
+      mode: "ladder",
+      rungIndex: state.rungIndex,
+      rungName: rung ? rung.name : "",
+      rungCount: state.ladder ? state.ladder.length : 0,
+      rungRevision: state.rungRevision,
+      reason: state.rungReason,
+      cooldownUntilMS: state.cooldownUntilMS,
+      validSamples: state.validSamples,
+      ewmaFrameMS: state.ewmaFrameMS,
+      p95FrameMS: state.p95FrameMS,
+      measurement: state.measurement,
+      missingRendererSamples: state.missingRendererSamples,
+      lastMeasurement: state.lastMeasurement,
+      rung,
+    };
+    const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+    const changed = state.lastPublishedRevision !== state.rungRevision;
+    if (!force && !changed && now - state.lastPublishedAtMS < 250) return;
+    state.lastPublishedAtMS = now;
+    state.lastPublishedRevision = state.rungRevision;
+    setAttrValue(mount, "data-gosx-scene3d-quality-ladder", "true");
+    // Essential tier, per the G2 spec.
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung", String(state.rungIndex));
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung-name", rung ? rung.name : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung-reason", state.rungReason || "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung-revision", String(Math.max(0, state.rungRevision || 0)));
+    // Bonus telemetry, mirroring the dprCap-tier controller's richer
+    // attribute set (data-gosx-scene3d-quality-frame-ms et al).
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung-count", String(state.ladder ? state.ladder.length : 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-measurement", state.measurement || "none");
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-p95-ms", state.p95FrameMS > 0 ? state.p95FrameMS.toFixed(2) : "");
+    // ComputeBudgetScale / ExpensivePassCadence: v1 pass-through only (see
+    // QualityRung's doc comment in scene/quality_ladder.go) — not wired into
+    // any actual compute/cadence dispatch, just published for apps that want
+    // to drive their own reduction off these values.
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung-compute-budget-scale", rung ? String(rung.computeBudgetScale) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung-cadence", rung ? String(rung.expensivePassCadence) : "");
+  }
+
   function applyScenePostFXState(mount, state) {
     if (!mount || !state) {
       return;
@@ -4292,6 +4630,15 @@
     const deferred = Array.isArray(state._deferredPostEffects) && state._deferredPostEffects.length > 0;
     const enabled = Array.isArray(state.postEffects) && state.postEffects.length > 0;
     setAttrValue(mount, "data-gosx-scene3d-postfx", deferred ? "deferred" : (enabled ? "enabled" : "none"));
+    // G1: live confirmation of the postFXMaxPixels cap actually driving the
+    // postfx render targets this frame. Both backends read
+    // sceneState.postFXMaxPixels fresh off the render bundle every frame and
+    // resize their offscreen targets accordingly (createScenePostProcessor.
+    // begin in 16-scene-webgl.js; ensureFBOs/getSceneTarget in
+    // 16a-scene-webgpu.js) — this attribute is this frame's live value, not
+    // whatever was true at mount time. See handle.updateSceneProps's
+    // postFXMaxPixels branch, the only non-mount/non-command mutator.
+    setAttrValue(mount, "data-gosx-scene3d-postfx-max-pixels", String(Math.max(0, Math.floor(sceneNumber(state.postFXMaxPixels, 0)))));
   }
 
   function createSceneStatsOverlay(mount, enabled) {
@@ -6971,7 +7318,7 @@
     await settlePreferredWebGPUBackend(props, capability);
 
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
-    scenePrimeAdaptiveQuality(adaptiveQuality, viewport, ctx.mount);
+    scenePrimeAdaptiveQuality(adaptiveQuality, viewport, ctx.mount, sceneState);
 
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
@@ -8933,7 +9280,7 @@
         viewport.cssHeight,
         sceneState.background,
         activeCamera,
-        sceneStateObjectsWithMaterials(sceneState),
+        sceneFilterObjectsByQualityGroups(sceneStateObjectsWithMaterials(sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality)),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),
         sceneStateHTML(sceneState),
@@ -9249,11 +9596,27 @@
       // single-engine upgrades (preview -> full in place, no re-mount) to
       // restore the full-quality device pixel ratio after the preview
       // phase intentionally capped it for a cheap first paint.
+      //
+      // G1: postFXMaxPixels is a second escape-hatch key, live-patched
+      // WITHOUT going through applyCommands()'s CommandSetPostEffects path
+      // (applyScenePostEffectsCommand in 10-runtime-scene-core.js) — that
+      // command rebuilds sceneState.postEffects from a caller-supplied raw
+      // effects array, and when the caller only wants to change the pixel
+      // cap (no effects payload in hand) it destructively rebuilds an EMPTY
+      // effects list, dropping any compiled custom Selena pass source.
+      // Writing sceneState.postFXMaxPixels directly, here, leaves
+      // sceneState.postEffects completely untouched — non-destructive by
+      // construction — and is sufficient on its own: both postfx backends
+      // already read sceneState.postFXMaxPixels fresh off the render bundle
+      // every frame and resize their offscreen targets when the scaled dims
+      // change (createScenePostProcessor.begin in 16-scene-webgl.js;
+      // ensureFBOs/getSceneTarget in 16a-scene-webgpu.js).
       updateSceneProps(partial) {
         if (disposed || !partial || typeof partial !== "object") {
           return;
         }
         let touchedViewport = false;
+        let touchedPostFXMaxPixels = false;
         for (const key in partial) {
           if (!Object.prototype.hasOwnProperty.call(partial, key)) {
             continue;
@@ -9261,6 +9624,15 @@
           props[key] = partial[key];
           if (key === "maxDevicePixelRatio" || key === "maxPixelRatio") {
             touchedViewport = true;
+          } else if (key === "postFXMaxPixels") {
+            touchedPostFXMaxPixels = true;
+          }
+        }
+        if (touchedPostFXMaxPixels) {
+          const nextPostFXMaxPixels = Math.max(0, Math.floor(sceneNumber(partial.postFXMaxPixels, sceneState.postFXMaxPixels)));
+          if (nextPostFXMaxPixels !== sceneState.postFXMaxPixels) {
+            sceneState.postFXMaxPixels = nextPostFXMaxPixels;
+            applyScenePostFXState(ctx.mount, sceneState);
           }
         }
         if (touchedViewport) {
