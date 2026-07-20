@@ -547,7 +547,23 @@
     _webgpuAdapterInfo = sceneWebGPUAdapterInfoSnapshot(adapter);
   }
 
-  function sceneWebGPUDeviceDescriptor() {
+  // sceneWebGPUDeviceDescriptor builds the requestDevice() descriptor from
+  // whatever requiredFeatures/requiredLimits the manifest asked for.
+  // `minimal`=true skips both entirely — used on the fresh-adapter retry
+  // after a requestDevice failure (see sceneWebGPUProbeDevice): the manifest's
+  // required limits/features are almost certainly unrelated to WHY the first
+  // request failed (e.g. "Not enough memory left" on a memory-tight browser),
+  // so re-requesting the exact same descriptor from a fresh adapter just
+  // repeats the same failure. Falling back to the browser's bare defaults
+  // (no requiredFeatures, no requiredLimits) gives a memory-constrained
+  // browser its best chance of granting SOME device — degraded capabilities
+  // are still strictly better than no WebGPU device at all, and the
+  // downstream capability/feature-gap checks already degrade gracefully
+  // when a requested feature turns out to be absent.
+  function sceneWebGPUDeviceDescriptor(minimal) {
+    if (minimal) {
+      return null;
+    }
     var descriptor = null;
     if (_webgpuRequestedFeatures.length > 0) {
       descriptor = descriptor || {};
@@ -625,11 +641,11 @@
     return false;
   }
 
-  function sceneWebGPUProbeDevice(adapter, adapterRequest, retried) {
+  function sceneWebGPUProbeDevice(adapter, adapterRequest, retried, minimal) {
     sceneWebGPURememberAdapter(adapter);
-    var descriptor = sceneWebGPUDeviceDescriptor();
+    var descriptor = sceneWebGPUDeviceDescriptor(minimal);
     return sceneWebGPURequestDevice(adapter, descriptor).catch(function(err) {
-      if (descriptor || retried || !navigator.gpu || typeof navigator.gpu.requestAdapter !== "function") {
+      if (retried || !navigator.gpu || typeof navigator.gpu.requestAdapter !== "function") {
         throw err;
       }
       var message = String(err && (err.message || err) || "unknown error");
@@ -640,7 +656,10 @@
         if (!retryAdapter) {
           throw err;
         }
-        return sceneWebGPUProbeDevice(retryAdapter, adapterRequest, true);
+        // Fresh-adapter retry requests the browser's bare-default device
+        // (minimal=true) instead of repeating the same requiredFeatures/
+        // requiredLimits descriptor — see sceneWebGPUDeviceDescriptor.
+        return sceneWebGPUProbeDevice(retryAdapter, adapterRequest, true, true);
       });
     });
   }
