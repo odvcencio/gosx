@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## v0.34.0 (2026-07-20)
+
+- Added persistent scene engines across soft navigations: `data-gosx-link`
+  navigation (server/navigation_runtime.js) used to dispose EVERY mounted
+  engine on every navigate() and let bootstrapPage() re-mount from the
+  incoming manifest, so a page-spanning background (e.g. a Scene3D
+  starfield) tore down and rebuilt its WebGL/WebGPU context on every nav —
+  a visible re-mount blink even when the scene never actually changed.
+  `window.__gosx_reusable_engines` (client/js/bootstrap-src/30-tail.js) now
+  identifies engines safe to carry across a navigation instead: for the
+  SAME engine id, the outgoing and incoming manifest entries must have the
+  identical component, the identical mountId, and byte-identical serialized
+  `props` (the structural scene payload). When they match, `disposePage`
+  skips disposing the engine, `navigation_runtime.js`'s `replaceBody` moves
+  the LIVE mount element (and Scene3D's canvas inside it) into the new body
+  instead of cloning a fresh one — a same-document move preserves the
+  rendering context; removal+recreation does not — and `mountAllEngines`
+  skips remounting it. Runtime-only state (camera orbit, water sim,
+  adaptive-quality rung, ...) living inside the still-mounted engine
+  instance is preserved for free as a result. Publishes
+  `data-gosx-engine-reused` on the mount element and emits
+  `engine-reused-across-navigation` / `engine-remounted` telemetry per
+  engine during a soft navigation. Selective (split-chunk) bootstrap mode
+  is unaffected (unchanged dispose+remount behavior) — the reuse path
+  currently only wires through the monolithic `bootstrap.js` runtime.
 - Fixed the Firefox console warning "WEBGL_debug_renderer_info is deprecated
   in Firefox and will be removed. Please use RENDERER." firing on every
   WebGL Scene3D mount: `sceneReadWebGLRendererMetadata` now tries the plain

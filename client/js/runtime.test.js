@@ -17370,6 +17370,310 @@ test("navigation runtime caches lifecycle scripts across page transitions", asyn
   assert.equal(env.document.getElementById("page-b").textContent, "Page B");
 });
 
+// --- Persistent scene engines across soft navigations (v0.34.0) ---
+//
+// window.__gosx_reusable_engines (client/js/bootstrap-src/30-tail.js) +
+// navigation_runtime.js's replaceBody/adoptOrClone let a soft navigation
+// carry an unchanged engine (same component, mountId, and byte-identical
+// scene props) across the swap instead of disposing and remounting it —
+// the live mount element (and the canvas Scene3D creates inside it) moves
+// into the new document unchanged, so its WebGL/WebGPU context survives.
+
+test("navigation runtime reuses an engine with an identical scene: same canvas element survives, no dispose", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "bg-scene";
+
+  const sceneProps = {
+    width: 320,
+    height: 180,
+    autoRotate: false,
+    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+  };
+  const manifestA = {
+    engines: [
+      {
+        id: "bg-scene",
+        mountId: "bg-scene",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: sceneProps,
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+  };
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: manifestA,
+    fetchRoutes: {
+      "http://localhost:3000/next": { text: "__REUSE_NEXT__", url: "http://localhost:3000/next" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const recordBefore = env.context.__gosx.engines.get("bg-scene");
+  assert.ok(recordBefore, "expected the Scene3D engine to mount initially");
+  const canvasBefore = mount.children[0];
+  assert.ok(canvasBefore, "expected Scene3D to create a canvas inside the mount");
+
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+
+  const nextMountPlaceholder = new FakeElement("div", null);
+  nextMountPlaceholder.id = "bg-scene";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifestA);
+
+  parsedDocs.set("__REUSE_NEXT__", buildNavigatedDocument({
+    title: "Next",
+    bodyNodes: [nextMountPlaceholder, manifestScript],
+  }));
+
+  const events = [];
+  env.context.__gosx_emit = function(level, cat, msg, fields) {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/next");
+  await flushAsyncWork();
+
+  assert.equal(disposed, false, "identical-scene navigation must not dispose the engine");
+  const liveMount = env.document.getElementById("bg-scene");
+  assert.strictEqual(liveMount, mount, "the mount element itself must be the SAME live element, not a clone");
+  assert.strictEqual(liveMount.children[0], canvasBefore, "the SAME canvas element must survive the navigation");
+  assert.equal(mount.getAttribute("data-gosx-engine-reused"), "true");
+  assert.equal(
+    events.some((e) => e.msg === "engine-reused-across-navigation" && e.fields.engineID === "bg-scene"),
+    true,
+  );
+  assert.strictEqual(env.context.__gosx.engines.get("bg-scene"), recordBefore, "the SAME engine record must persist");
+});
+
+test("navigation runtime disposes and remounts an engine when the scene payload differs", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "bg-scene-2";
+
+  const sceneA = {
+    width: 320,
+    height: 180,
+    autoRotate: false,
+    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+  };
+  const manifestA = {
+    engines: [
+      {
+        id: "bg-scene-2",
+        mountId: "bg-scene-2",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: sceneA,
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+  };
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: manifestA,
+    fetchRoutes: {
+      "http://localhost:3000/changed": { text: "__CHANGED_NEXT__", url: "http://localhost:3000/changed" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const recordBefore = env.context.__gosx.engines.get("bg-scene-2");
+  assert.ok(recordBefore, "expected the Scene3D engine to mount initially");
+  assert.ok(mount.children[0], "expected Scene3D to create a canvas inside the mount");
+
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+
+  // Same id/mountId/component, DIFFERENT scene payload (color changed) —
+  // must NOT be treated as reusable.
+  const sceneB = {
+    width: 320,
+    height: 180,
+    autoRotate: false,
+    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#ff8d8d" }] },
+  };
+  const manifestB = {
+    engines: [
+      {
+        id: "bg-scene-2",
+        mountId: "bg-scene-2",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: sceneB,
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+  };
+
+  const nextMountPlaceholder = new FakeElement("div", null);
+  nextMountPlaceholder.id = "bg-scene-2";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifestB);
+
+  parsedDocs.set("__CHANGED_NEXT__", buildNavigatedDocument({
+    title: "Next",
+    bodyNodes: [nextMountPlaceholder, manifestScript],
+  }));
+
+  const events = [];
+  env.context.__gosx_emit = function(level, cat, msg, fields) {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/changed");
+  await flushAsyncWork();
+
+  assert.equal(disposed, true, "a changed scene payload must dispose the outgoing engine");
+  const liveMount = env.document.getElementById("bg-scene-2");
+  assert.notStrictEqual(liveMount, mount, "a changed scene must NOT adopt the old mount element");
+  const newRecord = env.context.__gosx.engines.get("bg-scene-2");
+  assert.ok(newRecord, "expected the engine to be remounted");
+  assert.notStrictEqual(newRecord, recordBefore, "a fresh engine record must replace the disposed one");
+  assert.equal(
+    events.some((e) => e.msg === "engine-remounted" && e.fields.engineID === "bg-scene-2"),
+    true,
+  );
+  assert.equal(events.some((e) => e.msg === "engine-reused-across-navigation"), false);
+});
+
+test("navigation runtime reuses an engine while hub subscriptions disconnect and re-arm cleanly", async () => {
+  function makeSocket(url) {
+    return {
+      url,
+      closeCalled: false,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      close() {
+        this.closeCalled = true;
+      },
+    };
+  }
+
+  const mount = new FakeElement("div", null);
+  mount.id = "bg-scene-3";
+
+  const sceneProps = {
+    width: 320,
+    height: 180,
+    autoRotate: false,
+    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+  };
+  const manifestA = {
+    runtime: { path: "/runtime.wasm" },
+    engines: [
+      {
+        id: "bg-scene-3",
+        mountId: "bg-scene-3",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: sceneProps,
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+    hubs: [
+      {
+        id: "gosx-hub-nav",
+        name: "presence",
+        path: "/gosx/hub/presence",
+        bindings: [{ event: "snapshot", signal: "$presence" }],
+      },
+    ],
+  };
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    createWebSocket: makeSocket,
+    manifest: manifestA,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "http://localhost:3000/hub-next": { text: "__HUB_NEXT__", url: "http://localhost:3000/hub-next" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx.hubs.size, 1, "expected the hub to connect on the initial page");
+  const recordBefore = env.context.__gosx.engines.get("bg-scene-3");
+  assert.ok(recordBefore, "expected the Scene3D engine to mount initially");
+  const canvasBefore = mount.children[0];
+  const socketBefore = env.sockets[0];
+  assert.ok(socketBefore, "expected the hub to open a socket on the initial page");
+
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+
+  const nextMountPlaceholder = new FakeElement("div", null);
+  nextMountPlaceholder.id = "bg-scene-3";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifestA);
+
+  parsedDocs.set("__HUB_NEXT__", buildNavigatedDocument({
+    title: "Next",
+    bodyNodes: [nextMountPlaceholder, manifestScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/hub-next");
+  await flushAsyncWork();
+
+  // Engine reuse is unaffected by a hub reconnecting alongside it.
+  assert.equal(disposed, false, "identical-scene navigation must not dispose the engine even with a hub present");
+  assert.strictEqual(env.document.getElementById("bg-scene-3").children[0], canvasBefore);
+
+  // Hub disconnect+reconnect is unchanged behavior — it must keep working
+  // cleanly (exactly one re-arm, no double-connect) alongside engine reuse.
+  assert.equal(socketBefore.closeCalled, true, "the outgoing hub socket must be closed on navigation");
+  assert.equal(env.context.__gosx.hubs.size, 1, "the hub must be reconnected after navigation");
+  assert.equal(env.sockets.length, 2, "exactly one new socket must be opened for the re-armed hub");
+  assert.notStrictEqual(env.sockets[1], socketBefore);
+});
+
 test("navigation runtime marks current and ancestor links and exposes navigation state", async () => {
   const docsLink = new FakeElement("a", null);
   docsLink.setAttribute("href", "/docs");
