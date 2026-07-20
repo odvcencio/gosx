@@ -4361,8 +4361,17 @@
     if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
-  async function mountAllEngines(manifest) {
+  async function mountAllEngines(manifest, reuseEngineIDs) {
     if (!manifest.engines || manifest.engines.length === 0) return;
+    // reuseEngineIDs is only ever a real Set when this bootstrap is running
+    // as part of a soft navigation (see bootstrapPage/window.__gosx_reusable_engines)
+    // — the initial page load's bootstrapPage() call carries no such
+    // argument (or, via the DOMContentLoaded listener, an Event object,
+    // which also fails this check). isNavigationBootstrap therefore also
+    // gates the "engine-remounted" telemetry below: a freshly mounted
+    // engine on the FIRST page load was never "re"-mounted.
+    const isNavigationBootstrap = reuseEngineIDs instanceof Set;
+    const reuseIDs = isNavigationBootstrap ? reuseEngineIDs : new Set();
 
     const invalidEntries = new Map();
     const seenIDs = new Set();
@@ -4406,9 +4415,28 @@
       return entry && typeof entry === "object" &&
         (entry.kind !== "video" || videoEngines.indexOf(entry) === 0);
     }).map(function(entry) {
-      return mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
+      const engineID = String((entry && entry.id) || "");
+      if (engineID && reuseIDs.has(engineID)) {
+        // Carried across the navigation — window.__gosx_dispose_page already
+        // skipped disposing it (and reported engine-reused-across-navigation)
+        // and replaceBody moved its live mount element into the new body
+        // unchanged, so there is nothing to (re)mount here.
+        return Promise.resolve();
+      }
+      const promise = mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });
+      if (isNavigationBootstrap && engineID) {
+        promise.then(function() {
+          if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+            window.__gosx_emit("info", "engine", "engine-remounted", {
+              engineID,
+              component: String((entry && entry.component) || ""),
+            });
+          }
+        });
+      }
+      return promise;
     });
 
     await Promise.all(promises);
@@ -6579,7 +6607,8 @@
     window.__gosx.hubs.delete(hubID);
   };
 
-  async function disposePage() {
+  async function disposePage(reuseEngineIDs) {
+    const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
     goWASMEnginePageGeneration += 1;
     for (const pending of Array.from(pendingEngineRuntimes.values())) {
       disposePendingEngine(pending, true);
@@ -6593,6 +6622,11 @@
       }
     }
     for (const engineID of Array.from(window.__gosx.engines.keys())) {
+      if (reuseIDs.has(engineID)) {
+        const record = window.__gosx.engines.get(engineID);
+        reportEngineReuseTelemetry(engineID, record && record.component, record && record.mount);
+        continue; // carried across the navigation — see window.__gosx_reusable_engines
+      }
       window.__gosx_dispose_engine(engineID);
     }
     for (const hubID of Array.from(window.__gosx.hubs.keys())) {
@@ -6602,6 +6636,90 @@
     disposeManagedTextLayouts();
     pendingManifest = null;
     window.__gosx.ready = false;
+  }
+
+  // --------------------------------------------------------------------------
+  // Persistent scene engines across soft navigations
+  // --------------------------------------------------------------------------
+  //
+  // Soft navigation (server/navigation_runtime.js) used to dispose EVERY
+  // mounted engine on every navigate() and let bootstrapPage() re-mount from
+  // the incoming manifest — so a page-spanning background (e.g. a Scene3D
+  // starfield) tore down and rebuilt its WebGL/WebGPU context on every nav,
+  // producing a visible re-mount blink even though the scene never actually
+  // changed. window.__gosx_reusable_engines lets the navigation runtime
+  // identify engines it can carry across a navigation instead: disposePage
+  // (above) skips disposing them, replaceBody moves the LIVE mount element
+  // into the new body instead of cloning a fresh one (a same-document move
+  // preserves the canvas's rendering context; removal+recreation does not),
+  // and mountAllEngines skips remounting them.
+  //
+  // Reuse rule (deliberately conservative — this is a same-document DOM
+  // move, not a real diff/patch, so false positives would visibly break the
+  // page): an engine is reused ONLY when, for the SAME engine id, the
+  // outgoing and incoming manifest entries have the identical component,
+  // the identical mountId (the actual DOM element being kept), AND
+  // byte-identical serialized `props` (the structural scene payload — geometry,
+  // materials, lights, post-FX, quality ladder, everything the server
+  // authored). Runtime-only state that lives inside the already-mounted
+  // engine instance (camera orbit position, water sim state, in-flight
+  // animations, adaptive-quality rung, ...) is intentionally NOT part of the
+  // comparison — preserving exactly that state across the navigation is the
+  // whole point of reuse. Any other difference (including one the deep
+  // serialization comparison can't see, by construction, since it only sees
+  // authored props) falls back to the original dispose+remount behavior.
+  function scenePayloadIdentical(outgoingEntry, incomingEntry) {
+    try {
+      return JSON.stringify(outgoingEntry.props || null) === JSON.stringify(incomingEntry.props || null);
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  window.__gosx_reusable_engines = function(nextDoc) {
+    const reusable = new Set();
+    if (!nextDoc || !pendingManifest || !Array.isArray(pendingManifest.engines)) {
+      return reusable;
+    }
+    let nextManifest = null;
+    try {
+      const el = typeof nextDoc.getElementById === "function" ? nextDoc.getElementById("gosx-manifest") : null;
+      if (el) nextManifest = JSON.parse(el.textContent);
+    } catch (_e) {
+      return reusable;
+    }
+    if (!nextManifest || !Array.isArray(nextManifest.engines)) {
+      return reusable;
+    }
+    const nextByID = new Map();
+    for (const entry of nextManifest.engines) {
+      if (entry && entry.id) nextByID.set(String(entry.id), entry);
+    }
+    for (const outgoingEntry of pendingManifest.engines) {
+      if (!outgoingEntry || !outgoingEntry.id) continue;
+      const engineID = String(outgoingEntry.id);
+      const record = window.__gosx.engines.get(engineID);
+      if (!record || record.disposed) continue; // nothing live to carry over
+      const incomingEntry = nextByID.get(engineID);
+      if (!incomingEntry) continue;
+      if (String(outgoingEntry.component || "") !== String(incomingEntry.component || "")) continue;
+      if (String(outgoingEntry.mountId || outgoingEntry.id || "") !== String(incomingEntry.mountId || incomingEntry.id || "")) continue;
+      if (!scenePayloadIdentical(outgoingEntry, incomingEntry)) continue;
+      reusable.add(engineID);
+    }
+    return reusable;
+  };
+
+  function reportEngineReuseTelemetry(engineID, component, mount) {
+    if (mount && typeof mount.setAttribute === "function") {
+      mount.setAttribute("data-gosx-engine-reused", "true");
+    }
+    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+      window.__gosx_emit("info", "engine", "engine-reused-across-navigation", {
+        engineID: String(engineID || ""),
+        component: String(component || ""),
+      });
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -6941,7 +7059,7 @@
       return;
     }
 
-    mountAllEngines(pendingManifest).then(function() {
+    mountAllEngines(pendingManifest, pendingEngineReuseIDs).then(function() {
       return Promise.all([
         hydrateAllIslands(pendingManifest),
         connectAllHubs(pendingManifest),
@@ -6961,7 +7079,18 @@
   // Main initialization
   // --------------------------------------------------------------------------
 
-  async function bootstrapPage() {
+  // pendingEngineReuseIDs stashes the current bootstrapPage() call's reuse
+  // set for window.__gosx_runtime_ready to read — mirrors the pendingManifest
+  // pattern above (window.__gosx_runtime_ready is invoked by the Go-WASM
+  // binary itself once it finishes initializing, not by bootstrapPage
+  // directly, so the reuse set can't just be a local variable / call
+  // argument there). Reset unconditionally at the top of every bootstrapPage
+  // call so a later plain call (e.g. a future page's initial load) never
+  // sees a stale reuse set from a previous navigation.
+  let pendingEngineReuseIDs = new Set();
+
+  async function bootstrapPage(reuseEngineIDs) {
+    pendingEngineReuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
     mountManagedMotion(document.body || document.documentElement);

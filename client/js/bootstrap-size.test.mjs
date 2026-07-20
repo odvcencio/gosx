@@ -255,7 +255,12 @@ const budgets = [
   // Firefox-deprecation-warning fix (try the plain gl.VENDOR/gl.RENDERER
   // query first, only fall back to the extension when masked/empty).
   // gzip/brotli headroom unchanged. Measured: 1_317_049 / 348_868 / 282_141.
-  { file: "bootstrap.js", raw: 1_318_000, gzip: 349_000, brotli: 283_000 },
+  // v0.34.0: bumped raw 1_318_000 -> 1_320_000 and gzip 349_000 -> 350_000
+  // for persistent scene engines across soft navigations
+  // (window.__gosx_reusable_engines / disposePage+mountAllEngines reuse
+  // skip in 30-tail.js). Brotli headroom unchanged. Measured:
+  // 1_318_570 / 349_334 / 282_590.
+  { file: "bootstrap.js", raw: 1_320_000, gzip: 350_000, brotli: 283_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -595,7 +600,11 @@ const budgets = [
   // 85_024 / 26_115 / 23_259; brotli unchanged.
   // Bumped for the Go-WASM engine lifecycle described by the monolith budget
   // above. Measured: 94_446 / 28_907 / 25_685.
-  { file: "bootstrap-feature-engines.js", raw: 95_000, gzip: 29_500, brotli: 26_000 },
+  // v0.34.0: bumped raw 95_000 -> 96_000 for mountAllEngines' soft-nav
+  // reuse-skip branch (see the monolith budget note above; this chunk
+  // carries the same mountAllEngines source). gzip/brotli headroom
+  // unchanged. Measured: 95_091 / 29_111 / 25_840.
+  { file: "bootstrap-feature-engines.js", raw: 96_000, gzip: 29_500, brotli: 26_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];

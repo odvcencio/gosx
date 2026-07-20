@@ -204,7 +204,7 @@ var outputs = []output{
 			sourceExtract(tailFile, "hubs-connections", sectionHubConnections, sectionIslandDisposal),
 			sourceExtract(tailFile, "hubs-disconnect",
 				"  window.__gosx_disconnect_hub = function(hubID) {\n",
-				"\n  async function disposePage() {\n"),
+				"\n  async function disposePage(reuseEngineIDs) {\n"),
 			sourceFile("bootstrap-src/26c-feature-hubs-suffix.js"),
 		},
 	},

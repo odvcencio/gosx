@@ -994,7 +994,39 @@
     };
   }
 
-  function replaceBody(nextDoc, baseURL) {
+  // adoptOrClone mirrors cloneIntoDocument's deep-clone-and-normalize
+  // behavior EXCEPT for elements whose id is a key in `reused` — those are
+  // moved (not cloned) from the CURRENT live document, preserving their
+  // identity. This is what lets a reused Scene3D engine's canvas keep its
+  // WebGL/WebGPU rendering context across a soft navigation: a same-document
+  // move (appendChild on a node already attached elsewhere) preserves the
+  // context; cloneNode(true) + discarding the original does not — it
+  // produces a brand-new canvas with no context at all, which is exactly
+  // the "full re-mount" behavior reuse is meant to skip. Recurses so a
+  // reusable element nested inside a freshly-cloned wrapper (its ancestor
+  // isn't itself reused) still gets adopted.
+  function adoptOrClone(node, baseURL, reused) {
+    if (!reused || reused.size === 0) {
+      return cloneIntoDocument(node, baseURL);
+    }
+    if (node && node.nodeType === 1) {
+      const id = node.getAttribute && node.getAttribute("id");
+      if (id && reused.has(id)) {
+        return reused.get(id);
+      }
+    }
+    if (node && typeof node.cloneNode === "function") {
+      const shallow = node.cloneNode(false);
+      normalizeNodeURLs(shallow, baseURL);
+      for (const child of toArray(node.childNodes)) {
+        shallow.appendChild(adoptOrClone(child, baseURL, reused));
+      }
+      return shallow;
+    }
+    return node;
+  }
+
+  function replaceBody(nextDoc, baseURL, reuseIDs) {
     const body = document.body;
     const nextBody = nextDoc.body;
     const existingAttrs = attributeEntries(body);
@@ -1003,6 +1035,24 @@
     }
     for (const entry of attributeEntries(nextBody)) {
       body.setAttribute(entry.name, entry.value);
+    }
+
+    // Detach (not destroy) any live mount elements this navigation is
+    // reusing — captured BEFORE the body is wiped below so their rendering
+    // context survives the swap. See window.__gosx_reusable_engines and
+    // adoptOrClone above. Resolved via the engine registry's OWN `mount`
+    // element reference (not a fresh getElementById(engineID) lookup) since
+    // the reuse set is keyed by engine id, while the actual DOM element id
+    // is entry.mountId (defaults to entry.id, but is not guaranteed equal) —
+    // record.mount.id sidesteps that distinction entirely by using whatever
+    // id the live element actually has.
+    const reused = new Map();
+    if (reuseIDs && typeof reuseIDs.forEach === "function" && window.__gosx && window.__gosx.engines) {
+      reuseIDs.forEach(function(engineID) {
+        const record = window.__gosx.engines.get(engineID);
+        const el = record && record.mount;
+        if (el && el.id) reused.set(el.id, el);
+      });
     }
 
     while (body.firstChild) {
@@ -1014,7 +1064,7 @@
       if (isElement(child, "SCRIPT") && child.hasAttribute(SCRIPT_ROLE) && child.getAttribute("src")) {
         continue;
       }
-      body.appendChild(cloneIntoDocument(child, baseURL));
+      body.appendChild(adoptOrClone(child, baseURL, reused));
     }
   }
 
@@ -1140,15 +1190,15 @@
     return bootstrapLoadedNow;
   }
 
-  async function disposeCurrentPage() {
+  async function disposeCurrentPage(reuseIDs) {
     if (typeof window.__gosx_dispose_page === "function") {
-      await window.__gosx_dispose_page();
+      await window.__gosx_dispose_page(reuseIDs);
     }
   }
 
-  async function bootstrapCurrentPage(bootstrapLoadedNow) {
+  async function bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs) {
     if (!bootstrapLoadedNow && typeof window.__gosx_bootstrap_page === "function") {
-      await window.__gosx_bootstrap_page();
+      await window.__gosx_bootstrap_page(reuseIDs);
     }
   }
 
@@ -1597,9 +1647,31 @@
     };
   }
 
+  // reusableEngineIDs asks the mounted runtime (client/js/bootstrap-src/30-tail.js,
+  // window.__gosx_reusable_engines) which currently-mounted engines are safe
+  // to carry across this navigation instead of disposing and remounting —
+  // same component, same mountId, byte-identical serialized scene props. See
+  // that function's doc comment for the full (deliberately conservative)
+  // rule. Absent in older bootstrap bundles or non-Scene3D pages, in which
+  // case navigation behaves exactly as before (dispose + remount).
+  function reusableEngineIDs(nextDoc) {
+    if (typeof window.__gosx_reusable_engines !== "function") {
+      return new Set();
+    }
+    try {
+      const ids = window.__gosx_reusable_engines(nextDoc);
+      return ids instanceof Set ? ids : new Set();
+    } catch (_e) {
+      return new Set();
+    }
+  }
+
   async function applyNavigatedPage(nextDoc, nextURL, replace, isCurrent) {
     if (isCurrent && !isCurrent()) return;
-    await disposeCurrentPage();
+    // Computed BEFORE disposal — it compares the OUTGOING (still-live)
+    // engines against the INCOMING manifest parsed from nextDoc.
+    const reuseIDs = reusableEngineIDs(nextDoc);
+    await disposeCurrentPage(reuseIDs);
     if (isCurrent && !isCurrent()) return;
     // Head/body replacement adopts nodes out of the parsed document. Capture
     // managed scripts first so head-owned patch/lifecycle chunks are not lost
@@ -1608,11 +1680,11 @@
       .concat(collectManagedScripts(nextDoc.body, nextURL));
     await replaceManagedHead(nextDoc, nextURL);
     if (isCurrent && !isCurrent()) return;
-    replaceBody(nextDoc, nextURL);
+    replaceBody(nextDoc, nextURL, reuseIDs);
     updateHistory(nextURL, !!replace);
     const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL, managedScripts);
     if (isCurrent && !isCurrent()) return;
-    await bootstrapCurrentPage(bootstrapLoadedNow);
+    await bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs);
   }
 
   function applyNavigationScroll(a11y, preserveScroll) {
