@@ -694,6 +694,44 @@ func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	}
 }
 
+// TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag: PreloadHints() must
+// not <link rel="preload" as="script"> a bundle BootstrapScript() ALSO emits
+// as a same-document <script defer src="..."> tag — the browser's preload
+// scanner already discovers deferred scripts at full priority during HTML
+// parsing, so the extra preload adds nothing and, on a heavy page that
+// delays script execution, trips Firefox's "preloaded but not used within a
+// few seconds" warning. scene3d is the one selective feature bundle that IS
+// always also emitted as a <script defer> tag (see BootstrapScript); engines/
+// hubs/islands are fetched by client-side JS after bootstrap.js runs, so
+// their preloads remain genuinely useful and must NOT be dropped.
+func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines: buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureHubs:    buildmanifest.HashedAsset{File: "bootstrap-feature-hubs.js", Hash: "hubs"},
+		BootstrapFeatureScene3D: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+
+	preloads := gosx.RenderHTML(r.PreloadHints())
+	if strings.Contains(preloads, "bootstrap-feature-scene3d") {
+		t.Fatalf("scene3d bundle must not be preloaded — it is already a same-document <script defer> tag: %s", preloads)
+	}
+	if !strings.Contains(preloads, "bootstrap-feature-engines") {
+		t.Fatalf("engines bundle preload must be preserved (client-side fetched, never a same-document script tag): %s", preloads)
+	}
+
+	scripts := gosx.RenderHTML(r.BootstrapScript())
+	if !strings.Contains(scripts, `data-gosx-script="feature-scene3d"`) || !strings.Contains(scripts, "bootstrap-feature-scene3d") {
+		t.Fatalf("scene3d bundle must still be emitted as a deferred <script> tag: %s", scripts)
+	}
+}
+
 func TestRendererUsesIslandOnlyRuntimeForIslandPages(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{

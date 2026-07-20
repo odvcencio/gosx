@@ -193,7 +193,16 @@ class FakeWebGLContext {
     this._boundTexture = null;
     this._vendor = typeof options.vendor === "string" ? options.vendor : "FakeGPU Inc.";
     this._renderer = typeof options.renderer === "string" ? options.renderer : "FakeGPU Renderer";
+    // unmaskedVendor/unmaskedRenderer let a test simulate a browser that
+    // masks the PLAIN gl.VENDOR/gl.RENDERER query (vendor/renderer above)
+    // but reveals the real string through WEBGL_debug_renderer_info's
+    // UNMASKED_* parameters — distinct from vendor/renderer so a test can
+    // assert which path a caller actually used. Default to the same value
+    // (no masking) when not given.
+    this._unmaskedVendor = typeof options.unmaskedVendor === "string" ? options.unmaskedVendor : this._vendor;
+    this._unmaskedRenderer = typeof options.unmaskedRenderer === "string" ? options.unmaskedRenderer : this._renderer;
     this._disableDebugRendererInfo = options.debugRendererInfo === false;
+    this.debugRendererInfoRequests = 0;
     this.POINTS = 0x0000;
     this.ARRAY_BUFFER = 0x8892;
     this.STATIC_DRAW = 0x88E4;
@@ -518,11 +527,20 @@ class FakeWebGLContext {
   }
 
   getExtension(name) {
-    if (name === "WEBGL_debug_renderer_info" && !this._disableDebugRendererInfo) {
-      return {
-        UNMASKED_VENDOR_WEBGL: 0x9245,
-        UNMASKED_RENDERER_WEBGL: 0x9246,
-      };
+    if (name === "WEBGL_debug_renderer_info") {
+      // Track every request regardless of availability — real browsers
+      // (Firefox) log the deprecation warning on the mere getExtension()
+      // call, so tests assert on this counter to prove callers only reach
+      // for the extension when the plain gl.VENDOR/gl.RENDERER query came
+      // back masked/empty.
+      this.debugRendererInfoRequests += 1;
+      if (!this._disableDebugRendererInfo) {
+        return {
+          UNMASKED_VENDOR_WEBGL: 0x9245,
+          UNMASKED_RENDERER_WEBGL: 0x9246,
+        };
+      }
+      return null;
     }
     if (name === "WEBGL_lose_context") {
       return {
@@ -535,10 +553,16 @@ class FakeWebGLContext {
   }
 
   getParameter(param) {
-    if (param === 0x9245 || param === this.VENDOR) {
+    if (param === 0x9245) {
+      return this._unmaskedVendor;
+    }
+    if (param === 0x9246) {
+      return this._unmaskedRenderer;
+    }
+    if (param === this.VENDOR) {
       return this._vendor;
     }
-    if (param === 0x9246 || param === this.RENDERER) {
+    if (param === this.RENDERER) {
       return this._renderer;
     }
     return null;
@@ -14295,6 +14319,117 @@ test("bootstrap prefers canvas Scene3D rendering on software WebGL backends", as
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-preference"), "avoid");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "environment-constrained");
+});
+
+// --- WEBGL_debug_renderer_info: only query when the plain gl.VENDOR/
+// gl.RENDERER came back masked/empty — Firefox logs a deprecation warning
+// on every getExtension("WEBGL_debug_renderer_info") call, even when the
+// caller never uses the result. ---
+test("bootstrap never queries WEBGL_debug_renderer_info when the plain gl.VENDOR/gl.RENDERER already return real strings", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-unmasked-renderer";
+  let glInstance = null;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-unmasked-renderer",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-unmasked-renderer",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+    createWebGLContext: () => {
+      glInstance = new FakeWebGLContext({
+        vendor: "Google Inc. (Google)",
+        renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      });
+      return glInstance;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.ok(glInstance, "expected a WebGL context to have been created");
+  assert.equal(glInstance.debugRendererInfoRequests, 0,
+    "the plain gl.VENDOR/gl.RENDERER query already returned real strings — WEBGL_debug_renderer_info must never be requested");
+  // The plain-query path alone must still correctly detect a software
+  // (SwiftShader) renderer — proving the fallback isn't needed for
+  // correctness here, only for masked/older engines.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-software-webgl"), "true");
+});
+
+test("bootstrap falls back to WEBGL_debug_renderer_info only when the plain query is masked, and uses its unmasked result", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-masked-renderer";
+  let glInstance = null;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-masked-renderer",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-masked-renderer",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+    createWebGLContext: () => {
+      glInstance = new FakeWebGLContext({
+        // Plain gl.VENDOR/gl.RENDERER masked, exactly like a browser that
+        // hasn't unmasked the plain query (e.g. privacy.resistFingerprinting).
+        vendor: "Mozilla",
+        renderer: "Generic Renderer",
+        // Real strings, only revealed through WEBGL_debug_renderer_info's
+        // UNMASKED_VENDOR_WEBGL/UNMASKED_RENDERER_WEBGL.
+        unmaskedVendor: "Google Inc. (Google)",
+        unmaskedRenderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      });
+      return glInstance;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.ok(glInstance, "expected a WebGL context to have been created");
+  assert.equal(glInstance.debugRendererInfoRequests, 1,
+    "a masked plain query must fall back to WEBGL_debug_renderer_info exactly once");
+  // Detection must reflect the UNMASKED (real) renderer string, not the
+  // masked "Generic Renderer" placeholder.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-software-webgl"), "true");
 });
 
 test("bootstrap requires WebGL for Scene3D when requested", async () => {
