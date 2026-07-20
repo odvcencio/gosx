@@ -844,36 +844,60 @@
     };
   }
 
+  // sceneWebGLRendererLooksMasked: true for the well-known generic
+  // placeholder strings a browser substitutes for gl.VENDOR/gl.RENDERER
+  // when it hasn't (yet) unmasked the plain query — "Generic Renderer" /
+  // "Mozilla" (Firefox privacy.resistFingerprinting-style masking),
+  // "WebKit WebGL" (Safari) — or empty. Real GPU/driver strings never
+  // match these exactly.
+  function sceneWebGLRendererLooksMasked(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return true;
+    const lowered = trimmed.toLowerCase();
+    return lowered === "generic renderer" || lowered === "webkit webgl" || lowered === "mozilla" || lowered === "webgl";
+  }
+
   function sceneReadWebGLRendererMetadata(gl) {
     if (!gl || typeof gl.getParameter !== "function") {
       return { vendor: "", renderer: "" };
     }
     let vendor = "";
     let renderer = "";
+    // Try the plain (unextended) query FIRST — modern engines increasingly
+    // return the real, unmasked string here directly. Firefox has
+    // deprecated WEBGL_debug_renderer_info in favor of this and logs
+    // "WEBGL_debug_renderer_info is deprecated in Firefox and will be
+    // removed. Please use RENDERER." to the console every time the
+    // extension is requested — even when the answer it gives is never used
+    // downstream — so querying it unconditionally (the old behavior here)
+    // spammed that warning on every WebGL mount in Firefox.
     try {
-      const debugInfo = typeof gl.getExtension === "function"
-        ? gl.getExtension("WEBGL_debug_renderer_info")
-        : null;
-      if (debugInfo) {
-        vendor = String(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || "");
-        renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "");
-      }
+      vendor = String(gl.getParameter(gl.VENDOR) || "").trim();
     } catch (_error) {
       vendor = "";
+    }
+    try {
+      renderer = String(gl.getParameter(gl.RENDERER) || "").trim();
+    } catch (_error) {
       renderer = "";
     }
-    if (!vendor) {
+    // Fall back to the debug extension ONLY when the plain query came back
+    // masked/empty — older engines that still mask gl.VENDOR/gl.RENDERER
+    // by default need it; anything that already returned a real string
+    // skips the (deprecated-on-Firefox) extension call entirely.
+    if (sceneWebGLRendererLooksMasked(vendor) || sceneWebGLRendererLooksMasked(renderer)) {
       try {
-        vendor = String(gl.getParameter(gl.VENDOR) || "");
+        const debugInfo = typeof gl.getExtension === "function"
+          ? gl.getExtension("WEBGL_debug_renderer_info")
+          : null;
+        if (debugInfo) {
+          const unmaskedVendor = String(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || "").trim();
+          const unmaskedRenderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "").trim();
+          if (unmaskedVendor) vendor = unmaskedVendor;
+          if (unmaskedRenderer) renderer = unmaskedRenderer;
+        }
       } catch (_error) {
-        vendor = "";
-      }
-    }
-    if (!renderer) {
-      try {
-        renderer = String(gl.getParameter(gl.RENDERER) || "");
-      } catch (_error) {
-        renderer = "";
+        // Keep whatever the plain query returned.
       }
     }
     return {

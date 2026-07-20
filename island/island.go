@@ -1245,13 +1245,26 @@ func (r *Renderer) PreloadHints() gosx.Node {
 	}
 
 	if r.usesSelectiveRuntimeBootstrap() {
+		// Skip preloading any feature bundle that BootstrapScript() ALSO
+		// emits as a same-document <script defer src="..."> tag (currently
+		// just scene3d, whenever the page has a Scene3D engine — see
+		// bootstrapScriptSrcs). The browser's preload scanner already
+		// discovers deferred scripts at full priority during HTML parsing,
+		// so a redundant preload link adds nothing — and if a heavy page
+		// delays script execution past a few seconds, it trips Firefox's
+		// "preloaded but not used within a few seconds" console warning.
+		// engines/hubs/islands are genuinely NOT duplicated: those bundles
+		// are fetched by client-side JS after bootstrap.js runs, not
+		// server-rendered as <script> tags, so preloading them still
+		// starts the fetch earlier than the dynamic loader otherwise would.
+		emittedScriptSrcs := r.bootstrapScriptSrcs()
 		for _, path := range []string{
 			r.selectedBootstrapFeaturePath("engines"),
 			r.selectedBootstrapFeaturePath("hubs"),
 			r.selectedBootstrapFeaturePath("islands"),
 			r.selectedBootstrapFeaturePath("scene3d"),
 		} {
-			if strings.TrimSpace(path) == "" {
+			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script">`, path))
@@ -1260,6 +1273,37 @@ func (r *Renderer) PreloadHints() gosx.Node {
 	}
 
 	return gosx.RawHTML(b.String())
+}
+
+// bootstrapScriptSrcs returns the set of URLs BootstrapScript() emits as
+// same-document <script src="..."> tags. Used by PreloadHints() to avoid
+// preloading a script the initial HTML already declares — see the comment
+// at that call site.
+func (r *Renderer) bootstrapScriptSrcs() map[string]bool {
+	srcs := map[string]bool{}
+	if !r.needsClientBootstrap() {
+		return srcs
+	}
+	plan := r.clientRuntimePlan()
+	if plan.PreviewRelay && r.relayPath != "" {
+		srcs[r.relayPath] = true
+	}
+	if plan.StandardGoWASMExec && r.standardGoWASMExecPath != "" {
+		srcs[r.standardGoWASMExecPath] = true
+	}
+	if plan.WASMExec && r.wasmExecPath != "" {
+		srcs[r.wasmExecPath] = true
+	}
+	if plan.Patch && r.patchPath != "" {
+		srcs[r.patchPath] = true
+	}
+	if bootstrapPath := r.selectedBootstrapPath(); bootstrapPath != "" {
+		srcs[bootstrapPath] = true
+	}
+	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+		srcs[scene3dPath] = true
+	}
+	return srcs
 }
 
 // PageHead returns all head elements needed for islands on this page.

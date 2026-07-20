@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Fixed the Firefox console warning "WEBGL_debug_renderer_info is deprecated
+  in Firefox and will be removed. Please use RENDERER." firing on every
+  WebGL Scene3D mount: `sceneReadWebGLRendererMetadata` now tries the plain
+  `gl.getParameter(gl.VENDOR)`/`gl.getParameter(gl.RENDERER)` query first
+  (modern engines increasingly return the real, unmasked string there
+  directly) and only falls back to the `WEBGL_debug_renderer_info`
+  extension when that plain query comes back masked (a well-known generic
+  placeholder like "Generic Renderer"/"Mozilla"/"WebKit WebGL") or empty —
+  keeping the extension path for older engines that still mask it.
+- Fixed redundant `<link rel="preload" as="script">` hints for the scene3d
+  feature bundle: the server's `PreloadHints()` always preloaded it
+  alongside `BootstrapScript()` unconditionally emitting the SAME URL as a
+  same-document `<script defer>` tag whenever a page has a Scene3D engine.
+  The browser's preload scanner already discovers deferred scripts at full
+  priority during HTML parsing, so the extra preload added nothing and
+  tripped Firefox's "preloaded but not used within a few seconds" warning
+  when a heavy boot delayed the deferred script's execution. `PreloadHints()`
+  now skips any feature bundle URL `BootstrapScript()` will also emit as a
+  `<script src>` tag; engines/hubs/islands (fetched by client-side JS, never
+  server-rendered as script tags) are unaffected and keep their preloads.
+
 ## v0.33.2 (2026-07-19)
 
 - Fixed the WebGPU render loop drawing dead frames forever on a persistent
