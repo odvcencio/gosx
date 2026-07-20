@@ -10691,6 +10691,100 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
   assert.equal(diagnostics.deviceFeatures.length, 0);
 });
 
+// v0.33.2: the fresh-adapter retry after a requestDevice failure (e.g. a
+// memory-tight browser's "Not enough memory left") must request the bare
+// device defaults, NOT repeat the manifest's requiredFeatures/requiredLimits
+// — those are almost certainly unrelated to why the first request failed,
+// and a memory-constrained browser is far more likely to grant a modest
+// (no extra requirements) device than the exact same over-specified one.
+test("Scene3D WebGPU probe retries a memory failure with a MINIMAL descriptor even when the first attempt required features/limits", async () => {
+  let deviceRequests = 0;
+  let firstDescriptor = "unset";
+  let retryDescriptor = "unset";
+  const adapterFeatures = new Set(["future-rendering-mode"]);
+  const adapterLimits = { maxTextureDimension2D: 8192, maxComputeWorkgroupSizeX: 256 };
+  const failingAdapter = {
+    features: adapterFeatures,
+    limits: adapterLimits,
+    requestDevice: async (descriptor) => {
+      deviceRequests++;
+      firstDescriptor = descriptor;
+      // Sanity: the first attempt DID carry the manifest's requirements —
+      // this is the over-specified request a memory-tight browser rejects.
+      throw new Error("Not enough memory left.");
+    },
+  };
+  const retryAdapter = {
+    features: adapterFeatures,
+    limits: adapterLimits,
+    info: { vendor: "retry-vendor" },
+    requestDevice: async (descriptor) => {
+      deviceRequests++;
+      retryDescriptor = descriptor;
+      return {
+        lost: new Promise(() => {}),
+        features: new Set(),
+        limits: adapterLimits,
+      };
+    },
+  };
+  let adapterRequests = 0;
+  const env = createContext({
+    enableWebGPU: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+    },
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests++;
+        return adapterRequests === 1 ? failingAdapter : retryAdapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgpu-memory-retry-probe",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "probe-scene",
+          requiredCapabilities: [
+            "webgpu",
+            "webgpu:limit:maxComputeWorkgroupSizeX>=128",
+            "webgpu-feature:future-rendering-mode",
+          ],
+          props: {},
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(adapterRequests, 2, "must reacquire a fresh adapter after the memory failure");
+  assert.equal(deviceRequests, 2);
+  // The FIRST attempt is the over-specified one (proves the manifest's
+  // requirements really were being requested, i.e. this test's premise
+  // holds) — not undefined/minimal.
+  assert.ok(firstDescriptor && Array.isArray(firstDescriptor.requiredFeatures) && firstDescriptor.requiredFeatures.length > 0,
+    "first attempt must have requested the manifest's requiredFeatures");
+  assert.ok(firstDescriptor.requiredLimits && Object.keys(firstDescriptor.requiredLimits).length > 0,
+    "first attempt must have requested the manifest's requiredLimits");
+  // The RETRY must be minimal: no requiredFeatures, no requiredLimits.
+  assert.equal(retryDescriptor, undefined,
+    "the fresh-adapter retry must request bare device defaults, not repeat the same requiredFeatures/requiredLimits");
+  const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
+  assert.equal(diagnostics.ready, true);
+  assert.equal(diagnostics.retryCount, 1);
+  assert.match(diagnostics.warnings[0], /Not enough memory left/);
+  assert.equal(diagnostics.adapterInfo.vendor, "retry-vendor");
+});
+
 test("Scene3D WebGPU probe invalidates lost device and reacquires a fresh device", async () => {
   let adapterRequests = 0;
   let deviceRequests = 0;
@@ -12258,6 +12352,166 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   assert.equal(events.some((event) => event.msg === "renderer-canvas-replaced"), true);
   assert.equal(events.some((event) => event.msg === "renderer-swap" && event.fields.to === "webgl"), true);
   assert.equal(events.some((event) => event.msg === "renderer-fallback-unavailable"), false);
+});
+
+// --- v0.33.2: persistent per-frame WebGPU validation/OOM errors (frames
+// keep advancing, but every one is invalid — a stalled-frame-seq watchdog
+// cannot see this) must demote (tear down post-FX, retry raw) first, and
+// only escalate to a WebGL backend swap if raw rendering ALSO keeps
+// erroring after demotion. ---
+test("Scene3D WebGPU persistent frame errors demote post-FX first, then fall back to WebGL if raw rendering still errors", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-frame-error";
+  let now = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testWebGPUCreateCount = 0;
+          window.__testWebGPUDisposeCount = 0;
+          window.__testWebGPURenderCount = 0;
+          window.__testWebGPUDemoteCount = 0;
+          window.__testWebGPUFrameErrorStreak = 0;
+          window.__testWebGPUPostFXDisabled = false;
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              window.__testWebGPUCreateCount += 1;
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  return {
+                    ready: true,
+                    frameErrorStreak: window.__testWebGPUFrameErrorStreak,
+                    postFXDisabled: window.__testWebGPUPostFXDisabled,
+                    lastError: window.__testWebGPUFrameErrorStreak > 0 ? "Buffer with '' label is invalid" : ""
+                  };
+                },
+                disablePostProcessing: function() {
+                  if (window.__testWebGPUPostFXDisabled) return false;
+                  window.__testWebGPUPostFXDisabled = true;
+                  window.__testWebGPUDemoteCount += 1;
+                  return true;
+                },
+                render: function() { window.__testWebGPURenderCount += 1; },
+                dispose: function() { window.__testWebGPUDisposeCount += 1; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-frame-error",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-frame-error",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const originalCreateElement = env.document.createElement.bind(env.document);
+  env.document.createElement = function(tagName) {
+    const element = originalCreateElement(tagName);
+    if (String(tagName || "").toLowerCase() === "canvas") {
+      const originalGetContext = element.getContext.bind(element);
+      element.getContext = function(kind, options) {
+        const contextKind = String(kind || "");
+        if (
+          this.__webgpuClaimed &&
+          (contextKind === "2d" || contextKind === "webgl" || contextKind === "webgl2" || contextKind === "experimental-webgl")
+        ) {
+          this.contextCalls = this.contextCalls || [];
+          this.contextCalls.push({ kind, options: options || null, blockedByWebGPU: true });
+          return null;
+        }
+        return originalGetContext(kind, options);
+      };
+    }
+    return element;
+  };
+
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+
+  const firstCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(env.context.__testWebGPUCreateCount, 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  // --- Step 1: persistent frame errors (well past the streak threshold) ->
+  // DEMOTE. Renderer stays WebGPU; only post-FX gets torn down.
+  env.context.__testWebGPUFrameErrorStreak = 40;
+  now = 2000;
+  assert.equal(timers.runInterval(2000), 1);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", "demote must NOT swap the renderer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+  assert.equal(env.context.__testWebGPUDemoteCount, 1);
+  assert.equal(env.context.__testWebGPUCreateCount, 1, "demote must not recreate the renderer");
+  assert.equal(mount.children[0], firstCanvas, "demote must not replace the canvas");
+  assert.equal(events.some((event) => event.msg === "webgpu-postfx-demoted"), true);
+  assert.equal(events.some((event) => event.msg === "webgpu-persistent-frame-error-fallback"), false);
+  assert.equal(events.some((event) => event.msg === "renderer-swap"), false);
+
+  // --- Step 2: raw rendering (post-FX already torn down) STILL errors
+  // persistently -> FALLBACK to WebGL on a replacement canvas.
+  now = 4000;
+  assert.equal(timers.runInterval(2000), 1);
+  await flushAsyncWork();
+
+  const replacementCanvas = mount.children[0];
+  assert.notEqual(replacementCanvas, firstCanvas, "fallback must replace the (WebGPU-tainted) canvas");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-persistent-frame-error");
+  assert.equal(env.context.__testWebGPUDisposeCount, 1);
+  assert.ok((replacementCanvas.contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+  assert.equal(events.some((event) => event.msg === "webgpu-persistent-frame-error-fallback"), true);
+  assert.equal(events.some((event) => event.msg === "renderer-swap" && event.fields.to === "webgl"), true);
 });
 
 test("selective Scene3D bootstrap honors explicit WebGPU preference when WebGL is disabled", async () => {

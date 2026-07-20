@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## v0.33.2 (2026-07-19)
+
+- Fixed the WebGPU render loop drawing dead frames forever on a persistent
+  per-frame validation/OOM error (observed on Firefox/Windows under tight
+  GPU memory: a post-FX/HDR-target allocation failed silently — WebGPU
+  resource creation never throws synchronously — and the poisoned texture
+  was reused every frame after, reporting "Buffer with '' label is invalid"
+  with no recovery, black canvas). The engine now owns its own resilience
+  ladder instead of relying on a page reload:
+  - **Demote** (first response): after a streak of consecutive erroring
+    frames, tear down the post-FX chain's GPU resources and retry raw
+    rendering — the WebGPU renderer exposes `disablePostProcessing()` and
+    `diagnostics().frameErrorStreak`/`.postFXDisabled`; publishes
+    `data-gosx-scene3d-webgpu-postfx-demoted`.
+  - **Fallback** (if raw rendering also keeps erroring after demotion): swap
+    to the WebGL backend at runtime via the existing
+    `fallbackSceneRenderer`/context-loss machinery (full re-mount on a fresh
+    canvas, no page reload) with the new `webgpu-persistent-frame-error`
+    reason, published via the existing renderer-fallback attrs.
+  - `ensureFBOs`' post-FX target allocation is now guarded with an
+    `out-of-memory` error scope: a failed allocation invalidates the cached
+    texture (forces retry next call) and reports through the same error
+    path instead of silently caching an invalid resource.
+  - The WebGPU probe's fresh-adapter retry after a `requestDevice` failure
+    (e.g. "Not enough memory left") now requests the browser's bare device
+    defaults instead of repeating the same `requiredFeatures`/`requiredLimits`
+    — a memory-tight browser is far more likely to grant a modest device
+    than the exact over-specified request that already failed.
+
 ## v0.33.1 (2026-07-19)
 
 - Fixed `sceneQualityLadderAdmittedGroups` returning the active QualityLadder

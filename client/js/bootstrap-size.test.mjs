@@ -246,7 +246,12 @@ const budgets = [
   // non-destructive SCENE_CMD_SET_POST_UNIFORMS command, and the
   // adaptiveQuality+ladder warning fix. Brotli headroom unchanged. Measured:
   // 1_315_391 / 348_289 / 281_535.
-  { file: "bootstrap.js", raw: 1_317_000, gzip: 349_000, brotli: 282_000 },
+  // v0.33.2: bumped brotli 282_000 -> 283_000 for the WebGPU persistent
+  // frame-error resilience ladder (demote post-FX / fall back to WebGL),
+  // the postFX allocation error-scope guard, and the probe's minimal-
+  // descriptor fresh-adapter retry. raw/gzip headroom unchanged. Measured:
+  // 1_316_839 / 348_799 / 282_024.
+  { file: "bootstrap.js", raw: 1_317_000, gzip: 349_000, brotli: 283_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw

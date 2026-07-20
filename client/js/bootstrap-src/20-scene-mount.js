@@ -7641,6 +7641,14 @@
     const SCENE_RENDER_WATCHDOG_INTERVAL_MS = 2000;
     const SCENE_RENDER_STALL_MS = 6500;
     const SCENE_RENDER_FALLBACK_STALL_MS = 12000;
+    // SCENE_WEBGPU_FRAME_ERROR_STREAK_THRESHOLD: consecutive erroring WebGPU
+    // frames (see 16a-scene-webgpu.js's reportWebGPUFrameError /
+    // diagnostics().frameErrorStreak) before checkSceneWebGPUFrameErrorResilience
+    // acts. A genuinely persistent failure (memory-tight browser, poisoned
+    // post-FX target) blows past this on the very first SCENE_RENDER_WATCHDOG_INTERVAL_MS
+    // poll (2s of frames at any real frame rate); the threshold exists to
+    // ignore a single transient validation blip, not to add meaningful delay.
+    const SCENE_WEBGPU_FRAME_ERROR_STREAK_THRESHOLD = 30;
     let renderWatchdogTimer = null;
     let renderWatchdogLastSeq = -1;
     let renderWatchdogLastAt = 0;
@@ -7777,6 +7785,59 @@
       window.addEventListener("gosx:scene3d:webgpu-probe-ready", webgpuProbeReadyListener);
     }
 
+    // checkSceneWebGPUFrameErrorResilience reacts to PERSISTENT per-frame
+    // WebGPU validation/OOM errors — the failure mode a stalled-frame-seq
+    // watchdog (checkSceneRenderWatchdog below) cannot see, because the
+    // render loop keeps completing and advancing frame-seq every frame even
+    // though every frame is invalid (a memory-tight browser session that
+    // failed to allocate a post-FX/HDR target once and then reused the
+    // poisoned resource forever — "Buffer with '' label is invalid" on
+    // every frame, black canvas, no recovery).
+    //
+    // Two-step ladder, cheapest/least-disruptive first:
+    //   1. DEMOTE: tear down the post-FX chain (disablePostProcessing) and
+    //      retry raw rendering — the base scene without post-FX was fine for
+    //      the whole session up to the point post-FX's allocation failed, so
+    //      this alone recovers the common case.
+    //   2. FALLBACK: if raw rendering (post-FX already torn down) STILL
+    //      errors persistently, swap to the WebGL backend at runtime via the
+    //      existing fallbackSceneRenderer machinery (same path webgl-context-lost
+    //      and webgpu-device-lost already use) — a full engine re-mount on
+    //      the same canvas/mount, no page reload required.
+    // Returns true when it took an action this poll (caller should skip the
+    // rest of the stall-detection logic for this cycle).
+    function checkSceneWebGPUFrameErrorResilience(diagnostics) {
+      if (!diagnostics || !renderer || renderer.kind !== "webgpu") {
+        return false;
+      }
+      const streak = Math.max(0, Math.floor(sceneNumber(diagnostics.frameErrorStreak, 0)));
+      if (streak < SCENE_WEBGPU_FRAME_ERROR_STREAK_THRESHOLD) {
+        return false;
+      }
+      if (!diagnostics.postFXDisabled && typeof renderer.disablePostProcessing === "function" && renderer.disablePostProcessing()) {
+        setAttrValue(ctx.mount, "data-gosx-scene3d-webgpu-postfx-demoted", "true");
+        gosxSceneEmit("warn", "webgpu-postfx-demoted", {
+          frameErrorStreak: streak,
+          lastError: diagnostics.lastError || "",
+        });
+        viewportDirty = true;
+        renderLatestSceneBundle("webgpu-postfx-demoted");
+        scheduleRenderWithViewport("webgpu-postfx-demoted");
+        return true;
+      }
+      // Already demoted (post-FX torn down) and STILL erroring persistently
+      // — post-FX was not the (sole) problem. Escalate to a backend swap.
+      gosxSceneEmit("warn", "webgpu-persistent-frame-error-fallback", {
+        frameErrorStreak: streak,
+        lastError: diagnostics.lastError || "",
+      });
+      if (fallbackSceneRenderer("webgpu-persistent-frame-error")) {
+        renderLatestSceneBundle("webgpu-persistent-frame-error");
+        scheduleRenderWithViewport("webgpu-persistent-frame-error");
+      }
+      return true;
+    }
+
     function checkSceneRenderWatchdog() {
       if (disposed || !ctx.mount || !renderer || renderer.kind !== "webgpu") {
         return;
@@ -7795,6 +7856,9 @@
       const failureReason = rendererReportsWebGPUFailure(diagnostics);
       if (failureReason) {
         recoverSceneWebGPURenderer(failureReason, 0, true);
+        return;
+      }
+      if (checkSceneWebGPUFrameErrorResilience(diagnostics)) {
         return;
       }
       if (progress.seq > renderWatchdogLastSeq || progress.at > renderWatchdogLastAt) {
@@ -8078,7 +8142,14 @@
 	    }
 
 	    function sceneFallbackRequiresReplacementCanvas(reason) {
-	      return reason === "webgpu-device-lost";
+	      // A canvas that already had getContext("webgpu") called on it is
+	      // permanently tainted to that context type — getContext("webgl2")
+	      // on the SAME canvas returns null regardless of whether the WebGPU
+	      // device itself is still alive. webgpu-persistent-frame-error's
+	      // canvas was claimed by the (still-alive-but-broken) WebGPU
+	      // renderer exactly like webgpu-device-lost's was, so it needs the
+	      // same fresh-canvas treatment.
+	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error";
 	    }
 
 	    function createFallbackSceneWebGLRenderer(reason) {

@@ -3350,7 +3350,17 @@
   // Post-Processing Manager (WebGPU)
   // -----------------------------------------------------------------------
 
-  function wgpuCreatePostProcessor(device, targetFormat) {
+  // onAllocationError (optional): called with an error message when the
+  // HDR/post-FX render-target allocation below (ensureFBOs) fails — e.g. a
+  // GPUOutOfMemoryError on a memory-tight browser. See ensureFBOs' error-scope
+  // guard: WebGPU resource creation never throws synchronously, so an
+  // allocation failure would otherwise silently poison sceneTex/auxTex/
+  // depthTex and get reused (and fail validation) EVERY frame thereafter —
+  // this is precisely what a memory-tight-browser "Buffer/Texture is invalid"
+  // persistent-error session looks like. Guarding makes the failure a
+  // detectable event (reported once, cache invalidated so the next
+  // ensureFBOs call retries) instead of a poisoned resource used forever.
+  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError) {
     var disposed = false;
     var sceneTex = null;
     var sceneTexView = null;
@@ -3557,6 +3567,20 @@
       if (auxTex) auxTex.destroy();
       if (depthTex) depthTex.destroy();
 
+      // Guard allocation with an out-of-memory error scope: createTexture()
+      // never throws synchronously in WebGPU (a failed allocation still
+      // returns a texture object immediately, just an invalid one), so
+      // without this the failure would be silent until something tries to
+      // USE the invalid texture — and by then it's cached and reused every
+      // frame. Nested inside whatever whole-frame scope the caller may
+      // already have open (WebGPU error scopes stack); "out-of-memory" is a
+      // distinct filter from the "validation" scope the frame loop uses, so
+      // this doesn't steal or duplicate that reporting.
+      var scopedAlloc = !!(device && typeof device.pushErrorScope === "function");
+      if (scopedAlloc) {
+        try { device.pushErrorScope("out-of-memory"); } catch (_err) { scopedAlloc = false; }
+      }
+
       var texUsage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
       sceneTex = device.createTexture({ size: [width, height, 1], format: targetFormat, usage: texUsage });
       sceneTexView = sceneTex.createView();
@@ -3571,6 +3595,21 @@
 
       currentWidth = width;
       currentHeight = height;
+
+      if (scopedAlloc) {
+        wgpuPopScopedErrorScope(device).then(function(error) {
+          if (!error || disposed) return;
+          // Invalidate so the NEXT ensureFBOs call retries allocation
+          // instead of reusing the poisoned textures forever — this frame's
+          // views are already handed out and may still render garbage, but
+          // every subsequent frame gets a fresh attempt.
+          currentWidth = -1;
+          currentHeight = -1;
+          if (typeof onAllocationError === "function") {
+            onAllocationError(error.message || String(error));
+          }
+        });
+      }
     }
 
     // Lazily (re)allocate the bloom ping-pong pair at a specific resolution.
@@ -4237,6 +4276,18 @@
     var lastCullSurvivors = null; // null | string (JSON)
     var pendingWebGPUErrorScope = false;
     var webGPUErrorReportCount = 0;
+    // webGPUConsecutiveFrameErrors: consecutive frames (not capped, unlike
+    // webGPUErrorReportCount's 3-report emit cap above) that ended with a
+    // reported validation/OOM error — reset to 0 on the next clean frame.
+    // Drives the mount-level demote (tear down post-FX, retry raw) / backend
+    // fallback resilience in 20-scene-mount.js; see diagnostics().frameErrorStreak
+    // and disablePostProcessing() below.
+    var webGPUConsecutiveFrameErrors = 0;
+    // postFXForceDisabled: set by disablePostProcessing() (the "demote" step
+    // of the frame-error resilience ladder) — once true, render() never
+    // rebuilds or uses the post-FX chain again for this renderer instance,
+    // regardless of bundle.postEffects, until a fresh mount/renderer swap.
+    var postFXForceDisabled = false;
 
     function ensureGPUTiming() {
       if (gpuTiming !== null) return gpuTiming;
@@ -13658,7 +13709,15 @@
     function reportWebGPUFrameError(message) {
       var text = String(message || "").slice(0, 500);
       if (!text) return;
-      var stats = Object.assign({}, lastWebGPUFrameStats || {}, { renderer: "webgpu", lastError: text });
+      // Unlike webGPUErrorReportCount below (capped at 3 lifetime emits so a
+      // persistently-erroring session doesn't spam window.__gosx_emit
+      // forever), webGPUConsecutiveFrameErrors is UNCAPPED and reset to 0 on
+      // the next clean frame (see endWebGPUErrorScope) — it's what the
+      // mount-level resilience watchdog polls via diagnostics().frameErrorStreak
+      // to decide when to demote (tear down post-FX) and, if that doesn't
+      // help, fall back to WebGL.
+      webGPUConsecutiveFrameErrors += 1;
+      var stats = Object.assign({}, lastWebGPUFrameStats || {}, { renderer: "webgpu", lastError: text, frameErrorStreak: webGPUConsecutiveFrameErrors });
       publishWebGPUFrameStats(stats);
       if (webGPUErrorReportCount >= 3) return;
       webGPUErrorReportCount += 1;
@@ -13695,10 +13754,14 @@
         device.popErrorScope().then(function(error) {
           if (error) {
             reportWebGPUFrameError(error.message || String(error));
-          } else if (lastWebGPUFrameStats && lastWebGPUFrameStats.lastError) {
-            var clean = Object.assign({}, lastWebGPUFrameStats);
-            delete clean.lastError;
-            publishWebGPUFrameStats(clean);
+          } else {
+            webGPUConsecutiveFrameErrors = 0;
+            if (lastWebGPUFrameStats && lastWebGPUFrameStats.lastError) {
+              var clean = Object.assign({}, lastWebGPUFrameStats);
+              delete clean.lastError;
+              delete clean.frameErrorStreak;
+              publishWebGPUFrameStats(clean);
+            }
           }
         }).catch(function(error) {
           var message = error && error.message ? error.message : String(error);
@@ -14221,9 +14284,14 @@
       // swapchain re-creation and a hard stall on Metal).
       configureWebGPUCanvas(canvas);
 
-      // Determine post-processing.
+      // Determine post-processing. postFXForceDisabled (set by
+      // disablePostProcessing(), the frame-error resilience "demote" step)
+      // permanently overrides the authored post-FX chain for this renderer
+      // instance — a scene that persistently fails post-FX allocation/
+      // validation retries RAW rendering instead of drawing dead frames
+      // forever with a poisoned post-FX target.
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
-      var usePostProcessing = postEffects.length > 0;
+      var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
@@ -14361,7 +14429,7 @@
       var postTarget = null;
 
       if (usePostProcessing) {
-        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat);
+        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError);
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
         if (sampleCount > 1) {
           mainColorView = ensureMSAAColor(scaledW, scaledH, sampleCount);
@@ -14740,6 +14808,30 @@
       configuredSurfaceKey = "";
     }
 
+    // disablePostProcessing: the frame-error resilience "demote" step (see
+    // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog). Tears down the
+    // post-FX chain's GPU resources (HDR scene target, bloom ping-pong,
+    // depth, cached pipelines/bind groups — everything wgpuCreatePostProcessor
+    // owns) and permanently stops rebuilding them for this renderer instance,
+    // so a scene whose post-FX allocation/validation is persistently failing
+    // (memory-tight browser, poisoned target) falls back to raw rendering
+    // instead of resubmitting the same broken frame forever. Idempotent —
+    // returns false if already demoted (nothing to do).
+    function disablePostProcessing() {
+      if (postFXForceDisabled) return false;
+      postFXForceDisabled = true;
+      if (postProcessor) {
+        try { postProcessor.dispose(); } catch (_err) {}
+        postProcessor = null;
+      }
+      // Give raw rendering a fresh error-streak window: if post-FX really
+      // was the problem, this resets the counter the fallback threshold
+      // compares against, so the mount only escalates to a full backend
+      // swap if raw rendering ALSO keeps failing.
+      webGPUConsecutiveFrameErrors = 0;
+      return true;
+    }
+
     // Device + GPU resources were already initialized synchronously
     // above (using the pre-probed device from 16z). If that setup
     // failed, initFailed is true and render() will no-op; return null
@@ -14806,6 +14898,11 @@
       out.waterNormalDispatchSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
       out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
       out.postProcessing = !!postProcessor;
+      // Frame-error resilience state (see reportWebGPUFrameError /
+      // disablePostProcessing above and 20-scene-mount.js's
+      // checkSceneWebGPUFrameErrorWatchdog, the poller that acts on these).
+      out.frameErrorStreak = webGPUConsecutiveFrameErrors;
+      out.postFXDisabled = postFXForceDisabled;
       out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
       out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
       out.skinnedMeshObjects = lastWebGPUFrameStats && lastWebGPUFrameStats.skinnedMeshObjects || 0;
@@ -14828,6 +14925,7 @@
       diagnostics: diagnostics,
       render: render,
       dispose: dispose,
+      disablePostProcessing: disablePostProcessing,
     };
   }
 
