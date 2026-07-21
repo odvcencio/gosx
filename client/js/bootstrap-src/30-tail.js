@@ -6691,6 +6691,7 @@
     if (!nextManifest || !Array.isArray(nextManifest.engines)) {
       return reusable;
     }
+    inflateManifestShaderLibs(nextManifest, { publish: false });
     const nextByID = new Map();
     for (const entry of nextManifest.engines) {
       if (entry && entry.id) nextByID.set(String(entry.id), entry);

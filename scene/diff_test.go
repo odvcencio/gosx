@@ -176,6 +176,37 @@ func TestDiffCommandsReplacesPostEffects(t *testing.T) {
 	}
 }
 
+func TestSetPostUniformsCommandBuildsStableTypedPayload(t *testing.T) {
+	command := SetPostUniformsCommand([]PostUniformPatch{
+		{
+			Name: "flare-shield",
+			Uniforms: map[string]any{
+				"shieldStrength": 0.58,
+				"iris":           true,
+			},
+		},
+	})
+	if command.Kind != CommandSetPostUniforms {
+		t.Fatalf("command kind = %d, want %d", command.Kind, CommandSetPostUniforms)
+	}
+	if command.Kind != 14 {
+		t.Fatalf("CommandSetPostUniforms value = %d, want stable wire value 14", command.Kind)
+	}
+	payload := commandPayloadMap(t, command)
+	effects, ok := payload["effects"].([]any)
+	if !ok || len(effects) != 1 {
+		t.Fatalf("effects payload = %#v", payload["effects"])
+	}
+	effect, ok := effects[0].(map[string]any)
+	if !ok || effect["name"] != "flare-shield" {
+		t.Fatalf("effect payload = %#v", effects[0])
+	}
+	uniforms, ok := effect["uniforms"].(map[string]any)
+	if !ok || uniforms["shieldStrength"] != 0.58 || uniforms["iris"] != true {
+		t.Fatalf("uniform payload = %#v", effect["uniforms"])
+	}
+}
+
 func TestDiffCommandsReplacesEnvironment(t *testing.T) {
 	previous := SceneIR{
 		Environment: EnvironmentIR{AmbientColor: "#ffffff", AmbientIntensity: 0.1},

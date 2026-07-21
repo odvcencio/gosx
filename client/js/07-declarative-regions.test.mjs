@@ -297,6 +297,25 @@ test("region swap applies a data-gosx-scene-commands payload to every mounted Go
   assert.deepEqual(asJSON(engineB.calls), [commands]);
 });
 
+test("declarative scene command broadcasts keep legacy mounted handles separate from public target readiness", async () => {
+  const commands = [{ kind: 0, objectId: "legacy-pin", data: { kind: "label", props: { text: "legacy" } } }];
+  const engine = makeEngineHandle();
+  const engines = new Map([["legacy-engine", engine.record]]);
+  const root = makeRegion({}, [makeCommandScript(JSON.stringify(commands))]);
+
+  const { context } = runModule([], {}, { engines });
+  assert.equal(engine.record.handle.__gosxScene3DCommandReady, undefined);
+
+  context.window.__gosx_apply_scene_command_scripts(root);
+  assert.deepEqual(asJSON(engine.calls), [commands]);
+
+  await assert.rejects(
+    context.window.__gosx.scene3d.dispatchCommands(engine.record.handle, commands),
+    /not ready and has no stable id/,
+    "the public API still requires a ready target or a stable target id",
+  );
+});
+
 test("region swap ignores engines that are not GoSXScene3D and engines without applyCommands", async () => {
   const commands = [{ kind: 0, objectId: "x", data: { kind: "label", props: { text: "hi" } } }];
   const region = makeRegion(

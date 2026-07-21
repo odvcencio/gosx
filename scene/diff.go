@@ -25,6 +25,7 @@ const (
 	CommandSetInstancedGLBMeshes
 	CommandSetAnimations
 	CommandSetEnvironment
+	CommandSetPostUniforms
 )
 
 // Command is a server-authored Scene3D mutation. Send a JSON array of Commands
@@ -41,6 +42,13 @@ type CommandPayload struct {
 	Kind     string `json:"kind,omitempty"`
 	Geometry string `json:"geometry,omitempty"`
 	Props    any    `json:"props,omitempty"`
+}
+
+// PostUniformPatch is one named CustomPost uniform patch. The browser runtime
+// shallow-merges Uniforms into every installed post effect with the same name.
+type PostUniformPatch struct {
+	Name     string         `json:"name"`
+	Uniforms map[string]any `json:"uniforms"`
 }
 
 // DiffCommands builds a conservative command list that turns previous into
@@ -276,6 +284,17 @@ func SetPostEffectsCommand(effects []PostEffectIR, maxPixels int) Command {
 		Data: map[string]any{
 			"postEffects":     effects,
 			"postFXMaxPixels": maxPixels,
+		},
+	}
+}
+
+// SetPostUniformsCommand patches named CustomPost uniforms without replacing
+// the post-FX chain or invalidating compiled shader pipeline identity.
+func SetPostUniformsCommand(effects []PostUniformPatch) Command {
+	return Command{
+		Kind: CommandSetPostUniforms,
+		Data: map[string]any{
+			"effects": effects,
 		},
 	}
 }

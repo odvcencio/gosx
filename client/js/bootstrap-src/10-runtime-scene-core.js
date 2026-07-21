@@ -88,6 +88,10 @@
     // InstancedMesh Elio GPU cull kernel — hoisted when ≥2 meshes share the
     // same kernel source. Mirror entry exists in Go shaderLibFields (scene/shader_lib.go).
     { collection: "instancedMeshes",  field: "cullKernelWGSL" },
+    { collection: "postEffects",      field: "fragmentWGSL" },
+    { collection: "postEffects",      field: "vertexWGSL" },
+    { collection: "postEffects",      field: "fragmentGLSL" },
+    { collection: "postEffects",      field: "vertexGLSL" },
   ];
 
   // inflateSceneShaderLib walks a parsed scene object (props.scene), replaces
@@ -125,8 +129,9 @@
   // manifest, inflating shaderLib refs in each entry's props.scene. Called once
   // immediately after loadManifest() returns, before the manifest is stashed as
   // pendingManifest. Mutates the manifest in-place.
-  function inflateManifestShaderLibs(manifest) {
+  function inflateManifestShaderLibs(manifest, options) {
     if (!manifest || typeof manifest !== "object") return;
+    var publish = !options || options.publish !== false;
     var allEntries = [];
     if (Array.isArray(manifest.islands)) {
       for (var i = 0; i < manifest.islands.length; i++) allEntries.push(manifest.islands[i]);
@@ -143,7 +148,9 @@
         inflateSceneShaderLib(entry.props.scene);
       }
     }
-    publishManifestWaterShaderSources(allEntries);
+    if (publish) {
+      publishManifestWaterShaderSources(allEntries);
+    }
   }
 
   function publishManifestWaterShaderSources(entries) {
@@ -174,6 +181,84 @@
       }
     }
     window.__gosx_scene3d_water_shader_sources_by_id = published;
+  }
+
+  const SCENE3D_FORCE_WEBGL_STORAGE_KEY = "gosx:scene3d:force-webgl-next";
+
+  function scene3DActivateStoredForceWebGL() {
+    try {
+      if (typeof window === "undefined" || !window.sessionStorage) return false;
+      if (window.sessionStorage.getItem(SCENE3D_FORCE_WEBGL_STORAGE_KEY) !== "1") return false;
+      window.sessionStorage.removeItem(SCENE3D_FORCE_WEBGL_STORAGE_KEY);
+      window.__gosx_scene3d_force_webgl = true;
+      window.__gosx_scene3d_webgl_recovery_active = true;
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function scene3DForceWebGLRequested() {
+    return (typeof window !== "undefined" && window.__gosx_scene3d_force_webgl === true) ||
+      scene3DActivateStoredForceWebGL();
+  }
+
+  function isScene3DWebGLRecoveryActive() {
+    return scene3DForceWebGLRequested() ||
+      (typeof window !== "undefined" && window.__gosx_scene3d_webgl_recovery_active === true);
+  }
+
+  function requestScene3DWebGLRecovery(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    if (typeof window !== "undefined") {
+      window.__gosx_scene3d_force_webgl = true;
+      window.__gosx_scene3d_webgl_recovery_active = true;
+      try {
+        if (window.sessionStorage) {
+          window.sessionStorage.setItem(SCENE3D_FORCE_WEBGL_STORAGE_KEY, "1");
+        }
+      } catch (_error) {
+        // The in-memory global still covers this page.
+      }
+      if (opts.reload === true && window.location && typeof window.location.reload === "function") {
+        window.location.reload();
+      }
+    }
+    return { forceWebGL: true, reload: opts.reload === true };
+  }
+
+  function clearScene3DWebGLRecovery() {
+    if (typeof window !== "undefined") {
+      window.__gosx_scene3d_force_webgl = false;
+      window.__gosx_scene3d_webgl_recovery_active = false;
+      try {
+        if (window.sessionStorage) {
+          window.sessionStorage.removeItem(SCENE3D_FORCE_WEBGL_STORAGE_KEY);
+        }
+      } catch (_error) {
+        // Ignore storage failures.
+      }
+    }
+    return { forceWebGL: false };
+  }
+
+  if (typeof window !== "undefined") {
+    scene3DActivateStoredForceWebGL();
+    window.__gosx_scene3d_request_webgl_recovery = requestScene3DWebGLRecovery;
+    window.__gosx_scene3d_clear_webgl_recovery = clearScene3DWebGLRecovery;
+    window.__gosx_scene3d_force_webgl_requested = scene3DForceWebGLRequested;
+    window.__gosx_scene3d_is_webgl_recovery_active = isScene3DWebGLRecoveryActive;
+    window.__gosx = window.__gosx || {};
+    window.__gosx.scene3d = window.__gosx.scene3d || {};
+    window.__gosx.scene3d.requestWebGLRecovery = requestScene3DWebGLRecovery;
+    window.__gosx.scene3d.clearWebGLRecovery = clearScene3DWebGLRecovery;
+    window.__gosx.scene3d.forceWebGLRequested = scene3DForceWebGLRequested;
+    window.__gosx.scene3d.isWebGLRecoveryActive = isScene3DWebGLRecoveryActive;
+    window.__gosx_scene3d = window.__gosx_scene3d || {};
+    window.__gosx_scene3d.requestWebGLRecovery = requestScene3DWebGLRecovery;
+    window.__gosx_scene3d.clearWebGLRecovery = clearScene3DWebGLRecovery;
+    window.__gosx_scene3d.forceWebGLRequested = scene3DForceWebGLRequested;
+    window.__gosx_scene3d.isWebGLRecoveryActive = isScene3DWebGLRecoveryActive;
   }
 
   // --------------------------------------------------------------------------

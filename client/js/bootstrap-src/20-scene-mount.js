@@ -964,7 +964,10 @@
 
   function sceneForcesWebGL(props) {
     return sceneBool(props && props.forceWebGL, false) ||
-      (typeof window !== "undefined" && window.__gosx_scene3d_force_webgl === true);
+      (typeof window !== "undefined" && (
+        window.__gosx_scene3d_force_webgl === true ||
+        (typeof window.__gosx_scene3d_force_webgl_requested === "function" && window.__gosx_scene3d_force_webgl_requested())
+      ));
   }
 
   function scenePrefersWebGPU(props) {
@@ -2643,6 +2646,20 @@
   window.__gosx_scene3d_preload_model = function(src) {
     return loadSceneModelAsset(String(src || "").trim(), null);
   };
+  if (typeof window !== "undefined") {
+    window.__gosx = window.__gosx || {};
+    window.__gosx.scene3d = window.__gosx.scene3d || {};
+    window.__gosx.scene3d.preloadModel = function(src) {
+      return window.__gosx_scene3d_preload_model(src);
+    };
+    window.__gosx.scene3d.setPerformanceTelemetry = function(enabled) {
+      window.__gosx_scene3d_perf = enabled === true;
+      return window.__gosx_scene3d_perf;
+    };
+    window.__gosx.scene3d.isPerformanceTelemetryEnabled = function() {
+      return window.__gosx_scene3d_perf === true;
+    };
+  }
 
   function sceneModelHasSkins(skins) {
     return Array.isArray(skins) && skins.some(function(skin) {
@@ -9790,11 +9807,14 @@
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
         notifySceneRendererLifecycle("commands", false, false);
         if (result && typeof result.then === "function") {
-          result.then(function() {
+          scheduleRender("commands");
+          return result.then(function() {
             scheduleRender("commands-models");
+            return { applied: true };
           });
         }
         scheduleRender("commands");
+        return Promise.resolve({ applied: true });
       },
       getCamera() {
         return currentMountedSceneCamera();
@@ -9958,7 +9978,15 @@
         delete ctx.mount.__gosxScene3DCSSDynamic;
         delete ctx.mount.__gosxScene3DCSSRevision;
         delete ctx.mount.__gosxScene3DCSSAnimationUntil;
+        if (typeof window !== "undefined" && typeof window.__gosx_scene3d_clear_command_ready === "function") {
+          window.__gosx_scene3d_clear_command_ready(ctx.mount);
+        }
         delete ctx.mount.__gosxScene3DHandle;
+        if (typeof ctx.mount.removeAttribute === "function") {
+          ctx.mount.removeAttribute("data-gosx-scene3d-command-ready");
+          ctx.mount.removeAttribute("data-gosx-scene3d-command-revision");
+          ctx.mount.removeAttribute("data-gosx-scene3d-command-applied-revision");
+        }
       },
     };
     // Mirror the returned handle directly on the mount element. The
@@ -9971,5 +9999,8 @@
     // interactive (e.g. an app-level progressive-upgrade script) should
     // prefer reading it from here over window.__gosx.engines.get(id).handle.
     ctx.mount.__gosxScene3DHandle = handle;
+    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_mark_command_ready === "function") {
+      window.__gosx_scene3d_mark_command_ready(ctx.mount, handle, { engineID: ctx.id });
+    }
     return handle;
   });

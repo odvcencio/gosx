@@ -17463,6 +17463,341 @@ test("navigation runtime reuses an engine with an identical scene: same canvas e
   assert.strictEqual(env.context.__gosx.engines.get("bg-scene"), recordBefore, "the SAME engine record must persist");
 });
 
+test("navigation runtime reuses an engine when incoming scene still carries shaderLib postEffect refs", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "bg-scene-postfx";
+  const libID = "sl:postfx001122334455";
+  const shader = "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }\n@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+
+  function makeManifest() {
+    return {
+      engines: [
+        {
+          id: "bg-scene-postfx",
+          mountId: "bg-scene-postfx",
+          component: "GoSXScene3D",
+          kind: "surface",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            autoRotate: false,
+            scene: {
+              objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }],
+              postEffects: [{ kind: "customPost", name: "flare-shield", fragmentWGSLRef: libID, vertexWGSLRef: libID }],
+              shaderLib: { [libID]: shader },
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    };
+  }
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: makeManifest(),
+    fetchRoutes: {
+      "http://localhost:3000/next-postfx": { text: "__REUSE_POSTFX_NEXT__", url: "http://localhost:3000/next-postfx" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const recordBefore = env.context.__gosx.engines.get("bg-scene-postfx");
+  assert.ok(recordBefore, "expected the Scene3D engine to mount initially");
+  const canvasBefore = mount.children[0];
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+
+  const nextMountPlaceholder = new FakeElement("div", null);
+  nextMountPlaceholder.id = "bg-scene-postfx";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(makeManifest());
+  parsedDocs.set("__REUSE_POSTFX_NEXT__", buildNavigatedDocument({
+    title: "Next",
+    bodyNodes: [nextMountPlaceholder, manifestScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/next-postfx");
+  await flushAsyncWork();
+
+  assert.equal(disposed, false, "raw shaderLib refs must compare equal after incoming manifest inflation");
+  const liveMount = env.document.getElementById("bg-scene-postfx");
+  assert.strictEqual(liveMount, mount, "the live mount must be carried over");
+  assert.strictEqual(liveMount.children[0], canvasBefore, "the existing canvas must survive");
+  assert.equal(manifestScript.textContent.includes("fragmentWGSLRef"), true, "incoming DOM manifest text must not be mutated");
+});
+
+test("Scene3D public command API queues before ready, applies with ack, and rejects absent targets", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+
+  assert.equal(typeof env.context.__gosx.scene3d.dispatchCommands, "function");
+  const commands = [{ kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.5 } }] } }];
+  const pending = env.context.__gosx.scene3d.dispatchCommands("queued-scene", commands, { timeoutMS: 500 });
+  let settled = false;
+  pending.then(() => { settled = true; });
+  await flushAsyncWork();
+  assert.equal(settled, false, "pre-ready command Promise must wait for actual command readiness");
+
+  const mount = new FakeElement("div", env.document);
+  mount.id = "queued-scene";
+  env.document.body.appendChild(mount);
+  const applied = [];
+  const handle = {
+    applyCommands(received) {
+      applied.push(received);
+      return Promise.resolve({ ok: true });
+    },
+  };
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-command-ready"), null, "ready attr must be absent before listener install");
+  env.context.__gosx_scene3d_mark_command_ready(mount, handle, { engineID: "queued-scene" });
+  const ack = await pending;
+
+  assert.deepEqual(applied, [commands], "queued commands must apply after readiness");
+  assert.equal(ack.applied, true);
+  assert.equal(ack.revision, 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-command-ready"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-command-revision"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-command-applied-revision"), "1");
+
+  await assert.rejects(
+    env.context.__gosx.scene3d.dispatchCommands("missing-scene", commands, { timeoutMS: 1 }),
+    /did not become ready: missing-scene/,
+  );
+});
+
+test("Scene3D public command API flushes queues for distinct engine and mount ids", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+
+  const commands = [{ kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.5 } }] } }];
+  const byMount = env.context.__gosx.scene3d.dispatchCommands("scene-mount-id", commands, { timeoutMS: 500 });
+  const byEngine = env.context.__gosx.scene3d.dispatchCommands("scene-engine-id", commands, { timeoutMS: 500 });
+  const mount = new FakeElement("div", env.document);
+  mount.id = "scene-mount-id";
+  env.document.body.appendChild(mount);
+  let applied = 0;
+  const handle = {
+    applyCommands() {
+      applied += 1;
+      return Promise.resolve({ ok: true });
+    },
+  };
+
+  env.context.__gosx_scene3d_mark_command_ready(mount, handle, { engineID: "scene-engine-id" });
+  const ackMount = await byMount;
+  const ackEngine = await byEngine;
+
+  assert.equal(applied, 2, "ready marker must flush queues under mount id and engine id");
+  assert.equal(ackMount.applied, true);
+  assert.equal(ackEngine.applied, true);
+  assert.equal(ackMount.revision, 1);
+  assert.equal(ackEngine.revision, 2);
+});
+
+test("Scene3D public command API dispatches by engine id after ready before registry insertion", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+
+  const mount = new FakeElement("div", env.document);
+  mount.id = "late-registry-mount";
+  env.document.body.appendChild(mount);
+  const applied = [];
+  const handle = {
+    applyCommands(commands) {
+      applied.push(commands);
+      return Promise.resolve({ ok: true });
+    },
+  };
+
+  env.context.__gosx_scene3d_mark_command_ready(mount, handle, { engineID: "late-registry-engine" });
+  assert.equal(env.context.__gosx.engines.has("late-registry-engine"), false, "test must cover the pre-registry window");
+
+  const commands = [{ kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.7 } }] } }];
+  const ack = await env.context.__gosx.scene3d.dispatchCommands("late-registry-engine", commands, { timeoutMS: 50 });
+  assert.equal(ack.applied, true);
+  assert.equal(ack.revision, 1);
+  assert.deepEqual(applied, [commands]);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-command-applied-revision"), "1");
+
+  env.context.__gosx_scene3d_clear_command_ready(handle);
+  await assert.rejects(
+    env.context.__gosx.scene3d.dispatchCommands("late-registry-engine", commands, { timeoutMS: 1 }),
+    /did not become ready: late-registry-engine/,
+  );
+});
+
+test("Scene3D public command revisions stay monotonic across navigation reuse", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "revision-scene";
+  const manifest = {
+    engines: [
+      {
+        id: "revision-scene",
+        mountId: "revision-scene",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: {
+          width: 320,
+          height: 180,
+          autoRotate: false,
+          scene: {
+            postEffects: [{ kind: "customPost", name: "lens", uniforms: { amount: 0.1 } }],
+          },
+        },
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+  };
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: manifest,
+    fetchRoutes: {
+      "http://localhost:3000/revision-next": { text: "__REVISION_NEXT__", url: "http://localhost:3000/revision-next" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const first = await env.context.__gosx.scene3d.dispatchCommands("revision-scene", [
+    { kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.2 } }] } },
+  ]);
+  assert.equal(first.revision, 1);
+
+  const nextMountPlaceholder = new FakeElement("div", null);
+  nextMountPlaceholder.id = "revision-scene";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifest);
+  parsedDocs.set("__REVISION_NEXT__", buildNavigatedDocument({
+    title: "Revision Next",
+    bodyNodes: [nextMountPlaceholder, manifestScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/revision-next");
+  await flushAsyncWork();
+
+  const liveMount = env.document.getElementById("revision-scene");
+  assert.strictEqual(liveMount, mount, "engine mount must be reused");
+  const second = await env.context.__gosx.scene3d.dispatchCommands("revision-scene", [
+    { kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.3 } }] } },
+  ]);
+  assert.equal(second.revision, 2);
+  assert.equal(liveMount.getAttribute("data-gosx-scene3d-command-applied-revision"), "2");
+});
+
+test("Scene3D WebGL recovery API owns one-shot session persistence and reload", () => {
+  function makeSessionStorage(initial) {
+    const values = new Map(Object.entries(initial || {}));
+    return {
+      getItem(key) {
+        return values.has(key) ? values.get(key) : null;
+      },
+      setItem(key, value) {
+        values.set(key, String(value));
+      },
+      removeItem(key) {
+        values.delete(key);
+      },
+    };
+  }
+
+  const env = createContext({});
+  env.context.sessionStorage = makeSessionStorage({});
+  let reloads = 0;
+  env.context.location.reload = function() { reloads += 1; };
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+
+  assert.equal(typeof env.context.__gosx.scene3d.requestWebGLRecovery, "function");
+  assert.equal(env.context.__gosx.scene3d.isWebGLRecoveryActive(), false);
+  const result = env.context.__gosx.scene3d.requestWebGLRecovery({ reload: true });
+  assert.equal(result.forceWebGL, true);
+  assert.equal(result.reload, true);
+  assert.equal(reloads, 1, "reload:true must request a reload");
+  assert.equal(env.context.__gosx_scene3d_force_webgl, true, "compatibility global remains internally set");
+  assert.equal(env.context.__gosx.scene3d.forceWebGLRequested(), true);
+  assert.equal(env.context.__gosx.scene3d.isWebGLRecoveryActive(), true);
+  assert.equal(env.context.sessionStorage.getItem("gosx:scene3d:force-webgl-next"), "1");
+
+  env.context.__gosx.scene3d.clearWebGLRecovery();
+  assert.equal(env.context.__gosx.scene3d.isWebGLRecoveryActive(), false);
+  assert.equal(env.context.sessionStorage.getItem("gosx:scene3d:force-webgl-next"), null);
+
+  const envReload = createContext({});
+  envReload.context.sessionStorage = makeSessionStorage({ "gosx:scene3d:force-webgl-next": "1" });
+  runScript(bootstrapRuntimeSource, envReload.context, "bootstrap-runtime.js");
+  assert.equal(envReload.context.sessionStorage.getItem("gosx:scene3d:force-webgl-next"), null, "stored recovery marker must be one-shot");
+  assert.equal(envReload.context.__gosx.scene3d.isWebGLRecoveryActive(), true, "one-shot marker activates current page recovery state");
+  assert.equal(envReload.context.__gosx.scene3d.forceWebGLRequested(), true);
+
+  assert.match(
+    bootstrapScene3DMountSourceFile,
+    /__gosx_scene3d_force_webgl_requested/,
+    "Scene3D backend selection must consume the framework recovery API",
+  );
+});
+
+test("Scene3D canonical preloadModel wraps legacy model preload hook", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+
+  assert.equal(typeof env.context.__gosx.scene3d.preloadModel, "function");
+  assert.equal(typeof env.context.__gosx_scene3d_preload_model, "function");
+  const original = env.context.__gosx_scene3d_preload_model;
+  const calls = [];
+  env.context.__gosx_scene3d_preload_model = function(src) {
+    calls.push(src);
+    return Promise.resolve({ src: src, objects: [] });
+  };
+
+  const result = await env.context.__gosx.scene3d.preloadModel(" /models/full.glb ");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0], " /models/full.glb ");
+  assert.equal(result.src, " /models/full.glb ");
+
+  env.context.__gosx_scene3d_preload_model = original;
+});
+
+test("Scene3D canonical performance telemetry API owns legacy perf flag", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+
+  assert.equal(typeof env.context.__gosx.scene3d.setPerformanceTelemetry, "function");
+  assert.equal(typeof env.context.__gosx.scene3d.isPerformanceTelemetryEnabled, "function");
+  assert.equal(env.context.__gosx.scene3d.isPerformanceTelemetryEnabled(), false);
+  assert.equal(env.context.__gosx.scene3d.setPerformanceTelemetry(true), true);
+  assert.equal(env.context.__gosx_scene3d_perf, true);
+  assert.equal(env.context.__gosx.scene3d.isPerformanceTelemetryEnabled(), true);
+  assert.equal(env.context.__gosx.scene3d.setPerformanceTelemetry(false), false);
+  assert.equal(env.context.__gosx_scene3d_perf, false);
+  assert.equal(env.context.__gosx.scene3d.isPerformanceTelemetryEnabled(), false);
+});
+
 test("navigation runtime disposes and remounts an engine when the scene payload differs", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "bg-scene-2";
@@ -26180,6 +26515,68 @@ test("shaderLib hydrate: no-op when shaderLib absent (plain scene unaffected)", 
     "inline computeWGSL must be preserved when no shaderLib present");
 });
 
+test("shaderLib hydrate: postEffects WGSL and GLSL refs inflate before WASM hydration", async () => {
+  const wgsl = "// post wgsl " + "x".repeat(2000);
+  const glsl = "// post glsl " + "y".repeat(2000);
+  const wgslID = "sl:postwgsl001122334455";
+  const glslID = "sl:postglsl001122334455";
+  const islandRoot = new FakeElement("div", null);
+  islandRoot.id = "gosx-island-postfx-shader-test";
+
+  const env = createContext({
+    elements: [islandRoot],
+    manifest: {
+      islands: [
+        {
+          id: "gosx-island-postfx-shader-test",
+          component: "PostFX",
+          bundleId: "test-bundle",
+          props: {
+            scene: {
+              postEffects: [
+                {
+                  kind: "customPost",
+                  name: "flare-shield",
+                  fragmentWGSLRef: wgslID,
+                  vertexWGSLRef: wgslID,
+                  fragmentGLSLRef: glslID,
+                  vertexGLSLRef: glslID,
+                },
+              ],
+              shaderLib: { [wgslID]: wgsl, [glslID]: glsl },
+            },
+          },
+          programRef: "/test.json",
+          programFormat: "json",
+        },
+      ],
+      bundles: { "test-bundle": { path: "/test.wasm" } },
+      runtime: { path: "/test-runtime.wasm" },
+    },
+    fetchRoutes: {
+      "/test-runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/test.json": { text: '{}' },
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.hydrateCalls.length, 1, "island must be hydrated");
+  const props = JSON.parse(env.hydrateCalls[0][2]);
+  const scene = props && props.scene;
+  assert.equal(scene.shaderLib, undefined, "shaderLib must be deleted after inflation");
+  const effect = scene.postEffects && scene.postEffects[0];
+  assert.equal(effect.fragmentWGSL, wgsl, "fragmentWGSL must inflate from shaderLib");
+  assert.equal(effect.vertexWGSL, wgsl, "vertexWGSL must inflate from shaderLib");
+  assert.equal(effect.fragmentGLSL, glsl, "fragmentGLSL must inflate from shaderLib");
+  assert.equal(effect.vertexGLSL, glsl, "vertexGLSL must inflate from shaderLib");
+  assert.equal(effect.fragmentWGSLRef, undefined, "fragmentWGSLRef must be deleted");
+  assert.equal(effect.vertexWGSLRef, undefined, "vertexWGSLRef must be deleted");
+  assert.equal(effect.fragmentGLSLRef, undefined, "fragmentGLSLRef must be deleted");
+  assert.equal(effect.vertexGLSLRef, undefined, "vertexGLSLRef must be deleted");
+});
+
 // -------------------------------------------------------------------------
 // shaderLib hydrate: inflate for Points authored WGSL ref fields (S2 rungs)
 // -------------------------------------------------------------------------
@@ -26701,6 +27098,93 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
 
   const failWarns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("failed") || m.includes("passthrough")));
   assert.equal(failWarns.length, 0, "valid custom post WGSL must not warn");
+});
+
+test("custom post WebGPU: identical complete WGSL module is submitted once", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  let renderPipelineAsyncCalls = 0;
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const completeModule = [
+    "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {",
+    "  return vec4<f32>(0.0, 0.0, 0.0, 1.0);",
+    "}",
+    "@fragment fn fragmentMain() -> @location(0) vec4<f32> {",
+    "  return vec4<f32>(1.0);",
+    "}",
+  ].join("\n");
+
+  harness.renderer.render(makeBundleWithCustomPost({
+    fragmentWGSL: completeModule,
+    vertexWGSL: completeModule,
+  }), viewport);
+  assert.equal(renderPipelineAsyncCalls, 1, "frame 1 must trigger exactly one createRenderPipelineAsync");
+
+  const modules = fake.state.shaderModules.filter((module) => module.label === "selena-post-test-lens");
+  assert.equal(modules.length, 1, "one Selena post shader module must be created");
+  assert.equal(modules[0].code, completeModule, "identical complete WGSL must not be concatenated twice");
+  assert.equal((modules[0].code.match(/fn vertexMain/g) || []).length, 1, "vertexMain must occur once");
+  assert.equal((modules[0].code.match(/fn fragmentMain/g) || []).length, 1, "fragmentMain must occur once");
+
+  await flushAsyncWork();
+  await flushAsyncWork();
+  const failWarns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("failed") || m.includes("passthrough")));
+  assert.equal(failWarns.length, 0, "identical complete WGSL module must not warn");
+});
+
+test("custom post WebGPU: same name and WGSL prefix with different tail builds distinct pipelines", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  let renderPipelineAsyncCalls = 0;
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const sharedPrefix = "// shared prefix " + "x".repeat(180) + "\n";
+  const moduleA = [
+    sharedPrefix,
+    "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }",
+    "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(0.1, 0.2, 0.3, 1.0); }",
+  ].join("\n");
+  const moduleB = [
+    sharedPrefix,
+    "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }",
+    "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(0.9, 0.8, 0.7, 1.0); }",
+  ].join("\n");
+
+  harness.renderer.render(makeBundleWithCustomPost({
+    name: "same-prefix-lens",
+    fragmentWGSL: moduleA,
+    vertexWGSL: moduleA,
+  }), viewport);
+  harness.renderer.render(makeBundleWithCustomPost({
+    name: "same-prefix-lens",
+    fragmentWGSL: moduleB,
+    vertexWGSL: moduleB,
+  }), viewport);
+
+  assert.equal(renderPipelineAsyncCalls, 2, "different WGSL tails must not collide in the custom post pipeline cache");
+  const modules = fake.state.shaderModules.filter((module) => module.label === "selena-post-same-prefix-lens");
+  assert.equal(modules.length, 2, "both different WGSL modules must be submitted");
+  assert.equal(modules[0].code, moduleA);
+  assert.equal(modules[1].code, moduleB);
 });
 
 test("custom post WebGPU: invalid WGSL triggers async validation failure, warns once, identity on subsequent frames", async () => {
