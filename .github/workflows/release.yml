@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing semantic-version tag to release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate tag, release truth, and vanity module path
+        env:
+          GITHUB_REF_TYPE: tag
+          GITHUB_REF_NAME: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release tag must be semantic versioning: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          test "$(git describe --tags --exact-match)" = "${RELEASE_TAG}"
+          test "$(go list -m)" = "m31labs.dev/gosx"
+          go run ./cmd/gosx release check --root .
+          curl --fail --silent --show-error 'https://m31labs.dev/gosx?go-get=1' \
+            | grep -F 'm31labs.dev/gosx git https://github.com/odvcencio/gosx'
+
+      - name: Test, vet, and build
+        run: |
+          set -euo pipefail
+          go test ./...
+          go vet ./...
+          CGO_ENABLED=0 go build ./cmd/gosx
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build gosx
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${GOOS}" = "windows" ]]; then ext=".exe"; fi
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+            -o "gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 7
+          path: gosx-*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum gosx-* > checksums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            artifacts/gosx-*
+            artifacts/checksums.txt
+          generate_release_notes: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify vanity-path install
+        env:
+          GOPROXY: direct
+          GONOSUMDB: m31labs.dev
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if go install "m31labs.dev/gosx/cmd/gosx@${RELEASE_TAG}"; then
+              gosx version
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
