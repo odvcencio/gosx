@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.35.1 (2026-07-21)
+
+Corrective release for the failed v0.35.0 publication. This release supersedes
+v0.35.0 and sets the canonical release truth to v0.35.1.
+
+- Ships Scene3D runtime reuse across eligible soft navigations.
+- Publishes the Scene3D reuse public APIs and reuse telemetry.
+- Fixes Scene3D shader and renderer metadata paths that produced noisy
+  browser diagnostics.
+
 ## v0.34.0 (2026-07-20)
 
 - Added persistent scene engines across soft navigations: `data-gosx-link`
