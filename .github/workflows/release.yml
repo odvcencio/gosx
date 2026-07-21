@@ -51,6 +51,16 @@ jobs:
           curl --fail --silent --show-error 'https://m31labs.dev/gosx?go-get=1' \
             | grep -F 'm31labs.dev/gosx git https://github.com/odvcencio/gosx'
 
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: |
+          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          sudo dpkg -i tinygo.deb
+          go install golang.org/dl/go1.25.5@latest
+          go1.25.5 download
+          tinygo version
+
       - name: Test, vet, and build
         run: |
           set -euo pipefail
