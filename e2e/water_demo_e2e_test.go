@@ -73,7 +73,8 @@ type waterSnapshot struct {
 }
 
 const waterSnapshotJS = `(() => {
-  const el = document.querySelector("[data-gosx-scene3d-mounted]");
+  const el = document.querySelector("[data-gosx-scene3d-mounted]") ||
+    document.querySelector("[data-gosx-scene3d-water-renderer]");
   const attr = (name) => el?.getAttribute(name) || "";
   const number = (name) => Number(attr(name) || 0);
   return {
@@ -489,7 +490,7 @@ func TestWaterUnsupportedHonesty(t *testing.T) {
 	if status := page.navigate(t, app.baseURL+"/demos/water"); status < 200 || status > 299 {
 		t.Fatalf("/demos/water returned %d\n\nLogs:\n%s", status, app.logs.String())
 	}
-	page.waitFor(t, `!!document.querySelector('[data-gosx-scene3d-mounted][data-gosx-scene3d-water-renderer="unsupported"]')`,
+	page.waitFor(t, `!!document.querySelector('[data-gosx-scene3d-water-renderer="unsupported"]')`,
 		30*time.Second, `water renderer "unsupported" state`)
 
 	state := takeWaterSnapshot(t, page)

@@ -4066,9 +4066,7 @@
     if (hasLadder && enabled && hasExplicitAdaptiveTierConfig && typeof console !== "undefined" && console.warn) {
       // Go-side authors get the equivalent Props.QualityLadderWarnings()
       // warning at build time; this covers directly JS-authored scenes too.
-      console.warn("[gosx] Scene3D: QualityLadder is authored alongside adaptiveQuality (dprCap tiers) — " +
-        "the ladder supersedes the dprCap-tier governor; adaptiveQuality's tier/profile behavior will not run. " +
-        "Remove adaptiveQuality or the QualityLadder to avoid ambiguity.");
+      console.warn("[gosx] QualityLadder overrides adaptiveQuality.");
     }
     const state = {
       enabled: tierEnabled,
@@ -7427,8 +7425,10 @@
     ctx.mount.__gosxScene3DCSSVarTransition = sceneExtractCSSVarTransitionTiming(props);
 
     clearChildren(ctx.mount);
-    ctx.mount.setAttribute("data-gosx-scene3d-mounted", "true");
+    const readyAttr = "data-gosx-scene3d-ready";
+    const mountedAttr = "data-gosx-scene3d-mounted";
     ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
+    setAttrValue(ctx.mount, readyAttr, "false");
     setAttrValue(ctx.mount, "data-gosx-scene3d-controls", normalizeSceneControlsMode(props.controls));
     setAttrValue(ctx.mount, "data-gosx-scene3d-pick-signals", scenePickSignalNamespace(props));
     setAttrValue(ctx.mount, "data-gosx-scene3d-event-signals", sceneEventSignalNamespace(props));
@@ -7502,7 +7502,7 @@
       applySceneRendererState(ctx.mount, { kind: "unsupported" }, unsupportedReason);
       publishSceneWaterRendererState(ctx.mount, sceneState, null, unsupportedReason);
       publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
-      setAttrValue(ctx.mount, "data-gosx-scene3d-ready", "false");
+      setAttrValue(ctx.mount, readyAttr, "false");
       if (canvas.parentNode === ctx.mount) {
         ctx.mount.removeChild(canvas);
       }
@@ -7680,9 +7680,13 @@
     });
 
     let frameHandle = null;
-    let scheduledRenderHandle = null;
+    let renderHandle = null;
+    let initHandle = null;
+    let initPending = true;
+    let initReason = "";
+    let readySent = false;
     let disposed = false;
-    let lastScheduledRenderReason = "";
+    let lastRenderReason = "";
     let lastRenderLoopReason = "initializing";
     const SCENE_RENDER_WATCHDOG_INTERVAL_MS = 2000;
     const SCENE_RENDER_STALL_MS = 6500;
@@ -7713,13 +7717,13 @@
 
     function sceneRenderLoopSnapshot(reason) {
       const animation = sceneAnimationState();
-      let active = frameHandle != null || scheduledRenderHandle != null;
+      let active = frameHandle != null || renderHandle != null;
       let loopReason = reason || lastRenderLoopReason || animation.reason || "unknown";
       if (!sceneCanRender()) {
         active = false;
         loopReason = lifecycle.pageVisible ? "offscreen" : "page-hidden";
-      } else if (scheduledRenderHandle != null) {
-        loopReason = lastScheduledRenderReason || loopReason || "scheduled-render";
+      } else if (renderHandle != null) {
+        loopReason = lastRenderReason || loopReason || "scheduled-render";
       } else if (frameHandle != null) {
         loopReason = animation.reason || loopReason || "animation";
       } else if (!animation.wants) {
@@ -7729,7 +7733,7 @@
         active,
         wantsAnimation: animation.wants,
         reason: loopReason,
-        scheduled: scheduledRenderHandle != null,
+        scheduled: renderHandle != null,
         animationFrame: frameHandle != null,
       };
     }
@@ -8466,9 +8470,9 @@
     }
 
     function cancelScheduledRender() {
-      if (scheduledRenderHandle != null) {
-        cancelEngineFrame(scheduledRenderHandle);
-        scheduledRenderHandle = null;
+      if (renderHandle != null) {
+        cancelEngineFrame(renderHandle);
+        renderHandle = null;
       }
       applySceneRenderLoopState("");
     }
@@ -8487,11 +8491,16 @@
       if (disposed) {
         return;
       }
-      lastScheduledRenderReason = reason || "refresh";
+      lastRenderReason = reason || "refresh";
       recordScenePerfCounter("schedule:" + (reason || "refresh"));
-      if (scheduledRenderHandle != null) {
+      if (initPending) {
+        initReason = lastRenderReason;
+        applySceneRenderLoopState(lastRenderReason);
+        return;
+      }
+      if (renderHandle != null) {
         recordScenePerfCounter("coalesced:" + (reason || "refresh"));
-        applySceneRenderLoopState(lastScheduledRenderReason);
+        applySceneRenderLoopState(lastRenderReason);
         return;
       }
       // Defer the viewport read+write into the RAF callback. The old
@@ -8509,8 +8518,8 @@
       // layout has been resolved), so rect reads are cheap and the
       // subsequent canvas writes batch naturally into the following
       // compositor pass.
-      scheduledRenderHandle = engineFrame(function(now) {
-        scheduledRenderHandle = null;
+      renderHandle = engineFrame(function(now) {
+        renderHandle = null;
         if (disposed) {
           return;
         }
@@ -8522,9 +8531,9 @@
         // Keep eager refreshes from overlapping an in-flight animation tick.
         cancelFrame();
         lastAnimationFrameAt = typeof now === "number" ? now : 0;
-        renderFrame(typeof now === "number" ? now : 0, reason || "refresh");
+        renderFrame(typeof now === "number" ? now : 0, lastRenderReason || reason || "refresh");
       });
-      applySceneRenderLoopState(lastScheduledRenderReason);
+      applySceneRenderLoopState(lastRenderReason);
     }
 
     // Wraps scheduleRender so the caller can opt into marking the
@@ -9012,7 +9021,7 @@
         component: String(ctx.component || ""),
         renderer: rendererKind,
         fallbackReason: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-renderer-fallback"),
-        ready: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-ready") === "true",
+        ready: sceneDebugAttr(ctx.mount, readyAttr) === "true",
         active: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-active") !== "false",
         renderLoop: sceneRenderLoopSnapshot(""),
         controls: normalizeSceneControlsMode(props.controls),
@@ -9290,7 +9299,7 @@
       if (ctx.runtime && ctx.runtime.available()) {
         await applySceneCommands(sceneState, await ctx.runtime.hydrateFromProgramRef());
       } else {
-        console.warn("[gosx] Scene3D runtime requested but shared engine runtime is unavailable");
+        console.warn("[gosx] shared engine runtime unavailable");
       }
     }
 
@@ -9426,7 +9435,31 @@
       }
     }
 
+    function publishReady() {
+      if (readySent || disposed) {
+        return;
+      }
+      readySent = true;
+      setAttrValue(ctx.mount, readyAttr, "true");
+      setAttrValue(ctx.mount, mountedAttr, "true");
+      ctx.emit("mounted", {
+        width: viewport.cssWidth,
+        height: viewport.cssHeight,
+        objects: sceneStateObjects(sceneState).length,
+        labels: sceneStateLabels(sceneState).length,
+        sprites: sceneStateSprites(sceneState).length,
+        html: sceneStateHTML(sceneState).length,
+        lights: sceneStateLights(sceneState).length,
+        models: sceneModels(props).length,
+      });
+    }
+
     function renderFrame(now, reason) {
+      if (initPending) {
+        initReason = reason || initReason || "refresh";
+        applySceneRenderLoopState(initReason);
+        return;
+      }
       if (disposed) return;
       const frameStart = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
       const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
@@ -9489,6 +9522,7 @@
           if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
             viewportDirty = true;
           }
+          publishReady();
           scheduleNextAnimationFrame();
           return;
         }
@@ -9574,6 +9608,7 @@
       if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
         viewportDirty = true;
       }
+      publishReady();
       scheduleNextAnimationFrame();
     }
 
@@ -9673,52 +9708,18 @@
     await sceneModelHydration;
     scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
 
-    // Defer the first renderFrame to the next frame boundary. Goal: let
-    // the browser paint the pre-existing CSS/DOM content (LCP candidate)
-    // one frame earlier than it would if renderFrame ran synchronously
-    // here.
-    //
-    // On real hardware this is a small LCP nudge (real browsers show
-    // ~0 long tasks during mount — shader compile + buffer upload is
-    // typically 50-200ms on a real GPU, well under the 50ms long-task
-    // threshold once broken by this deferral).
-    //
-    // On headless-shell SwiftShader it's a big win: SwiftShader can
-    // take 1-2 seconds to compile/fall-back-compile the point shaders,
-    // and deferring keeps that entire chunk out of the LCP window so
-    // visual regression captures and CI perf profiles aren't dominated
-    // by GPU software-emulation latency.
-    //
-    // Scheduling priority (best → fallback):
-    //   1. scheduler.postTask('user-visible') — Chrome 94+, Firefox 126+
-    //   2. requestAnimationFrame — universal, paints on next vsync
-    //   3. setTimeout(0) — last-resort task-queue defer
+    // Defer the first Scene3D render until after a first-paint boundary.
     function scheduleInitialRender() {
       if (disposed) return;
-      // Defer the first renderFrame to a microtask so the browser has
-      // a chance to paint the pre-existing CSS/DOM content (the LCP
-      // candidate) before the scene's GL upload kicks off. A microtask
-      // runs after the current synchronous mount logic returns but
-      // before the next macrotask, which gives the browser its paint
-      // opportunity without waiting a full rAF cycle.
-      //
-      // Using a microtask here instead of rAF also resolves a subtle
-      // test / semantic conflict: several runtime.test.js assertions
-      // expect the first render to have happened by the time
-      // flushAsyncWork() returns (defers-offscreen, prefers-reduced-
-      // motion, hydrates-shared-runtime, etc.). Those tests predate the
-      // LCP-deferral optimization and were written against a sync-
-      // mount-render + rAF-animation-loop pattern. A microtask honors
-      // both contracts — tests see the render, LCP is still improved
-      // relative to a fully synchronous mount.
-      //
-      // Once this initial renderFrame runs it falls through to
-      // scheduleNextAnimationFrame which handles the normal rAF chain
-      // for animated scenes (and correctly does nothing for reduced-
-      // motion / non-animated scenes — keeping raf.count at 0 in tests
-      // that care).
-      Promise.resolve().then(function() {
-        if (!disposed) renderFrame(0);
+      initHandle = engineFrame(function() {
+        initHandle = null;
+        if (disposed) return;
+        initHandle = engineFrame(function(now) {
+          initHandle = null;
+          if (disposed) return;
+          initPending = false;
+          renderFrame(typeof now === "number" ? now : 0, initReason || "");
+        });
       });
     }
     scheduleInitialRender();
@@ -9731,7 +9732,7 @@
         if (sceneWantsAnimation()) {
           // Animation loop will pick it up
         } else {
-          renderFrame(0);
+          scheduleRender("progressive-upgrade");
         }
       }, sceneCompressionProgressiveDelay(props));
     }
@@ -9745,22 +9746,10 @@
         if (sceneWantsAnimation()) {
           // Animation loop will render the upgraded chain.
         } else {
-          renderFrame(0);
+          scheduleRender("deferred-postfx");
         }
       }, sceneDeferredPostFXDelay(props));
     }
-
-    setAttrValue(ctx.mount, "data-gosx-scene3d-ready", "true");
-    ctx.emit("mounted", {
-      width: viewport.cssWidth,
-      height: viewport.cssHeight,
-      objects: sceneStateObjects(sceneState).length,
-      labels: sceneStateLabels(sceneState).length,
-      sprites: sceneStateSprites(sceneState).length,
-      html: sceneStateHTML(sceneState).length,
-      lights: sceneStateLights(sceneState).length,
-      models: sceneModels(props).length,
-    });
 
     // Scroll-driven camera: scroll input should be visible immediately even
     // when an animated scene already has a frame loop running.
@@ -9902,6 +9891,11 @@
       },
       dispose() {
         disposed = true;
+        initPending = false;
+        if (initHandle != null) {
+          cancelEngineFrame(initHandle);
+          initHandle = null;
+        }
 	        if (ctx.mount && typeof ctx.mount.removeEventListener === "function") {
 	          ctx.mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
 	        }
