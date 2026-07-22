@@ -194,6 +194,7 @@ func prepareDevAssets(dir string) error {
 	}
 	for _, chunk := range []string{
 		"bootstrap-feature-scene3d.js",
+		"bootstrap-feature-scene3d-command.js",
 		"bootstrap-feature-scene3d-webgpu.js",
 		"bootstrap-feature-scene3d-gltf.js",
 		"bootstrap-feature-scene3d-animation.js",

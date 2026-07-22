@@ -13,6 +13,14 @@ const moduleSrc = fs.readFileSync(
   path.join(__dirname, "bootstrap-src", "07-declarative-regions.js"),
   "utf8"
 );
+const scene3dBridgeSrc = fs.readFileSync(
+  path.join(__dirname, "bootstrap-src", "09-scene3d-command-bridge.js"),
+  "utf8"
+);
+const scene3dCommandRuntimeSrc = fs.readFileSync(
+  path.join(__dirname, "bootstrap-src", "09a-scene3d-command-runtime.js"),
+  "utf8"
+);
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -80,6 +88,30 @@ function runModule(regions, payload, opts) {
         if (type === "gosx:ready") readyListeners.push(fn);
       },
       removeEventListener: () => {},
+      createElement: (tagName) => {
+        const tag = String(tagName || "").toLowerCase();
+        if (tag !== "script") return {};
+        return {
+          async: false,
+          onload: null,
+          onerror: null,
+          src: "",
+        };
+      },
+      head: {
+        appendChild: (script) => {
+          try {
+            if (!script || script.src !== "/gosx/bootstrap-feature-scene3d-command.js") {
+              throw new Error("script not found: " + (script && script.src));
+            }
+            vm.runInContext(scene3dCommandRuntimeSrc, ctx);
+            if (typeof script.onload === "function") script.onload({});
+          } catch (err) {
+            if (script && typeof script.onerror === "function") script.onerror(err);
+          }
+          return script;
+        },
+      },
     },
     window: {
       __gosx_subscribe_shared_signal: (name, fn, opts) => { subs.push({ name, fn, opts }); return () => {}; },
@@ -95,6 +127,7 @@ function runModule(regions, payload, opts) {
   };
   ctx.window.document = ctx.document;
   vm.createContext(ctx);
+  vm.runInContext(scene3dBridgeSrc, ctx);
   vm.runInContext(moduleSrc, ctx);
   return { subs, hubListeners, readyListeners, fetches, warnings, telemetry, engines, context: ctx };
 }
@@ -306,7 +339,7 @@ test("declarative scene command broadcasts keep legacy mounted handles separate 
   const { context } = runModule([], {}, { engines });
   assert.equal(engine.record.handle.__gosxScene3DCommandReady, undefined);
 
-  context.window.__gosx_apply_scene_command_scripts(root);
+  await context.window.__gosx_apply_scene_command_scripts(root);
   assert.deepEqual(asJSON(engine.calls), [commands]);
 
   await assert.rejects(
@@ -396,7 +429,7 @@ test("multiple data-gosx-scene-commands tags in one swapped fragment are each ap
   assert.deepEqual(asJSON(engine.calls), [first, second]);
 });
 
-test("initial-load data-gosx-scene-commands payloads apply once at scan time and again on gosx:ready", () => {
+test("initial-load data-gosx-scene-commands payloads apply once at scan time and again on gosx:ready", async () => {
   const commands = [{ kind: 0, objectId: "ssr-pin", data: { kind: "label", props: { text: "ssr" } } }];
   const engine = makeEngineHandle();
   const engines = new Map(); // no engine mounted yet at synchronous scan time
@@ -414,11 +447,12 @@ test("initial-load data-gosx-scene-commands payloads apply once at scan time and
   engines.set("engine", engine.record);
   assert.equal(readyListeners.length, 1, "07 must listen for gosx:ready exactly once");
   readyListeners[0]();
+  await tick();
 
   assert.deepEqual(asJSON(engine.calls), [commands], "the SSR-rendered payload must reach the now-mounted engine");
 });
 
-test("initial-load scan applies immediately when the engine is already mounted (no swap needed)", () => {
+test("initial-load scan applies immediately when the engine is already mounted (no swap needed)", async () => {
   const commands = [{ kind: 0, objectId: "ssr-pin", data: { kind: "label", props: { text: "ssr" } } }];
   const engine = makeEngineHandle();
   const engines = new Map([["engine", engine.record]]);
@@ -427,6 +461,7 @@ test("initial-load scan applies immediately when the engine is already mounted (
     initialCommandScripts: [makeCommandScript(JSON.stringify(commands))],
     engines,
   });
+  await tick();
 
   assert.deepEqual(asJSON(engine.calls), [commands]);
 });

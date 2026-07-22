@@ -678,11 +678,12 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
-		Bootstrap:                     buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
-		BootstrapRuntime:              buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
-		BootstrapFeatureEngines:       buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
-		BootstrapFeatureScene3D:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
-		BootstrapFeatureScene3DWebGPU: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:               buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:        buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -691,6 +692,9 @@ func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	html := gosx.RenderHTML(r.BootstrapScript())
 	if !strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
 		t.Fatalf("Scene3D WebGPU loader lacks GoSX provenance: %s", html)
+	}
+	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`) {
+		t.Fatalf("Scene3D script lacks command chunk URL: %s", html)
 	}
 }
 

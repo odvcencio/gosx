@@ -28,6 +28,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureEngines          HashedAsset `json:"bootstrapFeatureEngines,omitempty"`
 	BootstrapFeatureHubs             HashedAsset `json:"bootstrapFeatureHubs,omitempty"`
 	BootstrapFeatureScene3D          HashedAsset `json:"bootstrapFeatureScene3d,omitempty"`
+	BootstrapFeatureScene3DCommand   HashedAsset `json:"bootstrapFeatureScene3dCommand,omitempty"`
 	BootstrapFeatureScene3DWebGPU    HashedAsset `json:"bootstrapFeatureScene3dWebgpu,omitempty"`
 	BootstrapFeatureScene3DGLTF      HashedAsset `json:"bootstrapFeatureScene3dGltf,omitempty"`
 	BootstrapFeatureScene3DAnimation HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitempty"`
@@ -76,6 +77,7 @@ type RuntimePaths struct {
 	BootstrapFeatureEngines          string
 	BootstrapFeatureHubs             string
 	BootstrapFeatureScene3D          string
+	BootstrapFeatureScene3DCommand   string
 	BootstrapFeatureScene3DWebGPU    string
 	BootstrapFeatureScene3DGLTF      string
 	BootstrapFeatureScene3DAnimation string
@@ -113,6 +115,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureEngines:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureEngines.File),
 		BootstrapFeatureHubs:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureHubs.File),
 		BootstrapFeatureScene3D:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3D.File),
+		BootstrapFeatureScene3DCommand:   AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCommand.File),
 		BootstrapFeatureScene3DWebGPU:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGPU.File),
 		BootstrapFeatureScene3DGLTF:      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DGLTF.File),
 		BootstrapFeatureScene3DAnimation: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DAnimation.File),

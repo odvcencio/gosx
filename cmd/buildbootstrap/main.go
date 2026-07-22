@@ -83,6 +83,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/04-telemetry.js"),
 			sourceFile("bootstrap-src/05-document-env.js"),
 			sourceFile("bootstrap-src/06-declarative-actions.js"),
+			sourceFile("bootstrap-src/09-scene3d-command-bridge.js"),
 			sourceFile("bootstrap-src/07-declarative-regions.js"),
 			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
 			sourceFile("bootstrap-src/26-runtime-stream.js"),
@@ -212,6 +213,7 @@ var outputs = []output{
 		name: "bootstrap-feature-scene3d.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.js"),
+			sourceFile("bootstrap-src/09-scene3d-command-bridge.js"),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.js"),
@@ -252,6 +254,12 @@ var outputs = []output{
 			sourceFile("bootstrap-src/19b-scene-control-forms.js"),
 			sourceFile("bootstrap-src/20-scene-mount.js"),
 			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.js"),
+		},
+	},
+	{
+		name: "bootstrap-feature-scene3d-command.js",
+		sources: []source{
+			sourceFile("bootstrap-src/09a-scene3d-command-runtime.js"),
 		},
 	},
 	{

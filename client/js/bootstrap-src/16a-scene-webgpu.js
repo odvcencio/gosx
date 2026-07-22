@@ -3438,24 +3438,11 @@
       return (fragment || vertex).trim();
     }
 
-    function customPostWGSLCacheKey(name, wgsl) {
-      var hash1 = 0x811c9dc5;
-      var hash2 = 0x9e3779b9;
-      for (var i = 0; i < wgsl.length; i += 1) {
-        var code = wgsl.charCodeAt(i);
-        hash1 ^= code;
-        hash1 = Math.imul(hash1, 0x01000193) >>> 0;
-        hash2 ^= code + i;
-        hash2 = Math.imul(hash2, 0x85ebca6b) >>> 0;
-      }
-      return name + "\x00" + wgsl.length + "\x00" + hash1.toString(16) + "\x00" + hash2.toString(16);
-    }
-
     function buildCustomPostPipelineAsync(effect) {
       var wgsl = customPostWGSLModuleSource(effect);
       if (!wgsl) return null;
       var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
-      var cacheKey = customPostWGSLCacheKey(name, wgsl);
+      var cacheKey = name + "\x00" + wgsl;
       var cached = customPostPipelineCache.get(cacheKey);
       if (cached) return cached.failed ? null : cached;
 

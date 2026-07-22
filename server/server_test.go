@@ -1341,6 +1341,9 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap.3333.js"), []byte("console.log('hashed bootstrap');"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap-feature-scene3d-command.5555.js"), []byte("window.__gosx_scene3d_command_bridge = {};"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(assetsDir, "standard-go-wasm_exec.4444.js"), []byte("window.__gosx_standard_go_wasm_ctor = class {};"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1355,6 +1358,11 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 				File: "standard-go-wasm_exec.4444.js",
 				Hash: "4444",
 				Size: 52,
+			},
+			BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{
+				File: "bootstrap-feature-scene3d-command.5555.js",
+				Hash: "5555",
+				Size: 38,
 			},
 		},
 	}
@@ -1395,6 +1403,16 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 	if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
 		t.Fatalf("expected standard-Go runtime to be immutable, got %q", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gosx/bootstrap-feature-scene3d-command.js?v=5555", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected scene3d command runtime 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "__gosx_scene3d_command_bridge") {
+		t.Fatalf("unexpected scene3d command runtime body %q", body)
 	}
 }
 

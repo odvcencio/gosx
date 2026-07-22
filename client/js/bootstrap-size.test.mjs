@@ -260,7 +260,12 @@ const budgets = [
   // (window.__gosx_reusable_engines / disposePage+mountAllEngines reuse
   // skip in 30-tail.js). Brotli headroom unchanged. Measured:
   // 1_318_570 / 349_334 / 282_590.
-  { file: "bootstrap.js", raw: 1_320_000, gzip: 350_000, brotli: 283_000 },
+  // Bumped raw 1_320_000 -> 1_322_000 for the Scene3D command bridge split
+  // bootstrap loader and recovery API. Measured: 1_321_296 / 349_930 / 282_863.
+  // Bumped gzip 350_000 -> 351_000 and brotli 283_000 -> 284_000 for
+  // command-ready gating. Measured: 1_321_861 / 350_094 / 283_144.
+  // Raw cap unchanged.
+  { file: "bootstrap.js", raw: 1_322_000, gzip: 351_000, brotli: 284_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -446,7 +451,13 @@ const budgets = [
   // adaptiveQuality warning fix as the bootstrap.js monolith above (this
   // chunk carries the same Scene3D mount source). Brotli headroom unchanged.
   // Measured: 716_627 / 196_059 / 161_446.
-  { file: "bootstrap-feature-scene3d.js", raw: 718_000, gzip: 197_000, brotli: 162_000 },
+  // Bumped raw 718_000 -> 722_000, gzip 197_000 -> 198_000, and Brotli
+  // 162_000 -> 163_000 for the Scene3D command bridge loader plus public
+  // command/recovery APIs. Measured: 720_967 / 197_155 / 162_407.
+  { file: "bootstrap-feature-scene3d.js", raw: 722_000, gzip: 198_000, brotli: 163_000 },
+  // New split command chunk for lazy public Scene3D command dispatch. Measured:
+  // 2_249 / 960 / 811.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
