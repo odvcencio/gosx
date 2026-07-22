@@ -2367,6 +2367,13 @@ function installManualRAF(context) {
   };
 }
 
+async function flushSceneInitialFrameBoundary(raf, firstTime = 16, secondTime = 32) {
+  raf.flush(firstTime);
+  await flushAsyncWork();
+  raf.flush(secondTime);
+  await flushAsyncWork();
+}
+
 function installManualTimers(context) {
   let nextHandle = 1;
   const timers = new Map();
@@ -4444,6 +4451,156 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.deepEqual(env.engineDisposeCalls, [["gosx-engine-rt"]]);
 });
 
+test("Scene3D initial render waits for the second frame boundary", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-initial-frame-root";
+  mount.width = 320;
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    devicePixelRatio: 2,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-initial-frame-program.json": { text: '{"name":"InitialFrame"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-initial-frame",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-initial-frame-root",
+          runtime: "shared",
+          props: {
+            width: 320,
+            height: 180,
+            background: "#08151f",
+            scrollCameraStart: 10,
+            scrollCameraEnd: 4,
+          },
+          programRef: "/scene-initial-frame-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [-0.5, 0, 0.5, 0],
+      colors: [0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1],
+      vertexCount: 2,
+      objectCount: 0,
+    }),
+  });
+  env.context.__gosx_scene3d_perf = true;
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await Promise.resolve();
+
+  assert.equal(env.engineHydrateCalls.length, 1);
+  assert.equal(env.engineRenderCalls.length, 0, "initial render must not run in the current task or microtasks");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), null);
+  assert.equal(raf.count(), 1);
+
+  const mounted = env.context.__gosx.engines.get("gosx-engine-initial-frame");
+  assert.ok(mounted, "command handle can exist before scene-ready");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-command-ready"), "true");
+  await mounted.handle.applyCommands([
+    { kind: 0, objectId: "queued-point", data: { kind: "point", props: { id: "queued-point", x: 1, y: 2, z: 3 } } },
+  ]);
+  mounted.handle.updateSceneProps({ maxPixelRatio: 1.5 });
+  env.context.scrollY = 900;
+  env.context.dispatchEvent({ type: "scroll" });
+  await flushAsyncWork();
+
+  assert.equal(env.engineRenderCalls.length, 0, "pre-boundary commands, prop updates, and scroll must not render");
+  assert.equal(raf.count(), 1, "pre-boundary scheduleRender calls must not queue a first-frame render");
+
+  raf.flush(16);
+  await Promise.resolve();
+
+  assert.equal(env.engineRenderCalls.length, 0, "first frame gives the browser its paint opportunity");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), null);
+  assert.equal(raf.count(), 1);
+
+  raf.flush(32);
+  await Promise.resolve();
+
+  assert.equal(env.engineRenderCalls.length, 1, "second frame performs the initial Scene3D render");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:commands"], 1);
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:update-props"], 1);
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
+});
+
+test("Scene3D disposal cancels pending initial render before frame two", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-initial-dispose-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/scene-initial-dispose-program.json": { text: '{"name":"InitialDispose"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-initial-dispose",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-initial-dispose-root",
+          runtime: "shared",
+          props: { width: 320, height: 180, background: "#08151f" },
+          programRef: "/scene-initial-dispose-program.json",
+        },
+      ],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine: () => JSON.stringify({
+      background: "#08151f",
+      camera: { x: 0, y: 0, z: 6, fov: 72 },
+      positions: [-0.5, 0, 0.5, 0],
+      colors: [0.55, 0.88, 1, 1, 0.55, 0.88, 1, 1],
+      vertexCount: 2,
+      objectCount: 0,
+    }),
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.engineRenderCalls.length, 0);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), null);
+  raf.flush(16);
+  await Promise.resolve();
+  assert.equal(env.engineRenderCalls.length, 0);
+  assert.equal(raf.count(), 1);
+
+  env.context.__gosx_dispose_engine("gosx-engine-initial-dispose");
+  assert.equal(raf.count(), 0, "dispose must cancel the queued second-frame render");
+
+  raf.flush(32);
+  await Promise.resolve();
+
+  assert.equal(env.engineRenderCalls.length, 0);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), null);
+});
+
 // Regression test for the split feature-bundle build: bootstrap-feature-scene3d.js
 // runs in its own IIFE (see 26d-feature-scene3d-prefix.js), separate from the
 // runtime bundle's closure that declares `sceneLabelLayoutCacheLimit`
@@ -6108,6 +6265,7 @@ test("bootstrap starts Scene3D GLB model animation playback from model props", a
     return mixer;
   };
   await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
 
   assert.equal(env.fetchCalls.some((call) => call.url === "/models/rig.glb"), true);
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
@@ -12225,7 +12383,8 @@ test("Scene3D WebGPU render watchdog recreates stalled animated renderer", async
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
   timers.runDelay(0);
   await flushAsyncWork();
-  raf.flush(16);
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
   await flushAsyncWork();
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
@@ -12351,7 +12510,8 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
   timers.runDelay(0);
   await flushAsyncWork();
-  raf.flush(16);
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
   await flushAsyncWork();
 
   const firstCanvas = mount.children[0];
@@ -12968,19 +13128,17 @@ test("bootstrap reuses static opaque Scene3D buffers across dynamic-only runtime
   });
 
   let rafCount = 0;
-  // Allow two frames so the test can observe buffer reuse across a
-  // second render. The scene mount defers its first render to rAF for
-  // LCP; bounding at one rAF here used to match an older sync-mount
-  // path that no longer exists, leaving the test stuck at a single
-  // engineRenderCalls entry while the assertion wants >= 2.
+  // Allow four frame callbacks. Async shared-runtime mount setup can consume
+  // the first wait before the first paint-boundary callback is queued.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 2) return 0;
+    if (rafCount >= 4) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };
   env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
   await flushAsyncWork();
 
   const gl = mount.children[0].getContext("webgl");
@@ -13056,19 +13214,17 @@ test("bootstrap invalidates static opaque Scene3D buffers when camera clip state
   });
 
   let rafCount = 0;
-  // Allow two frames so the test can observe buffer reuse across a
-  // second render. The scene mount defers its first render to rAF for
-  // LCP; bounding at one rAF here used to match an older sync-mount
-  // path that no longer exists, leaving the test stuck at a single
-  // engineRenderCalls entry while the assertion wants >= 2.
+  // Allow four frame callbacks. Async shared-runtime mount setup can consume
+  // the first wait before the first paint-boundary callback is queued.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 2) return 0;
+    if (rafCount >= 4) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };
   env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
   await flushAsyncWork();
 
   const gl = mount.children[0].getContext("webgl");
@@ -13144,19 +13300,17 @@ test("bootstrap invalidates static opaque Scene3D buffers when shared-runtime li
   });
 
   let rafCount = 0;
-  // Allow two frames so the test can observe buffer reuse across a
-  // second render. The scene mount defers its first render to rAF for
-  // LCP; bounding at one rAF here used to match an older sync-mount
-  // path that no longer exists, leaving the test stuck at a single
-  // engineRenderCalls entry while the assertion wants >= 2.
+  // Allow four frame callbacks. Async shared-runtime mount setup can consume
+  // the first wait before the first paint-boundary callback is queued.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 2) return 0;
+    if (rafCount >= 4) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };
   env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
   await flushAsyncWork();
 
   const gl = mount.children[0].getContext("webgl");
@@ -13308,19 +13462,17 @@ test("bootstrap keeps static Scene3D bundle-pass caches isolated per pass", asyn
   });
 
   let rafCount = 0;
-  // Allow two frames so the test can observe buffer reuse across a
-  // second render. The scene mount defers its first render to rAF for
-  // LCP; bounding at one rAF here used to match an older sync-mount
-  // path that no longer exists, leaving the test stuck at a single
-  // engineRenderCalls entry while the assertion wants >= 2.
+  // Allow four frame callbacks. Async shared-runtime mount setup can consume
+  // the first wait before the first paint-boundary callback is queued.
   env.context.requestAnimationFrame = (callback) => {
-    if (rafCount >= 2) return 0;
+    if (rafCount >= 4) return 0;
     rafCount += 1;
     return setTimeout(() => callback(rafCount * 16), 0);
   };
   env.context.cancelAnimationFrame = (handle) => clearTimeout(handle);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
   await flushAsyncWork();
 
   const gl = mount.children[0].getContext("webgl");
@@ -14482,6 +14634,48 @@ test("bootstrap requires WebGL for Scene3D when requested", async () => {
   assert.equal(mount.children[0].textContent, "Update your browser or enable hardware acceleration.");
 });
 
+test("Scene3D water unsupported state does not claim a rendered mount", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-water-unsupported";
+
+  const env = createContext({
+    elements: [mount],
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-water-unsupported",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-water-unsupported",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            scene: {
+              backendCaps: { capable: ["webgl"] },
+              waterSystems: [
+                { id: "pool", kind: "pool", width: 4, height: 2, length: 4 },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-water-renderer"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-water-unsupported-reason"), "water-webgl2-unavailable");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "false");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), null);
+  assert.equal(mount.querySelector("[data-gosx-scene3d-unsupported]") != null, true);
+});
+
 test("bootstrap honors required WebGL over software-renderer canvas preference", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-required-software-webgl";
@@ -15376,7 +15570,7 @@ test("Scene3D adaptiveQuality+QualityLadder warning fires only for explicit tier
   }
 
   function ladderWarnings(warnLog) {
-    return warnLog.filter(function(w) { return w.indexOf("QualityLadder is authored alongside adaptiveQuality") !== -1; });
+    return warnLog.filter(function(w) { return w.indexOf("QualityLadder overrides adaptiveQuality") !== -1; });
   }
 
   const ladder = [{ name: "raw" }, { name: "glow", postEffects: ["bloom"] }];
@@ -16072,6 +16266,8 @@ test("bootstrap keeps Scene3D static when autoRotate is omitted", async () => {
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  assert.equal(raf.count(), 1, "initial paint boundary should be pending before first Scene3D render");
+  await flushSceneInitialFrameBoundary(raf);
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.equal(mount.firstElementChild.tagName, "CANVAS");
@@ -16112,6 +16308,7 @@ test("bootstrap respects prefers-reduced-motion for Scene3D animation loops", as
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-reduced-motion"), "true");
   assert.equal(raf.count(), 0);
@@ -16165,6 +16362,7 @@ test("animated Scene3D scroll camera renders immediately on scroll input", async
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
 
   const canvas = mount.children[0];
   const gl = canvas.getContext("webgl");
@@ -16341,6 +16539,7 @@ test("bootstrap pauses animated Scene3D when the page is hidden and resumes on v
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-page-visible"), "true");
   assert.equal(mount.getAttribute("data-gosx-scene3d-active"), "true");
@@ -16418,6 +16617,7 @@ test("bootstrap defers offscreen shared-runtime Scene3D rerenders until the moun
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
 
   assert.equal(renderArgs.length, 1);
   assert.equal(env.intersectionObservers.length, 1);
@@ -29032,6 +29232,7 @@ test("P4-M3 motion mixer: glTF model routes clip add/play/update/destroy through
   };
 
   await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
 
   // Mount succeeded and the WASM mixer (not the JS mixer) was created.
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
@@ -29304,12 +29505,11 @@ test("P4-M3 motion mixer: grow-and-retick passes dt=0 to avoid double clock adva
   const raf = installManualRAF(env.context);
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
-  // First frame: dt=0 (lastModelAnimationTimeSeconds is null on the initial tick).
-  raf.flush(16);
-  await flushAsyncWork();
-  // Second frame: dt > 0. Arm the overflow so the grow path fires with a real dt.
+  // Initial render: dt=0 because lastModelAnimationTimeSeconds is null.
+  await flushSceneInitialFrameBoundary(raf);
+  // Next animation frame: dt > 0. Arm the overflow so the grow path fires with a real dt.
   overflowOnNext = true;
-  raf.flush(32);
+  raf.flush(48);
   await flushAsyncWork();
 
   assert.ok(overflowSeen, "overflow/grow path must have been triggered");

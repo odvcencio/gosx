@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.35.3 (2026-07-22)
+
+GoSX now waits until after the first paint before it starts the initial
+Scene3D render. This reduces LCP pressure on Scene3D pages.
+
+- Replaces the Scene3D initial-render microtask with a cancellable double frame
+  boundary.
+- Keeps no-rAF and test environments asynchronous through framework frame
+  scheduling.
+- Adds runtime coverage for the frame boundary and disposal before frame two.
+
 ## v0.35.2 (2026-07-21)
 
 Release hygiene update for the split Scene3D runtime work.
