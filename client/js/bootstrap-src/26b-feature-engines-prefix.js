@@ -37,30 +37,8 @@
     const gosxNotifySharedSignal = api.gosxNotifySharedSignal;
     const gosxSubscribeSharedSignal = api.gosxSubscribeSharedSignal;
 
-    // Bridge runtime-scope render-bundle normalizers that live in
-    // 00-textlayout.js / 10-runtime-scene-core.js / 11-scene-math.js.
-    // normalizeEngineRenderBundle (concatenated in below from 30-tail.js's
-    // "engine mounting" section) calls these to normalize the camera/label/
-    // html/surface fields of ANY runtime:"shared" engine's render bundle —
-    // not just GoSXScene3D's. bootstrap-feature-engines.js does not carry
-    // 10-runtime-scene-core.js or 11-scene-math.js (see build-bootstrap.mjs),
-    // and bootstrap-runtime.js only carries a small extracted prefix of
-    // 10-runtime-scene-core.js that stops well before these functions — so on
-    // a split-bundle page whose ONLY shared-runtime engine is a non-Scene3D
-    // surface (e.g. a custom //gosx:engine using runtime:"shared"), none of
-    // these were ever defined, and decodeEngineRenderBundle's try/catch
-    // silently swallowed the resulting ReferenceError, dropping the whole
-    // render bundle every frame.
-    //
-    // window.__gosx_runtime_api is exported by 00-textlayout.js (always
-    // present — every bundle configuration includes it) and additionally
-    // extended by 10-runtime-scene-core.js / 11-scene-math.js when a chunk
-    // carrying them (bootstrap.js or the Scene3D feature chunk) has already
-    // run. Prefer that canonical implementation when present; otherwise fall
-    // back to a full (not degraded) local reimplementation so the bundle
-    // normalizes correctly even when Scene3D never loads. Mirrors the
-    // established window.__gosx_runtime_api bridge pattern in
-    // 26d-feature-scene3d-prefix.js.
+    // Use shared normalizers when present; otherwise keep non-Scene3D shared
+    // engines self-contained in the split engines bundle.
     const runtimeApi = window.__gosx_runtime_api || {};
     const normalizeTextLayoutOverflow = runtimeApi.normalizeTextLayoutOverflow || function(value) {
       const mode = typeof value === "string" ? value.trim().toLowerCase() : "";

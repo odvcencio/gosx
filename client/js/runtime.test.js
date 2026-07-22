@@ -11,6 +11,7 @@ const bootstrapFeatureIslandsSource = fs.readFileSync(path.join(__dirname, "boot
 const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-engines.js"), "utf8");
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
+const bootstrapFeatureScene3DCommandSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-command.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
 const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
@@ -29,6 +30,12 @@ const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
 const DOCUMENT_FRAGMENT_NODE = 11;
 const activeTestContexts = new Set();
+
+function scene3DCommandFetchRoutes(extra = {}) {
+  return Object.assign({
+    "/gosx/bootstrap-feature-scene3d-command.js": { text: bootstrapFeatureScene3DCommandSource },
+  }, extra);
+}
 
 test.afterEach(async () => {
   const contexts = Array.from(activeTestContexts);
@@ -17541,9 +17548,99 @@ test("navigation runtime reuses an engine when incoming scene still carries shad
   assert.equal(manifestScript.textContent.includes("fragmentWGSLRef"), true, "incoming DOM manifest text must not be mutated");
 });
 
-test("Scene3D public command API queues before ready, applies with ack, and rejects absent targets", async () => {
-  const env = createContext({});
+test("split runtime navigation reuses an identical Scene3D engine and keeps the same canvas", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "bg-scene-split";
+
+  const sceneProps = {
+    width: 320,
+    height: 180,
+    autoRotate: false,
+    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+  };
+  const manifest = {
+    engines: [
+      {
+        id: "bg-scene-split",
+        mountId: "bg-scene-split",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: sceneProps,
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+  };
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest,
+    fetchRoutes: scene3DCommandFetchRoutes({
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "http://localhost:3000/split-next": { text: "__SPLIT_REUSE_NEXT__", url: "http://localhost:3000/split-next" },
+    }),
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  const recordBefore = env.context.__gosx.engines.get("bg-scene-split");
+  assert.ok(recordBefore, "expected split runtime to mount the Scene3D engine");
+  assert.equal(typeof env.context.__gosx.scene3d.dispatchCommands, "function");
+  assert.equal(typeof env.context.__gosx.scene3d.preloadModel, "function");
+  assert.equal(typeof env.context.__gosx.scene3d.setPerformanceTelemetry, "function");
+  const canvasBefore = mount.children[0];
+  assert.ok(canvasBefore, "expected split Scene3D to create a canvas");
+
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+
+  const nextMountPlaceholder = new FakeElement("div", null);
+  nextMountPlaceholder.id = "bg-scene-split";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifest);
+
+  parsedDocs.set("__SPLIT_REUSE_NEXT__", buildNavigatedDocument({
+    title: "Split Next",
+    bodyNodes: [nextMountPlaceholder, manifestScript],
+  }));
+
+  const events = [];
+  env.context.__gosx_emit = function(level, cat, msg, fields) {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/split-next");
+  await flushAsyncWork();
+
+  assert.equal(disposed, false, "split runtime identical-scene navigation must not dispose the engine");
+  const liveMount = env.document.getElementById("bg-scene-split");
+  assert.strictEqual(liveMount, mount, "split runtime must move the same mount element");
+  assert.strictEqual(liveMount.children[0], canvasBefore, "split runtime must keep the same canvas element");
+  assert.equal(liveMount.getAttribute("data-gosx-engine-reused"), "true");
+  assert.strictEqual(env.context.__gosx.engines.get("bg-scene-split"), recordBefore, "the same engine record must persist");
+  assert.equal(
+    events.some((e) => e.msg === "engine-reused-across-navigation" && e.fields.engineID === "bg-scene-split"),
+    true,
+  );
+});
+
+test("Scene3D public command API queues before ready, applies with ack, and rejects absent targets", async () => {
+  const env = createContext({ fetchRoutes: scene3DCommandFetchRoutes() });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
 
   assert.equal(typeof env.context.__gosx.scene3d.dispatchCommands, "function");
   const commands = [{ kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.5 } }] } }];
@@ -17558,20 +17655,19 @@ test("Scene3D public command API queues before ready, applies with ack, and reje
   env.document.body.appendChild(mount);
   const applied = [];
   const handle = {
+    __gosxScene3DCommandReady: true,
     applyCommands(received) {
       applied.push(received);
       return Promise.resolve({ ok: true });
     },
   };
 
-  assert.equal(mount.getAttribute("data-gosx-scene3d-command-ready"), null, "ready attr must be absent before listener install");
-  env.context.__gosx_scene3d_mark_command_ready(mount, handle, { engineID: "queued-scene" });
+  mount.__gosxScene3DHandle = handle;
   const ack = await pending;
 
   assert.deepEqual(applied, [commands], "queued commands must apply after readiness");
   assert.equal(ack.applied, true);
   assert.equal(ack.revision, 1);
-  assert.equal(mount.getAttribute("data-gosx-scene3d-command-ready"), "true");
   assert.equal(mount.getAttribute("data-gosx-scene3d-command-revision"), "1");
   assert.equal(mount.getAttribute("data-gosx-scene3d-command-applied-revision"), "1");
 
@@ -17582,8 +17678,9 @@ test("Scene3D public command API queues before ready, applies with ack, and reje
 });
 
 test("Scene3D public command API flushes queues for distinct engine and mount ids", async () => {
-  const env = createContext({});
+  const env = createContext({ fetchRoutes: scene3DCommandFetchRoutes() });
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
 
   const commands = [{ kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.5 } }] } }];
   const byMount = env.context.__gosx.scene3d.dispatchCommands("scene-mount-id", commands, { timeoutMS: 500 });
@@ -17593,13 +17690,15 @@ test("Scene3D public command API flushes queues for distinct engine and mount id
   env.document.body.appendChild(mount);
   let applied = 0;
   const handle = {
+    __gosxScene3DCommandReady: true,
     applyCommands() {
       applied += 1;
       return Promise.resolve({ ok: true });
     },
   };
 
-  env.context.__gosx_scene3d_mark_command_ready(mount, handle, { engineID: "scene-engine-id" });
+  mount.__gosxScene3DHandle = handle;
+  env.context.__gosx.engines.set("scene-engine-id", { component: "GoSXScene3D", handle, mount });
   const ackMount = await byMount;
   const ackEngine = await byEngine;
 
@@ -17608,38 +17707,6 @@ test("Scene3D public command API flushes queues for distinct engine and mount id
   assert.equal(ackEngine.applied, true);
   assert.equal(ackMount.revision, 1);
   assert.equal(ackEngine.revision, 2);
-});
-
-test("Scene3D public command API dispatches by engine id after ready before registry insertion", async () => {
-  const env = createContext({});
-  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
-
-  const mount = new FakeElement("div", env.document);
-  mount.id = "late-registry-mount";
-  env.document.body.appendChild(mount);
-  const applied = [];
-  const handle = {
-    applyCommands(commands) {
-      applied.push(commands);
-      return Promise.resolve({ ok: true });
-    },
-  };
-
-  env.context.__gosx_scene3d_mark_command_ready(mount, handle, { engineID: "late-registry-engine" });
-  assert.equal(env.context.__gosx.engines.has("late-registry-engine"), false, "test must cover the pre-registry window");
-
-  const commands = [{ kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.7 } }] } }];
-  const ack = await env.context.__gosx.scene3d.dispatchCommands("late-registry-engine", commands, { timeoutMS: 50 });
-  assert.equal(ack.applied, true);
-  assert.equal(ack.revision, 1);
-  assert.deepEqual(applied, [commands]);
-  assert.equal(mount.getAttribute("data-gosx-scene3d-command-applied-revision"), "1");
-
-  env.context.__gosx_scene3d_clear_command_ready(handle);
-  await assert.rejects(
-    env.context.__gosx.scene3d.dispatchCommands("late-registry-engine", commands, { timeoutMS: 1 }),
-    /did not become ready: late-registry-engine/,
-  );
 });
 
 test("Scene3D public command revisions stay monotonic across navigation reuse", async () => {
@@ -17670,9 +17737,9 @@ test("Scene3D public command revisions stay monotonic across navigation reuse", 
     elements: [mount],
     enableWebGL: true,
     manifest: manifest,
-    fetchRoutes: {
+    fetchRoutes: scene3DCommandFetchRoutes({
       "http://localhost:3000/revision-next": { text: "__REVISION_NEXT__", url: "http://localhost:3000/revision-next" },
-    },
+    }),
     parseHTML(html) {
       return parsedDocs.get(html);
     },
@@ -17709,6 +17776,81 @@ test("Scene3D public command revisions stay monotonic across navigation reuse", 
   assert.equal(liveMount.getAttribute("data-gosx-scene3d-command-applied-revision"), "2");
 });
 
+test("Scene3D public command API loads through the authored compat URL and rejects failed chunk loads", async () => {
+  const commands = [{ kind: 14, data: { effects: [{ name: "lens", uniforms: { amount: 0.5 } }] } }];
+  const env = createContext({
+    fetchRoutes: {
+      "/gosx/assets/runtime/bootstrap-feature-scene3d-command.hash.js?v=hash": { text: bootstrapFeatureScene3DCommandSource },
+    },
+  });
+  const featureTag = env.document.createElement("script");
+  featureTag.setAttribute("data-gosx-script", "feature-scene3d");
+  featureTag.setAttribute("data-gosx-scene3d-command-url", "/gosx/assets/runtime/bootstrap-feature-scene3d-command.hash.js?v=hash");
+  env.document.head.appendChild(featureTag);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+
+  const applied = [];
+  const ack = await env.context.__gosx.scene3d.dispatchCommands({ id: "ready-scene", __gosxScene3DCommandReady: true, applyCommands: (received) => {
+    applied.push(received);
+    return Promise.resolve();
+  } }, commands);
+  assert.equal(ack.applied, true);
+  assert.deepEqual(applied, [commands]);
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/assets/runtime/bootstrap-feature-scene3d-command.hash.js?v=hash"),
+    true,
+    "dispatch must lazy-load the renderer-authored compat URL",
+  );
+
+  const missing = createContext({});
+  runScript(bootstrapRuntimeSource, missing.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, missing.context, "bootstrap-feature-scene3d.js");
+  await assert.rejects(
+    missing.context.__gosx.scene3d.dispatchCommands({ id: "ready-scene", __gosxScene3DCommandReady: true, applyCommands() {} }, commands),
+    /script not found: \/gosx\/bootstrap-feature-scene3d-command\.js/,
+  );
+});
+
+test("Scene3D public command API retries lazy command chunk load after failure", async () => {
+  const env = createContext({});
+  const commands = [{ kind: 14, data: { effects: [{ name: "retry", uniforms: { amount: 1 } }] } }];
+  const applied = [];
+  let attempts = 0;
+  env.document.scriptLoader = function(src, scriptElement) {
+    attempts += 1;
+    env.fetchCalls.push({ url: src, init: {} });
+    setTimeout(() => {
+      if (attempts === 1) {
+        scriptElement.onerror(new Error("script not found: " + src));
+        return;
+      }
+      runScript(bootstrapFeatureScene3DCommandSource, env.context, src);
+      scriptElement.onload({});
+    }, 0);
+  };
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+
+  const target = {
+    id: "retry-scene",
+    __gosxScene3DCommandReady: true,
+    applyCommands(received) {
+      applied.push(received);
+      return Promise.resolve();
+    },
+  };
+  await assert.rejects(
+    env.context.__gosx.scene3d.dispatchCommands(target, commands),
+    /script not found: \/gosx\/bootstrap-feature-scene3d-command\.js/,
+  );
+  const ack = await env.context.__gosx.scene3d.dispatchCommands(target, commands);
+
+  assert.equal(attempts, 2, "failed lazy-load promise must be cleared so dispatch can retry");
+  assert.equal(ack.applied, true);
+  assert.deepEqual(applied, [commands]);
+});
+
 test("Scene3D WebGL recovery API owns one-shot session persistence and reload", () => {
   function makeSessionStorage(initial) {
     const values = new Map(Object.entries(initial || {}));
@@ -17730,25 +17872,39 @@ test("Scene3D WebGL recovery API owns one-shot session persistence and reload", 
   let reloads = 0;
   env.context.location.reload = function() { reloads += 1; };
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
 
   assert.equal(typeof env.context.__gosx.scene3d.requestWebGLRecovery, "function");
+  assert.equal(typeof env.context.__gosx_scene3d_request_webgl_recovery, "function");
+  assert.equal(typeof env.context.__gosx_scene3d_clear_webgl_recovery, "function");
+  assert.equal(typeof env.context.__gosx_scene3d_force_webgl_requested, "function");
+  assert.equal(typeof env.context.__gosx_scene3d_is_webgl_recovery_active, "function");
+  assert.equal(typeof env.context.__gosx_scene3d.requestWebGLRecovery, "function");
+  assert.equal(typeof env.context.__gosx_scene3d.clearWebGLRecovery, "function");
+  assert.equal(typeof env.context.__gosx_scene3d.forceWebGLRequested, "function");
+  assert.equal(typeof env.context.__gosx_scene3d.isWebGLRecoveryActive, "function");
+  assert.equal(typeof env.context.__gosx_scene3d.dispatchCommands, "function");
   assert.equal(env.context.__gosx.scene3d.isWebGLRecoveryActive(), false);
-  const result = env.context.__gosx.scene3d.requestWebGLRecovery({ reload: true });
+  assert.equal(env.context.__gosx_scene3d_is_webgl_recovery_active(), false);
+  const result = env.context.__gosx_scene3d_request_webgl_recovery({ reload: true });
   assert.equal(result.forceWebGL, true);
   assert.equal(result.reload, true);
   assert.equal(reloads, 1, "reload:true must request a reload");
   assert.equal(env.context.__gosx_scene3d_force_webgl, true, "compatibility global remains internally set");
   assert.equal(env.context.__gosx.scene3d.forceWebGLRequested(), true);
+  assert.equal(env.context.__gosx_scene3d.forceWebGLRequested(), true);
   assert.equal(env.context.__gosx.scene3d.isWebGLRecoveryActive(), true);
+  assert.equal(env.context.__gosx_scene3d_is_webgl_recovery_active(), true);
   assert.equal(env.context.sessionStorage.getItem("gosx:scene3d:force-webgl-next"), "1");
 
-  env.context.__gosx.scene3d.clearWebGLRecovery();
+  env.context.__gosx_scene3d.clearWebGLRecovery();
   assert.equal(env.context.__gosx.scene3d.isWebGLRecoveryActive(), false);
   assert.equal(env.context.sessionStorage.getItem("gosx:scene3d:force-webgl-next"), null);
 
   const envReload = createContext({});
   envReload.context.sessionStorage = makeSessionStorage({ "gosx:scene3d:force-webgl-next": "1" });
   runScript(bootstrapRuntimeSource, envReload.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, envReload.context, "bootstrap-feature-scene3d.js");
   assert.equal(envReload.context.sessionStorage.getItem("gosx:scene3d:force-webgl-next"), null, "stored recovery marker must be one-shot");
   assert.equal(envReload.context.__gosx.scene3d.isWebGLRecoveryActive(), true, "one-shot marker activates current page recovery state");
   assert.equal(envReload.context.__gosx.scene3d.forceWebGLRequested(), true);
@@ -21770,7 +21926,7 @@ test("bootstrap engines feature runs canvas2d surface-kind mount on runtime read
 
   // runtimeReady must fan out to the surface-kind mount alongside the existing
   // engine + engine-surface mounts.
-  assert.match(suffix, /mountAllEngines\(manifest\)/);
+  assert.match(suffix, /mountAllEngines\(manifest, reuseEngineIDs\)/);
   assert.match(suffix, /mountAllEngineSurfaces\(\)/);
   assert.match(suffix, /mountAllSurfaceKinds\(\)/);
 });

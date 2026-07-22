@@ -244,7 +244,7 @@
       if (!feature || typeof feature.runtimeReady !== "function") {
         return null;
       }
-      return feature.runtimeReady(manifest);
+      return feature.runtimeReady(manifest, pendingEngineReuseIDs);
     }));
     window.__gosx.ready = true;
     refreshGosxDocumentState("ready");
@@ -259,7 +259,65 @@
     });
   };
 
-  async function disposePage() {
+  function normalizeRuntimePayload(entry) {
+    const props = entry && entry.props ? entry.props : null;
+    const component = String((entry && entry.component) || "");
+    const normalizers = window.__gosx_runtime_payload_normalizers;
+    const normalize = normalizers && normalizers[component];
+    if (typeof normalize !== "function") {
+      return props;
+    }
+    try {
+      return normalize(props, entry, { inflateSceneShaderLib: inflateSceneShaderLib }) || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function runtimePayloadIdentical(outgoingEntry, incomingEntry) {
+    try {
+      return JSON.stringify(normalizeRuntimePayload(outgoingEntry)) === JSON.stringify(normalizeRuntimePayload(incomingEntry));
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  window.__gosx_reusable_engines = function(nextDoc) {
+    const reusable = new Set();
+    if (!nextDoc || !pendingManifest || !Array.isArray(pendingManifest.engines)) {
+      return reusable;
+    }
+    let nextManifest = null;
+    try {
+      const el = typeof nextDoc.getElementById === "function" ? nextDoc.getElementById("gosx-manifest") : null;
+      if (el) nextManifest = JSON.parse(el.textContent);
+    } catch (_e) {
+      return reusable;
+    }
+    if (!nextManifest || !Array.isArray(nextManifest.engines)) {
+      return reusable;
+    }
+    const nextByID = new Map();
+    for (const entry of nextManifest.engines) {
+      if (entry && entry.id) nextByID.set(String(entry.id), entry);
+    }
+    for (const outgoingEntry of pendingManifest.engines) {
+      if (!outgoingEntry || !outgoingEntry.id) continue;
+      const engineID = String(outgoingEntry.id);
+      const record = window.__gosx.engines.get(engineID);
+      if (!record || record.disposed) continue;
+      const incomingEntry = nextByID.get(engineID);
+      if (!incomingEntry) continue;
+      if (String(outgoingEntry.component || "") !== String(incomingEntry.component || "")) continue;
+      if (String(outgoingEntry.mountId || outgoingEntry.id || "") !== String(incomingEntry.mountId || incomingEntry.id || "")) continue;
+      if (!runtimePayloadIdentical(outgoingEntry, incomingEntry)) continue;
+      reusable.add(engineID);
+    }
+    return reusable;
+  };
+
+  async function disposePage(reuseEngineIDs) {
+    const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
     if (typeof window.__gosx_dispose_runtime_content === "function") {
       window.__gosx_dispose_runtime_content(document.body || document.documentElement);
     } else {
@@ -274,15 +332,19 @@
     }
     for (const feature of Array.from(activeBootstrapFeatures.values())) {
       if (feature && typeof feature.disposePage === "function") {
-        feature.disposePage();
+        feature.disposePage(reuseIDs);
       }
     }
     pendingManifest = null;
     pendingFeatureLoad = Promise.resolve([]);
+    pendingEngineReuseIDs = new Set();
     window.__gosx.ready = false;
   }
 
-  async function bootstrapPage() {
+  let pendingEngineReuseIDs = new Set();
+
+  async function bootstrapPage(reuseEngineIDs) {
+    pendingEngineReuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
     if (typeof window.__gosx_mount_runtime_content === "function") {
@@ -305,6 +367,7 @@
     if (!manifest) {
       pendingManifest = null;
       pendingFeatureLoad = Promise.resolve([]);
+      pendingEngineReuseIDs = new Set();
       window.__gosx.ready = true;
       refreshGosxDocumentState("ready");
       return;

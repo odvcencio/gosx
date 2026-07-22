@@ -65,7 +65,14 @@ jobs:
         run: |
           set -euo pipefail
           go test ./...
-          go vet ./...
+          # Generated Danmuji test cases run under go test; vet production files only.
+          while IFS= read -r pkg; do
+            dir="$(GOFLAGS=-buildvcs=false go list -f '{{.Dir}}' "${pkg}")"
+            files="$(GOFLAGS=-buildvcs=false go list -f '{{range .GoFiles}}{{.}}{{"\n"}}{{end}}' "${pkg}")"
+            if [[ -n "${files}" ]]; then
+              (cd "${dir}" && printf '%s\n' "${files}" | xargs env GOFLAGS=-buildvcs=false go vet)
+            fi
+          done < <(GOFLAGS=-buildvcs=false go list ./...)
           CGO_ENABLED=0 go build ./cmd/gosx
 
   build:

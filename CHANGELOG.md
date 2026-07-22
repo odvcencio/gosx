@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.35.2 (2026-07-21)
+
+Release hygiene update for the split Scene3D runtime work.
+
+- Ships the lazy Scene3D command chunk and related build, dev, export,
+  manifest, server, and island plumbing.
+- Normalizes Scene3D shader library loading and preserves eligible engine
+  canvases across split-runtime navigation.
+- Adds compatibility aliases, mount readiness retry behavior, tests, generated
+  runtime assets, and size budget updates for the new split chunks.
+
 ## v0.35.1 (2026-07-21)
 
 Corrective release for the failed v0.35.0 publication. This release supersedes

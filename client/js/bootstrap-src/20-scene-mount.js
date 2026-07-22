@@ -2647,6 +2647,11 @@
     return loadSceneModelAsset(String(src || "").trim(), null);
   };
   if (typeof window !== "undefined") {
+    window.__gosx_runtime_payload_normalizers = window.__gosx_runtime_payload_normalizers || {};
+    window.__gosx_runtime_payload_normalizers.GoSXScene3D = function(props, _entry, helpers) {
+      if (props && props.scene) helpers.inflateSceneShaderLib(props.scene);
+      return props || null;
+    };
     window.__gosx = window.__gosx || {};
     window.__gosx.scene3d = window.__gosx.scene3d || {};
     window.__gosx.scene3d.preloadModel = function(src) {
@@ -9900,6 +9905,7 @@
 	        if (ctx.mount && typeof ctx.mount.removeEventListener === "function") {
 	          ctx.mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
 	        }
+        handle.__gosxScene3DCommandReady = false;
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, true);
         notifySceneRendererLifecycle("dispose", true, true);
         clearIdleContextRelease();
@@ -9978,9 +9984,6 @@
         delete ctx.mount.__gosxScene3DCSSDynamic;
         delete ctx.mount.__gosxScene3DCSSRevision;
         delete ctx.mount.__gosxScene3DCSSAnimationUntil;
-        if (typeof window !== "undefined" && typeof window.__gosx_scene3d_clear_command_ready === "function") {
-          window.__gosx_scene3d_clear_command_ready(ctx.mount);
-        }
         delete ctx.mount.__gosxScene3DHandle;
         if (typeof ctx.mount.removeAttribute === "function") {
           ctx.mount.removeAttribute("data-gosx-scene3d-command-ready");
@@ -9998,9 +10001,10 @@
     // completion. Callers that need the handle as soon as this mount is
     // interactive (e.g. an app-level progressive-upgrade script) should
     // prefer reading it from here over window.__gosx.engines.get(id).handle.
+    handle.__gosxScene3DCommandReady = true;
     ctx.mount.__gosxScene3DHandle = handle;
-    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_mark_command_ready === "function") {
-      window.__gosx_scene3d_mark_command_ready(ctx.mount, handle, { engineID: ctx.id });
+    if (typeof ctx.mount.setAttribute === "function") {
+      ctx.mount.setAttribute("data-gosx-scene3d-command-ready", "true");
     }
     return handle;
   });

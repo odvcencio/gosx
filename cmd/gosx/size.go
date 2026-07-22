@@ -165,6 +165,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-engines.js", file: rt.BootstrapFeatureEngines.File, role: "feature chunk"},
 		{name: "bootstrap-feature-hubs.js", file: rt.BootstrapFeatureHubs.File, role: "feature chunk"},
 		{name: "bootstrap-feature-scene3d.js", file: rt.BootstrapFeatureScene3D.File, role: "scene3d chunk"},
+		{name: "bootstrap-feature-scene3d-command.js", file: rt.BootstrapFeatureScene3DCommand.File, role: "scene3d command chunk"},
 		{name: "bootstrap-feature-scene3d-webgpu.js", file: rt.BootstrapFeatureScene3DWebGPU.File, role: "scene3d webgpu chunk"},
 		{name: "bootstrap-feature-scene3d-gltf.js", file: rt.BootstrapFeatureScene3DGLTF.File, role: "scene3d gltf chunk"},
 		{name: "bootstrap-feature-scene3d-animation.js", file: rt.BootstrapFeatureScene3DAnimation.File, role: "scene3d animation chunk"},

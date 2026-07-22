@@ -47,6 +47,7 @@ type Renderer struct {
 	bootstrapFeatureEnginesPath          string
 	bootstrapFeatureHubsPath             string
 	bootstrapFeatureScene3dPath          string
+	bootstrapFeatureScene3dCommandPath   string
 	bootstrapFeatureScene3dWebGPUPath    string
 	bootstrapFeatureScene3dGLTFPath      string
 	bootstrapFeatureScene3dAnimationPath string
@@ -152,6 +153,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
 	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
+	renderer.bootstrapFeatureScene3dCommandPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-command.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCommand.Hash))
 	renderer.bootstrapFeatureScene3dWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash))
 	renderer.bootstrapFeatureScene3dGLTFPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-gltf.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DGLTF.Hash))
 	renderer.bootstrapFeatureScene3dAnimationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-animation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DAnimation.Hash))
@@ -358,6 +360,15 @@ func (r *Renderer) SetBootstrapFeatureScene3DPath(path string) {
 	r.bootstrapFeatureScene3dPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DCommandPath overrides the lazy Scene3D command
+// bridge sub-feature chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DCommandPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dCommandPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DWebGPUPath overrides the async Scene3D WebGPU
 // sub-feature chunk URL. Emitted inline after the main scene3d script tag,
 // gated on navigator.gpu so non-WebGPU browsers skip the download.
@@ -425,6 +436,8 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureHubs.Hash)
 	case "/gosx/bootstrap-feature-scene3d.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3D.Hash)
+	case "/gosx/bootstrap-feature-scene3d-command.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCommand.Hash)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash)
 	case "/gosx/bootstrap-feature-scene3d-gltf.js":
@@ -450,7 +463,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -491,6 +504,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
+	r.SetBootstrapFeatureScene3DCommandPath(runtime.BootstrapFeatureScene3DCommand)
 	r.SetBootstrapFeatureScene3DWebGPUPath(runtime.BootstrapFeatureScene3DWebGPU)
 	r.SetBootstrapFeatureScene3DGLTFPath(runtime.BootstrapFeatureScene3DGLTF)
 	r.SetBootstrapFeatureScene3DAnimationPath(runtime.BootstrapFeatureScene3DAnimation)
@@ -669,6 +683,11 @@ func (r *Renderer) BootstrapScript() gosx.Node {
 		if gltfPath := r.bootstrapFeatureScene3dGLTFPath; gltfPath != "" {
 			b.WriteString(` data-gosx-scene3d-gltf-url="`)
 			b.WriteString(html.EscapeString(gltfPath))
+			b.WriteByte('"')
+		}
+		if commandPath := r.bootstrapFeatureScene3dCommandPath; commandPath != "" {
+			b.WriteString(` data-gosx-scene3d-command-url="`)
+			b.WriteString(html.EscapeString(commandPath))
 			b.WriteByte('"')
 		}
 		if animPath := r.bootstrapFeatureScene3dAnimationPath; animPath != "" {
