@@ -9932,17 +9932,14 @@
     // pattern it sits alongside).
 
     // sceneWaterCameraPosFromCam extracts the water shaders' "cameraPos"
-    // convention (the SAME world-space eye position FrameUniforms.cameraPos
-    // already carries for every other WebGPU pass, see uploadFrameUniforms's
-    // `camPosZ = -cam.z` -- z is a view-distance, not a raw coordinate, for
-    // every non-ortho2d camera) from the frame's already-normalized camera
-    // object (uploadFrameUniforms's return value).
+    // convention from the normalized camera object. It matches the
+    // world-space eye position in FrameUniforms.cameraPos.
     function sceneWaterCameraPosFromCam(cam) {
       if (!cam) return { x: 0, y: 0, z: 0 };
       return {
         x: sceneNumber(cam.x, 0),
         y: sceneNumber(cam.y, 0),
-        z: cam.mode === "ortho2d" ? 0 : -sceneNumber(cam.z, 0),
+        z: cam.mode === "ortho2d" ? 0 : sceneNumber(cam.z, 0),
       };
     }
 
@@ -11170,7 +11167,7 @@
         } else {
           scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, scratchProjMatrix);
         }
-        camPosZ = -cam.z; // cameraPos.z (negated per convention)
+        camPosZ = cam.z; // cameraPos.z is the world-space eye position.
       }
 
       // scenePBRProjectionMatrix and sceneMat4Ortho2DProj produce a
@@ -11203,7 +11200,7 @@
       f.set(scratchProjMatrix, 16);         // offset 64
       f[32] = cam.x;                         // cameraPos.x
       f[33] = cam.y;                         // cameraPos.y
-      f[34] = camPosZ;                       // cameraPos.z (3D: -z; ortho2d: 0 — z carries zoom)
+      f[34] = camPosZ;                       // cameraPos.z (3D: world eye; ortho2d: 0 — z carries zoom)
       // lightCount set below in uploadLights
       f[36] = width;                          // viewportWidth
       f[37] = height;                         // viewportHeight
@@ -11249,7 +11246,7 @@
       f.set(scratchProjMatrix, 16);
       f[32] = eye.x;
       f[33] = eye.y;
-      f[34] = -eye.z;
+      f[34] = eye.z;
       f[36] = width;
       f[37] = height;
       u[38] = toneMap ? 1 : 0;

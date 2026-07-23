@@ -130,7 +130,7 @@
     // Step 1: translate into camera-local space.
     let lx = sceneNumber(point && point.x, 0) - cam.x;
     let ly = sceneNumber(point && point.y, 0) - cam.y;
-    let lz = sceneNumber(point && point.z, 0) + cam.z;
+    let lz = sceneNumber(point && point.z, 0) - cam.z;
 
     // Step 2: inverse-rotate into camera frame (was sceneInverseRotatePoint).
     const sinZ = Math.sin(-cam.rotationZ);
@@ -154,8 +154,9 @@
     ly = nextY;
     lz = nextZ;
 
-    // Step 3: perspective clip test.
-    if (lz <= cam.near || lz >= cam.far) return null;
+    // Step 3: positive forward depth uses camera -Z.
+    const depth = -lz;
+    if (depth <= cam.near || depth >= cam.far) return null;
 
     if (cam.kind === "orthographic") {
       const bounds = sceneOrthographicBounds(cam, width, height);
@@ -164,7 +165,7 @@
       return {
         x: ((lx - bounds.left) / spanX) * width,
         y: ((bounds.top - ly) / spanY) * height,
-        depth: lz,
+        depth: depth,
       };
     }
 
@@ -174,9 +175,9 @@
     // projection aligned with the renderer in portrait viewports, not just landscape.
     const focal = (height / 2) / Math.tan((cam.fov * Math.PI) / 360);
     return {
-      x: width / 2 + (lx * focal) / lz,
-      y: height / 2 - (ly * focal) / lz,
-      depth: lz,
+      x: width / 2 + (lx * focal) / depth,
+      y: height / 2 - (ly * focal) / depth,
+      depth: depth,
     };
   }
 
@@ -185,7 +186,7 @@
     return sceneInverseRotatePoint({
       x: sceneNumber(point && point.x, 0) - normalizedCamera.x,
       y: sceneNumber(point && point.y, 0) - normalizedCamera.y,
-      z: sceneNumber(point && point.z, 0) + normalizedCamera.z,
+      z: sceneNumber(point && point.z, 0) - normalizedCamera.z,
     }, normalizedCamera.rotationX, normalizedCamera.rotationY, normalizedCamera.rotationZ);
   }
 
@@ -589,8 +590,7 @@
     // Unproject screen coordinates into a world-space ray, consistent with sceneProjectPoint.
     var cam = sceneRenderCamera(camera);
 
-    // Camera world position (z is negated, matching sceneCameraLocalPoint).
-    var origin = { x: cam.x, y: cam.y, z: -cam.z };
+    var origin = { x: cam.x, y: cam.y, z: cam.z };
     if (cam.kind === "orthographic") {
       var bounds = sceneOrthographicBounds(cam, width, height);
       var spanX = Math.max(0.000001, bounds.right - bounds.left);
@@ -598,16 +598,16 @@
       var localOrigin = {
         x: bounds.left + (pointerX / Math.max(1, width)) * spanX,
         y: bounds.top - (pointerY / Math.max(1, height)) * spanY,
-        z: 0,
+        z: -cam.near,
       };
-      var localDir = { x: 0, y: 0, z: 1 };
+      var localDir = { x: 0, y: 0, z: -1 };
       var worldOffset = sceneRotatePoint(localOrigin, cam.rotationX, cam.rotationY, cam.rotationZ);
       var worldDir = sceneRotatePoint(localDir, cam.rotationX, cam.rotationY, cam.rotationZ);
       var lenOrtho = Math.sqrt(worldDir.x * worldDir.x + worldDir.y * worldDir.y + worldDir.z * worldDir.z);
       return {
         origin: { x: origin.x + worldOffset.x, y: origin.y + worldOffset.y, z: origin.z + worldOffset.z },
         dir: lenOrtho < 1e-12
-          ? { x: 0, y: 0, z: 1 }
+          ? { x: 0, y: 0, z: -1 }
           : { x: worldDir.x / lenOrtho, y: worldDir.y / lenOrtho, z: worldDir.z / lenOrtho },
       };
     }
@@ -621,12 +621,11 @@
     var refDim = height / 2;
     var focal = refDim / tanHalf;
 
-    // Invert the projection: screenX = w/2 + localX*focal/depth, screenY = h/2 - localY*focal/depth.
-    // At unit depth (depth=1): localX = (screenX - w/2) / focal, localY = (h/2 - screenY) / focal.
+    // Invert the projection at unit positive depth. Camera forward is local -Z.
     var dirCam = {
       x: (pointerX - width / 2) / focal,
       y: (height / 2 - pointerY) / focal,
-      z: 1.0,
+      z: -1.0,
     };
 
     // Rotate from camera-local space to world space (inverse of sceneInverseRotatePoint).
@@ -635,7 +634,7 @@
     // Normalize.
     var len = Math.sqrt(dirWorld.x * dirWorld.x + dirWorld.y * dirWorld.y + dirWorld.z * dirWorld.z);
     if (len < 1e-12) {
-      return { origin: origin, dir: { x: 0, y: 0, z: 1 } };
+      return { origin: origin, dir: { x: 0, y: 0, z: -1 } };
     }
 
     return {
@@ -719,6 +718,8 @@
 
   if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
     Object.assign(window.__gosx_scene3d_api, {
+      sceneProjectPoint,
+      sceneCameraLocalPoint,
       sceneScreenToRay,
       sceneRayIntersectYPlane,
       sceneRayIntersectPlane,

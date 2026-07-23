@@ -5363,12 +5363,16 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
   const cameraDistanceToTarget = (camera) => Math.hypot(
     camera.x - orbitTarget.x,
     camera.y - orbitTarget.y,
-    -camera.z - orbitTarget.z,
+    camera.z - orbitTarget.z,
   );
   const initialCamera = mounted.handle.getCamera();
   assert.equal(Math.round(initialCamera.fov), 72);
   assert.ok(Math.abs(initialCamera.rotationX) < 0.0001);
   assert.ok(Math.abs(initialCamera.rotationY) < 0.0001);
+  const projectedOrbitTarget = env.context.__gosx_scene3d_api.sceneProjectPoint(orbitTarget, initialCamera, 640, 360);
+  assert.ok(projectedOrbitTarget, `orbit target should project in front of the initial camera: ${JSON.stringify(initialCamera)}`);
+  assert.ok(Math.abs(projectedOrbitTarget.x - 320) < 0.001, `orbit target x should be centered: ${JSON.stringify(projectedOrbitTarget)}`);
+  assert.ok(Math.abs(projectedOrbitTarget.y - 180) < 0.001, `orbit target y should be centered: ${JSON.stringify(projectedOrbitTarget)}`);
 
   canvas.dispatchEvent({
     type: "pointerdown",
@@ -7822,7 +7826,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
           mode: "texture",
           html: "<button>Inspect</button>",
           position: { x: 320, y: 160 },
-          depth: 6.8,
+          depth: 5.5,
         rayOriginX: 0,
         rayOriginY: 0,
         rayOriginZ: 0,
@@ -7886,7 +7890,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(batch["$scene.event.worldX"], 0);
   assert.equal(batch["$scene.event.localX"], 0);
   assert.equal(batch["$scene.event.uvX"], 0);
-  assert.ok(Math.abs(batch["$scene.event.depth"] - 6.8) < 1e-6, "expected fallback pick depth");
+  assert.ok(Math.abs(batch["$scene.event.depth"] - 5.2) < 1e-6, "expected fallback pick depth");
   assert.equal(batch["$scene.event.hovered"], true);
   assert.equal(batch["$scene.event.hoverKind"], "box");
   assert.equal(batch["$scene.event.object.shape.hovered"], true);
@@ -7905,8 +7909,8 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(debugPick.targetID, "shape");
   assert.equal(debugPick.uvX, 0);
   const hoverEvent = JSON.parse(JSON.stringify(interactionEvents[0]));
-  assert.ok(Math.abs(hoverEvent.detail.depth - 6.8) < 1e-6, "expected fallback event depth");
-  hoverEvent.detail.depth = 6.8;
+  assert.ok(Math.abs(hoverEvent.detail.depth - 5.2) < 1e-6, "expected fallback event depth");
+  hoverEvent.detail.depth = 5.2;
   assert.deepEqual(hoverEvent, {
     engineID: "gosx-engine-pick",
     component: "GoSXScene3D",
@@ -7927,7 +7931,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
       localZ: 0,
       uvX: 0,
       uvY: 0,
-      depth: 6.8,
+      depth: 5.2,
         rayOriginX: 0,
         rayOriginY: 0,
         rayOriginZ: 0,
@@ -8523,6 +8527,285 @@ test("bootstrap prepares Scene3D pass plans and cached buffers through shared pl
   assert.equal(smallHandle.id, "small");
   assert.equal(largeHandle.id, "large");
   assert.equal(owner.gpuBuffer, largeHandle);
+});
+
+test("bootstrap Scene3D bounds depth uses PBR camera forward depth", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = { x: 0, y: 0, z: 500, fov: 72, near: 0.05, far: 2000 };
+  const visible = { minX: -1, minY: -1, minZ: -604, maxX: 1, maxY: 1, maxZ: -604 };
+  const behind = { minX: -1, minY: -1, minZ: 604, maxX: 1, maxY: 1, maxZ: 604 };
+
+  const depth = api.sceneBoundsDepthMetrics(visible, camera);
+  assert.equal(depth.near, 1104);
+  assert.equal(depth.far, 1104);
+  assert.equal(depth.center, 1104);
+  assert.equal(api.sceneBoundsViewCulled(visible, camera), false);
+  assert.equal(api.sceneBoundsViewCulled(behind, camera), true);
+});
+
+test("bootstrap Scene3D bounds culling supports rotated cameras", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = { x: 0, y: 0, z: 0, rotationY: Math.PI / 2, fov: 72, near: 0.05, far: 128 };
+  const visible = { minX: -10, minY: -1, minZ: -1, maxX: -10, maxY: 1, maxZ: 1 };
+  const behind = { minX: 10, minY: -1, minZ: -1, maxX: 10, maxY: 1, maxZ: 1 };
+
+  assert.equal(api.sceneBoundsDepthMetrics(visible, camera).center, 10);
+  assert.equal(api.sceneBoundsViewCulled(visible, camera), false);
+  assert.equal(api.sceneBoundsViewCulled(behind, camera), true);
+});
+
+test("bootstrap Scene3D projection uses positive forward depth", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = { x: 10, y: 2, z: 500, fov: 90, near: 0.1, far: 2000 };
+
+  const front = api.sceneProjectPoint({ x: 10, y: 2, z: -500 }, camera, 200, 100);
+  assert.ok(front, "expected translated point in front of camera to project");
+  assert.equal(front.x, 100);
+  assert.equal(front.y, 50);
+  assert.equal(front.depth, 1000);
+  assert.equal(api.sceneWorldPointDepth({ x: 10, y: 2, z: -500 }, camera), 1000);
+
+  assert.equal(api.sceneProjectPoint({ x: 10, y: 2, z: 600 }, camera, 200, 100), null);
+  assert.equal(api.sceneWorldPointDepth({ x: 10, y: 2, z: 600 }, camera), -100);
+});
+
+test("bootstrap Scene3D projection supports rotated cameras", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = { x: 0, y: 0, z: 0, rotationY: Math.PI / 2, fov: 90, near: 0.1, far: 128 };
+
+  const front = api.sceneProjectPoint({ x: -10, y: 0, z: 0 }, camera, 200, 100);
+  assert.ok(front, "expected camera rotated toward -X to project -X point");
+  assert.ok(Math.abs(front.x - 100) < 1e-9);
+  assert.ok(Math.abs(front.y - 50) < 1e-9);
+  assert.ok(Math.abs(front.depth - 10) < 1e-9);
+  assert.equal(api.sceneProjectPoint({ x: 10, y: 0, z: 0 }, camera, 200, 100), null);
+});
+
+test("bootstrap Scene3D PBR view matrix matches scalar camera-local transform", async () => {
+  const api = await makeSceneApiEnv();
+  assert.equal(typeof api.scenePBRViewMatrix, "function");
+  assert.equal(typeof api.sceneCameraLocalPoint, "function");
+
+  function transformPoint(matrix, point) {
+    return {
+      x: matrix[0] * point.x + matrix[4] * point.y + matrix[8] * point.z + matrix[12],
+      y: matrix[1] * point.x + matrix[5] * point.y + matrix[9] * point.z + matrix[13],
+      z: matrix[2] * point.x + matrix[6] * point.y + matrix[10] * point.z + matrix[14],
+    };
+  }
+  function assertClose(actual, expected, label) {
+    assert.ok(Math.abs(actual.x - expected.x) < 1e-6, label + " x got " + actual.x + " want " + expected.x);
+    assert.ok(Math.abs(actual.y - expected.y) < 1e-6, label + " y got " + actual.y + " want " + expected.y);
+    assert.ok(Math.abs(actual.z - expected.z) < 1e-6, label + " z got " + actual.z + " want " + expected.z);
+  }
+
+  const cases = [
+    {
+      label: "yaw-pi-over-two",
+      camera: { x: 0, y: 0, z: 0, rotationY: Math.PI / 2, fov: 72, near: 0.05, far: 128 },
+      points: [{ x: -10, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }],
+    },
+    {
+      label: "combined-rotation-translation",
+      camera: { x: 3, y: -2, z: 5, rotationX: 0.37, rotationY: -0.61, rotationZ: 0.23, fov: 72, near: 0.05, far: 128 },
+      points: [{ x: -4, y: 7, z: -11 }, { x: 8, y: -3, z: 2 }],
+    },
+  ];
+
+  for (const item of cases) {
+    const matrix = api.scenePBRViewMatrix(item.camera);
+    for (const point of item.points) {
+      const fromMatrix = transformPoint(matrix, point);
+      const scalar = api.sceneCameraLocalPoint(point, item.camera);
+      assertClose(fromMatrix, scalar, item.label);
+    }
+  }
+
+  const yawMatrix = api.scenePBRViewMatrix(cases[0].camera);
+  assert.ok(Math.abs(transformPoint(yawMatrix, { x: -10, y: 0, z: 0 }).z + 10) < 1e-6);
+});
+
+test("bootstrap Scene3D orthographic projection uses camera depth range", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = {
+    kind: "orthographic",
+    x: 0, y: 0, z: 50,
+    left: -10, right: 10, bottom: -5, top: 5,
+    near: 1, far: 100,
+  };
+
+  const front = api.sceneProjectPoint({ x: 0, y: 0, z: 0 }, camera, 200, 100);
+  assert.ok(front, "expected orthographic point in front");
+  assert.equal(front.x, 100);
+  assert.equal(front.y, 50);
+  assert.equal(front.depth, 50);
+  assert.equal(api.sceneProjectPoint({ x: 0, y: 0, z: 49.5 }, camera, 200, 100), null);
+  assert.equal(api.sceneProjectPoint({ x: 0, y: 0, z: -60 }, camera, 200, 100), null);
+});
+
+test("bootstrap Scene3D screen-to-ray center uses world eye and negative local Z", async () => {
+  const api = await makeSceneApiEnv();
+
+  const perspective = api.sceneScreenToRay(100, 50, 200, 100, { x: 3, y: 4, z: 5, fov: 90, near: 0.1, far: 100 });
+  assert.equal(perspective.origin.x, 3);
+  assert.equal(perspective.origin.y, 4);
+  assert.equal(perspective.origin.z, 5);
+  assert.ok(Math.abs(perspective.dir.x) < 1e-9);
+  assert.ok(Math.abs(perspective.dir.y) < 1e-9);
+  assert.ok(Math.abs(perspective.dir.z + 1) < 1e-9);
+
+  const orthographic = api.sceneScreenToRay(100, 50, 200, 100, {
+    kind: "orthographic",
+    x: 3, y: 4, z: 5,
+    left: -10, right: 10, bottom: -5, top: 5,
+    near: 2, far: 100,
+  });
+  assert.equal(orthographic.origin.x, 3);
+  assert.equal(orthographic.origin.y, 4);
+  assert.equal(orthographic.origin.z, 3);
+  assert.ok(Math.abs(orthographic.dir.x) < 1e-9);
+  assert.ok(Math.abs(orthographic.dir.y) < 1e-9);
+  assert.ok(Math.abs(orthographic.dir.z + 1) < 1e-9);
+});
+
+test("bootstrap Scene3D draw sorting uses no-bounds positive depth", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = { x: 0, y: 0, z: 0, fov: 72, near: 0.05, far: 128 };
+  const bundle = {
+    camera,
+    materials: [{ kind: "flat", color: "#ffffff", opacity: 0.5, wireframe: true, renderPass: "alpha" }],
+    worldPositions: new Float32Array([
+      -1, 0, -2,
+      1, 0, -2,
+      -1, 0, -10,
+      1, 0, -10,
+    ]),
+    worldColors: new Float32Array([
+      1, 0, 0, 1,
+      1, 0, 0, 1,
+      0, 0, 1, 1,
+      0, 0, 1, 1,
+    ]),
+    objects: [
+      { id: "near", kind: "line", materialIndex: 0, vertexOffset: 0, vertexCount: 2, static: false },
+      { id: "far", kind: "line", materialIndex: 0, vertexOffset: 2, vertexCount: 2, static: false },
+    ],
+  };
+
+  const plan = api.buildSceneWorldDrawPlan(bundle);
+  assert.equal(api.sceneWorldPointDepth({ x: 0, y: 0, z: -10 }, camera), 10);
+  assert.equal(api.sceneWorldPointDepth({ x: 0, y: 0, z: -2 }, camera), 2);
+  assert.deepEqual(Array.from(plan.alphaPositions), [-1, 0, -10, 1, 0, -10, -1, 0, -2, 1, 0, -2]);
+});
+
+test("bootstrap Canvas fallback projection drops points behind camera", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = { x: 0, y: 0, z: 5, fov: 90, near: 0.1, far: 20 };
+
+  const front = api.sceneProjectPoint({ x: 0, y: 0, z: 0 }, camera, 200, 100);
+  assert.ok(front, "expected Canvas projection to keep front point");
+  assert.equal(front.x, 100);
+  assert.equal(front.y, 50);
+  assert.equal(front.depth, 5);
+  assert.equal(api.sceneProjectPoint({ x: 0, y: 0, z: 6 }, camera, 200, 100), null);
+});
+
+test("bootstrap Scene3D world planner keeps front bounds and drops behind bounds", async () => {
+  const api = await makeSceneApiEnv();
+  const camera = { x: 0, y: 0, z: 500, fov: 72, near: 0.05, far: 2000 };
+  const bundle = {
+    camera,
+    materials: [{ kind: "flat", color: "#ffffff", opacity: 1, wireframe: true, renderPass: "opaque" }],
+    worldPositions: new Float32Array([
+      -1, 0, -604,
+      1, 0, -604,
+      -1, 0, 604,
+      1, 0, 604,
+    ]),
+    worldColors: new Float32Array([
+      1, 1, 1, 1,
+      1, 1, 1, 1,
+      1, 1, 1, 1,
+      1, 1, 1, 1,
+    ]),
+    objects: [
+      {
+        id: "visible-line",
+        kind: "line",
+        materialIndex: 0,
+        vertexOffset: 0,
+        vertexCount: 2,
+        static: true,
+        bounds: { minX: -1, minY: 0, minZ: -604, maxX: 1, maxY: 0, maxZ: -604 },
+      },
+      {
+        id: "behind-line",
+        kind: "line",
+        materialIndex: 0,
+        vertexOffset: 2,
+        vertexCount: 2,
+        static: true,
+        bounds: { minX: -1, minY: 0, minZ: 604, maxX: 1, maxY: 0, maxZ: 604 },
+      },
+    ],
+  };
+
+  const plan = api.buildSceneWorldDrawPlan(bundle);
+  assert.equal(plan.staticOpaqueVertexCount, 2);
+  assert.deepEqual(Array.from(plan.staticOpaquePositions), [-1, 0, -604, 1, 0, -604]);
+});
+
+test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+
+  assert.match(core, /uniform vec2 u_depth_range;/);
+  assert.match(core, /a_position\.z - u_camera\.z/);
+  assert.match(core, /world\.z - u_camera\.z/);
+  assert.match(core, /float depth = -local\.z;/);
+  assert.match(core, /float clipZ = \(\(nearDepth \+ farDepth\) \* rangeInv\) \* local\.z \+ \(2\.0 \* nearDepth \* farDepth \* rangeInv\);/);
+  assert.match(core, /vec4\(local\.x \* focal \/ max\(u_aspect, 0\.0001\), local\.y \* focal, clipZ, depth\)/);
+  assert.match(core, /float clipDepth = \(\(depth - nearDepth\) \/ max\(farDepth - nearDepth, 0\.0001\)\) \* 2\.0 - 1\.0/);
+  assert.match(core, /depthRangeLocation: gl\.getUniformLocation\(program, "u_depth_range"\)/);
+  assert.match(core, /surfaceDepthRangeLocation: surfaceProgram \? gl\.getUniformLocation\(surfaceProgram, "u_depth_range"\)/);
+  assert.match(core, /gl\.uniform2f\(resources\.depthRangeLocation, camera\.near, camera\.far\)/);
+  assert.match(core, /gl\.uniform2f\(resources\.surfaceDepthRangeLocation, camera\.near, camera\.far\)/);
+  assert.match(core, /gl\.uniform2f\(thickProgram\.depthRangeLocation, camera\.near, camera\.far\)/);
+  assert.doesNotMatch(core, /vec4\(2\.0, 2\.0, 0\.0, 1\.0\)/);
+  assert.doesNotMatch(core, /depth <= nearDepth \|\| depth >= farDepth/);
+  assert.doesNotMatch(core, /clipDepth = clamp/);
+  assert.doesNotMatch(core, /a_position\.z \+ u_camera\.z/);
+  assert.doesNotMatch(core, /world\.z \+ u_camera\.z/);
+});
+
+test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgl, /scenePBRViewMatrix\(cam, scratchViewMatrix\)/);
+  assert.match(webgl, /gl\.uniformMatrix4fv\(uniforms\.viewMatrix, false, viewMatrix\)/);
+  assert.match(webgpu, /scenePBRViewMatrix\(cam, scratchViewMatrix\)/);
+  assert.match(webgpu, /f\.set\(scratchViewMatrix, 0\)/);
+  assert.match(webgpu, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, scratchProjMatrix, scratchViewMatrix\)/);
+});
+
+test("bootstrap Scene3D PBR cameraPos uniforms use world eye position", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(webgl, /vec3 V = normalize\(u_cameraPosition - v_worldPosition\);/);
+  assert.match(webgl, /gl\.uniform3f\(uniforms\.cameraPosition, cam\.x, cam\.y, cam\.z\)/);
+  assert.match(webgl, /gl\.uniform3f\(targetUniforms\.cameraPosition, _frameCam\.x, _frameCam\.y, _frameCam\.z\)/);
+  assert.match(webgl, /gl\.uniform3f\(ip\.uniforms\.cameraPosition, _frameCam\.x, _frameCam\.y, _frameCam\.z\)/);
+  assert.doesNotMatch(webgl, /cameraPosition, [^;\n]*-cam\.z/);
+  assert.doesNotMatch(webgl, /cameraPosition, [^;\n]*-_frameCam\.z/);
+
+  assert.match(webgpu, /let V = normalize\(frame\.cameraPos - in\.worldPos\);/);
+  assert.match(webgpu, /camPosZ = cam\.z; \/\/ cameraPos\.z is the world-space eye position\./);
+  assert.match(webgpu, /f\[34\] = camPosZ;\s*\/\/ cameraPos\.z \(3D: world eye; ortho2d: 0/);
+  assert.match(webgpu, /f\[34\] = eye\.z;/);
+  assert.match(webgpu, /z: cam\.mode === "ortho2d" \? 0 : sceneNumber\(cam\.z, 0\)/);
+  assert.doesNotMatch(webgpu, /camPosZ = -cam\.z/);
+  assert.doesNotMatch(webgpu, /f\[34\] = -eye\.z/);
 });
 
 test("bootstrap resolves Scene3D CSS custom properties in the planner", async () => {
@@ -9803,7 +10086,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /sceneWaterLookAtViewMatrix\(eye, reflectedTarget, reflectedUp, scratchViewMatrix\)/);
   assert.match(webgpu, /function uploadWaterReflectionFrameUniforms/);
   assert.match(webgpu, /f\[33\] = eye\.y/);
-  assert.match(webgpu, /f\[34\] = -eye\.z/);
+  assert.match(webgpu, /f\[34\] = eye\.z/);
   assert.match(webgpu, /function renderWaterObjectSceneTexturePasses/);
   assert.match(webgpu, /function waterSystemUsesProjectedObjectTextures\(system\)/);
   assert.match(webgpu, /function waterSystemHasObjectTextureSubject\(system\)/);
@@ -11978,14 +12261,14 @@ test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", as
 
   const hit = api.sceneRaycastPick(100, 100, 200, 200, bundle.camera, bundle);
   assert.ok(hit, "expected raycast hit");
-  assert.equal(hit.object.id, "near-triangle");
-  assert.equal(hit.index, 1);
-  assert.ok(Math.abs(hit.distance - 6) < 1e-6, "expected near triangle distance, got " + hit.distance);
+  assert.equal(hit.object.id, "far-triangle");
+  assert.equal(hit.index, 0);
+  assert.ok(Math.abs(hit.distance - 4) < 1e-6, "expected far triangle distance, got " + hit.distance);
   assert.equal(hit.point.x, 0);
   assert.equal(hit.point.y, 0);
-  assert.equal(hit.point.z, 0);
+  assert.equal(hit.point.z, 2);
   assert.equal(hit.worldPosition.x, 0);
-  assert.equal(hit.localPosition.z, 0);
+  assert.equal(hit.localPosition.z, 2);
   assert.equal(hit.triangleIndex, 0);
   assert.equal(hit.primitiveIndex, 0);
   assert.equal(hit.instanceIndex, -1);
@@ -14187,7 +14470,7 @@ test("bootstrap respects static Scene3D camera clip props for label projection",
             width: 520,
             height: 320,
             autoRotate: false,
-            camera: { x: 0, y: 0, z: 6, fov: 72, near: 7, far: 8 },
+            camera: { x: 0, y: 0, z: 6, fov: 72, near: 4, far: 5 },
             scene: {
               labels: [
                 {
@@ -31046,11 +31329,12 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
 
   // The per-frame updater exists and derives every reserved name from real
-  // scene state: camera (with the -z convention the PBR path uses), the
+  // scene state: camera, the
   // first directional light (negated into toward-light form), its
   // color x intensity, and environment ambient color x intensity.
   assert.match(webgl, /function sceneSelenaFrameContextUpdate\(cam, lights, environment\)/);
-  assert.match(webgl, /-sceneNumber\(cam && cam\.z, 0\)/);
+  assert.match(webgl, /cameraPos: \[[\s\S]{0,140}sceneNumber\(cam && cam\.z, 0\)/);
+  assert.doesNotMatch(webgl, /-sceneNumber\(cam && cam\.z, 0\)/);
   assert.match(webgl, /if \(String\(light\.kind \|\| ""\)\.toLowerCase\(\) !== "directional"\) continue;/);
   assert.match(webgl, /sunDir = \[-dx \/ len, -dy \/ len, -dz \/ len\];/);
   assert.match(webgl, /ambientRGBA\[0\] \* ambientIntensity/);

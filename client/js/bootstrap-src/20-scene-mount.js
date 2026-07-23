@@ -6392,7 +6392,7 @@
     return {
       x: normalized.x,
       y: normalized.y,
-      z: -normalized.z,
+      z: normalized.z,
     };
   }
 
@@ -6417,11 +6417,11 @@
   function sceneFlyCamera(state, fallbackCamera) {
     const base = sceneRenderCamera(fallbackCamera);
     const fly = state || sceneFlyStateFromCamera(base);
-    const position = fly.position || { x: 0, y: 0, z: -6 };
+    const position = fly.position || { x: 0, y: 0, z: 6 };
     return {
       x: sceneNumber(position.x, base.x),
       y: sceneNumber(position.y, base.y),
-      z: -sceneNumber(position.z, -base.z),
+      z: sceneNumber(position.z, base.z),
       kind: base.kind,
       rotationX: sceneClamp(sceneNumber(fly.pitch, base.rotationX), -1.52, 1.52),
       rotationY: sceneNumber(fly.yaw, base.rotationY),
@@ -6459,7 +6459,7 @@
       minDistance,
       maxDistance,
       pitchLimit,
-      yaw: Math.atan2(offsetX, -offsetZ),
+      yaw: Math.atan2(offsetX, offsetZ),
       pitch: Math.asin(sceneClamp(offsetY / Math.max(radius, 0.001), -pitchRatioLimit, pitchRatioLimit)),
       kind: normalized.kind,
       fov: normalized.fov,
@@ -6487,7 +6487,7 @@
     const worldPosition = {
       x: sceneNumber(target.x, 0) + Math.sin(yaw) * cosPitch * radius,
       y: sceneNumber(target.y, 0) + Math.sin(pitch) * radius,
-      z: sceneNumber(target.z, 0) - Math.cos(yaw) * cosPitch * radius,
+      z: sceneNumber(target.z, 0) + Math.cos(yaw) * cosPitch * radius,
     };
     const forward = {
       x: sceneNumber(target.x, 0) - worldPosition.x,
@@ -6498,10 +6498,10 @@
     return {
       x: worldPosition.x,
       y: worldPosition.y,
-      z: -worldPosition.z,
+      z: worldPosition.z,
       kind: base.kind,
-      rotationX: -Math.atan2(forward.y, horizontal),
-      rotationY: Math.atan2(forward.x, forward.z),
+      rotationX: Math.atan2(forward.y, horizontal),
+      rotationY: Math.atan2(-forward.x, -forward.z),
       rotationZ: 0,
       fov: sceneNumber(orbit.fov, base.fov),
       left: sceneNumber(orbit.left, base.left),

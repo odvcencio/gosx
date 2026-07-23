@@ -264,8 +264,8 @@ const budgets = [
   // bootstrap loader and recovery API. Measured: 1_321_296 / 349_930 / 282_863.
   // Bumped gzip 350_000 -> 351_000 and brotli 283_000 -> 284_000 for
   // command-ready gating. Measured: 1_321_861 / 350_094 / 283_144.
-  // Raw cap unchanged.
-  { file: "bootstrap.js", raw: 1_322_000, gzip: 351_000, brotli: 284_000 },
+  // Bumped raw 1_322_000 -> 1_324_000 for camera-depth parity assertions.
+  { file: "bootstrap.js", raw: 1_324_000, gzip: 351_000, brotli: 284_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -454,7 +454,9 @@ const budgets = [
   // Bumped raw 718_000 -> 722_000, gzip 197_000 -> 198_000, and Brotli
   // 162_000 -> 163_000 for the Scene3D command bridge loader plus public
   // command/recovery APIs. Measured: 720_967 / 197_155 / 162_407.
-  { file: "bootstrap-feature-scene3d.js", raw: 722_000, gzip: 198_000, brotli: 163_000 },
+  // Bumped raw 722_000 -> 723_000 for camera-depth parity coverage.
+  // Measured: 722_238 / 197_155 / 162_407.
+  { file: "bootstrap-feature-scene3d.js", raw: 723_000, gzip: 198_000, brotli: 163_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },

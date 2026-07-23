@@ -5115,16 +5115,12 @@
     fov: 0, near: 0, far: 0,
   };
 
-  // sceneBoundsDepthMetrics inlines the 8-corner depth computation that
-  // used to go: sceneBoundsCorners (8 fresh point objects) →
-  // sceneWorldPointDepth × 8 → sceneCameraLocalPoint → sceneInverseRotatePoint
-  // (each allocating their own results). That chain was 16 allocations
-  // per call. Now: 0 allocations for the 8-corner inner loop, plus one
-  // fresh result object the caller retains.
+  // sceneBoundsDepthMetrics inlines the 8-corner depth computation. It uses
+  // the same camera eye convention as scenePBRViewMatrix: camera.z is a world
+  // eye coordinate, and forward depth is -viewZ after inverse rotation.
   //
-  // The inverse rotation math matches sceneInverseRotatePoint exactly so
-  // the depth values are identical to the old path — bit-for-bit where
-  // floating-point reordering isn't involved, within 1 ulp otherwise.
+  // The inverse rotation math matches sceneInverseRotatePoint's rotation
+  // order. The final sign matches the renderer's positive forward depth.
   function sceneBoundsDepthMetrics(bounds, camera, cacheOwner) {
     if (!bounds) {
       const depth = sceneWorldPointDepth(0, camera);
@@ -5184,10 +5180,11 @@
       const worldY = (i & 2) ? maxY : minY;
       const worldZ = (i & 1) ? maxZ : minZ;
 
-      // Translate into camera-local space.
+      // Translate into view space before inverse rotation. This matches
+      // scenePBRViewMatrix's translation(-cam.x, -cam.y, -cam.z).
       let lx = worldX - cam.x;
       let ly = worldY - cam.y;
-      let lz = worldZ + cam.z;
+      let lz = worldZ - cam.z;
 
       // Inverse rotate: apply -rotZ, then -rotY, then -rotX in that order.
       let nX = lx * cosZ - ly * sinZ;
@@ -5204,8 +5201,9 @@
       nZ = ly * sinX + lz * cosX;
       lz = nZ;
 
-      if (lz < near) near = lz;
-      if (lz > far) far = lz;
+      const depth = -lz;
+      if (depth < near) near = depth;
+      if (depth > far) far = depth;
     }
 
     const result = {
@@ -6439,6 +6437,7 @@
       materialLocation: gl.getAttribLocation(program, "a_material"),
       cameraLocation: gl.getUniformLocation(program, "u_camera"),
       cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
+      depthRangeLocation: gl.getUniformLocation(program, "u_depth_range"),
       aspectLocation: gl.getUniformLocation(program, "u_aspect"),
       perspectiveLocation: gl.getUniformLocation(program, "u_use_perspective"),
       cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
@@ -6448,6 +6447,7 @@
       surfaceUVLocation: surfaceProgram ? gl.getAttribLocation(surfaceProgram, "a_uv") : -1,
       surfaceCameraLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera") : null,
       surfaceCameraRotationLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_rotation") : null,
+      surfaceDepthRangeLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_depth_range") : null,
       surfaceAspectLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_aspect") : null,
       surfaceCameraModeLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_camera_mode") : null,
       surfaceOrthoLocation: surfaceProgram ? gl.getUniformLocation(surfaceProgram, "u_ortho") : null,
@@ -6532,6 +6532,9 @@
         camera.rotationY,
         camera.rotationZ,
       );
+    }
+    if (typeof gl.uniform2f === "function" && resources.depthRangeLocation) {
+      gl.uniform2f(resources.depthRangeLocation, camera.near, camera.far);
     }
     if (typeof gl.uniform1f === "function" && resources.aspectLocation) {
       gl.uniform1f(resources.aspectLocation, aspect);
@@ -6816,6 +6819,9 @@
     }
     if (typeof gl.uniform3f === "function" && resources.surfaceCameraRotationLocation) {
       gl.uniform3f(resources.surfaceCameraRotationLocation, camera.rotationX, camera.rotationY, camera.rotationZ);
+    }
+    if (typeof gl.uniform2f === "function" && resources.surfaceDepthRangeLocation) {
+      gl.uniform2f(resources.surfaceDepthRangeLocation, camera.near, camera.far);
     }
     if (typeof gl.uniform1f === "function" && resources.surfaceAspectLocation) {
       gl.uniform1f(resources.surfaceAspectLocation, aspect);
@@ -7317,6 +7323,7 @@
       "attribute vec3 a_material;",
       "uniform vec4 u_camera;",
       "uniform vec3 u_camera_rotation;",
+      "uniform vec2 u_depth_range;",
       "uniform float u_aspect;",
       "uniform float u_use_perspective;",
       "uniform float u_camera_mode;",
@@ -7343,21 +7350,20 @@
       "void main() {",
       "  vec4 clip = vec4(a_position.xy, 0.0, 1.0);",
       "  if (u_use_perspective > 0.5) {",
-      "    vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z + u_camera.z), u_camera_rotation);",
-      "    float depth = local.z;",
-      "    if (depth <= 0.001) {",
-      "      clip = vec4(2.0, 2.0, 0.0, 1.0);",
-      "    } else if (u_camera_mode > 0.5) {",
+      "    vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z - u_camera.z), u_camera_rotation);",
+      "    float depth = -local.z;",
+      "    float nearDepth = max(u_depth_range.x, 0.0001);",
+      "    float farDepth = max(u_depth_range.y, nearDepth + 0.0001);",
+      "    if (u_camera_mode > 0.5) {",
       "      float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
       "      float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
-      "      float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "      float clipDepth = ((depth - nearDepth) / max(farDepth - nearDepth, 0.0001)) * 2.0 - 1.0;",
       "      clip = vec4(ox, oy, clipDepth, 1.0);",
       "    } else {",
       "      float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
-      "      vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
-      "      projected.x /= max(u_aspect, 0.0001);",
-      "      float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
-      "      clip = vec4(projected, clipDepth, 1.0);",
+      "      float rangeInv = 1.0 / (nearDepth - farDepth);",
+      "      float clipZ = ((nearDepth + farDepth) * rangeInv) * local.z + (2.0 * nearDepth * farDepth * rangeInv);",
+      "      clip = vec4(local.x * focal / max(u_aspect, 0.0001), local.y * focal, clipZ, depth);",
       "    }",
       "  }",
       "  gl_Position = clip;",
@@ -7414,6 +7420,7 @@
       "attribute vec2 a_uv;",
       "uniform vec4 u_camera;",
       "uniform vec3 u_camera_rotation;",
+      "uniform vec2 u_depth_range;",
       "uniform float u_aspect;",
       "uniform float u_camera_mode;",
       "uniform vec4 u_ortho;",
@@ -7436,21 +7443,20 @@
       "  return vec3(point.x, nextY, nextZ);",
       "}",
       "void main() {",
-      "  vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z + u_camera.z), u_camera_rotation);",
-      "  float depth = local.z;",
-      "  if (depth <= 0.001) {",
-      "    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);",
-      "  } else if (u_camera_mode > 0.5) {",
+      "  vec3 local = inverseRotatePoint(vec3(a_position.x - u_camera.x, a_position.y - u_camera.y, a_position.z - u_camera.z), u_camera_rotation);",
+      "  float depth = -local.z;",
+      "  float nearDepth = max(u_depth_range.x, 0.0001);",
+      "  float farDepth = max(u_depth_range.y, nearDepth + 0.0001);",
+      "  if (u_camera_mode > 0.5) {",
       "    float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
       "    float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
-      "    float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "    float clipDepth = ((depth - nearDepth) / max(farDepth - nearDepth, 0.0001)) * 2.0 - 1.0;",
       "    gl_Position = vec4(ox, oy, clipDepth, 1.0);",
       "  } else {",
       "    float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
-      "    vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
-      "    projected.x /= max(u_aspect, 0.0001);",
-      "    float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
-      "    gl_Position = vec4(projected, clipDepth, 1.0);",
+      "    float rangeInv = 1.0 / (nearDepth - farDepth);",
+      "    float clipZ = ((nearDepth + farDepth) * rangeInv) * local.z + (2.0 * nearDepth * farDepth * rangeInv);",
+      "    gl_Position = vec4(local.x * focal / max(u_aspect, 0.0001), local.y * focal, clipZ, depth);",
       "  }",
       "  v_uv = a_uv;",
       "}",
@@ -7521,6 +7527,7 @@
       "attribute float a_width;",
       "uniform vec4 u_camera;",
       "uniform vec3 u_camera_rotation;",
+      "uniform vec2 u_depth_range;",
       "uniform float u_aspect;",
       "uniform vec2 u_viewport;",
       "uniform float u_camera_mode;",
@@ -7544,22 +7551,20 @@
       "  return vec3(point.x, nextY, nextZ);",
       "}",
       "vec4 projectEndpoint(vec3 world) {",
-      "  vec3 local = inverseRotatePoint(vec3(world.x - u_camera.x, world.y - u_camera.y, world.z + u_camera.z), u_camera_rotation);",
-      "  float depth = local.z;",
-      "  if (depth <= 0.001) {",
-      "    return vec4(2.0, 2.0, 0.0, 1.0);",
-      "  }",
+      "  vec3 local = inverseRotatePoint(vec3(world.x - u_camera.x, world.y - u_camera.y, world.z - u_camera.z), u_camera_rotation);",
+      "  float depth = -local.z;",
+      "  float nearDepth = max(u_depth_range.x, 0.0001);",
+      "  float farDepth = max(u_depth_range.y, nearDepth + 0.0001);",
       "  if (u_camera_mode > 0.5) {",
       "    float ox = ((local.x - u_ortho.x) / max(u_ortho.y - u_ortho.x, 0.0001)) * 2.0 - 1.0;",
       "    float oy = ((local.y - u_ortho.w) / max(u_ortho.z - u_ortho.w, 0.0001)) * 2.0 - 1.0;",
-      "    float clipDepth = clamp(depth / max(u_camera.z + 128.0, 0.0001), 0.0, 1.0) * 2.0 - 1.0;",
+      "    float clipDepth = ((depth - nearDepth) / max(farDepth - nearDepth, 0.0001)) * 2.0 - 1.0;",
       "    return vec4(ox, oy, clipDepth, 1.0);",
       "  }",
       "  float focal = 1.0 / tan(radians(u_camera.w) * 0.5);",
-      "  vec2 projected = vec2(local.x * focal / depth, local.y * focal / depth);",
-      "  projected.x /= max(u_aspect, 0.0001);",
-      "  float clipDepth = clamp(depth / 128.0, 0.0, 1.0) * 2.0 - 1.0;",
-      "  return vec4(projected, clipDepth, 1.0);",
+      "  float rangeInv = 1.0 / (nearDepth - farDepth);",
+      "  float clipZ = ((nearDepth + farDepth) * rangeInv) * local.z + (2.0 * nearDepth * farDepth * rangeInv);",
+      "  return vec4(local.x * focal / max(u_aspect, 0.0001), local.y * focal, clipZ, depth);",
       "}",
       "void main() {",
       "  vec4 clipA = projectEndpoint(a_positionA);",
@@ -7622,6 +7627,7 @@
       widthLocation: gl.getAttribLocation(program, "a_width"),
       cameraLocation: gl.getUniformLocation(program, "u_camera"),
       cameraRotationLocation: gl.getUniformLocation(program, "u_camera_rotation"),
+      depthRangeLocation: gl.getUniformLocation(program, "u_depth_range"),
       aspectLocation: gl.getUniformLocation(program, "u_aspect"),
       viewportLocation: gl.getUniformLocation(program, "u_viewport"),
       cameraModeLocation: gl.getUniformLocation(program, "u_camera_mode"),
@@ -7893,6 +7899,9 @@
     if (thickProgram.cameraRotationLocation && typeof gl.uniform3f === "function") {
       gl.uniform3f(thickProgram.cameraRotationLocation, camera.rotationX, camera.rotationY, camera.rotationZ);
     }
+    if (thickProgram.depthRangeLocation && typeof gl.uniform2f === "function") {
+      gl.uniform2f(thickProgram.depthRangeLocation, camera.near, camera.far);
+    }
     if (thickProgram.aspectLocation && typeof gl.uniform1f === "function") {
       const aspect = Math.max(0.0001, canvas.width / Math.max(1, canvas.height));
       gl.uniform1f(thickProgram.aspectLocation, aspect);
@@ -8083,6 +8092,7 @@
     extractFrustumPlanesJS: typeof extractFrustumPlanesJS === "function" ? extractFrustumPlanesJS : undefined,
     buildSceneWorldDrawPlan: typeof buildSceneWorldDrawPlan === "function" ? buildSceneWorldDrawPlan : undefined,
     createSceneWorldDrawScratch: typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch : undefined,
+    sceneWorldPointDepth: typeof sceneWorldPointDepth === "function" ? sceneWorldPointDepth : undefined,
     createSceneThickLineScratch: typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch : undefined,
     expandSceneThickLineIntoScratch: typeof expandSceneThickLineIntoScratch === "function" ? expandSceneThickLineIntoScratch : undefined,
     sceneBundleNeedsThickLines,
