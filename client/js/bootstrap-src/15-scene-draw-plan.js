@@ -199,7 +199,7 @@
     for (let i = start; i < end; i += 3) {
       let lx = sceneNumber(sourcePositions[i], 0) - cam.x;
       let ly = sceneNumber(sourcePositions[i + 1], 0) - cam.y;
-      let lz = sceneNumber(sourcePositions[i + 2], 0) + cam.z;
+      let lz = sceneNumber(sourcePositions[i + 2], 0) - cam.z;
 
       // Inverse rotate: -rotZ, then -rotY, then -rotX (match sceneInverseRotatePoint).
       let nX = lx * cosZ - ly * sinZ;
@@ -213,7 +213,7 @@
       lz = nZ;
 
       nZ = ly * sinX + lz * cosX;
-      depthSum += nZ;
+      depthSum += -nZ;
       count += 1;
     }
     return depthSum / Math.max(1, count);
@@ -323,9 +323,9 @@
 
   function sceneWorldPointDepth(pointOrZ, camera) {
     if (pointOrZ && typeof pointOrZ === "object") {
-      return sceneCameraLocalPoint(pointOrZ, camera).z;
+      return -sceneCameraLocalPoint(pointOrZ, camera).z;
     }
-    return sceneCameraLocalPoint({ x: 0, y: 0, z: sceneNumber(pointOrZ, 0) }, camera).z;
+    return -sceneCameraLocalPoint({ x: 0, y: 0, z: sceneNumber(pointOrZ, 0) }, camera).z;
   }
 
   function sceneWorldObjectRenderPass(object, material) {

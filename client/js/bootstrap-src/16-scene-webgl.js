@@ -802,13 +802,12 @@
   // Build a 4x4 view matrix from camera position and Euler rotation.
   //
   // The GoSX camera convention: the camera has position (x, y, z) and Euler
-  // angles (rotationX, rotationY, rotationZ). The existing renderer shifts
-  // world points by (-camX, -camY, +camZ) then applies inverse rotation.
-  // The +camZ convention means the camera Z is negated in world space —
-  // the camera at Z=6 looks toward the origin along -Z.
+  // angles (rotationX, rotationY, rotationZ). The shared Scene3D contract
+  // shifts world points by (-camX, -camY, -camZ) then applies inverse
+  // rotation. Positive forward depth is -viewZ.
   //
   // To produce a standard 4x4 view matrix we construct:
-  //   V = inverseRotation * translation(-camX, -camY, +camZ)
+  //   V = inverseRotation * translation(-camX, -camY, -camZ)
   //
   // The inverse rotation is computed by applying -rotZ, -rotY, -rotX
   // (reverse order, negative angles) — matching sceneInverseRotatePoint.
@@ -827,18 +826,19 @@
     const sz = Math.sin(-cam.rotationZ);
     const cz = Math.cos(-cam.rotationZ);
 
-    // Rotation matrix = Rx(-rx) * Ry(-ry) * Rz(-rz)
+    // Rotation matrix = Rx(-rx) * Ry(-ry) * Rz(-rz), matching
+    // sceneInverseRotatePoint's scalar sequence exactly.
     // Column-major order for WebGL.
     const r00 = cy * cz;
-    const r01 = cy * sz;
-    const r02 = -sy;
+    const r01 = -cy * sz;
+    const r02 = sy;
 
-    const r10 = sx * sy * cz - cx * sz;
-    const r11 = sx * sy * sz + cx * cz;
-    const r12 = sx * cy;
+    const r10 = cx * sz + sx * sy * cz;
+    const r11 = cx * cz - sx * sy * sz;
+    const r12 = -sx * cy;
 
-    const r20 = cx * sy * cz + sx * sz;
-    const r21 = cx * sy * sz - sx * cz;
+    const r20 = sx * sz - cx * sy * cz;
+    const r21 = sx * cz + cx * sy * sz;
     const r22 = cx * cy;
 
     // Translation part: R * t
@@ -6607,9 +6607,8 @@
 	    // corpus (resolution/objectKind/spheres/...) keeps its per-material
 	    // channels, and `time` stays the reserved auto-uniform resolved
 	    // before this map is consulted:
-	    //   cameraPos : vec3 — world-space camera position (same -z
-	    //                      convention as u_cameraPosition on the
-	    //                      built-in PBR path)
+	    //   cameraPos : vec3 — world-space camera position, matching
+	    //                      u_cameraPosition on the built-in PBR path.
 	    //   sunDir    : vec3 — normalized direction TOWARD the first
 	    //                      directional light (the PBR light array
 	    //                      stores from-light directions; Selena
@@ -6643,7 +6642,7 @@
 	        cameraPos: [
 	          sceneNumber(cam && cam.x, 0),
 	          sceneNumber(cam && cam.y, 0),
-	          -sceneNumber(cam && cam.z, 0),
+	          sceneNumber(cam && cam.z, 0),
 	        ],
 	        sunDir: sunDir,
 	        sunColor: sunColor,
@@ -7051,7 +7050,7 @@
       gl.useProgram(program);
       gl.uniformMatrix4fv(uniforms.viewMatrix, false, viewMatrix);
       gl.uniformMatrix4fv(uniforms.projectionMatrix, false, projMatrix);
-      gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, -cam.z);
+      gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, cam.z);
 
       // Upload exposure and tone mapping mode (disabled when post-processing handles it).
       scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
@@ -7435,7 +7434,7 @@
       function uploadFrameUniformsForProgram(targetUniforms) {
         gl.uniformMatrix4fv(targetUniforms.viewMatrix, false, scratchViewMatrix);
         gl.uniformMatrix4fv(targetUniforms.projectionMatrix, false, scratchProjMatrix);
-        gl.uniform3f(targetUniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+        gl.uniform3f(targetUniforms.cameraPosition, _frameCam.x, _frameCam.y, _frameCam.z);
 
         var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
         scenePBRUploadExposure(gl, targetUniforms, bundle.environment, postEffects.length > 0);
@@ -8257,7 +8256,7 @@
       // Upload per-frame uniforms (camera, lights, fog, shadows).
       gl.uniformMatrix4fv(ip.uniforms.viewMatrix, false, viewMatrix);
       gl.uniformMatrix4fv(ip.uniforms.projectionMatrix, false, projMatrix);
-      gl.uniform3f(ip.uniforms.cameraPosition, _frameCam.x, _frameCam.y, -_frameCam.z);
+      gl.uniform3f(ip.uniforms.cameraPosition, _frameCam.x, _frameCam.y, _frameCam.z);
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       scenePBRUploadExposure(gl, ip.uniforms, bundle.environment, postEffects.length > 0);
