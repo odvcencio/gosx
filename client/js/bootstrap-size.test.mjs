@@ -454,7 +454,9 @@ const budgets = [
   // Bumped raw 718_000 -> 722_000, gzip 197_000 -> 198_000, and Brotli
   // 162_000 -> 163_000 for the Scene3D command bridge loader plus public
   // command/recovery APIs. Measured: 720_967 / 197_155 / 162_407.
-  { file: "bootstrap-feature-scene3d.js", raw: 722_000, gzip: 198_000, brotli: 163_000 },
+  // Bumped raw 722_000 -> 723_000 for camera-depth parity coverage.
+  // Measured: 722_238 / 197_155 / 162_407.
+  { file: "bootstrap-feature-scene3d.js", raw: 723_000, gzip: 198_000, brotli: 163_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },

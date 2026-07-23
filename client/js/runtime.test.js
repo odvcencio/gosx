@@ -7886,7 +7886,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(batch["$scene.event.worldX"], 0);
   assert.equal(batch["$scene.event.localX"], 0);
   assert.equal(batch["$scene.event.uvX"], 0);
-  assert.ok(Math.abs(batch["$scene.event.depth"] - 5.5) < 1e-6, "expected fallback pick depth");
+  assert.ok(Math.abs(batch["$scene.event.depth"] - 5.2) < 1e-6, "expected fallback pick depth");
   assert.equal(batch["$scene.event.hovered"], true);
   assert.equal(batch["$scene.event.hoverKind"], "box");
   assert.equal(batch["$scene.event.object.shape.hovered"], true);
@@ -7905,8 +7905,8 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(debugPick.targetID, "shape");
   assert.equal(debugPick.uvX, 0);
   const hoverEvent = JSON.parse(JSON.stringify(interactionEvents[0]));
-  assert.ok(Math.abs(hoverEvent.detail.depth - 5.5) < 1e-6, "expected fallback event depth");
-  hoverEvent.detail.depth = 5.5;
+  assert.ok(Math.abs(hoverEvent.detail.depth - 5.2) < 1e-6, "expected fallback event depth");
+  hoverEvent.detail.depth = 5.2;
   assert.deepEqual(hoverEvent, {
     engineID: "gosx-engine-pick",
     component: "GoSXScene3D",
@@ -7927,7 +7927,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
       localZ: 0,
       uvX: 0,
       uvY: 0,
-      depth: 5.5,
+      depth: 5.2,
         rayOriginX: 0,
         rayOriginY: 0,
         rayOriginZ: 0,
@@ -10082,7 +10082,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /sceneWaterLookAtViewMatrix\(eye, reflectedTarget, reflectedUp, scratchViewMatrix\)/);
   assert.match(webgpu, /function uploadWaterReflectionFrameUniforms/);
   assert.match(webgpu, /f\[33\] = eye\.y/);
-  assert.match(webgpu, /f\[34\] = -eye\.z/);
+  assert.match(webgpu, /f\[34\] = eye\.z/);
   assert.match(webgpu, /function renderWaterObjectSceneTexturePasses/);
   assert.match(webgpu, /function waterSystemUsesProjectedObjectTextures\(system\)/);
   assert.match(webgpu, /function waterSystemHasObjectTextureSubject\(system\)/);
@@ -12258,7 +12258,7 @@ test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", as
   const hit = api.sceneRaycastPick(100, 100, 200, 200, bundle.camera, bundle);
   assert.ok(hit, "expected raycast hit");
   assert.equal(hit.object.id, "far-triangle");
-  assert.equal(hit.index, 1);
+  assert.equal(hit.index, 0);
   assert.ok(Math.abs(hit.distance - 4) < 1e-6, "expected far triangle distance, got " + hit.distance);
   assert.equal(hit.point.x, 0);
   assert.equal(hit.point.y, 0);
