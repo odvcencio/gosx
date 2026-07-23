@@ -7822,7 +7822,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
           mode: "texture",
           html: "<button>Inspect</button>",
           position: { x: 320, y: 160 },
-          depth: 6.8,
+          depth: 5.5,
         rayOriginX: 0,
         rayOriginY: 0,
         rayOriginZ: 0,
@@ -7886,7 +7886,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(batch["$scene.event.worldX"], 0);
   assert.equal(batch["$scene.event.localX"], 0);
   assert.equal(batch["$scene.event.uvX"], 0);
-  assert.ok(Math.abs(batch["$scene.event.depth"] - 6.8) < 1e-6, "expected fallback pick depth");
+  assert.ok(Math.abs(batch["$scene.event.depth"] - 5.5) < 1e-6, "expected fallback pick depth");
   assert.equal(batch["$scene.event.hovered"], true);
   assert.equal(batch["$scene.event.hoverKind"], "box");
   assert.equal(batch["$scene.event.object.shape.hovered"], true);
@@ -7905,8 +7905,8 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
   assert.equal(debugPick.targetID, "shape");
   assert.equal(debugPick.uvX, 0);
   const hoverEvent = JSON.parse(JSON.stringify(interactionEvents[0]));
-  assert.ok(Math.abs(hoverEvent.detail.depth - 6.8) < 1e-6, "expected fallback event depth");
-  hoverEvent.detail.depth = 6.8;
+  assert.ok(Math.abs(hoverEvent.detail.depth - 5.5) < 1e-6, "expected fallback event depth");
+  hoverEvent.detail.depth = 5.5;
   assert.deepEqual(hoverEvent, {
     engineID: "gosx-engine-pick",
     component: "GoSXScene3D",
@@ -7927,7 +7927,7 @@ test("bootstrap emits declarative Scene3D pick signals without authored JS", asy
       localZ: 0,
       uvX: 0,
       uvY: 0,
-      depth: 6.8,
+      depth: 5.5,
         rayOriginX: 0,
         rayOriginY: 0,
         rayOriginZ: 0,
@@ -12257,14 +12257,14 @@ test("bootstrap raycasts Scene3D mesh triangles and returns the nearest hit", as
 
   const hit = api.sceneRaycastPick(100, 100, 200, 200, bundle.camera, bundle);
   assert.ok(hit, "expected raycast hit");
-  assert.equal(hit.object.id, "near-triangle");
+  assert.equal(hit.object.id, "far-triangle");
   assert.equal(hit.index, 1);
-  assert.ok(Math.abs(hit.distance - 6) < 1e-6, "expected near triangle distance, got " + hit.distance);
+  assert.ok(Math.abs(hit.distance - 4) < 1e-6, "expected far triangle distance, got " + hit.distance);
   assert.equal(hit.point.x, 0);
   assert.equal(hit.point.y, 0);
-  assert.equal(hit.point.z, 0);
+  assert.equal(hit.point.z, 2);
   assert.equal(hit.worldPosition.x, 0);
-  assert.equal(hit.localPosition.z, 0);
+  assert.equal(hit.localPosition.z, 2);
   assert.equal(hit.triangleIndex, 0);
   assert.equal(hit.primitiveIndex, 0);
   assert.equal(hit.instanceIndex, -1);
@@ -14466,7 +14466,7 @@ test("bootstrap respects static Scene3D camera clip props for label projection",
             width: 520,
             height: 320,
             autoRotate: false,
-            camera: { x: 0, y: 0, z: 6, fov: 72, near: 7, far: 8 },
+            camera: { x: 0, y: 0, z: 6, fov: 72, near: 4, far: 5 },
             scene: {
               labels: [
                 {
@@ -31325,11 +31325,12 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
 
   // The per-frame updater exists and derives every reserved name from real
-  // scene state: camera (with the -z convention the PBR path uses), the
+  // scene state: camera, the
   // first directional light (negated into toward-light form), its
   // color x intensity, and environment ambient color x intensity.
   assert.match(webgl, /function sceneSelenaFrameContextUpdate\(cam, lights, environment\)/);
-  assert.match(webgl, /-sceneNumber\(cam && cam\.z, 0\)/);
+  assert.match(webgl, /cameraPos: \[[\s\S]{0,140}sceneNumber\(cam && cam\.z, 0\)/);
+  assert.doesNotMatch(webgl, /-sceneNumber\(cam && cam\.z, 0\)/);
   assert.match(webgl, /if \(String\(light\.kind \|\| ""\)\.toLowerCase\(\) !== "directional"\) continue;/);
   assert.match(webgl, /sunDir = \[-dx \/ len, -dy \/ len, -dz \/ len\];/);
   assert.match(webgl, /ambientRGBA\[0\] \* ambientIntensity/);
