@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.35.4 (2026-07-23)
+
+Scene3D camera depth, culling, and orbit controls now use the same forward-Z
+convention across WebGL, WebGPU, and runtime control state.
+
+- Fixes camera-space depth parity so WebGL and WebGPU cull against the same
+  near/far rules and keep visible nodes consistent.
+- Tightens depth assertion coverage for the transformed draw plan and both
+  renderer paths.
+- Aligns orbit camera state with the corrected Z convention so signal-backed
+  and pointer-driven orbit controls report matching camera positions.
+
 ## v0.35.3 (2026-07-22)
 
 GoSX now waits until after the first paint before it starts the initial
