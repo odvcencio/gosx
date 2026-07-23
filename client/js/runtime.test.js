@@ -5363,12 +5363,16 @@ test("bootstrap drives shared-runtime Scene3D orbit controls without authored JS
   const cameraDistanceToTarget = (camera) => Math.hypot(
     camera.x - orbitTarget.x,
     camera.y - orbitTarget.y,
-    -camera.z - orbitTarget.z,
+    camera.z - orbitTarget.z,
   );
   const initialCamera = mounted.handle.getCamera();
   assert.equal(Math.round(initialCamera.fov), 72);
   assert.ok(Math.abs(initialCamera.rotationX) < 0.0001);
   assert.ok(Math.abs(initialCamera.rotationY) < 0.0001);
+  const projectedOrbitTarget = env.context.__gosx_scene3d_api.sceneProjectPoint(orbitTarget, initialCamera, 640, 360);
+  assert.ok(projectedOrbitTarget, `orbit target should project in front of the initial camera: ${JSON.stringify(initialCamera)}`);
+  assert.ok(Math.abs(projectedOrbitTarget.x - 320) < 0.001, `orbit target x should be centered: ${JSON.stringify(projectedOrbitTarget)}`);
+  assert.ok(Math.abs(projectedOrbitTarget.y - 180) < 0.001, `orbit target y should be centered: ${JSON.stringify(projectedOrbitTarget)}`);
 
   canvas.dispatchEvent({
     type: "pointerdown",

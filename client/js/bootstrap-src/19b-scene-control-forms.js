@@ -1003,7 +1003,7 @@
     const world = {
       x: sceneNumber(cam.x, 0),
       y: sceneNumber(cam.y, 0),
-      z: -sceneNumber(cam.z, 0),
+      z: sceneNumber(cam.z, 0),
     };
     const offset = {
       x: world.x - sceneNumber(target && target.x, 0),
@@ -1022,7 +1022,7 @@
     return !!options.setCamera(Object.assign({}, cam, {
       x: nextWorld.x,
       y: nextWorld.y,
-      z: -nextWorld.z,
+      z: nextWorld.z,
     }));
   }
 
