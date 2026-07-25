@@ -1061,7 +1061,8 @@ func (l *lowerer) gsxNodeInReturn(returnStmt *gotreesitter.Node) *gotreesitter.N
 
 func (l *lowerer) isGSXNode(n *gotreesitter.Node) bool {
 	typ := l.nodeType(n)
-	return typ == "jsx_element" || typ == "jsx_self_closing_element" || typ == "jsx_fragment"
+	return typ == "jsx_element" || typ == "jsx_raw_text_element" ||
+		typ == "jsx_self_closing_element" || typ == "jsx_fragment"
 }
 
 func (l *lowerer) extractPropsType(funcDecl *gotreesitter.Node) string {
@@ -1086,6 +1087,8 @@ func (l *lowerer) lowerGSXNode(n *gotreesitter.Node) NodeID {
 	switch l.nodeType(n) {
 	case "jsx_element":
 		return l.lowerGSXElement(n)
+	case "jsx_raw_text_element":
+		return l.lowerRawTextElement(n)
 	case "jsx_self_closing_element":
 		return l.lowerSelfClosing(n)
 	case "jsx_fragment":
@@ -1141,6 +1144,49 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 		Span:     l.span(n),
 	}
 	return l.prog.AddNode(node)
+}
+
+// lowerRawTextElement lowers <script>/<style>. The scanner hands back the body
+// and its closing tag as one jsx_raw_text token, so the body is emitted as a
+// single NodeRawHTML child: script and stylesheet source must not be escaped,
+// or `&&` and CSS `>` selectors break.
+func (l *lowerer) lowerRawTextElement(n *gotreesitter.Node) NodeID {
+	open := l.childByField(n, "open")
+	if open == nil {
+		return l.prog.AddNode(Node{Kind: NodeFragment, Span: l.span(n)})
+	}
+
+	tag := strings.TrimPrefix(l.text(l.childByField(open, "name")), "<")
+	attrs := l.extractAttrs(open)
+
+	var children []NodeID
+	if bodyNode := l.childByField(n, "children"); bodyNode != nil {
+		if body := trimRawTextCloseTag(l.text(bodyNode)); body != "" {
+			children = append(children, l.prog.AddNode(Node{
+				Kind: NodeRawHTML,
+				Text: body,
+				Span: l.span(bodyNode),
+			}))
+		}
+	}
+
+	return l.prog.AddNode(Node{
+		Kind:     NodeElement,
+		Tag:      tag,
+		Attrs:    attrs,
+		Children: children,
+		IsStatic: l.isStaticAttrs(attrs),
+		Span:     l.span(n),
+	})
+}
+
+// trimRawTextCloseTag drops the closing tag the external scanner folds into the
+// jsx_raw_text token.
+func trimRawTextCloseTag(raw string) string {
+	if idx := strings.LastIndex(raw, "</"); idx >= 0 {
+		return raw[:idx]
+	}
+	return raw
 }
 
 func (l *lowerer) lowerSelfClosing(n *gotreesitter.Node) NodeID {
@@ -1385,7 +1431,8 @@ func (l *lowerer) extractChildren(n *gotreesitter.Node) []NodeID {
 		if typ == "jsx_opening_element" || typ == "jsx_closing_element" {
 			continue
 		}
-		if typ == "jsx_element" || typ == "jsx_self_closing_element" ||
+		if typ == "jsx_element" || typ == "jsx_raw_text_element" ||
+			typ == "jsx_self_closing_element" ||
 			typ == "jsx_expression_container" || typ == "jsx_fragment" ||
 			typ == "jsx_text" {
 			children = append(children, l.lowerGSXNode(child))

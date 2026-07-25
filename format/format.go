@@ -58,6 +58,8 @@ func (f *formatter) format(n *gotreesitter.Node, depth int) string {
 	switch f.nodeType(n) {
 	case "jsx_element":
 		return f.formatElement(n, depth)
+	case "jsx_raw_text_element":
+		return f.formatRawTextElement(n)
 	case "jsx_self_closing_element":
 		return f.formatSelfClosing(n, depth)
 	case "jsx_fragment":
@@ -348,13 +350,23 @@ func (f *formatter) collectChildren(n *gotreesitter.Node) []*gotreesitter.Node {
 		if typ == "jsx_opening_element" || typ == "jsx_closing_element" {
 			continue
 		}
-		if typ == "jsx_element" || typ == "jsx_self_closing_element" ||
+		if typ == "jsx_element" || typ == "jsx_raw_text_element" ||
+			typ == "jsx_self_closing_element" ||
 			typ == "jsx_expression_container" || typ == "jsx_fragment" ||
 			typ == "jsx_text" {
 			children = append(children, child)
 		}
 	}
 	return children
+}
+
+// formatRawTextElement emits <script>/<style> exactly as written. Their bodies
+// are script and stylesheet source, so the formatter must not reindent or
+// reflow them: re-wrapping a line inside a JS template literal changes the
+// string it produces. Returning the original span also keeps `gosx fmt`
+// idempotent over these elements.
+func (f *formatter) formatRawTextElement(n *gotreesitter.Node) string {
+	return f.text(n)
 }
 
 func (f *formatter) extractTagName(n *gotreesitter.Node) string {

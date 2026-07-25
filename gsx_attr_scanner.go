@@ -15,6 +15,7 @@ type gsxScanner struct {
 const (
 	gsxExternalAttributeExpression = iota
 	gsxExternalText
+	gsxExternalRawText
 )
 
 func (s *gsxScanner) Create() any { return nil }
@@ -31,11 +32,106 @@ func (s *gsxScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validS
 	if s == nil || s.lang == nil {
 		return false
 	}
+	// Raw text is only valid immediately inside <script>/<style>, so the
+	// parser's validSymbols tells us when to swallow the body verbatim.
+	// Check it before the ordinary text scan: inside a raw-text element the
+	// `<` and `{` terminators of scanGSXText do not apply.
+	if gsxValid(validSymbols, gsxExternalRawText) {
+		if s.scanRawText(lexer) {
+			return true
+		}
+	}
 	if gsxValid(validSymbols, gsxExternalAttributeExpression) && lexer.Lookahead() == '{' {
 		return s.scanAttributeExpression(lexer)
 	}
 	if gsxValid(validSymbols, gsxExternalText) {
 		if s.scanGSXText(lexer) {
+			return true
+		}
+	}
+	return false
+}
+
+// rawTextCloseTags are the closing tags that terminate a raw-text body. HTML
+// forbids nesting these elements, so the first match always closes the body
+// the scanner is currently inside.
+var rawTextCloseTags = []string{"script", "style"}
+
+// scanRawText consumes a <script>/<style> body together with its closing tag,
+// emitting the whole span as one jsx_raw_text token. `<` and `{` carry no GSX
+// meaning here — `if (a < b) { f(); }` is script source, not an element
+// followed by an expression hole.
+//
+// The closing tag is part of the token because the grammar rule owns no
+// separate closing element; see jsx_raw_text_element in grammar.go for why.
+// RawTextBody strips the tag back off for consumers.
+//
+// Returning false when no closing tag is found is essential: the parser can
+// offer jsx_raw_text in states that are not really inside a raw-text element,
+// and a greedy scan would otherwise swallow the rest of the file.
+func (s *gsxScanner) scanRawText(lexer *gotreesitter.ExternalLexer) bool {
+	for {
+		ch := lexer.Lookahead()
+		if ch == 0 {
+			return false
+		}
+		if ch == '<' && s.consumeRawTextCloseTag(lexer) {
+			lexer.MarkEnd()
+			lexer.SetResultSymbol(s.lang.ExternalSymbols[gsxExternalRawText])
+			return true
+		}
+		lexer.Advance(false)
+	}
+}
+
+// consumeRawTextCloseTag advances over `</script>` or `</style>` (tag names are
+// case-insensitive in HTML) and reports whether it matched. On a non-match the
+// lexer has still advanced; scanRawText treats those characters as body text,
+// which is correct because they were not a closing tag.
+func (s *gsxScanner) consumeRawTextCloseTag(lexer *gotreesitter.ExternalLexer) bool {
+	lexer.Advance(false) // '<'
+	if lexer.Lookahead() != '/' {
+		return false
+	}
+	lexer.Advance(false)
+
+	var name []rune
+	for {
+		ch := lexer.Lookahead()
+		if ch >= 'A' && ch <= 'Z' {
+			ch += 'a' - 'A'
+		}
+		if ch < 'a' || ch > 'z' {
+			break
+		}
+		name = append(name, ch)
+		if len(name) > len("script") {
+			return false
+		}
+		lexer.Advance(false)
+	}
+
+	if !isRawTextTag(string(name)) {
+		return false
+	}
+	// Allow whitespace before `>`, as HTML does: `</script >`.
+	for {
+		ch := lexer.Lookahead()
+		if ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' {
+			break
+		}
+		lexer.Advance(false)
+	}
+	if lexer.Lookahead() != '>' {
+		return false
+	}
+	lexer.Advance(false)
+	return true
+}
+
+func isRawTextTag(name string) bool {
+	for _, tag := range rawTextCloseTags {
+		if name == tag {
 			return true
 		}
 	}
