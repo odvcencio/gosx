@@ -50,6 +50,16 @@ func Transpile(source []byte, opts Options) (string, error) {
 		return "", fmt.Errorf("transpile errors:\n%s", strings.Join(t.errs, "\n"))
 	}
 
+	// Last line of defense: the transpiler must never hand back Go that does
+	// not parse. A malformed GSX construct can walk to a CST that
+	// root.HasError() does not flag while still emitting wreckage — an
+	// unterminated <script>, for example, used to emit a few bare tokens and
+	// silently drop every declaration after it. Failing here converts that
+	// class of silent corruption into a build error.
+	if _, err := parser.ParseFile(token.NewFileSet(), opts.SourceFile, result, parser.SkipObjectResolution); err != nil {
+		return "", fmt.Errorf("transpile produced invalid Go (%w); this is a GoSX bug or malformed GSX in %s", err, opts.SourceFile)
+	}
+
 	return result, nil
 }
 
@@ -87,6 +97,8 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 		return t.emitSourceFile(n)
 	case "jsx_element":
 		return t.emitGSXElement(n)
+	case "jsx_raw_text_element":
+		return t.emitRawTextElement(n)
 	case "jsx_self_closing_element":
 		return t.emitSelfClosing(n)
 	case "jsx_fragment":
@@ -242,6 +254,52 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		return t.emitComponentCall(tag, t.emitAttrs(openNode), children)
 	}
 	return t.emitElementCall(tag, t.emitAttrs(openNode), children)
+}
+
+// emitRawTextElement emits <script>/<style>. Their bodies are script or
+// stylesheet source, so the content is passed through as raw HTML rather than
+// escaped text: escaping would corrupt operators like `&&` and `<`.
+func (t *transpiler) emitRawTextElement(n *gotreesitter.Node) string {
+	openNode := t.childByField(n, "open")
+	if openNode == nil {
+		t.errorf(n, "raw text element missing opening tag")
+		return ""
+	}
+
+	tag := rawTextTagName(t.text(t.childByField(openNode, "name")))
+	if tag == "" {
+		t.errorf(n, "raw text element has an unrecognized tag")
+		return ""
+	}
+
+	var children []string
+	if body := rawTextBody(t.text(t.childByField(n, "children"))); body != "" {
+		children = append(children, "gosx.RawHTML("+strconv.Quote(body)+")")
+	}
+	return t.emitElementCall(tag, t.emitAttrs(openNode), children)
+}
+
+// rawTextTagName turns the combined start-tag token (`<script`) into the tag
+// name. The grammar lexes `<` and the name together; see jsx_raw_text_start_tag.
+func rawTextTagName(startTag string) string {
+	name := strings.TrimPrefix(startTag, "<")
+	switch name {
+	case "script", "style":
+		return name
+	default:
+		return ""
+	}
+}
+
+// rawTextBody strips the closing tag from a jsx_raw_text token. The external
+// scanner includes `</script>` in the token so the grammar needs no separate
+// closing rule, so it is removed here.
+func rawTextBody(raw string) string {
+	idx := strings.LastIndex(raw, "</")
+	if idx < 0 {
+		return raw
+	}
+	return raw[:idx]
 }
 
 func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
@@ -544,13 +602,22 @@ func (t *transpiler) emitChildren(n *gotreesitter.Node) []string {
 		if typ == "jsx_opening_element" || typ == "jsx_closing_element" {
 			continue
 		}
-		if typ == "jsx_element" || typ == "jsx_self_closing_element" ||
+		if typ == "jsx_element" || typ == "jsx_raw_text_element" ||
+			typ == "jsx_self_closing_element" ||
 			typ == "jsx_expression_container" || typ == "jsx_fragment" ||
 			typ == "jsx_text" {
 			result := t.emit(child)
 			if result != "" {
 				children = append(children, result)
 			}
+			continue
+		}
+		// Any other jsx_* child is a node kind this function does not know how
+		// to emit. Report it instead of dropping it: a silent drop is how an
+		// inline <script> body could disappear from the output while the
+		// transpile call still reported success.
+		if strings.HasPrefix(typ, "jsx_") {
+			t.errorf(child, "unhandled GSX child node %q; transpiler and grammar are out of sync", typ)
 		}
 	}
 	return children
