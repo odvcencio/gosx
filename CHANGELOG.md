@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## v0.35.5 (2026-07-25)
+
+GSX now treats `<script>` and `<style>` bodies as raw text, the same way HTML
+does. Before this release the parser read `<` and `{` inside an inline script
+as GSX syntax, so `if (a < b) { run(); }` was silently corrupted or dropped
+while the transpile call still reported success. Inline scripts had to be moved
+into standalone `.js` assets to survive.
+
+- Adds `jsx_raw_text_element` plus a `jsx_raw_text` external scanner token that
+  captures a `<script>`/`<style>` body verbatim through its closing tag.
+- Emits raw-text bodies as `gosx.RawHTML`, so operators such as `&&` are no
+  longer HTML-escaped.
+- Rejects transpiler output that does not parse as Go. A malformed construct
+  used to emit wreckage and drop later declarations without an error.
+- Reports unhandled `jsx_*` child nodes instead of dropping them, so a grammar
+  addition can no longer go missing from the output.
+- Removes `internal/transpile`, a byte-identical copy of `transpile` that
+  `cmd/gosx` built against. A fix applied to one copy did nothing for the CLI.
+- Adds `cmd/gosx-grammar-blob` to regenerate the embedded grammar blob, which
+  `Language()` loads in preference to the in-code grammar.
+
 ## v0.35.4 (2026-07-23)
 
 Scene3D camera depth, culling, and orbit controls now use the same forward-Z
