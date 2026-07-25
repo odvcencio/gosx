@@ -38,8 +38,8 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/format"
-	"m31labs.dev/gosx/internal/transpile"
 	"m31labs.dev/gosx/render"
+	"m31labs.dev/gosx/transpile"
 )
 
 func main() {

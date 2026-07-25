@@ -109,10 +109,19 @@ func GosxGrammar() *Grammar {
 		// lookahead and can.
 		g.Externals = append(g.Externals, Sym("jsx_text"))
 
-		// Child can be: element, expression, text, or fragment
+		// Body of a raw-text element (<script>/<style>). Produced by the
+		// external scanner, which runs it to the matching closing tag without
+		// interpreting `<` or `{`. HTML gives these two elements the same
+		// treatment: their content is script/stylesheet source, not markup.
+		// Without this, JS like `if (a < b) { f(); }` parses as a GSX element
+		// plus an expression hole and the body is silently corrupted.
+		g.Externals = append(g.Externals, Sym("jsx_raw_text"))
+
+		// Child can be: element, raw-text element, expression, text, or fragment
 		g.Define("_jsx_child",
 			Choice(
 				Sym("jsx_element"),
+				Sym("jsx_raw_text_element"),
 				Sym("jsx_self_closing_element"),
 				Sym("jsx_expression_container"),
 				Sym("jsx_fragment"),
@@ -150,6 +159,47 @@ func GosxGrammar() *Grammar {
 				Field("open", Sym("jsx_opening_element")),
 				Repeat(Field("children", Sym("_jsx_child"))),
 				Field("close", Sym("jsx_closing_element")),
+			))
+
+		// ---------------------------------------------------------------
+		// Raw-text elements (<script>, <style>)
+		// ---------------------------------------------------------------
+
+		// `<` and the tag name are ONE token so the raw-text path is chosen by
+		// the lexer, not the parser. Splitting them (`<` then a name token)
+		// gives jsx_opening_element and jsx_raw_opening_element a common `<`
+		// prefix; the LR generator then resolves that state in favor of the
+		// raw rule and every nested ordinary element (`<div><span>…`) fails.
+		// Longest-match lexing keeps `<span` on the ordinary path because
+		// `<script`/`<style` simply do not match it.
+		g.Define("jsx_raw_text_start_tag",
+			Token(Prec(1, Seq(
+				Str("<"),
+				Choice(Str("script"), Str("style")),
+			))))
+
+		g.Define("jsx_raw_opening_element",
+			Seq(
+				Field("name", Sym("jsx_raw_text_start_tag")),
+				Repeat(Field("attributes", Choice(
+					Sym("jsx_attribute"),
+					Sym("jsx_spread_attribute"),
+				))),
+				Str(">"),
+			))
+
+		// <script>...</script> — body captured verbatim by the scanner.
+		//
+		// jsx_raw_text spans the body AND its closing tag, so this rule shares
+		// no sub-rule with jsx_element. That separation is deliberate: when the
+		// raw element ended with the ordinary jsx_closing_element, the LR
+		// generator merged the two "inside an element" states and then offered
+		// jsx_raw_text after every ordinary opening tag, which broke plain
+		// `<div>text</div>`. Owning the close here keeps the automata disjoint.
+		g.Define("jsx_raw_text_element",
+			Seq(
+				Field("open", Sym("jsx_raw_opening_element")),
+				Field("children", Sym("jsx_raw_text")),
 			))
 
 		// Self-closing element: <tag attrs />
