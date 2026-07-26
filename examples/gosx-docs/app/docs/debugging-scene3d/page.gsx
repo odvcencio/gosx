@@ -20,6 +20,17 @@ func Page() Node {
 					.
 				</li>
 				<li>
+					When a scene looks wrong on real hardware, read the render-truth attributes first:
+					<span class="inline-code">data-gosx-scene3d-render-post-chain</span>
+					names every authored post effect and whether it actually dispatched, and
+					<span class="inline-code">data-gosx-scene3d-render-mesh-drawn</span>
+					counts meshes that reached the framebuffer. See
+					<a href="#render-truth-attributes" class="inline-link">Render-Truth Attributes</a>
+					. To get a dump from a machine with a real GPU, run
+					<span class="inline-code">node scripts/windows-scene3d-probe.mjs</span>
+					on that machine and share the folder it writes.
+				</li>
+				<li>
 					Before trusting any browser screenshot, check
 					<span class="inline-code">data-gosx-scene3d-backend</span>
 					on the mount element. If it reads
@@ -232,25 +243,141 @@ func Page() Node {
 				also detects a software rasterizer (SwiftShader, Mesa llvmpipe, Mesa softpipe, and others) and prints a banner above every GPU section of its report. Perf numbers under software rendering — frame budgets, shader compile stalls, buffer upload time — do not represent what a user on real hardware experiences. Treat any regression found only under software rendering as suspect until it is confirmed on real hardware.
 			</p>
 			<p>
-				A GPU compositor bug can be unreproducible under SwiftShader or Mesa llvmpipe, because software compositing takes a different code path than the real hardware compositor. No sandboxed tool changes this — the fix is to drive the actual browser on the actual hardware. Use
-				<span class="inline-code">scripts/windows-scene3d-probe.mjs</span>
-				for this: it fetches the page and asserts the runtime chunks and shader payloads are present, then — with
-				<span class="inline-code">--browser</span>
-				— drives a real Edge or Chrome instance, reads the full
-				<span class="inline-code">data-gosx-scene3d-*</span>
-				attribute surface, and captures a screenshot.
+				A GPU compositor bug can be unreproducible under SwiftShader or Mesa llvmpipe, because software compositing takes a different code path than the real hardware compositor. No sandboxed tool changes this — the fix is to drive the actual browser on the actual hardware. Run the render-truth probe on the machine that has the GPU. The common case takes no flags.
 			</p>
-			{CodeBlock("bash", `node scripts/windows-scene3d-probe.mjs --url http://localhost:3000/your-scene --browser --screenshot probe.png`)}
+			{CodeBlock("bash", `node scripts/windows-scene3d-probe.mjs`)}
 			<p>
-				Override the target with
-				<span class="inline-code">GOSX_SCENE3D_PROBE_URL</span>
-				, force the browser pass with
-				<span class="inline-code">GOSX_SCENE3D_PROBE_BROWSER=1</span>
-				, and set
+				That probes
+				<span class="inline-code">https://m31labs.dev/</span>
+				with Edge and writes
+				<span class="inline-code">./scene3d-probe/</span>
+				. The directory holds
+				<span class="inline-code">report.json</span>
+				(the full machine-readable dump),
+				<span class="inline-code">summary.txt</span>
+				(PASS or FAIL with reasons),
+				<span class="inline-code">console.log</span>
+				, and screenshots at three moments: initial paint, settle, and each caller-specified offset. Hand back the whole folder.
+			</p>
+			<p>
+				The probe fails when the render is not GPU-backed, when an authored post effect never dispatched, when every submitted mesh or point entry drew nothing, when this browser's WGSL compiler reported an error, when the WebGPU device was lost during the run, or when a host-page guard latched on a backend that no longer runs. Each check is a defect that previously shipped while every health attribute read green.
+			</p>
+			<p>
+				Options, all optional:
+				<span class="inline-code">--url</span>
+				(page to probe),
+				<span class="inline-code">--browser edge|chrome|firefox</span>
+				,
+				<span class="inline-code">--out</span>
+				(output directory),
+				<span class="inline-code">--at 8,10,12</span>
+				(extra capture offsets in seconds — the default targets the galaxy supernova window, which is dark outside 8-12s), and
+				<span class="inline-code">--water</span>
+				(the legacy
+				<span class="inline-code">/demos/water</span>
+				regression harness, now
+				<span class="inline-code">scripts/windows-water-probe.mjs</span>
+				).
+			</p>
+			<h3>Compare two browsers</h3>
+			<p>
+				Edge and Firefox do not share a WebGPU implementation. Edge uses Dawn, which translates WGSL through Tint. Firefox uses wgpu, which translates WGSL through naga. Selena validates its emitted WGSL with naga, so a shader can pass authoring-time validation and still hit a Tint bug in Edge. Run the probe twice and diff the two dumps; the schema is identical, so the comparison is mechanical.
+			</p>
+			{CodeBlock("bash", `node scripts/windows-scene3d-probe.mjs --browser edge    --out probe-edge
+node scripts/windows-scene3d-probe.mjs --browser firefox --out probe-firefox
+node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox`)}
+			<p>
+				Set
 				<span class="inline-code">GOSX_BROWSER_EXECUTABLE</span>
 				or
 				<span class="inline-code">GOSX_PLAYWRIGHT_CORE</span>
-				when the default Edge/Chrome or Playwright-core paths do not match the target machine.
+				when the default Edge, Chrome or Playwright-core paths do not match the machine.
+			</p>
+		</section>
+		<section id="render-truth-attributes" class="docs-section-block">
+			<h2>Render-Truth Attributes</h2>
+			<p>
+				Most
+				<span class="inline-code">data-gosx-scene3d-*</span>
+				attributes report what was CONFIGURED or what the planner put in the bundle. The
+				<span class="inline-code">data-gosx-scene3d-render-*</span>
+				family reports what actually reached the framebuffer. Both renderers write the same names, so nothing that reads them has to branch on the backend. They appear only when the diagnostics tier is on — set
+				<span class="inline-code">window.__gosx_scene3d_render_truth = true</span>
+				before bootstrap, or
+				<span class="inline-code">window.__gosx_telemetry_config.scene3dDiagnostics = true</span>
+				. Production pays one boolean read.
+			</p>
+			<p>
+				<span class="inline-code">render-post-chain</span>
+				— one record per authored post effect, formatted
+				<span class="inline-code">index:kind[@name]:pipelineState:dispatchCount</span>
+				and pipe-separated. Pipeline state is
+				<span class="inline-code">missing</span>
+				,
+				<span class="inline-code">pending</span>
+				,
+				<span class="inline-code">failed</span>
+				or
+				<span class="inline-code">ok</span>
+				. An effect reading
+				<span class="inline-code">ok</span>
+				with
+				<span class="inline-code">0</span>
+				dispatches has a healthy pipeline that no pass ever bound. The companion counters are
+				<span class="inline-code">render-post-authored</span>
+				,
+				<span class="inline-code">render-post-dispatched</span>
+				,
+				<span class="inline-code">render-post-dead</span>
+				,
+				<span class="inline-code">render-post-failed</span>
+				and
+				<span class="inline-code">render-post-pending</span>
+				.
+			</p>
+			<p>
+				<span class="inline-code">render-mesh-submitted</span>
+				,
+				<span class="inline-code">render-mesh-drawn</span>
+				,
+				<span class="inline-code">render-mesh-view-culled</span>
+				and
+				<span class="inline-code">render-mesh-undrawable</span>
+				close the accounting identity
+				<span class="inline-code">submitted = drawn + viewCulled + undrawable</span>
+				. The point equivalents are
+				<span class="inline-code">render-points-submitted</span>
+				,
+				<span class="inline-code">render-points-drawn</span>
+				and the two
+				<span class="inline-code">render-point-instances-*</span>
+				counters.
+			</p>
+			<p>
+				<span class="inline-code">render-uniform-time</span>
+				is the reserved
+				<span class="inline-code">time</span>
+				auto-uniform exactly as fed to shaders, and
+				<span class="inline-code">render-uniform-time-advancing</span>
+				is 1 only when it grew since the previous publish. A frozen clock renders a static frame while every other attribute reads healthy.
+			</p>
+			<p>
+				<span class="inline-code">render-backend-truth</span>
+				is one JSON blob with the backend that ran, whether it is GPU-backed at all, the fallback reason, the adapter identity, the WGSL implementation (
+				<span class="inline-code">dawn</span>
+				or
+				<span class="inline-code">wgpu</span>
+				), device-loss state and the event journal.
+				<span class="inline-code">render-events</span>
+				is that journal on its own: an ordered, timestamped list of backend selections, fallbacks, device-loss events, uncaptured GPU errors and shader compiler complaints. A final state cannot describe a device that mounts healthy and dies eight seconds later; an ordered log can.
+			</p>
+			<p>
+				<span class="inline-code">render-latches</span>
+				and
+				<span class="inline-code">render-stale-latches</span>
+				report host-page decisions that settled on one backend and never re-armed. Register one with
+				<span class="inline-code">window.__gosx_scene3d_render_truth_api.latch(name, backend, true)</span>
+				. A latch whose recorded backend differs from the live backend is flagged stale — the signature of a guard that observed WebGPU, latched, and kept its decision after the device died.
 			</p>
 		</section>
 		<section id="enforce-backend-in-captures" class="docs-section-block">

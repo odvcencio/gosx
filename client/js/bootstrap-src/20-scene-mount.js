@@ -3842,6 +3842,69 @@
     }).filter(Boolean).join(",");
   }
 
+  // sceneRenderTruthAPI resolves the shared render-truth helpers. Returns null
+  // when 15a-scene-postfx-shared.js is absent, and every caller null-checks.
+  function sceneRenderTruthAPI() {
+    if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
+      return window.__gosx_scene3d_render_truth_api;
+    }
+    return null;
+  }
+
+  // sceneRenderBackendTruth builds the SINGLE machine-readable record of which
+  // backend actually runs and why anything else was rejected.
+  //
+  // Before this, answering "why is this page on WebGL?" meant correlating
+  // data-gosx-scene3d-backend, -renderer-fallback, -software-webgl,
+  // -webgpu-preference, -dropped and the WebGPU probe's internal error string
+  // across two files. Each of those is individually true and individually
+  // insufficient; three of them read "healthy" during the incidents this work
+  // came out of. One JSON blob with the adapter, the WGSL implementation
+  // (Dawn/Tint versus wgpu/naga), the fallback reason and the transition
+  // journal is what a probe or a deploy gate can actually assert against.
+  function sceneRenderBackendTruth(mount, renderer, fallbackReason, degraded) {
+    const api = sceneRenderTruthAPI();
+    const kind = renderer && renderer.kind ? renderer.kind : "";
+    const diag = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
+    const adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : {};
+    const truth = {
+      backend: kind,
+      // gpu is the assertion a deploy gate wants: did a shader run at all?
+      // A canvas2d mount runs none, which is how a dead post pass shipped
+      // behind a green "visual smoke passed" check for a week.
+      gpu: kind === "webgpu" || kind === "webgl",
+      fallbackReason: fallbackReason || "",
+      dropped: Array.isArray(degraded) ? degraded.slice() : [],
+      implementation: api ? api.implementation(adapterInfo) : "",
+      browserEngine: api && typeof api.browserEngine === "function" ? api.browserEngine() : "",
+      adapter: api && typeof api.adapterLabel === "function" ? api.adapterLabel(adapterInfo) : "",
+      adapterInfo: {
+        vendor: adapterInfo.vendor || "",
+        architecture: adapterInfo.architecture || "",
+        device: adapterInfo.device || "",
+        description: adapterInfo.description || "",
+      },
+      deviceLost: !!(diag && diag.deviceLost),
+      initError: (diag && diag.initError) || "",
+      lastError: (diag && diag.lastError) || "",
+      shaderDiagnostics: (diag && diag.shaderDiagnostics) || { messages: 0, errors: 0 },
+      events: api && typeof api.events === "function" ? api.events() : [],
+    };
+    if (mount && typeof mount.setAttribute === "function") {
+      let encoded = "";
+      try {
+        encoded = JSON.stringify(truth);
+      } catch (_err) {
+        encoded = "";
+      }
+      setAttrValue(mount, "data-gosx-scene3d-render-backend-truth", encoded);
+      setAttrValue(mount, "data-gosx-scene3d-render-gpu", truth.gpu ? "true" : "false");
+      setAttrValue(mount, "data-gosx-scene3d-render-implementation", truth.implementation);
+      mount.__gosxScene3DRenderBackendTruth = truth;
+    }
+    return truth;
+  }
+
   function applySceneRendererState(mount, renderer, fallbackReason, degraded) {
     if (!mount) {
       return;
@@ -3851,6 +3914,15 @@
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
     // data-gosx-scene3d-backend mirrors the renderer kind (canonical chosen backend name).
     setAttrValue(mount, "data-gosx-scene3d-backend", chosenBackend);
+    // Journal every backend selection and swap with a timestamp. A final-state
+    // attribute cannot describe "mounted on WebGPU, device died at t=8.2s,
+    // continued on WebGL"; an ordered log can, and that sequence is the shape
+    // of the intermittent, environment-specific defects that cost the most time.
+    const truthAPI = sceneRenderTruthAPI();
+    if (truthAPI && typeof truthAPI.record === "function") {
+      truthAPI.record("backend", chosenBackend + (fallbackReason ? " fallback=" + fallbackReason : ""));
+    }
+    sceneRenderBackendTruth(mount, renderer, fallbackReason, degraded);
     // data-gosx-scene3d-dropped lists features skipped per the backendCaps degraded verdict.
     setAttrValue(mount, "data-gosx-scene3d-dropped",
       Array.isArray(degraded) && degraded.length > 0 ? degraded.join(",") : "");
