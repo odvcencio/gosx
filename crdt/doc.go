@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	stdsync "sync"
 	"sync/atomic"
 	"time"
@@ -37,9 +38,44 @@ type listElem struct {
 }
 
 type object struct {
+	Kind objectKind
+	Map  map[string]mapEntry
+	// seq indexes the elements of a list or text object in document order.
+	// Map objects leave it nil.
+	seq *seq
+}
+
+// objectJSON is the wire shape of an object. The element index is rebuilt from
+// the ordered element list on decode.
+type objectJSON struct {
 	Kind objectKind          `json:"kind"`
 	Map  map[string]mapEntry `json:"map,omitempty"`
 	List []listElem          `json:"list,omitempty"`
+}
+
+func (o object) MarshalJSON() ([]byte, error) {
+	out := objectJSON{Kind: o.Kind, Map: o.Map}
+	if o.seq != nil && o.seq.length() > 0 {
+		out.List = o.seq.elems()
+	}
+	return marshalJSON(out)
+}
+
+func (o *object) UnmarshalJSON(data []byte) error {
+	var decoded objectJSON
+	if err := unmarshalJSON(data, &decoded); err != nil {
+		return err
+	}
+	o.Kind = decoded.Kind
+	o.Map = decoded.Map
+	if decoded.Kind == objectKindList || decoded.Kind == objectKindText {
+		o.seq = newSeq()
+		o.seq.reset(decoded.List)
+		normalizeSeqOrder(o.seq)
+	} else {
+		o.seq = nil
+	}
+	return nil
 }
 
 type snapshot struct {
@@ -107,10 +143,15 @@ func newDocWithActor(actor ActorID) *Doc {
 	}
 }
 
+// Load restores a document from a saved snapshot. It accepts the compact binary
+// form that Save writes and the older JSON form.
 func Load(data []byte) (*Doc, error) {
 	body, err := enc.DecodeDocument(data)
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > 0 && body[0] == snapshotVersion2 {
+		return decodeSnapshotV2(body)
 	}
 	var snap snapshot
 	if err := unmarshalJSON(body, &snap); err != nil {
@@ -131,6 +172,9 @@ func Load(data []byte) (*Doc, error) {
 		obj := value
 		if obj.Kind == objectKindMap && obj.Map == nil {
 			obj.Map = make(map[string]mapEntry)
+		}
+		if (obj.Kind == objectKindList || obj.Kind == objectKindText) && obj.seq == nil {
+			obj.seq = newSeq()
 		}
 		doc.objects[id] = &obj
 	}
@@ -153,6 +197,21 @@ func Load(data []byte) (*Doc, error) {
 }
 
 func (d *Doc) Save() ([]byte, error) {
+	hooks, patches, err := d.flushPendingForSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	fireHooks(hooks, patches)
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	return enc.EncodeDocument(d.encodeSnapshotV2()), nil
+}
+
+// saveLegacyJSON writes the older JSON snapshot. Load still reads that form, so
+// this exists to prove the compatibility path stays working.
+func (d *Doc) saveLegacyJSON() ([]byte, error) {
 	hooks, patches, err := d.flushPendingForSnapshot()
 	if err != nil {
 		return nil, err
@@ -325,11 +384,10 @@ func (d *Doc) DeleteAt(list ObjID, index uint64) error {
 	if target.Kind != objectKindList && target.Kind != objectKindText {
 		return fmt.Errorf("%s is not a list-like object", list)
 	}
-	visible := visibleElems(target.List)
-	if int(index) >= len(visible) {
-		return fmt.Errorf("list index %d out of range (length %d)", index, len(visible))
+	elemID, ok := target.seq.visibleIDAt(int(index))
+	if !ok {
+		return fmt.Errorf("list index %d out of range (length %d)", index, target.seq.visibleLength())
 	}
-	elemID := visible[index].ID
 	op := d.newLocalOpLocked("delete", list, Prop(elemID.String()), NullValue())
 	patch, err := d.applyOpLocked(op)
 	if err != nil {
@@ -351,11 +409,11 @@ func (d *Doc) ElementIDAt(list ObjID, index uint64) (OpID, error) {
 	if target.Kind != objectKindList && target.Kind != objectKindText {
 		return OpID{}, fmt.Errorf("%s is not a list-like object", list)
 	}
-	visible := visibleElems(target.List)
-	if int(index) >= len(visible) {
-		return OpID{}, fmt.Errorf("list index %d out of range (length %d)", index, len(visible))
+	elemID, ok := target.seq.visibleIDAt(int(index))
+	if !ok {
+		return OpID{}, fmt.Errorf("list index %d out of range (length %d)", index, target.seq.visibleLength())
 	}
-	return visible[index].ID, nil
+	return elemID, nil
 }
 
 // DeleteByElemID tombstones a stable list/text element. Repeating the delete
@@ -387,16 +445,23 @@ func (d *Doc) SpliceText(text ObjID, index, deleteCount uint64, insert string) (
 	if target.Kind != objectKindText {
 		return nil, nil, fmt.Errorf("%s is not a text object", text)
 	}
-	visible := visibleElems(target.List)
-	if index > uint64(len(visible)) || deleteCount > uint64(len(visible))-index {
-		return nil, nil, fmt.Errorf("text splice [%d,%d) out of range (length %d)", index, index+deleteCount, len(visible))
+	visibleLen := uint64(target.seq.visibleLength())
+	if index > visibleLen || deleteCount > visibleLen-index {
+		return nil, nil, fmt.Errorf("text splice [%d,%d) out of range (length %d)", index, index+deleteCount, visibleLen)
 	}
 	after := ""
 	if index > 0 {
-		after = visible[index-1].ID.String()
+		previous, ok := target.seq.visibleIDAt(int(index) - 1)
+		if !ok {
+			return nil, nil, fmt.Errorf("text splice cursor %d not found", index-1)
+		}
+		after = previous.String()
 	}
-	for _, elem := range visible[index : index+deleteCount] {
-		deleted = append(deleted, elem.ID)
+	if deleteCount > 0 {
+		deleted = make([]OpID, 0, deleteCount)
+		if err := target.seq.collectVisibleRange(int(index), int(deleteCount), &deleted); err != nil {
+			return nil, nil, err
+		}
 	}
 	insertRunes := []rune(insert)
 	if len(deleted) == 0 && len(insertRunes) == 0 {
@@ -426,14 +491,7 @@ func (d *Doc) setElementVisibilityLocked(list ObjID, elemID OpID, deleted bool) 
 	if target.Kind != objectKindList && target.Kind != objectKindText {
 		return fmt.Errorf("%s is not a list-like object", list)
 	}
-	found := false
-	for i := range target.List {
-		if target.List[i].ID == elemID {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !target.seq.contains(elemID) {
 		return fmt.Errorf("element %s not found on %s", elemID.String(), list)
 	}
 	action := "revive"
@@ -460,12 +518,7 @@ func (d *Doc) TextToString(text ObjID) (string, error) {
 	if target.Kind != objectKindText && target.Kind != objectKindList {
 		return "", fmt.Errorf("%s is not a text or list object", text)
 	}
-	visible := visibleElems(target.List)
-	var buf []byte
-	for _, elem := range visible {
-		buf = append(buf, elem.Value.Str...)
-	}
-	return string(buf), nil
+	return target.seq.visibleText(), nil
 }
 
 func (d *Doc) ListLen(list ObjID) (int, error) {
@@ -478,7 +531,7 @@ func (d *Doc) ListLen(list ObjID) (int, error) {
 	if target.Kind != objectKindList && target.Kind != objectKindText {
 		return 0, fmt.Errorf("%s is not a list-like object", list)
 	}
-	return len(visibleElems(target.List)), nil
+	return target.seq.visibleLength(), nil
 }
 
 func (d *Doc) Commit(msg string) (ChangeHash, error) {
@@ -886,39 +939,33 @@ func (d *Doc) applySpliceLocked(target *object, op Op) (Patch, error) {
 	if target.Kind != objectKindText {
 		return Patch{}, fmt.Errorf("splice is only supported on text objects")
 	}
-	indexes := make(map[string]int, len(target.List))
-	for i := range target.List {
-		indexes[target.List[i].ID.String()] = i
-	}
 	for _, id := range expandOpIDRuns(op.DeleteRuns) {
-		index, ok := indexes[id.String()]
-		if !ok {
+		if _, ok := target.seq.setVisibility(id, true, op.ID); !ok {
 			return Patch{}, fmt.Errorf("splice element %s not found", id.String())
 		}
-		visibilityID := target.List[index].VisibilityID
-		if visibilityID.Actor == "" {
-			visibilityID = target.List[index].ID
-		}
-		if op.ID.Greater(visibilityID) {
-			target.List[index].Deleted = true
-			target.List[index].VisibilityID = op.ID
-		}
 	}
-	after := op.After
+	afterID, hasAfter, err := parseOpIDRef(op.After)
+	if err != nil {
+		return Patch{}, err
+	}
 	for i, runeValue := range []rune(op.Run) {
 		id := OpID{Counter: op.ID.Counter + uint64(i), Actor: op.ID.Actor}
-		if _, exists := indexes[id.String()]; exists {
-			after = id.String()
+		if target.seq.contains(id) {
+			afterID, hasAfter = id, true
 			continue
 		}
-		target.List = append(target.List, listElem{ID: id, After: after, Value: StringValue(string(runeValue)), VisibilityID: id})
-		indexes[id.String()] = len(target.List) - 1
-		after = id.String()
+		elem := listElem{
+			ID:           id,
+			After:        formatOpIDRef(afterID, hasAfter),
+			Value:        StringValue(string(runeValue)),
+			VisibilityID: id,
+		}
+		target.seq.insertAfter(afterID, hasAfter, elem)
+		afterID, hasAfter = id, true
 	}
-	normalizeListOrder(target)
 	index := 0
 	if op.Run != "" {
-		index = d.visibleIndexLocked(target, op.ID.String())
+		index = target.seq.visibleIndexOf(op.ID)
 	}
 	return Patch{Obj: op.Obj, Prop: Prop(strconv.Itoa(index)), Action: "splice", Value: StringValue(op.Run)}, nil
 }
@@ -945,19 +992,8 @@ func (d *Doc) applyDeleteLocked(target *object, op Op) (Patch, error) {
 		}
 		return Patch{Obj: op.Obj, Prop: op.Prop, Action: "delete"}, nil
 	case objectKindList, objectKindText:
-		elemIDStr := string(op.Prop)
-		for i := range target.List {
-			if target.List[i].ID.String() == elemIDStr {
-				visibilityID := target.List[i].VisibilityID
-				if visibilityID.Actor == "" {
-					visibilityID = target.List[i].ID
-				}
-				if op.ID.Greater(visibilityID) {
-					target.List[i].Deleted = true
-					target.List[i].VisibilityID = op.ID
-				}
-				break
-			}
+		if elemID, ok, err := parseOpIDProp(op.Prop); err == nil && ok {
+			target.seq.setVisibility(elemID, true, op.ID)
 		}
 		return Patch{Obj: op.Obj, Prop: op.Prop, Action: "delete"}, nil
 	default:
@@ -969,22 +1005,15 @@ func (d *Doc) applyReviveLocked(target *object, op Op) (Patch, error) {
 	if target.Kind != objectKindList && target.Kind != objectKindText {
 		return Patch{}, fmt.Errorf("revive is only supported on list-like objects")
 	}
-	elemIDStr := string(op.Prop)
-	for i := range target.List {
-		if target.List[i].ID.String() != elemIDStr {
-			continue
-		}
-		visibilityID := target.List[i].VisibilityID
-		if visibilityID.Actor == "" {
-			visibilityID = target.List[i].ID
-		}
-		if op.ID.Greater(visibilityID) {
-			target.List[i].Deleted = false
-			target.List[i].VisibilityID = op.ID
-		}
-		return Patch{Obj: op.Obj, Prop: op.Prop, Action: "revive", Value: target.List[i].Value.Clone()}, nil
+	elemID, ok, err := parseOpIDProp(op.Prop)
+	if err != nil || !ok {
+		return Patch{}, fmt.Errorf("element %s not found", string(op.Prop))
 	}
-	return Patch{}, fmt.Errorf("element %s not found", elemIDStr)
+	elem, found := target.seq.setVisibility(elemID, false, op.ID)
+	if !found {
+		return Patch{}, fmt.Errorf("element %s not found", elemID.String())
+	}
+	return Patch{Obj: op.Obj, Prop: op.Prop, Action: "revive", Value: elem.Value.Clone()}, nil
 }
 
 func (d *Doc) applyIncrementLocked(target *object, op Op) (Patch, error) {
@@ -1012,16 +1041,20 @@ func (d *Doc) applyInsertLocked(target *object, op Op) (Patch, error) {
 	if target.Kind != objectKindList && target.Kind != objectKindText {
 		return Patch{}, fmt.Errorf("insert is only supported on list-like objects")
 	}
-	elem := listElem{
-		ID:           op.ID,
-		After:        op.After,
-		Value:        op.Value.Clone(),
-		VisibilityID: op.ID,
+	afterID, hasAfter, err := parseOpIDRef(op.After)
+	if err != nil {
+		return Patch{}, err
 	}
-	target.List = append(target.List, elem)
-	normalizeListOrder(target)
+	if !target.seq.contains(op.ID) {
+		target.seq.insertAfter(afterID, hasAfter, listElem{
+			ID:           op.ID,
+			After:        op.After,
+			Value:        op.Value.Clone(),
+			VisibilityID: op.ID,
+		})
+	}
 
-	index := d.visibleIndexLocked(target, op.ID.String())
+	index := target.seq.visibleIndexOf(op.ID)
 	return Patch{
 		Obj:    op.Obj,
 		Prop:   Prop(strconv.Itoa(index)),
@@ -1034,54 +1067,25 @@ func (d *Doc) afterIDLocked(target *object, index int) (string, error) {
 	if index < 0 {
 		return "", fmt.Errorf("negative list index")
 	}
-	visible := visibleElems(target.List)
 	if index == 0 {
 		return "", nil
 	}
-	if index > len(visible) {
+	if index > target.seq.visibleLength() {
 		return "", fmt.Errorf("list index %d out of range", index)
 	}
-	return visible[index-1].ID.String(), nil
-}
-
-func (d *Doc) findInsertPositionLocked(target *object, after string, id OpID) int {
-	base := -1
-	for i := range target.List {
-		if target.List[i].ID.String() == after {
-			base = i
-			break
-		}
+	elemID, ok := target.seq.visibleIDAt(index - 1)
+	if !ok {
+		return "", fmt.Errorf("list index %d out of range", index)
 	}
-	pos := base + 1
-	for pos < len(target.List) {
-		current := target.List[pos]
-		if current.After != after {
-			break
-		}
-		if !current.ID.Less(id) {
-			break
-		}
-		pos++
-	}
-	return pos
-}
-
-func (d *Doc) visibleIndexLocked(target *object, opID string) int {
-	visible := visibleElems(target.List)
-	for i, elem := range visible {
-		if elem.ID.String() == opID {
-			return i
-		}
-	}
-	return len(visible)
+	return elemID.String(), nil
 }
 
 func (d *Doc) listValueLocked(target *object, index int) (Value, error) {
-	visible := visibleElems(target.List)
-	if index < 0 || index >= len(visible) {
+	elem, ok := target.seq.visibleAt(index)
+	if !ok {
 		return Value{}, fmt.Errorf("list index %d out of range", index)
 	}
-	return visible[index].Value.Clone(), nil
+	return elem.Value.Clone(), nil
 }
 
 func newMapObject() *object {
@@ -1091,12 +1095,67 @@ func newMapObject() *object {
 	}
 }
 
-func normalizeListOrder(target *object) {
-	if target == nil || len(target.List) < 2 {
+// parseOpIDRef decodes the "counter@actor" reference an insert or splice stores
+// in its After field. An empty reference means the head of the sequence.
+func parseOpIDRef(ref string) (OpID, bool, error) {
+	if ref == "" {
+		return OpID{}, false, nil
+	}
+	at := strings.IndexByte(ref, '@')
+	if at <= 0 || at == len(ref)-1 {
+		return OpID{}, false, fmt.Errorf("malformed element reference %q", ref)
+	}
+	counter, err := strconv.ParseUint(ref[:at], 10, 64)
+	if err != nil {
+		return OpID{}, false, fmt.Errorf("malformed element reference %q", ref)
+	}
+	return OpID{Counter: counter, Actor: ref[at+1:]}, true, nil
+}
+
+// formatOpIDRef encodes a reference for storage in an element or an operation.
+func formatOpIDRef(id OpID, has bool) string {
+	if !has {
+		return ""
+	}
+	return id.String()
+}
+
+// parseOpIDProp decodes the element identity that a delete or revive operation
+// carries in its Prop field.
+func parseOpIDProp(prop Prop) (OpID, bool, error) {
+	return parseOpIDRef(string(prop))
+}
+
+// normalizeSeqOrder rebuilds the document order of a decoded sequence. A
+// snapshot already stores document order, so this only repairs input that a
+// different writer, or a fuzzer, produced.
+func normalizeSeqOrder(s *seq) {
+	if s == nil || s.length() < 2 {
 		return
 	}
-	children := make(map[string][]listElem, len(target.List))
-	for _, elem := range target.List {
+	elems := s.elems()
+	ordered := orderListElems(elems)
+	if len(ordered) != len(elems) {
+		return
+	}
+	same := true
+	for i := range ordered {
+		if ordered[i].ID != elems[i].ID {
+			same = false
+			break
+		}
+	}
+	if same {
+		return
+	}
+	s.reset(ordered)
+}
+
+// orderListElems sorts elements into replicated growable array order: a child
+// follows its reference, and siblings run from the newest identity to the oldest.
+func orderListElems(elems []listElem) []listElem {
+	children := make(map[string][]listElem, len(elems))
+	for _, elem := range elems {
 		children[elem.After] = append(children[elem.After], elem)
 	}
 	for after := range children {
@@ -1108,8 +1167,8 @@ func normalizeListOrder(target *object) {
 		})
 	}
 
-	ordered := make([]listElem, 0, len(target.List))
-	visited := make(map[string]bool, len(target.List))
+	ordered := make([]listElem, 0, len(elems))
+	visited := make(map[string]bool, len(elems))
 	var walk func(after string)
 	walk = func(after string) {
 		for _, child := range children[after] {
@@ -1123,9 +1182,9 @@ func normalizeListOrder(target *object) {
 		}
 	}
 	walk("")
-	if len(ordered) != len(target.List) {
-		remaining := make([]listElem, 0, len(target.List)-len(ordered))
-		for _, elem := range target.List {
+	if len(ordered) != len(elems) {
+		remaining := make([]listElem, 0, len(elems)-len(ordered))
+		for _, elem := range elems {
 			if !visited[elem.ID.String()] {
 				remaining = append(remaining, elem)
 			}
@@ -1145,25 +1204,14 @@ func normalizeListOrder(target *object) {
 			walk(elem.ID.String())
 		}
 	}
-	target.List = ordered
+	return ordered
 }
 
 func newListObject(kind objectKind) *object {
 	return &object{
 		Kind: kind,
-		List: make([]listElem, 0),
+		seq:  newSeq(),
 	}
-}
-
-func visibleElems(list []listElem) []listElem {
-	out := make([]listElem, 0, len(list))
-	for _, elem := range list {
-		if elem.Deleted {
-			continue
-		}
-		out = append(out, elem)
-	}
-	return out
 }
 
 func cloneObject(obj *object) *object {
@@ -1177,12 +1225,8 @@ func cloneObject(obj *object) *object {
 			out.Map[key] = value
 		}
 	}
-	if obj.List != nil {
-		out.List = make([]listElem, len(obj.List))
-		for i, value := range obj.List {
-			value.Value = value.Value.Clone()
-			out.List[i] = value
-		}
+	if obj.seq != nil {
+		out.seq = obj.seq.clone()
 	}
 	return out
 }

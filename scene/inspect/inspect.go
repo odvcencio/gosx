@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/scene/geom"
 	sceneschema "m31labs.dev/gosx/scene/schema"
 )
 
@@ -18,6 +19,11 @@ const Schema = "gosx.scene3d.inspect.v1"
 type Options struct {
 	Strict           bool
 	MaxTexturePixels int
+	// AssetRoots are directories that scene asset sources resolve against. When
+	// the list is empty, inspect does not check reachability and the report says
+	// so, so a report that did not look never reads as a report that found
+	// everything.
+	AssetRoots []string
 }
 
 type SceneReport struct {
@@ -27,7 +33,10 @@ type SceneReport struct {
 	Memory     SceneMemoryEstimate `json:"memory"`
 	FeatureUse map[string]int      `json:"featureUse"`
 	Fallbacks  []FallbackReport    `json:"fallbacks,omitempty"`
-	Validation sceneschema.Report  `json:"validation"`
+	// AssetResolution reports which asset sources were found on disk. It is nil
+	// only when the caller used the deprecated no-options entry points.
+	AssetResolution *AssetResolutionReport `json:"assetResolution,omitempty"`
+	Validation      sceneschema.Report     `json:"validation"`
 }
 
 type SurfaceReport struct {
@@ -120,11 +129,18 @@ func InspectJSON(path string, data []byte, opts Options) (SceneReport, error) {
 			Validation: validation,
 		}, nil
 	}
-	report := InspectDocument(path, doc, validation)
+	report := InspectDocumentWithOptions(path, doc, validation, opts)
 	return report, nil
 }
 
+// InspectDocument inspects a decoded document without checking asset
+// reachability. Call InspectDocumentWithOptions to resolve assets against real
+// directories.
 func InspectDocument(path string, doc sceneschema.Document, validation sceneschema.Report) SceneReport {
+	return InspectDocumentWithOptions(path, doc, validation, Options{})
+}
+
+func InspectDocumentWithOptions(path string, doc sceneschema.Document, validation sceneschema.Report, opts Options) SceneReport {
 	report := SceneReport{
 		Path:       path,
 		Surface:    surfaceReport(path, doc),
@@ -134,11 +150,13 @@ func InspectDocument(path string, doc sceneschema.Document, validation scenesche
 		Validation: validation,
 	}
 	seenAssets := map[string]bool{}
-	addAsset := func(src string) {
+	references := newAssetReferenceIndex()
+	addAsset := func(src, id, docPath string) {
 		src = strings.TrimSpace(src)
 		if src == "" || strings.HasPrefix(src, "var(") {
 			return
 		}
+		references.add(src, id, docPath)
 		if !seenAssets[src] {
 			report.Assets.Sources = append(report.Assets.Sources, src)
 			seenAssets[src] = true
@@ -150,17 +168,18 @@ func InspectDocument(path string, doc sceneschema.Document, validation scenesche
 		}
 	}
 
-	for _, object := range doc.Objects {
+	for index, object := range doc.Objects {
+		docPath := fmt.Sprintf("objects[%d]", index)
 		kind := normalizeKind(object.Kind, "object")
 		addFeature("geometry." + kind)
-		report.Memory.GeometryBytes += primitiveGeometryBytes(kind, object.Segments, object.RadialSegments, object.TubularSegments)
+		report.Memory.GeometryBytes += objectGeometryBytes(object)
 		report.Memory.TextureBytes += materialTextureBytes(object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap)
 		addMaterialFeatures(addFeature, object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap)
-		addAsset(object.Texture)
-		addAsset(object.NormalMap)
-		addAsset(object.RoughnessMap)
-		addAsset(object.MetalnessMap)
-		addAsset(object.EmissiveMap)
+		addAsset(object.Texture, object.ID, docPath+".texture")
+		addAsset(object.NormalMap, object.ID, docPath+".normalMap")
+		addAsset(object.RoughnessMap, object.ID, docPath+".roughnessMap")
+		addAsset(object.MetalnessMap, object.ID, docPath+".metalnessMap")
+		addAsset(object.EmissiveMap, object.ID, docPath+".emissiveMap")
 		if object.CustomVertexWGSL != "" || object.CustomFragmentWGSL != "" {
 			addFeature("material.customWGSL")
 			report.Assets.Shaders++
@@ -170,9 +189,9 @@ func InspectDocument(path string, doc sceneschema.Document, validation scenesche
 			report.Assets.Shaders++
 		}
 	}
-	for _, model := range doc.Models {
+	for index, model := range doc.Models {
 		report.Assets.Models++
-		addAsset(model.Src)
+		addAsset(model.Src, model.ID, fmt.Sprintf("models[%d].src", index))
 		addFeature("geometry.model")
 		if strings.EqualFold(filepath.Ext(stripQuery(model.Src)), ".glb") {
 			addFeature("asset.glb")
@@ -191,11 +210,11 @@ func InspectDocument(path string, doc sceneschema.Document, validation scenesche
 		report.Memory.GeometryBytes += primitiveGeometryBytes(kind, mesh.Segments, mesh.RadialSegments, mesh.TubularSegments)
 		report.Memory.InstanceBytes += int64(maxInt(mesh.Count, len(mesh.Transforms)/16)) * 64
 	}
-	for _, mesh := range doc.InstancedGLBMeshes {
+	for index, mesh := range doc.InstancedGLBMeshes {
 		addFeature("geometry.instancedGLBMesh")
 		report.Assets.Models++
 		report.Memory.InstanceBytes += int64(len(mesh.Instances)) * 64
-		addAsset(mesh.Src)
+		addAsset(mesh.Src, mesh.ID, fmt.Sprintf("instancedGLBMeshes[%d].src", index))
 	}
 	for _, particles := range doc.ComputeParticles {
 		addFeature("particles.compute")
@@ -206,11 +225,11 @@ func InspectDocument(path string, doc sceneschema.Document, validation scenesche
 			addFeature("overlay.label")
 		}
 	}
-	for _, sprite := range doc.Sprites {
+	for index, sprite := range doc.Sprites {
 		addFeature("overlay.sprite")
 		report.Assets.Textures++
 		report.Memory.TextureBytes += defaultTextureBytes
-		addAsset(sprite.Src)
+		addAsset(sprite.Src, sprite.ID, fmt.Sprintf("sprites[%d].src", index))
 	}
 	for _, html := range doc.HTML {
 		mode := strings.ToLower(strings.TrimSpace(html.Mode))
@@ -271,6 +290,10 @@ func InspectDocument(path string, doc sceneschema.Document, validation scenesche
 	sort.Strings(report.Assets.Sources)
 	report.Memory.TotalGPUBytes = report.Memory.GeometryBytes + report.Memory.InstanceBytes + report.Memory.PointBytes + report.Memory.ParticleBytes + report.Memory.TextureBytes + report.Memory.HTMLTextureBytes + report.Memory.ShadowBytes + report.Memory.PostFXBytes
 	report.Surface.EstimatedUploadCount = len(report.Assets.Sources) + report.Surface.Objects + report.Surface.InstancedMeshes + report.Surface.Points + report.Surface.ComputeParticles
+
+	resolution := resolveAssets(references, opts.AssetRoots)
+	report.AssetResolution = &resolution
+	appendUnresolvedAssetDiagnostics(&report.Validation, resolution)
 	return report
 }
 
@@ -367,34 +390,103 @@ func backendIntent(doc sceneschema.Document) []string {
 
 const defaultTextureBytes int64 = 4 << 20
 
-func primitiveGeometryBytes(kind string, segments, radialSegments, tubularSegments int) int64 {
-	verts := primitiveVertexCount(kind, segments, radialSegments, tubularSegments)
-	return int64(verts) * 44
+// bytesPerVertex is the size of one uploaded vertex: three floats of position,
+// three of normal, two of texture coordinate, three of color, and one packed
+// tangent word.
+const bytesPerVertex = 44
+
+// objectGeometryBytes estimates the GPU bytes one scene object uploads.
+//
+// An object that carries inline vertices is a generated mesh: a polyhedron, a
+// disc, a shape, an extrusion, or an imported glTF mesh. Its real size is its own
+// vertex count, so read that first.
+//
+// Reading the kind alone used to send every such object to the default branch,
+// which reports 36 vertices. A hundred-thousand-triangle mesh was therefore
+// reported as one cube. The estimate has to read the vertices or it understates
+// the whole family by orders of magnitude.
+func objectGeometryBytes(object scene.ObjectIR) int64 {
+	if count := inlineVertexCount(object); count > 0 {
+		return int64(count) * bytesPerVertex
+	}
+	return primitiveGeometryBytes(object.Kind, object.Segments, object.RadialSegments, object.TubularSegments)
 }
 
+// inlineVertexCount returns the vertex count an object ships inline, or zero when
+// it ships none.
+func inlineVertexCount(object scene.ObjectIR) int {
+	vertices := object.Vertices
+	if vertices == nil {
+		return 0
+	}
+	if vertices.Count > 0 {
+		return vertices.Count
+	}
+	return len(vertices.Positions) / 3
+}
+
+func primitiveGeometryBytes(kind string, segments, radialSegments, tubularSegments int) int64 {
+	verts := primitiveVertexCount(kind, segments, radialSegments, tubularSegments)
+	return int64(verts) * bytesPerVertex
+}
+
+// primitiveVertexCount returns how many vertices one named primitive uploads.
+//
+// The nine parametric kinds delegate to package scene/geom, the single generator
+// the browser wire path, the native renderer and the picker all read. Delegating
+// removes a whole class of defect: a private copy of the formula here reported
+// 1152 vertices for a 12-segment sphere while the generator built 432, because
+// the copy hardcoded 16 latitude rows instead of deriving them from the segment
+// count. The report was only right at the default resolution.
+//
+// The generated families keep their own formulas below, because they lower to a
+// "gltf-mesh" object rather than a named kind. objectGeometryBytes reads their
+// real vertex list first, so these formulas only matter if a future lowering
+// names one of them as a kind.
 func primitiveVertexCount(kind string, segments, radialSegments, tubularSegments int) int {
-	switch normalizeKind(kind, "") {
-	case "cube", "cubegeometry", "box", "boxgeometry":
-		return 36
-	case "plane", "planegeometry", "quad", "quadgeometry":
-		return 6
-	case "pyramid", "pyramidgeometry":
-		return 18
-	case "sphere", "spheregeometry", "uvsphere", "uvspheregeometry":
-		lon := positiveOrDefault(segments, 32)
-		return lon * 16 * 6
-	case "cylinder", "cylindergeometry":
-		return positiveOrDefault(segments, 32) * 12
-	case "cone", "conegeometry":
-		return positiveOrDefault(segments, 32) * 6
-	case "torus", "torusgeometry":
-		return positiveOrDefault(radialSegments, 32) * positiveOrDefault(tubularSegments, 16) * 6
-	case "torusknot", "torusknotgeometry":
-		// tubularSegments = path steps (default 128), radialSegments = cross-section (default 16)
-		return positiveOrDefault(tubularSegments, 128) * positiveOrDefault(radialSegments, 16) * 6
+	normalized := normalizeKind(kind, "")
+	if canonical := geom.NormalizeKind(normalized); canonical != "" {
+		return geom.DrawVertexCount(geom.Params{
+			Kind:            canonical,
+			Segments:        segments,
+			RadialSegments:  radialSegments,
+			TubularSegments: tubularSegments,
+		})
+	}
+	switch normalized {
+	case "tetrahedron", "tetrahedrongeometry":
+		return polyhedronVertexCount(4, segments)
+	case "octahedron", "octahedrongeometry":
+		return polyhedronVertexCount(8, segments)
+	case "icosahedron", "icosahedrongeometry":
+		return polyhedronVertexCount(20, segments)
+	case "dodecahedron", "dodecahedrongeometry":
+		// Twelve pentagon faces ship as three triangles each.
+		return polyhedronVertexCount(36, segments)
+	case "circle", "circlegeometry":
+		// A fan of one triangle per rim step, expanded to a flat list.
+		return positiveOrDefault(segments, 32) * 3
+	case "ring", "ringgeometry":
+		// Two triangles per step of each band. radialSegments carries the band
+		// count, which RingGeometry names phiSegments.
+		return positiveOrDefault(segments, 32) * positiveOrDefault(radialSegments, 1) * 6
 	default:
 		return 36
 	}
+}
+
+// polyhedronVertexCount returns the expanded vertex count of a subdivided
+// polyhedron. Every subdivision step splits each edge, so a face becomes
+// (detail+1)^2 triangles. The detail is capped at 5, as the generator caps it.
+func polyhedronVertexCount(faces, detail int) int {
+	if detail < 0 {
+		detail = 0
+	}
+	if detail > 5 {
+		detail = 5
+	}
+	cols := detail + 1
+	return faces * cols * cols * 3
 }
 
 func materialTextureBytes(values ...string) int64 {

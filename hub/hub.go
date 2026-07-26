@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -27,6 +28,11 @@ const (
 	readWait       = 60 * time.Second
 	writeWait      = 10 * time.Second
 	pingPeriod     = (readWait * 9) / 10
+
+	// defaultSyncMessageSize is the inbound frame allowance for a connection
+	// that may push CRDT sync. A full document bootstrap can be large, so the
+	// allowance is much larger than maxMessageSize.
+	defaultSyncMessageSize = 16 * 1024 * 1024
 )
 
 // Hub is a long-lived server-side coordinator for realtime state.
@@ -59,8 +65,19 @@ type Hub struct {
 	// other hub-level mutex — release it before taking other locks.
 	latchedMu sync.RWMutex
 
+	// textDropped and binaryDropped total the messages every client, present
+	// or departed, lost to a full send buffer. They only grow.
+	textDropped   atomic.Uint64
+	binaryDropped atomic.Uint64
+
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
 	MaxClients int
+
+	// MaxSyncMessageSize is the inbound frame allowance, in bytes, for a
+	// connection that may push CRDT sync. Zero selects
+	// defaultSyncMessageSize, which is 16 MiB. Set it before the first
+	// connection; a change does not reach an accepted connection.
+	MaxSyncMessageSize int
 }
 
 // ConnectionMetadata contains server-supplied values associated with one
@@ -83,6 +100,72 @@ type Client struct {
 	// trySend/tryBinarySend check it under the same mu before writing, so a
 	// send can never race with the close of the same channel — see trySend.
 	closed bool
+
+	// textDropped and binaryDropped count the messages this client lost
+	// because its send buffer was full. They only grow. Read them with
+	// atomic loads through DropStats.
+	textDropped   atomic.Uint64
+	binaryDropped atomic.Uint64
+	// loggedDrop marks that the first drop for this client was logged.
+	loggedDrop atomic.Bool
+}
+
+// DropStats counts the messages a hub or one client lost because a send buffer
+// was full.
+//
+// The hub never blocks a broadcast on a slow consumer. A client whose 256-slot
+// buffer is full loses the message instead. That choice keeps one slow reader
+// from stalling every other reader, but it makes the loss invisible unless it
+// is counted. These counters make it visible.
+//
+// Text counts messages queued by Broadcast, BroadcastWhere, Send, and latch
+// replay. Binary counts CRDT sync frames. A binary drop is not data loss for a
+// CRDT document, because the next sync round recomputes what the peer still
+// needs; a text drop is permanent loss for that client.
+type DropStats struct {
+	Text   uint64
+	Binary uint64
+}
+
+// Total returns the sum of the text and binary drop counts.
+func (d DropStats) Total() uint64 { return d.Text + d.Binary }
+
+// DropStats returns the messages this client has lost to a full send buffer.
+// A nil Client returns a zero value.
+func (c *Client) DropStats() DropStats {
+	if c == nil {
+		return DropStats{}
+	}
+	return DropStats{
+		Text:   c.textDropped.Load(),
+		Binary: c.binaryDropped.Load(),
+	}
+}
+
+// recordDrop counts one lost message and logs the first loss for this client.
+// A Client built without a Hub still counts its own drops.
+func (c *Client) recordDrop(binary bool) {
+	if binary {
+		c.binaryDropped.Add(1)
+		if c.Hub != nil {
+			c.Hub.binaryDropped.Add(1)
+		}
+	} else {
+		c.textDropped.Add(1)
+		if c.Hub != nil {
+			c.Hub.textDropped.Add(1)
+		}
+	}
+	if c.Hub == nil || !c.loggedDrop.CompareAndSwap(false, true) {
+		return
+	}
+	kind := "text"
+	if binary {
+		kind = "binary"
+	}
+	log.Printf("[hub/%s] client %s send buffer full: dropped a %s message. "+
+		"Further drops for this client are counted, not logged.",
+		c.Hub.name, c.ID, kind)
 }
 
 // Metadata returns one server-supplied metadata value for this connection.
@@ -114,16 +197,22 @@ func (c *Client) Metadata(key string) (string, bool) {
 // close on c.mu makes them mutually exclusive: a send either completes
 // strictly before the channel is marked closed (and so is never racing an
 // in-flight close), or observes closed=true and is skipped.
+// A false return means either "client gone" or "buffer full". trySend counts
+// the buffer-full case as a drop; a departed client is not a drop, because
+// removeClient already reports the disconnect.
 func (c *Client) trySend(msg []byte) bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return false
 	}
 	select {
 	case c.send <- msg:
+		c.mu.Unlock()
 		return true
 	default:
+		c.mu.Unlock()
+		c.recordDrop(false)
 		return false
 	}
 }
@@ -131,14 +220,17 @@ func (c *Client) trySend(msg []byte) bool {
 // tryBinarySend is trySend for the binary (CRDT sync) channel.
 func (c *Client) tryBinarySend(msg []byte) bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return false
 	}
 	select {
 	case c.binarySend <- msg:
+		c.mu.Unlock()
 		return true
 	default:
+		c.mu.Unlock()
+		c.recordDrop(true)
 		return false
 	}
 }
@@ -304,6 +396,31 @@ func (h *Hub) BroadcastWhere(event string, data any, predicate func(*Client) boo
 	}
 }
 
+// BroadcastBinary sends one binary WebSocket frame to every connected client
+// and returns the number of clients that accepted it. A client with a full
+// buffer loses the frame and raises the binary drop counters.
+//
+// The frame shares the binary channel with CRDT sync, which routes on the first
+// byte. SyncDoc allocates prefixes 1 through 255, so an application frame must
+// start with 0x00. Binary frames are never latched.
+//
+// The stock GoSX browser runtime ignores binary frames on a hub connection, so
+// a caller must supply its own decoder.
+func (h *Hub) BroadcastBinary(payload []byte) int {
+	if len(payload) == 0 {
+		return 0
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	sent := 0
+	for _, client := range h.clients {
+		if client.tryBinarySend(payload) {
+			sent++
+		}
+	}
+	return sent
+}
+
 // Send sends a message to a specific client.
 func (h *Hub) Send(clientID string, event string, data any) {
 	h.mu.RLock()
@@ -397,6 +514,31 @@ func (h *Hub) ClientCount() int {
 	return len(h.clients)
 }
 
+// DropStats returns the total messages this hub has lost to full client send
+// buffers, over the whole life of the hub. Departed clients stay counted.
+//
+// Scrape this value to alarm on silent message loss. A rising Text count means
+// at least one consumer cannot keep up with the broadcast rate.
+func (h *Hub) DropStats() DropStats {
+	return DropStats{
+		Text:   h.textDropped.Load(),
+		Binary: h.binaryDropped.Load(),
+	}
+}
+
+// ClientDropStats returns the drop counts for every connected client, keyed by
+// client ID. The totals from DropStats are usually larger, because they also
+// carry the drops of clients that have since disconnected.
+func (h *Hub) ClientDropStats() map[string]DropStats {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make(map[string]DropStats, len(h.clients))
+	for id, client := range h.clients {
+		out[id] = client.DropStats()
+	}
+	return out
+}
+
 // Name returns the hub name.
 func (h *Hub) Name() string {
 	return h.name
@@ -440,11 +582,6 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
 	}
-	readLimit := int64(maxMessageSize)
-	if h.hasSyncDocs() {
-		readLimit = 16 * 1024 * 1024
-	}
-	conn.SetReadLimit(readLimit)
 	if err := conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
 		log.Printf("[hub/%s] set read deadline error: %v", h.name, err)
 		conn.Close()
@@ -464,6 +601,10 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		binarySend: make(chan []byte, 256),
 		syncStates: newPeerSyncState(),
 	}
+
+	// The read limit is per connection, so a client that may not push CRDT
+	// sync keeps the small frame allowance. See readLimitFor.
+	conn.SetReadLimit(h.readLimitFor(client))
 
 	// Register client
 	h.mu.Lock()
@@ -500,12 +641,9 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	h.latchedMu.RUnlock()
 
 	for _, payload := range payloads {
-		select {
-		case client.send <- payload:
-		default:
-			// Send buffer full — drop the replay for this topic.
-			// Consistent with Broadcast's behavior on a saturated client.
-		}
+		// trySend counts a full buffer as a drop. Latch replay follows the
+		// same rule as Broadcast: never block the join path.
+		client.trySend(payload)
 	}
 
 	// Fire join handler (may broadcast to all clients including this one)

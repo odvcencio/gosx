@@ -1,6 +1,8 @@
 package bundle
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/engine"
@@ -44,10 +46,11 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	// Primitive geometry: positions + colors + normals + uvs = 4 buffers.
 	// Material uniform = 1.
 	// Cull resources (input + output + drawArgs + cullUniform) = 4.
+	// Per-cascade shadow-caster cull (output + drawArgs + uniform) × 3 = 9.
 	// Post-FX resources: bloom params + present tonemap + blurH + blurV uniforms = 4.
-	// Total = 13.
-	if got := len(d.buffers) - buffersBefore; got != 13 {
-		t.Errorf("expected 13 new buffers (geometry + material + cull + post-fx), got %d", got)
+	// Total = 22.
+	if got := len(d.buffers) - buffersBefore; got != 22 {
+		t.Errorf("expected 22 new buffers (geometry + material + cull + caster cull + post-fx), got %d", got)
 	}
 
 	if len(d.encoders) != 1 {
@@ -59,15 +62,24 @@ func TestFrameInstancedMeshDispatches(t *testing.T) {
 	}
 	mainPass := passes[3]
 
-	// Each of the 3 cascades draws the instanced mesh once.
+	// Each of the 3 cascades draws the instanced mesh once, through the
+	// cascade's own caster-cull output buffer.
 	for i := 0; i < 3; i++ {
-		if len(passes[i].draws) != 1 {
-			t.Fatalf("shadow cascade %d: expected 1 draw, got %d", i, len(passes[i].draws))
+		if passes[i].indirectDraws != 1 {
+			t.Fatalf("shadow cascade %d: expected 1 indirect draw, got %d", i, passes[i].indirectDraws)
 		}
-		if passes[i].draws[0].instanceCount != 3 {
-			t.Errorf("shadow cascade %d: expected 3 instances, got %d",
-				i, passes[i].draws[0].instanceCount)
+		if len(passes[i].draws) != 0 {
+			t.Errorf("shadow cascade %d: casters must draw indirectly, got %d direct",
+				i, len(passes[i].draws))
 		}
+	}
+
+	// One cull dispatch per mesh plus one per cascade for the shadow casters.
+	if len(d.encoders[0].computePasses) != 1 {
+		t.Fatalf("expected 1 compute pass, got %d", len(d.encoders[0].computePasses))
+	}
+	if got := len(d.encoders[0].computePasses[0].dispatches); got != 4 {
+		t.Errorf("cull dispatches = %d, want 4 (main frustum + 3 cascades)", got)
 	}
 	// Main pass emits one indirect draw (cull compacted output) per mesh.
 	if mainPass.indirectDraws != 1 {
@@ -112,7 +124,7 @@ func TestFrameInstancedMeshHonorsCastShadow(t *testing.T) {
 	}
 }
 
-func TestFrameShadowPassUsesPerMeshCullInputs(t *testing.T) {
+func TestFrameShadowPassUsesPerCascadeCasterCull(t *testing.T) {
 	d := newFakeDevice()
 	r, err := New(Config{Device: d, Surface: fakeSurface{}})
 	if err != nil {
@@ -145,13 +157,30 @@ func TestFrameShadowPassUsesPerMeshCullInputs(t *testing.T) {
 	if err := r.Frame(b, 640, 360, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
-	if r.instanceBuf != nil {
-		t.Fatalf("shadow path should bind per-mesh cull input buffers, not allocate the shared instance buffer")
-	}
 	for cascade := 0; cascade < 3; cascade++ {
 		pass := d.encoders[0].passes[cascade]
-		if len(pass.draws) != 2 {
-			t.Fatalf("cascade %d shadow draws = %d, want 2", cascade, len(pass.draws))
+		if pass.indirectDraws != 2 {
+			t.Fatalf("cascade %d shadow indirect draws = %d, want 2", cascade, pass.indirectDraws)
+		}
+		// Each cascade must bind its own caster output buffer, never the
+		// unculled instance input.
+		for _, label := range pass.vbufLabels {
+			if strings.HasPrefix(label, "bundle.cull.input:") {
+				t.Fatalf("cascade %d bound the unculled input buffer %q", cascade, label)
+			}
+		}
+	}
+	// Every caster draw must read the cascade's own compacted output.
+	for cascade := 0; cascade < 3; cascade++ {
+		want := fmt.Sprintf("#cascade%d", cascade)
+		found := 0
+		for _, label := range d.encoders[0].passes[cascade].vbufLabels {
+			if strings.Contains(label, want) {
+				found++
+			}
+		}
+		if found != 2 {
+			t.Fatalf("cascade %d caster output binds = %d, want 2", cascade, found)
 		}
 	}
 }

@@ -68,7 +68,14 @@ func (c *Cache) Get(query string) (any, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	results := c.index.Search(vec, len(c.store))
+	// Get wants one entry, so fetch a bounded candidate set and re-rank only
+	// those exactly. See candidates.go for the accuracy measurements.
+	//
+	// An expired entry consumes a candidate slot. A cache whose top candidates
+	// have all expired can therefore miss a live entry that ranks below the
+	// candidate set. That entry would have to be a near tie to score above the
+	// threshold, so the miss costs one recompute and one Set.
+	results := c.index.Search(vec, candidateCount(1, len(c.store)))
 	if len(results) == 0 {
 		return nil, false
 	}

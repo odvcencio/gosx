@@ -1,0 +1,127 @@
+/* ============================================================
+   Scene3D vs three.js docs page
+   page.css — sidecar for app/docs/scene3d-vs-threejs/page.gsx
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Chrome-text heading overrides (dark mode)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .docs-header__title {
+  background: linear-gradient(
+    135deg,
+    var(--chrome-dark) 0%,
+    var(--chrome-light) 40%,
+    var(--chrome-dark) 60%,
+    var(--chrome-light) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (forced-colors: active) {
+  .docs-section:not(.light) .docs-header__title {
+    -webkit-text-fill-color: CanvasText;
+    background: none;
+  }
+}
+
+.docs-section:not(.light) .prose h2 {
+  color: var(--chrome-light);
+}
+
+.docs-section:not(.light) .inline-code {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: rgba(212, 175, 55, 0.08);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+  padding: 0.15em 0.4em;
+  border-radius: 0.25em;
+}
+
+/* ------------------------------------------------------------
+   Headline figures
+   ------------------------------------------------------------ */
+
+.vs-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+}
+
+/* ------------------------------------------------------------
+   Coverage table
+   ------------------------------------------------------------ */
+
+.vs-table-wrap {
+  margin: var(--space-md) 0;
+  overflow-x: auto;
+}
+
+.vs-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-small);
+}
+
+.vs-matrix caption {
+  caption-side: bottom;
+  padding-top: 0.5rem;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.vs-matrix th,
+.vs-matrix td {
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: top;
+}
+
+.vs-matrix thead th {
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vs-matrix tbody th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------
+   Glass panel + TOC accents (dark mode)
+   ------------------------------------------------------------ */
+
+.docs-section:not(.light) .glass-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.docs-section:not(.light) .toc-link.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+.docs-section:not(.light) .docs-tag {
+  border-color: rgba(212, 175, 55, 0.2);
+  color: var(--accent);
+  background: rgba(212, 175, 55, 0.06);
+}
+
+/* ------------------------------------------------------------
+   Mobile
+   ------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+  .vs-stat-row {
+    grid-template-columns: 1fr;
+  }
+}

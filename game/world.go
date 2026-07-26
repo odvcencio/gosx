@@ -2,7 +2,6 @@ package game
 
 import (
 	"reflect"
-	"slices"
 	"strings"
 )
 
@@ -31,15 +30,26 @@ type Velocity struct {
 	Angular Vec3 `json:"angular,omitzero"`
 }
 
-// World stores entities, typed components, and typed resources. It is small
-// and deterministic by design: systems choose their own storage-heavy
-// structures when they need tighter cache behavior.
+// World stores entities, typed components, and typed resources.
+//
+// Storage is dense and ordered. Each component type owns one column of packed
+// values, held in ascending entity order. A query copies contiguous memory and
+// never sorts. The live entity list is kept in the same ascending order, so
+// EntitiesInto never sorts either.
+//
+// The typed API stores values without boxing them into an interface, so a hot
+// system that writes components every frame allocates nothing.
 type World struct {
-	next       EntityID
-	alive      map[EntityID]struct{}
+	next EntityID
+	// alive maps a live handle to its slot in live.
+	alive map[EntityID]int
+	// live holds handles in ascending order. A despawned slot holds
+	// InvalidEntity until the list compacts.
+	live       []EntityID
+	liveDead   int
 	names      map[string]EntityID
 	entityName map[EntityID]string
-	components map[reflect.Type]map[EntityID]any
+	components map[reflect.Type]componentStore
 	resources  map[reflect.Type]any
 }
 
@@ -60,10 +70,10 @@ func WithName(name string) EntityOption {
 // NewWorld creates an empty entity/component world.
 func NewWorld() *World {
 	return &World{
-		alive:      make(map[EntityID]struct{}),
+		alive:      make(map[EntityID]int),
 		names:      make(map[string]EntityID),
 		entityName: make(map[EntityID]string),
-		components: make(map[reflect.Type]map[EntityID]any),
+		components: make(map[reflect.Type]componentStore),
 		resources:  make(map[reflect.Type]any),
 	}
 }
@@ -84,7 +94,9 @@ func (w *World) Spawn(opts ...EntityOption) EntityID {
 	}
 	w.next++
 	id := w.next
-	w.alive[id] = struct{}{}
+	// Handles increase, so an append keeps the live list ascending.
+	w.alive[id] = len(w.live)
+	w.live = append(w.live, id)
 	if cfg.name != "" {
 		if previous := w.names[cfg.name]; previous != InvalidEntity {
 			delete(w.entityName, previous)
@@ -100,14 +112,43 @@ func (w *World) Despawn(id EntityID) {
 	if w == nil || id == InvalidEntity {
 		return
 	}
+	pos, ok := w.alive[id]
+	if !ok {
+		return
+	}
 	delete(w.alive, id)
-	if name := w.entityName[id]; name != "" {
-		delete(w.names, name)
-		delete(w.entityName, id)
+	// Mark the slot instead of moving the tail. The list compacts itself once
+	// half of the slots are dead, so one despawn costs constant time on average.
+	w.live[pos] = InvalidEntity
+	w.liveDead++
+	w.compactLive()
+	if len(w.entityName) > 0 {
+		if name := w.entityName[id]; name != "" {
+			delete(w.names, name)
+			delete(w.entityName, id)
+		}
 	}
-	for _, bucket := range w.components {
-		delete(bucket, id)
+	for _, store := range w.components {
+		store.removeEntity(id)
 	}
+}
+
+// compactLive drops the dead slots once they outnumber the live ones.
+func (w *World) compactLive() {
+	if w.liveDead < compactFloor || w.liveDead*2 < len(w.live) {
+		return
+	}
+	next := 0
+	for _, id := range w.live {
+		if id == InvalidEntity {
+			continue
+		}
+		w.live[next] = id
+		w.alive[id] = next
+		next++
+	}
+	w.live = w.live[:next]
+	w.liveDead = 0
 }
 
 // Alive reports whether id still refers to a live entity.
@@ -138,35 +179,40 @@ func (w *World) Entities() []EntityID {
 
 // EntitiesInto appends all live entities to dst in spawn order. The returned
 // slice reuses dst's backing array when capacity allows, which avoids per-frame
-// allocations in fixed-step game loops.
+// allocations in fixed-step game loops. The live list is already ordered, so
+// this copies memory and does not sort.
 func EntitiesInto(w *World, dst []EntityID) []EntityID {
 	out := dst[:0]
-	if w == nil || len(w.alive) == 0 {
+	if w == nil || len(w.live) == 0 {
 		return out
 	}
-	for id := range w.alive {
-		out = append(out, id)
+	if w.liveDead == 0 {
+		return append(out, w.live...)
 	}
-	slices.Sort(out)
+	for _, id := range w.live {
+		if id != InvalidEntity {
+			out = append(out, id)
+		}
+	}
 	return out
 }
 
 // Set attaches component to id using its concrete Go type as the component key.
+// Prefer SetComponent: the typed entry point stores the value without boxing it.
 func (w *World) Set(id EntityID, component any) bool {
 	if w == nil || component == nil || !w.Alive(id) {
 		return false
 	}
 	typ := reflect.TypeOf(component)
 	if w.components == nil {
-		w.components = make(map[reflect.Type]map[EntityID]any)
+		w.components = make(map[reflect.Type]componentStore)
 	}
-	bucket := w.components[typ]
-	if bucket == nil {
-		bucket = make(map[EntityID]any)
-		w.components[typ] = bucket
+	store := w.components[typ]
+	if store == nil {
+		store = &boxedStore{typ: typ}
+		w.components[typ] = store
 	}
-	bucket[id] = component
-	return true
+	return store.setAny(id, component)
 }
 
 // Remove deletes component type typ from id.
@@ -174,58 +220,43 @@ func (w *World) Remove(id EntityID, typ reflect.Type) bool {
 	if w == nil || typ == nil {
 		return false
 	}
-	bucket := w.components[typ]
-	if bucket == nil {
+	store := w.components[typ]
+	if store == nil {
 		return false
 	}
-	if _, ok := bucket[id]; !ok {
-		return false
-	}
-	delete(bucket, id)
-	return true
+	return store.removeEntity(id)
 }
 
 func componentType[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil)).Elem()
 }
 
-// SetComponent attaches a typed component to id.
+// SetComponent attaches a typed component to id. The value goes into dense
+// storage without a heap box.
 func SetComponent[T any](w *World, id EntityID, component T) bool {
 	if w == nil || !w.Alive(id) {
 		return false
 	}
-	typ := componentType[T]()
-	if w.components == nil {
-		w.components = make(map[reflect.Type]map[EntityID]any)
-	}
-	bucket := w.components[typ]
-	if bucket == nil {
-		bucket = make(map[EntityID]any)
-		w.components[typ] = bucket
-	}
-	bucket[id] = component
+	denseColumn[T](w).set(id, component)
 	return true
 }
 
-// GetComponent returns the typed component attached to id.
+// GetComponent returns the typed component attached to id. Despawn clears every
+// column, so a hit implies a live entity.
 func GetComponent[T any](w *World, id EntityID) (T, bool) {
 	var zero T
-	if w == nil || !w.Alive(id) {
-		return zero, false
+	switch store := readColumn[T](w).(type) {
+	case *denseStore[T]:
+		return store.get(id)
+	case *boxedStore:
+		boxed, ok := store.getAny(id)
+		if !ok {
+			return zero, false
+		}
+		typed, ok := boxed.(T)
+		return typed, ok
 	}
-	bucket := w.components[componentType[T]()]
-	if bucket == nil {
-		return zero, false
-	}
-	value, ok := bucket[id]
-	if !ok {
-		return zero, false
-	}
-	typed, ok := value.(T)
-	if !ok {
-		return zero, false
-	}
-	return typed, true
+	return zero, false
 }
 
 // UpdateComponent edits a component in place through a copy/writeback cycle.
@@ -263,32 +294,41 @@ func Query[T any](w *World) []ComponentRef[T] {
 // QueryInto appends all live entities carrying component T to dst. The returned
 // slice is sorted by entity ID and reuses dst's backing array when possible.
 // Prefer this in hot systems that run every fixed frame.
+//
+// The column is already ordered and holds only live entities, so this walks
+// contiguous memory once. It does not sort and it does not check liveness.
 func QueryInto[T any](w *World, dst []ComponentRef[T]) []ComponentRef[T] {
 	out := dst[:0]
-	if w == nil {
-		return out
+	switch store := readColumn[T](w).(type) {
+	case *denseStore[T]:
+		entities := store.entities
+		values := store.values
+		if cap(out) < store.count() {
+			out = make([]ComponentRef[T], 0, store.count())
+		}
+		if store.deadN == 0 {
+			for i := range entities {
+				out = append(out, ComponentRef[T]{Entity: entities[i], Value: values[i]})
+			}
+			return out
+		}
+		dead := store.dead
+		for i := range entities {
+			if dead[i] {
+				continue
+			}
+			out = append(out, ComponentRef[T]{Entity: entities[i], Value: values[i]})
+		}
+	case *boxedStore:
+		for i, id := range store.entities {
+			if store.dead[i] {
+				continue
+			}
+			if value, ok := store.values[i].(T); ok {
+				out = append(out, ComponentRef[T]{Entity: id, Value: value})
+			}
+		}
 	}
-	bucket := w.components[componentType[T]()]
-	if len(bucket) == 0 {
-		return out
-	}
-	for id, raw := range bucket {
-		if !w.Alive(id) {
-			continue
-		}
-		if value, ok := raw.(T); ok {
-			out = append(out, ComponentRef[T]{Entity: id, Value: value})
-		}
-	}
-	slices.SortFunc(out, func(a, b ComponentRef[T]) int {
-		if a.Entity < b.Entity {
-			return -1
-		}
-		if a.Entity > b.Entity {
-			return 1
-		}
-		return 0
-	})
 	return out
 }
 

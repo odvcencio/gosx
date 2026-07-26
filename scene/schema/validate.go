@@ -129,6 +129,9 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		if strings.TrimSpace(object.Kind) == "" {
 			report.add(Error, "scene.object.kind_missing", "Object scene record requires kind", path+".kind", object.ID, nil)
 		}
+		validateGeometryKind(report, object.Kind, object.ID, path)
+		validateMaterialKind(report, object.MaterialKind, object.ID, path, opts.Strict)
+		validateBlendMode(report, object.BlendMode, object.ID, path)
 		validateObject(report, object, path)
 	}
 	for i, model := range doc.Models {
@@ -150,6 +153,9 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		path := fmt.Sprintf("instancedMeshes[%d]", i)
 		addID(mesh.ID, path+".id", true)
 		addTargetID(mesh.ID)
+		validateGeometryKind(report, mesh.Kind, mesh.ID, path)
+		validateMaterialKind(report, mesh.MaterialKind, mesh.ID, path, opts.Strict)
+		validateBlendMode(report, mesh.BlendMode, mesh.ID, path)
 		validateInstancedMesh(report, mesh, path)
 	}
 	for i, mesh := range doc.InstancedGLBMeshes {
@@ -717,6 +723,7 @@ func validateLight(report *Report, light scene.LightIR, path string) {
 	if strings.TrimSpace(light.Kind) == "" {
 		report.add(Error, "scene.light.kind_missing", "Light scene record requires kind", path+".kind", light.ID, nil)
 	}
+	validateLightKind(report, light.Kind, light.ID, path)
 	validateNumericFields(report, light.ID, path, map[string]float64{
 		"intensity":      light.Intensity,
 		"x":              light.X,

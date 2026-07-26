@@ -52,7 +52,7 @@ GoSX is opinionated about a small number of things and flexible about everything
 - **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
 - **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Island-only and compute-island-only routes select a slim `runtime-islands.wasm` that drops the shared engine bridge and editor/runtime helpers; routes that need shared engines keep the full WASM runtime. An app with no islands has no client VM; an app with no engines has no engine bundle.
-- **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure. The island VM is ~50 opcodes. The patch applier and island hook are under 1k lines of JS. You can read all of it. (The Scene3D feature chunk is larger — see the build manifest for the exact bytes a route ships.)
+- **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure. The island VM is 68 opcodes. The patch applier and island hook are under 1k lines of JS. You can read all of it. (The Scene3D feature chunk is larger — see the build manifest for the exact bytes a route ships.)
 - **Small dependency budget.** That's not marketing — it's a design constraint. Every new transitive dep is a bug surface, a license to audit, and a supply-chain risk. We take that budget seriously.
 
 ## Five Primitives
@@ -168,7 +168,7 @@ GSX syntax is parsed by [gotreesitter](https://github.com/odvcencio/gotreesitter
   -> server components: render to HTML directly
   -> island components:
        -> extract signals, computeds, handlers from Go source
-       -> compile expressions to VM opcodes (~50 operations)
+       -> compile expressions to VM opcodes (68 operations)
        -> serialize as IslandProgram (JSON dev / binary prod)
        -> browser: shared WASM VM + JS patch applier and island hook (under 1k lines)
        -> per-island programs are 1-10KB each
@@ -338,7 +338,12 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 ## Scene3D — 3D Engine
 
-The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree; the runtime lowers it to a compact IR, streams it to the client, and renders it through two backends that reach the browser as part of the standard bootstrap bundle: a hand-written JS WebGL backend, and a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle` with hand-written WGSL) compiled to WASM. Typed Scene3D surfaces declare WebGPU as a default capability, so capable browsers take the WebGPU path first and fall back through WebGL and canvas when the scene or device needs it. Both backends consume the same SceneIR; the planner picks at runtime based on capability. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
+The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
+
+- **On the web**, two hand-written JavaScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
+- **On the desktop**, and for headless rendering, a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle`, with hand-written WGSL) consumes the same IR. It also backs `scene/preview`, which renders to PNG with no browser and no GPU.
+
+Typed Scene3D surfaces declare WebGPU as a default capability, so a capable browser takes the WebGPU path first and falls back through WebGL2 to canvas when the device or the scene needs it. The server computes a per-backend fidelity verdict and ships it with the scene, so a backend that cannot render a scene faithfully is diverted rather than allowed to draw the wrong image. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
 
 ```go
 scene.Props{
@@ -402,10 +407,10 @@ scene.Props{
 - **Scene graph** — `Group`, `Mesh`, `LODGroup`, `Decal`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
-- **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadows on directional and spot with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap
+- **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadow maps on directional lights, with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap; spot lights render their cone and penumbra but do not yet cast shadows on either browser backend
 - **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
-- **Build-time asset planning** — `gosx assets plan public` and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio, USDZ, and WGSL assets into a low-memory `scene-assets.json` contract, including KTX2 upload metadata, concrete variant targets, planned KTX2 transcodes, GGX IBL prefiltering, split-sum LUT generation, meshopt/Draco compression, LOD stacks, and TurboQuant vertex/animation stream compression
+- **Build-time asset planning** — `gosx assets plan public` and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio, USDZ, and WGSL assets into a low-memory `scene-assets.json` contract. It reads real structure: glTF mesh, material and animation counts, KTX2 headers, and WGSL entry points and bind groups. It then records the optimizations each asset *would* benefit from — KTX2 transcodes, GGX IBL prefiltering, split-sum LUT generation, meshopt or Draco compression, LOD stacks, vertex and animation stream compression — as `candidate` or `planned` actions. **Planning is all it does today. GoSX ships no encoder for any of them**, and the runtime glTF loader cannot consume Draco, meshopt or KTX2 either — it raises a named error instead of building a corrupt mesh
 - **Server-driven scene diffs** — `scene.DiffCommands(prev.SceneIR(), next.SceneIR())` emits the browser command protocol for live object, label, sprite, and light replacement, so a Go server can mutate typed scene state and stream compact Scene3D commands over a hub instead of shipping a new page payload
 - **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback with loop, speed, blend weight, fade-in/fade-out, and replay-sequence controls; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
 - **Instancing** — `InstancedMesh` renders repeated geometry through WebGPU instance-rate vertex buffers and WebGL2 `drawArraysInstanced`, with per-instance transforms, colors, material passes, receive shadows, and WebGPU instanced shadow casters
@@ -416,13 +421,13 @@ scene.Props{
 - **WebGPU presentation** — tier-aware 4x MSAA render targets with resolve-to-canvas/post-FX targets, adapter feature/limit negotiation for timestamp queries, shader-f16, indirect first-instance, compressed textures, subgroups, manifest-driven `requiredFeatures` / `requiredLimits` negotiation, opt-in adapter `powerPreference`, opt-in canvas `alphaMode` / `colorSpace` / `toneMapping`, and diagnostics exposed for tooling through `data-gosx-scene3d-webgpu-*` mount attributes, plus shared SceneIR parity across WebGPU, WebGL2, and headless backends
 - **Post-processing** — `SSAO`, `DOF`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, with backend-specific passes skipped gracefully when unavailable
 - **Editor/debug surfaces** — `AxesHelper`, `GridHelper`, `BoxHelper`, `BoundingBoxHelper`, `SkeletonHelper`, visual `TransformControls`, selected mesh outline styling, dashed/solid line materials, and opt-in `Stats` overlay
-- **Native preview & certification** — `scene/preview` renders typed scenes to PNG with no browser or GPU (thumbnails, docs images, deterministic visual tests), and `scene/harness` certifies contract evidence — frame hashes, coverage, Selena artifact hashes, exact BVH ray/drag traces — into schema-versioned JSON reports suitable for agent-operated authoring workflows
+- **Native preview & certification** — `scene/preview` renders typed scenes to PNG with no browser or GPU (thumbnails, docs images, deterministic visual tests), and `scene/harness` certifies contract evidence — frame hashes, coverage, Selena artifact hashes, and BVH-accelerated ray/drag traces that are exact for every analytic primitive and every triangle mesh, use a pick radius for points, sprites and line strokes, fall back to a bounds box only for glTF models Go never loads, and name the method behind each hit — into schema-versioned JSON reports suitable for agent-operated authoring workflows
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
-- **Compression & LOD** — per-component scalar quantization with delta encoding, progressive streaming, camera-distance-based LOD switching via `scene.Compression`, plus conventional discrete mesh/model swaps via `scene.LODGroup`
+- **Compression & LOD** — per-chunk min/max scalar quantization with bit packing, including a per-lane mat4 deinterleave so translation lanes cannot crush scale lanes, progressive streaming that previews at 2 bits and upgrades to full precision, camera-distance-based LOD switching via `scene.Compression`, plus conventional discrete mesh/model swaps via `scene.LODGroup`
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
 - **Camera controls** — `orbit`, `first-person`, `fly`, pointer lock, drag-to-rotate, focus targets, pick signals (including the world-space click ray as `$surface.event.rayOriginX/Y/Z` + `rayDirX/Y/Z`), interactive TransformControls gizmo drags that emit `gosx:scene3d:input` `kind:"gizmo-commit"` events and an optional `GizmoOutputSignal`, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
-- **Shared IR across backends** — the JS WebGL backend, the pure-Go WebGPU pipeline, and the headless test backend consume the same SceneIR, with feature parity gated by what each target surface actually supports
+- **Shared IR across backends** — the JS WebGPU and WebGL2 browser backends, the pure-Go desktop WebGPU pipeline, and the headless software rasterizer all consume the same SceneIR, with feature parity gated by what each target surface actually supports and reported through the capability verdict
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
 
 The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. You can hold the whole thing in your head, and when something goes wrong you read Go and JavaScript — not a black box.
@@ -442,7 +447,7 @@ Hubs handle client lifecycle, message framing, broadcast patterns, per-connectio
 
 ## Collaboration: CRDT + Workspace
 
-The `crdt` package implements a conflict-free replicated document model with a wire-compatible sync protocol (bloom-filter-based message exchange, delta-encoded changes, vector-clock causality tracking). Its convergence contract is covered by partitioned concurrent text edits, large partitioned histories, tombstone save/load merge tests, and sync recovery tests. It's independent of the transport — you can drive it over a `hub`, over Redis, or over raw bytes in a file.
+The `crdt` package implements a conflict-free replicated document model with a bloom-filter-based sync protocol, delta-encoded changes, and vector-clock causality tracking. Documents serialize to a compact binary snapshot — interned actor and object tables, zigzag varint deltas, run-length tombstones, and change hashes recomputed on load rather than stored — which costs about 5 bytes per character of text. The chunk framing follows Automerge's shape (magic bytes, ULEB128 length, truncated checksum) but the body is GoSX's own encoding, so treat it as protocol-compatible in structure, not byte-compatible with Automerge. Older JSON snapshots still load. Its convergence contract is covered by partitioned concurrent text edits, large partitioned histories, tombstone save/load merge tests, and sync recovery tests. It's independent of the transport — you can drive it over a `hub`, over Redis, or over raw bytes in a file.
 
 ```go
 doc := crdt.NewDoc()
@@ -456,7 +461,7 @@ The `workspace` package layers a distributed semantic collaboration space on top
 
 ## Volumetric Data & Simulation
 
-**`field`** — 3D vector fields. Trilinear sampling, axis-aligned bounding boxes, and a full set of operators (`Advect`, `Curl`, `Divergence`, `Gradient`, `Blur`, `Resample`). Per-component scalar quantization with delta encoding collapses a 256³ float32 vector field from ~64 MB to a few hundred KB, and streaming publish/subscribe over `hub` lets a server-authoritative simulation broadcast field updates to subscribed clients. The package is renderer-agnostic — it's the substrate for volumetric rendering, particle advection, fluid simulation, and anything else that needs structured 3D data at a distance.
+**`field`** — 3D vector fields. Trilinear sampling, axis-aligned bounding boxes, and a full set of operators (`Advect`, `Curl`, `Divergence`, `Gradient`, `Blur`, `Resample`). Per-component scalar quantization packs each value to a fixed bit width, so the ratio is `32/bitWidth` — a 256³ scalar field drops from 64 MiB to 8 MiB at 4 bits, and a 64³ scalar field to about 192 KiB at 6 bits. Delta encoding tightens the quantized range rather than shrinking the payload. Streaming streaming publish/subscribe over `hub` lets a server-authoritative simulation broadcast field updates to subscribed clients. The package is renderer-agnostic — it's the substrate for volumetric rendering, particle advection, fluid simulation, and anything else that needs structured 3D data at a distance.
 
 **`sim`** — Server-authoritative game simulation. Games implement the `Simulation` interface; a `Runner` drives it at a fixed tick rate, collects per-client inputs from a hub, broadcasts state snapshots, and handles replay and spectator sync. The server is the source of truth; clients submit inputs and render the authoritative state they receive back.
 
@@ -622,8 +627,8 @@ within budget. CI runs the gate on every PR. Baselines (Phase 1c shipped):
 
 | Flavor | Build tags                    | Shipped (Phase 1c) | Budget |
 |--------|-------------------------------|--------------------|--------|
-| full   | _(none)_                      | ~7,883 KB          | 8,500 KB |
-| tiny   | `gosx_tiny_islands_only`      | ~5,618 KB          | 5,900 KB |
+| full   | _(none)_                      | ~1,368 KB          | 5,500 KB |
+| tiny   | `gosx_tiny_islands_only`      | ~684 KB            | 3,200 KB |
 
 Override the budget for a planned-growth slice by exporting
 `WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. **Any budget increase
@@ -725,7 +730,6 @@ Three tiers:
 | `highlight` | Syntax highlighting for Go, GSX, JavaScript, JSON, and Bash |
 | `client/vm` | Expression VM, tree reconciler, patch generation |
 | `client/bridge` | WASM bridge for island/engine lifecycle |
-| `client/enginevm` | Lightweight VM for engine scripting |
 | `client/wasm` | WASM entry point |
 | `client/js` | Browser runtime: bootstrap (lite/runtime/full), patch applier, feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
 | `render` | Server-side HTML rendering from IR |
@@ -770,16 +774,24 @@ Client correctness is verified at four layers: pure Go VM/bridge tests, JS runti
 
 ## Dependencies
 
-Six:
+The discipline is real, but it is per-package rather than per-module, and the distinction matters when you audit it.
+
+**The root `gosx` package pulls exactly one third-party module.** `go list -deps .` returns `gotreesitter` (with its grammar packages) and nothing else. Import `gosx` alone and that is your whole external surface.
+
+The six libraries the framework's runtime paths use:
 
 - [gotreesitter](https://github.com/odvcencio/gotreesitter) — pure-Go tree-sitter runtime with grammar composition
-- [turboquant](https://github.com/odvcencio/turboquant) — pure-Go MSE-optimal vector quantizer powering `vecdb` and `crdt` compression
+- [turboquant](https://github.com/odvcencio/turboquant) — pure-Go MSE-optimal vector quantizer powering `vecdb`
 - [gorilla/websocket](https://github.com/gorilla/websocket) — WebSocket support for hubs
 - [rivo/uniseg](https://github.com/rivo/uniseg) — Unicode segmentation for text layout
 - [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) — image optimization
 - [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) — HTML utilities
 
-No CGo. No JavaScript toolchain. Compiles anywhere `GOOS/GOARCH` can reach, including WASM.
+**The module graph is larger, and `go.mod` is the honest record.** Beyond those six it carries direct requires for tooling and optional subsystems: `chromedp` and `cdproto` (the `perf` profiler and browser tests), `brotli` (asset compression), `fsnotify` (the dev watcher), `mdpp` (Markdown++ in `content`), `pixelmatch` (visual regression), `go-redis` and `miniredis` (the optional Redis stores and their tests), `selena` (shader compilation), and `golang.org/x/sys`. A `//go:build tools` file additionally pins sibling M31 Labs modules ahead of their migrations, which is why `google.golang.org/grpc` and `protobuf` appear in `go.sum` — they reach no shipped binary, but they do reach a dependency audit.
+
+**No CGo.** `CGO_ENABLED=0 go build ./...` is clean, and `windows/amd64`, `darwin/arm64` and `linux/arm64` all cross-compile clean. `GOOS=js GOARCH=wasm` builds every package except `examples/vecdb-webgpu-smoke`, which references a removed `vecdb` prepared-query API — a known breakage documented at `e2e/vecdb_webgpu_smoke_test.go`.
+
+**No JavaScript toolchain** — for your app. The framework itself contains roughly 79,000 lines of hand-written browser JavaScript and vendors `hls.min.js` for HLS playback. The claim is about your build, and there it holds: no Node, no npm, no bundler config.
 
 ## Built On
 

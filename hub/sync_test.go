@@ -467,6 +467,49 @@ func TestHubBinaryAuthorizerDropsUnauthorizedInboundSync(t *testing.T) {
 	_ = viewerID
 }
 
+// clientFrameWithChanges builds a peer document from serverDoc, makes one edit,
+// and returns a sync frame that really carries that change.
+//
+// The sync protocol advertises the heads a peer already has through a Bloom
+// filter. A false positive makes the sender hold the change back for the next
+// round, which leaves a frame with no changes. The actor identity is random, so
+// the outcome varies from run to run. Retrying with a fresh actor keeps the test
+// on the case it means to check: a frame that does carry a change.
+func clientFrameWithChanges(t *testing.T, serverDoc *crdt.Doc) (*crdt.Doc, []byte) {
+	t.Helper()
+	for attempt := 0; attempt < 32; attempt++ {
+		clientDoc := crdt.NewDoc()
+		clientState := crdtsync.NewState()
+		bootstrapState := crdtsync.NewState()
+		bootstrap, ok := serverDoc.GenerateSyncMessage(bootstrapState)
+		if !ok {
+			t.Fatal("expected bootstrap sync message")
+		}
+		if err := clientDoc.ReceiveSyncMessage(clientState, bootstrap); err != nil {
+			t.Fatal(err)
+		}
+		if err := clientDoc.Put(crdt.Root, "title", crdt.StringValue("client")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := clientDoc.Commit("client edit"); err != nil {
+			t.Fatal(err)
+		}
+		frame, ok := clientDoc.GenerateSyncMessage(clientState)
+		if !ok {
+			t.Fatal("expected client sync message")
+		}
+		changes, err := decodeSyncChanges(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(changes) > 0 {
+			return clientDoc, frame
+		}
+	}
+	t.Fatal("no sync frame carried a change after 32 attempts")
+	return nil, nil
+}
+
 func TestHubBinaryChangeAuthorizerRejectsActorSubstitutionBeforeMerge(t *testing.T) {
 	h := New("collab-change-auth")
 	serverDoc := crdt.NewDoc()
@@ -479,26 +522,7 @@ func TestHubBinaryChangeAuthorizerRejectsActorSubstitutionBeforeMerge(t *testing
 	h.SyncDoc("room-actor", serverDoc)
 	prefix := h.syncDocName["room-actor"]
 
-	clientDoc := crdt.NewDoc()
-	clientState := crdtsync.NewState()
-	bootstrapState := crdtsync.NewState()
-	bootstrap, ok := serverDoc.GenerateSyncMessage(bootstrapState)
-	if !ok {
-		t.Fatal("expected bootstrap sync message")
-	}
-	if err := clientDoc.ReceiveSyncMessage(clientState, bootstrap); err != nil {
-		t.Fatal(err)
-	}
-	if err := clientDoc.Put(crdt.Root, "title", crdt.StringValue("client")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := clientDoc.Commit("client edit"); err != nil {
-		t.Fatal(err)
-	}
-	frame, ok := clientDoc.GenerateSyncMessage(clientState)
-	if !ok {
-		t.Fatal("expected client sync message")
-	}
+	clientDoc, frame := clientFrameWithChanges(t, serverDoc)
 
 	client := &Client{
 		ID:         "writer",

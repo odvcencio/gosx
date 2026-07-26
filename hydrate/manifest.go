@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 )
 
@@ -26,6 +27,9 @@ type Manifest struct {
 
 	// Hubs lists realtime hub connections the client should establish.
 	Hubs []HubEntry `json:"hubs,omitempty"`
+
+	// Controllers lists headless declarative browser controllers for the page.
+	Controllers []ControllerEntry `json:"controllers,omitempty"`
 
 	// ClientIdentity describes optional browser-owned client identity state.
 	ClientIdentity *ClientIdentityConfig `json:"clientIdentity,omitempty"`
@@ -92,6 +96,12 @@ type HubEntry struct {
 	// Input describes optional browser input forwarding owned by the GoSX
 	// bootstrap rather than page-authored JavaScript.
 	Input *HubInputConfig `json:"input,omitempty"`
+}
+
+// ControllerEntry describes one bootstrap-owned headless controller instance.
+type ControllerEntry struct {
+	ID     string            `json:"id"`
+	Config controller.Config `json:"config"`
 }
 
 // HubBinding maps a hub event to a shared signal name.
@@ -424,9 +434,24 @@ func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, inp
 	return id
 }
 
+// AddController registers a declarative headless controller and returns the
+// assigned stable manifest ID.
+func (m *Manifest) AddController(config controller.Config) string {
+	id := controllerID(len(m.Controllers))
+	m.Controllers = append(m.Controllers, ControllerEntry{
+		ID:     id,
+		Config: config,
+	})
+	return id
+}
+
 // SetClientIdentity configures bootstrap-owned client identity state.
 func (m *Manifest) SetClientIdentity(config ClientIdentityConfig) {
 	m.ClientIdentity = &config
+}
+
+func controllerID(n int) string {
+	return "gosx-controller-" + itoa(n)
 }
 
 func engineID(n int) string {

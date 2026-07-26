@@ -19,6 +19,12 @@ import (
 var (
 	ErrMagicLinkInvalid = errors.New("magic link is invalid")
 	ErrMagicLinkExpired = errors.New("magic link expired")
+
+	// ErrMagicLinkBaseURLRequired reports a magic-link flow with no absolute
+	// base URL. The link carries a sign-in token, so GoSX refuses to build the
+	// link from request headers. Set MagicLinkOptions.BaseURL, or list the
+	// hosts in MagicLinkOptions.AllowedHosts.
+	ErrMagicLinkBaseURLRequired = fmt.Errorf("auth: magic link needs BaseURL or AllowedHosts: %w", ErrOriginNotConfigured)
 )
 
 // MagicLinkToken is a persisted sign-in token awaiting consumption.
@@ -123,8 +129,23 @@ func (s *MemoryMagicLinkStore) Consume(token string, now time.Time) (MagicLinkTo
 
 // MagicLinkOptions configures the built-in magic-link auth flow.
 type MagicLinkOptions struct {
-	Path        string
-	BaseURL     string
+	Path string
+
+	// BaseURL is the absolute origin of the application, such as
+	// "https://app.example". The magic link carries a sign-in token, so GoSX
+	// needs BaseURL or AllowedHosts. Without either one, Issue and Send fail
+	// with ErrMagicLinkBaseURLRequired.
+	BaseURL string
+
+	// AllowedHosts lists the hosts that may build the link when BaseURL is
+	// empty. Use it for a multi-tenant deployment. GoSX rejects any other
+	// host, so an attacker cannot redirect the token to another site.
+	AllowedHosts []string
+
+	// ForwardedTrust reads X-Forwarded-Proto and X-Forwarded-Host from listed
+	// proxies only. GoSX ignores both headers by default.
+	ForwardedTrust ForwardedTrust
+
 	TTL         time.Duration
 	SuccessPath string
 	FailurePath string
@@ -139,7 +160,8 @@ type MagicLinkOptions struct {
 type MagicLinks struct {
 	manager     *Manager
 	path        string
-	baseURL     string
+	origin      *originResolver
+	originErr   error
 	ttl         time.Duration
 	successPath string
 	failurePath string
@@ -173,10 +195,12 @@ func NewMagicLinks(manager *Manager, opts MagicLinkOptions) *MagicLinks {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	origin, originErr := newOriginResolver(opts.BaseURL, opts.AllowedHosts, opts.ForwardedTrust)
 	return &MagicLinks{
 		manager:     manager,
 		path:        opts.Path,
-		baseURL:     strings.TrimRight(opts.BaseURL, "/"),
+		origin:      origin,
+		originErr:   originErr,
 		ttl:         opts.TTL,
 		successPath: opts.SuccessPath,
 		failurePath: opts.FailurePath,
@@ -218,6 +242,12 @@ func (m *MagicLinks) Issue(r *http.Request, email string, next string) (MagicLin
 	if err != nil {
 		return MagicLinkDelivery{}, err
 	}
+	// Build the link before the store keeps the token. A missing origin then
+	// leaves no usable token behind.
+	callback, err := m.callbackURL(r, token)
+	if err != nil {
+		return MagicLinkDelivery{}, err
+	}
 	expiresAt := m.now().Add(m.ttl)
 	record := MagicLinkToken{
 		Token:     token,
@@ -233,7 +263,7 @@ func (m *MagicLinks) Issue(r *http.Request, email string, next string) (MagicLin
 	delivery := MagicLinkDelivery{
 		Email:     email,
 		Token:     token,
-		URL:       m.callbackURL(r, token),
+		URL:       callback,
 		User:      user,
 		Next:      record.Next,
 		ExpiresAt: expiresAt,
@@ -289,7 +319,13 @@ func (m *MagicLinks) RequestHandler() http.Handler {
 		}
 		delivery, err := m.Send(r, email, next)
 		if err != nil {
-			writeMagicLinkError(w, r, http.StatusBadRequest, err)
+			// A missing origin is a server configuration fault, not a bad
+			// request from the client.
+			status := http.StatusBadRequest
+			if errors.Is(err, ErrOriginNotConfigured) || errors.Is(err, ErrOriginNotAllowed) {
+				status = http.StatusInternalServerError
+			}
+			writeMagicLinkError(w, r, status, err)
 			return
 		}
 
@@ -364,16 +400,21 @@ func (m *MagicLinks) resolveUser(ctx context.Context, email string) (User, error
 	}, nil
 }
 
-func (m *MagicLinks) callbackURL(r *http.Request, token string) string {
-	path := m.path + "?token=" + url.QueryEscape(token)
-	base := m.baseURL
-	if base == "" {
-		base = requestOrigin(r)
+// callbackURL builds the absolute link that carries the sign-in token. It
+// fails when no trusted origin exists, so a forged Host or X-Forwarded-Host
+// header cannot send the token to another site.
+func (m *MagicLinks) callbackURL(r *http.Request, token string) (string, error) {
+	if m.originErr != nil {
+		return "", m.originErr
 	}
-	if base == "" {
-		return path
+	base, err := m.origin.resolve(r)
+	if err != nil {
+		if errors.Is(err, ErrOriginNotConfigured) {
+			return "", ErrMagicLinkBaseURLRequired
+		}
+		return "", err
 	}
-	return base + path
+	return base + m.path + "?token=" + url.QueryEscape(token), nil
 }
 
 func readMagicLinkRequest(r *http.Request) (string, string, error) {
@@ -411,10 +452,13 @@ func addMagicLinkFlash(r *http.Request, key string, value any) {
 	}
 }
 
+// redirectBackTarget returns a same-site path to return the browser to. It
+// keeps only a Referer that points at the current host, because a cross-site
+// form can set any Referer value and turn the redirect into an open redirect.
 func redirectBackTarget(r *http.Request, fallback string) string {
 	if r != nil {
-		if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" {
-			return referer
+		if target := sameSiteRefererPath(r); target != "" {
+			return target
 		}
 		if r.URL != nil && r.URL.Path != "" {
 			return r.URL.Path
@@ -426,38 +470,69 @@ func redirectBackTarget(r *http.Request, fallback string) string {
 	return fallback
 }
 
+func sameSiteRefererPath(r *http.Request) string {
+	referer := strings.TrimSpace(r.Header.Get("Referer"))
+	if referer == "" {
+		return ""
+	}
+	parsed, err := url.Parse(referer)
+	if err != nil {
+		return ""
+	}
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, r.Host) {
+		return ""
+	}
+	target := parsed.EscapedPath()
+	if target == "" {
+		return ""
+	}
+	if parsed.RawQuery != "" {
+		target += "?" + parsed.RawQuery
+	}
+	return sanitizeRedirectTarget(target)
+}
+
+// sanitizeRedirectTarget keeps only a same-site path. It returns an empty
+// string for every other value, so the caller falls back to a safe path.
+//
+// A browser rewrites a backslash to a forward slash inside a URL path, so
+// "/\evil.example" becomes "//evil.example" and jumps to another host. The
+// function therefore rejects a backslash, a percent-encoded backslash, and
+// every control character, tab, or newline that hides the real target.
 func sanitizeRedirectTarget(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || strings.HasPrefix(value, "//") {
+	if value == "" {
 		return ""
 	}
-	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+	if strings.ContainsFunc(value, unsafeRedirectRune) {
 		return ""
 	}
-	if !strings.HasPrefix(value, "/") {
+	if strings.Contains(strings.ToLower(value), "%5c") {
+		return ""
+	}
+	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme != "" || parsed.Opaque != "" || parsed.Host != "" || parsed.User != nil {
 		return ""
 	}
 	return value
 }
 
-func requestOrigin(r *http.Request) string {
-	if r == nil {
-		return ""
+// unsafeRedirectRune reports a rune that must never reach a Location header.
+func unsafeRedirectRune(r rune) bool {
+	switch {
+	case r == '\\':
+		return true
+	case r <= 0x1f, r == 0x7f:
+		return true
+	default:
+		return false
 	}
-	scheme := "http"
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
-		scheme = forwarded
-	} else if r.TLS != nil {
-		scheme = "https"
-	}
-	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = strings.TrimSpace(r.Host)
-	}
-	if host == "" {
-		return ""
-	}
-	return scheme + "://" + host
 }
 
 func randomMagicLinkToken() (string, error) {

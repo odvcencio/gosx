@@ -31,14 +31,22 @@ func main() {
 	}
 	port := getenv("PORT", "8080")
 	publicBase := strings.TrimRight(getenv("PUBLIC_URL", "http://localhost:"+port), "/")
-	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{})
+	// Keep the Secure cookie flag, unless PUBLIC_URL serves plain HTTP. A
+	// local HTTP run needs the opt-out, because a browser drops a Secure
+	// cookie on a plain HTTP origin.
+	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{
+		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 	authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
 	docsapp.BindAuth(authn)
 	magicLinks := authn.MagicLinks(auth.MagicLinkOptions{
-		Path:        "/auth/magic-link",
+		Path: "/auth/magic-link",
+		// Pin the origin that carries the sign-in token. Without BaseURL a
+		// forged Host header could send the token to another site.
+		BaseURL:     publicBase,
 		SuccessPath: "/docs/auth",
 		FailurePath: "/docs/auth",
 		FlashKey:    "magicLink",
@@ -107,6 +115,7 @@ func main() {
 	app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
 	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
 	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
+	app.Redirect("GET /docs/", "/docs/getting-started", http.StatusTemporaryRedirect)
 	app.Mount("/demos/collab/ws", collab.Hub)
 	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)

@@ -93,7 +93,7 @@ type WaterInteractionEvidence struct {
 // normal spacing, independent simulation/render topology, optics, resource
 // budgets, normalized lighting, and Selena pass completeness.
 func (s *Session) CertifyWater(label string, contract WaterContract) WaterTelemetry {
-	ir := s.props.SceneIR()
+	ir := s.sceneIR
 	var water *scene.WaterSystemIR
 	for i := range ir.WaterSystems {
 		if contract.SystemID == "" || ir.WaterSystems[i].ID == contract.SystemID {

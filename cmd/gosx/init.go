@@ -201,6 +201,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	_ "__MODULE__/modules"
@@ -220,7 +221,12 @@ func main() {
 
 	appName := getenv("APP_NAME", "My GoSX App")
 	port := getenv("PORT", "8080")
-	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{})
+	publicBase := getenv("PUBLIC_URL", "http://localhost:"+port)
+	// Local development serves plain HTTP. A Secure cookie never reaches the
+	// server there. Point PUBLIC_URL at an https origin to restore Secure.
+	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{
+		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
+	})
 	if err != nil {
 		log.Fatal(err)
 	}

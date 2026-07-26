@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 )
 
@@ -217,6 +218,79 @@ func TestManifestAddHub(t *testing.T) {
 	}
 	if m.Hubs[0].Bindings[0].Signal != "$presence" {
 		t.Fatalf("unexpected binding %#v", m.Hubs[0].Bindings[0])
+	}
+}
+
+func TestManifestAddControllerRoundTrip(t *testing.T) {
+	m := NewManifest()
+	id := m.AddController(controller.Config{
+		Name: "palette",
+		Root: "#app",
+		Inputs: []controller.Input{{
+			Name:   "theme",
+			Signal: "$theme",
+			Output: "events",
+		}},
+		Outputs: []controller.Output{{
+			Name:    "events",
+			Signal:  "$controller.events",
+			Initial: map[string]any{"ready": true},
+		}},
+		Keys: []controller.KeyBinding{{
+			Code:           "KeyK",
+			Modifiers:      []string{"meta"},
+			Output:         "events",
+			PreventDefault: true,
+		}},
+		Timers: []controller.Timer{{
+			Name:    "pulse",
+			Output:  "events",
+			EveryMS: 250,
+		}},
+		Resources: []controller.FetchResource{{
+			Name:          "settings",
+			URL:           "/api/settings",
+			Output:        "events",
+			RefreshSignal: "$refreshSettings",
+		}},
+		Storage: &controller.Storage{
+			Namespace: "prefs",
+			Load: []controller.StorageSlot{{
+				Key:    "theme",
+				Output: "events",
+			}},
+			Save: []controller.StorageSlot{{
+				Key:    "theme",
+				Signal: "$theme",
+			}},
+		},
+	})
+	if id != "gosx-controller-0" {
+		t.Fatalf("expected gosx-controller-0, got %s", id)
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	decoded, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Controllers) != 1 {
+		t.Fatalf("expected 1 controller, got %d", len(decoded.Controllers))
+	}
+	got := decoded.Controllers[0]
+	if got.ID != id || got.Config.Name != "palette" {
+		t.Fatalf("unexpected controller entry: %#v", got)
+	}
+	if got.Config.Keys[0].Modifiers[0] != "meta" {
+		t.Fatalf("modifiers did not round trip: %#v", got.Config.Keys[0])
+	}
+	if got.Config.Resources[0].RefreshSignal != "$refreshSettings" {
+		t.Fatalf("resource did not round trip: %#v", got.Config.Resources[0])
+	}
+	if got.Config.Storage.Load[0].Output != "events" {
+		t.Fatalf("storage did not round trip: %#v", got.Config.Storage)
 	}
 }
 

@@ -55,3 +55,56 @@ func BenchmarkWorldEntitiesInto10k(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkWorldGetComponent10k(b *testing.B) {
+	world := benchmarkWorld10k(b)
+	ids := EntitiesInto(world, nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, ok := GetComponent[Transform](world, ids[i%len(ids)]); !ok {
+			b.Fatal("expected component")
+		}
+	}
+}
+
+func BenchmarkWorldSetComponent10k(b *testing.B) {
+	world := benchmarkWorld10k(b)
+	ids := EntitiesInto(world, nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SetComponent(world, ids[i%len(ids)], Transform{Position: Vec3{X: float64(i)}})
+	}
+}
+
+func BenchmarkWorldSpawnAndSet(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		world := NewWorld()
+		b.StartTimer()
+		for j := 0; j < 1000; j++ {
+			id := world.Spawn()
+			SetComponent(world, id, Transform{Position: Vec3{X: float64(j)}})
+		}
+	}
+}
+
+func BenchmarkWorldDespawn1k(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		world := NewWorld()
+		ids := make([]EntityID, 0, 1000)
+		for j := 0; j < 1000; j++ {
+			id := world.Spawn()
+			ids = append(ids, id)
+			SetComponent(world, id, Transform{Position: Vec3{X: float64(j)}})
+		}
+		b.StartTimer()
+		for _, id := range ids {
+			world.Despawn(id)
+		}
+	}
+}

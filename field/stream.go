@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	enc "m31labs.dev/gosx/crdt/encoding"
 	"m31labs.dev/gosx/hub"
 )
 
@@ -51,6 +52,88 @@ func (s *streamState) get(h *hub.Hub, topic string) *topicState {
 // If opts.DeltaAgainst is nil and a previous field exists for this topic,
 // PublishField automatically uses the previous field as the delta base.
 func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) error {
+	q, err := quantizeAndDispatch(h, topic, f, opts)
+	if err != nil {
+		return err
+	}
+
+	// WebSocket broadcast — JSON-encode and ship to connected clients.
+	// encoding/json base64-encodes Packed and Preview, so the frame is about
+	// 33% larger than q.WireSize. Use PublishFieldBinary when both ends can
+	// speak the compact binary form.
+	payload, err := json.Marshal(q)
+	if err != nil {
+		return err
+	}
+	if h != nil {
+		h.Broadcast(fieldEventPrefix+topic, json.RawMessage(payload))
+	}
+	return nil
+}
+
+// fieldBinaryPrefix marks a binary hub frame as a quantized field payload.
+// Hub.SyncDoc allocates prefixes 1 through 255 for CRDT documents, so 0 is free
+// for application protocols.
+const fieldBinaryPrefix byte = 0x00
+
+// PublishFieldBinary is PublishField over the compact binary wire form. It
+// returns the number of bytes in the frame.
+//
+// The frame is about 25% smaller than the JSON frame that PublishField sends,
+// because encoding/json base64-encodes the packed payload. Local subscribers
+// and the delta bookkeeping behave exactly as they do for PublishField.
+//
+// The frame layout is one prefix byte, the topic as a length-prefixed string,
+// then the payload of Quantized.MarshalBinary. Decode it with DecodeFieldFrame.
+//
+// The stock GoSX browser runtime ignores binary hub frames, so a caller must
+// supply its own decoder before switching a page to this transport.
+func PublishFieldBinary(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) (int, error) {
+	q, err := quantizeAndDispatch(h, topic, f, opts)
+	if err != nil {
+		return 0, err
+	}
+	body, err := q.MarshalBinary()
+	if err != nil {
+		return 0, err
+	}
+	frame := make([]byte, 0, 1+10+len(topic)+len(body))
+	frame = append(frame, fieldBinaryPrefix)
+	frame = enc.AppendULEB128(frame, uint64(len(topic)))
+	frame = append(frame, topic...)
+	frame = append(frame, body...)
+	if h != nil {
+		h.BroadcastBinary(frame)
+	}
+	return len(frame), nil
+}
+
+// DecodeFieldFrame reads a frame produced by PublishFieldBinary.
+func DecodeFieldFrame(frame []byte) (string, *Quantized, error) {
+	const op = "field.DecodeFieldFrame"
+	if len(frame) == 0 {
+		return "", nil, fieldError(op, "frame is empty")
+	}
+	if frame[0] != fieldBinaryPrefix {
+		return "", nil, fieldError(op, "frame prefix is %d, want %d", frame[0], fieldBinaryPrefix)
+	}
+	r := &wireReader{buf: frame, pos: 1}
+	name, err := r.blob()
+	if err != nil {
+		return "", nil, fieldError(op, "%v", err)
+	}
+	topic := string(name)
+	q, err := DecodeQuantized(frame[r.pos:])
+	if err != nil {
+		return topic, nil, err
+	}
+	return topic, q, nil
+}
+
+// quantizeAndDispatch runs the shared part of both publish paths: it picks the
+// delta base, quantizes, records the new base, and hands the decoded field to
+// the local subscribers.
+func quantizeAndDispatch(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) (*Quantized, error) {
 	streams.mu.Lock()
 	state := streams.get(h, topic)
 	if opts.DeltaAgainst == nil {
@@ -62,14 +145,14 @@ func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) erro
 
 	q, err := f.QuantizeChecked(opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var decoded *Field
 	if len(subs) > 0 {
 		decoded, err = decodeForSubscriber(q, opts.DeltaAgainst)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -78,28 +161,17 @@ func PublishField(h *hub.Hub, topic string, f *Field, opts QuantizeOptions) erro
 	state.last = f
 	streams.mu.Unlock()
 
-	// 1. Local dispatch — decode once and share the decoded *Field across all
+	// Local dispatch — decode once and share the decoded *Field across all
 	// local subscribers. Subscribers must treat the received *Field as
 	// read-only; this is the documented contract for SubscribeField.
-	if len(subs) > 0 {
-		for _, ch := range subs {
-			select {
-			case ch <- decoded:
-			default:
-				// Drop if subscriber is slow; never block PublishField.
-			}
+	for _, ch := range subs {
+		select {
+		case ch <- decoded:
+		default:
+			// Drop if the subscriber is slow; never block the publisher.
 		}
 	}
-
-	// 2. WebSocket broadcast — JSON-encode and ship to connected clients.
-	payload, err := json.Marshal(q)
-	if err != nil {
-		return err
-	}
-	if h != nil {
-		h.Broadcast(fieldEventPrefix+topic, json.RawMessage(payload))
-	}
-	return nil
+	return q, nil
 }
 
 // decodeForSubscriber reconstructs the *Field that PublishField just emitted,

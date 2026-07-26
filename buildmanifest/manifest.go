@@ -27,9 +27,12 @@ type RuntimeAssets struct {
 	BootstrapFeatureIslands          HashedAsset `json:"bootstrapFeatureIslands,omitempty"`
 	BootstrapFeatureEngines          HashedAsset `json:"bootstrapFeatureEngines,omitempty"`
 	BootstrapFeatureHubs             HashedAsset `json:"bootstrapFeatureHubs,omitempty"`
+	BootstrapFeatureControllers      HashedAsset `json:"bootstrapFeatureControllers,omitempty"`
+	BootstrapFeatureTextlayout       HashedAsset `json:"bootstrapFeatureTextlayout,omitempty"`
 	BootstrapFeatureScene3D          HashedAsset `json:"bootstrapFeatureScene3d,omitempty"`
 	BootstrapFeatureScene3DCommand   HashedAsset `json:"bootstrapFeatureScene3dCommand,omitempty"`
 	BootstrapFeatureScene3DWebGPU    HashedAsset `json:"bootstrapFeatureScene3dWebgpu,omitempty"`
+	BootstrapFeatureScene3DWebGL     HashedAsset `json:"bootstrapFeatureScene3dWebgl,omitempty"`
 	BootstrapFeatureScene3DGLTF      HashedAsset `json:"bootstrapFeatureScene3dGltf,omitempty"`
 	BootstrapFeatureScene3DAnimation HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitempty"`
 	Patch                            HashedAsset `json:"patch"`
@@ -76,9 +79,12 @@ type RuntimePaths struct {
 	BootstrapFeatureIslands          string
 	BootstrapFeatureEngines          string
 	BootstrapFeatureHubs             string
+	BootstrapFeatureControllers      string
+	BootstrapFeatureTextlayout       string
 	BootstrapFeatureScene3D          string
 	BootstrapFeatureScene3DCommand   string
 	BootstrapFeatureScene3DWebGPU    string
+	BootstrapFeatureScene3DWebGL     string
 	BootstrapFeatureScene3DGLTF      string
 	BootstrapFeatureScene3DAnimation string
 	Patch                            string
@@ -114,9 +120,12 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureIslands:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureIslands.File),
 		BootstrapFeatureEngines:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureEngines.File),
 		BootstrapFeatureHubs:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureHubs.File),
+		BootstrapFeatureControllers:      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureControllers.File),
+		BootstrapFeatureTextlayout:       AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureTextlayout.File),
 		BootstrapFeatureScene3D:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3D.File),
 		BootstrapFeatureScene3DCommand:   AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCommand.File),
 		BootstrapFeatureScene3DWebGPU:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGPU.File),
+		BootstrapFeatureScene3DWebGL:     AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGL.File),
 		BootstrapFeatureScene3DGLTF:      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DGLTF.File),
 		BootstrapFeatureScene3DAnimation: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DAnimation.File),
 		Patch:                            AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),

@@ -26,6 +26,7 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/routing"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/runtime"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/scene3d"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/scene3d-vs-threejs"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/signals"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/streaming"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/text-layout"

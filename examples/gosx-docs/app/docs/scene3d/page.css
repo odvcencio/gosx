@@ -101,6 +101,81 @@
 }
 
 /* ------------------------------------------------------------
+   Warning / note callout — names a real limit
+   ------------------------------------------------------------ */
+
+.scene3d-warning {
+  margin: var(--space-md) 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 0.5rem;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-left-width: 3px;
+  background: rgba(212, 175, 55, 0.07);
+}
+
+.scene3d-warning > p {
+  margin: 0.35rem 0;
+}
+
+.scene3d-warning__title {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------
+   Support / method matrices
+   ------------------------------------------------------------ */
+
+.scene3d-table-wrap {
+  margin: var(--space-md) 0;
+  overflow-x: auto;
+}
+
+.scene3d-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-small);
+}
+
+.scene3d-matrix caption {
+  caption-side: bottom;
+  padding-top: 0.5rem;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.scene3d-matrix th,
+.scene3d-matrix td {
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: top;
+}
+
+.scene3d-matrix thead th {
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.scene3d-matrix tbody th {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------
+   Stat row — raycast benchmark figures
+   ------------------------------------------------------------ */
+
+.scene3d-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+}
+
+/* ------------------------------------------------------------
    Glass panel (shared utility — dark mode tint)
    ------------------------------------------------------------ */
 
@@ -133,5 +208,9 @@
 @media (max-width: 767px) {
   .scene3d-geometry-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .scene3d-stat-row {
+    grid-template-columns: 1fr;
   }
 }

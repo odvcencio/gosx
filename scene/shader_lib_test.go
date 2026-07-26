@@ -49,7 +49,7 @@ func TestShaderLibRoundTrip(t *testing.T) {
 		ComputeParticles: systems,
 	}
 
-	// Marshal via the MarshalJSON path (which applies applyShaderLib).
+	// Marshal via the MarshalJSON path (which applies hoistShaderLib).
 	data, err := json.Marshal(ir)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)

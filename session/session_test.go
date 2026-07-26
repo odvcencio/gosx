@@ -350,12 +350,19 @@ func FuzzDecodeSessionCookie(f *testing.F) {
 	})
 }
 
+// tamperCookieValue changes the first byte of the cookie value, so the signed
+// payload always differs.
+//
+// Do not change the last base64 character instead. The final character of a
+// base64 group carries padding bits, so a change there can decode to the same
+// bytes and keep the signature valid.
 func tamperCookieValue(value string) string {
 	if value == "" {
 		return "x"
 	}
-	if value[len(value)-1] == 'A' {
-		return value[:len(value)-1] + "B"
+	replacement := "A"
+	if value[0] == 'A' {
+		replacement = "B"
 	}
-	return value[:len(value)-1] + "A"
+	return replacement + value[1:]
 }
