@@ -272,7 +272,13 @@ const budgets = [
   // so per-character reveal scripts stop being hand-written per app, and
   // retiring one such script removed a 13.4KB minified bundle from the first
   // consumer to migrate.
-  { file: "bootstrap.js", raw: 1_327_000, gzip: 351_000, brotli: 284_000 },
+  // Bumped gzip 351_000 -> 352_000 for the post-effect kind canonicalizer
+  // (SCENE_POST_KIND_CANONICAL in 10-runtime-scene-core.js). Measured:
+  // 1_325_828 / 351_066 / 283_825 — +66 gzip bytes, raw and brotli ceilings
+  // unchanged and still fit. The table is the fix: normalizeScenePostEffect
+  // used to lowercase kind, which silently un-dispatched every camelCase post
+  // effect ("customPost"/"toneMapping"/"colorGrade") on both render backends.
+  { file: "bootstrap.js", raw: 1_327_000, gzip: 352_000, brotli: 284_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
