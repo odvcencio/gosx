@@ -2,6 +2,63 @@
 
 ## Unreleased
 
+## v0.35.9 (2026-07-26)
+
+Scene3D custom post-process passes now execute. `customPost`, `toneMapping`,
+and `colorGrade` never ran on either backend, so any app that authored one
+received nothing at all.
+
+- `normalizeScenePostEffect` forced the effect kind to lower case. That rewrote
+  `customPost` to `custompost`, `toneMapping` to `tonemapping`, and `colorGrade`
+  to `colorgrade`. Both backends dispatch with `switch (effect.kind)` and `===`
+  against camelCase constants, so all three kinds fell through to
+  `default: break;`. The effect stayed in scene state, the post chain still ran,
+  and the mount attributes still counted the effect. Zero pixels were written.
+  Only the all-lowercase kinds survived: `bloom`, `ssao`, `dof`, `fxaa`, and
+  `vignette`.
+- The normalizer now folds case for matching only, then returns the exact
+  spelling both backends dispatch on. An unknown kind keeps the author's
+  spelling, so a newer backend still receives it.
+- The planner emits `colorGrade` for `color-grade`, `color-grading`, and
+  `colorgrade`. The CSS `--scene-filter` path writes straight into scene state
+  and skips the normalizer, so the hyphenated spelling left that pass unmatched
+  as well.
+- WebGL now assigns the return value of `applyCustomPost` unconditionally. The
+  helper returns `null` to report that the pass already drew to the default
+  framebuffer. The old `if (next !== null)` guard dropped that signal, so the
+  closing `blitToScreen` painted the unprocessed scene over the pass output. A
+  trailing custom pass wrote no visible pixels even when it compiled and drew
+  correctly.
+- WebGPU passes `packSelenaUniforms` into `wgpuCreatePostProcessor` as a
+  callback. The uniform packer lives in a sibling closure, not an enclosing one,
+  so the previous bare call raised a `ReferenceError`. The customPost case was
+  unreachable, which hid the defect.
+- New regression tests drive the real author path on both backends: props to
+  `createSceneState` to bundle to `renderer.render`. They assert that the pass
+  reaches shader creation and that it is drawn with its own pipeline.
+  `scripts/forced-red-custompost.go` reads back canvas pixels under SwiftShader
+  and confirms that a forced-red custom pass is the only draw that reaches the
+  canvas.
+
+Scene3D debug tooling:
+
+- `gosx visual --require-backend` accepts `webgpu`, `webgl`, or `any-gpu`. It
+  reads the `data-gosx-scene3d-backend` attributes after the settle wait and
+  fails the capture before any pixel comparison when a mount missed the
+  requirement. The error names each failing mount, separates a Canvas2D
+  fallback from a wrong GPU family, and prints the headless Chrome flags that a
+  software GPU needs.
+- `window.__gosx_scene3d_require_gpu` lets a custom capture harness refuse the
+  Canvas2D fallback without disabling the WebGL path, because WebGL is also a
+  real GPU backend.
+- A new `/docs/debugging-scene3d` page describes the four tiers of Scene3D debug
+  tooling: the CPU reference renderer, the state and draw recorder, the live
+  inspector, and the compositor diagnostics.
+
+Upgrade note: an app that authors `customPost`, `toneMapping`, or `colorGrade`
+receives those passes for the first time on this release. Review the visual
+result before you ship.
+
 ## v0.35.8 (2026-07-26)
 
 WebGPU mesh rendering now preserves authored two-sided materials and reports
