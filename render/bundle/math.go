@@ -187,13 +187,56 @@ func computeMVP(cam engine.RenderCamera, width, height int) mat4 {
 		far = 100
 	}
 	proj := mat4Perspective(fov, aspect, near, far)
+	return mat4Mul(proj, cameraViewMatrix(cam))
+}
 
+// cameraViewMatrix builds the world-to-view matrix for a 3D camera:
+// rotate about X, then about Y, then translate by the negated position.
+// computeMVP and buildCascadeMatrix both call it, so the cascade fit inverts
+// exactly the transform the main pass applies. A private copy in either place
+// would drift.
+//
+// RotationZ is not part of the composition. computeMVP never applied it, and a
+// cascade fit that added roll would put shadows where the main pass does not
+// draw them.
+func cameraViewMatrix(cam engine.RenderCamera) mat4 {
 	rotX := mat4RotateX(float32(cam.RotationX))
 	rotY := mat4RotateY(float32(cam.RotationY))
 	trans := mat4Translate(-float32(cam.X), -float32(cam.Y), -float32(cam.Z))
-	view := mat4Mul(mat4Mul(rotX, rotY), trans)
+	return mat4Mul(mat4Mul(rotX, rotY), trans)
+}
 
-	return mat4Mul(proj, view)
+// cameraViewToWorldRotation returns the rotation that carries a view-space
+// direction back into world space. The view rotation is orthonormal, so its
+// inverse is its transpose, and the transpose costs nine copies instead of a
+// general 4x4 inverse.
+//
+// buildCascadeMatrix needs this to place frustum-slice corners. Without it the
+// corners land as though the camera always looked down world -Z, so a rotated
+// camera fits every cascade to the wrong part of the world and loses all its
+// shadows.
+func cameraViewToWorldRotation(cam engine.RenderCamera) mat4 {
+	rotX := mat4RotateX(float32(cam.RotationX))
+	rotY := mat4RotateY(float32(cam.RotationY))
+	r := mat4Mul(rotX, rotY)
+	var t mat4
+	for col := 0; col < 3; col++ {
+		for row := 0; row < 3; row++ {
+			t[col*4+row] = r[row*4+col]
+		}
+	}
+	t[15] = 1
+	return t
+}
+
+// rotateVec3 applies the upper-left 3x3 of m to v. Used for direction vectors,
+// so the translation column is deliberately ignored.
+func rotateVec3(m mat4, v [3]float32) [3]float32 {
+	return [3]float32{
+		m[0]*v[0] + m[4]*v[1] + m[8]*v[2],
+		m[1]*v[0] + m[5]*v[1] + m[9]*v[2],
+		m[2]*v[0] + m[6]*v[1] + m[10]*v[2],
+	}
 }
 
 // orthoCamera2DModeString mirrors bundle.OrthoCamera2DMode without taking a
@@ -274,16 +317,84 @@ type cascadeData struct {
 	farSplits [4]float32
 }
 
-// computeCascades builds three cascaded light view-proj matrices fitted to
-// three slices of the camera view frustum. Fit strategy: each cascade
-// covers a bounding sphere of its frustum slice in light space, giving a
-// stable orthographic projection that doesn't flicker when the camera
-// rotates (shimmering at cascade edges is a known CSM artifact addressed by
-// rounding to texel increments; that refinement is R4).
+// defaultCascadeLambda blends the logarithmic and the uniform split schedules.
+// 0 gives uniform splits, which spend resolution far away. 1 gives logarithmic
+// splits, which spend it near the camera and starve the far cascade. 0.5 is the
+// practical default the JavaScript WebGL backend already uses, so both renderers
+// place their cascade edges in the same places.
+const defaultCascadeLambda = 0.5
+
+// resolveCascadeLambda reads Config.ShadowCascadeLambda. A nil pointer selects
+// the shared default so a host that does not care matches the web renderer.
+func resolveCascadeLambda(configured *float64) float32 {
+	if configured == nil {
+		return defaultCascadeLambda
+	}
+	return float32(*configured)
+}
+
+// cascadeSplitDistances returns the cascade boundaries in view space, from the
+// camera near plane through each cascade's far distance. Element 0 is near and
+// element count is far, so cascade i covers [out[i], out[i+1]].
 //
-// Splits default to a practical-but-arbitrary 2 / 15 / 60 world units. R4
-// will expose these via RenderBundle fields.
-func computeCascades(cam engine.RenderCamera, lightDir [3]float32) cascadeData {
+// The schedule is the Parallel-Split Shadow Maps practical scheme:
+//
+//	log_i     = near * (far/near)^p
+//	uniform_i = near + (far - near) * p
+//	split_i   = lambda*log_i + (1 - lambda)*uniform_i,  p = (i+1)/count
+//
+// The renderer used fixed 6 / 22 / far boundaries before, which suited one
+// scene scale and banded every other. This schedule tracks the camera's own
+// near and far planes instead.
+func cascadeSplitDistances(near, far float32, count int, lambda float32) [cascadeCount + 1]float32 {
+	var out [cascadeCount + 1]float32
+	if count < 1 {
+		count = 1
+	}
+	if count > cascadeCount {
+		count = cascadeCount
+	}
+	if near <= 0 {
+		near = 0.1
+	}
+	if far <= near {
+		far = near + 0.0001
+	}
+	if lambda < 0 {
+		lambda = 0
+	}
+	if lambda > 1 {
+		lambda = 1
+	}
+	ratio := float64(far / near)
+	out[0] = near
+	for i := 0; i < count; i++ {
+		p := float64(i+1) / float64(count)
+		logSplit := float64(near) * math.Pow(ratio, p)
+		uniSplit := float64(near) + float64(far-near)*p
+		out[i+1] = float32(float64(lambda)*logSplit + (1-float64(lambda))*uniSplit)
+	}
+	// The last cascade always reaches the camera far plane, even when float
+	// rounding leaves the blend a hair short.
+	out[count] = far
+	for i := count + 1; i <= cascadeCount; i++ {
+		out[i] = far
+	}
+	return out
+}
+
+// computeCascades builds three cascaded light view-proj matrices fitted to
+// three slices of the camera view frustum. Each cascade covers the bounding
+// sphere of its slice. A sphere has one radius whatever the camera heading, so
+// the orthographic extent never changes as the camera turns, and
+// buildCascadeMatrix rounds the sphere centre to whole shadow-map texels so the
+// shadow edges do not crawl as the camera moves.
+//
+// aspect is the framebuffer width divided by its height. Pass the real value:
+// the fit used to assume a square framebuffer, which left the true frustum
+// wider than the fitted box on every wide viewport and dropped the shadows of
+// casters near the left and right screen edges.
+func computeCascades(cam engine.RenderCamera, lightDir [3]float32, lambda, aspect float32) cascadeData {
 	var out cascadeData
 
 	near := float32(cam.Near)
@@ -294,58 +405,119 @@ func computeCascades(cam engine.RenderCamera, lightDir [3]float32) cascadeData {
 	if far <= 0 {
 		far = 100
 	}
-	// Fixed splits for R3. R4 replaces with log / uniform blending.
-	splits := [cascadeCount + 1]float32{near, 6, 22, far}
+	if aspect <= 0 {
+		aspect = 1
+	}
+	fov := float32(cam.FOV)
+	if fov <= 0 {
+		fov = float32(math.Pi / 3)
+	}
+	splits := cascadeSplitDistances(near, far, cascadeCount, lambda)
+	// The lit shader selects a cascade from the straight-line distance between
+	// the camera and the pixel, not from the pixel's view-space depth. The two
+	// differ most at the frustum corners, where the straight-line distance is
+	// radialRatio times the depth. Pulling each cascade's near edge back by that
+	// ratio makes the fitted box cover every pixel the shader can route to it.
+	// Without the pull-back a corner pixel just inside one split lands in the
+	// next cascade, falls outside that cascade's box, and loses its shadow.
+	ratio := radialRatio(fov, aspect)
+	// The camera rotation and the light frame are the same for every cascade.
+	// Building them once takes eight transcendental calls and two matrix
+	// products out of the per-cascade loop.
+	shape := cascadeShape{
+		toWorld:    cameraViewToWorldRotation(cam),
+		lightFrame: lightFrameMatrix(lightDir),
+		camPos:     [3]float32{float32(cam.X), float32(cam.Y), float32(cam.Z)},
+		tanHalf:    float32(math.Tan(float64(fov) / 2)),
+		aspect:     aspect,
+	}
 	for i := 0; i < cascadeCount; i++ {
-		out.viewProjs[i] = buildCascadeMatrix(cam, lightDir, splits[i], splits[i+1])
+		sliceNear := splits[i] / ratio
+		if sliceNear < near {
+			sliceNear = near
+		}
+		out.viewProjs[i] = buildCascadeMatrix(shape, sliceNear, splits[i+1])
 		out.farSplits[i] = splits[i+1]
 	}
 	return out
 }
 
+// cascadeShape carries the parts of a cascade fit that do not change between
+// cascades. computeCascades builds it once per frame.
+type cascadeShape struct {
+	// toWorld rotates a view-space direction back into world space.
+	toWorld mat4
+	// lightFrame is the light view rotation anchored at the world origin. The
+	// anchor has to stay put while the camera moves, or the shadow-map texel
+	// grid moves with the camera and the snap in buildCascadeMatrix buys
+	// nothing.
+	lightFrame mat4
+	camPos     [3]float32
+	tanHalf    float32
+	aspect     float32
+}
+
+// lightFrameMatrix builds the light view rotation for a directional light,
+// anchored at the world origin.
+func lightFrameMatrix(lightDir [3]float32) mat4 {
+	up := [3]float32{0, 1, 0}
+	if float32(math.Abs(float64(lightDir[1]))) > 0.99 {
+		up = [3]float32{0, 0, 1}
+	}
+	return mat4LookAt([3]float32{0, 0, 0}, lightDir, up)
+}
+
+// radialRatio is the largest ratio of straight-line camera distance to
+// view-space depth inside a frustum with this field of view and aspect. It is
+// the length of the direction to a frustum corner, taken at unit depth.
+func radialRatio(fovRad, aspect float32) float32 {
+	tanHalf := float32(math.Tan(float64(fovRad) / 2))
+	x := tanHalf * aspect
+	y := tanHalf
+	return float32(math.Sqrt(float64(1 + x*x + y*y)))
+}
+
 // buildCascadeMatrix returns the light-space view-projection fitted to the
 // sub-frustum between viewNear and viewFar, used for rendering one shadow
 // cascade.
-func buildCascadeMatrix(cam engine.RenderCamera, lightDir [3]float32, viewNear, viewFar float32) mat4 {
-	// Reconstruct the 8 frustum corners in world space.
-	aspect := float32(1)
-	fov := float32(cam.FOV)
-	if fov <= 0 {
-		fov = float32(math.Pi / 3)
-	}
-	// tan(fov/2) for vertical; horizontal scales by aspect. We don't
-	// actually know the aspect here (it's the framebuffer's), so assume
-	// square for the cascade fit — a slight overestimate keeps the sphere
-	// fully containing the frustum. R4 can plumb width/height through.
-	tanHalf := float32(math.Tan(float64(fov) / 2))
+//
+// The box is fitted tight to the slice. The fit used to widen the bounding
+// sphere by a fifth so that casters just outside the frustum still cast into
+// the cascade, but a directional light does not need the margin: the shadow of
+// a point lands at the point's own light-space x and y, so a caster outside the
+// box in x or y drops its shadow outside the box too. Only the light-space
+// depth range has to reach back toward the light, and backOff does that. The
+// removed margin returns its square in shadow-map texel density.
+func buildCascadeMatrix(shape cascadeShape, viewNear, viewFar float32) mat4 {
+	// The 8 slice corners in view space. tan(fov/2) gives the vertical
+	// half-extent per unit of depth; the horizontal half-extent scales by the
+	// framebuffer aspect, exactly as mat4Perspective does.
+	tanHalf, aspect := shape.tanHalf, shape.aspect
 	corners := [8][3]float32{
-		// Near plane corners
+		// Near plane corners.
 		{-tanHalf * viewNear * aspect, -tanHalf * viewNear, -viewNear},
 		{+tanHalf * viewNear * aspect, -tanHalf * viewNear, -viewNear},
 		{+tanHalf * viewNear * aspect, +tanHalf * viewNear, -viewNear},
 		{-tanHalf * viewNear * aspect, +tanHalf * viewNear, -viewNear},
-		// Far plane corners
+		// Far plane corners.
 		{-tanHalf * viewFar * aspect, -tanHalf * viewFar, -viewFar},
 		{+tanHalf * viewFar * aspect, -tanHalf * viewFar, -viewFar},
 		{+tanHalf * viewFar * aspect, +tanHalf * viewFar, -viewFar},
 		{-tanHalf * viewFar * aspect, +tanHalf * viewFar, -viewFar},
 	}
-	// Transform from view space back to world using the inverse camera
-	// view. Approximated here by building the forward view and inverting
-	// its translation — full inverse is R4 work. For cascade fit purposes
-	// we treat corners as world-centered around camera.
-	camPos := [3]float32{float32(cam.X), float32(cam.Y), float32(cam.Z)}
+	// Carry the corners back into world space through the true inverse of the
+	// camera view matrix: rotate by the transposed view rotation, then add the
+	// camera position.
+	toWorld, camPos := shape.toWorld, shape.camPos
 	for i := range corners {
-		// Rotate by camera orientation (inverse rotation).
-		// For R3 we ignore camera rotation; the bounding sphere is
-		// conservative enough to catch slight mismatches. Pure
-		// translation recovers the world-space position for a
-		// forward-looking camera.
-		corners[i][0] += camPos[0]
-		corners[i][1] += camPos[1]
-		corners[i][2] += camPos[2]
+		rotated := rotateVec3(toWorld, corners[i])
+		corners[i] = [3]float32{
+			rotated[0] + camPos[0],
+			rotated[1] + camPos[1],
+			rotated[2] + camPos[2],
+		}
 	}
-	// Center + radius of the bounding sphere.
+	// Centre + radius of the bounding sphere.
 	var cx, cy, cz float32
 	for _, c := range corners {
 		cx += c[0]
@@ -363,25 +535,32 @@ func buildCascadeMatrix(cam engine.RenderCamera, lightDir [3]float32, viewNear, 
 			r = d
 		}
 	}
-	// Pad the radius so shadow casters just outside the frustum still
-	// cast into the cascade.
-	r *= 1.2
+	if r <= 0 {
+		r = 0.001
+	}
 
-	// Light eye at center - lightDir*(r + backOff).
+	// backOff extends the volume toward the light so casters above the slice
+	// still reach the depth range.
 	const backOff = 20.0
-	eye := [3]float32{
-		cx - lightDir[0]*(r+backOff),
-		cy - lightDir[1]*(r+backOff),
-		cz - lightDir[2]*(r+backOff),
-	}
-	target := [3]float32{cx, cy, cz}
-	up := [3]float32{0, 1, 0}
-	if float32(math.Abs(float64(lightDir[1]))) > 0.99 {
-		up = [3]float32{0, 0, 1}
-	}
-	view := mat4LookAt(eye, target, up)
+	lightFrame := shape.lightFrame
+	lx := lightFrame[0]*cx + lightFrame[4]*cy + lightFrame[8]*cz
+	ly := lightFrame[1]*cx + lightFrame[5]*cy + lightFrame[9]*cz
+	lz := lightFrame[2]*cx + lightFrame[6]*cy + lightFrame[10]*cz
 
+	// Round the sphere centre to whole shadow-map texels. A tight fit follows
+	// the camera exactly, so without the rounding every sub-texel camera step
+	// slides the whole shadow map and the shadow edges crawl. The sphere radius
+	// already holds still under rotation, so the centre is all that is left.
 	size := 2 * r
+	texel := size / float32(shadowMapSize)
+	if texel > 0 {
+		lx = float32(math.Round(float64(lx/texel))) * texel
+		ly = float32(math.Round(float64(ly/texel))) * texel
+	}
+	// Put the snapped centre on the light frame's view axis, backOff + r in
+	// front of the eye.
+	view := mat4Mul(mat4Translate(-lx, -ly, -lz-(r+backOff)), lightFrame)
+
 	proj := mat4Orthographic(size, 0.5, 2*(r+backOff)+size)
 	return mat4Mul(proj, view)
 }

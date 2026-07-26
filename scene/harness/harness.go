@@ -27,6 +27,25 @@ type Session struct {
 	options   preview.Options
 	report    Report
 	lastFrame *image.RGBA
+
+	// renderFrame produces one frame for the session's source. A typed session
+	// renders scene.Props; a JSON session renders a serialized document. Both
+	// reach the same CPU rasterizer, so the telemetry means the same thing.
+	renderFrame func(preview.Options) (*preview.Result, error)
+
+	// typedGraph is true when the session owns a typed scene graph. Ray tracing
+	// needs one. A JSON session records a problem instead of a false trace.
+	typedGraph bool
+
+	// sceneIR is the canonical document for this session. Both a typed session
+	// and a JSON session hold one, so record-level certificates read the same
+	// data regardless of how the session started.
+	sceneIR scene.SceneIR
+
+	// accel caches the bounding-volume hierarchy for this session's graph.
+	// props is assigned once at construction and never reassigned, so one
+	// tree stays valid for every trace the session records.
+	accel *scene.SceneAccelerator
 }
 
 type Report struct {
@@ -37,6 +56,10 @@ type Report struct {
 	Events    []Event          `json:"events"`
 	Valid     bool             `json:"valid"`
 	Problems  []string         `json:"problems,omitempty"`
+	// ContentHash is a SHA-256 of this report with the hash field cleared. Two
+	// runs that produce the same evidence produce the same string, so a machine
+	// consumer can answer "did anything change" with one comparison.
+	ContentHash string `json:"contentHash,omitempty"`
 }
 
 type SceneSummary struct {
@@ -46,6 +69,9 @@ type SceneSummary struct {
 	Lights          int `json:"lights"`
 }
 
+// Event is one recorded step of the session. Events keep the order in which
+// they were recorded, and Sequence numbers them from one, so a machine consumer
+// can align two reports without re-deriving the order.
 type Event struct {
 	Sequence    int                   `json:"sequence"`
 	Kind        string                `json:"kind"`
@@ -53,13 +79,20 @@ type Event struct {
 	Trace       *TraceTelemetry       `json:"trace,omitempty"`
 	Interaction *InteractionTelemetry `json:"interaction,omitempty"`
 	Water       *WaterTelemetry       `json:"water,omitempty"`
+	Golden      *GoldenTelemetry      `json:"golden,omitempty"`
+	Determinism *DeterminismTelemetry `json:"determinism,omitempty"`
 }
 
 type FrameTelemetry struct {
-	Time                  float64                   `json:"time"`
-	Width                 int                       `json:"width"`
-	Height                int                       `json:"height"`
+	Time   float64 `json:"time"`
+	Width  int     `json:"width"`
+	Height int     `json:"height"`
+	// PNGHash covers the encoded PNG container. PixelHash covers only the raw
+	// RGBA bytes, so a re-encode with a different compression level does not
+	// look like a visual change. Compare PixelHash to answer "did the picture
+	// change"; compare PNGHash to answer "is the file byte-identical".
 	PNGHash               string                    `json:"pngSHA256"`
+	PixelHash             string                    `json:"pixelSHA256"`
 	Coverage              float64                   `json:"coverage"`
 	ChangedPixels         int                       `json:"changedPixels"`
 	VisibleBounds         *PixelBounds              `json:"visibleBounds,omitempty"`
@@ -111,15 +144,64 @@ type SelenaEvidence struct {
 // model camera frames and pointer probes without launching a browser.
 func New(props scene.Props, options preview.Options) *Session {
 	ir := props.SceneIR()
+	session := &Session{props: props, options: options, typedGraph: true,
+		sceneIR: ir, report: newReport(ir)}
+	session.renderFrame = func(opts preview.Options) (*preview.Result, error) {
+		return preview.Render(props, opts)
+	}
+	return session
+}
+
+// NewFromJSON starts a session from a serialized SceneIR document or the
+// runtime props JSON that scene.Props emits. It renders through the same CPU
+// rasterizer as a typed session.
+//
+// Ray tracing needs a typed scene graph, which JSON does not carry. Trace on a
+// JSON session records a problem instead of returning a hit list that would
+// look real and be empty.
+func NewFromJSON(data []byte, options preview.Options) (*Session, error) {
+	ir, err := decodeSceneIR(data)
+	if err != nil {
+		return nil, err
+	}
+	payload := append([]byte(nil), data...)
+	session := &Session{options: options, sceneIR: ir, report: newReport(ir)}
+	session.renderFrame = func(opts preview.Options) (*preview.Result, error) {
+		return preview.RenderJSON(payload, opts)
+	}
+	return session, nil
+}
+
+func newReport(ir scene.SceneIR) Report {
 	instances := 0
 	for _, mesh := range ir.InstancedMeshes {
 		instances += mesh.Count
 	}
-	return &Session{props: props, options: options, report: Report{
+	return Report{
 		Schema: Schema, Backend: "pure-go-headless",
 		Scene:  SceneSummary{Objects: len(ir.Objects), InstancedMeshes: len(ir.InstancedMeshes), Instances: instances, Lights: len(ir.Lights)},
 		Events: []Event{}, Valid: true,
-	}}
+	}
+}
+
+// decodeSceneIR reads either a bare SceneIR document or a runtime props
+// envelope that nests the document under "scene".
+func decodeSceneIR(data []byte) (scene.SceneIR, error) {
+	var envelope struct {
+		Scene json.RawMessage `json:"scene"`
+	}
+	payload := data
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return scene.SceneIR{}, fmt.Errorf("scene harness: decode JSON: %w", err)
+	}
+	if len(envelope.Scene) > 0 && string(envelope.Scene) != "null" {
+		payload = envelope.Scene
+	}
+	var ir scene.SceneIR
+	if err := json.Unmarshal(payload, &ir); err != nil {
+		return scene.SceneIR{}, fmt.Errorf("scene harness: decode SceneIR: %w", err)
+	}
+	return ir, nil
 }
 
 // Render records one deterministic native frame and returns its pixels for
@@ -127,7 +209,7 @@ func New(props scene.Props, options preview.Options) *Session {
 func (s *Session) Render(time float64) (*preview.Result, error) {
 	opts := s.options
 	opts.Time = time
-	result, err := preview.Render(s.props, opts)
+	result, err := s.renderFrame(opts)
 	if err != nil {
 		s.problem("render: " + err.Error())
 		return nil, err
@@ -153,8 +235,22 @@ func (s *Session) Render(time float64) (*preview.Result, error) {
 }
 
 // Trace records a ray traversal and its complete, nearest-first hit list.
+//
+// The traversal runs through a session-cached bounding-volume hierarchy. The
+// tree costs roughly 4.7 ms to build for 10,000 instances, then answers each
+// ray in about 0.6 microseconds instead of 108. Building it once per session
+// pays that cost back after a handful of rays. scene.TestSceneAcceleratorMatchesGraphWalk
+// pins the tree to the exact results of the linear walk, so certified evidence
+// does not change.
 func (s *Session) Trace(label string, ray scene.Ray, options ...scene.RaycastOption) scene.RayTrace {
-	trace := scene.TraceGraph(s.props.Graph, ray, options...)
+	if !s.typedGraph {
+		s.problem(fmt.Sprintf("trace %q: this session was built from JSON and has no typed scene graph", label))
+		return scene.RayTrace{}
+	}
+	if s.accel == nil {
+		s.accel = scene.NewSceneAccelerator(s.props.Graph)
+	}
+	trace := s.accel.Trace(ray, options...)
 	s.report.Events = append(s.report.Events, Event{Sequence: len(s.report.Events) + 1, Kind: "raytrace", Trace: &TraceTelemetry{Label: label, Trace: trace}})
 	return trace
 }
@@ -197,15 +293,22 @@ func (s *Session) ObjectDrag(label string, state scene.ObjectDragState, input sc
 	return result
 }
 
-func (s *Session) Report() Report { return s.report }
+// Report returns the recorded evidence with ContentHash filled in.
+func (s *Session) Report() Report {
+	report := s.report
+	report.ContentHash = contentHash(report)
+	return report
+}
 
 // WriteJSON emits stable, indented telemetry. Runtime frame timings are
 // intentionally excluded because they make agent snapshots machine-dependent.
+// Object keys and event order are stable, so two identical sessions produce
+// byte-identical JSON.
 func (s *Session) WriteJSON(w io.Writer) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(s.report)
+	return encoder.Encode(s.Report())
 }
 
 func (s *Session) Validate() error {
@@ -244,7 +347,8 @@ func analyzeFrame(result *preview.Result, previous *image.RGBA) (FrameTelemetry,
 		coverage = float64(changed) / float64(pixels)
 	}
 	return FrameTelemetry{
-		Width: result.Image.Bounds().Dx(), Height: result.Image.Bounds().Dy(), PNGHash: hash,
+		Width: result.Image.Bounds().Dx(), Height: result.Image.Bounds().Dy(),
+		PNGHash: hash, PixelHash: rawPixelHash(result.Image),
 		Coverage: coverage, ChangedPixels: changed, VisibleBounds: bounds, UniqueColors: unique,
 		TemporalChangedPixels: temporal, LuminanceVariance: variance, EdgeEnergy: edgeEnergy,
 		Batches: len(result.Bundle.InstancedMeshes), Instances: instances, Materials: len(result.Bundle.Materials),

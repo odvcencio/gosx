@@ -698,6 +698,33 @@ func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	}
 }
 
+func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:               buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:        buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+
+	html := gosx.RenderHTML(r.BootstrapScriptWithNonce("scene-nonce"))
+	for _, snippet := range []string{
+		`data-gosx-script="feature-scene3d-webgpu-loader" nonce="scene-nonce"`,
+		`document.currentScript.nonce`,
+		`if(_n){s.nonce=_n;}`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected Scene3D WebGPU loader to include %q in %s", snippet, html)
+		}
+	}
+}
+
 // TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag: PreloadHints() must
 // not <link rel="preload" as="script"> a bundle BootstrapScript() ALSO emits
 // as a same-document <script defer src="..."> tag — the browser's preload
@@ -1099,5 +1126,83 @@ func TestLoadDefaultBuildManifestOverrideMissingManifestReturnsNil(t *testing.T)
 
 	if manifest := loadDefaultBuildManifest(); manifest != nil {
 		t.Errorf("expected nil when override dir has no manifest, got %+v", manifest)
+	}
+}
+
+// TestScene3DScriptCarriesLazyChunkURLs pins that the feature-scene3d script tag
+// advertises the hashed URL of every chunk the browser fetches on demand.
+//
+// The WebGL2 renderer moved out of the base Scene3D chunk so a WebGPU-capable
+// browser stops downloading roughly 34,000 brotli bytes it never runs. That
+// saving only lands if the runtime can find the chunk. Without a hashed URL the
+// runtime falls back to the unversioned path, which serves correctly but cannot
+// be cached immutably; without any URL the fetch 404s and the page silently
+// drops to the legacy vertex-colour renderer instead of PBR.
+func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                        buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                 buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:          buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:   buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DWebGPU:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		BootstrapFeatureScene3DWebGL:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgl.js", Hash: "webgl"},
+		BootstrapFeatureScene3DGLTF:      buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-gltf.js", Hash: "gltf"},
+		BootstrapFeatureScene3DAnimation: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-animation.js", Hash: "anim"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	html := gosx.RenderHTML(r.BootstrapScript())
+
+	for _, want := range []string{
+		`data-gosx-scene3d-webgl-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgl.js"`,
+		`data-gosx-scene3d-webgpu-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgpu.js"`,
+		`data-gosx-scene3d-gltf-url="/gosx/assets/runtime/bootstrap-feature-scene3d-gltf.js"`,
+		`data-gosx-scene3d-animation-url="/gosx/assets/runtime/bootstrap-feature-scene3d-animation.js"`,
+		`data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("feature-scene3d script is missing %s\ngot: %s", want, html)
+		}
+	}
+
+	// The WebGL renderer must not be emitted as a script tag. It loads on
+	// demand, and a tag here would defeat the whole saving.
+	if strings.Contains(html, `src="/gosx/assets/runtime/bootstrap-feature-scene3d-webgl.js"`) {
+		t.Errorf("WebGL chunk is eagerly loaded as a script tag: %s", html)
+	}
+}
+
+// TestTextlayoutChunkIsNeverEmittedEagerly pins that the demand-loaded
+// text-layout engine gets no script tag and no preload hint. Either one would
+// download the chunk on every page and cancel the saving the client-side gate
+// exists to capture.
+func TestTextlayoutChunkIsNeverEmittedEagerly(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                  buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:           buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureIslands:    buildmanifest.HashedAsset{File: "bootstrap-feature-islands.js", Hash: "islands"},
+		BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: "bootstrap-feature-textlayout.js", Hash: "textlayout"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderIsland("Counter", nil, gosx.Text(""))
+	scripts := gosx.RenderHTML(r.BootstrapScript())
+	hints := gosx.RenderHTML(r.PreloadHints())
+
+	if strings.Contains(scripts, "bootstrap-feature-textlayout") {
+		t.Errorf("text-layout chunk emitted as a script tag: %s", scripts)
+	}
+	if strings.Contains(hints, "bootstrap-feature-textlayout") {
+		t.Errorf("text-layout chunk emitted as a preload hint: %s", hints)
+	}
+	// The resolved hashed URL must still be available to the runtime.
+	if got := r.BootstrapFeatureTextlayoutPath(); got != "/gosx/assets/runtime/bootstrap-feature-textlayout.js" {
+		t.Errorf("text-layout chunk URL not resolved from the manifest: %q", got)
 	}
 }

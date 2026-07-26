@@ -116,8 +116,22 @@ func (q *Quantized) DecompressChecked() (*Field, error) {
 	return out, nil
 }
 
-// WireSize returns the total bytes consumed by the packed payload (excluding
-// the small Mins/Maxs/header overhead, which is constant per field).
+// WireSize returns the bytes of the packed payload and the preview payload. It
+// excludes every header byte.
+//
+// WireSize is not the size of a transmitted frame. Two transports exist:
+//
+//   - PublishField sends JSON. Standard encoding/json base64-encodes Packed and
+//     Preview and prints Mins and Maxs in decimal, so the frame is about 33%
+//     larger than WireSize.
+//   - MarshalBinary produces the compact binary form. That frame is WireSize
+//     plus a header of about 30 to 60 bytes. Call BinarySize for the exact
+//     count.
+//
+// The codec compresses at a fixed rate. Quantization is scalar, so the ratio
+// against float32 source data is exactly 32/BitWidth. Delta encoding narrows
+// the quantized range and lowers the reconstruction error; it does not change
+// the byte count.
 func (q *Quantized) WireSize() int {
 	return len(q.Packed) + len(q.Preview)
 }

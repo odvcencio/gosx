@@ -38,7 +38,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/format"
-	"m31labs.dev/gosx/render"
+	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/transpile"
 )
 
@@ -422,7 +422,10 @@ func cmdRender() {
 		fatal("no components found")
 	}
 
-	html, err := render.HTML(prog, componentName, render.Options{Indent: "  "})
+	// route.RenderProgramComponent is the single server-side IR renderer. The
+	// old render.HTML was a second implementation of the same walk, so it was
+	// removed. Output is compact instead of indented.
+	html, err := route.RenderProgramComponent(prog, componentName, route.ProgramRenderEnv{})
 	if err != nil {
 		fatal("render: %v", err)
 	}

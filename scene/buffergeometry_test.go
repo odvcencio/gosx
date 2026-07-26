@@ -82,9 +82,11 @@ func TestBufferGeometryKeepsWebGPUCapable(t *testing.T) {
 	}
 }
 
-// A pickable buffer mesh forces WebGL via the honesty gate, exactly like a
-// pickable parametric mesh — this is the kiln viewport's case.
-func TestBufferGeometryPickableForcesWebGL(t *testing.T) {
+// A pickable buffer mesh keeps WebGPU, exactly like a pickable parametric
+// mesh — this is the kiln viewport's case. The honesty gate used to force it to
+// WebGL2 because gpu-picking was WebGPU-false; both GPU backends now implement
+// picking. See the FeatureGPUPicking comment in scene/capability/capability.go.
+func TestBufferGeometryPickableKeepsWebGPU(t *testing.T) {
 	pickable := true
 	props := Props{Graph: NewGraph(Mesh{
 		ID:       "buf",
@@ -96,7 +98,11 @@ func TestBufferGeometryPickableForcesWebGL(t *testing.T) {
 	if ir.BackendCaps == nil {
 		t.Fatalf("expected BackendCaps")
 	}
-	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGL {
-		t.Fatalf("expected Capable==[webgl], got %v", ir.BackendCaps.Capable)
+	got := backendSet(ir.BackendCaps.Capable)
+	if !got[capability.BackendWebGPU] {
+		t.Fatalf("expected WebGPU capable for a pickable buffer mesh, got %v", ir.BackendCaps.Capable)
+	}
+	if got[capability.BackendCanvas2D] {
+		t.Fatalf("expected canvas2d excluded for gpu-picking, got %v", ir.BackendCaps.Capable)
 	}
 }

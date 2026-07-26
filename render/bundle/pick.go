@@ -49,7 +49,7 @@ const pickRowAlignment = 256
 type pickRequest struct {
 	x, y        int
 	cb          PickResultCallback
-	targets     map[uint32]PickResult
+	targets     *pickTargets
 	staging     gpu.Buffer
 	inFlight    bool
 	submitFrame bool // flagged on the frame we enqueued the copy
@@ -187,7 +187,7 @@ type pickReadbackStart struct {
 	req      *pickRequest
 	staging  gpu.Buffer
 	cb       PickResultCallback
-	targets  map[uint32]PickResult
+	targets  *pickTargets
 	callback bool
 }
 
@@ -219,7 +219,7 @@ func (r *Renderer) finishPickReadbackAsync(start pickReadbackStart) {
 		if !current {
 			return
 		}
-		start.cb(pickResultForID(start.targets, id))
+		start.cb(start.targets.resultForID(id))
 	}()
 }
 
@@ -232,129 +232,107 @@ func backgroundPickResult() PickResult {
 	}
 }
 
-func pickResultForID(targets map[uint32]PickResult, id uint32) PickResult {
+// pickSpanKind names the bundle collection that owns a run of pick IDs.
+type pickSpanKind uint8
+
+const (
+	pickSpanInstanced pickSpanKind = iota
+	pickSpanObject
+	pickSpanSurface
+)
+
+// pickSpan maps a contiguous run of pick IDs back to the bundle entry that
+// owns them. One span covers every instance of an InstancedMesh; object and
+// surface spans cover a single ID.
+//
+// Spans replace the per-instance map the renderer used to rebuild on every
+// frame. A scene with 100k instances needs 1 span per mesh instead of 100k map
+// entries, and Frame builds nothing at all until a pick is queued.
+type pickSpan struct {
+	base     uint32
+	count    uint32
+	objectID string
+	index    int
+	kind     pickSpanKind
+}
+
+// contains reports whether id falls inside the span.
+func (s pickSpan) contains(id uint32) bool {
+	return s.base != 0 && id >= s.base && id-s.base < s.count
+}
+
+// result returns the identity-only PickResult for an ID inside the span.
+func (s pickSpan) result(id uint32) PickResult {
+	out := PickResult{
+		ID:             id,
+		ObjectID:       s.objectID,
+		ObjectIndex:    s.index,
+		InstanceIndex:  -1,
+		PrimitiveIndex: -1,
+		TriangleIndex:  -1,
+	}
+	if s.kind == pickSpanInstanced {
+		out.InstanceIndex = int(id - s.base)
+	}
+	return out
+}
+
+// pickTargets is the snapshot one queued pick needs to turn the ID the GPU
+// returns into a PickResult. spans resolve identity for any ID. hits hold the
+// extra geometry — triangle, UV, local and world position, depth — for the few
+// instances the click ray actually crosses.
+type pickTargets struct {
+	spans []pickSpan
+	hits  map[uint32]PickResult
+	ray   pickRay
+}
+
+// resultForID resolves one GPU-returned ID against the snapshot.
+func (t *pickTargets) resultForID(id uint32) PickResult {
+	if t == nil {
+		return pickResultForID(nil, id)
+	}
 	if id == 0 {
-		// The enrichment pass stores a ray-stamped background result at ID 0
-		// so no-hit clicks still report the click ray.
-		if background, ok := targets[0]; ok {
+		background := backgroundPickResult()
+		background.RayOrigin = t.ray.origin
+		background.RayDirection = t.ray.dir
+		return background
+	}
+	if hit, ok := t.hits[id]; ok {
+		return hit
+	}
+	for _, span := range t.spans {
+		if !span.contains(id) {
+			continue
+		}
+		out := span.result(id)
+		out.RayOrigin = t.ray.origin
+		out.RayDirection = t.ray.dir
+		return out
+	}
+	out := pickResultForID(nil, id)
+	out.RayOrigin = t.ray.origin
+	out.RayDirection = t.ray.dir
+	return out
+}
+
+// pickResultForID resolves an ID with no snapshot available. It reports the
+// numeric fallback identity so a pick still returns something usable when the
+// bundle changed under the readback.
+func pickResultForID(hits map[uint32]PickResult, id uint32) PickResult {
+	if id == 0 {
+		if background, ok := hits[0]; ok {
 			return background
 		}
 		return backgroundPickResult()
 	}
-	if result, ok := targets[id]; ok {
+	if result, ok := hits[id]; ok {
 		return result
 	}
 	result := backgroundPickResult()
 	result.ID = id
 	result.ObjectIndex = int(id) - 1
 	return result
-}
-
-func clonePickTargets(src map[uint32]PickResult) map[uint32]PickResult {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[uint32]PickResult, len(src))
-	for id, target := range src {
-		dst[id] = target
-	}
-	return dst
-}
-
-func buildPickTargets(meshes []engine.RenderInstancedMesh) ([]uint32, map[uint32]PickResult) {
-	bases, targets, _ := buildInstancedPickTargets(meshes, 1)
-	return bases, targets
-}
-
-func buildInstancedPickTargets(meshes []engine.RenderInstancedMesh, startID uint32) ([]uint32, map[uint32]PickResult, uint32) {
-	if len(meshes) == 0 {
-		return nil, nil, startID
-	}
-	bases := make([]uint32, len(meshes))
-	targets := make(map[uint32]PickResult)
-	nextID := startID
-	for objectIndex, mesh := range meshes {
-		if mesh.InstanceCount <= 0 {
-			continue
-		}
-		bases[objectIndex] = nextID
-		for instanceIndex := 0; instanceIndex < mesh.InstanceCount; instanceIndex++ {
-			id := nextID + uint32(instanceIndex)
-			targets[id] = PickResult{
-				ID:             id,
-				ObjectID:       mesh.ID,
-				ObjectIndex:    objectIndex,
-				InstanceIndex:  instanceIndex,
-				PrimitiveIndex: -1,
-				TriangleIndex:  -1,
-			}
-		}
-		nextID += uint32(mesh.InstanceCount)
-		if nextID == 0 {
-			break
-		}
-	}
-	return bases, targets, nextID
-}
-
-func buildObjectPickTargets(objects []engine.RenderObject, startID uint32, targets map[uint32]PickResult) ([]uint32, map[uint32]PickResult, uint32) {
-	if len(objects) == 0 {
-		return nil, targets, startID
-	}
-	if targets == nil {
-		targets = make(map[uint32]PickResult)
-	}
-	bases := make([]uint32, len(objects))
-	nextID := startID
-	for objectIndex, object := range objects {
-		if object.VertexCount <= 0 || !renderObjectPickable(object) {
-			continue
-		}
-		bases[objectIndex] = nextID
-		targets[nextID] = PickResult{
-			ID:             nextID,
-			ObjectID:       object.ID,
-			ObjectIndex:    objectIndex,
-			InstanceIndex:  -1,
-			PrimitiveIndex: -1,
-			TriangleIndex:  -1,
-		}
-		nextID++
-		if nextID == 0 {
-			break
-		}
-	}
-	return bases, targets, nextID
-}
-
-func buildSurfacePickTargets(surfaces []engine.RenderSurface, startID uint32, targets map[uint32]PickResult) ([]uint32, map[uint32]PickResult, uint32) {
-	if len(surfaces) == 0 {
-		return nil, targets, startID
-	}
-	if targets == nil {
-		targets = make(map[uint32]PickResult)
-	}
-	bases := make([]uint32, len(surfaces))
-	nextID := startID
-	for surfaceIndex, surface := range surfaces {
-		if !surfaceDrawable(surface) {
-			continue
-		}
-		bases[surfaceIndex] = nextID
-		targets[nextID] = PickResult{
-			ID:             nextID,
-			ObjectID:       surface.ID,
-			ObjectIndex:    surfaceIndex,
-			InstanceIndex:  -1,
-			PrimitiveIndex: -1,
-			TriangleIndex:  -1,
-		}
-		nextID++
-		if nextID == 0 {
-			break
-		}
-	}
-	return bases, targets, nextID
 }
 
 func renderObjectPickable(object engine.RenderObject) bool {
@@ -364,19 +342,89 @@ func renderObjectPickable(object engine.RenderObject) bool {
 	return true
 }
 
-func (r *Renderer) preparePickTargets(b engine.RenderBundle) {
-	meshBases, targets, nextID := buildInstancedPickTargets(b.InstancedMeshes, 1)
-	objectBases, targets, nextID := buildObjectPickTargets(b.Objects, nextID, targets)
-	surfaceBases, targets, _ := buildSurfacePickTargets(b.Surfaces, nextID, targets)
-	r.pickBases = meshBases
-	r.objectPickBases = objectBases
-	r.surfacePickBases = surfaceBases
-	r.pickTargets = targets
+// updatePickSpans recomputes the pick ID assignment for the current bundle.
+// It writes into Renderer-owned slices that grow one way, so a steady-state
+// frame allocates nothing. It deliberately builds no per-instance results —
+// pickTargetsForRequest does that, and only when a pick is queued.
+func (r *Renderer) updatePickSpans(b engine.RenderBundle) {
+	r.pickSpans = r.pickSpans[:0]
+	r.pickBases = resetUint32s(r.pickBases, len(b.InstancedMeshes))
+	r.objectPickBases = resetUint32s(r.objectPickBases, len(b.Objects))
+	r.surfacePickBases = resetUint32s(r.surfacePickBases, len(b.Surfaces))
+
+	nextID := uint32(1)
+	for i := range b.InstancedMeshes {
+		mesh := &b.InstancedMeshes[i]
+		if mesh.InstanceCount <= 0 {
+			continue
+		}
+		r.pickBases[i] = nextID
+		r.pickSpans = append(r.pickSpans, pickSpan{
+			base: nextID, count: uint32(mesh.InstanceCount),
+			objectID: mesh.ID, index: i, kind: pickSpanInstanced,
+		})
+		nextID += uint32(mesh.InstanceCount)
+		if nextID == 0 {
+			return
+		}
+	}
+	for i := range b.Objects {
+		object := &b.Objects[i]
+		if object.VertexCount <= 0 || !renderObjectPickable(*object) {
+			continue
+		}
+		r.objectPickBases[i] = nextID
+		r.pickSpans = append(r.pickSpans, pickSpan{
+			base: nextID, count: 1,
+			objectID: object.ID, index: i, kind: pickSpanObject,
+		})
+		nextID++
+		if nextID == 0 {
+			return
+		}
+	}
+	for i := range b.Surfaces {
+		if !surfaceDrawable(b.Surfaces[i]) {
+			continue
+		}
+		r.surfacePickBases[i] = nextID
+		r.pickSpans = append(r.pickSpans, pickSpan{
+			base: nextID, count: 1,
+			objectID: b.Surfaces[i].ID, index: i, kind: pickSpanSurface,
+		})
+		nextID++
+		if nextID == 0 {
+			return
+		}
+	}
 }
 
-func (r *Renderer) pickTargetsForRequest(b engine.RenderBundle, x, y, width, height int) map[uint32]PickResult {
-	targets := clonePickTargets(r.pickTargets)
-	enrichPickTargetsWithRay(targets, b, r.pickBases, r.objectPickBases, r.surfacePickBases, x, y, width, height)
+// resetUint32s returns a zeroed slice of length n, reusing dst when it fits.
+func resetUint32s(dst []uint32, n int) []uint32 {
+	if cap(dst) < n {
+		return make([]uint32, n)
+	}
+	dst = dst[:n]
+	for i := range dst {
+		dst[i] = 0
+	}
+	return dst
+}
+
+// pickTargetsForRequest snapshots what the readback needs for one queued pick.
+// It copies the span table, computes the click ray, and raycasts the scene once
+// to collect geometry for the instances the ray crosses. Only crossed instances
+// enter the hits map, so the map stays small no matter how many instances the
+// scene draws.
+func (r *Renderer) pickTargetsForRequest(b engine.RenderBundle, x, y, width, height int) *pickTargets {
+	targets := &pickTargets{ray: pickRayForCamera(b.Camera, x, y, width, height)}
+	if len(r.pickSpans) > 0 {
+		targets.spans = append(make([]pickSpan, 0, len(r.pickSpans)), r.pickSpans...)
+	}
+	if width <= 0 || height <= 0 {
+		return targets
+	}
+	collectPickHits(targets, b, r.pickBases, r.objectPickBases, r.surfacePickBases)
 	return targets
 }
 
@@ -414,104 +462,101 @@ type primitiveHit struct {
 	depth         float32
 }
 
-func enrichPickTargetsWithRay(targets map[uint32]PickResult, b engine.RenderBundle, bases, objectBases, surfaceBases []uint32, x, y, width, height int) {
-	if targets == nil || width <= 0 || height <= 0 {
-		return
-	}
-	ray := pickRayForCamera(b.Camera, x, y, width, height)
-	defer func() {
-		for id, target := range targets {
-			target.RayOrigin = ray.origin
-			target.RayDirection = ray.dir
-			targets[id] = target
+// collectPickHits raycasts the scene along the click ray and records geometry
+// for every entry the ray crosses. Entries the ray misses stay out of the map:
+// resultForID resolves their identity from the span table instead.
+//
+// Each instance first gets a bounding-sphere test that respects the scale baked
+// into its transform. That rejects most instances with 4 multiplies instead of
+// a full triangle walk.
+func collectPickHits(targets *pickTargets, b engine.RenderBundle, bases, objectBases, surfaceBases []uint32) {
+	ray := targets.ray
+	addHit := func(span pickSpan, id uint32, hit primitiveHit) {
+		out := span.result(id)
+		out.PrimitiveIndex = hit.triangleIndex
+		out.TriangleIndex = hit.triangleIndex
+		out.LocalPosition = hit.localPosition
+		out.WorldPosition = hit.worldPosition
+		out.UV = hit.uv
+		out.Depth = hit.depth
+		out.RayOrigin = ray.origin
+		out.RayDirection = ray.dir
+		if targets.hits == nil {
+			targets.hits = make(map[uint32]PickResult)
 		}
-		background := backgroundPickResult()
-		background.RayOrigin = ray.origin
-		background.RayDirection = ray.dir
-		targets[0] = background
-	}()
-	for objectIndex, mesh := range b.InstancedMeshes {
+		targets.hits[id] = out
+	}
+	for objectIndex := range b.InstancedMeshes {
+		mesh := &b.InstancedMeshes[objectIndex]
 		if objectIndex >= len(bases) || bases[objectIndex] == 0 || mesh.InstanceCount <= 0 {
 			continue
 		}
-		geo := primitiveForParams(primitiveParamsForInstancedMesh(mesh))
+		params := normalizePrimitiveParams(primitiveParamsForInstancedMesh(*mesh))
+		geo := primitiveForParams(params)
 		if geo == nil || geo.vertexCount <= 0 {
 			continue
 		}
+		baseRadius := primitiveCullRadius(params)
+		span := pickSpan{
+			base: bases[objectIndex], count: uint32(mesh.InstanceCount),
+			objectID: mesh.ID, index: objectIndex, kind: pickSpanInstanced,
+		}
 		for instanceIndex := 0; instanceIndex < mesh.InstanceCount; instanceIndex++ {
-			id := bases[objectIndex] + uint32(instanceIndex)
-			target, ok := targets[id]
-			if !ok {
+			model := matrixForInstance(mesh.Transforms, instanceIndex)
+			if !raySphereIntersects(ray, model, instanceCullRadius(baseRadius, model)) {
 				continue
 			}
-			if hit, ok := raycastPrimitiveInstance(ray, geo, matrixForInstance(mesh.Transforms, instanceIndex)); ok {
-				target.PrimitiveIndex = hit.triangleIndex
-				target.TriangleIndex = hit.triangleIndex
-				target.LocalPosition = hit.localPosition
-				target.WorldPosition = hit.worldPosition
-				target.UV = hit.uv
-				target.Depth = hit.depth
-				targets[id] = target
+			if hit, ok := raycastPrimitiveInstance(ray, geo, model); ok {
+				addHit(span, span.base+uint32(instanceIndex), hit)
 			}
 		}
 	}
-	enrichObjectPickTargetsWithRay(targets, b, objectBases, ray)
-	enrichSurfacePickTargetsWithRay(targets, b, surfaceBases, ray)
-}
-
-func enrichObjectPickTargetsWithRay(targets map[uint32]PickResult, b engine.RenderBundle, objectBases []uint32, ray pickRay) {
-	if len(targets) == 0 {
-		return
-	}
-	for objectIndex, object := range b.Objects {
+	for objectIndex := range b.Objects {
+		object := &b.Objects[objectIndex]
 		if objectIndex >= len(objectBases) || objectBases[objectIndex] == 0 {
 			continue
 		}
-		if !nativeObjectDrawable(b, object) || !renderObjectPickable(object) {
+		if !nativeObjectDrawable(b, *object) || !renderObjectPickable(*object) {
 			continue
 		}
-		id := objectBases[objectIndex]
-		target, ok := targets[id]
-		if !ok {
+		if hit, ok := raycastWorldObject(ray, b, *object); ok {
+			addHit(pickSpan{
+				base: objectBases[objectIndex], count: 1,
+				objectID: object.ID, index: objectIndex, kind: pickSpanObject,
+			}, objectBases[objectIndex], hit)
+		}
+	}
+	for surfaceIndex := range b.Surfaces {
+		surface := &b.Surfaces[surfaceIndex]
+		if surfaceIndex >= len(surfaceBases) || surfaceBases[surfaceIndex] == 0 || !surfaceDrawable(*surface) {
 			continue
 		}
-		if hit, ok := raycastWorldObject(ray, b, object); ok {
-			target.PrimitiveIndex = hit.triangleIndex
-			target.TriangleIndex = hit.triangleIndex
-			target.LocalPosition = hit.localPosition
-			target.WorldPosition = hit.worldPosition
-			target.UV = hit.uv
-			target.Depth = hit.depth
-			target.ObjectIndex = objectIndex
-			targets[id] = target
+		if hit, ok := raycastSurface(ray, *surface); ok {
+			addHit(pickSpan{
+				base: surfaceBases[surfaceIndex], count: 1,
+				objectID: surface.ID, index: surfaceIndex, kind: pickSpanSurface,
+			}, surfaceBases[surfaceIndex], hit)
 		}
 	}
 }
 
-func enrichSurfacePickTargetsWithRay(targets map[uint32]PickResult, b engine.RenderBundle, surfaceBases []uint32, ray pickRay) {
-	if len(targets) == 0 {
-		return
+// raySphereIntersects reports whether the ray crosses the bounding sphere
+// centred on the transform's translation column with the given radius. It is
+// the cheap reject in front of the triangle walk.
+func raySphereIntersects(ray pickRay, model mat4, radius float32) bool {
+	cx, cy, cz := model[12], model[13], model[14]
+	ox := cx - ray.origin[0]
+	oy := cy - ray.origin[1]
+	oz := cz - ray.origin[2]
+	// Project the centre onto the ray, then measure the perpendicular distance.
+	t := ox*ray.dir[0] + oy*ray.dir[1] + oz*ray.dir[2]
+	if t < -radius {
+		return false
 	}
-	for surfaceIndex, surface := range b.Surfaces {
-		if surfaceIndex >= len(surfaceBases) || surfaceBases[surfaceIndex] == 0 || !surfaceDrawable(surface) {
-			continue
-		}
-		id := surfaceBases[surfaceIndex]
-		target, ok := targets[id]
-		if !ok {
-			continue
-		}
-		if hit, ok := raycastSurface(ray, surface); ok {
-			target.PrimitiveIndex = hit.triangleIndex
-			target.TriangleIndex = hit.triangleIndex
-			target.LocalPosition = hit.localPosition
-			target.WorldPosition = hit.worldPosition
-			target.UV = hit.uv
-			target.Depth = hit.depth
-			target.ObjectIndex = surfaceIndex
-			targets[id] = target
-		}
-	}
+	px := ox - ray.dir[0]*t
+	py := oy - ray.dir[1]*t
+	pz := oz - ray.dir[2]*t
+	return px*px+py*py+pz*pz <= radius*radius
 }
 
 func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay {

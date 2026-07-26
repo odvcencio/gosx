@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,11 @@ var (
 	ErrWebAuthnCredentialNotFound = errors.New("webauthn credential not found")
 	ErrWebAuthnVerificationFailed = errors.New("webauthn verification failed")
 	ErrWebAuthnCounterInvalid     = errors.New("webauthn counter is invalid")
+
+	// ErrWebAuthnOriginRequired reports a WebAuthn flow with no configured
+	// origin. The origin check is the anti-phishing control of WebAuthn, so
+	// GoSX never reads it from request headers. Set WebAuthnOptions.Origin.
+	ErrWebAuthnOriginRequired = fmt.Errorf("auth: webauthn needs WebAuthnOptions.Origin: %w", ErrOriginNotConfigured)
 )
 
 type webAuthnStateKind string
@@ -165,9 +171,16 @@ func (s *MemoryWebAuthnStore) UpdateCounter(id string, signCount uint32, usedAt 
 
 // WebAuthnOptions configures the built-in WebAuthn/passkey flow.
 type WebAuthnOptions struct {
-	RPID             string
-	RPName           string
-	Origin           string
+	RPID   string
+	RPName string
+
+	// Origin is the absolute origin that serves the sign-in page, such as
+	// "https://app.example". WebAuthn compares it against the origin in the
+	// client data, which stops a phishing site from replaying a ceremony.
+	// GoSX never derives this value from request headers. Every ceremony
+	// fails with ErrWebAuthnOriginRequired while Origin is empty.
+	Origin string
+
 	TTL              time.Duration
 	SessionKey       string
 	SuccessPath      string
@@ -194,6 +207,7 @@ type WebAuthn struct {
 	store            WebAuthnStore
 	resolver         WebAuthnResolver
 	now              func() time.Time
+	configErr        error
 }
 
 type webAuthnState struct {
@@ -327,11 +341,23 @@ func NewWebAuthn(manager *Manager, opts WebAuthnOptions) *WebAuthn {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	// Validate the origin once, at startup. Every ceremony reports the same
+	// error until the application configures an absolute origin.
+	origin := strings.TrimRight(strings.TrimSpace(opts.Origin), "/")
+	var configErr error
+	if origin == "" {
+		configErr = ErrWebAuthnOriginRequired
+	} else if normalized, err := normalizeBaseURL(origin); err != nil {
+		configErr = err
+	} else {
+		origin = normalized
+	}
 	return &WebAuthn{
 		manager:          manager,
 		rpID:             strings.TrimSpace(opts.RPID),
 		rpName:           strings.TrimSpace(opts.RPName),
-		origin:           strings.TrimRight(strings.TrimSpace(opts.Origin), "/"),
+		origin:           origin,
+		configErr:        configErr,
 		ttl:              opts.TTL,
 		sessionKey:       opts.SessionKey,
 		successPath:      opts.SuccessPath,
@@ -353,6 +379,10 @@ func (m *Manager) WebAuthn(opts WebAuthnOptions) *WebAuthn {
 func (w *WebAuthn) BeginRegistration(r *http.Request, user User, next string) (WebAuthnCreationOptions, error) {
 	if w == nil {
 		return WebAuthnCreationOptions{}, fmt.Errorf("webauthn manager is nil")
+	}
+	// Fail before the browser starts a ceremony that can never verify.
+	if _, err := w.effectiveOrigin(); err != nil {
+		return WebAuthnCreationOptions{}, err
 	}
 	user = normalizeWebAuthnUser(user)
 	if user.ID == "" {
@@ -427,7 +457,11 @@ func (w *WebAuthn) FinishRegistration(r *http.Request, payload WebAuthnRegistrat
 	if !equalWebAuthnChallenge(clientData.Challenge, state.Challenge) {
 		return WebAuthnCredential{}, "", ErrWebAuthnChallengeInvalid
 	}
-	if clientData.Origin != w.effectiveOrigin(r) {
+	expectedOrigin, err := w.effectiveOrigin()
+	if err != nil {
+		return WebAuthnCredential{}, "", err
+	}
+	if clientData.Origin != expectedOrigin {
 		return WebAuthnCredential{}, "", ErrWebAuthnVerificationFailed
 	}
 	authData, err := decodeAuthenticatorData(payload.Response.AuthenticatorData)
@@ -475,6 +509,10 @@ func (w *WebAuthn) FinishRegistration(r *http.Request, payload WebAuthnRegistrat
 func (w *WebAuthn) BeginAuthentication(r *http.Request, login string, next string) (WebAuthnRequestOptions, error) {
 	if w == nil {
 		return WebAuthnRequestOptions{}, fmt.Errorf("webauthn manager is nil")
+	}
+	// Fail before the browser starts a ceremony that can never verify.
+	if _, err := w.effectiveOrigin(); err != nil {
+		return WebAuthnRequestOptions{}, err
 	}
 	user, err := w.resolveUser(r.Context(), login)
 	if err != nil {
@@ -546,7 +584,11 @@ func (w *WebAuthn) FinishAuthentication(r *http.Request, payload WebAuthnAuthent
 	if !equalWebAuthnChallenge(clientData.Challenge, state.Challenge) {
 		return User{}, "", ErrWebAuthnChallengeInvalid
 	}
-	if clientData.Origin != w.effectiveOrigin(r) {
+	expectedOrigin, err := w.effectiveOrigin()
+	if err != nil {
+		return User{}, "", err
+	}
+	if clientData.Origin != expectedOrigin {
 		return User{}, "", ErrWebAuthnVerificationFailed
 	}
 	authDataBytes, err := decodeWebAuthnBytes(payload.Response.AuthenticatorData)
@@ -733,18 +775,22 @@ func (w *WebAuthn) resolveUser(ctx context.Context, login string) (User, error) 
 	return normalizeWebAuthnUser(User{ID: login, Email: login}), nil
 }
 
+// effectiveRPID returns the relying party id. It falls back to the host of the
+// configured origin, never to the request host, because a client sets the Host
+// header.
 func (w *WebAuthn) effectiveRPID(r *http.Request) string {
 	if w != nil && strings.TrimSpace(w.rpID) != "" {
 		return strings.TrimSpace(w.rpID)
 	}
-	host := ""
-	if r != nil {
-		host = r.Host
+	origin, err := w.effectiveOrigin()
+	if err != nil {
+		return ""
 	}
-	if idx := strings.Index(host, ":"); idx >= 0 {
-		host = host[:idx]
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return ""
 	}
-	return host
+	return parsed.Hostname()
 }
 
 func (w *WebAuthn) effectiveRPName(r *http.Request) string {
@@ -757,11 +803,20 @@ func (w *WebAuthn) effectiveRPName(r *http.Request) string {
 	return "GoSX"
 }
 
-func (w *WebAuthn) effectiveOrigin(r *http.Request) string {
-	if w != nil && strings.TrimSpace(w.origin) != "" {
-		return strings.TrimRight(w.origin, "/")
+// effectiveOrigin returns the configured expected origin. It never reads
+// request headers: the origin check is the anti-phishing control of WebAuthn,
+// and a client controls Host and X-Forwarded-Host.
+func (w *WebAuthn) effectiveOrigin() (string, error) {
+	if w == nil {
+		return "", ErrWebAuthnOriginRequired
 	}
-	return requestOrigin(r)
+	if w.configErr != nil {
+		return "", w.configErr
+	}
+	if w.origin == "" {
+		return "", ErrWebAuthnOriginRequired
+	}
+	return w.origin, nil
 }
 
 func normalizeWebAuthnUserWithFallback(login string, user User, err error) (User, error) {

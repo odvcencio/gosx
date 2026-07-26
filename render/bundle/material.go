@@ -54,15 +54,63 @@ type materialResources struct {
 const materialUniformSize = 112
 
 // resolveMaterialFingerprint picks the effective material for one instanced
-// mesh. Lookup prefers bundle.Materials[MaterialIndex]; out-of-range or
-// missing indices fall back to a sensible vertex-color default so legacy
-// primitives still render lit.
-func resolveMaterialFingerprint(b engine.RenderBundle, im engine.RenderInstancedMesh) materialFingerprint {
-	if im.MaterialIndex < 0 || im.MaterialIndex >= len(b.Materials) {
+// mesh. Lookup prefers materials[MaterialIndex]; out-of-range or missing
+// indices fall back to a sensible vertex-color default so legacy primitives
+// still render lit.
+//
+// The parameter is the material slice, not the whole bundle. A RenderBundle is
+// 864 bytes and a RenderInstancedMesh is 296 bytes, and the previous signature
+// copied both on every call. prepareMeshStates calls this once per mesh per
+// frame, so at a thousand meshes the copies alone cost more than the work.
+func resolveMaterialFingerprint(materials []engine.RenderMaterial, materialIndex int) materialFingerprint {
+	if materialIndex < 0 || materialIndex >= len(materials) {
 		return defaultVertexColorMaterial()
 	}
-	mat := b.Materials[im.MaterialIndex]
-	return materialFromRender(mat)
+	return materialFromRender(materials[materialIndex])
+}
+
+// materialFingerprintMemo holds one fingerprint per bundle material index for
+// the frame in progress. resolveMaterialFingerprint parses a CSS colour string
+// and quantizes fifteen floats, and prepareMeshStates used to repeat that for
+// every mesh. Scenes normally share a handful of materials across many meshes,
+// so the repeat was the largest single cost in a high-mesh-count frame: a CPU
+// profile of a 1000-mesh frame put 26 percent of all samples in that one
+// function.
+//
+// The memo lives for one frame. Materials may change between frames, and
+// engine.RenderMaterial holds maps, so it cannot be compared with == to detect
+// that. Rebuilding once per material per frame is cheap and always correct.
+type materialFingerprintMemo struct {
+	fps   []materialFingerprint
+	valid []bool
+}
+
+// reset sizes the memo for a bundle with count materials and marks every slot
+// stale. The slices only grow, so a steady-state frame allocates nothing.
+func (m *materialFingerprintMemo) reset(count int) {
+	if cap(m.fps) < count {
+		m.fps = make([]materialFingerprint, count)
+		m.valid = make([]bool, count)
+	}
+	m.fps = m.fps[:count]
+	m.valid = m.valid[:count]
+	clear(m.valid)
+}
+
+// lookup returns the fingerprint for one material index, computing it on first
+// request in the frame and reusing it afterwards.
+func (m *materialFingerprintMemo) lookup(materials []engine.RenderMaterial, materialIndex int) materialFingerprint {
+	if materialIndex < 0 || materialIndex >= len(m.valid) {
+		// Out of range indices take the default, which costs no parsing.
+		return resolveMaterialFingerprint(materials, materialIndex)
+	}
+	if m.valid[materialIndex] {
+		return m.fps[materialIndex]
+	}
+	fp := resolveMaterialFingerprint(materials, materialIndex)
+	m.fps[materialIndex] = fp
+	m.valid[materialIndex] = true
+	return fp
 }
 
 func defaultVertexColorMaterial() materialFingerprint {

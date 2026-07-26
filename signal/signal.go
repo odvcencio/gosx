@@ -6,6 +6,24 @@
 //
 // Inspired by FluffyUI's reactive model, adapted for browser/WASM context
 // with single-thread-minded semantics.
+//
+// # Notification rules
+//
+// Set and Update notify subscribers only when the value changes. New installs a
+// default equality test for every comparable type; NewWithEqual overrides it.
+// Types that Go cannot compare, such as slices and maps, notify on every Set.
+//
+// One change to a base signal produces exactly one notification per dependent
+// Computed value. No lock is held while subscribers run, so a subscriber may
+// read any signal or computed value, including the one that notified it.
+//
+// # Goroutine scope
+//
+// Dependency tracking and Batch are scoped to the calling goroutine. A read on
+// one goroutine never becomes a dependency of a Computed value built on
+// another, and one goroutine's Batch never delays another goroutine's
+// notifications. Runtimes without a standard goroutine header, such as TinyGo,
+// share one scope; that matches their single-threaded model.
 package signal
 
 import "sync"
@@ -32,12 +50,14 @@ type subscriberEntry struct {
 	fn Subscriber
 }
 
-// New creates a new signal with an initial value.
+// New creates a new signal with an initial value. Comparable value types get a
+// default equality test, so Set with an unchanged value does not notify.
 func New[T any](initial T) *Signal[T] {
-	return &Signal[T]{value: initial}
+	return &Signal[T]{value: initial, equal: defaultEqual[T]()}
 }
 
-// NewWithEqual creates a signal with a custom equality function.
+// NewWithEqual creates a signal with a custom equality function. Pass nil to
+// notify on every Set regardless of the value.
 func NewWithEqual[T any](initial T, eq func(a, b T) bool) *Signal[T] {
 	return &Signal[T]{value: initial, equal: eq}
 }
@@ -59,10 +79,7 @@ func (s *Signal[T]) Set(value T) {
 		return
 	}
 	s.value = value
-	subs := make([]Subscriber, 0, len(s.subs))
-	for _, e := range s.subs {
-		subs = append(subs, e.fn)
-	}
+	subs := s.snapshotSubscribersLocked()
 	s.mu.Unlock()
 
 	batchNotify(subs)
@@ -77,13 +94,23 @@ func (s *Signal[T]) Update(fn func(T) T) {
 		return
 	}
 	s.value = newVal
-	subs := make([]Subscriber, 0, len(s.subs))
-	for _, e := range s.subs {
-		subs = append(subs, e.fn)
-	}
+	subs := s.snapshotSubscribersLocked()
 	s.mu.Unlock()
 
 	batchNotify(subs)
+}
+
+// snapshotSubscribersLocked copies the callback list so notification runs with
+// the mutex released. The caller must hold s.mu.
+func (s *Signal[T]) snapshotSubscribersLocked() []Subscriber {
+	if len(s.subs) == 0 {
+		return nil
+	}
+	subs := make([]Subscriber, len(s.subs))
+	for i, e := range s.subs {
+		subs[i] = e.fn
+	}
+	return subs
 }
 
 // Subscribe registers a callback for value changes. Returns an unsubscribe function.
@@ -110,37 +137,43 @@ func (s *Signal[T]) subscribe(fn Subscriber) func() {
 	return s.Subscribe(fn)
 }
 
+// hasSubscribers reports whether anybody listens for changes. A Computed value
+// uses it to stay lazy while nobody observes it.
+func (s *Signal[T]) hasSubscribers() bool {
+	s.mu.Lock()
+	n := len(s.subs)
+	s.mu.Unlock()
+	return n > 0
+}
+
 // Computed is a derived reactive value that recomputes when dependencies change.
 type Computed[T any] struct {
-	mu      sync.Mutex
-	compute func() T
-	signal  *Signal[T]
-	unsubs  []func()
-	dirty   bool
+	mu         sync.Mutex
+	compute    func() T
+	signal     *Signal[T]
+	unsubs     []func()
+	dirty      bool
+	refreshing bool
+	stopped    bool
 }
 
 // Derive creates a computed value from a function.
 // Dependencies are tracked automatically on first evaluation.
 func Derive[T any](fn func() T) *Computed[T] {
-	c := &Computed[T]{
-		compute: fn,
-		dirty:   true,
-	}
-	// Evaluate immediately to track deps and get initial value
+	c := &Computed[T]{compute: fn}
+	// Evaluate immediately to track deps and get the initial value.
 	val, deps := trackDependencies(fn)
 	c.signal = New(val)
-	c.dirty = false
-	c.subscribeToDeps(deps)
+	c.mu.Lock()
+	c.subscribeToDepsLocked(deps)
+	c.mu.Unlock()
 	return c
 }
 
-// Get returns the current computed value.
+// Get returns the current computed value. It recomputes first when a dependency
+// changed while nobody observed the value.
 func (c *Computed[T]) Get() T {
-	c.mu.Lock()
-	if c.dirty {
-		c.recompute()
-	}
-	c.mu.Unlock()
+	c.refresh()
 	return c.signal.Get()
 }
 
@@ -156,37 +189,91 @@ func (c *Computed[T]) subscribe(fn Subscriber) func() {
 // Stop disposes the computed value and unsubscribes from all dependencies.
 func (c *Computed[T]) Stop() {
 	c.mu.Lock()
-	for _, unsub := range c.unsubs {
-		unsub()
-	}
+	c.stopped = true
+	unsubs := c.unsubs
 	c.unsubs = nil
 	c.mu.Unlock()
-}
 
-func (c *Computed[T]) recompute() {
-	// Unsubscribe old deps
-	for _, unsub := range c.unsubs {
+	for _, unsub := range unsubs {
 		unsub()
 	}
-	c.unsubs = nil
-
-	// Re-track dependencies
-	val, deps := trackDependencies(c.compute)
-	c.signal.Set(val)
-	c.dirty = false
-	c.subscribeToDeps(deps)
 }
 
-func (c *Computed[T]) subscribeToDeps(deps []Subscribable) {
-	for _, dep := range deps {
-		unsub := dep.subscribe(func() {
-			c.mu.Lock()
-			c.dirty = true
+// refresh recomputes the value when it is stale and publishes the result once.
+// It never holds c.mu while it runs user code or notifies subscribers, so a
+// subscriber may call Get without deadlocking.
+func (c *Computed[T]) refresh() {
+	c.mu.Lock()
+	if c.stopped || !c.dirty {
+		c.mu.Unlock()
+		return
+	}
+	if c.refreshing {
+		// Another goroutine already recomputes. It repeats the pass because
+		// dirty stays set, so this caller must not compute in parallel.
+		c.mu.Unlock()
+		return
+	}
+	c.refreshing = true
+	c.mu.Unlock()
+
+	for {
+		c.mu.Lock()
+		if c.stopped || !c.dirty {
+			c.refreshing = false
 			c.mu.Unlock()
-			// Propagate change notification
-			c.signal.Set(c.signal.Get())
-		})
-		c.unsubs = append(c.unsubs, unsub)
+			return
+		}
+		c.dirty = false
+		c.mu.Unlock()
+
+		val, deps := trackDependencies(c.compute)
+
+		c.mu.Lock()
+		stopped := c.stopped
+		if !stopped {
+			c.subscribeToDepsLocked(deps)
+		}
+		c.mu.Unlock()
+
+		if stopped {
+			c.mu.Lock()
+			c.refreshing = false
+			c.mu.Unlock()
+			return
+		}
+		// Publish outside c.mu. Exactly one Set runs per dependency change.
+		c.signal.Set(val)
+	}
+}
+
+// onDepChange marks the value stale and republishes it once. It stays lazy while
+// nobody subscribes: the next Get then does the work.
+func (c *Computed[T]) onDepChange() {
+	c.mu.Lock()
+	if c.stopped {
+		c.mu.Unlock()
+		return
+	}
+	c.dirty = true
+	c.mu.Unlock()
+
+	if !c.signal.hasSubscribers() {
+		return
+	}
+	c.refresh()
+}
+
+// subscribeToDepsLocked replaces the dependency subscriptions. The caller must
+// hold c.mu.
+func (c *Computed[T]) subscribeToDepsLocked(deps []Subscribable) {
+	old := c.unsubs
+	c.unsubs = nil
+	for _, unsub := range old {
+		unsub()
+	}
+	for _, dep := range deps {
+		c.unsubs = append(c.unsubs, dep.subscribe(c.onDepChange))
 	}
 }
 
@@ -209,11 +296,13 @@ func Watch(fn func()) *Effect {
 func (e *Effect) Dispose() {
 	e.mu.Lock()
 	e.dead = true
-	for _, unsub := range e.unsubs {
-		unsub()
-	}
+	unsubs := e.unsubs
 	e.unsubs = nil
 	e.mu.Unlock()
+
+	for _, unsub := range unsubs {
+		unsub()
+	}
 }
 
 func (e *Effect) run() {
@@ -222,25 +311,27 @@ func (e *Effect) run() {
 		e.mu.Unlock()
 		return
 	}
-	// Unsubscribe old deps
-	for _, unsub := range e.unsubs {
-		unsub()
-	}
+	unsubs := e.unsubs
 	e.unsubs = nil
 	e.mu.Unlock()
 
-	// Run and track
+	for _, unsub := range unsubs {
+		unsub()
+	}
+
+	// Run and track with the mutex released.
 	_, deps := trackDependencies(func() struct{} {
 		e.fn()
 		return struct{}{}
 	})
 
 	e.mu.Lock()
+	if e.dead {
+		e.mu.Unlock()
+		return
+	}
 	for _, dep := range deps {
-		unsub := dep.subscribe(func() {
-			e.run()
-		})
-		e.unsubs = append(e.unsubs, unsub)
+		e.unsubs = append(e.unsubs, dep.subscribe(e.run))
 	}
 	e.mu.Unlock()
 }

@@ -26,19 +26,27 @@ type CompressedArray struct {
 // SceneIR is the typed lowered scene payload emitted from a Graph before it is
 // serialized into the current Scene3D compatibility contract.
 //
-// Historically serialized via legacyProps → map[string]any → json.Marshal,
-// which cost ~900 interface-boxing allocations per scene marshal. Since
-// every field (including the interface-typed PostEffects — each concrete
-// post-effect type implements json.Marshaler) now has proper json tags,
-// reflection-based json.Marshal(sceneIR) produces the same wire shape
-// directly, and Props.MarshalJSON takes that fast path.
+// SceneIR carries no MarshalJSON method. Every field has a json tag.
+// Every PostEffects concrete type also implements json.Marshaler. So
+// plain reflection over json.Marshal(ir) emits the wire shape directly.
+// This path builds no map[string]any intermediate. The old legacyProps()
+// map path cost ~900 interface-boxing allocations per scene marshal.
+// See scene.go's Props.LegacyProps for the one remaining caller of that
+// map-tree path. It stays, because its exported contract returns a
+// map[string]any.
 //
-// ShaderLib carries deduplicated large shader strings hoisted from
-// computeParticles[].computeWGSL and objects[].custom*WGSL/customVertex/
-// customFragment when the same source appears ≥2 times in the scene.
-// The inline field is replaced with a sibling *Ref field (e.g.
-// computeWGSLRef:"sl:..."). The JS hydrate path inflates refs back before
-// downstream renderers see them.
+// ShaderLib carries deduplicated large shader strings. The hoist covers
+// computeParticles[].computeWGSL, objects[].custom*WGSL/customVertex/
+// customFragment, points[], instancedMeshes[].cullKernelWGSL, and
+// waterSystems[] fields, whenever the same source string appears at
+// least twice in the scene. hoistShaderLib runs this pass inside
+// MarshalJSON, on a private copy of the struct, right before the
+// reflection marshal. It writes the source id directly into the
+// struct's *Ref field (for example, ComputeWGSLRef = "sl:...") and
+// clears the inline field, so the reflection marshal sees the hoisted
+// shape. The JS hydrate path, and
+// SceneIR.UnmarshalJSON on the Go side, restore the inline fields
+// before any renderer sees them.
 type SceneIR struct {
 	Schema             string               `json:"schema,omitempty"`
 	Objects            []ObjectIR           `json:"objects,omitempty"`
@@ -55,7 +63,6 @@ type SceneIR struct {
 	Lights             []LightIR            `json:"lights,omitempty"`
 	Environment        EnvironmentIR        `json:"environment,omitzero"`
 	PostEffects        []PostEffectIR       `json:"postEffects,omitempty"`
-	RenderGraph        *RenderGraphIR       `json:"renderGraph,omitempty"`
 	PostFXMaxPixels    int                  `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                  `json:"shadowMaxPixels,omitempty"`
 	// QualityLadder / QualityStartRung: see Props.QualityLadder and
@@ -103,40 +110,6 @@ type SceneIR struct {
 	// MotionProgram (transforms) so material packets route independently in the
 	// JS runtime.
 	MaterialMotionProgram []byte `json:"materialMotionProgram,omitempty"`
-}
-
-// RenderGraphIR is the backend-neutral retained render/resource schedule.
-// Authoring tools may retain richer editing data, but runtime and headless
-// consumers share this exact ordered plan.
-type RenderGraphIR struct {
-	Resources   []RenderResourceIR   `json:"resources"`
-	Passes      []RenderGraphPassIR  `json:"passes"`
-	Allocations []RenderAllocationIR `json:"allocations,omitempty"`
-}
-
-type RenderResourceIR struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Ownership string `json:"ownership"`
-	Format    string `json:"format,omitempty"`
-	Width     int    `json:"width,omitempty"`
-	Height    int    `json:"height,omitempty"`
-	Bytes     int64  `json:"bytes,omitempty"`
-}
-
-type RenderGraphPassIR struct {
-	ID      string   `json:"id"`
-	Kind    string   `json:"kind"`
-	Reads   []string `json:"reads,omitempty"`
-	Writes  []string `json:"writes,omitempty"`
-	Depends []string `json:"depends,omitempty"`
-}
-
-type RenderAllocationIR struct {
-	Resource string `json:"resource"`
-	Slot     int    `json:"slot"`
-	FirstUse int    `json:"firstUse"`
-	LastUse  int    `json:"lastUse"`
 }
 
 // InteractionProfileIR declares a named client-side Scene3D interaction
@@ -1071,7 +1044,14 @@ func (p Props) SceneIR() SceneIR {
 		// keeping it first matches the order users typically write.)
 		ir.PostEffects = append([]PostEffectIR{synthesized}, ir.PostEffects...)
 	}
-	ir.PostFXMaxPixels = p.PostFX.resolveMaxPixels()
+	// PostFXMaxPixels only means something when the scene has a post-FX
+	// chain to size a render target for. resolveMaxPixels() always returns
+	// a positive default (1080p), so gate the assignment on PostEffects
+	// being non-empty; otherwise the wire always carries a stray
+	// postFXMaxPixels value even when no post-FX pass runs.
+	if len(ir.PostEffects) > 0 {
+		ir.PostFXMaxPixels = p.PostFX.resolveMaxPixels()
+	}
 	ir.ShadowMaxPixels = p.Shadows.resolveMaxPixels()
 	ir.QualityLadder = qualityLadderSceneIR(p.QualityLadder)
 	if len(ir.QualityLadder) > 0 {
@@ -1153,17 +1133,23 @@ func SetSkinLookup(l SkinLookup) { skinLookup = l }
 // unserved by at least one custom-material object in the SceneIR. A backend
 // is "unserved" by a material if the resolver says the material cannot serve
 // it (i.e. the required shading language is absent).
+//
+// Each check also accepts the paired *Ref field, such as CustomVertexRef,
+// as proof of presence. This function runs inside Props.SceneIR(),
+// before hoistShaderLib ever sees the scene (hoistShaderLib runs later,
+// inside MarshalJSON), so the Ref check here only matters for an author
+// who sets a Ref field directly, without an inline source.
 func customShaderUnservedBackends(ir SceneIR, r capability.ShaderResolver) []capability.Backend {
 	seen := map[capability.Backend]bool{}
 	for _, obj := range ir.Objects {
-		if obj.CustomVertex == "" && obj.CustomFragment == "" &&
-			obj.CustomVertexWGSL == "" && obj.CustomFragmentWGSL == "" {
+		hasGLSL := obj.CustomVertex != "" || obj.CustomFragment != "" ||
+			obj.CustomVertexRef != "" || obj.CustomFragmentRef != ""
+		hasWGSL := obj.CustomVertexWGSL != "" || obj.CustomFragmentWGSL != "" ||
+			obj.CustomVertexWGSLRef != "" || obj.CustomFragmentWGSLRef != ""
+		if !hasGLSL && !hasWGSL {
 			continue
 		}
-		src := capability.CustomMaterialSources{
-			GLSL: obj.CustomVertex != "" || obj.CustomFragment != "",
-			WGSL: obj.CustomVertexWGSL != "" || obj.CustomFragmentWGSL != "",
-		}
+		src := capability.CustomMaterialSources{GLSL: hasGLSL, WGSL: hasWGSL}
 		served := r.Serves(src)
 		for b, ok := range served {
 			if !ok {
@@ -1203,14 +1189,20 @@ func requiredBackends(p Props) []capability.Backend {
 // SceneIR lowers a typed graph into a typed intermediate representation.
 //
 // The returned slices alias the graphLowerer's internal accumulators
-// directly — no defensive copy — because SceneIR's only caller is
-// Props.SceneIR → legacyProps → MarshalJSON, none of which mutate the
-// slices. Skipping the defensive copies cuts ~7 allocations and ~7
-// backing-array copies per page render on any non-trivial scene, which
-// on a 20-mesh fixture drops SceneIR() from ~22µs / 292 allocs to
-// noticeably less. If a future caller needs to mutate, they can take
-// a copy themselves — the cost of the copy belongs at the mutation
-// site, not at the lowering site.
+// directly — no defensive copy — because callers of Graph.SceneIR() and
+// Props.SceneIR() expect every inline shader-source field intact (no
+// hoisting) on the value they get back. Skipping the defensive copies
+// cuts ~7 allocations and ~7 backing-array copies per page render on any
+// non-trivial scene, which on a 20-mesh fixture drops SceneIR() from
+// ~22µs / 292 allocs to noticeably less. If a future caller needs to
+// mutate, they can take a copy themselves — the cost of the copy belongs
+// at the mutation site, not at the lowering site.
+//
+// Shader-lib hoisting (see hoistShaderLib) runs only inside
+// SceneIR.MarshalJSON, not here. Hoisting here would mutate every
+// in-memory caller's Objects/Points/etc. slices, not just the JSON
+// wire bytes, and break any caller that inspects SceneIR fields
+// directly without ever marshaling.
 func (g Graph) SceneIR() SceneIR {
 	if len(g.Nodes) == 0 {
 		return SceneIR{}
@@ -1273,27 +1265,93 @@ func (g Graph) SceneIR() SceneIR {
 	return ir
 }
 
-// MarshalJSON serializes SceneIR to its wire JSON form. When any qualifying
-// shader string (computeWGSL, customVertexWGSL, etc.) appears ≥2 times across
-// the scene's nodes, MarshalJSON hoists the duplicates into a top-level
-// "shaderLib" map and replaces the inline fields with "*Ref" fields. This
-// is transparent to all downstream consumers: the JS hydrate path inflates
-// the refs back before renderers see them.
+// MarshalJSON hoists duplicate shader-source strings into ir.ShaderLib
+// (see hoistShaderLib), then encodes the result through plain reflection
+// over json tags. There is no map[string]any intermediate on this path.
+// The old legacyProps() map path cost ~900 interface-boxing allocations
+// per scene marshal; hoistShaderLib itself only walks the small set of
+// shader-source field pairs, so this stays cheap even on a large scene.
 //
-// Implementation note: we produce the map form via legacyProps() so that the
-// applyShaderLib pass can mutate map values in place — the struct-tag reflection
-// path doesn't give us mutable access to nested object fields at low cost.
+// cloneShaderLibCollections runs first, but only when shaderLibNeedsHoist
+// says a hoist will actually change something. Cloning is skipped for
+// the common scene that has no duplicated shader source, which is the
+// majority case. cloneShaderLibCollections exists so hoistShaderLib's
+// field writes land on private backing arrays, not the caller's. ir is
+// a value receiver, which copies only the top-level struct; a slice
+// field copy still points at the caller's original backing array.
+// Without the clone, hoisting would mutate data the caller may still
+// hold and reuse — for example, marshaling the same SceneIR value
+// twice.
 func (ir SceneIR) MarshalJSON() ([]byte, error) {
-	m := ir.legacyProps()
-	if len(m) == 0 {
-		return []byte("{}"), nil
+	type sceneIRAlias SceneIR
+	if shaderLibNeedsHoist(&ir) {
+		cloneShaderLibCollections(&ir)
+		hoistShaderLib(&ir)
 	}
-	applyShaderLib(m)
-	return json.Marshal(m)
+	return json.Marshal(sceneIRAlias(ir))
 }
 
-// UnmarshalJSON deserializes SceneIR from its wire JSON form, inflating any
-// shaderLib refs back to inline fields before populating the struct.
+// shaderLibNeedsHoist reports whether hoistShaderLib would change ir: at
+// least one qualifying shader-source string, at least shaderLibThreshold
+// bytes long, appears twice or more across ir's shader-bearing
+// collections. It only reads ir, so MarshalJSON can call it before it
+// decides whether to pay for cloneShaderLibCollections.
+func shaderLibNeedsHoist(ir *SceneIR) bool {
+	counts := make(map[string]int)
+	for _, p := range collectShaderLibPairs(ir) {
+		s := *p.inline
+		if len(s) < shaderLibThreshold {
+			continue
+		}
+		counts[s]++
+		if counts[s] >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// cloneShaderLibCollections replaces every SceneIR collection that
+// hoistShaderLib may write into with a fresh copy of its backing array.
+// Each copy is one allocation, sized to the collection, and is far
+// cheaper than the legacyProps() map tree it replaces. See MarshalJSON
+// for why the clone must happen before hoistShaderLib runs.
+func cloneShaderLibCollections(ir *SceneIR) {
+	if len(ir.Objects) > 0 {
+		ir.Objects = append([]ObjectIR(nil), ir.Objects...)
+	}
+	if len(ir.Models) > 0 {
+		ir.Models = append([]ModelIR(nil), ir.Models...)
+	}
+	if len(ir.Points) > 0 {
+		ir.Points = append([]PointsIR(nil), ir.Points...)
+	}
+	if len(ir.InstancedMeshes) > 0 {
+		ir.InstancedMeshes = append([]InstancedMeshIR(nil), ir.InstancedMeshes...)
+	}
+	if len(ir.ComputeParticles) > 0 {
+		ir.ComputeParticles = append([]ComputeParticlesIR(nil), ir.ComputeParticles...)
+	}
+	if len(ir.WaterSystems) > 0 {
+		ir.WaterSystems = append([]WaterSystemIR(nil), ir.WaterSystems...)
+	}
+	// ShaderLib is a map, a reference type: a struct-field copy still
+	// shares the caller's map. hoistShaderLib may merge new entries into
+	// it, so clone it too, or a caller-supplied ShaderLib would gain
+	// entries the caller never asked for.
+	if len(ir.ShaderLib) > 0 {
+		cloned := make(map[string]string, len(ir.ShaderLib))
+		for id, src := range ir.ShaderLib {
+			cloned[id] = src
+		}
+		ir.ShaderLib = cloned
+	}
+}
+
+// UnmarshalJSON deserializes SceneIR from its wire JSON form. It restores
+// shaderLib refs back to inline fields, via inflateShaderLibStruct,
+// before it returns. This is a single decode pass. It builds no
+// intermediate map[string]any.
 func (ir *SceneIR) UnmarshalJSON(data []byte) error {
 	// Use a type alias to avoid infinite recursion.
 	type sceneIRAlias SceneIR
@@ -1301,26 +1359,192 @@ func (ir *SceneIR) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &alias); err != nil {
 		return err
 	}
-	// Inflate shaderLib refs on the raw map so that the *Ref struct fields
-	// are populated — then re-unmarshal into the alias. This is a two-pass
-	// approach that handles both the struct Ref fields and the inline fields.
-	//
-	// Simpler path: inflate on the map, re-marshal, re-unmarshal.
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	inflateShaderLib(raw)
-	inflated, err := json.Marshal(raw)
-	if err != nil {
-		return err
-	}
-	var final sceneIRAlias
-	if err := json.Unmarshal(inflated, &final); err != nil {
-		return err
-	}
-	*ir = SceneIR(final)
+	result := SceneIR(alias)
+	inflateShaderLibStruct(&result)
+	*ir = result
 	return nil
+}
+
+// shaderLibPair is one inline/Ref shader-source field pair discovered on a
+// SceneIR node during lowering-time hoisting. inline points at the field
+// that carries the source text (e.g. ObjectIR.CustomVertexWGSL); ref points
+// at its sibling *Ref field (e.g. ObjectIR.CustomVertexWGSLRef).
+type shaderLibPair struct {
+	inline *string
+	ref    *string
+}
+
+// collectShaderLibPairs walks every SceneIR collection whose IR struct
+// declares a *Ref sibling field for a shader-source field. It returns one
+// shaderLibPair per field. This covers objects, models (via the embedded
+// ObjectIR), points, instancedMeshes, computeParticles, and waterSystems.
+//
+// PostEffects shader fields, such as CustomPostIR.FragmentWGSL, are not
+// covered. CustomPostIR declares no *Ref sibling field, so a duplicated
+// authored post-effect shader stays inline. This is a named gap. See
+// hoistShaderLib for the reason.
+func collectShaderLibPairs(ir *SceneIR) []shaderLibPair {
+	// Pre-size to the exact field-pair count per collection so the common
+	// case — a scene with no shader-lib candidates at all — pays for one
+	// slice allocation instead of the ~9 grow-and-copy steps a nil-start
+	// append chain would trigger once a few hundred pairs accumulate.
+	capacity := 4*(len(ir.Objects)+len(ir.Models)+len(ir.Points)) +
+		len(ir.InstancedMeshes) + 5*len(ir.ComputeParticles) + 14*len(ir.WaterSystems)
+	pairs := make([]shaderLibPair, 0, capacity)
+	for i := range ir.Objects {
+		pairs = append(pairs, objectShaderLibPairs(&ir.Objects[i])...)
+	}
+	for i := range ir.Models {
+		pairs = append(pairs, objectShaderLibPairs(&ir.Models[i].ObjectIR)...)
+	}
+	for i := range ir.Points {
+		pairs = append(pairs, pointsShaderLibPairs(&ir.Points[i])...)
+	}
+	for i := range ir.InstancedMeshes {
+		pairs = append(pairs, instancedMeshShaderLibPairs(&ir.InstancedMeshes[i])...)
+	}
+	for i := range ir.ComputeParticles {
+		pairs = append(pairs, computeParticlesShaderLibPairs(&ir.ComputeParticles[i])...)
+	}
+	for i := range ir.WaterSystems {
+		pairs = append(pairs, waterSystemShaderLibPairs(&ir.WaterSystems[i])...)
+	}
+	return pairs
+}
+
+func objectShaderLibPairs(o *ObjectIR) []shaderLibPair {
+	return []shaderLibPair{
+		{&o.CustomVertex, &o.CustomVertexRef},
+		{&o.CustomFragment, &o.CustomFragmentRef},
+		{&o.CustomVertexWGSL, &o.CustomVertexWGSLRef},
+		{&o.CustomFragmentWGSL, &o.CustomFragmentWGSLRef},
+	}
+}
+
+func pointsShaderLibPairs(pt *PointsIR) []shaderLibPair {
+	return []shaderLibPair{
+		{&pt.CustomVertex, &pt.CustomVertexRef},
+		{&pt.CustomFragment, &pt.CustomFragmentRef},
+		{&pt.CustomVertexWGSL, &pt.CustomVertexWGSLRef},
+		{&pt.CustomFragmentWGSL, &pt.CustomFragmentWGSLRef},
+	}
+}
+
+func instancedMeshShaderLibPairs(m *InstancedMeshIR) []shaderLibPair {
+	return []shaderLibPair{
+		{&m.CullKernelWGSL, &m.CullKernelWGSLRef},
+	}
+}
+
+func computeParticlesShaderLibPairs(c *ComputeParticlesIR) []shaderLibPair {
+	return []shaderLibPair{
+		{&c.ComputeWGSL, &c.ComputeWGSLRef},
+		{&c.RenderVertex, &c.RenderVertexRef},
+		{&c.RenderFragment, &c.RenderFragmentRef},
+		{&c.RenderVertexWGSL, &c.RenderVertexWGSLRef},
+		{&c.RenderFragmentWGSL, &c.RenderFragmentWGSLRef},
+	}
+}
+
+func waterSystemShaderLibPairs(w *WaterSystemIR) []shaderLibPair {
+	return []shaderLibPair{
+		{&w.SeedWGSL, &w.SeedWGSLRef},
+		{&w.DropWGSL, &w.DropWGSLRef},
+		{&w.DisplacementWGSL, &w.DisplacementWGSLRef},
+		{&w.SimulationWGSL, &w.SimulationWGSLRef},
+		{&w.NormalWGSL, &w.NormalWGSLRef},
+		{&w.CausticsWGSL, &w.CausticsWGSLRef},
+		{&w.PoolVertexWGSL, &w.PoolVertexWGSLRef},
+		{&w.PoolFragmentWGSL, &w.PoolFragmentWGSLRef},
+		{&w.SurfaceVertexWGSL, &w.SurfaceVertexWGSLRef},
+		{&w.SurfaceFragmentWGSL, &w.SurfaceFragmentWGSLRef},
+		{&w.SurfaceBelowFragmentWGSL, &w.SurfaceBelowFragmentWGSLRef},
+		{&w.ObjectShadowWGSL, &w.ObjectShadowWGSLRef},
+		{&w.ObjectMeshShadowVertexWGSL, &w.ObjectMeshShadowVertexWGSLRef},
+		{&w.ObjectMeshShadowFragmentWGSL, &w.ObjectMeshShadowFragmentWGSLRef},
+	}
+}
+
+// hoistShaderLib scans ir's typed collections, via collectShaderLibPairs,
+// for duplicate shader-source strings. It hoists each duplicate into
+// ir.ShaderLib and replaces the inline field with its sibling Ref field.
+// SceneIR.MarshalJSON calls this on a private, cloned copy right before
+// the plain reflection JSON marshal, so the marshal emits the hoisted
+// wire shape directly. No per-marshal map-tree build is needed.
+//
+// The policy matches the legacy map-based applyShaderLib. It hoists a
+// string only when it appears at least twice, and only when the string
+// is at least shaderLibThreshold bytes long. A pre-set Ref field with no
+// matching inline field is left untouched, since there is nothing to
+// count or replace.
+func hoistShaderLib(ir *SceneIR) {
+	pairs := collectShaderLibPairs(ir)
+	if len(pairs) == 0 {
+		return
+	}
+
+	counts := make(map[string]int, len(pairs))
+	for _, p := range pairs {
+		s := *p.inline
+		if len(s) < shaderLibThreshold {
+			continue
+		}
+		counts[s]++
+	}
+
+	lib := make(map[string]string)
+	for s, n := range counts {
+		if n >= 2 {
+			lib[shaderLibID(s)] = s
+		}
+	}
+	if len(lib) == 0 {
+		return
+	}
+
+	sourceToID := make(map[string]string, len(lib))
+	for id, s := range lib {
+		sourceToID[s] = id
+	}
+	for _, p := range pairs {
+		id, dup := sourceToID[*p.inline]
+		if !dup {
+			continue
+		}
+		*p.ref = id
+		*p.inline = ""
+	}
+
+	if ir.ShaderLib == nil {
+		ir.ShaderLib = make(map[string]string, len(lib))
+	}
+	for id, s := range lib {
+		ir.ShaderLib[id] = s
+	}
+}
+
+// inflateShaderLibStruct reverses hoistShaderLib directly on the typed
+// struct. For every shaderLibPair whose Ref field names an entry in
+// ir.ShaderLib, it restores the inline field and clears the Ref field. A
+// Ref that names a missing lib entry is cleared, but its inline field
+// stays empty. This tolerates a partial or hand-edited payload.
+// ir.ShaderLib is cleared afterward. Every SceneIR consumer expects
+// inline fields, not the hoisted form, once this function returns.
+func inflateShaderLibStruct(ir *SceneIR) {
+	if len(ir.ShaderLib) == 0 {
+		return
+	}
+	for _, p := range collectShaderLibPairs(ir) {
+		id := *p.ref
+		if id == "" {
+			continue
+		}
+		if src, ok := ir.ShaderLib[id]; ok {
+			*p.inline = src
+		}
+		*p.ref = ""
+	}
+	ir.ShaderLib = nil
 }
 
 func (ir SceneIR) isZero() bool {
@@ -2637,6 +2861,11 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
+	capability.FeatureComputeParts,
+	capability.FeatureGPUCull,
+	capability.FeatureRectAreaLight,
+	capability.FeatureRectAreaSpecular,
+	capability.FeatureLightProbeSH,
 }
 
 func waterSystemUsesObjectTexturePass(w WaterSystemIR) bool {
@@ -2776,6 +3005,38 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 				seen[capability.FeatureSkinning] = true
 				break
 			}
+		}
+	}
+
+	// compute-particles: the scene declares at least one GPU particle system.
+	// WebGL has no compute-particle path (Matrix: WebGPU=true, WebGL=false),
+	// so this reports a real degradation instead of a silent CPU fallback.
+	if len(ir.ComputeParticles) > 0 {
+		seen[capability.FeatureComputeParts] = true
+	}
+
+	// gpu-cull: any InstancedMesh carries an Elio GPU cull kernel, inline or
+	// hoisted into ShaderLib. The JS runtime only runs GPU frustum culling
+	// on WebGPU when cullKernelWGSL (or its Ref) is present; WebGL never
+	// culls on the GPU (Matrix: WebGPU=true, WebGL=false).
+	for i := range ir.InstancedMeshes {
+		if ir.InstancedMeshes[i].CullKernelWGSL != "" || ir.InstancedMeshes[i].CullKernelWGSLRef != "" {
+			seen[capability.FeatureGPUCull] = true
+			break
+		}
+	}
+
+	// Per-light-kind features. The WebGPU renderer honours all seven light
+	// kinds, but two carry a known shortfall that the author must be told
+	// about: rect-area specular substitutes a representative-point lobe for
+	// the fitted LTC tables, and a light probe folds to ambient rather than
+	// evaluating its spherical-harmonic coefficients. capability.Matrix marks
+	// both false on every backend, so each reports a degradation. None of the
+	// three light features sits in DefaultPolicy().Required, so none can
+	// exclude a backend.
+	for i := range ir.Lights {
+		for _, f := range capability.LightKindFeatures(ir.Lights[i].Kind) {
+			seen[f] = true
 		}
 	}
 

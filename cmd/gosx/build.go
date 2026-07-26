@@ -504,9 +504,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-islands", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js"), &manifest.Runtime.BootstrapFeatureIslands},
 		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines},
 		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs},
+		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers},
+		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout},
 		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D},
 		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand},
 		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU},
+		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL},
 		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF},
 		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
@@ -638,6 +641,8 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		manifest.Runtime.BootstrapFeatureIslands.File,
 		manifest.Runtime.BootstrapFeatureEngines.File,
 		manifest.Runtime.BootstrapFeatureHubs.File,
+		manifest.Runtime.BootstrapFeatureControllers.File,
+		manifest.Runtime.BootstrapFeatureTextlayout.File,
 		manifest.Runtime.Patch.File,
 		manifest.Runtime.VideoHLS.File,
 	))
@@ -1015,12 +1020,18 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureEngines.File)
 	case "/gosx/bootstrap-feature-hubs.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureHubs.File)
+	case "/gosx/bootstrap-feature-controllers.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureControllers.File)
+	case "/gosx/bootstrap-feature-textlayout.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureTextlayout.File)
 	case "/gosx/bootstrap-feature-scene3d.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "/gosx/bootstrap-feature-scene3d-command.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCommand.File)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
+	case "/gosx/bootstrap-feature-scene3d-webgl.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWebGL.File)
 	case "/gosx/bootstrap-feature-scene3d-gltf.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DGLTF.File)
 	case "/gosx/bootstrap-feature-scene3d-animation.js":
@@ -1097,6 +1108,12 @@ func copyDirIfPresent(src, dst string) error {
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
 			return os.MkdirAll(target, 0755)
+		}
+		// Go test files are never runtime inputs; shipping them in a bundle
+		// makes `go test ./...` descend into dist/ and fail on repo-relative
+		// fixture paths.
+		if strings.HasSuffix(info.Name(), "_test.go") {
+			return nil
 		}
 		return copyFile(target, path)
 	})

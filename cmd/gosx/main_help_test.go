@@ -38,7 +38,6 @@ func TestSubcommandHelpDoesNotTreatHelpAsOperand(t *testing.T) {
 		{name: "release", args: []string{"release", "--help"}, want: "gosx release"},
 		{name: "release check", args: []string{"release", "check", "--help"}, want: "gosx release check"},
 		{name: "scene", args: []string{"scene", "--help"}, want: "gosx scene"},
-		{name: "scene certify", args: []string{"scene", "certify", "--help"}, want: "gosx scene certify"},
 		{name: "scene inspect", args: []string{"scene", "inspect", "--help"}, want: "gosx scene inspect"},
 		{name: "scene schema", args: []string{"scene", "schema", "--help"}, want: "gosx scene schema"},
 		{name: "scene validate", args: []string{"scene", "validate", "--help"}, want: "gosx scene validate"},

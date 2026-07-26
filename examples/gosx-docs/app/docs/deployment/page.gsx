@@ -52,6 +52,17 @@ func Page() Node {
 			<span class="inline-code">_gosx/css/</span>
 			with content-addressed filenames. The export step runs at Go speed — the entire gosx-docs site exports in under two seconds on a laptop.
 		</p>
+		<h2 id="github-pages">GitHub Pages</h2>
+		<p>
+			A static export deploys to GitHub Pages with the official Pages actions. The workflow builds the site with
+			<span class="inline-code">gosx build --prod</span>
+			, disables Jekyll processing with a
+			<span class="inline-code">.nojekyll</span>
+			file, and publishes
+			<span class="inline-code">dist/static</span>
+			as the Pages artifact.
+		</p>
+		<CodeBlock lang="yaml" source={data.sampleGitHubPages} />
 		<h2 id="server-deployment">Server Deployment</h2>
 		<p>
 			The production binary is statically linked and ships with all templates, assets, and the WASM runtime embedded. No external files are required at runtime. The binary listens on the port specified by
@@ -62,9 +73,11 @@ func Page() Node {
 		</p>
 		<CodeBlock lang="bash" source={data.sampleServerBuild} />
 		<p>
-			All pages cached under ISR are stored in memory by default. Persistent ISR across restarts requires an external cache backend bound at startup. See the
-			<a href="/docs/isr" class="inline-link">ISR reference</a>
-			for the cache adapter interface.
+			All pages cached under ISR are stored in memory by default. Persistent ISR across restarts requires an external cache backend bound at startup with
+			<span class="inline-code">app.SetISRStore</span>
+			— see the
+			<a href="#isr" class="inline-link">ISR section</a>
+			below.
 		</p>
 		<CodeBlock lang="go" source={data.sampleServerMain} />
 		<h2 id="isr">ISR — Incremental Static Regeneration</h2>

@@ -17,3 +17,8 @@ docs/superpowers/
 # Local dev workspace overlay (links sibling prism/selena checkouts) — never commit
 go.work
 go.work.sum
+
+# Compiled test binaries from 'go test -c'. Agents and benchmark runs leave
+# these at the repository root; one reached 8.2 MB.
+*.test
+*.test.exe

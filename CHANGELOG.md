@@ -272,6 +272,222 @@ enough telemetry to distinguish submitted work from CPU view culling.
   `chromedp` integration test from ordinary unit runs, making the required
   checks reproducible on clean runners.
 
+An audit of every package produced measured evidence for a set of long-standing
+defects. This entry records the fixes. Several change public defaults, and the
+security items change them deliberately: each one now fails closed.
+
+### Breaking — security
+
+Read this section before upgrading. Four of these defects were exploitable.
+
+- **Session cookies now expire on the server.** The signed and encrypted
+  envelope carries an issue timestamp, and `decodeCookie` rejects an envelope
+  older than `Options.MaxAge`. Before this change nothing checked age, so
+  `MaxAge` only set browser attributes and a captured cookie replayed forever.
+  A session past half its lifetime is renewed. A timestamp more than five
+  minutes in the future is rejected.
+- **Timestamp-free cookies expire after a grace window.** A cookie written by
+  an older release is accepted inside `Options.LegacyCookieGrace` (30 days by
+  default) and immediately re-issued with a timestamp. The window starts at
+  manager creation, so a process restart restarts it. **Set
+  `LegacyCookieGrace: -1` once your rollout completes**, or a captured
+  pre-upgrade cookie keeps replaying.
+- **Session cookies default to `Secure`.** Plain-HTTP development needs
+  `Options.AllowInsecure: true`. Both `gosx init` templates now set it from
+  `PUBLIC_URL`.
+- **`auth.MagicLinkOptions` requires `BaseURL` or `AllowedHosts`.** The link
+  origin was derived from `X-Forwarded-Host` with no allowlist, so an attacker
+  could have a victim's magic-link token emailed to a host they control.
+  `Issue` and `Send` now return `ErrMagicLinkBaseURLRequired`, and
+  `RequestHandler` answers 500 for the configuration fault.
+- **`auth.WebAuthnOptions.Origin` is mandatory.** `effectiveOrigin` fell back
+  to request headers, which defeats the primary anti-phishing check. Every
+  ceremony now returns `ErrWebAuthnOriginRequired` without it, and the relying
+  party ID derives from the configured origin rather than `r.Host`.
+- **`X-Forwarded-Proto` and `X-Forwarded-Host` are ignored** unless
+  `auth.ForwardedTrust` names the proxy addresses and the request arrives from
+  one of them.
+- **Redirect targets reject a backslash, a control character, and `%5c`.**
+  `/\evil.example` passed every previous check, and browsers normalize `\` to
+  `/`, so it resolved to a protocol-relative jump. The same helper guards
+  OAuth and WebAuthn. A cross-site `Referer` no longer steers a redirect-back.
+- **An oversized session writes no cookie** and reports through
+  `Options.OnError` and `Store.Err()` instead of failing silently.
+  `session.New` rejects a `__Host-` name that is not `Secure`, sets a domain,
+  or uses a path other than `/`.
+
+### Breaking — caching
+
+- **Automatic ETags are derived from the response body.** They previously
+  hashed only the request, the cache keys, and the revalidation versions, and
+  `ApplyCacheHeaders` ran before the body existed — so any data-dependent page
+  using `ctx.CachePublic` served **stale content behind a 304** until an
+  explicit revalidation. A body-derived validator is strong; the bodyless form
+  stays weak. New API: `ApplyCacheHeadersForBody`,
+  `CacheState.SetRepresentation`, `HasRepresentation`, `ContentAddressed`.
+- **`no-store` and `no-cache` responses carry no automatic ETag**, so a wrong
+  304 is now impossible on them.
+- A 304 costs one render, because an honest content-derived validator needs the
+  body. Rendering is now roughly ten times cheaper, so this is a smaller cost
+  than it was. The per-request ID and CSP nonce are excluded from the digest,
+  since neither describes the resource.
+
+### Fixed — physics
+
+- **All eight declared collider shapes now collide.** Cylinder, cone, convex
+  hull and triangle mesh were selectable through the public API and the scene
+  bridge, but the narrowphase had no case for any of them, so they silently
+  passed through everything. They also reported an infinite bounding box, which
+  made the broadphase pair them against every other collider. Convex pairs now
+  resolve through GJK with EPA; meshes use a bounding-volume hierarchy with
+  per-triangle tests. Mesh against mesh remains unimplemented and reports
+  `ErrMeshPairUnsupported` at construction rather than failing quietly.
+- **A collider the engine cannot use fails loudly.** An unusable radius, a
+  coplanar hull, bad indices, or an unknown shape name now sets `Collider.Err()`
+  and produces a finite zero-extent bounding box. A convex hull or mesh authored
+  through the scene IR is rejected at bridge time, because `scene.Collider3D`
+  carries no vertex buffer and such a collider would have no geometry.
+- **Continuous collision detection no longer scans every collider.** The sweep
+  iterated the whole collider list for each collider of each dynamic body and
+  filtered to static targets inside the loop. The broadphase now keeps a static
+  sub-index that the swept query consults. Measured at 3,200 bodies, the
+  continuous path costs about 1.3 times a discrete step instead of 4.9, and per
+  step allocations fell from 16,725 to 3,210. Broadphase candidate generation is
+  now allocation free.
+- **Expanding polytope search could report a penetration depth of exactly
+  zero** for a deeply overlapping hull or cylinder pair, which the solver
+  accepts and then corrects by nothing.
+
+Two pre-existing behaviours are unchanged and documented rather than fixed: a
+dynamic body resting on a static box freezes laterally, because continuous
+detection is currently what holds spheres up on planes; and mesh collision has
+no internal-edge filter, so a body crossing a triangle boundary can receive an
+edge normal instead of a face normal.
+
+### Fixed — crashes
+
+- **Two unrecoverable client crashes.** `SliceVal` and `SubstringVal` clamped
+  the end index only from above, so `items[0:len(items)-1]` on an empty slice
+  panicked. A cyclic value built by `arr[0] = arr` then overflowed the stack
+  in `String`, `Eq` and the JSON path. Production builds pass `-panic=trap`
+  and the client holds no `recover`, so either one killed every island,
+  engine and hub on the page for the rest of the session. Both now degrade
+  with a diagnostic. A fuzz target covers the expression VM.
+- **Nested VM loops share one step budget.** The cap was per loop, so two
+  levels permitted about 10¹² body evaluations. `SetForCap` had no callers.
+- **The frustum near plane used the wrong clip-depth form** in the desktop
+  renderer, which placed it at the midpoint of an orthographic range and
+  discarded half the volume. Per-cascade shadow-caster culling rejected every
+  caster.
+- **Instance culling ignored per-instance scale**, so a scaled-up instance
+  could vanish while on screen.
+- **`BufferGeometry` raycast bounds understated the geometry**, so the
+  broadphase dropped real hits on any mesh larger than a unit cube.
+  `Lines` reported hits inside the empty middle of a wire frame. `Decal` was
+  not raycastable at all.
+- **`signal.Computed` deadlocked** when a subscriber read the computed value,
+  because `Get` held its mutex across the notification. It now releases the
+  lock before notifying, and propagates once instead of twice.
+- **Dependency tracking is scoped to the calling goroutine.** It was
+  process-global, so a read on one goroutine could land in a tracking window
+  another goroutine had opened, and the computed subscribed to a signal it
+  never read. An ordinary `Get` pays one atomic load for this.
+- **Identical `Set` calls no longer notify.** A signal over a comparable type
+  installs a default equality test, which also makes `Set` and `Get` faster
+  than before.
+- **`Batch` belongs to the calling goroutine, and says so.** Exact
+  goroutine-scoped batching was implemented and then withdrawn: it made island
+  dispatch — which batches signal writes on every user event — roughly four
+  times slower, because `runtime.Stack` is Go's only portable identity source
+  and costs microseconds. `Batch` keeps a documented single-goroutine contract
+  plus a detector that panics when two goroutines write signals inside one
+  batch, at no cost on the notification path. The detector is best effort in
+  the same sense as the runtime's concurrent map write check: a foreign write
+  that overlaps no other write goes undetected. A panic inside `fn` no longer
+  leaves the package batching forever.
+- `cmd/gosx` builds for `GOOS=js` again; its build constraint wrongly
+  included WebAssembly.
+
+### Performance
+
+Measured before and after, on the same machine, with allocation counts stable
+across runs.
+
+- **`.gsx` server rendering.** A 100-item page costs 244 allocations instead
+  of 9,435, and a depth-100 tree 40 instead of 862. Expressions lower once and
+  cache; the compile cache keys on file modification time rather than a content
+  hash of every request; the render environment is copy-on-write; and one
+  `strings.Builder` threads the whole walk. The build manifest is no longer
+  re-read per request.
+- **CRDT text editing is flat rather than quadratic.** An insert costs about
+  1.6 microseconds at any document size, against 5 milliseconds per character
+  at 3,200 characters before. `Save()` produces about 5 bytes per character
+  rather than 226.
+- **Raycasting** gained a bounding-volume hierarchy: a 1,000-node graph
+  answers in 1.3 microseconds instead of 133, and a 10,000-instance mesh in
+  0.6 instead of 1,368. Exact intersection now covers torus, pyramid, torus
+  knot, and arbitrary triangle meshes.
+- **Desktop renderer frames allocate nothing** in steady state at any instance
+  count. Pick targets, instance transforms, uniform packing and pass
+  descriptors are all reused, and transform uploads are skipped when a
+  fingerprint matches.
+- **`game.World`** stores components in dense typed columns instead of nested
+  maps, so a 10,000-entity query is allocation free and about twenty times
+  faster. `GetComponent` is slightly slower, because lookup is now a binary
+  search over ordered storage.
+- **`semantic`** bounds its candidate set instead of requesting the whole
+  store and re-ranking all of it. Dropping the exact re-rank entirely was
+  measured and rejected: it costs top-one accuracy.
+- **Scene3D serialization** no longer builds an intermediate map tree, which
+  removes seven eighths of its allocations. The wire format is unchanged.
+
+### Changed — Scene3D
+
+- **The WebGPU backend honours all seven light types.** Spot, hemisphere,
+  rect-area and light-probe previously rendered as point lights. The eight-light
+  cap is gone; the buffer grows to 256 and reports beyond that rather than
+  dropping lights. Rect-area diffuse response is exact; its specular response
+  substitutes a representative-point lobe, and a light probe folds to ambient.
+  Both shortfalls report through the capability verdict. Spot lights still cast
+  no shadow.
+- **GPU picking works on WebGPU.** The capability matrix had marked it
+  unsupported there and required, so a single pickable object excluded WebGPU
+  from a scene. Both matrix cells were wrong.
+- **The WebGL renderer loads on demand.** A WebGPU-capable browser no longer
+  downloads it, which removes about 34,000 brotli bytes from a Scene3D page.
+  The fallback ladder still runs WebGPU, then device loss, then WebGL, then
+  canvas.
+- **The browser text-layout engine loads on demand**, removing about 9,000
+  brotli bytes from every page that does not lay out text.
+- **The glTF loader reads nine `KHR_materials_*` extensions** plus
+  `KHR_texture_transform`. An asset using Draco, meshopt or Basis
+  supercompression now raises a named error instead of building a corrupt
+  mesh from compressed bytes.
+- `scene.Compression` documents its real codec. It is per-chunk scalar
+  quantization, not TurboQuant, and it has no delta stage.
+
+### Removed
+
+- `scene/cert` and the `gosx scene certify` command. Its statuses were literal
+  constants, so it presented an author's self-assessment as measured evidence.
+  `scene/harness` produces the real thing.
+- `render/html.go`. It was a second IR-to-HTML renderer reachable only from the
+  CLI. The request path uses one renderer now. `gosx render` output is compact
+  and expands builtins as a result.
+- `SceneIR.RenderGraph` and its types, which nothing populated.
+- Fighting-game debug tooling from the Scene3D chunk, which every 3D page
+  downloaded.
+
+### Verification
+
+- `make test-js` now runs the JavaScript test suite. It previously ran only a
+  bundle-staleness check under a label claiming otherwise, so 610 tests and 12
+  size budgets never executed in CI.
+- The capability matrix has tests that corroborate each cell against renderer
+  source. The existing drift guard only proved that two hand-written manifests
+  agreed with each other, which is how two wrong `gpu-picking` cells stayed
+  green.
+
 ## v0.35.7 (2026-07-25)
 
 Declarative motion can now split text and stagger the reveal across the pieces.

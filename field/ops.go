@@ -44,19 +44,42 @@ func Gradient(scalar *Field) *Field {
 }
 
 // GradientChecked returns the gradient or a validation error when scalar is
-// not a scalar field.
+// not a scalar field. It allocates the output. Callers that run every frame
+// should use GradientInto with a buffer they keep.
 func GradientChecked(scalar *Field) (*Field, error) {
 	if err := validateFieldComponents("field.Gradient", scalar, 1); err != nil {
 		return nil, err
+	}
+	out, err := NewChecked(scalar.Resolution, 3, scalar.Bounds)
+	if err != nil {
+		return nil, err
+	}
+	if err := GradientInto(out, scalar); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GradientInto writes the gradient of scalar into dst. dst must be a vec3 field
+// with the resolution of scalar. dst must not share memory with scalar, because
+// the central difference reads neighbor voxels after they would be overwritten.
+//
+// GradientInto allocates nothing. It is the form a per-frame loop should call.
+func GradientInto(dst, scalar *Field) error {
+	if err := validateFieldComponents("field.Gradient", scalar, 1); err != nil {
+		return err
+	}
+	if err := validateOutput("field.Gradient", dst, scalar.Resolution, 3); err != nil {
+		return err
+	}
+	if sameBuffer(dst, scalar) {
+		return fieldError("field.Gradient", "output must not alias the input")
 	}
 	rx, ry, rz := scalar.Resolution[0], scalar.Resolution[1], scalar.Resolution[2]
 	dx := (scalar.Bounds.Max[0] - scalar.Bounds.Min[0]) / float32(rx)
 	dy := (scalar.Bounds.Max[1] - scalar.Bounds.Min[1]) / float32(ry)
 	dz := (scalar.Bounds.Max[2] - scalar.Bounds.Min[2]) / float32(rz)
-	out, err := NewChecked(scalar.Resolution, 3, scalar.Bounds)
-	if err != nil {
-		return nil, err
-	}
+	out := dst
 	for k := 0; k < rz; k++ {
 		for j := 0; j < ry; j++ {
 			for i := 0; i < rx; i++ {
@@ -70,7 +93,7 @@ func GradientChecked(scalar *Field) (*Field, error) {
 			}
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // centralDiff returns f[neighbor+] - f[neighbor-] of component 0 along axis (0=x,1=y,2=z).
@@ -103,19 +126,41 @@ func Divergence(velocity *Field) *Field {
 }
 
 // DivergenceChecked returns the divergence or a validation error when velocity
-// is not a vec3 field.
+// is not a vec3 field. It allocates the output. Callers that run every frame
+// should use DivergenceInto with a buffer they keep.
 func DivergenceChecked(velocity *Field) (*Field, error) {
 	if err := validateFieldComponents("field.Divergence", velocity, 3); err != nil {
 		return nil, err
+	}
+	out, err := NewChecked(velocity.Resolution, 1, velocity.Bounds)
+	if err != nil {
+		return nil, err
+	}
+	if err := DivergenceInto(out, velocity); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DivergenceInto writes the divergence of velocity into dst. dst must be a
+// scalar field with the resolution of velocity, and must not share memory with
+// velocity.
+//
+// DivergenceInto allocates nothing.
+func DivergenceInto(dst, velocity *Field) error {
+	if err := validateFieldComponents("field.Divergence", velocity, 3); err != nil {
+		return err
+	}
+	if err := validateOutput("field.Divergence", dst, velocity.Resolution, 1); err != nil {
+		return err
+	}
+	if sameBuffer(dst, velocity) {
+		return fieldError("field.Divergence", "output must not alias the input")
 	}
 	rx, ry, rz := velocity.Resolution[0], velocity.Resolution[1], velocity.Resolution[2]
 	dx := (velocity.Bounds.Max[0] - velocity.Bounds.Min[0]) / float32(rx)
 	dy := (velocity.Bounds.Max[1] - velocity.Bounds.Min[1]) / float32(ry)
 	dz := (velocity.Bounds.Max[2] - velocity.Bounds.Min[2]) / float32(rz)
-	out, err := NewChecked(velocity.Resolution, 1, velocity.Bounds)
-	if err != nil {
-		return nil, err
-	}
 	for k := 0; k < rz; k++ {
 		for j := 0; j < ry; j++ {
 			for i := 0; i < rx; i++ {
@@ -123,11 +168,11 @@ func DivergenceChecked(velocity *Field) (*Field, error) {
 				dvydy := componentDiff(velocity, i, j, k, 1, 1, ry) / (2 * dy)
 				dvzdz := componentDiff(velocity, i, j, k, 2, 2, rz) / (2 * dz)
 				idx := (k*ry+j)*rx + i
-				out.Data[idx] = dvxdx + dvydy + dvzdz
+				dst.Data[idx] = dvxdx + dvydy + dvzdz
 			}
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // componentDiff returns the central difference of component c along axis,
@@ -160,19 +205,41 @@ func Curl(velocity *Field) *Field {
 }
 
 // CurlChecked returns the curl or a validation error when velocity is not a
-// vec3 field.
+// vec3 field. It allocates the output. Callers that run every frame should use
+// CurlInto with a buffer they keep.
 func CurlChecked(velocity *Field) (*Field, error) {
 	if err := validateFieldComponents("field.Curl", velocity, 3); err != nil {
 		return nil, err
+	}
+	out, err := NewChecked(velocity.Resolution, 3, velocity.Bounds)
+	if err != nil {
+		return nil, err
+	}
+	if err := CurlInto(out, velocity); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CurlInto writes the curl of velocity into dst. dst must be a vec3 field with
+// the resolution of velocity, and must not share memory with velocity.
+//
+// CurlInto allocates nothing.
+func CurlInto(dst, velocity *Field) error {
+	if err := validateFieldComponents("field.Curl", velocity, 3); err != nil {
+		return err
+	}
+	if err := validateOutput("field.Curl", dst, velocity.Resolution, 3); err != nil {
+		return err
+	}
+	if sameBuffer(dst, velocity) {
+		return fieldError("field.Curl", "output must not alias the input")
 	}
 	rx, ry, rz := velocity.Resolution[0], velocity.Resolution[1], velocity.Resolution[2]
 	dx := (velocity.Bounds.Max[0] - velocity.Bounds.Min[0]) / float32(rx)
 	dy := (velocity.Bounds.Max[1] - velocity.Bounds.Min[1]) / float32(ry)
 	dz := (velocity.Bounds.Max[2] - velocity.Bounds.Min[2]) / float32(rz)
-	out, err := NewChecked(velocity.Resolution, 3, velocity.Bounds)
-	if err != nil {
-		return nil, err
-	}
+	out := dst
 	for k := 0; k < rz; k++ {
 		for j := 0; j < ry; j++ {
 			for i := 0; i < rx; i++ {
@@ -189,25 +256,67 @@ func CurlChecked(velocity *Field) (*Field, error) {
 			}
 		}
 	}
-	return out, nil
+	return nil
 }
 
-// Blur applies a separable Gaussian blur with the given radius (in voxels).
-// Returns a new field; the input is not modified.
+// Blur applies a separable Gaussian blur with the given radius, in voxels.
+// It returns a new field and does not change the input. Invalid input returns
+// nil; callers that need diagnostics should use BlurInto.
+//
+// Blur allocates one output field and one scratch field per call. A per-frame
+// loop should call BlurInto and keep both buffers.
 func Blur(f *Field, radius float32) *Field {
-	if radius <= 0 {
-		out := New(f.Resolution, f.Components, f.Bounds)
-		copy(out.Data, f.Data)
-		return out
+	if err := validateField("field.Blur", f); err != nil {
+		return nil
 	}
-	kernel := gaussianKernel(radius)
-	tmp := New(f.Resolution, f.Components, f.Bounds)
 	out := New(f.Resolution, f.Components, f.Bounds)
-	tmp2 := New(f.Resolution, f.Components, f.Bounds)
-	blurAxis(f, tmp, kernel, 0)
-	blurAxis(tmp, tmp2, kernel, 1)
-	blurAxis(tmp2, out, kernel, 2)
+	if err := BlurInto(out, f, radius, nil); err != nil {
+		return nil
+	}
 	return out
+}
+
+// BlurInto writes a separable Gaussian blur of src into dst. dst must have the
+// shape of src. dst may alias src exactly, which gives an in-place blur; a
+// partial overlap is not supported.
+//
+// scratch supplies the one temporary buffer the three passes need. Pass nil to
+// let BlurInto allocate a temporary for this call only. Pass a reused Scratch to
+// make a steady-state loop allocation free.
+//
+// A separable Gaussian needs one scratch buffer, not three. The passes
+// ping-pong between dst and the scratch buffer, so the third pass lands the
+// result in dst.
+func BlurInto(dst, src *Field, radius float32, scratch *Scratch) error {
+	if err := validateField("field.Blur", src); err != nil {
+		return err
+	}
+	if err := validateOutput("field.Blur", dst, src.Resolution, src.Components); err != nil {
+		return err
+	}
+	if radius <= 0 {
+		if !sameBuffer(dst, src) {
+			copy(dst.Data, src.Data)
+		}
+		return nil
+	}
+	if scratch == nil {
+		scratch = &Scratch{}
+	}
+	kernel := scratch.gaussian(radius)
+	tmp := scratch.fieldLike(src)
+	if sameBuffer(dst, src) {
+		// dst holds the input. Move the data out first, then ping-pong back.
+		blurAxis(src, tmp, kernel, 0)
+		blurAxis(tmp, dst, kernel, 1)
+		blurAxis(dst, tmp, kernel, 2)
+		copy(dst.Data, tmp.Data)
+		return nil
+	}
+	blurAxis(src, dst, kernel, 0)
+	blurAxis(dst, tmp, kernel, 1)
+	blurAxis(tmp, dst, kernel, 2)
+	return nil
 }
 
 func gaussianKernel(radius float32) []float32 {
@@ -261,25 +370,63 @@ func blurAxis(src, dst *Field, kernel []float32, axis int) {
 }
 
 // Resample produces a field at a new resolution using trilinear filtering
-// from the source field.
+// from the source field. Invalid input returns nil; callers that need
+// diagnostics should use ResampleInto.
+//
+// Resample allocates the output. A per-frame loop should call ResampleInto with
+// a buffer it keeps.
 func Resample(f *Field, newResolution [3]int) *Field {
-	out := New(newResolution, f.Components, f.Bounds)
-	dx := (f.Bounds.Max[0] - f.Bounds.Min[0]) / float32(newResolution[0])
-	dy := (f.Bounds.Max[1] - f.Bounds.Min[1]) / float32(newResolution[1])
-	dz := (f.Bounds.Max[2] - f.Bounds.Min[2]) / float32(newResolution[2])
+	if err := validateField("field.Resample", f); err != nil {
+		return nil
+	}
+	out, err := NewChecked(newResolution, f.Components, f.Bounds)
+	if err != nil {
+		return nil
+	}
+	if err := ResampleInto(out, f); err != nil {
+		return nil
+	}
+	return out
+}
+
+// ResampleInto writes src, trilinearly filtered to the resolution of dst, into
+// dst. dst carries the target resolution and must have the component count of
+// src. dst must not share memory with src.
+//
+// ResampleInto allocates nothing.
+func ResampleInto(dst, src *Field) error {
+	if err := validateField("field.Resample", src); err != nil {
+		return err
+	}
+	if dst == nil {
+		return fieldError("field.Resample", "output field is nil")
+	}
+	if err := validateOutput("field.Resample", dst, dst.Resolution, src.Components); err != nil {
+		return err
+	}
+	if sameBuffer(dst, src) {
+		return fieldError("field.Resample", "output must not alias the input")
+	}
+	// The resampled grid covers the same world volume as the source, so dst
+	// takes the source bounds. Only the sample count changes.
+	dst.Bounds = src.Bounds
+	newResolution := dst.Resolution
+	dx := (src.Bounds.Max[0] - src.Bounds.Min[0]) / float32(newResolution[0])
+	dy := (src.Bounds.Max[1] - src.Bounds.Min[1]) / float32(newResolution[1])
+	dz := (src.Bounds.Max[2] - src.Bounds.Min[2]) / float32(newResolution[2])
 	idx := 0
 	for k := 0; k < newResolution[2]; k++ {
-		zc := f.Bounds.Min[2] + (float32(k)+0.5)*dz
+		zc := src.Bounds.Min[2] + (float32(k)+0.5)*dz
 		for j := 0; j < newResolution[1]; j++ {
-			yc := f.Bounds.Min[1] + (float32(j)+0.5)*dy
+			yc := src.Bounds.Min[1] + (float32(j)+0.5)*dy
 			for i := 0; i < newResolution[0]; i++ {
-				xc := f.Bounds.Min[0] + (float32(i)+0.5)*dx
-				for c := 0; c < f.Components; c++ {
-					out.Data[idx] = f.sampleAt(xc, yc, zc, c)
+				xc := src.Bounds.Min[0] + (float32(i)+0.5)*dx
+				for c := 0; c < src.Components; c++ {
+					dst.Data[idx] = src.sampleAt(xc, yc, zc, c)
 					idx++
 				}
 			}
 		}
 	}
-	return out
+	return nil
 }

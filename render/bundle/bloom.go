@@ -227,6 +227,13 @@ type bloomResources struct {
 	presentUniform gpu.Buffer // tone-map mode/exposure used by the compose pass
 	blurHUniform   gpu.Buffer // horizontal texel-offset uniform
 	blurVUniform   gpu.Buffer // vertical texel-offset uniform
+
+	// Last value written to each uniform above. The caches live here so a
+	// rebuilt bloom chain starts with them invalid.
+	paramsCache  vec4Cache
+	presentCache vec4Cache
+	blurHCache   vec4Cache
+	blurVCache   vec4Cache
 }
 
 type bloomConfig struct {
@@ -608,12 +615,8 @@ func (r *Renderer) configureBloom(cfg bloomConfig) {
 	if !cfg.enabled {
 		intensity = 0
 	}
-	r.device.Queue().WriteBuffer(r.bloom.paramsUniform, 0, float32sToBytes([]float32{
-		float32(cfg.threshold),
-		float32(intensity),
-		float32(cfg.scale),
-		0,
-	}))
+	r.writeVec4IfChanged(&r.bloom.paramsCache, r.bloom.paramsUniform,
+		float32(cfg.threshold), float32(intensity), float32(cfg.scale), 0)
 
 	radiusScale := cfg.radius / defaultBloomRadius
 	if radiusScale <= 0 {
@@ -621,8 +624,8 @@ func (r *Renderer) configureBloom(cfg bloomConfig) {
 	}
 	dx := float32(radiusScale) / float32(r.bloom.width)
 	dy := float32(radiusScale) / float32(r.bloom.height)
-	r.device.Queue().WriteBuffer(r.bloom.blurHUniform, 0, float32sToBytes([]float32{dx, 0, 0, 0}))
-	r.device.Queue().WriteBuffer(r.bloom.blurVUniform, 0, float32sToBytes([]float32{0, dy, 0, 0}))
+	r.writeVec4IfChanged(&r.bloom.blurHCache, r.bloom.blurHUniform, dx, 0, 0, 0)
+	r.writeVec4IfChanged(&r.bloom.blurVCache, r.bloom.blurVUniform, 0, dy, 0, 0)
 }
 
 func (r *Renderer) configureToneMap(cfg toneMapConfig) {
@@ -633,12 +636,8 @@ func (r *Renderer) configureToneMap(cfg toneMapConfig) {
 	if exposure <= 0 {
 		exposure = 1
 	}
-	r.device.Queue().WriteBuffer(r.bloom.presentUniform, 0, float32sToBytes([]float32{
-		toneMapModeCode(cfg.mode),
-		float32(exposure),
-		0,
-		0,
-	}))
+	r.writeVec4IfChanged(&r.bloom.presentCache, r.bloom.presentUniform,
+		toneMapModeCode(cfg.mode), float32(exposure), 0, 0)
 }
 
 // recordBloomPasses runs the three bloom passes between the main HDR pass
@@ -651,11 +650,8 @@ func (r *Renderer) recordBloomPasses(enc gpu.CommandEncoder) {
 	}
 	// 1) Bright pass — HDR → bloom.texA.
 	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
-		ColorAttachments: []gpu.RenderPassColorAttachment{{
-			View: r.bloom.viewA, LoadOp: gpu.LoadOpClear, StoreOp: gpu.StoreOpStore,
-			ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 1},
-		}},
-		Label: "bundle.bloom.bright",
+		ColorAttachments: r.postColorAttachments(postSlotBloomBright, r.bloom.viewA),
+		Label:            "bundle.bloom.bright",
 	})
 	pass.SetPipeline(r.brightPipeline)
 	pass.SetBindGroup(0, r.bloom.brightBindGrp)
@@ -664,11 +660,8 @@ func (r *Renderer) recordBloomPasses(enc gpu.CommandEncoder) {
 
 	// 2) Horizontal blur — bloom.texA → bloom.texB.
 	pass = enc.BeginRenderPass(gpu.RenderPassDesc{
-		ColorAttachments: []gpu.RenderPassColorAttachment{{
-			View: r.bloom.viewB, LoadOp: gpu.LoadOpClear, StoreOp: gpu.StoreOpStore,
-			ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 1},
-		}},
-		Label: "bundle.bloom.blurH",
+		ColorAttachments: r.postColorAttachments(postSlotBloomBlurH, r.bloom.viewB),
+		Label:            "bundle.bloom.blurH",
 	})
 	pass.SetPipeline(r.blurPipeline)
 	pass.SetBindGroup(0, r.bloom.blurHBindGrp)
@@ -677,11 +670,8 @@ func (r *Renderer) recordBloomPasses(enc gpu.CommandEncoder) {
 
 	// 3) Vertical blur — bloom.texB → bloom.texA (the present pass reads A).
 	pass = enc.BeginRenderPass(gpu.RenderPassDesc{
-		ColorAttachments: []gpu.RenderPassColorAttachment{{
-			View: r.bloom.viewA, LoadOp: gpu.LoadOpClear, StoreOp: gpu.StoreOpStore,
-			ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 1},
-		}},
-		Label: "bundle.bloom.blurV",
+		ColorAttachments: r.postColorAttachments(postSlotBloomBlurV, r.bloom.viewA),
+		Label:            "bundle.bloom.blurV",
 	})
 	pass.SetPipeline(r.blurPipeline)
 	pass.SetBindGroup(0, r.bloom.blurVBindGrp)

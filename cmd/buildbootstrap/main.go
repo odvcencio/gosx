@@ -17,6 +17,18 @@
 //	go run ./cmd/buildbootstrap            # rebuild all bundles
 //	go run ./cmd/buildbootstrap --check    # exit 1 if committed bundles are stale
 //
+// The build also writes client/js/bootstrap-src/chunks.json, the machine-
+// readable copy of the chunk manifest below. JS tests read that file instead of
+// keeping a second hand-written copy of the file lists. --check treats a stale
+// chunks.json the same way it treats a stale bundle.
+//
+// bootstrap-src/15-scene-ir-schema-strict.js is NOT in any bundle. It is a
+// development tool: it validates a SceneIR document the server already
+// produced, it publishes window.__gosx_validate_scene_ir_strict, and nothing
+// in the runtime, the server, the tests or the examples reads that global. It
+// cost every Scene3D page 52_389 source bytes. Load the file directly when a
+// tool needs it.
+//
 // Set GOSX_BUNDLE_DEBUG=1 to append sourceMappingURL trailers to the bundles.
 package main
 
@@ -39,35 +51,43 @@ import (
 	"github.com/tdewolff/minify/v2/js"
 )
 
+// Shared source paths. Every chunk lists whole files. The build used to cut
+// chunk boundaries out of one large file with literal comment banners and
+// function-declaration strings as markers, so a rename or a re-indent changed
+// what shipped. The former 30-tail.js is now the 30a..30k file set and the
+// runtime-utils head of 10-runtime-scene-core.js is now
+// 10-runtime-scene-utils.js. Each seam is a file, so a chunk manifest names
+// files only.
 const (
-	tailFile               = "bootstrap-src/30-tail.js"
-	runtimeSceneCoreFile   = "bootstrap-src/10-runtime-scene-core.js"
-	runtimePrimitivesFile  = "bootstrap-src/10-runtime-primitives.js"
-	runtimeUtilsStart      = "  // Pending manifest reference, set during init, consumed when runtime is ready.\n"
-	runtimeUtilsEnd        = "  function sceneCSSVarReference(value) {\n"
-	sectionEngineMounting  = "  // --------------------------------------------------------------------------\n  // Engine mounting\n  // --------------------------------------------------------------------------\n"
-	sectionHubConnections  = "  // --------------------------------------------------------------------------\n  // Hub connections\n  // --------------------------------------------------------------------------\n"
-	sectionIslandDisposal  = "  // --------------------------------------------------------------------------\n  // Island disposal\n  // --------------------------------------------------------------------------\n"
-	sectionHydration       = "  // --------------------------------------------------------------------------\n  // Hydration\n  // --------------------------------------------------------------------------\n"
-	sectionCapabilityProbe = "  function entryRequiresAsyncWebGPUProbe(entry) {\n"
-	sectionRuntimeReady    = "  // --------------------------------------------------------------------------\n  // Runtime ready callback\n  // --------------------------------------------------------------------------\n"
-	sectionEventDelegation = "  // --------------------------------------------------------------------------\n  // Event delegation\n  // --------------------------------------------------------------------------\n"
+	textLayoutEngineFile     = "bootstrap-src/01-textlayout-engine.js"
+	runtimeSceneUtilsFile    = "bootstrap-src/10-runtime-scene-utils.js"
+	runtimeSceneCoreFile     = "bootstrap-src/10-runtime-scene-core.js"
+	runtimePrimitivesFile    = "bootstrap-src/10-runtime-primitives.js"
+	tailEventDelegationFile  = "bootstrap-src/30a-tail-event-delegation.js"
+	tailEngineMountingFile   = "bootstrap-src/30b-tail-engine-mounting.js"
+	tailHubConnectionsFile   = "bootstrap-src/30c-tail-hub-connections.js"
+	tailHubFightInputFile    = "bootstrap-src/30c1-tail-hub-fight-input.js"
+	tailArcadeAudioFile      = "bootstrap-src/30c2-tail-arcade-audio.js"
+	tailIslandDisposeFile    = "bootstrap-src/30d-tail-island-dispose.js"
+	tailEngineDisposeFile    = "bootstrap-src/30e-tail-engine-dispose.js"
+	tailHubDisconnectFile    = "bootstrap-src/30f-tail-hub-disconnect.js"
+	tailPageDisposeFile      = "bootstrap-src/30g-tail-page-dispose.js"
+	tailCapabilityProbeFile  = "bootstrap-src/30h-tail-capability-probe.js"
+	tailHydrationFile        = "bootstrap-src/30i-tail-hydration.js"
+	tailRuntimeReadyFile     = "bootstrap-src/30j-tail-runtime-ready.js"
+	tailInitFile             = "bootstrap-src/30k-tail-init.js"
+	videoSyncFallbackFile    = "bootstrap-src/28-video-sync-fallback.js"
+	scene3DCommandBridgeFile = "bootstrap-src/09-scene3d-command-bridge.js"
+	controllersFile          = "bootstrap-src/08-controllers.js"
 )
 
 type source struct {
-	kind  string // "file" or "extract"
 	rel   string // path relative to client/js, forward slashes
-	label string // sourcemap label ("rel" or "rel#id")
-	start string // extract start marker (inclusive)
-	end   string // extract end marker (exclusive)
+	label string // sourcemap label, always the path
 }
 
 func sourceFile(rel string) source {
-	return source{kind: "file", rel: rel, label: rel}
-}
-
-func sourceExtract(rel, id, start, end string) source {
-	return source{kind: "extract", rel: rel, label: rel + "#" + id, start: start, end: end}
+	return source{rel: rel, label: rel}
 }
 
 type output struct {
@@ -80,16 +100,26 @@ var outputs = []output{
 		name: "bootstrap.js",
 		sources: []source{
 			sourceFile("bootstrap-src/00-textlayout.js"),
+			// The monolith keeps the text-layout engine inline. 01a/01b wrap it
+			// in its own IIFE, exactly like the lazily fetched
+			// bootstrap-feature-textlayout.js chunk, so one engine code path
+			// serves both. The engine reads its shared helpers from
+			// window.__gosx_runtime_api, which 00-textlayout.js assigns last.
+			sourceFile("bootstrap-src/01a-textlayout-inline-prefix.js"),
+			sourceFile(textLayoutEngineFile),
+			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.js"),
 			sourceFile("bootstrap-src/04-telemetry.js"),
 			sourceFile("bootstrap-src/05-document-env.js"),
 			sourceFile("bootstrap-src/06-declarative-actions.js"),
-			sourceFile("bootstrap-src/09-scene3d-command-bridge.js"),
+			sourceFile(scene3DCommandBridgeFile),
 			sourceFile("bootstrap-src/07-declarative-regions.js"),
+			sourceFile(controllersFile),
 			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
 			sourceFile("bootstrap-src/26-runtime-stream.js"),
 			sourceFile("bootstrap-src/26-runtime-dom.js"),
 			sourceFile("bootstrap-src/26-runtime-blocks.js"),
 			sourceFile(runtimePrimitivesFile),
+			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.js"),
 			sourceFile("bootstrap-src/11a-scene-decompress.js"),
@@ -98,12 +128,15 @@ var outputs = []output{
 			sourceFile("bootstrap-src/13-scene-material.js"),
 			sourceFile("bootstrap-src/14-scene-lighting.js"),
 			sourceFile("bootstrap-src/15-scene-ir-schema.js"),
-			sourceFile("bootstrap-src/15-scene-ir-schema-strict.js"),
 			sourceFile("bootstrap-src/15-scene-draw-plan.js"),
 			sourceFile("bootstrap-src/15b-scene-planner.js"),
 			sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
 			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
 			sourceFile("bootstrap-src/16b-scene-hdr.js"),
+			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
+			// to own. The monolith keeps 16-scene-webgl.js inline right after
+			// it, so both files ship here and neither declares a name twice.
+			sourceFile("bootstrap-src/16c-scene-shared-pbr.js"),
 			sourceFile("bootstrap-src/16-scene-webgl.js"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
@@ -112,19 +145,50 @@ var outputs = []output{
 			// turn aborts GoSXScene3D engine registration and kills 38 tests
 			// in runtime.test.js that rely on scene3d mount.
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
+			// 16a1 holds the Selena uniform packer at module scope. 16a calls it
+			// from wgpuCreatePostProcessor, which sits outside the renderer
+			// closure, so the packer cannot live inside that closure. It ships
+			// right after 16a because that placement compresses best.
 			sourceFile("bootstrap-src/16a-scene-webgpu.js"),
+			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.js"),
 			sourceFile("bootstrap-src/16b-scene-compute.js"),
 			sourceFile("bootstrap-src/17-scene-input.js"),
 			sourceFile("bootstrap-src/18-scene-canvas.js"),
 			sourceFile("bootstrap-src/19-scene-gltf.js"),
 			sourceFile("bootstrap-src/19a-scene-animation.js"),
 			sourceFile("bootstrap-src/19b-scene-control-forms.js"),
+			// 16d publishes the base symbols the lazy WebGL chunk reads through
+			// window.__gosx_scene3d_api. The monolith does not need the bridge,
+			// but it costs a few hundred bytes and keeps one source order.
+			sourceFile("bootstrap-src/16d-scene-webgl-bridge.js"),
+			sourceFile("bootstrap-src/20a-scene-mount-backend.js"),
+			sourceFile("bootstrap-src/20b-scene-mount-webgl-chunk.js"),
+			sourceFile("bootstrap-src/20c-scene-mount-quality.js"),
+			sourceFile("bootstrap-src/20d-scene-mount-overlays.js"),
+			sourceFile("bootstrap-src/20e-scene-mount-viewport.js"),
+			sourceFile("bootstrap-src/20f-scene-mount-overlay-dom.js"),
+			sourceFile("bootstrap-src/20g-scene-mount-controls.js"),
+			sourceFile("bootstrap-src/20h-scene-mount-telemetry.js"),
 			sourceFile("bootstrap-src/20-scene-mount.js"),
 			// 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
-			// engine the video factory (in 30-tail.js) uses on the brain-absent
-			// path. It must load before the tail.
-			sourceFile("bootstrap-src/28-video-sync-fallback.js"),
-			sourceFile(tailFile),
+			// engine the video factory (in 30b) uses on the brain-absent path. It
+			// must load before the tail.
+			sourceFile(videoSyncFallbackFile),
+			// The 30a..30k set replaces the former single 30-tail.js. The
+			// monolith ships every part, in the original order.
+			sourceFile(tailEventDelegationFile),
+			sourceFile(tailEngineMountingFile),
+			sourceFile(tailHubConnectionsFile),
+			sourceFile(tailHubFightInputFile),
+			sourceFile(tailArcadeAudioFile),
+			sourceFile(tailIslandDisposeFile),
+			sourceFile(tailEngineDisposeFile),
+			sourceFile(tailHubDisconnectFile),
+			sourceFile(tailPageDisposeFile),
+			sourceFile(tailCapabilityProbeFile),
+			sourceFile(tailHydrationFile),
+			sourceFile(tailRuntimeReadyFile),
+			sourceFile(tailInitFile),
 		},
 	},
 	{
@@ -154,7 +218,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26-runtime-stream.js"),
 			sourceFile("bootstrap-src/26-runtime-dom.js"),
 			sourceFile("bootstrap-src/26-runtime-blocks.js"),
-			sourceExtract(runtimeSceneCoreFile, "runtime-utils", runtimeUtilsStart, runtimeUtilsEnd),
+			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile("bootstrap-src/26-runtime-tail.js"),
 		},
@@ -163,11 +227,14 @@ var outputs = []output{
 		name: "bootstrap-feature-islands.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26a-feature-islands-prefix.js"),
-			sourceExtract(tailFile, "islands-event-delegation", sectionEventDelegation, sectionEngineMounting),
-			sourceExtract(tailFile, "islands-dispose",
-				"  window.__gosx_dispose_island = function(islandID) {\n",
-				"\n  window.__gosx_dispose_engine = function(engineID) {\n"),
-			sourceExtract(tailFile, "islands-hydration", sectionHydration, sectionRuntimeReady),
+			sourceFile(tailEventDelegationFile),
+			sourceFile(tailIslandDisposeFile),
+			// 30h holds entryRequiresAsyncWebGPUProbe. The hydration path calls
+			// it, so both the islands chunk and the engines chunk carry it. The
+			// marker-based build duplicated it silently, because the hydration
+			// extract range contained the probe extract range.
+			sourceFile(tailCapabilityProbeFile),
+			sourceFile(tailHydrationFile),
 			sourceFile("bootstrap-src/26a-feature-islands-suffix.js"),
 		},
 	},
@@ -189,13 +256,10 @@ var outputs = []output{
 			// engine the video factory uses when the WASM brain is absent. The
 			// engines feature carries the video factory, so it must carry the
 			// fallback engine too.
-			sourceFile("bootstrap-src/28-video-sync-fallback.js"),
-			sourceExtract(tailFile, "runtime-capability-probe", sectionCapabilityProbe,
-				"  async function hydrateIsland(entry) {\n"),
-			sourceExtract(tailFile, "engines-mounting", sectionEngineMounting, sectionHubConnections),
-			sourceExtract(tailFile, "engines-dispose",
-				"  window.__gosx_dispose_engine = function(engineID) {\n",
-				"\n  window.__gosx_disconnect_hub = function(hubID) {\n"),
+			sourceFile(videoSyncFallbackFile),
+			sourceFile(tailCapabilityProbeFile),
+			sourceFile(tailEngineMountingFile),
+			sourceFile(tailEngineDisposeFile),
 			sourceFile("bootstrap-src/26b-feature-engines-suffix.js"),
 		},
 	},
@@ -203,19 +267,49 @@ var outputs = []output{
 		name: "bootstrap-feature-hubs.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26c-feature-hubs-prefix.js"),
-			sourceExtract(tailFile, "hubs-connections", sectionHubConnections, sectionIslandDisposal),
-			sourceExtract(tailFile, "hubs-disconnect",
-				"  window.__gosx_disconnect_hub = function(hubID) {\n",
-				"\n  async function disposePage(reuseEngineIDs) {\n"),
+			sourceFile(tailHubConnectionsFile),
+			// 30c1 is one application's fighting-game controller set. It ships
+			// only because hydrate.HubInputConfig.Mode routes to it. Drop this
+			// one path when that typed Go API retires.
+			sourceFile(tailHubFightInputFile),
+			sourceFile(tailArcadeAudioFile),
+			sourceFile(tailHubDisconnectFile),
 			sourceFile("bootstrap-src/26c-feature-hubs-suffix.js"),
+		},
+	},
+	{
+		name: "bootstrap-feature-controllers.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26h-feature-controllers-prefix.js"),
+			sourceFile(controllersFile),
+			sourceFile("bootstrap-src/26h-feature-controllers-suffix.js"),
+		},
+	},
+	{
+		// Text-layout engine chunk. bootstrap-lite.js and bootstrap-runtime.js
+		// carried this engine on every page, even a page with no text block:
+		// 42_738 of 131_137 minified bytes in lite (32.6%) and 42_751 of
+		// 157_086 in runtime (27.2%). The selective runtime now fetches it when
+		// the document holds a data-gosx-text-layout element, or when the
+		// manifest mounts a Scene3D engine, which lays out labels.
+		name: "bootstrap-feature-textlayout.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26i-feature-textlayout-prefix.js"),
+			sourceFile(textLayoutEngineFile),
+			sourceFile("bootstrap-src/26i-feature-textlayout-suffix.js"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.js"),
-			sourceFile("bootstrap-src/09-scene3d-command-bridge.js"),
+			sourceFile(scene3DCommandBridgeFile),
 			sourceFile(runtimePrimitivesFile),
+			// 10-runtime-scene-utils.js is NOT here any more. This chunk
+			// carried a full copy of it while bootstrap-runtime.js carried
+			// another, so a Chromium Scene3D page downloaded the same helpers
+			// twice. 26d-feature-scene3d-prefix.js now bridges the eight names
+			// this chunk reads from window.__gosx_runtime_api.
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.js"),
 			sourceFile("bootstrap-src/11a-scene-decompress.js"),
@@ -224,20 +318,31 @@ var outputs = []output{
 			sourceFile("bootstrap-src/13-scene-material.js"),
 			sourceFile("bootstrap-src/14-scene-lighting.js"),
 			sourceFile("bootstrap-src/15-scene-ir-schema.js"),
-			sourceFile("bootstrap-src/15-scene-ir-schema-strict.js"),
 			sourceFile("bootstrap-src/15-scene-draw-plan.js"),
 			sourceFile("bootstrap-src/15b-scene-planner.js"),
 			sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
 			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
 			sourceFile("bootstrap-src/16b-scene-hdr.js"),
 			sourceFile("bootstrap-src/16b-scene-compute.js"),
-			sourceFile("bootstrap-src/16-scene-webgl.js"),
-			// 16a-scene-webgpu.js is NOT here — it moved to
-			// bootstrap-feature-scene3d-webgpu.js so WebGL-only pages (Safari,
-			// Firefox on most platforms, ForceWebGL) don't parse WebGPU code
-			// they'll never run. 16b-scene-compute.js stays in this chunk
-			// because WebGL uses its CPU particle-system path. 16z holds the
-			// tiny stub + adapter probe so the WebGL mount path stays sync.
+			// 16-scene-webgl.js is NOT here any more — it moved to
+			// bootstrap-feature-scene3d-webgl.js. A WebGPU-capable browser
+			// downloaded both GPU backends and drew with one of them, so the
+			// WebGL renderer cost a Chromium Scene3D page 160_835 minified
+			// bytes it never executed. 20-scene-mount.js fetches the chunk
+			// when the selection order puts WebGL first, and again when a
+			// WebGPU device loss walks the fallback ladder down to WebGL.
+			//
+			// 16c keeps the backend-agnostic part eager: the camera matrices,
+			// the shadow bounds, the instanced geometry generators, the light
+			// and environment hashes, and the draw-pass classifiers. 15b, the
+			// scene core and the WebGPU chunk all read those.
+			//
+			// 16b-scene-compute.js stays in this chunk because WebGL uses its
+			// CPU particle-system path. This chunk is the ONLY copy of it: the
+			// webgpu chunk carried a second copy until v0.35.8, which cost a
+			// Chromium Scene3D page 27_651 duplicate minified bytes. 16z holds
+			// the tiny stub + adapter probe.
+			sourceFile("bootstrap-src/16c-scene-shared-pbr.js"),
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
 			sourceFile("bootstrap-src/17-scene-input.js"),
 			sourceFile("bootstrap-src/18-scene-canvas.js"),
@@ -254,8 +359,32 @@ var outputs = []output{
 			// and quaternion slerp. Consumers that DO need the mixer can
 			// lazy-load it via window.__gosx_scene3d_animation_api.
 			sourceFile("bootstrap-src/19b-scene-control-forms.js"),
+			// 16d must come after every module it reads, and before the mount
+			// code that may fetch the WebGL chunk.
+			sourceFile("bootstrap-src/16d-scene-webgl-bridge.js"),
+			sourceFile("bootstrap-src/20a-scene-mount-backend.js"),
+			sourceFile("bootstrap-src/20b-scene-mount-webgl-chunk.js"),
+			sourceFile("bootstrap-src/20c-scene-mount-quality.js"),
+			sourceFile("bootstrap-src/20d-scene-mount-overlays.js"),
+			sourceFile("bootstrap-src/20e-scene-mount-viewport.js"),
+			sourceFile("bootstrap-src/20f-scene-mount-overlay-dom.js"),
+			sourceFile("bootstrap-src/20g-scene-mount-controls.js"),
+			sourceFile("bootstrap-src/20h-scene-mount-telemetry.js"),
 			sourceFile("bootstrap-src/20-scene-mount.js"),
 			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.js"),
+		},
+	},
+	{
+		// WebGL2 renderer chunk. A WebGPU-capable browser never fetches it.
+		// 20-scene-mount.js loads it when backendSelectionOrder puts WebGL
+		// first, and when the WebGPU fallback ladder steps down to WebGL after
+		// a device loss. See 26j-feature-scene3d-webgl-prefix.js for the
+		// bridged symbols.
+		name: "bootstrap-feature-scene3d-webgl.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-prefix.js"),
+			sourceFile("bootstrap-src/16-scene-webgl.js"),
+			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.js"),
 		},
 	},
 	{
@@ -268,8 +397,14 @@ var outputs = []output{
 		name: "bootstrap-feature-scene3d-webgpu.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.js"),
+			// 16b-scene-compute.js is NOT here any more. It used to ship in
+			// this chunk AND in bootstrap-feature-scene3d.js, so a Chromium
+			// Scene3D page downloaded the same 27_651 minified bytes twice.
+			// It now ships once, in the base scene3d chunk, and this bridge
+			// hands 16a the two symbols it reads lexically.
+			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.js"),
 			sourceFile("bootstrap-src/16a-scene-webgpu.js"),
-			sourceFile("bootstrap-src/16b-scene-compute.js"),
+			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.js"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.js"),
 		},
 	},
@@ -298,19 +433,6 @@ const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
 func normalizeNewlines(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	return strings.ReplaceAll(s, "\r", "\n")
-}
-
-func extractSource(body string, src source) (string, error) {
-	startIndex := strings.Index(body, src.start)
-	if startIndex < 0 {
-		return "", fmt.Errorf("missing start marker for %s", src.label)
-	}
-	searchFrom := startIndex + len(src.start)
-	endOffset := strings.Index(body[searchFrom:], src.end)
-	if endOffset < 0 {
-		return "", fmt.Errorf("missing end marker for %s", src.label)
-	}
-	return body[startIndex : searchFrom+endOffset], nil
 }
 
 type compacted struct {
@@ -596,17 +718,10 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 			return builtBundle{}, err
 		}
 		body := string(data)
-		resolved := body
-		if src.kind == "extract" {
-			resolved, err = extractSource(body, src)
-			if err != nil {
-				return builtBundle{}, err
-			}
-		}
 		sections = append(sections, section{
 			label:     src.label,
-			raw:       normalizeNewlines(resolved),
-			compacted: compactSource(resolved),
+			raw:       normalizeNewlines(body),
+			compacted: compactSource(body),
 		})
 	}
 
@@ -781,9 +896,44 @@ func findClientJS(explicit string) (string, error) {
 	}
 }
 
+// chunksManifestRel is the machine-readable copy of the outputs table. JS
+// tests and the free-variable closure check read it, so nothing keeps a second
+// hand-written copy of a chunk file list.
+const chunksManifestRel = "bootstrap-src/chunks.json"
+
+// chunksManifestJSON renders the outputs table as stable, indented JSON. The
+// key order follows the outputs table, so a manifest edit shows a small diff.
+func chunksManifestJSON() string {
+	var b strings.Builder
+	b.WriteString("{\n")
+	b.WriteString("  \"comment\": \"Generated by cmd/buildbootstrap. Do not edit by hand.\",\n")
+	b.WriteString("  \"chunks\": [\n")
+	for i, entry := range outputs {
+		b.WriteString("    {\n      \"name\": ")
+		b.WriteString(jsQuote(entry.name))
+		b.WriteString(",\n      \"sources\": [\n")
+		for j, src := range entry.sources {
+			b.WriteString("        ")
+			b.WriteString(jsQuote(src.rel))
+			if j < len(entry.sources)-1 {
+				b.WriteByte(',')
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString("      ]\n    }")
+		if i < len(outputs)-1 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("  ]\n}\n")
+	return b.String()
+}
+
 func run() error {
 	dirFlag := flag.String("dir", "", "path to client/js (default: auto-detect from working directory)")
 	check := flag.Bool("check", false, "verify committed bundles are up to date; exit 1 when stale")
+	closureOnly := flag.Bool("closure", false, "run only the chunk closure check and exit")
 	minifier := flag.String("minifier", "esbuild", "JS minifier backend: esbuild (default, byte-stable) or tdewolff (A/B comparison)")
 	flag.Parse()
 
@@ -791,10 +941,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	// Prove every chunk is closed before doing anything else. A chunk that
+	// reads an identifier nothing declares throws ReferenceError in the
+	// browser, and no size gate can see that.
+	if err := verifyChunkClosure(dir); err != nil {
+		return err
+	}
+	if *closureOnly {
+		return nil
+	}
 	debugSourcemaps := os.Getenv("GOSX_BUNDLE_DEBUG") == "1"
+
+	manifestPath := filepath.Join(dir, filepath.FromSlash(chunksManifestRel))
+	manifest := chunksManifestJSON()
 
 	if *check {
 		var stale []string
+		if current, _ := os.ReadFile(manifestPath); string(current) != manifest {
+			stale = append(stale, chunksManifestRel)
+		}
 		for _, entry := range outputs {
 			next, err := buildBundle(dir, entry, *minifier, debugSourcemaps)
 			if err != nil {
@@ -817,6 +983,9 @@ func run() error {
 		return nil
 	}
 
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		return err
+	}
 	for _, entry := range outputs {
 		built, err := buildBundle(dir, entry, *minifier, debugSourcemaps)
 		if err != nil {

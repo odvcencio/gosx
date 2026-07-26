@@ -648,7 +648,11 @@ func TestActiveLightingSamplesShadowMap(t *testing.T) {
 	for i := range shadow.depth {
 		shadow.depth[i] = 1
 	}
-	writeDepth(shadow, 0, 2, 2, 0.2)
+	// writeDepth takes a texture-space depth, which runs from zero to one. The
+	// two probes below sit at clip depths 0.1 and 0.8, which map to 0.55 and
+	// 0.90. Store an occluder between them so one probe reads lit and the other
+	// reads shadowed.
+	writeDepth(shadow, 0, 2, 2, 0.7)
 
 	pass := &RenderPassEncoder{bindGroups: map[int]*BindGroup{0: &BindGroup{
 		desc: gpu.BindGroupDesc{Entries: []gpu.BindGroupEntry{

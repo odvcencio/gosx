@@ -1,22 +1,43 @@
 package bundle
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 
 	"m31labs.dev/gosx/render/gpu"
 )
 
-// cullWGSL is the R3 frustum-culling compute shader. One thread per instance
-// tests the instance's bounding sphere (center from the transform's
-// translation column; radius from a conservative constant) against the six
-// camera frustum planes. Visible instances are appended to a compacted
-// output buffer; the indirect-draw args buffer's instanceCount field is
-// atomically bumped so the main pass picks up only the visible count.
+// cullWGSL is the frustum-culling compute shader. One thread per instance
+// tests the instance's bounding sphere against the six frustum planes. The
+// sphere centre comes from the transform's translation column; the radius is
+// the primitive's unscaled radius multiplied by the largest axis scale the
+// transform carries. Visible instances are appended to a compacted output
+// buffer; the indirect-draw args buffer's instanceCount field is atomically
+// bumped, so the draw pass picks up only the visible count.
 //
-// This is intentionally per-instance O(N) — a compute shader running 10k
-// threads on any WebGPU-capable GPU completes in well under a millisecond.
-// BVH / per-cluster culling is R4.
+// Scaling the radius per thread costs three lengths and two comparisons and
+// fixes a correctness bug: with a constant radius an instance scaled up 10x
+// vanished while still on screen. instanceCullRadius in primitive.go is the
+// CPU oracle for the same calculation — keep the two in step.
+//
+// This is intentionally per-instance O(N). A compute shader running 100k
+// threads on any WebGPU-capable GPU finishes in well under a millisecond.
+//
+// A cluster hierarchy is not the next scaling step, and BenchmarkFrameNull in
+// bench_frame_test.go says why. Hold the total instance count at 20000 and move
+// it between meshes: one mesh costs about 86 microseconds of renderer CPU and a
+// thousand meshes cost about 287. One extra mesh costs as much as fifty extra
+// instances. The renderer spends nothing per instance on culling — the GPU does
+// that — and about 4 nanoseconds per instance on the change-detection hash that
+// lets a static mesh skip its upload.
+//
+// A cluster hierarchy would add a CPU-side build, a second dispatch, and a
+// rebuild whenever an instance moves. It would attack the cheap axis and make
+// the expensive one worse. Per-mesh work is the axis to attack. The first cut
+// was the material fingerprint memo in material.go, worth about 19 percent of a
+// thousand-mesh frame. Re-run BenchmarkFrameNull1000Mesh1InstanceEach with a
+// profile before adding anything here.
 const cullWGSL = `
 struct CullUniforms {
   planes    : array<vec4<f32>, 6>,
@@ -43,11 +64,18 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let m = record.model;
   // Translation column of a column-major mat4 lives at m[3].xyz.
   let center = m[3].xyz;
+  // Largest axis scale of the upper-left 3x3. The maximum never
+  // under-estimates the bounding sphere, so no visible instance is dropped.
+  let scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
+  var radius = cull.radius;
+  if (scale > 0.0) {
+    radius = radius * scale;
+  }
   var inside = true;
   for (var p : i32 = 0; p < 6; p = p + 1) {
     let plane = cull.planes[p];
     let d = dot(plane.xyz, center) + plane.w;
-    if (d < -cull.radius) {
+    if (d < -radius) {
       inside = false;
       break;
     }
@@ -71,13 +99,59 @@ type cullResources struct {
 	outputBuf   gpu.Buffer
 	drawArgsBuf gpu.Buffer
 	bindGroup   gpu.BindGroup
+
+	// uploadedHash fingerprints the instance records last written into
+	// inputBuf. recordCullPass skips the re-encode and the upload when the
+	// incoming transforms hash to the same value. haveUpload guards the first
+	// frame, and a grown resource set starts with haveUpload false because
+	// ensureCullResources builds a fresh struct.
+	uploadedHash  uint64
+	uploadedCount int
+	haveUpload    bool
+
+	// casters hold the per-cascade shadow-caster cull outputs. They are built
+	// only for meshes that cast shadows. Each shares inputBuf and owns its own
+	// compacted output plus indirect draw args.
+	casters [cascadeCount]*casterCullResources
+}
+
+// casterCullResources is one cascade's shadow-caster cull output for one
+// InstancedMesh. The shadow pass used to bind the unculled input buffer and
+// draw every instance into all three cascades. With these, each cascade draws
+// only the casters whose bounding spheres reach its light volume.
+type casterCullResources struct {
+	cullUniform gpu.Buffer
+	outputBuf   gpu.Buffer
+	drawArgsBuf gpu.Buffer
+	bindGroup   gpu.BindGroup
+}
+
+func destroyCasterCullResources(c *casterCullResources) {
+	if c == nil {
+		return
+	}
+	if c.cullUniform != nil {
+		c.cullUniform.Destroy()
+	}
+	if c.outputBuf != nil {
+		c.outputBuf.Destroy()
+	}
+	if c.drawArgsBuf != nil {
+		c.drawArgsBuf.Destroy()
+	}
 }
 
 // ensureCullResources grows or lazily creates the cull buffers for a given
-// (cache key, max instance count) pair. Resources never shrink.
-func (r *Renderer) ensureCullResources(key string, instanceCount int) (*cullResources, error) {
+// (cache key, max instance count) pair. Resources never shrink. When
+// needCasters is true the per-cascade shadow-caster outputs are built too.
+func (r *Renderer) ensureCullResources(key string, instanceCount int, needCasters bool) (*cullResources, error) {
 	res, ok := r.cullCache[key]
 	if ok && res.capacity >= instanceCount {
+		if needCasters && res.casters[0] == nil {
+			if err := r.buildCasterCullResources(res, key); err != nil {
+				return nil, err
+			}
+		}
 		return res, nil
 	}
 	// Grow geometrically so we don't reallocate on every frame when instance
@@ -147,7 +221,7 @@ func (r *Renderer) ensureCullResources(key string, instanceCount int) (*cullReso
 		return nil, fmt.Errorf("bundle.ensureCullResources: %w", err)
 	}
 
-	new := &cullResources{
+	fresh := &cullResources{
 		capacity:    newCap,
 		cullUniform: cullUniform,
 		inputBuf:    inputBuf,
@@ -155,8 +229,73 @@ func (r *Renderer) ensureCullResources(key string, instanceCount int) (*cullReso
 		drawArgsBuf: drawArgsBuf,
 		bindGroup:   bg,
 	}
-	r.cullCache[key] = new
-	return new, nil
+	r.cullCache[key] = fresh
+	if needCasters {
+		if err := r.buildCasterCullResources(fresh, key); err != nil {
+			return nil, err
+		}
+	}
+	return fresh, nil
+}
+
+// buildCasterCullResources creates one cull output set per shadow cascade for
+// the mesh described by res. Every set reads the mesh's shared instance input
+// buffer and writes its own compacted output plus indirect draw args.
+func (r *Renderer) buildCasterCullResources(res *cullResources, key string) error {
+	bufBytes := res.capacity * instanceRecordStride
+	for cascade := 0; cascade < cascadeCount; cascade++ {
+		label := fmt.Sprintf("%s#cascade%d", key, cascade)
+		outputBuf, err := r.device.CreateBuffer(gpu.BufferDesc{
+			Size:  bufBytes,
+			Usage: gpu.BufferUsageStorage | gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
+			Label: "bundle.cull.casterOutput:" + label,
+		})
+		if err != nil {
+			return fmt.Errorf("bundle.buildCasterCullResources: %w", err)
+		}
+		drawArgsBuf, err := r.device.CreateBuffer(gpu.BufferDesc{
+			Size:  16, // 4×u32
+			Usage: gpu.BufferUsageStorage | gpu.BufferUsageIndirect | gpu.BufferUsageCopyDst,
+			Label: "bundle.cull.casterDrawArgs:" + label,
+		})
+		if err != nil {
+			outputBuf.Destroy()
+			return fmt.Errorf("bundle.buildCasterCullResources: %w", err)
+		}
+		cullUniform, err := r.device.CreateBuffer(gpu.BufferDesc{
+			Size:  cullUniformSize,
+			Usage: gpu.BufferUsageUniform | gpu.BufferUsageCopyDst,
+			Label: "bundle.cull.casterUniforms:" + label,
+		})
+		if err != nil {
+			outputBuf.Destroy()
+			drawArgsBuf.Destroy()
+			return fmt.Errorf("bundle.buildCasterCullResources: %w", err)
+		}
+		bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+			Layout: r.cullBGLayout,
+			Entries: []gpu.BindGroupEntry{
+				{Binding: 0, Buffer: cullUniform, Size: cullUniformSize},
+				{Binding: 1, Buffer: res.inputBuf, Size: bufBytes},
+				{Binding: 2, Buffer: outputBuf, Size: bufBytes},
+				{Binding: 3, Buffer: drawArgsBuf, Size: 16},
+			},
+			Label: "bundle.cull.casterBindgroup:" + label,
+		})
+		if err != nil {
+			outputBuf.Destroy()
+			drawArgsBuf.Destroy()
+			cullUniform.Destroy()
+			return fmt.Errorf("bundle.buildCasterCullResources: %w", err)
+		}
+		res.casters[cascade] = &casterCullResources{
+			cullUniform: cullUniform,
+			outputBuf:   outputBuf,
+			drawArgsBuf: drawArgsBuf,
+			bindGroup:   bg,
+		}
+	}
+	return nil
 }
 
 func destroyCullResources(c *cullResources) {
@@ -174,6 +313,9 @@ func destroyCullResources(c *cullResources) {
 	}
 	if c.cullUniform != nil {
 		c.cullUniform.Destroy()
+	}
+	for _, caster := range c.casters {
+		destroyCasterCullResources(caster)
 	}
 }
 
@@ -204,22 +346,19 @@ func (r *Renderer) buildCullPipeline() error {
 // 6 vec4 planes (96) + vertexCount + radius + 2 padding floats = 112 bytes.
 const cullUniformSize = 112
 
-// cullUniformBytes packs cull-shader inputs into std140-friendly bytes.
-func cullUniformBytes(planes [6][4]float32, vertexCount uint32, radius float32) []byte {
-	out := make([]byte, cullUniformSize)
+// cullUniformBytes packs cull-shader inputs into a Renderer-owned buffer and
+// returns it. WriteBuffer copies the bytes, so reusing one buffer per frame is
+// safe and keeps the per-frame allocation count flat.
+func (r *Renderer) cullUniformBytes(planes [6][4]float32, vertexCount uint32, radius float32) []byte {
+	out := r.cullUniformScratch[:]
 	for i := 0; i < 6; i++ {
-		copy(out[i*16:(i+1)*16], float32sToBytes(planes[i][:]))
+		putFloat32s(out[i*16:(i+1)*16], planes[i][:])
 	}
-	// vertexCount (u32) + radius (f32) + 2 padding floats.
-	put32 := func(off int, v uint32) {
-		out[off+0] = byte(v)
-		out[off+1] = byte(v >> 8)
-		out[off+2] = byte(v >> 16)
-		out[off+3] = byte(v >> 24)
-	}
-	put32(96, vertexCount)
-	copy(out[100:104], float32sToBytes([]float32{radius}))
-	// Trailing 8 bytes of pad are already zero.
+	binary.LittleEndian.PutUint32(out[96:100], vertexCount)
+	binary.LittleEndian.PutUint32(out[100:104], math.Float32bits(radius))
+	// Trailing 8 bytes of pad stay zero.
+	binary.LittleEndian.PutUint32(out[104:108], 0)
+	binary.LittleEndian.PutUint32(out[108:112], 0)
 	return out
 }
 
@@ -227,6 +366,13 @@ func cullUniformBytes(planes [6][4]float32, vertexCount uint32, radius float32) 
 // a view-projection matrix via the Gribb-Hartmann method. Planes are
 // normalized and stored as (nx, ny, nz, d) where the half-space n·p + d ≥ 0
 // means "inside the frustum".
+//
+// The near plane is r3 + r2, which is the form for a projection whose clip-space
+// z runs from -1 to 1. Both mat4Perspective and mat4Orthographic in this package
+// produce that range. The plain r2 form belongs to a 0-to-1 depth range; using it
+// here put the near plane at the midpoint of an orthographic depth range and
+// discarded half the volume. That made per-cascade shadow-caster culling reject
+// every caster, because a cascade projection is orthographic.
 func extractFrustumPlanes(vp mat4) [6][4]float32 {
 	// Column-major mat4: vp[col*4+row]. Row i is (vp[0*4+i], vp[1*4+i],
 	// vp[2*4+i], vp[3*4+i]).
@@ -240,7 +386,7 @@ func extractFrustumPlanes(vp mat4) [6][4]float32 {
 		subRow(r3, r0), // right:  r3 - r0
 		addRow(r3, r1), // bottom: r3 + r1
 		subRow(r3, r1), // top:    r3 - r1
-		r2,             // near:   r2
+		addRow(r3, r2), // near:   r3 + r2
 		subRow(r3, r2), // far:    r3 - r2
 	}
 	for i := range planes {
@@ -266,17 +412,15 @@ func normalizePlane(p [4]float32) [4]float32 {
 }
 
 // drawArgsResetBytes builds the 16-byte reset pattern for the indirect-draw
-// args buffer: [vertexCount, 0, 0, 0] as 4×u32 little-endian.
-func drawArgsResetBytes(vertexCount uint32) []byte {
-	out := make([]byte, 16)
-	put := func(off int, v uint32) {
-		out[off+0] = byte(v)
-		out[off+1] = byte(v >> 8)
-		out[off+2] = byte(v >> 16)
-		out[off+3] = byte(v >> 24)
-	}
-	put(0, vertexCount)
-	// Other three u32 stay zero (instanceCount, firstVertex, firstInstance).
+// args buffer: [vertexCount, 0, 0, 0] as 4 little-endian u32. The bytes land in
+// a Renderer-owned buffer that WriteBuffer copies, so no allocation happens.
+func (r *Renderer) drawArgsResetBytes(vertexCount uint32) []byte {
+	out := r.drawArgsScratch[:]
+	binary.LittleEndian.PutUint32(out[0:4], vertexCount)
+	// The other three u32 stay zero: instanceCount, firstVertex, firstInstance.
+	binary.LittleEndian.PutUint32(out[4:8], 0)
+	binary.LittleEndian.PutUint32(out[8:12], 0)
+	binary.LittleEndian.PutUint32(out[12:16], 0)
 	return out
 }
 

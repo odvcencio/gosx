@@ -497,6 +497,12 @@ func (r *RenderPassEncoder) SetVertexBuffer(slot int, b gpu.Buffer) {
 		r.vertexBuffers[slot] = buf
 	}
 }
+
+// SetIndexBuffer and DrawIndexed are not implemented. The bundle renderer
+// draws every mesh non-indexed, so nothing exercises them today. They stay as
+// no-ops rather than panics because a host may bind an index buffer it never
+// draws from. Implement both before adding an indexed path: an indexed draw
+// through this backend renders nothing and reports no error.
 func (r *RenderPassEncoder) SetIndexBuffer(gpu.Buffer, gpu.IndexFormat) {}
 func (r *RenderPassEncoder) Draw(vertexCount, instanceCount, firstVertex, firstInstance int) {
 	if !isFullscreenCopyPass(r.desc.Label) || r.bindGroup == nil {
@@ -527,6 +533,8 @@ func (r *RenderPassEncoder) Draw(vertexCount, instanceCount, firstVertex, firstI
 		}
 	}
 }
+
+// DrawIndexed is not implemented. See the note on SetIndexBuffer.
 func (r *RenderPassEncoder) DrawIndexed(int, int, int, int, int) {}
 func (r *RenderPassEncoder) DrawIndirect(b gpu.Buffer, offset int) {
 	buf, ok := b.(*Buffer)
@@ -579,7 +587,7 @@ func (c *ComputePassEncoder) DispatchWorkgroups(x, y, z int) {
 	}
 	switch c.pipeline.desc.Label {
 	case "bundle.cull":
-		runCullPassThrough(bg)
+		runCullFrustum(bg)
 	case "bundle.particles.update":
 		// The particle WGSL uses workgroup_size(64). Limit the CPU update
 		// to the same logical invocation count the recorded dispatch asked
@@ -596,10 +604,11 @@ func (c *ComputePassEncoder) DispatchWorkgroups(x, y, z int) {
 }
 
 // DispatchWorkgroupsIndirect approximates indirect dispatch in the CPU
-// backend: the workgroup count lives in a GPU buffer the headless backend does
-// not introspect, so only count-independent passthroughs (cull) run.
-// Registered ComputeExecutors receive (0, 0, 0) for the workgroup dims —
-// they are expected to derive their own invocation count from the bound buffers.
+// backend. The workgroup count lives in a GPU buffer this backend does not
+// introspect, so only kernels that derive their own invocation count from the
+// bound buffers run. runCullFrustum is one: it reads the instance count from
+// the input buffer's last write size. Registered ComputeExecutors receive
+// (0, 0, 0) for the workgroup dimensions and must do the same.
 func (c *ComputePassEncoder) DispatchWorkgroupsIndirect(_ gpu.Buffer, _ int) {
 	if c.pipeline == nil {
 		return
@@ -610,7 +619,7 @@ func (c *ComputePassEncoder) DispatchWorkgroupsIndirect(_ gpu.Buffer, _ int) {
 	}
 	switch c.pipeline.desc.Label {
 	case "bundle.cull":
-		runCullPassThrough(bg)
+		runCullFrustum(bg)
 	default:
 		// Invoke a registered ComputeExecutor for this pipeline label, if any.
 		// Pass (0,0,0) dims; the executor must use buffer state for its count.
@@ -838,10 +847,31 @@ type rasterTarget struct {
 	height       int
 }
 
-func runCullPassThrough(bg *BindGroup) {
-	var input, output, drawArgs *Buffer
+// instanceRecordStride is the byte size of one InstanceRecord in the cull
+// shader: a column-major mat4 of float32 (64 B) plus a vec4 of u32 (16 B).
+const instanceRecordStride = 80
+
+// cullPlaneCount is the number of frustum planes the cull uniform carries.
+const cullPlaneCount = 6
+
+// runCullFrustum executes the render/bundle cull shader on the CPU. It is a
+// counterpart of cullWGSL: one bounding-sphere test per instance against six
+// frustum planes, with the primitive radius scaled by the instance's largest
+// axis scale, then compaction of the survivors into the output buffer.
+//
+// Headless used to pass every instance through untouched. Running the real test
+// turns this device into an oracle for GPU-driven culling: a test can pin that a
+// scaled instance survives, or that an off-screen instance is dropped, with no
+// GPU present.
+//
+// A zero uniform block degrades to "everything visible", because a zero plane
+// gives distance 0 and 0 is never below a negative radius.
+func runCullFrustum(bg *BindGroup) {
+	var uniforms, input, output, drawArgs *Buffer
 	for _, entry := range bg.desc.Entries {
 		switch entry.Binding {
+		case 0:
+			uniforms, _ = entry.Buffer.(*Buffer)
 		case 1:
 			input, _ = entry.Buffer.(*Buffer)
 		case 2:
@@ -858,16 +888,67 @@ func runCullPassThrough(bg *BindGroup) {
 		return
 	}
 	instanceBytes = min(instanceBytes, len(input.data), len(output.data))
-	// InstanceRecordStride is 80 B (mat4f32=64 + vec4u32=16); the old 64-byte
-	// stride was a latent bug that caused runCullPassThrough to under-count
-	// survivors by discarding the pickData tail of each record.
-	const instanceRecordStride = 80
 	instanceBytes -= instanceBytes % instanceRecordStride
 	instanceCount := instanceBytes / instanceRecordStride
-	copy(output.data[:instanceBytes], input.data[:instanceBytes])
+
+	var planes [cullPlaneCount][4]float32
+	baseRadius := float32(0)
+	if uniforms != nil && len(uniforms.data) >= 104 {
+		for p := 0; p < cullPlaneCount; p++ {
+			for c := 0; c < 4; c++ {
+				planes[p][c] = readFloat32(uniforms.data, p*16+c*4)
+			}
+		}
+		baseRadius = readFloat32(uniforms.data, 100)
+	}
+
+	visible := 0
+	for i := 0; i < instanceCount; i++ {
+		record := input.data[i*instanceRecordStride : (i+1)*instanceRecordStride]
+		if !cullInstanceVisible(record, planes, baseRadius) {
+			continue
+		}
+		dst := output.data[visible*instanceRecordStride : (visible+1)*instanceRecordStride]
+		copy(dst, record)
+		visible++
+	}
 	output.lastWriteOffset = 0
-	output.lastWriteSize = instanceBytes
-	binary.LittleEndian.PutUint32(drawArgs.data[4:8], uint32(instanceCount))
+	output.lastWriteSize = visible * instanceRecordStride
+	binary.LittleEndian.PutUint32(drawArgs.data[4:8], uint32(visible))
+}
+
+// cullInstanceVisible mirrors the per-thread body of cullWGSL for one packed
+// instance record.
+func cullInstanceVisible(record []byte, planes [cullPlaneCount][4]float32, baseRadius float32) bool {
+	// Column-major mat4: column c starts at byte c*16.
+	scale := columnScale(record, 0)
+	if s := columnScale(record, 1); s > scale {
+		scale = s
+	}
+	if s := columnScale(record, 2); s > scale {
+		scale = s
+	}
+	radius := baseRadius
+	if scale > 0 {
+		radius = baseRadius * scale
+	}
+	cx := readFloat32(record, 48)
+	cy := readFloat32(record, 52)
+	cz := readFloat32(record, 56)
+	for _, plane := range planes {
+		d := plane[0]*cx + plane[1]*cy + plane[2]*cz + plane[3]
+		if d < -radius {
+			return false
+		}
+	}
+	return true
+}
+
+func columnScale(record []byte, column int) float32 {
+	x := readFloat32(record, column*16+0)
+	y := readFloat32(record, column*16+4)
+	z := readFloat32(record, column*16+8)
+	return float32(math.Sqrt(float64(x*x + y*y + z*z)))
 }
 
 func runParticleUpdate(bg *BindGroup, maxInvocations int) {
@@ -1123,15 +1204,26 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 			instanceStride = stride
 		}
 	}
+	// The lit pipeline shades per pixel. Every other pipeline hands the fill a
+	// finished colour to interpolate.
+	var shading *sceneLighting
+	if label == "bundle.lit" {
+		shading = &lighting
+	}
+	var tri [3]clipVertex
+	var clipScratch [4]clipVertex
 	for inst := firstInstance; inst < firstInstance+instanceCount; inst++ {
 		model, ok := readMat4Stride(instanceBuf, inst, instanceStride)
 		if !ok {
 			model = identityMat4()
 		}
+		// The instance record carries its stable pick ID in the first u32 after
+		// the model matrix. Writing it into the id attachment lets a test drive
+		// the renderer's whole pick path — queue, copy, read back, resolve —
+		// with no GPU present. The field stayed zero before, so every headless
+		// pick reported background.
+		target.pickID = readInstancePickID(instanceBuf, inst, instanceStride)
 		for base := 0; base+2 < vertexCount; base += 3 {
-			var pts [3][2]float32
-			var depths [3]float32
-			var cols [3][4]float32
 			valid := true
 			for i := 0; i < 3; i++ {
 				vertex := firstVertex + base + i
@@ -1144,33 +1236,168 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 				if instanceBuf != nil {
 					worldPos = transformPoint(model, pos)
 				}
-				x, y, depth, ok := transformToScreen(mvp, worldPos, target.width, target.height)
-				if !ok {
-					valid = false
-					break
-				}
-				pts[i] = [2]float32{x, y}
-				depths[i] = depth
+				tri[i].clip = transformToClip(mvp, worldPos)
+				tri[i].world = worldPos
 				if label == "bundle.lit" {
-					baseColor := material.resolve(readColor(colorBuf, vertex), readUV(uvBuf, vertex))
+					// The base colour and the normal travel to the fill, which
+					// runs the lighting model per pixel like litWGSL does.
+					tri[i].color = material.resolve(readColor(colorBuf, vertex), readUV(uvBuf, vertex))
 					normal := readNormal(normalBuf, vertex)
 					if instanceBuf != nil {
 						normal = transformDirection(model, normal)
 					}
-					lit := lighting.shade([3]float32{baseColor[0], baseColor[1], baseColor[2]}, normal, worldPos)
-					cols[i] = [4]float32{lit[0], lit[1], lit[2], baseColor[3]}
+					tri[i].normal = normal
 				} else {
 					color := readColor(colorBuf, vertex)
-					cols[i] = [4]float32{color[0], color[1], color[2], 1}
+					tri[i].color = [4]float32{color[0], color[1], color[2], 1}
 				}
 			}
-			if valid {
-				if !triangleOutsideClip(depths) {
-					rasterizeTriangle(target, pts, depths, cols)
-				}
+			if !valid {
+				continue
 			}
+			r.rasterizeClippedTriangle(target, tri, clipScratch[:0], shading)
 		}
 	}
+}
+
+// clipVertex is one triangle corner in homogeneous clip space plus every
+// attribute the rasterizer interpolates across the face.
+type clipVertex struct {
+	clip   [4]float32
+	color  [4]float32
+	world  [3]float32
+	normal [3]float32
+}
+
+// rasterizeClippedTriangle clips one triangle against the near plane and draws
+// the surviving polygon as a fan.
+//
+// The rasterizer used to drop any triangle with a vertex behind the camera,
+// because the projection of such a vertex has a non-positive w. That silently
+// removed every large ground plane from every headless image: a plane wide
+// enough to receive a shadow always has one corner behind the camera. No test
+// in this package could witness a shadow landing on a ground plane, and the
+// backend reported a black frame instead of failing.
+func (r *RenderPassEncoder) rasterizeClippedTriangle(
+	target rasterTarget, tri [3]clipVertex, scratch []clipVertex, shading *sceneLighting,
+) {
+	poly := clipTriangleNearPlane(tri, scratch)
+	if len(poly) < 3 {
+		return
+	}
+	for i := 1; i+1 < len(poly); i++ {
+		var verts [3]rasterVertex
+		corners := [3]clipVertex{poly[0], poly[i], poly[i+1]}
+		ok := true
+		for j, v := range corners {
+			x, y, depth, good := projectClip(v.clip, target.width, target.height)
+			if !good {
+				ok = false
+				break
+			}
+			verts[j] = rasterVertex{
+				x: x, y: y, depth: depth, invW: 1 / v.clip[3],
+				color: v.color, world: v.world, normal: v.normal,
+			}
+		}
+		if ok && !triangleOutsideClip([3]float32{verts[0].depth, verts[1].depth, verts[2].depth}) {
+			rasterizeTriangle(target, verts, shading)
+		}
+	}
+}
+
+// clipTriangleNearPlane clips a triangle against the near plane in homogeneous
+// clip space and appends the result to out.
+//
+// The near plane is z + w >= 0, the form that matches a projection whose clip
+// depth runs from -1 to 1. Both mat4Perspective and mat4Orthographic in the
+// bundle package produce that range. A point behind a perspective camera fails
+// the test, so one plane covers both the near clip and the negative-w case.
+//
+// Clipping a triangle against one plane yields at most four vertices, so a
+// four-element scratch array serves every call and the rasterizer allocates
+// nothing per triangle.
+func clipTriangleNearPlane(tri [3]clipVertex, out []clipVertex) []clipVertex {
+	distance := func(v clipVertex) float32 { return v.clip[2] + v.clip[3] }
+	inside := [3]bool{
+		distance(tri[0]) >= 0,
+		distance(tri[1]) >= 0,
+		distance(tri[2]) >= 0,
+	}
+	if inside[0] && inside[1] && inside[2] {
+		return append(out, tri[0], tri[1], tri[2])
+	}
+	if !inside[0] && !inside[1] && !inside[2] {
+		return out
+	}
+	for i := 0; i < 3; i++ {
+		current := tri[i]
+		next := tri[(i+1)%3]
+		if inside[i] {
+			out = append(out, current)
+		}
+		if inside[i] != inside[(i+1)%3] {
+			d0 := distance(current)
+			d1 := distance(next)
+			denom := d0 - d1
+			if denom == 0 {
+				continue
+			}
+			out = append(out, lerpClipVertex(current, next, d0/denom))
+		}
+	}
+	return out
+}
+
+// lerpClipVertex interpolates a clip-space vertex. Clip space is linear in the
+// homogeneous coordinates, so a straight interpolation of both the position and
+// the colour is correct here; the perspective divide happens afterwards.
+func lerpClipVertex(a, b clipVertex, t float32) clipVertex {
+	var out clipVertex
+	for i := 0; i < 4; i++ {
+		out.clip[i] = a.clip[i] + (b.clip[i]-a.clip[i])*t
+		out.color[i] = a.color[i] + (b.color[i]-a.color[i])*t
+	}
+	for i := 0; i < 3; i++ {
+		out.world[i] = a.world[i] + (b.world[i]-a.world[i])*t
+		out.normal[i] = a.normal[i] + (b.normal[i]-a.normal[i])*t
+	}
+	return out
+}
+
+// transformToClip projects a world point into homogeneous clip space without
+// dividing. Callers clip first and divide afterwards.
+func transformToClip(m [16]float32, p [3]float32) [4]float32 {
+	x, y, z := p[0], p[1], p[2]
+	return [4]float32{
+		m[0]*x + m[4]*y + m[8]*z + m[12],
+		m[1]*x + m[5]*y + m[9]*z + m[13],
+		m[2]*x + m[6]*y + m[10]*z + m[14],
+		m[3]*x + m[7]*y + m[11]*z + m[15],
+	}
+}
+
+// projectClip divides a clip-space position through and maps it to pixel
+// coordinates plus a normalized depth.
+func projectClip(clip [4]float32, width, height int) (float32, float32, float32, bool) {
+	if width <= 0 || height <= 0 {
+		return 0, 0, 0, false
+	}
+	w := clip[3]
+	if w <= 0 || math.IsNaN(float64(w)) || math.IsInf(float64(w), 0) {
+		return 0, 0, 0, false
+	}
+	ndcX := clip[0] / w
+	ndcY := clip[1] / w
+	ndcZ := clip[2] / w
+	if math.IsNaN(float64(ndcX)) || math.IsNaN(float64(ndcY)) ||
+		math.IsNaN(float64(ndcZ)) || math.IsInf(float64(ndcX), 0) ||
+		math.IsInf(float64(ndcY), 0) || math.IsInf(float64(ndcZ), 0) {
+		return 0, 0, 0, false
+	}
+	sx := (ndcX*0.5 + 0.5) * float32(width-1)
+	sy := (1 - (ndcY*0.5 + 0.5)) * float32(height-1)
+	return sx, sy, ndcZ, true
 }
 
 func (r *RenderPassEncoder) rasterizeParticles(instanceCount, firstInstance int) {
@@ -1721,8 +1948,10 @@ func (l sceneLighting) sampleShadow(worldPos [3]float32) float32 {
 	if l.shadowLayer >= 0 {
 		layer = l.shadowLayer
 	}
+	// The shadow map holds depth in the zero-to-one range, so the reference
+	// depth has to travel through the same mapping the raster write uses.
 	bias := float32(0.003 + 0.003*float32(cascade))
-	return sampleShadowCompare(l.shadow, layer, u, v, proj[2]-bias)
+	return sampleShadowCompare(l.shadow, layer, u, v, ndcToDepth(proj[2])-bias)
 }
 
 func (l sceneLighting) pickCascade(worldPos [3]float32) int {
@@ -1741,6 +1970,20 @@ func (l sceneLighting) pickCascade(worldPos [3]float32) int {
 		return 2
 	}
 	return 0
+}
+
+// readInstancePickID reads the stable pick ID an instance record carries in the
+// first u32 after its model matrix. Returns 0 when the buffer is absent or the
+// record has no room for the pick tail, which means "background" downstream.
+func readInstancePickID(buf *Buffer, index, stride int) uint32 {
+	if buf == nil || index < 0 || stride < instanceRecordStride {
+		return 0
+	}
+	offset := index*stride + 64
+	if offset < 0 || offset+4 > len(buf.data) {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(buf.data[offset : offset+4])
 }
 
 func readMat4Stride(buf *Buffer, index, stride int) ([16]float32, bool) {
@@ -1803,7 +2046,38 @@ func writeFloat32(data []byte, offset int, v float32) {
 	binary.LittleEndian.PutUint32(data[offset:offset+4], math.Float32bits(v))
 }
 
-func rasterizeTriangle(target rasterTarget, pts [3][2]float32, depths [3]float32, cols [3][4]float32) {
+// rasterVertex is one screen-space triangle corner: pixel position, normalized
+// depth, the reciprocal of the clip w, and the attributes the rasterizer
+// interpolates. invW drives perspective-correct interpolation.
+type rasterVertex struct {
+	x, y   float32
+	depth  float32
+	invW   float32
+	color  [4]float32
+	world  [3]float32
+	normal [3]float32
+}
+
+// rasterizeTriangle fills one screen-space triangle.
+//
+// When shading is non-nil the fill evaluates the lighting model at every pixel,
+// exactly as litWGSL evaluates it in its fragment stage. The rasterizer used to
+// shade at the three corners and interpolate the result, which meant a shadow
+// only appeared where it happened to land on a vertex. A ground plane has four
+// corners, so no shadow could ever be seen on one, and the headless backend
+// reported an evenly lit plane whatever the shadow map held.
+//
+// Interpolation is perspective correct: attributes are carried as attr/w, the
+// reciprocal 1/w is carried alongside, and the divide happens per pixel. Screen
+// linear interpolation is close enough on a small triangle but wildly wrong on
+// a ground plane running to the horizon, which is precisely the surface a
+// shadow lands on.
+func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *sceneLighting) {
+	pts := [3][2]float32{
+		{verts[0].x, verts[0].y},
+		{verts[1].x, verts[1].y},
+		{verts[2].x, verts[2].y},
+	}
 	area := edge(pts[0], pts[1], pts[2])
 	if math.Abs(float64(area)) < 1e-6 {
 		return
@@ -1827,24 +2101,57 @@ func rasterizeTriangle(target rasterTarget, pts [3][2]float32, depths [3]float32
 			w0 /= area
 			w1 /= area
 			w2 /= area
-			depth := depths[0]*w0 + depths[1]*w1 + depths[2]*w2
+			depth := verts[0].depth*w0 + verts[1].depth*w1 + verts[2].depth*w2
 			if !depthPasses(target, x, y, depth) {
 				continue
 			}
+			// Perspective-correct weights. invSum is the interpolated 1/w.
+			invSum := verts[0].invW*w0 + verts[1].invW*w1 + verts[2].invW*w2
+			p0, p1, p2 := w0, w1, w2
+			if invSum > 0 {
+				p0 = verts[0].invW * w0 / invSum
+				p1 = verts[1].invW * w1 / invSum
+				p2 = verts[2].invW * w2 / invSum
+			}
+			var out [4]float32
+			for i := 0; i < 4; i++ {
+				out[i] = verts[0].color[i]*p0 + verts[1].color[i]*p1 + verts[2].color[i]*p2
+			}
+			if shading != nil {
+				var world, normal [3]float32
+				for i := 0; i < 3; i++ {
+					world[i] = verts[0].world[i]*p0 + verts[1].world[i]*p1 + verts[2].world[i]*p2
+					normal[i] = verts[0].normal[i]*p0 + verts[1].normal[i]*p1 + verts[2].normal[i]*p2
+				}
+				lit := shading.shade([3]float32{out[0], out[1], out[2]}, normal, world)
+				out[0], out[1], out[2] = lit[0], lit[1], lit[2]
+			}
 			writeRasterColor(target, x, y, color.RGBA{
-				R: clampByte(cols[0][0]*w0 + cols[1][0]*w1 + cols[2][0]*w2),
-				G: clampByte(cols[0][1]*w0 + cols[1][1]*w1 + cols[2][1]*w2),
-				B: clampByte(cols[0][2]*w0 + cols[1][2]*w1 + cols[2][2]*w2),
-				A: clampByte(cols[0][3]*w0 + cols[1][3]*w1 + cols[2][3]*w2),
+				R: clampByte(out[0]),
+				G: clampByte(out[1]),
+				B: clampByte(out[2]),
+				A: clampByte(out[3]),
 			})
 			if target.id != nil {
 				writeTextureUint32(target.id, target.idLayer, x, y, target.pickID)
 			}
 			if target.depthWrite {
-				writeDepth(target.depth, target.depthLayer, x, y, depth)
+				writeDepth(target.depth, target.depthLayer, x, y, ndcToDepth(depth))
 			}
 		}
 	}
+}
+
+// ndcToDepth maps a clip-space depth into the zero-to-one range a depth texture
+// holds. mat4Perspective and mat4Orthographic in the bundle package both put
+// clip depth between -1 and 1, and a depth texture stores no negative value.
+//
+// The rasterizer used to store the clip depth directly. writeDepth clamps to
+// zero and one, so every sample in the near half of a light volume landed on
+// zero, and a shadow comparison against zero always reported "lit". No shadow
+// could ever darken a headless image, whatever the shadow map held.
+func ndcToDepth(ndc float32) float32 {
+	return clamp01f(ndc*0.5 + 0.5)
 }
 
 func depthPasses(target rasterTarget, x, y int, depth float32) bool {
@@ -1854,6 +2161,7 @@ func depthPasses(target rasterTarget, x, y int, depth float32) bool {
 	if pointOutsideClip(depth) {
 		return false
 	}
+	value := ndcToDepth(depth)
 	stored := readDepth(target.depth, target.depthLayer, x, y)
 	switch target.depthCompare {
 	case gpu.CompareAlways:
@@ -1861,17 +2169,17 @@ func depthPasses(target rasterTarget, x, y int, depth float32) bool {
 	case gpu.CompareNever:
 		return false
 	case gpu.CompareLess:
-		return depth < stored
+		return value < stored
 	case gpu.CompareLessEqual:
-		return depth <= stored
+		return value <= stored
 	case gpu.CompareEqual:
-		return math.Abs(float64(depth-stored)) <= 1e-6
+		return math.Abs(float64(value-stored)) <= 1e-6
 	case gpu.CompareGreater:
-		return depth > stored
+		return value > stored
 	case gpu.CompareGreaterEqual:
-		return depth >= stored
+		return value >= stored
 	case gpu.CompareNotEqual:
-		return math.Abs(float64(depth-stored)) > 1e-6
+		return math.Abs(float64(value-stored)) > 1e-6
 	default:
 		return true
 	}
