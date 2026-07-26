@@ -1002,7 +1002,14 @@
               const fallbackReason = reason || "webgl-unavailable";
               const backendCaps = sceneBackendCapsOf(props);
               const allowWebGLFallback = sceneBackendCapsAllowsKind(backendCaps, "webgl");
-              const allowCanvasFallback = sceneBackendCapsAllowsKind(backendCaps, "canvas2d");
+              // __gosx_scene3d_require_gpu (see /docs/debugging-scene3d on the
+              // gosx-docs site) lets a capture harness refuse the Canvas2D swap
+              // outright, without touching the production DefaultPolicy. It only
+              // removes the Canvas2D fallback below -- the WebGL fallback attempt
+              // right after this block still runs, because WebGL is a real GPU
+              // backend too.
+              const requireGPUOnly = typeof window !== "undefined" && window.__gosx_scene3d_require_gpu === true;
+              const allowCanvasFallback = sceneBackendCapsAllowsKind(backendCaps, "canvas2d") && !requireGPUOnly;
               const preferCanvasFallback = fallbackReason === "environment-constrained" || fallbackReason === "webgl-context-lost";
               if (!preferCanvasFallback && allowWebGLFallback) {
                 // WebGL ships as a lazily fetched chunk. Fetch it before the

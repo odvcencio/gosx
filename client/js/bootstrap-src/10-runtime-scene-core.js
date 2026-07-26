@@ -2204,10 +2204,52 @@
     });
   }
 
+  // SCENE_POST_KIND_CANONICAL maps a case-folded post-effect kind onto the EXACT
+  // spelling both render backends dispatch on. The WebGPU (16a-scene-webgpu.js
+  // `switch (effect.kind)`) and WebGL (16-scene-webgl.js, same switch) chains
+  // compare against the SCENE_POST_* constants with ===, and three of those
+  // constants are camelCase: "toneMapping", "colorGrade" and "customPost".
+  //
+  // This normalizer used to force kind through .toLowerCase(), which silently
+  // rewrote those three to "tonemapping"/"colorgrade"/"custompost". They then
+  // fell through both switches to `default: break;` — the effect stayed in
+  // state.postEffects, still counted toward the post-effects mount attribute,
+  // and the post chain still ran its final blit, so every health signal looked
+  // green while the pass itself never rendered a single pixel. Only the kinds
+  // that happen to be all-lowercase (bloom/ssao/dof/fxaa/vignette) survived.
+  //
+  // Fold case for MATCHING, then hand back the canonical spelling.
+  const SCENE_POST_KIND_CANONICAL = {
+    tonemapping: "toneMapping",
+    tonemap: "toneMapping",
+    bloom: "bloom",
+    vignette: "vignette",
+    colorgrade: "colorGrade",
+    "color-grade": "colorGrade",
+    "color-grading": "colorGrade",
+    ssao: "ssao",
+    dof: "dof",
+    fxaa: "fxaa",
+    custompost: "customPost",
+    "custom-post": "customPost",
+  };
+
+  function sceneCanonicalPostEffectKind(raw) {
+    const text = typeof raw === "string" ? raw.trim() : "";
+    if (!text) {
+      return "";
+    }
+    // An unrecognized kind keeps the author's EXACT spelling. A kind this
+    // runtime does not know may still be dispatched by a newer backend or a
+    // downstream consumer, and case-folding it would break that pass the same
+    // way folding "customPost" broke every Selena post effect.
+    return SCENE_POST_KIND_CANONICAL[text.toLowerCase()] || text;
+  }
+
   function normalizeScenePostEffect(raw, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(raw) ? raw : {};
-    const kind = typeof item.kind === "string" && item.kind ? item.kind.trim().toLowerCase() : (typeof current.kind === "string" ? current.kind : "");
+    const kind = typeof item.kind === "string" && item.kind ? sceneCanonicalPostEffectKind(item.kind) : sceneCanonicalPostEffectKind(current.kind);
     if (!kind) {
       return null;
     }

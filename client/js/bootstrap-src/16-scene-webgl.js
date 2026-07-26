@@ -4025,7 +4025,13 @@
 
   // Post-processing manager — orchestrates an effect chain between the
   // scene render and the final screen blit.
-  function createScenePostProcessor(gl) {
+  // resolveSelenaUniform: the renderer's Selena uniform resolver
+  // (selenaUniformValue), injected the same way the WebGPU post processor
+  // takes sceneSelenaUniformData. It is what supplies RESERVED auto-uniforms
+  // (time, mvp, modelMatrix, normalMatrix, and the context-class names) that
+  // never appear in an effect's author-supplied uniform map. Without it a
+  // custom post pass silently reads 0 for every reserved uniform.
+  function createScenePostProcessor(gl, resolveSelenaUniform) {
     var quad = createSceneFullscreenQuad(gl);
     var sceneFBO = null;
     var auxFBO = null;
@@ -4123,27 +4129,29 @@
         gl.uniform1i(gl.getUniformLocation(p.program, "_sceneDepth"), 1);
       }
 
-      // Upload user uniforms by name from shaderLayout.
-      var uniforms = effect.uniforms || {};
+      // Upload uniforms by name from shaderLayout. Every declared field is
+      // resolved through the SAME resolver the mesh path and the WebGPU post
+      // path use, so reserved auto-uniforms (time, mvp, modelMatrix,
+      // normalMatrix, context-class names) get live engine values and
+      // compiled layout defaults apply to fields the author did not set.
+      // Reserved names deliberately win over the author map — that is the
+      // resolver's own precedence (see selenaUniformValue), which exists so a
+      // declared `param time`, whose compiled default of 0 ships inside
+      // customUniforms, cannot shadow the clock.
+      var material = { customUniforms: effect.uniforms || {} };
       var layout = effect.shaderLayout;
       var fields = (layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.fields))
         ? layout.uniformBlock.fields : [];
       for (var fi = 0; fi < fields.length; fi++) {
         var field = fields[fi];
-        var val = Object.prototype.hasOwnProperty.call(uniforms, field.name) ? uniforms[field.name] : null;
-        if (val === null || val === undefined) continue;
+        if (!field || typeof field.name !== "string") continue;
         var loc = gl.getUniformLocation(p.program, field.name);
         if (!loc) continue;
-        if (typeof val === "number") {
-          gl.uniform1f(loc, val);
-        } else if (Array.isArray(val) || (val && val.length)) {
-          switch (val.length) {
-            case 2: gl.uniform2fv(loc, val); break;
-            case 3: gl.uniform3fv(loc, val); break;
-            case 4: gl.uniform4fv(loc, val); break;
-            default: gl.uniform1fv(loc, val); break;
-          }
-        }
+        var val = typeof resolveSelenaUniform === "function"
+          ? resolveSelenaUniform(material, layout, field, null)
+          : selenaPostFallbackUniformValue(material, layout, field);
+        if (val === null || val === undefined) continue;
+        sceneSelenaUploadUniform(gl, loc, field.type, val);
       }
 
       drawSceneFullscreenQuad(gl, quad.vao);
@@ -4399,9 +4407,22 @@
             case SCENE_POST_CUSTOM_POST: {
               // Selena post contract (WebGL2): use provided GLSL pair.
               // On failure the pass is skipped (identity passthrough).
+              //
+              // Assign UNCONDITIONALLY, exactly like every built-in pass above.
+              // Every apply* helper shares one return protocol:
+              //   targetFBO present -> the texture it rendered into
+              //   targetFBO null    -> null, meaning "this was the LAST pass and
+              //                        it already drew to the default framebuffer"
+              // and the identity/failure paths return the INPUT texture, never
+              // null. This case used to guard the assignment with
+              // `if (next !== null)`, which swallowed the "already on screen"
+              // signal: currentTexture stayed pointing at the raw scene color,
+              // so the `blitToScreen(currentTexture)` below then painted the
+              // un-post-processed scene straight over the pass's own output. A
+              // trailing custom pass therefore produced zero visible pixels even
+              // when it compiled, bound and drew correctly.
               var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
-              var next = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
-              if (next !== null) currentTexture = next;
+              currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
               break;
             }
             default:
@@ -4895,6 +4916,60 @@
       }
     }
     return undefined;
+  }
+
+  // Upload one resolved Selena uniform value by its DECLARED type (not by the
+  // JS shape of the value): a `vec3` param given a bare number must still go
+  // out as a vec3. Shared by the mesh path (uploadSelenaUniforms) and the
+  // custom post path (createScenePostProcessor.applyCustomPost) so the two
+  // cannot drift apart again — WebGL customPost previously carried its own
+  // shape-driven copy that skipped reserved uniforms entirely.
+  function sceneSelenaUploadScalar(value) {
+    if (Array.isArray(value) || (value && typeof value.length === "number")) {
+      return sceneNumber(value[0], 0);
+    }
+    return sceneNumber(value, 0);
+  }
+
+  function sceneSelenaUploadUniform(gl, loc, type, value) {
+    switch (String(type || "")) {
+    case "mat4":
+      gl.uniformMatrix4fv(loc, false, value);
+      break;
+    case "mat3":
+      gl.uniformMatrix3fv(loc, false, value);
+      break;
+    case "vec4":
+      gl.uniform4f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0), sceneNumber(value && value[2], 0), sceneNumber(value && value[3], 0));
+      break;
+    case "vec3":
+      gl.uniform3f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0), sceneNumber(value && value[2], 0));
+      break;
+    case "vec2":
+      gl.uniform2f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0));
+      break;
+    default:
+      gl.uniform1f(loc, sceneSelenaUploadScalar(value));
+      break;
+    }
+  }
+
+  // Degraded resolver used only when a post processor is built without the
+  // renderer's resolver injected. It applies author values and compiled
+  // layout defaults, but it CANNOT supply live reserved uniforms such as
+  // time, because the per-frame clock lives in the renderer closure.
+  function selenaPostFallbackUniformValue(material, layout, field) {
+    var name = field && field.name;
+    var values = material && material.customUniforms;
+    if (values && typeof values === "object" && Object.prototype.hasOwnProperty.call(values, name)) {
+      return values[name];
+    }
+    var def = sceneSelenaUniformDefault(layout, name);
+    if (def !== undefined) return def;
+    var count = sceneSelenaFloatCount(field && field.type);
+    if (count === 16) return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    if (count === 9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    return 0;
   }
 
   function sceneSelenaTextureURL(material, texture, index) {
@@ -6294,7 +6369,10 @@
 
       if (usePostProcessing) {
         if (!postProcessor) {
-          postProcessor = createScenePostProcessor(gl);
+          // Inject the Selena uniform resolver so custom post passes receive
+          // reserved auto-uniforms (time and friends), matching the WebGPU
+          // path's wgpuCreatePostProcessor(..., sceneSelenaUniformData).
+          postProcessor = createScenePostProcessor(gl, selenaUniformValue);
         }
         var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
         renderW = scaled.width;
@@ -6515,13 +6593,6 @@
       return 0;
     }
 
-    function selenaScalar(value) {
-      if (Array.isArray(value) || (value && typeof value.length === "number")) {
-        return sceneNumber(value[0], 0);
-      }
-      return sceneNumber(value, 0);
-    }
-
     function uploadSelenaUniforms(gl, info, material, owner) {
       var layout = info && info.layout;
       var fields = layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.fields)
@@ -6532,26 +6603,7 @@
         var loc = info.uniforms && info.uniforms[field.name];
         if (!loc) continue;
         var value = selenaUniformValue(material, layout, field, owner);
-        switch (String(field.type || "")) {
-        case "mat4":
-          gl.uniformMatrix4fv(loc, false, value);
-          break;
-        case "mat3":
-          gl.uniformMatrix3fv(loc, false, value);
-          break;
-        case "vec4":
-          gl.uniform4f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0), sceneNumber(value && value[2], 0), sceneNumber(value && value[3], 0));
-          break;
-        case "vec3":
-          gl.uniform3f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0), sceneNumber(value && value[2], 0));
-          break;
-        case "vec2":
-          gl.uniform2f(loc, sceneNumber(value && value[0], 0), sceneNumber(value && value[1], 0));
-          break;
-        default:
-          gl.uniform1f(loc, selenaScalar(value));
-          break;
-        }
+        sceneSelenaUploadUniform(gl, loc, field.type, value);
       }
     }
 

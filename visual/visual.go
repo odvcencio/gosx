@@ -83,6 +83,205 @@ type CaptureOptions struct {
 
 	// Timeout bounds the entire capture. Defaults to 60s.
 	Timeout time.Duration
+
+	// RequireBackend gates the capture on the Scene3D renderer that
+	// actually mounted. Zero value (RequireBackendNone) performs no check
+	// and preserves the historical, permissive behavior of every existing
+	// caller. When set, Capture reads every `data-gosx-scene3d-backend`
+	// attribute on the page after the settle wait and returns a
+	// *BackendRequirementError instead of a screenshot if any mounted
+	// Scene3D surface (or the absence of one) does not satisfy it.
+	RequireBackend RequireBackend
+}
+
+// RequireBackend names the GPU backend(s) a Scene3D capture must have
+// actually mounted on. See CaptureOptions.RequireBackend.
+type RequireBackend string
+
+const (
+	// RequireBackendNone performs no backend check. This is the zero
+	// value, so every existing caller keeps today's permissive behavior.
+	RequireBackendNone RequireBackend = ""
+	// RequireBackendWebGPU requires every Scene3D mount on the page to
+	// have chosen the WebGPU renderer.
+	RequireBackendWebGPU RequireBackend = "webgpu"
+	// RequireBackendWebGL requires every Scene3D mount on the page to
+	// have chosen the WebGL renderer.
+	RequireBackendWebGL RequireBackend = "webgl"
+	// RequireBackendAnyGPU accepts either WebGPU or WebGL and rejects
+	// only the Canvas2D fallback (or the absence of any renderer).
+	RequireBackendAnyGPU RequireBackend = "any-gpu"
+)
+
+// acceptableBackends returns the `data-gosx-scene3d-backend` values that
+// satisfy req, or nil when req performs no check.
+func acceptableBackends(req RequireBackend) []string {
+	switch req {
+	case RequireBackendWebGPU:
+		return []string{"webgpu"}
+	case RequireBackendWebGL:
+		return []string{"webgl"}
+	case RequireBackendAnyGPU:
+		return []string{"webgpu", "webgl"}
+	default:
+		return nil
+	}
+}
+
+// ValidRequireBackend reports whether s is a recognized --require-backend
+// value, including the empty string (no requirement).
+func ValidRequireBackend(s string) bool {
+	switch RequireBackend(s) {
+	case RequireBackendNone, RequireBackendWebGPU, RequireBackendWebGL, RequireBackendAnyGPU:
+		return true
+	default:
+		return false
+	}
+}
+
+// sceneMountBackend is one Scene3D mount's backend snapshot, read from the
+// live page after the settle wait. Field names are unmarshaled by
+// chromedp.Evaluate's JSON decode, so they mirror sceneMountBackendProbeJS.
+type sceneMountBackend struct {
+	ID             string `json:"id"`
+	Backend        string `json:"backend"`
+	Renderer       string `json:"renderer"`
+	FallbackReason string `json:"fallbackReason"`
+}
+
+// sceneMountBackendProbeJS reads every Scene3D mount's backend attributes
+// (data-gosx-scene3d-backend / -renderer / -renderer-fallback; see
+// client/js/bootstrap-src/20-scene-mount.js). It never throws: a page with
+// no Scene3D mount returns an empty array, which BackendRequirementError
+// reports as its own failure mode.
+const sceneMountBackendProbeJS = `(function() {
+  var out = [];
+  var els = document.querySelectorAll('[data-gosx-scene3d-backend]');
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    out.push({
+      id: el.id || '',
+      backend: el.getAttribute('data-gosx-scene3d-backend') || '',
+      renderer: el.getAttribute('data-gosx-scene3d-renderer') || '',
+      fallbackReason: el.getAttribute('data-gosx-scene3d-renderer-fallback') || ''
+    });
+  }
+  return out;
+})()`
+
+// BackendRequirementError is returned by Capture (and therefore Assert)
+// when opts.RequireBackend names a GPU backend and it was not met: either
+// no Scene3D mount was found on the page, or at least one mounted surface
+// did not reach an acceptable backend. Mounts lists only the surfaces that
+// failed; a nil Mounts with a non-empty Required means no mount was found
+// at all.
+type BackendRequirementError struct {
+	URL      string
+	Required RequireBackend
+	Mounts   []sceneMountBackend
+}
+
+func (e *BackendRequirementError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "visual: --require-backend=%s not met for %s\n\n", string(e.Required), e.URL)
+
+	if len(e.Mounts) == 0 {
+		b.WriteString("No Scene3D mount was found on the page: no element carries a\n")
+		b.WriteString("data-gosx-scene3d-backend attribute, so --require-backend has nothing\n")
+		b.WriteString("to check. If a Scene3D scene is expected on this page, the mount may\n")
+		b.WriteString("not have finished before the capture ran: raise --wait, or set\n")
+		b.WriteString("--wait-selector to a scene-specific selector instead of the default\n")
+		b.WriteString("\"body\".\n")
+		return b.String()
+	}
+
+	hasNoGPU := false
+	hasWrongGPU := false
+	b.WriteString("Mounted Scene3D backend(s) that failed the check:\n")
+	for _, m := range e.Mounts {
+		label := m.ID
+		if label == "" {
+			label = "(no id)"
+		}
+		fmt.Fprintf(&b, "  %s: backend=%q renderer=%q fallbackReason=%q\n", label, m.Backend, m.Renderer, m.FallbackReason)
+		if m.Backend == "webgpu" || m.Backend == "webgl" {
+			hasWrongGPU = true
+		} else {
+			hasNoGPU = true
+		}
+	}
+	b.WriteString("\n")
+
+	if hasNoGPU {
+		b.WriteString("At least one of those mounts ran on the Canvas2D fallback renderer, or\n")
+		b.WriteString("on no renderer at all. No shaders, no post-FX, and no GPU geometry\n")
+		b.WriteString("pipeline ran for that surface. The screenshot you just captured cannot\n")
+		b.WriteString("be trusted to show materials, lighting, particles, or post-processing —\n")
+		b.WriteString("it can look plausible and still be wrong. Do not treat it as evidence\n")
+		b.WriteString("that a shader, geometry, or post-FX bug is fixed.\n\n")
+
+		b.WriteString("Why this happens: default headless Chrome exposes no GPU, so the\n")
+		b.WriteString("Scene3D runtime falls back to a plain Canvas2D renderer and still\n")
+		b.WriteString("paints something — a picture with no visible defects is not proof the\n")
+		b.WriteString("scene rendered correctly.\n\n")
+
+		b.WriteString("Fix: give headless Chrome a real (software) GPU. gosx visual's own\n")
+		b.WriteString("local Chrome launch already carries the working recipe (see\n")
+		b.WriteString("visual/visual.go: newAllocator):\n")
+		b.WriteString("  --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader\n")
+		b.WriteString("  --enable-webgl --ignore-gpu-blocklist\n")
+		b.WriteString("If this capture went through CHROME_WS_URL (a remote or in-cluster\n")
+		b.WriteString("headless-shell), gosx does not control that service's launch flags —\n")
+		b.WriteString("confirm it was started with the same recipe.\n\n")
+	}
+	if hasWrongGPU {
+		b.WriteString("At least one of those mounts DID reach a real GPU renderer (WebGL or\n")
+		b.WriteString("WebGPU) — just not the specific one --require-backend demands. If this\n")
+		b.WriteString("capture depends on WebGPU-only features (compute particles, timestamp\n")
+		b.WriteString("queries, instanced GPU culling), a WebGL renderer silently skips them.\n")
+		b.WriteString("Headless Chrome needs additional flags beyond the SwiftShader WebGL\n")
+		b.WriteString("recipe above to expose WebGPU (or a machine with real WebGPU support).\n")
+		b.WriteString("If either GPU backend is acceptable for this check, pass\n")
+		b.WriteString("--require-backend=any-gpu instead.\n\n")
+	}
+
+	b.WriteString("Before trusting any Scene3D capture without --require-backend, read\n")
+	b.WriteString("data-gosx-scene3d-backend yourself and refuse anything reporting\n")
+	b.WriteString("\"canvas\". See /docs/debugging-scene3d on the gosx-docs site (examples/\n")
+	b.WriteString("gosx-docs) for the full Scene3D debugging toolset.\n")
+	return b.String()
+}
+
+// checkBackendRequirement validates mounts against required and returns a
+// *BackendRequirementError describing every failure, or nil when required
+// is RequireBackendNone or every mount satisfies it.
+func checkBackendRequirement(url string, required RequireBackend, mounts []sceneMountBackend) error {
+	if required == RequireBackendNone {
+		return nil
+	}
+	if len(mounts) == 0 {
+		return &BackendRequirementError{URL: url, Required: required}
+	}
+	accepted := acceptableBackends(required)
+	var failing []sceneMountBackend
+	for _, m := range mounts {
+		if !backendAccepted(m.Backend, accepted) {
+			failing = append(failing, m)
+		}
+	}
+	if len(failing) == 0 {
+		return nil
+	}
+	return &BackendRequirementError{URL: url, Required: required, Mounts: failing}
+}
+
+func backendAccepted(backend string, accepted []string) bool {
+	for _, b := range accepted {
+		if b == backend {
+			return true
+		}
+	}
+	return false
 }
 
 // applyDefaults fills in zero-value fields.
@@ -139,6 +338,11 @@ func Capture(ctx context.Context, url string, opts CaptureOptions) ([]byte, erro
 
 	actions = append(actions, chromedp.Sleep(opts.Wait))
 
+	var mounts []sceneMountBackend
+	if opts.RequireBackend != RequireBackendNone {
+		actions = append(actions, chromedp.Evaluate(sceneMountBackendProbeJS, &mounts))
+	}
+
 	var buf []byte
 	if opts.Selector != "" {
 		actions = append(actions, chromedp.Screenshot(opts.Selector, &buf, chromedp.NodeVisible, chromedp.ByQuery))
@@ -151,6 +355,9 @@ func Capture(ctx context.Context, url string, opts CaptureOptions) ([]byte, erro
 	}
 	if len(buf) == 0 {
 		return nil, fmt.Errorf("visual: capture %s: empty screenshot", url)
+	}
+	if err := checkBackendRequirement(url, opts.RequireBackend, mounts); err != nil {
+		return nil, err
 	}
 	return buf, nil
 }

@@ -3611,7 +3611,15 @@
     return sceneWebGPUDeviceHasF16(device) ? "f16" : "f32";
   }
 
-  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError) {
+  // packSelenaUniforms is injected by the caller (createSceneWebGPURenderer)
+  // because the Selena uniform packer — sceneSelenaUniformData and the
+  // sceneSelenaMaterialLayout / sceneSelenaUniformValue helpers it needs — lives
+  // inside the RENDERER closure, which is a SIBLING of this factory, not an
+  // enclosing scope. Calling it by bare name from here throws ReferenceError.
+  // That crash sat undiscovered because the customPost case was unreachable:
+  // normalizeScenePostEffect lowercased the kind, so this pass never ran and
+  // never reached the uniform upload on the frame after its pipeline resolved.
+  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError, packSelenaUniforms) {
     // Resolve the precision variant once per post processor, not per frame.
     var postPrecisionMode = sceneWebGPUPostPrecisionMode(device);
     var postUsesF16 = postPrecisionMode === "f16";
@@ -3759,7 +3767,9 @@
     var customPostUniformBuffers = new Map(); // name → buffer
     function ensureCustomPostUniformBuffer(effect) {
       var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
-      var uniformData = sceneSelenaUniformData({ customUniforms: effect.uniforms, shaderLayout: effect.shaderLayout });
+      var uniformData = typeof packSelenaUniforms === "function"
+        ? packSelenaUniforms({ customUniforms: effect.uniforms, shaderLayout: effect.shaderLayout })
+        : null;
       if (!uniformData || uniformData.byteLength === 0) {
         uniformData = new Float32Array(4); // 16-byte placeholder
       }
@@ -7465,12 +7475,16 @@
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
       var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(options && options.sampleCount, activeSampleCount || 1)));
       var pipelineLabelSuffix = options && options.labelSuffix ? String(options.labelSuffix) + "-" : "";
-      // cullMode defaults to "back" (every existing caller relies on this
-      // default and never passes the option, so behavior there is unchanged).
-      // Water pool geometry is authored with inward-facing wall triangles so
-      // it can use the same back-face culling contract as upstream. This is
-      // important visually: drawing both sides turns the pool into an opaque
-      // exterior shell instead of an open vessel viewed through its rim.
+      // cullMode defaults to "back" when the caller passes no options (or
+      // options.cullMode is absent/falsy) -- unchanged from before options.cullMode
+      // existed. Water pool geometry is authored with inward-facing wall
+      // triangles so it can use the same back-face culling contract as
+      // upstream. This is important visually: drawing both sides turns the
+      // pool into an opaque exterior shell instead of an open vessel viewed
+      // through its rim. drawPBRObjects (this file) is the other caller that
+      // passes options: it requests cullMode:"none" for mesh objects with
+      // obj.doubleSided === true, leaving every other object on the "back"
+      // default -- see the winding-hazard note above that call.
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
       // depthStencil defaults to true (every existing caller relies on this
       // default and never passes the option, so behavior there is unchanged):
@@ -7604,8 +7618,9 @@
     // updateElioSkinnedMeshes. The skinned draw binds vertex buffers via
     // webGPUBindElioSkinnedBuffers rather than iterating attrs, so this resource
     // deliberately does NOT expose an attrs field (avoids double-binding).
-    function getSelenaSkinnedPipeline(material, blendMode, depthWrite) {
+    function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
       if (!sceneSelenaIsMaterial(material)) return null;
+      var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
       // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
       // (_gosxWGPUSelenaSkinnedResource) so a material drawn both skinned and
       // unskinned never aliases the wrong pipeline — the skinned key uses the
@@ -7616,7 +7631,8 @@
         memo.blendMode === blendMode &&
         memo.depthWrite === depthWrite &&
         memo.targetFormat === targetFormat &&
-        memo.sampleCount === activeSampleCount
+        memo.sampleCount === activeSampleCount &&
+        memo.cullMode === pipelineCullMode
       ) {
         return memo.failed ? null : memo.resource;
       }
@@ -7631,6 +7647,7 @@
         depthWrite ? "1" : "0",
         targetFormat,
         activeSampleCount,
+        pipelineCullMode,
       ].join("|");
       function stampSkinned(resource, failed) {
         material._gosxWGPUSelenaSkinnedResource = {
@@ -7638,6 +7655,7 @@
           depthWrite: depthWrite,
           targetFormat: targetFormat,
           sampleCount: activeSampleCount,
+          cullMode: pipelineCullMode,
           resource: resource,
           failed: failed,
         };
@@ -7656,7 +7674,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: "back" },
+          primitive: { topology: "triangle-list", cullMode: pipelineCullMode },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
@@ -13842,6 +13860,26 @@
       return count;
     }
 
+    // webGPUCountViewCulledMeshObjects counts bundle.meshObjects entries with
+    // viewCulled === true -- the CPU frustum cull applied before buildDrawList
+    // ever hands an object to drawPBRObjects. data-gosx-scene3d-webgpu-mesh-objects
+    // publishes bundle.meshObjects.length UNCONDITIONALLY (a bundle/authoring
+    // count, not a "what actually drew" count), so a viewCulled object still
+    // counts there -- that ambiguity is exactly what let three Selena mesh
+    // planes read "3" on data-gosx-scene3d-webgpu-mesh-objects for ~two weeks
+    // while a camera-depth sign error CPU-frustum-culled them to zero pixels.
+    // Pairing this SUBMITTED/CULLED split (mesh-draw-calls vs mesh-view-culled)
+    // alongside the bundle count, mirroring the point/compute-particle
+    // draw-call counters, closes that diagnostic gap.
+    function webGPUCountViewCulledMeshObjects(bundle) {
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var count = 0;
+      for (var i = 0; i < objects.length; i++) {
+        if (objects[i] && objects[i].viewCulled) count++;
+      }
+      return count;
+    }
+
     function webGPUSceneMeshVertexCount(bundle) {
       var count = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0)));
       var positions = bundle && bundle.worldMeshPositions;
@@ -14032,7 +14070,7 @@
     // PBR object drawing
     // -----------------------------------------------------------------------
 
-    function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup, blendMode, depthWrite, pbrBuffers) {
+    function drawPBRObjects(pass, objectList, bundle, materials, frameBindGroup, blendMode, depthWrite, pbrBuffers, stats) {
       var lastMaterialIndex = -1;
       var lastReceiveShadow = null;
       var currentPipelineKind = "";
@@ -14077,11 +14115,26 @@
         var count = obj.vertexCount;
         var isSkinned = webGPUObjectIsSkinned(obj);
         var computedMorphRecord = !isSkinned ? webGPUObjectComputedMorphDrawRecord(obj) : null;
+        // cullMode: "back" is getSelenaPipeline's own default (every OTHER
+        // caller passes no options and relies on it -- see the comment on
+        // pipelineCullMode there). obj.doubleSided opts a single mesh object
+        // out of that default; anything absent/false resolves to the exact
+        // same "back" value the hardcoded default produced before this line
+        // existed, so no already-working scene changes. Do NOT default
+        // non-doubleSided objects to "none" -- gosx's own box/sphere
+        // primitives wind triangles with the right-hand normal OPPOSITE
+        // their declared shading normal (see boxTriangleMesh/sphereTriangleMesh
+        // in 12-scene-geometry.js), so "back" facing depends on that inverted
+        // winding lining up with the shading normal the water pool/surface
+        // cullMode anchors establish. cullMode:"none" (doubleSided) draws
+        // both faces regardless of winding, so it's safe independent of that
+        // hazard; flipping the false-case default would not be.
+        var selenaPipelineOptions = obj.doubleSided ? { cullMode: "none" } : null;
         var selenaResource = isSkinned
-          ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite)
-          : getSelenaPipeline(mat, blendMode, depthWrite);
+          ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite, selenaPipelineOptions)
+          : getSelenaPipeline(mat, blendMode, depthWrite, selenaPipelineOptions);
         if (selenaResource) {
-          var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex);
+          var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + (obj.doubleSided ? ":ds" : "");
           if (currentPipelineKind !== selenaKey) {
             pass.setPipeline(selenaResource.pipeline);
             currentPipelineKind = selenaKey;
@@ -14094,6 +14147,7 @@
               // the shared 4-slot skinned binding (slot0=skinned pos, 1-3=base).
               if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
                 pass.draw(count);
+                if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
               }
               continue;
             }
@@ -14101,6 +14155,7 @@
               bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count);
             }
             pass.draw(count);
+            if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
             continue;
           }
         }
@@ -14115,6 +14170,7 @@
           }
           if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
             pass.draw(count);
+            if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
           }
           continue;
         }
@@ -14135,6 +14191,7 @@
           if (!webGPUBindSceneMeshVertexBuffer(pass, 2, pbrBuffers && pbrBuffers.uvs, offset, count)) continue;
           if (!webGPUBindComputedMorphBuffer(pass, 3, computedMorphRecord.tangentBuffer, count, 4)) continue;
           pass.draw(count);
+          if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
           continue;
         }
 
@@ -14144,6 +14201,7 @@
         if (!webGPUBindSceneMeshVertexBuffer(pass, 3, pbrBuffers && pbrBuffers.tangents, offset, count)) continue;
 
         pass.draw(count);
+        if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
       }
     }
 
@@ -15499,6 +15557,8 @@
       mount.setAttribute("data-gosx-scene3d-webgpu-water-sky-cube-texture-pending", String(published.waterSkyCubeTexturePending || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-water-sky-cube-texture-failed", String(published.waterSkyCubeTextureFailed || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-mesh-objects", String(published.meshObjects || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-mesh-draw-calls", String(published.meshDrawCalls || 0));
+      mount.setAttribute("data-gosx-scene3d-webgpu-mesh-view-culled", String(published.meshViewCulled || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));
       mount.setAttribute("data-gosx-scene3d-webgpu-computed-morph-vertices", String(published.computedMorphVertices || 0));
@@ -16371,7 +16431,7 @@
       var postTarget = null;
 
       if (usePostProcessing) {
-        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError);
+        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError, sceneSelenaUniformData);
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
         if (sampleCount > 1) {
           mainColorView = ensureMSAAColor(scaledW, scaledH, sampleCount);
@@ -16439,6 +16499,17 @@
         computeParticleEntries: pointStats.computeParticleEntries,
         computeParticleInstances: pointStats.computeParticleInstances,
         meshObjects: Array.isArray(bundle.meshObjects) ? bundle.meshObjects.length : 0,
+        // meshDrawCalls is filled in below by drawPBRObjects (mutated in place
+        // across the opaque/alpha/additive passes, mirroring how waterUpdateStats
+        // accumulates across many draw functions within one frame) -- it counts
+        // actual pass.draw() dispatches, i.e. SUBMITTED mesh objects only.
+        // meshViewCulled is the CPU-frustum-culled complement: bundle.meshObjects
+        // entries buildDrawList excluded via obj.viewCulled before drawPBRObjects
+        // ever saw them. meshObjects (above) counts BOTH -- see the comment on
+        // webGPUCountViewCulledMeshObjects for why that ambiguity is the bug this
+        // pair of counters exists to close.
+        meshDrawCalls: 0,
+        meshViewCulled: webGPUCountViewCulledMeshObjects(bundle),
         skinnedMeshObjects: webGPUCountSkinnedMeshes(bundle),
         computedMorphDispatches: computedMorphStats.computedMorphDispatches,
         computedMorphVertices: computedMorphStats.computedMorphVertices,
@@ -16655,7 +16726,7 @@
           var opaquePipeline = getPBRPipeline("opaque", true);
           mainPass.setPipeline(opaquePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers);
+          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats);
         }
         if (instancedDrawList.opaque.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
@@ -16675,7 +16746,7 @@
           var alphaPipeline = getPBRPipeline("alpha", false);
           mainPass.setPipeline(alphaPipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers);
+          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats);
         }
         if (instancedDrawList.alpha.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
@@ -16695,7 +16766,7 @@
           var additivePipeline = getPBRPipeline("additive", false);
           mainPass.setPipeline(additivePipeline);
           mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers);
+          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats);
         }
         if (instancedDrawList.additive.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);

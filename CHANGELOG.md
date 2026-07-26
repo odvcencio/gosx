@@ -2,6 +2,164 @@
 
 ## Unreleased
 
+### Procedural point clouds (`scene.PointsGenerator`)
+
+`scene.Points` accepted only explicit `Positions` and `Sizes` arrays. A
+deterministic point cloud therefore paid full serialization cost for data the
+client can derive. The m31labs.dev star field shipped an 852,163-byte inline
+JSON manifest — 16,200 positions and 5,400 sizes — on every content route, for
+values that are pure arithmetic on a seed.
+
+- Added `scene.PointsGenerator`, an optional descriptor on `scene.Points` that
+  replaces the arrays with a recipe: kind, seed, stride, per-lane offsets, box
+  centre and extent, and the size curve. The client expands it at mount into
+  the identical arrays. A layer with no generator serializes exactly as before.
+- Explicit `Positions` always win. When both are set the arrays are kept and
+  the descriptor is dropped, so the payload never carries redundant data.
+- `PointsGenerator.Generate` expands the same values server-side for tests,
+  asset baking, and any Go consumer that needs the geometry.
+- The wire form is `PointsGeneratorIR` (`generator` on the points record).
+  A 5,400-point layer serializes to 218 bytes.
+
+Go and JavaScript must agree exactly, and platform transcendentals do not.
+Measured over seeds 0..20000 of the `fract(sin(s*12.9898+78.233)*43758.5453)`
+hash, Go's `math.Sin` and V8's `Math.sin` produce different bits for 19.78% of
+seeds, peaking at 7.276e-12. The divergence is small but unbounded in
+principle: an argument landing within one quantum of an integer makes the two
+sides disagree about `floor()`, which moves a point across its whole axis.
+
+- `scene/points_generator.go` defines the shared spec: `canonicalSin`,
+  `canonicalLog` and `canonicalExp` are ports of Go's own pure-Go kernels,
+  with every product wrapped in an explicit `float64()` conversion to block
+  fused multiply-add on arm64 and ppc64. `canonicalPow` is `exp(y*log(x))`.
+- `client/js/bootstrap-src/11b-scene-points-generate.js` is the matching
+  JavaScript. Both sides use only `+`, `-`, `*`, `/` and comparisons.
+- `canonicalSin` reproduces Go's `math.Sin` bit-for-bit over the generator
+  argument range, so adopting the kernel moves no existing point.
+  `canonicalPow` tracks `math.Pow` to within 1.11e-16.
+- `scene/testdata/points_generator_golden.json` pins four descriptors by
+  SHA-256 over the little-endian IEEE-754 bytes of their expanded arrays.
+  `scene/points_generator_test.go` and
+  `client/js/11b-scene-points-generate.test.mjs` assert against the same
+  fixture, so a divergence fails on whichever side drifted.
+- Strict IR validation accepts a `generator` in place of positions and rejects
+  an unknown kind. At runtime an unrecognized recipe zeroes the layer count so
+  the layer disappears instead of indexing an empty buffer.
+
+## v0.35.10 (2026-07-26)
+
+WebGL custom post-process passes received no reserved auto-uniforms. The pass
+read `time` as 0 on every frame, so each time-driven effect stayed inert. A
+Selena post pass that fades in, flows, or animates showed a static first frame.
+
+- `applyCustomPost` in `client/js/bootstrap-src/16-scene-webgl.js` read only the
+  author-supplied `effect.uniforms` map. Reserved auto-uniforms are not in that
+  map. The pass therefore received 0 for `time`, `mvp`, `modelMatrix`,
+  `normalMatrix`, and the context-class names `cameraPos`, `sunDir`, `sunColor`,
+  and `ambient`.
+- v0.35.9 made this defect reachable. Before v0.35.9 the post effect kind was
+  folded to lower case, so `customPost` matched no backend case and the pass
+  never ran. The uniform defect was present but unreachable.
+- The WebGL mesh path and the WebGPU post path always resolved these names. The
+  mesh path calls `selenaUniformValue` through `uploadSelenaUniforms`. The
+  WebGPU post path calls `sceneSelenaUniformValue` through
+  `sceneSelenaUniformData`. Only the WebGL post path skipped the resolver.
+- `createScenePostProcessor` now accepts the renderer's Selena uniform resolver
+  as a parameter, and the render loop supplies `selenaUniformValue`. This
+  matches the WebGPU side, where `wgpuCreatePostProcessor` already accepts
+  `sceneSelenaUniformData`.
+- `applyCustomPost` now resolves every declared uniform block field through that
+  resolver. Precedence is unchanged: reserved names resolve first, then the
+  author map, then the compiled layout defaults, then a typed zero. A declared
+  `param time` ships a compiled default of 0 inside `customUniforms`. Reserved
+  names resolve first so that default cannot shadow the clock.
+- Compiled layout defaults now apply to custom post fields that the author does
+  not set. The old code skipped such a field, and GLSL then read 0.
+- Uniform upload is now driven by the declared field type through a shared
+  `sceneSelenaUploadUniform` helper. The old post-path code chose the upload
+  call from the JavaScript shape of the value, so a `vec3` field that held a
+  bare number went out as a scalar. The mesh path and the post path now share
+  one upload function and cannot diverge again.
+- Added a regression test that asserts uniform CONTENT, not dispatch. It mounts
+  a WebGL scene with a `customPost` effect, advances the clock, and requires a
+  nonzero `time` that tracks `performance.now()`. Earlier tests asserted only
+  that the pass dispatched, which is how this defect stayed hidden.
+
+## v0.35.9 (2026-07-26)
+
+Scene3D custom post-process passes now execute. `customPost`, `toneMapping`,
+and `colorGrade` never ran on either backend, so any app that authored one
+received nothing at all.
+
+- `normalizeScenePostEffect` forced the effect kind to lower case. That rewrote
+  `customPost` to `custompost`, `toneMapping` to `tonemapping`, and `colorGrade`
+  to `colorgrade`. Both backends dispatch with `switch (effect.kind)` and `===`
+  against camelCase constants, so all three kinds fell through to
+  `default: break;`. The effect stayed in scene state, the post chain still ran,
+  and the mount attributes still counted the effect. Zero pixels were written.
+  Only the all-lowercase kinds survived: `bloom`, `ssao`, `dof`, `fxaa`, and
+  `vignette`.
+- The normalizer now folds case for matching only, then returns the exact
+  spelling both backends dispatch on. An unknown kind keeps the author's
+  spelling, so a newer backend still receives it.
+- The planner emits `colorGrade` for `color-grade`, `color-grading`, and
+  `colorgrade`. The CSS `--scene-filter` path writes straight into scene state
+  and skips the normalizer, so the hyphenated spelling left that pass unmatched
+  as well.
+- WebGL now assigns the return value of `applyCustomPost` unconditionally. The
+  helper returns `null` to report that the pass already drew to the default
+  framebuffer. The old `if (next !== null)` guard dropped that signal, so the
+  closing `blitToScreen` painted the unprocessed scene over the pass output. A
+  trailing custom pass wrote no visible pixels even when it compiled and drew
+  correctly.
+- WebGPU passes `packSelenaUniforms` into `wgpuCreatePostProcessor` as a
+  callback. The uniform packer lives in a sibling closure, not an enclosing one,
+  so the previous bare call raised a `ReferenceError`. The customPost case was
+  unreachable, which hid the defect.
+- New regression tests drive the real author path on both backends: props to
+  `createSceneState` to bundle to `renderer.render`. They assert that the pass
+  reaches shader creation and that it is drawn with its own pipeline.
+  `scripts/forced-red-custompost.go` reads back canvas pixels under SwiftShader
+  and confirms that a forced-red custom pass is the only draw that reaches the
+  canvas.
+
+Scene3D debug tooling:
+
+- `gosx visual --require-backend` accepts `webgpu`, `webgl`, or `any-gpu`. It
+  reads the `data-gosx-scene3d-backend` attributes after the settle wait and
+  fails the capture before any pixel comparison when a mount missed the
+  requirement. The error names each failing mount, separates a Canvas2D
+  fallback from a wrong GPU family, and prints the headless Chrome flags that a
+  software GPU needs.
+- `window.__gosx_scene3d_require_gpu` lets a custom capture harness refuse the
+  Canvas2D fallback without disabling the WebGL path, because WebGL is also a
+  real GPU backend.
+- A new `/docs/debugging-scene3d` page describes the four tiers of Scene3D debug
+  tooling: the CPU reference renderer, the state and draw recorder, the live
+  inspector, and the compositor diagnostics.
+
+Upgrade note: an app that authors `customPost`, `toneMapping`, or `colorGrade`
+receives those passes for the first time on this release. Review the visual
+result before you ship.
+
+## v0.35.8 (2026-07-26)
+
+WebGPU mesh rendering now preserves authored two-sided materials and reports
+enough telemetry to distinguish submitted work from CPU view culling.
+
+- Double-sided mesh objects select a no-cull WebGPU pipeline. The behavior
+  applies to standard materials, custom Selena materials, and skinned Selena
+  meshes; other objects retain back-face culling.
+- Scene3D WebGPU telemetry separates bundled mesh objects, submitted mesh draw
+  calls, and objects rejected by CPU frustum culling. Diagnostics can now tell
+  whether missing geometry was culled before submission instead of treating
+  every bundled object as a draw call.
+- Selena pipeline caches include the cull mode, preventing one mesh's
+  double-sided setting from leaking into another mesh that shares a material.
+- CI installs Go in the JavaScript job and excludes the browser-only
+  `chromedp` integration test from ordinary unit runs, making the required
+  checks reproducible on clean runners.
+
 An audit of every package produced measured evidence for a set of long-standing
 defects. This entry records the fixes. Several change public defaults, and the
 security items change them deliberately: each one now fails closed.

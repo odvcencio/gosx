@@ -171,8 +171,9 @@
       if (count > 0 && rawPositions > 0 && rawPositions < count * 3) {
         pushSceneStrictDiagnostic(diagnostics, "error", "scene.points.count_mismatch", "Point count exceeds position triples", path + ".positions", entry.id, { count: count, positions: rawPositions });
       }
-      if (count > 0 && rawPositions === 0 && compressedPositions === 0) {
-        pushSceneStrictDiagnostic(diagnostics, "error", "scene.points.positions_missing", "Point layer count requires positions or compressedPositions", path + ".positions", entry.id);
+      var generator = validateSceneStrictPointsGenerator(diagnostics, entry.generator, path + ".generator", entry.id);
+      if (count > 0 && rawPositions === 0 && compressedPositions === 0 && !generator) {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.points.positions_missing", "Point layer count requires positions, compressedPositions or a generator", path + ".positions", entry.id);
       }
       if (compressedPositions > 0) {
         var stride = sceneStrictIsNonNegativeInteger(positionStride) && positionStride > 0 ? positionStride : 3;
@@ -624,6 +625,43 @@
           return;
         }
       }
+    }
+
+    // Validate a procedural point-cloud descriptor. Returns true when the
+    // entry carries a generator the runtime can expand, which is what lets a
+    // layer omit positions entirely. An unknown kind is an error here rather
+    // than a silent empty layer at mount, so authoring mistakes surface in
+    // strict mode instead of as a missing star field.
+    function validateSceneStrictPointsGenerator(diagnostics, generator, path, id) {
+      if (generator == null) {
+        return false;
+      }
+      if (typeof generator !== "object" || Array.isArray(generator)) {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.points.generator_invalid", "Point generator must be an object", path, id);
+        return false;
+      }
+      var kind = generator.kind || "box-scatter";
+      if (kind !== "box-scatter") {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.points.generator_kind", "Unknown point generator kind", path + ".kind", id, { kind: kind });
+        return false;
+      }
+      var numericFields = ["seed", "stride", "offsetX", "offsetY", "offsetZ", "offsetSize",
+        "centerX", "centerY", "centerZ", "extentX", "extentY", "extentZ",
+        "sizeMin", "sizeMax", "sizeExp"];
+      for (var fi = 0; fi < numericFields.length; fi++) {
+        var key = numericFields[fi];
+        var value = generator[key];
+        if (value === undefined || value === null) {
+          continue;
+        }
+        if (typeof value !== "number" || !isFinite(value)) {
+          pushSceneStrictDiagnostic(diagnostics, "error", "scene.points.generator_invalid", "Point generator field must be a finite number", path + "." + key, id, { value: value });
+        }
+      }
+      if (generator.stride !== undefined && generator.stride !== null && generator.stride <= 0) {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.points.generator_invalid", "Point generator stride must be positive", path + ".stride", id, { value: generator.stride });
+      }
+      return true;
     }
 
     function validateSceneStrictPointsColorArray(diagnostics, colors, count, path, id) {

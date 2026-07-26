@@ -8211,6 +8211,85 @@ test("bootstrap applies Scene3D post-effect diff commands", async () => {
   assert.deepEqual(state._adaptiveSourcePostEffects, state.postEffects);
 });
 
+// Regression pin: normalizeScenePostEffect must hand the render backends the
+// EXACT kind spelling their `switch (effect.kind)` chains compare against.
+// It used to lowercase kind, which rewrote the three camelCase kinds
+// ("customPost", "toneMapping", "colorGrade") into forms that matched no case
+// in either backend, so those passes silently became no-ops while every health
+// signal (effect present in state, post-effect count attribute, post chain
+// running) still read green.
+test("Scene3D post-effect kinds keep their canonical camelCase spelling through normalization", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  // The canonical spellings the backends dispatch on, exported by the scene API.
+  assert.equal(api.SCENE_POST_CUSTOM_POST, "customPost");
+  assert.equal(api.SCENE_POST_TONE_MAPPING, "toneMapping");
+  assert.equal(api.SCENE_POST_COLOR_GRADE, "colorGrade");
+
+  // (a) The author path (props → createSceneState).
+  const state = api.createSceneState({
+    scene: {
+      postEffects: [
+        { kind: "customPost", name: "galaxy-liquid-glass", fragmentWGSL: "//frag", vertexWGSL: "//vert" },
+        { kind: "toneMapping", exposure: 1.2, mode: "aces" },
+        { kind: "colorGrade", exposure: 1, contrast: 1.1 },
+        { kind: "bloom", threshold: 0.8 },
+        { kind: "ssao", radius: 4 },
+      ],
+    },
+  });
+  // Array.from re-homes the vm-context array into this realm so deepStrictEqual
+  // compares contents rather than cross-realm Array prototypes.
+  assert.deepEqual(
+    Array.from(state.postEffects, (effect) => effect.kind),
+    [api.SCENE_POST_CUSTOM_POST, api.SCENE_POST_TONE_MAPPING, api.SCENE_POST_COLOR_GRADE, "bloom", "ssao"],
+    "createSceneState must preserve the canonical kind spelling for every effect",
+  );
+  assert.equal(state.postEffects[0].fragmentWGSL, "//frag", "the custom pass keeps its authored shader");
+
+  // (b) The command path (SCENE_CMD_SET_POST_EFFECTS re-normalizes from scratch).
+  api.applySceneCommands(state, [{
+    kind: 7,
+    data: {
+      postEffects: [
+        { kind: "customPost", name: "galaxy-liquid-glass", fragmentWGSL: "//frag" },
+        { kind: "toneMapping", exposure: 1.0 },
+      ],
+    },
+  }]);
+  assert.deepEqual(
+    Array.from(state.postEffects, (effect) => effect.kind),
+    [api.SCENE_POST_CUSTOM_POST, api.SCENE_POST_TONE_MAPPING],
+    "applySceneCommands must preserve the canonical kind spelling too",
+  );
+
+  // (c) Author spelling is still matched case-insensitively and folded back to
+  // canonical, so existing lowercase/hyphenated authoring keeps working.
+  const aliased = api.createSceneState({
+    scene: {
+      postEffects: [
+        { kind: "custompost", name: "a", fragmentWGSL: "//f" },
+        { kind: "CustomPost", name: "b", fragmentWGSL: "//f" },
+        { kind: "tonemapping" },
+        { kind: "color-grade" },
+      ],
+    },
+  });
+  assert.deepEqual(
+    Array.from(aliased.postEffects, (effect) => effect.kind),
+    ["customPost", "customPost", "toneMapping", "colorGrade"],
+    "aliases must fold to the canonical spelling the backends dispatch on",
+  );
+
+  // (d) An unknown kind keeps the author's exact spelling rather than being
+  // case-folded into something no backend can dispatch.
+  const unknown = api.createSceneState({ scene: { postEffects: [{ kind: "myCoolPass" }] } });
+  assert.equal(unknown.postEffects[0].kind, "myCoolPass");
+});
+
 test("bootstrap applies Scene3D environment diff commands", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -9095,6 +9174,14 @@ test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
   assert.match(source, /data-gosx-scene3d-webgpu-compute-particle-authored-draw-instances/);
   assert.match(source, /data-gosx-scene3d-webgpu-compute-particle-authored-draw-calls/);
   assert.match(source, /data-gosx-scene3d-webgpu-mesh-objects/);
+  // mesh-objects publishes bundle.meshObjects.length UNCONDITIONALLY (it
+  // includes CPU-frustum-culled objects) -- mesh-draw-calls/mesh-view-culled
+  // split SUBMITTED from CULLED, mirroring the point/compute-particle
+  // draw-call counters above, so a culled-to-zero mesh no longer reads as
+  // "drawing" on the mesh-objects count alone.
+  assert.match(source, /function webGPUCountViewCulledMeshObjects\(bundle\)/);
+  assert.match(source, /data-gosx-scene3d-webgpu-mesh-draw-calls/);
+  assert.match(source, /data-gosx-scene3d-webgpu-mesh-view-culled/);
   assert.match(source, /data-gosx-scene3d-webgpu-instanced-instances/);
 });
 
@@ -10832,6 +10919,18 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   assert.match(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+});
+
+test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // getSelenaPipeline's own default stays "back" (unchanged) when the
+  // caller passes no cullMode option -- drawPBRObjects is the caller that
+  // now conditions its options argument on obj.doubleSided.
+  assert.match(webgpu, /var pipelineCullMode = options && typeof options\.cullMode === "string" && options\.cullMode \? options\.cullMode : "back";/);
+  assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided \? \{ cullMode: "none" \} : null;/);
+  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
+  assert.match(webgpu, /getSelenaSkinnedPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
@@ -15368,6 +15467,153 @@ test("Scene3D defers postfx until idle delay", async () => {
   await flushAsyncWork();
 
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
+});
+
+// --- WebGL customPost reserved auto-uniforms ---
+//
+// v0.35.9 repaired customPost DISPATCH: post effect kinds were lowercased, so
+// "customPost" matched no backend case and the pass never ran. Once the pass
+// started to run, a second defect became reachable. applyCustomPost read ONLY
+// effect.uniforms, so RESERVED auto-uniforms — time above all — were never
+// resolved. Any time-driven WebGL post effect therefore read time == 0 on
+// every frame and stayed inert.
+//
+// The WebGPU post path (ensureCustomPostUniformBuffer -> sceneSelenaUniformData
+// -> sceneSelenaUniformValue) and the WebGL mesh path (uploadSelenaUniforms ->
+// selenaUniformValue) both resolve reserved uniforms. Only WebGL customPost did
+// not. The bug class survived because every earlier test asserted that the pass
+// DISPATCHED and none asserted what the pass RECEIVED. This test asserts
+// uniform CONTENT.
+const CUSTOM_POST_TIME_LAYOUT_FIXTURE = {
+  schemaVersion: "selena.descriptor.v1",
+  languageVersion: "selena.lang.v1",
+  material: "TimedLens",
+  kind: "post",
+  entryPoints: { vertex: "vertexMain", fragment: "fragmentMain" },
+  attributes: [{ location: 0, name: "a_position", type: "vec2" }],
+  textures: [],
+  uniformBlock: {
+    size: 32,
+    fields: [
+      { name: "time", type: "float", offset: 0, size: 4 },
+      { name: "amount", type: "float", offset: 4, size: 4 },
+      { name: "tint", type: "vec3", offset: 16, size: 12 },
+    ],
+    defaults: [
+      // A compiled `param time` ships its default of 0 inside customUniforms.
+      // It must NOT shadow the engine clock — same precedence the mesh path
+      // and the WebGPU post path apply (reserved names resolve first).
+      { name: "time", type: "float", values: [0] },
+      { name: "tint", type: "vec3", values: [0.25, 0.5, 0.75] },
+    ],
+  },
+  wgsl: { group: 0, binding: 0 },
+};
+
+test("WebGL customPost receives reserved auto-uniforms: time is nonzero and advances with the clock", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-custompost-reserved-uniforms";
+
+  let fakeNowMS = 4000; // a real page never starts its clock at exactly 0
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    performanceNow: () => fakeNowMS,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-custompost-reserved-uniforms",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-custompost-reserved-uniforms",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 200,
+            autoRotate: true,
+            scene: {
+              postEffects: [
+                {
+                  kind: "customPost",
+                  name: "timed-lens",
+                  stage: "beforeTonemap",
+                  vertexGLSL: "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }",
+                  fragmentGLSL: "precision mediump float; uniform sampler2D _sceneColor; uniform float time; uniform float amount; uniform vec3 tint; varying vec2 v_uv; void main() { gl_FragColor = vec4(tint * amount * sin(time), 1.0); }",
+                  shaderLayout: CUSTOM_POST_TIME_LAYOUT_FIXTURE,
+                  // Author map carries ONLY the non-reserved param. `time` and
+                  // `tint` must come from the engine clock and the compiled
+                  // layout defaults respectively.
+                  uniforms: { amount: 0.75 },
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl",
+    "this regression test is meaningless unless the WebGL backend actually ran");
+
+  const gl = mount.children[0].getContext("webgl2") || mount.children[0].getContext("webgl");
+  assert.ok(gl, "expected a fake WebGL context on the scene canvas");
+  const uniform1fValues = (name) => gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === name)
+    .map((entry) => entry[2]);
+
+  const firstTimes = uniform1fValues("time");
+  assert.ok(firstTimes.length > 0,
+    "the custom post pass must upload the reserved `time` uniform at least once");
+  // THE REGRESSION: before the fix every one of these was 0, because
+  // applyCustomPost only ever read effect.uniforms and `time` is not in it.
+  assert.ok(firstTimes.every((value) => value > 0),
+    "reserved `time` must resolve to the engine clock, got: " + JSON.stringify(firstTimes));
+  assert.ok(firstTimes.includes(4), "time must be performance.now()/1000, expected 4, got: " + JSON.stringify(firstTimes));
+
+  // Author-supplied non-reserved params keep working.
+  assert.ok(uniform1fValues("amount").includes(0.75),
+    "author-supplied `amount` must still reach the pass");
+  // Compiled layout defaults now apply to fields absent from the author map.
+  // Before the fix these were skipped outright and silently read 0 in GLSL.
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform3f" && entry[1] === "tint"
+      && entry[2] === 0.25 && entry[3] === 0.5 && entry[4] === 0.75),
+    "compiled layout default for `tint` must upload as a vec3");
+
+  // Advance the clock and drive more frames: `time` must track it, which is
+  // what makes an animated post effect animate at all.
+  const opsBefore = gl.ops.length;
+  fakeNowMS = 9000;
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const laterTimes = gl.ops
+    .slice(opsBefore)
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
+    .map((entry) => entry[2]);
+  assert.ok(laterTimes.length > 0, "expected further frames to re-upload `time`");
+  assert.ok(laterTimes.includes(9),
+    "reserved `time` must advance with the clock, got: " + JSON.stringify(laterTimes));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("WebGL post processor is constructed with the Selena uniform resolver injected", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  // The injection is what supplies reserved auto-uniforms to custom post
+  // passes; without it applyCustomPost silently falls back to author values
+  // only. Mirrors the WebGPU side's wgpuCreatePostProcessor(..., sceneSelenaUniformData).
+  assert.match(webgl, /function createScenePostProcessor\(gl, resolveSelenaUniform\)/);
+  assert.match(webgl, /postProcessor = createScenePostProcessor\(gl, selenaUniformValue\);/);
+  assert.match(webgl, /resolveSelenaUniform\(material, layout, field, null\)/);
+  // applyCustomPost must NOT go back to reading the author map directly.
+  assert.doesNotMatch(webgl, /hasOwnProperty\.call\(uniforms, field\.name\) \? uniforms\[field\.name\] : null/);
 });
 
 // --- G1: live-patchable postFXMaxPixels ---
@@ -22502,6 +22748,16 @@ test("Scene3D renderer recovery respects backendCaps fallbacks", () => {
   assert.match(source, /if \(!allowCanvasFallback\) \{[\s\S]*renderer-canvas-fallback-disallowed/);
 });
 
+test("Scene3D fallbackSceneRenderer honors window.__gosx_scene3d_require_gpu without touching the WebGL fallback", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  // The gate is read once, right where allowCanvasFallback is computed, and
+  // only that Canvas2D swap is disallowed -- the WebGL fallback attempt keeps
+  // its own, unmodified allowWebGLFallback condition.
+  assert.match(source, /const requireGPUOnly = typeof window !== "undefined" && window\.__gosx_scene3d_require_gpu === true;/);
+  assert.match(source, /const allowCanvasFallback = sceneBackendCapsAllowsKind\(backendCaps, "canvas2d"\) && !requireGPUOnly;/);
+  assert.match(source, /if \(!preferCanvasFallback && allowWebGLFallback\) \{/);
+});
+
 test("Scene3D WebGPU water debug gates isolate update and draw stages", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   assert.match(source, /new URLSearchParams\(window\.location\.search\)\.get\("gosx-water-debug"\)/);
@@ -26130,6 +26386,138 @@ test("16a board rects draw through the Selena BoardFill pipeline: custom WGSL mo
   assert.notEqual(uniformWrites[0].data[0], 0, "selena mvp must carry the ortho-2D projection");
 });
 
+test("16a splits SUBMITTED mesh draws from CULLED ones (mesh-draw-calls / mesh-view-culled)", async () => {
+  // Regression coverage for the telemetry gap that let three Selena mesh
+  // planes on m31labs.dev read data-gosx-scene3d-webgpu-mesh-objects="3" for
+  // ~two weeks while a camera-depth sign error CPU-frustum-culled them to
+  // zero drawn pixels: mesh-objects counts the bundle (SUBMITTED + CULLED
+  // together), so it never moved. mesh-draw-calls/mesh-view-culled split
+  // the two apart.
+  const harness = await createBoardWebGPUHarness();
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [{ kind: "flat", color: "#ffffff", opacity: 1, renderPass: "opaque" }],
+    meshObjects: [
+      { id: "visible", kind: "box", materialIndex: 0, vertexOffset: 0, vertexCount: 3, viewCulled: false, depthCenter: 4 },
+      { id: "culled", kind: "box", materialIndex: 0, vertexOffset: 3, vertexCount: 3, viewCulled: true, depthCenter: 8 },
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(18),
+    worldMeshNormals: new Float32Array(18),
+  };
+
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1, "exactly one main render pass");
+  assert.equal(mains[0].draws.length, 1, "buildDrawList excludes the viewCulled object — only the visible one reaches pass.draw()");
+
+  // mesh-objects is the pre-existing bundle count: it includes the culled
+  // object (the exact ambiguity that misled the original investigation).
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-objects"), "2");
+  // mesh-draw-calls: SUBMITTED only.
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-draw-calls"), "1");
+  // mesh-view-culled: CULLED only.
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-view-culled"), "1");
+});
+
+test("16a Selena mesh draws request cullMode:none only for doubleSided:true objects", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [selenaMaterial],
+    meshObjects: [
+      { id: "single-sided", kind: "box", materialIndex: 0, vertexOffset: 0, vertexCount: 3, viewCulled: false },
+      { id: "double-sided", kind: "box", materialIndex: 0, vertexOffset: 3, vertexCount: 3, viewCulled: false, doubleSided: true },
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(18),
+    worldMeshNormals: new Float32Array(18),
+  };
+
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1);
+  const draws = mains[0].draws;
+  assert.equal(draws.length, 2, "both mesh objects draw");
+  assert.equal(
+    draws[0].pipeline.desc.primitive.cullMode, "back",
+    "absent doubleSided keeps the Selena pipeline's existing back-face cull default",
+  );
+  assert.equal(
+    draws[1].pipeline.desc.primitive.cullMode, "none",
+    "doubleSided:true draws through a cullMode:none Selena pipeline",
+  );
+});
+
+test("16a Selena skinned mesh draws preserve per-object doubleSided cull mode", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  function skinnedMesh(id, doubleSided, depthCenter) {
+    return {
+      id,
+      kind: "gltf-mesh",
+      materialIndex: 0,
+      vertexOffset: 0,
+      vertexCount: 3,
+      viewCulled: false,
+      depthCenter,
+      doubleSided,
+      directVertices: true,
+      modelMatrix: identity,
+      skin: { jointMatrices: identity },
+      vertices: {
+        count: 3,
+        positions: new Float32Array(9),
+        joints: new Float32Array(12),
+        weights: new Float32Array([
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+        ]),
+      },
+    };
+  }
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [selenaMaterial],
+    meshObjects: [
+      skinnedMesh("single-sided-skin", false, 4),
+      skinnedMesh("double-sided-skin", true, 5),
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+  };
+
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1);
+  assert.deepEqual(
+    mains[0].draws.map((draw) => draw.pipeline.desc.primitive.cullMode),
+    ["back", "none"],
+    "skinned Selena pipelines must cache and draw distinct single- and double-sided variants",
+  );
+});
+
 // -----------------------------------------------------------------------------
 // DOM CanvasBoard overlays — labels/html sync + dispose
 //
@@ -28150,6 +28538,114 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
   assert.equal(failWarns.length, 0, "valid custom post WGSL must not warn");
 });
 
+// End-to-end dispatch pin. Every other custom-post test above hands the renderer
+// a HAND-BUILT bundle with kind:"customPost" written literally, so they all kept
+// passing while the real author path was dead: normalizeScenePostEffect
+// lowercased kind to "custompost", which matched no case in the backend switch,
+// and the pass was never entered. The effect stayed in state.postEffects and the
+// post chain still ran its final blit, so nothing observable complained.
+//
+// This test drives the REAL author path — props → createSceneState →
+// createSceneRenderBundle → renderer.render — and asserts the pass actually
+// reaches the GPU: its WGSL compiles into a shader module, and on the frame
+// after the async pipeline resolves it is BOUND AND DRAWN. Assert the draw, not
+// just the compile: a pass that compiles but never dispatches is exactly the bug.
+test("custom post WebGPU: a customPost authored through createSceneState is compiled AND drawn", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const sceneAPI = harness.env.context.__gosx_scene3d_api;
+  assert.ok(sceneAPI && typeof sceneAPI.createSceneState === "function", "scene3d chunk must publish createSceneState");
+
+  const fragmentWGSL = "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }";
+  const vertexWGSL = "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }";
+
+  // The author path: exactly the shape a Selena CustomPost lowers to on the wire.
+  const state = sceneAPI.createSceneState({
+    scene: {
+      postEffects: [{
+        kind: "customPost",
+        name: "galaxy-liquid-glass",
+        fragmentWGSL,
+        vertexWGSL,
+      }],
+    },
+  });
+  assert.equal(state.postEffects.length, 1, "the custom pass must survive createSceneState");
+  assert.equal(state.postEffects[0].kind, sceneAPI.SCENE_POST_CUSTOM_POST,
+    "state must carry the canonical kind the backend switch dispatches on");
+
+  // The real bundle builder, fed the real state (a minimal compute particle
+  // keeps the renderer's no-geometry early-return from firing first).
+  const bundle = sceneAPI.createSceneRenderBundle(
+    320, 180,
+    null,
+    { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    [], [], [], [], [],
+    {},
+    0,
+    [], [],
+    [{ id: "post-dispatch-cp", count: 4, emitter: { kind: "point" }, material: { color: "#fff" } }],
+    [],
+    state.postEffects,
+    0,
+    false,
+  );
+  assert.equal(bundle.postEffects.length, 1, "the bundle must carry the custom pass");
+  assert.equal(bundle.postEffects[0].kind, sceneAPI.SCENE_POST_CUSTOM_POST);
+
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  // Frame 1: the pass is entered and its WGSL submitted; the pipeline is async
+  // so this frame still falls through to the identity blit.
+  harness.renderer.render(bundle, viewport);
+
+  const postModules = fake.state.shaderModules.filter(
+    (module) => module.label === "selena-post-galaxy-liquid-glass",
+  );
+  assert.equal(postModules.length, 1,
+    "the authored customPost WGSL must reach createShaderModule — if this is 0 the pass was never dispatched");
+  assert.equal(postModules[0].code.includes(fragmentWGSL), true, "the authored fragment WGSL must be submitted verbatim");
+  assert.equal(postModules[0].code.includes(vertexWGSL), true, "the authored vertex WGSL must be submitted verbatim");
+
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const drawsBefore = mainRenderPasses(fake).reduce((n, pass) => n + pass.draws.length, 0);
+
+  // Frame 2: the pipeline has resolved, so the pass must BIND AND DRAW.
+  harness.renderer.render(bundle, viewport);
+
+  const postBindGroups = fake.state.bindGroups.filter(
+    (bg) => bg.desc && bg.desc.layout && bg.desc.layout.desc && bg.desc.layout.desc.label === "gosx-selena-post",
+  );
+  assert.equal(postBindGroups.length >= 1, true,
+    "the custom post pass must build a bind group against the gosx-selena-post layout");
+
+  const postDraws = [];
+  for (const pass of mainRenderPasses(fake)) {
+    for (const draw of pass.draws) {
+      if (draw.pipeline && draw.pipeline.label === "gosx-selena-post-galaxy-liquid-glass") {
+        postDraws.push(draw);
+      }
+    }
+  }
+  assert.equal(postDraws.length >= 1, true,
+    "the custom post pipeline must actually be drawn with — compiling it is not enough");
+  assert.equal(drawsBefore >= 0, true);
+
+  const failWarns = harness.warnLog.filter((m) => m.includes("custom post pass"));
+  assert.deepEqual(failWarns, [], "a valid authored custom pass must not warn");
+});
+
 test("custom post WebGPU: identical complete WGSL module is submitted once", async () => {
   const fake = makeFakeGPUDeviceForCompute({
     pipelineAsyncBehavior(desc) {
@@ -28373,6 +28869,72 @@ test("custom post WebGL2: valid vertexGLSL+fragmentGLSL compiles and links the p
 
   renderer.dispose();
 });
+
+// WebGL counterpart of the WebGPU dispatch pin. 16-scene-webgl.js runs the same
+// `switch (effect.kind)` against the same camelCase SCENE_POST_* constants, so
+// the lowercasing normalizer killed the custom pass on BOTH backends. Every
+// other WebGL custom-post test writes kind:"customPost" literally into a
+// hand-built bundle, so none of them covered the author path.
+test("custom post WebGL2: a customPost authored through createSceneState is dispatched", async () => {
+  const { env, renderer, canvas, warnLog } = createWebGLRendererForPost();
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const sceneAPI = env.context.__gosx_scene3d_api;
+  const validVert = "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const validFrag = "precision mediump float; varying vec2 v_uv; uniform sampler2D _sceneColor; void main() { gl_FragColor = texture2D(_sceneColor, v_uv); }";
+
+  // The author path produces the effect; the rest of the bundle is the shape the
+  // sibling WebGL tests already use.
+  const state = sceneAPI.createSceneState({
+    scene: {
+      postEffects: [{ kind: "customPost", name: "gl-lens", vertexGLSL: validVert, fragmentGLSL: validFrag }],
+    },
+  });
+  assert.equal(state.postEffects[0].kind, sceneAPI.SCENE_POST_CUSTOM_POST,
+    "state must carry the canonical kind the WebGL backend switch dispatches on");
+
+  const bundle = Object.assign(makeWebGLBundleWithCustomPost({}), { postEffects: state.postEffects });
+
+  const gl = canvas.getContext("webgl2");
+  const linkedBefore = gl.ops.filter((op) => op[0] === "linkProgram").length;
+
+  renderer.render(bundle, viewport);
+
+  const linkedAfter = gl.ops.filter((op) => op[0] === "linkProgram").length;
+  assert.equal(linkedAfter > linkedBefore, true,
+    "the authored custom post GLSL must compile+link — if it does not, the pass was never dispatched");
+
+  const warns = warnLog.filter((m) => m.includes("custom post pass") || m.includes("gl-lens"));
+  assert.deepEqual(warns, [], "a valid authored custom pass must not warn");
+
+  // A TRAILING custom pass must own the final image. applyCustomPost returns
+  // null to signal "I already drew to the default framebuffer"; the case used to
+  // swallow that via `if (next !== null)`, leaving currentTexture on the raw
+  // scene color so the chain's closing blitToScreen painted the un-post-processed
+  // scene straight over the pass output. That produced exactly ONE extra
+  // on-screen draw and zero visible effect. Exactly one full-screen draw may
+  // reach the canvas: the custom pass's own.
+  assert.equal(countDefaultFramebufferDraws(gl), 1,
+    "a trailing custom post pass must be the ONLY draw that reaches the canvas — a second one means the scene was blitted over it");
+
+  renderer.dispose();
+});
+
+// countDefaultFramebufferDraws counts fullscreen draws issued while the DEFAULT
+// framebuffer (id undefined) is bound — i.e. draws that actually land on the
+// canvas the user sees.
+function countDefaultFramebufferDraws(gl) {
+  let bound = "initial";
+  let count = 0;
+  for (const op of gl.ops) {
+    if (op[0] === "bindFramebuffer") {
+      bound = op[2];
+    } else if ((op[0] === "drawArrays" || op[0] === "drawElements") && bound == null && bound !== "initial") {
+      count += 1;
+    }
+  }
+  return count;
+}
 
 test("custom post WebGL2: compile/link failure warns once and falls back to identity on subsequent frames", async () => {
   // Strategy: boot a renderer normally (initial programs compile/link OK via
