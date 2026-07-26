@@ -71,6 +71,43 @@ func TestInlineScriptBodyIsOpaque(t *testing.T) {
 	}
 }
 
+// TestScriptExpressionContainerStillInterpolates is the counterweight to
+// raw-text handling, and it exists because raw-text elements broke it.
+//
+// `<script>{ClientScript()}</script>` injects the value of a Go call and is the
+// established way to ship a server-built script body. The first raw-text
+// implementation swallowed `{ClientScript()}` as literal JS, so pages shipped
+// the identifier as source and the browser raised a ReferenceError. Nothing in
+// the Go build failed; only a browser smoke test caught it.
+func TestScriptExpressionContainerStillInterpolates(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"bare call", `<div><script>{ClientScript()}</script></div>`},
+		{"call with args", `<div><script>{BuildScript(cfg, 2)}</script></div>`},
+		{"identifier", `<div><script>{scriptBody}</script></div>`},
+		{"padded with spaces", `<div><script> {ClientScript()} </script></div>`},
+		{"with attributes", `<div><script defer>{ClientScript()}</script></div>`},
+		{"style element", `<div><style>{CriticalCSS()}</style></div>`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := transpileBody(t, tc.body)
+			if !strings.Contains(out, "gosx.Expr(") {
+				t.Errorf("expression hole was not interpolated (likely swallowed as raw text):\n%s", out)
+			}
+			if strings.Contains(out, "gosx.RawHTML(\"{") {
+				t.Errorf("expression hole emitted as literal script source:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestInlineStyleBodyIsOpaque covers the other raw-text element. CSS child
 // combinators (`>`) and blocks (`{}`) hit the same lexer hazards as JS.
 func TestInlineStyleBodyIsOpaque(t *testing.T) {

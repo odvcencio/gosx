@@ -273,8 +273,18 @@ func (t *transpiler) emitRawTextElement(n *gotreesitter.Node) string {
 	}
 
 	var children []string
-	if body := rawTextBody(t.text(t.childByField(n, "children"))); body != "" {
-		children = append(children, "gosx.RawHTML("+strconv.Quote(body)+")")
+	if body := t.childByField(n, "children"); body != nil {
+		switch t.nodeType(body) {
+		case "jsx_expression_container":
+			// <script>{ClientScript()}</script> — the Go value supplies the
+			// element's content, exactly as it did before raw-text elements
+			// existed. Keep the ordinary expression lowering.
+			children = append(children, t.emit(body))
+		default:
+			if raw := rawTextBody(t.text(body)); raw != "" {
+				children = append(children, "gosx.RawHTML("+strconv.Quote(raw)+")")
+			}
+		}
 	}
 	return t.emitElementCall(tag, t.emitAttrs(openNode), children)
 }

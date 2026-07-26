@@ -1161,7 +1161,11 @@ func (l *lowerer) lowerRawTextElement(n *gotreesitter.Node) NodeID {
 
 	var children []NodeID
 	if bodyNode := l.childByField(n, "children"); bodyNode != nil {
-		if body := trimRawTextCloseTag(l.text(bodyNode)); body != "" {
+		if l.nodeType(bodyNode) == "jsx_expression_container" {
+			// <script>{ClientScript()}</script> — a Go value supplies the
+			// content, so lower it as an ordinary expression hole.
+			children = append(children, l.lowerGSXNode(bodyNode))
+		} else if body := trimRawTextCloseTag(l.text(bodyNode)); body != "" {
 			children = append(children, l.prog.AddNode(Node{
 				Kind: NodeRawHTML,
 				Text: body,

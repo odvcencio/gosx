@@ -70,6 +70,30 @@ var rawTextCloseTags = []string{"script", "style"}
 // offer jsx_raw_text in states that are not really inside a raw-text element,
 // and a greedy scan would otherwise swallow the rest of the file.
 func (s *gsxScanner) scanRawText(lexer *gotreesitter.ExternalLexer) bool {
+	// A body whose first non-space character is `{` is a GSX expression hole,
+	// not script source: `<script>{ClientScript()}</script>` injects the value
+	// of a Go call. Declining here hands the position to
+	// jsx_expression_container. Returning false discards whatever this scan
+	// advanced over, so the parser re-reads from the same place.
+	//
+	// The cost is that an inline script cannot OPEN with a bare JS block. Put
+	// a statement before it, or move the script to a .js asset. Interpolation
+	// is the far more common shape and predates raw-text elements.
+	for {
+		ch := lexer.Lookahead()
+		if ch == 0 {
+			return false
+		}
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			lexer.Advance(false)
+			continue
+		}
+		if ch == '{' {
+			return false
+		}
+		break
+	}
+
 	for {
 		ch := lexer.Lookahead()
 		if ch == 0 {

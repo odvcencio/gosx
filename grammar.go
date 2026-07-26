@@ -196,10 +196,24 @@ func GosxGrammar() *Grammar {
 		// generator merged the two "inside an element" states and then offered
 		// jsx_raw_text after every ordinary opening tag, which broke plain
 		// `<div>text</div>`. Owning the close here keeps the automata disjoint.
+		// Two body shapes:
+		//   <script>if (a < b) { go(); }</script>   -> jsx_raw_text (script source)
+		//   <script>{ClientScript()}</script>       -> expression hole (Go value)
+		// The scanner decides between them by declining raw text when the body
+		// opens with `{`, so only one of these alternatives is ever live at a
+		// given position. The raw-text alternative carries its own closing tag
+		// inside the token; the interpolated one needs an explicit close.
 		g.Define("jsx_raw_text_element",
 			Seq(
 				Field("open", Sym("jsx_raw_opening_element")),
-				Field("children", Sym("jsx_raw_text")),
+				Choice(
+					Field("children", Sym("jsx_raw_text")),
+					Seq(
+						Field("children", Sym("jsx_expression_container")),
+						Field("close", Sym("jsx_closing_element")),
+					),
+					Field("close", Sym("jsx_closing_element")),
+				),
 			))
 
 		// Self-closing element: <tag attrs />

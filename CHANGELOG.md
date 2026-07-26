@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## v0.35.6 (2026-07-25)
+
+Fixes a regression in v0.35.5. Upgrade from v0.35.5 immediately if any page
+injects a script body through an expression hole.
+
+v0.35.5 made `<script>` and `<style>` bodies raw text. That also swallowed
+`<script>{ClientScript()}</script>`, the established way to inject a
+server-built script: the Go call was emitted as literal JavaScript, so the
+browser raised a ReferenceError for the function name. Go builds and unit
+tests did not catch it, because the damage only appears when a browser runs
+the page.
+
+- The external scanner now declines raw text when a body's first non-space
+  character is `{`, so the expression hole lowers as it did before v0.35.5.
+- `jsx_raw_text_element` accepts a raw body, an expression-hole body, or no
+  body. The transpiler and IR lower each form correctly.
+- Adds regression coverage for both shapes together, so neither can silently
+  take the other's place again.
+
+Known limitation: an inline script body cannot OPEN with a bare JavaScript
+block, because `{` at that position marks an expression hole. Put a statement
+before the block, or move the script to a `.js` asset.
+
 ## v0.35.5 (2026-07-25)
 
 GSX now treats `<script>` and `<style>` bodies as raw text, the same way HTML
