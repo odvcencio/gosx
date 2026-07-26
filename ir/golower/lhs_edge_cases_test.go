@@ -49,8 +49,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 99.0 {
-		t.Errorf("F() = %f, want 99.0", got.Num)
+	if got.Number() != 99.0 {
+		t.Errorf("F() = %f, want 99.0", got.Number())
 	}
 }
 
@@ -75,8 +75,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 7.5 {
-		t.Errorf("F() = %f, want 7.5", got.Num)
+	if got.Number() != 7.5 {
+		t.Errorf("F() = %f, want 7.5", got.Number())
 	}
 }
 
@@ -169,8 +169,8 @@ func F() float64 {
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// 2 + 3 + 4 + 5 + 5 = 19.
-	if got.Num != 19.0 {
-		t.Errorf("F() = %f, want 19.0", got.Num)
+	if got.Number() != 19.0 {
+		t.Errorf("F() = %f, want 19.0", got.Number())
 	}
 }
 
@@ -193,8 +193,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 42.0 {
-		t.Errorf("F() = %f, want 42.0", got.Num)
+	if got.Number() != 42.0 {
+		t.Errorf("F() = %f, want 42.0", got.Number())
 	}
 }
 
@@ -230,8 +230,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 42.0 {
-		t.Errorf("F() = %f, want 42.0", got.Num)
+	if got.Number() != 42.0 {
+		t.Errorf("F() = %f, want 42.0", got.Number())
 	}
 }
 
@@ -256,7 +256,7 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 99.0 {
-		t.Errorf("F() = %f, want 99.0", got.Num)
+	if got.Number() != 99.0 {
+		t.Errorf("F() = %f, want 99.0", got.Number())
 	}
 }

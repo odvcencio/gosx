@@ -54,8 +54,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 12.5 {
-		t.Errorf("F() = %f, want 12.5", got.Num)
+	if got.Number() != 12.5 {
+		t.Errorf("F() = %f, want 12.5", got.Number())
 	}
 }
 
@@ -85,8 +85,8 @@ func F() float64 {
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// (10 + 5.5) * 2 = 31.
-	if got.Num != 31.0 {
-		t.Errorf("F() = %f, want 31.0", got.Num)
+	if got.Number() != 31.0 {
+		t.Errorf("F() = %f, want 31.0", got.Number())
 	}
 }
 
@@ -109,8 +109,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 9.5 {
-		t.Errorf("F() = %f, want 9.5", got.Num)
+	if got.Number() != 9.5 {
+		t.Errorf("F() = %f, want 9.5", got.Number())
 	}
 }
 
@@ -134,8 +134,8 @@ func F() float64 {
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// (1+4.5) + (3-1.5) = 5.5 + 1.5 = 7.
-	if got.Num != 7.0 {
-		t.Errorf("F() = %f, want 7.0", got.Num)
+	if got.Number() != 7.0 {
+		t.Errorf("F() = %f, want 7.0", got.Number())
 	}
 }
 
@@ -158,8 +158,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 18.5 {
-		t.Errorf("F() = %f, want 18.5", got.Num)
+	if got.Number() != 18.5 {
+		t.Errorf("F() = %f, want 18.5", got.Number())
 	}
 }
 
@@ -181,8 +181,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 12.5 {
-		t.Errorf("F() = %f, want 12.5", got.Num)
+	if got.Number() != 12.5 {
+		t.Errorf("F() = %f, want 12.5", got.Number())
 	}
 }
 
@@ -216,7 +216,7 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 99.0 {
-		t.Errorf("F() = %f, want 99.0", got.Num)
+	if got.Number() != 99.0 {
+		t.Errorf("F() = %f, want 99.0", got.Number())
 	}
 }

@@ -46,8 +46,8 @@ func F() bool {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if !got.Bool {
-		t.Errorf("isEven(10) = %v, want true (mutual recursion must resolve via registry pre-pass)", got.Bool)
+	if !got.Truth() {
+		t.Errorf("isEven(10) = %v, want true (mutual recursion must resolve via registry pre-pass)", got.Truth())
 	}
 }
 
@@ -80,7 +80,7 @@ func F() bool {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Bool {
-		t.Errorf("isEven(7) = %v, want false", got.Bool)
+	if got.Truth() {
+		t.Errorf("isEven(7) = %v, want false", got.Truth())
 	}
 }

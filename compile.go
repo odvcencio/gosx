@@ -25,7 +25,7 @@ func SetGrammarBlob(data []byte) error {
 	gosxLangOnce.Do(func() {
 		gosxLangCached, gosxLangErr = LoadLanguageBlob(data)
 		if gosxLangErr == nil && gosxLangCached != nil {
-			gosxLangCached.ExternalScanner = &gsxScanner{lang: gosxLangCached}
+			gosxLangCached.ExternalScanner = newGSXScanner(gosxLangCached)
 		}
 	})
 	if gosxLangErr != nil {
@@ -46,7 +46,7 @@ func Language() (*gotreesitter.Language, error) {
 			gosxLangCached, _, gosxLangErr = GenerateLanguageAndBlob(g)
 		}
 		if gosxLangErr == nil && gosxLangCached != nil {
-			gosxLangCached.ExternalScanner = &gsxScanner{lang: gosxLangCached}
+			gosxLangCached.ExternalScanner = newGSXScanner(gosxLangCached)
 		}
 	})
 	return gosxLangCached, gosxLangErr
@@ -78,6 +78,9 @@ func Compile(source []byte) (*ir.Program, error) {
 	root := tree.RootNode()
 	if root.HasError() {
 		return nil, DescribeParseError(root, source, lang)
+	}
+	if err := requirePackageClause(root, lang); err != nil {
+		return nil, err
 	}
 
 	prog, err := ir.Lower(root, source, lang)

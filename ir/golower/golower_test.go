@@ -27,7 +27,7 @@ func F() int { return 42 }`)
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if got.Type != program.TypeInt || int(got.Num) != 42 {
+	if got.Type != program.TypeInt || int(got.Number()) != 42 {
 		t.Errorf("F() = %+v, want IntVal(42)", got)
 	}
 }
@@ -43,8 +43,8 @@ func F() int { return 2 * 3 + 1 }`)
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if int(got.Num) != 7 {
-		t.Errorf("F() = %f, want 7", got.Num)
+	if int(got.Number()) != 7 {
+		t.Errorf("F() = %f, want 7", got.Number())
 	}
 }
 
@@ -63,8 +63,8 @@ func F() int {
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if int(got.Num) != 15 {
-		t.Errorf("F() = %f, want 15", got.Num)
+	if int(got.Number()) != 15 {
+		t.Errorf("F() = %f, want 15", got.Number())
 	}
 }
 
@@ -85,8 +85,8 @@ func F() int {
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if int(got.Num) != 1 {
-		t.Errorf("F() = %f, want 1", got.Num)
+	if int(got.Number()) != 1 {
+		t.Errorf("F() = %f, want 1", got.Number())
 	}
 }
 
@@ -107,8 +107,8 @@ func Sum() int {
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if int(got.Num) != 10 { // 0+1+2+3+4
-		t.Errorf("Sum() = %f, want 10", got.Num)
+	if int(got.Number()) != 10 { // 0+1+2+3+4
+		t.Errorf("Sum() = %f, want 10", got.Number())
 	}
 }
 
@@ -129,8 +129,8 @@ func Count() int {
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if int(got.Num) != 3 {
-		t.Errorf("Count() = %f, want 3", got.Num)
+	if int(got.Number()) != 3 {
+		t.Errorf("Count() = %f, want 3", got.Number())
 	}
 }
 
@@ -148,8 +148,8 @@ func F() float64 { return math.Sqrt(16) }`)
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if got.Num != 4 {
-		t.Errorf("F() = %f, want 4", got.Num)
+	if got.Number() != 4 {
+		t.Errorf("F() = %f, want 4", got.Number())
 	}
 }
 
@@ -166,8 +166,8 @@ func F() float64 { return math.Pi }`)
 	}
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if got.Num < 3.14 || got.Num > 3.15 {
-		t.Errorf("math.Pi = %f, want ~3.14159", got.Num)
+	if got.Number() < 3.14 || got.Number() > 3.15 {
+		t.Errorf("math.Pi = %f, want ~3.14159", got.Number())
 	}
 }
 
@@ -224,7 +224,7 @@ func F() int {
 		"items": vm.ArrayVal([]vm.Value{vm.IntVal(10), vm.IntVal(20), vm.IntVal(30)}),
 	})
 	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
-	if int(got.Num) != 60 {
-		t.Errorf("F() = %f, want 60", got.Num)
+	if int(got.Number()) != 60 {
+		t.Errorf("F() = %f, want 60", got.Number())
 	}
 }

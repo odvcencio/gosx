@@ -27,6 +27,57 @@ func (e *ParseError) Error() string {
 	return fmt.Sprintf("%d:%d: %s\n    %s\n    %s^", e.Line, e.Column, e.Message, e.Snippet, caretPadding(e.Snippet, e.Column))
 }
 
+// requirePackageClause rejects a source file that does not open with a
+// package clause.
+//
+// Go requires a package clause in every file. The grammar does not, and the
+// parser reports no error node for a file without one. Text such as
+// "not a valid gsx file" lexes as a run of bare identifiers and yields a clean
+// source_file. Callers read a compile error as the signal that input is bad,
+// so check the structure here.
+//
+// gotreesitter made this check necessary at v0.35.0. Before that release the
+// Go grammar approximated automatic semicolon insertion inside the lexer DFA,
+// and the approximation produced an error node on such input by accident. The
+// external _automatic_semicolon scanner that replaced it is byte-strict and
+// accepts the same input.
+func requirePackageClause(root *gotreesitter.Node, lang *gotreesitter.Language) error {
+	if root == nil || lang == nil {
+		return nil
+	}
+	if root.Type(lang) != "source_file" {
+		return nil
+	}
+	for i := 0; i < root.NamedChildCount(); i++ {
+		child := root.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		switch child.Type(lang) {
+		case "comment":
+			// Comments are extras. Skip them and keep looking.
+			continue
+		case "package_clause":
+			return nil
+		default:
+			return &ParseError{
+				Line:    int(child.StartPoint().Row) + 1,
+				Column:  int(child.StartPoint().Column) + 1,
+				Message: "expected a package clause before " + child.Type(lang),
+			}
+		}
+	}
+	// A file of only comments or whitespace has no package clause either.
+	if root.NamedChildCount() > 0 || root.EndByte() > root.StartByte() {
+		return &ParseError{
+			Line:    1,
+			Column:  1,
+			Message: "expected a package clause",
+		}
+	}
+	return nil
+}
+
 // DescribeParseError returns the first syntax error in a parse tree, if any.
 func DescribeParseError(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) error {
 	if root == nil || !root.HasError() {

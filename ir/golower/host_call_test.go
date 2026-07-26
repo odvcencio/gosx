@@ -92,11 +92,11 @@ func F(c *surface.Canvas, x float64, y float64) {
 	if len(rec.Calls[0].Args) != 2 {
 		t.Fatalf("call.Args len = %d, want 2", len(rec.Calls[0].Args))
 	}
-	if rec.Calls[0].Args[0].Num != 3.5 {
-		t.Errorf("args[0] = %f, want 3.5", rec.Calls[0].Args[0].Num)
+	if rec.Calls[0].Args[0].Number() != 3.5 {
+		t.Errorf("args[0] = %f, want 3.5", rec.Calls[0].Args[0].Number())
 	}
-	if rec.Calls[0].Args[1].Num != 7.25 {
-		t.Errorf("args[1] = %f, want 7.25", rec.Calls[0].Args[1].Num)
+	if rec.Calls[0].Args[1].Number() != 7.25 {
+		t.Errorf("args[1] = %f, want 7.25", rec.Calls[0].Args[1].Number())
 	}
 }
 
@@ -125,8 +125,8 @@ func F(c *surface.Canvas, color string) {
 	if len(rec.Calls) != 1 || rec.Calls[0].Method != "SetFillStyle" {
 		t.Fatalf("expected one canvas.SetFillStyle call; got %+v", rec.Calls)
 	}
-	if rec.Calls[0].Args[0].Str != "#7b5c3a" {
-		t.Errorf("args[0] = %q, want %q", rec.Calls[0].Args[0].Str, "#7b5c3a")
+	if rec.Calls[0].Args[0].Text() != "#7b5c3a" {
+		t.Errorf("args[0] = %q, want %q", rec.Calls[0].Args[0].Text(), "#7b5c3a")
 	}
 }
 
@@ -161,8 +161,8 @@ func F(ctx *surface.Context, slot int) {
 	if len(rec.Calls) != 1 || rec.Calls[0].Method != "RegisterSlot" {
 		t.Fatalf("expected one ctx.RegisterSlot call; got %+v", rec.Calls)
 	}
-	if int(rec.Calls[0].Args[0].Num) != 42 {
-		t.Errorf("args[0] = %d, want 42", int(rec.Calls[0].Args[0].Num))
+	if int(rec.Calls[0].Args[0].Number()) != 42 {
+		t.Errorf("args[0] = %d, want 42", int(rec.Calls[0].Args[0].Number()))
 	}
 }
 
@@ -198,14 +198,14 @@ func F(c *surface.Canvas, label string, x float64, y float64) {
 	if len(rec.Calls[0].Args) != 3 {
 		t.Fatalf("call.Args len = %d, want 3", len(rec.Calls[0].Args))
 	}
-	if rec.Calls[0].Args[0].Str != "hello" {
-		t.Errorf("args[0] = %q, want \"hello\"", rec.Calls[0].Args[0].Str)
+	if rec.Calls[0].Args[0].Text() != "hello" {
+		t.Errorf("args[0] = %q, want \"hello\"", rec.Calls[0].Args[0].Text())
 	}
-	if rec.Calls[0].Args[1].Num != 10 {
-		t.Errorf("args[1] = %f, want 10", rec.Calls[0].Args[1].Num)
+	if rec.Calls[0].Args[1].Number() != 10 {
+		t.Errorf("args[1] = %f, want 10", rec.Calls[0].Args[1].Number())
 	}
-	if rec.Calls[0].Args[2].Num != 32 {
-		t.Errorf("args[2] = %f, want 32 (y + 12)", rec.Calls[0].Args[2].Num)
+	if rec.Calls[0].Args[2].Number() != 32 {
+		t.Errorf("args[2] = %f, want 32 (y + 12)", rec.Calls[0].Args[2].Number())
 	}
 }
 
@@ -231,7 +231,7 @@ func F(x float64) float64 {
 		"x": vm.FloatVal(0),
 	})
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 0 {
-		t.Errorf("sin(0) = %f, want 0", got.Num)
+	if got.Number() != 0 {
+		t.Errorf("sin(0) = %f, want 0", got.Number())
 	}
 }
