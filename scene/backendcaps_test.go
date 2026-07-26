@@ -43,9 +43,15 @@ func TestSceneIRBackendCapsIBL(t *testing.T) {
 	}
 }
 
-// Test 2: a pickable mesh forces webgl-only (gpu-picking is required by
-// DefaultPolicy and only webgl implements it).
-func TestSceneIRBackendCapsPickableForcesWebGL(t *testing.T) {
+// Test 2: a pickable mesh keeps both GPU backends and drops canvas2d.
+// gpu-picking is required by DefaultPolicy, both WebGPU and WebGL2 implement
+// it, and Canvas2D does not.
+//
+// This test asserted webgl-only until gpu-picking shipped on WebGPU. That
+// exclusion sent every interactive scene to WebGL2, because collectFeatures
+// raises gpu-picking as soon as one object is Pickable. See the
+// FeatureGPUPicking comment in scene/capability/capability.go.
+func TestSceneIRBackendCapsPickableKeepsGPUBackends(t *testing.T) {
 	pickable := true
 	props := Props{Graph: NewGraph(Mesh{
 		ID:       "m",
@@ -57,8 +63,16 @@ func TestSceneIRBackendCapsPickableForcesWebGL(t *testing.T) {
 	if ir.BackendCaps == nil {
 		t.Fatalf("expected BackendCaps to be set on SceneIR")
 	}
-	if len(ir.BackendCaps.Capable) != 1 || ir.BackendCaps.Capable[0] != capability.BackendWebGL {
-		t.Fatalf("expected Capable == [webgl], got %v", ir.BackendCaps.Capable)
+	got := backendSet(ir.BackendCaps.Capable)
+	if len(ir.BackendCaps.Capable) != 2 || !got[capability.BackendWebGPU] || !got[capability.BackendWebGL] {
+		t.Fatalf("expected Capable == [webgpu webgl], got %v", ir.BackendCaps.Capable)
+	}
+	if got[capability.BackendCanvas2D] {
+		t.Fatalf("expected canvas2d excluded for gpu-picking, got %v", ir.BackendCaps.Capable)
+	}
+	// WebGPU must be capable outright, not merely degraded.
+	if degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGPU], capability.FeatureGPUPicking) {
+		t.Fatalf("expected webgpu NOT degraded on gpu-picking, got %v", ir.BackendCaps.Degraded)
 	}
 }
 
@@ -136,12 +150,46 @@ func TestSceneIRBackendCapsWaterObjectMeshShadowReason(t *testing.T) {
 	if !got[capability.BackendWebGPU] || !got[capability.BackendWebGL] {
 		t.Fatalf("expected webgpu+webgl capable for water object mesh shadow pass, got %v", ir.BackendCaps.Capable)
 	}
+	if got[capability.BackendCanvas2D] {
+		t.Fatalf("canvas2d must fall out of a water scene, got %v", ir.BackendCaps.Capable)
+	}
+
+	// The mesh-shadow pass DEGRADES WebGL2; it does not exclude it. WebGL2
+	// rasterizes no caster geometry, so it shades the object shadow from an
+	// analytic primitive and the shadow shape is wrong. That is a degraded image
+	// of the scene, not a different scene, and excluding WebGL2 would leave a
+	// browser without WebGPU holding nothing. See
+	// scene/capability/water_shadow_test.go.
+	//
+	// canvas2d still falls out, but on the two REQUIRED water features rather
+	// than on the shadow pass. Assert both halves, because the interesting
+	// property is which feature carries which verdict.
+	var webglDegraded, canvasExcluded bool
 	for _, reason := range ir.BackendCaps.Reasons {
-		if reason.Feature == capability.FeatureWaterObjectMeshShadowPass && reason.Excludes == capability.BackendCanvas2D {
-			return
+		if reason.Feature == capability.FeatureWaterObjectMeshShadowPass {
+			if reason.Excludes != "" {
+				t.Fatalf("the mesh-shadow pass is droppable and must exclude nobody, got %+v", reason)
+			}
+			if reason.Degrades == capability.BackendWebGL {
+				webglDegraded = true
+			}
+		}
+		switch reason.Feature {
+		case capability.FeatureWaterSim, capability.FeatureWaterObjectTexturePass:
+			if reason.Excludes == capability.BackendCanvas2D {
+				canvasExcluded = true
+			}
 		}
 	}
-	t.Fatalf("expected canvas2d exclusion reason for water object mesh shadow pass, got %+v", ir.BackendCaps.Reasons)
+	if !webglDegraded {
+		t.Fatalf("expected webgl DEGRADED by the mesh shadow pass, got %+v", ir.BackendCaps.Reasons)
+	}
+	if !canvasExcluded {
+		t.Fatalf("expected canvas2d excluded by a required water feature, got %+v", ir.BackendCaps.Reasons)
+	}
+	if degraded := ir.BackendCaps.Degraded[capability.BackendWebGL]; len(degraded) != 1 || degraded[0] != capability.FeatureWaterObjectMeshShadowPass {
+		t.Fatalf("webgl must be degraded by the mesh shadow pass alone, got %v", ir.BackendCaps.Degraded)
+	}
 }
 
 // Test 3: backendCaps round-trips through the serialized scene payload.
