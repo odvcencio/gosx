@@ -163,6 +163,62 @@ func TestVideoPersistAndLockInputPropsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestVideoParityOptionsRoundTrip(t *testing.T) {
+	cfg := VideoEngineConfig(VideoProps{
+		Src: "media/promo.mp4",
+		SubtitleTracks: []VideoTrack{
+			{ID: "en", Src: "subs/en.vtt?token=abc", AuthKey: "english-main", Bitmap: true},
+		},
+		Subtitles: &SubtitleOptions{
+			OffsetMs:            150,
+			Scale:               " large ",
+			Style:               " boxed ",
+			GapBridgeMs:         700,
+			CueTailMs:           300,
+			PaintLeadMs:         50,
+			BitmapPrefetchLimit: 8,
+			RetryLimit:          18,
+			RetryRefreshAfter:   2,
+			RefreshEndpoint:     "api/subtitles/refresh",
+			RefreshCallback:     "refreshSubtitles",
+		},
+		AudioSource: &AudioSourceOptions{QueryParam: " audio "},
+		Fullscreen:  &FullscreenOptions{Target: " shell "},
+		Telemetry: &VideoTelemetryOptions{
+			Endpoint:              "api/playback/telemetry",
+			QualityIntervalMs:     60000,
+			StallRecoveryDelayMs:  12000,
+			MaxStallRecoveryCount: 2,
+		},
+	})
+
+	got := string(cfg.Props)
+	for _, snippet := range []string{
+		`"authKey":"english-main"`,
+		`"bitmap":true`,
+		`"subtitles":{`,
+		`"offsetMs":150`,
+		`"scale":"large"`,
+		`"style":"boxed"`,
+		`"gapBridgeMs":700`,
+		`"cueTailMs":300`,
+		`"paintLeadMs":50`,
+		`"bitmapPrefetchLimit":8`,
+		`"retryLimit":18`,
+		`"retryRefreshAfter":2`,
+		`"refreshEndpoint":"/api/subtitles/refresh"`,
+		`"refreshCallback":"refreshSubtitles"`,
+		`"audioSource":{"queryParam":"audio"}`,
+		`"fullscreen":{"target":"shell"}`,
+		`"telemetry":{`,
+		`"endpoint":"/api/playback/telemetry"`,
+	} {
+		if !strings.Contains(got, snippet) {
+			t.Fatalf("expected %q in props %s", snippet, got)
+		}
+	}
+}
+
 func TestVideoPersistAndLockInputPropsOmitWhenZero(t *testing.T) {
 	cfg := VideoEngineConfig(VideoProps{Src: "media/promo.mp4"})
 	got := string(cfg.Props)

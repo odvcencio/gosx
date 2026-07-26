@@ -12,27 +12,59 @@ import (
 	"m31labs.dev/gosx/server"
 )
 
+// cssFile names a stylesheet on disk together with the freshness data that one
+// os.Stat supplies.
+//
+// WHY it carries the stat data: the caches below used to key on the path alone,
+// so an edited stylesheet never reached the next render and a restart was the
+// only way to see it. The path lookup already pays one stat to decide whether
+// the file exists, so the modification time and the size come free.
+type cssFile struct {
+	path        string
+	modTimeNano int64
+	size        int64
+}
+
+func (f cssFile) empty() bool { return f.path == "" }
+
+// fileCSSNodeCache maps a cache key to one cssNodeEntry. The entry replaces the
+// old one when the file changes, so the map holds one entry per stylesheet and
+// per layer, not one per edit.
 var fileCSSNodeCache sync.Map
+
+// fileScene3DStyleCache maps a stylesheet path to one scene3DStyleEntry.
 var fileScene3DStyleCache sync.Map
+
+type cssNodeEntry struct {
+	modTimeNano int64
+	size        int64
+	node        gosx.Node
+}
+
+type scene3DStyleEntry struct {
+	modTimeNano int64
+	size        int64
+	sheet       gosxcss.Scene3DStylesheet
+}
 
 func addRouteFileCSSHead(ctx *RouteContext, page FilePage) {
 	if ctx == nil {
 		return
 	}
 	order := 0
-	if node, ok := fileCSSNode(page.Root, globalCSSPath(page.Root), server.CSSLayerGlobal, order); ok && !node.IsZero() {
+	if node, ok := fileCSSNode(page.Root, globalCSSFile(page.Root), server.CSSLayerGlobal, order); ok && !node.IsZero() {
 		ctx.AddHead(node)
 		order++
 	}
 	for _, file := range page.Layouts {
-		node, ok := fileCSSNode(page.Root, sidecarCSSPath(file), server.CSSLayerLayout, order)
+		node, ok := fileCSSNode(page.Root, sidecarCSSFile(file), server.CSSLayerLayout, order)
 		if !ok || node.IsZero() {
 			continue
 		}
 		ctx.AddHead(node)
 		order++
 	}
-	if node, ok := fileCSSNode(page.Root, sidecarCSSPath(page.FilePath), server.CSSLayerPage, order); ok && !node.IsZero() {
+	if node, ok := fileCSSNode(page.Root, sidecarCSSFile(page.FilePath), server.CSSLayerPage, order); ok && !node.IsZero() {
 		ctx.AddHead(node)
 	}
 }
@@ -42,7 +74,7 @@ func addFileCSSHead(ctx *RouteContext, files ...string) {
 		return
 	}
 	for _, file := range files {
-		node, ok := fileCSSNode("", sidecarCSSPath(file), server.CSSLayerPage, 0)
+		node, ok := fileCSSNode("", sidecarCSSFile(file), server.CSSLayerPage, 0)
 		if !ok || node.IsZero() {
 			continue
 		}
@@ -50,16 +82,29 @@ func addFileCSSHead(ctx *RouteContext, files ...string) {
 	}
 }
 
-func globalCSSPath(root string) string {
+// statCSSFile returns the stylesheet at candidate when it exists.
+func statCSSFile(candidate string) (cssFile, bool) {
+	if candidate == "" {
+		return cssFile{}, false
+	}
+	info, err := os.Stat(candidate)
+	if err != nil || info.IsDir() {
+		return cssFile{}, false
+	}
+	return cssFile{
+		path:        candidate,
+		modTimeNano: info.ModTime().UnixNano(),
+		size:        info.Size(),
+	}, true
+}
+
+func globalCSSFile(root string) cssFile {
 	root = strings.TrimSpace(root)
 	if root == "" {
-		return ""
+		return cssFile{}
 	}
-	candidate := filepath.Join(root, "global.css")
-	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-		return candidate
-	}
-	return ""
+	file, _ := statCSSFile(filepath.Join(root, "global.css"))
+	return file
 }
 
 func fileCSSCacheKey(cssPath string, layer server.CSSLayer, order int) string {
@@ -69,34 +114,36 @@ func fileCSSCacheKey(cssPath string, layer server.CSSLayer, order int) string {
 	return strings.Join([]string{cssPath, string(layer), strconv.Itoa(order)}, "\x00")
 }
 
-func fileCSSNode(root, cssPath string, layer server.CSSLayer, order int) (gosx.Node, bool) {
-	if cssPath == "" {
+func fileCSSNode(root string, css cssFile, layer server.CSSLayer, order int) (gosx.Node, bool) {
+	if css.empty() {
 		return gosx.Node{}, false
 	}
-	cacheKey := fileCSSCacheKey(cssPath, layer, order)
+	cacheKey := fileCSSCacheKey(css.path, layer, order)
 	if cached, ok := fileCSSNodeCache.Load(cacheKey); ok {
-		node, _ := cached.(gosx.Node)
-		return node, !node.IsZero()
+		entry, _ := cached.(cssNodeEntry)
+		if entry.modTimeNano == css.modTimeNano && entry.size == css.size {
+			return entry.node, !entry.node.IsZero()
+		}
 	}
 
-	data, err := os.ReadFile(cssPath)
+	data, err := os.ReadFile(css.path)
 	if err != nil {
-		fileCSSNodeCache.Store(cacheKey, gosx.Node{})
+		fileCSSNodeCache.Store(cacheKey, cssNodeEntry{modTimeNano: css.modTimeNano, size: css.size})
 		return gosx.Node{}, false
 	}
 
-	source := fileCSSSource(root, cssPath)
+	source := fileCSSSource(root, css.path)
 	scopeID := ""
 	cssText := string(data)
 	cssText, _ = gosxcss.ExtractScene3DStyles(cssText)
 	if fileCSSLayerNeedsScope(layer) {
-		scopeID = fileCSSScopeID(cssPath)
+		scopeID = fileCSSScopeID(css.path)
 		cssText = gosxcss.ScopeCSS(cssText, scopeID)
 	}
 
 	node := gosx.El("style",
 		gosx.Attrs(
-			gosx.Attr("data-gosx-file-css", filepath.ToSlash(filepath.Base(cssPath))),
+			gosx.Attr("data-gosx-file-css", filepath.ToSlash(filepath.Base(css.path))),
 			gosx.Attr("data-gosx-css-layer", string(layer)),
 			gosx.Attr("data-gosx-css-owner", server.FileStylesheetOwner(layer)),
 			gosx.Attr("data-gosx-css-source", source),
@@ -106,34 +153,44 @@ func fileCSSNode(root, cssPath string, layer server.CSSLayer, order int) (gosx.N
 		),
 		gosx.RawHTML(cssText),
 	)
-	fileCSSNodeCache.Store(cacheKey, node)
+	fileCSSNodeCache.Store(cacheKey, cssNodeEntry{
+		modTimeNano: css.modTimeNano,
+		size:        css.size,
+		node:        node,
+	})
 	return node, true
 }
 
 func fileAncestorScene3DStyles(page FilePage) gosxcss.Scene3DStylesheet {
 	var sheet gosxcss.Scene3DStylesheet
-	sheet = sheet.Merge(fileScene3DStyles(globalCSSPath(page.Root)))
+	sheet = sheet.Merge(fileScene3DStyles(globalCSSFile(page.Root)))
 	for _, file := range page.Layouts {
-		sheet = sheet.Merge(fileScene3DStyles(sidecarCSSPath(file)))
+		sheet = sheet.Merge(fileScene3DStyles(sidecarCSSFile(file)))
 	}
 	return sheet
 }
 
-func fileScene3DStyles(cssPath string) gosxcss.Scene3DStylesheet {
-	if cssPath == "" {
+func fileScene3DStyles(css cssFile) gosxcss.Scene3DStylesheet {
+	if css.empty() {
 		return gosxcss.Scene3DStylesheet{}
 	}
-	if cached, ok := fileScene3DStyleCache.Load(cssPath); ok {
-		sheet, _ := cached.(gosxcss.Scene3DStylesheet)
-		return sheet
+	if cached, ok := fileScene3DStyleCache.Load(css.path); ok {
+		entry, _ := cached.(scene3DStyleEntry)
+		if entry.modTimeNano == css.modTimeNano && entry.size == css.size {
+			return entry.sheet
+		}
 	}
-	data, err := os.ReadFile(cssPath)
+	data, err := os.ReadFile(css.path)
 	if err != nil {
-		fileScene3DStyleCache.Store(cssPath, gosxcss.Scene3DStylesheet{})
+		fileScene3DStyleCache.Store(css.path, scene3DStyleEntry{modTimeNano: css.modTimeNano, size: css.size})
 		return gosxcss.Scene3DStylesheet{}
 	}
 	_, sheet := gosxcss.ExtractScene3DStyles(string(data))
-	fileScene3DStyleCache.Store(cssPath, sheet)
+	fileScene3DStyleCache.Store(css.path, scene3DStyleEntry{
+		modTimeNano: css.modTimeNano,
+		size:        css.size,
+		sheet:       sheet,
+	})
 	return sheet
 }
 
@@ -152,20 +209,18 @@ func fileCSSSource(root, cssPath string) string {
 	return filepath.ToSlash(filepath.Base(cssPath))
 }
 
-func sidecarCSSPath(file string) string {
+// sidecarCSSFile returns the stylesheet that sits beside a page or layout file.
+func sidecarCSSFile(file string) cssFile {
 	file = strings.TrimSpace(file)
 	if file == "" {
-		return ""
+		return cssFile{}
 	}
 	ext := filepath.Ext(file)
 	if ext == "" {
-		return ""
+		return cssFile{}
 	}
-	candidate := strings.TrimSuffix(file, ext) + ".css"
-	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-		return candidate
-	}
-	return ""
+	css, _ := statCSSFile(file[:len(file)-len(ext)] + ".css")
+	return css
 }
 
 func fileCSSScopeID(file string) string {

@@ -86,6 +86,35 @@
     return String(window.location && window.location.href || "");
   }
 
+  function scriptNonceValue(script) {
+    if (!script) return "";
+    return String(script.nonce || script.getAttribute && script.getAttribute("nonce") || "");
+  }
+
+  function currentDocumentNonce() {
+    const current = scriptNonceValue(document.currentScript);
+    if (current) return current;
+    const selectors = [
+      "script[nonce][data-gosx-navigation]",
+      "script[nonce][data-gosx-document-contract]",
+      "script[nonce][data-gosx-script]",
+      "script[nonce]",
+    ];
+    for (const selector of selectors) {
+      const found = document.querySelector(selector);
+      const nonce = scriptNonceValue(found);
+      if (nonce) return nonce;
+    }
+    return "";
+  }
+
+  function applyCurrentNonce(script) {
+    const nonce = currentDocumentNonce();
+    if (nonce && script) {
+      script.nonce = nonce;
+    }
+  }
+
   function keepsLiteralURL(value) {
     return !value || value[0] === "#" || value.startsWith("data:") || value.startsWith("javascript:");
   }
@@ -1112,6 +1141,7 @@
       script.async = false;
       script.setAttribute(SCRIPT_ROLE, role || "managed");
       script.setAttribute("data-gosx-script-load", "dom");
+      applyCurrentNonce(script);
       script.onload = function() {
         script.setAttribute("data-gosx-script-loaded", "true");
         resolve(false);
@@ -1128,7 +1158,8 @@
     if (role === "bootstrap" && typeof window.__gosx_bootstrap_page === "function") {
       return false;
     }
-    const cacheKey = (load === "dom" ? "dom:" : "eval:") + src;
+    const effectiveLoad = load === "dom" || currentDocumentNonce() ? "dom" : "eval";
+    const cacheKey = effectiveLoad + ":" + src;
     // The initial document already executed its deferred runtime chunks, but
     // the navigation cache starts empty. Reusing the exact same chunk on the
     // next route must not fetch+eval it again: Scene3D deliberately publishes
@@ -1142,7 +1173,7 @@
       return false;
     }
 
-    const promise = load === "dom"
+    const promise = effectiveLoad === "dom"
       ? loadManagedScriptTag(role, src)
       : (async function() {
         const resp = await gosxRuntimeRequest(src);

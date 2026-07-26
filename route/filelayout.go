@@ -15,15 +15,132 @@ import (
 	"m31labs.dev/gosx/ir"
 )
 
-// gsxCompileCache caches compiled .gsx IR programs by content hash.
-// Eliminates re-compilation on subsequent renders of the same template.
+// gsxCompileCache caches compiled .gsx IR programs.
+//
+// WHY two keys: the old cache keyed only on the content hash, so every request
+// paid os.ReadFile plus fmt.Sprintf("%x", sha256.Sum256(data)) — a full file
+// hash and a 64-byte hex allocation — just to look the program up. The `files`
+// map keys on path plus modification time plus size, which one os.Stat
+// supplies. The hash map stays as the fallback for callers that already hold
+// the bytes and for the rare case where os.Stat fails but the read succeeds.
+//
+// Hot reload still works: an edit changes the modification time, the key misses
+// and the template recompiles. The trade-off matches the Go build cache — an
+// edit that keeps both the byte length and the modification time serves the
+// stale program. Filesystems with one-second time resolution can hit that; ext4
+// and APFS report nanoseconds and cannot.
 var gsxCompileCache struct {
 	mu    sync.RWMutex
 	progs map[string]*ir.Program
+	files map[string]gsxFileProgram
+}
+
+// gsxFileProgram is one stat-keyed cache entry. It stores the compile error too
+// so a broken template does not recompile on every request.
+type gsxFileProgram struct {
+	modTimeNano int64
+	size        int64
+	prog        *ir.Program
+	err         error
 }
 
 func init() {
 	gsxCompileCache.progs = make(map[string]*ir.Program)
+	gsxCompileCache.files = make(map[string]gsxFileProgram)
+}
+
+// loadCachedGSXProgram returns the compiled program for a .gsx file, reading
+// and compiling it only when the file changed since the last request.
+func loadCachedGSXProgram(path string) (*ir.Program, error) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		// Stat failed. Read the bytes and fall back to the content hash.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		prog, err := compileCachedGSX(data)
+		if err != nil {
+			return nil, fmt.Errorf("compile %s: %w", path, err)
+		}
+		return prog, nil
+	}
+
+	modTimeNano := info.ModTime().UnixNano()
+	size := info.Size()
+
+	gsxCompileCache.mu.RLock()
+	entry, ok := gsxCompileCache.files[path]
+	gsxCompileCache.mu.RUnlock()
+	if ok && entry.modTimeNano == modTimeNano && entry.size == size {
+		return entry.prog, entry.err
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	prog, compileErr := compileCachedGSX(data)
+	if compileErr != nil {
+		compileErr = fmt.Errorf("compile %s: %w", path, compileErr)
+	}
+
+	gsxCompileCache.mu.Lock()
+	gsxCompileCache.files[path] = gsxFileProgram{
+		modTimeNano: modTimeNano,
+		size:        size,
+		prog:        prog,
+		err:         compileErr,
+	}
+	gsxCompileCache.mu.Unlock()
+
+	return prog, compileErr
+}
+
+// htmlSourceCache caches the raw text of an .html layout or page.
+//
+// WHY: an .html file substitutes placeholders in its raw bytes, so it never
+// reaches the compiled-program cache and every request re-read it from disk. The
+// key is the path plus the modification time plus the size, which one os.Stat
+// supplies, so an edit still reaches the next render.
+var htmlSourceCache sync.Map
+
+type htmlSourceEntry struct {
+	modTimeNano int64
+	size        int64
+	source      string
+}
+
+func loadCachedHTMLSource(path string) (string, error) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", path, err)
+		}
+		return string(data), nil
+	}
+
+	modTimeNano := info.ModTime().UnixNano()
+	size := info.Size()
+	if cached, ok := htmlSourceCache.Load(path); ok {
+		entry, _ := cached.(htmlSourceEntry)
+		if entry.modTimeNano == modTimeNano && entry.size == size {
+			return entry.source, nil
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	source := string(data)
+	htmlSourceCache.Store(path, htmlSourceEntry{
+		modTimeNano: modTimeNano,
+		size:        size,
+		source:      source,
+	})
+	return source, nil
 }
 
 func compileCachedGSX(data []byte) (*ir.Program, error) {
@@ -40,6 +157,9 @@ func compileCachedGSX(data []byte) (*ir.Program, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Lower every {expr} hole now. After this the render path never calls
+	// go/parser for this program.
+	prewarmFileProgramExprs(prog)
 
 	gsxCompileCache.mu.Lock()
 	gsxCompileCache.progs[hash] = prog
@@ -153,33 +273,36 @@ type fileRenderOptions struct {
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return gosx.Node{}, fmt.Errorf("read %s: %w", path, err)
-	}
-	cssPath := sidecarCSSPath(path)
-	scopeID := fileCSSScopeID(cssPath)
-	opts.Scene3DStyles = opts.Scene3DStyles.Merge(fileScene3DStyles(cssPath))
+	css := sidecarCSSFile(path)
+	scopeID := fileCSSScopeID(css.path)
+	opts.Scene3DStyles = opts.Scene3DStyles.Merge(fileScene3DStyles(css))
 
 	switch filepath.Ext(path) {
 	case ".html":
-		rendered, used := replaceHTMLPlaceholders(string(data), opts.ComponentReplacements, opts.HTMLPlaceholders)
+		// HTML layouts substitute placeholders in the raw bytes. The source
+		// text now comes from a stat-keyed cache, so a request re-reads the file
+		// only after an edit.
+		source, err := loadCachedHTMLSource(path)
+		if err != nil {
+			return gosx.Node{}, err
+		}
+		rendered, used := replaceHTMLPlaceholders(source, opts.ComponentReplacements, opts.HTMLPlaceholders)
 		if opts.RequireReplacement && !used {
 			return gosx.Node{}, fmt.Errorf("layout %s is missing a slot placeholder", path)
 		}
 		rendered = scopeHTMLFragmentRoots(rendered, scopeID)
 		return gosx.RawHTML(rendered), nil
 	case ".gsx":
-		return renderGSXFile(path, data, opts, scopeID)
+		return renderGSXFile(path, opts, scopeID)
 	default:
 		return gosx.Node{}, fmt.Errorf("unsupported page extension: %s", path)
 	}
 }
 
-func renderGSXFile(path string, data []byte, opts fileRenderOptions, scopeID string) (gosx.Node, error) {
-	prog, err := compileCachedGSX(data)
+func renderGSXFile(path string, opts fileRenderOptions, scopeID string) (gosx.Node, error) {
+	prog, err := loadCachedGSXProgram(path)
 	if err != nil {
-		return gosx.Node{}, fmt.Errorf("compile %s: %w", path, err)
+		return gosx.Node{}, err
 	}
 
 	component, err := preferredGSXRenderComponent(path, prog)

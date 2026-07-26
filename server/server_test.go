@@ -1945,7 +1945,7 @@ func TestAppEnableISRRespectsOnDemandTagInvalidation(t *testing.T) {
 		return gosx.Text("fresh docs")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/docs/", nil)
 	req.Header.Set("Accept", "text/html")
 	w := httptest.NewRecorder()
 	handler := app.Build()
@@ -1956,7 +1956,7 @@ func TestAppEnableISRRespectsOnDemandTagInvalidation(t *testing.T) {
 
 	app.RevalidateTag("docs-pages")
 
-	staleReq := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	staleReq := httptest.NewRequest(http.MethodGet, "/docs/", nil)
 	staleReq.Header.Set("Accept", "text/html")
 	staleRes := httptest.NewRecorder()
 	handler.ServeHTTP(staleRes, staleReq)
@@ -2441,7 +2441,23 @@ func TestAppPageCacheHeadersAndRevalidation(t *testing.T) {
 	}
 }
 
-func TestAppPageNotModifiedSkipsDocumentRender(t *testing.T) {
+// TestAppPageNotModifiedRendersToValidateAndSendsNoBody records a deliberate
+// trade. The ETag now describes the response body, so the server must produce
+// the body before it can say the body is unchanged. A conditional request
+// therefore renders the document and then answers 304 with no body.
+//
+// The earlier behavior skipped the render, but only because the validator
+// described the request instead of the body. Two different bodies then shared
+// one validator, and a stale conditional request won a 304 with an empty body.
+//
+// A memoized map from validator key to body digest would skip the render again,
+// but the key cannot include the body, so any content change without a
+// RevalidatePath or RevalidateTag call would win a wrong 304. That is the defect
+// the body digest removes. Callers that must avoid the render entirely should use
+// ISR, which caches real rendered bytes (see server/isr.go).
+//
+// The 304 still saves the body transfer, which dominates for a large document.
+func TestAppPageNotModifiedRendersToValidateAndSendsNoBody(t *testing.T) {
 	app := New()
 	documentRenders := 0
 	app.SetDocument(func(doc *DocumentContext) gosx.Node {
@@ -2487,8 +2503,64 @@ func TestAppPageNotModifiedSkipsDocumentRender(t *testing.T) {
 	if notModifiedRes.Code != http.StatusNotModified {
 		t.Fatalf("expected 304, got %d: %s", notModifiedRes.Code, notModifiedRes.Body.String())
 	}
-	if documentRenders != 1 {
-		t.Fatalf("expected conditional request to skip document render, got %d renders", documentRenders)
+	if body := notModifiedRes.Body.String(); body != "" {
+		t.Fatalf("expected an empty 304 body, got %q", body)
+	}
+	if documentRenders != 2 {
+		t.Fatalf("expected the conditional request to render once to validate, got %d renders", documentRenders)
+	}
+	// A 304 must not advertise a body type.
+	if contentType := notModifiedRes.Header().Get("Content-Type"); contentType != "" {
+		t.Fatalf("expected no Content-Type on a 304, got %q", contentType)
+	}
+}
+
+// TestAppPageETagTracksBody proves the validator is content-derived: two
+// different bodies for one path must not share a validator, and a conditional
+// request that carries the old validator must receive the new body.
+func TestAppPageETagTracksBody(t *testing.T) {
+	app := New()
+	bodyText := "first"
+	app.Page("GET /tracked", func(ctx *Context) gosx.Node {
+		ctx.CachePublic(time.Minute)
+		ctx.CacheTag("tracked")
+		return gosx.Text(bodyText)
+	})
+	handler := app.Build()
+
+	firstRes := httptest.NewRecorder()
+	handler.ServeHTTP(firstRes, httptest.NewRequest(http.MethodGet, "/tracked", nil))
+	firstETag := firstRes.Header().Get("ETag")
+	if firstETag == "" {
+		t.Fatalf("expected an etag in %v", firstRes.Header())
+	}
+	if strings.HasPrefix(firstETag, "W/") {
+		t.Fatalf("a body-derived validator must be strong, got %q", firstETag)
+	}
+
+	// The same body must repeat the validator.
+	repeatRes := httptest.NewRecorder()
+	handler.ServeHTTP(repeatRes, httptest.NewRequest(http.MethodGet, "/tracked", nil))
+	if got := repeatRes.Header().Get("ETag"); got != firstETag {
+		t.Fatalf("unchanged body changed the validator: %q then %q", firstETag, got)
+	}
+
+	// A different body must change the validator, and the old validator must
+	// not win a 304.
+	bodyText = "second"
+	staleReq := httptest.NewRequest(http.MethodGet, "/tracked", nil)
+	staleReq.Header.Set("If-None-Match", firstETag)
+	staleRes := httptest.NewRecorder()
+	handler.ServeHTTP(staleRes, staleReq)
+	if staleRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a changed body, got %d", staleRes.Code)
+	}
+	if !strings.Contains(staleRes.Body.String(), "second") {
+		t.Fatalf("expected the new body, got %q", staleRes.Body.String())
+	}
+	secondETag := staleRes.Header().Get("ETag")
+	if secondETag == firstETag {
+		t.Fatalf("two different bodies shared the validator %q", firstETag)
 	}
 }
 

@@ -6,10 +6,12 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -98,6 +100,7 @@ type App struct {
 	operations         []OperationObserver
 	clientEventsLogger *slog.Logger
 	headDecorators     []HeadDecorator
+	securityPolicy     SecurityPolicy
 
 	schedulerOnce sync.Once
 	scheduler     *scheduled.Scheduler
@@ -118,7 +121,7 @@ func New() *App {
 	}
 	app.middleware = []Middleware{
 		requestIDMiddleware(),
-		securityHeadersMiddleware(),
+		app.securityHeaders(),
 		recoveryMiddleware(),
 	}
 	return app
@@ -592,11 +595,25 @@ func (a *App) apiRouteHandler(route registeredAPIRoute) http.Handler {
 			return
 		}
 		status := statusWithDefault(ctx.status, payload)
-		if ApplyCacheHeaders(r, ctx.Header(), status, ctx.cache, a.Revalidator()) {
+		// Marshal first so the ETag describes the JSON bytes the client
+		// receives. A request-derived tag gave two different payloads one
+		// validator, and a stale conditional request won a 304.
+		body, marshalErr := marshalJSONBody(payload)
+		if marshalErr != nil {
+			// Keep the old behavior for an unmarshalable payload: fall back to
+			// the request-derived validator and let writeJSON report the fault.
+			if ApplyCacheHeaders(r, ctx.Header(), status, ctx.cache, a.Revalidator()) {
+				WriteNotModified(w, ctx.Header())
+				return
+			}
+			writeJSON(w, status, payload, ctx.Header())
+			return
+		}
+		if ApplyCacheHeadersForBody(r, ctx.Header(), status, ctx.cache, a.Revalidator(), body) {
 			WriteNotModified(w, ctx.Header())
 			return
 		}
-		writeJSON(w, status, payload, ctx.Header())
+		writeJSONBody(w, status, payload, body, ctx.Header())
 	})
 }
 
@@ -725,12 +742,19 @@ func listenAddrHost(addr string) (string, bool) {
 
 // HTMLDocument wraps content in a full HTML5 document.
 func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
-	return gosx.RawHTML(renderDocument(title, head, body))
+	return HTMLDocumentWithNonce(title, "", head, body)
 }
 
-func renderDocument(title string, head gosx.Node, body gosx.Node) string {
+// HTMLDocumentWithNonce wraps content in a full HTML5 document, threading a
+// per-request CSP nonce through GoSX-owned document shell scripts.
+func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx.Node) gosx.Node {
+	return gosx.RawHTML(renderDocument(title, nonce, head, body))
+}
+
+func renderDocument(title string, nonce string, head gosx.Node, body gosx.Node) string {
 	return renderDocumentWithContext(&DocumentContext{
 		Title: title,
+		Nonce: nonce,
 		Head:  head,
 		Body:  body,
 	})
@@ -810,17 +834,30 @@ func (a *App) observeOperation(event OperationEvent) {
 
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
 	ctx = ensurePageContext(ctx)
-	if a.pageNotModified(ctx) {
-		WriteNotModified(w, ctx.Header())
-		return
+	// Drop the nonce before the render when a shared cache may store the body.
+	// One stored copy reaches many clients, so a per-request nonce in that copy
+	// would name a value the next client never received. documentContext drops
+	// the request ID on the same rule.
+	if ctx.cache.SharedCacheable() {
+		ctx.SetNonce("")
 	}
 	renderedPage := a.renderPageNode(ctx, pattern, body, defaultTitle)
 
+	// WriteHTML applies the cache headers after it renders the document, so the
+	// ETag describes the body. The old pre-render check could only hash the
+	// request, so two different bodies shared one validator and a stale
+	// conditional request won a 304 with an empty body. A 304 now costs one
+	// document render.
 	WriteHTML(w, HTMLResponse{
-		Status:   ctx.status,
-		Headers:  ctx.Header(),
-		Node:     renderedPage,
-		Deferred: ctx.deferred,
+		Status:             ctx.status,
+		Headers:            ctx.Header(),
+		Node:               renderedPage,
+		Deferred:           ctx.deferred,
+		Request:            ctx.Request,
+		Cache:              ctx.cache,
+		Revalidator:        a.Revalidator(),
+		CacheDigestExclude: []string{ctx.Nonce()},
+		Nonce:              ctx.Nonce(),
 	})
 }
 
@@ -832,10 +869,6 @@ func ensurePageContext(ctx *Context) *Context {
 		ctx.status = http.StatusOK
 	}
 	return ctx
-}
-
-func (a *App) pageNotModified(ctx *Context) bool {
-	return ApplyCacheHeaders(ctx.Request, ctx.Header(), ctx.status, ctx.cache, a.Revalidator())
 }
 
 // HeadDecorator returns additional content to render in the document <head>
@@ -880,7 +913,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 	// Runtime head emission moved into PageState.Head() (lazy, at document
 	// render) so layout-registered engines reach the manifest.
 	if a.navigation {
-		ctx.AddHead(NavigationScript())
+		ctx.AddHead(NavigationScriptWithNonce(ctx.Nonce()))
 	}
 	for _, decorate := range a.headDecorators {
 		if decorate == nil {
@@ -1060,16 +1093,6 @@ func requestIDMiddleware() Middleware {
 	}
 }
 
-func securityHeadersMiddleware() Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 func recoveryMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1145,6 +1168,30 @@ func writeJSON(w http.ResponseWriter, status int, payload any, headers http.Head
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// marshalJSONBody encodes a payload into the exact bytes writeJSONBody sends.
+// It exists so a caller can hash the body before it writes the headers. An empty
+// slice stands for the no-body response that a nil payload produces.
+func marshalJSONBody(payload any) ([]byte, error) {
+	if payload == nil {
+		return []byte{}, nil
+	}
+	return json.Marshal(payload)
+}
+
+// writeJSONBody writes an already-marshaled payload. It appends the trailing
+// newline that json.Encoder writes, so the wire bytes match writeJSON.
+func writeJSONBody(w http.ResponseWriter, status int, payload any, body []byte, headers http.Header) {
+	copyHeaders(w.Header(), headers)
+	if payload == nil {
+		w.WriteHeader(status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+	_, _ = w.Write([]byte{'\n'})
 }
 
 func writeJSONError(w http.ResponseWriter, status int, err error, headers http.Header) {
@@ -1337,14 +1384,36 @@ func chainMiddleware(handler http.Handler, middleware []Middleware) http.Handler
 	return wrapped
 }
 
+// muxMatched reports whether mux holds a registered pattern for the request.
+//
+// WHY it exists: the dispatcher must know whether a route matched before the
+// handler runs. Reading the recorded status instead made a handler-set 404 or
+// 405 look like "no route matched", and it forced the response through a
+// buffer, which stops streaming and hides http.Hijacker. http.ServeMux answers
+// the same question directly and returns an empty pattern only for the handlers
+// it synthesizes itself: not found, method not allowed, and path cleanup.
+func muxMatched(mux *http.ServeMux, r *http.Request) bool {
+	_, pattern := mux.Handler(r)
+	return pattern != ""
+}
+
 func routeHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
-	rec := &interceptResponseWriter{header: make(http.Header)}
+	if muxMatched(mux, r) {
+		// A registered route owns the response. Serve straight to the client so
+		// the handler can flush a streamed shell and upgrade the connection.
+		mux.ServeHTTP(w, r)
+		return true
+	}
+	rec := newInterceptResponseWriter(w)
 	mux.ServeHTTP(rec, r)
+	if rec.escaped() {
+		return true
+	}
 	switch rec.statusCode {
 	case 0, http.StatusNotFound:
 		return false
 	default:
-		rec.commit(w)
+		rec.commit()
 		return true
 	}
 }
@@ -1359,11 +1428,18 @@ func mountHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bo
 }
 
 func redirectHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
-	rec := &interceptResponseWriter{header: make(http.Header)}
+	if muxMatched(mux, r) {
+		mux.ServeHTTP(w, r)
+		return true
+	}
+	rec := newInterceptResponseWriter(w)
 	mux.ServeHTTP(rec, r)
+	if rec.escaped() {
+		return true
+	}
 	switch {
 	case rec.statusCode >= 300 && rec.statusCode < 400:
-		rec.commit(w)
+		rec.commit()
 		return true
 	default:
 		return false
@@ -1371,21 +1447,41 @@ func redirectHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request)
 }
 
 func rewriteHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
-	rec := &interceptResponseWriter{header: make(http.Header)}
+	if muxMatched(mux, r) {
+		mux.ServeHTTP(w, r)
+		return true
+	}
+	rec := newInterceptResponseWriter(w)
 	mux.ServeHTTP(rec, r)
+	if rec.escaped() {
+		return true
+	}
 	switch rec.statusCode {
 	case 0, http.StatusNotFound, http.StatusMethodNotAllowed:
 		return false
 	default:
-		rec.commit(w)
+		rec.commit()
 		return true
 	}
 }
 
+// interceptResponseWriter buffers a response so the dispatcher can drop it and
+// try the next stage.
+//
+// It forwards Flush, Hijack and Unwrap to the real writer. A handler that
+// streams or upgrades the connection must reach the network, so the first such
+// call commits the buffered bytes and switches to direct writes. escaped
+// reports that switch, and the dispatcher then treats the request as handled.
 type interceptResponseWriter struct {
-	header     http.Header
-	body       strings.Builder
-	statusCode int
+	dst         http.ResponseWriter
+	header      http.Header
+	body        strings.Builder
+	statusCode  int
+	passthrough bool
+}
+
+func newInterceptResponseWriter(dst http.ResponseWriter) *interceptResponseWriter {
+	return &interceptResponseWriter{dst: dst, header: make(http.Header)}
 }
 
 func (w *interceptResponseWriter) Header() http.Header {
@@ -1399,18 +1495,71 @@ func (w *interceptResponseWriter) Write(data []byte) (int, error) {
 	if w.statusCode == 0 {
 		w.statusCode = http.StatusOK
 	}
+	if w.passthrough {
+		return w.dst.Write(data)
+	}
 	return w.body.Write(data)
 }
 
 func (w *interceptResponseWriter) WriteHeader(status int) {
+	if w.passthrough {
+		return
+	}
 	w.statusCode = status
 }
 
-func (w *interceptResponseWriter) commit(dst http.ResponseWriter) {
-	copyHeaders(dst.Header(), w.header)
+// Flush sends the buffered bytes and then flushes the real writer.
+func (w *interceptResponseWriter) Flush() {
+	if w.dst == nil {
+		return
+	}
+	w.commit()
+	if flusher, ok := w.dst.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Hijack hands the raw connection to the caller. The buffer is dropped, because
+// the connection leaves HTTP and the caller writes the bytes itself.
+func (w *interceptResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.dst.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	conn, buffered, err := hijacker.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	w.passthrough = true
+	w.body.Reset()
+	return conn, buffered, nil
+}
+
+// Unwrap returns the real writer so http.ResponseController reaches it.
+func (w *interceptResponseWriter) Unwrap() http.ResponseWriter {
+	return w.dst
+}
+
+// escaped reports that the handler took over the connection.
+func (w *interceptResponseWriter) escaped() bool {
+	return w.passthrough
+}
+
+func (w *interceptResponseWriter) commit() {
+	if w.passthrough || w.dst == nil {
+		return
+	}
+	w.passthrough = true
+	copyHeaders(w.dst.Header(), w.header)
+	// Point Header at the real map, so a later header change still lands
+	// somewhere a caller can read.
+	w.header = w.dst.Header()
 	if w.statusCode == 0 {
 		w.statusCode = http.StatusOK
 	}
-	dst.WriteHeader(w.statusCode)
-	_, _ = dst.Write([]byte(w.body.String()))
+	w.dst.WriteHeader(w.statusCode)
+	if w.body.Len() > 0 {
+		_, _ = io.WriteString(w.dst, w.body.String())
+	}
+	w.body.Reset()
 }

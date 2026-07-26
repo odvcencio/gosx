@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -106,14 +107,34 @@ func (s *InMemoryISRStore) WriteArtifact(staticDir, pagePath, file string, body 
 	if !ok {
 		return ISRArtifactInfo{}, errors.New("isr artifact path is invalid")
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+	dir := filepath.Dir(target)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return ISRArtifactInfo{}, err
 	}
-	temp := target + ".tmp"
-	if err := os.WriteFile(temp, body, 0644); err != nil {
+	// Give each writer its own temporary file. A fixed target+".tmp" name let
+	// two concurrent writers truncate one path, so one writer could rename a
+	// file that the other had already renamed away, or rename a partial file.
+	temp, err := os.CreateTemp(dir, filepath.Base(target)+".*.tmp")
+	if err != nil {
 		return ISRArtifactInfo{}, err
 	}
-	if err := os.Rename(temp, target); err != nil {
+	tempName := temp.Name()
+	written, err := temp.Write(body)
+	if err == nil && written != len(body) {
+		err = io.ErrShortWrite
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Chmod(tempName, 0644)
+	}
+	if err != nil {
+		_ = os.Remove(tempName)
+		return ISRArtifactInfo{}, err
+	}
+	if err := os.Rename(tempName, target); err != nil {
+		_ = os.Remove(tempName)
 		return ISRArtifactInfo{}, err
 	}
 	info, err := os.Stat(target)
