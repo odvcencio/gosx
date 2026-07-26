@@ -23,10 +23,30 @@ const (
 
 // VkFormat values we know how to pass through without a transcoder.
 const (
+	// Narrow unorm formats. The texture build step writes these when a
+	// source image does not use every channel. A grayscale mask becomes
+	// R8, and a packed roughness/metalness pair becomes R8G8, so the GPU
+	// stores one or two bytes per texel instead of four.
+	VkFormatR8Unorm     = 9
+	VkFormatR8SRGB      = 15
+	VkFormatR8G8Unorm   = 16
+	VkFormatR8G8SRGB    = 22
+	VkFormatR8G8B8Unorm = 23
+	VkFormatR8G8B8SRGB  = 29
+
 	VkFormatR8G8B8A8Unorm = 37
 	VkFormatR8G8B8A8SRGB  = 43
 	VkFormatB8G8R8A8Unorm = 44
 	VkFormatB8G8R8A8SRGB  = 50
+
+	// Half-float and float formats. The IBL build step writes prefiltered
+	// environment maps as RGBA16F and the split-sum LUT as RG16F.
+	VkFormatR16Sfloat          = 76
+	VkFormatR16G16Sfloat       = 83
+	VkFormatR16G16B16A16Sfloat = 97
+	VkFormatR32Sfloat          = 100
+	VkFormatR32G32Sfloat       = 103
+	VkFormatR32G32B32A32Sfloat = 109
 
 	VkFormatBC7UnormBlock = 145
 	VkFormatBC7SRGBBlock  = 146
@@ -182,9 +202,23 @@ func Parse(data []byte) (*Image, error) {
 // IsSupportedFormat before upload planning.
 func BytesPerPixel(vkFormat int) int {
 	switch vkFormat {
+	case VkFormatR8Unorm, VkFormatR8SRGB:
+		return 1
+	case VkFormatR8G8Unorm, VkFormatR8G8SRGB:
+		return 2
+	case VkFormatR8G8B8Unorm, VkFormatR8G8B8SRGB:
+		return 3
 	case VkFormatR8G8B8A8Unorm, VkFormatR8G8B8A8SRGB,
 		VkFormatB8G8R8A8Unorm, VkFormatB8G8R8A8SRGB:
 		return 4
+	case VkFormatR16Sfloat:
+		return 2
+	case VkFormatR16G16Sfloat, VkFormatR32Sfloat:
+		return 4
+	case VkFormatR16G16B16A16Sfloat, VkFormatR32G32Sfloat:
+		return 8
+	case VkFormatR32G32B32A32Sfloat:
+		return 16
 	}
 	return 0
 }
