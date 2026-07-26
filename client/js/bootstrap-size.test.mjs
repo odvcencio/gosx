@@ -550,7 +550,12 @@ const budgets = [
   // helpers, mirroring dispatchWaterObjectDisplacementEvents) so a fast
   // pointer stroke's whole drop burst lands in one frame instead of
   // coalescing to the single latest drop. Measured: 357_196 / 83_302 / 69_503.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 358_000, gzip: 83_800, brotli: 70_000 },
+  // Bumped raw 358_000 -> 359_000: mesh draw telemetry (mesh-draw-calls /
+  // mesh-view-culled split via webGPUCountViewCulledMeshObjects + a
+  // meshDrawCalls accumulator threaded through drawPBRObjects) plus the
+  // doubleSided-aware Selena cullMode option at its call site. gzip/brotli
+  // unchanged and still fit. Measured: 358_372 / 83_631 / 69_802.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 359_000, gzip: 83_800, brotli: 70_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
