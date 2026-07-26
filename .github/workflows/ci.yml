@@ -25,10 +25,12 @@ jobs:
       - name: Release gate
         run: make release-gate
 
-  # go-tests: Go-only checks and tests. No Node, TinyGo, or Chrome install,
-  # so this job carries none of their setup cost. This is the heaviest job
-  # (~11 minutes of measured step time) but no longer serializes behind or
-  # ahead of the JS/WASM/browser jobs.
+  # go-tests: Go checks and tests, plus TinyGo — cmd/gosx/build_test.go
+  # exercises a real production GoSX build (`go run ./cmd/gosx build --prod`)
+  # via `make test`, which requires TinyGo on PATH. No Node or Chrome install:
+  # nothing here shells out to either. This is the heaviest job (~11 minutes
+  # of measured step time before the TinyGo install) but no longer serializes
+  # behind or ahead of the JS/WASM/browser jobs.
   go-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -45,6 +47,20 @@ jobs:
 
       - name: Install Danmuji
         run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
+
+      # TinyGo is required here too: TestRunBuildProdWritesHybridStaticBundleForStarterApp
+      # and its siblings in cmd/gosx/build_test.go shell out to a real
+      # production GoSX build (`go run ./cmd/gosx build --prod`), which
+      # requires TinyGo on PATH. `make test` runs those.
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: |
+          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          sudo dpkg -i tinygo.deb
+          go install golang.org/dl/go1.25.5@latest
+          go1.25.5 download
+          tinygo version
 
       - name: Format check
         run: make fmt-check
@@ -133,8 +149,8 @@ jobs:
       - name: Build WASM runtime
         run: make build-runtime
 
-  # browser-tests: Go + Chrome. No TinyGo/Node install — the e2e suite and
-  # perf gate exercise the dev server, not the TinyGo production runtime.
+  # browser-tests: Go + Chrome + TinyGo. No Node install — the browser
+  # executes the WASM itself; nothing here shells out to `node`.
   browser-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -152,6 +168,19 @@ jobs:
       - name: Set up Chrome
         id: chrome
         uses: browser-actions/setup-chrome@v1
+
+      # TinyGo is required: TestProductionBuildRunsMixedTinyGoAndStandardGoWASM
+      # (e2e/go_wasm_mixed_prod_e2e_test.go) runs a real production GoSX build
+      # (`go run ./cmd/gosx build --prod`), which requires TinyGo on PATH.
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: |
+          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          sudo dpkg -i tinygo.deb
+          go install golang.org/dl/go1.25.5@latest
+          go1.25.5 download
+          tinygo version
 
       - name: Browser docs E2E gate
         env:
