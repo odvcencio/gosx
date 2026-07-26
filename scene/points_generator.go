@@ -109,6 +109,35 @@ func (g PointsGenerator) Supported() bool {
 	return g.normalized().Kind == PointsGenBoxScatter
 }
 
+// Resolved returns a copy of the layer with any procedural descriptor
+// expanded into explicit Positions and Sizes.
+//
+// Only the browser needs the recipe; a server-side consumer that works on the
+// geometry itself — baking a GLB, measuring bounds, asserting in a test —
+// needs the values. Calling this keeps those consumers working unchanged when
+// a layer converts to a generator.
+//
+// A layer with no descriptor, or one that already carries explicit positions,
+// is returned as-is. An unsupported descriptor is also returned as-is rather
+// than silently emptied, so the caller sees the original layer instead of a
+// vanished one.
+func (p Points) Resolved() Points {
+	if p.Generator == nil || len(p.Positions) > 0 {
+		return p
+	}
+	positions, sizes := p.Generator.Generate(p.Count)
+	if positions == nil {
+		return p
+	}
+	out := p
+	out.Positions = positions
+	if len(out.Sizes) == 0 {
+		out.Sizes = sizes
+	}
+	out.Generator = nil
+	return out
+}
+
 // lowerIR converts the authored descriptor into its wire form, resolving
 // defaults first so the payload never depends on the client agreeing about
 // them.

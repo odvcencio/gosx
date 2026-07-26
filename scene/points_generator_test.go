@@ -430,6 +430,54 @@ func TestPointsGeneratorRoundTripsThroughJSON(t *testing.T) {
 	}
 }
 
+// TestPointsResolved covers the server-side escape hatch: consumers that need
+// the geometry rather than the recipe get the identical values the browser
+// would have expanded.
+func TestPointsResolved(t *testing.T) {
+	gen := &PointsGenerator{
+		Seed: 0, Stride: 3, OffsetX: 0, OffsetY: 1, OffsetZ: 2, OffsetSize: 7,
+		Extent: Vec3(2000, 2000, 2000), SizeMin: 0.92, SizeMax: 4.17,
+	}
+	layer := Points{ID: "stars", Count: 128, Generator: gen}
+	resolved := layer.Resolved()
+	if resolved.Generator != nil {
+		t.Error("resolved layer should no longer carry a descriptor")
+	}
+	if len(resolved.Positions) != 128 || len(resolved.Sizes) != 128 {
+		t.Fatalf("resolved to %d positions and %d sizes, want 128 each",
+			len(resolved.Positions), len(resolved.Sizes))
+	}
+	wantPositions, wantSizes := gen.Generate(128)
+	for i := range wantPositions {
+		if resolved.Positions[i] != wantPositions[i] {
+			t.Fatalf("position %d = %+v, want %+v", i, resolved.Positions[i], wantPositions[i])
+		}
+		if resolved.Sizes[i] != wantSizes[i] {
+			t.Fatalf("size %d = %v, want %v", i, resolved.Sizes[i], wantSizes[i])
+		}
+	}
+	// Resolving is what keeps a server-side consumer working, so it must also
+	// survive lowering back down to explicit arrays.
+	record := lowerPointsForTest(t, resolved)
+	if record.Generator != nil {
+		t.Error("resolved layer must lower as an explicit array layer")
+	}
+	if len(record.Positions) != 128*3 {
+		t.Errorf("resolved layer lowered to %d position values, want %d",
+			len(record.Positions), 128*3)
+	}
+
+	// Layers without a descriptor, and unsupported kinds, pass through.
+	plain := Points{ID: "plain", Count: 1, Positions: []Vector3{Vec3(1, 2, 3)}}
+	if got := plain.Resolved(); len(got.Positions) != 1 || got.Positions[0] != Vec3(1, 2, 3) {
+		t.Error("explicit layer must pass through Resolved unchanged")
+	}
+	unsupported := Points{ID: "x", Count: 4, Generator: &PointsGenerator{Kind: "spiral-arm"}}
+	if got := unsupported.Resolved(); got.Generator == nil || len(got.Positions) != 0 {
+		t.Error("unsupported descriptor must pass through rather than empty the layer")
+	}
+}
+
 // TestPointsGeneratorSizeExponentOne confirms the exponent-1 fast path is not
 // merely close to the power form but identical, since that path carries the
 // 5400-point star layer.
