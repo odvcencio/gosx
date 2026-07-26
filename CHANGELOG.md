@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.35.8 (2026-07-26)
+
+WebGPU mesh rendering now preserves authored two-sided materials and reports
+enough telemetry to distinguish submitted work from CPU view culling.
+
+- Double-sided mesh objects select a no-cull WebGPU pipeline. The behavior
+  applies to standard materials, custom Selena materials, and skinned Selena
+  meshes; other objects retain back-face culling.
+- Scene3D WebGPU telemetry separates bundled mesh objects, submitted mesh draw
+  calls, and objects rejected by CPU frustum culling. Diagnostics can now tell
+  whether missing geometry was culled before submission instead of treating
+  every bundled object as a draw call.
+- Selena pipeline caches include the cull mode, preventing one mesh's
+  double-sided setting from leaking into another mesh that shares a material.
+- CI installs Go in the JavaScript job and excludes the browser-only
+  `chromedp` integration test from ordinary unit runs, making the required
+  checks reproducible on clean runners.
+
 ## v0.35.7 (2026-07-25)
 
 Declarative motion can now split text and stagger the reveal across the pieces.
