@@ -241,7 +241,11 @@
     } else if (mode === "word") {
       segments = text.split(/(\s+)/);
     } else {
-      segments = text.split(/\r?\n/);
+      // Capture the newlines so they survive as text nodes, exactly as the
+      // word branch preserves its whitespace. A non-capturing split drops the
+      // separators, and rebuilding the element from the units alone then runs
+      // adjacent lines together with no break at all.
+      segments = text.split(/(\r?\n)/);
       if (segments.length <= 1) {
         segments = text.match(/[^.!?]+[.!?]?\s*/g) || [text];
       }
