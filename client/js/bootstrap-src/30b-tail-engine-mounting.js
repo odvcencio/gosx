@@ -1,130 +1,9 @@
-  // --------------------------------------------------------------------------
-  // Event delegation
-  // --------------------------------------------------------------------------
-
-  // Event types that are delegated on each island root element.
-  const DELEGATED_EVENTS = [
-    "click", "input", "change", "submit",
-    "keydown", "keyup", "focus", "blur",
-  ];
-
-  // Extract a small payload from a DOM event for forwarding to WASM.
-  function extractEventData(e) {
-    const data = { type: e.type };
-
-    switch (e.type) {
-      case "click":
-        if (e.target && e.target.value !== undefined) {
-          const value = String(e.target.value == null ? "" : e.target.value);
-          if (value !== "") {
-            data.value = value;
-          }
-        }
-        break;
-      case "input":
-      case "change":
-        if (e.target && e.target.value !== undefined) {
-          data.value = e.target.value;
-        }
-        break;
-      case "keydown":
-      case "keyup":
-        data.key = e.key;
-        break;
-      case "submit":
-        // Prevent default form submission — the WASM handler decides what to do.
-        e.preventDefault();
-        break;
-      // click, focus, blur: no extra data needed beyond type
-    }
-
-    return data;
-  }
-
-  // Attach ONE delegated listener per event type on `islandRoot`. Each
-  // listener walks the ancestor chain from event.target to the root looking
-  // for a `data-gosx-handler` attribute. If found, it calls the WASM-side
-  // __gosx_action(islandID, handlerName, eventDataJSON).
-  //
-  // Returns an array of { type, listener } objects so callers can remove them.
-  // Handler attribute pattern: data-gosx-on-{eventType}="handlerName"
-  // Examples: data-gosx-on-click="increment", data-gosx-on-input="updateName"
-  // Falls back to data-gosx-handler for click-only (legacy/shorthand).
-  function findHandlerForEvent(target, root, eventType) {
-    const specificAttr = handlerAttrName(eventType);
-
-    let el = target;
-    while (el && el !== root.parentNode) {
-      const handlerName = elementHandlerName(el, eventType, specificAttr);
-      if (handlerName) {
-        return handlerName;
-      }
-      el = el.parentNode;
-    }
-    return null;
-  }
-
-  function handlerAttrName(eventType) {
-    return "data-gosx-on-" + eventType;
-  }
-
-  function elementHandlerName(el, eventType, specificAttr) {
-    if (hasAttributeName(el, specificAttr)) {
-      return el.getAttribute(specificAttr);
-    }
-    if (eventType === "click" && hasAttributeName(el, "data-gosx-handler")) {
-      return el.getAttribute("data-gosx-handler");
-    }
-    return null;
-  }
-
-  function hasAttributeName(el, attr) {
-    return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
-  }
-
-  function setupEventDelegation(islandRoot, islandID) {
-    const entries = [];
-
-    for (const eventType of DELEGATED_EVENTS) {
-      const listener = createDelegatedListener(islandRoot, islandID, eventType);
-      const useCapture = delegatedEventCapture(eventType);
-      islandRoot.addEventListener(eventType, listener, useCapture);
-      entries.push({ type: eventType, listener, capture: useCapture });
-    }
-
-    return entries;
-  }
-
-  function delegatedEventCapture(eventType) {
-    return eventType === "focus" || eventType === "blur";
-  }
-
-  function createDelegatedListener(islandRoot, islandID, eventType) {
-    return function(e) {
-      if (e.__gosx_handled) return;
-
-      const handlerName = findHandlerForEvent(e.target, islandRoot, eventType);
-      if (!handlerName) return;
-
-      e.__gosx_handled = true;
-      dispatchIslandAction(islandID, handlerName, extractEventData(e));
-    };
-  }
-
-  function dispatchIslandAction(islandID, handlerName, eventData) {
-    const actionFn = window.__gosx_action;
-    if (typeof actionFn !== "function") return;
-
-    try {
-      const result = actionFn(islandID, handlerName, JSON.stringify(eventData));
-      if (typeof result === "string" && result !== "") {
-        console.error(`[gosx] action error (${islandID}/${handlerName}):`, result);
-      }
-    } catch (err) {
-      console.error(`[gosx] action error (${islandID}/${handlerName}):`, err);
-    }
-  }
-
+// 30b — engine mounting: the engine factory registry, the built-in engine
+// factories, and the mount and remount paths.
+//
+// Chunks: bootstrap.js, bootstrap-feature-engines.js.
+// Depends on 30a for delegated listeners and on the scene and video modules
+// the factories call. 30e disposes what this file mounts.
   // --------------------------------------------------------------------------
   // Engine mounting
   // --------------------------------------------------------------------------
@@ -1496,6 +1375,30 @@
     };
   }
 
+  function videoNormalizeConfiguredAudioTrack(item, index, activeID) {
+    const source = item && typeof item === "object" ? item : {};
+    const id = String(videoPropValue(source, ["id", "trackID", "trackId"], String(index)) || String(index)).trim();
+    const language = String(videoPropValue(source, ["language", "lang"], "") || "").trim();
+    const label = String(videoPropValue(source, ["label", "title", "name"], language || ("Audio " + (index + 1))) || "").trim();
+    return {
+      id: id || String(index),
+      index: index,
+      label: label,
+      language: language,
+      active: String(activeID || "") !== "" && String(activeID) === (id || String(index)),
+    };
+  }
+
+  function videoConfiguredAudioTracks(props, activeID) {
+    const tracks = videoPropValue(props, ["audioTracks", "audio_tracks"], []);
+    if (!Array.isArray(tracks)) {
+      return [];
+    }
+    return tracks.map(function(track, index) {
+      return videoNormalizeConfiguredAudioTrack(track, index, activeID);
+    });
+  }
+
   function videoNormalizeQualityLevel(item, index, activeIndex) {
     const source = item && typeof item === "object" ? item : {};
     const height = Math.max(0, Math.round(sceneNumber(source.height, 0)));
@@ -1519,7 +1422,7 @@
   // createBuiltInVideoEngine) because restorePersistedVideoPrefs() runs
   // eagerly at the very top of that closure, before a same-scope `const`
   // declared further down would have run its initializer (TDZ).
-  const PERSISTED_VIDEO_PREF_FIELDS = ["volume", "mute", "rate", "subtitleTrack", "audioTrack", "qualityLevel"];
+  const PERSISTED_VIDEO_PREF_FIELDS = ["volume", "mute", "rate", "subtitleTrack", "subtitleOffsetMs", "subtitleScale", "subtitleStyle", "audioTrack", "qualityLevel"];
 
   function videoPersistEnabled(props) {
     return sceneBool(videoPropValue(props, ["persistPrefs"], false), false) ||
@@ -1632,6 +1535,10 @@
       default: sceneBool(videoPropValue(source, ["default"], false), false),
       forced: sceneBool(videoPropValue(source, ["forced"], false), false),
     };
+    const authKey = String(videoPropValue(source, ["authKey", "auth_key"], "") || "").trim();
+    if (authKey) {
+      normalized.authKey = authKey;
+    }
     if (sceneBool(videoPropValue(source, ["bitmap"], false), false)) {
       normalized.bitmap = true;
     }
@@ -1657,6 +1564,89 @@
       return "";
     }
     return subtitleBase.replace(/\/$/, "") + "/" + encodeURIComponent(id) + ".vtt";
+  }
+
+  function videoSubtitleOptions(props) {
+    const options = videoPropValue(props, ["subtitles", "subtitleOptions", "subtitle_options"], {}) || {};
+    return {
+      offsetMS: sceneNumber(videoPropValue(options, ["offsetMs", "offsetMS", "offset_ms"], 0), 0),
+      scale: String(videoPropValue(options, ["scale"], "") || "").trim().toLowerCase(),
+      style: String(videoPropValue(options, ["style"], "") || "").trim().toLowerCase(),
+      gapBridgeMS: Math.max(0, sceneNumber(videoPropValue(options, ["gapBridgeMs", "gap_bridge_ms"], 0), 0)),
+      cueTailMS: Math.max(0, sceneNumber(videoPropValue(options, ["cueTailMs", "cue_tail_ms"], 0), 0)),
+      paintLeadMS: sceneNumber(videoPropValue(options, ["paintLeadMs", "paint_lead_ms"], 0), 0),
+      bitmapPrefetchLimit: Math.max(0, Math.floor(sceneNumber(videoPropValue(options, ["bitmapPrefetchLimit", "bitmap_prefetch_limit"], 0), 0))),
+      retryLimit: Math.max(1, Math.floor(sceneNumber(videoPropValue(options, ["retryLimit", "retry_limit"], 60), 60))),
+      retryRefreshAfter: Math.max(0, Math.floor(sceneNumber(videoPropValue(options, ["retryRefreshAfter", "retry_refresh_after"], 0), 0))),
+      refreshEndpoint: String(videoPropValue(options, ["refreshEndpoint", "refresh_endpoint"], "") || "").trim(),
+      refreshCallback: String(videoPropValue(options, ["refreshCallback", "refresh_callback"], "") || "").trim(),
+    };
+  }
+
+  function videoAudioSourceOptions(props) {
+    const options = videoPropValue(props, ["audioSource", "audio_source"], {}) || {};
+    return {
+      queryParam: String(videoPropValue(options, ["queryParam", "query_param"], "") || "").trim(),
+    };
+  }
+
+  function videoFullscreenOptions(props) {
+    const options = videoPropValue(props, ["fullscreen", "fullscreenOptions", "fullscreen_options"], {}) || {};
+    return {
+      target: String(videoPropValue(options, ["target"], "") || "").trim().toLowerCase(),
+    };
+  }
+
+  function videoTelemetryOptions(props) {
+    const options = videoPropValue(props, ["telemetry", "videoTelemetry", "video_telemetry"], {}) || {};
+    return {
+      endpoint: String(videoPropValue(options, ["endpoint"], "") || "").trim(),
+      qualityIntervalMS: Math.max(0, sceneNumber(videoPropValue(options, ["qualityIntervalMs", "quality_interval_ms"], 0), 0)),
+      stallRecoveryDelayMS: Math.max(0, sceneNumber(videoPropValue(options, ["stallRecoveryDelayMs", "stall_recovery_delay_ms"], 0), 0)),
+      maxStallRecoveryCount: Math.max(0, Math.floor(sceneNumber(videoPropValue(options, ["maxStallRecoveryCount", "max_stall_recovery_count"], 0), 0))),
+    };
+  }
+
+  function videoStableTrackIdentity(track, props) {
+    const id = String(track && track.id || "").trim();
+    if (id) {
+      return id;
+    }
+    const authKey = String(track && track.authKey || "").trim();
+    if (authKey) {
+      return authKey;
+    }
+    const url = videoTrackURL(track, props);
+    if (!url) {
+      return "";
+    }
+    try {
+      const parsed = new URL(url, window.location && window.location.href ? window.location.href : "http://localhost/");
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.pathname;
+    } catch (_error) {
+      return String(url).split("#")[0].split("?")[0];
+    }
+  }
+
+  function videoRefreshTrackIdentity(track, props) {
+    const authKey = String(track && track.authKey || "").trim();
+    if (authKey) {
+      return authKey;
+    }
+    return videoStableTrackIdentity(track, props);
+  }
+
+  function videoSubtitleRefreshPayload(track, props, engineID) {
+    const payload = {
+      track: videoRefreshTrackIdentity(track, props),
+      src: videoTrackURL(track, props),
+    };
+    if (engineID !== undefined) {
+      payload.engineID = String(engineID || "");
+    }
+    return payload;
   }
 
   function videoFirstFallbackNode(children, tagName) {
@@ -1847,15 +1837,46 @@
       return a.endMS - b.endMS;
     });
     let maxEndMS = 0;
-    for (const cue of cues) {
+    for (let i = 0; i < cues.length; i += 1) {
+      const cue = cues[i];
+      cue.nextStartMS = i + 1 < cues.length ? cues[i + 1].startMS : -1;
       maxEndMS = Math.max(maxEndMS, cue.endMS);
       cue.prefixMaxEndMS = maxEndMS;
     }
     return cues;
   }
 
-  function videoActiveCues(cues, currentTimeSeconds) {
-    const currentMS = Math.max(0, Math.round(sceneNumber(currentTimeSeconds, 0) * 1000));
+  function videoCueVisibleAt(cue, currentMS, options) {
+    if (!cue) {
+      return false;
+    }
+    if (currentMS < cue.endMS) {
+      return true;
+    }
+    const nextStart = sceneNumber(cue.nextStartMS, -1);
+    if (nextStart > cue.endMS) {
+      const gap = nextStart - cue.endMS;
+      return gap <= sceneNumber(options && options.gapBridgeMS, 0) && currentMS < nextStart;
+    }
+    const tailMS = sceneNumber(options && options.cueTailMS, 0);
+    return tailMS > 0 && currentMS < cue.endMS + tailMS;
+  }
+
+  function videoCueSearchEndMS(cue, options) {
+    if (!cue) {
+      return 0;
+    }
+    let endMS = cue.endMS + sceneNumber(options && options.cueTailMS, 0);
+    const nextStart = sceneNumber(cue.nextStartMS, -1);
+    if (nextStart > cue.endMS && nextStart - cue.endMS <= sceneNumber(options && options.gapBridgeMS, 0)) {
+      endMS = Math.max(endMS, nextStart);
+    }
+    return endMS;
+  }
+
+  function videoActiveCues(cues, currentTimeSeconds, options) {
+    const timing = options && typeof options === "object" ? options : {};
+    const currentMS = Math.max(0, Math.round(sceneNumber(currentTimeSeconds, 0) * 1000 + sceneNumber(timing.offsetMS, 0) + sceneNumber(timing.paintLeadMS, 0)));
     if (!Array.isArray(cues) || cues.length === 0) {
       return [];
     }
@@ -1872,10 +1893,10 @@
     const active = [];
     for (let index = low - 1; index >= 0; index -= 1) {
       const cue = cues[index];
-      if (sceneNumber(cue.prefixMaxEndMS, cue.endMS) <= currentMS) {
+      if (sceneNumber(cue.prefixMaxEndMS, cue.endMS) + sceneNumber(timing.cueTailMS, 0) <= currentMS && videoCueSearchEndMS(cue, timing) <= currentMS) {
         break;
       }
-      if (currentMS < cue.endMS) {
+      if (videoCueVisibleAt(cue, currentMS, timing)) {
         const activeCue = { text: cue.text };
         if (cue.image) {
           activeCue.image = cue.image;
@@ -1979,6 +2000,10 @@
     const props = ctx && ctx.props && typeof ctx.props === "object" ? ctx.props : {};
     const fallbackChildren = mount && mount.childNodes ? Array.from(mount.childNodes) : [];
     const authoredSources = videoSourcesFromProps(props);
+    let subtitleOptions = videoSubtitleOptions(props);
+    const audioSourceOptions = videoAudioSourceOptions(props);
+    const fullscreenOptions = videoFullscreenOptions(props);
+    const telemetryOptions = videoTelemetryOptions(props);
     const video = videoFirstFallbackNode(fallbackChildren, "VIDEO") || document.createElement("video");
     const unsubscribers = [];
     const eventListeners = [];
@@ -2038,6 +2063,9 @@
     let hlsLiveFlag = false;
     let lastAudioTracksSignature = "";
     let lastQualityLevelsSignature = "";
+    let telemetryQualityTimer = 0;
+    let telemetryStallTimer = 0;
+    let telemetryStallRecoveries = 0;
     const videoOutputPayloads = new Map();
     const videoOutputPrimitiveValues = new Map();
 
@@ -2084,10 +2112,42 @@
         subtitleState.lastStatus = subtitleState.status;
         writeVideoOutputSignal("subtitleStatus", subtitleState.status);
       }
+      writeVideoOutputSignal("subtitleOptions", {
+        offsetMs: subtitleOptions.offsetMS,
+        scale: subtitleOptions.scale,
+        style: subtitleOptions.style,
+        gapBridgeMs: subtitleOptions.gapBridgeMS,
+        cueTailMs: subtitleOptions.cueTailMS,
+        paintLeadMs: subtitleOptions.paintLeadMS,
+      });
+    }
+
+    function refreshSubtitleOptionsFromSignals() {
+      const base = videoSubtitleOptions(props);
+      subtitleOptions = Object.assign({}, base, {
+        offsetMS: sceneNumber(readVideoSignal("subtitleOffsetMs", base.offsetMS), base.offsetMS),
+        scale: String(readVideoSignal("subtitleScale", base.scale) || base.scale || "").trim().toLowerCase(),
+        style: String(readVideoSignal("subtitleStyle", base.style) || base.style || "").trim().toLowerCase(),
+      });
+      if (subtitleOverlay) {
+        if (subtitleOptions.scale) {
+          subtitleOverlay.setAttribute("data-gosx-video-subtitle-scale", subtitleOptions.scale);
+        } else {
+          subtitleOverlay.removeAttribute("data-gosx-video-subtitle-scale");
+        }
+        if (subtitleOptions.style) {
+          subtitleOverlay.setAttribute("data-gosx-video-subtitle-style", subtitleOptions.style);
+        } else {
+          subtitleOverlay.removeAttribute("data-gosx-video-subtitle-style");
+        }
+      }
+      updateSubtitleOutputs();
+      updateCueOutputs();
+      persistPrefsIfEnabled();
     }
 
     function updateCueOutputs() {
-      const next = videoActiveCues(subtitleState.cues, sceneNumber(video.currentTime, 0));
+      const next = videoActiveCues(subtitleState.cues, sceneNumber(video.currentTime, 0), subtitleOptions);
       const signature = JSON.stringify(next);
       if (signature === subtitleState.lastSignature) {
         return;
@@ -2106,6 +2166,12 @@
       subtitleOverlay.setAttribute("data-gosx-video-subtitles", "true");
       subtitleOverlay.setAttribute("aria-hidden", "true");
       subtitleOverlay.setAttribute("hidden", "true");
+      if (subtitleOptions.scale) {
+        subtitleOverlay.setAttribute("data-gosx-video-subtitle-scale", subtitleOptions.scale);
+      }
+      if (subtitleOptions.style) {
+        subtitleOverlay.setAttribute("data-gosx-video-subtitle-style", subtitleOptions.style);
+      }
       return subtitleOverlay;
     }
 
@@ -2118,6 +2184,12 @@
         return;
       }
       overlay.removeAttribute("hidden");
+      if (subtitleOptions.scale) {
+        overlay.setAttribute("data-gosx-video-subtitle-scale", subtitleOptions.scale);
+      }
+      if (subtitleOptions.style) {
+        overlay.setAttribute("data-gosx-video-subtitle-style", subtitleOptions.style);
+      }
       for (const cue of active) {
         if (cue && cue.image && cue.image.src) {
           const image = cue.image;
@@ -2382,6 +2454,9 @@
         mute: Boolean(video.muted),
         rate: requestedRate,
         subtitleTrack: String(readVideoSignal("subtitleTrack", "") || ""),
+        subtitleOffsetMs: sceneNumber(readVideoSignal("subtitleOffsetMs", subtitleOptions.offsetMS), subtitleOptions.offsetMS),
+        subtitleScale: String(readVideoSignal("subtitleScale", subtitleOptions.scale) || ""),
+        subtitleStyle: String(readVideoSignal("subtitleStyle", subtitleOptions.style) || ""),
         audioTrack: String(readVideoSignal("audioTrack", "") || ""),
         qualityLevel: sceneNumber(readVideoSignal("qualityLevel", -1), -1),
       });
@@ -2698,6 +2773,52 @@
       return Boolean(video) && video.duration === Infinity;
     }
 
+    function fullscreenTargetElement() {
+      const target = fullscreenOptions.target;
+      if (target === "video") {
+        return video;
+      }
+      if (target === "parent" || target === "shell") {
+        return mount && mount.parentNode && mount.parentNode.nodeType === 1 ? mount.parentNode : mount;
+      }
+      return mount || video;
+    }
+
+    function activeFullscreenElement() {
+      return (document && (document.fullscreenElement || document.webkitFullscreenElement || document.webkitCurrentFullScreenElement)) || null;
+    }
+
+    function videoIsFullscreen() {
+      const active = activeFullscreenElement();
+      return Boolean(active && (active === mount || active === video || active === fullscreenTargetElement()));
+    }
+
+    function requestVideoFullscreen() {
+      const target = fullscreenTargetElement();
+      if (!target) {
+        return;
+      }
+      const request = target.requestFullscreen || target.webkitRequestFullscreen || target.webkitEnterFullscreen;
+      if (typeof request === "function") {
+        try {
+          request.call(target);
+        } catch (error) {
+          setError(error && error.message ? error.message : "fullscreen failed");
+        }
+      }
+    }
+
+    function exitVideoFullscreen() {
+      const exit = document && (document.exitFullscreen || document.webkitExitFullscreen || document.webkitCancelFullScreen);
+      if (typeof exit === "function") {
+        try {
+          exit.call(document);
+        } catch (error) {
+          setError(error && error.message ? error.message : "exit fullscreen failed");
+        }
+      }
+    }
+
     function updateVideoOutputs() {
       const duration = videoOutputDuration();
       const playing = !sceneBool(video.paused, true) && !sceneBool(video.ended, false);
@@ -2708,7 +2829,7 @@
       writeVideoOutputSignal("playing", playing);
       writeVideoOutputSignal("buffered", videoBufferedAhead(video));
       writeVideoOutputSignal("stalled", stalled);
-      writeVideoOutputSignal("fullscreen", Boolean(document && document.fullscreenElement && (document.fullscreenElement === mount || document.fullscreenElement === video)));
+      writeVideoOutputSignal("fullscreen", videoIsFullscreen());
       writeVideoOutputSignal("ready", sceneNumber(video.readyState, 0) >= 2);
       writeVideoOutputSignal("muted", Boolean(video.muted));
       writeVideoOutputSignal("actualRate", sceneNumber(video.playbackRate, requestedRate));
@@ -2733,6 +2854,90 @@
       eventListeners.push({ target, type, listener, options });
     }
 
+    function emitVideoTelemetry(event, extra) {
+      const endpoint = telemetryOptions.endpoint;
+      if (!endpoint) {
+        return;
+      }
+      try {
+        const payload = Object.assign({
+          version: 1,
+          event: String(event || ""),
+          engineID: String((ctx && ctx.id) || ""),
+          src: currentSource,
+          position: Math.max(0, sceneNumber(video.currentTime, 0)),
+          duration: videoOutputDuration(),
+          buffered: videoBufferedAhead(video),
+          readyState: Math.max(0, Math.floor(sceneNumber(video.readyState, 0))),
+          networkState: Math.max(0, Math.floor(sceneNumber(video.networkState, 0))),
+          stalled: Boolean(stalled),
+          qualityLevel: sceneNumber(readVideoSignal("qualityLevel", -1), -1),
+        }, extra || {});
+        const body = JSON.stringify(payload);
+        if (typeof navigator !== "undefined" && navigator && typeof navigator.sendBeacon === "function" && typeof Blob === "function") {
+          if (navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }))) {
+            return;
+          }
+        }
+        fetch(endpoint, {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+          body,
+        }).catch(function() {});
+      } catch (_error) {
+      }
+    }
+
+    function startVideoQualityTelemetry() {
+      const interval = telemetryOptions.qualityIntervalMS;
+      if (!telemetryOptions.endpoint || interval <= 0 || telemetryQualityTimer) {
+        return;
+      }
+      telemetryQualityTimer = setInterval(function() {
+        if (disposed || sceneBool(video.paused, true)) {
+          return;
+        }
+        const quality = typeof video.getVideoPlaybackQuality === "function" ? video.getVideoPlaybackQuality() : null;
+        emitVideoTelemetry("quality", {
+          droppedVideoFrames: quality ? Math.max(0, sceneNumber(quality.droppedVideoFrames, 0)) : null,
+          totalVideoFrames: quality ? Math.max(0, sceneNumber(quality.totalVideoFrames, 0)) : null,
+        });
+      }, Math.max(1000, interval));
+    }
+
+    function clearTelemetryStallTimer() {
+      if (telemetryStallTimer) {
+        clearTimeout(telemetryStallTimer);
+        telemetryStallTimer = 0;
+      }
+    }
+
+    function scheduleTelemetryStallRecovery(reason) {
+      emitVideoTelemetry("stall", { reason: String(reason || "unknown") });
+      clearTelemetryStallTimer();
+      const delay = telemetryOptions.stallRecoveryDelayMS;
+      const maxCount = telemetryOptions.maxStallRecoveryCount;
+      if (!delay || !maxCount || telemetryStallRecoveries >= maxCount) {
+        return;
+      }
+      telemetryStallTimer = setTimeout(function() {
+        telemetryStallTimer = 0;
+        if (disposed || !stalled || sceneBool(video.paused, true)) {
+          return;
+        }
+        telemetryStallRecoveries += 1;
+        emitVideoTelemetry("stall-recovery", { action: "reload", attempt: telemetryStallRecoveries });
+        try {
+          video.load();
+          safePlay();
+        } catch (_error) {
+        }
+      }, Math.max(250, delay));
+    }
+
     function teardownHLS() {
       if (hls && typeof hls.destroy === "function") {
         hls.destroy();
@@ -2754,6 +2959,8 @@
         for (let i = 0; i < video.audioTracks.length; i += 1) {
           tracks.push(videoNormalizeNativeAudioTrack(video.audioTracks[i], i));
         }
+      } else {
+        tracks = videoConfiguredAudioTracks(props, readVideoSignal("audioTrack", videoPropValue(props, ["audioTrack"], "")));
       }
       const signature = JSON.stringify(tracks);
       if (signature !== lastAudioTracksSignature) {
@@ -2811,6 +3018,52 @@
         }
         updateAudioTrackOutputs();
         persistPrefsIfEnabled();
+      }
+      if (audioSourceOptions.queryParam && currentSource) {
+        rewriteSourceForAudioTrack(selected);
+        updateAudioTrackOutputs();
+        persistPrefsIfEnabled();
+      }
+    }
+
+    function sourceWithAudioTrack(source, selected) {
+      const key = String(audioSourceOptions.queryParam || "").trim();
+      if (!key) {
+        return String(source || "");
+      }
+      try {
+        const base = window.location && window.location.href ? window.location.href : "http://localhost/";
+        const url = new URL(String(source || ""), base);
+        if (selected === "" || selected === "-1") {
+          url.searchParams.delete(key);
+        } else {
+          url.searchParams.set(key, selected);
+        }
+        if (!/^[a-z][a-z0-9+.-]*:/i.test(String(source || ""))) {
+          return url.pathname + url.search + url.hash;
+        }
+        return url.toString();
+      } catch (_error) {
+        return String(source || "");
+      }
+    }
+
+    async function rewriteSourceForAudioTrack(selected) {
+      const nextSource = sourceWithAudioTrack(currentSource, selected);
+      if (!nextSource || nextSource === currentSource) {
+        return;
+      }
+      const wasPaused = sceneBool(video.paused, true);
+      const position = Math.max(0, sceneNumber(video.currentTime, 0));
+      await applySource(nextSource);
+      try {
+        if (position > 0) {
+          video.currentTime = position;
+        }
+      } catch (_error) {
+      }
+      if (!wasPaused) {
+        safePlay();
       }
     }
 
@@ -3480,6 +3733,53 @@
       });
     }
 
+    function prefetchBitmapSubtitleImages(cues) {
+      const limit = Math.max(0, subtitleOptions.bitmapPrefetchLimit);
+      if (!limit || typeof Image !== "function" || !Array.isArray(cues)) {
+        return;
+      }
+      const seen = new Set();
+      let count = 0;
+      for (const cue of cues) {
+        const src = String(cue && cue.image && cue.image.src || "").trim();
+        if (!src || seen.has(src)) {
+          continue;
+        }
+        seen.add(src);
+        try {
+          const image = new Image();
+          image.decoding = "async";
+          image.src = src;
+        } catch (_error) {
+        }
+        count += 1;
+        if (count >= limit) {
+          break;
+        }
+      }
+    }
+
+    async function refreshSubtitleCredentials(track) {
+      const endpoint = subtitleOptions.refreshEndpoint;
+      const callbackName = subtitleOptions.refreshCallback;
+      if (callbackName && typeof window[callbackName] === "function") {
+        await window[callbackName](videoSubtitleRefreshPayload(track, props, String((ctx && ctx.id) || "")));
+        return true;
+      }
+      if (!endpoint) {
+        return false;
+      }
+      const body = JSON.stringify(videoSubtitleRefreshPayload(track, props));
+      const response = await fetch(endpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      return Boolean(response && response.ok);
+    }
+
     async function loadSubtitleTrack(trackID) {
       const selected = String(trackID || "").trim();
       const loadToken = subtitleState.loadToken + 1;
@@ -3523,13 +3823,14 @@
       }
       subtitleState.status = "loading";
       updateSubtitleOutputs();
-      for (let attempt = 0; attempt < 60; attempt += 1) {
+      let refreshes = 0;
+      for (let attempt = 0; attempt < subtitleOptions.retryLimit; attempt += 1) {
         if (!isCurrentLoad()) {
           return;
         }
         let response = null;
         try {
-          response = await fetch(subtitleURL);
+          response = await fetch(subtitleURL, { credentials: "same-origin", cache: "no-store" });
         } catch (error) {
           if (!isCurrentLoad()) {
             return;
@@ -3548,7 +3849,19 @@
         if (!isCurrentLoad()) {
           return;
         }
-        if (response.status === 202) {
+        if ((response.status === 401 || response.status === 403) && refreshes < Math.max(1, subtitleOptions.retryRefreshAfter || 1)) {
+          refreshes += 1;
+          subtitleState.status = "warming";
+          updateSubtitleOutputs();
+          try {
+            if (await refreshSubtitleCredentials(localTrack)) {
+              await waitMS(subtitleRetryDelayMS(response, 500));
+              continue;
+            }
+          } catch (_error) {
+          }
+        }
+        if (response.status === 202 || response.status === 425 || response.status === 429 || response.status === 503) {
           subtitleState.status = "warming";
           updateSubtitleOutputs();
           await waitMS(subtitleRetryDelayMS(response, 1500));
@@ -3565,6 +3878,7 @@
           return;
         }
         subtitleState.cues = parseVideoVTT(text);
+        prefetchBitmapSubtitleImages(subtitleState.cues);
         subtitleState.loadedID = selected;
         subtitleState.status = "ready";
         clearError();
@@ -3826,6 +4140,7 @@
     }
     addListener(video, "canplay", function() {
       stalled = false;
+      clearTelemetryStallTimer();
       clearError();
       updateVideoOutputs();
     });
@@ -3842,6 +4157,7 @@
         return;
       }
       stalled = false;
+      clearTelemetryStallTimer();
       clearError();
       markInteractionActive(1800);
       syncBrainPlaybackStart();
@@ -3851,6 +4167,7 @@
     });
     addListener(video, "pause", function() {
       stalled = false;
+      clearTelemetryStallTimer();
       markInteractionActive(0);
       updateVideoOutputs();
       sendLeadSnapshot(true);
@@ -3863,12 +4180,14 @@
       stalled = true;
       markInteractionActive(0);
       renderSyncOverlay();
+      scheduleTelemetryStallRecovery("waiting");
       updateVideoOutputs();
     });
     addListener(video, "stalled", function() {
       stalled = true;
       markInteractionActive(0);
       renderSyncOverlay();
+      scheduleTelemetryStallRecovery("stalled");
       updateVideoOutputs();
     });
     addListener(video, "volumechange", function() {
@@ -3900,6 +4219,10 @@
       scheduleInteractionIdle(900);
     });
     addListener(document, "fullscreenchange", function() {
+      refreshVideoViewportOutput();
+      updateVideoOutputs();
+    });
+    addListener(document, "webkitfullscreenchange", function() {
       refreshVideoViewportOutput();
       updateVideoOutputs();
     });
@@ -3955,10 +4278,16 @@
         } else {
           video.pause();
         }
-      } else if ((command === "enter-fullscreen" || command === "toggle-fullscreen") && mount && typeof mount.requestFullscreen === "function") {
-        mount.requestFullscreen();
-      } else if (command === "exit-fullscreen" && document && typeof document.exitFullscreen === "function") {
-        document.exitFullscreen();
+      } else if (command === "enter-fullscreen") {
+        requestVideoFullscreen();
+      } else if (command === "toggle-fullscreen") {
+        if (videoIsFullscreen()) {
+          exitVideoFullscreen();
+        } else {
+          requestVideoFullscreen();
+        }
+      } else if (command === "exit-fullscreen") {
+        exitVideoFullscreen();
       } else if (command === "enter-pip") {
         enterPiP();
       } else if (command === "exit-pip") {
@@ -3995,6 +4324,9 @@
       startSubtitleLoad(value);
       persistPrefsIfEnabled();
     }));
+    unsubscribers.push(subscribeVideoSignal("subtitleOffsetMs", refreshSubtitleOptionsFromSignals));
+    unsubscribers.push(subscribeVideoSignal("subtitleScale", refreshSubtitleOptionsFromSignals));
+    unsubscribers.push(subscribeVideoSignal("subtitleStyle", refreshSubtitleOptionsFromSignals));
     unsubscribers.push(subscribeVideoSignal("audioTrack", function(value) {
       applyAudioTrackSelection(value);
     }));
@@ -4019,6 +4351,7 @@
     video.volume = initialVolume;
     video.muted = sceneBool(readVideoSignal("mute", videoPropValue(props, ["muted"], false)), false);
     video.playbackRate = requestedRate;
+    startVideoQualityTelemetry();
     refreshVideoViewportOutput();
     updateVideoOutputs();
 
@@ -4036,6 +4369,11 @@
       dispose() {
         disposed = true;
         clearInteractionTimer();
+        clearTelemetryStallTimer();
+        if (telemetryQualityTimer) {
+          clearInterval(telemetryQualityTimer);
+          telemetryQualityTimer = 0;
+        }
         clearCountdownTimer();
         closeSyncSocket();
         // Dispose the brain AFTER intervals are cleared and `disposed` is set,
@@ -4444,2779 +4782,3 @@
     await Promise.all(promises);
   }
 
-  // --------------------------------------------------------------------------
-  // Hub connections
-  // --------------------------------------------------------------------------
-
-  function hubURL(path) {
-    if (!path) return "";
-    if (isAbsoluteHubURL(path)) {
-      return path;
-    }
-    return hubOrigin() + normalizeHubPath(path);
-  }
-
-  function isAbsoluteHubURL(path) {
-    return path.startsWith("ws://") || path.startsWith("wss://");
-  }
-
-  function hubOrigin() {
-    return hubScheme() + hubHost();
-  }
-
-  function hubScheme() {
-    return window.location && window.location.protocol === "https:" ? "wss://" : "ws://";
-  }
-
-  function hubHost() {
-    return window.location && window.location.host ? window.location.host : "";
-  }
-
-  function normalizeHubPath(path) {
-    return path.startsWith("/") ? path : "/" + path;
-  }
-
-  function applyHubBindings(entry, message) {
-    if (!entry.bindings || entry.bindings.length === 0) return;
-
-    for (const binding of entry.bindings) {
-      applyHubBinding(entry, binding, message);
-    }
-  }
-
-  function applyHubBinding(entry, binding, message) {
-    if (binding && binding.direction === "out") return;
-    if (!binding || binding.event !== message.event || !binding.signal) return;
-    try {
-      const result = setSharedSignalJSON(binding.signal, JSON.stringify(message.data));
-      if (typeof result === "string" && result !== "") {
-        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
-      }
-    } catch (e) {
-      console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
-    }
-  }
-
-  function initializeClientIdentity(config) {
-    const cfg = normalizeClientIdentityConfig(config);
-    if (!cfg) return null;
-    const current = window.__gosx.identity;
-    if (current && current.configKey === cfg.configKey) {
-      return current;
-    }
-    const clientId = ensureClientIdentity(cfg);
-    const identity = {
-      clientId: clientId,
-      headerName: cfg.headerName,
-      cookieName: cfg.cookieName,
-      configKey: cfg.configKey,
-      applyHeaders: function(headers) {
-        const next = Object.assign({}, headers || {});
-        if (cfg.headerName) next[cfg.headerName] = clientId;
-        return next;
-      },
-    };
-    window.__gosx.identity = identity;
-    if (cfg.globalName && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(cfg.globalName)) {
-      window[cfg.globalName] = identity;
-    }
-    return identity;
-  }
-
-  function normalizeClientIdentityConfig(raw) {
-    if (!raw || typeof raw !== "object") return null;
-    const cookieName = String(raw.cookieName || "gosx_client_id").trim();
-    const storageKey = String(raw.storageKey || cookieName).trim();
-    const headerName = String(raw.headerName || "X-GoSX-Client-ID").trim();
-    if (!cookieName || !storageKey) return null;
-    const legacy = Array.isArray(raw.legacyCookieNames)
-      ? raw.legacyCookieNames.map(function(value) { return String(value || "").trim(); }).filter(Boolean)
-      : [];
-    const maxAge = Math.max(60, Math.floor(hubInputNumber(raw.maxAgeSeconds, 31536000)));
-    return {
-      cookieName: cookieName,
-      legacyCookieNames: legacy,
-      storageKey: storageKey,
-      headerName: headerName,
-      globalName: String(raw.globalName || "").trim(),
-      prefix: String(raw.prefix || "gosx-"),
-      maxAgeSeconds: maxAge,
-      sameSite: String(raw.sameSite || "Lax").trim() || "Lax",
-      configKey: [cookieName, storageKey, headerName].join("|"),
-    };
-  }
-
-  function ensureClientIdentity(config) {
-    const id = normalizeClientIdentity(readIdentityCookie(config))
-      || normalizeClientIdentity(readIdentityStorage(config.storageKey))
-      || randomClientIdentity(config.prefix);
-    writeIdentityStorage(config.storageKey, id);
-    writeIdentityCookie(config, id);
-    return id;
-  }
-
-  function normalizeClientIdentity(value) {
-    const id = String(value || "").trim();
-    return /^[A-Za-z0-9_-]{6,96}$/.test(id) ? id : "";
-  }
-
-  function readIdentityCookie(config) {
-    const cookieText = String(document && document.cookie || "");
-    if (!cookieText) return "";
-    const names = [config.cookieName].concat(config.legacyCookieNames || []);
-    const parts = cookieText.split(";");
-    for (const name of names) {
-      const prefix = name + "=";
-      for (const part of parts) {
-        const item = String(part || "").trim();
-        if (item.indexOf(prefix) !== 0) continue;
-        try {
-          return decodeURIComponent(item.slice(prefix.length));
-        } catch (_e) {
-          return "";
-        }
-      }
-    }
-    return "";
-  }
-
-  function writeIdentityCookie(config, id) {
-    if (!document) return;
-    try {
-      document.cookie = config.cookieName + "=" + encodeURIComponent(id)
-        + "; Path=/; Max-Age=" + config.maxAgeSeconds
-        + "; SameSite=" + config.sameSite;
-    } catch (_e) {}
-  }
-
-  function readIdentityStorage(key) {
-    try {
-      return window.localStorage ? window.localStorage.getItem(key) || "" : "";
-    } catch (_e) {
-      return "";
-    }
-  }
-
-  function writeIdentityStorage(key, id) {
-    try {
-      if (window.localStorage) window.localStorage.setItem(key, id);
-    } catch (_e) {}
-  }
-
-  function randomClientIdentity(prefix) {
-    const safePrefix = String(prefix || "gosx-");
-    if (window.crypto && typeof window.crypto.randomUUID === "function") {
-      return safePrefix + window.crypto.randomUUID().replace(/-/g, "");
-    }
-    const bytes = new Uint8Array(16);
-    if (window.crypto && typeof window.crypto.getRandomValues === "function") {
-      window.crypto.getRandomValues(bytes);
-    } else {
-      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-    }
-    return safePrefix + Array.prototype.map.call(bytes, function(byte) {
-      return byte.toString(16).padStart(2, "0");
-    }).join("");
-  }
-
-  function gosxClientIdentity() {
-    return window.__gosx && window.__gosx.identity ? window.__gosx.identity : null;
-  }
-
-  function gosxClientID() {
-    const identity = gosxClientIdentity();
-    if (identity && identity.clientId) return String(identity.clientId);
-    const feral = window.__feralIdentity;
-    return feral && feral.clientId ? String(feral.clientId) : "";
-  }
-
-  function gosxIdentityHeaders(headers) {
-    const identity = gosxClientIdentity();
-    if (identity && typeof identity.applyHeaders === "function") {
-      return identity.applyHeaders(headers);
-    }
-    const feral = window.__feralIdentity;
-    if (feral && typeof feral.applyHeaders === "function") {
-      return feral.applyHeaders(headers);
-    }
-    return Object.assign({}, headers || {});
-  }
-
-  function normalizeHubInputConfig(entry) {
-    const input = entry && entry.input;
-    if (!input || typeof input !== "object") return null;
-    const every = Math.max(8, Math.min(100, hubInputNumber(input.sendEveryMs, 16)));
-    return {
-      mode: String(input.mode || "").trim().toLowerCase(),
-      event: String(input.event || "input"),
-      readyEvent: String(input.readyEvent || "ready"),
-      trainingEvent: String(input.trainingEvent || "training"),
-      signal: String(input.signal || ""),
-      trainingSignal: String(input.trainingSignal || ""),
-      touchRoot: String(input.touchRoot || ""),
-      player: Math.max(1, Math.min(2, Math.floor(hubInputNumber(input.player, 1)))),
-      local: Boolean(input.local),
-      spectator: Boolean(input.spectator),
-      slotToken: String(input.slotToken || ""),
-      sendEveryMS: every,
-      root: String(input.root || ""),
-      username: String(input.username || ""),
-      fightPath: String(input.fightPath || "/fight"),
-      cpuEndpoint: String(input.cpuEndpoint || "/api/cpu-match/start"),
-      localEndpoint: String(input.localEndpoint || "/api/local-match/start"),
-      fightCurrentEndpoint: String(input.fightCurrentEndpoint || "/api/fight/current"),
-      minLocalGamepads: Math.max(0, Math.floor(hubInputNumber(input.minLocalGamepads, 2))),
-      attractSignal: String(input.attractSignal || "$attract"),
-      lobbySignal: String(input.lobbySignal || "$lobby"),
-      vsSignal: String(input.vsSignal || "$vs"),
-    };
-  }
-
-  function createHubInputController(record) {
-    const config = normalizeHubInputConfig(record && record.entry);
-    if (!config) return null;
-    if (config.mode === "arcade-select") {
-      return createArcadeSelectHubController(record, config);
-    }
-
-    const keys = Object.create(null);
-    const touch = { up: false, down: false, left: false, right: false, lp: false, hp: false, lk: false, hk: false, guard: false };
-    const touchCounts = Object.create(null);
-    const activePointers = new Map();
-    const listeners = [];
-    let disposed = false;
-    let timer = 0;
-    let readySent = false;
-    let trainingVisible = false;
-    let lastCue = "";
-    let lastFeedbackSeq = 0;
-    let lastPhaseCue = "";
-    const lastFightAudioState = {
-      initialized: false,
-      p1Beast: false,
-      p2Beast: false,
-      p1Ready: false,
-      p2Ready: false,
-    };
-
-    function addListener(target, type, listener, options) {
-      if (!target || typeof target.addEventListener !== "function") return;
-      target.addEventListener(type, listener, options);
-      listeners.push([target, type, listener, options]);
-    }
-
-    function disposeListeners() {
-      for (const binding of listeners) {
-        binding[0].removeEventListener(binding[1], binding[2], binding[3]);
-      }
-      listeners.length = 0;
-    }
-
-    function socketOpen() {
-      const socket = record && record.socket;
-      return Boolean(socket && typeof socket.send === "function" && (socket.readyState === 1 || socket.readyState == null));
-    }
-
-    function send(event, data) {
-      if (!socketOpen()) return false;
-      try {
-        record.socket.send(JSON.stringify({ event: event, data: data || {} }));
-        return true;
-      } catch (e) {
-        console.error(`[gosx] hub input send error for ${record.entry.id}:`, e);
-        return false;
-      }
-    }
-
-    function clientID() {
-      return gosxClientID();
-    }
-
-    function basePayload(player) {
-      const payload = { player: player || config.player };
-      if (config.slotToken) payload.slotToken = config.slotToken;
-      const id = clientID();
-      if (id) payload.clientId = id;
-      return payload;
-    }
-
-    function sendReady() {
-      if (readySent || !socketOpen()) return;
-      readySent = send(config.readyEvent, basePayload(config.player));
-    }
-
-    function publishJSON(signal, data) {
-      if (!signal) return;
-      try {
-        const result = setSharedSignalJSON(signal, JSON.stringify(data || {}));
-        if (typeof result === "string" && result !== "") {
-          console.error(`[gosx] hub input signal error (${record.entry.id}/${signal}):`, result);
-        }
-      } catch (e) {
-        console.error(`[gosx] hub input signal error (${record.entry.id}/${signal}):`, e);
-      }
-    }
-
-    function publishTrainingState(extra) {
-      publishJSON(config.trainingSignal, Object.assign({
-        enabled: trainingVisible,
-        paused: false,
-        recording: false,
-      }, extra || {}));
-    }
-
-    function sendTraining(action) {
-      trainingVisible = true;
-      publishTrainingState({ action: action });
-      const payload = basePayload(config.player);
-      payload.action = action;
-      send(config.trainingEvent, payload);
-    }
-
-    function setKey(event, active) {
-      if (!event) return;
-      if (event.code) keys[event.code] = active;
-      if (event.key) keys[String(event.key).toLowerCase()] = active;
-      if (!active) return;
-      unlockArcadeAudio();
-
-      if (event.code === "F2") {
-        trainingVisible = !trainingVisible;
-        publishTrainingState();
-        event.preventDefault();
-        return;
-      }
-      if (event.code === "F3") {
-        event.preventDefault();
-        sendTraining("pause");
-        return;
-      }
-      if (event.code === "F4") {
-        event.preventDefault();
-        sendTraining("step");
-        return;
-      }
-      if (event.code === "F5") {
-        event.preventDefault();
-        sendTraining("dummy");
-        return;
-      }
-      if (hubInputCapturesKey(event)) {
-        event.preventDefault();
-      }
-    }
-
-    function keyDown() {
-      for (let i = 0; i < arguments.length; i++) {
-        const name = arguments[i];
-        if (keys[name] || keys[String(name).toLowerCase()]) return true;
-      }
-      return false;
-    }
-
-    function touchControl(event) {
-      const target = event && event.target;
-      const node = target && target.closest ? target : target && target.parentElement;
-      const control = node && node.closest ? node.closest("[data-dir],[data-btn]") : null;
-      if (!control) return null;
-      if (config.touchRoot && (!control.closest || !control.closest(config.touchRoot))) {
-        return null;
-      }
-      return control;
-    }
-
-    function touchKey(control) {
-      if (!control || !control.dataset) return "";
-      if (control.dataset.dir) return "dir:" + control.dataset.dir;
-      if (control.dataset.btn) return "btn:" + control.dataset.btn;
-      return "";
-    }
-
-    function updateTouch(key, active) {
-      if (!key) return;
-      const next = Math.max(0, (touchCounts[key] || 0) + (active ? 1 : -1));
-      touchCounts[key] = next;
-      const value = next > 0;
-      const parts = key.split(":");
-      if (parts[0] === "dir" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
-        touch[parts[1]] = value;
-      } else if (parts[0] === "btn" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
-        touch[parts[1]] = value;
-      }
-    }
-
-    function onPointerDown(event) {
-      const control = touchControl(event);
-      if (!control) return;
-      const key = touchKey(control);
-      if (!key) return;
-      unlockArcadeAudio();
-      activePointers.set(event.pointerId, key);
-      updateTouch(key, true);
-      if (control.setPointerCapture && event.pointerId != null) {
-        try {
-          control.setPointerCapture(event.pointerId);
-        } catch (_e) {
-          // Pointer capture is best effort.
-        }
-      }
-      event.preventDefault();
-    }
-
-    function onPointerUp(event) {
-      const fallback = touchKey(touchControl(event));
-      const key = activePointers.get(event.pointerId) || fallback;
-      activePointers.delete(event.pointerId);
-      updateTouch(key, false);
-      if (key) event.preventDefault();
-    }
-
-    function onBlur() {
-      for (const key of Object.keys(keys)) keys[key] = false;
-      for (const key of Object.keys(touchCounts)) {
-        touchCounts[key] = 0;
-        updateTouch(key, false);
-      }
-      activePointers.clear();
-    }
-
-    function gamepads() {
-      const nav = window.navigator;
-      if (!nav || typeof nav.getGamepads !== "function") return [];
-      try {
-        return Array.prototype.slice.call(nav.getGamepads() || []).filter(Boolean);
-      } catch (_e) {
-        return [];
-      }
-    }
-
-    function readDirection(pad, includePrimary, player) {
-      let up = includePrimary && (keyDown("KeyW", "w", "ArrowUp", "arrowup") || touch.up);
-      let down = includePrimary && (keyDown("KeyS", "s", "ArrowDown", "arrowdown") || touch.down);
-      let left = includePrimary && (keyDown("KeyA", "a", "ArrowLeft", "arrowleft") || touch.left);
-      let right = includePrimary && (keyDown("KeyD", "d", "ArrowRight", "arrowright") || touch.right);
-
-      if (pad) {
-        up = up || gamepadPressed(pad, 12);
-        down = down || gamepadPressed(pad, 13);
-        left = left || gamepadPressed(pad, 14);
-        right = right || gamepadPressed(pad, 15);
-        const axes = Array.isArray(pad.axes) ? pad.axes : [];
-        if (hubInputNumber(axes[1], 0) < -0.5) up = true;
-        if (hubInputNumber(axes[1], 0) > 0.5) down = true;
-        if (hubInputNumber(axes[0], 0) < -0.5) left = true;
-        if (hubInputNumber(axes[0], 0) > 0.5) right = true;
-      }
-
-      const p2 = Number(player) === 2;
-      const forward = p2 ? left : right;
-      const back = p2 ? right : left;
-
-      if (up && forward) return 2;
-      if (up && back) return 8;
-      if (down && forward) return 4;
-      if (down && back) return 6;
-      if (up) return 1;
-      if (forward) return 3;
-      if (down) return 5;
-      if (back) return 7;
-      return 0;
-    }
-
-    function readButtons(pad, includePrimary) {
-      let buttons = 0;
-      if (includePrimary) {
-        if (keyDown("KeyU", "u") || touch.lp) buttons |= 1;
-        if (keyDown("KeyI", "i") || touch.hp) buttons |= 2;
-        if (keyDown("KeyJ", "j") || touch.lk) buttons |= 4;
-        if (keyDown("KeyK", "k") || touch.hk) buttons |= 8;
-        if (keyDown("KeyL", "l", "Space", " ") || touch.guard) buttons |= 16;
-      }
-      if (pad) {
-        if (gamepadPressed(pad, 0)) buttons |= 1;
-        if (gamepadPressed(pad, 1)) buttons |= 2;
-        if (gamepadPressed(pad, 2)) buttons |= 4;
-        if (gamepadPressed(pad, 3)) buttons |= 8;
-        if (gamepadPressed(pad, 4) || gamepadPressed(pad, 5)) buttons |= 16;
-      }
-      return buttons;
-    }
-
-    function readInput(pad, includePrimary, player) {
-      return {
-        dir: readDirection(pad, includePrimary, player),
-        btn: readButtons(pad, includePrimary),
-      };
-    }
-
-    function sendInput(player, input) {
-      const payload = basePayload(player);
-      payload.dir = input.dir;
-      payload.btn = input.btn;
-      send(config.event, payload);
-    }
-
-    function fightAudioFallbackCue(kind, event) {
-      const cueKind = String(kind || "").trim().toLowerCase();
-      if (!cueKind || cueKind === "none") return "none";
-      if (cueKind === "block") return "block";
-      if (cueKind === "just_guard") return "just_guard";
-      if (cueKind === "guard_cancel") return "guard_cancel";
-      if (cueKind === "armor") return "armor";
-      if (cueKind === "throw_tech") return "throw_tech";
-      if (cueKind === "throw") return "throw";
-      if (cueKind === "hit") {
-        if (event && event.punish) return "punish";
-        if (event && event.counter) return "counter";
-        if (event && event.launcher) return "launcher";
-        const damage = Math.max(0, hubInputNumber(event && event.damage, 0));
-        const move = Math.max(0, Math.floor(hubInputNumber(event && event.moveId, 0)));
-        if (damage >= 95 || move === 1 || move === 3) return "hit_heavy";
-        return "hit_light";
-      }
-      return cueKind;
-    }
-
-    function fightAudioPlayer(data, player) {
-      if (Number(player) === 2) return data && data.p2;
-      if (Number(player) === 1) return data && data.p1;
-      return null;
-    }
-
-    function fightAudioPositionValue(player, field, fallback) {
-      if (!player || typeof player !== "object") return fallback;
-      if (field === "x" && player.hurtbox && Object.prototype.hasOwnProperty.call(player.hurtbox, "x")) {
-        return hubInputNumber(player.hurtbox.x, fallback);
-      }
-      if (Object.prototype.hasOwnProperty.call(player, field)) {
-        return hubInputNumber(player[field], fallback);
-      }
-      return fallback;
-    }
-
-    function fightAudioPan(data, event, cue) {
-      if (cue && Object.prototype.hasOwnProperty.call(cue, "pan")) {
-        return arcadeClamp(cue.pan, -0.95, 0.95, 0);
-      }
-      const attacker = fightAudioPlayer(data, event && event.attacker);
-      const defender = fightAudioPlayer(data, event && event.defender);
-      if (attacker && defender) {
-        const x = (fightAudioPositionValue(attacker, "x", 0) + fightAudioPositionValue(defender, "x", 0)) * 0.5;
-        return arcadeClamp(x / 3.4, -0.85, 0.85, 0);
-      }
-      if (attacker) return arcadeClamp(fightAudioPositionValue(attacker, "x", 0) / 3.4, -0.85, 0.85, 0);
-      if (defender) return arcadeClamp(fightAudioPositionValue(defender, "x", 0) / 3.4, -0.85, 0.85, 0);
-      return 0;
-    }
-
-    function fightAudioDepth(data, event, cue) {
-      if (cue && Object.prototype.hasOwnProperty.call(cue, "depth")) {
-        return arcadeClamp(cue.depth, -0.75, 0.75, 0);
-      }
-      const attacker = fightAudioPlayer(data, event && event.attacker);
-      const defender = fightAudioPlayer(data, event && event.defender);
-      if (attacker && defender) {
-        return arcadeClamp((fightAudioPositionValue(attacker, "z", 0) + fightAudioPositionValue(defender, "z", 0)) * 0.5, -0.75, 0.75, 0);
-      }
-      if (attacker) return arcadeClamp(fightAudioPositionValue(attacker, "z", 0), -0.75, 0.75, 0);
-      if (defender) return arcadeClamp(fightAudioPositionValue(defender, "z", 0), -0.75, 0.75, 0);
-      return 0;
-    }
-
-    function fightAudioIntensity(kind, event, cue) {
-      if (cue && Object.prototype.hasOwnProperty.call(cue, "intensity")) {
-        return arcadeClamp(cue.intensity, 0.05, 1.25, 0.3);
-      }
-      const damage = Math.max(0, hubInputNumber(event && event.damage, 0));
-      const blocked = Boolean(event && event.blocked) || kind === "block";
-      const special = Boolean(event && (event.counter || event.punish || event.launcher || event.guardCancel || event.justGuard || event.armor))
-        || kind === "throw" || kind === "throw_tech";
-      let intensity = blocked ? 0.18 : Math.min(0.85, 0.24 + damage / 260);
-      if (special) intensity = Math.min(1, intensity + 0.22);
-      return intensity;
-    }
-
-    function inferFightPhaseCue(data) {
-      if (!data || typeof data !== "object") return "";
-      if (data.matchOver) return "match";
-      const phase = String(data.phase || "").trim().toLowerCase();
-      if (phase === "countdown") return "round";
-      if (phase === "fight") return "fight";
-      if (phase === "ko") return "ko";
-      if (phase === "roundend") return "roundend";
-      return "";
-    }
-
-    function playFightPhaseAudio(data) {
-      const cue = data && data.audio && typeof data.audio === "object" ? data.audio : {};
-      const phaseCue = String(cue.phaseCue || inferFightPhaseCue(data)).trim().toLowerCase();
-      if (!phaseCue || phaseCue === "none") return;
-      const key = [data && data.round, data && data.phase, data && data.matchOver, data && data.winner, phaseCue].join(":");
-      if (key === lastPhaseCue) return;
-      lastPhaseCue = key;
-      playArcadeSFX(phaseCue, {
-        intensity: phaseCue === "fight" ? 0.62 : 0.55,
-        pan: 0,
-        depth: 0,
-      });
-    }
-
-    function playFightStateAudio(data) {
-      const p1 = data && data.p1 || {};
-      const p2 = data && data.p2 || {};
-      const next = {
-        p1Beast: Boolean(p1.beastActive),
-        p2Beast: Boolean(p2.beastActive),
-        p1Ready: hubInputNumber(p1.beast, 0) >= 100,
-        p2Ready: hubInputNumber(p2.beast, 0) >= 100,
-      };
-      if (!lastFightAudioState.initialized) {
-        Object.assign(lastFightAudioState, next, { initialized: true });
-        return;
-      }
-      if (next.p1Beast && !lastFightAudioState.p1Beast) playArcadeSFX("surge", { intensity: 0.86, pan: -0.42 });
-      if (next.p2Beast && !lastFightAudioState.p2Beast) playArcadeSFX("surge", { intensity: 0.86, pan: 0.42 });
-      if (next.p1Ready && !lastFightAudioState.p1Ready) playArcadeSFX("surge_ready", { intensity: 0.55, pan: -0.36 });
-      if (next.p2Ready && !lastFightAudioState.p2Ready) playArcadeSFX("surge_ready", { intensity: 0.55, pan: 0.36 });
-      Object.assign(lastFightAudioState, next);
-    }
-
-    function publishCue(pads) {
-      const connected = pads.length > 0;
-      const cue = {
-        connected: connected,
-        active: true,
-        pads: pads.length,
-        padCount: pads.length,
-        player: config.player,
-        state: config.spectator ? "ready" : (connected ? "pad" : "touch"),
-        title: config.spectator ? "CPU DUEL" : (connected ? "GAMEPAD LINKED" : "GRAB A GAMEPAD"),
-        copy: config.spectator ? "Bots are driving both fighters." : (connected ? "Pad mapped: A/B/X/Y, shoulders guard." : "Keyboard and touch are live until a pad is connected."),
-        mode: config.spectator ? "SPECTATE" : (config.local ? "LOCAL VS" : "ONLINE"),
-        perf: "",
-      };
-      const signature = JSON.stringify(cue);
-      if (signature === lastCue) return;
-      lastCue = signature;
-      publishJSON(config.signal, cue);
-    }
-
-    function onHubMessage(message) {
-      if (!message || message.event !== "tick") return;
-      const data = message.data || {};
-      const event = data.event || {};
-      playFightPhaseAudio(data);
-      playFightStateAudio(data);
-      const cue = data.audio && typeof data.audio === "object" ? data.audio : {};
-      const seq = Math.floor(hubInputNumber(cue.seq, hubInputNumber(event.seq, 0)));
-      if (!seq || seq === lastFeedbackSeq) return;
-      lastFeedbackSeq = seq;
-      const kind = String(event.kind || "");
-      if (!kind || kind === "none") return;
-
-      let feedback = String(cue.cue || "").trim().toLowerCase();
-      if (!feedback || feedback === "none") feedback = fightAudioFallbackCue(kind, event);
-      if (!feedback || feedback === "none") return;
-      const intensity = fightAudioIntensity(kind, event, cue);
-      const special = Boolean(event.counter || event.punish || event.launcher || event.guardCancel || event.justGuard || event.armor)
-        || kind === "throw" || kind === "throw_tech" || feedback === "counter" || feedback === "punish" || feedback === "launcher";
-      playArcadeSFX(feedback, {
-        intensity: intensity,
-        pan: fightAudioPan(data, event, cue),
-        depth: fightAudioDepth(data, event, cue),
-      });
-      vibrateGamepads(feedback, intensity, special ? 130 : 75);
-    }
-
-    function pump() {
-      if (disposed) return;
-      sendReady();
-      const pads = gamepads();
-      publishCue(pads);
-      if (socketOpen() && !config.spectator) {
-        if (config.local) {
-          sendInput(1, readInput(pads[0], true, 1));
-          sendInput(2, readInput(pads[1], false, 2));
-        } else {
-          sendInput(config.player, readInput(pads[0], true, config.player));
-        }
-      }
-    }
-
-    function tick() {
-      if (disposed) return;
-      pump();
-      timer = setTimeout(tick, config.sendEveryMS);
-    }
-
-    addListener(document, "keydown", function(event) { setKey(event, true); }, { passive: false });
-    addListener(document, "keyup", function(event) { setKey(event, false); }, { passive: false });
-    addListener(document, "pointerdown", onPointerDown, { passive: false });
-    addListener(document, "pointerup", onPointerUp, { passive: false });
-    addListener(document, "pointercancel", onPointerUp, { passive: false });
-    addListener(window, "blur", onBlur);
-    publishTrainingState();
-    tick();
-
-    return {
-      flush: pump,
-      onMessage: onHubMessage,
-      dispose: function() {
-        disposed = true;
-        if (timer) {
-          clearTimeout(timer);
-          timer = 0;
-        }
-        disposeListeners();
-        onBlur();
-        publishJSON(config.signal, { connected: false, active: false, pads: 0 });
-        publishJSON(config.trainingSignal, { enabled: false, paused: false, recording: false });
-      },
-    };
-  }
-
-  function createArcadeSelectHubController(record, config) {
-    const root = controllerQuery(config.root || ".landing") || document.body || document.documentElement;
-    const state = {
-      selectedChar: 0,
-      selectedAction: "cpu",
-      inputMode: "touch",
-      padState: "touch",
-      padTitle: "TAP START",
-      padCopy: "Gamepad recommended",
-      padStatus: "TOUCH READY",
-      localSub: "2 PADS",
-      selectVisible: false,
-      actionState: "ready",
-      actionTitle: "READY",
-      actionCopy: "Pick fast. Fight faster.",
-      onlineLabel: "FIND MATCH",
-      onlineSub: "ONLINE",
-      queued: false,
-      busy: false,
-      prompt: "PICK A FIGHTER",
-      pressStart: "TAP START",
-    };
-    const attract = { phase: "title", paradeIndex: 0, active: true };
-    const vs = {
-      active: false,
-      left: { name: "FIGHTER", beast: "SURGE FORM", accent: "#f25f5c" },
-      right: { name: "FIGHTER", beast: "SURGE FORM", accent: "#5ce1e6" },
-    };
-    const actionOrder = ["cpu", "local", "online"];
-    const listeners = [];
-    const timers = [];
-    const intervals = [];
-    let disposed = false;
-    let readySent = false;
-    let previousButtons = Object.create(null);
-    let previousDirection = 0;
-    let paradeInterval = 0;
-
-    function addListener(target, type, listener, options) {
-      if (!target || typeof target.addEventListener !== "function") return;
-      target.addEventListener(type, listener, options);
-      listeners.push([target, type, listener, options]);
-    }
-
-    function schedule(fn, ms) {
-      const timer = setTimeout(function() {
-        const index = timers.indexOf(timer);
-        if (index >= 0) timers.splice(index, 1);
-        if (!disposed) fn();
-      }, ms);
-      timers.push(timer);
-      return timer;
-    }
-
-    function every(fn, ms) {
-      const timer = setInterval(function() {
-        if (!disposed) fn();
-      }, ms);
-      intervals.push(timer);
-      return timer;
-    }
-
-    function clearParadeInterval() {
-      if (!paradeInterval) return;
-      clearInterval(paradeInterval);
-      const index = intervals.indexOf(paradeInterval);
-      if (index >= 0) intervals.splice(index, 1);
-      paradeInterval = 0;
-    }
-
-    function publish(signal, value) {
-      publishSharedJSON(signal, value, record.entry.id);
-    }
-
-    function publishState() {
-      publish(config.signal || "$landing", state);
-      publish(config.attractSignal, attract);
-      publish(config.vsSignal, vs);
-      applyArcadeDOMState(root, state, attract);
-    }
-
-    function publishLobby(players, queueSize) {
-      publish(config.lobbySignal, { players: players || 0, queue: { size: queueSize || 0 } });
-    }
-
-    function socketOpen() {
-      const socket = record && record.socket;
-      return Boolean(socket && typeof socket.send === "function" && (socket.readyState === 1 || socket.readyState == null));
-    }
-
-    function send(event, data) {
-      if (!socketOpen()) return false;
-      try {
-        record.socket.send(JSON.stringify({ event: event, data: data || {} }));
-        return true;
-      } catch (e) {
-        console.error(`[gosx] arcade-select send error for ${record.entry.id}:`, e);
-        return false;
-      }
-    }
-
-    function basePayload() {
-      const payload = { clientId: gosxClientID() || "local-player" };
-      if (config.username) payload.name = config.username;
-      return payload;
-    }
-
-    function sendReady() {
-      if (readySent || !socketOpen()) return;
-      readySent = send(config.readyEvent || "join", basePayload());
-    }
-
-    function actionStatus(action) {
-      const confirm = state.inputMode === "gamepad" ? "A" : "Tap";
-      if (action === "local" && connectedGamepads().length < config.minLocalGamepads) {
-        return { title: "2 PADS NEEDED", copy: "Local versus is gamepad-only." };
-      }
-      if (action === "local") return { title: "VERSUS READY", copy: confirm + " starts same-screen versus." };
-      if (action === "online") return { title: "ONLINE READY", copy: confirm + " searches for a match." };
-      return { title: "CPU READY", copy: confirm + " starts a solo fight." };
-    }
-
-    function setActionStatus(kind, title, copy) {
-      state.actionState = kind || "ready";
-      state.actionTitle = title || "READY";
-      state.actionCopy = copy || "";
-      state.prompt = state.actionTitle;
-      publishState();
-    }
-
-    function updateReadyStatus() {
-      if (state.busy || state.queued) return;
-      const status = actionStatus(state.selectedAction);
-      setActionStatus("ready", status.title, status.copy);
-    }
-
-    function setQueued(queued) {
-      state.queued = Boolean(queued);
-      state.onlineLabel = state.queued ? "CANCEL QUEUE" : "FIND MATCH";
-      state.onlineSub = state.queued ? "SEARCHING" : "ONLINE";
-      state.busy = false;
-      publishState();
-    }
-
-    function setBusy(busy) {
-      state.busy = Boolean(busy);
-      publishState();
-    }
-
-    function setInputMode(mode, pads) {
-      const nextPads = pads || connectedGamepads();
-      state.inputMode = mode === "gamepad" ? "gamepad" : "touch";
-      state.pressStart = state.inputMode === "gamepad" ? "PRESS START" : "TAP START";
-      const count = nextPads.length;
-      state.padState = count ? "ready" : "touch";
-      state.padTitle = count > 1 ? count + " PADS READY" : (count === 1 ? "PAD 1 READY" : "TAP START");
-      state.padCopy = count > 1 ? "LOCAL 1V1" : (count === 1 ? "A / START" : "Gamepad recommended");
-      state.padStatus = count > 1 ? count + " PADS READY" : (count === 1 ? "PAD 1 READY" : "TOUCH READY");
-      state.localSub = count > 1 ? "VERSUS" : "2 PADS";
-      publishState();
-      updateReadyStatus();
-    }
-
-    function updateInputModeFromGamepads() {
-      const pads = connectedGamepads();
-      setInputMode(pads.length ? "gamepad" : "touch", pads);
-    }
-
-    function characterIDs() {
-      const ids = [];
-      for (const card of controllerQueryAll(".select-screen .char-card")) {
-        const id = Number(card.dataset && card.dataset.char);
-        if (Number.isFinite(id)) ids.push(id);
-      }
-      return ids.length ? ids : [0, 1, 2, 3];
-    }
-
-    function selectCharacter(charID) {
-      const id = Math.max(0, Math.floor(hubInputNumber(charID, 0)));
-      const changed = state.selectedChar !== id;
-      state.selectedChar = id;
-      publishState();
-      if (changed) playArcadeSFX("move");
-    }
-
-    function cycleCharacter(delta) {
-      const ids = characterIDs();
-      let index = ids.indexOf(state.selectedChar);
-      if (index < 0) index = 0;
-      selectCharacter(ids[(index + delta + ids.length) % ids.length]);
-    }
-
-    function setSelectedAction(action) {
-      if (actionOrder.indexOf(action) < 0) return;
-      const changed = state.selectedAction !== action;
-      state.selectedAction = action;
-      if (changed) playArcadeSFX("move");
-      publishState();
-      updateReadyStatus();
-    }
-
-    function cycleAction(delta) {
-      let index = actionOrder.indexOf(state.selectedAction);
-      if (index < 0) index = 0;
-      setSelectedAction(actionOrder[(index + delta + actionOrder.length) % actionOrder.length]);
-    }
-
-    function cancelQueue() {
-      if (!state.queued) return false;
-      send(config.trainingEvent || "dequeue", { clientId: gosxClientID() || "local-player" });
-      setQueued(false);
-      setActionStatus("ready", "QUEUE CANCELED", "Pick another fight.");
-      return true;
-    }
-
-    function breakAttract() {
-      if (!attract.active) return;
-      playArcadeSFX("confirm");
-      attract.active = false;
-      state.selectVisible = true;
-      selectCharacter(0);
-      setSelectedAction("cpu");
-      publishState();
-      updateReadyStatus();
-      sendReady();
-    }
-
-    function setAttractPhase(phase) {
-      attract.phase = phase;
-      publishState();
-    }
-
-    function setParadeIndex(index) {
-      attract.paradeIndex = index;
-      publishState();
-    }
-
-    function startAttractLoop() {
-      clearParadeInterval();
-      setAttractPhase("title");
-      schedule(function() {
-        if (!attract.active) return;
-        setAttractPhase("parade");
-        setParadeIndex(0);
-        paradeInterval = every(function() {
-          if (!attract.active || attract.phase !== "parade") return;
-          setParadeIndex((attract.paradeIndex + 1) % 4);
-        }, 2600);
-        schedule(function() {
-          if (!attract.active) return;
-          clearParadeInterval();
-          setAttractPhase("pressstart");
-          schedule(startAttractLoop, 2600);
-        }, 10400);
-      }, 2600);
-    }
-
-    function onAttractInput(event) {
-      if (!attract.active) return;
-      event.__gosxArcadeConsumed = true;
-      setInputMode("touch");
-      if (event && typeof event.preventDefault === "function") event.preventDefault();
-      breakAttract();
-    }
-
-    function onSelectKey(event) {
-      if (event.__gosxArcadeConsumed || attract.active || state.busy) return;
-      const target = event.target;
-      if (target && /^(input|textarea|select)$/i.test(target.tagName || "")) return;
-      let handled = true;
-      switch (event.code) {
-        case "ArrowLeft":
-        case "KeyA":
-          cycleCharacter(-1);
-          break;
-        case "ArrowRight":
-        case "KeyD":
-          cycleCharacter(1);
-          break;
-        case "ArrowUp":
-        case "KeyW":
-          cycleAction(-1);
-          break;
-        case "ArrowDown":
-        case "KeyS":
-          cycleAction(1);
-          break;
-        case "Digit1":
-          selectCharacter(0);
-          break;
-        case "Digit2":
-          selectCharacter(1);
-          break;
-        case "Digit3":
-          selectCharacter(2);
-          break;
-        case "Digit4":
-          selectCharacter(3);
-          break;
-        case "KeyC":
-          setSelectedAction("cpu");
-          break;
-        case "KeyL":
-          setSelectedAction("local");
-          break;
-        case "KeyO":
-          setSelectedAction("online");
-          break;
-        case "Enter":
-        case "Space":
-          triggerAction(state.selectedAction);
-          break;
-        case "Escape":
-          handled = cancelQueue();
-          break;
-        default:
-          handled = false;
-      }
-      if (handled && event && typeof event.preventDefault === "function") event.preventDefault();
-    }
-
-    function onRootClick(event) {
-      const target = event && event.target;
-      const card = closestElement(target, ".char-card");
-      if (card && card.dataset && card.dataset.char != null) {
-        selectCharacter(Number(card.dataset.char));
-        return;
-      }
-      const action = closestElement(target, "[data-action]");
-      if (action && action.dataset && action.dataset.action) {
-        triggerAction(action.dataset.action);
-      }
-    }
-
-    function onRootFocus(event) {
-      const action = closestElement(event && event.target, "[data-action]");
-      if (action && action.dataset && action.dataset.action) {
-        setSelectedAction(action.dataset.action);
-      }
-    }
-
-    function triggerAction(action) {
-      if (state.busy) return;
-      if (action === "local" && connectedGamepads().length < config.minLocalGamepads) {
-        setSelectedAction("local");
-        setActionStatus("error", "2 PADS NEEDED", "Local versus is gamepad-only.");
-        playArcadeSFX("move");
-        return;
-      }
-      if (action === "online") {
-        playArcadeSFX("confirm");
-        if (state.queued) {
-          if (socketOpen()) {
-            setBusy(true);
-            send(config.trainingEvent || "dequeue", { clientId: gosxClientID() || "local-player" });
-          } else {
-            setQueued(false);
-            setActionStatus("ready", "QUEUE CANCELED", "Pick another fight.");
-          }
-          return;
-        }
-        if (socketOpen()) {
-          setBusy(true);
-          setActionStatus("loading", "JOINING QUEUE", "Opening the lobby channel.");
-          send(config.event || "queue", Object.assign(basePayload(), { characterId: state.selectedChar }));
-        } else {
-          setActionStatus("error", "LOBBY CONNECTING", "Try online again in a moment.");
-        }
-        return;
-      }
-      if (action === "local") {
-        startAPIMatch(config.localEndpoint, {
-          playerId: gosxClientID() || "local-player",
-          playerName: config.username || "Fighter",
-          p1CharacterId: state.selectedChar,
-          p2CharacterId: localOpponentChar(),
-        }, "STARTING LOCAL 1V1", "Loading both fighters.");
-        return;
-      }
-      startAPIMatch(config.cpuEndpoint, {
-        playerId: gosxClientID() || "local-player",
-        playerName: config.username || "Fighter",
-        characterId: state.selectedChar,
-      }, "STARTING CPU FIGHT", "Locking in the matchup.");
-    }
-
-    function startAPIMatch(endpoint, payload, title, copy) {
-      playArcadeSFX("confirm");
-      setBusy(true);
-      setActionStatus("loading", title, copy);
-      fetch(endpoint, {
-        method: "POST",
-        headers: gosxIdentityHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(payload),
-      }).then(function(response) {
-        if (!response || !response.ok) throw new Error("match start failed");
-        return response.json();
-      }).then(startFightTransition, function() {
-        setBusy(false);
-        setActionStatus("error", "START FAILED", "Try again.");
-      });
-    }
-
-    function startFightTransition(data) {
-      const payload = data || {};
-      setBusy(true);
-      setActionStatus("loading", "MATCH LOCKED", "Entering the arena.");
-      const playerNo = payload.playerNo || 1;
-      let p1Char = payload.p1CharId;
-      let p2Char = payload.p2CharId;
-      if (p1Char == null) p1Char = playerNo === 2 ? (payload.opponentCharId || 0) : state.selectedChar;
-      if (p2Char == null) p2Char = playerNo === 2 ? state.selectedChar : (payload.opponentCharId || 0);
-      const opponentChar = playerNo === 2 ? p1Char : p2Char;
-      const current = {
-        clientId: gosxClientID() || "local-player",
-        matchId: payload.matchId || "",
-        mode: payload.mode || "online",
-        playerNo: playerNo,
-        slotToken: payload.slotToken || payload.token || "",
-        p1CharId: p1Char,
-        p2CharId: p2Char,
-      };
-      fetch(config.fightCurrentEndpoint, {
-        method: "POST",
-        headers: gosxIdentityHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(current),
-      }).catch(function() {}).finally(function() {
-        showVS(opponentChar);
-        schedule(function() {
-          navigateManaged(config.fightPath || "/fight");
-        }, 760);
-      });
-    }
-
-    function showVS(opponentChar) {
-      vs.left = characterMeta(state.selectedChar);
-      vs.right = characterMeta(opponentChar || 0);
-      vs.active = true;
-      publishState();
-      schedule(function() {
-        vs.active = false;
-        publishState();
-      }, 740);
-    }
-
-    function localOpponentChar() {
-      const ids = characterIDs();
-      let index = ids.indexOf(state.selectedChar);
-      if (index < 0) index = 0;
-      return ids[(index + 1 + ids.length) % ids.length];
-    }
-
-    function characterMeta(charID) {
-      const card = controllerQuery('.select-screen .char-card[data-char="' + String(charID) + '"]');
-      if (!card || !card.dataset) {
-        return { name: "FIGHTER", beast: "SURGE FORM", accent: "#f25f5c" };
-      }
-      return {
-        name: card.dataset.name || "FIGHTER",
-        beast: card.dataset.beast || "SURGE FORM",
-        accent: card.dataset.accent || "#f25f5c",
-      };
-    }
-
-    function onHubMessage(message) {
-      if (!message) return;
-      const data = message.data || {};
-      if (message.event === "lobby_state") {
-        publishLobby(data.count || data.playerCount || 0, data.queueSize || 0);
-      } else if (message.event === "match_found") {
-        startFightTransition(data);
-      } else if (message.event === "queued") {
-        setQueued(true);
-        setActionStatus("queued", "MATCHMAKING", "Waiting for a challenger.");
-        publishLobby(data.count || data.playerCount || 0, data.queueSize || 0);
-      } else if (message.event === "dequeued") {
-        setQueued(false);
-        setActionStatus("ready", "QUEUE CANCELED", "Pick another fight.");
-        publishLobby(0, 0);
-      }
-    }
-
-    function pollGamepad() {
-      const pads = connectedGamepads();
-      if (!pads.length) {
-        setInputMode("touch", pads);
-        previousButtons = Object.create(null);
-        previousDirection = 0;
-        return;
-      }
-      const pad = pads[0];
-      setInputMode("gamepad", pads);
-      if (attract.active) {
-        if (gamepadButtonEdge(pad, 9) || gamepadButtonEdge(pad, 0)) breakAttract();
-        return;
-      }
-      const dir = gamepadDirectionEdge(pad);
-      if (dir === 7) cycleCharacter(-1);
-      if (dir === 3) cycleCharacter(1);
-      if (dir === 1) cycleAction(-1);
-      if (dir === 5) cycleAction(1);
-      if (gamepadButtonEdge(pad, 4)) cycleCharacter(-1);
-      if (gamepadButtonEdge(pad, 5)) cycleCharacter(1);
-      if (gamepadButtonEdge(pad, 6)) cycleAction(-1);
-      if (gamepadButtonEdge(pad, 7)) cycleAction(1);
-      if (gamepadButtonEdge(pad, 1) || gamepadButtonEdge(pad, 8)) cancelQueue();
-      if (gamepadButtonEdge(pad, 0) || gamepadButtonEdge(pad, 9)) triggerAction(state.selectedAction);
-    }
-
-    function gamepadButtonEdge(pad, index) {
-      const key = String(pad && pad.index != null ? pad.index : 0) + ":" + index;
-      const pressed = gamepadPressed(pad, index);
-      const wasPressed = Boolean(previousButtons[key]);
-      previousButtons[key] = pressed;
-      return pressed && !wasPressed;
-    }
-
-    function gamepadDirectionEdge(pad) {
-      const dir = gamepadMenuDirection(pad);
-      const edge = dir && dir !== previousDirection ? dir : 0;
-      previousDirection = dir;
-      return edge;
-    }
-
-    addListener(document, "keydown", onAttractInput, { passive: false });
-    addListener(document, "pointerdown", onAttractInput, { passive: false });
-    addListener(document, "touchstart", onAttractInput, { passive: false });
-    addListener(document, "keydown", onSelectKey, { passive: false });
-    addListener(root, "click", onRootClick);
-    addListener(root, "focus", onRootFocus, true);
-    addListener(window, "gamepadconnected", updateInputModeFromGamepads);
-    addListener(window, "gamepaddisconnected", updateInputModeFromGamepads);
-    every(pollGamepad, 90);
-    updateInputModeFromGamepads();
-    startAttractLoop();
-    publishState();
-    sendReady();
-
-    return {
-      flush: sendReady,
-      onMessage: onHubMessage,
-      dispose: function() {
-        disposed = true;
-        clearParadeInterval();
-        for (const timer of timers.splice(0)) clearTimeout(timer);
-        for (const timer of intervals.splice(0)) clearInterval(timer);
-        for (const binding of listeners.splice(0)) {
-          binding[0].removeEventListener(binding[1], binding[2], binding[3]);
-        }
-        stopArcadeSFX();
-      },
-    };
-  }
-
-  function publishSharedJSON(signal, value, scope) {
-    if (!signal) return;
-    try {
-      const result = setSharedSignalJSON(signal, JSON.stringify(value || {}));
-      if (typeof result === "string" && result !== "") {
-        console.error(`[gosx] shared signal error (${scope || "runtime"}/${signal}):`, result);
-      }
-    } catch (e) {
-      console.error(`[gosx] shared signal error (${scope || "runtime"}/${signal}):`, e);
-    }
-  }
-
-  function controllerQuery(selector) {
-    if (!selector || !document || typeof document.querySelector !== "function") return null;
-    try {
-      return document.querySelector(selector);
-    } catch (_e) {
-      return null;
-    }
-  }
-
-  function controllerQueryAll(selector) {
-    if (!selector || !document || typeof document.querySelectorAll !== "function") return [];
-    try {
-      return Array.from(document.querySelectorAll(selector) || []);
-    } catch (_e) {
-      return [];
-    }
-  }
-
-  function closestElement(target, selector) {
-    let current = target && target.nodeType === 1 ? target : null;
-    while (current) {
-      if (elementMatches(current, selector)) return current;
-      current = current.parentNode && current.parentNode.nodeType === 1 ? current.parentNode : null;
-    }
-    return null;
-  }
-
-  function elementMatches(element, selector) {
-    if (!element || !selector) return false;
-    if (typeof element.matches === "function") {
-      try {
-        return element.matches(selector);
-      } catch (_e) {
-        return false;
-      }
-    }
-    if (selector === ".char-card") {
-      return String(element.getAttribute && element.getAttribute("class") || "").split(/\s+/).includes("char-card");
-    }
-    if (selector === "[data-action]") {
-      return Boolean(element.dataset && element.dataset.action);
-    }
-    return false;
-  }
-
-  function applyArcadeDOMState(root, state, attract) {
-    const target = root || controllerQuery(".landing");
-    if (target && target.dataset) {
-      target.dataset.inputMode = state.inputMode;
-      target.dataset.padStatus = state.padState;
-    }
-    const backdrop = controllerQuery("#attract-backdrop");
-    if (backdrop && backdrop.classList) {
-      backdrop.classList.toggle("dimmed", !attract.active);
-    }
-  }
-
-  function connectedGamepads() {
-    const nav = window.navigator;
-    if (!nav || typeof nav.getGamepads !== "function") return [];
-    try {
-      return Array.prototype.slice.call(nav.getGamepads() || []).filter(function(pad) {
-        return pad && pad.connected !== false;
-      });
-    } catch (_e) {
-      return [];
-    }
-  }
-
-  function vibrateGamepads(kind, intensity, durationMS) {
-    const pads = connectedGamepads();
-    if (!pads.length) return;
-    const duration = Math.max(20, Math.min(160, Math.floor(hubInputNumber(durationMS, 75))));
-    const strong = Math.max(0, Math.min(1, hubInputNumber(intensity, 0.25)));
-    let weak = Math.max(0.06, strong * 0.45);
-    if (kind === "block" || kind === "guard" || kind === "just_guard" || kind === "guard_cancel") weak = Math.min(0.8, strong * 0.85);
-    if (kind === "armor" || kind === "throw" || kind === "throw_tech") weak = Math.min(0.7, strong * 0.55);
-    if (kind === "hit_heavy" || kind === "counter" || kind === "punish" || kind === "launcher" || kind === "ko") weak = Math.min(0.9, strong * 0.62);
-    for (const pad of pads) {
-      const actuator = gamepadActuator(pad);
-      if (actuator && typeof actuator.playEffect === "function") {
-        try {
-          actuator.playEffect("dual-rumble", {
-            duration: duration,
-            strongMagnitude: strong,
-            weakMagnitude: weak,
-          });
-          continue;
-        } catch (_e) {
-          // Optional haptics should never affect input delivery.
-        }
-      }
-      const pulse = pad && pad.hapticActuators && pad.hapticActuators[0];
-      if (pulse && typeof pulse.pulse === "function") {
-        try {
-          pulse.pulse(strong, duration);
-        } catch (_e) {}
-      }
-    }
-  }
-
-  function gamepadActuator(pad) {
-    if (!pad) return null;
-    if (pad.vibrationActuator) return pad.vibrationActuator;
-    if (pad.hapticActuators && pad.hapticActuators[0]) return pad.hapticActuators[0];
-    return null;
-  }
-
-  function gamepadMenuDirection(pad) {
-    let x = 0;
-    let y = 0;
-    const axes = Array.isArray(pad && pad.axes) ? pad.axes : [];
-    if (hubInputNumber(axes[0], 0) < -0.45) x = -1;
-    if (hubInputNumber(axes[0], 0) > 0.45) x = 1;
-    if (hubInputNumber(axes[1], 0) < -0.45) y = -1;
-    if (hubInputNumber(axes[1], 0) > 0.45) y = 1;
-    if (gamepadPressed(pad, 14)) x = -1;
-    if (gamepadPressed(pad, 15)) x = 1;
-    if (gamepadPressed(pad, 12)) y = -1;
-    if (gamepadPressed(pad, 13)) y = 1;
-    if (x < 0) return 7;
-    if (x > 0) return 3;
-    if (y < 0) return 1;
-    if (y > 0) return 5;
-    return 0;
-  }
-
-  function navigateManaged(url) {
-    if (window.__gosx_page_nav && typeof window.__gosx_page_nav.navigate === "function") {
-      window.__gosx_page_nav.navigate(url);
-      return;
-    }
-    window.location.href = url;
-  }
-
-  const arcadeAudioState = {
-    context: null,
-    active: [],
-    master: null,
-    compressor: null,
-    voiceLimit: 28,
-  };
-
-  function arcadeAudioContext() {
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-    if (!Ctor) return null;
-    if (!arcadeAudioState.context) {
-      try {
-        arcadeAudioState.context = new Ctor();
-        arcadeConfigureOutput(arcadeAudioState.context);
-      } catch (_e) {
-        arcadeAudioState.context = null;
-      }
-    }
-    return arcadeAudioState.context;
-  }
-
-  function arcadeConfigureOutput(audio) {
-    if (!audio || arcadeAudioState.master) return;
-    const destination = audio.destination;
-    if (!destination || typeof audio.createGain !== "function") return;
-    const master = audio.createGain();
-    master.gain.value = 0.82;
-    let tail = master;
-    if (typeof audio.createDynamicsCompressor === "function") {
-      const compressor = audio.createDynamicsCompressor();
-      if (compressor.threshold) compressor.threshold.value = -18;
-      if (compressor.knee) compressor.knee.value = 18;
-      if (compressor.ratio) compressor.ratio.value = 4;
-      if (compressor.attack) compressor.attack.value = 0.003;
-      if (compressor.release) compressor.release.value = 0.12;
-      master.connect(compressor);
-      tail = compressor;
-      arcadeAudioState.compressor = compressor;
-    }
-    tail.connect(destination);
-    arcadeAudioState.master = master;
-  }
-
-  function arcadeOutput(audio) {
-    arcadeConfigureOutput(audio);
-    return arcadeAudioState.master || audio.destination;
-  }
-
-  function unlockArcadeAudio() {
-    const audio = arcadeAudioContext();
-    if (!audio || typeof audio.createOscillator !== "function" || typeof audio.createGain !== "function") return;
-    if (typeof audio.resume === "function") audio.resume();
-    return audio;
-  }
-
-  function arcadeClamp(value, min, max, fallback) {
-    return Math.max(min, Math.min(max, hubInputNumber(value, fallback)));
-  }
-
-  function arcadeSoundOptions(options) {
-    if (typeof options === "number") {
-      return { delayMS: Math.max(0, hubInputNumber(options, 0)), intensity: 1, pan: 0, depth: 0 };
-    }
-    const raw = options && typeof options === "object" ? options : {};
-    return {
-      delayMS: Math.max(0, hubInputNumber(raw.delayMS, 0)),
-      intensity: arcadeClamp(raw.intensity, 0.05, 1.35, 1),
-      pan: arcadeClamp(raw.pan, -0.95, 0.95, 0),
-      depth: arcadeClamp(raw.depth, -0.75, 0.75, 0),
-      rate: arcadeClamp(raw.rate, 0.25, 2, 1),
-    };
-  }
-
-  function playArcadeSFX(kind, options) {
-    const audio = unlockArcadeAudio();
-    if (!audio) return;
-    const cue = String(kind || "move").trim().toLowerCase();
-    const opts = arcadeSoundOptions(options);
-    const heavy = Math.max(0.65, opts.intensity);
-    if (cue === "confirm") {
-      arcadeTone(audio, 220, 0.055, 0.08, "square", opts);
-      arcadeTone(audio, 880, 0.09, 0.08, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 18 }));
-      return;
-    }
-    if (cue === "round") {
-      arcadeTone(audio, 196, 0.12, 0.075, "square", opts);
-      arcadeTone(audio, 294, 0.12, 0.055, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 46 }));
-      arcadeTone(audio, 392, 0.16, 0.05, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 92 }));
-      return;
-    }
-    if (cue === "fight") {
-      arcadeTone(audio, 330, 0.06, 0.075, "square", opts);
-      arcadeTone(audio, 660, 0.075, 0.075, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 42 }));
-      arcadeNoise(audio, 0.055, 0.04, "highpass", 1500, Object.assign({}, opts, { delayMS: opts.delayMS + 22 }));
-      return;
-    }
-    if (cue === "ko" || cue === "match") {
-      arcadeNoise(audio, 0.16, 0.095, "lowpass", 720, opts);
-      arcadeSweep(audio, 190, 62, 0.32, 0.07, "sawtooth", opts);
-      arcadeTone(audio, 82, 0.18, 0.08, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 65 }));
-      return;
-    }
-    if (cue === "hit_light" || cue === "hit") {
-      arcadeNoise(audio, 0.052, 0.075 * opts.intensity, "bandpass", 1900, opts);
-      arcadeTone(audio, 118, 0.035, 0.05 * opts.intensity, "square", opts);
-      arcadeTone(audio, 720, 0.026, 0.038 * opts.intensity, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 7 }));
-      return;
-    }
-    if (cue === "hit_heavy") {
-      arcadeNoise(audio, 0.082, 0.1 * heavy, "lowpass", 1100, opts);
-      arcadeTone(audio, 74, 0.055, 0.075 * heavy, "square", opts);
-      arcadeTone(audio, 540, 0.04, 0.054 * heavy, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
-      arcadeTone(audio, 1260, 0.024, 0.034 * heavy, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 22 }));
-      return;
-    }
-    if (cue === "counter" || cue === "punish") {
-      playArcadeSFX("hit_heavy", Object.assign({}, opts, { intensity: Math.min(1.25, opts.intensity + 0.12) }));
-      arcadeTone(audio, cue === "punish" ? 990 : 1180, 0.075, 0.052, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 42 }));
-      arcadeTone(audio, cue === "punish" ? 1320 : 1480, 0.05, 0.04, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 74 }));
-      return;
-    }
-    if (cue === "launcher") {
-      arcadeNoise(audio, 0.06, 0.07 * heavy, "highpass", 1100, opts);
-      arcadeSweep(audio, 240, 980, 0.16, 0.06 * heavy, "sawtooth", opts);
-      arcadeTone(audio, 1560, 0.04, 0.035, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 80 }));
-      return;
-    }
-    if (cue === "block") {
-      arcadeNoise(audio, 0.045, 0.058 * opts.intensity, "bandpass", 820, opts);
-      arcadeTone(audio, 150, 0.035, 0.055 * opts.intensity, "square", opts);
-      arcadeTone(audio, 270, 0.04, 0.035 * opts.intensity, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
-      return;
-    }
-    if (cue === "guard" || cue === "just_guard") {
-      arcadeTone(audio, 420, 0.04, 0.05 * opts.intensity, "triangle", opts);
-      arcadeTone(audio, 980, 0.035, 0.045 * opts.intensity, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 14 }));
-      arcadeTone(audio, 1540, 0.04, 0.03, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 34 }));
-      return;
-    }
-    if (cue === "guard_cancel") {
-      playArcadeSFX("just_guard", opts);
-      arcadeSweep(audio, 520, 1120, 0.12, 0.045, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 44 }));
-      return;
-    }
-    if (cue === "armor") {
-      arcadeNoise(audio, 0.09, 0.07 * heavy, "lowpass", 420, opts);
-      arcadeTone(audio, 72, 0.08, 0.075 * heavy, "square", opts);
-      arcadeTone(audio, 144, 0.06, 0.05 * heavy, "sawtooth", Object.assign({}, opts, { delayMS: opts.delayMS + 18 }));
-      return;
-    }
-    if (cue === "throw") {
-      arcadeNoise(audio, 0.075, 0.06 * heavy, "bandpass", 620, opts);
-      arcadeSweep(audio, 420, 120, 0.11, 0.052 * heavy, "sawtooth", opts);
-      arcadeTone(audio, 110, 0.065, 0.08 * heavy, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 24 }));
-      return;
-    }
-    if (cue === "throw_tech") {
-      arcadeTone(audio, 560, 0.035, 0.055, "square", opts);
-      arcadeTone(audio, 1120, 0.05, 0.05, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 20 }));
-      arcadeNoise(audio, 0.035, 0.045, "highpass", 1800, Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
-      return;
-    }
-    if (cue === "surge" || cue === "surge_ready") {
-      arcadeSweep(audio, cue === "surge" ? 160 : 320, cue === "surge" ? 920 : 1280, cue === "surge" ? 0.34 : 0.12, cue === "surge" ? 0.07 : 0.045, "sawtooth", opts);
-      arcadeTone(audio, cue === "surge" ? 80 : 640, cue === "surge" ? 0.24 : 0.06, cue === "surge" ? 0.055 : 0.035, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 38 }));
-      return;
-    }
-    arcadeTone(audio, 440, 0.035, 0.045, "square", opts);
-    arcadeTone(audio, 660, 0.04, 0.035, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 12 }));
-  }
-
-  function arcadeConnectToOutput(audio, node, opts, nodes) {
-    let tail = node;
-    if (typeof audio.createStereoPanner === "function" && Math.abs(opts.pan) > 0.001) {
-      const panner = audio.createStereoPanner();
-      panner.pan.value = opts.pan;
-      tail.connect(panner);
-      tail = panner;
-      nodes.push(panner);
-    }
-    tail.connect(arcadeOutput(audio));
-  }
-
-  function arcadeSetParam(param, value, time) {
-    if (param && typeof param.setValueAtTime === "function") {
-      param.setValueAtTime(value, time || 0);
-      return;
-    }
-    if (param && Object.prototype.hasOwnProperty.call(param, "value")) {
-      param.value = value;
-    }
-  }
-
-  function arcadeRampParam(param, value, time, exponential) {
-    if (param && exponential && typeof param.exponentialRampToValueAtTime === "function") {
-      param.exponentialRampToValueAtTime(Math.max(0.0001, value), time);
-      return;
-    }
-    if (param && typeof param.linearRampToValueAtTime === "function") {
-      param.linearRampToValueAtTime(value, time);
-      return;
-    }
-    arcadeSetParam(param, value, time);
-  }
-
-  function arcadeEnvelope(gain, now, volume, duration) {
-    if (!gain || !gain.gain) return;
-    arcadeSetParam(gain.gain, 0.0001, now);
-    arcadeRampParam(gain.gain, Math.max(0.0001, volume), now + 0.006, true);
-    arcadeRampParam(gain.gain, 0.0001, now + duration + 0.04, true);
-  }
-
-  function arcadeTrackVoice(record) {
-    arcadeAudioState.active.push(record);
-    while (arcadeAudioState.active.length > arcadeAudioState.voiceLimit) {
-      releaseArcadeAudio(arcadeAudioState.active[0], true);
-    }
-  }
-
-  function arcadeTone(audio, freq, duration, volume, type, options) {
-    const opts = arcadeSoundOptions(options);
-    const now = audio.currentTime || 0;
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.type = type || "square";
-    arcadeSetParam(osc.frequency, freq * opts.rate, now);
-    arcadeEnvelope(gain, now, volume * opts.intensity, duration);
-    osc.connect(gain);
-    const nodes = [osc, gain];
-    arcadeConnectToOutput(audio, gain, opts, nodes);
-    const record = { source: osc, nodes: [osc, gain] };
-    record.nodes = nodes;
-    arcadeTrackVoice(record);
-    osc.onended = function() {
-      releaseArcadeAudio(record, false);
-    };
-    const startAt = now + opts.delayMS / 1000;
-    osc.start(startAt);
-    osc.stop(startAt + duration + 0.08);
-  }
-
-  function arcadeSweep(audio, startFreq, endFreq, duration, volume, type, options) {
-    const opts = arcadeSoundOptions(options);
-    const now = audio.currentTime || 0;
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.type = type || "sawtooth";
-    const startAt = now + opts.delayMS / 1000;
-    arcadeSetParam(osc.frequency, Math.max(20, startFreq * opts.rate), startAt);
-    arcadeRampParam(osc.frequency, Math.max(20, endFreq * opts.rate), startAt + duration, false);
-    arcadeEnvelope(gain, startAt, volume * opts.intensity, duration);
-    osc.connect(gain);
-    const nodes = [osc, gain];
-    arcadeConnectToOutput(audio, gain, opts, nodes);
-    const record = { source: osc, nodes: nodes };
-    arcadeTrackVoice(record);
-    osc.onended = function() {
-      releaseArcadeAudio(record, false);
-    };
-    osc.start(startAt);
-    osc.stop(startAt + duration + 0.08);
-  }
-
-  function arcadeNoise(audio, duration, volume, filterType, frequency, options) {
-    if (typeof audio.createBuffer !== "function" || typeof audio.createBufferSource !== "function") {
-      arcadeTone(audio, frequency || 440, duration, volume * 0.7, "square", options);
-      return;
-    }
-    const opts = arcadeSoundOptions(options);
-    const sampleRate = Math.max(8000, audio.sampleRate || 44100);
-    const length = Math.max(1, Math.floor(sampleRate * duration));
-    const buffer = audio.createBuffer(1, length, sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < length; i += 1) {
-      const falloff = 1 - i / length;
-      data[i] = (Math.random() * 2 - 1) * falloff;
-    }
-    const source = audio.createBufferSource();
-    const gain = audio.createGain();
-    source.buffer = buffer;
-    let tail = source;
-    const nodes = [source, gain];
-    if (typeof audio.createBiquadFilter === "function") {
-      const filter = audio.createBiquadFilter();
-      filter.type = filterType || "bandpass";
-      if (filter.frequency) filter.frequency.value = Math.max(40, frequency || 1200);
-      if (filter.Q) filter.Q.value = filter.type === "lowpass" ? 0.75 : 4.5;
-      source.connect(filter);
-      tail = filter;
-      nodes.push(filter);
-    }
-    const now = audio.currentTime || 0;
-    const startAt = now + opts.delayMS / 1000;
-    arcadeEnvelope(gain, startAt, volume * opts.intensity, duration);
-    tail.connect(gain);
-    arcadeConnectToOutput(audio, gain, opts, nodes);
-    const record = { source: source, nodes: nodes };
-    arcadeTrackVoice(record);
-    source.onended = function() {
-      releaseArcadeAudio(record, false);
-    };
-    source.start(startAt);
-    source.stop(startAt + duration + 0.08);
-  }
-
-  function releaseArcadeAudio(record, stop) {
-    if (!record) return;
-    const index = arcadeAudioState.active.indexOf(record);
-    if (index >= 0) arcadeAudioState.active.splice(index, 1);
-    if (record.source) {
-      record.source.onended = null;
-      if (stop && typeof record.source.stop === "function") {
-        try {
-          record.source.stop(0);
-        } catch (_e) {}
-      }
-    }
-    for (const node of record.nodes || []) {
-      if (node && typeof node.disconnect === "function") {
-        try {
-          node.disconnect();
-        } catch (_e) {}
-      }
-    }
-  }
-
-  function stopArcadeSFX() {
-    arcadeAudioState.active.slice().forEach(function(record) {
-      releaseArcadeAudio(record, true);
-    });
-  }
-
-  function arcadeLayerGain(layer) {
-    const gain = layer && typeof layer.gain === "number" ? layer.gain : 1;
-    return Math.max(0, gain);
-  }
-
-  // arcadeMergePatchLayerOptions layers a SynthPatch layer's own pan/
-  // delayMS/rate/envelope (see scene/audio.go's ToneLayer/SweepLayer/
-  // NoiseLayer) on top of the patch-level options every layer starts
-  // from, so a single arcadePlayPatch() call can fire layers that each
-  // deviate from the shared pan/timing/rate.
-  function arcadeMergePatchLayerOptions(layer, baseOpts) {
-    const merged = Object.assign({}, baseOpts);
-    if (layer && typeof layer.pan === "number") {
-      merged.pan = arcadeClamp(layer.pan, -0.95, 0.95, baseOpts.pan);
-    }
-    if (layer && typeof layer.delayMS === "number" && layer.delayMS > 0) {
-      merged.delayMS = Math.max(0, baseOpts.delayMS + layer.delayMS);
-    }
-    if (layer && typeof layer.rate === "number" && layer.rate > 0) {
-      merged.rate = arcadeClamp(layer.rate, 0.05, 4, baseOpts.rate);
-    }
-    if (layer && layer.envelope && typeof layer.envelope === "object") {
-      merged.envelope = layer.envelope;
-    }
-    return merged;
-  }
-
-  // arcadePlayPatch fires a SynthPatch (scene/audio.go): an arbitrary
-  // combination of tone/sweep/noise layers, each an arcadeTone/
-  // arcadeSweep/arcadeNoise call under the hood. This is the trigger seam
-  // arcadeAudio previously lacked outside playArcadeSFX's fixed, hard-coded
-  // cue vocabulary — see window.__gosx.arcadeAudio below and
-  // 20-scene-mount.js's "audio" hub-event handling for how a server-driven
-  // scene reaches this.
-  function arcadePlayPatch(patch, options) {
-    const audio = unlockArcadeAudio();
-    if (!audio || !patch || typeof patch !== "object") return;
-    const baseOpts = arcadeSoundOptions(options);
-    (Array.isArray(patch.tones) ? patch.tones : []).forEach(function(tone) {
-      if (!tone || typeof tone !== "object") return;
-      arcadeTone(
-        audio,
-        hubInputNumber(tone.frequency, 440),
-        Math.max(0.01, hubInputNumber(tone.duration, 0.05)),
-        arcadeLayerGain(tone),
-        tone.waveform || "square",
-        arcadeMergePatchLayerOptions(tone, baseOpts),
-      );
-    });
-    (Array.isArray(patch.sweeps) ? patch.sweeps : []).forEach(function(sweep) {
-      if (!sweep || typeof sweep !== "object") return;
-      arcadeSweep(
-        audio,
-        hubInputNumber(sweep.startFrequency, 440),
-        hubInputNumber(sweep.endFrequency, 220),
-        Math.max(0.01, hubInputNumber(sweep.duration, 0.12)),
-        arcadeLayerGain(sweep),
-        sweep.waveform || "sawtooth",
-        arcadeMergePatchLayerOptions(sweep, baseOpts),
-      );
-    });
-    (Array.isArray(patch.noises) ? patch.noises : []).forEach(function(noise) {
-      if (!noise || typeof noise !== "object") return;
-      arcadeNoise(
-        audio,
-        Math.max(0.01, hubInputNumber(noise.duration, 0.08)),
-        arcadeLayerGain(noise),
-        noise.filterType || "bandpass",
-        hubInputNumber(noise.filterFrequency, 1200),
-        arcadeMergePatchLayerOptions(noise, baseOpts),
-      );
-    });
-  }
-
-  // window.__gosx.arcadeAudio exposes the procedural synth engine outside
-  // its previous sole caller (createHubInputController's onHubMessage,
-  // above). This is the "minimal trigger seam" scene/audio.go's AudioCue
-  // doc references: any code holding window.__gosx (e.g.
-  // 20-scene-mount.js's "audio" hub-event handling) can fire a built-in
-  // named cue or an inline SynthPatch without depending on this closure.
-  window.__gosx.arcadeAudio = {
-    play: playArcadeSFX,
-    playPatch: arcadePlayPatch,
-    stop: stopArcadeSFX,
-    unlock: unlockArcadeAudio,
-  };
-
-  function hubInputNumber(value, fallback) {
-    const next = Number(value);
-    return Number.isFinite(next) ? next : fallback;
-  }
-
-  function gamepadPressed(pad, index) {
-    const button = pad && pad.buttons && pad.buttons[index];
-    return Boolean(button && (button.pressed || hubInputNumber(button.value, 0) > 0.55));
-  }
-
-  function hubInputCapturesKey(event) {
-    const code = String(event && event.code || "");
-    const key = String(event && event.key || "").toLowerCase();
-    return code === "KeyW" || code === "KeyA" || code === "KeyS" || code === "KeyD"
-      || code === "KeyU" || code === "KeyI" || code === "KeyJ" || code === "KeyK" || code === "KeyL"
-      || code === "ArrowUp" || code === "ArrowDown" || code === "ArrowLeft" || code === "ArrowRight"
-      || code === "Space"
-      || key === "w" || key === "a" || key === "s" || key === "d"
-      || key === "u" || key === "i" || key === "j" || key === "k" || key === "l"
-      || key === " ";
-  }
-
-  function connectHub(entry) {
-    if (!canConnectHub(entry)) return;
-
-    window.__gosx_disconnect_hub(entry.id);
-    const record = createHubRecord(entry);
-    window.__gosx.hubs.set(entry.id, record);
-    attachHubSocketHandlers(record);
-  }
-
-  function canConnectHub(entry) {
-    return Boolean(entry && entry.id && entry.path && typeof WebSocket === "function");
-  }
-
-  function createHubRecord(entry) {
-    return {
-      entry: entry,
-      socket: new WebSocket(hubURL(entry.path)),
-      reconnectTimer: null,
-    };
-  }
-
-  function bindHubOutputs(record) {
-    record.outputUnsubscribers = record.outputUnsubscribers || [];
-    if (record.outputUnsubscribers.length > 0) return;
-    const bindings = record.entry && record.entry.bindings;
-    if (!bindings || !bindings.length) return;
-    for (let bi = 0; bi < bindings.length; bi++) {
-      const b = bindings[bi];
-      if (!b || b.direction !== "out" || !b.signal || !b.event) continue;
-      (function(binding) {
-        let lastSentAt = 0;
-        let debounceTimer = null;
-        const sendValue = function(value) {
-          const socket = record.socket;
-          if (socket && (socket.readyState === 1 || socket.readyState == null)) {
-            socket.send(JSON.stringify({ event: binding.event, data: value || {} }));
-          }
-        };
-        const fn = function(value) {
-          if (binding.throttleMs > 0) {
-            const now = Date.now();
-            if (now - lastSentAt >= binding.throttleMs) {
-              lastSentAt = now;
-              sendValue(value);
-            }
-          } else if (binding.debounceMs > 0) {
-            if (debounceTimer != null) clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(function() {
-              debounceTimer = null;
-              sendValue(value);
-            }, binding.debounceMs);
-          } else {
-            sendValue(value);
-          }
-        };
-        const unsub = gosxSubscribeSharedSignal(binding.signal, fn, { immediate: false });
-        record.outputUnsubscribers.push(unsub);
-      })(b);
-    }
-  }
-
-  function attachHubSocketHandlers(record) {
-    const entry = record.entry;
-    const socket = record.socket;
-    record.inputController = createHubInputController(record);
-    try {
-      socket.binaryType = "arraybuffer";
-    } catch (_e) {
-      // Some test doubles and embedded runtimes expose binaryType as read-only.
-    }
-    socket.onopen = function() {
-      if (record.inputController && typeof record.inputController.flush === "function") {
-        record.inputController.flush();
-      }
-      bindHubOutputs(record);
-    };
-    socket.onmessage = function(evt) {
-      const decoded = decodeHubMessage(entry, evt.data);
-      if (decoded && typeof decoded.then === "function") {
-        decoded.then(function(message) {
-          dispatchHubMessage(record, message);
-        });
-        return;
-      }
-      dispatchHubMessage(record, decoded);
-    };
-
-    socket.onclose = function() {
-      scheduleHubReconnect(record);
-    };
-
-    socket.onerror = function(e) {
-      console.error(`[gosx] hub connection error for ${entry.id}:`, e);
-    };
-  }
-
-  function dispatchHubMessage(record, message) {
-    if (!message) return;
-    const entry = record.entry;
-    applyHubBindings(entry, message);
-    if (record.inputController && typeof record.inputController.onMessage === "function") {
-      try {
-        record.inputController.onMessage(message);
-      } catch (e) {
-        console.error(`[gosx] hub input message error for ${entry.id}:`, e);
-      }
-    }
-    emitHubEvent(entry, message);
-  }
-
-  function decodeHubMessage(entry, raw) {
-    if (typeof raw === "string") {
-      return parseHubMessage(entry, raw, false);
-    }
-    if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
-      return null;
-    }
-    if (raw && typeof raw.text === "function") {
-      return raw.text().then(function(text) {
-        return parseHubMessage(entry, text, true);
-      }, function() {
-        return null;
-      });
-    }
-    return null;
-  }
-
-  function parseHubMessage(entry, raw, quietNonJSON) {
-    const text = String(raw == null ? "" : raw);
-    const trimmed = text.trim();
-    if (quietNonJSON && trimmed && trimmed[0] !== "{" && trimmed[0] !== "[") {
-      return null;
-    }
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      console.error(`[gosx] failed to decode hub message for ${entry.id}:`, e);
-      return null;
-    }
-  }
-
-  function emitHubEvent(entry, message) {
-    if (typeof document.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
-      return;
-    }
-    document.dispatchEvent(new CustomEvent("gosx:hub:event", {
-      detail: {
-        hubID: entry.id,
-        hubName: entry.name,
-        event: message.event,
-        data: message.data,
-      },
-    }));
-  }
-
-  function scheduleHubReconnect(record) {
-    const entry = record.entry;
-    const socket = record.socket;
-    const current = window.__gosx.hubs.get(entry.id);
-    if (!current || current.socket !== socket) return;
-    current.reconnectTimer = setTimeout(function() {
-      connectHub(entry);
-    }, 1000);
-  }
-
-  async function connectAllHubs(manifest) {
-    initializeClientIdentity(manifest && manifest.clientIdentity);
-    if (!manifest || !manifest.hubs || manifest.hubs.length === 0) return;
-    for (const entry of manifest.hubs) {
-      connectHub(entry);
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Island disposal
-  // --------------------------------------------------------------------------
-
-  // Remove all delegated event listeners for an island and clear it from the
-  // tracking map. Optionally calls the WASM-side __gosx_dispose if available.
-  window.__gosx_dispose_island = function(islandID) {
-    const record = window.__gosx.islands.get(islandID);
-    if (!record) return;
-
-    // Remove delegated listeners from the island root.
-    if (record.root && record.listeners) {
-      for (const entry of record.listeners) {
-        record.root.removeEventListener(entry.type, entry.listener, entry.capture);
-      }
-    }
-
-    // Notify WASM side if dispose function is available.
-    if (typeof window.__gosx_dispose === "function") {
-      try {
-        window.__gosx_dispose(islandID);
-      } catch (e) {
-        console.error(`[gosx] dispose error for ${islandID}:`, e);
-      }
-    }
-
-    window.__gosx.islands.delete(islandID);
-  };
-
-  window.__gosx_dispose_compute_island = function(islandID) {
-    const record = window.__gosx.computeIslands && window.__gosx.computeIslands.get(islandID);
-    if (!record) return;
-
-    releaseInputProviders(record);
-
-    if (typeof window.__gosx_dispose === "function") {
-      try {
-        window.__gosx_dispose(islandID);
-      } catch (e) {
-        console.error(`[gosx] dispose error for compute island ${islandID}:`, e);
-      }
-    }
-
-    window.__gosx.computeIslands.delete(islandID);
-  };
-
-  window.__gosx_dispose_engine = function(engineID) {
-    const pending = pendingEngineRuntimes.get(engineID);
-    if (pending) disposePendingEngine(pending, true);
-
-    const record = window.__gosx.engines.get(engineID);
-    if (!record) return;
-    window.__gosx.engines.delete(engineID);
-    if (record.disposed) return;
-    record.disposed = true;
-    if (record.moduleRecord) record.moduleRecord.mountedIDs.delete(engineID);
-
-    releaseInputProviders(record);
-
-    if (record.runtime && typeof record.runtime.dispose === "function") {
-      try {
-        record.runtime.dispose();
-      } catch (e) {
-        console.error(`[gosx] runtime dispose error for engine ${engineID}:`, e);
-      }
-    }
-
-    if (record.handle && typeof record.handle.dispose === "function") {
-      try {
-        record.handle.dispose();
-      } catch (e) {
-        console.error(`[gosx] dispose error for engine ${engineID}:`, e);
-      }
-    }
-    if (record.fallbackSnapshot) {
-      restoreGoWASMEngineFallback(record.mount, record.fallbackSnapshot);
-    }
-  };
-
-  window.__gosx_engine_frame = function(engineID) {
-    const pending = pendingEngineRuntimes.get(engineID);
-    if (pending && pending.runtime && typeof pending.runtime.frame === "function") {
-      return pending.runtime.frame();
-    }
-    const record = window.__gosx.engines.get(engineID);
-    if (!record || !record.runtime || typeof record.runtime.frame !== "function") {
-      return null;
-    }
-    return record.runtime.frame();
-  };
-
-  window.__gosx_disconnect_hub = function(hubID) {
-    const record = window.__gosx.hubs.get(hubID);
-    if (!record) return;
-
-    if (record.reconnectTimer) {
-      clearTimeout(record.reconnectTimer);
-      record.reconnectTimer = null;
-    }
-    if (record.inputController && typeof record.inputController.dispose === "function") {
-      record.inputController.dispose();
-      record.inputController = null;
-    }
-    if (Array.isArray(record.outputUnsubscribers)) {
-      record.outputUnsubscribers.forEach(function(fn) { try { fn(); } catch (_) {} });
-      record.outputUnsubscribers = null;
-    }
-    if (record.socket && typeof record.socket.close === "function") {
-      try {
-        record.socket.close();
-      } catch (e) {
-        console.error(`[gosx] disconnect error for hub ${hubID}:`, e);
-      }
-    }
-
-    window.__gosx.hubs.delete(hubID);
-  };
-
-  async function disposePage(reuseEngineIDs) {
-    const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
-    goWASMEnginePageGeneration += 1;
-    for (const pending of Array.from(pendingEngineRuntimes.values())) {
-      disposePendingEngine(pending, true);
-    }
-    for (const islandID of Array.from(window.__gosx.islands.keys())) {
-      window.__gosx_dispose_island(islandID);
-    }
-    if (window.__gosx.computeIslands) {
-      for (const islandID of Array.from(window.__gosx.computeIslands.keys())) {
-        window.__gosx_dispose_compute_island(islandID);
-      }
-    }
-    for (const engineID of Array.from(window.__gosx.engines.keys())) {
-      if (reuseIDs.has(engineID)) {
-        const record = window.__gosx.engines.get(engineID);
-        reportEngineReuseTelemetry(engineID, record && record.component, record && record.mount);
-        continue; // carried across the navigation — see window.__gosx_reusable_engines
-      }
-      window.__gosx_dispose_engine(engineID);
-    }
-    for (const hubID of Array.from(window.__gosx.hubs.keys())) {
-      window.__gosx_disconnect_hub(hubID);
-    }
-    disposeManagedMotion();
-    disposeManagedTextLayouts();
-    pendingManifest = null;
-    window.__gosx.ready = false;
-  }
-
-  // --------------------------------------------------------------------------
-  // Persistent scene engines across soft navigations
-  // --------------------------------------------------------------------------
-  //
-  // Soft navigation (server/navigation_runtime.js) used to dispose EVERY
-  // mounted engine on every navigate() and let bootstrapPage() re-mount from
-  // the incoming manifest — so a page-spanning background (e.g. a Scene3D
-  // starfield) tore down and rebuilt its WebGL/WebGPU context on every nav,
-  // producing a visible re-mount blink even though the scene never actually
-  // changed. window.__gosx_reusable_engines lets the navigation runtime
-  // identify engines it can carry across a navigation instead: disposePage
-  // (above) skips disposing them, replaceBody moves the LIVE mount element
-  // into the new body instead of cloning a fresh one (a same-document move
-  // preserves the canvas's rendering context; removal+recreation does not),
-  // and mountAllEngines skips remounting them.
-  //
-  // Reuse rule (deliberately conservative — this is a same-document DOM
-  // move, not a real diff/patch, so false positives would visibly break the
-  // page): an engine is reused ONLY when, for the SAME engine id, the
-  // outgoing and incoming manifest entries have the identical component,
-  // the identical mountId (the actual DOM element being kept), AND
-  // byte-identical serialized `props` (the structural scene payload — geometry,
-  // materials, lights, post-FX, quality ladder, everything the server
-  // authored). Runtime-only state that lives inside the already-mounted
-  // engine instance (camera orbit position, water sim state, in-flight
-  // animations, adaptive-quality rung, ...) is intentionally NOT part of the
-  // comparison — preserving exactly that state across the navigation is the
-  // whole point of reuse. Any other difference (including one the deep
-  // serialization comparison can't see, by construction, since it only sees
-  // authored props) falls back to the original dispose+remount behavior.
-  function scenePayloadIdentical(outgoingEntry, incomingEntry) {
-    try {
-      return JSON.stringify(outgoingEntry.props || null) === JSON.stringify(incomingEntry.props || null);
-    } catch (_e) {
-      return false;
-    }
-  }
-
-  window.__gosx_reusable_engines = function(nextDoc) {
-    const reusable = new Set();
-    if (!nextDoc || !pendingManifest || !Array.isArray(pendingManifest.engines)) {
-      return reusable;
-    }
-    let nextManifest = null;
-    try {
-      const el = typeof nextDoc.getElementById === "function" ? nextDoc.getElementById("gosx-manifest") : null;
-      if (el) nextManifest = JSON.parse(el.textContent);
-    } catch (_e) {
-      return reusable;
-    }
-    if (!nextManifest || !Array.isArray(nextManifest.engines)) {
-      return reusable;
-    }
-    inflateManifestShaderLibs(nextManifest, { publish: false });
-    const nextByID = new Map();
-    for (const entry of nextManifest.engines) {
-      if (entry && entry.id) nextByID.set(String(entry.id), entry);
-    }
-    for (const outgoingEntry of pendingManifest.engines) {
-      if (!outgoingEntry || !outgoingEntry.id) continue;
-      const engineID = String(outgoingEntry.id);
-      const record = window.__gosx.engines.get(engineID);
-      if (!record || record.disposed) continue; // nothing live to carry over
-      const incomingEntry = nextByID.get(engineID);
-      if (!incomingEntry) continue;
-      if (String(outgoingEntry.component || "") !== String(incomingEntry.component || "")) continue;
-      if (String(outgoingEntry.mountId || outgoingEntry.id || "") !== String(incomingEntry.mountId || incomingEntry.id || "")) continue;
-      if (!scenePayloadIdentical(outgoingEntry, incomingEntry)) continue;
-      reusable.add(engineID);
-    }
-    return reusable;
-  };
-
-  function reportEngineReuseTelemetry(engineID, component, mount) {
-    if (mount && typeof mount.setAttribute === "function") {
-      mount.setAttribute("data-gosx-engine-reused", "true");
-    }
-    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
-      window.__gosx_emit("info", "engine", "engine-reused-across-navigation", {
-        engineID: String(engineID || ""),
-        component: String(component || ""),
-      });
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Hydration
-  // --------------------------------------------------------------------------
-
-  // Hydrate a single island: fetch its program data, call __gosx_hydrate,
-  // and set up event delegation on the island root element.
-  function entryRequiresAsyncWebGPUProbe(entry) {
-    const required = requiredCapabilityList(entry);
-    return required.some((capability) => capability.indexOf("webgpu:") === 0 || capability.indexOf("webgpu-feature:") === 0);
-  }
-
-  async function prepareRuntimeCapabilityProbe(entry) {
-    if (!entryRequiresAsyncWebGPUProbe(entry)) {
-      return;
-    }
-    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
-      await window.__gosx_scene3d_webgpu_probe_ready();
-    }
-  }
-
-  async function hydrateIsland(entry) {
-    const root = islandRoot(entry);
-    if (!root) return;
-    if (entry.static) return;
-
-    const program = await loadIslandProgram(entry, root);
-    if (!program) return;
-    if (!runIslandHydration(entry, root, program)) return;
-    const listeners = setupEventDelegation(root, entry.id);
-    rememberHydratedIsland(entry, root, listeners);
-  }
-
-  async function hydrateComputeIsland(entry) {
-    if (!entry || entry.static) return;
-    await prepareRuntimeCapabilityProbe(entry);
-    const capabilityStatus = runtimeCapabilityStatus(entry);
-    if (!capabilityStatus.ok) {
-      reportMissingComputeIslandCapabilities(entry, capabilityStatus);
-      return;
-    }
-
-    const program = await loadIslandProgram(entry, null);
-    if (!program) return;
-    if (!runComputeIslandHydration(entry, program)) return;
-    activateInputProviders(entry);
-    rememberHydratedComputeIsland(entry);
-  }
-
-  function reportMissingComputeIslandCapabilities(entry, status) {
-    const missing = status.missing.join(" ");
-    console.error(`[gosx] missing required compute island capabilities for ${entry.id}: ${missing}`);
-    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
-      window.__gosx_emit("error", "compute-island", "missing required compute island capabilities", {
-        islandID: String(entry.id || ""),
-        component: String(entry.component || ""),
-        missing,
-      });
-    }
-    if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-      window.__gosx.reportIssue({
-        scope: "compute-island",
-        type: "capability",
-        component: entry.component,
-        source: entry.id,
-        message: `missing required compute island capabilities: ${missing}`,
-        fallback: "none",
-      });
-    }
-  }
-
-  function islandRoot(entry) {
-    const root = document.getElementById(entry.id);
-    if (!root) {
-      console.warn(`[gosx] island root #${entry.id} not found in DOM`);
-      return null;
-    }
-    return root;
-  }
-
-  async function loadIslandProgram(entry, root) {
-    const programFormat = inferProgramFormat(entry);
-    if (!entry.programRef) {
-      console.error(`[gosx] skipping island ${entry.id} — missing programRef`);
-      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
-        window.__gosx_emit("error", "island", "missing programRef", {
-          islandID: String(entry.id || ""),
-          component: String(entry.component || ""),
-        });
-      }
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "island",
-          type: "program",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.programRef,
-          element: root,
-          message: `missing programRef for island ${entry.id}`,
-          fallback: "server",
-        });
-      }
-      return null;
-    }
-
-    const programData = await fetchProgram(entry.programRef, programFormat);
-    if (programData === null) {
-      console.error(`[gosx] skipping island ${entry.id} — program fetch failed`);
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "island",
-          type: "program",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.programRef,
-          element: root,
-          message: `failed to fetch island program for ${entry.id}`,
-          fallback: "server",
-        });
-      }
-      return null;
-    }
-    return { data: programData, format: programFormat };
-  }
-
-  function runIslandHydration(entry, root, program) {
-    const hydrateFn = window.__gosx_hydrate;
-    if (typeof hydrateFn !== "function") {
-      console.error("[gosx] __gosx_hydrate not available — cannot hydrate island", entry.id);
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "island",
-          type: "hydrate",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.programRef,
-          element: root,
-          message: `__gosx_hydrate not available for island ${entry.id}`,
-          fallback: "server",
-        });
-      }
-      return false;
-    }
-
-    try {
-      const result = hydrateFn(
-        entry.id,
-        entry.component,
-        JSON.stringify(entry.props || {}),
-        program.data,
-        program.format
-      );
-      if (typeof result === "string" && result !== "") {
-        console.error(`[gosx] failed to hydrate island ${entry.id}: ${result}`);
-        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
-          window.__gosx_emit("error", "island", "failed to hydrate island", {
-            islandID: String(entry.id || ""),
-            component: String(entry.component || ""),
-            programRef: String(entry.programRef || ""),
-            reason: String(result),
-          });
-        }
-        if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-          window.__gosx.reportIssue({
-            scope: "island",
-            type: "hydrate",
-            component: entry.component,
-            source: entry.id,
-            ref: entry.programRef,
-            element: root,
-            message: result,
-            fallback: "server",
-          });
-        }
-        return false;
-      }
-      return true;
-    } catch (e) {
-      console.error(`[gosx] failed to hydrate island ${entry.id}:`, e);
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "island",
-          type: "hydrate",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.programRef,
-          element: root,
-          message: `failed to hydrate island ${entry.id}`,
-          error: e,
-          fallback: "server",
-        });
-      }
-      return false;
-    }
-  }
-
-  function runComputeIslandHydration(entry, program) {
-    const hydrateFn = typeof window.__gosx_hydrate_compute === "function"
-      ? window.__gosx_hydrate_compute
-      : window.__gosx_hydrate;
-    if (typeof hydrateFn !== "function") {
-      console.error("[gosx] __gosx_hydrate_compute not available — cannot hydrate compute island", entry.id);
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "compute-island",
-          type: "hydrate",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.programRef,
-          message: `__gosx_hydrate_compute not available for compute island ${entry.id}`,
-          fallback: "none",
-        });
-      }
-      return false;
-    }
-
-    try {
-      const result = hydrateFn(
-        entry.id,
-        entry.component,
-        JSON.stringify(entry.props || {}),
-        program.data,
-        program.format
-      );
-      if (typeof result === "string" && result !== "") {
-        console.error(`[gosx] failed to hydrate compute island ${entry.id}: ${result}`);
-        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
-          window.__gosx_emit("error", "compute-island", "failed to hydrate compute island", {
-            islandID: String(entry.id || ""),
-            component: String(entry.component || ""),
-            programRef: String(entry.programRef || ""),
-            reason: String(result),
-          });
-        }
-        if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-          window.__gosx.reportIssue({
-            scope: "compute-island",
-            type: "hydrate",
-            component: entry.component,
-            source: entry.id,
-            ref: entry.programRef,
-            message: result,
-            fallback: "none",
-          });
-        }
-        return false;
-      }
-      return true;
-    } catch (e) {
-      console.error(`[gosx] failed to hydrate compute island ${entry.id}:`, e);
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "compute-island",
-          type: "hydrate",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.programRef,
-          message: `failed to hydrate compute island ${entry.id}`,
-          error: e,
-          fallback: "none",
-        });
-      }
-      return false;
-    }
-  }
-
-  function rememberHydratedIsland(entry, root, listeners) {
-    if (window.__gosx && typeof window.__gosx.clearIssueState === "function") {
-      window.__gosx.clearIssueState(root);
-    }
-    window.__gosx.islands.set(entry.id, {
-      component: entry.component,
-      root: root,
-      listeners: listeners,
-    });
-  }
-
-  function rememberHydratedComputeIsland(entry) {
-    if (!window.__gosx.computeIslands) {
-      window.__gosx.computeIslands = new Map();
-    }
-    window.__gosx.computeIslands.set(entry.id, {
-      component: entry.component,
-      capabilities: capabilityList(entry),
-    });
-  }
-
-  // Hydrate all islands from the manifest. Called once the WASM runtime
-  // signals readiness via __gosx_runtime_ready.
-  async function hydrateAllIslands(manifest) {
-    const islands = Array.isArray(manifest && manifest.islands) ? manifest.islands : [];
-    const computeIslands = Array.isArray(manifest && manifest.computeIslands) ? manifest.computeIslands : [];
-    if (islands.length === 0 && computeIslands.length === 0) return;
-
-    // Hydrate islands concurrently — each is independent.
-    const promises = islands.map(function(entry) {
-      return hydrateIsland(entry).catch(function(e) {
-        console.error(`[gosx] unexpected error hydrating ${entry.id}:`, e);
-      });
-    });
-    for (const entry of computeIslands) {
-      promises.push(hydrateComputeIsland(entry).catch(function(e) {
-        console.error(`[gosx] unexpected error hydrating compute island ${entry.id}:`, e);
-      }));
-    }
-
-    await Promise.all(promises);
-  }
-
-  // --------------------------------------------------------------------------
-  // Runtime ready callback
-  // --------------------------------------------------------------------------
-
-  // Called by the Go WASM binary once the runtime has finished initializing
-  // and all exported functions (__gosx_hydrate, __gosx_action, etc.) are
-  // registered. This is the signal that it is safe to hydrate islands.
-  window.__gosx_runtime_ready = function() {
-    if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
-      adoptTextLayoutImpl(window.__gosx_text_layout);
-      window.__gosx_text_layout = gosxTextLayout;
-    }
-    if (typeof window.__gosx_text_layout_metrics === "function" && window.__gosx_text_layout_metrics !== gosxTextLayoutMetrics) {
-      adoptTextLayoutMetricsImpl(window.__gosx_text_layout_metrics);
-      window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
-    }
-    if (typeof window.__gosx_text_layout_ranges === "function" && window.__gosx_text_layout_ranges !== gosxTextLayoutRanges) {
-      adoptTextLayoutRangesImpl(window.__gosx_text_layout_ranges);
-      window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
-    }
-    refreshManagedTextLayouts();
-    refreshGosxDocumentState("runtime-ready");
-    refreshGosxEnvironmentState("runtime-ready");
-    if (!pendingManifest) {
-      window.__gosx.ready = true;
-      refreshGosxDocumentState("ready");
-      return;
-    }
-
-    mountAllEngines(pendingManifest, pendingEngineReuseIDs, pendingIsNavigationBootstrap).then(function() {
-      return Promise.all([
-        hydrateAllIslands(pendingManifest),
-        connectAllHubs(pendingManifest),
-      ]);
-    }).then(function() {
-      window.__gosx.ready = true;
-      refreshGosxDocumentState("ready");
-      document.dispatchEvent(new CustomEvent("gosx:ready"));
-    }).catch(function(e) {
-      console.error("[gosx] bootstrap failed:", e);
-      window.__gosx.ready = true;
-      refreshGosxDocumentState("ready");
-    });
-  };
-
-  // --------------------------------------------------------------------------
-  // Main initialization
-  // --------------------------------------------------------------------------
-
-  // pendingEngineReuseIDs stashes the current bootstrapPage() call's reuse
-  // set for window.__gosx_runtime_ready to read — mirrors the pendingManifest
-  // pattern above (window.__gosx_runtime_ready is invoked by the Go-WASM
-  // binary itself once it finishes initializing, not by bootstrapPage
-  // directly, so the reuse set can't just be a local variable / call
-  // argument there). Reset unconditionally at the top of every bootstrapPage
-  // call so a later plain call (e.g. a future page's initial load) never
-  // sees a stale reuse set from a previous navigation. pendingIsNavigationBootstrap
-  // records whether THIS call's ORIGINAL argument was a real Set, captured
-  // before pendingEngineReuseIDs coerces a missing/non-Set argument away —
-  // that original distinction is what tells a first page load apart from a
-  // soft navigation (see mountAllEngines).
-  let pendingEngineReuseIDs = new Set();
-  let pendingIsNavigationBootstrap = false;
-
-  async function bootstrapPage(reuseEngineIDs) {
-    pendingIsNavigationBootstrap = reuseEngineIDs instanceof Set;
-    pendingEngineReuseIDs = pendingIsNavigationBootstrap ? reuseEngineIDs : new Set();
-    refreshGosxEnvironmentState("bootstrap-page");
-    refreshGosxDocumentState("bootstrap-page");
-    mountManagedMotion(document.body || document.documentElement);
-    mountManagedTextLayouts(document.body || document.documentElement);
-
-    const manifest = loadManifest();
-    if (!manifest) {
-      // No manifest — pure server-rendered page, no islands to hydrate.
-      pendingManifest = null;
-      window.__gosx.ready = true;
-      refreshGosxDocumentState("ready");
-      return;
-    }
-    // Inflate shaderLib refs in all entry props.scene objects before the manifest
-    // is stashed or consumed. Downstream consumers (16a/16b/16) see inline fields
-    // exactly as if the scene was never deduplicated.
-    inflateManifestShaderLibs(manifest);
-    initializeClientIdentity(manifest.clientIdentity);
-
-    // Stash manifest for use when WASM signals readiness.
-    pendingManifest = manifest;
-    window.__gosx.ready = false;
-
-    if (manifestNeedsRuntime(manifest)) {
-      if (runtimeReady()) {
-        window.__gosx_runtime_ready();
-      } else {
-        await loadRuntime(manifest.runtime);
-      }
-    } else {
-      if (manifestNeedsRuntimeBridge(manifest)) {
-        console.error("[gosx] islands, compute islands, and hub bindings require manifest.runtime.path");
-      }
-      window.__gosx_runtime_ready();
-    }
-  }
-
-  function manifestNeedsRuntimeBridge(manifest) {
-    return manifestHasEntries(manifest, "islands")
-      || manifestHasEntries(manifest, "computeIslands")
-      || manifestHasEntries(manifest, "hubs")
-      || Boolean(manifest && manifest.clientIdentity)
-      || manifestNeedsVideoBridge(manifest)
-      || manifestNeedsEngineInputBridge(manifest)
-      || manifestNeedsSharedEngineRuntime(manifest);
-  }
-
-  function manifestNeedsRuntime(manifest) {
-    return Boolean(manifestNeedsRuntimeBridge(manifest) && manifest.runtime && manifest.runtime.path);
-  }
-
-  function manifestNeedsEngineInputBridge(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      const capabilities = capabilityList(entry);
-      return capabilities.includes("keyboard") || capabilities.includes("pointer") || capabilities.includes("gamepad");
-    });
-  }
-
-  function manifestNeedsSharedEngineRuntime(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      return engineUsesSharedRuntime(entry);
-    });
-  }
-
-  function manifestNeedsVideoBridge(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      return entry && entry.kind === "video";
-    });
-  }
-
-  function manifestHasEntries(manifest, key) {
-    return Boolean(manifest && manifest[key] && manifest[key].length > 0);
-  }
-
-  window.__gosx_bootstrap_page = bootstrapPage;
-  window.__gosx_dispose_page = disposePage;
-
-  // Bench-mode exports. Activated only when window.__gosx_bench_exports
-  // is set to true BEFORE the bundle runs. Zero runtime cost in production
-  // — single boolean check per page load, never touches any function
-  // reference unless the flag is on. The bench harness at
-  // client/js/runtime.bench.js uses these to microbenchmark hot path
-  // functions in isolation without standing up the full DOM mount surface.
-  if (window.__gosx_bench_exports === true) {
-    window.__gosx_bench = {
-      // 10-runtime-scene-core.js
-      sceneRenderCamera: sceneRenderCamera,
-      translateScenePointInto: translateScenePointInto,
-      createSceneThickLineScratch: createSceneThickLineScratch,
-      expandSceneThickLineIntoScratch: expandSceneThickLineIntoScratch,
-      sceneBundleNeedsThickLines: sceneBundleNeedsThickLines,
-      // 16-scene-webgl.js — file-scope light/exposure helpers.
-      // (The per-frame functions like buildPBRDrawList, drawPBRObjectList,
-      // and render live inside createScenePBRRenderer closures and are not
-      // exposed here. Measure those via a real Scene3D mount in a follow-up
-      // if/when we need end-to-end per-frame numbers.)
-      scenePBRLightsHash: scenePBRLightsHash,
-      hashLightContent: hashLightContent,
-      hashEnvironmentContent: hashEnvironmentContent,
-      scenePBRUploadLights: scenePBRUploadLights,
-      scenePBRUploadExposure: scenePBRUploadExposure,
-    };
-  }
-
-  // Start when DOM is ready.
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bootstrapPage);
-  } else {
-    bootstrapPage();
-  }
-})();

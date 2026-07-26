@@ -232,7 +232,14 @@
   }
 
   function planeTriangleMesh(object) {
-    const vertices = boxVertices(object.width, 0, object.depth).slice(0, 4);
+    // Take the four corners of the y-plane, not the first four boxVertices.
+    // boxVertices lists the -z face first (indices 0..3), so slice(0, 4) with
+    // height 0 gave four points that all share z = -depth/2: a zero-area strip
+    // instead of a plane. Indices 0, 1, 5 and 4 are the corners that span x
+    // and z. The winding stays clockwise about the +y normal, which is the
+    // convention every other generator in this file uses.
+    const box = boxVertices(object.width, 0, object.depth);
+    const vertices = [box[0], box[1], box[5], box[4]];
     const out = scenePrimitiveMeshBuilder();
     const normal = { x: 0, y: 1, z: 0 };
     scenePushMeshTriangle(out, vertices[0], vertices[1], vertices[2], normal, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 });
@@ -426,6 +433,27 @@
     return sceneFinalizePrimitiveMesh(out);
   }
 
+  // sceneInstancedTriangleMesh borrows a solid mesh from the instanced
+  // geometry generators in 16c-scene-shared-pbr.js. Both files sit in the same
+  // IIFE and function declarations hoist, so the call resolves lexically.
+  //
+  // The two families return the same shape and differ only in the count key:
+  // this one uses `count`, the instanced one uses `vertexCount`. Tangents come
+  // through as generated, which is better than the empty array
+  // sceneFinalizePrimitiveMesh hands back.
+  function sceneInstancedTriangleMesh(kind, object) {
+    if (typeof generateInstancedGeometry !== "function") return null;
+    const mesh = generateInstancedGeometry(kind, object || {});
+    if (!mesh || !(mesh.vertexCount > 2)) return null;
+    return {
+      positions: mesh.positions,
+      normals: mesh.normals,
+      uvs: mesh.uvs,
+      tangents: mesh.tangents || new Float32Array(0),
+      count: mesh.vertexCount,
+    };
+  }
+
   function scenePrimitiveTriangleMesh(object) {
     switch (object && object.kind) {
       case "box":
@@ -439,6 +467,16 @@
         return torusTriangleMesh(object);
       case "torusknot":
         return torusKnotTriangleMesh(object);
+      // cylinder, cone and pyramid had no case here, so
+      // 10-runtime-scene-core.js never set vertices for them,
+      // appendSceneObjectToBundle fell through to sceneObjectSegments, and
+      // 15-scene-draw-plan.js kept the object on the line pass. Three
+      // documented primitive kinds drew as wireframes when the author asked
+      // for a solid mesh. The solid generators already existed in 16c.
+      case "cylinder":
+      case "cone":
+      case "pyramid":
+        return sceneInstancedTriangleMesh(object.kind, object);
       default:
         return null;
     }

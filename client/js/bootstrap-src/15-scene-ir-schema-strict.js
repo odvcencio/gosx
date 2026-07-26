@@ -1,3 +1,18 @@
+// 15-scene-ir-schema-strict — strict SceneIR validation. DEVELOPMENT TOOL.
+//
+// This file is in NO bundle. cmd/buildbootstrap does not list it.
+//
+// It re-checks a SceneIR document that the Go server already produced and
+// already validated, and it publishes window.__gosx_validate_scene_ir_strict.
+// Nothing in the runtime, the server, the tests or the examples reads that
+// global, so every Scene3D page paid 52_389 source bytes for a check that
+// never ran. Load this file directly from a tool or a test page when you want
+// the diagnostics.
+//
+// Keep it out of the bundles. If a production path ever needs validation, add
+// the specific check to the lightweight validator in 15-scene-ir-schema.js
+// instead of shipping this whole module.
+
   // Strict SceneIR validation for dev/test/CLI-style browser tooling. This
   // module is intentionally separate from the lightweight runtime validator so
   // production mount paths can keep their low-cost checks.

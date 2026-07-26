@@ -1297,13 +1297,189 @@
   var INSTANCED_CULL_RECORD_STRIDE = 80; // mat4(64) + pickData uint32x4(16)
   var INSTANCED_CULL_UNIFORM_SIZE  = 112; // 6 vec4 planes(96) + vertexCount u32 + radius f32 + 8B pad
 
-  function createSceneInstancedCullSystem(device, mesh) {
+  // SCENE_INSTANCED_CULL_BUILTIN_WGSL is the renderer's own frustum-cull
+  // kernel. It mirrors cullWGSL in render/bundle/cull.go term for term, and it
+  // scales the bounding radius PER INSTANCE by the largest of the three
+  // upper-left column lengths of the instance transform.
+  //
+  // The scale term is a correctness requirement, not a tuning knob. A constant
+  // radius drops an instance that its transform scales up, so the instance
+  // disappears while it is plainly on screen. The largest column length never
+  // under-estimates the sphere, so an instance is never wrongly culled. Shear
+  // inflates the radius, which is safe.
+  //
+  // Cost: three length() calls and two comparisons per thread.
+  //
+  // The thread guard bounds on the LIVE instance count, not on arrayLength. The
+  // input buffer's capacity runs 25% past the instance count, and WebGPU
+  // zero-initializes a buffer, so a thread past the live count would read an
+  // all-zero matrix. Its centre is the origin and its scale is zero, so it
+  // passes the frustum test and compacts a degenerate instance into the output.
+  // That instance rasterizes nothing, but it inflates the survivor count the
+  // telemetry reports and it costs vertex shading.
+  //
+  // The live count rides in the uniform lane the native layout leaves as
+  // padding. render/bundle/cull.go keeps that lane as padding, so this is a
+  // documented divergence: an authored kernel that declares the field as
+  // padding and ignores it is unaffected, and the binding size stays 112 bytes.
+  var SCENE_INSTANCED_CULL_BUILTIN_WGSL = [
+    "struct InstanceRecord {",
+    "  model: mat4x4<f32>,",
+    "  pick: vec4<u32>,",
+    "};",
+    "struct CullUniforms {",
+    "  planes: array<vec4<f32>, 6>,",
+    "  vertexCount: u32,",
+    "  radius: f32,",
+    "  instanceCount: u32,",
+    "  _pad1: u32,",
+    "};",
+    "@group(0) @binding(0) var<uniform> cull: CullUniforms;",
+    "@group(0) @binding(1) var<storage, read> src: array<InstanceRecord>;",
+    "@group(0) @binding(2) var<storage, read_write> dst: array<InstanceRecord>;",
+    "@group(0) @binding(3) var<storage, read_write> drawArgs: array<atomic<u32>, 4>;",
+    "",
+    "@compute @workgroup_size(64)",
+    "fn main(@builtin(global_invocation_id) gid: vec3<u32>) {",
+    "  let index = gid.x;",
+    "  if (index >= min(cull.instanceCount, arrayLength(&src))) { return; }",
+    "  let m = src[index].model;",
+    "  let centre = m[3].xyz;",
+    "  let scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));",
+    "  var radius = cull.radius;",
+    "  if (scale > 0.0) { radius = radius * scale; }",
+    "  for (var p = 0u; p < 6u; p = p + 1u) {",
+    "    let plane = cull.planes[p];",
+    "    let d = dot(plane.xyz, centre) + plane.w;",
+    "    if (d < -radius) { return; }",
+    "  }",
+    "  let slot = atomicAdd(&drawArgs[1], 1u);",
+    "  dst[slot] = src[index];",
+    "}",
+  ].join("\n");
+
+  // sceneInstanceColumnScale returns the largest of the three upper-left column
+  // lengths of a column-major mat4 stored at `base` in `transforms`. It is the
+  // CPU oracle for the GPU kernel's scale term, and it mirrors
+  // instanceCullRadius in render/bundle/primitive.go.
+  function sceneInstanceColumnScale(transforms, base) {
+    if (!transforms || base < 0 || base + 11 >= transforms.length) return 0;
+    var x0 = transforms[base + 0], y0 = transforms[base + 1], z0 = transforms[base + 2];
+    var x1 = transforms[base + 4], y1 = transforms[base + 5], z1 = transforms[base + 6];
+    var x2 = transforms[base + 8], y2 = transforms[base + 9], z2 = transforms[base + 10];
+    var s0 = Math.sqrt(x0 * x0 + y0 * y0 + z0 * z0);
+    var s1 = Math.sqrt(x1 * x1 + y1 * y1 + z1 * z1);
+    var s2 = Math.sqrt(x2 * x2 + y2 * y2 + z2 * z2);
+    return Math.max(s0, Math.max(s1, s2));
+  }
+
+  // sceneInstanceCullRadius scales one base radius by one instance transform.
+  // A scale of zero or less keeps the base radius, so a degenerate transform
+  // never collapses the sphere to nothing.
+  function sceneInstanceCullRadius(baseRadius, transforms, base) {
+    var scale = sceneInstanceColumnScale(transforms, base);
+    if (!(scale > 0)) return baseRadius;
+    return baseRadius * scale;
+  }
+
+  // sceneInstancedMaxTransformScale returns the largest per-instance scale in a
+  // packed mat4 array. An author-supplied cull kernel may ignore scale
+  // entirely, so the JS side inflates the uniform radius by this bound. The
+  // result over-includes instances, which keeps the image right; it never
+  // drops one.
+  function sceneInstancedMaxTransformScale(transforms, count) {
+    if (!transforms || !(count > 0)) return 1;
+    var limit = Math.min(count, Math.floor(transforms.length / 16));
+    var max = 0;
+    for (var i = 0; i < limit; i++) {
+      var scale = sceneInstanceColumnScale(transforms, i * 16);
+      if (scale > max) max = scale;
+    }
+    return max > 0 ? max : 1;
+  }
+
+  // sceneInstanceTransformFingerprint folds a packed mat4 array into four
+  // interleaved FNV-1a lanes. It allocates nothing and reads each float once.
+  // The renderer skips the instance-record encode AND the queue.writeBuffer
+  // when the fingerprint repeats, so a static 10 000-instance mesh stops
+  // re-uploading 800 KB every frame.
+  //
+  // Four lanes instead of one: a single 32-bit lane collides often on float
+  // data that differs in one component. Four lanes over interleaved strides
+  // make an undetected change far less likely, and they cost the same pass.
+  function sceneInstanceTransformFingerprint(transforms, count) {
+    if (!transforms || !(count > 0)) return "0:0:0:0:0";
+    var limit = Math.min(count * 16, transforms.length);
+    var view = _sceneFingerprintView(transforms, limit);
+    var h0 = 2166136261, h1 = 2166136261, h2 = 2166136261, h3 = 2166136261;
+    for (var i = 0; i < limit; i++) {
+      var bits = view[i];
+      h0 = (h0 ^ (bits & 0xff)) * 16777619;
+      h1 = (h1 ^ ((bits >>> 8) & 0xff)) * 16777619;
+      h2 = (h2 ^ ((bits >>> 16) & 0xff)) * 16777619;
+      h3 = (h3 ^ (bits >>> 24)) * 16777619;
+      h0 = h0 >>> 0; h1 = h1 >>> 0; h2 = h2 >>> 0; h3 = h3 >>> 0;
+    }
+    return limit + ":" + h0 + ":" + h1 + ":" + h2 + ":" + h3;
+  }
+
+  var _sceneFingerprintScratch = null;
+
+  // _sceneFingerprintView exposes the raw bits of the float data as u32 without
+  // copying when the source is a Float32Array. A plain Array falls back to a
+  // reused scratch buffer, so the walk still allocates nothing per frame.
+  function _sceneFingerprintView(transforms, limit) {
+    if (transforms instanceof Float32Array) {
+      return new Uint32Array(transforms.buffer, transforms.byteOffset, Math.min(limit, transforms.length));
+    }
+    if (!_sceneFingerprintScratch || _sceneFingerprintScratch.f32.length < limit) {
+      var buffer = new ArrayBuffer(Math.max(64, limit) * 4);
+      _sceneFingerprintScratch = { f32: new Float32Array(buffer), u32: new Uint32Array(buffer) };
+    }
+    for (var i = 0; i < limit; i++) _sceneFingerprintScratch.f32[i] = transforms[i];
+    return _sceneFingerprintScratch.u32;
+  }
+
+  // scenePlaneFingerprint folds the six frustum planes the same way. The cull
+  // dispatch may be skipped only when BOTH the transforms and the planes
+  // repeat, because a moving camera changes the survivor set on its own.
+  function scenePlaneFingerprint(planes) {
+    if (!planes || planes.length < 6) return "";
+    var out = "";
+    for (var p = 0; p < 6; p++) {
+      var plane = planes[p];
+      if (!plane) return "";
+      out += plane[0] + "," + plane[1] + "," + plane[2] + "," + plane[3] + ";";
+    }
+    return out;
+  }
+
+  // Scratch buffers shared by every cull system. update() runs once per mesh per
+  // frame, and it finishes with the data before it returns, so one shared
+  // allocation is safe and it removes two per-mesh allocations per frame.
+  var _cullResetScratch = new Uint32Array(4);
+  var _cullUniformBytes = new ArrayBuffer(INSTANCED_CULL_UNIFORM_SIZE);
+  var _cullUniformF = new Float32Array(_cullUniformBytes);
+  var _cullUniformU = new Uint32Array(_cullUniformBytes);
+
+  function createSceneInstancedCullSystem(device, mesh, options) {
+    var createOptions = options || {};
     // Validate and extract cull parameters from the mesh entry.
-    var cullWGSL  = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL : null;
-    var entryPoint = (typeof mesh.cullKernelEntry === "string" && mesh.cullKernelEntry.trim()) ? mesh.cullKernelEntry : "main";
-    // Absent cullRadius (0) → use a conservative 2.0 default rather than 0
-    // (a zero radius would cull everything). Slice 1 caveat.
-    var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
+    var authoredWGSL = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL : null;
+    // A mesh without an authored kernel still gets GPU culling: the built-in
+    // kernel above covers the plain frustum case and scales the radius per
+    // instance. An authored kernel wins, because it may cull on rules the
+    // renderer cannot see.
+    var cullWGSL = authoredWGSL || SCENE_INSTANCED_CULL_BUILTIN_WGSL;
+    var usesBuiltinKernel = !authoredWGSL;
+    var entryPoint = (!usesBuiltinKernel && typeof mesh.cullKernelEntry === "string" && mesh.cullKernelEntry.trim()) ? mesh.cullKernelEntry : "main";
+    // Radius resolution order: the authored cullRadius, then the caller's
+    // geometry-derived bound, then 2.0. The 2.0 tail is a last resort and it
+    // under-estimates a large primitive, so 16a always supplies
+    // options.fallbackRadius from the real local bounds.
+    var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0)
+      ? mesh.cullRadius
+      : (sceneNumber(createOptions.fallbackRadius, 0) > 0 ? sceneNumber(createOptions.fallbackRadius, 0) : 2.0);
     // Constrain cullBackend to known values.
     var cullBackend = (typeof mesh.cullBackend === "string" && mesh.cullBackend.trim()) ? mesh.cullBackend.trim().toLowerCase() : "webgpu";
     if (cullBackend !== "webgpu") cullBackend = "webgpu";
@@ -1321,6 +1497,15 @@
     var ready = false;
     var computePipeline = null;
     var bindGroup = null;
+    // Static-scene skip state. uploadedOnce guards the very first frame: the
+    // input buffer holds nothing until one upload lands, so no skip may happen
+    // before it.
+    var uploadedOnce = false;
+    var lastTransformFingerprint = null;
+    var lastPlaneKey = "";
+    var lastUniformVertexCount = -1;
+    var lastUniformRadius = -1;
+    var lastDispatchInstanceCount = -1;
 
     var bufBytes = capacity * INSTANCED_CULL_RECORD_STRIDE;
 
@@ -1422,8 +1607,13 @@
       capacity: capacity,
       cullRadius: cullRadius,
       instanceCount: instanceCount,
+      usesBuiltinKernel: usesBuiltinKernel,
       lastSurvivors: null,  // null until first successful poll; then a number
       lastVertexCount: 0,
+      // dispatchCount / skippedDispatchCount feed the renderer diagnostics so a
+      // page can prove the static-scene skip fired.
+      dispatchCount: 0,
+      skippedDispatchCount: 0,
 
       isReady: function() { return ready; },
 
@@ -1461,36 +1651,71 @@
       // update() is called once per frame, before the main pass.
       // planes: [6][4] float array — [nx,ny,nz,d] per plane.
       // vertexCount: geometry primitive vertex count.
-      // instanceRecords: Float32Array of 80B InstanceRecord data (mat4 + pickData).
+      // instanceRecords: Float32Array of 80B InstanceRecord data (mat4 + pickData),
+      //   or null when the caller knows the input buffer already holds them.
       // instanceCount: number of active instances.
-      update: function(device, encoder, planes, vertexCount, instanceRecords, instanceCount) {
-        if (!ready) return;
+      // options.transformFingerprint: fold of the source transforms. When it
+      //   repeats AND the frustum planes repeat, update() skips the reset, the
+      //   upload and the dispatch. outputBuf and drawArgsBuf keep the previous
+      //   frame's contents, so the caller's drawIndirect still draws the right
+      //   survivors. Pass null to force work every frame.
+      // options.maxInstanceScale: largest per-instance scale in the transforms.
+      //   The built-in kernel scales per thread and ignores this. An authored
+      //   kernel may ignore scale, so the uniform radius carries the bound.
+      // Returns true when the dispatch was encoded, false when it was skipped.
+      update: function(device, encoder, planes, vertexCount, instanceRecords, instanceCount, options) {
+        if (!ready) return false;
+        var opts = options || {};
+        var fingerprint = typeof opts.transformFingerprint === "string" ? opts.transformFingerprint : null;
+        var planeKey = scenePlaneFingerprint(planes);
+        var radiusScale = usesBuiltinKernel
+          ? 1
+          : Math.max(1, sceneNumber(opts.maxInstanceScale, 1));
+        var effectiveRadius = cullRadius * radiusScale;
+
+        if (
+          uploadedOnce &&
+          fingerprint !== null &&
+          fingerprint === lastTransformFingerprint &&
+          planeKey !== "" &&
+          planeKey === lastPlaneKey &&
+          vertexCount === lastUniformVertexCount &&
+          effectiveRadius === lastUniformRadius &&
+          instanceCount === lastDispatchInstanceCount
+        ) {
+          this.skippedDispatchCount += 1;
+          return false;
+        }
 
         // CRITICAL (Risk #1): reset drawArgs EVERY frame before dispatch.
         // drawArgs[1] = instanceCount accumulates via atomicAdd in the shader;
         // if not reset each frame it compounds across frames.
-        var resetData = new Uint32Array([vertexCount, 0, 0, 0]);
-        device.queue.writeBuffer(drawArgsBuf, 0, resetData);
+        _cullResetScratch[0] = vertexCount;
+        device.queue.writeBuffer(drawArgsBuf, 0, _cullResetScratch);
 
         // Upload instance records.
         if (instanceRecords && instanceRecords.byteLength > 0) {
           device.queue.writeBuffer(inputBuf, 0, instanceRecords);
+          uploadedOnce = true;
         }
 
         // Upload cull uniforms: 6 planes (6*16=96B) + vertexCount u32 + radius f32 + 8B pad.
-        var uniformData = new ArrayBuffer(INSTANCED_CULL_UNIFORM_SIZE);
-        var uf = new Float32Array(uniformData);
-        var uu = new Uint32Array(uniformData);
+        var uf = _cullUniformF;
+        var uu = _cullUniformU;
         for (var p = 0; p < 6; p++) {
           uf[p * 4 + 0] = planes[p][0]; // nx
           uf[p * 4 + 1] = planes[p][1]; // ny
           uf[p * 4 + 2] = planes[p][2]; // nz
           uf[p * 4 + 3] = planes[p][3]; // d
         }
-        uu[24] = vertexCount; // offset 96 = index 24 in u32 view
-        uf[25] = cullRadius;  // offset 100 = index 25 in f32 view
-        // Trailing 8 bytes of pad are already zero.
-        device.queue.writeBuffer(cullUniformBuf, 0, uniformData);
+        uu[24] = vertexCount;      // offset 96 = index 24 in u32 view
+        uf[25] = effectiveRadius;  // offset 100 = index 25 in f32 view
+        // Offset 104 is padding in the native layout. The built-in kernel reads
+        // the live instance count from it so a thread past the count cannot
+        // compact a zero-filled record. An authored kernel ignores it.
+        uu[26] = Math.max(0, Math.floor(instanceCount));
+        uu[27] = 0;
+        device.queue.writeBuffer(cullUniformBuf, 0, _cullUniformBytes);
 
         // Dispatch the cull compute pass.
         var pass = encoder.beginComputePass();
@@ -1498,6 +1723,14 @@
         pass.setBindGroup(0, bindGroup);
         pass.dispatchWorkgroups(Math.ceil(Math.max(1, instanceCount) / 64));
         pass.end();
+
+        lastTransformFingerprint = fingerprint;
+        lastPlaneKey = planeKey;
+        lastUniformVertexCount = vertexCount;
+        lastUniformRadius = effectiveRadius;
+        lastDispatchInstanceCount = instanceCount;
+        this.dispatchCount += 1;
+        return true;
       },
 
       dispose: function() {
@@ -1530,6 +1763,12 @@
       createSceneParticleSystem,
       createSceneInstancedCullSystem,
       cullSystemSignature,
+      SCENE_INSTANCED_CULL_BUILTIN_WGSL,
+      sceneInstanceColumnScale,
+      sceneInstanceCullRadius,
+      sceneInstancedMaxTransformScale,
+      sceneInstanceTransformFingerprint,
+      scenePlaneFingerprint,
       listSceneParticleForces,
       registerSceneParticleForce,
       registerSceneParticleForceKind,
