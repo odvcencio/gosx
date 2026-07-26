@@ -4,6 +4,10 @@
 
   const bootstrapFeatureFactories = window.__gosx_bootstrap_features || Object.create(null);
   const activeBootstrapFeatures = new Map();
+  // In-flight feature loads, keyed by name. Two callers can ask for the same
+  // feature in the same tick — the document gate and the manifest gate both ask
+  // for "textlayout" — and a feature factory must run exactly once.
+  const pendingBootstrapFeatures = new Map();
   let pendingFeatureLoad = Promise.resolve([]);
 
   window.__gosx_bootstrap_features = bootstrapFeatureFactories;
@@ -83,6 +87,10 @@
         return String(assets.bootstrapFeatureEnginesPath || runtimeFeaturePreloadPath("bootstrap-feature-engines") || "/gosx/bootstrap-feature-engines.js").trim();
       case "hubs":
         return String(assets.bootstrapFeatureHubsPath || runtimeFeaturePreloadPath("bootstrap-feature-hubs") || "/gosx/bootstrap-feature-hubs.js").trim();
+      case "controllers":
+        return String(assets.bootstrapFeatureControllersPath || runtimeFeaturePreloadPath("bootstrap-feature-controllers") || "/gosx/bootstrap-feature-controllers.js").trim();
+      case "textlayout":
+        return String(assets.bootstrapFeatureTextLayoutPath || runtimeFeaturePreloadPath("bootstrap-feature-textlayout") || "/gosx/bootstrap-feature-textlayout.js").trim();
       case "scene3d":
         return assets && assets.bootstrapFeatureScene3dPath;
       default:
@@ -90,9 +98,38 @@
     }
   }
 
-  async function ensureBootstrapFeature(name) {
+  function ensureBootstrapFeature(name) {
+    if (activeBootstrapFeatures.has(name)) {
+      return Promise.resolve(activeBootstrapFeatures.get(name));
+    }
+    if (pendingBootstrapFeatures.has(name)) {
+      return pendingBootstrapFeatures.get(name);
+    }
+    const pending = initBootstrapFeature(name).then(function(feature) {
+      pendingBootstrapFeatures.delete(name);
+      return feature;
+    }, function(error) {
+      pendingBootstrapFeatures.delete(name);
+      throw error;
+    });
+    pendingBootstrapFeatures.set(name, pending);
+    return pending;
+  }
+
+  async function initBootstrapFeature(name) {
     if (activeBootstrapFeatures.has(name)) {
       return activeBootstrapFeatures.get(name);
+    }
+
+    // The monolithic bootstrap.js carries the text-layout engine inline, so the
+    // forwarders in 00-textlayout.js already reach a registered engine. Skip
+    // the fetch in that case.
+    if (name === "textlayout"
+      && typeof window.__gosx_text_layout_engine_ready === "function"
+      && window.__gosx_text_layout_engine_ready()) {
+      const inlineFeature = { name: "textlayout" };
+      activeBootstrapFeatures.set(name, inlineFeature);
+      return inlineFeature;
     }
 
     // Scene3D is loaded via an async <script> tag emitted by the Go renderer,
@@ -138,6 +175,40 @@
     }
   }
 
+  // documentNeedsTextLayoutFeature gates the text-layout engine fetch. The
+  // engine is 42.7 KB of minified browser typography — Intl.Segmenter wrappers,
+  // CJK line-break tables, hyphenation, vertical writing mode — and it used to
+  // ship in every bundle. One querySelector answers for managed text blocks.
+  function documentNeedsTextLayoutFeature() {
+    if (typeof window.__gosx_document_has_text_layout !== "function") {
+      return false;
+    }
+    return window.__gosx_document_has_text_layout(document);
+  }
+
+  // manifestNeedsTextLayoutFeature answers for Scene3D. A Scene3D Label lays out
+  // through layoutBrowserText, so a scene that ships a label needs the engine
+  // before its first frame. A scene with no label — a galaxy, a particle field,
+  // a CSS-driven scene — must not pay 42.7 KB for typography it never calls.
+  //
+  // The test scans the raw manifest text rather than walking the parsed props.
+  // Scene props reach megabytes on compressed geometry, and a substring test on
+  // a string the page already holds allocates nothing. A false positive costs
+  // one extra fetch, never a wrong frame.
+  //
+  // A label that arrives after mount, through applyCommands, does not appear in
+  // this text. The forwarders in 00-textlayout.js cover that case: the first
+  // layout call starts the fetch, and the invalidation listener in
+  // 20-scene-mount.js lays the label out again once the engine registers.
+  function manifestNeedsTextLayoutFeature(featureNames) {
+    if (featureNames.indexOf("scene3d") < 0) {
+      return false;
+    }
+    const node = typeof document.getElementById === "function" ? document.getElementById("gosx-manifest") : null;
+    const raw = node ? String(node.textContent || "") : "";
+    return raw.indexOf('"label"') >= 0;
+  }
+
   function manifestFeatureNames(manifest) {
     const names = [];
     if (manifestHasEntries(manifest, "engines")) {
@@ -152,6 +223,9 @@
     }
     if (manifestHasEntries(manifest, "hubs")) {
       names.push("hubs");
+    }
+    if (manifestHasEntries(manifest, "controllers")) {
+      names.push("controllers");
     }
     if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
       names.push("islands");
@@ -206,6 +280,9 @@
 
   function ensureManifestFeatures(manifest) {
     const names = manifestFeatureNames(manifest);
+    if (manifestNeedsTextLayoutFeature(names)) {
+      names.push("textlayout");
+    }
     if (names.length === 0) {
       return Promise.resolve([]);
     }
@@ -347,6 +424,16 @@
     pendingEngineReuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
+
+    // Start the text-layout engine fetch before any mount work. The document
+    // scan answers the question now, so the request goes out in parallel with
+    // the manifest read and the runtime download. The forwarders in
+    // 00-textlayout.js queue mountManagedTextLayouts below and replay it when
+    // the engine registers, so the fetch never blocks first paint.
+    const textLayoutLoad = documentNeedsTextLayoutFeature()
+      ? ensureBootstrapFeature("textlayout")
+      : null;
+
     if (typeof window.__gosx_mount_runtime_content === "function") {
       window.__gosx_mount_runtime_content(document.body || document.documentElement);
     } else {
@@ -366,8 +453,13 @@
     const manifest = loadManifest();
     if (!manifest) {
       pendingManifest = null;
-      pendingFeatureLoad = Promise.resolve([]);
+      // A page can hold text blocks and no manifest. Keep the text-layout load
+      // in the pending set so window.__gosx.ready waits for the engine.
+      pendingFeatureLoad = textLayoutLoad
+        ? textLayoutLoad.then(function(feature) { return feature ? [feature] : []; }, function() { return []; })
+        : Promise.resolve([]);
       pendingEngineReuseIDs = new Set();
+      await pendingFeatureLoad;
       window.__gosx.ready = true;
       refreshGosxDocumentState("ready");
       return;

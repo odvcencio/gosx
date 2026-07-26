@@ -223,12 +223,40 @@
   // Keyframe interpolation
   // ---------------------------------------------------------------------------
 
+  // Resolve how many values one keyframe of this channel holds. glTF morph
+  // "weights" channels carry one value per morph target, so the width cannot
+  // come from the property name alone. gltfExtractAnimations records the true
+  // width; fall back to the TRS widths for hand-built clips.
+  function sceneAnimChannelWidth(channel) {
+    var declared = channel && channel.componentCount;
+    if (typeof declared === "number" && declared > 0) {
+      return Math.floor(declared);
+    }
+    return channel && channel.property === "rotation" ? 4 : 3;
+  }
+
+  // Return a scratch array of the requested width. Widths of 3 and 4 reuse the
+  // shared buffers. Wider channels keep one cached buffer each, so a morph
+  // weights channel still allocates nothing per frame.
+  function sceneAnimChannelScratch(channel, width) {
+    if (width === 4) {
+      return _animScratch4;
+    }
+    if (width === 3) {
+      return _animScratch3;
+    }
+    if (!channel._scratch || channel._scratch.length !== width) {
+      channel._scratch = new Float32Array(width);
+    }
+    return channel._scratch;
+  }
+
   function sceneAnimInterpolateChannel(channel, time) {
     var times = channel.times;
     var values = channel.values;
     var isRotation = channel.property === "rotation";
-    var componentCount = isRotation ? 4 : 3;
-    var scratch = isRotation ? _animScratch4 : _animScratch3;
+    var componentCount = isRotation ? 4 : sceneAnimChannelWidth(channel);
+    var scratch = isRotation ? _animScratch4 : sceneAnimChannelScratch(channel, componentCount);
 
     // Clamp before first keyframe.
     if (time <= times[0]) {
@@ -269,9 +297,9 @@
     if (isRotation) {
       _sceneAnimSlerpQuatOffset(scratch, values, start0, values, start1, alpha);
     } else {
-      scratch[0] = values[start0]     + (values[start1]     - values[start0])     * alpha;
-      scratch[1] = values[start0 + 1] + (values[start1 + 1] - values[start0 + 1]) * alpha;
-      scratch[2] = values[start0 + 2] + (values[start1 + 2] - values[start0 + 2]) * alpha;
+      for (var li = 0; li < componentCount; li++) {
+        scratch[li] = values[start0 + li] + (values[start1 + li] - values[start0 + li]) * alpha;
+      }
     }
     return scratch;
   }
@@ -521,7 +549,7 @@
           existing = _mixerResults.get(key);
           if (!existing) {
             // Copy scratch array — it will be overwritten by the next interpolation.
-            var componentCount = channel.property === "rotation" ? 4 : 3;
+            var componentCount = channel.property === "rotation" ? 4 : sceneAnimChannelWidth(channel);
             var copied = new Array(componentCount);
             for (var vi = 0; vi < componentCount; vi++) copied[vi] = value[vi];
             _mixerResults.set(key, {

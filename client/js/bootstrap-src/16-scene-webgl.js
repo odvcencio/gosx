@@ -2,16 +2,13 @@
   //
   // Provides Cook-Torrance BRDF with per-pixel lighting, replacing
   // the legacy vertex-color renderer for WebGL2-capable browsers.
-
-  // Post-effect kind constants.
-  var SCENE_POST_TONE_MAPPING = "toneMapping";
-  var SCENE_POST_BLOOM = "bloom";
-  var SCENE_POST_VIGNETTE = "vignette";
-  var SCENE_POST_COLOR_GRADE = "colorGrade";
-  var SCENE_POST_SSAO = "ssao";
-  var SCENE_POST_DOF = "dof";
-  var SCENE_POST_CUSTOM_POST = "customPost";
-  var SCENE_POST_FXAA = "fxaa";
+  //
+  // This file ships as the lazily fetched bootstrap-feature-scene3d-webgl.js
+  // chunk. A WebGPU-capable browser never runs it, so it must not load until
+  // the mount path picks WebGL, or until a WebGPU device loss forces the
+  // fallback ladder down to WebGL. See 26j-feature-scene3d-webgl-prefix.js
+  // for the symbols the base chunk bridges in, and 16c-scene-shared-pbr.js
+  // for the backend-agnostic helpers that stayed eager.
 
   // --- PBR Shader Sources ---
 
@@ -69,11 +66,11 @@
     "in vec3 v_bitangent;",
     "in vec4 v_instanceColor;",
     "",
-    "// Camera",
+    // Camera
     "uniform vec3 u_cameraPosition;",
     "uniform mat4 u_viewMatrix;",
     "",
-    "// Material",
+    // Material
     "uniform vec3 u_albedo;",
     "uniform float u_roughness;",
     "uniform float u_metalness;",
@@ -86,7 +83,7 @@
     "uniform float u_opacity;",
     "uniform bool u_unlit;",
     "",
-    "// Texture maps",
+    // Texture maps
     "uniform sampler2D u_albedoMap;",
     "uniform sampler2D u_normalMap;",
     "uniform sampler2D u_roughnessMap;",
@@ -98,7 +95,7 @@
     "uniform bool u_hasMetalnessMap;",
     "uniform bool u_hasEmissiveMap;",
     "",
-    "// Lights (max 8)",
+    // Lights (max 8)
     "uniform int u_lightCount;",
     "uniform int u_lightTypes[8];",
     "uniform vec3 u_lightPositions[8];",
@@ -111,7 +108,7 @@
     "uniform float u_lightPenumbras[8];",
     "uniform vec3 u_lightGroundColors[8];",
     "",
-    "// Environment",
+    // Environment
     "uniform vec3 u_ambientColor;",
     "uniform float u_ambientIntensity;",
     "uniform vec3 u_skyColor;",
@@ -123,11 +120,11 @@
     "uniform float u_envIntensity;",
     "uniform float u_envRotation;",
     "",
-    "// Shadow maps (max 2 directional lights × up to 4 cascades each).",
-    "// CSM: the renderer picks a cascade per fragment via view-space depth",
-    "// against u_shadowCascadeSplits*[]. When u_shadowCascades* == 1 the",
-    "// extra cascade samplers are bound to the same texture as cascade 0 and",
-    "// the first branch always wins, matching the pre-CSM single-map path.",
+    // Shadow maps (max 2 directional lights × up to 4 cascades each).
+    // CSM: the renderer picks a cascade per fragment via view-space depth
+    // against u_shadowCascadeSplits*[]. When u_shadowCascades* == 1 the
+    // extra cascade samplers are bound to the same texture as cascade 0 and
+    // the first branch always wins, matching the pre-CSM single-map path.
     "uniform sampler2D u_shadowMap0_0;",
     "uniform sampler2D u_shadowMap0_1;",
     "uniform sampler2D u_shadowMap0_2;",
@@ -150,18 +147,18 @@
     "uniform float u_shadowBias1;",
     "uniform float u_shadowSoftness1;",
     "",
-    "// Per-object shadow receive control",
+    // Per-object shadow receive control
     "uniform bool u_receiveShadow;",
     "",
-    "// Shadow-casting light indices — maps shadow slot to light array index.",
+    // Shadow-casting light indices — maps shadow slot to light array index.
     "uniform int u_shadowLightIndex0;",
     "uniform int u_shadowLightIndex1;",
     "",
-    "// Exposure and tone mapping control.",
+    // Exposure and tone mapping control.
     "uniform float u_exposure;",
     "uniform int u_toneMapMode;",
     "",
-    "// Fog",
+    // Fog
     "uniform int u_hasFog;",
     "uniform float u_fogDensity;",
     "uniform vec3 u_fogColor;",
@@ -172,9 +169,9 @@
     "",
     "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}",
     "",
-    "// Poisson disk taps used for both the PCSS blocker search and the final",
-    "// PCF filter. 8 taps provide a stable penumbra estimate without pushing",
-    "// WebGL2 fragment register pressure too high.",
+    // Poisson disk taps used for both the PCSS blocker search and the final
+    // PCF filter. 8 taps provide a stable penumbra estimate without pushing
+    // WebGL2 fragment register pressure too high.
     "const vec2 kPoissonDisk8[8] = vec2[](",
     "    vec2(-0.94201624, -0.39906216),",
     "    vec2( 0.94558609, -0.76890725),",
@@ -186,12 +183,12 @@
     "    vec2( 0.97484398,  0.75648379)",
     ");",
     "",
-    "// PCSS (Percentage-Closer Soft Shadows) with PCF fallback.",
-    "// The softness parameter is interpreted as a combined (light-size /",
-    "// world-units) hint: when > 0 we do a blocker search, estimate the",
-    "// penumbra from the receiver-to-blocker distance, and then PCF with a",
-    "// filter radius scaled to the penumbra. When softness is 0 we skip the",
-    "// extra samples and just return a hard comparison.",
+    // PCSS (Percentage-Closer Soft Shadows) with PCF fallback.
+    // The softness parameter is interpreted as a combined (light-size /
+    // world-units) hint: when > 0 we do a blocker search, estimate the
+    // penumbra from the receiver-to-blocker distance, and then PCF with a
+    // filter radius scaled to the penumbra. When softness is 0 we skip the
+    // extra samples and just return a hard comparison.
     "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
@@ -202,16 +199,16 @@
     "    float receiverDepth = projCoords.z;",
     "    float texelSize = 1.0 / float(textureSize(shadowMap, 0).x);",
     "",
-    "    // Hard-shadow fast path.",
+    // Hard-shadow fast path.
     "    if (softness <= 0.0001) {",
     "        float depth = texture(shadowMap, projCoords.xy).r;",
     "        return (receiverDepth - bias > depth) ? 0.0 : 1.0;",
     "    }",
     "",
-    "    // --- Blocker search ---",
-    "    // Sample a disk sized by the light's shadow-space \"size\" (softness)",
-    "    // and average the depth of taps that are behind the receiver. These",
-    "    // are the occluders contributing to the penumbra.",
+    // --- Blocker search ---
+    // Sample a disk sized by the light's shadow-space \"size\" (softness)
+    // and average the depth of taps that are behind the receiver. These
+    // are the occluders contributing to the penumbra.
     "    float blockerRadius = max(1.0, softness * 32.0);",
     "    float blockerDepthSum = 0.0;",
     "    float blockerCount = 0.0;",
@@ -224,19 +221,19 @@
     "        }",
     "    }",
     "",
-    "    // No blockers: fully lit.",
+    // No blockers: fully lit.
     "    if (blockerCount < 0.5) {",
     "        return 1.0;",
     "    }",
     "",
     "    float avgBlockerDepth = blockerDepthSum / blockerCount;",
     "",
-    "    // --- Penumbra estimate ---",
-    "    // penumbra = (receiver - blocker) / blocker * lightSize.",
-    "    // Guard blocker against zero to avoid division by near-plane epsilon.",
+    // --- Penumbra estimate ---
+    // penumbra = (receiver - blocker) / blocker * lightSize.
+    // Guard blocker against zero to avoid division by near-plane epsilon.
     "    float penumbra = (receiverDepth - avgBlockerDepth) * softness / max(avgBlockerDepth, 1e-4);",
     "",
-    "    // --- PCF with penumbra-scaled radius ---",
+    // --- PCF with penumbra-scaled radius ---
     "    float filterRadius = max(1.0, clamp(penumbra * 128.0, 1.0, softness * 96.0));",
     "    float shadow = 0.0;",
     "    for (int i = 0; i < 8; i++) {",
@@ -247,11 +244,11 @@
     "    return shadow / 8.0;",
     "}",
     "",
-    "// Cascaded-shadow dispatchers for up to 4 cascades per slot.",
-    "// View-space positive depth is compared against u_shadowCascadeSplits*[c],",
-    "// where split[c] is the far plane of cascade c. Sampler selection is",
-    "// unrolled because GLSL ES 3.00 disallows dynamic uniform-int indexing of",
-    "// sampler arrays; mat4 and float arrays are indexed normally.",
+    // Cascaded-shadow dispatchers for up to 4 cascades per slot.
+    // View-space positive depth is compared against u_shadowCascadeSplits*[c],
+    // where split[c] is the far plane of cascade c. Sampler selection is
+    // unrolled because GLSL ES 3.00 disallows dynamic uniform-int indexing of
+    // sampler arrays; mat4 and float arrays are indexed normally.
     "float shadowFactorSlot0(float viewDepth) {",
     "    int c = 0;",
     "    if (u_shadowCascades0 >= 2 && viewDepth >= u_shadowCascadeSplits0[0]) c = 1;",
@@ -276,7 +273,7 @@
     "    return shadowFactor(u_shadowMap1_0, ls, u_shadowBias1, u_shadowSoftness1);",
     "}",
     "",
-    "// GGX/Trowbridge-Reitz normal distribution function.",
+    // GGX/Trowbridge-Reitz normal distribution function.
     "float distributionGGX(vec3 N, vec3 H, float roughness) {",
     "    float a = roughness * roughness;",
     "    float a2 = a * a;",
@@ -287,21 +284,21 @@
     "    return a2 / max(denom, 0.0000001);",
     "}",
     "",
-    "// Smith geometry function (GGX variant) — single direction.",
+    // Smith geometry function (GGX variant) — single direction.
     "float geometrySchlickGGX(float NdotV, float roughness) {",
     "    float r = roughness + 1.0;",
     "    float k = (r * r) / 8.0;",
     "    return NdotV / (NdotV * (1.0 - k) + k);",
     "}",
     "",
-    "// Smith geometry function — combined for view and light directions.",
+    // Smith geometry function — combined for view and light directions.
     "float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {",
     "    float NdotV = max(dot(N, V), 0.0);",
     "    float NdotL = max(dot(N, L), 0.0);",
     "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
     "}",
     "",
-    "// Schlick fresnel approximation.",
+    // Schlick fresnel approximation.
     "vec3 fresnelSchlick(float cosTheta, vec3 F0) {",
     "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
@@ -321,7 +318,7 @@
     "    return vec2(atan(d.z, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);",
     "}",
     "",
-    "// Point light distance attenuation.",
+    // Point light distance attenuation.
     "float pointLightAttenuation(float distance, float range, float decay) {",
     "    if (range > 0.0) {",
     "        float ratio = clamp(1.0 - pow(distance / range, 4.0), 0.0, 1.0);",
@@ -331,7 +328,7 @@
     "}",
     "",
     "void main() {",
-    "    // Resolve material properties, sampling textures when available.",
+    // Resolve material properties, sampling textures when available.
     "    vec3 albedo = u_albedo;",
     "    albedo *= v_instanceColor.rgb;",
     "    if (u_hasAlbedoMap) {",
@@ -358,7 +355,7 @@
     "        emissiveColor = texture(u_emissiveMap, v_uv).rgb;",
     "    }",
     "",
-    "    // Unlit path: output albedo directly.",
+    // Unlit path: output albedo directly.
     "    if (u_unlit) {",
     "        vec3 color = albedo + emissiveColor * emissiveStrength;",
     "        float opacity = u_opacity;",
@@ -367,7 +364,7 @@
     "        return;",
     "    }",
     "",
-    "    // Resolve per-pixel normal via TBN matrix.",
+    // Resolve per-pixel normal via TBN matrix.
     "    vec3 N = normalize(v_normal);",
     "    if (u_hasNormalMap) {",
     "        vec3 T = normalize(v_tangent);",
@@ -380,16 +377,16 @@
     "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
     "    float NoV = max(dot(N, V), 0.0);",
     "",
-    "    // Fresnel reflectance at normal incidence — dielectric vs metallic blend.",
+    // Fresnel reflectance at normal incidence — dielectric vs metallic blend.
     "    vec3 F0 = mix(vec3(0.04), albedo, metalness);",
     "",
-    "    // Accumulate direct lighting.",
+    // Accumulate direct lighting.
     "    vec3 Lo = vec3(0.0);",
     "",
-    "    // View-space positive depth of this fragment — used to pick a cascade",
-    "    // in shadowFactorSlot*(). Light-space transforms already happen per",
-    "    // cascade inside shadowFactor(); this extra multiply per fragment is",
-    "    // cheap and isolates CSM logic to the fragment shader.",
+    // View-space positive depth of this fragment — used to pick a cascade
+    // in shadowFactorSlot*(). Light-space transforms already happen per
+    // cascade inside shadowFactor(); this extra multiply per fragment is
+    // cheap and isolates CSM logic to the fragment shader.
     "    float viewDepth = -(u_viewMatrix * vec4(v_worldPosition, 1.0)).z;",
     "",
     "    for (int i = 0; i < 8; i++) {",
@@ -399,13 +396,13 @@
     "        vec3 lightColor = u_lightColors[i];",
     "        float intensity = u_lightIntensities[i];",
     "",
-    "        // Ambient light (type 0): add flat contribution, no BRDF.",
+    // Ambient light (type 0): add flat contribution, no BRDF.
     "        if (lightType == 0) {",
     "            Lo += albedo * lightColor * intensity;",
     "            continue;",
     "        }",
     "",
-    "        // Hemisphere light (type 4): sky/ground blend based on normal Y.",
+    // Hemisphere light (type 4): sky/ground blend based on normal Y.
     "        if (lightType == 4) {",
     "            float hBlend = N.y * 0.5 + 0.5;",
     "            vec3 hemiColor = mix(u_lightGroundColors[i], lightColor, hBlend);",
@@ -417,24 +414,24 @@
     "        float attenuation = 1.0;",
     "",
     "        if (lightType == 1) {",
-    "            // Directional light.",
+    // Directional light.
     "            L = normalize(-u_lightDirections[i]);",
     "        } else if (lightType == 3) {",
-    "            // Spot light.",
+    // Spot light.
     "            vec3 toLight = u_lightPositions[i] - v_worldPosition;",
     "            float dist = length(toLight);",
     "            L = toLight / max(dist, 0.0001);",
     "",
-    "            // Cone attenuation.",
+    // Cone attenuation.
     "            float cosAngle = dot(L, -normalize(u_lightDirections[i]));",
     "            float outerCos = cos(u_lightAngles[i]);",
     "            float innerCos = cos(u_lightAngles[i] * (1.0 - u_lightPenumbras[i]));",
     "            float spotAtten = clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);",
     "",
-    "            // Distance attenuation (same as point light).",
+    // Distance attenuation (same as point light).
     "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]) * spotAtten;",
     "        } else {",
-    "            // Point light (type 2).",
+    // Point light (type 2).
     "            vec3 toLight = u_lightPositions[i] - v_worldPosition;",
     "            float dist = length(toLight);",
     "            L = toLight / max(dist, 0.0001);",
@@ -444,7 +441,7 @@
     "        vec3 H = normalize(V + L);",
     "        float NdotL = max(dot(N, L), 0.0);",
     "",
-    "        // Cook-Torrance specular BRDF.",
+    // Cook-Torrance specular BRDF.
     "        float D = distributionGGX(N, H, roughness);",
     "        float G = geometrySmith(N, V, L, roughness);",
     "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
@@ -453,10 +450,10 @@
     "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
     "        vec3 specular = numerator / denominator;",
     "",
-    "        // Energy conservation: diffuse complement of specular.",
+    // Energy conservation: diffuse complement of specular.
     "        vec3 kD = (vec3(1.0) - F) * (1.0 - metalness);",
     "",
-    "        // Shadow attenuation for directional lights.",
+    // Shadow attenuation for directional lights.
     "        float shadow = 1.0;",
     "        if (u_receiveShadow && lightType == 1) {",
     "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
@@ -470,7 +467,7 @@
     "        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadow;",
     "    }",
     "",
-    "    // Environment lighting: equirectangular envMap when loaded, hemisphere fallback otherwise.",
+    // Environment lighting: equirectangular envMap when loaded, hemisphere fallback otherwise.
     "    vec3 ambient;",
     "    if (u_hasEnvMap) {",
     "        vec3 Nr = rotateEnvY(N, u_envRotation);",
@@ -488,7 +485,7 @@
     "        ambient = envDiffuse * albedo;",
     "    }",
     "",
-    "    // Emissive contribution.",
+    // Emissive contribution.
     "    vec3 emission = emissiveColor * emissiveStrength;",
     "",
     "    vec3 color = ambient + Lo + emission;",
@@ -516,7 +513,7 @@
     "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
     "    }",
     "",
-    "    // Exponential fog.",
+    // Exponential fog.
     "    if (u_hasFog != 0) {",
     "        float fogDist = length(v_worldPosition - u_cameraPosition);",
     "        float fogFactor = exp(-u_fogDensity * u_fogDensity * fogDist * fogDist);",
@@ -524,20 +521,20 @@
     "        color = mix(u_fogColor, color, fogFactor);",
     "    }",
     "",
-    "    // Apply exposure.",
+    // Apply exposure.
     "    color *= u_exposure;",
     "",
-    "    // Tone mapping.",
+    // Tone mapping.
     "    if (u_toneMapMode == 1) {",
-    "        // ACES filmic.",
+    // ACES filmic.
     "        color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);",
     "    } else if (u_toneMapMode == 2) {",
-    "        // Reinhard.",
+    // Reinhard.
     "        color = color / (color + vec3(1.0));",
     "    }",
-    "    // else: linear (no tone mapping).",
+    // else: linear (no tone mapping).
     "",
-    "    // Gamma correction.",
+    // Gamma correction.
     "    color = pow(color, vec3(1.0 / 2.2));",
     "",
     "    float opacity = u_opacity;",
@@ -588,7 +585,7 @@
     "uniform float u_minPixelSize;",
     "uniform float u_maxPixelSize;",
     "",
-    "// Fog",
+    // Fog
     "uniform int u_hasFog;",
     "uniform float u_fogDensity;",
     "",
@@ -620,7 +617,7 @@
     "",
     "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
     "",
-    "    // Exponential fog",
+    // Exponential fog
     "    if (u_hasFog != 0) {",
     "        float dist = length(viewPos.xyz);",
     "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
@@ -664,7 +661,7 @@
     "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0);",
     "        color = mix(color, vec3(1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
     "    } else if (u_pointStyle == 2) {",
-    "        // glow: pure radial gaussian falloff — soft gas cloud, no core, no streaks",
+    // glow: pure radial gaussian falloff — soft gas cloud, no core, no streaks
     "        vec2 centered = gl_PointCoord - vec2(0.5);",
     "        float radial = length(centered) * 2.0;",
     "        if (radial > 1.0) discard;",
@@ -672,7 +669,7 @@
     "        alpha = g;",
     "    }",
     "",
-    "    // Apply fog",
+    // Apply fog
     "    if (u_hasFog != 0) {",
     "        color = mix(u_fogColor, color, v_fogFactor);",
     "    }",
@@ -798,101 +795,6 @@
   ].join("\n");
 
   // --- Matrix Helpers ---
-
-  // Build a 4x4 view matrix from camera position and Euler rotation.
-  //
-  // The GoSX camera convention: the camera has position (x, y, z) and Euler
-  // angles (rotationX, rotationY, rotationZ). The shared Scene3D contract
-  // shifts world points by (-camX, -camY, -camZ) then applies inverse
-  // rotation. Positive forward depth is -viewZ.
-  //
-  // To produce a standard 4x4 view matrix we construct:
-  //   V = inverseRotation * translation(-camX, -camY, -camZ)
-  //
-  // The inverse rotation is computed by applying -rotZ, -rotY, -rotX
-  // (reverse order, negative angles) — matching sceneInverseRotatePoint.
-  // Build a 4x4 view matrix into `out` (or a new Float32Array if omitted).
-  function scenePBRViewMatrix(camera, out) {
-    const cam = sceneRenderCamera(camera);
-    const tx = -cam.x;
-    const ty = -cam.y;
-    const tz = -cam.z;
-
-    // Inverse Euler: apply -rotZ, then -rotY, then -rotX.
-    const sx = Math.sin(-cam.rotationX);
-    const cx = Math.cos(-cam.rotationX);
-    const sy = Math.sin(-cam.rotationY);
-    const cy = Math.cos(-cam.rotationY);
-    const sz = Math.sin(-cam.rotationZ);
-    const cz = Math.cos(-cam.rotationZ);
-
-    // Rotation matrix = Rx(-rx) * Ry(-ry) * Rz(-rz), matching
-    // sceneInverseRotatePoint's scalar sequence exactly.
-    // Column-major order for WebGL.
-    const r00 = cy * cz;
-    const r01 = -cy * sz;
-    const r02 = sy;
-
-    const r10 = cx * sz + sx * sy * cz;
-    const r11 = cx * cz - sx * sy * sz;
-    const r12 = -sx * cy;
-
-    const r20 = sx * sz - cx * sy * cz;
-    const r21 = sx * cz + cx * sy * sz;
-    const r22 = cx * cy;
-
-    // Translation part: R * t
-    const d0 = r00 * tx + r01 * ty + r02 * tz;
-    const d1 = r10 * tx + r11 * ty + r12 * tz;
-    const d2 = r20 * tx + r21 * ty + r22 * tz;
-
-    // Column-major 4x4 matrix as Float32Array.
-    var m = out || new Float32Array(16);
-    m[0] = r00; m[1] = r10; m[2] = r20; m[3] = 0;
-    m[4] = r01; m[5] = r11; m[6] = r21; m[7] = 0;
-    m[8] = r02; m[9] = r12; m[10] = r22; m[11] = 0;
-    m[12] = d0; m[13] = d1; m[14] = d2; m[15] = 1;
-    return m;
-  }
-
-  // Build a perspective projection matrix into `out` (or a new Float32Array).
-  // fov is in degrees, matching sceneRenderCamera output.
-  function scenePBRProjectionMatrix(fov, aspect, near, far, out) {
-    const fovRad = (fov * Math.PI) / 180;
-    const f = 1 / Math.tan(fovRad * 0.5);
-    const rangeInv = 1 / (near - far);
-
-    // Column-major.
-    var m = out || new Float32Array(16);
-    m[0] = f / aspect; m[1] = 0; m[2] = 0; m[3] = 0;
-    m[4] = 0; m[5] = f; m[6] = 0; m[7] = 0;
-    m[8] = 0; m[9] = 0; m[10] = (near + far) * rangeInv; m[11] = -1;
-    m[12] = 0; m[13] = 0; m[14] = 2 * near * far * rangeInv; m[15] = 0;
-    return m;
-  }
-
-  function scenePBROrthographicProjectionMatrix(left, right, top, bottom, near, far, out) {
-    var m = out || new Float32Array(16);
-    const width = Math.max(0.000001, right - left);
-    const height = Math.max(0.000001, top - bottom);
-    const depth = Math.max(0.000001, far - near);
-    m[0] = 2 / width; m[1] = 0; m[2] = 0; m[3] = 0;
-    m[4] = 0; m[5] = 2 / height; m[6] = 0; m[7] = 0;
-    m[8] = 0; m[9] = 0; m[10] = -2 / depth; m[11] = 0;
-    m[12] = -(right + left) / width; m[13] = -(top + bottom) / height; m[14] = -(far + near) / depth; m[15] = 1;
-    return m;
-  }
-
-  function scenePBRProjectionMatrixForCamera(camera, aspect, out) {
-    const cam = sceneRenderCamera(camera);
-    if (cam.kind === "orthographic") {
-      const bounds = sceneOrthographicBounds(cam, Math.max(1, aspect * 1000), 1000);
-      return scenePBROrthographicProjectionMatrix(bounds.left, bounds.right, bounds.top, bounds.bottom, cam.near, cam.far, out);
-    }
-    return scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, out);
-  }
-
-  // --- Shadow Map Infrastructure ---
 
   // Create a framebuffer with a depth-only texture for shadow mapping.
   function createSceneShadowResources(gl, size) {
@@ -1235,121 +1137,6 @@
     ]);
 
     return sceneMat4Multiply(proj, view);
-  }
-
-  // Compute an orthographic light-space matrix for a directional light.
-  // sceneBounds is { minX, minY, minZ, maxX, maxY, maxZ }.
-  function sceneShadowLightSpaceMatrix(light, sceneBounds) {
-    // Light direction (normalized).
-    var dx = sceneNumber(light.directionX, 0);
-    var dy = sceneNumber(light.directionY, -1);
-    var dz = sceneNumber(light.directionZ, 0);
-    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (len < 0.0001) {
-      dx = 0; dy = -1; dz = 0; len = 1;
-    }
-    dx /= len; dy /= len; dz /= len;
-
-    // Scene center and radius from AABB.
-    var cx = (sceneBounds.minX + sceneBounds.maxX) * 0.5;
-    var cy = (sceneBounds.minY + sceneBounds.maxY) * 0.5;
-    var cz = (sceneBounds.minZ + sceneBounds.maxZ) * 0.5;
-    var ex = (sceneBounds.maxX - sceneBounds.minX) * 0.5;
-    var ey = (sceneBounds.maxY - sceneBounds.minY) * 0.5;
-    var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
-    var radius = Math.sqrt(ex * ex + ey * ey + ez * ez);
-    if (radius < 0.01) radius = 10;
-
-    // Position the light camera behind the scene center along the light direction.
-    var eyeX = cx - dx * radius * 2;
-    var eyeY = cy - dy * radius * 2;
-    var eyeZ = cz - dz * radius * 2;
-
-    // Build a lookAt view matrix (light looking at scene center).
-    // Forward = normalize(center - eye) = (dx, dy, dz).
-    var fx = dx, fy = dy, fz = dz;
-
-    // Choose an up vector not parallel to forward.
-    var upX = 0, upY = 1, upZ = 0;
-    if (Math.abs(fy) > 0.99) {
-      upX = 0; upY = 0; upZ = 1;
-    }
-
-    // Right = normalize(forward x up).
-    var rx = fy * upZ - fz * upY;
-    var ry = fz * upX - fx * upZ;
-    var rz = fx * upY - fy * upX;
-    var rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
-    if (rLen < 0.0001) rLen = 1;
-    rx /= rLen; ry /= rLen; rz /= rLen;
-
-    // Recompute up = right x forward.
-    upX = ry * fz - rz * fy;
-    upY = rz * fx - rx * fz;
-    upZ = rx * fy - ry * fx;
-
-    // View matrix (column-major).
-    var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
-    var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
-    var tz = -(fx * eyeX + fy * eyeY + fz * eyeZ);
-
-    // Note: forward is positive — we look along +forward, so no negation.
-    var view = new Float32Array([
-      rx,  upX, fx,  0,
-      ry,  upY, fy,  0,
-      rz,  upZ, fz,  0,
-      tx,  ty,  tz,  1,
-    ]);
-
-    // Orthographic projection matrix (column-major).
-    // Maps [-radius, radius] in all axes to [-1, 1] clip space.
-    var near = 0.01;
-    var far = radius * 4;
-    var l = -radius, rr = radius, b = -radius, t = radius;
-    var proj = new Float32Array([
-      2 / (rr - l),     0,              0,                    0,
-      0,                2 / (t - b),    0,                    0,
-      0,                0,              -2 / (far - near),    0,
-      -(rr + l) / (rr - l), -(t + b) / (t - b), -(far + near) / (far - near), 1,
-    ]);
-
-    // Multiply proj * view (column-major).
-    return sceneMat4Multiply(proj, view);
-  }
-
-  // Compute the AABB of all objects in the bundle.
-  function sceneShadowComputeBounds(bundle) {
-    var minX = Infinity, minY = Infinity, minZ = Infinity;
-    var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    var positions = bundle.worldMeshPositions;
-    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-
-    for (var i = 0; i < objects.length; i++) {
-      var obj = objects[i];
-      if (!obj || obj.viewCulled) continue;
-      if (obj.directVertices) continue;
-      var offset = obj.vertexOffset;
-      var count = obj.vertexCount;
-      if (!Number.isFinite(offset) || !Number.isFinite(count) || count <= 0) continue;
-
-      for (var v = 0; v < count; v++) {
-        var idx = (offset + v) * 3;
-        var px = positions[idx];
-        var py = positions[idx + 1];
-        var pz = positions[idx + 2];
-        if (px < minX) minX = px;
-        if (py < minY) minY = py;
-        if (pz < minZ) minZ = pz;
-        if (px > maxX) maxX = px;
-        if (py > maxY) maxY = py;
-        if (pz > maxZ) maxZ = pz;
-      }
-    }
-
-    if (!isFinite(minX)) {
-      return { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
-    }
-    return { minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ };
   }
 
   // Computes a cheap change-detector hash for a shadow pass. When the
@@ -5420,425 +5207,6 @@
     };
   }
 
-  // Generate PBR vertex data (positions, normals, UVs, tangents) for a geometry
-  // kind. Returns { positions, normals, uvs, tangents, vertexCount } where each
-  // array is a Float32Array ready for GPU upload.
-  function generateInstancedGeometry(kind, dims) {
-    kind = normalizeInstancedGeometryKind(kind);
-    var w = sceneNumber(dims && dims.width, 1);
-    var h = sceneNumber(dims && dims.height, 1);
-    var d = sceneNumber(dims && dims.depth, 1);
-    var size = sceneNumber(dims && dims.size, 0);
-    if (kind === "cube" && size > 0) {
-      w = size;
-      h = size;
-      d = size;
-    }
-
-    if (kind === "sphere") {
-      return generateInstancedSphereGeometry(
-        sceneNumber(dims && dims.radius, 0.5),
-        sceneNumber(dims && dims.segments, 32)
-      );
-    }
-    if (kind === "plane") {
-      return generateInstancedPlaneGeometry(w, d);
-    }
-    if (kind === "pyramid") {
-      return generateInstancedPyramidGeometry(w, h, d);
-    }
-    if (kind === "cylinder") {
-      return generateInstancedCylinderGeometry(
-        sceneNumber(dims && dims.radiusTop, sceneNumber(dims && dims.radius, 0.5)),
-        sceneNumber(dims && dims.radiusBottom, sceneNumber(dims && dims.radius, 0.5)),
-        h,
-        sceneNumber(dims && dims.segments, 32)
-      );
-    }
-    if (kind === "cone") {
-      return generateInstancedCylinderGeometry(
-        0,
-        sceneNumber(dims && dims.radiusBottom, sceneNumber(dims && dims.radius, 0.5)),
-        h,
-        sceneNumber(dims && dims.segments, 32)
-      );
-    }
-    if (kind === "torus") {
-      return generateInstancedTorusGeometry(
-        sceneNumber(dims && dims.radius, 0.7),
-        sceneNumber(dims && dims.tube, 0.3),
-        sceneNumber(dims && dims.radialSegments, 32),
-        sceneNumber(dims && dims.tubularSegments, 16)
-      );
-    }
-
-    // Default: box geometry.
-    return generateInstancedBoxGeometry(w, h, d);
-  }
-
-  function normalizeInstancedGeometryKind(kind) {
-    if (typeof normalizeSceneKind === "function") {
-      return normalizeSceneKind(kind);
-    }
-    var text = typeof kind === "string" ? kind.trim().toLowerCase() : "";
-    switch (text) {
-      case "cubegeometry":
-        return "cube";
-      case "boxgeometry":
-        return "box";
-      case "planegeometry":
-      case "quad":
-      case "quadgeometry":
-        return "plane";
-      case "pyramidgeometry":
-        return "pyramid";
-      case "spheregeometry":
-      case "uvsphere":
-      case "uvspheregeometry":
-        return "sphere";
-      case "cylindergeometry":
-        return "cylinder";
-      case "conegeometry":
-        return "cone";
-      case "torusgeometry":
-        return "torus";
-      case "torusknotgeometry":
-      case "torus-knot":
-        return "torusknot";
-      default:
-        return text || "box";
-    }
-  }
-
-  // Generate a unit box with the given dimensions. 36 vertices (12 triangles).
-  // Each face has outward normals, [0,1] UVs, and MikkTSpace-compatible tangents.
-  function generateInstancedBoxGeometry(w, h, d) {
-    var hw = w * 0.5, hh = h * 0.5, hd = d * 0.5;
-
-    // 6 faces × 2 triangles × 3 vertices = 36 vertices.
-    // Each face: normal, tangent(vec4), 4 corners → 2 triangles.
-    var faces = [
-      // +Z face (front)
-      { n: [0, 0, 1], t: [1, 0, 0, 1], v: [[-hw,-hh,hd],[hw,-hh,hd],[hw,hh,hd],[-hw,hh,hd]] },
-      // -Z face (back)
-      { n: [0, 0,-1], t: [-1, 0, 0, 1], v: [[hw,-hh,-hd],[-hw,-hh,-hd],[-hw,hh,-hd],[hw,hh,-hd]] },
-      // +X face (right)
-      { n: [1, 0, 0], t: [0, 0,-1, 1], v: [[hw,-hh,hd],[hw,-hh,-hd],[hw,hh,-hd],[hw,hh,hd]] },
-      // -X face (left)
-      { n: [-1, 0, 0], t: [0, 0, 1, 1], v: [[-hw,-hh,-hd],[-hw,-hh,hd],[-hw,hh,hd],[-hw,hh,-hd]] },
-      // +Y face (top)
-      { n: [0, 1, 0], t: [1, 0, 0, 1], v: [[-hw,hh,hd],[hw,hh,hd],[hw,hh,-hd],[-hw,hh,-hd]] },
-      // -Y face (bottom)
-      { n: [0,-1, 0], t: [1, 0, 0, 1], v: [[-hw,-hh,-hd],[hw,-hh,-hd],[hw,-hh,hd],[-hw,-hh,hd]] },
-    ];
-
-    var quadUVs = [[0,0],[1,0],[1,1],[0,1]];
-    var triIndices = [0,1,2, 0,2,3];
-
-    var vertexCount = 36;
-    var positions = new Float32Array(vertexCount * 3);
-    var normals = new Float32Array(vertexCount * 3);
-    var uvs = new Float32Array(vertexCount * 2);
-    var tangents = new Float32Array(vertexCount * 4);
-
-    var vi = 0;
-    for (var fi = 0; fi < 6; fi++) {
-      var face = faces[fi];
-      for (var ti = 0; ti < 6; ti++) {
-        var ci = triIndices[ti];
-        var p = face.v[ci];
-        positions[vi * 3]     = p[0];
-        positions[vi * 3 + 1] = p[1];
-        positions[vi * 3 + 2] = p[2];
-        normals[vi * 3]     = face.n[0];
-        normals[vi * 3 + 1] = face.n[1];
-        normals[vi * 3 + 2] = face.n[2];
-        uvs[vi * 2]     = quadUVs[ci][0];
-        uvs[vi * 2 + 1] = quadUVs[ci][1];
-        tangents[vi * 4]     = face.t[0];
-        tangents[vi * 4 + 1] = face.t[1];
-        tangents[vi * 4 + 2] = face.t[2];
-        tangents[vi * 4 + 3] = face.t[3];
-        vi++;
-      }
-    }
-
-    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vertexCount };
-  }
-
-  // Generate a plane (quad) with the given width and depth, lying in the XZ plane.
-  // 6 vertices (2 triangles), face normal pointing up (+Y).
-  function generateInstancedPlaneGeometry(w, d) {
-    var hw = w * 0.5, hd = d * 0.5;
-    var vertexCount = 6;
-    var positions = new Float32Array(vertexCount * 3);
-    var normals = new Float32Array(vertexCount * 3);
-    var uvs = new Float32Array(vertexCount * 2);
-    var tangents = new Float32Array(vertexCount * 4);
-
-    var corners = [[-hw, 0, hd], [hw, 0, hd], [hw, 0, -hd], [-hw, 0, -hd]];
-    var cornerUVs = [[0, 0], [1, 0], [1, 1], [0, 1]];
-    var triIndices = [0, 1, 2, 0, 2, 3];
-
-    for (var i = 0; i < 6; i++) {
-      var ci = triIndices[i];
-      var p = corners[ci];
-      positions[i * 3] = p[0]; positions[i * 3 + 1] = p[1]; positions[i * 3 + 2] = p[2];
-      normals[i * 3] = 0; normals[i * 3 + 1] = 1; normals[i * 3 + 2] = 0;
-      uvs[i * 2] = cornerUVs[ci][0]; uvs[i * 2 + 1] = cornerUVs[ci][1];
-      tangents[i * 4] = 1; tangents[i * 4 + 1] = 0; tangents[i * 4 + 2] = 0; tangents[i * 4 + 3] = 1;
-    }
-
-    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vertexCount };
-  }
-
-  // Generate a UV sphere with the given radius and segment count.
-  function generateInstancedSphereGeometry(radius, segments) {
-    var slices = instancedSegmentCount(segments, 32, 3, 256);
-    var rings = Math.max(2, Math.floor(slices / 2));
-
-    // Count: each ring-slice quad = 2 triangles = 6 vertices,
-    // except the top and bottom caps which are single triangles.
-    var vertexCount = rings * slices * 6;
-    var positions = new Float32Array(vertexCount * 3);
-    var normals = new Float32Array(vertexCount * 3);
-    var uvs = new Float32Array(vertexCount * 2);
-    var tangents = new Float32Array(vertexCount * 4);
-    var vi = 0;
-
-    function spherePoint(ring, slice) {
-      var phi = (ring / rings) * Math.PI;
-      var theta = (slice / slices) * Math.PI * 2;
-      var sp = Math.sin(phi);
-      var nx = sp * Math.cos(theta);
-      var ny = Math.cos(phi);
-      var nz = sp * Math.sin(theta);
-      return {
-        px: nx * radius, py: ny * radius, pz: nz * radius,
-        nx: nx, ny: ny, nz: nz,
-        u: slice / slices, v: ring / rings,
-        tx: -Math.sin(theta), ty: 0, tz: Math.cos(theta),
-      };
-    }
-
-    function pushVert(pt) {
-      positions[vi * 3] = pt.px; positions[vi * 3 + 1] = pt.py; positions[vi * 3 + 2] = pt.pz;
-      normals[vi * 3] = pt.nx; normals[vi * 3 + 1] = pt.ny; normals[vi * 3 + 2] = pt.nz;
-      uvs[vi * 2] = pt.u; uvs[vi * 2 + 1] = pt.v;
-      tangents[vi * 4] = pt.tx; tangents[vi * 4 + 1] = pt.ty; tangents[vi * 4 + 2] = pt.tz; tangents[vi * 4 + 3] = 1;
-      vi++;
-    }
-
-    for (var r = 0; r < rings; r++) {
-      for (var s = 0; s < slices; s++) {
-        var a = spherePoint(r, s);
-        var b = spherePoint(r, s + 1);
-        var c = spherePoint(r + 1, s + 1);
-        var dd = spherePoint(r + 1, s);
-        pushVert(a); pushVert(b); pushVert(c);
-        pushVert(a); pushVert(c); pushVert(dd);
-      }
-    }
-
-    return { positions: positions, normals: normals, uvs: uvs, tangents: tangents, vertexCount: vi };
-  }
-
-  function instancedSegmentCount(value, fallback, minValue, maxValue) {
-    var count = Math.round(sceneNumber(value, fallback));
-    return Math.max(minValue, Math.min(maxValue, count));
-  }
-
-  function instancedPositiveNumber(value, fallback) {
-    var number = sceneNumber(value, fallback);
-    return number > 0 ? number : fallback;
-  }
-
-  function instancedNormalize3(x, y, z) {
-    var length = Math.sqrt(x * x + y * y + z * z);
-    if (!Number.isFinite(length) || length <= 0.000001) {
-      return [0, 1, 0];
-    }
-    return [x / length, y / length, z / length];
-  }
-
-  function instancedTriangleNormal(a, b, c) {
-    var abx = b[0] - a[0];
-    var aby = b[1] - a[1];
-    var abz = b[2] - a[2];
-    var acx = c[0] - a[0];
-    var acy = c[1] - a[1];
-    var acz = c[2] - a[2];
-    return instancedNormalize3(
-      aby * acz - abz * acy,
-      abz * acx - abx * acz,
-      abx * acy - aby * acx
-    );
-  }
-
-  function createInstancedGeometryWriter(vertexCount) {
-    var positions = new Float32Array(vertexCount * 3);
-    var normals = new Float32Array(vertexCount * 3);
-    var uvs = new Float32Array(vertexCount * 2);
-    var tangents = new Float32Array(vertexCount * 4);
-    var vi = 0;
-    function push(position, normal, uv, tangent) {
-      positions[vi * 3] = position[0];
-      positions[vi * 3 + 1] = position[1];
-      positions[vi * 3 + 2] = position[2];
-      normals[vi * 3] = normal[0];
-      normals[vi * 3 + 1] = normal[1];
-      normals[vi * 3 + 2] = normal[2];
-      uvs[vi * 2] = uv[0];
-      uvs[vi * 2 + 1] = uv[1];
-      tangents[vi * 4] = tangent[0];
-      tangents[vi * 4 + 1] = tangent[1];
-      tangents[vi * 4 + 2] = tangent[2];
-      tangents[vi * 4 + 3] = tangent[3];
-      vi++;
-    }
-    function build() {
-      return {
-        positions: vi * 3 === positions.length ? positions : positions.subarray(0, vi * 3),
-        normals: vi * 3 === normals.length ? normals : normals.subarray(0, vi * 3),
-        uvs: vi * 2 === uvs.length ? uvs : uvs.subarray(0, vi * 2),
-        tangents: vi * 4 === tangents.length ? tangents : tangents.subarray(0, vi * 4),
-        vertexCount: vi,
-      };
-    }
-    return { push: push, build: build };
-  }
-
-  function pushInstancedFlatTri(writer, p0, p1, p2, uv0, uv1, uv2) {
-    var normal = instancedTriangleNormal(p0, p1, p2);
-    var tangent3 = instancedNormalize3(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
-    var tangent = [tangent3[0], tangent3[1], tangent3[2], 1];
-    writer.push(p0, normal, uv0, tangent);
-    writer.push(p1, normal, uv1, tangent);
-    writer.push(p2, normal, uv2, tangent);
-  }
-
-  function generateInstancedPyramidGeometry(w, h, d) {
-    var hw = instancedPositiveNumber(w, 1) * 0.5;
-    var hh = instancedPositiveNumber(h, 1) * 0.5;
-    var hd = instancedPositiveNumber(d, 1) * 0.5;
-    var base = [[-hw, -hh, -hd], [hw, -hh, -hd], [hw, -hh, hd], [-hw, -hh, hd]];
-    var apex = [0, hh, 0];
-    var writer = createInstancedGeometryWriter(18);
-
-    pushInstancedFlatTri(writer, base[0], base[1], base[2], [0, 0], [1, 0], [1, 1]);
-    pushInstancedFlatTri(writer, base[0], base[2], base[3], [0, 0], [1, 1], [0, 1]);
-    for (var i = 0; i < 4; i++) {
-      pushInstancedFlatTri(writer, base[i], apex, base[(i + 1) % 4], [0, 1], [0.5, 0], [1, 1]);
-    }
-    return writer.build();
-  }
-
-  function generateInstancedCylinderGeometry(radiusTop, radiusBottom, height, segments) {
-    var rt = Math.max(0, sceneNumber(radiusTop, 0.5));
-    var rb = Math.max(0, sceneNumber(radiusBottom, 0.5));
-    var h = instancedPositiveNumber(height, 1);
-    if (rt === 0 && rb === 0) {
-      rb = 0.5;
-    }
-    var count = instancedSegmentCount(segments, 32, 3, 256);
-    var vertsPerSegment = (rt > 0 && rb > 0 ? 6 : 3) + (rb > 0 ? 3 : 0) + (rt > 0 ? 3 : 0);
-    var writer = createInstancedGeometryWriter(count * vertsPerSegment);
-    var halfH = h * 0.5;
-    var slopeY = (rb - rt) / h;
-
-    for (var i = 0; i < count; i++) {
-      var u0 = i / count;
-      var u1 = (i + 1) / count;
-      var th0 = (Math.PI * 2 * i) / count;
-      var th1 = (Math.PI * 2 * (i + 1)) / count;
-      var c0 = Math.cos(th0);
-      var s0 = Math.sin(th0);
-      var c1 = Math.cos(th1);
-      var s1 = Math.sin(th1);
-      var n0 = instancedNormalize3(c0, slopeY, s0);
-      var n1 = instancedNormalize3(c1, slopeY, s1);
-      var t0 = [-s0, 0, c0, 1];
-      var t1 = [-s1, 0, c1, 1];
-      var b0 = [rb * c0, -halfH, rb * s0];
-      var b1 = [rb * c1, -halfH, rb * s1];
-      var top0 = [rt * c0, halfH, rt * s0];
-      var top1 = [rt * c1, halfH, rt * s1];
-
-      if (rb > 0 && rt > 0) {
-        writer.push(b0, n0, [u0, 1], t0);
-        writer.push(top1, n1, [u1, 0], t1);
-        writer.push(b1, n1, [u1, 1], t1);
-        writer.push(b0, n0, [u0, 1], t0);
-        writer.push(top0, n0, [u0, 0], t0);
-        writer.push(top1, n1, [u1, 0], t1);
-      } else if (rt === 0) {
-        writer.push(b0, n0, [u0, 1], t0);
-        writer.push(top1, n1, [u1, 0], t1);
-        writer.push(b1, n1, [u1, 1], t1);
-      } else {
-        writer.push(b0, n0, [u0, 1], t0);
-        writer.push(top0, n0, [u0, 0], t0);
-        writer.push(top1, n1, [u1, 0], t1);
-      }
-
-      if (rb > 0) {
-        writer.push([0, -halfH, 0], [0, -1, 0], [0.5, 0.5], [1, 0, 0, 1]);
-        writer.push(b0, [0, -1, 0], [0.5 + c0 * 0.5, 0.5 + s0 * 0.5], [1, 0, 0, 1]);
-        writer.push(b1, [0, -1, 0], [0.5 + c1 * 0.5, 0.5 + s1 * 0.5], [1, 0, 0, 1]);
-      }
-      if (rt > 0) {
-        writer.push([0, halfH, 0], [0, 1, 0], [0.5, 0.5], [1, 0, 0, 1]);
-        writer.push(top1, [0, 1, 0], [0.5 + c1 * 0.5, 0.5 + s1 * 0.5], [1, 0, 0, 1]);
-        writer.push(top0, [0, 1, 0], [0.5 + c0 * 0.5, 0.5 + s0 * 0.5], [1, 0, 0, 1]);
-      }
-    }
-    return writer.build();
-  }
-
-  function generateInstancedTorusGeometry(radius, tube, radialSegments, tubularSegments) {
-    var major = instancedPositiveNumber(radius, 0.7);
-    var minor = instancedPositiveNumber(tube, 0.3);
-    var radial = instancedSegmentCount(radialSegments, 32, 3, 256);
-    var tubular = instancedSegmentCount(tubularSegments, 16, 3, 128);
-    var writer = createInstancedGeometryWriter(radial * tubular * 6);
-
-    function vertexAt(i, j) {
-      var u = (Math.PI * 2 * i) / radial;
-      var v = (Math.PI * 2 * j) / tubular;
-      var cu = Math.cos(u);
-      var su = Math.sin(u);
-      var cv = Math.cos(v);
-      var sv = Math.sin(v);
-      var r = major + minor * cv;
-      return {
-        position: [r * cu, minor * sv, r * su],
-        normal: instancedNormalize3(cv * cu, sv, cv * su),
-        uv: [i / radial, j / tubular],
-        tangent: [-su, 0, cu, 1],
-      };
-    }
-
-    function pushTorusVertex(v) {
-      writer.push(v.position, v.normal, v.uv, v.tangent);
-    }
-
-    for (var i = 0; i < radial; i++) {
-      for (var j = 0; j < tubular; j++) {
-        var a = vertexAt(i, j);
-        var b = vertexAt(i, j + 1);
-        var c = vertexAt(i + 1, j);
-        var dd = vertexAt(i + 1, j + 1);
-        pushTorusVertex(a);
-        pushTorusVertex(b);
-        pushTorusVertex(c);
-        pushTorusVertex(c);
-        pushTorusVertex(b);
-        pushTorusVertex(dd);
-      }
-    }
-    return writer.build();
-  }
-
   function scenePBRCompileShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -5870,85 +5238,6 @@
   }
 
   // --- Light Uniform Upload ---
-
-  // Shared scratch for number → u32 bit reinterpretation used by the light
-  // hash. Allocated once at module level; safe because the hash function
-  // is called synchronously per upload and never recursively.
-  var _scenePBRLightsHashBuf = new ArrayBuffer(4);
-  var _scenePBRLightsHashFloat = new Float32Array(_scenePBRLightsHashBuf);
-  var _scenePBRLightsHashInt = new Uint32Array(_scenePBRLightsHashBuf);
-
-  function scenePBRLightsHashNumber(h, n) {
-    _scenePBRLightsHashFloat[0] = (typeof n === "number" && n === n) ? n : 0;
-    return Math.imul((h ^ _scenePBRLightsHashInt[0]) >>> 0, 16777619) >>> 0;
-  }
-
-  function scenePBRLightsHashString(h, s) {
-    var str = (typeof s === "string") ? s : "";
-    var len = str.length;
-    for (var i = 0; i < len; i++) {
-      h = Math.imul((h ^ str.charCodeAt(i)) >>> 0, 16777619) >>> 0;
-    }
-    // Length-delimit to distinguish "ab" + "c" from "a" + "bc".
-    return Math.imul((h ^ (len + 1)) >>> 0, 16777619) >>> 0;
-  }
-
-  // hashLightContent computes the per-light sub-hash the frame-level
-  // scenePBRLightsHash combines. Called from normalizeSceneLight (in
-  // 10-runtime-scene-core.js) whenever a light is created or patched,
-  // so the expensive string/number walk runs at mutation time — rare —
-  // instead of per-frame. The result is stamped onto the light object
-  // as `_lightHash` and read by scenePBRLightsHash without rehashing.
-  //
-  // Kept in 16-scene-webgl.js alongside scenePBRLightsHash so the two
-  // must agree on what fields contribute to the hash; moving either
-  // without the other is a correctness bug.
-  function hashLightContent(l) {
-    if (!l) return 0;
-    var h = 2166136261;
-    h = scenePBRLightsHashString(h, l.kind);
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.x, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.y, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.z, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionX, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionY, -1));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.directionZ, 0));
-    h = scenePBRLightsHashString(h, l.color);
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.intensity, 1));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.range, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.decay, 2));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.angle, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.penumbra, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.width, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.height, 0));
-    h = scenePBRLightsHashString(h, l.groundColor);
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowBias, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSize, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowCascades, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSoftness, 0));
-    return h;
-  }
-
-  // hashEnvironmentContent is the env-side counterpart to hashLightContent.
-  // Called from normalizeSceneEnvironment and sceneResolveLightingEnvironment
-  // whenever the environment is normalized so the cached sub-hash travels
-  // with the environment object downstream.
-  function hashEnvironmentContent(env) {
-    if (!env) return 0;
-    var h = 2166136261;
-    h = scenePBRLightsHashString(h, env.ambientColor);
-    h = scenePBRLightsHashNumber(h, sceneNumber(env.ambientIntensity, 0));
-    h = scenePBRLightsHashString(h, env.skyColor);
-    h = scenePBRLightsHashNumber(h, sceneNumber(env.skyIntensity, 0));
-    h = scenePBRLightsHashString(h, env.groundColor);
-    h = scenePBRLightsHashNumber(h, sceneNumber(env.groundIntensity, 0));
-    h = scenePBRLightsHashString(h, env.envMap);
-    h = scenePBRLightsHashNumber(h, sceneNumber(env.envIntensity, 1));
-    h = scenePBRLightsHashNumber(h, sceneNumber(env.envRotation, 0));
-    h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
-    h = scenePBRLightsHashString(h, env.fogColor);
-    return h;
-  }
 
   // scenePBRLightsHash combines per-light and per-environment cached
   // sub-hashes into a 32-bit frame hash. Called once per frame (hoisted
@@ -8577,37 +7866,6 @@
       dispose: dispose,
       type: "webgl-pbr",
     };
-  }
-
-  // Determine the render pass for an object given its material.
-  function scenePBRObjectRenderPass(obj, material) {
-    if (obj && typeof obj.renderPass === "string" && obj.renderPass) {
-      const pass = obj.renderPass.toLowerCase();
-      if (pass === "alpha" || pass === "additive" || pass === "opaque") {
-        return pass;
-      }
-    }
-    if (material && typeof material.renderPass === "string" && material.renderPass) {
-      const pass = material.renderPass.toLowerCase();
-      if (pass === "alpha" || pass === "additive" || pass === "opaque") {
-        return pass;
-      }
-    }
-    // If material opacity < 1, default to alpha pass.
-    if (material && sceneNumber(material.opacity, 1) < 1) {
-      return "alpha";
-    }
-    return "opaque";
-  }
-
-  // Depth-based sort comparator for translucent objects (back-to-front).
-  function scenePBRDepthSort(a, b) {
-    const da = sceneNumber(a && a.depthCenter, 0);
-    const db = sceneNumber(b && b.depthCenter, 0);
-    if (da !== db) {
-      return db - da;
-    }
-    return String(a && a.id || "").localeCompare(String(b && b.id || ""));
   }
 
   function sceneWebGLCommandSequence(bundle, viewport, previousPrepared) {

@@ -115,9 +115,69 @@
     return normalized;
   }
 
+  // ---------------------------------------------------------------------------
+  // Extension helpers
+  // ---------------------------------------------------------------------------
+
+  // Read one extension object from any glTF record (material, texture,
+  // primitive, bufferView). Returns null when the record does not carry it.
+  function gltfExtension(record, name) {
+    if (!record || !record.extensions) {
+      return null;
+    }
+    var value = record.extensions[name];
+    return value && typeof value === "object" ? value : null;
+  }
+
+  // Read a scalar factor from an extension object, clamped to [min, max].
+  function gltfExtensionFactor(extension, key, fallback, min, max) {
+    if (!extension || extension[key] == null) {
+      return fallback;
+    }
+    var value = Number(extension[key]);
+    if (!isFinite(value)) {
+      return fallback;
+    }
+    return Math.max(min, Math.min(max, value));
+  }
+
+  // Read the largest component of a linear colour factor. GoSX materials carry
+  // scalar sheen and specular strengths, so a colour factor collapses to its
+  // peak intensity.
+  function gltfExtensionColorPeak(extension, key, fallback) {
+    var color = extension && extension[key];
+    if (!Array.isArray(color) || color.length < 3) {
+      return fallback;
+    }
+    var peak = Math.max(Number(color[0]) || 0, Number(color[1]) || 0, Number(color[2]) || 0);
+    return Math.max(0, Math.min(1, peak));
+  }
+
+  // Compression extensions rewrite the bytes a bufferView or primitive points
+  // at. The loader has no decoder for them, so reading the raw bytes would
+  // build a corrupt mesh. Throw instead, with the extension named.
+  function gltfRejectCompressedBufferView(bufferView) {
+    if (gltfExtension(bufferView, "EXT_meshopt_compression")) {
+      throw new Error(
+        "glTF uses EXT_meshopt_compression, which this loader cannot decode. " +
+        "Re-export the asset without meshopt compression, or run gltfpack without -cc."
+      );
+    }
+  }
+
+  function gltfRejectCompressedPrimitive(primitive) {
+    if (gltfExtension(primitive, "KHR_draco_mesh_compression")) {
+      throw new Error(
+        "glTF uses KHR_draco_mesh_compression, which this loader cannot decode. " +
+        "Re-export the asset without Draco compression."
+      );
+    }
+  }
+
   function gltfReadAccessor(gltf, accessorIndex, binaryBuffer) {
     var accessor = gltf.accessors[accessorIndex];
     var bufferView = gltf.bufferViews[accessor.bufferView];
+    gltfRejectCompressedBufferView(bufferView);
     var buffer = binaryBuffer;
 
     var byteOffset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
@@ -525,12 +585,34 @@
   // Mesh primitive extraction
   // ---------------------------------------------------------------------------
 
-  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer) {
+  // Renormalize a VEC3 stream in place. KHR_mesh_quantization stores a normal
+  // as a normalized BYTE or SHORT, so the decoded vector is up to half a
+  // lattice step short of unit length. The world-transform path renormalizes
+  // already, but the skinned path keeps the model-space vector, so do it here.
+  function gltfRenormalizeVec3(values) {
+    for (var i = 0; i + 2 < values.length; i += 3) {
+      var x = values[i], y = values[i + 1], z = values[i + 2];
+      var length = Math.sqrt(x * x + y * y + z * z);
+      if (length > 1e-8) {
+        values[i] = x / length;
+        values[i + 1] = y / length;
+        values[i + 2] = z / length;
+      }
+    }
+    return values;
+  }
+
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform) {
     var positions = gltfReadAccessor(gltf, primitive.attributes.POSITION, binaryBuffer);
 
     var normals = primitive.attributes.NORMAL != null
       ? gltfReadAccessor(gltf, primitive.attributes.NORMAL, binaryBuffer)
       : null;
+    // A normalized accessor already handed back a fresh Float32Array, so this
+    // never writes through a view over the shared GLB buffer.
+    if (normals && gltf.accessors[primitive.attributes.NORMAL].normalized) {
+      normals = gltfRenormalizeVec3(normals);
+    }
 
     var uvs = primitive.attributes.TEXCOORD_0 != null
       ? gltfReadAccessor(gltf, primitive.attributes.TEXCOORD_0, binaryBuffer)
@@ -586,6 +668,14 @@
       if (!uvs) {
         uvs = gltfGenerateDefaultUVs(positions.length / 3);
       }
+    }
+
+    // Bake KHR_texture_transform into the UVs before tangents are computed, so
+    // the tangent basis matches the UVs the shader samples with. Copy first: a
+    // tightly packed accessor hands back a view over the shared GLB buffer, and
+    // two primitives can read the same accessor.
+    if (uvTransform) {
+      uvs = gltfApplyTextureTransform(new Float32Array(uvs), uvTransform);
     }
 
     // Compute tangents if not provided by the asset.
@@ -728,7 +818,16 @@
       return "";
     }
     var texture = textures[textureInfo.index];
-    if (!texture || texture.source == null) {
+    if (!texture) {
+      return "";
+    }
+    if (texture.source == null) {
+      // KHR_texture_basisu moves the image reference into the extension and
+      // points it at a KTX2 container. The loader has no Basis transcoder, so
+      // report the missing map and keep the mesh. Other maps still load.
+      if (gltfExtension(texture, "KHR_texture_basisu")) {
+        console.warn("[gosx] glTF texture uses KHR_texture_basisu (KTX2); this loader cannot transcode it. Rendering without that map.");
+      }
       return "";
     }
     var images = gltf.images;
@@ -763,6 +862,60 @@
     return URL.createObjectURL(blob);
   }
 
+  // ---------------------------------------------------------------------------
+  // KHR_texture_transform
+  //
+  // GoSX shaders sample UVs directly and carry no texture matrix uniform, so
+  // the loader bakes the transform into the UV buffer instead. Baking is exact
+  // for every map that shares one transform, which is what Blender, Substance,
+  // and gltfpack emit. Read the transform from the base colour texture and
+  // apply it to the whole primitive.
+  // ---------------------------------------------------------------------------
+
+  // Build the 2x3 UV matrix the KHR_texture_transform spec defines as
+  // translation * rotation * scale. Returns null for an identity transform so
+  // the caller can skip the buffer rewrite.
+  function gltfTextureTransformMatrix(textureInfo) {
+    var transform = gltfExtension(textureInfo, "KHR_texture_transform");
+    if (!transform) {
+      return null;
+    }
+    var offset = Array.isArray(transform.offset) ? transform.offset : [0, 0];
+    var scale = Array.isArray(transform.scale) ? transform.scale : [1, 1];
+    var rotation = Number(transform.rotation) || 0;
+    var offsetU = Number(offset[0]) || 0;
+    var offsetV = Number(offset[1]) || 0;
+    var scaleU = isFinite(Number(scale[0])) ? Number(scale[0]) : 1;
+    var scaleV = isFinite(Number(scale[1])) ? Number(scale[1]) : 1;
+    if (offsetU === 0 && offsetV === 0 && rotation === 0 && scaleU === 1 && scaleV === 1) {
+      return null;
+    }
+    var cos = Math.cos(rotation);
+    var sin = Math.sin(rotation);
+    return {
+      m00: cos * scaleU,
+      m01: sin * scaleV,
+      m02: offsetU,
+      m10: -sin * scaleU,
+      m11: cos * scaleV,
+      m12: offsetV,
+    };
+  }
+
+  // Rewrite a UV buffer in place with the texture transform.
+  function gltfApplyTextureTransform(uvs, matrix) {
+    if (!matrix || !uvs || !uvs.length) {
+      return uvs;
+    }
+    for (var i = 0; i + 1 < uvs.length; i += 2) {
+      var u = uvs[i];
+      var v = uvs[i + 1];
+      uvs[i] = matrix.m00 * u + matrix.m01 * v + matrix.m02;
+      uvs[i + 1] = matrix.m10 * u + matrix.m11 * v + matrix.m12;
+    }
+    return uvs;
+  }
+
   function gltfExtractMaterial(gltf, materialIndex, binaryBuffer) {
     if (materialIndex == null || !gltf.materials || materialIndex >= gltf.materials.length) {
       return gltfDefaultPBRMaterial();
@@ -779,7 +932,15 @@
     var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
     var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
 
-    return {
+    // KHR_materials_emissive_strength scales the emissive factor above 1 so
+    // HDR emitters keep their intensity. The PBR shaders take an unclamped
+    // emissive scalar, so multiply straight through.
+    var emissiveExtension = gltfExtension(mat, "KHR_materials_emissive_strength");
+    if (emissiveExtension) {
+      emissiveStrength *= gltfExtensionFactor(emissiveExtension, "emissiveStrength", 1, 0, 1000);
+    }
+
+    var record = {
       kind: "standard",
       color: gltfBaseColorToHex(baseColorFactor),
       roughness: pbr.roughnessFactor != null ? pbr.roughnessFactor : 1.0,
@@ -794,17 +955,81 @@
       alphaMode: mat.alphaMode || "OPAQUE",
       doubleSided: mat.doubleSided || false,
     };
+
+    // KHR_materials_clearcoat -> StandardMaterial.Clearcoat, range 0 to 1.
+    var clearcoat = gltfExtension(mat, "KHR_materials_clearcoat");
+    if (clearcoat) {
+      record.clearcoat = gltfExtensionFactor(clearcoat, "clearcoatFactor", 0, 0, 1);
+    }
+
+    // KHR_materials_sheen carries a colour and a roughness. StandardMaterial
+    // carries one scalar sheen strength, so take the colour peak. The sheen
+    // roughness and the colour hue are dropped.
+    var sheen = gltfExtension(mat, "KHR_materials_sheen");
+    if (sheen) {
+      record.sheen = gltfExtensionColorPeak(sheen, "sheenColorFactor", 0);
+    }
+
+    // KHR_materials_transmission -> StandardMaterial.Transmission, 0 to 1.
+    var transmission = gltfExtension(mat, "KHR_materials_transmission");
+    if (transmission) {
+      record.transmission = gltfExtensionFactor(transmission, "transmissionFactor", 0, 0, 1);
+    }
+
+    // KHR_materials_iridescence -> StandardMaterial.Iridescence, 0 to 1.
+    var iridescence = gltfExtension(mat, "KHR_materials_iridescence");
+    if (iridescence) {
+      record.iridescence = gltfExtensionFactor(iridescence, "iridescenceFactor", 0, 0, 1);
+    }
+
+    // KHR_materials_anisotropy carries an unsigned strength and a rotation in
+    // radians. StandardMaterial.Anisotropy is one signed scalar from -1 to 1,
+    // where the sign selects the tangent or the bitangent direction. Project
+    // the rotation onto that axis pair with cos(2 * rotation): a rotation of 0
+    // gives +strength along the tangent and a rotation of pi/2 gives -strength
+    // along the bitangent. Rotations between the two axes lose their exact
+    // angle.
+    var anisotropy = gltfExtension(mat, "KHR_materials_anisotropy");
+    if (anisotropy) {
+      var strength = gltfExtensionFactor(anisotropy, "anisotropyStrength", 0, 0, 1);
+      var rotation = Number(anisotropy.anisotropyRotation) || 0;
+      record.anisotropy = Math.max(-1, Math.min(1, strength * Math.cos(2 * rotation)));
+    }
+
+    // KHR_materials_ior records the index of refraction. The PBR shaders derive
+    // F0 from a fixed 0.04, so nothing consumes this value yet. Carry it on the
+    // material so a later shader pass can read it without a loader change.
+    var ior = gltfExtension(mat, "KHR_materials_ior");
+    if (ior) {
+      record.ior = gltfExtensionFactor(ior, "ior", 1.5, 1, 5);
+    }
+
+    // KHR_materials_unlit switches to the flat shading path. Both the WebGL and
+    // the WebGPU renderers read material.unlit already.
+    if (gltfExtension(mat, "KHR_materials_unlit")) {
+      record.unlit = true;
+    }
+
+    // KHR_texture_transform on the base colour texture. Record the matrix so
+    // gltfExtractMeshNode can bake it into the UV buffer.
+    var uvMatrix = gltfTextureTransformMatrix(pbr.baseColorTexture);
+    if (uvMatrix) {
+      record.uvTransform = uvMatrix;
+    }
+
+    return record;
   }
 
   // ---------------------------------------------------------------------------
   // Mesh node extraction — produces objects for the scene asset
   // ---------------------------------------------------------------------------
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
     }
+    var suffix = idSuffix || "";
 
     var normalMat = gltfNormalMatrix(worldTransform);
     var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
@@ -812,6 +1037,7 @@
 
     for (var p = 0; p < mesh.primitives.length; p++) {
       var primitive = mesh.primitives[p];
+      gltfRejectCompressedPrimitive(primitive);
       var mode = primitive.mode != null ? primitive.mode : 4;
       var material = gltfExtractMaterial(gltf, primitive.material, binaryBuffer);
       var extras = gltfCollectScene3DExtras(node, mesh, primitive);
@@ -825,7 +1051,7 @@
         var pointCount = Math.floor(pointPositions.length / 3);
         var pointColors = gltfPointColorBuffer(gltf, primitive, binaryBuffer, pointCount);
         var pointSizes = gltfPointSizeBuffer(gltf, primitive, binaryBuffer, pointCount);
-        var pointID = mesh.name ? (mesh.name + "-points-" + p) : ("mesh-" + meshIndex + "-points-" + p);
+        var pointID = (mesh.name ? (mesh.name + "-points-" + p) : ("mesh-" + meshIndex + "-points-" + p)) + suffix;
         var pointEntry = {
           id: pointID,
           count: pointCount,
@@ -861,7 +1087,7 @@
         var lineIndices = primitive.indices != null
           ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
           : null;
-        var lineID = mesh.name ? (mesh.name + "-lines-" + p) : ("mesh-" + meshIndex + "-lines-" + p);
+        var lineID = (mesh.name ? (mesh.name + "-lines-" + p) : ("mesh-" + meshIndex + "-lines-" + p)) + suffix;
         var lineObject = {
           id: lineID,
           kind: "lines",
@@ -883,7 +1109,7 @@
         continue;
       }
 
-      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer);
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
@@ -944,6 +1170,7 @@
       if (mesh.name) {
         objectID = mesh.name + "-prim-" + p;
       }
+      objectID += suffix;
 
       var vertices = {
         positions: objectPositions,
@@ -981,6 +1208,43 @@
   // Node hierarchy traversal
   // ---------------------------------------------------------------------------
 
+  // EXT_mesh_gpu_instancing lists per-instance transforms in accessors on the
+  // node. Return one 4x4 matrix per instance, in the node's own space. A loader
+  // that ignores the extension draws one instance instead of every instance, so
+  // reading it is a correctness fix, not an optimization.
+  function gltfInstanceTransforms(gltf, node, binaryBuffer) {
+    var instancing = gltfExtension(node, "EXT_mesh_gpu_instancing");
+    var attributes = instancing && instancing.attributes;
+    if (!attributes) {
+      return null;
+    }
+    function stream(name) {
+      return attributes[name] != null
+        ? gltfReadAccessor(gltf, attributes[name], binaryBuffer)
+        : null;
+    }
+    var t = stream("TRANSLATION");
+    var r = stream("ROTATION");
+    var s = stream("SCALE");
+    var count = Math.max(
+      t ? Math.floor(t.length / 3) : 0,
+      r ? Math.floor(r.length / 4) : 0,
+      s ? Math.floor(s.length / 3) : 0
+    );
+    if (!count) {
+      return null;
+    }
+    var out = [];
+    for (var i = 0; i < count; i++) {
+      out.push(sceneTRSToMat4(
+        t ? [t[i * 3], t[i * 3 + 1], t[i * 3 + 2]] : [0, 0, 0],
+        r ? [r[i * 4], r[i * 4 + 1], r[i * 4 + 2], r[i * 4 + 3]] : [0, 0, 0, 1],
+        s ? [s[i * 3], s[i * 3 + 1], s[i * 3 + 2]] : [1, 1, 1]
+      ));
+    }
+    return out;
+  }
+
   function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result) {
     var node = gltf.nodes[nodeIndex];
     if (!node) {
@@ -991,7 +1255,24 @@
     var worldTransform = sceneMat4Multiply(parentTransform, localTransform);
 
     if (node.mesh != null) {
-      gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, node.skin != null ? node.skin : null, node);
+      var skin = node.skin != null ? node.skin : null;
+      var instances = gltfInstanceTransforms(gltf, node, binaryBuffer);
+      if (instances) {
+        for (var n = 0; n < instances.length; n++) {
+          gltfExtractMeshNode(
+            gltf,
+            node.mesh,
+            binaryBuffer,
+            sceneMat4Multiply(worldTransform, instances[n]),
+            result,
+            skin,
+            node,
+            "-inst-" + n
+          );
+        }
+      } else {
+        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node);
+      }
     }
 
     var children = node.children || [];
@@ -1027,10 +1308,17 @@
           }
         }
 
+        // Component count per keyframe. Translation and scale carry 3, rotation
+        // carries 4, and a morph "weights" channel carries one value per morph
+        // target. The mixer reads this instead of guessing from the property
+        // name, so a weights channel interpolates at its true width.
+        var componentCount = times.length > 0 ? Math.max(1, Math.floor(values.length / times.length)) : 3;
+
         channels.push({
           targetID: ch.target.node,
           targetNode: ch.target.node,
           property: ch.target.path,
+          componentCount: componentCount,
           interpolation: sampler.interpolation || "LINEAR",
           times: times instanceof Float32Array ? times : new Float32Array(times),
           values: values instanceof Float32Array ? values : new Float32Array(values),
@@ -1085,7 +1373,49 @@
   // Full scene extraction
   // ---------------------------------------------------------------------------
 
+  // Extensions this loader reads. KHR_materials_* map onto StandardMaterial
+  // fields the PBR shaders already consume. KHR_texture_transform bakes into
+  // the UV buffer. Everything absent from this list is ignored, and the
+  // compression extensions raise a named error at the point of use.
+  var GLTF_SUPPORTED_EXTENSIONS = [
+    // A quantized accessor is an ordinary accessor with a narrow component
+    // type. gltfReadAccessor already reads every legal type and honours the
+    // normalized flag, and the node transform carries the dequantization, so
+    // the loader needs no decoder for this one.
+    "KHR_mesh_quantization",
+    "EXT_mesh_gpu_instancing",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior",
+    "KHR_materials_clearcoat",
+    "KHR_materials_sheen",
+    "KHR_materials_transmission",
+    "KHR_materials_iridescence",
+    "KHR_materials_anisotropy",
+    "KHR_materials_unlit",
+    "KHR_texture_transform",
+  ];
+
+  // Warn once per load about required extensions the loader ignores. A required
+  // extension the loader drops changes how the asset looks, so name it.
+  function gltfReportUnsupportedRequiredExtensions(gltf) {
+    var required = gltf && Array.isArray(gltf.extensionsRequired) ? gltf.extensionsRequired : null;
+    if (!required || !required.length) {
+      return [];
+    }
+    var missing = [];
+    for (var i = 0; i < required.length; i++) {
+      if (GLTF_SUPPORTED_EXTENSIONS.indexOf(required[i]) === -1) {
+        missing.push(required[i]);
+      }
+    }
+    if (missing.length) {
+      console.warn("[gosx] glTF requires extensions this loader ignores: " + missing.join(", "));
+    }
+    return missing;
+  }
+
   function gltfExtractScene(gltf, binaryBuffer) {
+    gltfReportUnsupportedRequiredExtensions(gltf);
     var result = {
       objects: [],
       points: [],

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "..", "..");
 
 const budgets = [
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.js
@@ -272,7 +274,81 @@ const budgets = [
   // so per-character reveal scripts stop being hand-written per app, and
   // retiring one such script removed a 13.4KB minified bundle from the first
   // consumer to migrate.
-  { file: "bootstrap.js", raw: 1_327_000, gzip: 351_000, brotli: 284_000 },
+  // Bumped raw 1_327_000 -> 1_345_000, gzip 351_000 -> 357_000, and brotli
+  // 284_000 -> 289_000 for the controller host plus video parity integration:
+  // bootstrap.js now carries declarative headless controllers, while the video
+  // engine carries subtitle timing/prefs, audio source selection, fullscreen,
+  // telemetry, and HLS/audio/quality parity work. Measured: 1_342_674 /
+  // 355_800 / 287_691.
+  //
+  // Bumped raw 1_345_000 -> 1_372_000, gzip 357_000 -> 365_000, brotli 289_000
+  // -> 295_000. Two sources, both measured in isolation with the builder's own
+  // esbuild settings:
+  //
+  //   1. WebGPU GPU picking in 16a-scene-webgpu.js: raw +11_087, gzip +3_553,
+  //      brotli +2_933.
+  //   2. The text-layout engine split: the engine moved out of 00-textlayout.js
+  //      into 01-textlayout-engine.js and now runs in its own IIFE. The monolith
+  //      still carries it, so it pays the seam without collecting the saving —
+  //      forwarders in core, bridge reads in the engine, and no cross-IIFE
+  //      identifier mangling. Roughly raw +12_000, gzip +3_000, brotli +2_000.
+  //
+  // The monolith is the legacy single-file bundle. No app ships it: apps load
+  // bootstrap-runtime.js plus feature chunks, and those went DOWN. See the
+  // bootstrap-lite.js and bootstrap-runtime.js notes below.
+  // Measured: 1_366_591 / 363_390 / 293_904.
+  //
+  // Bumped raw 1_372_000 -> 1_376_000, gzip 365_000 -> 366_000, brotli
+  // 295_000 -> 296_500. Measured 1_371_043 / 364_206 / 295_076. Two sources
+  // pull in opposite directions:
+  //
+  //   1. The WebGPU light-fidelity work added +8_704 minified to
+  //      16a-scene-webgpu.js: all seven light types instead of two, and a light
+  //      buffer that grows 8 -> 256 instead of truncating. That is what pushed
+  //      brotli past the old ceiling.
+  //   2. The WebGL chunk split gives the monolith raw -4_029 / gzip -1_888 /
+  //      brotli -839. The monolith keeps 16-scene-webgl.js inline, so it pays
+  //      the bridge seam and collects none of the lazy-load saving. It still
+  //      comes out ahead because the same change deleted the dead
+  //      fighter-debug helpers from 20-scene-mount.js and moved 3_679 chars of
+  //      GLSL comment prose out of the shipped shader strings into JS comments.
+  //      Text inside a shader string ships; a JS comment does not.
+  //
+  // The new ceilings hold about 0.35% headroom, which is the usual rounding
+  // allowance for this gate.
+  //
+  // Bumped raw 1_376_000 -> 1_390_000, gzip 366_000 -> 370_000, brotli
+  // 296_500 -> 300_000 for the WebGPU advanced-feature work. Measured before
+  // 1_371_043 / 364_206 / 295_076; after 1_384_693 / 368_545 / 298_410, so
+  // raw +13_650, gzip +4_339, brotli +3_334. Four sources, all in
+  // 16a-scene-webgpu.js and 16b-scene-compute.js:
+  //
+  //   1. Render bundles. The recorder that fingerprints the frame's command
+  //      stream, the bundle cache, the eligibility gate and the memoized frame
+  //      bind group. This is the largest of the four and the one that buys a
+  //      per-frame saving on every redrawing mesh scene.
+  //   2. Per-pass GPU timing through timestampWrites, the standard API.
+  //      encoder.writeTimestamp is non-standard and Chromium removed it, so
+  //      before this a Chromium page measured no GPU time at all.
+  //   3. The built-in GPU cull kernel, which scales the bounding radius per
+  //      instance. Without the scale term an instance its transform scales up
+  //      is culled while it is on screen, so it vanishes.
+  //   4. shader-f16 variants of the bloom blur and FXAA. The shader BODY is
+  //      written once against precision aliases, so only the two-line preamble
+  //      and two extra var statements are new bytes.
+  //
+  // Partly offset by moving 32 whole-line WGSL comments out of the shader
+  // strings in 16a-scene-webgpu.js into JS comments: raw -1_432, gzip -517,
+  // brotli -392 in this bundle. Text inside a shader string ships to every
+  // visitor; a JS comment does not.
+  //
+  // Ratcheted down raw 1_390_000 -> 1_362_000, gzip 370_000 -> 363_500, brotli
+  // 300_000 -> 294_500. 15-scene-ir-schema-strict.js left every bundle: it
+  // re-validates server-generated SceneIR, it publishes
+  // window.__gosx_validate_scene_ir_strict, and nothing reads that global.
+  // Measured before 1_384_788 / 368_563 / 298_245; after 1_357_472 / 362_216 /
+  // 293_071.
+  { file: "bootstrap.js", raw: 1_362_000, gzip: 363_500, brotli: 294_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -302,7 +378,21 @@ const budgets = [
   // Measured: 149_154 / 38_850 / 33_866.
   // Bumped raw 155_000 -> 158_000 for declarative motion text splitting.
   // Measured 156_406; gzip and brotli ceilings unchanged and still fit.
-  { file: "bootstrap-runtime.js", raw: 158_000, gzip: 41_000, brotli: 36_000 },
+  //
+  // RATCHETED DOWN, raw 158_000 -> 124_000, gzip 41_000 -> 33_500, brotli
+  // 36_000 -> 29_500. The browser text-layout engine left this bundle for the
+  // lazily fetched bootstrap-feature-textlayout.js chunk. It was 42_751 of
+  // 157_086 minified bytes here (27.2%) and it loaded on every page, whether or
+  // not the page held a text block. Measured before 165_503 / 43_650 / 37_955;
+  // after 122_824 / 33_056 / 28_965. Both figures come from the same
+  // bootstrap-src snapshot, so no other in-flight work is folded in.
+  //
+  // Bumped raw 124_000 -> 124_500 for the ten-name publication block at the end
+  // of 10-runtime-scene-utils.js. That block is what lets the Scene3D chunk
+  // drop its duplicate copy of the whole file, so the route pays 554 raw bytes
+  // here to save 45_750 there. Measured before 122_824 / 33_056 / 28_965;
+  // after 123_378 / 33_194 / 29_089.
+  { file: "bootstrap-runtime.js", raw: 124_500, gzip: 33_500, brotli: 29_500 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -325,7 +415,13 @@ const budgets = [
   // 28_268.
   // Bumped raw 131_000 -> 133_000 for declarative motion text splitting.
   // Measured 131_083; gzip and brotli ceilings unchanged and still fit.
-  { file: "bootstrap-lite.js", raw: 133_000, gzip: 34_000, brotli: 30_000 },
+  //
+  // RATCHETED DOWN, raw 133_000 -> 97_000, gzip 34_000 -> 26_000, brotli
+  // 30_000 -> 23_000. Same cause as bootstrap-runtime.js: the text-layout engine
+  // was 42_738 of 131_137 minified bytes here (32.6%) and now ships as a lazily
+  // fetched chunk. Measured before 138_518 / 36_131 / 31_765; after
+  // 95_866 / 25_543 / 22_713.
+  { file: "bootstrap-lite.js", raw: 97_000, gzip: 26_000, brotli: 23_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -467,7 +563,48 @@ const budgets = [
   // command/recovery APIs. Measured: 720_967 / 197_155 / 162_407.
   // Bumped raw 722_000 -> 723_000 for camera-depth parity coverage.
   // Measured: 722_238 / 197_155 / 162_407.
-  { file: "bootstrap-feature-scene3d.js", raw: 723_000, gzip: 198_000, brotli: 163_000 },
+  //
+  // RATCHETED DOWN, raw 723_000 -> 575_000, gzip 198_000 -> 157_000, brotli
+  // 163_000 -> 130_000. 16-scene-webgl.js left this chunk for the lazily
+  // fetched bootstrap-feature-scene3d-webgl.js. A WebGPU-capable browser
+  // downloaded both GPU backends and drew with one of them, so the WebGL
+  // renderer was 151_301 minified bytes a Chromium page never executed.
+  // 16c-scene-shared-pbr.js keeps the backend-agnostic 37-symbol closure eager.
+  // Measured before 722_708 / 197_507 / 162_733; after 571_407 / 155_678 /
+  // 128_930. Both figures come from the same bootstrap-src snapshot, so the
+  // concurrent WebGPU light-fidelity work sits in both columns.
+  // Bumped raw 575_000 -> 578_000, gzip 157_000 -> 158_000, brotli 130_000 ->
+  // 131_000 for the built-in GPU cull kernel in 16b-scene-compute.js, plus its
+  // CPU oracle and the transform fingerprint that skips a static mesh's
+  // per-frame instance upload. Measured before 571_407 / 155_678 / 128_930;
+  // after 574_475 / 156_864 / 129_877.
+  //
+  // Ratcheted down raw 578_000 -> 532_000, gzip 158_000 -> 146_500, brotli
+  // 131_000 -> 121_800. Two cuts. First, this chunk no longer carries its own
+  // copy of 10-runtime-scene-utils.js; bootstrap-runtime.js already ships that
+  // file, so the Chromium Scene3D route downloaded the same 42_096 source
+  // bytes twice. 26d-feature-scene3d-prefix.js bridges the ten names this
+  // chunk reads. Second, 15-scene-ir-schema-strict.js left every bundle.
+  // Measured before 574_532 / 156_879 / 129_941; after 528_782 / 145_264 /
+  // 120_684.
+  { file: "bootstrap-feature-scene3d.js", raw: 532_000, gzip: 146_500, brotli: 121_800 },
+  // WebGL2 renderer chunk, split out of bootstrap-feature-scene3d.js. Fetched
+  // when backendSelectionOrder puts WebGL first (Safari, Firefox on most
+  // platforms, ForceWebGL, RequireWebGL, a WebGPU feature gap), and when a
+  // WebGPU device loss walks the fallback ladder down to WebGL. Measured:
+  // 152_354 / 42_873 / 36_926.
+  //
+  // Note the compression cost of the split, the same trade the text-layout
+  // chunk records below. Inside the base chunk this code contributed 151_301
+  // raw and 33_803 brotli. Standalone it costs 148_439 raw and 35_555 brotli,
+  // because a separate chunk loses the shared compression context. Moving
+  // 3_679 chars of GLSL comment prose out of the shipped shader strings paid
+  // back most of the seam: a WebGL page now saves 2_862 raw and 678 gzip and
+  // pays only +1_752 brotli, while a WebGPU page saves 33_803 brotli.
+  //
+  // Keep this budget tight so the chunk cannot absorb unrelated code and turn
+  // that trade the wrong way. Measured: 148_439 / 41_151 / 35_555.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 151_000, gzip: 41_800, brotli: 36_100 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
@@ -550,7 +687,46 @@ const budgets = [
   // helpers, mirroring dispatchWaterObjectDisplacementEvents) so a fast
   // pointer stroke's whole drop burst lands in one frame instead of
   // coalescing to the single latest drop. Measured: 357_196 / 83_302 / 69_503.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 358_000, gzip: 83_800, brotli: 70_000 },
+  //
+  // RATCHETED DOWN, raw 358_000 -> 344_000, gzip 83_800 -> 80_500, brotli
+  // 70_000 -> 67_500, even though WebGPU GPU picking added raw +11_087 / gzip
+  // +3_553 / brotli +2_933 in the same window. 16b-scene-compute.js used to ship
+  // in this chunk AND in bootstrap-feature-scene3d.js, so a Chromium Scene3D page
+  // downloaded the same 27_651 minified bytes twice. The file now ships once, in
+  // the base scene3d chunk, and 26e1-feature-scene3d-webgpu-compute-bridge.js
+  // hands 16a the two symbols it reads lexically. Measured before 369_250 /
+  // 87_335 / 72_806; after 341_499 / 79_699 / 66_886, a saving of 27_751 raw /
+  // 7_636 gzip / 5_920 brotli. Both figures come from the same bootstrap-src
+  // snapshot, so the picking work sits in both columns.
+  //
+  // Bumped raw 344_000 -> 353_000, gzip 80_500 -> 83_000, brotli 67_500 ->
+  // 69_700 for the WebGPU light-fidelity work: all seven light types instead of
+  // two (spot cones, hemisphere gradients, rect-area shape), type codes 0-4
+  // byte-identical to WebGL, and a light buffer that grows 8 -> 256 on demand
+  // and reports past that instead of truncating. All 16 WGSL shaders validate
+  // under naga. That work added +8_704 minified on its own; the WebGL split
+  // below does not touch this chunk. Measured: 350_051 / 82_311 / 69_000.
+  // Bumped raw 353_000 -> 364_000, gzip 83_000 -> 86_500, brotli 69_700 ->
+  // 72_200 for the WebGPU advanced-feature work: render bundles, per-pass GPU
+  // timing through timestampWrites, and the shader-f16 post variants. Measured
+  // before 350_051 / 82_311 / 69_000; after 360_574 / 85_389 / 71_574, so raw
+  // +10_523, gzip +3_078, brotli +2_574. That figure is already net of moving
+  // 32 whole-line WGSL comments out of the shader strings (raw -1_432).
+  //
+  // This is the chunk that pays for the frame-time win, and it is the right
+  // place for it: only a WebGPU browser downloads it.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 364_000, gzip: 86_500, brotli: 72_200 },
+  // Text-layout engine chunk, split out of 00-textlayout.js. Fetched when the
+  // document holds a data-gosx-text-layout element, or when a Scene3D manifest
+  // ships a Label. Measured: 42_323 / 10_778 / 9_631.
+  //
+  // Note the compression cost of the split: the engine contributed about 8_990
+  // brotli bytes while it rode inside bootstrap-runtime.js and costs 9_631 as a
+  // standalone chunk, because a standalone chunk loses the shared compression
+  // context. A page that needs text layout therefore pays about +641 brotli, and
+  // a page that does not saves 8_990. Keep this budget tight so the chunk cannot
+  // absorb unrelated code and turn that trade the wrong way.
+  { file: "bootstrap-feature-textlayout.js", raw: 44_000, gzip: 11_200, brotli: 10_000 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
@@ -628,7 +804,12 @@ const budgets = [
   // reuse-skip branch (see the monolith budget note above; this chunk
   // carries the same mountAllEngines source). gzip/brotli headroom
   // unchanged. Measured: 95_091 / 29_111 / 25_840.
-  { file: "bootstrap-feature-engines.js", raw: 96_000, gzip: 29_500, brotli: 26_000 },
+  // Bumped raw 96_000 -> 105_000, gzip 29_500 -> 32_000, and brotli 26_000 ->
+  // 28_500 for the video parity additions carried by the engines feature
+  // chunk. Measured: 103_662 / 31_450 / 27_897.
+  { file: "bootstrap-feature-engines.js", raw: 105_000, gzip: 32_000, brotli: 28_500 },
+  // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
+  { file: "bootstrap-feature-controllers.js", raw: 10_000, gzip: 3_500, brotli: 3_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
   { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
 ];
@@ -707,9 +888,179 @@ const routeBudgets = [
     // Measured 251_895; gzip and brotli ceilings unchanged and still fit.
     // document-env carries the motion subsystem, so every surface that
     // includes it picks up the same addition.
-    raw: 253_000,
-    gzip: 70_000,
-    brotli: 62_000,
+    // Bumped raw 253_000 -> 263_000, gzip 70_000 -> 73_500, and brotli 62_000
+    // -> 64_500 for the video parity additions carried by the engines feature
+    // chunk. Measured: 260_846 / 72_330 / 63_636.
+    //
+    // RATCHETED DOWN, raw 263_000 -> 229_000, gzip 73_500 -> 65_500, brotli
+    // 64_500 -> 57_800. bootstrap-runtime.js gave up the text-layout engine to
+    // bootstrap-feature-textlayout.js, and a video route holds no text block.
+    // Measured before 269_305 / 75_133 / 65_911; after 226_626 / 64_539 / 56_921.
+    raw: 229_000,
+    gzip: 65_500,
+    brotli: 57_800,
+    maxMonolithFraction: 0.25,
+  },
+  // Scene3D had no route budget until now, so the four-chunk Scene3D surface
+  // could grow without any gate: only the per-chunk budgets applied, and moving
+  // bytes between chunks hid inside them. 16b-scene-compute.js shipped twice for
+  // several releases for exactly that reason.
+  //
+  // Both Scene3D routes below take the worst case, a scene that ships a Label,
+  // so they also cover the text-layout chunk. Neither route can meet the 25%
+  // monolith fraction the video route holds — Scene3D IS most of the monolith —
+  // so maxMonolithFraction stays unset for them.
+  {
+    name: "Scene3D Chromium route (WebGPU, with labels)",
+    files: [
+      "bootstrap-runtime.js",
+      "bootstrap-feature-engines.js",
+      "bootstrap-feature-scene3d.js",
+      "bootstrap-feature-scene3d-webgpu.js",
+      "bootstrap-feature-textlayout.js",
+    ],
+    // Measured before the 16b dedup 1_361_263 / 359_975 / 301_450; after
+    // 1_333_156 / 352_523 / 296_171.
+    //
+    // RATCHETED DOWN, raw 1_340_000 -> 1_196_000, gzip 354_500 -> 315_000,
+    // brotli 298_000 -> 266_000. This route no longer carries
+    // bootstrap-feature-scene3d-webgl.js: a WebGPU-capable browser used to
+    // download both GPU backends and draw with one of them. It fetches the
+    // WebGL chunk only after a WebGPU device loss, which the separate
+    // device-loss route below gates.
+    //
+    // Measured before 1_341_708 / 355_135 / 298_285; after 1_190_407 /
+    // 313_306 / 264_482, a saving of 151_301 raw / 41_829 gzip / 33_803 brotli.
+    // Both figures come from the same bootstrap-src snapshot, so the concurrent
+    // WebGPU light-fidelity work sits in both columns and cannot flatter the
+    // delta. For scale: three.js core is roughly 170 KB gzip, and this route is
+    // now 313 KB gzip for a full Scene3D page with labels, down from 355 KB.
+    //
+    // Bumped raw 1_196_000 -> 1_210_000, gzip 315_000 -> 319_000, brotli
+    // 266_000 -> 269_500 for the WebGPU advanced-feature work. Measured before
+    // 1_190_407 / 313_306 / 264_482; after 1_203_998 / 317_570 / 268_003, so
+    // raw +13_591, gzip +4_264, brotli +3_521.
+    //
+    // Stated plainly: this route grew by 4.3 KB gzip, from 313 KB to 318 KB.
+    // three.js core is roughly 170 KB gzip for a comparable app. The bytes buy
+    // render-bundle replay, which removes most per-frame draw encoding on a
+    // redrawing mesh scene, real per-pass GPU timings, half-precision bloom and
+    // FXAA, and a cull kernel that no longer drops a scaled-up instance. A
+    // frame-time win is worth 4 KB on a route that already carries a renderer.
+    //
+    // Ratcheted down raw 1_210_000 -> 1_163_000, gzip 319_000 -> 308_000,
+    // brotli 269_500 -> 261_000. Two cuts, both in the base scene3d chunk:
+    // the duplicate copy of 10-runtime-scene-utils.js this route already had
+    // inside bootstrap-runtime.js, and the dev-only strict SceneIR validator.
+    // Measured before 1_206_251 / 318_235 / 268_477; after 1_158_990 /
+    // 306_310 / 259_184. That is -47_261 raw / -11_925 gzip / -9_293 brotli.
+    raw: 1_163_000,
+    gzip: 308_000,
+    brotli: 261_000,
+  },
+  {
+    name: "Scene3D Safari and Firefox route (WebGL, with labels)",
+    files: [
+      "bootstrap-runtime.js",
+      "bootstrap-feature-engines.js",
+      "bootstrap-feature-scene3d.js",
+      "bootstrap-feature-scene3d-webgl.js",
+      "bootstrap-feature-textlayout.js",
+    ],
+    // Measured before the text-layout split 992_013 / 272_640 / 228_644; after
+    // 991_657 / 272_824 / 229_285. Raw fell and the compressed figures rose by
+    // about 0.2%: a standalone chunk loses the shared compression context it had
+    // inside bootstrap-runtime.js.
+    //
+    // The WebGL chunk split repeats that trade, and this route pays part of it.
+    // Measured before 991_657 / 272_824 / 229_285; after 988_795 / 272_146 /
+    // 231_037, so raw -2_862, gzip -678, brotli +1_752. A WebGL browser fetches
+    // the same code either way, so the only cost is the lost cross-chunk brotli
+    // context, about +0.8%. Raw and gzip both fell, because the split also moved
+    // 3_679 chars of GLSL comment prose out of the shipped shader strings.
+    //
+    // The remaining brotli regression is deliberate and it is the cheaper side
+    // of the trade: a WebGPU page saves 33_803 brotli, twenty times what a
+    // WebGL page pays. Closing the gap needs two base bundles, one with WebGL
+    // inline for WebGL browsers and one without it for WebGPU browsers, which
+    // means the island renderer must choose between them. That is emitter work,
+    // not runtime work.
+    //
+    // A Scene3D scene with no Label skips the text-layout chunk and measures
+    // 946_472 / 261_368 / 221_406.
+    //
+    // Bumped brotli 232_200 -> 233_000 for the built-in GPU cull kernel in
+    // 16b-scene-compute.js, which this route carries because WebGL uses 16b's
+    // CPU particle path. Measured before 988_795 / 272_146 / 231_037; after
+    // 991_863 / 273_332 / 231_984. A WebGL page never runs the kernel, so this
+    // 947 brotli bytes is dead weight for it. Moving the cull system into a
+    // WebGPU-only chunk would remove it, and that is chunking work, not
+    // renderer work.
+    //
+    // Ratcheted down raw 993_000 -> 951_000, gzip 273_500 -> 263_000, brotli
+    // 233_000 -> 224_000 for the same two cuts as the Chromium route.
+    // Measured before 991_863 / 273_332 / 231_984; after 946_724 / 261_870 /
+    // 222_915.
+    raw: 951_000,
+    gzip: 263_000,
+    brotli: 224_000,
+  },
+  {
+    // Worst case for a Chromium page: the WebGPU device dies and the fallback
+    // ladder fetches the WebGL chunk on top of everything already loaded. This
+    // route exists so the ladder's total download cannot creep.
+    //
+    // Measured 1_338_846 / 354_457 / 300_037. That is -2_862 raw / -678 gzip /
+    // +1_752 brotli against what EVERY Chromium page paid before the split
+    // (1_341_708 / 355_135 / 298_285), and it is the same seam cost the WebGL
+    // route pays. Only a page whose GPU device actually fails reaches it, and
+    // the alternative was a page that renders nothing.
+    name: "Scene3D Chromium route after a WebGPU device loss (both backends, with labels)",
+    files: [
+      "bootstrap-runtime.js",
+      "bootstrap-feature-engines.js",
+      "bootstrap-feature-scene3d.js",
+      "bootstrap-feature-scene3d-webgpu.js",
+      "bootstrap-feature-scene3d-webgl.js",
+      "bootstrap-feature-textlayout.js",
+    ],
+    //
+    // Bumped raw 1_345_000 -> 1_360_000, gzip 356_000 -> 360_000, brotli
+    // 301_500 -> 305_000 for the WebGPU advanced-feature work, which this route
+    // carries in full because it loads both backends. Measured 1_352_437 /
+    // 358_721 / 303_558.
+    //
+    // Ratcheted down raw 1_360_000 -> 1_312_000, gzip 360_000 -> 349_000,
+    // brotli 305_000 -> 296_500 for the same two cuts. Measured before
+    // 1_352_437 / 358_721 / 303_558; after 1_307_429 / 347_461 / 294_739.
+    raw: 1_312_000,
+    gzip: 349_000,
+    brotli: 296_500,
+  },
+  {
+    // The minimal Scene3D page: a WebGPU hero or product view with no islands,
+    // no realtime hub and no text labels. It fetches the runtime, the base
+    // scene3d chunk and the WebGPU renderer, and nothing else. This is the
+    // floor of the Scene3D product, and it was never measured before.
+    //
+    // Measured 1_012_865 / 264_049 / 221_597 after two cuts: the duplicate
+    // copy of 10-runtime-scene-utils.js and the dev-only strict SceneIR
+    // validator. Before those cuts the same route was 1_060_126 / 275_974 /
+    // 230_890.
+    //
+    // The base chunk still dominates this route. 16b-scene-compute.js,
+    // 15b-scene-planner.js and 17-scene-input.js are conditional capability
+    // that a hero scene never runs, and the server already computes the
+    // verdict for each one. Gating them is the next cut.
+    name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
+    files: [
+      "bootstrap-runtime.js",
+      "bootstrap-feature-scene3d.js",
+      "bootstrap-feature-scene3d-webgpu.js",
+    ],
+    raw: 1_016_000,
+    gzip: 265_500,
+    brotli: 223_000,
   },
 ];
 
@@ -742,7 +1093,12 @@ test("selective runtime route surfaces stay within first-load budgets", () => {
     assert.ok(raw <= budget.raw, `${budget.name} raw size ${raw} exceeds budget ${budget.raw}`);
     assert.ok(gzip <= budget.gzip, `${budget.name}.gz size ${gzip} exceeds budget ${budget.gzip}`);
     assert.ok(brotli <= budget.brotli, `${budget.name}.br size ${brotli} exceeds budget ${budget.brotli}`);
-    assert.ok(raw < monolithRaw * 0.25, `${budget.name} should stay below 25% of legacy monolith raw size`);
+    if (typeof budget.maxMonolithFraction === "number") {
+      assert.ok(
+        raw < monolithRaw * budget.maxMonolithFraction,
+        `${budget.name} should stay below ${budget.maxMonolithFraction * 100}% of legacy monolith raw size`,
+      );
+    }
   }
 });
 
@@ -774,4 +1130,27 @@ test("device-capability gate stays DRY (gosxLowEndHardware, AND-form, no inlined
     /function\s+gosxLowEndHardware[\s\S]{0,200}<=\s*4\s*\)\s*&&\s*\(/.test(env),
     "gosxLowEndHardware must AND the memory and core checks (not OR)",
   );
+});
+
+// The closure gate. Every chunk is one script, so an identifier that no source
+// file in the chunk declares throws ReferenceError the first time the chunk
+// reaches it. A size gate cannot see that, and a split that leaves a symbol
+// behind ships a latent crash. cmd/buildbootstrap/closure.go parses each chunk
+// with a real JavaScript parser, builds real scopes, and reports the free
+// identifiers, minus the browser globals and minus the names the chunk guards
+// with `typeof X === "function"`.
+//
+// The check found four latent ReferenceErrors when it first ran:
+// sceneSelenaUniformData (WebGPU custom post effects), gosxLowEndHardware (the
+// Scene3D device-capability gate), and flyMode plus cancelOrbitInertia (the
+// managed control-forms camera). All four are fixed.
+//
+// cmd/buildbootstrap/freevars.mjs is the acorn cross-check of the same
+// analysis. It needs npm, so it is a tool, not the gate.
+test("every generated chunk is closed over its own scope plus real globals", () => {
+  execFileSync("go", ["run", ".", "-closure"], {
+    cwd: path.join(repoRoot, "cmd", "buildbootstrap"),
+    env: { ...process.env, GOWORK: "off" },
+    stdio: "pipe",
+  });
 });
