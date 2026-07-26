@@ -22,6 +22,8 @@
     "data-gosx-motion-easing",
     "data-gosx-motion-distance",
     "data-gosx-motion-respect-reduced",
+    "data-gosx-motion-split",
+    "data-gosx-motion-stagger",
   ];
   const gosxManagedMotionRecordsByElement = new Map();
   let gosxManagedMotionObserver = null;
@@ -190,7 +192,93 @@
       easing: gosxMotionStringAttr(element, "data-gosx-motion-easing", "cubic-bezier(0.16, 1, 0.3, 1)"),
       distance: Math.max(0, gosxNumber(gosxMotionStringAttr(element, "data-gosx-motion-distance", 18), 18)),
       respectReducedMotion: gosxMotionBoolAttr(element, "data-gosx-motion-respect-reduced", true),
+      split: normalizeGosxMotionSplit(gosxMotionStringAttr(element, "data-gosx-motion-split", "")),
+      stagger: Math.max(0, Math.round(gosxNumber(gosxMotionStringAttr(element, "data-gosx-motion-stagger", 0), 0))),
     };
+  }
+
+  function normalizeGosxMotionSplit(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "char":
+      case "word":
+      case "line":
+        return String(value).trim().toLowerCase();
+      default:
+        return "";
+    }
+  }
+
+  // Splits an element's text into per-unit spans so a preset can run across
+  // them with a stagger. Apps otherwise hand-write this: measure text, wrap
+  // each character, assign an incrementing delay, then drive the reveal — the
+  // shape of every bespoke "kinetic typography" script.
+  //
+  // Runs once per element. The spans are cached on the record, and the marker
+  // attribute keeps a re-init (soft navigation replaying page scripts) from
+  // wrapping already-wrapped output into nested spans.
+  //
+  // Whitespace stays as plain text nodes so line breaking and word spacing are
+  // unchanged; only the visible units become animatable boxes.
+  const GOSX_MOTION_SPLIT_ATTR = "data-gosx-motion-split-applied";
+  const GOSX_MOTION_UNIT_CLASS = "gosx-motion-unit";
+
+  function gosxMotionSplitUnits(element, mode) {
+    if (!element || !mode) {
+      return [];
+    }
+    if (element.getAttribute(GOSX_MOTION_SPLIT_ATTR) === mode) {
+      return gosxArrayFrom(element.querySelectorAll("." + GOSX_MOTION_UNIT_CLASS));
+    }
+
+    const text = element.textContent || "";
+    if (!text.trim()) {
+      return [];
+    }
+
+    let segments;
+    if (mode === "char") {
+      segments = text.split("");
+    } else if (mode === "word") {
+      segments = text.split(/(\s+)/);
+    } else {
+      // Capture the newlines so they survive as text nodes, exactly as the
+      // word branch preserves its whitespace. A non-capturing split drops the
+      // separators, and rebuilding the element from the units alone then runs
+      // adjacent lines together with no break at all.
+      segments = text.split(/(\r?\n)/);
+      if (segments.length <= 1) {
+        segments = text.match(/[^.!?]+[.!?]?\s*/g) || [text];
+      }
+    }
+
+    const fragment = document.createDocumentFragment();
+    const units = [];
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      if (!segment) {
+        continue;
+      }
+      if (/^\s+$/.test(segment)) {
+        fragment.appendChild(document.createTextNode(segment));
+        continue;
+      }
+      const span = document.createElement("span");
+      span.className = GOSX_MOTION_UNIT_CLASS;
+      // inline-block so transforms apply; without it translate/scale are
+      // ignored on inline boxes.
+      span.style.display = "inline-block";
+      span.textContent = segment;
+      fragment.appendChild(span);
+      units.push(span);
+    }
+
+    if (!units.length) {
+      return [];
+    }
+    element.textContent = "";
+    element.appendChild(fragment);
+    setAttrValue(element, GOSX_MOTION_SPLIT_ATTR, mode);
+    return units;
   }
 
   function gosxManagedMotionReduced(config) {
@@ -247,7 +335,25 @@
   }
 
   function cancelManagedMotionAnimation(record) {
-    if (!record || !record.animation || typeof record.animation.cancel !== "function") {
+    if (!record) {
+      return;
+    }
+    // Split mode starts one animation per text unit. Cancelling only the
+    // record's tracked animation would leave every other unit running against
+    // a stale config.
+    if (record.unitAnimations) {
+      for (let i = 0; i < record.unitAnimations.length; i++) {
+        const unitAnimation = record.unitAnimations[i];
+        if (unitAnimation && typeof unitAnimation.cancel === "function") {
+          try {
+            unitAnimation.cancel();
+          } catch (_error) {
+          }
+        }
+      }
+      record.unitAnimations = null;
+    }
+    if (!record.animation || typeof record.animation.cancel !== "function") {
       record.animation = null;
       return;
     }
@@ -256,6 +362,72 @@
     } catch (_error) {
     }
     record.animation = null;
+  }
+
+  // Runs the configured preset across pre-split text units, offsetting each by
+  // stagger * index. The record settles to "finished" when the LAST unit ends,
+  // so data-gosx-motion-state stays a truthful summary of the whole run.
+  //
+  // Web Animations with fill:"both" hold the start state for the duration of
+  // the delay, so no CSS pre-hide class is needed. That matters: a class-based
+  // pre-hide leaves text permanently invisible whenever the reveal fails to
+  // fire, while an animation that never starts simply leaves the text readable.
+  function playManagedMotionUnits(record, units) {
+    const keyframes = gosxManagedMotionKeyframes(record.config);
+    const animations = [];
+    let last = null;
+    let lastDelay = -1;
+
+    for (let i = 0; i < units.length; i++) {
+      const delay = record.config.delay + (record.config.stagger * i);
+      let animation = null;
+      try {
+        animation = units[i].animate(keyframes, {
+          duration: record.config.duration,
+          delay: delay,
+          easing: record.config.easing,
+          fill: "both",
+        });
+      } catch (_error) {
+        continue;
+      }
+      if (!animation) {
+        continue;
+      }
+      animations.push(animation);
+      if (delay > lastDelay) {
+        lastDelay = delay;
+        last = animation;
+      }
+    }
+
+    if (!animations.length) {
+      gosxManagedMotionState(record, "finished");
+      return;
+    }
+
+    record.unitAnimations = animations;
+    record.animation = last;
+
+    if (last && last.finished && typeof last.finished.then === "function") {
+      last.finished.then(function() {
+        if (record.animation !== last) {
+          return;
+        }
+        record.animation = null;
+        record.unitAnimations = null;
+        gosxManagedMotionState(record, "finished");
+      }, function() {
+        if (record.animation !== last) {
+          return;
+        }
+        record.animation = null;
+        record.unitAnimations = null;
+        gosxManagedMotionState(record, "idle");
+      });
+      return;
+    }
+    gosxManagedMotionState(record, "finished");
   }
 
   function playManagedMotion(record, reason) {
@@ -275,6 +447,20 @@
       gosxManagedMotionState(record, "finished");
       return;
     }
+
+    // Split mode animates each text unit instead of the element, offsetting
+    // every unit by stagger * index. The element itself is left alone, so its
+    // layout box never moves.
+    if (record.config.split) {
+      const units = gosxMotionSplitUnits(record.element, record.config.split);
+      if (units.length) {
+        playManagedMotionUnits(record, units);
+        return;
+      }
+      // Nothing splittable (empty or whitespace-only): fall through and animate
+      // the element so the trigger still resolves rather than hanging.
+    }
+
     const animation = record.element.animate(gosxManagedMotionKeyframes(record.config), {
       duration: record.config.duration,
       delay: record.config.delay,

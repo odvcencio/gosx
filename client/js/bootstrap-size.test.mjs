@@ -265,7 +265,14 @@ const budgets = [
   // Bumped gzip 350_000 -> 351_000 and brotli 283_000 -> 284_000 for
   // command-ready gating. Measured: 1_321_861 / 350_094 / 283_144.
   // Bumped raw 1_322_000 -> 1_324_000 for camera-depth parity assertions.
-  { file: "bootstrap.js", raw: 1_324_000, gzip: 351_000, brotli: 284_000 },
+  // Bumped raw 1_324_000 -> 1_327_000 for declarative motion text splitting
+  // (data-gosx-motion-split / -stagger). Measured 1_324_757, +1_905 raw over
+  // the previous bundle; gzip and brotli ceilings are unchanged and still fit.
+  // The cost buys back more than it spends in any app that used it: it exists
+  // so per-character reveal scripts stop being hand-written per app, and
+  // retiring one such script removed a 13.4KB minified bundle from the first
+  // consumer to migrate.
+  { file: "bootstrap.js", raw: 1_327_000, gzip: 351_000, brotli: 284_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -293,7 +300,9 @@ const budgets = [
   // 148_081 / 38_641 / 33_659.
   // Bumped raw 149_000 -> 150_000 for lifecycle-aware keyed stream updates.
   // Measured: 149_154 / 38_850 / 33_866.
-  { file: "bootstrap-runtime.js", raw: 155_000, gzip: 41_000, brotli: 36_000 },
+  // Bumped raw 155_000 -> 158_000 for declarative motion text splitting.
+  // Measured 156_406; gzip and brotli ceilings unchanged and still fit.
+  { file: "bootstrap-runtime.js", raw: 158_000, gzip: 41_000, brotli: 36_000 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -314,7 +323,9 @@ const budgets = [
   // Bumped raw 126_000 -> 127_000 and gzip 32_000 -> 33_000 for
   // lifecycle-aware keyed stream updates. Measured: 125_329 / 32_131 /
   // 28_268.
-  { file: "bootstrap-lite.js", raw: 131_000, gzip: 34_000, brotli: 30_000 },
+  // Bumped raw 131_000 -> 133_000 for declarative motion text splitting.
+  // Measured 131_083; gzip and brotli ceilings unchanged and still fit.
+  { file: "bootstrap-lite.js", raw: 133_000, gzip: 34_000, brotli: 30_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -692,7 +703,11 @@ const routeBudgets = [
     // fragment-aware stream lifecycle shared by runtime and engines routes.
     // Measured: 231_831 / 64_376 / 56_521.
     // Combined v0.31.6 selective route: 248_331 / 68_808 / 60_591.
-    raw: 250_000,
+    // Bumped raw 250_000 -> 253_000 for declarative motion text splitting.
+    // Measured 251_895; gzip and brotli ceilings unchanged and still fit.
+    // document-env carries the motion subsystem, so every surface that
+    // includes it picks up the same addition.
+    raw: 253_000,
     gzip: 70_000,
     brotli: 62_000,
   },

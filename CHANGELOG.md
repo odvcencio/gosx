@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## v0.35.7 (2026-07-25)
+
+Declarative motion can now split text and stagger the reveal across the pieces.
+
+`data-gosx-motion` already carried presets, triggers, easing, and reduced-motion
+handling, but it animated an element as one box. Per-character and per-word
+reveals therefore stayed in hand-written app scripts: measure the text, wrap
+each unit in a span, assign an incrementing delay, drive the transition. That
+script is the same in every app that wants the effect.
+
+- Adds `data-gosx-motion-split="char|word|line"`, which wraps an element's text
+  in `.gosx-motion-unit` spans once and animates each with the configured
+  preset.
+- Adds `data-gosx-motion-stagger="<ms>"`, offsetting unit N by `stagger * N`.
+  `data-gosx-motion-delay` still sets the base offset.
+- Whitespace stays as plain text nodes, so line breaking and word spacing do
+  not change. Splitting is idempotent, so soft navigation replaying a page
+  script cannot nest spans.
+- `data-gosx-motion-state` settles to `finished` when the LAST unit ends, so it
+  still summarizes the whole run.
+
+Units animate through the Web Animations API with `fill: "both"`, the same as
+unsplit motion. A reveal that never fires therefore leaves text VISIBLE. Scripts
+that pre-hide with a CSS class and rely on a later class flip fail the other
+way: when the flip is missed, the text is gone for the rest of the session.
+
 ## v0.35.6 (2026-07-25)
 
 Fixes a regression in v0.35.5. Upgrade from v0.35.5 immediately if any page
