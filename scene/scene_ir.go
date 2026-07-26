@@ -512,6 +512,35 @@ type LightIR struct {
 	Live           []string       `json:"live,omitempty"`
 }
 
+// PointsGeneratorIR is the wire form of scene.PointsGenerator: a procedural
+// recipe that replaces the expanded positions and sizes arrays on the wire.
+//
+// Centre and extent are flattened to scalars rather than nested vectors to
+// keep the descriptor a single small object. Values are emitted already
+// normalised (kind, stride and size exponent resolved), so the payload is
+// self-describing and does not depend on the client agreeing about defaults.
+//
+// See client/js/bootstrap-src/11b-scene-points-generate.js for the expander
+// and scene/points_generator.go for the determinism contract.
+type PointsGeneratorIR struct {
+	Kind       string  `json:"kind"`
+	Seed       int     `json:"seed,omitempty"`
+	Stride     int     `json:"stride,omitempty"`
+	OffsetX    int     `json:"offsetX,omitempty"`
+	OffsetY    int     `json:"offsetY,omitempty"`
+	OffsetZ    int     `json:"offsetZ,omitempty"`
+	OffsetSize int     `json:"offsetSize,omitempty"`
+	CenterX    float64 `json:"centerX,omitempty"`
+	CenterY    float64 `json:"centerY,omitempty"`
+	CenterZ    float64 `json:"centerZ,omitempty"`
+	ExtentX    float64 `json:"extentX,omitempty"`
+	ExtentY    float64 `json:"extentY,omitempty"`
+	ExtentZ    float64 `json:"extentZ,omitempty"`
+	SizeMin    float64 `json:"sizeMin,omitempty"`
+	SizeMax    float64 `json:"sizeMax,omitempty"`
+	SizeExp    float64 `json:"sizeExp,omitempty"`
+}
+
 // PointsIR is the typed compatibility record for one lowered particle system.
 type PointsIR struct {
 	ID                  string            `json:"id"`
@@ -542,6 +571,10 @@ type PointsIR struct {
 	PreviewPositions    []CompressedArray `json:"previewPositions,omitempty"`
 	PreviewSizes        []CompressedArray `json:"previewSizes,omitempty"`
 	PositionStride      int               `json:"positionStride,omitempty"`
+	// Generator carries a procedural recipe in place of Positions/Sizes. The
+	// client expands it at mount into the identical arrays. Nil means the
+	// layer ships explicit arrays, exactly as before.
+	Generator *PointsGeneratorIR `json:"generator,omitempty"`
 	// Authored shader material fields — same envelope as ObjectIR.
 	CustomVertex          string            `json:"customVertex,omitempty"`
 	CustomFragment        string            `json:"customFragment,omitempty"`
@@ -1651,6 +1684,9 @@ func (item PointsIR) legacyProps() map[string]any {
 		"id":    item.ID,
 		"count": item.Count,
 	}
+	if item.Generator != nil {
+		record["generator"] = item.Generator.legacyProps()
+	}
 	if len(item.CompressedPositions) > 0 {
 		record["compressedPositions"] = item.CompressedPositions
 	} else if len(item.Positions) > 0 {
@@ -1715,6 +1751,29 @@ func (item PointsIR) legacyProps() map[string]any {
 	}
 	setString(record, "qualityGroup", item.QualityGroup)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	return record
+}
+
+// legacyProps flattens the generator descriptor into the attribute map the
+// client runtime reads. Zero-valued fields are omitted so an unused lane costs
+// nothing on the wire.
+func (gen PointsGeneratorIR) legacyProps() map[string]any {
+	record := map[string]any{"kind": gen.Kind}
+	setInt(record, "seed", gen.Seed)
+	setInt(record, "stride", gen.Stride)
+	setInt(record, "offsetX", gen.OffsetX)
+	setInt(record, "offsetY", gen.OffsetY)
+	setInt(record, "offsetZ", gen.OffsetZ)
+	setInt(record, "offsetSize", gen.OffsetSize)
+	setNumeric(record, "centerX", gen.CenterX)
+	setNumeric(record, "centerY", gen.CenterY)
+	setNumeric(record, "centerZ", gen.CenterZ)
+	setNumeric(record, "extentX", gen.ExtentX)
+	setNumeric(record, "extentY", gen.ExtentY)
+	setNumeric(record, "extentZ", gen.ExtentZ)
+	setNumeric(record, "sizeMin", gen.SizeMin)
+	setNumeric(record, "sizeMax", gen.SizeMax)
+	setNumeric(record, "sizeExp", gen.SizeExp)
 	return record
 }
 

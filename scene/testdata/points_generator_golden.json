@@ -1,0 +1,171 @@
+{
+  "_comment": "Bit-exact expansion of scene.PointsGenerator descriptors. Digests are SHA-256 over little-endian IEEE-754 bytes. The JavaScript runtime must reproduce these exactly; see client/js/11b-scene-points-generate.test.mjs.",
+  "cases": [
+    {
+      "name": "m31labs-galaxy-stars",
+      "count": 5400,
+      "generator": {
+        "Kind": "box-scatter",
+        "Seed": 0,
+        "Stride": 3,
+        "OffsetX": 0,
+        "OffsetY": 1,
+        "OffsetZ": 2,
+        "OffsetSize": 7,
+        "Center": {},
+        "Extent": {
+          "x": 2000,
+          "y": 2000,
+          "z": 2000
+        },
+        "SizeMin": 0.92,
+        "SizeMax": 4.17,
+        "SizeExponent": 1
+      },
+      "positionsSha256": "83ccef1eb9933a7b6cafe2182eae69612c0bd1a6f9932d6020f84d6901fd51c2",
+      "sizesSha256": "46ba2f1d4cd9135175ae4dc3bb4219b92863d7bfd60a93563475f30721aa13d1",
+      "positionsHead": [
+        "00713b9f56d183c0",
+        "00e73ce1b6027e40",
+        "00d88fc549196040",
+        "0080a53818a056c0",
+        "002829292d737cc0",
+        "001829eb2d378440",
+        "00f076eaf39a7f40",
+        "00000f34100c1e40",
+        "0004cb9022704740"
+      ],
+      "sizesHead": [
+        "5c87b4c128750440",
+        "717d28bb5382ef3f",
+        "5c7ff0445dcb0140"
+      ]
+    },
+    {
+      "name": "m31labs-starfield-near",
+      "count": 380,
+      "generator": {
+        "Kind": "box-scatter",
+        "Seed": 31,
+        "Stride": 7,
+        "OffsetX": 0,
+        "OffsetY": 1,
+        "OffsetZ": 2,
+        "OffsetSize": 3,
+        "Center": {
+          "z": -150
+        },
+        "Extent": {
+          "x": 1440,
+          "y": 1008,
+          "z": 220
+        },
+        "SizeMin": 1.7,
+        "SizeMax": 5.2,
+        "SizeExponent": 2.4
+      },
+      "positionsSha256": "0504580cb68b312f27b00ece487d34fae942e83e5c455d2d09d0dd4d9f5a4342",
+      "sizesSha256": "1e9f4b44b137ec1d1bf0427a5982fe2f3a9352f7702d392b129f1075397aa122",
+      "positionsHead": [
+        "00f0159ae3ec5640",
+        "00380581cca960c0",
+        "00d89c9e936165c0",
+        "00b77302e59a76c0",
+        "00487d83e3f76dc0",
+        "00482b3335fa55c0",
+        "005caf8afec77b40",
+        "0058018a4e0a6e40",
+        "006c95dfd1106ec0"
+      ],
+      "sizesHead": [
+        "dcc4f1d7bcde0440",
+        "d3a0fa93b5621040",
+        "1c04d7e1395c0140"
+      ]
+    },
+    {
+      "name": "defaults-and-negative-seed",
+      "count": 64,
+      "generator": {
+        "Kind": "",
+        "Seed": -119,
+        "Stride": 0,
+        "OffsetX": 0,
+        "OffsetY": 1,
+        "OffsetZ": 2,
+        "OffsetSize": 3,
+        "Center": {
+          "x": -3.5,
+          "y": 12.25,
+          "z": 0.125
+        },
+        "Extent": {
+          "x": 7,
+          "y": 0.5,
+          "z": 1024
+        },
+        "SizeMin": 0.1,
+        "SizeMax": 9.75,
+        "SizeExponent": 0
+      },
+      "positionsSha256": "844c0e11045e68d3f0d86adbf1ed857d1ba12006cab897d565e127908d0e24fd",
+      "sizesSha256": "c47a3883d42598c32e0ce431f0d878b79b6659dfc3dbfdb86856f22ddb6bee30",
+      "positionsHead": [
+        "00b0f9ceb28d1bc0",
+        "b01a9113459c2840",
+        "00006fa42c7f7440",
+        "00402320baa60dc0",
+        "0088ebddbbed2840",
+        "00007aceea9a72c0",
+        "00003efc353df9bf",
+        "00a84a57853a2840",
+        "0000501841e11ac0"
+      ],
+      "sizesHead": [
+        "cd54f6fdd18f1240",
+        "9af92698304d1e40",
+        "331f0c55a7ea1d40"
+      ]
+    },
+    {
+      "name": "sublinear-size-curve",
+      "count": 128,
+      "generator": {
+        "Kind": "box-scatter",
+        "Seed": 9001,
+        "Stride": 5,
+        "OffsetX": 4,
+        "OffsetY": 0,
+        "OffsetZ": 3,
+        "OffsetSize": 1,
+        "Center": {},
+        "Extent": {
+          "x": 64,
+          "y": 64,
+          "z": 64
+        },
+        "SizeMin": 0.25,
+        "SizeMax": 3,
+        "SizeExponent": 0.37
+      },
+      "positionsSha256": "9b8e66b29a34aa7552ab11cdb8356913b32dab262159d0cb159cf5abb9ca105c",
+      "sizesSha256": "a8a966cbbc5ef979ab252eaee50e028fc9454ab9fc81d6d6a98ab0028900ed50",
+      "positionsHead": [
+        "0000a4c381782e40",
+        "00006db7b3fb2440",
+        "0000e8d1118926c0",
+        "000000f15af2c2bf",
+        "0000b2a2f9b627c0",
+        "000023c7d0033bc0",
+        "0000364385aa3a40",
+        "00003cf7d2e33a40",
+        "00000374061a3dc0"
+      ],
+      "sizesHead": [
+        "9c7a84b821c80140",
+        "b3c0167428e4f13f",
+        "483647082106fd3f"
+      ]
+    }
+  ]
+}
