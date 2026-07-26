@@ -28,6 +28,7 @@ func cmdVisual() {
 	timeout := fs.Duration("timeout", 60*time.Second, "overall capture timeout")
 	diffOut := fs.String("diff", "", "where to write the diff image on failure")
 	jsonOut := fs.Bool("json", false, "emit result as JSON")
+	requireBackend := fs.String("require-backend", "", "hard-fail unless the mounted Scene3D backend is webgpu, webgl, or any-gpu (default: no check)")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `gosx visual - pixel-level visual regression testing
 
@@ -54,6 +55,10 @@ Examples:
   # Hide dynamic chrome before capture:
   gosx visual --eval "document.querySelector('.clock').remove()" http://localhost:8080/
 
+  # Refuse a Scene3D capture that silently fell back to the 2D canvas
+  # renderer instead of WebGPU (see /docs/debugging-scene3d on gosx-docs):
+  gosx visual --require-backend webgpu http://localhost:8080/scene
+
 Environment:
   CHROME_WS_URL  If set, connects to a remote headless-shell service
                  (e.g. ws://chrome-headless:9222) instead of launching a
@@ -64,6 +69,10 @@ Environment:
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		os.Exit(2)
+	}
+
+	if !visual.ValidRequireBackend(*requireBackend) {
+		fatal("visual: --require-backend must be one of webgpu, webgl, any-gpu (got %q)", *requireBackend)
 	}
 
 	if fs.NArg() < 1 {
@@ -80,6 +89,7 @@ Environment:
 			Selector:          *selector,
 			EvalBeforeCapture: *evalJS,
 			Timeout:           *timeout,
+			RequireBackend:    visual.RequireBackend(*requireBackend),
 		},
 		BaselinePath: *baseline,
 		Threshold:    *threshold,
@@ -159,13 +169,14 @@ Usage:
   gosx visual [flags] <url>
 
 Common flags:
-  --update              write captured screenshot to baseline
-  --baseline <path>     explicit baseline PNG path
-  --threshold <pct>     maximum allowed pixel diff percentage
-  -w <px> -h <px>       viewport width and height
-  --selector <css>      capture one element instead of the full viewport
-  --eval <javascript>   run JavaScript before capture
-  --json                emit JSON
+  --update                  write captured screenshot to baseline
+  --baseline <path>         explicit baseline PNG path
+  --threshold <pct>         maximum allowed pixel diff percentage
+  -w <px> -h <px>           viewport width and height
+  --selector <css>          capture one element instead of the full viewport
+  --eval <javascript>       run JavaScript before capture
+  --require-backend <name>  hard-fail unless Scene3D mounted webgpu, webgl, or any-gpu
+  --json                    emit JSON
 
 `)
 }

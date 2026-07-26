@@ -22212,6 +22212,16 @@ test("Scene3D renderer recovery respects backendCaps fallbacks", () => {
   assert.match(source, /if \(!allowCanvasFallback\) \{[\s\S]*renderer-canvas-fallback-disallowed/);
 });
 
+test("Scene3D fallbackSceneRenderer honors window.__gosx_scene3d_require_gpu without touching the WebGL fallback", () => {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  // The gate is read once, right where allowCanvasFallback is computed, and
+  // only that Canvas2D swap is disallowed -- the WebGL fallback attempt keeps
+  // its own, unmodified allowWebGLFallback condition.
+  assert.match(source, /const requireGPUOnly = typeof window !== "undefined" && window\.__gosx_scene3d_require_gpu === true;/);
+  assert.match(source, /const allowCanvasFallback = sceneBackendCapsAllowsKind\(backendCaps, "canvas2d"\) && !requireGPUOnly;/);
+  assert.match(source, /if \(!preferCanvasFallback && allowWebGLFallback\) \{/);
+});
+
 test("Scene3D WebGPU water debug gates isolate update and draw stages", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   assert.match(source, /new URLSearchParams\(window\.location\.search\)\.get\("gosx-water-debug"\)/);
