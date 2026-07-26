@@ -285,16 +285,17 @@ const budgets = [
   // ceilings unchanged and still fit. The cost is the fix: WebGL customPost
   // read only the author uniform map, so reserved uniforms such as `time`
   // stayed 0 and every time-driven post effect rendered a static frame.
-  // Bumped raw 1_327_000 -> 1_333_000, gzip 352_000 -> 354_000, brotli
-  // 285_000 -> 287_000 for procedural point clouds
-  // (11b-scene-points-generate.js): the canonical sin/log/exp/pow kernel plus
-  // the box-scatter expander. Measured: 1_330_627 / 353_413 / 285_862.
-  // The kernel is ~3.6KB raw of ported Go math that cannot be replaced with
-  // Math.sin/Math.pow without losing bit-exact parity with the server. It
-  // buys far more than it costs: the m31labs.dev starfield alone drops an
-  // 852_163-byte inline manifest to a ~300-byte descriptor, and the saving
-  // scales with every deterministic point layer any app ships.
-  { file: "bootstrap.js", raw: 1_333_000, gzip: 354_000, brotli: 287_000 },
+  // Bumped raw 1_327_000 -> 1_341_000, gzip 352_000 -> 356_000, brotli
+  // 285_000 -> 288_000 for render-truth telemetry: the shared helpers in
+  // 15a-scene-postfx-shared.js (per-effect post-chain records, the timestamped
+  // device-loss/fallback journal, Dawn-versus-wgpu implementation identity,
+  // getCompilationInfo capture) plus the WebGL and WebGPU call sites that feed
+  // them. Measured: 1_337_953 / 355_010 / 286_800 — +11_977 raw, +3_867 gzip,
+  // +2_746 brotli. The cost buys the ability to tell "the effect is in the
+  // chain" apart from "the effect drew": a customPost pass was tuned across
+  // three sessions while producing zero pixels because every existing
+  // attribute reported the former and none reported the latter.
+  { file: "bootstrap.js", raw: 1_341_000, gzip: 356_000, brotli: 288_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -489,12 +490,13 @@ const budgets = [
   // command/recovery APIs. Measured: 720_967 / 197_155 / 162_407.
   // Bumped raw 722_000 -> 723_000 for camera-depth parity coverage.
   // Measured: 722_238 / 197_155 / 162_407.
-  // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
-  // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
-  // same canonical math kernel and box-scatter expander added to bootstrap.js
-  // above; this chunk carries the same Scene3D scene sources. Measured:
-  // 727_318 / 199_778 / 164_522.
-  { file: "bootstrap-feature-scene3d.js", raw: 730_000, gzip: 201_000, brotli: 166_000 },
+  // Bumped raw 723_000 -> 734_000, gzip 198_000 -> 202_000, brotli 163_000 ->
+  // 166_000 for render-truth telemetry. This chunk carries 15a (the shared
+  // helpers), 16-scene-webgl.js (per-effect chain marking, mesh submitted /
+  // drawn / culled / undrawable counters, point submitted-versus-drawn) and
+  // 20-scene-mount.js (the single backend-truth JSON record). Measured:
+  // 731_875 / 200_622 / 165_155.
+  { file: "bootstrap-feature-scene3d.js", raw: 734_000, gzip: 202_000, brotli: 166_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
@@ -582,7 +584,13 @@ const budgets = [
   // meshDrawCalls accumulator threaded through drawPBRObjects) plus the
   // doubleSided-aware Selena cullMode option for static and skinned meshes.
   // gzip/brotli unchanged and still fit. Measured: 358_470 / 83_676 / 69_856.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 359_000, gzip: 83_800, brotli: 70_000 },
+  // Bumped raw 359_000 -> 364_000, gzip 83_800 -> 85_500, brotli 70_000 ->
+  // 71_500 for render-truth telemetry on the WebGPU path: the post-chain
+  // dispatch record marked at fullscreenPass, explicit pending/failed
+  // reporting for customPost, getCompilationInfo capture on all nine authored
+  // Selena shader modules, the uncapturederror listener and the device-loss
+  // journal entry. Measured: 361_210 / 84_519 / 70_450.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 364_000, gzip: 85_500, brotli: 71_500 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
