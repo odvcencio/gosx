@@ -278,7 +278,14 @@ const budgets = [
   // unchanged and still fit. The table is the fix: normalizeScenePostEffect
   // used to lowercase kind, which silently un-dispatched every camelCase post
   // effect ("customPost"/"toneMapping"/"colorGrade") on both render backends.
-  { file: "bootstrap.js", raw: 1_327_000, gzip: 352_000, brotli: 284_000 },
+  // Bumped brotli 284_000 -> 285_000 for reserved auto-uniform resolution on
+  // the WebGL custom post path (createScenePostProcessor now takes the Selena
+  // resolver; applyCustomPost resolves every declared field through it).
+  // Measured: 1_325_976 / 351_143 / 284_054 — +229 brotli bytes, raw and gzip
+  // ceilings unchanged and still fit. The cost is the fix: WebGL customPost
+  // read only the author uniform map, so reserved uniforms such as `time`
+  // stayed 0 and every time-driven post effect rendered a static frame.
+  { file: "bootstrap.js", raw: 1_327_000, gzip: 352_000, brotli: 285_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw

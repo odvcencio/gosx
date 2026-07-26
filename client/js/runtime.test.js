@@ -15164,6 +15164,153 @@ test("Scene3D defers postfx until idle delay", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
 });
 
+// --- WebGL customPost reserved auto-uniforms ---
+//
+// v0.35.9 repaired customPost DISPATCH: post effect kinds were lowercased, so
+// "customPost" matched no backend case and the pass never ran. Once the pass
+// started to run, a second defect became reachable. applyCustomPost read ONLY
+// effect.uniforms, so RESERVED auto-uniforms — time above all — were never
+// resolved. Any time-driven WebGL post effect therefore read time == 0 on
+// every frame and stayed inert.
+//
+// The WebGPU post path (ensureCustomPostUniformBuffer -> sceneSelenaUniformData
+// -> sceneSelenaUniformValue) and the WebGL mesh path (uploadSelenaUniforms ->
+// selenaUniformValue) both resolve reserved uniforms. Only WebGL customPost did
+// not. The bug class survived because every earlier test asserted that the pass
+// DISPATCHED and none asserted what the pass RECEIVED. This test asserts
+// uniform CONTENT.
+const CUSTOM_POST_TIME_LAYOUT_FIXTURE = {
+  schemaVersion: "selena.descriptor.v1",
+  languageVersion: "selena.lang.v1",
+  material: "TimedLens",
+  kind: "post",
+  entryPoints: { vertex: "vertexMain", fragment: "fragmentMain" },
+  attributes: [{ location: 0, name: "a_position", type: "vec2" }],
+  textures: [],
+  uniformBlock: {
+    size: 32,
+    fields: [
+      { name: "time", type: "float", offset: 0, size: 4 },
+      { name: "amount", type: "float", offset: 4, size: 4 },
+      { name: "tint", type: "vec3", offset: 16, size: 12 },
+    ],
+    defaults: [
+      // A compiled `param time` ships its default of 0 inside customUniforms.
+      // It must NOT shadow the engine clock — same precedence the mesh path
+      // and the WebGPU post path apply (reserved names resolve first).
+      { name: "time", type: "float", values: [0] },
+      { name: "tint", type: "vec3", values: [0.25, 0.5, 0.75] },
+    ],
+  },
+  wgsl: { group: 0, binding: 0 },
+};
+
+test("WebGL customPost receives reserved auto-uniforms: time is nonzero and advances with the clock", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-custompost-reserved-uniforms";
+
+  let fakeNowMS = 4000; // a real page never starts its clock at exactly 0
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    performanceNow: () => fakeNowMS,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-custompost-reserved-uniforms",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-custompost-reserved-uniforms",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 200,
+            autoRotate: true,
+            scene: {
+              postEffects: [
+                {
+                  kind: "customPost",
+                  name: "timed-lens",
+                  stage: "beforeTonemap",
+                  vertexGLSL: "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }",
+                  fragmentGLSL: "precision mediump float; uniform sampler2D _sceneColor; uniform float time; uniform float amount; uniform vec3 tint; varying vec2 v_uv; void main() { gl_FragColor = vec4(tint * amount * sin(time), 1.0); }",
+                  shaderLayout: CUSTOM_POST_TIME_LAYOUT_FIXTURE,
+                  // Author map carries ONLY the non-reserved param. `time` and
+                  // `tint` must come from the engine clock and the compiled
+                  // layout defaults respectively.
+                  uniforms: { amount: 0.75 },
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas", "webgl", "animation"],
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl",
+    "this regression test is meaningless unless the WebGL backend actually ran");
+
+  const gl = mount.children[0].getContext("webgl2") || mount.children[0].getContext("webgl");
+  assert.ok(gl, "expected a fake WebGL context on the scene canvas");
+  const uniform1fValues = (name) => gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === name)
+    .map((entry) => entry[2]);
+
+  const firstTimes = uniform1fValues("time");
+  assert.ok(firstTimes.length > 0,
+    "the custom post pass must upload the reserved `time` uniform at least once");
+  // THE REGRESSION: before the fix every one of these was 0, because
+  // applyCustomPost only ever read effect.uniforms and `time` is not in it.
+  assert.ok(firstTimes.every((value) => value > 0),
+    "reserved `time` must resolve to the engine clock, got: " + JSON.stringify(firstTimes));
+  assert.ok(firstTimes.includes(4), "time must be performance.now()/1000, expected 4, got: " + JSON.stringify(firstTimes));
+
+  // Author-supplied non-reserved params keep working.
+  assert.ok(uniform1fValues("amount").includes(0.75),
+    "author-supplied `amount` must still reach the pass");
+  // Compiled layout defaults now apply to fields absent from the author map.
+  // Before the fix these were skipped outright and silently read 0 in GLSL.
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform3f" && entry[1] === "tint"
+      && entry[2] === 0.25 && entry[3] === 0.5 && entry[4] === 0.75),
+    "compiled layout default for `tint` must upload as a vec3");
+
+  // Advance the clock and drive more frames: `time` must track it, which is
+  // what makes an animated post effect animate at all.
+  const opsBefore = gl.ops.length;
+  fakeNowMS = 9000;
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const laterTimes = gl.ops
+    .slice(opsBefore)
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
+    .map((entry) => entry[2]);
+  assert.ok(laterTimes.length > 0, "expected further frames to re-upload `time`");
+  assert.ok(laterTimes.includes(9),
+    "reserved `time` must advance with the clock, got: " + JSON.stringify(laterTimes));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("WebGL post processor is constructed with the Selena uniform resolver injected", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  // The injection is what supplies reserved auto-uniforms to custom post
+  // passes; without it applyCustomPost silently falls back to author values
+  // only. Mirrors the WebGPU side's wgpuCreatePostProcessor(..., sceneSelenaUniformData).
+  assert.match(webgl, /function createScenePostProcessor\(gl, resolveSelenaUniform\)/);
+  assert.match(webgl, /postProcessor = createScenePostProcessor\(gl, selenaUniformValue\);/);
+  assert.match(webgl, /resolveSelenaUniform\(material, layout, field, null\)/);
+  // applyCustomPost must NOT go back to reading the author map directly.
+  assert.doesNotMatch(webgl, /hasOwnProperty\.call\(uniforms, field\.name\) \? uniforms\[field\.name\] : null/);
+});
+
 // --- G1: live-patchable postFXMaxPixels ---
 test("Scene3D handle.updateSceneProps({postFXMaxPixels}) live-patches non-destructively: custom pass source survives, the live value changes, a no-op update is cheap", async () => {
   const mount = new FakeElement("div", null);
