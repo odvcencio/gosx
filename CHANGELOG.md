@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+## v0.35.10 (2026-07-26)
+
+WebGL custom post-process passes received no reserved auto-uniforms. The pass
+read `time` as 0 on every frame, so each time-driven effect stayed inert. A
+Selena post pass that fades in, flows, or animates showed a static first frame.
+
+- `applyCustomPost` in `client/js/bootstrap-src/16-scene-webgl.js` read only the
+  author-supplied `effect.uniforms` map. Reserved auto-uniforms are not in that
+  map. The pass therefore received 0 for `time`, `mvp`, `modelMatrix`,
+  `normalMatrix`, and the context-class names `cameraPos`, `sunDir`, `sunColor`,
+  and `ambient`.
+- v0.35.9 made this defect reachable. Before v0.35.9 the post effect kind was
+  folded to lower case, so `customPost` matched no backend case and the pass
+  never ran. The uniform defect was present but unreachable.
+- The WebGL mesh path and the WebGPU post path always resolved these names. The
+  mesh path calls `selenaUniformValue` through `uploadSelenaUniforms`. The
+  WebGPU post path calls `sceneSelenaUniformValue` through
+  `sceneSelenaUniformData`. Only the WebGL post path skipped the resolver.
+- `createScenePostProcessor` now accepts the renderer's Selena uniform resolver
+  as a parameter, and the render loop supplies `selenaUniformValue`. This
+  matches the WebGPU side, where `wgpuCreatePostProcessor` already accepts
+  `sceneSelenaUniformData`.
+- `applyCustomPost` now resolves every declared uniform block field through that
+  resolver. Precedence is unchanged: reserved names resolve first, then the
+  author map, then the compiled layout defaults, then a typed zero. A declared
+  `param time` ships a compiled default of 0 inside `customUniforms`. Reserved
+  names resolve first so that default cannot shadow the clock.
+- Compiled layout defaults now apply to custom post fields that the author does
+  not set. The old code skipped such a field, and GLSL then read 0.
+- Uniform upload is now driven by the declared field type through a shared
+  `sceneSelenaUploadUniform` helper. The old post-path code chose the upload
+  call from the JavaScript shape of the value, so a `vec3` field that held a
+  bare number went out as a scalar. The mesh path and the post path now share
+  one upload function and cannot diverge again.
+- Added a regression test that asserts uniform CONTENT, not dispatch. It mounts
+  a WebGL scene with a `customPost` effect, advances the clock, and requires a
+  nonzero `time` that tracks `performance.now()`. Earlier tests asserted only
+  that the pass dispatched, which is how this defect stayed hidden.
+
 ## v0.35.9 (2026-07-26)
 
 Scene3D custom post-process passes now execute. `customPost`, `toneMapping`,
