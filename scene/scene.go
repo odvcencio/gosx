@@ -471,8 +471,14 @@ func (m Mesh) SpreadProps() map[string]any {
 
 // Points renders a particle system using GL_POINTS.
 type Points struct {
-	ID           string
-	Count        int       // number of particles
+	ID    string
+	Count int // number of particles
+	// Generator replaces Positions/Sizes with a procedural recipe. When set
+	// and Positions is empty, the scene ships the descriptor instead of the
+	// arrays and the client expands it at mount into bit-identical values —
+	// see scene/points_generator.go. Explicit Positions always win, so a
+	// layer with no Generator serialises exactly as it always has.
+	Generator    *PointsGenerator
 	Positions    []Vector3 // per-particle positions
 	Sizes        []float64 // per-particle sizes (optional, default 1.0)
 	Colors       []string  // per-particle hex colors (optional)
@@ -2768,6 +2774,14 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 	if pts.Spin.X != 0 || pts.Spin.Y != 0 || pts.Spin.Z != 0 {
 		l.spinTracks = append(l.spinTracks, spinMotionTrack(pts.Spin, id))
 	}
+	// A procedural layer ships its recipe and nothing else. Explicit arrays
+	// take precedence: an author who supplies Positions gets exactly the
+	// bytes they always got, and the descriptor is dropped so the payload
+	// never carries both.
+	useGenerator := pts.Generator != nil && len(pts.Positions) == 0
+	if useGenerator {
+		record.Generator = pts.Generator.lowerIR()
+	}
 	// Flatten positions to [x,y,z, x,y,z, ...].
 	if len(pts.Positions) > 0 {
 		flat := make([]float64, 0, len(pts.Positions)*3)
@@ -2776,7 +2790,7 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		}
 		record.Positions = flat
 	}
-	if len(pts.Sizes) > 0 {
+	if len(pts.Sizes) > 0 && !useGenerator {
 		record.Sizes = append([]float64(nil), pts.Sizes...)
 	}
 	if len(pts.Colors) > 0 {

@@ -183,6 +183,13 @@
                  (props && Array.isArray(props.points) ? props.points : []);
     for (var i = 0; i < points.length; i++) {
       var entry = points[i];
+      // Procedural layers expand first: a generator descriptor produces the
+      // same plain arrays an explicit layer would have arrived with, so every
+      // path below (progressive, LOD, plain) sees one shape. Entries without a
+      // descriptor are untouched.
+      if (typeof sceneGeneratePointsEntry === "function") {
+        sceneGeneratePointsEntry(entry);
+      }
       if (progressive || lod) {
         // Decompress preview immediately for fast first paint
         if (entry.previewPositions && !entry.positions) {

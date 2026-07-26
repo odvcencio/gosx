@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Procedural point clouds (`scene.PointsGenerator`)
+
+`scene.Points` accepted only explicit `Positions` and `Sizes` arrays. A
+deterministic point cloud therefore paid full serialization cost for data the
+client can derive. The m31labs.dev star field shipped an 852,163-byte inline
+JSON manifest — 16,200 positions and 5,400 sizes — on every content route, for
+values that are pure arithmetic on a seed.
+
+- Added `scene.PointsGenerator`, an optional descriptor on `scene.Points` that
+  replaces the arrays with a recipe: kind, seed, stride, per-lane offsets, box
+  centre and extent, and the size curve. The client expands it at mount into
+  the identical arrays. A layer with no generator serializes exactly as before.
+- Explicit `Positions` always win. When both are set the arrays are kept and
+  the descriptor is dropped, so the payload never carries redundant data.
+- `PointsGenerator.Generate` expands the same values server-side for tests,
+  asset baking, and any Go consumer that needs the geometry.
+- The wire form is `PointsGeneratorIR` (`generator` on the points record).
+  A 5,400-point layer serializes to 218 bytes.
+
+Go and JavaScript must agree exactly, and platform transcendentals do not.
+Measured over seeds 0..20000 of the `fract(sin(s*12.9898+78.233)*43758.5453)`
+hash, Go's `math.Sin` and V8's `Math.sin` produce different bits for 19.78% of
+seeds, peaking at 7.276e-12. The divergence is small but unbounded in
+principle: an argument landing within one quantum of an integer makes the two
+sides disagree about `floor()`, which moves a point across its whole axis.
+
+- `scene/points_generator.go` defines the shared spec: `canonicalSin`,
+  `canonicalLog` and `canonicalExp` are ports of Go's own pure-Go kernels,
+  with every product wrapped in an explicit `float64()` conversion to block
+  fused multiply-add on arm64 and ppc64. `canonicalPow` is `exp(y*log(x))`.
+- `client/js/bootstrap-src/11b-scene-points-generate.js` is the matching
+  JavaScript. Both sides use only `+`, `-`, `*`, `/` and comparisons.
+- `canonicalSin` reproduces Go's `math.Sin` bit-for-bit over the generator
+  argument range, so adopting the kernel moves no existing point.
+  `canonicalPow` tracks `math.Pow` to within 1.11e-16.
+- `scene/testdata/points_generator_golden.json` pins four descriptors by
+  SHA-256 over the little-endian IEEE-754 bytes of their expanded arrays.
+  `scene/points_generator_test.go` and
+  `client/js/11b-scene-points-generate.test.mjs` assert against the same
+  fixture, so a divergence fails on whichever side drifted.
+- Strict IR validation accepts a `generator` in place of positions and rejects
+  an unknown kind. At runtime an unrecognized recipe zeroes the layer count so
+  the layer disappears instead of indexing an empty buffer.
+
 ## v0.35.10 (2026-07-26)
 
 WebGL custom post-process passes received no reserved auto-uniforms. The pass

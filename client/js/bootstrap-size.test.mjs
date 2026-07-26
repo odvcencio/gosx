@@ -285,7 +285,16 @@ const budgets = [
   // ceilings unchanged and still fit. The cost is the fix: WebGL customPost
   // read only the author uniform map, so reserved uniforms such as `time`
   // stayed 0 and every time-driven post effect rendered a static frame.
-  { file: "bootstrap.js", raw: 1_327_000, gzip: 352_000, brotli: 285_000 },
+  // Bumped raw 1_327_000 -> 1_333_000, gzip 352_000 -> 354_000, brotli
+  // 285_000 -> 287_000 for procedural point clouds
+  // (11b-scene-points-generate.js): the canonical sin/log/exp/pow kernel plus
+  // the box-scatter expander. Measured: 1_330_627 / 353_413 / 285_862.
+  // The kernel is ~3.6KB raw of ported Go math that cannot be replaced with
+  // Math.sin/Math.pow without losing bit-exact parity with the server. It
+  // buys far more than it costs: the m31labs.dev starfield alone drops an
+  // 852_163-byte inline manifest to a ~300-byte descriptor, and the saving
+  // scales with every deterministic point layer any app ships.
+  { file: "bootstrap.js", raw: 1_333_000, gzip: 354_000, brotli: 287_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -480,7 +489,12 @@ const budgets = [
   // command/recovery APIs. Measured: 720_967 / 197_155 / 162_407.
   // Bumped raw 722_000 -> 723_000 for camera-depth parity coverage.
   // Measured: 722_238 / 197_155 / 162_407.
-  { file: "bootstrap-feature-scene3d.js", raw: 723_000, gzip: 198_000, brotli: 163_000 },
+  // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
+  // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
+  // same canonical math kernel and box-scatter expander added to bootstrap.js
+  // above; this chunk carries the same Scene3D scene sources. Measured:
+  // 727_318 / 199_778 / 164_522.
+  { file: "bootstrap-feature-scene3d.js", raw: 730_000, gzip: 201_000, brotli: 166_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
