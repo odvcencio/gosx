@@ -25,9 +25,15 @@ jobs:
       - name: Release gate
         run: make release-gate
 
-  test:
+  # go-tests: Go checks and tests, plus TinyGo — cmd/gosx/build_test.go
+  # exercises a real production GoSX build (`go run ./cmd/gosx build --prod`)
+  # via `make test`, which requires TinyGo on PATH. No Node or Chrome install:
+  # nothing here shells out to either. This is the heaviest job (~11 minutes
+  # of measured step time before the TinyGo install) but no longer serializes
+  # behind or ahead of the JS/WASM/browser jobs.
+  go-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -39,6 +45,51 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install Danmuji
+        run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
+
+      # TinyGo is required here too: TestRunBuildProdWritesHybridStaticBundleForStarterApp
+      # and its siblings in cmd/gosx/build_test.go shell out to a real
+      # production GoSX build (`go run ./cmd/gosx build --prod`), which
+      # requires TinyGo on PATH. `make test` runs those.
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: |
+          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          sudo dpkg -i tinygo.deb
+          go install golang.org/dl/go1.25.5@latest
+          go1.25.5 download
+          tinygo version
+
+      - name: Format check
+        run: make fmt-check
+
+      - name: Danmuji generated spec check
+        run: make verify-danmuji
+
+      - name: Unit and integration tests
+        run: make test
+
+      - name: Race tests
+        run: make test-race
+
+      - name: Fuzz smoke tests
+        run: make test-fuzz-smoke
+
+      - name: Build CLI
+        run: make build-cli
+
+  # js-tests: Node only, no Go/TinyGo/Chrome setup. This is the fastest
+  # feedback loop (~32s) and must not sit behind the multi-minute Go job.
+  js-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       # Node is only needed as a bare runtime for `node --test` (stdlib-only
       # JS unit tests). There are no npm dependencies to install.
       - name: Set up Node.js
@@ -46,18 +97,32 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Set up Chrome
-        id: chrome
-        uses: browser-actions/setup-chrome@v1
+      - name: JavaScript runtime contract tests
+        run: make test-js
 
-      - name: Install Danmuji
-        run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
+  # wasm-tests: Go + TinyGo. Also needs Node, because `go test -exec
+  # go_js_wasm_exec` (used by test-wasm / test-wasm-islands) shells out to
+  # `node` under the hood (see $(go env GOROOT)/lib/wasm/go_js_wasm_exec).
+  # Pinning Node 22 here (same as js-tests) preserves exact prior behavior
+  # instead of relying on whatever Node ships by default on the runner image.
+  wasm-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
-      - name: Format check
-        run: make fmt-check
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - name: Danmuji generated spec check
-        run: make verify-danmuji
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       - name: Install TinyGo
         env:
@@ -69,18 +134,6 @@ jobs:
           go1.25.5 download
           tinygo version
 
-      - name: Unit and integration tests
-        run: make test
-
-      - name: Race tests
-        run: make test-race
-
-      - name: Fuzz smoke tests
-        run: make test-fuzz-smoke
-
-      - name: JavaScript runtime contract tests
-        run: make test-js
-
       - name: WASM runtime tests
         run: make test-wasm
 
@@ -89,6 +142,45 @@ jobs:
 
       - name: WASM size-budget gate
         run: make wasm-size-budget
+
+      - name: Production water bundle smoke test
+        run: make test-water-prod
+
+      - name: Build WASM runtime
+        run: make build-runtime
+
+  # browser-tests: Go + Chrome + TinyGo. No Node install — the browser
+  # executes the WASM itself; nothing here shells out to `node`.
+  browser-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      # TinyGo is required: TestProductionBuildRunsMixedTinyGoAndStandardGoWASM
+      # (e2e/go_wasm_mixed_prod_e2e_test.go) runs a real production GoSX build
+      # (`go run ./cmd/gosx build --prod`), which requires TinyGo on PATH.
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: |
+          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          sudo dpkg -i tinygo.deb
+          go install golang.org/dl/go1.25.5@latest
+          go1.25.5 download
+          tinygo version
 
       - name: Browser docs E2E gate
         env:
@@ -100,14 +192,25 @@ jobs:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
-      - name: Production water bundle smoke test
-        run: make test-water-prod
+  # test: kept as a lightweight aggregate so the `test` check name still
+  # exists for any external required-check configuration that references it
+  # by name. As of this split, `main` branch protection on this repo has no
+  # required_status_checks configured (verified via `gh api
+  # repos/odvcencio/gosx/branches/main/protection`), so nothing currently
+  # depends on this name — this job is defensive insurance, not a fix for a
+  # known break.
+  test:
+    runs-on: ubuntu-latest
+    needs:
+      - go-tests
+      - js-tests
+      - wasm-tests
+      - browser-tests
+    timeout-minutes: 5
 
-      - name: Build CLI
-        run: make build-cli
-
-      - name: Build WASM runtime
-        run: make build-runtime
+    steps:
+      - name: All test jobs passed
+        run: echo "go-tests, js-tests, wasm-tests, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame
