@@ -1196,7 +1196,12 @@
       return text;
     }
     if (text === "color-grade" || text === "color-grading" || text === "colorgrade") {
-      return "color-grade";
+      // Return the spelling both backends dispatch on (SCENE_POST_COLOR_GRADE).
+      // The CSS --scene-filter path writes straight into state.postEffects
+      // without passing through normalizeScenePostEffect, so emitting the
+      // hyphenated form here left the pass permanently unmatched by the
+      // `switch (effect.kind)` chains in 16a-scene-webgpu.js / 16-scene-webgl.js.
+      return "colorGrade";
     }
     return "";
   }

@@ -3360,7 +3360,15 @@
   // persistent-error session looks like. Guarding makes the failure a
   // detectable event (reported once, cache invalidated so the next
   // ensureFBOs call retries) instead of a poisoned resource used forever.
-  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError) {
+  // packSelenaUniforms is injected by the caller (createSceneWebGPURenderer)
+  // because the Selena uniform packer — sceneSelenaUniformData and the
+  // sceneSelenaMaterialLayout / sceneSelenaUniformValue helpers it needs — lives
+  // inside the RENDERER closure, which is a SIBLING of this factory, not an
+  // enclosing scope. Calling it by bare name from here throws ReferenceError.
+  // That crash sat undiscovered because the customPost case was unreachable:
+  // normalizeScenePostEffect lowercased the kind, so this pass never ran and
+  // never reached the uniform upload on the frame after its pipeline resolved.
+  function wgpuCreatePostProcessor(device, targetFormat, onAllocationError, packSelenaUniforms) {
     var disposed = false;
     var sceneTex = null;
     var sceneTexView = null;
@@ -3505,7 +3513,9 @@
     var customPostUniformBuffers = new Map(); // name → buffer
     function ensureCustomPostUniformBuffer(effect) {
       var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
-      var uniformData = sceneSelenaUniformData({ customUniforms: effect.uniforms, shaderLayout: effect.shaderLayout });
+      var uniformData = typeof packSelenaUniforms === "function"
+        ? packSelenaUniforms({ customUniforms: effect.uniforms, shaderLayout: effect.shaderLayout })
+        : null;
       if (!uniformData || uniformData.byteLength === 0) {
         uniformData = new Float32Array(4); // 16-byte placeholder
       }
@@ -14485,7 +14495,7 @@
       var postTarget = null;
 
       if (usePostProcessing) {
-        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError);
+        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError, sceneSelenaUniformData);
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
         if (sampleCount > 1) {
           mainColorView = ensureMSAAColor(scaledW, scaledH, sampleCount);

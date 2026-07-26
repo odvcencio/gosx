@@ -4612,9 +4612,22 @@
             case SCENE_POST_CUSTOM_POST: {
               // Selena post contract (WebGL2): use provided GLSL pair.
               // On failure the pass is skipped (identity passthrough).
+              //
+              // Assign UNCONDITIONALLY, exactly like every built-in pass above.
+              // Every apply* helper shares one return protocol:
+              //   targetFBO present -> the texture it rendered into
+              //   targetFBO null    -> null, meaning "this was the LAST pass and
+              //                        it already drew to the default framebuffer"
+              // and the identity/failure paths return the INPUT texture, never
+              // null. This case used to guard the assignment with
+              // `if (next !== null)`, which swallowed the "already on screen"
+              // signal: currentTexture stayed pointing at the raw scene color,
+              // so the `blitToScreen(currentTexture)` below then painted the
+              // un-post-processed scene straight over the pass's own output. A
+              // trailing custom pass therefore produced zero visible pixels even
+              // when it compiled, bound and drew correctly.
               var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
-              var next = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
-              if (next !== null) currentTexture = next;
+              currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
               break;
             }
             default:
