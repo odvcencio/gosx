@@ -5914,8 +5914,9 @@
     // updateElioSkinnedMeshes. The skinned draw binds vertex buffers via
     // webGPUBindElioSkinnedBuffers rather than iterating attrs, so this resource
     // deliberately does NOT expose an attrs field (avoids double-binding).
-    function getSelenaSkinnedPipeline(material, blendMode, depthWrite) {
+    function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
       if (!sceneSelenaIsMaterial(material)) return null;
+      var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
       // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
       // (_gosxWGPUSelenaSkinnedResource) so a material drawn both skinned and
       // unskinned never aliases the wrong pipeline — the skinned key uses the
@@ -5926,7 +5927,8 @@
         memo.blendMode === blendMode &&
         memo.depthWrite === depthWrite &&
         memo.targetFormat === targetFormat &&
-        memo.sampleCount === activeSampleCount
+        memo.sampleCount === activeSampleCount &&
+        memo.cullMode === pipelineCullMode
       ) {
         return memo.failed ? null : memo.resource;
       }
@@ -5941,6 +5943,7 @@
         depthWrite ? "1" : "0",
         targetFormat,
         activeSampleCount,
+        pipelineCullMode,
       ].join("|");
       function stampSkinned(resource, failed) {
         material._gosxWGPUSelenaSkinnedResource = {
@@ -5948,6 +5951,7 @@
           depthWrite: depthWrite,
           targetFormat: targetFormat,
           sampleCount: activeSampleCount,
+          cullMode: pipelineCullMode,
           resource: resource,
           failed: failed,
         };
@@ -5966,7 +5970,7 @@
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
-          primitive: { topology: "triangle-list", cullMode: "back" },
+          primitive: { topology: "triangle-list", cullMode: pipelineCullMode },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
         });
@@ -12336,9 +12340,10 @@
         // cullMode anchors establish. cullMode:"none" (doubleSided) draws
         // both faces regardless of winding, so it's safe independent of that
         // hazard; flipping the false-case default would not be.
+        var selenaPipelineOptions = obj.doubleSided ? { cullMode: "none" } : null;
         var selenaResource = isSkinned
-          ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite)
-          : getSelenaPipeline(mat, blendMode, depthWrite, obj.doubleSided ? { cullMode: "none" } : null);
+          ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite, selenaPipelineOptions)
+          : getSelenaPipeline(mat, blendMode, depthWrite, selenaPipelineOptions);
         if (selenaResource) {
           var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + (obj.doubleSided ? ":ds" : "");
           if (currentPipelineKind !== selenaKey) {

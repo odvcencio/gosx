@@ -10822,7 +10822,9 @@ test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none
   // caller passes no cullMode option -- drawPBRObjects is the caller that
   // now conditions its options argument on obj.doubleSided.
   assert.match(webgpu, /var pipelineCullMode = options && typeof options\.cullMode === "string" && options\.cullMode \? options\.cullMode : "back";/);
-  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, obj\.doubleSided \? \{ cullMode: "none" \} : null\)/);
+  assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided \? \{ cullMode: "none" \} : null;/);
+  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
+  assert.match(webgpu, /getSelenaSkinnedPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
@@ -25819,6 +25821,66 @@ test("16a Selena mesh draws request cullMode:none only for doubleSided:true obje
   assert.equal(
     draws[1].pipeline.desc.primitive.cullMode, "none",
     "doubleSided:true draws through a cullMode:none Selena pipeline",
+  );
+});
+
+test("16a Selena skinned mesh draws preserve per-object doubleSided cull mode", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  function skinnedMesh(id, doubleSided, depthCenter) {
+    return {
+      id,
+      kind: "gltf-mesh",
+      materialIndex: 0,
+      vertexOffset: 0,
+      vertexCount: 3,
+      viewCulled: false,
+      depthCenter,
+      doubleSided,
+      directVertices: true,
+      modelMatrix: identity,
+      skin: { jointMatrices: identity },
+      vertices: {
+        count: 3,
+        positions: new Float32Array(9),
+        joints: new Float32Array(12),
+        weights: new Float32Array([
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+        ]),
+      },
+    };
+  }
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [selenaMaterial],
+    meshObjects: [
+      skinnedMesh("single-sided-skin", false, 4),
+      skinnedMesh("double-sided-skin", true, 5),
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+  };
+
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1);
+  assert.deepEqual(
+    mains[0].draws.map((draw) => draw.pipeline.desc.primitive.cullMode),
+    ["back", "none"],
+    "skinned Selena pipelines must cache and draw distinct single- and double-sided variants",
   );
 });
 
