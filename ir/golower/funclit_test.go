@@ -60,8 +60,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 10 {
-		t.Errorf("F() = %v, want 10", got.Num)
+	if int(got.Number()) != 10 {
+		t.Errorf("F() = %v, want 10", got.Number())
 	}
 }
 
@@ -86,8 +86,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 20 {
-		t.Errorf("F() = %v, want 20 (capture-by-reference)", got.Num)
+	if int(got.Number()) != 20 {
+		t.Errorf("F() = %v, want 20 (capture-by-reference)", got.Number())
 	}
 }
 
@@ -111,8 +111,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 12 {
-		t.Errorf("F() = %v, want 12", got.Num)
+	if int(got.Number()) != 12 {
+		t.Errorf("F() = %v, want 12", got.Number())
 	}
 }
 
@@ -150,7 +150,7 @@ func Mount(c *surface.Canvas) {
 	}
 	cv := rec.Calls[0].Args[0]
 	if !vm.IsClosure(cv) {
-		t.Errorf("StartLoop arg should be a ClosureVal; got Value{Type=%v Str=%q}", cv.Type, cv.Str)
+		t.Errorf("StartLoop arg should be a ClosureVal; got Value{Type=%v Str=%q}", cv.Type, cv.Text())
 	}
 }
 
@@ -177,8 +177,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 7 {
-		t.Errorf("F() = %v, want 7", got.Num)
+	if int(got.Number()) != 7 {
+		t.Errorf("F() = %v, want 7", got.Number())
 	}
 }
 
@@ -206,8 +206,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 3 {
-		t.Errorf("F() = %v, want 3 (closure-mutates-captured-local)", got.Num)
+	if int(got.Number()) != 3 {
+		t.Errorf("F() = %v, want 3 (closure-mutates-captured-local)", got.Number())
 	}
 }
 

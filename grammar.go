@@ -51,11 +51,27 @@ func GosxGrammar() *Grammar {
 
 		g.Externals = append(g.Externals, Sym("jsx_attribute_expression"))
 
-		// String attribute value: "hello"
+		// String attribute value: "hello" or "f(\"x\")".
+		//
+		// A backslash escapes the next character, so an attribute value can
+		// carry a double quote. Without the escape branch the lexer stops at
+		// the first inner quote: `data-on-click="f(\"x\")"` then lexes as the
+		// value `"f(\"`, a bare boolean attribute `x`, and a trailing run that
+		// no rule accepts.
+		//
+		// Before gotreesitter v0.35.0 that split produced no error node, so
+		// the wrong parse shipped in silence. The parser now reports it, which
+		// is how this gap surfaced.
+		//
+		// The whole literal stays one token, so consumers keep reading the
+		// value with Node.Text and trimming the quotes.
 		g.Define("jsx_string_literal",
 			Token(Seq(
 				Str(`"`),
-				Pat(`[^"]*`),
+				Repeat(Choice(
+					Pat(`[^"\\]+`),
+					Pat(`\\.`),
+				)),
 				Str(`"`),
 			)))
 
