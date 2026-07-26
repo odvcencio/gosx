@@ -15,6 +15,7 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/water"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/auth"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/compiler"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/debugging-scene3d"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/deployment"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/engines"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/forms"

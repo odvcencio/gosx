@@ -151,6 +151,126 @@ func TestAssertWritesDiffAndCurrentOnMismatch(t *testing.T) {
 	}
 }
 
+func TestValidRequireBackend(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"", true},
+		{"webgpu", true},
+		{"webgl", true},
+		{"any-gpu", true},
+		{"canvas2d", false},
+		{"WebGPU", false},
+		{"bogus", false},
+	} {
+		if got := ValidRequireBackend(tc.value); got != tc.want {
+			t.Errorf("ValidRequireBackend(%q) = %v, want %v", tc.value, got, tc.want)
+		}
+	}
+}
+
+func TestCheckBackendRequirementNoneSkipsCheck(t *testing.T) {
+	err := checkBackendRequirement("https://example.test/", RequireBackendNone, nil)
+	if err != nil {
+		t.Fatalf("checkBackendRequirement(RequireBackendNone) = %v, want nil", err)
+	}
+	err = checkBackendRequirement("https://example.test/", RequireBackendNone, []sceneMountBackend{{Backend: "canvas"}})
+	if err != nil {
+		t.Fatalf("checkBackendRequirement(RequireBackendNone) with mounts = %v, want nil", err)
+	}
+}
+
+func TestCheckBackendRequirementNoMountFound(t *testing.T) {
+	err := checkBackendRequirement("https://example.test/", RequireBackendWebGPU, nil)
+	var reqErr *BackendRequirementError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("checkBackendRequirement error = %v, want *BackendRequirementError", err)
+	}
+	if len(reqErr.Mounts) != 0 {
+		t.Fatalf("Mounts = %v, want empty", reqErr.Mounts)
+	}
+	if !bytes.Contains([]byte(reqErr.Error()), []byte("No Scene3D mount was found")) {
+		t.Fatalf("Error() = %q, want the no-mount explanation", reqErr.Error())
+	}
+}
+
+func TestCheckBackendRequirementCanvasFallbackFails(t *testing.T) {
+	mounts := []sceneMountBackend{{ID: "scene-mount", Backend: "canvas", Renderer: "canvas", FallbackReason: "webgl-unavailable"}}
+	err := checkBackendRequirement("https://example.test/", RequireBackendWebGPU, mounts)
+	var reqErr *BackendRequirementError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("checkBackendRequirement error = %v, want *BackendRequirementError", err)
+	}
+	if len(reqErr.Mounts) != 1 || reqErr.Mounts[0].Backend != "canvas" {
+		t.Fatalf("Mounts = %v, want the failing canvas mount", reqErr.Mounts)
+	}
+	msg := reqErr.Error()
+	for _, want := range []string{"Canvas2D fallback", "use-gl=angle", "use-angle=swiftshader", "CHROME_WS_URL"} {
+		if !bytes.Contains([]byte(msg), []byte(want)) {
+			t.Errorf("Error() missing %q in:\n%s", want, msg)
+		}
+	}
+}
+
+func TestCheckBackendRequirementWrongGPUFamilyFails(t *testing.T) {
+	mounts := []sceneMountBackend{{ID: "scene-mount", Backend: "webgl", Renderer: "webgl", FallbackReason: "webgpu-unavailable"}}
+	err := checkBackendRequirement("https://example.test/", RequireBackendWebGPU, mounts)
+	var reqErr *BackendRequirementError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("checkBackendRequirement error = %v, want *BackendRequirementError", err)
+	}
+	msg := reqErr.Error()
+	if !bytes.Contains([]byte(msg), []byte("any-gpu instead")) {
+		t.Errorf("Error() missing wrong-GPU-family guidance in:\n%s", msg)
+	}
+	if bytes.Contains([]byte(msg), []byte("Canvas2D fallback renderer, or")) {
+		t.Errorf("Error() should not claim no GPU ran when the mount reached webgl:\n%s", msg)
+	}
+}
+
+func TestCheckBackendRequirementAnyGPUAcceptsWebGLOrWebGPU(t *testing.T) {
+	for _, backend := range []string{"webgl", "webgpu"} {
+		mounts := []sceneMountBackend{{ID: "scene-mount", Backend: backend}}
+		if err := checkBackendRequirement("https://example.test/", RequireBackendAnyGPU, mounts); err != nil {
+			t.Errorf("checkBackendRequirement(any-gpu, %s) = %v, want nil", backend, err)
+		}
+	}
+	mounts := []sceneMountBackend{{ID: "scene-mount", Backend: "canvas"}}
+	if err := checkBackendRequirement("https://example.test/", RequireBackendAnyGPU, mounts); err == nil {
+		t.Fatalf("checkBackendRequirement(any-gpu, canvas) = nil, want error")
+	}
+}
+
+func TestCaptureEnforcesRequireBackend(t *testing.T) {
+	oldCapture := captureForAssert
+	t.Cleanup(func() { captureForAssert = oldCapture })
+
+	// captureForAssert is a seam over Assert, not Capture itself, so this
+	// test exercises checkBackendRequirement wiring through the same
+	// error-propagation path Assert uses, via a fake that mimics Capture's
+	// post-screenshot check.
+	captureForAssert = func(ctx context.Context, url string, opts CaptureOptions) ([]byte, error) {
+		mounts := []sceneMountBackend{{ID: "scene-mount", Backend: "canvas"}}
+		if err := checkBackendRequirement(url, opts.RequireBackend, mounts); err != nil {
+			return nil, err
+		}
+		return solidPNG(t, 4, 4, color.RGBA{A: 255}), nil
+	}
+
+	err := Assert(context.Background(), "https://example.test/scene", AssertOptions{
+		Update: true,
+		CaptureOptions: CaptureOptions{
+			RequireBackend: RequireBackendWebGPU,
+		},
+		BaselinePath: filepath.Join(t.TempDir(), "baseline.png"),
+	})
+	var reqErr *BackendRequirementError
+	if !errors.As(err, &reqErr) {
+		t.Fatalf("Assert error = %v, want *BackendRequirementError", err)
+	}
+}
+
 func TestDefaultBaselinePath(t *testing.T) {
 	got := DefaultBaselinePath("https://example.com/")
 	want := filepath.Join("testdata", "visual")
