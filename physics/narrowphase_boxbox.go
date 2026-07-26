@@ -214,21 +214,24 @@ func clipBoxFace(refCol, incCol *Collider,
 		return nil
 	}
 
-	contacts := make([]ContactPoint, 0, 4)
+	// Clipping a face against a face of the same size lands several points on
+	// the same corner. Collect every point below the reference plane, then let
+	// reduceContactPatch pick four that spread over the whole patch.
+	candidates := make([]ContactPoint, 0, len(poly))
 	for _, p := range poly {
 		signed := refFaceNormal.Dot(p) - refDist
 		if signed > contactTolerance {
 			continue
 		}
-		penetration := -signed
-		contacts = append(contacts, makeContactPoint(refCol, incCol, p, penetration))
-		if len(contacts) >= 4 {
-			break
-		}
+		candidates = append(candidates, makeContactPoint(refCol, incCol, p, -signed))
 	}
-	if len(contacts) > 4 {
-		contacts = contacts[:4]
+	if len(candidates) == 0 {
+		return nil
 	}
+	var kept [4]ContactPoint
+	count := reduceContactPatch(candidates, &kept)
+	contacts := make([]ContactPoint, count)
+	copy(contacts, kept[:count])
 	return contacts
 }
 

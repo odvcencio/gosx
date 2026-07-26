@@ -112,6 +112,12 @@ func constraintTouchesBody(constraint Constraint, body *RigidBody) bool {
 	switch c := constraint.(type) {
 	case *DistanceConstraint:
 		return c.BodyA == body || c.BodyB == body
+	case *PointConstraint:
+		return c.BodyA == body || c.BodyB == body
+	case *HingeConstraint:
+		return c.BodyA == body || c.BodyB == body
+	case *FixedConstraint:
+		return c.BodyA == body || c.BodyB == body
 	}
 	return false
 }
@@ -122,10 +128,13 @@ func (w *World) pruneContactState(removed map[*Collider]struct{}) {
 	}
 	contacts := w.contacts[:0]
 	for _, contact := range w.contacts {
-		if _, drop := removed[contact.ColliderA]; drop {
-			continue
-		}
-		if _, drop := removed[contact.ColliderB]; drop {
+		_, dropA := removed[contact.ColliderA]
+		_, dropB := removed[contact.ColliderB]
+		if dropA || dropB {
+			// The support under a sleeping body may have just gone. Wake both
+			// sides so the next step decides again.
+			contact.BodyA.Wake()
+			contact.BodyB.Wake()
 			continue
 		}
 		contacts = append(contacts, contact)
