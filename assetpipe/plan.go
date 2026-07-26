@@ -1,5 +1,40 @@
-// Package assetpipe inventories Scene3D-ready project assets and describes the
-// build-time optimization work GoSX should perform before those assets ship.
+// Package assetpipe inventories Scene3D-ready project assets, describes the
+// build-time optimization work GoSX should perform before those assets ship,
+// and runs the part of that work GoSX can do in pure Go.
+//
+// # The plan and execute seam
+//
+// Plan probes structure only. It caps every read at Options.MaxProbeBytes,
+// writes no files, and returns actions whose status is "candidate",
+// "planned", "present", or "ready". Every one of those means "not done".
+// `gosx assets plan` depends on that speed and on that honesty.
+//
+// Execute is the separate build step. It reads whole assets, bounded by
+// ExecuteOptions.MaxExecuteBytes, writes the files the plan named, and
+// returns a report whose action status is "executed", "skipped", or
+// "failed". Only Execute sets Variant.State to "built", so a variant that
+// claims a file is a variant whose file exists.
+//
+// # Codec scope
+//
+// Execute materializes three actions today:
+//
+//   - prefilter-ibl-ggx builds the GGX-prefiltered specular cubemap, the
+//     diffuse irradiance cubemap, and a spherical-harmonic sidecar.
+//   - generate-split-sum-lut bakes the scene-independent BRDF table.
+//   - build-lod-stack simplifies meshes with the quadric error metric.
+//
+// The remaining actions stay plans on purpose:
+//
+//   - meshopt-compress needs an EXT_meshopt_compression encoder. The codec
+//     is tractable in Go, but the browser also needs a decoder, and that
+//     decoder does not fit the current bootstrap byte budget.
+//   - draco-compress needs the Draco codec. The reference decoder alone is
+//     about 200 KB of WebAssembly plus glue, which is far outside the
+//     framework's byte budget.
+//   - texture-transcode-ktx2 needs a BC7, ASTC, or ETC2 encoder. The KTX2
+//     container writer lives in render/bundle/ktx2 and handles uncompressed
+//     formats, so the missing piece is the block encoder, not the container.
 package assetpipe
 
 import (
@@ -134,8 +169,11 @@ type Action struct {
 }
 
 // Variant describes a concrete optimized output the asset pipeline should
-// eventually materialize. It is a plan, not a claim that the file already
-// exists.
+// eventually materialize. Plan emits variants with an empty State, and an
+// empty State is a plan, not a claim that the file already exists.
+//
+// Execute rewrites the variants of every action it runs. Those carry
+// State "built" and a byte count, and the file behind the URI exists.
 type Variant struct {
 	URI                  string   `json:"uri"`
 	Kind                 string   `json:"kind,omitempty"`
@@ -143,7 +181,15 @@ type Variant struct {
 	Compression          string   `json:"compression,omitempty"`
 	SourceAction         string   `json:"sourceAction,omitempty"`
 	RequiredCapabilities []string `json:"requiredCapabilities,omitempty"`
+	// State is empty or "planned" for a plan, and "built" for a file the
+	// executor wrote.
+	State string `json:"state,omitempty"`
+	// Bytes is the size of the written file. It stays zero for a plan.
+	Bytes int64 `json:"bytes,omitempty"`
 }
+
+// Exists reports whether the variant names a file the executor wrote.
+func (v Variant) Exists() bool { return v.State == VariantBuilt }
 
 // GLTFInfo records cheap structural facts from glTF JSON.
 type GLTFInfo struct {
@@ -480,6 +526,12 @@ func gltfActions(info GLTFInfo, opts Options) []Action {
 	if info.Primitives > 0 || info.Meshes > 0 {
 		actions = append(actions,
 			Action{Name: "build-lod-stack", Status: "candidate", Reason: "mesh scenes need route-selectable LODs"},
+			Action{
+				Name:   "optimize-mesh",
+				Status: "candidate",
+				Reason: "quantize attributes and reorder vertices without a runtime decoder",
+				Target: "KHR_mesh_quantization, vertex cache, overdraw, vertex fetch, weld",
+			},
 			Action{Name: "meshopt-compress", Status: compressionStatus(info, "EXT_meshopt_compression"), Reason: "compact index and vertex streams"},
 			Action{Name: "draco-compress", Status: compressionStatus(info, "KHR_draco_mesh_compression"), Reason: "asset-store compatibility path"},
 			turboQuantAction(opts),
@@ -533,6 +585,12 @@ func gltfVariants(path string, info GLTFInfo) []Variant {
 				Kind:         "model",
 				Compression:  "turboquant",
 				SourceAction: "turboquant-streams",
+			},
+			Variant{
+				URI:          siblingVariant(path, ".opt", ".glb"),
+				Kind:         "model",
+				Quality:      "optimized",
+				SourceAction: "optimize-mesh",
 			},
 			Variant{
 				URI:          siblingVariant(path, ".lod0", ".glb"),
