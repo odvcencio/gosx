@@ -78,7 +78,7 @@ jobs:
       - name: Fuzz smoke tests
         run: make test-fuzz-smoke
 
-      - name: JavaScript runtime contract tests
+      - name: JavaScript runtime tests and bundle staleness check
         run: make test-js
 
       - name: WASM runtime tests
@@ -86,6 +86,13 @@ jobs:
 
       - name: Island-only WASM runtime tests
         run: make test-wasm-islands
+
+      # motion is one Go evaluator that drives the server IR, the native
+      # renderer, the client VM and the WASM exports. This target proves the
+      # native and js/wasm builds agree on floats, against a native-generated
+      # golden corpus. No other gate ran it, so a divergence could ship.
+      - name: Motion cross-target float parity gate
+        run: make test-motion-parity
 
       - name: WASM size-budget gate
         run: make wasm-size-budget
@@ -102,6 +109,13 @@ jobs:
 
       - name: Production water bundle smoke test
         run: make test-water-prod
+
+      # The desktop host is 3520 lines behind a windows build tag. release.yml
+      # cross-compiles the binary, but nothing compiled the windows TEST
+      # binaries, so a broken desktop test could not fail anywhere. This runs
+      # the portable tests and links both windows test binaries.
+      - name: Desktop tests and Windows cross-compile gate
+        run: make test-desktop
 
       - name: Build CLI
         run: make build-cli

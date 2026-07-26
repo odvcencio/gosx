@@ -182,6 +182,112 @@ func TestCollectFeatures(t *testing.T) {
 			t.Error("expected FeatureWaterObjectMeshShadowPass from authored mesh shadow shader; not present")
 		}
 	})
+
+	t.Run("compute particles system triggers compute-particles capability", func(t *testing.T) {
+		ir := SceneIR{
+			ComputeParticles: []ComputeParticlesIR{{ID: "dust", Count: 100}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureComputeParts] {
+			t.Error("expected FeatureComputeParts from computeParticles; not present")
+		}
+	})
+
+	t.Run("no compute particles: no compute-particles capability", func(t *testing.T) {
+		ir := SceneIR{
+			Objects: []ObjectIR{{ID: "box", Kind: "box"}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if got[capability.FeatureComputeParts] {
+			t.Error("did not expect FeatureComputeParts without computeParticles")
+		}
+	})
+
+	t.Run("instanced mesh with cull kernel triggers gpu-cull capability", func(t *testing.T) {
+		ir := SceneIR{
+			InstancedMeshes: []InstancedMeshIR{{
+				ID:             "rocks",
+				Count:          200,
+				CullKernelWGSL: "@compute @workgroup_size(64) fn cull() {}",
+			}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureGPUCull] {
+			t.Error("expected FeatureGPUCull from cullKernelWGSL; not present")
+		}
+	})
+
+	t.Run("instanced mesh with hoisted cull kernel ref triggers gpu-cull capability", func(t *testing.T) {
+		ir := SceneIR{
+			InstancedMeshes: []InstancedMeshIR{{
+				ID:                "rocks",
+				Count:             200,
+				CullKernelWGSLRef: "sl:abc123",
+			}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureGPUCull] {
+			t.Error("expected FeatureGPUCull from cullKernelWGSLRef; not present")
+		}
+	})
+
+	t.Run("instanced mesh without cull kernel: no gpu-cull capability", func(t *testing.T) {
+		ir := SceneIR{
+			InstancedMeshes: []InstancedMeshIR{{ID: "rocks", Count: 200}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if got[capability.FeatureGPUCull] {
+			t.Error("did not expect FeatureGPUCull without a cull kernel")
+		}
+	})
+}
+
+// TestComputeParticlesReportsWebGLDegraded verifies the honesty-gate fix:
+// a scene using ComputeParticles must report WebGL as degraded (present in
+// Capable, listed under Degraded[webgl]) instead of silently claiming full
+// WebGL support while the runtime falls back to a CPU particle simulation.
+func TestComputeParticlesReportsWebGLDegraded(t *testing.T) {
+	props := Props{
+		Graph: NewGraph(ComputeParticles{
+			ID:    "dust",
+			Count: 64,
+			Emitter: ParticleEmitter{
+				Kind:   "sphere",
+				Radius: 1,
+			},
+			Material: ParticleMaterial{Color: "#ffffff"},
+		}),
+	}
+	ir := props.SceneIR()
+
+	if ir.BackendCaps == nil {
+		t.Fatal("BackendCaps is nil")
+	}
+
+	// compute-particles is not in DefaultPolicy().Required, so WebGL stays
+	// Capable — but it must show up as degraded, not silently full-featured.
+	capableWebGL := false
+	for _, b := range ir.BackendCaps.Capable {
+		if b == capability.BackendWebGL {
+			capableWebGL = true
+			break
+		}
+	}
+	if !capableWebGL {
+		t.Fatalf("expected WebGL to remain Capable (compute-particles is optional); got %v", ir.BackendCaps.Capable)
+	}
+
+	degraded := ir.BackendCaps.Degraded[capability.BackendWebGL]
+	found := false
+	for _, f := range degraded {
+		if f == capability.FeatureComputeParts {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected FeatureComputeParts in Degraded[webgl]; got %v", degraded)
+	}
 }
 
 // TestSkinLookupDetectsSkinning verifies that collectFeatures tags
