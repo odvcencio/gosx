@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/island"
@@ -20,24 +21,26 @@ type PageRuntime struct {
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
 type PageRuntimeSummary struct {
-	Bootstrap                   bool
-	Runtime                     bool
-	BootstrapMode               string
-	Manifest                    bool
-	RuntimePath                 string
-	WASMExecPath                string
-	StandardGoWASMExecPath      string
-	PatchPath                   string
-	BootstrapPath               string
-	BootstrapFeatureIslandsPath string
-	BootstrapFeatureEnginesPath string
-	BootstrapFeatureHubsPath    string
-	BootstrapFeatureScene3DPath string
-	HLSPath                     string
-	Islands                     int
-	ComputeIslands              int
-	Engines                     int
-	Hubs                        int
+	Bootstrap                       bool
+	Runtime                         bool
+	BootstrapMode                   string
+	Manifest                        bool
+	RuntimePath                     string
+	WASMExecPath                    string
+	StandardGoWASMExecPath          string
+	PatchPath                       string
+	BootstrapPath                   string
+	BootstrapFeatureIslandsPath     string
+	BootstrapFeatureEnginesPath     string
+	BootstrapFeatureHubsPath        string
+	BootstrapFeatureControllersPath string
+	BootstrapFeatureScene3DPath     string
+	HLSPath                         string
+	Islands                         int
+	ComputeIslands                  int
+	Engines                         int
+	Hubs                            int
+	Controllers                     int
 }
 
 // NewPageRuntime creates an empty runtime registry for a page response.
@@ -121,6 +124,19 @@ func (r *PageRuntime) BindHubInput(name, path string, bindings []hydrate.HubBind
 	}
 	r.active = true
 	return r.renderer.BindHubInput(name, path, bindings, input)
+}
+
+// Controller registers a declarative headless browser controller for the
+// current page.
+func (r *PageRuntime) Controller(config controller.Config) string {
+	if r == nil {
+		return ""
+	}
+	id := r.renderer.RegisterController(config)
+	if id != "" {
+		r.active = true
+	}
+	return id
 }
 
 // ClientIdentity asks the GoSX bootstrap to maintain a stable anonymous client
@@ -209,6 +225,12 @@ func (r *PageRuntime) LifecycleScript(src string, args ...any) {
 
 // Head renders the preload, manifest, and bootstrap tags required by the page runtime.
 func (r *PageRuntime) Head() gosx.Node {
+	return r.HeadWithNonce("")
+}
+
+// HeadWithNonce renders the preload, manifest, and bootstrap tags required by
+// the page runtime, attaching nonce to GoSX-owned script elements when set.
+func (r *PageRuntime) HeadWithNonce(nonce string) gosx.Node {
 	if r == nil {
 		return gosx.Text("")
 	}
@@ -216,7 +238,7 @@ func (r *PageRuntime) Head() gosx.Node {
 	if r.active {
 		nodes = append(nodes,
 			r.renderer.PreloadHints(),
-			r.renderer.PageHead(),
+			r.renderer.PageHeadWithNonce(nonce),
 		)
 	}
 	nodes = append(nodes, r.head...)
@@ -238,24 +260,26 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 	}
 	summary := r.renderer.Summary()
 	return PageRuntimeSummary{
-		Bootstrap:                   summary.Bootstrap,
-		Runtime:                     strings.TrimSpace(summary.RuntimePath) != "",
-		BootstrapMode:               summary.BootstrapMode,
-		Manifest:                    summary.Manifest,
-		RuntimePath:                 summary.RuntimePath,
-		WASMExecPath:                summary.WASMExecPath,
-		StandardGoWASMExecPath:      summary.StandardGoWASMExecPath,
-		PatchPath:                   summary.PatchPath,
-		BootstrapPath:               summary.BootstrapPath,
-		BootstrapFeatureIslandsPath: summary.BootstrapFeatureIslandsPath,
-		BootstrapFeatureEnginesPath: summary.BootstrapFeatureEnginesPath,
-		BootstrapFeatureHubsPath:    summary.BootstrapFeatureHubsPath,
-		BootstrapFeatureScene3DPath: summary.BootstrapFeatureScene3DPath,
-		HLSPath:                     summary.HLSPath,
-		Islands:                     summary.Islands,
-		ComputeIslands:              summary.ComputeIslands,
-		Engines:                     summary.Engines,
-		Hubs:                        summary.Hubs,
+		Bootstrap:                       summary.Bootstrap,
+		Runtime:                         strings.TrimSpace(summary.RuntimePath) != "",
+		BootstrapMode:                   summary.BootstrapMode,
+		Manifest:                        summary.Manifest,
+		RuntimePath:                     summary.RuntimePath,
+		WASMExecPath:                    summary.WASMExecPath,
+		StandardGoWASMExecPath:          summary.StandardGoWASMExecPath,
+		PatchPath:                       summary.PatchPath,
+		BootstrapPath:                   summary.BootstrapPath,
+		BootstrapFeatureIslandsPath:     summary.BootstrapFeatureIslandsPath,
+		BootstrapFeatureEnginesPath:     summary.BootstrapFeatureEnginesPath,
+		BootstrapFeatureHubsPath:        summary.BootstrapFeatureHubsPath,
+		BootstrapFeatureControllersPath: summary.BootstrapFeatureControllersPath,
+		BootstrapFeatureScene3DPath:     summary.BootstrapFeatureScene3DPath,
+		HLSPath:                         summary.HLSPath,
+		Islands:                         summary.Islands,
+		ComputeIslands:                  summary.ComputeIslands,
+		Engines:                         summary.Engines,
+		Hubs:                            summary.Hubs,
+		Controllers:                     summary.Controllers,
 	}
 }
 

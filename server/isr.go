@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,7 +78,19 @@ func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch fun
 	if !ok {
 		return false
 	}
-	artifact, mode, ok := a.prepareISRArtifact(artifact, dispatch)
+	// Prerendered export HTML carries links relative to the page's directory,
+	// which only resolve correctly when the served URL ends in a trailing
+	// slash. Canonicalize ISR pages to their trailing-slash URL so relative
+	// links work the same on the origin as they do on static hosts.
+	if artifact.page.Path != "/" && !strings.HasSuffix(r.URL.Path, "/") {
+		target := r.URL.Path + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return true
+	}
+	artifact, mode, ok := a.prepareISRArtifact(r.Context(), artifact, dispatch)
 	if !ok {
 		return false
 	}
@@ -98,7 +111,7 @@ func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWrite
 	return acceptsHTML(r)
 }
 
-func (a *App) prepareISRArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
+func (a *App) prepareISRArtifact(ctx context.Context, artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
 	info, err := artifact.store.StatArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
 	switch {
 	case err == nil:
@@ -107,7 +120,7 @@ func (a *App) prepareISRArtifact(artifact isrArtifact, dispatch func(http.Respon
 	case !errors.Is(err, ErrISRArtifactNotFound):
 		return isrArtifact{}, "", false
 	}
-	return a.regenerateISRArtifact(artifact, dispatch)
+	return a.regenerateISRArtifact(ctx, artifact, dispatch)
 }
 
 func (a *App) isrServeArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
@@ -125,7 +138,38 @@ func (a *App) isrServeArtifact(artifact isrArtifact, dispatch func(http.Response
 	return artifact, mode, true
 }
 
-func (a *App) regenerateISRArtifact(artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
+// isrColdStartWait bounds how long a request waits for another request to
+// generate the first artifact. A page render that runs longer than this makes
+// the waiter render the page itself, which costs work but always answers.
+const isrColdStartWait = 5 * time.Second
+
+// isrColdStartPoll is the interval between artifact checks while waiting.
+const isrColdStartPoll = 2 * time.Millisecond
+
+// regenerateISRArtifact produces the first artifact for a page.
+//
+// It takes the same refresh lease that the stale-while-revalidate path takes.
+// Without the lease every concurrent cold request rendered the page: 40
+// concurrent requests produced 11 full renders in a measurement. A request that
+// does not win the lease waits for the winner and then serves the shared
+// artifact.
+func (a *App) regenerateISRArtifact(ctx context.Context, artifact isrArtifact, dispatch func(http.ResponseWriter, *http.Request, bool)) (isrArtifact, string, bool) {
+	if artifact.store == nil {
+		return isrArtifact{}, "", false
+	}
+	lease, acquired, err := artifact.store.AcquireRefresh(artifact.bundleRoot, artifact.page.Path)
+	if err != nil {
+		return isrArtifact{}, "", false
+	}
+	if !acquired {
+		return a.awaitISRArtifact(ctx, artifact)
+	}
+	defer func() {
+		if lease != nil {
+			_ = lease.Release()
+		}
+	}()
+
 	started := time.Now()
 	info, err := a.isr.regenerate(artifact, a.Revalidator(), dispatch)
 	if err != nil {
@@ -148,6 +192,38 @@ func (a *App) regenerateISRArtifact(artifact isrArtifact, dispatch func(http.Res
 	})
 	artifact.modTime = info.ModTime
 	return artifact, "MISS", true
+}
+
+// awaitISRArtifact waits for another request to write the first artifact.
+//
+// It reports false on timeout or cancellation. The caller then falls through to
+// a dynamic render, which answers the request without the cached artifact.
+func (a *App) awaitISRArtifact(ctx context.Context, artifact isrArtifact) (isrArtifact, string, bool) {
+	deadline := time.Now().Add(isrColdStartWait)
+	ticker := time.NewTicker(isrColdStartPoll)
+	defer ticker.Stop()
+	for {
+		info, err := artifact.store.StatArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
+		if err == nil {
+			artifact.modTime = info.ModTime
+			return artifact, "MISS", true
+		}
+		if !errors.Is(err, ErrISRArtifactNotFound) {
+			return isrArtifact{}, "", false
+		}
+		if time.Now().After(deadline) {
+			return isrArtifact{}, "", false
+		}
+		if ctx == nil {
+			<-ticker.C
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return isrArtifact{}, "", false
+		case <-ticker.C:
+		}
+	}
 }
 
 func acceptsHTML(r *http.Request) bool {

@@ -7,10 +7,22 @@ import (
 	"strings"
 )
 
+// scopeIDBytes is how many hash bytes back a scope ID.
+//
+// WHY six: the ID used to keep two bytes, so two files collided at roughly even
+// odds by 300 files and their scoped rules then leaked into each other. Six
+// bytes give 48 bits, which keeps the collision odds below one in a million for
+// a project of 20000 stylesheets. The extra eight characters repeat inside each
+// scoped selector, and a compressed response absorbs that cost.
+const scopeIDBytes = 6
+
+// ScopeIDLength is the character count of a value that ScopeID returns.
+const ScopeIDLength = scopeIDBytes * 2
+
 // ScopeID generates a short scope identifier from the component or file name.
 func ScopeID(name string) string {
 	sum := sha256.Sum256([]byte(name))
-	return hex.EncodeToString(sum[:2])
+	return hex.EncodeToString(sum[:scopeIDBytes])
 }
 
 // ScopeCSS rewrites selectors so they stay inside the provided scope while

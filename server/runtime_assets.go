@@ -18,7 +18,7 @@ import (
 // bootstrap.js has not been built yet (e.g. during `go run` development).
 const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
 (function(){
-  window.__gosx = window.__gosx || { version: "dev", islands: new Map(), engines: new Map(), hubs: new Map(), textLayouts: new Map(), sharedSignals: { values: new Map(), subscribers: new Map() }, input: {}, ready: true };
+  window.__gosx = window.__gosx || { version: "dev", islands: new Map(), engines: new Map(), hubs: new Map(), controllers: new Map(), textLayouts: new Map(), sharedSignals: { values: new Map(), subscribers: new Map() }, input: {}, ready: true };
   window.__gosx_engine_factories = window.__gosx_engine_factories || Object.create(null);
   window.__gosx_register_engine_factory = window.__gosx_register_engine_factory || function(name, factory) { window.__gosx_engine_factories[name] = factory; };
   // Mount engines from page manifest
@@ -255,6 +255,8 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"bootstrap-feature-islands.js":         filepath.Join(buildDir, "bootstrap-feature-islands.js"),
 		"bootstrap-feature-engines.js":         filepath.Join(buildDir, "bootstrap-feature-engines.js"),
 		"bootstrap-feature-hubs.js":            filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
+		"bootstrap-feature-controllers.js":     filepath.Join(buildDir, "bootstrap-feature-controllers.js"),
+		"bootstrap-feature-textlayout.js":      filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
 		"bootstrap-feature-scene3d.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
 		"bootstrap-feature-scene3d-command.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
 		"patch.js":                             filepath.Join(buildDir, "patch.js"),
@@ -341,12 +343,18 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureEngines.File)
 	case "bootstrap-feature-hubs.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureHubs.File)
+	case "bootstrap-feature-controllers.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureControllers.File)
+	case "bootstrap-feature-textlayout.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureTextlayout.File)
 	case "bootstrap-feature-scene3d.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "bootstrap-feature-scene3d-command.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCommand.File)
 	case "bootstrap-feature-scene3d-webgpu.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
+	case "bootstrap-feature-scene3d-webgl.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWebGL.File)
 	case "bootstrap-feature-scene3d-gltf.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DGLTF.File)
 	case "bootstrap-feature-scene3d-animation.js":
@@ -389,6 +397,14 @@ func runtimeManifestAssetPath(assetsDir, bucket, file string) (string, bool) {
 	return target, true
 }
 
+// runtimeMetaInitMu guards the lazy allocation of App.runtimeMeta. Without
+// this lock, two concurrent requests can each see a nil cache, each allocate
+// their own *runtimeManifestCache, and each lock a different mutex — so the
+// per-cache mutex protects nothing. This lock only covers the short
+// check-and-set of the pointer; the cache's own mutex still guards the
+// manifest read below.
+var runtimeMetaInitMu sync.Mutex
+
 func (a *App) runtimeBuildManifest(root string) (*buildmanifest.Manifest, bool) {
 	if a == nil {
 		return nil, false
@@ -398,11 +414,14 @@ func (a *App) runtimeBuildManifest(root string) (*buildmanifest.Manifest, bool) 
 	if err != nil || info.IsDir() {
 		return nil, false
 	}
+
+	runtimeMetaInitMu.Lock()
 	if a.runtimeMeta == nil {
 		a.runtimeMeta = &runtimeManifestCache{}
 	}
-
 	cache := a.runtimeMeta
+	runtimeMetaInitMu.Unlock()
+
 	modTime := info.ModTime().UTC()
 
 	cache.mu.Lock()

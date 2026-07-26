@@ -23,6 +23,8 @@ type VideoTrack struct {
 	ID       string `json:"id,omitempty"`
 	Kind     string `json:"kind,omitempty"`
 	Src      string `json:"src,omitempty"`
+	AuthKey  string `json:"authKey,omitempty"`
+	Bitmap   bool   `json:"bitmap,omitempty"`
 	SrcLang  string `json:"srclang,omitempty"`
 	Language string `json:"language,omitempty"`
 	Label    string `json:"label,omitempty"`
@@ -64,6 +66,42 @@ type SyncTuning struct {
 	MaxPreloadMs           float64 `json:"maxPreloadMs,omitempty"`
 }
 
+// SubtitleOptions configures the built-in subtitle painter. Zero values keep
+// the runtime defaults, so older Video usage keeps its current behavior.
+type SubtitleOptions struct {
+	OffsetMs            float64 `json:"offsetMs,omitempty"`
+	Scale               string  `json:"scale,omitempty"`
+	Style               string  `json:"style,omitempty"`
+	GapBridgeMs         float64 `json:"gapBridgeMs,omitempty"`
+	CueTailMs           float64 `json:"cueTailMs,omitempty"`
+	PaintLeadMs         float64 `json:"paintLeadMs,omitempty"`
+	BitmapPrefetchLimit int     `json:"bitmapPrefetchLimit,omitempty"`
+	RetryLimit          int     `json:"retryLimit,omitempty"`
+	RetryRefreshAfter   int     `json:"retryRefreshAfter,omitempty"`
+	RefreshEndpoint     string  `json:"refreshEndpoint,omitempty"`
+	RefreshCallback     string  `json:"refreshCallback,omitempty"`
+}
+
+// AudioSourceOptions configures audio-language source rewriting for media
+// servers that expose alternate audio through a query parameter.
+type AudioSourceOptions struct {
+	QueryParam string `json:"queryParam,omitempty"`
+}
+
+// VideoTelemetryOptions configures best-effort playback telemetry hooks.
+type VideoTelemetryOptions struct {
+	Endpoint              string  `json:"endpoint,omitempty"`
+	QualityIntervalMs     float64 `json:"qualityIntervalMs,omitempty"`
+	StallRecoveryDelayMs  float64 `json:"stallRecoveryDelayMs,omitempty"`
+	MaxStallRecoveryCount int     `json:"maxStallRecoveryCount,omitempty"`
+}
+
+// FullscreenOptions configures which element the Video command bridge targets
+// for fullscreen requests.
+type FullscreenOptions struct {
+	Target string `json:"target,omitempty"`
+}
+
 // VideoProps configures both the server-rendered baseline <video> element and
 // the built-in video engine runtime contract.
 type VideoProps struct {
@@ -92,14 +130,18 @@ type VideoProps struct {
 	SyncStrategy string `json:"syncStrategy,omitempty"`
 	// SyncTuning carries optional overrides for the follow-mode drift engine.
 	// nil means the JS factory uses proven defaults for every field.
-	SyncTuning     *SyncTuning       `json:"syncTuning,omitempty"`
-	HLS            map[string]any    `json:"hls,omitempty"`
-	HLSConfig      map[string]any    `json:"hlsConfig,omitempty"`
-	AudioTrack     string            `json:"audioTrack,omitempty"`
-	AudioTracks    []VideoAudioTrack `json:"audioTracks,omitempty"`
-	SubtitleBase   string            `json:"subtitleBase,omitempty"`
-	SubtitleTrack  string            `json:"subtitleTrack,omitempty"`
-	SubtitleTracks []VideoTrack      `json:"subtitleTracks,omitempty"`
+	SyncTuning     *SyncTuning            `json:"syncTuning,omitempty"`
+	HLS            map[string]any         `json:"hls,omitempty"`
+	HLSConfig      map[string]any         `json:"hlsConfig,omitempty"`
+	AudioTrack     string                 `json:"audioTrack,omitempty"`
+	AudioTracks    []VideoAudioTrack      `json:"audioTracks,omitempty"`
+	AudioSource    *AudioSourceOptions    `json:"audioSource,omitempty"`
+	SubtitleBase   string                 `json:"subtitleBase,omitempty"`
+	SubtitleTrack  string                 `json:"subtitleTrack,omitempty"`
+	SubtitleTracks []VideoTrack           `json:"subtitleTracks,omitempty"`
+	Subtitles      *SubtitleOptions       `json:"subtitles,omitempty"`
+	Fullscreen     *FullscreenOptions     `json:"fullscreen,omitempty"`
+	Telemetry      *VideoTelemetryOptions `json:"telemetry,omitempty"`
 	// PersistPrefs opts the engine into persisting playback preferences
 	// (volume, muted, rate, subtitleTrack, audioTrack, qualityLevel) to
 	// localStorage and restoring them on mount. PersistKey (below) namespaces
@@ -272,8 +314,35 @@ func normalizeVideoProps(props VideoProps) VideoProps {
 	props.SyncMode = strings.TrimSpace(props.SyncMode)
 	props.SyncStrategy = strings.TrimSpace(props.SyncStrategy)
 	props.AudioTrack = strings.TrimSpace(props.AudioTrack)
+	if props.AudioSource != nil {
+		props.AudioSource.QueryParam = strings.TrimSpace(props.AudioSource.QueryParam)
+		if *props.AudioSource == (AudioSourceOptions{}) {
+			props.AudioSource = nil
+		}
+	}
 	props.SubtitleBase = AssetURL(props.SubtitleBase)
 	props.SubtitleTrack = strings.TrimSpace(props.SubtitleTrack)
+	if props.Subtitles != nil {
+		props.Subtitles.Scale = strings.TrimSpace(props.Subtitles.Scale)
+		props.Subtitles.Style = strings.TrimSpace(props.Subtitles.Style)
+		props.Subtitles.RefreshEndpoint = AssetURL(props.Subtitles.RefreshEndpoint)
+		props.Subtitles.RefreshCallback = strings.TrimSpace(props.Subtitles.RefreshCallback)
+		if *props.Subtitles == (SubtitleOptions{}) {
+			props.Subtitles = nil
+		}
+	}
+	if props.Fullscreen != nil {
+		props.Fullscreen.Target = strings.TrimSpace(props.Fullscreen.Target)
+		if *props.Fullscreen == (FullscreenOptions{}) {
+			props.Fullscreen = nil
+		}
+	}
+	if props.Telemetry != nil {
+		props.Telemetry.Endpoint = AssetURL(props.Telemetry.Endpoint)
+		if *props.Telemetry == (VideoTelemetryOptions{}) {
+			props.Telemetry = nil
+		}
+	}
 	props.PersistKey = strings.TrimSpace(props.PersistKey)
 	normalizedSources := make([]VideoSource, 0, len(props.Sources))
 	for _, source := range props.Sources {
@@ -302,6 +371,7 @@ func normalizeVideoProps(props VideoProps) VideoProps {
 		track.ID = strings.TrimSpace(track.ID)
 		track.Kind = normalizeVideoTrackKind(track.Kind)
 		track.Src = AssetURL(track.Src)
+		track.AuthKey = strings.TrimSpace(track.AuthKey)
 		track.SrcLang = strings.TrimSpace(track.SrcLang)
 		track.Language = strings.TrimSpace(track.Language)
 		track.Label = strings.TrimSpace(track.Label)

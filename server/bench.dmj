@@ -61,7 +61,7 @@ benchmark "render deferred chunk" {
         html := "<div class=\"deferred\">Loaded content for the slot</div>"
     }
     measure {
-        _ = renderDeferredChunk(slotID, html)
+        _ = renderDeferredChunk(slotID, html, "")
     }
     report_allocs
 }
