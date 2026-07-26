@@ -80,8 +80,10 @@ jobs:
       - name: Build CLI
         run: make build-cli
 
-  # js-tests: Node only, no Go/TinyGo/Chrome setup. This is the fastest
-  # feedback loop (~32s) and must not sit behind the multi-minute Go job.
+  # js-tests: Node for `node --test`, plus Go — `make test-js` also runs
+  # `cd cmd/buildbootstrap && go run . --check` (the bundle staleness gate),
+  # which needs a Go toolchain. No TinyGo/Chrome setup: nothing here shells
+  # out to either.
   js-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -89,6 +91,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       # Node is only needed as a bare runtime for `node --test` (stdlib-only
       # JS unit tests). There are no npm dependencies to install.
