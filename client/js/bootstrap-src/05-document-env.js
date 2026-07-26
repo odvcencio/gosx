@@ -222,6 +222,32 @@
   const GOSX_MOTION_SPLIT_ATTR = "data-gosx-motion-split-applied";
   const GOSX_MOTION_UNIT_CLASS = "gosx-motion-unit";
 
+  // GOSX_MOTION_REVEALED_ATTR marks an element that has already run its
+  // reveal at least once. It survives record disposal (dispose only removes
+  // the Map entry and cancels the live Animation — it never touches this
+  // attribute), unlike data-gosx-motion-state, which a freshly created
+  // record immediately resets to "idle". That makes it the one reliable
+  // signal playManagedMotion has, on a brand-new record, for "this exact
+  // DOM node already went through the reveal before."
+  //
+  // That distinction matters because any re-mount of managed motion over a
+  // still-live document (soft navigation back to the same page, a
+  // dispose+remount cycle, any future re-init that reuses the existing body)
+  // creates a FRESH record for the SAME element. gosxMotionSplitUnits keys
+  // its reuse check off GOSX_MOTION_SPLIT_ATTR, so it correctly hands back
+  // the same already-split spans instead of double-wrapping — but the fresh
+  // record does not know those spans were already revealed, and Web
+  // Animations composites a NEW animate() call above the old (possibly
+  // still-finished-but-live, possibly already-cancelled) one. With
+  // fill:"both" that new animation's first keyframe is opacity 0, so it
+  // instantly re-hides text that was already fully visible, then only
+  // reveals it again after the full delay+duration replays — a multi-second
+  // "loads, then disappears" flash for every unit, worst on split/staggered
+  // presets where the last unit's delay is largest. See gosx issue: hero
+  // motion text disappearing on m31labs.dev after the galaxy's progressive
+  // scene upgrade.
+  const GOSX_MOTION_REVEALED_ATTR = "data-gosx-motion-revealed";
+
   function gosxMotionSplitUnits(element, mode) {
     if (!element || !mode) {
       return [];
@@ -440,7 +466,18 @@
       gosxManagedMotionState(record, "reduced");
       return;
     }
+    // A fresh record over an element that was already revealed in a prior
+    // record's lifetime (see GOSX_MOTION_REVEALED_ATTR) must not replay the
+    // reveal from its hidden first keyframe: the element/units are already
+    // showing their natural (visible) style, and re-animating would flash
+    // them invisible again for a full delay+duration before they recover.
+    if (record.element.getAttribute(GOSX_MOTION_REVEALED_ATTR) === "true") {
+      record.played = true;
+      gosxManagedMotionState(record, "finished");
+      return;
+    }
     record.played = true;
+    setAttrValue(record.element, GOSX_MOTION_REVEALED_ATTR, "true");
     gosxManagedMotionState(record, "running");
     cancelManagedMotionAnimation(record);
     if (typeof record.element.animate !== "function") {

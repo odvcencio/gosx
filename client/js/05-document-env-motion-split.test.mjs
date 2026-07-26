@@ -93,9 +93,12 @@ const exposeSrc = `
   window.__test_hooks = {
     gosxMotionSplitUnits,
     playManagedMotionUnits,
+    playManagedMotion,
     normalizeGosxMotionSplit,
     GOSX_MOTION_UNIT_CLASS,
     GOSX_MOTION_SPLIT_ATTR,
+    GOSX_MOTION_REVEALED_ATTR,
+    document,
   };
 `;
 
@@ -503,5 +506,69 @@ test("playManagedMotionUnits with no units settles the record to finished withou
   assert.doesNotThrow(() => {
     hooks.playManagedMotionUnits(record, []);
   });
+  assert.equal(el.getAttribute("data-gosx-motion-state"), "finished");
+});
+
+// --- re-mount replay guard ------------------------------------------------
+//
+// Regression test for the m31labs.dev hero-text-disappears defect: a fresh
+// managed-motion record over an element that was already fully split and
+// revealed by a PRIOR record (soft navigation replaying page scripts, or
+// any dispose+remount cycle that reuses the live document) must not replay
+// the reveal from its hidden first keyframe. gosxMotionSplitUnits already
+// hands back the existing spans instead of double-wrapping (see the
+// idempotency test above); this test covers the other half of the
+// contract -- playManagedMotion must not re-`animate()` those spans, since
+// Web Animations composites the new call above the old one and, with
+// fill:"both", instantly re-hides text that was already visible.
+test("re-mount replay guard: a fresh record over an already-revealed element does not re-animate it", () => {
+  const hooks = runModule();
+
+  // Every span gosxMotionSplitUnits creates goes through document.createElement
+  // -- patch it once so every unit gets an .animate stub and calls are counted,
+  // without having to reach into the split output between passes.
+  const originalCreateElement = hooks.document.createElement.bind(hooks.document);
+  let animateCallCount = 0;
+  hooks.document.createElement = function (tag) {
+    const node = originalCreateElement(tag);
+    node.animate = function () {
+      animateCallCount += 1;
+      return fakeAnimation();
+    };
+    return node;
+  };
+
+  const el = makeTextEl("Hi");
+  el.animate = () => fakeAnimation(); // satisfies playManagedMotion's element.animate guard ahead of the split branch
+  el.setAttribute("data-gosx-motion", "");
+  el.setAttribute("data-gosx-motion-preset", "slide-up");
+  el.setAttribute("data-gosx-motion-split", "char");
+  el.setAttribute("data-gosx-motion-duration", "200");
+  el.setAttribute("data-gosx-motion-stagger", "20");
+  // Sidesteps gosxManagedMotionReduced's environment-state lookup, which
+  // this minimal harness does not stub.
+  el.setAttribute("data-gosx-motion-respect-reduced", "false");
+
+  // Pass 1: a brand-new record plays the reveal, same as the initial mount.
+  const firstRecord = { element: el, config: null, played: false, animation: null, unitAnimations: null };
+  hooks.playManagedMotion(firstRecord, "load");
+
+  assert.equal(firstRecord.played, true);
+  assert.ok(animateCallCount > 0, "the first pass must animate the split units");
+  assert.equal(el.getAttribute(hooks.GOSX_MOTION_REVEALED_ATTR), "true");
+  const callsAfterFirstPass = animateCallCount;
+
+  // Pass 2: a fresh record over the SAME still-live element -- what a
+  // re-mount produces. Before this fix, this replayed the invisible-first-
+  // keyframe animation over spans that were already fully visible.
+  const secondRecord = { element: el, config: null, played: false, animation: null, unitAnimations: null };
+  hooks.playManagedMotion(secondRecord, "load");
+
+  assert.equal(secondRecord.played, true);
+  assert.equal(
+    animateCallCount,
+    callsAfterFirstPass,
+    "a re-mount over an already-revealed element must not call animate() again"
+  );
   assert.equal(el.getAttribute("data-gosx-motion-state"), "finished");
 });
