@@ -56,11 +56,11 @@ func TestEvalHostCallEvaluatesArgsInSourceOrder(t *testing.T) {
 	if len(args) != 2 {
 		t.Fatalf("expected 2 args; got %d", len(args))
 	}
-	if args[0].Num != 1.5 {
-		t.Errorf("args[0] = %f, want 1.5", args[0].Num)
+	if args[0].num != 1.5 {
+		t.Errorf("args[0] = %f, want 1.5", args[0].num)
 	}
-	if args[1].Num != 2.5 {
-		t.Errorf("args[1] = %f, want 2.5", args[1].Num)
+	if args[1].num != 2.5 {
+		t.Errorf("args[1] = %f, want 2.5", args[1].num)
 	}
 }
 
@@ -79,8 +79,8 @@ func TestEvalHostCallReturnValue(t *testing.T) {
 	}
 	vm.BindHost("c", rec)
 	got := vm.Eval(0)
-	if int(got.Num) != 800 {
-		t.Errorf("c.Width() returned %d, want 800", int(got.Num))
+	if int(got.num) != 800 {
+		t.Errorf("c.Width() returned %d, want 800", int(got.num))
 	}
 }
 

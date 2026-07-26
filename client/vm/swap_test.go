@@ -88,24 +88,24 @@ func TestVMSwapProgramMergesSignalByName(t *testing.T) {
 	InitSignals(vm, swapProgA())
 
 	// count starts at 3 (A's init).
-	if got := vm.Eval(0); got.Num != 3 {
-		t.Fatalf("initial count = %v, want 3", got.Num)
+	if got := vm.Eval(0); got.num != 3 {
+		t.Fatalf("initial count = %v, want 3", got.num)
 	}
 	// Run A's handler once: count 3 -> 4.
 	vm.EvalWithFrame(4)
-	if got := vm.signals["count"].Get(); got.Num != 4 {
-		t.Fatalf("after A bump, count = %v, want 4", got.Num)
+	if got := vm.signals["count"].Get(); got.num != 4 {
+		t.Fatalf("after A bump, count = %v, want 4", got.num)
 	}
 
 	// Swap to B. Same signal name => live value 4 is kept, init 99 ignored.
 	vm.SwapProgram(swapProgB())
-	if got := vm.signals["count"].Get(); got.Num != 4 {
-		t.Fatalf("after swap to B, count = %v, want 4 (merge-by-name kept live value)", got.Num)
+	if got := vm.signals["count"].Get(); got.num != 4 {
+		t.Fatalf("after swap to B, count = %v, want 4 (merge-by-name kept live value)", got.num)
 	}
 	// B's handler is now active: count = count + 10 => 14.
 	vm.EvalWithFrame(4)
-	if got := vm.signals["count"].Get(); got.Num != 14 {
-		t.Fatalf("after B bump, count = %v, want 14 (new handler active)", got.Num)
+	if got := vm.signals["count"].Get(); got.num != 14 {
+		t.Fatalf("after B bump, count = %v, want 14 (new handler active)", got.num)
 	}
 	// The new program is installed (exprs swapped).
 	if vm.program.Name != "B" {
@@ -121,15 +121,15 @@ func TestVMSwapProgramMergesSignalByName(t *testing.T) {
 func TestIslandSwapProgramKeepsStateNewHandlerReconciles(t *testing.T) {
 	island := NewIsland(swapProgA(), `{}`)
 	island.Dispatch("bump", "{}") // count 3 -> 4 under A
-	if got := island.vm.signals["count"].Get(); got.Num != 4 {
-		t.Fatalf("pre-swap count = %v, want 4", got.Num)
+	if got := island.vm.signals["count"].Get(); got.num != 4 {
+		t.Fatalf("pre-swap count = %v, want 4", got.num)
 	}
 
 	island.SwapProgram(swapProgB())
 
 	// Merge-by-name kept the live value across the swap.
-	if got := island.vm.signals["count"].Get(); got.Num != 4 {
-		t.Fatalf("post-swap count = %v, want 4 (state preserved)", got.Num)
+	if got := island.vm.signals["count"].Get(); got.num != 4 {
+		t.Fatalf("post-swap count = %v, want 4 (state preserved)", got.num)
 	}
 	// The handler map was rebuilt against B; the rendered tree reflects the
 	// reconcile (display node shows the live value 4).
@@ -138,8 +138,8 @@ func TestIslandSwapProgramKeepsStateNewHandlerReconciles(t *testing.T) {
 	}
 	// B's handler body is the active one: count = count + 10 => 14.
 	island.Dispatch("bump", "{}")
-	if got := island.vm.signals["count"].Get(); got.Num != 14 {
-		t.Fatalf("post-swap bump count = %v, want 14 (new handler active)", got.Num)
+	if got := island.vm.signals["count"].Get(); got.num != 14 {
+		t.Fatalf("post-swap bump count = %v, want 14 (new handler active)", got.num)
 	}
 	if got := counterFirstNodeText(island.prev); got != "14" {
 		t.Fatalf("post-bump display = %q, want \"14\"", got)
@@ -170,8 +170,8 @@ func TestVMSwapProgramRenamedSignalCleanReinit(t *testing.T) {
 	if !ok {
 		t.Fatal("tally signal missing after swap to C")
 	}
-	if got := tally.Get(); got.Num != 0 {
-		t.Fatalf("tally = %v, want 0 (clean re-init)", got.Num)
+	if got := tally.Get(); got.num != 0 {
+		t.Fatalf("tally = %v, want 0 (clean re-init)", got.num)
 	}
 	// Old signal removed — no stale "count" lingering.
 	if _, ok := vm.signals["count"]; ok {

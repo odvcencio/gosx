@@ -86,8 +86,8 @@ func TestVMLitInt(t *testing.T) {
 	if v.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", v.Type)
 	}
-	if v.Num != 42 {
-		t.Fatalf("expected 42, got %f", v.Num)
+	if v.num != 42 {
+		t.Fatalf("expected 42, got %f", v.num)
 	}
 }
 
@@ -100,8 +100,8 @@ func TestVMLitString(t *testing.T) {
 	if v.Type != program.TypeString {
 		t.Fatalf("expected TypeString, got %d", v.Type)
 	}
-	if v.Str != "hello" {
-		t.Fatalf("expected 'hello', got %q", v.Str)
+	if v.Text() != "hello" {
+		t.Fatalf("expected 'hello', got %q", v.Text())
 	}
 }
 
@@ -114,8 +114,8 @@ func TestVMLitFloat(t *testing.T) {
 	if v.Type != program.TypeFloat {
 		t.Fatalf("expected TypeFloat, got %d", v.Type)
 	}
-	if v.Num != 3.14 {
-		t.Fatalf("expected 3.14, got %f", v.Num)
+	if v.num != 3.14 {
+		t.Fatalf("expected 3.14, got %f", v.num)
 	}
 }
 
@@ -127,12 +127,12 @@ func TestVMLitBool(t *testing.T) {
 	vm := NewVM(prog, nil)
 
 	v := vm.Eval(0)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("expected true")
 	}
 
 	v2 := vm.Eval(1)
-	if v2.Bool {
+	if v2.Truth() {
 		t.Fatal("expected false")
 	}
 }
@@ -147,8 +147,8 @@ func TestVMAdd(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if v.Num != 13 {
-		t.Fatalf("expected 13, got %f", v.Num)
+	if v.num != 13 {
+		t.Fatalf("expected 13, got %f", v.num)
 	}
 }
 
@@ -163,8 +163,8 @@ func TestVMAddConcatsStrings(t *testing.T) {
 	if v.Type != program.TypeString {
 		t.Fatalf("expected TypeString, got %d", v.Type)
 	}
-	if v.Str != "badge tone-success" {
-		t.Fatalf("expected concatenated string, got %q", v.Str)
+	if v.Text() != "badge tone-success" {
+		t.Fatalf("expected concatenated string, got %q", v.Text())
 	}
 }
 
@@ -176,8 +176,8 @@ func TestVMSub(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if v.Num != 7 {
-		t.Fatalf("expected 7, got %f", v.Num)
+	if v.num != 7 {
+		t.Fatalf("expected 7, got %f", v.num)
 	}
 }
 
@@ -189,8 +189,8 @@ func TestVMMul(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if v.Num != 20 {
-		t.Fatalf("expected 20, got %f", v.Num)
+	if v.num != 20 {
+		t.Fatalf("expected 20, got %f", v.num)
 	}
 }
 
@@ -202,8 +202,8 @@ func TestVMDiv(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if v.Num != 3 {
-		t.Fatalf("expected 3 (integer division), got %f", v.Num)
+	if v.num != 3 {
+		t.Fatalf("expected 3 (integer division), got %f", v.num)
 	}
 }
 
@@ -215,8 +215,8 @@ func TestVMMod(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if v.Num != 1 {
-		t.Fatalf("expected 1, got %f", v.Num)
+	if v.num != 1 {
+		t.Fatalf("expected 1, got %f", v.num)
 	}
 }
 
@@ -227,8 +227,8 @@ func TestVMNeg(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(1)
-	if v.Num != -5 {
-		t.Fatalf("expected -5, got %f", v.Num)
+	if v.num != -5 {
+		t.Fatalf("expected -5, got %f", v.num)
 	}
 }
 
@@ -242,7 +242,7 @@ func TestVMEq(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("5 == 5 should be true")
 	}
 }
@@ -255,7 +255,7 @@ func TestVMNeq(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("5 != 6 should be true")
 	}
 }
@@ -268,7 +268,7 @@ func TestVMLt(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("3 < 5 should be true")
 	}
 }
@@ -281,7 +281,7 @@ func TestVMGt(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("5 > 3 should be true")
 	}
 }
@@ -294,7 +294,7 @@ func TestVMLte(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("5 <= 5 should be true")
 	}
 }
@@ -307,7 +307,7 @@ func TestVMGte(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("5 >= 3 should be true")
 	}
 }
@@ -357,7 +357,7 @@ func TestVMAnd(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if v.Bool {
+	if v.Truth() {
 		t.Fatal("true && false should be false")
 	}
 }
@@ -370,7 +370,7 @@ func TestVMOr(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("true || false should be true")
 	}
 }
@@ -382,7 +382,7 @@ func TestVMNot(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(1)
-	if v.Bool {
+	if v.Truth() {
 		t.Fatal("!true should be false")
 	}
 }
@@ -398,8 +398,8 @@ func TestVMPropGet(t *testing.T) {
 	}
 	vm := NewVM(prog, props)
 	v := vm.Eval(0)
-	if v.Str != "Hello World" {
-		t.Fatalf("expected 'Hello World', got %q", v.Str)
+	if v.Text() != "Hello World" {
+		t.Fatalf("expected 'Hello World', got %q", v.Text())
 	}
 }
 
@@ -412,8 +412,8 @@ func TestVMPropGetMissing(t *testing.T) {
 	if v.Type != program.TypeString {
 		t.Fatalf("expected TypeString zero value, got type %d", v.Type)
 	}
-	if v.Str != "" {
-		t.Fatalf("expected empty string, got %q", v.Str)
+	if v.Text() != "" {
+		t.Fatalf("expected empty string, got %q", v.Text())
 	}
 }
 
@@ -428,8 +428,8 @@ func TestVMSignalGet(t *testing.T) {
 	vm.SetSignal("count", sig)
 
 	v := vm.Eval(0)
-	if v.Num != 5 {
-		t.Fatalf("expected 5, got %f", v.Num)
+	if v.num != 5 {
+		t.Fatalf("expected 5, got %f", v.num)
 	}
 }
 
@@ -444,8 +444,8 @@ func TestVMSignalSet(t *testing.T) {
 
 	vm.Eval(1) // execute the set
 	v := sig.Get()
-	if v.Num != 42 {
-		t.Fatalf("expected signal to be 42, got %f", v.Num)
+	if v.num != 42 {
+		t.Fatalf("expected signal to be 42, got %f", v.num)
 	}
 }
 
@@ -460,8 +460,8 @@ func TestVMCondTrue(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(3)
-	if v.Str != "yes" {
-		t.Fatalf("expected 'yes', got %q", v.Str)
+	if v.Text() != "yes" {
+		t.Fatalf("expected 'yes', got %q", v.Text())
 	}
 }
 
@@ -474,8 +474,8 @@ func TestVMCondFalse(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(3)
-	if v.Str != "no" {
-		t.Fatalf("expected 'no', got %q", v.Str)
+	if v.Text() != "no" {
+		t.Fatalf("expected 'no', got %q", v.Text())
 	}
 }
 
@@ -489,8 +489,8 @@ func TestVMConcat(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if v.Str != "hello world" {
-		t.Fatalf("expected 'hello world', got %q", v.Str)
+	if v.Text() != "hello world" {
+		t.Fatalf("expected 'hello world', got %q", v.Text())
 	}
 }
 
@@ -506,24 +506,24 @@ func TestVMCounterProgram(t *testing.T) {
 
 	// Evaluate expr[0] (SignalGet "count") — should return 5.
 	v := vm.Eval(0)
-	if v.Num != 5 {
-		t.Fatalf("expected count=5, got %f", v.Num)
+	if v.num != 5 {
+		t.Fatalf("expected count=5, got %f", v.num)
 	}
 
 	// Dispatch decrement: evaluate expr[2] (SignalSet "count" <- expr[4])
 	// expr[4] = Sub(expr[6], expr[7]) = Sub(SignalGet("count"), LitInt("1")) = 5 - 1 = 4
 	vm.Eval(2)
 	v = countSig.Get()
-	if v.Num != 4 {
-		t.Fatalf("expected count=4 after decrement, got %f", v.Num)
+	if v.num != 4 {
+		t.Fatalf("expected count=4 after decrement, got %f", v.num)
 	}
 
 	// Dispatch increment: evaluate expr[3] (SignalSet "count" <- expr[5])
 	// expr[5] = Add(expr[8], expr[9]) = Add(SignalGet("count"), LitInt("1")) = 4 + 1 = 5
 	vm.Eval(3)
 	v = countSig.Get()
-	if v.Num != 5 {
-		t.Fatalf("expected count=5 after increment, got %f", v.Num)
+	if v.num != 5 {
+		t.Fatalf("expected count=5 after increment, got %f", v.num)
 	}
 }
 
@@ -608,8 +608,8 @@ func TestVMMissingSignalReturnsZero(t *testing.T) {
 	if v.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt zero value, got type %d", v.Type)
 	}
-	if v.Num != 0 {
-		t.Fatalf("expected 0, got %f", v.Num)
+	if v.num != 0 {
+		t.Fatalf("expected 0, got %f", v.num)
 	}
 }
 
@@ -645,7 +645,7 @@ func TestVMNotWithMissingOperand(t *testing.T) {
 	vm := NewVM(prog, nil)
 
 	v := vm.Eval(0)
-	if v.Bool {
+	if v.Truth() {
 		t.Fatal("expected false for Not with no operand")
 	}
 }
@@ -692,11 +692,11 @@ func TestVMOpMap(t *testing.T) {
 	}
 	vm := NewVM(prog, props)
 	v := vm.Eval(4)
-	if len(v.Items) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(v.Items))
+	if len(v.List()) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(v.List()))
 	}
-	if v.Items[0].Num != 2 || v.Items[1].Num != 4 || v.Items[2].Num != 6 {
-		t.Fatalf("expected [2, 4, 6], got [%f, %f, %f]", v.Items[0].Num, v.Items[1].Num, v.Items[2].Num)
+	if v.List()[0].num != 2 || v.List()[1].num != 4 || v.List()[2].num != 6 {
+		t.Fatalf("expected [2, 4, 6], got [%f, %f, %f]", v.List()[0].num, v.List()[1].num, v.List()[2].num)
 	}
 }
 
@@ -718,11 +718,11 @@ func TestVMOpFilter(t *testing.T) {
 	}
 	vm := NewVM(prog, props)
 	v := vm.Eval(6)
-	if len(v.Items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(v.Items))
+	if len(v.List()) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(v.List()))
 	}
-	if v.Items[0].Num != 2 || v.Items[1].Num != 4 {
-		t.Fatalf("expected [2, 4], got [%f, %f]", v.Items[0].Num, v.Items[1].Num)
+	if v.List()[0].num != 2 || v.List()[1].num != 4 {
+		t.Fatalf("expected [2, 4], got [%f, %f]", v.List()[0].num, v.List()[1].num)
 	}
 }
 
@@ -736,7 +736,7 @@ func TestVMOpContainsString(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(2)
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("expected 'hello world' to contain 'world'")
 	}
 }
@@ -750,8 +750,8 @@ func TestVMOpToUpper(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	v := vm.Eval(1)
-	if v.Str != "HELLO" {
-		t.Fatalf("expected 'HELLO', got %q", v.Str)
+	if v.Text() != "HELLO" {
+		t.Fatalf("expected 'HELLO', got %q", v.Text())
 	}
 }
 
@@ -766,8 +766,8 @@ func TestVMOpIndexObjectField(t *testing.T) {
 	})
 
 	v := vm.Eval(2)
-	if v.Str != "Ada" {
-		t.Fatalf("expected Ada, got %q", v.Str)
+	if v.Text() != "Ada" {
+		t.Fatalf("expected Ada, got %q", v.Text())
 	}
 }
 
@@ -782,8 +782,8 @@ func TestVMOpIndexArray(t *testing.T) {
 	})
 
 	v := vm.Eval(2)
-	if v.Str != "b" {
-		t.Fatalf("expected b, got %q", v.Str)
+	if v.Text() != "b" {
+		t.Fatalf("expected b, got %q", v.Text())
 	}
 }
 
@@ -799,14 +799,14 @@ func TestVMOpSplitJoinRoundTrip(t *testing.T) {
 
 	// Check split
 	split := vm.Eval(1)
-	if len(split.Items) != 3 {
-		t.Fatalf("expected 3 items from split, got %d", len(split.Items))
+	if len(split.List()) != 3 {
+		t.Fatalf("expected 3 items from split, got %d", len(split.List()))
 	}
 
 	// Check round-trip
 	joined := vm.Eval(2)
-	if joined.Str != "a,b,c" {
-		t.Fatalf("expected 'a,b,c' after round-trip, got %q", joined.Str)
+	if joined.Text() != "a,b,c" {
+		t.Fatalf("expected 'a,b,c' after round-trip, got %q", joined.Text())
 	}
 }
 
@@ -820,11 +820,11 @@ func TestVMOpSplitJoinDynamicSeparator(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 
-	if split := vm.Eval(2); len(split.Items) != 3 {
-		t.Fatalf("expected 3 items from split, got %d", len(split.Items))
+	if split := vm.Eval(2); len(split.List()) != 3 {
+		t.Fatalf("expected 3 items from split, got %d", len(split.List()))
 	}
-	if joined := vm.Eval(4); joined.Str != "a::b::c" {
-		t.Fatalf("expected a::b::c, got %q", joined.Str)
+	if joined := vm.Eval(4); joined.Text() != "a::b::c" {
+		t.Fatalf("expected a::b::c, got %q", joined.Text())
 	}
 }
 
@@ -840,8 +840,8 @@ func TestVMOpToStringInt(t *testing.T) {
 	if v.Type != program.TypeString {
 		t.Fatalf("expected TypeString, got %d", v.Type)
 	}
-	if v.Str != "42" {
-		t.Fatalf("expected '42', got %q", v.Str)
+	if v.Text() != "42" {
+		t.Fatalf("expected '42', got %q", v.Text())
 	}
 }
 
@@ -877,7 +877,7 @@ func TestValueEachEntriesObjectOrderIsStable(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 entries, got %d", len(entries))
 	}
-	if entries[0].Key.Str != "alpha" || entries[1].Key.Str != "mu" || entries[2].Key.Str != "zeta" {
+	if entries[0].Key.Text() != "alpha" || entries[1].Key.Text() != "mu" || entries[2].Key.Text() != "zeta" {
 		t.Fatalf("expected sorted object keys, got %+v", entries)
 	}
 }
@@ -955,22 +955,22 @@ func TestResolveForEachRestoresScopedProps(t *testing.T) {
 	if tree.Nodes[out[0]].Text != "a" || tree.Nodes[out[1]].Text != "b" {
 		t.Fatalf("expected resolved for-each children to be [a b], got %q and %q", tree.Nodes[out[0]].Text, tree.Nodes[out[1]].Text)
 	}
-	if vm.props["_item"].Str != "outer-item" {
-		t.Fatalf("expected _item restored, got %q", vm.props["_item"].Str)
+	if vm.props["_item"].Text() != "outer-item" {
+		t.Fatalf("expected _item restored, got %q", vm.props["_item"].Text())
 	}
-	if vm.props["_index"].Num != 99 {
-		t.Fatalf("expected _index restored, got %f", vm.props["_index"].Num)
+	if vm.props["_index"].num != 99 {
+		t.Fatalf("expected _index restored, got %f", vm.props["_index"].num)
 	}
-	if vm.props["_key"].Str != "outer-key" {
-		t.Fatalf("expected _key restored, got %q", vm.props["_key"].Str)
+	if vm.props["_key"].Text() != "outer-key" {
+		t.Fatalf("expected _key restored, got %q", vm.props["_key"].Text())
 	}
-	if vm.props["row"].Str != "outer-row" {
-		t.Fatalf("expected row restored, got %q", vm.props["row"].Str)
+	if vm.props["row"].Text() != "outer-row" {
+		t.Fatalf("expected row restored, got %q", vm.props["row"].Text())
 	}
-	if vm.props["rowKey"].Str != "outer-row-key" {
-		t.Fatalf("expected rowKey restored, got %q", vm.props["rowKey"].Str)
+	if vm.props["rowKey"].Text() != "outer-row-key" {
+		t.Fatalf("expected rowKey restored, got %q", vm.props["rowKey"].Text())
 	}
-	if vm.props["rowIndex"].Num != 42 {
-		t.Fatalf("expected rowIndex restored, got %f", vm.props["rowIndex"].Num)
+	if vm.props["rowIndex"].num != 42 {
+		t.Fatalf("expected rowIndex restored, got %f", vm.props["rowIndex"].num)
 	}
 }

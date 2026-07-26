@@ -18,9 +18,17 @@ var _ Reconciler = (*Island)(nil)
 type Island struct {
 	vm       *VM
 	program  *program.Program
-	id       string
 	prev     *ResolvedTree // previous tree for reconciliation
 	handlers map[string]*program.Handler
+
+	// reuse carries the per-program static analysis and the previous
+	// walk's snapshot, so a reconcile can copy the subtrees that nothing
+	// changed instead of evaluating them. nil disables the optimisation
+	// and restores whole-tree evaluation. See reuse.go.
+	reuse *islandReuse
+	// reuseBuilt records that the analysis already ran, so a program that
+	// cannot benefit is analysed once instead of on every reconcile.
+	reuseBuilt bool
 
 	// PatchCallback is called when shared signals trigger a re-render.
 	// Set by the bridge to push patches to JS.
@@ -58,7 +66,37 @@ func (island *Island) CheckHydration(serverTree *ResolvedTree) []string {
 func (island *Island) SetSharedSignal(name string, sig *signal.Signal[Value]) {
 	island.vm.SetSignal(name, sig)
 	// Re-evaluate the initial tree with the shared signal's current value
-	island.prev = island.vm.EvalTree()
+	island.prev = island.evalTree()
+}
+
+// ensureReuse runs the subtree-reuse analysis once, on the first reconcile.
+//
+// Building it in NewIsland would charge every server-side render for an
+// optimisation only an interactive island can use. Building it here charges
+// the first event instead, and every event after that reads the result.
+func (island *Island) ensureReuse() {
+	if island.reuseBuilt {
+		return
+	}
+	island.reuseBuilt = true
+	island.reuse = newIslandReuse(island.program)
+}
+
+// evalTree builds the next resolved tree. It hands the VM the subtree-reuse
+// context first, so the walk copies the subtrees whose inputs did not change
+// and evaluates the rest.
+//
+// The snapshot refresh runs before the walk. Read refresh's doc comment for
+// why that order is the safe one.
+func (island *Island) evalTree() *ResolvedTree {
+	reuse := island.reuse
+	if reuse == nil {
+		return island.vm.EvalTree()
+	}
+	dirty := reuse.refresh(island.vm)
+	reuse.begin(island.vm, island.prev, dirty)
+	defer reuse.end(island.vm)
+	return island.vm.EvalTree()
 }
 
 // EvalExpr evaluates an expression by ID in this island's VM.
@@ -96,7 +134,11 @@ func NewIsland(prog *program.Program, propsJSON string) *Island {
 		handlers: handlerMap(prog),
 	}
 
-	island.prev = vm.EvalTree()
+	// The first tree has nothing to reuse, so the analysis stays unbuilt
+	// here. An island that renders once and never receives an event — the
+	// server-side path through ResolveInitialTree — then pays nothing for
+	// subtree reuse at all. Reconcile builds the analysis on first use.
+	island.prev = island.evalTree()
 	return island
 }
 
@@ -118,6 +160,12 @@ func (island *Island) SwapProgram(prog *program.Program) []PatchOp {
 	island.vm.SwapProgram(prog)
 	island.program = prog
 	island.handlers = handlerMap(prog)
+	// The old analysis described the old bytecode, and the old spans point
+	// into a tree the old node table produced. Both go away with the swap.
+	// The rebuilt state starts unprimed, so the first walk after a swap
+	// evaluates every node.
+	island.reuse = nil
+	island.reuseBuilt = false
 	return island.Reconcile()
 }
 
@@ -148,8 +196,32 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 }
 
 // Reconcile evaluates the current tree and diffs against the previous tree.
+//
+// The walk no longer evaluates every node. Route (b) of the old design note
+// shipped: reuse.go computes, per program node, the set of signals and props
+// its subtree reads, and the walk copies a subtree out of island.prev when
+// none of those inputs changed. A counter increment now evaluates one
+// expression node and copies the three elements around it.
+//
+// Two limits stay, both deliberate:
+//
+//   - A node inside a forEach body is never reused, because the VM rebinds
+//     `_item` and the `as`/`index` names per iteration and the same program
+//     node resolves to different content each pass. Making that case work
+//     needs a per-iteration identity, not a per-node one.
+//   - A subtree containing any impure opcode is never reused. isPureOp in
+//     reuse.go holds the contract, and an unlisted opcode is impure, so the
+//     safe direction is the default.
+//
+// Route (a) of the old note, skipping evaluation of Program.StaticMask
+// subtrees, is now redundant. The mask means "this one node is static" — it
+// is populated by populateStaticMask in ir/island.go straight from each
+// source node's IsStatic flag, with no subtree rollup — so it could not have
+// carried a whole subtree by itself. The read-set analysis proves the same
+// property for a subtree and covers the dynamic-but-unchanged case too.
 func (island *Island) Reconcile() []PatchOp {
-	next := island.vm.EvalTree()
+	island.ensureReuse()
+	next := island.evalTree()
 	ops := ReconcileTrees(island.prev, next, island.program.StaticMask)
 	island.prev = next
 	return ops

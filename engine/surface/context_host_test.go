@@ -19,16 +19,16 @@ func TestContextHostReceiver_PropsIntoPopulatesFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PropsInto: %v", err)
 	}
-	if out.Str != "" || out.Num != 0 {
+	if out.Text() != "" || out.Number() != 0 {
 		t.Fatalf("PropsInto should return zero Value, got %+v", out)
 	}
-	if got := target.Fields["Name"].Str; got != "hello" {
+	if got := target.Map()["Name"].Text(); got != "hello" {
 		t.Fatalf("Name = %q, want %q", got, "hello")
 	}
-	if got := target.Fields["Count"].Num; got != 42 {
+	if got := target.Map()["Count"].Number(); got != 42 {
 		t.Fatalf("Count = %v, want 42", got)
 	}
-	if got := target.Fields["Active"].Bool; got != true {
+	if got := target.Map()["Active"].Truth(); got != true {
 		t.Fatalf("Active = %v, want true", got)
 	}
 }
@@ -42,23 +42,23 @@ func TestContextHostReceiver_PropsIntoHandlesNestedArrays(t *testing.T) {
 		t.Fatalf("PropsInto: %v", err)
 	}
 
-	nodes := target.Fields["Nodes"]
-	if len(nodes.Items) != 2 {
-		t.Fatalf("Nodes length = %d, want 2", len(nodes.Items))
+	nodes := target.Map()["Nodes"]
+	if len(nodes.List()) != 2 {
+		t.Fatalf("Nodes length = %d, want 2", len(nodes.List()))
 	}
-	if got := nodes.Items[0].Fields["ID"].Str; got != "a" {
+	if got := nodes.List()[0].Map()["ID"].Text(); got != "a" {
 		t.Fatalf("Nodes[0].ID = %q, want %q", got, "a")
 	}
-	if got := nodes.Items[1].Fields["ID"].Str; got != "b" {
+	if got := nodes.List()[1].Map()["ID"].Text(); got != "b" {
 		t.Fatalf("Nodes[1].ID = %q, want %q", got, "b")
 	}
 
-	tags := target.Fields["Tags"]
-	if len(tags.Items) != 3 {
-		t.Fatalf("Tags length = %d, want 3", len(tags.Items))
+	tags := target.Map()["Tags"]
+	if len(tags.List()) != 3 {
+		t.Fatalf("Tags length = %d, want 3", len(tags.List()))
 	}
-	if tags.Items[2].Str != "z" {
-		t.Fatalf("Tags[2] = %q, want %q", tags.Items[2].Str, "z")
+	if tags.List()[2].Text() != "z" {
+		t.Fatalf("Tags[2] = %q, want %q", tags.List()[2].Text(), "z")
 	}
 }
 
@@ -69,8 +69,8 @@ func TestContextHostReceiver_PropsIntoEmptyJSONIsNoOp(t *testing.T) {
 	if _, err := recv.Call("PropsInto", []vm.Value{target}); err != nil {
 		t.Fatalf("empty propsJSON should be no-op success, got: %v", err)
 	}
-	if len(target.Fields) != 0 {
-		t.Fatalf("target Fields should stay empty, got %d entries", len(target.Fields))
+	if len(target.Map()) != 0 {
+		t.Fatalf("target Fields should stay empty, got %d entries", len(target.Map()))
 	}
 }
 
@@ -143,7 +143,7 @@ func TestContextHostReceiver_MutationPropagatesByReference(t *testing.T) {
 
 	// The mutation went through the shared Fields map, so the original
 	// sees it too.
-	if got := original.Fields["NodeCount"].Num; got != 7 {
+	if got := original.Map()["NodeCount"].Number(); got != 7 {
 		t.Fatalf("by-reference propagation failed: original NodeCount = %v, want 7", got)
 	}
 }

@@ -52,16 +52,17 @@ func init() {
 // from _items when the surrounding call is sort.Slice. This matches
 // how Go's sort.Slice closure is reinvoked over the in-place mutated
 // slice. Returns the sorted array as a new Value.
-func (vm *VM) sortSliceValue(e program.Expr) Value {
+func (vm *VM) sortSliceValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 2) {
 		return ArrayVal(nil)
 	}
 	coll := vm.Eval(e.Operands[0])
-	if coll.Items == nil {
+	if !coll.isList() {
 		return coll
 	}
-	items := make([]Value, len(coll.Items))
-	copy(items, coll.Items)
+	source := coll.list()
+	items := make([]Value, len(source))
+	copy(items, source)
 
 	bodyID := e.Operands[1]
 	restore := vm.captureProps([]string{"_i", "_j", "_items"})
@@ -72,7 +73,7 @@ func (vm *VM) sortSliceValue(e program.Expr) Value {
 		vm.props["_i"] = IntVal(i)
 		vm.props["_j"] = IntVal(j)
 		vm.props["_items"] = ArrayVal(working)
-		return vm.Eval(bodyID).Bool
+		return vm.Eval(bodyID).Truth()
 	})
 	return ArrayVal(items)
 }

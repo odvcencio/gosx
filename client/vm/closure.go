@@ -44,20 +44,17 @@ import (
 // evaluate them defensively (the lowerer always emits literals, but
 // dynamic operands shouldn't crash the VM) and feed the resulting
 // names into ClosureVal.
-func (vm *VM) evalClosureExpr(e program.Expr) (Value, bool) {
-	if e.Op != program.OpClosure {
-		return Value{}, false
-	}
+func (vm *VM) closureValue(e *program.Expr) Value {
 	captured := make([]string, 0, len(e.Operands))
 	for _, op := range e.Operands {
 		nameVal := vm.Eval(op)
-		if nameVal.Str != "" {
-			captured = append(captured, nameVal.Str)
+		if name := nameVal.text(); name != "" {
+			captured = append(captured, name)
 		}
 	}
 	// Snapshot the caller's frame pointer. nil is OK — closures
 	// declared at handler scope with no enclosing locals are valid.
-	return ClosureVal(e.Value, captured, vm.frame), true
+	return ClosureVal(e.Value, captured, vm.frame)
 }
 
 // invokeClosureFromIndirectCall handles the Y.D OpIndirectCall path
@@ -71,12 +68,16 @@ func (vm *VM) evalClosureExpr(e program.Expr) (Value, bool) {
 // the ClosureVal. The captured-frame bridge is installed by wrapping
 // the fresh callee frame's `parent` slot — see frame.go's parent
 // lookup chain.
-func (vm *VM) invokeClosureFromIndirectCall(cv Value, args []Value, e program.Expr) Value {
-	def, ok := vm.funcs[cv.closure.funcName]
+func (vm *VM) invokeClosureFromIndirectCall(cv Value, args []Value, e *program.Expr) Value {
+	ref := cv.closureRefOf()
+	if ref == nil {
+		return ZeroValue(program.TypeAny)
+	}
+	def, ok := vm.funcs[ref.funcName]
 	if !ok {
 		vm.recordExprDiagnostic(
 			"unknown_closure_func",
-			"closure refers to unregistered FuncDef "+cv.closure.funcName,
+			"closure refers to unregistered FuncDef "+ref.funcName,
 			e.Op,
 			e.Value,
 		)
@@ -99,7 +100,7 @@ func (vm *VM) invokeClosureFromIndirectCall(cv Value, args []Value, e program.Ex
 	}
 
 	prevFrame := vm.frame
-	closureFrame := newClosureFrame(cv.closure)
+	closureFrame := newClosureFrame(ref)
 	vm.frame = closureFrame
 	vm.callDepth++
 	defer func() {
@@ -120,8 +121,8 @@ func (vm *VM) invokeClosureFromIndirectCall(cv Value, args []Value, e program.Ex
 	var result Value
 	for _, bodyID := range def.Body {
 		result = vm.Eval(bodyID)
-		if result.Control == ControlReturn {
-			result.Control = ControlNone
+		if result.Control() == ControlReturn {
+			result = result.WithControl(ControlNone)
 			break
 		}
 	}
@@ -164,8 +165,8 @@ func (vm *VM) InvokeClosure(cv Value, args []Value) Value {
 	if !IsClosure(cv) {
 		return ZeroValue(program.TypeAny)
 	}
-	synthetic := program.Expr{Op: program.OpIndirectCall, Value: cv.closure.funcName}
-	return vm.invokeClosureFromIndirectCall(cv, args, synthetic)
+	synthetic := program.Expr{Op: program.OpIndirectCall, Value: ClosureFuncName(cv)}
+	return vm.invokeClosureFromIndirectCall(cv, args, &synthetic)
 }
 
 // itoa is a tiny helper so closure.go doesn't pull strconv (keeps the

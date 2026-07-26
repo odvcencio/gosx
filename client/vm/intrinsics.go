@@ -108,7 +108,7 @@ func IntrinsicNames() []string {
 // dispatched (whether or not the intrinsic errored — errors are
 // surfaced via diagnostics), or (zero, false) when no intrinsic is
 // registered under the name.
-func (vm *VM) callIntrinsic(e program.Expr) (Value, bool) {
+func (vm *VM) callIntrinsic(e *program.Expr) (Value, bool) {
 	fn, ok := LookupIntrinsic(e.Value)
 	if !ok {
 		return Value{}, false

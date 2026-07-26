@@ -47,13 +47,13 @@ func TestOpFieldSetWritesIntoExistingObject(t *testing.T) {
 		"Y": FloatVal(2),
 	}))
 	got := machine.Eval(6)
-	if got.Num != 99 {
-		t.Errorf("v.X after FieldSet = %f, want 99", got.Num)
+	if got.num != 99 {
+		t.Errorf("v.X after FieldSet = %f, want 99", got.num)
 	}
 	// Confirm the original map was mutated, not a copy.
 	v, _ := machine.frame.get("v")
-	if v.Fields["X"].Num != 99 {
-		t.Errorf("frame.v.Fields[X] = %f, want 99 (in-place mutation broken)", v.Fields["X"].Num)
+	if v.Map()["X"].num != 99 {
+		t.Errorf("frame.v.Fields[X] = %f, want 99 (in-place mutation broken)", v.Map()["X"].num)
 	}
 }
 
@@ -74,8 +74,8 @@ func TestOpFieldSetOnNonStructDiagnoses(t *testing.T) {
 	machine := NewVM(prog, nil)
 	machine.frame = newFrame()
 	got := machine.Eval(2)
-	if int(got.Num) != 42 {
-		t.Errorf("OpFieldSet on non-struct returned %f, want 42 (assigned value)", got.Num)
+	if int(got.num) != 42 {
+		t.Errorf("OpFieldSet on non-struct returned %f, want 42 (assigned value)", got.num)
 	}
 	diags := machine.Diagnostics()
 	found := false
@@ -116,12 +116,12 @@ func TestOpIndexSetWritesIntoSliceInPlace(t *testing.T) {
 	machine.frame.declare("s")
 	machine.frame.set("s", ArrayVal([]Value{IntVal(1), IntVal(2), IntVal(3)}))
 	got := machine.Eval(7)
-	if int(got.Num) != 9 {
-		t.Errorf("s[1] after IndexSet = %d, want 9", int(got.Num))
+	if int(got.num) != 9 {
+		t.Errorf("s[1] after IndexSet = %d, want 9", int(got.num))
 	}
 	v, _ := machine.frame.get("s")
-	if int(v.Items[1].Num) != 9 {
-		t.Errorf("frame.s.Items[1] = %d, want 9 (in-place mutation broken)", int(v.Items[1].Num))
+	if int(v.List()[1].num) != 9 {
+		t.Errorf("frame.s.Items[1] = %d, want 9 (in-place mutation broken)", int(v.List()[1].num))
 	}
 }
 
@@ -152,8 +152,8 @@ func TestOpIndexSetWritesIntoMapInPlace(t *testing.T) {
 	// Start with an empty map; IndexSet should create the key.
 	machine.frame.set("m", ObjectVal(map[string]Value{}))
 	got := machine.Eval(7)
-	if int(got.Num) != 5 {
-		t.Errorf("m[\"k\"] after IndexSet = %d, want 5", int(got.Num))
+	if int(got.num) != 5 {
+		t.Errorf("m[\"k\"] after IndexSet = %d, want 5", int(got.num))
 	}
 }
 

@@ -20,8 +20,8 @@ func TestSharedStoreBasic(t *testing.T) {
 	if !ok {
 		t.Fatal("expected shared signal")
 	}
-	if val.Str != "dark" {
-		t.Fatalf("expected 'dark', got %q", val.Str)
+	if val.Text() != "dark" {
+		t.Fatalf("expected 'dark', got %q", val.Text())
 	}
 }
 
@@ -47,8 +47,8 @@ func TestSharedStoreTypedInit(t *testing.T) {
 	if val.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", val.Type)
 	}
-	if val.Num != 0 {
-		t.Fatalf("expected init value 0, got %v", val.Num)
+	if val.Number() != 0 {
+		t.Fatalf("expected init value 0, got %v", val.Number())
 	}
 }
 
@@ -102,8 +102,8 @@ func TestCrossIslandReRender(t *testing.T) {
 
 	// Verify the store value
 	val, _ := b.GetStore().Get("$count")
-	if val.Num != 1 {
-		t.Fatalf("expected $count=1, got %v", val.Num)
+	if val.Number() != 1 {
+		t.Fatalf("expected $count=1, got %v", val.Number())
 	}
 
 	// Increment again — B should get another patch
@@ -118,7 +118,7 @@ func TestCrossIslandReRender(t *testing.T) {
 	}
 
 	val2, _ := b.GetStore().Get("$count")
-	t.Logf("After 2 increments: $count=%v, B received %d patch sets", val2.Num, len(bPatches2))
+	t.Logf("After 2 increments: $count=%v, B received %d patch sets", val2.Number(), len(bPatches2))
 }
 
 // TestDisposeUnsubscribes proves that disposing an island unsubscribes

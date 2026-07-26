@@ -14,7 +14,7 @@ import (
 //
 // Implementations:
 //   - *Island in this package (DOM patches)
-//   - *enginevm.Runtime in client/enginevm (engine commands)
+//   - *SceneAdapter in this package (engine commands)
 type Reconciler interface {
 	// Dispose releases any retained reconciliation state.
 	Dispose()

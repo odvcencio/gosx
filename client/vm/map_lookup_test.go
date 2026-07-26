@@ -42,14 +42,14 @@ func TestMapLookupPresent(t *testing.T) {
 	prog, id := buildLookupProgram([][2]string{{"hit", "1.5"}, {"miss", "0"}}, "hit")
 	vm := NewVM(prog, nil)
 	got := vm.Eval(id)
-	if got.Fields == nil {
+	if got.Map() == nil {
 		t.Fatalf("expected ObjectVal with Fields; got %+v", got)
 	}
-	if got.Fields["ok"].Bool != true {
-		t.Errorf("ok = %v, want true", got.Fields["ok"].Bool)
+	if got.Map()["ok"].Truth() != true {
+		t.Errorf("ok = %v, want true", got.Map()["ok"].Truth())
 	}
-	if got.Fields["value"].Num != 1.5 {
-		t.Errorf("value = %f, want 1.5", got.Fields["value"].Num)
+	if got.Map()["value"].num != 1.5 {
+		t.Errorf("value = %f, want 1.5", got.Map()["value"].num)
 	}
 }
 
@@ -57,15 +57,15 @@ func TestMapLookupAbsent(t *testing.T) {
 	prog, id := buildLookupProgram([][2]string{{"hit", "1.5"}}, "miss")
 	vm := NewVM(prog, nil)
 	got := vm.Eval(id)
-	if got.Fields == nil {
+	if got.Map() == nil {
 		t.Fatalf("expected ObjectVal with Fields; got %+v", got)
 	}
-	if got.Fields["ok"].Bool != false {
-		t.Errorf("ok = %v, want false", got.Fields["ok"].Bool)
+	if got.Map()["ok"].Truth() != false {
+		t.Errorf("ok = %v, want false", got.Map()["ok"].Truth())
 	}
 	// Missing-key value is the zero Any — Num is 0, Str is empty.
-	v := got.Fields["value"]
-	if v.Num != 0 || v.Str != "" {
+	v := got.Map()["value"]
+	if v.num != 0 || v.Text() != "" {
 		t.Errorf("absent value = %+v, want zero", v)
 	}
 }
@@ -92,7 +92,7 @@ func TestMapLookupOnNonMap(t *testing.T) {
 	vm := NewVM(prog, nil)
 	vm.diagnosticSink = func(d Diagnostic) { diags = append(diags, d) }
 	got := vm.Eval(lookupID)
-	if got.Fields == nil || got.Fields["ok"].Bool != false {
+	if got.Map() == nil || got.Map()["ok"].Truth() != false {
 		t.Errorf("non-map lookup yielded %+v, want {value: zero, ok: false}", got)
 	}
 	if len(diags) == 0 {
@@ -121,10 +121,10 @@ func TestMapLookupOperandCount(t *testing.T) {
 
 	vm := NewVM(prog, nil)
 	got := vm.Eval(lookupID)
-	if got.Fields == nil {
+	if got.Map() == nil {
 		t.Fatalf("expected ObjectVal even on operand-shortage; got %+v", got)
 	}
-	if got.Fields["ok"].Bool != false {
-		t.Errorf("ok = %v, want false on operand-shortage", got.Fields["ok"].Bool)
+	if got.Map()["ok"].Truth() != false {
+		t.Errorf("ok = %v, want false on operand-shortage", got.Map()["ok"].Truth())
 	}
 }

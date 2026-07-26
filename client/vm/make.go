@@ -34,15 +34,12 @@ import (
 // (ArrayVal). Unknown tags record an "invalid_make" diagnostic and
 // fall back to the zero Any value so the VM's panic-free contract
 // holds.
-func (vm *VM) evalMakeExpr(e program.Expr) (Value, bool) {
-	if e.Op != program.OpMake {
-		return Value{}, false
-	}
+func (vm *VM) makeValue(e *program.Expr) Value {
 	switch e.Value {
 	case "map":
-		return ObjectVal(map[string]Value{}), true
+		return ObjectVal(map[string]Value{})
 	case "slice":
-		return vm.makeSlice(e), true
+		return vm.makeSlice(e)
 	default:
 		vm.recordExprDiagnostic(
 			"invalid_make",
@@ -50,7 +47,7 @@ func (vm *VM) evalMakeExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
 }
 
@@ -59,7 +56,7 @@ func (vm *VM) evalMakeExpr(e program.Expr) (Value, bool) {
 // diagnostic and fall back to a zero-length slice — the engine-surface
 // authoring contract is permissive about runtime type errors so the VM
 // stays panic-free (matches the Y.A / Y.C convention).
-func (vm *VM) makeSlice(e program.Expr) Value {
+func (vm *VM) makeSlice(e *program.Expr) Value {
 	if len(e.Operands) == 0 {
 		// `make([]T)` is not valid Go syntactically, but `make([]T, 0)`
 		// produces an empty slice — preserve that even if the lowerer
@@ -67,7 +64,7 @@ func (vm *VM) makeSlice(e program.Expr) Value {
 		return ArrayVal([]Value{})
 	}
 	lenVal := vm.Eval(e.Operands[0])
-	n := int(lenVal.Num)
+	n := int(lenVal.num)
 	if n < 0 {
 		vm.recordExprDiagnostic(
 			"invalid_make",

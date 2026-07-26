@@ -42,7 +42,7 @@ func init() {
 		if len(args) != 1 {
 			return Value{}, errors.New("rand.Intn expects 1 argument")
 		}
-		n := int(args[0].Num)
+		n := int(args[0].num)
 		if n <= 0 {
 			return Value{}, errors.New("rand.Intn: n must be > 0")
 		}
@@ -54,7 +54,7 @@ func init() {
 		if len(args) != 1 {
 			return Value{}, errors.New("rand.Seed expects 1 argument")
 		}
-		seed := int64(args[0].Num)
+		seed := int64(args[0].num)
 		randMu.Lock()
 		defer randMu.Unlock()
 		randSrc = rand.New(rand.NewSource(seed))

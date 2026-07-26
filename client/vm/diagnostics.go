@@ -77,7 +77,7 @@ func (vm *VM) recordExprDiagnostic(code, message string, op program.OpCode, valu
 	})
 }
 
-func (vm *VM) recordMissingOperands(e program.Expr, want int) {
+func (vm *VM) recordMissingOperands(e *program.Expr, want int) {
 	vm.recordExprDiagnostic(
 		"missing_operands",
 		fmt.Sprintf("opcode %d requires at least %d operands, got %d", e.Op, want, len(e.Operands)),
@@ -86,7 +86,7 @@ func (vm *VM) recordMissingOperands(e program.Expr, want int) {
 	)
 }
 
-func (vm *VM) requireOperands(e program.Expr, want int) bool {
+func (vm *VM) requireOperands(e *program.Expr, want int) bool {
 	if len(e.Operands) >= want {
 		return true
 	}

@@ -7,8 +7,8 @@ import (
 func TestStrconvItoa(t *testing.T) {
 	fn, _ := LookupIntrinsic("strconv.Itoa")
 	v, _ := fn([]Value{IntVal(42)})
-	if v.Str != "42" {
-		t.Errorf("Itoa(42) = %q, want 42", v.Str)
+	if v.Text() != "42" {
+		t.Errorf("Itoa(42) = %q, want 42", v.Text())
 	}
 }
 
@@ -18,8 +18,8 @@ func TestStrconvAtoiOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if int(v.Num) != 42 {
-		t.Errorf("Atoi(\"42\") = %f, want 42", v.Num)
+	if int(v.num) != 42 {
+		t.Errorf("Atoi(\"42\") = %f, want 42", v.num)
 	}
 }
 
@@ -37,8 +37,8 @@ func TestStrconvFormatFloat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if v.Str != "3.14" {
-		t.Errorf("FormatFloat = %q, want 3.14", v.Str)
+	if v.Text() != "3.14" {
+		t.Errorf("FormatFloat = %q, want 3.14", v.Text())
 	}
 }
 
@@ -48,7 +48,7 @@ func TestStrconvParseFloat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if v.Num != 2.5 {
-		t.Errorf("ParseFloat(\"2.5\") = %f, want 2.5", v.Num)
+	if v.num != 2.5 {
+		t.Errorf("ParseFloat(\"2.5\") = %f, want 2.5", v.num)
 	}
 }

@@ -62,8 +62,8 @@ func TestVM_OpClosureInvokeRunsBody(t *testing.T) {
 		t.Fatalf("OpClosure did not yield a ClosureVal")
 	}
 	got := vm.InvokeClosure(cv, []Value{IntVal(7)})
-	if int(got.Num) != 14 {
-		t.Errorf("InvokeClosure(7) = %v, want 14", got.Num)
+	if int(got.num) != 14 {
+		t.Errorf("InvokeClosure(7) = %v, want 14", got.num)
 	}
 }
 
@@ -105,8 +105,8 @@ func TestVM_ClosureCaptureByReferenceWriteback(t *testing.T) {
 	if !ok {
 		t.Fatalf("parent frame lost n after closure invocations")
 	}
-	if int(got.Num) != 3 {
-		t.Errorf("parent n = %v, want 3 (closure writes did not propagate)", got.Num)
+	if int(got.num) != 3 {
+		t.Errorf("parent n = %v, want 3 (closure writes did not propagate)", got.num)
 	}
 }
 
@@ -136,11 +136,11 @@ func TestVM_ClosureShadowingParamWinsOverCapture(t *testing.T) {
 	vm := NewVM(prog, nil)
 	cv := ClosureVal("__y_g_shadow", []string{"x"}, parent)
 	got := vm.InvokeClosure(cv, []Value{IntVal(5)})
-	if int(got.Num) != 5 {
-		t.Errorf("shadowing: got %v, want 5 (the parameter, not the captured 100)", got.Num)
+	if int(got.num) != 5 {
+		t.Errorf("shadowing: got %v, want 5 (the parameter, not the captured 100)", got.num)
 	}
-	if v, _ := parent.get("x"); int(v.Num) != 100 {
-		t.Errorf("parent x mutated despite param shadow: %v, want 100", v.Num)
+	if v, _ := parent.get("x"); int(v.num) != 100 {
+		t.Errorf("parent x mutated despite param shadow: %v, want 100", v.num)
 	}
 }
 

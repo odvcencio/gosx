@@ -39,7 +39,7 @@ func mathUnary(fn func(float64) float64) Intrinsic {
 		if len(args) != 1 {
 			return Value{}, errors.New("math: function expects 1 argument")
 		}
-		return FloatVal(fn(args[0].Num)), nil
+		return FloatVal(fn(args[0].num)), nil
 	}
 }
 
@@ -51,6 +51,6 @@ func mathBinary(fn func(float64, float64) float64) Intrinsic {
 		if len(args) != 2 {
 			return Value{}, errors.New("math: function expects 2 arguments")
 		}
-		return FloatVal(fn(args[0].Num, args[1].Num)), nil
+		return FloatVal(fn(args[0].num, args[1].num)), nil
 	}
 }

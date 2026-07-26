@@ -14,8 +14,8 @@ func TestRandSeedThenFloat64IsDeterministic(t *testing.T) {
 	_, _ = seed([]Value{IntVal(42)})
 	c, _ := flt(nil)
 	d, _ := flt(nil)
-	if a.Num != c.Num || b.Num != d.Num {
-		t.Errorf("seeded sequence not reproducible: (%f,%f) vs (%f,%f)", a.Num, b.Num, c.Num, d.Num)
+	if a.num != c.num || b.num != d.num {
+		t.Errorf("seeded sequence not reproducible: (%f,%f) vs (%f,%f)", a.num, b.num, c.num, d.num)
 	}
 }
 
@@ -28,8 +28,8 @@ func TestRandIntnRange(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
-		if v.Num < 0 || v.Num >= 10 {
-			t.Errorf("rand.Intn(10) out of range: %f", v.Num)
+		if v.num < 0 || v.num >= 10 {
+			t.Errorf("rand.Intn(10) out of range: %f", v.num)
 		}
 	}
 }

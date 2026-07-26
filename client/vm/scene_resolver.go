@@ -307,11 +307,6 @@ type point3 struct {
 	Z float64
 }
 
-type projectedLine struct {
-	From rootengine.RenderPoint
-	To   rootengine.RenderPoint
-}
-
 type sceneAppendResult struct {
 	Bounds     rootengine.RenderBounds
 	HasBounds  bool

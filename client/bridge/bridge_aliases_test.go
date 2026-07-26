@@ -20,8 +20,8 @@ func TestStoreSetSurfaceEventReadableViaSceneAlias(t *testing.T) {
 	if !ok {
 		t.Fatalf("legacy $scene.event.selectedID lookup failed after $surface.event.selectedID write")
 	}
-	if got.Str != "rect-42" {
-		t.Errorf("alias read = %q, want %q", got.Str, "rect-42")
+	if got.Text() != "rect-42" {
+		t.Errorf("alias read = %q, want %q", got.Text(), "rect-42")
 	}
 }
 
@@ -37,8 +37,8 @@ func TestStoreSetSceneAliasReachesSurfaceTarget(t *testing.T) {
 	if !ok {
 		t.Fatalf("$surface.event lookup failed after $scene.event write")
 	}
-	if got.Str != "legacy-id" {
-		t.Errorf("canonical read = %q, want %q", got.Str, "legacy-id")
+	if got.Text() != "legacy-id" {
+		t.Errorf("canonical read = %q, want %q", got.Text(), "legacy-id")
 	}
 }
 
@@ -62,7 +62,7 @@ func TestStoreSignalAliasNotifiesLegacySubscriber(t *testing.T) {
 	if fired == 0 {
 		t.Fatalf("legacy subscriber did not fire when $surface.event.selectedID was written")
 	}
-	if v := legacySig.Get().Str; v != "hit" {
+	if v := legacySig.Get().Text(); v != "hit" {
 		t.Errorf("legacy signal value after canonical write = %q, want %q", v, "hit")
 	}
 }
@@ -87,7 +87,7 @@ func TestStoreNonAliasNamesAreUnaffected(t *testing.T) {
 	store := NewStore()
 	store.Set("$custom.counter", vm.IntVal(42))
 	got, ok := store.Get("$custom.counter")
-	if !ok || got.Num != 42 {
+	if !ok || got.Number() != 42 {
 		t.Errorf("custom signal lost through alias path: ok=%v got=%v", ok, got)
 	}
 }
@@ -105,8 +105,8 @@ func TestStoreAliasTableMatchesADR0007(t *testing.T) {
 			t.Errorf("legacy lookup %q failed after canonical %q write", legacy, canonical)
 			continue
 		}
-		if got.Str != legacy {
-			t.Errorf("legacy lookup %q = %q, want %q", legacy, got.Str, legacy)
+		if got.Text() != legacy {
+			t.Errorf("legacy lookup %q = %q, want %q", legacy, got.Text(), legacy)
 		}
 	}
 }
