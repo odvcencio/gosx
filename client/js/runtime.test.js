@@ -9081,6 +9081,14 @@ test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
   assert.match(source, /data-gosx-scene3d-webgpu-compute-particle-authored-draw-instances/);
   assert.match(source, /data-gosx-scene3d-webgpu-compute-particle-authored-draw-calls/);
   assert.match(source, /data-gosx-scene3d-webgpu-mesh-objects/);
+  // mesh-objects publishes bundle.meshObjects.length UNCONDITIONALLY (it
+  // includes CPU-frustum-culled objects) -- mesh-draw-calls/mesh-view-culled
+  // split SUBMITTED from CULLED, mirroring the point/compute-particle
+  // draw-call counters above, so a culled-to-zero mesh no longer reads as
+  // "drawing" on the mesh-objects count alone.
+  assert.match(source, /function webGPUCountViewCulledMeshObjects\(bundle\)/);
+  assert.match(source, /data-gosx-scene3d-webgpu-mesh-draw-calls/);
+  assert.match(source, /data-gosx-scene3d-webgpu-mesh-view-culled/);
   assert.match(source, /data-gosx-scene3d-webgpu-instanced-instances/);
 });
 
@@ -10805,6 +10813,18 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   assert.match(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+});
+
+test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  // getSelenaPipeline's own default stays "back" (unchanged) when the
+  // caller passes no cullMode option -- drawPBRObjects is the caller that
+  // now conditions its options argument on obj.doubleSided.
+  assert.match(webgpu, /var pipelineCullMode = options && typeof options\.cullMode === "string" && options\.cullMode \? options\.cullMode : "back";/);
+  assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided \? \{ cullMode: "none" \} : null;/);
+  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
+  assert.match(webgpu, /getSelenaSkinnedPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
@@ -25730,6 +25750,138 @@ test("16a board rects draw through the Selena BoardFill pipeline: custom WGSL mo
   // must be present (non-zero diagonal), proving the 2D camera reached the
   // selena uniform path.
   assert.notEqual(uniformWrites[0].data[0], 0, "selena mvp must carry the ortho-2D projection");
+});
+
+test("16a splits SUBMITTED mesh draws from CULLED ones (mesh-draw-calls / mesh-view-culled)", async () => {
+  // Regression coverage for the telemetry gap that let three Selena mesh
+  // planes on m31labs.dev read data-gosx-scene3d-webgpu-mesh-objects="3" for
+  // ~two weeks while a camera-depth sign error CPU-frustum-culled them to
+  // zero drawn pixels: mesh-objects counts the bundle (SUBMITTED + CULLED
+  // together), so it never moved. mesh-draw-calls/mesh-view-culled split
+  // the two apart.
+  const harness = await createBoardWebGPUHarness();
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [{ kind: "flat", color: "#ffffff", opacity: 1, renderPass: "opaque" }],
+    meshObjects: [
+      { id: "visible", kind: "box", materialIndex: 0, vertexOffset: 0, vertexCount: 3, viewCulled: false, depthCenter: 4 },
+      { id: "culled", kind: "box", materialIndex: 0, vertexOffset: 3, vertexCount: 3, viewCulled: true, depthCenter: 8 },
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(18),
+    worldMeshNormals: new Float32Array(18),
+  };
+
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1, "exactly one main render pass");
+  assert.equal(mains[0].draws.length, 1, "buildDrawList excludes the viewCulled object — only the visible one reaches pass.draw()");
+
+  // mesh-objects is the pre-existing bundle count: it includes the culled
+  // object (the exact ambiguity that misled the original investigation).
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-objects"), "2");
+  // mesh-draw-calls: SUBMITTED only.
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-draw-calls"), "1");
+  // mesh-view-culled: CULLED only.
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-mesh-view-culled"), "1");
+});
+
+test("16a Selena mesh draws request cullMode:none only for doubleSided:true objects", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [selenaMaterial],
+    meshObjects: [
+      { id: "single-sided", kind: "box", materialIndex: 0, vertexOffset: 0, vertexCount: 3, viewCulled: false },
+      { id: "double-sided", kind: "box", materialIndex: 0, vertexOffset: 3, vertexCount: 3, viewCulled: false, doubleSided: true },
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(18),
+    worldMeshNormals: new Float32Array(18),
+  };
+
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1);
+  const draws = mains[0].draws;
+  assert.equal(draws.length, 2, "both mesh objects draw");
+  assert.equal(
+    draws[0].pipeline.desc.primitive.cullMode, "back",
+    "absent doubleSided keeps the Selena pipeline's existing back-face cull default",
+  );
+  assert.equal(
+    draws[1].pipeline.desc.primitive.cullMode, "none",
+    "doubleSided:true draws through a cullMode:none Selena pipeline",
+  );
+});
+
+test("16a Selena skinned mesh draws preserve per-object doubleSided cull mode", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  function skinnedMesh(id, doubleSided, depthCenter) {
+    return {
+      id,
+      kind: "gltf-mesh",
+      materialIndex: 0,
+      vertexOffset: 0,
+      vertexCount: 3,
+      viewCulled: false,
+      depthCenter,
+      doubleSided,
+      directVertices: true,
+      modelMatrix: identity,
+      skin: { jointMatrices: identity },
+      vertices: {
+        count: 3,
+        positions: new Float32Array(9),
+        joints: new Float32Array(12),
+        weights: new Float32Array([
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+        ]),
+      },
+    };
+  }
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [selenaMaterial],
+    meshObjects: [
+      skinnedMesh("single-sided-skin", false, 4),
+      skinnedMesh("double-sided-skin", true, 5),
+    ],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+  };
+
+  harness.renderer.render(bundle, {});
+
+  const mains = mainRenderPasses(harness.fake);
+  assert.equal(mains.length, 1);
+  assert.deepEqual(
+    mains[0].draws.map((draw) => draw.pipeline.desc.primitive.cullMode),
+    ["back", "none"],
+    "skinned Selena pipelines must cache and draw distinct single- and double-sided variants",
+  );
 });
 
 // -----------------------------------------------------------------------------
