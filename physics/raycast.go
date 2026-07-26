@@ -37,7 +37,7 @@ func (w *World) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
 // Raycast returns the closest hit against this collider. maxDistance <= 0
 // means unbounded.
 func (c *Collider) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
-	if c == nil {
+	if c == nil || c.invalid != nil {
 		return RaycastHit{}, false
 	}
 	direction := ray.Direction.Normalize()
@@ -56,6 +56,22 @@ func (c *Collider) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
 		hit, ok = raycastPlane(c, r, limit)
 	case ShapeBox:
 		hit, ok = raycastBox(c, r, limit)
+	case ShapeCapsule:
+		hit, ok = raycastCapsule(c, r, limit)
+	case ShapeCylinder:
+		hit, ok = raycastCylinder(c, r, limit)
+	case ShapeCone:
+		hit, ok = raycastCone(c, r, limit)
+	case ShapeTriangleMesh:
+		hit, ok = raycastMesh(c, r, limit)
+	case ShapeConvexHull:
+		// A hull is stored as a point cloud with no face list, so there is no
+		// surface to intersect. Supply Indices to also get a triangulated
+		// surface, which RaycastSupported then reports as usable.
+		if c.mesh == nil {
+			return RaycastHit{}, false
+		}
+		hit, ok = raycastMesh(c, r, limit)
 	default:
 		return RaycastHit{}, false
 	}
@@ -65,6 +81,23 @@ func (c *Collider) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
 	hit.Collider = c
 	hit.Body = c.Body
 	return hit, true
+}
+
+// RaycastSupported reports whether Raycast can hit this collider. A convex hull
+// declared without Indices has no triangulated surface, so a raycast against it
+// always misses. Check this instead of reading a miss as an answer.
+func (c *Collider) RaycastSupported() bool {
+	if c == nil || c.invalid != nil {
+		return false
+	}
+	switch c.Shape {
+	case ShapeSphere, ShapePlane, ShapeBox, ShapeCapsule, ShapeCylinder, ShapeCone, ShapeTriangleMesh:
+		return true
+	case ShapeConvexHull:
+		return c.mesh != nil
+	default:
+		return false
+	}
 }
 
 func raycastSphere(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool) {

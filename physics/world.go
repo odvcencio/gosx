@@ -13,6 +13,16 @@ type WorldConfig struct {
 	// starting is on by default; disabling is only useful for tests or
 	// deterministic replay scenarios that must reproduce a cold solver.
 	DisableWarmStart bool
+
+	// SleepTime is how long a body must stay slow before it sleeps, in seconds.
+	// Sleeping applies only to a body whose BodyConfig sets CanSleep. Leave the
+	// field zero to use half a second.
+	SleepTime float64
+	// SleepLinearSpeed and SleepAngularSpeed are the speeds a sleeping
+	// candidate must stay under, in metres and radians per second. Leave them
+	// zero to use 0.05 and 0.1.
+	SleepLinearSpeed  float64
+	SleepAngularSpeed float64
 }
 
 type contactCacheKey struct {
@@ -21,9 +31,10 @@ type contactCacheKey struct {
 }
 
 type cachedContactPoint struct {
-	LocalA        Vec3
-	LocalB        Vec3
-	NormalImpulse float64
+	LocalA         Vec3
+	LocalB         Vec3
+	NormalImpulse  float64
+	TangentImpulse [2]float64
 }
 
 type cachedManifold struct {
@@ -47,6 +58,24 @@ type World struct {
 	warmStart           bool
 	contactCache        map[contactCacheKey]cachedManifold
 	constraints         []Constraint
+
+	// solveState mirrors contacts one to one and holds the per-step solver
+	// scratch. The backing array is reused, so a step allocates nothing here.
+	solveState []contactSolveManifold
+	// pseudoBodies lists the bodies the position pass moved this step. Both
+	// slices keep their backing array between steps.
+	pseudoBodies []*RigidBody
+
+	sleepTime         float64
+	sleepLinearSpeed  float64
+	sleepAngularSpeed float64
+
+	// steps counts fixed steps. broadphaseStep records the step whose poses
+	// the grid holds, so the swept pass never queries a stale grid.
+	steps          uint64
+	broadphaseStep uint64
+	// sweepTargets is the reused result buffer of the swept broadphase query.
+	sweepTargets []*Collider
 }
 
 func DefaultWorldConfig() WorldConfig {
@@ -75,6 +104,15 @@ func NewWorld(config WorldConfig) *World {
 	if config.BroadPhaseCell <= 0 {
 		config.BroadPhaseCell = 2
 	}
+	if config.SleepTime <= 0 {
+		config.SleepTime = 0.5
+	}
+	if config.SleepLinearSpeed <= 0 {
+		config.SleepLinearSpeed = 0.05
+	}
+	if config.SleepAngularSpeed <= 0 {
+		config.SleepAngularSpeed = 0.1
+	}
 	w := &World{
 		gravity:             config.Gravity,
 		fixedTimestep:       config.FixedTimestep,
@@ -82,6 +120,9 @@ func NewWorld(config WorldConfig) *World {
 		broadphase:          NewSpatialHash(config.BroadPhaseCell),
 		continuousCollision: !config.DisableCCD,
 		warmStart:           !config.DisableWarmStart,
+		sleepTime:           config.SleepTime,
+		sleepLinearSpeed:    config.SleepLinearSpeed,
+		sleepAngularSpeed:   config.SleepAngularSpeed,
 	}
 	if w.warmStart {
 		w.contactCache = make(map[contactCacheKey]cachedManifold)
@@ -135,8 +176,13 @@ func (w *World) Contacts() []ContactManifold {
 	return contacts
 }
 
+// CandidatePairs returns the broadphase pairs for the current collider poses.
+// The result is a fresh slice, so callers may keep it.
 func (w *World) CandidatePairs() []ColliderPair {
-	return w.broadphase.CandidatePairs(w.colliders)
+	internal := w.broadphase.CandidatePairs(w.colliders)
+	pairs := make([]ColliderPair, len(internal))
+	copy(pairs, internal)
+	return pairs
 }
 
 func (w *World) FixedTimestep() float64 {
@@ -151,8 +197,11 @@ func (w *World) Gravity() Vec3 {
 	return w.gravity
 }
 
+// SetGravity replaces the world gravity and wakes every body, because a body
+// asleep under the old gravity may have to fall under the new one.
 func (w *World) SetGravity(gravity Vec3) {
 	w.gravity = gravity
+	w.WakeAll()
 }
 
 func (w *World) Step(elapsed float64) int {
@@ -178,8 +227,12 @@ func (w *World) StepFixed() {
 }
 
 func (w *World) stepFixed(dt float64) {
+	w.steps++
+	w.refreshInertia()
 	w.integrateForces(dt)
 	w.generateContacts()
+	w.wakeTouchedBodies()
+	w.prepareContacts()
 	if w.warmStart {
 		w.warmStartContacts()
 	}
@@ -189,6 +242,120 @@ func (w *World) stepFixed(dt float64) {
 		w.cacheContactImpulses()
 	}
 	w.integrateVelocities(dt)
+	w.updateSleep(dt)
+}
+
+// wakeTouchedBodies wakes a sleeping body that a moving body now touches. A
+// sleeping body takes no impulse, so it would sink through an arriving body
+// without this pass.
+func (w *World) wakeTouchedBodies() {
+	for i := range w.contacts {
+		manifold := &w.contacts[i]
+		if manifold.IsTrigger() {
+			continue
+		}
+		a, b := manifold.BodyA, manifold.BodyB
+		// Wake only a body that is asleep. Calling Wake on a body that is
+		// already awake would restart its countdown, and one restless body in a
+		// tower would then stop the whole tower from ever settling.
+		if b.IsSleeping() && bodyDisturbs(w, a) {
+			b.Wake()
+		}
+		if a.IsSleeping() && bodyDisturbs(w, b) {
+			a.Wake()
+		}
+	}
+}
+
+// bodyDisturbs reports whether a body moves fast enough to wake what it hits.
+func bodyDisturbs(w *World, body *RigidBody) bool {
+	if body == nil || body.IsSleeping() {
+		return false
+	}
+	return body.Velocity.Len2() > w.sleepLinearSpeed*w.sleepLinearSpeed ||
+		body.AngularVelocity.Len2() > w.sleepAngularSpeed*w.sleepAngularSpeed
+}
+
+// updateSleep puts a slow body to sleep once it has stayed slow for long
+// enough. A sleeping body keeps its pose, takes no impulse and costs the solver
+// nothing, which is what stops a settled stack from creeping over thousands of
+// steps.
+//
+// Only a body whose BodyConfig sets CanSleep is eligible. Every other body
+// keeps simulating, which preserves the behaviour callers had before.
+func (w *World) updateSleep(dt float64) {
+	if w.sleepTime <= 0 {
+		return
+	}
+
+	// Mark the bodies that are slow enough to be sleep candidates.
+	for _, body := range w.bodies {
+		if body == nil {
+			continue
+		}
+		body.sleepBlocked = false
+		body.sleepSlow = body.Velocity.Len2() <= w.sleepLinearSpeed*w.sleepLinearSpeed &&
+			body.AngularVelocity.Len2() <= w.sleepAngularSpeed*w.sleepAngularSpeed
+	}
+
+	// A body that leans on a moving body cannot sleep. Letting it sleep anyway
+	// turns it into an immovable support for one step, which shakes the pile it
+	// belongs to and wakes it again. The block travels one contact per step, so
+	// a whole tower goes quiet before any part of it sleeps.
+	for i := range w.contacts {
+		manifold := &w.contacts[i]
+		if manifold.IsTrigger() {
+			continue
+		}
+		a, b := manifold.BodyA, manifold.BodyB
+		if a != nil && a.IsDynamic() && !a.sleepSlow && b != nil {
+			b.sleepBlocked = true
+		}
+		if b != nil && b.IsDynamic() && !b.sleepSlow && a != nil {
+			a.sleepBlocked = true
+		}
+	}
+
+	for _, body := range w.bodies {
+		if body == nil || !body.CanSleep || !body.IsDynamic() || body.sleeping {
+			continue
+		}
+		if !body.sleepSlow || body.sleepBlocked {
+			body.sleepTimer = 0
+			continue
+		}
+		body.sleepTimer += dt
+		if body.sleepTimer < w.sleepTime {
+			continue
+		}
+		body.sleeping = true
+		body.sleepTimer = 0
+		body.Velocity = Vec3{}
+		body.AngularVelocity = Vec3{}
+	}
+}
+
+// WakeAll wakes every sleeping body. Call it after changing the world in a way
+// the contact pass cannot see, such as teleporting geometry.
+func (w *World) WakeAll() {
+	if w == nil {
+		return
+	}
+	for _, body := range w.bodies {
+		body.Wake()
+	}
+}
+
+// refreshInertia rebuilds the world inverse inertia tensor of every dynamic
+// body from its current rotation. Contacts and constraints both read it, so it
+// must run before contact generation.
+func (w *World) refreshInertia() {
+	for _, body := range w.bodies {
+		if body == nil || !body.IsDynamic() {
+			continue
+		}
+		body.refreshWorldInertia()
+	}
 }
 
 func (w *World) prepareConstraints(dt float64) {
@@ -210,7 +377,7 @@ func (w *World) solveContactsAndConstraints(dt float64) {
 	}
 	for iter := 0; iter < iterations; iter++ {
 		for i := range w.contacts {
-			solveContactVelocity(&w.contacts[i])
+			solveContactVelocityState(&w.contacts[i], &w.solveState[i])
 		}
 		for _, c := range w.constraints {
 			if c != nil {
@@ -218,14 +385,45 @@ func (w *World) solveContactsAndConstraints(dt float64) {
 			}
 		}
 	}
-	for i := range w.contacts {
-		solveContactPosition(&w.contacts[i], dt)
-	}
+	w.solveContactPositions(dt)
 	for _, c := range w.constraints {
 		if c != nil {
 			c.SolvePosition()
 		}
 	}
+}
+
+// solveContactPositions removes the remaining overlap with a pseudo velocity
+// pass, then integrates the pseudo velocities into positions and rotations.
+//
+// The pass gives a body an angular correction as well as a linear one, so a box
+// that lands on one corner rotates down onto its face instead of sinking.
+func (w *World) solveContactPositions(dt float64) {
+	if dt <= 0 || len(w.contacts) == 0 {
+		return
+	}
+	w.pseudoBodies = w.pseudoBodies[:0]
+	for iter := 0; iter < positionIterations; iter++ {
+		for i := range w.contacts {
+			w.pseudoBodies = solveContactPositionState(&w.contacts[i], &w.solveState[i], dt, w.pseudoBodies)
+		}
+	}
+	for i, body := range w.pseudoBodies {
+		if body.pseudoVelocity.Len2() > 0 {
+			body.Position = body.Position.Add(body.pseudoVelocity.Mul(dt))
+		}
+		if speed := body.pseudoAngular.Len(); speed > epsilon {
+			delta := QuatFromAxisAngle(body.pseudoAngular.Div(speed), speed*dt)
+			body.Rotation = delta.Mul(body.Rotation).Normalize()
+			body.refreshWorldInertia()
+		}
+		body.pseudoVelocity = Vec3{}
+		body.pseudoAngular = Vec3{}
+		body.pseudoActive = false
+		// Drop the reference so a removed body can be collected.
+		w.pseudoBodies[i] = nil
+	}
+	w.pseudoBodies = w.pseudoBodies[:0]
 }
 
 // warmStartContacts seeds newly-generated contact manifolds with cached
@@ -235,9 +433,11 @@ func (w *World) solveContactsAndConstraints(dt float64) {
 //
 // Matching: for each new contact point, find the cached point with the closest
 // (LocalA, LocalB) pair within a tolerance. Matched points inherit the cached
-// NormalImpulse; unmatched points start from zero. Tangent impulses always
-// start from zero because the tangent basis is recomputed each iteration from
-// the current relative velocity.
+// normal and friction impulses; unmatched points start from zero.
+//
+// The friction basis is derived from the contact normal alone, so a cached
+// friction impulse still names the same direction on the next step. That is
+// what lets a resting stack hold its lateral grip without rebuilding it.
 func (w *World) warmStartContacts() {
 	if w.contactCache == nil {
 		return
@@ -246,7 +446,8 @@ func (w *World) warmStartContacts() {
 
 	for mi := range w.contacts {
 		m := &w.contacts[mi]
-		if m.IsTrigger() || m.PointCount == 0 {
+		state := &w.solveState[mi]
+		if !state.active {
 			continue
 		}
 		key := manifoldCacheKey(m)
@@ -254,9 +455,9 @@ func (w *World) warmStartContacts() {
 		if !ok {
 			continue
 		}
-		normal := m.Normal.Normalize()
-		for pi := 0; pi < m.PointCount; pi++ {
+		for pi := 0; pi < state.count; pi++ {
 			p := &m.Points[pi]
+			slot := &state.points[pi]
 			best := -1
 			bestDist := matchToleranceSq
 			for ci := 0; ci < cached.Count; ci++ {
@@ -270,14 +471,18 @@ func (w *World) warmStartContacts() {
 			if best < 0 {
 				continue
 			}
-			seeded := cached.Points[best].NormalImpulse
-			if seeded <= 0 {
+			seededNormal := cached.Points[best].NormalImpulse
+			seededTangent := cached.Points[best].TangentImpulse
+			if seededNormal <= 0 {
 				continue
 			}
-			p.NormalImpulse = seeded
-			impulse := normal.Mul(seeded)
-			applyLinearImpulse(m.BodyA, impulse.Neg())
-			applyLinearImpulse(m.BodyB, impulse)
+			p.NormalImpulse = seededNormal
+			p.TangentImpulse = seededTangent
+			impulse := state.normal.Mul(seededNormal).
+				Add(state.tangent[0].Mul(seededTangent[0])).
+				Add(state.tangent[1].Mul(seededTangent[1]))
+			applyImpulseAtOffset(m.BodyA, impulse.Neg(), slot.rA)
+			applyImpulseAtOffset(m.BodyB, impulse, slot.rB)
 		}
 	}
 }
@@ -300,9 +505,10 @@ func (w *World) cacheContactImpulses() {
 		var cm cachedManifold
 		for pi := 0; pi < m.PointCount; pi++ {
 			cm.Points[cm.Count] = cachedContactPoint{
-				LocalA:        m.Points[pi].LocalA,
-				LocalB:        m.Points[pi].LocalB,
-				NormalImpulse: m.Points[pi].NormalImpulse,
+				LocalA:         m.Points[pi].LocalA,
+				LocalB:         m.Points[pi].LocalB,
+				NormalImpulse:  m.Points[pi].NormalImpulse,
+				TangentImpulse: m.Points[pi].TangentImpulse,
 			}
 			cm.Count++
 		}
@@ -333,7 +539,12 @@ func (w *World) integrateForces(dt float64) {
 		}
 		acceleration := w.gravity.Add(body.force.Mul(body.InvMass))
 		body.Velocity = body.Velocity.Add(acceleration.Mul(dt))
-		body.AngularVelocity = body.AngularVelocity.Add(body.torque.Mul(body.InvMass * dt))
+		if !body.invInertiaWorld.isZero() && body.torque.Len2() > 0 {
+			// Angular acceleration is the inverse inertia tensor applied to the
+			// torque, not the torque divided by mass.
+			body.AngularVelocity = body.AngularVelocity.
+				Add(body.invInertiaWorld.mul(body.torque).Mul(dt))
+		}
 		body.Velocity = body.Velocity.Mul(dampingFactor(body.LinearDamping, dt))
 		body.AngularVelocity = body.AngularVelocity.Mul(dampingFactor(body.AngularDamping, dt))
 		body.clearForces()
@@ -342,13 +553,22 @@ func (w *World) integrateForces(dt float64) {
 
 func (w *World) generateContacts() {
 	pairs := w.broadphase.CandidatePairs(w.colliders)
+	w.broadphaseStep = w.steps
 	w.contacts = w.contacts[:0]
 	for _, pair := range pairs {
-		contact, ok := Collide(pair.A, pair.B)
-		if ok {
-			w.contacts = append(w.contacts, contact)
-		}
+		w.contacts = CollideAll(pair.A, pair.B, w.contacts)
 	}
+}
+
+// ensureBroadphase rebuilds the grid when the current step has not filled it
+// yet. The swept pass reads the static cell map, and a stale map would let a
+// fast body pass through geometry.
+func (w *World) ensureBroadphase() {
+	if w.broadphaseStep == w.steps && w.broadphase.Built() > 0 {
+		return
+	}
+	w.broadphase.Rebuild(w.colliders)
+	w.broadphaseStep = w.steps
 }
 
 func (w *World) integrateVelocities(dt float64) {
@@ -357,20 +577,23 @@ func (w *World) integrateVelocities(dt float64) {
 			continue
 		}
 		displacement := body.Velocity.Mul(dt)
-		if w.continuousCollision {
+		swept := false
+		if w.continuousCollision && bodyNeedsSweep(body, displacement) {
+			w.ensureBroadphase()
 			if hit, ok := w.sweepBody(body, displacement); ok {
 				body.Position = body.Position.Add(displacement.Normalize().Mul(maxFloat(0, hit.Distance-ccdSlop)))
 				resolveCCDVelocity(body, hit)
-			} else {
-				body.Position = body.Position.Add(displacement)
+				swept = true
 			}
-		} else {
+		}
+		if !swept {
 			body.Position = body.Position.Add(displacement)
 		}
 		angularSpeed := body.AngularVelocity.Len()
 		if angularSpeed > epsilon {
 			delta := QuatFromAxisAngle(body.AngularVelocity.Div(angularSpeed), angularSpeed*dt)
 			body.Rotation = delta.Mul(body.Rotation).Normalize()
+			body.refreshWorldInertia()
 		}
 	}
 }

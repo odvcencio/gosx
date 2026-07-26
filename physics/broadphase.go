@@ -2,6 +2,7 @@ package physics
 
 import (
 	"math"
+	"slices"
 	"sort"
 )
 
@@ -10,10 +11,42 @@ type ColliderPair struct {
 	B *Collider
 }
 
+// spatialEntry caches one collider's world bounds for the duration of a step.
+// AABB() rotates vectors, so computing it once per step instead of once per
+// candidate pair removes most of the broadphase cost.
+type spatialEntry struct {
+	collider *Collider
+	aabb     AABB
+	stamp    uint64
+}
+
+// SpatialHash is a uniform-grid broadphase. One rebuild per step fills two cell
+// maps: cells holds every collider, staticCells holds only the immovable,
+// non-trigger colliders that the swept pass needs.
 type SpatialHash struct {
 	cellSize float64
-	cells    map[cellKey][]*Collider
 	skin     float64
+
+	cells       map[cellKey][]int32
+	staticCells map[cellKey][]int32
+	usedKeys    []cellKey
+	staticKeys  []cellKey
+
+	entries        []spatialEntry
+	infinite       []int32
+	staticInfinite []int32
+
+	pairKeys []uint64
+	pairs    []ColliderPair
+
+	// indexOrdered records whether entries are already sorted by collider
+	// index. When they are, sorting the packed pair keys also sorts the pairs,
+	// so the final comparison sort is skipped.
+	indexOrdered bool
+
+	queryGen uint64
+	// built counts rebuilds. Callers use it to detect a stale grid.
+	built uint64
 }
 
 type cellKey struct {
@@ -27,75 +60,229 @@ func NewSpatialHash(cellSize float64) *SpatialHash {
 		cellSize = 2
 	}
 	return &SpatialHash{
-		cellSize: cellSize,
-		cells:    make(map[cellKey][]*Collider),
-		skin:     0.001,
+		cellSize:    cellSize,
+		cells:       make(map[cellKey][]int32),
+		staticCells: make(map[cellKey][]int32),
+		skin:        0.001,
 	}
 }
 
-func (s *SpatialHash) CandidatePairs(colliders []*Collider) []ColliderPair {
+// Rebuild refills the grid from the given colliders. Call it once per step
+// before any query.
+func (s *SpatialHash) Rebuild(colliders []*Collider) {
 	if s == nil {
-		s = NewSpatialHash(2)
+		return
 	}
-	for key := range s.cells {
-		delete(s.cells, key)
-	}
+	s.reset(len(colliders))
 
-	var infinite []*Collider
+	lastIndex := math.MinInt
+	s.indexOrdered = true
 	for _, collider := range colliders {
 		if collider == nil {
 			continue
 		}
 		aabb := collider.AABB().Expand(s.skin)
-		if !aabb.IsFinite() {
-			infinite = append(infinite, collider)
-			continue
+		index := int32(len(s.entries))
+		s.entries = append(s.entries, spatialEntry{collider: collider, aabb: aabb})
+		if collider.index < lastIndex {
+			s.indexOrdered = false
 		}
+		lastIndex = collider.index
+
+		// The swept pass only ever looks at immovable, solid colliders, so the
+		// filter happens here, at insert time, and not inside the sweep loop.
+		isStatic := immovableCollider(collider) && !collider.IsTrigger
+
 		minCell, maxCell, ok := s.cellRange(aabb)
-		if !ok {
-			infinite = append(infinite, collider)
+		if !aabb.IsFinite() || !ok {
+			s.infinite = append(s.infinite, index)
+			if isStatic {
+				s.staticInfinite = append(s.staticInfinite, index)
+			}
 			continue
 		}
 		for x := minCell.x; x <= maxCell.x; x++ {
 			for y := minCell.y; y <= maxCell.y; y++ {
 				for z := minCell.z; z <= maxCell.z; z++ {
 					key := cellKey{x: x, y: y, z: z}
-					s.cells[key] = append(s.cells[key], collider)
+					s.insert(s.cells, &s.usedKeys, key, index)
+					if isStatic {
+						s.insert(s.staticCells, &s.staticKeys, key, index)
+					}
 				}
 			}
 		}
 	}
+	s.built++
+}
 
-	pairMap := make(map[uint64]ColliderPair)
-	for _, cellColliders := range s.cells {
-		for i := 0; i < len(cellColliders); i++ {
-			for j := i + 1; j < len(cellColliders); j++ {
-				addCandidatePair(pairMap, cellColliders[i], cellColliders[j])
+// Built reports how many times the grid was rebuilt. A caller compares it
+// against its own step counter to notice a stale grid.
+func (s *SpatialHash) Built() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.built
+}
+
+// reset empties the grid but keeps the per-cell slices, so a steady-state
+// simulation stops allocating after the first few steps.
+func (s *SpatialHash) reset(colliderCount int) {
+	// A world whose bodies travel far leaves empty cells behind. Rebuild the
+	// maps when the bookkeeping outgrows the live data.
+	limit := 8*colliderCount + 4096
+	if len(s.cells) > limit {
+		s.cells = make(map[cellKey][]int32, len(s.usedKeys))
+	} else {
+		for _, key := range s.usedKeys {
+			s.cells[key] = s.cells[key][:0]
+		}
+	}
+	if len(s.staticCells) > limit {
+		s.staticCells = make(map[cellKey][]int32, len(s.staticKeys))
+	} else {
+		for _, key := range s.staticKeys {
+			s.staticCells[key] = s.staticCells[key][:0]
+		}
+	}
+	s.usedKeys = s.usedKeys[:0]
+	s.staticKeys = s.staticKeys[:0]
+	s.entries = s.entries[:0]
+	s.infinite = s.infinite[:0]
+	s.staticInfinite = s.staticInfinite[:0]
+}
+
+func (s *SpatialHash) insert(cells map[cellKey][]int32, keys *[]cellKey, key cellKey, index int32) {
+	bucket, exists := cells[key]
+	if !exists || len(bucket) == 0 {
+		*keys = append(*keys, key)
+	}
+	cells[key] = append(bucket, index)
+}
+
+// CandidatePairs rebuilds the grid and returns the overlapping pairs, ordered
+// by collider index. The returned slice is owned by the hash and is reused by
+// the next call.
+func (s *SpatialHash) CandidatePairs(colliders []*Collider) []ColliderPair {
+	if s == nil {
+		return nil
+	}
+	s.Rebuild(colliders)
+	return s.pairsFromGrid()
+}
+
+func (s *SpatialHash) pairsFromGrid() []ColliderPair {
+	s.pairKeys = s.pairKeys[:0]
+	for _, key := range s.usedKeys {
+		bucket := s.cells[key]
+		for i := 0; i < len(bucket); i++ {
+			for j := i + 1; j < len(bucket); j++ {
+				s.appendPairKey(bucket[i], bucket[j])
 			}
 		}
 	}
-	for _, inf := range infinite {
-		for _, collider := range colliders {
-			if inf == collider {
-				continue
-			}
-			addCandidatePair(pairMap, inf, collider)
+	for _, index := range s.infinite {
+		for other := range s.entries {
+			s.appendPairKey(index, int32(other))
 		}
 	}
 
-	pairs := make([]ColliderPair, 0, len(pairMap))
-	for _, pair := range pairMap {
-		pairs = append(pairs, pair)
-	}
-	sort.Slice(pairs, func(i, j int) bool {
-		ai, bi := orderedColliderIndexes(pairs[i].A, pairs[i].B)
-		aj, bj := orderedColliderIndexes(pairs[j].A, pairs[j].B)
-		if ai == aj {
-			return bi < bj
+	// A packed key is (lowEntry << 32 | highEntry), so a numeric sort followed
+	// by a single dedupe pass replaces the old map plus comparison sort.
+	slices.Sort(s.pairKeys)
+	s.pairs = s.pairs[:0]
+	for i, key := range s.pairKeys {
+		if i > 0 && key == s.pairKeys[i-1] {
+			continue
 		}
-		return ai < aj
-	})
-	return pairs
+		a := s.entries[key>>32].collider
+		b := s.entries[key&0xffffffff].collider
+		if b.index < a.index {
+			a, b = b, a
+		}
+		s.pairs = append(s.pairs, ColliderPair{A: a, B: b})
+	}
+	if !s.indexOrdered {
+		sort.Slice(s.pairs, func(i, j int) bool {
+			ai, bi := orderedColliderIndexes(s.pairs[i].A, s.pairs[i].B)
+			aj, bj := orderedColliderIndexes(s.pairs[j].A, s.pairs[j].B)
+			if ai == aj {
+				return bi < bj
+			}
+			return ai < aj
+		})
+	}
+	return s.pairs
+}
+
+func (s *SpatialHash) appendPairKey(i, j int32) {
+	if i == j {
+		return
+	}
+	if j < i {
+		i, j = j, i
+	}
+	if !validEntryPair(s.entries[i], s.entries[j]) {
+		return
+	}
+	s.pairKeys = append(s.pairKeys, uint64(uint32(i))<<32|uint64(uint32(j)))
+}
+
+// QueryAABB appends every collider whose cached bounds overlap box. Rebuild
+// must have run for the current step.
+func (s *SpatialHash) QueryAABB(box AABB, out []*Collider) []*Collider {
+	return s.query(s.cells, s.infinite, box, out)
+}
+
+// QueryStaticAABB appends every immovable, non-trigger collider whose cached
+// bounds overlap box.
+func (s *SpatialHash) QueryStaticAABB(box AABB, out []*Collider) []*Collider {
+	return s.query(s.staticCells, s.staticInfinite, box, out)
+}
+
+func (s *SpatialHash) query(cells map[cellKey][]int32, unbounded []int32, box AABB, out []*Collider) []*Collider {
+	if s == nil || len(s.entries) == 0 {
+		return out
+	}
+	s.queryGen++
+	generation := s.queryGen
+
+	minCell, maxCell, ok := s.cellRange(box)
+	if !box.IsFinite() || !ok {
+		// The query box spans too many cells to walk. Fall back to a linear
+		// scan, which is still one pass instead of one pass per cell.
+		for i := range s.entries {
+			out = s.take(int32(i), generation, box, out, false)
+		}
+		return out
+	}
+	for x := minCell.x; x <= maxCell.x; x++ {
+		for y := minCell.y; y <= maxCell.y; y++ {
+			for z := minCell.z; z <= maxCell.z; z++ {
+				for _, index := range cells[cellKey{x: x, y: y, z: z}] {
+					out = s.take(index, generation, box, out, true)
+				}
+			}
+		}
+	}
+	for _, index := range unbounded {
+		out = s.take(index, generation, box, out, false)
+	}
+	return out
+}
+
+// take appends one entry to out unless this query already reported it. The
+// stamp lives on the entry, so deduplication needs no map.
+func (s *SpatialHash) take(index int32, generation uint64, box AABB, out []*Collider, checkBounds bool) []*Collider {
+	entry := &s.entries[index]
+	if entry.stamp == generation {
+		return out
+	}
+	entry.stamp = generation
+	if checkBounds && !entry.aabb.Overlaps(box) {
+		return out
+	}
+	return append(out, entry.collider)
 }
 
 func (s *SpatialHash) cellRange(aabb AABB) (cellKey, cellKey, bool) {
@@ -119,38 +306,21 @@ func (s *SpatialHash) cellRange(aabb AABB) (cellKey, cellKey, bool) {
 	return minCell, maxCell, true
 }
 
-func addCandidatePair(pairs map[uint64]ColliderPair, a, b *Collider) {
-	if !validCandidatePair(a, b) {
-		return
-	}
-	if b.index < a.index {
-		a, b = b, a
-	}
-	pairs[pairKey(a, b)] = ColliderPair{A: a, B: b}
-}
-
-func validCandidatePair(a, b *Collider) bool {
-	if a == nil || b == nil || a == b {
+func validEntryPair(a, b spatialEntry) bool {
+	if a.collider == nil || b.collider == nil || a.collider == b.collider {
 		return false
 	}
-	if a.Body != nil && a.Body == b.Body {
+	if a.collider.Body != nil && a.collider.Body == b.collider.Body {
 		return false
 	}
-	if immovableCollider(a) && immovableCollider(b) {
+	if immovableCollider(a.collider) && immovableCollider(b.collider) {
 		return false
 	}
-	aabbA := a.AABB()
-	aabbB := b.AABB()
-	return !aabbA.IsFinite() || !aabbB.IsFinite() || aabbA.Overlaps(aabbB)
+	return !a.aabb.IsFinite() || !b.aabb.IsFinite() || a.aabb.Overlaps(b.aabb)
 }
 
 func immovableCollider(c *Collider) bool {
 	return c == nil || c.Body == nil || !c.Body.IsDynamic()
-}
-
-func pairKey(a, b *Collider) uint64 {
-	ai, bi := orderedColliderIndexes(a, b)
-	return uint64(uint32(ai))<<32 | uint64(uint32(bi))
 }
 
 func orderedColliderIndexes(a, b *Collider) (int, int) {

@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -34,12 +35,15 @@ func (ir IR) PhysicsSpec() physics.WorldSpec {
 	}
 
 	spec := physics.WorldSpec{Config: cfg}
+	var diagnostics []string
 
 	for _, body := range p.Bodies {
 		mass := body.Mass
 		if body.Static {
 			mass = 0
 		}
+		colliders, bodyDiagnostics := collidersToPhysics(body.Colliders, "body "+strings.TrimSpace(body.ID))
+		diagnostics = append(diagnostics, bodyDiagnostics...)
 		spec.Bodies = append(spec.Bodies, physics.BodySpec{
 			Body: physics.BodyConfig{
 				ID:              strings.TrimSpace(body.ID),
@@ -53,13 +57,16 @@ func (ir IR) PhysicsSpec() physics.WorldSpec {
 				LinearDamping:   body.LinearDamping,
 				AngularDamping:  body.AngularDamping,
 			},
-			Colliders: collidersToPhysics(body.Colliders),
+			Colliders: colliders,
 		})
 	}
 
 	if len(p.Static) > 0 {
-		spec.Static = collidersToPhysics(p.Static)
+		static, staticDiagnostics := collidersToPhysics(p.Static, "scene static geometry")
+		spec.Static = static
+		diagnostics = append(diagnostics, staticDiagnostics...)
 	}
+	spec.Diagnostics = diagnostics
 	if len(p.Constraints) > 0 {
 		spec.Constraints = make([]physics.ConstraintSpec, 0, len(p.Constraints))
 		for _, constraint := range p.Constraints {
@@ -87,14 +94,22 @@ func (ir IR) PhysicsTopic(programRef string) string {
 	return "scene3d:physics:" + trimmed
 }
 
-func collidersToPhysics(src []IRCollider) []physics.ColliderConfig {
+// collidersToPhysics translates scene colliders. owner names the declaring
+// body or the scene, so a diagnostic points the author at the right place.
+//
+// A shape the engine cannot build is reported, never dropped in silence. A
+// dropped collider makes its body pass through the world, which is far harder
+// to notice than an error.
+func collidersToPhysics(src []IRCollider, owner string) ([]physics.ColliderConfig, []string) {
 	if len(src) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]physics.ColliderConfig, 0, len(src))
-	for _, c := range src {
-		shape, ok := shapeNameToKind(c.Shape)
-		if !ok {
+	var diagnostics []string
+	for index, c := range src {
+		shape, err := shapeNameToKind(c.Shape)
+		if err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s collider %d: %v", owner, index, err))
 			continue
 		}
 		out = append(out, physics.ColliderConfig{
@@ -110,9 +125,18 @@ func collidersToPhysics(src []IRCollider) []physics.ColliderConfig {
 			Distance:  c.Distance,
 		})
 	}
-	return out
+	return out, diagnostics
 }
 
+// constraintToPhysics translates one scene constraint.
+//
+// The engine builds four joints: "distance", "point", "hinge" and "fixed". A
+// scene names the joint through Kind and gives the two attach points. An empty
+// Kind means "distance", which keeps older scenes working.
+//
+// IRConstraint carries no axis, motor or limit fields, so a scene-declared
+// hinge turns about the body local +Y axis with no motor and no limit. Build
+// the hinge through physics.HingeConstraint to set an axis, a motor or limits.
 func constraintToPhysics(c IRConstraint) physics.ConstraintSpec {
 	kind := strings.ToLower(strings.TrimSpace(c.Kind))
 	if kind == "" {
@@ -129,26 +153,36 @@ func constraintToPhysics(c IRConstraint) physics.ConstraintSpec {
 	}
 }
 
-func shapeNameToKind(name string) (physics.ColliderShape, bool) {
-	switch strings.ToLower(strings.TrimSpace(name)) {
+// shapeNameToKind maps a scene shape name onto a physics collider shape.
+//
+// "convex" and "mesh" are rejected on purpose. The physics engine supports both
+// shapes, but Collider3D carries no vertex or index buffer, so a scene-declared
+// hull or mesh would have no geometry and would pass through every body. Build
+// such colliders through the physics API, where ColliderConfig.Vertices and
+// ColliderConfig.Indices supply the geometry.
+func shapeNameToKind(name string) (physics.ColliderShape, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(name))
+	switch trimmed {
 	case "box":
-		return physics.ShapeBox, true
+		return physics.ShapeBox, nil
 	case "sphere":
-		return physics.ShapeSphere, true
+		return physics.ShapeSphere, nil
 	case "capsule":
-		return physics.ShapeCapsule, true
+		return physics.ShapeCapsule, nil
 	case "plane":
-		return physics.ShapePlane, true
+		return physics.ShapePlane, nil
 	case "cylinder":
-		return physics.ShapeCylinder, true
+		return physics.ShapeCylinder, nil
 	case "cone":
-		return physics.ShapeCone, true
+		return physics.ShapeCone, nil
 	case "convex", "convexhull":
-		return physics.ShapeConvexHull, true
+		return 0, fmt.Errorf("shape %q needs vertex data that Collider3D cannot carry; declare the hull through physics.ColliderConfig.Vertices instead", trimmed)
 	case "mesh", "trianglemesh":
-		return physics.ShapeTriangleMesh, true
+		return 0, fmt.Errorf("shape %q needs vertex and index data that Collider3D cannot carry; declare the mesh through physics.ColliderConfig.Vertices and Indices instead", trimmed)
+	case "":
+		return 0, fmt.Errorf("collider Shape is empty; use box, sphere, capsule, plane, cylinder or cone")
 	}
-	return 0, false
+	return 0, fmt.Errorf("unknown collider shape %q; use box, sphere, capsule, plane, cylinder or cone", trimmed)
 }
 
 // eulerToQuat converts XYZ Euler radians to a unit quaternion using the

@@ -4,8 +4,56 @@ import "math"
 
 const contactTolerance = 1e-6
 
+// Collide returns the first contact manifold between two colliders. Use
+// CollideAll when either collider is a triangle mesh, because a mesh pair can
+// produce one manifold per contacting triangle.
 func Collide(a, b *Collider) (ContactManifold, bool) {
 	if a == nil || b == nil {
+		return ContactManifold{}, false
+	}
+	if a.Shape == ShapeTriangleMesh || b.Shape == ShapeTriangleMesh {
+		manifolds := CollideAll(a, b, nil)
+		if len(manifolds) == 0 {
+			return ContactManifold{}, false
+		}
+		return manifolds[0], true
+	}
+	return collidePair(a, b)
+}
+
+// CollideAll appends every contact manifold between two colliders to out.
+// Every pair except a triangle mesh produces at most one manifold.
+//
+// A collider that failed validation produces no manifolds. Check Collider.Err
+// or World.Diagnostics to find such a collider; it never collides with
+// anything.
+func CollideAll(a, b *Collider, out []ContactManifold) []ContactManifold {
+	if a == nil || b == nil || a.invalid != nil || b.invalid != nil {
+		return out
+	}
+	switch {
+	case a.Shape == ShapeTriangleMesh && b.Shape == ShapeTriangleMesh:
+		// Not implemented. World.Diagnostics reports the pair.
+		return out
+	case a.Shape == ShapeTriangleMesh:
+		return collideMeshShape(a, b, out)
+	case b.Shape == ShapeTriangleMesh:
+		start := len(out)
+		out = collideMeshShape(b, a, out)
+		for i := start; i < len(out); i++ {
+			out[i] = flipManifold(out[i])
+		}
+		return out
+	}
+	manifold, ok := collidePair(a, b)
+	if !ok {
+		return out
+	}
+	return append(out, manifold)
+}
+
+func collidePair(a, b *Collider) (ContactManifold, bool) {
+	if a.invalid != nil || b.invalid != nil {
 		return ContactManifold{}, false
 	}
 
@@ -56,6 +104,20 @@ func Collide(a, b *Collider) (ContactManifold, bool) {
 		return flipManifold(manifold), true
 	case a.Shape == ShapeCapsule && b.Shape == ShapeCapsule:
 		return collideCapsuleCapsule(a, b)
+	case a.Shape == ShapePlane && b.Shape == ShapePlane:
+		// Two half-spaces overlap everywhere. There is no useful contact and
+		// the broadphase never pairs two immovable colliders anyway.
+		return ContactManifold{}, false
+	case a.Shape == ShapePlane && isSupportShape(b):
+		manifold, ok := collideConvexPlane(b, a)
+		if !ok {
+			return ContactManifold{}, false
+		}
+		return flipManifold(manifold), true
+	case b.Shape == ShapePlane && isSupportShape(a):
+		return collideConvexPlane(a, b)
+	case isSupportShape(a) && isSupportShape(b):
+		return collideConvexGJK(a, b)
 	default:
 		return ContactManifold{}, false
 	}
