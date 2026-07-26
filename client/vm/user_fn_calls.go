@@ -60,11 +60,7 @@ import (
 // a fresh frame that bridges captured names through to the enclosing
 // frame for Go's capture-by-reference semantics. Otherwise the
 // existing Y.D path runs.
-func (vm *VM) evalIndirectCallExpr(e program.Expr) (Value, bool) {
-	if e.Op != program.OpIndirectCall {
-		return Value{}, false
-	}
-
+func (vm *VM) indirectCallValue(e *program.Expr) Value {
 	// Slice Y.G — closure-aware path. If a local with this name holds a
 	// ClosureVal, dispatch through it instead of looking up the FuncDef
 	// registry. Evaluate args in the caller's frame BEFORE pushing the
@@ -75,7 +71,7 @@ func (vm *VM) evalIndirectCallExpr(e program.Expr) (Value, bool) {
 			for i, opID := range e.Operands {
 				args[i] = vm.Eval(opID)
 			}
-			return vm.invokeClosureFromIndirectCall(local, args, e), true
+			return vm.invokeClosureFromIndirectCall(local, args, e)
 		}
 	}
 
@@ -87,7 +83,7 @@ func (vm *VM) evalIndirectCallExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
 
 	// Cap recursion depth so a runaway call sequence is panic-free.
@@ -104,7 +100,7 @@ func (vm *VM) evalIndirectCallExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
 
 	// Step 1: evaluate arguments in the CALLER's frame.
@@ -148,8 +144,8 @@ func (vm *VM) evalIndirectCallExpr(e program.Expr) (Value, bool) {
 	var result Value
 	for _, bodyID := range def.Body {
 		result = vm.Eval(bodyID)
-		if result.Control == ControlReturn {
-			result.Control = ControlNone
+		if result.Control() == ControlReturn {
+			result = result.WithControl(ControlNone)
 			break
 		}
 	}
@@ -159,5 +155,5 @@ func (vm *VM) evalIndirectCallExpr(e program.Expr) (Value, bool) {
 	// carrier (lowered by lowerMultiReturn — see ir/golower for the
 	// `__ret_<i>` keying contract). Pass it through unchanged so the
 	// caller's lowerMultiAssign reads it via OpIndex.
-	return result, true
+	return result
 }

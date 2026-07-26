@@ -72,7 +72,7 @@ func reconcileNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, nextId
 		appendReplaceSubtree(ops, next, nextIdx, path)
 		return
 	}
-	reconcileElementNodePair(ops, prev, next, pair.prev, pair.next, nextIdx, path, staticMask)
+	reconcileElementNodePair(ops, prev, next, pair.prev, pair.next, path, staticMask)
 }
 
 type resolvedNodePair struct {
@@ -128,7 +128,7 @@ func reconcileLeafNodePair(ops *[]PatchOp, pn, nn *ResolvedNode, next *ResolvedT
 	}
 }
 
-func reconcileElementNodePair(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, nextIdx int, path string, staticMask []bool) {
+func reconcileElementNodePair(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
 	if pn.Text != nn.Text && (pn.Text != "" || nn.Text != "") {
 		appendTextPatch(ops, path, nn.Text)
 	}
@@ -310,7 +310,13 @@ func reorderIndices(current, desired []string) []int {
 	return reorderedIndices(indexByKey, desired)
 }
 
+// stringSlicesEqual reports whether two string slices hold the same values in
+// the same order. It checks the lengths itself: the only caller guards them
+// today, but a future caller must not be able to turn this into an index panic.
 func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
 	for i := range left {
 		if left[i] != right[i] {
 			return false
@@ -349,26 +355,26 @@ func reorderedIndices(indexByKey map[string]int, desired []string) []int {
 // falls back to a plain index-positional diff.
 func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
 	pc, nc := pn.Children, nn.Children
-	prevHas, prevUnique := childIdentitySet(prev, pc)
-	nextHas, nextUnique := childIdentitySet(next, nc)
-
-	if !prevUnique || !nextUnique {
+	if !childIdentitiesUnique(prev, pc) || !childIdentitiesUnique(next, nc) {
 		reconcileIndexPositional(ops, prev, next, pc, nc, path, staticMask)
 		return
 	}
 
+	prevLookup := newChildIdentityLookup(prev, pc)
+	nextLookup := newChildIdentityLookup(next, nc)
+
 	i, j, d := 0, 0, 0
 	for i < len(pc) && j < len(nc) {
-		pid := childIdentity(prev, pc[i])
-		nid := childIdentity(next, nc[j])
+		pid, _ := childIdentity(prev, pc[i])
+		nid, _ := childIdentity(next, nc[j])
 		switch {
 		case pid == nid:
 			reconcileNodePair(ops, prev, next, pc[i], nc[j], childPath(path, d), staticMask)
 			i, j, d = i+1, j+1, d+1
-		case !nextHas[pid]:
+		case !nextLookup.has(pid):
 			appendRemoveChild(ops, childPath(path, d)) // prev child gone; successor shifts to d
 			i++
-		case !prevHas[nid]:
+		case !prevLookup.has(nid):
 			appendCreateSubtree(ops, next, nc[j], path, d) // next child is new
 			j, d = j+1, d+1
 		default:
@@ -405,39 +411,125 @@ func reconcileIndexPositional(ops *[]PatchOp, prev, next *ResolvedTree, pc, nc [
 	}
 }
 
-func childIdentity(tree *ResolvedTree, idx int) string {
-	n := resolvedNodeAt(tree, idx)
-	if n == nil {
-		return ""
-	}
-	if n.Key != "" {
-		return "k:" + n.Key
-	}
-	if n.HasSource && n.Source >= 0 {
-		return "s:" + strconv.Itoa(n.Source)
-	}
-	return ""
+// childID identifies one sibling for identity-aware diffing.
+//
+// A non-empty key identifies the node; otherwise the program node index does.
+// The struct is comparable, so identity checks need no string building. The
+// previous shape returned "k:"+Key or "s:"+itoa(Source), which allocated one
+// string per child, per side, on every event.
+type childID struct {
+	key    string
+	source int
 }
 
-// childIdentitySet returns the set of non-empty child identities and whether
-// every child had a distinct, non-empty identity (the precondition for
-// identity-aware diffing).
-func childIdentitySet(tree *ResolvedTree, indices []int) (map[string]bool, bool) {
+// childIdentity returns the identity of a sibling plus whether it has one.
+func childIdentity(tree *ResolvedTree, idx int) (childID, bool) {
+	n := resolvedNodeAt(tree, idx)
+	if n == nil {
+		return childID{}, false
+	}
+	if n.Key != "" {
+		return childID{key: n.Key}, true
+	}
+	if n.HasSource && n.Source >= 0 {
+		return childID{source: n.source1()}, true
+	}
+	return childID{}, false
+}
+
+// source1 shifts the program node index by one so that source 0 never collides
+// with the zero childID, which stands for "no identity".
+func (node *ResolvedNode) source1() int {
+	return node.Source + 1
+}
+
+// childIdentityScanLimit is the sibling count above which building a map beats
+// scanning the child list. Below it the scan wins, because it allocates nothing.
+//
+// Sibling groups with distinct identities are handwritten markup — a handful of
+// elements. A forEach row set shares one program source, so its identities
+// repeat and childIdentitiesUnique rejects it on the second child. A list long
+// enough to reach the map branch is therefore rare.
+const childIdentityScanLimit = 16
+
+// childIdentitiesUnique reports whether every child in indices carries a
+// distinct, non-empty identity. That is the precondition for identity-aware
+// diffing; a false answer sends the caller to the index-positional walk.
+func childIdentitiesUnique(tree *ResolvedTree, indices []int) bool {
+	// An empty list is trivially unique. A single child is NOT: it may carry no
+	// identity at all, and that must still send the caller to the index walk,
+	// because the identity walk would treat the missing identity as absent from
+	// the other side and emit a remove plus a create instead of an in-place
+	// reconcile.
 	if len(indices) == 0 {
-		return nil, true
+		return true
 	}
-	set := make(map[string]bool, len(indices))
-	unique := true
+	if len(indices) > childIdentityScanLimit {
+		seen := make(map[childID]struct{}, len(indices))
+		for _, idx := range indices {
+			id, ok := childIdentity(tree, idx)
+			if !ok {
+				return false
+			}
+			if _, exists := seen[id]; exists {
+				return false
+			}
+			seen[id] = struct{}{}
+		}
+		return true
+	}
+	for i, idx := range indices {
+		id, ok := childIdentity(tree, idx)
+		if !ok {
+			return false
+		}
+		for _, prior := range indices[:i] {
+			if other, priorOK := childIdentity(tree, prior); priorOK && other == id {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// childIdentityLookup answers "does this sibling list contain that identity".
+//
+// Short lists scan the tree directly and allocate nothing. Long lists build a map
+// once so the merge walk stays linear. The struct holds no inline array, so it
+// returns through the caller's frame with no heap traffic.
+type childIdentityLookup struct {
+	tree    *ResolvedTree
+	indices []int
+	set     map[childID]struct{} // nil in scanning mode
+}
+
+// newChildIdentityLookup prepares membership answers for one sibling list. Call
+// it only after childIdentitiesUnique has passed.
+func newChildIdentityLookup(tree *ResolvedTree, indices []int) childIdentityLookup {
+	if len(indices) <= childIdentityScanLimit {
+		return childIdentityLookup{tree: tree, indices: indices}
+	}
+	set := make(map[childID]struct{}, len(indices))
 	for _, idx := range indices {
-		id := childIdentity(tree, idx)
-		if id == "" || set[id] {
-			unique = false
-		}
-		if id != "" {
-			set[id] = true
+		if id, ok := childIdentity(tree, idx); ok {
+			set[id] = struct{}{}
 		}
 	}
-	return set, unique
+	return childIdentityLookup{tree: tree, indices: indices, set: set}
+}
+
+// has reports whether the sibling list carries id.
+func (l childIdentityLookup) has(id childID) bool {
+	if l.set != nil {
+		_, ok := l.set[id]
+		return ok
+	}
+	for _, idx := range l.indices {
+		if other, ok := childIdentity(l.tree, idx); ok && other == id {
+			return true
+		}
+	}
+	return false
 }
 
 func appendReplaceSubtree(ops *[]PatchOp, tree *ResolvedTree, nodeIdx int, path string) {

@@ -37,7 +37,7 @@ func TestOpSeqReturnsLastValue(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	got := vm.EvalWithFrame(7)
-	if got.Type != program.TypeInt || int(got.Num) != 3 {
+	if got.Type != program.TypeInt || int(got.num) != 3 {
 		t.Fatalf("OpSeq result = %+v, want IntVal(3)", got)
 	}
 }
@@ -56,11 +56,11 @@ func TestOpSeqWritesSignal(t *testing.T) {
 	sig := signal.New(IntVal(0))
 	vm.SetSignal("count", sig)
 	got := vm.EvalWithFrame(3)
-	if got.Type != program.TypeInt || int(got.Num) != 7 {
+	if got.Type != program.TypeInt || int(got.num) != 7 {
 		t.Fatalf("OpSeq with signal target = %+v, want IntVal(7)", got)
 	}
-	if int(sig.Get().Num) != 7 {
-		t.Fatalf("signal.Get = %f, want 7", sig.Get().Num)
+	if int(sig.Get().num) != 7 {
+		t.Fatalf("signal.Get = %f, want 7", sig.Get().num)
 	}
 }
 
@@ -77,7 +77,7 @@ func TestOpLocalDeclThenAssignThenGet(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	got := vm.EvalWithFrame(4)
-	if got.Type != program.TypeInt || int(got.Num) != 5 {
+	if got.Type != program.TypeInt || int(got.num) != 5 {
 		t.Fatalf("local x = %+v, want IntVal(5)", got)
 	}
 }
@@ -90,7 +90,7 @@ func TestOpLocalGetMissingProducesDiagnostic(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	got, diags := vm.EvalWithDiagnostics(0)
-	if got.Type != program.TypeAny || got.Num != 0 || got.Str != "" || got.Bool {
+	if got.Type != program.TypeAny || got.num != 0 || got.Text() != "" || got.Truth() {
 		t.Fatalf("missing local should return zero value, got %+v", got)
 	}
 	if len(diags) != 1 || diags[0].Code != "missing_local" {
@@ -130,17 +130,17 @@ func TestEvalWithFrameIsIsolated(t *testing.T) {
 	// Outer frame writes x = 1.
 	vm.frame = newFrame()
 	vm.Eval(2)
-	if v, ok := vm.frame.get("x"); !ok || int(v.Num) != 1 {
+	if v, ok := vm.frame.get("x"); !ok || int(v.num) != 1 {
 		t.Fatalf("outer frame x = %+v ok=%v, want IntVal(1)", v, ok)
 	}
 
 	// Inner EvalWithFrame writes x = 99. Outer x must remain 1.
 	inner := vm.EvalWithFrame(3)
-	if int(inner.Num) != 99 {
+	if int(inner.num) != 99 {
 		t.Fatalf("inner assign returned %+v, want IntVal(99)", inner)
 	}
 
-	if v, ok := vm.frame.get("x"); !ok || int(v.Num) != 1 {
+	if v, ok := vm.frame.get("x"); !ok || int(v.num) != 1 {
 		t.Fatalf("outer frame x after inner EvalWithFrame = %+v ok=%v, want IntVal(1)", v, ok)
 	}
 }
@@ -176,10 +176,10 @@ func TestOpAssignFallsThroughToSignal(t *testing.T) {
 
 	// Even with an active frame, signal takes precedence.
 	got := vm.EvalWithFrame(1)
-	if int(got.Num) != 42 {
+	if int(got.num) != 42 {
 		t.Fatalf("assign returned %+v, want IntVal(42)", got)
 	}
-	if int(sig.Get().Num) != 42 {
-		t.Fatalf("signal not updated: got %f, want 42", sig.Get().Num)
+	if int(sig.Get().num) != 42 {
+		t.Fatalf("signal not updated: got %f, want 42", sig.Get().num)
 	}
 }

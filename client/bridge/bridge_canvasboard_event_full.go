@@ -270,7 +270,7 @@ func (b *Bridge) canvasBoardApplyNav(adapter *vm.CanvasBoardAdapter, dir CanvasN
 	}
 	current := ""
 	if cur, ok := store.Get("$surface.event.selectedID"); ok {
-		current = cur.Str
+		current = cur.Text()
 	}
 	next := adapter.NavFrom(current, canvasNavDirString(dir))
 	if next == "" {

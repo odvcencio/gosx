@@ -17,7 +17,7 @@ func TestRegistryLookupRoundTrip(t *testing.T) {
 		if len(args) != 1 {
 			return Value{}, nil
 		}
-		return IntVal(int(args[0].Num) * 2), nil
+		return IntVal(int(args[0].num) * 2), nil
 	})
 
 	fn, ok := r.Lookup("test.Double")
@@ -28,8 +28,8 @@ func TestRegistryLookupRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("intrinsic err: %v", err)
 	}
-	if int(v.Num) != 14 {
-		t.Fatalf("test.Double(7) = %f, want 14", v.Num)
+	if int(v.num) != 14 {
+		t.Fatalf("test.Double(7) = %f, want 14", v.num)
 	}
 }
 
@@ -48,7 +48,7 @@ func TestOpCallDispatchesIntrinsic(t *testing.T) {
 	})
 	vm := NewVM(prog, nil)
 	got := vm.Eval(1)
-	if got.Type != program.TypeFloat || got.Num != 0 {
+	if got.Type != program.TypeFloat || got.num != 0 {
 		t.Fatalf("math.Sin(0) via OpCall = %+v, want FloatVal(0)", got)
 	}
 }

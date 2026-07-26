@@ -58,7 +58,7 @@ type tickRecorder struct {
 
 func (r *tickRecorder) Call(method string, args []vm.Value) (vm.Value, error) {
 	if method == "Tick" && len(args) == 1 {
-		*r.ticks = append(*r.ticks, args[0].Num)
+		*r.ticks = append(*r.ticks, args[0].Number())
 	}
 	return vm.ZeroValue(program.TypeAny), nil
 }
@@ -171,9 +171,9 @@ func (r *abRecorder) Call(method string, args []vm.Value) (vm.Value, error) {
 	}
 	switch method {
 	case "TickA":
-		*r.a = append(*r.a, args[0].Num)
+		*r.a = append(*r.a, args[0].Number())
 	case "TickB":
-		*r.b = append(*r.b, args[0].Num)
+		*r.b = append(*r.b, args[0].Number())
 	}
 	return vm.ZeroValue(program.TypeAny), nil
 }
@@ -352,15 +352,15 @@ func TestCanvasHostReceiver_DispatchesCanvasMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Width: %v", err)
 	}
-	if int(got.Num) != 1024 {
-		t.Errorf("Width = %v, want 1024", got.Num)
+	if int(got.Number()) != 1024 {
+		t.Errorf("Width = %v, want 1024", got.Number())
 	}
 
 	got, err = recv.Call("Height", nil)
 	if err != nil {
 		t.Fatalf("Height: %v", err)
 	}
-	if int(got.Num) != 768 {
-		t.Errorf("Height = %v, want 768", got.Num)
+	if int(got.Number()) != 768 {
+		t.Errorf("Height = %v, want 768", got.Number())
 	}
 }

@@ -47,23 +47,6 @@ func newClosureFrame(cr *closureRef) *frame {
 	}
 }
 
-// has reports whether name has been declared in this frame.
-// For closure frames, captured names report as declared whenever the
-// captured frame has them, so OpLocalGet hits the captured-bridge
-// path instead of producing a missing-frame diagnostic.
-func (f *frame) has(name string) bool {
-	if f == nil {
-		return false
-	}
-	if _, ok := f.locals[name]; ok {
-		return true
-	}
-	if f.captured != nil && f.captured.captured[name] && f.captured.frame != nil {
-		return f.captured.frame.has(name)
-	}
-	return false
-}
-
 // get returns the current value of name and whether it was declared.
 // Reads of undeclared locals return the zero Value with ok=false so
 // the caller can surface a missing_local diagnostic. For closure

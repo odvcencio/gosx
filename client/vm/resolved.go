@@ -58,7 +58,7 @@ func materializeDOMAttrs(attrs []ResolvedAttr, events []ResolvedEvent) []Resolve
 	for _, event := range events {
 		eventType := eventAttrType(event.Name)
 		out = append(out, ResolvedAttr{
-			Name:  "data-gosx-on-" + eventType,
+			Name:  eventMarkerAttr(eventType),
 			Value: event.Handler,
 		})
 		if eventType == "click" {
@@ -69,6 +69,36 @@ func materializeDOMAttrs(attrs []ResolvedAttr, events []ResolvedEvent) []Resolve
 		}
 	}
 	return out
+}
+
+// eventMarkerAttr returns the data-gosx-on-<type> attribute name the browser
+// reconciler reads.
+//
+// Every reconcile rebuilds the attribute list of every element that carries an
+// event, and the concatenation allocated a fresh string each time. The eight
+// names below cover every event the lowerer emits today, so the hot path now
+// returns a constant.
+func eventMarkerAttr(eventType string) string {
+	switch eventType {
+	case "click":
+		return "data-gosx-on-click"
+	case "input":
+		return "data-gosx-on-input"
+	case "change":
+		return "data-gosx-on-change"
+	case "submit":
+		return "data-gosx-on-submit"
+	case "keydown":
+		return "data-gosx-on-keydown"
+	case "keyup":
+		return "data-gosx-on-keyup"
+	case "focus":
+		return "data-gosx-on-focus"
+	case "blur":
+		return "data-gosx-on-blur"
+	default:
+		return "data-gosx-on-" + eventType
+	}
 }
 
 func eventAttrType(name string) string {

@@ -22,30 +22,44 @@ func ValueFromJSON(raw string) (Value, error) {
 
 // ToAny converts a VM value back into plain Go values suitable for JSON marshaling.
 func (v Value) ToAny() any {
-	if v.Items != nil {
-		items := make([]any, len(v.Items))
-		for i := range v.Items {
-			items[i] = v.Items[i].ToAny()
+	return v.toAnyAtDepth(0)
+}
+
+// toAnyAtDepth mirrors the depth guard in Value.String and
+// Value.Eq. A Value can contain itself, built through OpIndexSet or
+// OpFieldSet's in-place mutation. Such a Value must degrade to a
+// sentinel instead of recursing until the goroutine stack
+// overflows.
+func (v Value) toAnyAtDepth(depth int) any {
+	if depth > maxValueRecursionDepth {
+		return cycleSentinel
+	}
+	if v.isList() {
+		src := v.list()
+		items := make([]any, len(src))
+		for i := range src {
+			items[i] = src[i].toAnyAtDepth(depth + 1)
 		}
 		return items
 	}
-	if v.Fields != nil {
-		fields := make(map[string]any, len(v.Fields))
-		for key, field := range v.Fields {
-			fields[key] = field.ToAny()
+	if v.isMap() {
+		src := v.dict()
+		fields := make(map[string]any, len(src))
+		for key, field := range src {
+			fields[key] = field.toAnyAtDepth(depth + 1)
 		}
 		return fields
 	}
 
 	switch v.Type {
 	case program.TypeString:
-		return v.Str
+		return v.text()
 	case program.TypeBool:
-		return v.Bool
+		return v.truth()
 	case program.TypeInt:
-		return int(v.Num)
+		return int(v.num)
 	case program.TypeFloat:
-		return v.Num
+		return v.num
 	default:
 		return nil
 	}

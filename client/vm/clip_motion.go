@@ -224,13 +224,6 @@ func positioned(track *motion.Track) motion.Positioned {
 	}
 }
 
-func lastTime(times []float64) float64 {
-	if len(times) == 0 {
-		return 0
-	}
-	return times[len(times)-1]
-}
-
 // vec3Track builds an ArityVec3 keyframe track from a stride-3 channel.
 func vec3Track(ch rootengine.RenderAnimationChannel, ref, prop string, stride int) *motion.Track {
 	n := frameCount(ch, stride)

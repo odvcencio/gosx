@@ -37,7 +37,7 @@ func stringsUnary(fn func(string) string) Intrinsic {
 		if len(args) != 1 {
 			return Value{}, errors.New("strings: function expects 1 argument")
 		}
-		return StringVal(fn(args[0].Str)), nil
+		return StringVal(fn(args[0].text())), nil
 	}
 }
 
@@ -47,7 +47,7 @@ func stringsPredicate(fn func(string, string) bool) Intrinsic {
 		if len(args) != 2 {
 			return Value{}, errors.New("strings: predicate expects 2 arguments")
 		}
-		return BoolVal(fn(args[0].Str, args[1].Str)), nil
+		return BoolVal(fn(args[0].text(), args[1].text())), nil
 	}
 }
 
@@ -55,7 +55,7 @@ func intrinsicStringsSplit(args []Value) (Value, error) {
 	if len(args) != 2 {
 		return Value{}, errors.New("strings.Split expects 2 arguments")
 	}
-	parts := strings.Split(args[0].Str, args[1].Str)
+	parts := strings.Split(args[0].text(), args[1].text())
 	items := make([]Value, len(parts))
 	for i, p := range parts {
 		items[i] = StringVal(p)
@@ -68,14 +68,15 @@ func intrinsicStringsJoin(args []Value) (Value, error) {
 		return Value{}, errors.New("strings.Join expects 2 arguments")
 	}
 	src := args[0]
-	if src.Items == nil {
+	if !src.isList() {
 		return StringVal(""), nil
 	}
-	parts := make([]string, len(src.Items))
-	for i, v := range src.Items {
+	items := src.list()
+	parts := make([]string, len(items))
+	for i, v := range items {
 		parts[i] = v.String()
 	}
-	return StringVal(strings.Join(parts, args[1].Str)), nil
+	return StringVal(strings.Join(parts, args[1].text())), nil
 }
 
 func intrinsicStringsReplace(args []Value) (Value, error) {
@@ -84,9 +85,9 @@ func intrinsicStringsReplace(args []Value) (Value, error) {
 	// args; with 3 args we treat it as ReplaceAll (n = -1).
 	switch len(args) {
 	case 3:
-		return StringVal(strings.ReplaceAll(args[0].Str, args[1].Str, args[2].Str)), nil
+		return StringVal(strings.ReplaceAll(args[0].text(), args[1].text(), args[2].text())), nil
 	case 4:
-		return StringVal(strings.Replace(args[0].Str, args[1].Str, args[2].Str, int(args[3].Num))), nil
+		return StringVal(strings.Replace(args[0].text(), args[1].text(), args[2].text(), int(args[3].num))), nil
 	default:
 		return Value{}, errors.New("strings.Replace expects 3 or 4 arguments")
 	}
