@@ -1,6 +1,6 @@
 # GoSX Editor
 
-`github.com/odvcencio/gosx/editor` is an optional Markdown++ editor module with
+`m31labs.dev/gosx/editor` is an optional Markdown++ editor module with
 its own `go.mod`. It ships the server-rendered editor shell, toolbar model,
 text operations, and the native browser assets used for live preview, autosave,
 outline, gallery, and metadata stats.

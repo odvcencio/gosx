@@ -17,7 +17,7 @@ func Page() Node {
 				<span class="inline-code">go install</span>
 				command.
 			</p>
-			{CodeBlock("bash", "go install github.com/odvcencio/gosx/cmd/gosx@latest")}
+			{CodeBlock("bash", "go install m31labs.dev/gosx/cmd/gosx@latest")}
 			<p>
 				Verify the installation by running
 				<span class="inline-code">gosx --version</span>
@@ -59,7 +59,7 @@ func Page() Node {
 				<span class="inline-code">data</span>
 				binding.
 			</p>
-			{CodeBlock("go", "// app/page.server.go\npackage app\n\nimport (\n\t\"log\"\n\n\t\"github.com/odvcencio/gosx/route\"\n)\n\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\treturn map[string]any{\n\t\t\t\t\"greeting\": \"Hello from the server\",\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
+			{CodeBlock("go", "// app/page.server.go\npackage app\n\nimport (\n\t\"log\"\n\n\t\"m31labs.dev/gosx/route\"\n)\n\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\treturn map[string]any{\n\t\t\t\t\"greeting\": \"Hello from the server\",\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
 			{CodeBlock("gsx", "// app/page.gsx\npackage app\n\nfunc Page() Node {\n\treturn <div>\n\t\t<h1>{data.greeting}</h1>\n\t</div>\n}")}
 		</section>
 		<section id="dev-server" class="docs-section-block">

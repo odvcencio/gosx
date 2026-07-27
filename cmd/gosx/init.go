@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -88,6 +89,37 @@ func RunInit(dir string, module string, template string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "gosx init: created %s template in %s\n", template, absDir)
+
+	if err := tidyScaffold(absDir); err != nil {
+		fmt.Fprintf(os.Stderr, "gosx init: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gosx init: run `go mod tidy` in %s before `go run .`\n", absDir)
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "\nNext:\n  cd %s\n  go run .\n", dir)
+	return nil
+}
+
+// tidyScaffold resolves the new module's dependencies.
+//
+// The template writes go.mod and no go.sum, and a module with neither will not
+// build — `go run .` stops on the first missing sum entry and names a package
+// the author never mentioned. Every scaffolded project hit that, so the step
+// belongs here rather than in a paragraph of documentation that the error
+// message does not point to.
+//
+// A failure is not fatal. It usually means no network, and the project is
+// complete apart from this; the caller prints the command to run by hand.
+func tidyScaffold(dir string) error {
+	cmd := exec.Command("go", "mod", "tidy")
+	cmd.Dir = dir
+	// The generated go.mod carries its own replace directives, so an enclosing
+	// go.work would only make the result depend on where the project was
+	// created.
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go mod tidy: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
 	return nil
 }
 
@@ -126,10 +158,10 @@ func writeScaffoldFile(root string, rel string, contents string) error {
 func goModTemplate(module string) string {
 	template := fmt.Sprintf(`module %s
 
-go 1.25.1
+go %s
 
 require m31labs.dev/gosx v%s
-`, module, gosx.Version)
+`, module, gosx.MinGoVersion, gosx.Version)
 	if replacePath := localGoSXReplacePath(); replacePath != "" {
 		template += fmt.Sprintf("\nreplace m31labs.dev/gosx => %s\n", replacePath)
 		for _, line := range localGoSXDependencyReplaceLines(replacePath) {
@@ -139,27 +171,78 @@ require m31labs.dev/gosx v%s
 	return template
 }
 
+// localGoSXReplacePath reports the GoSX checkout this CLI was built from, so a
+// project scaffolded inside the repository builds against the working tree
+// instead of the released module.
+//
+// This must fail closed. runtime.Caller reports a build-time path, and for a
+// CLI installed with `go install` that path is the read-only module cache —
+// which satisfies every "does this look like GoSX" test on its own: the go.mod
+// declares the module, and env/ and session/ are both present. Answering yes
+// there writes an absolute path from the packager's machine into a stranger's
+// go.mod, leaking a home directory and breaking the project on every other
+// machine. Answering no wrongly costs a contributor one dogfooding shortcut.
+//
+// So the two checks below are the discriminating ones, and both must pass.
 func localGoSXReplacePath() string {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		return ""
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	goModPath := filepath.Join(repoRoot, "go.mod")
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
+	if !isGoSXCheckout(repoRoot) {
 		return ""
-	}
-	if !strings.Contains(string(data), "module m31labs.dev/gosx") {
-		return ""
-	}
-	for _, dir := range []string{"env", "session"} {
-		info, err := os.Stat(filepath.Join(repoRoot, dir))
-		if err != nil || !info.IsDir() {
-			return ""
-		}
 	}
 	return filepath.ToSlash(repoRoot)
+}
+
+// isGoSXCheckout reports whether dir is a GoSX working tree rather than an
+// extracted copy of the module. It is separated from localGoSXReplacePath so a
+// test can hand it a directory instead of depending on where the test binary
+// was compiled.
+func isGoSXCheckout(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil || !strings.Contains(string(data), "module m31labs.dev/gosx") {
+		return false
+	}
+	for _, sub := range []string{"env", "session"} {
+		info, err := os.Stat(filepath.Join(dir, sub))
+		if err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	if inModuleCache(dir) {
+		return false
+	}
+	// A working tree carries version-control metadata. In a linked worktree
+	// .git is a file rather than a directory, so accept either. An unpacked
+	// module zip has neither.
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return false
+	}
+	return true
+}
+
+// inModuleCache reports whether dir lives under the Go module cache.
+//
+// Two independent signals, because neither is reliable alone: GOMODCACHE is
+// unset in most environments, and the @version path element is a convention.
+// Either one firing is enough to refuse.
+func inModuleCache(dir string) bool {
+	if cache := os.Getenv("GOMODCACHE"); cache != "" {
+		if rel, err := filepath.Rel(filepath.Clean(cache), dir); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	// The cache stores every module as <path>@<version>. No checkout of GoSX
+	// itself is named that way.
+	for _, element := range strings.Split(filepath.ToSlash(dir), "/") {
+		if strings.Contains(element, "@") {
+			return true
+		}
+	}
+	return false
 }
 
 func localGoSXDependencyReplaceLines(repoRoot string) []string {

@@ -108,7 +108,7 @@ func Page() Node {
 				<span class="inline-code">signal</span>
 				package provides the signal types:
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/signal"
+			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
 	
 	// A writable signal with an initial value.
 	count := signal.New(0)
@@ -151,7 +151,7 @@ func Page() Node {
 			<p>
 				Computed signals derive their value from one or more source signals. They are re-evaluated lazily when any dependency changes:
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/signal"
+			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
 	
 	items  := signal.New([]string{"apple", "banana", "cherry"})
 	filter := signal.New("")

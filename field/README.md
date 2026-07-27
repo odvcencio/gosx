@@ -13,7 +13,7 @@ Package `field` provides a 3D vector field type with trilinear sampling, standar
 ## Quick start
 
 ```go
-import "github.com/odvcencio/gosx/field"
+import "m31labs.dev/gosx/field"
 
 // Build a velocity field analytically.
 v := field.FromFunc([3]int{32, 32, 32}, 3,
