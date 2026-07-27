@@ -494,7 +494,7 @@ test("the renderer reports each lighting issue once, not once per frame", () => 
 //
 // The three functions below are the shipped renderer text, lifted out of
 // 16a-scene-webgpu.js and evaluated in the sandbox with the closure variables
-// the renderer gives them. runtime.test.js uses the same technique for the
+// the renderer gives them. the runtime suite uses the same technique for the
 // cull helpers. This runs the real growth, retirement, packing and upload
 // logic against a recording fake device. It does NOT compile WGSL or draw.
 

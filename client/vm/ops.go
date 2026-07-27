@@ -26,7 +26,7 @@ const (
 
 	// PatchSetHTML is receive-only. No Go code emits it, and the reconciler
 	// never will: patch.js sanitizes kind 9 by assigning op.text as text
-	// content, so it cannot inject markup, and runtime.test.js pins that
+	// content, so it cannot inject markup, and the client/js runtime suite pins that
 	// behaviour. The constant stays because the JS applier still accepts the
 	// kind, and a protocol number must not be silently reused for something
 	// else. Removing it means removing the JS branch and its test in the same

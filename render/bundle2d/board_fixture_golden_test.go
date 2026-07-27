@@ -12,7 +12,7 @@ import (
 // The board-bundle wire fixtures under testdata/ are the Go↔JS golden
 // contract for the 16a WebGPU board path: the SAME bytes are asserted here
 // against bundle2d's marshal output and consumed by the node tests in
-// client/js/runtime.test.js (createBoardWebGPUHarness drives the real chunked
+// client/js/runtime-18-scene-webgpu-board-water.test.js (createBoardWebGPUHarness drives the real chunked
 // 16a renderer with them). If the wire shape changes intentionally, regenerate
 // with
 //
@@ -24,7 +24,7 @@ import (
 
 // boardFixtureRectsNodes is the two-rect board behind
 // testdata/board_fixture_rects.json (zoom 0.5 keeps the rects un-culled; see
-// the runtime.test.js fixture banner).
+// the runtime suite's fixture banner).
 func boardFixtureRectsNodes() []gosx.CanvasBoardNode {
 	return []gosx.CanvasBoardNode{
 		{ID: "card-a", Kind: "rect", X: 16, Y: 24, Width: 200, Height: 120, Color: "#3a86ff"},
@@ -82,7 +82,7 @@ func TestBoardGPUBundleGolden(t *testing.T) {
 				t.Fatalf("read golden (regenerate with GOSX_UPDATE_BOARD_FIXTURES=1): %v", err)
 			}
 			if got != string(want) {
-				t.Errorf("marshal output diverged from %s.\nIf intentional, regenerate with GOSX_UPDATE_BOARD_FIXTURES=1 and re-run the js suite (client/js/runtime.test.js reads the same file).\ngot  (%d bytes): %.300s…\nwant (%d bytes): %.300s…", path, len(got), got, len(want), want)
+				t.Errorf("marshal output diverged from %s.\nIf intentional, regenerate with GOSX_UPDATE_BOARD_FIXTURES=1 and re-run the js suite (client/js/runtime-18-scene-webgpu-board-water.test.js reads the same file).\ngot  (%d bytes): %.300s…\nwant (%d bytes): %.300s…", path, len(got), got, len(want), want)
 			}
 		})
 	}
