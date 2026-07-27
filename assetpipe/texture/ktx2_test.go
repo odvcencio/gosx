@@ -154,12 +154,19 @@ func TestVkFormatForRefusesBadChannelCounts(t *testing.T) {
 	}
 }
 
-// TestKTX2WriterRefusesBlockCompressedFormats states the scope boundary in a
-// test, so nobody "fixes" it by emitting an empty BC7 container.
+// TestKTX2WriterRefusesBlockCompressedFormats states the scope boundary that
+// still holds, so nobody "fixes" it by emitting an empty ASTC container.
+//
+// The BC family left this list when the encoders landed: codec_bcn.go and
+// codec_bc7.go fill BC1, BC3, BC4, BC5 and BC7 payloads, and the container
+// writer describes all five. ASTC and ETC2 have no GoSX encoder, so a container
+// claiming one would hold nothing.
 func TestKTX2WriterRefusesBlockCompressedFormats(t *testing.T) {
 	for _, format := range []int{
-		ktx2.VkFormatBC7SRGBBlock,
 		ktx2.VkFormatASTC4x4SRGBBlock,
+		ktx2.VkFormatASTC6x6UnormBlock,
+		ktx2.VkFormatASTC8x8SRGBBlock,
+		ktx2.VkFormatETC2R8G8B8UnormBlock,
 		ktx2.VkFormatETC2R8G8B8A8SRGBBlock,
 	} {
 		img := &ktx2.Image{

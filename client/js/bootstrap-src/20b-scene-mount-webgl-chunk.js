@@ -21,12 +21,28 @@
   //      on window.__gosx_scene3d_webgl_api. It is null until the chunk lands.
   //
   // Use sceneWebGLRendererFactory as the readiness test. Never test
-  // createSceneWebGLRenderer: that is the legacy vertex-color renderer in
-  // 10-runtime-scene-core.js, it stays in the base chunk, and treating it as
-  // "WebGL is ready" would silently downgrade a PBR scene.
+  // sceneLegacyWebGLRendererFactory: that returns the legacy vertex-colour
+  // renderer, and treating it as "WebGL is ready" would silently downgrade a
+  // PBR scene.
   function sceneWebGLChunkAPI() {
     return typeof window !== "undefined" && window.__gosx_scene3d_webgl_api
       ? window.__gosx_scene3d_webgl_api
+      : null;
+  }
+
+  // sceneLegacyWebGLRendererFactory resolves the legacy vertex-colour
+  // renderer. It lived in 10-runtime-scene-core.js, so this file used to call
+  // it lexically. It now ships in 16e-scene-webgl-legacy.js inside the WebGL
+  // chunk, which lands after this file, so the lookup must happen at call
+  // time. 16e assigns the function onto window.__gosx_scene3d_api when it
+  // runs; bootstrap.js keeps the lexical binding and wins first.
+  function sceneLegacyWebGLRendererFactory() {
+    if (typeof createSceneWebGLRenderer === "function") {
+      return createSceneWebGLRenderer;
+    }
+    const api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
+    return api && typeof api.createSceneWebGLRenderer === "function"
+      ? api.createSceneWebGLRenderer
       : null;
   }
 
@@ -83,7 +99,11 @@
         if (pbrRenderer) { return { renderer: pbrRenderer, fallbackReason: fallbackReason, degraded: [] }; }
       }
     }
-    const webglRenderer = createSceneWebGLRenderer(canvas, {
+    const legacyFactory = sceneLegacyWebGLRendererFactory();
+    if (!legacyFactory) {
+      return null;
+    }
+    const webglRenderer = legacyFactory(canvas, {
       antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
       powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
     });
@@ -1598,6 +1618,229 @@
   // Expose the animation lazy-loader for consumers that need to drive
   // keyframe or skeletal clips from outside the main scene mount.
   window.__gosx_ensure_scene3d_animation_loaded = ensureAnimationFeatureLoaded;
+
+  // Cached promise for the compute sub-feature chunk. It carries the GPU
+  // particle simulation, the CPU particle fallback, the particle force
+  // registry and the GPU instanced-cull system. A scene with one cube and one
+  // directional light runs none of them, and used to pay 8_772 gzip bytes for
+  // all of them. See 26k-feature-scene3d-compute-prefix.js.
+  var sceneComputeFeaturePromise = null;
+
+  function ensureComputeFeatureLoaded() {
+    if (window.__gosx_scene3d_compute_api) {
+      return Promise.resolve(window.__gosx_scene3d_compute_api);
+    }
+    // bootstrap.js keeps 16b-scene-compute.js inline, so the API object
+    // already carries the factory and no fetch is needed.
+    if (window.__gosx_scene3d_api
+      && typeof window.__gosx_scene3d_api.createSceneParticleSystem === "function") {
+      return Promise.resolve(window.__gosx_scene3d_api);
+    }
+    if (sceneComputeFeaturePromise) {
+      return sceneComputeFeaturePromise;
+    }
+    sceneComputeFeaturePromise = new Promise(function(resolve, reject) {
+      var url = resolveSceneSubFeatureURL("gosxScene3dComputeUrl", "");
+      if (!url) {
+        // The server did not advertise the chunk, so this page's scene
+        // declared no particles and no instanced meshes. Refuse rather than
+        // guess a path: a 404 here would look like a broken deployment.
+        sceneComputeFeaturePromise = null;
+        reject(new Error("scene3d-compute chunk URL was not advertised"));
+        return;
+      }
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-compute";
+      s.src = url;
+      gosxApplyCurrentScriptNonce(s);
+      s.onload = function() {
+        if (window.__gosx_scene3d_compute_api) {
+          resolve(window.__gosx_scene3d_compute_api);
+        } else {
+          sceneComputeFeaturePromise = null;
+          reject(new Error("scene3d-compute chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneComputeFeaturePromise = null; // allow retry on the next attempt
+        reject(new Error("failed to load scene3d-compute chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    return sceneComputeFeaturePromise;
+  }
+
+  // Expose the compute lazy-loader so a runtime program that adds particles
+  // after mount can await the chunk instead of dropping the first frames.
+  window.__gosx_ensure_scene3d_compute_loaded = ensureComputeFeatureLoaded;
+
+  // sceneNeedsComputeFeature reports whether a scene state reaches the compute
+  // chunk. Two paths do:
+  //
+  //   1. A compute particle system. Both renderers call
+  //      createSceneParticleSystem for each entry.
+  //   2. An instanced mesh. The WebGPU renderer runs the GPU frustum cull for
+  //      instanced meshes, and that lives in the same file.
+  //
+  // Be permissive on purpose. A chunk that is needed and not fetched is a
+  // dropped particle system; a chunk fetched and unused costs one request the
+  // page would otherwise not make.
+  function sceneNeedsComputeFeature(state) {
+    if (!state) return false;
+    if (Array.isArray(state.computeParticles) && state.computeParticles.length > 0) {
+      return true;
+    }
+    return Array.isArray(state.instancedMeshes) && state.instancedMeshes.length > 0;
+  }
+
+  // requestSceneComputeFeatureIfNeeded starts the fetch without awaiting it.
+  // A runtime program or a scene command can add a particle system after the
+  // mount settled, and the renderer bridges return null until the chunk lands.
+  // The scene then draws its particles one or two frames later instead of
+  // throwing.
+  function requestSceneComputeFeatureIfNeeded(state) {
+    if (!sceneNeedsComputeFeature(state)) return;
+    try {
+      ensureComputeFeatureLoaded().catch(function() {});
+    } catch (_error) {}
+  }
+
+  // settleSceneComputeFeature awaits the compute chunk before the first
+  // render when the scene needs it. Await it next to settlePreferredWebGLBackend
+  // so the first frame draws the particles instead of skipping them.
+  async function settleSceneComputeFeature(state) {
+    if (!sceneNeedsComputeFeature(state)) {
+      return false;
+    }
+    try {
+      return !!(await ensureComputeFeatureLoaded());
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D compute systems:",
+        error && error.message ? error.message : error);
+      return false;
+    }
+  }
+
+  // Cached promise for the decompress sub-feature chunk. It carries the
+  // quantized-array decoder, the progressive and level-of-detail ladders, and
+  // the procedural point generators. See
+  // 26l-feature-scene3d-decompress-prefix.js.
+  var sceneDecompressFeaturePromise = null;
+
+  // sceneDecompressAPIFunction resolves one decompress entry point. The
+  // monolith keeps 11a and 11b inline, so the lookup finds the function on the
+  // API object either way: 10-runtime-scene-core.js publishes the inline copy
+  // there, and the chunk suffix publishes the fetched copy to the same place.
+  function sceneDecompressAPIFunction(name) {
+    var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
+    return api && typeof api[name] === "function" ? api[name] : null;
+  }
+
+  function ensureDecompressFeatureLoaded() {
+    if (sceneDecompressAPIFunction("sceneDecompressProps")) {
+      return Promise.resolve(window.__gosx_scene3d_api);
+    }
+    if (sceneDecompressFeaturePromise) {
+      return sceneDecompressFeaturePromise;
+    }
+    sceneDecompressFeaturePromise = new Promise(function(resolve, reject) {
+      var url = resolveSceneSubFeatureURL("gosxScene3dDecompressUrl", "");
+      if (!url) {
+        // The server did not advertise the chunk, so this page's scene carries
+        // no compressed array and no generator descriptor. Refuse rather than
+        // guess a path: a 404 here would look like a broken deployment.
+        sceneDecompressFeaturePromise = null;
+        reject(new Error("scene3d-decompress chunk URL was not advertised"));
+        return;
+      }
+      var s = document.createElement("script");
+      s.async = false;
+      s.dataset.gosxScript = "feature-scene3d-decompress";
+      s.src = url;
+      gosxApplyCurrentScriptNonce(s);
+      s.onload = function() {
+        if (sceneDecompressAPIFunction("sceneDecompressProps")) {
+          resolve(window.__gosx_scene3d_api);
+        } else {
+          sceneDecompressFeaturePromise = null;
+          reject(new Error("scene3d-decompress chunk loaded but did not publish API"));
+        }
+      };
+      s.onerror = function() {
+        sceneDecompressFeaturePromise = null; // allow retry on the next attempt
+        reject(new Error("failed to load scene3d-decompress chunk"));
+      };
+      document.head.appendChild(s);
+    });
+    return sceneDecompressFeaturePromise;
+  }
+
+  window.__gosx_ensure_scene3d_decompress_loaded = ensureDecompressFeatureLoaded;
+
+  // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
+  // animation-channel record carries something only the decompress chunk can
+  // read. The field names match the writers in 11a-scene-decompress.js.
+  function sceneEntryNeedsDecompress(entry) {
+    if (!entry || typeof entry !== "object") return false;
+    return Boolean(entry.generator
+      || entry.compressedPositions
+      || entry.compressedSizes
+      || entry.compressedTransforms
+      || entry.compressedTimes
+      || entry.compressedValues
+      || entry.previewPositions
+      || entry.previewSizes
+      || entry.previewTransforms
+      || entry.previewTimes
+      || entry.previewValues);
+  }
+
+  function sceneListNeedsDecompress(list) {
+    if (!Array.isArray(list)) return false;
+    for (var i = 0; i < list.length; i += 1) {
+      if (sceneEntryNeedsDecompress(list[i])) return true;
+    }
+    return false;
+  }
+
+  // sceneNeedsDecompressFeature inspects the RAW props, not the scene state,
+  // because createSceneState calls sceneDecompressProps before it builds the
+  // state. A compression policy alone is enough: progressive and
+  // level-of-detail mode both drive the chunk on every frame.
+  function sceneNeedsDecompressFeature(props) {
+    if (!props || typeof props !== "object") return false;
+    if (props.compression) return true;
+    var scene = props.scene && typeof props.scene === "object" ? props.scene : null;
+    var points = (scene && scene.points) || props.points;
+    if (sceneListNeedsDecompress(points)) return true;
+    var meshes = (scene && scene.instancedMeshes) || props.instancedMeshes;
+    if (sceneListNeedsDecompress(meshes)) return true;
+    var animations = (scene && scene.animations) || props.animations;
+    if (!Array.isArray(animations)) return false;
+    for (var i = 0; i < animations.length; i += 1) {
+      var clip = animations[i];
+      if (clip && sceneListNeedsDecompress(clip.channels)) return true;
+    }
+    return false;
+  }
+
+  // settleSceneDecompressFeature awaits the decompress chunk BEFORE
+  // createSceneState runs. createSceneState calls sceneDecompressProps as its
+  // first statement, so a late chunk would leave every compressed array
+  // undecoded and the scene would draw nothing.
+  async function settleSceneDecompressFeature(props) {
+    if (!sceneNeedsDecompressFeature(props)) {
+      return false;
+    }
+    try {
+      return !!(await ensureDecompressFeatureLoaded());
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D compressed data:",
+        error && error.message ? error.message : error);
+      return false;
+    }
+  }
 
   function publishSceneModelAssetStatus(mount, status, asset, cached, error) {
     if (!mount) return;

@@ -33,5 +33,19 @@
       // WebGL renderer recomputes them per frame to skip unchanged uploads.
       hashLightContent: typeof hashLightContent === "function" ? hashLightContent : undefined,
       hashEnvironmentContent: typeof hashEnvironmentContent === "function" ? hashEnvironmentContent : undefined,
+      // 10-runtime-scene-core.js — typed float coercion. The legacy renderer
+      // moved to 16e-scene-webgl-legacy.js, which now runs in the WebGL chunk,
+      // but this helper stayed here because mesh and animation normalization
+      // call it on every backend.
+      sceneTypedFloatArray: typeof sceneTypedFloatArray === "function" ? sceneTypedFloatArray : undefined,
+      // 13-scene-material.js and 15-scene-draw-plan.js — the material and
+      // draw-pass helpers the legacy renderer reads. They had no consumer
+      // outside this IIFE until 16e moved out of the base chunk.
+      sceneFallbackMaterialData: typeof sceneFallbackMaterialData === "function" ? sceneFallbackMaterialData : undefined,
+      sceneMaterialEmissive: typeof sceneMaterialEmissive === "function" ? sceneMaterialEmissive : undefined,
+      sceneMaterialOpacity: typeof sceneMaterialOpacity === "function" ? sceneMaterialOpacity : undefined,
+      compareSceneWorldPassEntries: typeof compareSceneWorldPassEntries === "function" ? compareSceneWorldPassEntries : undefined,
+      sceneWorldObjectRenderPass: typeof sceneWorldObjectRenderPass === "function" ? sceneWorldObjectRenderPass : undefined,
+      sceneWorldObjectRenderable: typeof sceneWorldObjectRenderable === "function" ? sceneWorldObjectRenderable : undefined,
     });
   }

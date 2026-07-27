@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 )
@@ -39,6 +40,29 @@ type Manifest struct {
 
 	// Runtime points to the shared island WASM runtime.
 	Runtime RuntimeRef `json:"runtime"`
+
+	// TextureVariants maps one source asset path onto the built encodings of
+	// that texture. The client reads it to swap an authored image URI for a
+	// block-compressed file the live device can upload.
+	//
+	// The map carries built files only. A planned variant names work the
+	// pipeline did not do, so publishing one would produce a 404 in the
+	// browser. SetTextureVariants fills the map from a variant manifest, which
+	// assetpipe.BuildVariantManifest already filtered on the built state.
+	TextureVariants map[string][]ManifestVariantRef `json:"textureVariants,omitempty"`
+}
+
+// ManifestVariantRef is one built asset variant a client may choose.
+//
+// The four fields are exactly what a selector needs and nothing more: the URI
+// to fetch, the delivery tier, the byte cost that breaks a tier tie, and the
+// capability tokens the consumer must hold. A client that lacks one required
+// token must keep the source URI.
+type ManifestVariantRef struct {
+	URI                  string   `json:"uri"`
+	Quality              string   `json:"quality,omitempty"`
+	Bytes                int64    `json:"bytes,omitempty"`
+	RequiredCapabilities []string `json:"requiredCapabilities,omitempty"`
 }
 
 // EngineEntry describes a single engine instance.
@@ -448,6 +472,50 @@ func (m *Manifest) AddController(config controller.Config) string {
 // SetClientIdentity configures bootstrap-owned client identity state.
 func (m *Manifest) SetClientIdentity(config ClientIdentityConfig) {
 	m.ClientIdentity = &config
+}
+
+// SetTextureVariants copies the texture rows of a variant manifest onto the page
+// manifest, so the client can select a variant without a second fetch.
+//
+// Only rows whose Kind is "texture" travel. An environment map, a model or an
+// audio track needs a different consumer, and a texture selector that saw one
+// could hand a texture binding a file that holds no pixels.
+//
+// The function refuses a variant with an empty URI. Everything else it copies
+// verbatim, because assetpipe.BuildVariantManifest already dropped the variants
+// the pipeline planned but never built.
+func (m *Manifest) SetTextureVariants(manifest assetpipe.VariantManifest) {
+	out := map[string][]ManifestVariantRef{}
+	for _, asset := range manifest.Assets {
+		path := strings.TrimSpace(asset.Path)
+		if path == "" {
+			continue
+		}
+		var refs []ManifestVariantRef
+		for _, variant := range asset.Variants {
+			if !strings.EqualFold(strings.TrimSpace(variant.Kind), "texture") {
+				continue
+			}
+			uri := strings.TrimSpace(variant.URI)
+			if uri == "" {
+				continue
+			}
+			refs = append(refs, ManifestVariantRef{
+				URI:                  uri,
+				Quality:              variant.Quality,
+				Bytes:                variant.Bytes,
+				RequiredCapabilities: append([]string(nil), variant.RequiredCapabilities...),
+			})
+		}
+		if len(refs) > 0 {
+			out[path] = refs
+		}
+	}
+	if len(out) == 0 {
+		m.TextureVariants = nil
+		return
+	}
+	m.TextureVariants = out
 }
 
 func controllerID(n int) string {

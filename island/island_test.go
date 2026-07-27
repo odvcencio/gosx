@@ -1206,3 +1206,192 @@ func TestTextlayoutChunkIsNeverEmittedEagerly(t *testing.T) {
 		t.Errorf("text-layout chunk URL not resolved from the manifest: %q", got)
 	}
 }
+
+// scene3DChunkGateRenderer builds a renderer with every Scene3D chunk resolved
+// from a manifest, then registers one GoSXScene3D engine with the given props.
+// It returns the rendered bootstrap script markup.
+func scene3DChunkGateRenderer(t *testing.T, props any) string {
+	t.Helper()
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                         buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                  buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:           buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
+		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(props)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{
+		Name:  "GoSXScene3D",
+		Kind:  engine.KindSurface,
+		Props: raw,
+	}, gosx.Text(""))
+	return gosx.RenderHTML(r.BootstrapScript())
+}
+
+const (
+	scene3DComputeURLAttr    = `data-gosx-scene3d-compute-url="/gosx/assets/runtime/bootstrap-feature-scene3d-compute.js"`
+	scene3DDecompressURLAttr = `data-gosx-scene3d-decompress-url="/gosx/assets/runtime/bootstrap-feature-scene3d-decompress.js"`
+)
+
+// TestMinimalSceneGetsNoComputeOrDecompressURL is the headline of the "no free
+// lunch" rule. A cube and one directional light run no particle simulation, no
+// GPU cull, no quantized decoder and no point generator. The page must not
+// advertise either chunk, because the runtime refuses to guess a path and can
+// therefore never fetch bytes this scene cannot use.
+func TestMinimalSceneGetsNoComputeOrDecompressURL(t *testing.T) {
+	markup := scene3DChunkGateRenderer(t, map[string]any{
+		"scene": map[string]any{
+			"objects": []map[string]any{{"id": "cube", "kind": "box"}},
+			"lights":  []map[string]any{{"id": "key", "kind": "directional"}},
+		},
+	})
+	if strings.Contains(markup, "bootstrap-feature-scene3d-compute") {
+		t.Errorf("a cube and a directional light must not advertise the compute chunk:\n%s", markup)
+	}
+	if strings.Contains(markup, "bootstrap-feature-scene3d-decompress") {
+		t.Errorf("a cube and a directional light must not advertise the decompress chunk:\n%s", markup)
+	}
+}
+
+// TestSceneWithParticlesReceivesTheComputeURL pins the other half of the gate.
+// A chunk that is needed and not advertised is a dropped feature, not a smaller
+// page: the runtime rejects rather than guesses, so a missing URL means the
+// particles never appear.
+func TestSceneWithParticlesReceivesTheComputeURL(t *testing.T) {
+	markup := scene3DChunkGateRenderer(t, map[string]any{
+		"scene": map[string]any{
+			"computeParticles": []map[string]any{{"id": "sparks", "count": 512}},
+		},
+	})
+	if !strings.Contains(markup, scene3DComputeURLAttr) {
+		t.Errorf("a scene with a compute particle system must advertise the compute chunk:\n%s", markup)
+	}
+	if strings.Contains(markup, "bootstrap-feature-scene3d-decompress") {
+		t.Errorf("plain particle arrays need no decompress chunk:\n%s", markup)
+	}
+}
+
+// TestSceneWithInstancedMeshReceivesTheComputeURL covers the second path into
+// the compute chunk. The WebGPU renderer culls instanced meshes on the GPU with
+// a kernel that ships in the same file as the particle systems.
+func TestSceneWithInstancedMeshReceivesTheComputeURL(t *testing.T) {
+	markup := scene3DChunkGateRenderer(t, map[string]any{
+		"scene": map[string]any{
+			"instancedMeshes": []map[string]any{{"id": "meteors", "instanceCount": 4096}},
+		},
+	})
+	if !strings.Contains(markup, scene3DComputeURLAttr) {
+		t.Errorf("a scene with an instanced mesh must advertise the compute chunk:\n%s", markup)
+	}
+}
+
+// TestSceneWithCompressedPointsReceivesTheDecompressURL pins the decompress
+// gate. createSceneState decodes every compressed array as its first statement,
+// so a scene that carries one and gets no URL renders nothing at all.
+func TestSceneWithCompressedPointsReceivesTheDecompressURL(t *testing.T) {
+	markup := scene3DChunkGateRenderer(t, map[string]any{
+		"scene": map[string]any{
+			"points": []map[string]any{{
+				"id":                  "galaxy",
+				"compressedPositions": []map[string]any{{"packed": "AAAA", "dim": 3}},
+			}},
+		},
+	})
+	if !strings.Contains(markup, scene3DDecompressURLAttr) {
+		t.Errorf("a scene with a compressed point layer must advertise the decompress chunk:\n%s", markup)
+	}
+	if strings.Contains(markup, "bootstrap-feature-scene3d-compute") {
+		t.Errorf("a point layer is not a particle system and needs no compute chunk:\n%s", markup)
+	}
+}
+
+// TestSceneWithGeneratedPointsReceivesTheDecompressURL covers the second path
+// into the decompress chunk: the procedural point generators ship beside the
+// decoder because each calls the other.
+func TestSceneWithGeneratedPointsReceivesTheDecompressURL(t *testing.T) {
+	markup := scene3DChunkGateRenderer(t, map[string]any{
+		"scene": map[string]any{
+			"points": []map[string]any{{
+				"id":        "starfield",
+				"count":     20000,
+				"generator": map[string]any{"kind": "box", "seed": 7},
+			}},
+		},
+	})
+	if !strings.Contains(markup, scene3DDecompressURLAttr) {
+		t.Errorf("a generated point layer must advertise the decompress chunk:\n%s", markup)
+	}
+}
+
+// TestCompressionPolicyAloneReceivesTheDecompressURL covers progressive and
+// level-of-detail mode. Both drive the chunk after the first frame even when
+// the first payload arrives as plain float arrays.
+func TestCompressionPolicyAloneReceivesTheDecompressURL(t *testing.T) {
+	markup := scene3DChunkGateRenderer(t, map[string]any{
+		"compression": map[string]any{"lod": true, "lodThreshold": 20},
+		"scene": map[string]any{
+			"points": []map[string]any{{"id": "cloud", "positions": []float64{0, 0, 0}}},
+		},
+	})
+	if !strings.Contains(markup, scene3DDecompressURLAttr) {
+		t.Errorf("a level-of-detail policy must advertise the decompress chunk:\n%s", markup)
+	}
+}
+
+// TestGatedScene3DChunksAreNeverEmittedEagerly is the sibling of
+// TestTextlayoutChunkIsNeverEmittedEagerly. An eager script tag or a preload
+// hint would download the chunk on every page and cancel the saving silently:
+// no size budget measures per-page transfer, so nothing else can see it.
+func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                         buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                  buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:           buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
+		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"compression": map[string]any{"lod": true},
+		"scene": map[string]any{
+			"computeParticles": []map[string]any{{"id": "sparks"}},
+			"points":           []map[string]any{{"id": "cloud", "generator": map[string]any{"kind": "box"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: raw}, gosx.Text(""))
+	scripts := gosx.RenderHTML(r.BootstrapScript())
+	hints := gosx.RenderHTML(r.PreloadHints())
+
+	// Both URLs must be advertised for this scene.
+	for _, want := range []string{scene3DComputeURLAttr, scene3DDecompressURLAttr} {
+		if !strings.Contains(scripts, want) {
+			t.Fatalf("the gate did not advertise %s:\n%s", want, scripts)
+		}
+	}
+	for _, chunk := range []string{
+		"bootstrap-feature-scene3d-compute.js",
+		"bootstrap-feature-scene3d-decompress.js",
+	} {
+		if strings.Contains(scripts, `src="/gosx/assets/runtime/`+chunk+`"`) {
+			t.Errorf("%s is loaded eagerly as a script tag, which cancels the split:\n%s", chunk, scripts)
+		}
+		if strings.Contains(hints, chunk) {
+			t.Errorf("%s is emitted as a preload hint, which downloads it on every page:\n%s", chunk, hints)
+		}
+	}
+}

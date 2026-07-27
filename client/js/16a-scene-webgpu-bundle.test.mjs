@@ -45,7 +45,9 @@ test("pipeline validation helpers cross the gated WebGPU chunk boundary", () => 
     );
     assert.match(
       computeBridgeSource,
-      new RegExp(`var ${helper} = sceneApi\\.${helper};`),
+      new RegExp(
+        `(?:var ${helper} = sceneApi\\.${helper};|function ${helper}\\([\\s\\S]*api\\.${helper})`,
+      ),
       `${helper} must be imported by the WebGPU feature chunk`,
     );
   }
