@@ -18,8 +18,10 @@
 //   - Half-float and float formats: R16F, RG16F, RGBA16F, R32F, RG32F,
 //     and RGBA32F. The asset pipeline writes prefiltered environment maps
 //     as RGBA16F and the split-sum lookup table as RG16F.
-//   - Block-compressed pass-through formats: BC7, ASTC 4x4 / 6x6 / 8x8,
-//     and ETC2 RGB/RGBA8, including sRGB variants.
+//   - Block-compressed pass-through formats: BC1 (with and without alpha),
+//     BC3, BC4, BC5, BC7, ASTC 4x4 / 6x6 / 8x8, and ETC2 RGB/RGBA8, including
+//     the sRGB variants each format has. BC4 and BC5 have no sRGB variant,
+//     because they store data and not colour.
 //   - Zlib (DEFLATE) supercompression (scheme 3), via compress/zlib.
 //   - Arbitrary mip level counts.
 //   - 2D, 2D array, cubemap, cubemap-array, and 3D texture metadata.
@@ -38,13 +40,22 @@
 // the largest. It supports the uncompressed formats above, with either
 // plain payloads or zlib supercompression.
 //
-// Encode refuses block-compressed formats with ErrEncodeBlockCompressed,
-// which wraps ErrEncodeFormat. A Basic Data Format Descriptor has to describe
-// the compression scheme channel by channel, and this package has no BC7,
-// ASTC, or ETC2 encoder to feed it. Adding a block encoder, not the container,
-// is the work that unlocks those formats. The refusal is deliberate: a
-// container that names BC7 over a payload nobody compressed would upload as
-// noise.
+// Encode also writes the BC block family: BC1, BC3, BC4, BC5, and BC7. The
+// descriptor of each one was checked byte for byte against a file KTX-Software
+// 4.4.2 wrote for the same VkFormat; testdata holds those files and
+// TestBlockDescriptorMatchesKhronosGolden compares them.
+//
+// Encode refuses a block format it has no descriptor for, with
+// ErrEncodeBlockCompressed, which wraps ErrEncodeFormat. ASTC and ETC2 sit there
+// today: no GoSX encoder writes those payloads, and a container that named ASTC
+// over a payload nobody compressed would upload as noise. Adding an encoder, not
+// the container, is the work that unlocks them.
+//
+// Encode refuses a level-0 size that is not a whole number of texel blocks, with
+// ErrEncodeBlockAlignment. WebGPU createTexture validates the same rule, so a
+// file that broke it would fail in the browser instead of at build time. Mip
+// levels below the block size stay legal: the GPU derives them and pads the last
+// block.
 //
 // A three-byte texel makes rows of the last two mip levels unaligned to four
 // bytes. A WebGL2 consumer of an RGB8 container must set UNPACK_ALIGNMENT to 1

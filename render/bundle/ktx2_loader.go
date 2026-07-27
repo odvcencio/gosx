@@ -88,6 +88,19 @@ func (r *Renderer) RegisterKTX2Texture(key string, data []byte) error {
 	return nil
 }
 
+// KTX2UploadFormat reports the GPU format this loader uploads one KTX2
+// VkFormat as. The second value is false when the loader cannot upload it.
+//
+// The function exists so a producer can prove it emits nothing this loader
+// rejects. The asset pipeline used to emit r8unorm containers that the loader
+// refused, and nothing noticed, because the two lists lived in two packages
+// with no test across them. TestEveryEmittedFormatUploads in
+// assetpipe/texture now closes that gap.
+func KTX2UploadFormat(vkFormat int) (gpu.TextureFormat, bool) {
+	format := ktx2FormatToGPU(vkFormat)
+	return format, format != gpu.FormatUndefined
+}
+
 // ktx2FormatToGPU maps parsed KTX2 VkFormat values to gpu.TextureFormat.
 // Unknown formats return FormatUndefined so the loader fails with a clear
 // error rather than creating a texture in the wrong format.
@@ -101,6 +114,29 @@ func ktx2FormatToGPU(vk int) gpu.TextureFormat {
 		return gpu.FormatBGRA8Unorm
 	case ktx2.VkFormatB8G8R8A8SRGB:
 		return gpu.FormatBGRA8UnormSRGB
+	// The texture pipeline has emitted r8unorm and rg8unorm containers since it
+	// learned to prune a constant alpha channel. This loader could not upload
+	// them, so the native renderer failed on a file the build produced.
+	// TestEveryPipelineFormatUploads now covers the whole emitted set.
+	case ktx2.VkFormatR8Unorm:
+		return gpu.FormatR8Unorm
+	case ktx2.VkFormatR8G8Unorm:
+		return gpu.FormatRG8Unorm
+	// BC1 without alpha and BC1 with one alpha bit share one WebGPU format.
+	// An opaque BC1 payload decodes the same either way, because the encoder
+	// never emits the transparent index.
+	case ktx2.VkFormatBC1RGBUnormBlock, ktx2.VkFormatBC1RGBAUnormBlock:
+		return gpu.FormatBC1RGBAUnorm
+	case ktx2.VkFormatBC1RGBSRGBBlock, ktx2.VkFormatBC1RGBASRGBBlock:
+		return gpu.FormatBC1RGBAUnormSRGB
+	case ktx2.VkFormatBC3UnormBlock:
+		return gpu.FormatBC3RGBAUnorm
+	case ktx2.VkFormatBC3SRGBBlock:
+		return gpu.FormatBC3RGBAUnormSRGB
+	case ktx2.VkFormatBC4UnormBlock:
+		return gpu.FormatBC4RUnorm
+	case ktx2.VkFormatBC5UnormBlock:
+		return gpu.FormatBC5RGUnorm
 	case ktx2.VkFormatBC7UnormBlock:
 		return gpu.FormatBC7RGBAUnorm
 	case ktx2.VkFormatBC7SRGBBlock:

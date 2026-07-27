@@ -38,12 +38,28 @@ import (
 // was the material fingerprint memo in material.go, worth about 19 percent of a
 // thousand-mesh frame. Re-run BenchmarkFrameNull1000Mesh1InstanceEach with a
 // profile before adding anything here.
+//
+// The thread guard bounds on the live instance count, not on the buffer length.
+// The input buffer's capacity runs 25 percent past the instance count and the
+// dispatch rounds the thread count up to a multiple of 64, so threads run past
+// the live records. WebGPU zero-initializes a buffer, so such a thread reads an
+// all-zero matrix. Its centre is the origin and its scale is zero, so it keeps
+// the base radius, passes the frustum test, and compacts a degenerate record
+// into the output. That record rasterizes nothing, but it inflates the survivor
+// count the telemetry reports and it costs vertex shading.
+//
+// The live count rides in the uniform lane this struct used to leave as
+// padding. SCENE_INSTANCED_CULL_BUILTIN_WGSL in
+// client/js/bootstrap-src/16b-scene-compute.js declared the field first and
+// recorded the difference in prose. TestCullWGSLMatchesJSCompute now
+// pins the agreement instead.
 const cullWGSL = `
 struct CullUniforms {
   planes    : array<vec4<f32>, 6>,
   vertexCount : u32,
   radius    : f32,
-  _pad0     : vec2<f32>,
+  instanceCount : u32,
+  _pad1     : u32,
 };
 
 struct InstanceRecord {
@@ -59,7 +75,7 @@ struct InstanceRecord {
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
-  if (i >= arrayLength(&input)) { return; }
+  if (i >= min(cull.instanceCount, arrayLength(&input))) { return; }
   let record = input[i];
   let m = record.model;
   // Translation column of a column-major mat4 lives at m[3].xyz.
@@ -343,21 +359,50 @@ func (r *Renderer) buildCullPipeline() error {
 }
 
 // cullUniformSize is the layout size of the CullUniforms struct in WGSL.
-// 6 vec4 planes (96) + vertexCount + radius + 2 padding floats = 112 bytes.
+// 6 vec4 planes (96) + vertexCount + radius + instanceCount + 1 pad = 112 bytes.
 const cullUniformSize = 112
+
+// cullUniformInstanceCountOffset is the byte offset of the instanceCount lane
+// inside CullUniforms. The CPU oracle in render/gpu/headless reads the same
+// offset, so keep the two in step.
+const cullUniformInstanceCountOffset = 104
+
+// cullUnboundedInstanceCount is the value that means "no live count supplied".
+// The shader takes min(instanceCount, arrayLength(&input)), so the all-ones
+// value selects arrayLength and reproduces the behaviour of the shader before
+// the instanceCount lane existed.
+const cullUnboundedInstanceCount = uint32(0xffffffff)
 
 // cullUniformBytes packs cull-shader inputs into a Renderer-owned buffer and
 // returns it. WriteBuffer copies the bytes, so reusing one buffer per frame is
 // safe and keeps the per-frame allocation count flat.
-func (r *Renderer) cullUniformBytes(planes [6][4]float32, vertexCount uint32, radius float32) []byte {
+//
+// instanceCount is the live instance count of the mesh. Supply it. The shader
+// bounds its threads on min(instanceCount, arrayLength(&input)), so a supplied
+// count stops the dispatch from compacting the zero-matrix records that sit
+// past the live data in an over-allocated input buffer.
+//
+// The parameter is optional only because recordCullPass in renderer.go still
+// calls the three-argument form, and that file belongs to another change in
+// flight. A call that omits the count writes cullUnboundedInstanceCount, which
+// reproduces the old behaviour exactly. The one-line caller change is:
+//
+//	r.cullUniformBytes(frustum, uint32(st.vertexCount), st.radius, uint32(st.instanceCount))
+//
+// TestCullUniformCarriesLiveInstanceCount pins both forms.
+func (r *Renderer) cullUniformBytes(planes [6][4]float32, vertexCount uint32, radius float32, instanceCount ...uint32) []byte {
 	out := r.cullUniformScratch[:]
 	for i := 0; i < 6; i++ {
 		putFloat32s(out[i*16:(i+1)*16], planes[i][:])
 	}
 	binary.LittleEndian.PutUint32(out[96:100], vertexCount)
 	binary.LittleEndian.PutUint32(out[100:104], math.Float32bits(radius))
-	// Trailing 8 bytes of pad stay zero.
-	binary.LittleEndian.PutUint32(out[104:108], 0)
+	live := cullUnboundedInstanceCount
+	if len(instanceCount) > 0 {
+		live = instanceCount[0]
+	}
+	binary.LittleEndian.PutUint32(out[cullUniformInstanceCountOffset:108], live)
+	// The last four bytes are pad and stay zero.
 	binary.LittleEndian.PutUint32(out[108:112], 0)
 	return out
 }

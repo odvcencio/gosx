@@ -31,8 +31,8 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	if got := len(d.computePipelines); got != 2 {
 		t.Errorf("expected 2 compute pipelines (cull + particleUpdate), got %d", got)
 	}
-	if got := len(d.buffers); got != 5 {
-		t.Errorf("expected 5 startup buffers (scene + 3 shadow cascades + default bone palette), got %d", got)
+	if got := len(d.buffers); got != 6 {
+		t.Errorf("expected 6 startup buffers (scene + scene lights + 3 shadow cascades + default bone palette), got %d", got)
 	}
 	if got := len(d.textures); got != 3 {
 		t.Errorf("expected 3 textures at construction (shadow map + 1x1 fallback + fallback env cube), got %d", got)
@@ -144,13 +144,16 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 		t.Error("shadow sampler should be a comparison sampler (Compare != Always)")
 	}
 
-	// Lit bind group (group 0) has scene, shadow, and environment entries.
+	// Lit bind group (group 0) has scene, shadow, environment and light entries.
 	litBG := findBindGroup(t, d, "bundle.lit.bindgroup")
-	if got := len(litBG.desc.Entries); got != 5 {
-		t.Errorf("lit group-0 bindgroup: expected 5 entries, got %d", got)
+	if got := len(litBG.desc.Entries); got != 6 {
+		t.Errorf("lit group-0 bindgroup: expected 6 entries, got %d", got)
 	}
 	if litBG.desc.Entries[3].TextureView == nil {
 		t.Error("lit group-0 bindgroup must include environment cubemap")
+	}
+	if litBG.desc.Entries[5].Buffer == nil {
+		t.Error("lit group-0 bindgroup must include the scene light storage buffer")
 	}
 }
 
@@ -316,7 +319,10 @@ func TestFrameRunsBloomOnlyWhenPostEffectPresent(t *testing.T) {
 	if got := latestWriteBytes(d.queue, "bundle.bloom.params.uniform"); string(got) != string(float32sToBytes([]float32{1.25, 0.75, 0.25, 0})) {
 		t.Fatalf("unexpected bloom params uniform bytes: %v", got)
 	}
-	if got := latestWriteBytes(d.queue, "bundle.present.tonemap.uniform"); string(got) != string(float32sToBytes([]float32{1, 1.2, 0, 0})) {
+	// Mode 2 is Reinhard in the browser table that toneMapModeCode now follows.
+	// The lane used to carry 1 for Reinhard, because the Go table had no entry
+	// for "linear" or "none" and started its numbering at ACES.
+	if got := latestWriteBytes(d.queue, "bundle.present.tonemap.uniform"); string(got) != string(float32sToBytes([]float32{2, 1.2, 0, 0})) {
 		t.Fatalf("unexpected tone-map uniform bytes: %v", got)
 	}
 	if got := latestWriteBytes(d.queue, "bundle.bloom.blurH.uniform"); string(got) != string(float32sToBytes([]float32{0.02, 0, 0, 0})) {

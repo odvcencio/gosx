@@ -143,9 +143,12 @@ func TestParseTruncated(t *testing.T) {
 // TestParseUnsupportedFormat raises ErrUnsupportedFormat rather than
 // silently passing through bytes the renderer doesn't know how to upload.
 func TestParseUnsupportedFormat(t *testing.T) {
-	const vkFormatBC1RGBUnormBlock = 131
+	// BC6H_SFLOAT. It is a real VkFormat, and no GoSX encoder or loader knows
+	// it, so the parser must refuse rather than hand up bytes the renderer
+	// would upload as the wrong format. BC1 used to sit here and now parses.
+	const vkFormatBC6HSfloatBlock = 144
 	payload := make([]byte, 16)
-	ktx := buildKTX2(vkFormatBC1RGBUnormBlock, schemeNone, 4, 4, [][]byte{payload}, []uint64{16})
+	ktx := buildKTX2(vkFormatBC6HSfloatBlock, schemeNone, 4, 4, [][]byte{payload}, []uint64{16})
 	_, err := Parse(ktx)
 	if !errors.Is(err, ErrUnsupportedFormat) {
 		t.Errorf("want ErrUnsupportedFormat, got %v", err)

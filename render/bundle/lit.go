@@ -5,9 +5,11 @@ import "strings"
 // litWGSL is the R2 physically-based lit + shadowed shader.
 //
 // Lighting model:
-//   - Direct: Cook-Torrance specular (GGX D, Smith V, Schlick F) plus
-//     energy-conserving Lambertian diffuse.
-//   - Indirect: hemisphere ambient from RenderEnvironment, scaled by baseColor.
+//   - Direct: one Cook-Torrance lobe per scene light. The loop reads the light
+//     array in group 0 binding 5 and shades five kinds: ambient, directional,
+//     point, spot and hemisphere.
+//   - Indirect: three independent RenderEnvironment terms, ambient plus sky
+//     plus ground, summed and then scaled by baseColor.
 //   - Shadow: comparison-sampled directional shadow map with a conservative
 //     constant bias. Receiver-plane depth bias arrives with CSM in R3.
 //
@@ -15,7 +17,29 @@ import "strings"
 // baseColor, metalness, roughness, emissive, and texture flags. When no
 // material is supplied the renderer defaults to baseColor=vertex-color,
 // metal=0, roughness=0.6.
+//
+// The shading terms here must match the browser copy in
+// client/js/bootstrap-src/16a-scene-webgpu.js WGSL_PBR_FRAGMENT. Nothing
+// regenerates one copy from the other, so lit_drift_test.go pins the terms both
+// copies share and records the terms they still compute differently. Change a
+// term here and update that ledger in the same commit.
 const litWGSL = `
+// Light is one packed scene light. resolveSceneLights in renderer.go writes it,
+// and the first five fields carry the same meaning as the browser Light struct
+// in 16a-scene-webgpu.js, field for field.
+//
+// The browser record is seven vec4. The two it carries beyond this one hold the
+// world-space edge vectors of a rect-area light. engine.RenderLight has no
+// width and no height, so those two vectors cannot exist on this path, and this
+// record stops at five vec4. See the rect-area-light row in lit_drift_test.go.
+struct Light {
+  position       : vec4<f32>, // xyz = world position, w = kind code
+  direction      : vec4<f32>, // xyz = direction the light shines, w = intensity
+  color          : vec4<f32>, // rgb = colour, or the sky colour, a = range
+  params         : vec4<f32>, // x = decay, y = shadow bias, z = cast shadow, w = cone angle
+  groundPenumbra : vec4<f32>, // rgb = hemisphere ground colour, a = spot penumbra
+};
+
 struct Scene {
   viewProj         : mat4x4<f32>,
   lightViewProj0   : mat4x4<f32>,
@@ -29,6 +53,7 @@ struct Scene {
   groundColor      : vec4<f32>,
   cascadeSplits    : vec4<f32>, // xyz = view-space far distances for cascades 0/1/2
   envParams        : vec4<f32>, // x = cubemap intensity, y = Y rotation, z = has cubemap
+  lightParams      : vec4<f32>, // x = light count, y = shadowed light index, zw reserved
 };
 
 struct Material {
@@ -46,6 +71,10 @@ struct Material {
 @group(0) @binding(2) var          shadowSampler     : sampler_comparison;
 @group(0) @binding(3) var          envCubeTexture    : texture_cube<f32>;
 @group(0) @binding(4) var          envCubeSampler    : sampler;
+// The light array is a storage buffer, not a fixed uniform array, so no
+// compile-time light cap exists. The fragment loop bounds itself with
+// arrayLength, exactly as the browser copy does.
+@group(0) @binding(5) var<storage, read> lights       : array<Light>;
 @group(1) @binding(0) var<uniform> material          : Material;
 @group(1) @binding(1) var          baseColorTexture  : texture_2d<f32>;
 @group(1) @binding(2) var          baseColorSampler  : sampler;
@@ -151,6 +180,27 @@ fn fresnelSchlick(F0 : vec3<f32>, VdotH : f32) -> vec3<f32> {
   return F0 + (vec3<f32>(1.0) - F0) * k;
 }
 
+// Point light distance falloff. A light with a range uses the windowed inverse
+// square law that three.js uses; a light with no range uses the plain inverse
+// power of the decay. Both browser renderers carry this expression unchanged.
+fn pointLightAttenuation(dist : f32, range : f32, decay : f32) -> f32 {
+  if (range > 0.0) {
+    let ratio = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
+    return ratio * ratio / max(dist * dist, 0.0001);
+  }
+  return 1.0 / max(pow(dist, decay), 0.0001);
+}
+
+// Spot cone falloff. L points from the surface toward the light, and spotDir is
+// the direction the light shines. The penumbra narrows the inner cone, so a
+// penumbra of zero gives a hard edge and a penumbra of one fades from the axis.
+fn spotConeAttenuation(L : vec3<f32>, spotDir : vec3<f32>, angle : f32, penumbra : f32) -> f32 {
+  let cosAngle = dot(L, -normalize(spotDir));
+  let outerCos = cos(angle);
+  let innerCos = cos(angle * (1.0 - penumbra));
+  return clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);
+}
+
 fn rotateEnvY(v : vec3<f32>, radians : f32) -> vec3<f32> {
   let c = cos(radians);
   let s = sin(radians);
@@ -185,12 +235,14 @@ fn fs_main(in : VSOut) -> FSOut {
   let hasNormalMap = step(0.5, material.textureParams.y);
   let N = normalize(mix(geomN, mappedN, hasNormalMap));
   let V = normalize(scene.cameraPos.xyz - in.worldPos);
+  // scene.lightDir still carries the primary directional light. The cascade fit
+  // uses it, and the image-based terms at the end of this function take their
+  // Fresnel from it. The light loop below shades every light from the light
+  // array instead, and declares its own copy of each term.
   let L = normalize(-scene.lightDir.xyz);
   let H = normalize(V + L);
 
-  let NdotL = max(dot(N, L), 0.0);
   let NdotV = max(dot(N, V), 1e-4);
-  let NdotH = max(dot(N, H), 0.0);
   let VdotH = max(dot(V, H), 0.0);
 
   // Material resolution: vertex color acts as baseColor when the material
@@ -202,13 +254,19 @@ fn fs_main(in : VSOut) -> FSOut {
   let sampled = textureSample(baseColorTexture, baseColorSampler, in.uv).rgb;
   let baseColor = solid * sampled;
 
-  // Per-texel PBR inputs: each map's .r channel scales the corresponding
-  // uniform factor. hasRoughMap / hasMetalMap gates the lookup so materials
-  // without maps keep their flat factors.
+  // Per-texel material inputs. glTF 2.0 packs roughness in green and metalness
+  // in blue, and leaves red for the occlusion map that shares the texture. Read
+  // green and blue, or a packed texture drives both factors from occlusion.
+  // Both browser renderers read the same two channels, and
+  // assetpipe/texture PackMetallicRoughness writes that layout. A grey
+  // single-factor map holds one value in all three channels, so the channel
+  // choice changes the image only for a packed texture. hasRoughMap and
+  // hasMetalMap gate the lookup, so a material with no map keeps its flat
+  // factor.
   let hasRoughMap = step(0.5, material.textureParams.z);
   let hasMetalMap = step(0.5, material.textureParams.w);
-  let roughSample = textureSample(roughnessMapTex, baseColorSampler, in.uv).r;
-  let metalSample = textureSample(metalnessMapTex, baseColorSampler, in.uv).r;
+  let roughSample = textureSample(roughnessMapTex, baseColorSampler, in.uv).g;
+  let metalSample = textureSample(metalnessMapTex, baseColorSampler, in.uv).b;
   let metalness = clamp(material.pbrParams.x * mix(1.0, metalSample, hasMetalMap), 0.0, 1.0);
   var roughness = clamp(material.pbrParams.y * mix(1.0, roughSample, hasRoughMap), 0.04, 1.0);
   let anisotropy = clamp(material.physicalParams2.x, -1.0, 1.0);
@@ -217,44 +275,149 @@ fn fs_main(in : VSOut) -> FSOut {
   // F0: 0.04 for dielectrics, baseColor for metals, linearly interpolated.
   let F0 = mix(vec3<f32>(0.04), baseColor, metalness);
 
-  let D = distributionGGX(NdotH, roughness);
-  let G = geometrySmith(NdotV, NdotL, roughness);
+  // Fresnel at the primary light. The image-based terms below reuse it, so a
+  // cubemap keeps the exact response it had before the light array arrived.
   let F = fresnelSchlick(F0, VdotH);
-
-  let specular = D * G * F;
 
   // Energy-conserving diffuse (kD = (1 - F) * (1 - metalness)).
   let kS = F;
   let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
-  let diffuse = kD * baseColor / 3.141592653589793;
 
-  let radiance = scene.lightColor.rgb * scene.lightColor.a;
-  let shadow = sampleShadow(in.worldPos, in.viewZ);
-  let direct = (diffuse + specular) * radiance * NdotL * shadow;
+  // Direct light: one Cook-Torrance lobe per scene light.
+  //
+  // The array holds every authored light, in bundle order, so a scene lit by a
+  // point light shades here instead of falling back to a canned key light. The
+  // kind codes match the two browser renderers: 0 ambient, 1 directional,
+  // 2 point, 3 spot, 4 hemisphere, 5 rect-area. A LightProbe arrives as code 0,
+  // because a probe is a flat term with no position; the browser folds it the
+  // same way.
+  //
+  // Code 5 falls through with no contribution. engine.RenderLight carries no
+  // width and no height, so the rectangle the form factor integrates over does
+  // not exist on this path. See the rect-area-light row in lit_drift_test.go.
+  //
+  // Every texture read stays outside this loop on purpose. textureSample needs
+  // uniform control flow, and a loop over a per-pixel count is not uniform.
+  var directSum = vec3<f32>(0.0);
+  let lightCount = min(u32(max(scene.lightParams.x, 0.0)), arrayLength(&lights));
+  let shadowLightIndex = i32(scene.lightParams.y);
+  for (var i = 0u; i < lightCount; i = i + 1u) {
+    let light = lights[i];
+    let kind = u32(light.position.w);
+    let lightColor = light.color.rgb;
+    let intensity = light.direction.w;
+    let range = light.color.a;
+    let decay = light.params.x;
 
-  // Hemisphere ambient: blend the sky/ground dome colors by the world
-  // normal's up-component. Modulated by a tinted ambient (.rgb) and an
-  // intensity (.a) so the artist can pull the whole ambient channel up or
-  // down with one scalar.
-  let hemi = mix(scene.groundColor.rgb, scene.skyColor.rgb, N.y * 0.5 + 0.5);
-  let ambient  = baseColor * hemi * scene.ambientColor.rgb * scene.ambientColor.a;
-  let envDiffuse = textureSample(envCubeTexture, envCubeSampler, rotateEnvY(N, scene.envParams.y)).rgb * baseColor * kD;
+    // Ambient (code 0): a flat term with no BRDF and no falloff.
+    if (kind == 0u) {
+      directSum = directSum + baseColor * lightColor * intensity;
+      continue;
+    }
+    // Hemisphere (code 4): sky above, ground below, blended by the normal Y.
+    if (kind == 4u) {
+      let hemiBlend = N.y * 0.5 + 0.5;
+      let hemiColor = mix(light.groundPenumbra.rgb, lightColor, hemiBlend);
+      directSum = directSum + baseColor * hemiColor * intensity;
+      continue;
+    }
+    // Rect-area (code 5): recorded as unshaded, not approximated.
+    if (kind == 5u) {
+      continue;
+    }
+
+    var L : vec3<f32>;
+    var attenuation = 1.0;
+    if (kind == 1u) {
+      L = normalize(-light.direction.xyz);
+    } else if (kind == 3u) {
+      let toLight = light.position.xyz - in.worldPos;
+      let dist = length(toLight);
+      L = toLight / max(dist, 0.0001);
+      let cone = spotConeAttenuation(L, light.direction.xyz, light.params.w, light.groundPenumbra.a);
+      attenuation = pointLightAttenuation(dist, range, decay) * cone;
+    } else {
+      let toLight = light.position.xyz - in.worldPos;
+      let dist = length(toLight);
+      L = toLight / max(dist, 0.0001);
+      attenuation = pointLightAttenuation(dist, range, decay);
+    }
+
+    let H = normalize(V + L);
+    let NdotL = max(dot(N, L), 0.0);
+    let NdotH = max(dot(N, H), 0.0);
+    let VdotH = max(dot(V, H), 0.0);
+
+    let D = distributionGGX(NdotH, roughness);
+    let G = geometrySmith(NdotV, NdotL, roughness);
+    let F = fresnelSchlick(F0, VdotH);
+
+    let specular = D * G * F;
+
+    let kS = F;
+    let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
+    let diffuse = kD * baseColor / 3.141592653589793;
+
+    let radiance = lightColor * intensity * attenuation;
+    // One cascaded shadow map exists, and it is fitted to the light in
+    // scene.lightDir. Only that light reads it; every other light is unshadowed.
+    var shadow = 1.0;
+    if (kind == 1u && i32(i) == shadowLightIndex) {
+      shadow = sampleShadow(in.worldPos, in.viewZ);
+    }
+    let direct = (diffuse + specular) * radiance * NdotL * shadow;
+    directSum = directSum + direct;
+  }
+  // direct names the summed direct light. The per-light line above keeps the
+  // exact expression the browser copy and the CPU oracle in
+  // render/gpu/headless both pin, so all three copies still name one term.
+  let direct = directSum;
+
+  // Environment ambient: sum three independent terms, so each intensity gates
+  // only its own colour. Both browser renderers sum the same three terms. The
+  // earlier form also multiplied the sky and ground blend by the ambient
+  // intensity. The default ambient intensity is 0.3, so that form cut the whole
+  // dome to about a third and made every native image too dark.
+  //
+  // The sky and ground intensities arrive premultiplied into .rgb from
+  // resolveHemisphereAmbient in renderer.go, so this line carries no explicit
+  // sky or ground factor. This line applies the ambient intensity from .a, and
+  // applies it once.
+  let hemi = N.y * 0.5 + 0.5;
+  let envDiffuse = scene.ambientColor.rgb * scene.ambientColor.a
+                 + scene.skyColor.rgb * hemi
+                 + scene.groundColor.rgb * (1.0 - hemi);
+  let ambient = envDiffuse * baseColor;
+  let cubeDiffuse = textureSample(envCubeTexture, envCubeSampler, rotateEnvY(N, scene.envParams.y)).rgb * baseColor * kD;
   let envReflect = rotateEnvY(reflect(-V, N), scene.envParams.y);
   let envSpecular = textureSample(envCubeTexture, envCubeSampler, envReflect).rgb * F * (1.0 - roughness * 0.65);
-  let cubeIBL = (envDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;
-  // Emissive: scalar strength × (emissive tint × optional emissive map sample).
+  let cubeIBL = (cubeDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;
+  // Emissive colour: start from the shaded base colour, and let the emissive
+  // map replace it. Both browser renderers do the same. The earlier form
+  // multiplied the map by material.emissive.rgb. materialFromRender fills those
+  // lanes from the base colour, so the native path applied the base colour
+  // twice and emitted the wrong hue.
   let hasEmissiveMap = step(0.5, material.textureParams2.x);
   let emissiveSample = textureSample(emissiveMapTex, baseColorSampler, in.uv).rgb;
-  let emissiveTint = material.emissive.rgb * mix(vec3<f32>(1.0), emissiveSample, hasEmissiveMap);
-  let emissive = emissiveTint * material.pbrParams.z;
+  let emissiveColor = mix(baseColor, emissiveSample, hasEmissiveMap);
+  let emissive = emissiveColor * material.pbrParams.z;
   var color = direct + ambient + cubeIBL + emissive;
+  // Clear coat: scale the lobe by 0.28, as both browser renderers do. The
+  // earlier gain of 1.0 made a coated highlight about 3.6 times too bright.
   let clearcoat = clamp(material.physicalParams.x, 0.0, 1.0);
   let clearcoatPower = mix(12.0, 96.0, 1.0 - roughness);
-  color = color + vec3<f32>(pow(NdotV, clearcoatPower) * clearcoat);
+  color = color + vec3<f32>(pow(NdotV, clearcoatPower) * clearcoat * 0.28);
+  // Sheen: add the velvet term instead of blending toward it. The earlier
+  // blend pulled the lit colour toward the velvet colour, so a fabric lost
+  // brightness and saturation as sheen rose.
   let sheen = clamp(material.physicalParams.y, 0.0, 1.0);
-  color = mix(color, color + baseColor * pow(1.0 - NdotV, 3.0), sheen * 0.35);
+  let velvet = pow(1.0 - NdotV, 3.0) * sheen;
+  color = color + baseColor * velvet * 0.55;
+  // Iridescence: take the phases and the frequency both browser renderers use.
+  // The earlier constants swept one full turn (6.2831853 radians) across the
+  // facing range, so the hue bands sat about 1.27 times wider apart.
   let iridescence = clamp(material.physicalParams.w, 0.0, 1.0);
-  let iri = 0.5 + 0.5 * cos(vec3<f32>(0.0, 2.0943951, 4.1887902) + NdotV * 6.2831853);
+  let iri = 0.5 + 0.5 * cos(vec3<f32>(0.0, 2.1, 4.2) + NdotV * 8.0);
   color = mix(color, color * (vec3<f32>(0.65) + iri * 0.7), iridescence * pow(1.0 - NdotV, 2.0));
   let transmission = clamp(material.physicalParams.z, 0.0, 1.0) * (1.0 - metalness);
   color = mix(color, ambient + baseColor * 0.1, transmission * 0.55);

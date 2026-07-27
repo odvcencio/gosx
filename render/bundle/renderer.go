@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 
 	"m31labs.dev/gosx/engine"
@@ -66,6 +67,12 @@ type Renderer struct {
 
 	// Scene uniforms (viewProj + 3 lightViewProjs + camera + light + env).
 	sceneUniformBuf gpu.Buffer
+	// Scene light array. litWGSL reads it as a runtime-sized storage array, so
+	// no compile-time light cap exists. The buffer grows by doubling and never
+	// shrinks, because a scene that once held many lights normally holds them
+	// again on the next frame.
+	lightStorageBuf gpu.Buffer
+	lightStorageCap int
 	// Shadow-pass uniforms: one buffer per cascade, each holding the
 	// cascade's lightViewProj (64 bytes). Separate bind groups per buffer.
 	shadowUniformBufs [cascadeCount]gpu.Buffer
@@ -89,6 +96,11 @@ type Renderer struct {
 	shadowArrayView  gpu.TextureView
 	shadowLayerViews [cascadeCount]gpu.TextureView
 	shadowSampler    gpu.Sampler
+	// shadowCascadesClear is true when the last recorded shadow pass drew
+	// nothing, so every cascade still holds the far-plane clear value. Only then
+	// may recordShadowPass skip a caster-free frame. It starts false, so the
+	// first such frame still runs the pass once and clears.
+	shadowCascadesClear bool
 
 	// Shared material texture sampler (separate from the comparison sampler
 	// used for shadows; this one does anisotropic color lookup).
@@ -216,10 +228,15 @@ type Renderer struct {
 	// buffer per payload shape is enough and a steady-state frame allocates
 	// nothing for uniform or instance packing.
 	instanceEncodeScratch []byte
-	sceneUniformScratch   [sceneUniformSize]byte
-	shadowUniformScratch  [64]byte
-	cullUniformScratch    [cullUniformSize]byte
-	drawArgsScratch       [16]byte
+	// lightRecords and lightEncodeScratch hold the packed scene lights for the
+	// frame in progress. Both only grow, so a steady-state frame allocates
+	// nothing for the light array.
+	lightRecords         []packedLight
+	lightEncodeScratch   []byte
+	sceneUniformScratch  [sceneUniformSize]byte
+	shadowUniformScratch [64]byte
+	cullUniformScratch   [cullUniformSize]byte
+	drawArgsScratch      [16]byte
 
 	// Reusable render-pass attachment records. WebGPU consumes a pass
 	// descriptor when the pass begins, so one set per pass shape avoids a slice
@@ -649,6 +666,11 @@ func (r *Renderer) Destroy() {
 	if r.sceneUniformBuf != nil {
 		r.sceneUniformBuf.Destroy()
 	}
+	if r.lightStorageBuf != nil {
+		r.lightStorageBuf.Destroy()
+		r.lightStorageBuf = nil
+		r.lightStorageCap = 0
+	}
 	for i := range r.shadowUniformBufs {
 		if r.shadowUniformBufs[i] != nil {
 			r.shadowUniformBufs[i].Destroy()
@@ -734,6 +756,21 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// projection, so a cascade fitted without it covers the wrong volume.
 	cascades := computeCascades(b.Camera, lightDir, r.cascadeLambda, float32(width)/float32(height))
 
+	// The light array has to reach the GPU before the scene uniform, because the
+	// uniform carries the count the shader loops to.
+	var shadowLightIndex int
+	r.lightRecords, shadowLightIndex = resolveSceneLights(b, r.lightRecords)
+	if err := r.ensureLightStorage(len(r.lightRecords)); err != nil {
+		return err
+	}
+	lightBytes, lightCount := r.lightStorageBytes(r.lightRecords)
+	if lightCount > 0 {
+		r.device.Queue().WriteBuffer(r.lightStorageBuf, 0, lightBytes)
+	}
+	if shadowLightIndex >= lightCount {
+		shadowLightIndex = -1
+	}
+
 	r.device.Queue().WriteBuffer(r.sceneUniformBuf, 0, r.sceneUniformBytes(sceneUniformBlock{
 		viewProj:       viewProj,
 		lightViewProjs: cascades.viewProjs,
@@ -745,6 +782,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		groundColor:    groundColor,
 		cascadeSplits:  cascades.farSplits,
 		envParams:      environmentParams(b.Environment),
+		lightParams:    [4]float32{float32(lightCount), float32(shadowLightIndex), 0, 0},
 	}))
 	for i := 0; i < cascadeCount; i++ {
 		putFloat32s(r.shadowUniformScratch[:], cascades.viewProjs[i][:])
@@ -779,9 +817,14 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// unculled per-mesh transform buffers; a shadow caster outside the main
 	// frustum can still cast into it. CSM cascades bound the shadow draw volume
 	// on their own.
+	//
+	// A frame with no caster skips all three passes, but only once the cascades
+	// are known clear. Read shadowCascadesClear for why the state is needed.
+	casters := r.frameCastsShadow(b)
 	for i := 0; i < cascadeCount; i++ {
-		r.recordShadowPass(enc, b, i)
+		r.recordShadowPass(enc, b, i, casters)
 	}
+	r.shadowCascadesClear = !casters
 
 	// 2b) Advance particle state (compute pass). Runs before the main pass
 	// so the state storage buffer is ready to be read as vertex data.
@@ -1144,8 +1187,12 @@ func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle,
 			cull.haveUpload = true
 		}
 		r.device.Queue().WriteBuffer(cull.drawArgsBuf, 0, r.drawArgsResetBytes(uint32(st.vertexCount)))
+		// Pass the live instance count so the kernel bounds its threads on
+		// min(instanceCount, arrayLength(&input)), matching the browser kernel.
+		// Omitting it writes 0xffffffff, which makes min() select arrayLength
+		// and lets the kernel compact zero-matrix records past the live count.
 		r.device.Queue().WriteBuffer(cull.cullUniform, 0,
-			r.cullUniformBytes(frustum, uint32(st.vertexCount), st.radius))
+			r.cullUniformBytes(frustum, uint32(st.vertexCount), st.radius, uint32(st.instanceCount)))
 		if !st.castShadow {
 			// A mesh that stopped casting shadows keeps its caster buffers, but
 			// nothing reads them. Skip the writes and the dispatch.
@@ -1158,7 +1205,7 @@ func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle,
 			}
 			r.device.Queue().WriteBuffer(caster.drawArgsBuf, 0, r.drawArgsResetBytes(uint32(st.vertexCount)))
 			r.device.Queue().WriteBuffer(caster.cullUniform, 0,
-				r.cullUniformBytes(casterPlanes[cascade], uint32(st.vertexCount), st.radius))
+				r.cullUniformBytes(casterPlanes[cascade], uint32(st.vertexCount), st.radius, uint32(st.instanceCount)))
 		}
 	}
 	if drawable == 0 {
@@ -1192,9 +1239,43 @@ func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle,
 	return nil
 }
 
+// frameCastsShadow reports whether any draw would reach a shadow pass.
+//
+// It tests the same two conditions recordShadowPass tests, so it cannot report
+// "no caster" for a frame that would draw one. It can report a caster for a frame
+// whose object mesh cache turns out empty, which costs one pass and no
+// correctness.
+func (r *Renderer) frameCastsShadow(b engine.RenderBundle) bool {
+	for i := range r.meshStates {
+		if st := &r.meshStates[i]; st.drawable && st.castShadow {
+			return true
+		}
+	}
+	for _, object := range b.Objects {
+		if object.CastShadow && nativeObjectDrawable(b, object) {
+			return true
+		}
+	}
+	return false
+}
+
 // recordShadowPass renders cascade-specific depth-only draws into the
 // cascade's layer of the shadow texture array. Called once per cascade index.
-func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle, cascade int) {
+//
+// hasCasters comes from frameCastsShadow. When it is false the pass has nothing
+// to draw and only clears, so the whole pass is skipped once the cascades are
+// already clear. That clear is not free: the cascades are 2048 squares, and a
+// profile of an empty sixteen-pixel frame put most of its samples in it.
+//
+// The state matters. A frame that skips the pass leaves whatever the previous
+// frame drew, so a caster that goes away would keep shadowing until something
+// else cleared the map. shadowCascadesClear records that the last recorded pass
+// drew nothing, which is the only condition under which the stale contents are
+// the same as a fresh clear.
+func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle, cascade int, hasCasters bool) {
+	if !hasCasters && r.shadowCascadesClear {
+		return
+	}
 	r.shadowDepthAttachment[cascade] = gpu.RenderPassDepthStencilAttachment{
 		View:            r.shadowLayerViews[cascade],
 		DepthLoadOp:     gpu.LoadOpClear,
@@ -1496,6 +1577,11 @@ func (r *Renderer) buildUniformBuffers() error {
 		return fmt.Errorf("bundle.buildUniformBuffers (scene): %w", err)
 	}
 	r.sceneUniformBuf = scene
+	// The lit bind groups are built once, at startup, and they need a light
+	// buffer to point at from the first frame.
+	if err := r.ensureLightStorage(0); err != nil {
+		return fmt.Errorf("bundle.buildUniformBuffers (lights): %w", err)
+	}
 	for i := 0; i < cascadeCount; i++ {
 		buf, err := r.device.CreateBuffer(gpu.BufferDesc{
 			Size:  64,
@@ -1893,14 +1979,19 @@ func (r *Renderer) createLitSceneBindGroup(layout gpu.BindGroupLayout, envTex *t
 			{Binding: 2, Sampler: r.shadowSampler},
 			{Binding: 3, TextureView: envTex.view},
 			{Binding: 4, Sampler: r.materialSampler},
+			{Binding: 5, Buffer: r.lightStorageBuf, Size: r.lightStorageCap * lightRecordSize},
 		},
 		Label: label,
 	})
 }
 
 // sceneUniformSize is the layout size of the Scene struct in WGSL. 4 mat4
-// (viewProj + 3 cascade lightViewProjs) = 256, plus 8 vec4 = 128 -> 384 bytes.
-const sceneUniformSize = 384
+// (viewProj + 3 cascade lightViewProjs) = 256, plus 9 vec4 = 144 -> 400 bytes.
+//
+// lightParams was appended at 384. Every earlier offset stayed, so the CPU
+// decode in render/gpu/headless/device.go activeLighting needs one added read
+// and no edit to an existing one.
+const sceneUniformSize = 400
 
 type sceneUniformBlock struct {
 	viewProj       mat4
@@ -1917,6 +2008,10 @@ type sceneUniformBlock struct {
 	cascadeSplits [4]float32
 	// envParams.x = cubemap intensity, y = Y rotation radians, z = has env.
 	envParams [4]float32
+	// lightParams.x is how many records the light storage buffer holds this
+	// frame. lightParams.y is the index of the light the cascaded shadow map is
+	// fitted to, or -1 when no light reads it.
+	lightParams [4]float32
 }
 
 // sceneUniformBytes packs the scene uniform block into a Renderer-owned buffer
@@ -1938,7 +2033,32 @@ func (r *Renderer) sceneUniformBytes(s sceneUniformBlock) []byte {
 	putFloat32s(out[base+80:base+96], s.groundColor[:])
 	putFloat32s(out[base+96:base+112], s.cascadeSplits[:])
 	putFloat32s(out[base+112:base+128], s.envParams[:])
+	putFloat32s(out[base+128:base+144], s.lightParams[:])
 	return out
+}
+
+// primaryDirectionalIndex returns the index of the light the cascaded shadow map
+// is fitted to, or -1 when no authored light qualifies.
+//
+// The rule: the first light of kind "directional" wins, and a direction of
+// exactly zero disqualifies it, because a zero vector names no direction. A
+// later directional light never replaces a disqualified earlier one.
+//
+// resolveDirectionalLight and resolveSceneLights both call this, so the light
+// that steers the cascade fit is always the same light that reads the shadow
+// map in litWGSL. Two separate rules would drift and put the shadow on a light
+// the cascades were never fitted to.
+func primaryDirectionalIndex(lights []engine.RenderLight) int {
+	for i, l := range lights {
+		if l.Kind != "directional" {
+			continue
+		}
+		if l.DirectionX == 0 && l.DirectionY == 0 && l.DirectionZ == 0 {
+			return -1
+		}
+		return i
+	}
+	return -1
 }
 
 // resolveDirectionalLight picks a primary directional light from the bundle's
@@ -1949,24 +2069,19 @@ func resolveDirectionalLight(b engine.RenderBundle) (dir [3]float32, color [4]fl
 	color = [4]float32{1, 0.96, 0.9, 1.0} // w = intensity
 	ambient = [4]float32{0.35, 0.38, 0.45, 0.35}
 
-	for _, l := range b.Lights {
-		if l.Kind == "directional" {
-			dx, dy, dz := float32(l.DirectionX), float32(l.DirectionY), float32(l.DirectionZ)
-			if dx == 0 && dy == 0 && dz == 0 {
-				break
-			}
-			length := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
-			if length > 0 {
-				dir = [3]float32{dx / length, dy / length, dz / length}
-			}
-			lc := parseCSSColor(l.Color, [3]float32{1, 1, 1})
-			intensity := float32(l.Intensity)
-			if intensity == 0 {
-				intensity = 1.0
-			}
-			color = [4]float32{lc[0], lc[1], lc[2], intensity}
-			break
+	if idx := primaryDirectionalIndex(b.Lights); idx >= 0 {
+		l := b.Lights[idx]
+		dx, dy, dz := float32(l.DirectionX), float32(l.DirectionY), float32(l.DirectionZ)
+		length := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+		if length > 0 {
+			dir = [3]float32{dx / length, dy / length, dz / length}
 		}
+		lc := parseCSSColor(l.Color, [3]float32{1, 1, 1})
+		intensity := float32(l.Intensity)
+		if intensity == 0 {
+			intensity = 1.0
+		}
+		color = [4]float32{lc[0], lc[1], lc[2], intensity}
 	}
 
 	env := b.Environment
@@ -1999,6 +2114,222 @@ func resolveHemisphereAmbient(b engine.RenderBundle) (sky [4]float32, ground [4]
 	}
 	return [4]float32{skyRGB[0] * skyI, skyRGB[1] * skyI, skyRGB[2] * skyI, 1},
 		[4]float32{groundRGB[0] * groundI, groundRGB[1] * groundI, groundRGB[2] * groundI, 1}
+}
+
+// The scene light array.
+//
+// litWGSL reads a storage array of Light records. The five vec4 below carry the
+// same fields, in the same order, as the first five vec4 of the browser Light
+// struct in client/js/bootstrap-src/16a-scene-webgpu.js. The browser record
+// holds two more vec4 for the edge vectors of a rect-area light;
+// engine.RenderLight has no width and no height, so those cannot exist here.
+const (
+	// lightFloats is the float count of one packed light: five vec4.
+	lightFloats = 20
+	// lightRecordSize is the byte size of one packed light.
+	lightRecordSize = lightFloats * 4
+	// lightCapacityMin and lightCapacityMax bound the storage buffer. They
+	// match SCENE_WEBGPU_LIGHT_CAPACITY_MIN and _MAX in the browser renderer,
+	// so neither backend accepts a scene the other rejects.
+	lightCapacityMin = 8
+	lightCapacityMax = 256
+)
+
+// Light kind codes. Codes 0 to 5 are the numbers both browser renderers write,
+// so a scene reads the same kind on every backend.
+const (
+	lightKindAmbient     = 0
+	lightKindDirectional = 1
+	lightKindPoint       = 2
+	lightKindSpot        = 3
+	lightKindHemisphere  = 4
+	lightKindRectArea    = 5
+)
+
+// packedLight is one scene light in the layout litWGSL reads.
+type packedLight [lightFloats]float32
+
+// lightKindCode maps an engine.RenderLight kind to its shader kind code.
+//
+// A light probe maps to ambient, not to point. A probe carries no position, so
+// a point code would invent a distance falloff the author never asked for. Both
+// browser renderers make the same choice. Neither backend reads
+// LightProbe.Coefficients; see the light-probe-sh cell in
+// scene/capability/capability.go.
+//
+// An unknown kind maps to point, which is what both browser renderers do.
+func lightKindCode(kind string) float32 {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "ambient":
+		return lightKindAmbient
+	case "light-probe":
+		return lightKindAmbient
+	case "directional":
+		return lightKindDirectional
+	case "point":
+		return lightKindPoint
+	case "spot":
+		return lightKindSpot
+	case "hemisphere":
+		return lightKindHemisphere
+	case "rect-area":
+		return lightKindRectArea
+	default:
+		return lightKindPoint
+	}
+}
+
+// resolveSceneLights packs every authored light into out and returns the packed
+// slice together with the index of the light that reads the shadow map.
+//
+// Defaults follow sceneWebGPUPackLights in the browser renderer field for
+// field, because engine.RenderBundle marshals with omitempty: a zero on this
+// side is an absent field on that side, and an absent field takes the browser
+// default. Intensity 0 becomes 1, decay 0 becomes 2, shadow bias 0 becomes
+// 0.005, and a direction of exactly zero becomes straight down.
+//
+// A bundle with no lights at all takes one synthetic key light, which is the
+// same fallback resolveDirectionalLight applies. An unlit demo still renders.
+// A bundle that authors any light takes only the lights it authored, which is
+// what both browser renderers do.
+//
+// out is reused across frames. Pass the previous slice to allocate nothing.
+func resolveSceneLights(b engine.RenderBundle, out []packedLight) ([]packedLight, int) {
+	out = out[:0]
+	for _, l := range b.Lights {
+		var rec packedLight
+		// position.xyz + kind code
+		rec[0] = float32(l.X)
+		rec[1] = float32(l.Y)
+		rec[2] = float32(l.Z)
+		rec[3] = lightKindCode(l.Kind)
+
+		// direction.xyz + intensity
+		dx, dy, dz := float32(l.DirectionX), float32(l.DirectionY), float32(l.DirectionZ)
+		if dx == 0 && dy == 0 && dz == 0 {
+			dy = -1
+		}
+		intensity := float32(l.Intensity)
+		if intensity == 0 {
+			intensity = 1
+		}
+		rec[4], rec[5], rec[6], rec[7] = dx, dy, dz, intensity
+
+		// color.rgb + range
+		lc := parseCSSColor(l.Color, [3]float32{1, 1, 1})
+		rec[8], rec[9], rec[10] = lc[0], lc[1], lc[2]
+		rec[11] = float32(l.Range)
+
+		// params: decay, shadow bias, cast shadow, cone angle
+		decay := float32(l.Decay)
+		if decay == 0 {
+			decay = 2
+		}
+		bias := float32(l.ShadowBias)
+		if bias == 0 {
+			bias = 0.005
+		}
+		castShadow := float32(0)
+		if l.CastShadow {
+			castShadow = 1
+		}
+		rec[12], rec[13], rec[14], rec[15] = decay, bias, castShadow, float32(l.Angle)
+
+		// groundPenumbra: hemisphere ground colour + spot penumbra
+		gc := parseCSSColor(l.GroundColor, [3]float32{0, 0, 0})
+		rec[16], rec[17], rec[18] = gc[0], gc[1], gc[2]
+		rec[19] = clamp01f(float32(l.Penumbra))
+
+		out = append(out, rec)
+	}
+	if len(out) == 0 {
+		out = append(out, fallbackKeyLight())
+		// The cascades are fitted to the same fallback direction, so the
+		// synthetic light is the one that reads the shadow map.
+		return out, 0
+	}
+	return out, primaryDirectionalIndex(b.Lights)
+}
+
+// fallbackKeyLight is the built-in directional light a bundle with no lights
+// takes. Its direction, colour and intensity are the defaults
+// resolveDirectionalLight substitutes, so a scene with no authored light shades
+// exactly as it did before the light array arrived.
+//
+// The direction stays unnormalized here. litWGSL normalizes it, exactly as it
+// normalizes scene.lightDir.
+func fallbackKeyLight() packedLight {
+	var rec packedLight
+	rec[3] = lightKindDirectional
+	rec[4], rec[5], rec[6] = -0.4, -1.0, -0.3
+	rec[7] = 1
+	rec[8], rec[9], rec[10] = 1, 0.96, 0.9
+	rec[12] = 2     // decay, unread by a directional light
+	rec[13] = 0.005 // shadow bias, unread by litWGSL
+	return rec
+}
+
+// lightStorageCapacityFor returns the record capacity that holds count lights: a
+// power of two, at least the minimum, never past the maximum. It mirrors
+// sceneWebGPULightCapacityFor in the browser renderer.
+func lightStorageCapacityFor(count int) int {
+	capacity := lightCapacityMin
+	for capacity < count && capacity < lightCapacityMax {
+		capacity *= 2
+	}
+	if capacity > lightCapacityMax {
+		return lightCapacityMax
+	}
+	return capacity
+}
+
+// ensureLightStorage grows the light storage buffer to hold count lights.
+//
+// Growing replaces the buffer, and the lit bind groups hold the old one, so this
+// clears the environment bind group key. Frame calls
+// ensureEnvironmentBindGroups later in the same frame, which rebuilds both lit
+// bind groups against the new buffer.
+func (r *Renderer) ensureLightStorage(count int) error {
+	capacity := lightStorageCapacityFor(count)
+	if r.lightStorageBuf != nil && r.lightStorageCap >= capacity {
+		return nil
+	}
+	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  capacity * lightRecordSize,
+		Usage: gpu.BufferUsageStorage | gpu.BufferUsageCopyDst,
+		Label: "bundle.scene.lights",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle: create light storage buffer: %w", err)
+	}
+	if r.lightStorageBuf != nil {
+		r.lightStorageBuf.Destroy()
+		// Force ensureEnvironmentBindGroups to rebuild the lit bind groups.
+		r.envBindGroupKey = ""
+	}
+	r.lightStorageBuf = buf
+	r.lightStorageCap = capacity
+	return nil
+}
+
+// lightStorageBytes packs the light records into a Renderer-owned buffer and
+// returns it. Records past the buffer capacity are dropped; the count written
+// into the scene uniform is clamped to match, so the shader never reads past
+// the array.
+func (r *Renderer) lightStorageBytes(records []packedLight) ([]byte, int) {
+	count := len(records)
+	if count > r.lightStorageCap {
+		count = r.lightStorageCap
+	}
+	need := count * lightRecordSize
+	if cap(r.lightEncodeScratch) < need {
+		r.lightEncodeScratch = make([]byte, need)
+	}
+	out := r.lightEncodeScratch[:need]
+	for i := 0; i < count; i++ {
+		putFloat32s(out[i*lightRecordSize:(i+1)*lightRecordSize], records[i][:])
+	}
+	return out, count
 }
 
 func destroyPassResources(p *passResources) {

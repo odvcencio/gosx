@@ -92,16 +92,38 @@ func TestEncodeRejectsBadShape(t *testing.T) {
 	}
 }
 
+// TestEncodeRejectsBlockCompressedFormat pins the scope boundary that survives.
+//
+// The writer gained descriptors for the BC family, so BC7 now encodes. ASTC and
+// ETC2 have no GoSX encoder, so a container claiming one would hold nothing.
+// The named error keeps that refusal visible instead of shipping an empty file.
 func TestEncodeRejectsBlockCompressedFormat(t *testing.T) {
-	src := &Image{
-		Format: VkFormatBC7UnormBlock,
-		Width:  4,
-		Height: 4,
-		Faces:  1,
-		Levels: []Level{{Bytes: make([]byte, 16)}},
-	}
-	if _, err := Encode(src, EncodeOptions{}); !errors.Is(err, ErrEncodeFormat) {
-		t.Fatalf("err = %v, want ErrEncodeFormat", err)
+	for _, format := range []int{
+		VkFormatASTC4x4UnormBlock,
+		VkFormatASTC4x4SRGBBlock,
+		VkFormatASTC6x6UnormBlock,
+		VkFormatASTC8x8UnormBlock,
+		VkFormatETC2R8G8B8UnormBlock,
+		VkFormatETC2R8G8B8A8SRGBBlock,
+	} {
+		info, ok := FormatBlockInfo(format)
+		if !ok {
+			t.Fatalf("vkFormat %d has no block info", format)
+		}
+		src := &Image{
+			Format: format,
+			Width:  info.Width,
+			Height: info.Height,
+			Faces:  1,
+			Levels: []Level{{Bytes: make([]byte, info.BytesPerBlock)}},
+		}
+		_, err := Encode(src, EncodeOptions{})
+		if !errors.Is(err, ErrEncodeBlockCompressed) {
+			t.Fatalf("vkFormat %d gave %v, want ErrEncodeBlockCompressed", format, err)
+		}
+		if !errors.Is(err, ErrEncodeFormat) {
+			t.Fatalf("vkFormat %d: the error must still wrap ErrEncodeFormat, got %v", format, err)
+		}
 	}
 }
 
