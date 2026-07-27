@@ -1,6 +1,9 @@
 package scene
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // linePointWire is a Vector3 that always emits x/y/z as zero-valued
 // fields — unlike Vector3's default omitempty form. The legacy
@@ -8,13 +11,33 @@ import "strings"
 // coordinates (via an explicit map[string]any{"x": p.X, "y": p.Y,
 // "z": p.Z}), so preserving that wire shape matters for the JS
 // consumer that reads these arrays.
-//
-// Used by ObjectIR.MarshalJSON, which shadows the embedded alias's
-// Points field with a []linePointWire.
 type linePointWire struct {
 	X float64 `json:"x"`
 	Y float64 `json:"y"`
 	Z float64 `json:"z"`
+}
+
+// LinePoints is the polyline vertex list of an ObjectIR. It is a named
+// []Vector3, so existing code that assigns, ranges, indexes or appends
+// a []Vector3 keeps compiling unchanged.
+//
+// It carries the MarshalJSON that ObjectIR used to carry. ObjectIR is
+// ~1 KB, so a MarshalJSON on ObjectIR forced encoding/json to box a
+// full copy per record, encode it into a private buffer, copy the
+// result out, and re-scan every byte through appendCompact. Moving the
+// method down to the field that needs it costs the same work only for
+// the rare object that has line points, and lets the ~1 KB object
+// record encode straight through reflection.
+//
+// A profile of a 1000-object scene put appendCompact at 43% of the
+// marshal CPU and the ObjectIR wrapper at 57% of its allocated bytes.
+type LinePoints []Vector3
+
+// MarshalJSON emits every coordinate of every vertex, including zeros.
+// Vector3 tags x, y and z omitempty, so a point like Vec3(0, 2, 0)
+// would otherwise reach the browser as {"y":2} and move the line.
+func (p LinePoints) MarshalJSON() ([]byte, error) {
+	return json.Marshal(toLinePointsWire(p))
 }
 
 // toLinePointsWire converts a []Vector3 to []linePointWire so it
