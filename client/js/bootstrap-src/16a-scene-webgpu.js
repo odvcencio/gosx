@@ -3341,6 +3341,25 @@
     return text.indexOf("poperrorscope") >= 0 && text.indexOf("instance dropped") >= 0;
   }
 
+  // wgpuPopScopedErrorScope pops ONE device error scope.
+  //
+  // ONLY TWO CALLERS MAY EXIST, and both already do: ensureFBOs' allocation
+  // guard below, and the per-frame validation scope
+  // (beginWebGPUErrorScope / endWebGPUErrorScope). Do not add a third.
+  //
+  // The stack this pops is owned by the DEVICE, not by the operation. Six
+  // asynchronous pipeline-build sites used to push and pop it from their own
+  // .then / .catch — that is, in SETTLE order against a LIFO stack — so two
+  // overlapping builds swapped results and one build's error was reported
+  // against the other. Measured in Firefox on m31labs.dev: four clean authored
+  // points modules with a RESOLVED createRenderPipelineAsync were all marked
+  // failed by an error belonging to a compute kernel. Those sites now validate
+  // per object (create*PipelineAsync + getCompilationInfo); see the block
+  // comment on sceneShaderModuleError in 16b-scene-compute.js.
+  //
+  // The two remaining callers are safe because neither can interleave with
+  // anything: ensureFBOs pushes and pops inside one synchronous block, and the
+  // frame scope is guarded against re-entry by pendingWebGPUErrorScope.
   function wgpuPopScopedErrorScope(scopedDevice) {
     if (!scopedDevice || typeof scopedDevice.popErrorScope !== "function") {
       return Promise.resolve(null);
@@ -3505,12 +3524,18 @@
       var bgl = getSelenaPostBGL();
       var pipelineLayout = scopedDevice.createPipelineLayout({ bindGroupLayouts: [bgl] });
 
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        customPostPipelineCache.delete(cacheKey);
-        return null;
+      function markFailed(reason) {
+        sceneReportPipelineFailure("post", name, reason);
+        if (!customPostFailed.has(name)) {
+          console.warn("[gosx] custom post pass '" + name + "' failed validation; becoming identity passthrough.", reason);
+          customPostFailed.add(name);
+        }
+        customPostPipelineCache.set(cacheKey, { failed: true });
       }
+
+      // Validated per object: the promise is the verdict, getCompilationInfo
+      // the reason. No device error scope — it would be popped by whichever
+      // other async build settled first. See wgpuPopScopedErrorScope.
       scopedDevice.createRenderPipelineAsync({
         label: "gosx-selena-post-" + name,
         layout: pipelineLayout,
@@ -3522,26 +3547,18 @@
         },
         primitive: { topology: "triangle-list" },
       }).then(function(pipeline) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+        return sceneShaderModuleError([module]).then(function(compileErr) {
           if (disposed) return;
-          if (scopeErr) {
-            if (!customPostFailed.has(name)) {
-              console.warn("[gosx] custom post pass '" + name + "' failed validation; becoming identity passthrough.", scopeErr.message);
-              customPostFailed.add(name);
-            }
-            customPostPipelineCache.set(cacheKey, { failed: true });
-          } else {
-            customPostPipelineCache.set(cacheKey, { pipeline: pipeline, bgl: bgl });
+          if (compileErr) {
+            markFailed(compileErr);
+            return;
           }
+          customPostPipelineCache.set(cacheKey, { pipeline: pipeline, bgl: bgl });
         });
       }).catch(function(err) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+        return sceneShaderModuleError([module]).then(function(compileErr) {
           if (disposed) return;
-          if (!customPostFailed.has(name)) {
-            console.warn("[gosx] custom post pass '" + name + "' pipeline error; becoming identity passthrough.", String(err));
-            customPostFailed.add(name);
-          }
-          customPostPipelineCache.set(cacheKey, { failed: true });
+          markFailed(compileErr || err);
         });
       });
       return null; // pending this frame
@@ -6737,20 +6754,18 @@
       var fragMod = scopedDevice.createShaderModule({ label: "points-authored-frag", code: fragWGSL });
       renderTruth().captureShaderInfo(fragMod, "points-authored-frag");
 
-      function markFailed() {
+      function markFailed(reason) {
+        sceneReportPipelineFailure("points", systemID, reason);
         if (!pointsAuthoredLayerFailed.get(systemID)) {
           pointsAuthoredLayerFailed.set(systemID, true);
-          console.warn("[gosx] Points authored pipeline failed for layer '" + systemID + "'; falling back to builtin.");
+          console.warn("[gosx] Points authored pipeline failed for layer '" + systemID + "'; falling back to builtin.", reason);
         }
         pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
       }
 
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        pointsAuthoredPipelineCache.delete(cacheKey);
-        return null;
-      }
+      // This is the site the mis-pairing bug hit hardest: 19 point layers on
+      // one page build here, all overlapping, all previously sharing one
+      // device error scope stack. Validation is now per object.
       scopedDevice.createRenderPipelineAsync({
         label: "gosx-points-authored-" + blendMode,
         layout: pointsAuthoredVertexPipelineLayout,
@@ -6760,18 +6775,18 @@
         multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
         depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
       }).then(function(pipeline) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          if (scopeErr) {
-            markFailed();
-          } else {
-            pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+          if (compileErr) {
+            markFailed(compileErr);
+            return;
           }
+          pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
         });
-      }).catch(function() {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+      }).catch(function(err) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          markFailed();
+          markFailed(compileErr || err);
         });
       });
       return null; // pending first frame — builtin fallback used
@@ -6813,20 +6828,18 @@
       var fragMod = scopedDevice.createShaderModule({ label: "particle-render-authored-frag", code: fragWGSL });
       renderTruth().captureShaderInfo(fragMod, "particle-render-authored-frag");
 
-      function markFailed() {
+      function markFailed(reason) {
+        sceneReportPipelineFailure("particle-render", systemID, reason);
         if (!pointsAuthoredLayerFailed.get(systemID)) {
           pointsAuthoredLayerFailed.set(systemID, true);
-          console.warn("[gosx] ComputeParticle authored render pipeline failed for system '" + systemID + "'; falling back to builtin.");
+          console.warn("[gosx] ComputeParticle authored render pipeline failed for system '" + systemID + "'; falling back to builtin.", reason);
         }
         pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
       }
 
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        pointsAuthoredPipelineCache.delete(cacheKey);
-        return null;
-      }
+      // Per-object validation; no device error scope. This build overlaps the
+      // compute kernel build for the SAME system, which is exactly the pairing
+      // that reported a rejected kernel against a healthy render pipeline.
       scopedDevice.createRenderPipelineAsync({
         label: "gosx-particle-render-authored-" + blendMode,
         layout: pointsAuthoredStoragePipelineLayout,
@@ -6836,18 +6849,18 @@
         multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
         depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
       }).then(function(pipeline) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          if (scopeErr) {
-            markFailed();
-          } else {
-            pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+          if (compileErr) {
+            markFailed(compileErr);
+            return;
           }
+          pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
         });
-      }).catch(function() {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+      }).catch(function(err) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          markFailed();
+          markFailed(compileErr || err);
         });
       });
       return null;
