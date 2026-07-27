@@ -673,8 +673,15 @@ func TestPostFXMaxPixelsEmittedWithLegacyTonemapMigration(t *testing.T) {
 		},
 	}
 	ir := props.SceneIR()
+	// The synthesis IS the precondition this test exists to check, so its absence
+	// must fail. Skipping on it made the test disappear in exactly the case worth
+	// catching: a migration that stopped running would take the emission check
+	// below with it, and the suite would still report green.
 	if len(ir.PostEffects) == 0 {
-		t.Skip("migrateEnvironmentTonemap didn't synthesize — legacy path may have moved")
+		t.Fatalf("migrateEnvironmentTonemap synthesized no effect from Environment.ToneMapping=%q, "+
+			"so ir.PostEffects is empty. The whole legacy path rests on that synthesis: without it "+
+			"a scene authored against the old Environment field silently loses both its tone mapping "+
+			"and its resolution cap.", props.Environment.ToneMapping)
 	}
 	bag := ir.legacyProps()
 	got, ok := bag["postFXMaxPixels"]

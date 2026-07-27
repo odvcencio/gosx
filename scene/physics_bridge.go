@@ -14,7 +14,7 @@ import (
 //
 // The scene IR is authoritative for configuration and bodies; this function
 // is a pure translator — no physics.World is instantiated. Callers drive
-// simulation lifecycle separately (typically via physics.NewRunner paired
+// simulation lifecycle separately (typically via physics/hubrunner.NewRunner paired
 // with a hub).
 func (ir IR) PhysicsSpec() physics.WorldSpec {
 	if ir.Physics == nil {

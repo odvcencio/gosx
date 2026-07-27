@@ -2,6 +2,8 @@ package scene
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -14,8 +16,106 @@ import (
 // serialize a []PostEffectIR field via the standard reflection-based
 // encoder without going through an intermediate map[string]any.
 // legacyProps is preserved for tests and introspection callers.
+//
+// Decoding needs a dispatcher, because encoding/json cannot build a value for
+// an interface field. Every concrete type writes a "kind" discriminator, and
+// DecodePostEffectIR dispatches on it. SceneIR.UnmarshalJSON calls that
+// dispatcher, so a scene that carries a post effect survives a JSON round trip.
 type PostEffectIR interface {
 	legacyProps() map[string]any
+}
+
+// Post effect wire kinds. Each concrete PostEffectIR writes one of these
+// strings as its "kind" field, and DecodePostEffectIR dispatches on it. The JS
+// runtime reads the same strings (SCENE_POST_* in 10-runtime-scene-core.js), so
+// treat them as a wire contract and do not rename one without the runtime.
+const (
+	PostEffectKindTonemap    = "toneMapping"
+	PostEffectKindBloom      = "bloom"
+	PostEffectKindVignette   = "vignette"
+	PostEffectKindColorGrade = "colorGrade"
+	PostEffectKindSSAO       = "ssao"
+	PostEffectKindDOF        = "dof"
+	PostEffectKindFXAA       = "fxaa"
+	PostEffectKindCustomPost = "customPost"
+)
+
+// ErrUnknownPostEffectKind reports a postEffects entry whose "kind" field no
+// PostEffectIR type claims. Decoding fails rather than skipping the entry,
+// because a dropped effect renders a visibly different scene and reports
+// nothing. A missing "kind" fails the same way.
+var ErrUnknownPostEffectKind = errors.New("scene: unknown post effect kind")
+
+// postEffectIRDecoders maps one wire kind to a decoder for its IR type. Keep
+// one entry per concrete PostEffectIR type; TestPostEffectIRRoundTripCoversEveryType
+// fails when a type has no entry.
+var postEffectIRDecoders = map[string]func([]byte) (PostEffectIR, error){
+	PostEffectKindTonemap:    decodePostEffectIRAs[TonemapIR],
+	PostEffectKindBloom:      decodePostEffectIRAs[BloomIR],
+	PostEffectKindVignette:   decodePostEffectIRAs[VignetteIR],
+	PostEffectKindColorGrade: decodePostEffectIRAs[ColorGradeIR],
+	PostEffectKindSSAO:       decodePostEffectIRAs[SSAOIR],
+	PostEffectKindDOF:        decodePostEffectIRAs[DOFIR],
+	PostEffectKindFXAA:       decodePostEffectIRAs[FXAAIR],
+	PostEffectKindCustomPost: decodePostEffectIRAs[CustomPostIR],
+}
+
+// decodePostEffectIRAs decodes one entry into the concrete IR type T. The
+// pointer target picks up T's UnmarshalJSON method when it declares one.
+func decodePostEffectIRAs[T PostEffectIR](data []byte) (PostEffectIR, error) {
+	var out T
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DecodePostEffectIR decodes one postEffects entry into its concrete IR type.
+// It returns an error that wraps ErrUnknownPostEffectKind when the entry
+// carries a kind this build does not know.
+func DecodePostEffectIR(data []byte) (PostEffectIR, error) {
+	var probe struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, fmt.Errorf("scene: decode post effect kind: %w", err)
+	}
+	decode, ok := postEffectIRDecoders[probe.Kind]
+	if !ok {
+		return nil, fmt.Errorf("%w %q", ErrUnknownPostEffectKind, probe.Kind)
+	}
+	effect, err := decode(data)
+	if err != nil {
+		return nil, fmt.Errorf("scene: decode post effect %q: %w", probe.Kind, err)
+	}
+	return effect, nil
+}
+
+// DecodePostEffectIRs decodes a JSON array of postEffects entries. Order is
+// semantic for a post chain, so the result keeps the encoded order.
+func DecodePostEffectIRs(data []byte) ([]PostEffectIR, error) {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("scene: decode post effects: %w", err)
+	}
+	return decodePostEffectIRList(raw)
+}
+
+// decodePostEffectIRList decodes already-split entries. SceneIR.UnmarshalJSON
+// holds the entries as raw messages, so it calls this directly.
+func decodePostEffectIRList(raw []json.RawMessage) ([]PostEffectIR, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make([]PostEffectIR, 0, len(raw))
+	for index, entry := range raw {
+		effect, err := DecodePostEffectIR(entry)
+		if err != nil {
+			return nil, fmt.Errorf("post effect %d: %w", index, err)
+		}
+		out = append(out, effect)
+	}
+	return out, nil
 }
 
 // TonemapIR lowers Tonemap into the bundle.postEffects[i] shape:
@@ -127,6 +227,32 @@ func (ir BloomIR) MarshalJSON() ([]byte, error) {
 	}
 	b.WriteByte('}')
 	return []byte(b.String()), nil
+}
+
+// UnmarshalJSON decodes the shape MarshalJSON writes. BloomIR needs an
+// explicit decoder because one wire key does not match its Go field: the shader
+// uniform is u_intensity, so the IR writes "intensity" for Strength. Plain
+// reflection would leave Strength at zero and the bloom would lose its
+// intensity on every round trip.
+//
+// Absent keys stay at the Go zero value. The zero value means "use the runtime
+// default", which is the same contract MarshalJSON applies in reverse, so a
+// second marshal reproduces the first one byte for byte.
+func (ir *BloomIR) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Threshold float64 `json:"threshold"`
+		Intensity float64 `json:"intensity"`
+		Radius    float64 `json:"radius"`
+		Scale     float64 `json:"scale"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	ir.Threshold = wire.Threshold
+	ir.Strength = wire.Intensity
+	ir.Radius = wire.Radius
+	ir.Scale = wire.Scale
+	return nil
 }
 
 // VignetteIR lowers Vignette.
