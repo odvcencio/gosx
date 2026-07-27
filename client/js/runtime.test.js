@@ -18683,6 +18683,57 @@ test("Scene3D canonical performance telemetry API owns legacy perf flag", async 
   assert.equal(env.context.__gosx.scene3d.isPerformanceTelemetryEnabled(), false);
 });
 
+test("bootstrap does not report an engine as remounted on a genuine first page load", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "bg-scene-first-load";
+
+  const manifest = {
+    engines: [
+      {
+        id: "bg-scene-first-load",
+        mountId: "bg-scene-first-load",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: {
+          width: 320,
+          height: 180,
+          autoRotate: false,
+          scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+        },
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+  };
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest,
+  });
+
+  // bootstrap.js calls bootstrapPage() with no argument on a cold load (the
+  // FakeDocument harness starts at readyState "complete"). Install the
+  // capturing __gosx_emit right after the telemetry install (inside
+  // runScript) but before the async engine mount settles, so the same
+  // pattern used by the navigation test below also observes first-load
+  // telemetry.
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const events = [];
+  env.context.__gosx_emit = function(level, cat, msg, fields) {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  await flushAsyncWork();
+
+  const record = env.context.__gosx.engines.get("bg-scene-first-load");
+  assert.ok(record, "expected the Scene3D engine to mount on the first page load");
+  assert.equal(
+    events.some((e) => e.msg === "engine-remounted"),
+    false,
+    "a genuine first page load must never report an engine-remounted event",
+  );
+});
+
 test("navigation runtime disposes and remounts an engine when the scene payload differs", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "bg-scene-2";
@@ -22665,7 +22716,7 @@ test("bootstrap engines feature runs canvas2d surface-kind mount on runtime read
 
   // runtimeReady must fan out to the surface-kind mount alongside the existing
   // engine + engine-surface mounts.
-  assert.match(suffix, /mountAllEngines\(manifest, reuseEngineIDs\)/);
+  assert.match(suffix, /mountAllEngines\(manifest, reuseEngineIDs, isNavigationBootstrap\)/);
   assert.match(suffix, /mountAllEngineSurfaces\(\)/);
   assert.match(suffix, /mountAllSurfaceKinds\(\)/);
 });
