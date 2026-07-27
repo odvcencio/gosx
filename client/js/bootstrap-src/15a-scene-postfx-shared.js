@@ -642,6 +642,54 @@ function sceneRenderTruthShaderCounts() {
   return { messages: sceneRenderTruthShaderMessages, errors: sceneRenderTruthShaderErrors };
 }
 
+// ---------------------------------------------------------------------------
+// Pipeline rejections
+// ---------------------------------------------------------------------------
+//
+// A shader module that fails to compile is one thing; a PIPELINE the driver
+// refuses to build is another, and until now only the first was published.
+// An authored compute kernel that Firefox rejected produced exactly one
+// console.warn. The scene then ran on the builtin fallback, so every counter
+// -- particle counts, draw calls, post chain, frame errors -- read healthy,
+// and the true cause took three sessions to find.
+//
+// A rejection is now a published number plus a journal entry, so "did an
+// authored kernel get refused" is ONE attribute read:
+//
+//   data-gosx-scene3d-render-pipeline-failures  -> count
+//   data-gosx-scene3d-render-pipeline-failed    -> "stage@id:reason|..."
+//
+// Always recorded, never gated on the diagnostics tier: these are rare events
+// (a handful per session at worst, capped below), and losing the one record
+// that explains a production incident to save a few bytes is a bad trade.
+var SCENE_RENDER_TRUTH_MAX_PIPELINE_FAILURES = 16;
+var sceneRenderTruthPipelineFailures = 0;
+var sceneRenderTruthPipelineFailureList = [];
+
+// stage names the build site ("compute-payload", "points", "particle-render",
+// "post", "gpu-cull"); id is the layer / system / effect identity; reason is
+// the driver's own text. Callers pass the rejection reason from the per-object
+// signal that produced it -- never from a device-global error scope, which
+// cannot say WHICH pipeline it belongs to.
+function sceneRenderTruthPipelineFailure(stage, id, reason) {
+  sceneRenderTruthPipelineFailures++;
+  var label = sceneRenderTruthToken(stage || "pipeline") + "@" + sceneRenderTruthToken(id || "-");
+  var text = String(reason == null ? "" : (reason.message || reason)).slice(0, 120);
+  if (sceneRenderTruthPipelineFailureList.length < SCENE_RENDER_TRUTH_MAX_PIPELINE_FAILURES) {
+    sceneRenderTruthPipelineFailureList.push(label + ":" + text.replace(/[|]+/g, "/"));
+  }
+  sceneRenderTruthRecord("pipeline-rejected", label + " " + text);
+  return sceneRenderTruthPipelineFailures;
+}
+
+function sceneRenderTruthPipelineFailureCount() {
+  return sceneRenderTruthPipelineFailures;
+}
+
+function sceneRenderTruthEncodePipelineFailures() {
+  return sceneRenderTruthPipelineFailureList.join("|");
+}
+
 // sceneRenderTruthPublish stamps the backend-neutral attribute surface. Both
 // renderers write the SAME attribute names, so a probe, a deploy gate or a
 // human reading the DOM never has to branch on which backend won.
@@ -690,6 +738,8 @@ function sceneRenderTruthPublish(mount, truth) {
   var shaders = sceneRenderTruthShaderCounts();
   set("shader-messages", shaders.messages);
   set("shader-errors", shaders.errors);
+  set("pipeline-failures", sceneRenderTruthPipelineFailures);
+  set("pipeline-failed", sceneRenderTruthEncodePipelineFailures());
   set("events", sceneRenderTruthEncodeEvents());
   set("latches", sceneRenderTruthEncodeLatches(truth.backend));
   set("stale-latches", sceneRenderTruthStaleLatchCount(truth.backend));
@@ -721,6 +771,9 @@ if (typeof window !== "undefined") {
     staleLatches: sceneRenderTruthStaleLatchCount,
     captureShaderInfo: sceneRenderTruthCaptureShaderInfo,
     shaderCounts: sceneRenderTruthShaderCounts,
+    pipelineFailure: sceneRenderTruthPipelineFailure,
+    pipelineFailureCount: sceneRenderTruthPipelineFailureCount,
+    encodePipelineFailures: sceneRenderTruthEncodePipelineFailures,
     implementation: sceneRenderTruthImplementation,
     browserEngine: sceneRenderTruthBrowserEngine,
     adapterLabel: sceneRenderTruthAdapterLabel,

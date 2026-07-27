@@ -298,7 +298,17 @@ const budgets = [
   // Re-measured on top of the procedural point generator (PR #94), which the
   // original render-truth measurement predated. Measured: 1_342_558 / 357_345
   // / 288_596.
-  { file: "bootstrap.js", raw: 1_345_000, gzip: 358_500, brotli: 290_000 },
+  //
+  // Bumped raw 1_345_000 -> 1_346_000: per-object WebGPU pipeline validation.
+  // The six asynchronous pipeline builds no longer push a device-global error
+  // scope, which two overlapping builds used to pop in the wrong order and so
+  // report one build's error against the other. They now read the two signals
+  // that belong to the object: the create*PipelineAsync promise and
+  // getCompilationInfo(). The chunk also carries the new render-truth pipeline
+  // rejection counter, so a kernel the driver refuses is one attribute read.
+  // Measured: 1_344_993 / 358_212 / 289_492. Removing the scopes gives most of
+  // the added code back; gzip and brotli ceilings are unchanged and still fit.
+  { file: "bootstrap.js", raw: 1_346_000, gzip: 358_500, brotli: 290_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -502,7 +512,16 @@ const budgets = [
   // Re-measured on top of the procedural point generator (PR #94), which the
   // original render-truth measurement predated. Measured: 736_443 / 202_810 /
   // 166_954.
-  { file: "bootstrap-feature-scene3d.js", raw: 738_000, gzip: 204_000, brotli: 168_000 },
+  //
+  // Bumped raw 738_000 -> 739_000: per-object WebGPU pipeline validation. This
+  // chunk carries 15a (the new pipeline-rejection counter and journal entry)
+  // and 16b-scene-compute.js (sceneShaderModuleError, which reads
+  // getCompilationInfo per module instead of popping a device-global error
+  // scope that any other overlapping build could take). It does NOT carry
+  // 16a-scene-webgpu.js, where deleting three error-scope guards paid for the
+  // additions, so this chunk shows the cost without the saving. Measured:
+  // 738_379 / 203_400 / 167_390; gzip and brotli ceilings unchanged.
+  { file: "bootstrap-feature-scene3d.js", raw: 739_000, gzip: 204_000, brotli: 168_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
