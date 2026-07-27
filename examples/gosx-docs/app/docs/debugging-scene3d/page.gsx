@@ -284,8 +284,8 @@ func Page() Node {
 				Edge and Firefox do not share a WebGPU implementation. Edge uses Dawn, which translates WGSL through Tint. Firefox uses wgpu, which translates WGSL through naga. Selena validates its emitted WGSL with naga, so a shader can pass authoring-time validation and still hit a Tint bug in Edge. Run the probe twice and diff the two dumps; the schema is identical, so the comparison is mechanical.
 			</p>
 			{CodeBlock("bash", `node scripts/windows-scene3d-probe.mjs --browser edge    --out probe-edge
-node scripts/windows-scene3d-probe.mjs --browser firefox --out probe-firefox
-node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox`)}
+	node scripts/windows-scene3d-probe.mjs --browser firefox --out probe-firefox
+	node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox`)}
 			<p>
 				Set
 				<span class="inline-code">GOSX_BROWSER_EXECUTABLE</span>
@@ -302,15 +302,21 @@ node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox`)}
 				attributes report what was CONFIGURED or what the planner put in the bundle. The
 				<span class="inline-code">data-gosx-scene3d-render-*</span>
 				family reports what actually reached the framebuffer. Both renderers write the same names, so nothing that reads them has to branch on the backend. They appear only when the diagnostics tier is on — set
-				<span class="inline-code">window.__gosx_scene3d_render_truth = true</span>
+				<span class="inline-code">
+					window.__gosx_scene3d_render_truth = true
+				</span>
 				before bootstrap, or
-				<span class="inline-code">window.__gosx_telemetry_config.scene3dDiagnostics = true</span>
+				<span class="inline-code">
+					window.__gosx_telemetry_config.scene3dDiagnostics = true
+				</span>
 				. Production pays one boolean read.
 			</p>
 			<p>
 				<span class="inline-code">render-post-chain</span>
 				— one record per authored post effect, formatted
-				<span class="inline-code">index:kind[@name]:pipelineState:dispatchCount</span>
+				<span class="inline-code">
+					index:kind[@name]:pipelineState:dispatchCount
+				</span>
 				and pipe-separated. Pipeline state is
 				<span class="inline-code">missing</span>
 				,
@@ -344,7 +350,9 @@ node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox`)}
 				and
 				<span class="inline-code">render-mesh-undrawable</span>
 				close the accounting identity
-				<span class="inline-code">submitted = drawn + viewCulled + undrawable</span>
+				<span class="inline-code">
+					submitted = drawn + viewCulled + undrawable
+				</span>
 				. The point equivalents are
 				<span class="inline-code">render-points-submitted</span>
 				,
@@ -376,7 +384,9 @@ node scripts/windows-scene3d-probe.mjs --diff probe-edge probe-firefox`)}
 				and
 				<span class="inline-code">render-stale-latches</span>
 				report host-page decisions that settled on one backend and never re-armed. Register one with
-				<span class="inline-code">window.__gosx_scene3d_render_truth_api.latch(name, backend, true)</span>
+				<span class="inline-code">
+					window.__gosx_scene3d_render_truth_api.latch(name, backend, true)
+				</span>
 				. A latch whose recorded backend differs from the live backend is flagged stale — the signature of a guard that observed WebGPU, latched, and kept its decision after the device died.
 			</p>
 		</section>
