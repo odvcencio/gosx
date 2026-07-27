@@ -37,11 +37,7 @@ document.dispatchEvent(new CustomEvent("gosx:ready"));
 </html>`
 
 func TestInjectCreatesReadyMark(t *testing.T) {
-	d, err := New(WithHeadless(true), WithTimeout(10*time.Second))
-	if err != nil {
-		t.Skipf("skipping: %v", err)
-	}
-	defer d.Close()
+	d := requireDriver(t, 10*time.Second)
 
 	if err := InjectDriver(d); err != nil {
 		t.Fatalf("InjectDriver: %v", err)
@@ -101,11 +97,7 @@ func TestInjectCreatesReadyMark(t *testing.T) {
 }
 
 func TestInjectWrapsHydrateWithMarks(t *testing.T) {
-	d, err := New(WithHeadless(true), WithTimeout(10*time.Second))
-	if err != nil {
-		t.Skipf("skipping: %v", err)
-	}
-	defer d.Close()
+	d := requireDriver(t, 10*time.Second)
 
 	if err := InjectDriver(d); err != nil {
 		t.Fatalf("InjectDriver: %v", err)
@@ -151,11 +143,7 @@ window.__gosx_hydrate("test-island-1");
 }
 
 func TestInjectWrapsActionWithMarks(t *testing.T) {
-	d, err := New(WithHeadless(true), WithTimeout(10*time.Second))
-	if err != nil {
-		t.Skipf("skipping: %v", err)
-	}
-	defer d.Close()
+	d := requireDriver(t, 10*time.Second)
 
 	if err := InjectDriver(d); err != nil {
 		t.Fatalf("InjectDriver: %v", err)

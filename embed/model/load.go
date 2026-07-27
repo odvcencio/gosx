@@ -7,6 +7,19 @@ import (
 	"strings"
 )
 
+// weights/minilm-l6-v2.gsxt is committed at 0 BYTES, and it stays that way.
+// Real MiniLM-L6-v2 weights are about 90 MB, which does not belong in a library
+// repository, and nothing here converts or fetches them: this repository has no
+// converter command and no fetch step.
+//
+// So HasWeights() reports false and New() refuses. Callers who want a real model
+// read a .gsxt file themselves and call LoadFromBytes. Write the file with
+// WriteTensorFile using the tensor names buildModel reads below.
+//
+// embed/model/load_test.go records this state and asserts New's behaviour in both
+// directions, so the placeholder cannot pass unnoticed and cannot silently gain
+// content either.
+//
 //go:embed weights/minilm-l6-v2.gsxt
 var embeddedWeights []byte
 
@@ -16,9 +29,13 @@ func HasWeights() bool {
 }
 
 // New creates a Model loaded with the default MiniLM-L6-v2 weights.
+//
+// It fails today, because the embedded weight file is an empty placeholder. See
+// the comment on embeddedWeights.
 func New() (*Model, error) {
 	if !HasWeights() {
-		return nil, fmt.Errorf("embed/model: no embedded weights")
+		return nil, fmt.Errorf("embed/model: weights/minilm-l6-v2.gsxt is an empty placeholder, " +
+			"so there is no default model; read a .gsxt tensor file and call LoadFromBytes instead")
 	}
 	return LoadFromBytes(embeddedWeights)
 }

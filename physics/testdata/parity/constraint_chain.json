@@ -1,0 +1,1776 @@
+{
+  "name": "constraint_chain",
+  "why": "point, hinge with motor and limits, soft distance and fixed joint impulse accumulation",
+  "generatedBy": "go1.26.4 linux/amd64",
+  "fmaContraction": false,
+  "steps": 600,
+  "sampleEvery": 60,
+  "scenario": {
+    "Config": {
+      "Gravity": {
+        "X": 0,
+        "Y": -9.81,
+        "Z": 0
+      },
+      "FixedTimestep": 0.016666666666666666,
+      "SolverIter": 0,
+      "SolverIterations": 14,
+      "BroadPhaseCell": 0,
+      "DisableCCD": false,
+      "DisableWarmStart": false,
+      "SleepTime": 0,
+      "SleepLinearSpeed": 0,
+      "SleepAngularSpeed": 0
+    },
+    "Bodies": [
+      {
+        "Body": {
+          "ID": "anchor",
+          "Mass": 0,
+          "Position": {
+            "X": 0,
+            "Y": 6,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": null
+      },
+      {
+        "Body": {
+          "ID": "link-0",
+          "Mass": 1,
+          "Position": {
+            "X": 0.6,
+            "Y": 5.1,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0.10566871683993562,
+            "Y": 0.10566871683993562,
+            "Z": 0,
+            "W": 0.9887710779360424
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0.1,
+          "Friction": 0.3,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.4,
+            "Height": 0.4,
+            "Depth": 0.4,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "link-1",
+          "Mass": 1.25,
+          "Position": {
+            "X": 1.2,
+            "Y": 4.2,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0.20896434210788314,
+            "Y": 0.20896434210788314,
+            "Z": 0,
+            "W": 0.9553364891256061
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0.1,
+          "Friction": 0.3,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.4,
+            "Height": 0.4,
+            "Depth": 0.4,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "link-2",
+          "Mass": 1.5,
+          "Position": {
+            "X": 1.7999999999999998,
+            "Y": 3.3,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0.3075670787524794,
+            "Y": 0.3075670787524794,
+            "Z": 0,
+            "W": 0.900447102352677
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0.1,
+          "Friction": 0.3,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.4,
+            "Height": 0.4,
+            "Depth": 0.4,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "link-3",
+          "Mass": 1.75,
+          "Position": {
+            "X": 2.4,
+            "Y": 2.4,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0.39926252188357425,
+            "Y": 0.39926252188357425,
+            "Z": 0,
+            "W": 0.8253356149096783
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0.1,
+          "Friction": 0.3,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.4,
+            "Height": 0.4,
+            "Depth": 0.4,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "wrecker",
+          "Mass": 6,
+          "Position": {
+            "X": 5,
+            "Y": 4.2,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": -6,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0.4,
+          "Friction": 0,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 1,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0,
+            "Height": 0,
+            "Depth": 0,
+            "Radius": 0.45,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      }
+    ],
+    "Constraints": [
+      {
+        "Kind": "point",
+        "BodyAID": "anchor",
+        "BodyBID": "link-0",
+        "BodyAIndex": 0,
+        "BodyBIndex": 0,
+        "AttachA": {
+          "X": 0.3,
+          "Y": 0,
+          "Z": 0
+        },
+        "AttachB": {
+          "X": -0.3,
+          "Y": 0,
+          "Z": 0
+        },
+        "Distance": 0,
+        "Softness": 0,
+        "AxisA": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "AxisB": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "MotorEnabled": false,
+        "MotorSpeed": 0,
+        "MaxMotorTorque": 0,
+        "LimitEnabled": false,
+        "LowerLimit": 0,
+        "UpperLimit": 0
+      },
+      {
+        "Kind": "hinge",
+        "BodyAID": "link-0",
+        "BodyBID": "link-1",
+        "BodyAIndex": 0,
+        "BodyBIndex": 0,
+        "AttachA": {
+          "X": 0.25,
+          "Y": 0,
+          "Z": 0
+        },
+        "AttachB": {
+          "X": -0.25,
+          "Y": 0,
+          "Z": 0
+        },
+        "Distance": 0,
+        "Softness": 0,
+        "AxisA": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "AxisB": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "MotorEnabled": true,
+        "MotorSpeed": 1.5,
+        "MaxMotorTorque": 6,
+        "LimitEnabled": true,
+        "LowerLimit": -0.9,
+        "UpperLimit": 0.9
+      },
+      {
+        "Kind": "distance",
+        "BodyAID": "link-1",
+        "BodyBID": "link-2",
+        "BodyAIndex": 0,
+        "BodyBIndex": 0,
+        "AttachA": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "AttachB": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "Distance": 0.8,
+        "Softness": 0.15,
+        "AxisA": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "AxisB": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "MotorEnabled": false,
+        "MotorSpeed": 0,
+        "MaxMotorTorque": 0,
+        "LimitEnabled": false,
+        "LowerLimit": 0,
+        "UpperLimit": 0
+      },
+      {
+        "Kind": "fixed",
+        "BodyAID": "link-2",
+        "BodyBID": "link-3",
+        "BodyAIndex": 0,
+        "BodyBIndex": 0,
+        "AttachA": {
+          "X": 0.2,
+          "Y": 0,
+          "Z": 0
+        },
+        "AttachB": {
+          "X": -0.2,
+          "Y": 0,
+          "Z": 0
+        },
+        "Distance": 0,
+        "Softness": 0,
+        "AxisA": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "AxisB": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "MotorEnabled": false,
+        "MotorSpeed": 0,
+        "MaxMotorTorque": 0,
+        "LimitEnabled": false,
+        "LowerLimit": 0,
+        "UpperLimit": 0
+      }
+    ],
+    "Static": [
+      {
+        "Shape": 3,
+        "Offset": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "Rotation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0,
+          "W": 0
+        },
+        "IsTrigger": false,
+        "Width": 0,
+        "Height": 0,
+        "Depth": 0,
+        "Radius": 0,
+        "Normal": {
+          "X": 0,
+          "Y": 1,
+          "Z": 0
+        },
+        "Distance": 0,
+        "Vertices": null,
+        "Indices": null
+      }
+    ],
+    "Diagnostics": null
+  },
+  "specDigest": "1eaaf01d580aeee0",
+  "stateDigest": "ce0c130782a0811c",
+  "contactSteps": 587,
+  "contactPoints": 3156,
+  "samples": [
+    {
+      "step": 60,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fe34eb874eadad2",
+            "401823e5750d73cd",
+            "3fa90553fc8edc1a",
+            "3fbbd972041a4d06",
+            "bfb23788bb8a2412",
+            "3faf0d9500815f09",
+            "3fefab478e2afbe8",
+            "3fd30cb0b3934f4a",
+            "c002d41232e86884",
+            "3ffad0f55fd6cef3",
+            "c00dbd554a6265e7",
+            "c01c798518d8feb9",
+            "c0200939e867f0eb"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3ff0bd11ee5d5e99",
+            "401929ee8a60d298",
+            "3fc29723e07b96e2",
+            "3fe80d9aedfc5234",
+            "3fd2187704de0a77",
+            "3fd8dce71bc0ecde",
+            "3fdceaa8311ed47e",
+            "3ffa2e60d456b0e6",
+            "c016947ed77c23c3",
+            "400e1db612ade918",
+            "3fe21fe75c4ae8ae",
+            "c0010609d8c42c37",
+            "c022b35d71a88665"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3ff9cc16b32e0a5f",
+            "401abe7d7f82b0d7",
+            "3fe2000ab634aca8",
+            "bfe7b1271fb10ad4",
+            "bfdb472009fce248",
+            "bfdf4b6a6640e73e",
+            "3fc6914efdcd4dcf",
+            "40110b09b9ddc4e9",
+            "c014acbc76d2601b",
+            "3fdcd645529752f1",
+            "c01226cc7903c236",
+            "3fe14946baf69318",
+            "401c60f318768b89"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "3ffac87d0ca0c0bd",
+            "401b7293880cba6b",
+            "3fee1978b71e7716",
+            "bfe5c6287d42be6d",
+            "bfdd527439cdbffc",
+            "bfdfba568c17aa1c",
+            "3fd2406506a626be",
+            "400b4dc1a8a090e8",
+            "c00a1c6626b354cc",
+            "bfd061e5f7517622",
+            "c01001cb222f89c6",
+            "3fc33f6a51e705d8",
+            "401c5491bb40a22c"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "bfeffffffffffff6",
+            "3feaa6c4c5974e65",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "400292d77318fc52",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 120,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fda10869b5ce695",
+            "4018e8463b25cf06",
+            "3f93b7d512771fd6",
+            "3feb93e091a97f5d",
+            "3fdb46de2fcf17f6",
+            "3fca619de6035bbf",
+            "3fc750270b6b7010",
+            "4004eedf445a36c5",
+            "bff2caf084aebb4a",
+            "3fc53ba2cf29311a",
+            "400606532beeb7b4",
+            "40154a7e444c5ea0",
+            "c023ce9b932b871a"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fe8f588b8142c34",
+            "4018d60115c0544d",
+            "3fcfb8dcf7664b59",
+            "bfa8da32afe06ff2",
+            "3fd0effd402641de",
+            "3fd7ebd8bd640546",
+            "bfec67881e095860",
+            "40093b2f681667dd",
+            "c01190af7a05ccbf",
+            "c0008d297ce98ec8",
+            "40129dd0def3278a",
+            "4014bc30729515a0",
+            "c02501fb170333d4"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3ff0542ffb752342",
+            "401c117974d0a5dd",
+            "3fda83c90a7e05cf",
+            "bfccc2ccf8af9b4a",
+            "3fe7e38a51a407d7",
+            "3fe1ad6f5b21fa9c",
+            "3fd2e1c0bfaef7b6",
+            "4020d9c7ab3a9bdd",
+            "c019829490c69e71",
+            "401644792a2613e9",
+            "402d7524436948c0",
+            "401038b72458346b",
+            "bff892ea81892f61"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "3fe6c24dece47199",
+            "401be5bc46bccfc3",
+            "3fbe58ad4ba9c276",
+            "bfce4bbaceb2e768",
+            "3fea579f242f2dc9",
+            "3fdcbfe846f7b2f0",
+            "3fd0422b51bb67ee",
+            "401d10fa6ce93ba0",
+            "c0005bb5afac8abb",
+            "4015ba66b5626a8b",
+            "402cd2b58c25e69c",
+            "4010f2d1559b49c5",
+            "bff53a6da87fe1c8"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c01bfffffffffff5",
+            "3fddf1aae6c8f756",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "bf80129cbab64920",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 180,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fcff64eeac430e2",
+            "4016dd4886343dd6",
+            "3fb022ed614f4982",
+            "bfda69e9f8a3c227",
+            "3fe589206a9c5a61",
+            "3fd328cdbc095734",
+            "bfe125aa19a61bcc",
+            "bff5c0ec1b1adfea",
+            "3fefda50c35f124f",
+            "4004335c487fa58c",
+            "c01b064183484855",
+            "c02c6e2d370d0516",
+            "bfef4c1f04e36128"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fc79e14cc0f5cc7",
+            "4016c0b297745981",
+            "3fdfb5f3f2886d9d",
+            "bfe26597ad3e2d28",
+            "bfcb7ac6d23cd921",
+            "bfe8a21db4b4281b",
+            "bfc678e8d2e36d8a",
+            "c01a70303483436e",
+            "4002be37d4e90754",
+            "3ffe2535694a8ae8",
+            "c018d849d58477ae",
+            "c02cf017d901217a",
+            "3fecfc7994cf335a"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3fa9a600026ccace",
+            "40136ce51b104c15",
+            "3fd8609acc13eb48",
+            "3fde19afad925234",
+            "3fb2cfaf90ecb818",
+            "bfebb4714140cce0",
+            "3fc3c2a510eab47a",
+            "c0151a216c7d069e",
+            "40076919195c1d3c",
+            "bfb0138fd36afd45",
+            "401a1d5b9583f55a",
+            "401d6e38450e98ba",
+            "c0354e6b1608aff0"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "bfc4affc1f91c92f",
+            "4012b0266f97e2a1",
+            "3f9eb9bed8f31aa7",
+            "3fe220191d5777c5",
+            "bf61d6c48451865f",
+            "bfea338b6c4319de",
+            "3fb7f0a67347c7c9",
+            "c025b4e464059e40",
+            "4020f10221056f5a",
+            "bfe1bb95effc8e42",
+            "401a1e1c4ac7ff2d",
+            "401cd3834c3b869d",
+            "c0354c521ba92262"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c029ffffffffffef",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 240,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fb3b1a4ba8efd26",
+            "4017b42cd42e54a9",
+            "bfb83ecc936d588e",
+            "3fa797e04710ab25",
+            "bfef500fb3207c48",
+            "bfc910b8ddd4db16",
+            "bfa706a1a06c189d",
+            "3fabd5940d39bcc0",
+            "3fe507afb0f9dbda",
+            "bfe786669a2c9d82",
+            "c00ba3defe571006",
+            "c009e675291ee932",
+            "c01e4af972909bb3"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "bfc303ff640cd5dc",
+            "4018fec9d3aa92d9",
+            "3fa7124388bedd84",
+            "3fc21d858044aab8",
+            "bfbd43eb0a6b11aa",
+            "3fe40f273c79f2b9",
+            "3fe83e47379c1cac",
+            "40053733a80be50e",
+            "3ff798af44ba221a",
+            "c00bbb89e8a28c47",
+            "c00feca7e5851836",
+            "bffc013698f8d6be",
+            "c023040954a4aad7"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "bfeb8b297c5f89f6",
+            "4019588a5f605ab8",
+            "3fde76bff81c1a0f",
+            "bfc8c641f02468b8",
+            "bfe1de20ca15574f",
+            "3fe9cd76a6ead989",
+            "3f9904514b2f2d38",
+            "4011df42e533b577",
+            "402242fb9012b674",
+            "bfe9caedf4a921c8",
+            "c022facd09757969",
+            "4008425a72bbf94d",
+            "c03612b55cf0d601"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "bff4c29f5776e7e3",
+            "4019d8fb067909c4",
+            "3fda42a9b63eaada",
+            "bfd10eaffa877c9b",
+            "bfdd971eeb67f943",
+            "3fead903b29ac1a2",
+            "3fbb34bf6f7acd66",
+            "40159f427c3ed779",
+            "40304f08ceefb486",
+            "bfe27af53d0b8226",
+            "c022e08ef3511d38",
+            "40078a1af1e7311d",
+            "c0364e6b73918daa"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c033000000000000",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 300,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fd548dcbdd56bce",
+            "4018f407e76e4da1",
+            "bfc90dedd7ba29a5",
+            "3fe6c7da4749f028",
+            "3fe32360f03491c5",
+            "bfbffbd544d16b72",
+            "3fd6296ccd14ef7f",
+            "3ff3ab32d2c4a4ce",
+            "bfd988b369a1ebf7",
+            "3fda7880b74a6b57",
+            "3fe34ff904c3a7db",
+            "3ffc642bf620fdb4",
+            "c019418e0c7d7780"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fe70d7fab812ff9",
+            "401981c03a8d3d72",
+            "bfc7b78ff6d08cd5",
+            "3fd510380e9728b2",
+            "3fc454dd98ba786d",
+            "3fba5c047a4823d0",
+            "bfed9a99ee65ecec",
+            "3ff57e2586660d18",
+            "c001ac9d2941b0f3",
+            "bfe4290dd6bf2d61",
+            "40000c67182e9059",
+            "3ff6bc6807593a7f",
+            "c01d690e45ed05c4"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3fec1644667be0c0",
+            "401c5962d4a3cd75",
+            "3fcd8114a29418c7",
+            "3fdf4c11411507b6",
+            "3fba33d805f67e54",
+            "3feaca48d4fd1761",
+            "3fcc79ee0188ed8b",
+            "401ad4d0b0e05256",
+            "c005c6c6507b870a",
+            "bff80da711f18980",
+            "c008bbeeb07fdddd",
+            "401a6414dc32b9cd",
+            "401e0faa20f73969"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "3fe59b812ceccfdc",
+            "401d170c09d3125c",
+            "3fe151ba195973a8",
+            "3fdd1d5a3c0a7cb7",
+            "3fc9f91fa7d67df4",
+            "3feb43cddee213d9",
+            "3fc49c377cf124d9",
+            "401c49f894729dea",
+            "c00a5eb719d86954",
+            "bff09785077e241b",
+            "c00b8676bec59fa5",
+            "40175e7d188a4861",
+            "401f1657669e5a0c"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c039000000000018",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 360,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fe09ac73f318462",
+            "40180677f2dc6595",
+            "bf2e358835786880",
+            "bfeead488e8600ad",
+            "3fc1bc4ebdb20b38",
+            "bfc030168241c9de",
+            "bfcb640f94b2ebf4",
+            "3fe28ec115a600e8",
+            "c00dc4f06c158bf6",
+            "bff58bba5ea6f134",
+            "40202f054f4c4846",
+            "40074335eb1921d1",
+            "c02e1d995c3d0777"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fe2e32ed5e18827",
+            "40168e8c7adfa0ac",
+            "3fcb5500aeb19810",
+            "3f67fd426b2ed81f",
+            "bfd057559f3bbbd7",
+            "bfebabd487a63496",
+            "3fdbadeb9621e018",
+            "c008e2f35ebe021c",
+            "c0159961801b1183",
+            "c013c36d06dc8814",
+            "4023a0dab88a4967",
+            "3fcf898d9c604c80",
+            "c03102e10fe349bd"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3ff567b94aabb829",
+            "4014db2904eb6548",
+            "3fcb5986fba7a130",
+            "3fef0cbe014d65b6",
+            "bfca1bc8f763bfd1",
+            "bfb60dd7740c0886",
+            "bfb8ed3249a43e74",
+            "c019e36b601d0ee4",
+            "c02dc2f6cbf70246",
+            "3ff2662394843236",
+            "4009eb371a7ff2e2",
+            "4003ea328e5e6927",
+            "c00447440bbaa0f0"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "3ffba1973b5945d4",
+            "40144aa4794e339d",
+            "3fc6fa49806ead9b",
+            "3feeb7800cc52640",
+            "bfcae74968212aea",
+            "3f88efa2557e9e36",
+            "bfc7b1c92aea50e6",
+            "c01cda7a6b398181",
+            "c02fece8b17bb3b4",
+            "bfd4eb3d3e36bd6e",
+            "400803abdeadc500",
+            "40000e7fb42b7c6f",
+            "c0065cad354765dc"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c03f000000000030",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 420,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fc1a7e7baf11385",
+            "4018fc929ce8a23b",
+            "3fa9bff58c592d13",
+            "bfdb96747f7e6f1e",
+            "bfe3bd2f66d5b8e1",
+            "bfe45695eeb1fb25",
+            "bfc6134f5171d3c6",
+            "3ffdff6ef1f8c27f",
+            "3feaff981bf2f2ba",
+            "4004782e389a8f62",
+            "bfe28bf590637584",
+            "4025b479da78a83e",
+            "c0170dfb915ad345"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fbabe3f69e17849",
+            "401952633ac38e37",
+            "3fddf9dfa5a637b5",
+            "3fd6fa4cb2ca0d73",
+            "bfe1b82b5b77eeeb",
+            "3fc10c9a2d8b9df9",
+            "3fe7a9508797f3a6",
+            "4017325a9eb1440a",
+            "4002d3004a3af9fd",
+            "4003ddd1dd889497",
+            "bfdd3b74c56d9026",
+            "4026a0003526404d",
+            "c016722c60128bfd"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "bfc967047e1ea173",
+            "401c61a29d6c1ee6",
+            "3fcee250ee78d83f",
+            "3fd030120890d2fc",
+            "3fe33d19a2f31fdc",
+            "bfe28e3268857541",
+            "bfdf3ea34bd15117",
+            "401e7ad6415b60f3",
+            "4007f048df5e6493",
+            "400f01972c84e965",
+            "bffe3fbe498d079f",
+            "4002bc4b58badc26",
+            "c023545aa177845c"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "bfd741f481a4bbea",
+            "401de19ac01e3acf",
+            "3fd67b82f23dea36",
+            "3fd028040acd2514",
+            "3fdf90ebaef293b9",
+            "bfe3d0705de4feab",
+            "bfe1ce34fdc62397",
+            "40271dfc5599ef43",
+            "40142127d581da3c",
+            "400db2b6ee819425",
+            "bffdb8a193277f47",
+            "4003c514f1f421e3",
+            "c023fb42ac42eeac"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c042800000000024",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 480,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fdc41b1934ee2d4",
+            "40175676b33fad40",
+            "bfc4052aac1aaee6",
+            "3feb1661242f1976",
+            "bfda0a656fc18f18",
+            "bfd35de53b401803",
+            "3fc4c66d497ab98e",
+            "bff980278f380226",
+            "bff675916570402f",
+            "3feb1d7cebb552d0",
+            "c00841723e146726",
+            "bfd29ee7a353ddfa",
+            "c02483a18a5b92ab"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fd6340731946547",
+            "4015b78d4807e9fb",
+            "bfa3f149bca3c2b1",
+            "3fd47725b64ade16",
+            "bfa6cc57b281bdfa",
+            "3fed48256f5110cd",
+            "bfcef10aaea849ba",
+            "c014b74d9a622ac9",
+            "3fe36e2f41a7657c",
+            "3ff47e75ea2c2fd1",
+            "c011d625b5d9b29b",
+            "bff04e3c6437f893",
+            "c028ba8e61d9b04a"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3fe4d50f860aaedc",
+            "4012d6d3c2ef486d",
+            "bfd6b1097c61b860",
+            "bfe5f783739fdef5",
+            "3fdfc21e93392b9c",
+            "bfd1aa07da3969f0",
+            "3fdd12989b4d22b1",
+            "c024c0851a9797d2",
+            "3fa0e1131fa60e72",
+            "c00652be83f7db4f",
+            "40145f3ebb2f59ee",
+            "402ab2db59c5690c",
+            "c036e802c95a5694"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "3feaaa903623d83c",
+            "40112b333dd2a29c",
+            "bfd993712ceb152c",
+            "bfe3595c8e215990",
+            "3fe02d2fbf114b37",
+            "bfd88a7625e32af8",
+            "3fded04ca885a18c",
+            "c0319b2f4fcd8b92",
+            "c0174d0b529c3cbc",
+            "c01dc2add4fce40d",
+            "401404c849fe74a7",
+            "402a73ed4a86855f",
+            "c0378b6263aac231"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c045800000000030",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 540,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fdf34ed7b249e94",
+            "4018a8711895e283",
+            "3faaa1f427a2d7b3",
+            "3fef070854aba602",
+            "3fc997c4334e8075",
+            "3fc08eaf09b975dd",
+            "bfacbb86cb3bade4",
+            "3fef0c8dcadcb64f",
+            "bff2e766326a9472",
+            "bff86e5d0ba448f4",
+            "400d09d87310eb91",
+            "4022614bc08d3d4b",
+            "c01baeedc4bf1d88"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fea477065f39a7e",
+            "4017a2a86f48e373",
+            "3fbbe8da07075824",
+            "bfc5a08d129b36a0",
+            "3fa65a842514945d",
+            "3fe3b8190556ece0",
+            "bfe893687fe3ee58",
+            "bff067671995571a",
+            "c0079ba50399bc7e",
+            "c016f14cdf92b44e",
+            "4017c0e9c3d9d32b",
+            "4022ea0dcae65b36",
+            "c0254b37c3b6ced2"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3ffa80bc886fd7bf",
+            "40183c6f02a25282",
+            "3fd09dd69d21c380",
+            "bfedfcd5abba9b86",
+            "bfc1055a7739e9a6",
+            "3fcb3a65d491bbfa",
+            "bfcf0f9dd784d8e5",
+            "40101470850ae243",
+            "c028e411f34241c4",
+            "c027929c323a877f",
+            "3fd8c75f954c296f",
+            "4021105b89ef4a13",
+            "400e769a6a06c717"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "400076e5c4db4035",
+            "4018a210efbb0759",
+            "3fc31a8733c6fd14",
+            "bfef24c2052edf62",
+            "bfc13caf1896f819",
+            "3fc12bf666a3a5f2",
+            "bfc087bea6dceee5",
+            "40040da43b298a46",
+            "c02677ac424df641",
+            "c02f1a44ec2e4bd5",
+            "3fd9a65e463adf0b",
+            "40209973d3f3cf0c",
+            "400e9a8f14f1155a"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c04880000000003c",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 600,
+      "bodies": [
+        {
+          "id": "anchor",
+          "index": 1,
+          "bits": [
+            "0000000000000000",
+            "4018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "link-0",
+          "index": 2,
+          "bits": [
+            "3fcfff5b62dcf4ba",
+            "40193d1b26323281",
+            "bf88b206fd61b508",
+            "3fe4adf266a3b979",
+            "3fe639ef2e10bc3e",
+            "3fcfefa6fad6e5ae",
+            "3fc8da7639a50732",
+            "4004d6810ca7e098",
+            "3ff0adb824a7a71c",
+            "c0013cf7a6f4be7a",
+            "c0222fd491e8a3f0",
+            "4010c64e4b1419f0",
+            "c020a8cd5e2884d2"
+          ]
+        },
+        {
+          "id": "link-1",
+          "index": 3,
+          "bits": [
+            "3fe01701ffd485bd",
+            "401a4685a7d00044",
+            "3fce0a801478ba96",
+            "bfb27a3e58e1a0aa",
+            "3fd377907e30a796",
+            "bf9aa00abcf0ef5e",
+            "bfee627d6254e5bb",
+            "4012fe9bd4a8d4a7",
+            "3ffd55932edadef4",
+            "c017f2020f7d7e28",
+            "c022b2321d04f463",
+            "401222d35f919e0a",
+            "c01dd0129456bc99"
+          ]
+        },
+        {
+          "id": "link-2",
+          "index": 4,
+          "bits": [
+            "3fe1073d5b3cf836",
+            "401d20c35a60b413",
+            "3fe5b93a53d5eddc",
+            "bfe134463889d95c",
+            "bfe609334da42cf3",
+            "bfdb2acf046d4239",
+            "3fce7112a59d4a35",
+            "40264fdf87e035ba",
+            "3fea4b73639739ca",
+            "c01060433b12bdb5",
+            "40176cf9b9ba67dd",
+            "402a62fd6c75382c",
+            "c01e3f66a88312a7"
+          ]
+        },
+        {
+          "id": "link-3",
+          "index": 5,
+          "bits": [
+            "3fd775cb1d366822",
+            "401df4eecfc49926",
+            "3ff093be17a04d9a",
+            "bfddd0bacbe76bc5",
+            "bfe69482576e66d6",
+            "bfd981bc5eb0f72a",
+            "3fd6bcd9b698c7bb",
+            "4030b0e2f37d7e48",
+            "3fe436581b41bd76",
+            "bfd079796557c0fe",
+            "40186a114be0c761",
+            "402a9fa4ad80bbdf",
+            "c01df9621d17cf96"
+          ]
+        },
+        {
+          "id": "wrecker",
+          "index": 6,
+          "bits": [
+            "c04b800000000048",
+            "3fdcc49ba5e353f7",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "c018000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    }
+  ]
+}

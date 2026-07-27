@@ -71,6 +71,13 @@ jobs:
       - name: Unit and integration tests
         run: make test
 
+      # editor/ is a nested Go module, so nothing above reaches it: `go list
+      # ./editor/...` fails from the root and `make test` never compiles it.
+      # That left 3404 non-test lines and 68 tests with no gate on any runner.
+      # The target builds, vets and tests the module against the working tree.
+      - name: Editor module tests
+        run: make test-editor
+
       - name: Race tests
         run: make test-race
 
@@ -88,10 +95,12 @@ jobs:
       - name: Desktop tests and Windows cross-compile gate
         run: make test-desktop
 
-  # js-tests: Node for `node --test`, plus Go — `make test-js` also runs
-  # `cd cmd/buildbootstrap && go run . --check` (the bundle staleness gate),
-  # which needs a Go toolchain. No TinyGo/Chrome setup: nothing here shells
-  # out to either.
+  # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
+  # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
+  # staleness gate), and both need a Go toolchain. The unit tests matter here
+  # because cmd/buildbootstrap writes every shipped client bundle: --check
+  # catches a stale bundle, and only the tests catch a wrong one. No
+  # TinyGo/Chrome setup: nothing here shells out to either.
   js-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -163,6 +172,16 @@ jobs:
       - name: Motion cross-target float parity gate
         run: make test-motion-parity
 
+      # physics is one rigid body engine that serves the server's authoritative
+      # step and the client's predicted step. This target replays the golden
+      # corpus under js/wasm and demands bit equality, so the two steps cannot
+      # drift. Verified locally: 7 scenarios, 3600 steps, 48074 contact points,
+      # bit exact with zero tolerance. The gate needs a build that does not fuse
+      # a floating point multiply and add, which is GOAMD64 v2 or lower (the Go
+      # default) and js/wasm, which has no fused instruction.
+      - name: Physics cross-target float parity gate
+        run: make test-physics-parity
+
       - name: WASM size-budget gate
         run: make wasm-size-budget
 
@@ -209,6 +228,19 @@ jobs:
         env:
           GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: make test-e2e
+
+      # The perf driver's own browser tests. They sit behind `//go:build
+      # browser` and nothing passed that tag before this step existed, so 11
+      # tests never compiled anywhere.
+      #
+      # GOSX_CHROME_NO_SANDBOX is required: the runner cannot give Chrome a user
+      # namespace. The make target also sets GOSX_REQUIRE_CHROME, so a broken
+      # Chrome install fails this step instead of skipping every test in it.
+      - name: Perf driver browser tests
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_CHROME_NO_SANDBOX: "1"
+        run: make test-perf-browser
 
       - name: Perf budget gate
         env:

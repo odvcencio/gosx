@@ -10,13 +10,13 @@ func TestCopyDirIfPresentSkipsGoTestFiles(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
 	files := map[string]string{
-		"page.gsx":                  "package app\n",
-		"page.go":                   "package app\n",
-		"page_test.go":              "package app\n",
-		"nested/inner.go":           "package nested\n",
-		"nested/inner_test.go":      "package nested\n",
-		"nested/fixtures_test.gsx":  "package nested\n",
-		"testdata/golden.html":      "<html></html>\n",
+		"page.gsx":                 "package app\n",
+		"page.go":                  "package app\n",
+		"page_test.go":             "package app\n",
+		"nested/inner.go":          "package nested\n",
+		"nested/inner_test.go":     "package nested\n",
+		"nested/fixtures_test.gsx": "package nested\n",
+		"testdata/golden.html":     "<html></html>\n",
 	}
 	for name, body := range files {
 		path := filepath.Join(src, filepath.FromSlash(name))

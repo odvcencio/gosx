@@ -205,6 +205,8 @@ func prepareDevAssets(dir string) error {
 		"bootstrap-feature-scene3d-webgl.js",
 		"bootstrap-feature-scene3d-gltf.js",
 		"bootstrap-feature-scene3d-animation.js",
+		"bootstrap-feature-scene3d-compute.js",
+		"bootstrap-feature-scene3d-decompress.js",
 	} {
 		if err := copyFile(filepath.Join(buildDir, chunk), filepath.Join(gosxRoot, "client", "js", chunk)); err != nil {
 			return fmt.Errorf("stage %s: %w", chunk, err)

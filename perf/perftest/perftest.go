@@ -12,11 +12,14 @@
 //	}
 //
 // perftest.Run handles Chrome discovery, driver lifecycle, instrumentation
-// injection, and cleanup. If Chrome is not found, the test is skipped
-// (not failed) so CI without Chrome still passes.
+// injection, and cleanup. If Chrome is not found the test is SKIPPED, so a
+// developer machine without Chrome still passes. Set GOSX_REQUIRE_CHROME to turn
+// that skip into a failure, which is what a job that installs Chrome must do: a
+// suite where every test skips reports a green pass over zero executed work.
 package perftest
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -92,9 +95,7 @@ func Run(t *testing.T, url string, opts ...RunOption) *perf.Report {
 	t.Helper()
 
 	// Check Chrome availability before doing any work.
-	if _, err := perf.FindChrome(); err != nil {
-		t.Skipf("perftest: %v", err)
-	}
+	requireChrome(t)
 
 	s := &perf.Scenario{
 		URLs:     []string{url},
@@ -113,13 +114,33 @@ func Run(t *testing.T, url string, opts ...RunOption) *perf.Report {
 	return report
 }
 
+// requireChromeEnv names the environment variable that turns a missing browser
+// from a skip into a failure. The Makefile target test-perf-browser sets it, and
+// so does the browser-tests continuous integration job.
+//
+// Skipping is right on a developer machine without Chrome. It is wrong in a job
+// that installs Chrome: there, an absent browser means the install broke, and
+// every test that calls Run would report a green pass over zero executed work.
+const requireChromeEnv = "GOSX_REQUIRE_CHROME"
+
+// requireChrome skips, or fails when a browser was promised.
+func requireChrome(t *testing.T) {
+	t.Helper()
+	_, err := perf.FindChrome()
+	if err == nil {
+		return
+	}
+	if os.Getenv(requireChromeEnv) != "" {
+		t.Fatalf("%s is set, so a browser is required here: %v", requireChromeEnv, err)
+	}
+	t.Skipf("perftest: %v (set %s to make this a failure)", err, requireChromeEnv)
+}
+
 // RunMulti profiles multiple URLs in sequence.
 func RunMulti(t *testing.T, urls []string, opts ...RunOption) *perf.Report {
 	t.Helper()
 
-	if _, err := perf.FindChrome(); err != nil {
-		t.Skipf("perftest: %v", err)
-	}
+	requireChrome(t)
 
 	s := &perf.Scenario{
 		URLs:     urls,
