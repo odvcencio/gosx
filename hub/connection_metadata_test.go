@@ -100,7 +100,6 @@ func TestHubConnectionMetadataLifecycleAndWireIsolation(t *testing.T) {
 	defer server.Close()
 
 	alice := dialHubMetadataTestClient(t, server, "/alice")
-	bob := dialHubMetadataTestClient(t, server, "/bob")
 
 	// The welcome envelope is intentionally the only server-generated identity
 	// payload. Connection metadata must not leak into it or any replay payload.
@@ -112,6 +111,19 @@ func TestHubConnectionMetadataLifecycleAndWireIsolation(t *testing.T) {
 	if strings.Contains(string(snapshot.Data), "alice") || strings.Contains(string(snapshot.Data), "editor") {
 		t.Fatalf("connection metadata leaked into latch replay: %s", snapshot.Data)
 	}
+
+	// Read alice's own join broadcast before bob dials. ServeHTTPWithMetadata
+	// runs one connection's whole upgrade-through-join sequence synchronously
+	// in its own per-request goroutine, and a client's Dial call returns as
+	// soon as the WebSocket handshake completes -- well before the server
+	// registers the client or runs its join handler. Dialing alice before bob
+	// therefore gives no guarantee that alice's join handler runs, or
+	// broadcasts, before bob's does; the hub does not serialize join
+	// processing across connections (see TestHubConnectionMetadataConcurrent
+	// UpgradesAndDisconnects, which asserts no such order). The real barrier
+	// here is that bob has not dialed yet, so alice is the hub's only
+	// connected client and "joinObserved" on alice's own socket can only ever
+	// carry her own actor.
 	joinObserved := readUntilEvent(t, alice, "joinObserved")
 	var joinPayload map[string]string
 	if err := json.Unmarshal(joinObserved.Data, &joinPayload); err != nil {
@@ -120,6 +132,8 @@ func TestHubConnectionMetadataLifecycleAndWireIsolation(t *testing.T) {
 	if joinPayload["actor"] != "alice" {
 		t.Fatalf("join handler observed actor=%q, want alice", joinPayload["actor"])
 	}
+
+	bob := dialHubMetadataTestClient(t, server, "/bob")
 	bobWelcome := readUntilEvent(t, bob, "__welcome")
 	if strings.Contains(string(bobWelcome.Data), "bob") || strings.Contains(string(bobWelcome.Data), "viewer") {
 		t.Fatalf("connection metadata leaked into bob welcome payload: %s", bobWelcome.Data)
