@@ -295,7 +295,10 @@ const budgets = [
   // chain" apart from "the effect drew": a customPost pass was tuned across
   // three sessions while producing zero pixels because every existing
   // attribute reported the former and none reported the latter.
-  { file: "bootstrap.js", raw: 1_341_000, gzip: 356_000, brotli: 288_000 },
+  // Re-measured on top of the procedural point generator (PR #94), which the
+  // original render-truth measurement predated. Measured: 1_342_558 / 357_345
+  // / 288_596.
+  { file: "bootstrap.js", raw: 1_345_000, gzip: 358_500, brotli: 290_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -496,7 +499,10 @@ const budgets = [
   // drawn / culled / undrawable counters, point submitted-versus-drawn) and
   // 20-scene-mount.js (the single backend-truth JSON record). Measured:
   // 731_875 / 200_622 / 165_155.
-  { file: "bootstrap-feature-scene3d.js", raw: 734_000, gzip: 202_000, brotli: 166_000 },
+  // Re-measured on top of the procedural point generator (PR #94), which the
+  // original render-truth measurement predated. Measured: 736_443 / 202_810 /
+  // 166_954.
+  { file: "bootstrap-feature-scene3d.js", raw: 738_000, gzip: 204_000, brotli: 168_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
