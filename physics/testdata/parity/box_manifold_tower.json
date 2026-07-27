@@ -1,0 +1,1921 @@
+{
+  "name": "box_manifold_tower",
+  "why": "box against box clip, four-point manifold reduction, deep penetration position pass",
+  "generatedBy": "go1.26.4 linux/amd64",
+  "fmaContraction": false,
+  "steps": 540,
+  "sampleEvery": 54,
+  "scenario": {
+    "Config": {
+      "Gravity": {
+        "X": 0,
+        "Y": -9.81,
+        "Z": 0
+      },
+      "FixedTimestep": 0.016666666666666666,
+      "SolverIter": 0,
+      "SolverIterations": 14,
+      "BroadPhaseCell": 0,
+      "DisableCCD": false,
+      "DisableWarmStart": false,
+      "SleepTime": 0,
+      "SleepLinearSpeed": 0,
+      "SleepAngularSpeed": 0
+    },
+    "Bodies": [
+      {
+        "Body": {
+          "ID": "brick-0",
+          "Mass": 2,
+          "Position": {
+            "X": 0,
+            "Y": 0.5,
+            "Z": -0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 1
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.6,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "brick-1",
+          "Mass": 2,
+          "Position": {
+            "X": 0.02,
+            "Y": 1.52,
+            "Z": -0.01
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0.034992854604336196,
+            "Z": 0,
+            "W": 0.9993875625234886
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.6,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "brick-2",
+          "Mass": 2,
+          "Position": {
+            "X": 0.04,
+            "Y": 2.54,
+            "Z": -0.02
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0.06994284733753277,
+            "Z": 0,
+            "W": 0.9975510002532796
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.6,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "brick-3",
+          "Mass": 2,
+          "Position": {
+            "X": 0.06,
+            "Y": 3.56,
+            "Z": -0.03
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0.1048071688288825,
+            "Z": 0,
+            "W": 0.9944925627484974
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.6,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "brick-4",
+          "Mass": 2,
+          "Position": {
+            "X": 0.08,
+            "Y": 4.58,
+            "Z": -0.04
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0.13954311464423652,
+            "Z": 0,
+            "W": 0.9902159962126372
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.6,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "brick-5",
+          "Mass": 2,
+          "Position": {
+            "X": 0.1,
+            "Y": 5.6,
+            "Z": -0.05
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0.17410813759359597,
+            "Z": 0,
+            "W": 0.9847265389049336
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.6,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "striker",
+          "Mass": 4,
+          "Position": {
+            "X": -6,
+            "Y": 3.2,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": 7,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0.2,
+          "Friction": 0.3,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.9,
+            "Height": 0.9,
+            "Depth": 0.9,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      }
+    ],
+    "Constraints": null,
+    "Static": [
+      {
+        "Shape": 3,
+        "Offset": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "Rotation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0,
+          "W": 0
+        },
+        "IsTrigger": false,
+        "Width": 0,
+        "Height": 0,
+        "Depth": 0,
+        "Radius": 0,
+        "Normal": {
+          "X": 0,
+          "Y": 1,
+          "Z": 0
+        },
+        "Distance": 0,
+        "Vertices": null,
+        "Indices": null
+      }
+    ],
+    "Diagnostics": null
+  },
+  "specDigest": "faa1c3d719c47669",
+  "stateDigest": "e06e6ed438b16c80",
+  "contactSteps": 540,
+  "contactPoints": 14691,
+  "samples": [
+    {
+      "step": 54,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd3b14177c396e6",
+            "3fdff68b78ad8216",
+            "3f83ba714946541a",
+            "bf241892f5e561f5",
+            "bf9d4f3290b3a624",
+            "3f18338527037a84",
+            "3feffca4c061cf65",
+            "bf7420c2c957bfe6",
+            "3f734f095b7da6b4",
+            "bf90bebd7581d610",
+            "bf833ac4ebe10863",
+            "bf85f4647c7370e1",
+            "3f91ba327c016baa"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fba62666e8dd920",
+            "3ff7ff0ce760dded",
+            "bf8e8b92e548522d",
+            "bf52cc7a95df8987",
+            "3fa12dc60a659d67",
+            "3f71aad28316f856",
+            "3feffb4e5266f1f5",
+            "3fa5cb6fc44a6d6e",
+            "bf94696a435c8632",
+            "bfa21f52b98c7739",
+            "bf7e57b6ada071e9",
+            "3f8ac75f839e05d0",
+            "bfc0e35a1e70382a"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fbb88f1e108a7b2",
+            "4003fd9edcb8b1af",
+            "bf9d68896abddf3d",
+            "bf56f1d58d3c6e70",
+            "3fb1a7cc6c40e9ad",
+            "3f72de556f155b04",
+            "3fefec663e5123c1",
+            "3fc686a1b21ab941",
+            "bf92781780794568",
+            "bfa6526b32b477c2",
+            "bf8112a0b081b25e",
+            "3f906074452e8d5d",
+            "bfc31e06249a8943"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fbaffeca1355c80",
+            "400c09cfabc4b5b0",
+            "bfa476785a8875d0",
+            "bf55c3b0d931d2dd",
+            "3fba979eddad61ae",
+            "3f870d320e8f9dc9",
+            "3fefd32780bba724",
+            "3fcdc19c59768c16",
+            "3fb2d2428ef3c24b",
+            "bfac5ee20845df5d",
+            "3f9d02fc39199219",
+            "3f9a0e8f9e51df65",
+            "3f8e9daae7121cef"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fb874ed2bc06ad2",
+            "401207377c8c1b16",
+            "bfa9812905cd5c86",
+            "bf5e07baf0156454",
+            "3fc1c515705b5aaa",
+            "3f8c8ada2097eac1",
+            "3fefafdb4ee32a9b",
+            "3fca486d90b33587",
+            "3fb866255c5c1773",
+            "bfac7267946b7fcc",
+            "3f765116ec808dc5",
+            "3facedfdccb8410e",
+            "3fa4c61eae50198d"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fb51d05671819ea",
+            "401606c392b00529",
+            "bfae7e0cfca65b78",
+            "bf6336cbcb8f9a4e",
+            "3fc61f9959846296",
+            "3f8c8e2086fe8fe2",
+            "3fef83e119820608",
+            "3fbdada8f1554142",
+            "3fb7f417a0867e33",
+            "bfac2c0b206310cf",
+            "3f7a48bd38042038",
+            "3f9e485b335e680f",
+            "3fa4a295bf9ee17e"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe5ee8346da6b5b",
+            "3fe0961400bd52b0",
+            "3f61c6aa8a3576da",
+            "bf4fb0196582e021",
+            "3f7f0a1860ea875f",
+            "bf5f40eed195d5aa",
+            "3fefffbefcc6fddf",
+            "3fee79c9d0e3af48",
+            "bf9cb575ba2b1390",
+            "3f85967f14b3309a",
+            "bf9123cc4d6c1d21",
+            "3fb0f8db831e56be",
+            "bfa12d4cb3ab6786"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 108,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd465a53a4bcb05",
+            "3fdff90954f5aa11",
+            "3f8453fa37038642",
+            "3ef1e3de8f7734ec",
+            "bf981d973546ea55",
+            "3f0caa99b987a736",
+            "3feffdba5ab2d6ac",
+            "3f5906ef4e9fce74",
+            "3f4119233e7d312e",
+            "3f7dd39660e5cfea",
+            "3f44f5c9800e526c",
+            "bf2667e5c6ade79a",
+            "bf39c8204b900d44"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fbcb4ec1d6855d7",
+            "3ff7fdda2efa854b",
+            "bf819405d1b34dc8",
+            "3f3601407524a4d9",
+            "3fa25c7f79efcb43",
+            "3f57d565057b7d0f",
+            "3feffab8acd9f830",
+            "3f92fb3292461cfa",
+            "bf6e4cf346d2082c",
+            "3f93327edea24263",
+            "3f8ff2350658b5d3",
+            "3f1be9752e76f91c",
+            "bfa0e1ce7a0cf072"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fbeb72be1a823d5",
+            "4003fdb359a68cb8",
+            "bf94ae2e596347bf",
+            "3f399f0ffc3a7eed",
+            "3fb247cd2aa5aab4",
+            "3f59b52537630c9f",
+            "3fefeb139b17fe65",
+            "3faa666afd4cc960",
+            "bf72153fb6f1c930",
+            "3fa18cbbb27cac55",
+            "3f944bef2981c3bf",
+            "3f56e0d3110307fd",
+            "bfa17045fc4ba9f6"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc06501e140a1a0",
+            "400bfc922b5438d7",
+            "bfa03ff4e79d796d",
+            "3f39cc761b53ed69",
+            "3fbb4feb0234f534",
+            "3f5ad9a3bc9df56d",
+            "3fefd13b9067951d",
+            "3fb5e5a5edfdce51",
+            "bf73bdd2751cc07b",
+            "3faba1d182876a73",
+            "3f967524ae522315",
+            "3f575743c5a01ff3",
+            "bfa1cce18043280e"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fc1b1236551632d",
+            "4011fdc94b01b0d0",
+            "bfa74fdf04ddf23f",
+            "3f38eaaf8e0a4e60",
+            "3fc22bd0ea818ea4",
+            "3f5b4acda84eb10f",
+            "3fefad05216eb063",
+            "3fbec6e5845c475d",
+            "bf7450daee647db8",
+            "3fb369c7dcdea69d",
+            "3f9720f8d2d3d4c8",
+            "3f58cd2ccb71bd37",
+            "bfa1ee8e4f7cde13"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fc1e9e30f8bba50",
+            "4015fd4c90a18e81",
+            "bfafbb57827a7532",
+            "3f355a1c06165009",
+            "3fc6967dd5fc17d1",
+            "3f5b599a64cd7bf5",
+            "3fef7f6d249e0cc3",
+            "3fc3dc9381df23a4",
+            "bf72c95ef39d5ef4",
+            "3fb92d21efbc03eb",
+            "3f970c2d09d841ad",
+            "3f5889ea1b1934d5",
+            "bfa1e8ddae1f5cff"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455e8212a519e",
+            "3fdcc4b3b0aa2be3",
+            "bf94bc57d6d584c1",
+            "3ecdcd389111d465",
+            "bf9d3b788092fc4e",
+            "be8b02f72afd9e1b",
+            "3feffca94c4aee0e",
+            "be8aa885e9ea0000",
+            "be504a1160a00000",
+            "3e6370f80dbb8000",
+            "be60cb6ebb5aff3f",
+            "3e65865bf5c3ef4c",
+            "3e0966bfce9c0ee0"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 162,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd47670638ef281",
+            "3fdff8671b11af97",
+            "3f84055c027e53df",
+            "bf13066e16b85b0a",
+            "bf9843df87912821",
+            "bee3274ea6f7ff89",
+            "3feffdb31d7d9b79",
+            "3f8389c0e75ae129",
+            "3f34ee0c7e30aa58",
+            "3f764ff63697aca5",
+            "bf39a399aea69fc8",
+            "beef5cd976f87e20",
+            "bf520c1a0887c740"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fbdbdaf0f696b0f",
+            "3ff7fcfcec9d2c7a",
+            "bf82509d085d6a16",
+            "bf3ee9e036fe4424",
+            "3fa25dde44110b11",
+            "bf3709ea39e2fe14",
+            "3feffab9dd2382ef",
+            "3fa0346149818447",
+            "3f82684f44a1551d",
+            "3f82f532bd5ec3ea",
+            "3f5f883d76d0c708",
+            "bf758236399613cc",
+            "bfa135d601c625cc"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fc04f8ac7400eab",
+            "4003fd6c2c281e14",
+            "bf972a9186bf20c1",
+            "bf4668a816882c60",
+            "3fb242aebc9f9131",
+            "bf39973829f0a5e9",
+            "3fefeb216c542360",
+            "3fb0ab10074482ff",
+            "3f812695b1fba4a2",
+            "3f8765e5d6e03c43",
+            "3f655420b2fa6cde",
+            "bf7d6ed2f052c960",
+            "bfa292699e835b1a"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc1a85c3c5a2836",
+            "400bfc6e7b03e595",
+            "bfa379905be5d78d",
+            "bf4ccb2841f24613",
+            "3fbb58b22b76255c",
+            "bf3abfb8a58cdcf2",
+            "3fefd11f69140ae1",
+            "3fb9f2fe28a7c2de",
+            "3f805cdbe49e6368",
+            "3f8c702e00479ac9",
+            "3f632d0351597239",
+            "bf82930e5e77cf91",
+            "bfa302b0626afd25"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fc3336a50d51581",
+            "4011fdae83c7030c",
+            "bfad98a50b295061",
+            "bf4ef3b4084897bb",
+            "3fc231eba5862d87",
+            "bf3c5f9bdf09779f",
+            "3fefaccf0322f0fe",
+            "3fc1b9fc37d3f2f2",
+            "3f7f6063e3c6829b",
+            "3f90d14616a1db61",
+            "3f60a296ff3850e6",
+            "bf849b7e68717405",
+            "bfa314d358abdec1"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fc3a5b8d7e30867",
+            "4015fd1f8c142c71",
+            "bfb4c06605c0fc4e",
+            "bf4faafeb37b4969",
+            "3fc69d1d69799105",
+            "bf3faca62f749492",
+            "3fef7f22f08d794a",
+            "3fc6852a9964db0f",
+            "3f7f311d5d867887",
+            "3f92ececec692210",
+            "3f61203ef4be12d5",
+            "bf8485310abe2f9e",
+            "bfa313ed9ecd5e81"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c75239b138",
+            "3fdcc4c9c5794d37",
+            "bf94c43197e69725",
+            "3ee611a0c27bb151",
+            "bf9d3a8b5ca52f33",
+            "3eb57aa7020da990",
+            "3feffca982712ff8",
+            "bd02b6f000000000",
+            "bcca800000000000",
+            "3ceac00000000000",
+            "bcdf55e3abc71d33",
+            "3ce1acc013c1b91e",
+            "bcb19a65e3d272fb"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 216,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd470bd3bbc1996",
+            "3fdff7be61fd15a1",
+            "3f8691704f01425b",
+            "bee859ea06f95f05",
+            "bf981d69b8fc0066",
+            "3ef7819f6d698595",
+            "3feffdba63faee43",
+            "bf5b6e2103faa220",
+            "3f24a71bf9468938",
+            "bf6caeb01a995962",
+            "3f4a585d9a190f8a",
+            "bf2a7c48ecdd02dc",
+            "3f421a77e429f07e"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fbd7ab3ce54c2d1",
+            "3ff7fb1d92d348e3",
+            "bf7821d92e8663ac",
+            "bf31cdbe18a722c0",
+            "3fa2348d07eb6664",
+            "3f4565440f607562",
+            "3feffad153d76067",
+            "bf79aec1347adc2c",
+            "bf50e4ab56dc4243",
+            "bf84904562025e9b",
+            "bf83a5a2f10c1d83",
+            "3f4bc13533e07a63",
+            "3f830443b13d6169"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fc0026a027fbd0f",
+            "4003fc4cf91c70e6",
+            "bf9301810bb4597d",
+            "bf373e6cfec732e4",
+            "3fb220fb707a33de",
+            "3f48aed637e63c59",
+            "3fefeb6e2fc30df1",
+            "bf8f71309d60a8fc",
+            "bf50e7a597b28f3d",
+            "bf93d9e23b4daa6a",
+            "bf84fe4d2611c9c7",
+            "3f609f69ad28e073",
+            "3f898c502d014429"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc138db897e75ed",
+            "400bfb11aa2b8fae",
+            "bfa1adb335ed3b2c",
+            "bf3b0b58a8ffed76",
+            "3fbb251bb9a1e3d7",
+            "3f49c5036cc2127b",
+            "3fefd1d043e0251f",
+            "bf9c6ea9077888e7",
+            "bf532569c18c77fa",
+            "bf9e3576d9f8e23a",
+            "bf8559a9dc18347a",
+            "3f676d0576cb04a3",
+            "3f8eea2184a52eea"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fc2a4c79fbcdc68",
+            "4011fcffac8d7a10",
+            "bfad014618e68b2d",
+            "bf3da3491befa9ab",
+            "3fc216a90a977333",
+            "3f4ac838df94bd4a",
+            "3fefadc906fb8842",
+            "bfa5f51a7f0664a6",
+            "bf5555cca1132f41",
+            "bfa46810f2d86218",
+            "bf85487cbbdcba38",
+            "3f6af4fec72cbecf",
+            "3f90a72d1486d8e2"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fc2fa2c94946821",
+            "4015fc777f97d7bc",
+            "bfb54f87487004a9",
+            "bf3deaec6ddd62f4",
+            "3fc68211170d4753",
+            "3f4a9ab554a5252e",
+            "3fef80593a340d56",
+            "bfae3a2065034c3b",
+            "bf57627cd4923d16",
+            "bfa9bc9f7479782d",
+            "bf85580bae7b3573",
+            "3f6bf3543dfdbade",
+            "3f90609095ef0cbb"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c3c8ad7cad",
+            "3fdcc4ca8e8a0d43",
+            "bf94c43970f8d174",
+            "3ee68de63986df8a",
+            "bf9d3a8405664e5b",
+            "3eb5fef9370f1ff3",
+            "3feffca9841e2439",
+            "bc10000000000000",
+            "0000000000000000",
+            "3c46800000000000",
+            "3c58c180901c7b99",
+            "3c0b596ca692084e",
+            "3c16aeeec3b07006"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 270,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd468e5520c1fa2",
+            "3fdff5d39a32e710",
+            "3f882382b87333ae",
+            "bf24a249195ea683",
+            "bf981e7b7aa6d740",
+            "3f08454c76157a70",
+            "3feffdba2953e67e",
+            "bf314ccd1da8c5f8",
+            "3f498b05562141dc",
+            "3f72b70799727514",
+            "3f5cdc059eaf6517",
+            "bf4b6aa22bfcec5a",
+            "3f3382266496c46e"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fbd1f359b10947d",
+            "3ff7fa160dd0dcf6",
+            "bf6b7c7f5f782cdf",
+            "3f217a224b6db913",
+            "3fa22c66f4c1e086",
+            "3f5782b466cf0303",
+            "3feffad44ed1a80e",
+            "bf61dfca782c1c0c",
+            "3f46aee6285cf9ba",
+            "3f877697f565dac1",
+            "3f82c86a2dc160ad",
+            "bf44045a85afc961",
+            "3f65f579dc04d32b"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fbf274d2bc3bdda",
+            "4003fbc7646f8828",
+            "bf8f4af99041870d",
+            "3f225f2c4f11c625",
+            "3fb213829927ad07",
+            "3f5bb2c38a9ac6e2",
+            "3fefeb8a73953d78",
+            "bf722900d08f42a9",
+            "3f3ed64342603df7",
+            "3f94dcaf41f9446e",
+            "3f8450a1a12e5685",
+            "bf51359687307549",
+            "3f67bf4c9cfa699e"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc08de9887cfc86",
+            "400bfa863517f18a",
+            "bfa0a174f5eeb96f",
+            "3f18ea0e1cebac8d",
+            "3fbb1753a539b1a8",
+            "3f5d7708b29220d7",
+            "3fefd1fca845da84",
+            "bf7dcbf149b434e3",
+            "3f456280a0ea14cb",
+            "3f9efb28d98ad195",
+            "3f84ff4c70daad3b",
+            "bf516ac289d236fd",
+            "3f674a4d15652785"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fc1cda1eee6c43b",
+            "4011fcaed84db5d7",
+            "bfad7cc49342f9fd",
+            "3f09c670d4c945fb",
+            "3fc210eed5b5c8b8",
+            "3f5d57ed12fdaf25",
+            "3fefadfad7e70f36",
+            "bf84a33c070a121f",
+            "3f4e7c28013525f4",
+            "3fa4bbc4f9aa167d",
+            "3f85161c91a861ab",
+            "bf517fcc57f562c4",
+            "3f66e21f5730a9d4"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fc1f8f3d4794187",
+            "4015fc26403ff518",
+            "bfb68e69ab6fe753",
+            "bf143d1c4cd96f45",
+            "3fc67c9b677b3bba",
+            "3f5e2c177abd125f",
+            "3fef8094eb2e9250",
+            "bf8a4fb913472d61",
+            "3f549022878bc6e0",
+            "3faa0055d76e989d",
+            "3f850f78936f59bd",
+            "bf51eb575510d5e4",
+            "3f66f263a460a7bd"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c3c8ad7cad",
+            "3fdcc4ca8e8a0d43",
+            "bf94c43970f8d174",
+            "3ee68de63986df8a",
+            "bf9d3a8405664e5b",
+            "3eb5fef9370f1ff3",
+            "3feffca9841e2439",
+            "3c57000000000000",
+            "0000000000000000",
+            "3c3f000000000000",
+            "3c4ea719cdfd50a8",
+            "3c17b855529c4260",
+            "bc6881becf580de1"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 324,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd4a8e890f3be8e",
+            "3fdff89699686587",
+            "3f86ec40e6f0e9d7",
+            "bf0e037dff3c8a64",
+            "bf984609b1a82ed2",
+            "bee7faa22e5383c7",
+            "3feffdb2b4e9281f",
+            "bf5a4d38f301147d",
+            "bf131226159d8e00",
+            "bf48178bae629461",
+            "3eb6837ff5b4e500",
+            "3ef374987e4f4798",
+            "3f243c9786972e58"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fc02146c3c798d3",
+            "3ff7fce449dabe10",
+            "bf737c83ae3f4497",
+            "bf450d8bc66f6065",
+            "3fa21d77f937d679",
+            "bf329028b29fbcb6",
+            "3feffade714a791e",
+            "bf7a0e3e91ee17c0",
+            "bf60e13ce79f630f",
+            "bf3b985e585d2b4c",
+            "3f4cc9a8192bd8f6",
+            "3f369a7ed2dd1cf8",
+            "3f807436b1f93889"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fc217c1046d3ac9",
+            "4003fd3ac1a59a09",
+            "bf935794886f541d",
+            "bf4809d7df4b4b88",
+            "3fb20fc668fa78e3",
+            "bf38e9c81883ec1d",
+            "3fefeb953755aebe",
+            "bf8d4f0cecca81ca",
+            "bf5a3c0101c38f0b",
+            "3f425626023c7381",
+            "3f42207053810da0",
+            "3f31eaf756a21c4a",
+            "3f83669ceb1052b1"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc3813542c54cba",
+            "400bfc02d4c21e75",
+            "bfa408ace04da23f",
+            "bf49730c5bef5c77",
+            "3fbb1a77250e7105",
+            "bf3d285aa73d3f43",
+            "3fefd1f48a93b0cd",
+            "bf984fedbda6761b",
+            "bf54964a305ff438",
+            "3f535c0975586413",
+            "3f3ae5be2589cfdc",
+            "3f2e90d0fbfa9b5b",
+            "3f851d2ebf159878"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fc4ad9472a2ce27",
+            "4011fd7198baef7e",
+            "bfb14e0429f661ac",
+            "bf49dc875dd73db4",
+            "3fc214989e40d03b",
+            "bf40f63795b04d1a",
+            "3fefaddbdc928ffe",
+            "bfa16d0042641571",
+            "bf50cbe10d7bb397",
+            "3f5ab3737e1bff5b",
+            "3f39dc417409679a",
+            "3f2c022229cc926d",
+            "3f85b8240fcf0134"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fc488cf550a04e5",
+            "4015fcdc2d682af4",
+            "bfba041a9e45c04b",
+            "bf49c70b9a41e493",
+            "3fc6815f8e0ab628",
+            "bf41d293ab90b3f7",
+            "3fef80611ad96f77",
+            "bfa6d739eb410761",
+            "bf5023cf056cecf6",
+            "3f60c142733753a4",
+            "3f3c70b1d64470f8",
+            "3f2c0c3e8d472ad1",
+            "3f85a2e7b9bc98c6"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c3c8ad7cad",
+            "3fdcc4ca8e8a0d43",
+            "bf94c43970f8d174",
+            "3ee68de63986df8a",
+            "bf9d3a8405664e5b",
+            "3eb5fef9370f1ff3",
+            "3feffca9841e2439",
+            "bc57000000000000",
+            "0000000000000000",
+            "bc3e000000000000",
+            "bc5028b97ce7abb4",
+            "bc165f498580b8ee",
+            "3c6881c23533036c"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 378,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd495cc2dd4e251",
+            "3fdffac0fbadfb66",
+            "3f89f3ecc7155839",
+            "3f0459f494626a73",
+            "bf98168e2d8857a1",
+            "3f2588ac3a5292c2",
+            "3feffdbba725cc5e",
+            "bf680d9acb2dbb4a",
+            "3f5665ca09bc8df6",
+            "3f689c53fde190bc",
+            "3f6ba0182ad01370",
+            "3f13074d75a7c080",
+            "3f4b4dc4079190fc"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fbececf3537dd0e",
+            "3ff7fdf8adcc98ee",
+            "bf4cce62f7f0a9fe",
+            "3f3310b621f25a6d",
+            "3fa24a0e7dbccf3c",
+            "3f651f44d86577b2",
+            "3feffabe845d373c",
+            "bf78af9218453806",
+            "bf4ac541e91a0e4f",
+            "3f7eb0fbad6db718",
+            "3f57d72500e24d1a",
+            "3f48a4e2a4fbcafd",
+            "3f66b1962d3d352a"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fc041535c54da3c",
+            "4003fda97ed96bd0",
+            "bf86a88f9c673bc3",
+            "3f2dd3d06c2b79e6",
+            "3fb2287380ea41f3",
+            "3f6678db168818a8",
+            "3fefeb55f7eedb0e",
+            "bf8321a8bd29cedf",
+            "bf239ec32663a39e",
+            "3f812f886423204c",
+            "bf49b86b3d543298",
+            "3f4d42a083c77051",
+            "3f78970f8a0d9dc6"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc0667df2c0b16c",
+            "400bfc6fc8b2b5a3",
+            "bf9ba34e5b09aa1c",
+            "3f231e5e5ae7bd44",
+            "3fbb38e86f0021f4",
+            "3f675f32d3ce1c0f",
+            "3fefd184d475495d",
+            "bf8fe80995d50b7e",
+            "3f0dd1cc0ace167e",
+            "3f80ab392285eebe",
+            "bf5064ba9e818708",
+            "befa2202c6aa1613",
+            "3f80845fe634d376"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fc0363bf16498a9",
+            "4011fdb610d3f137",
+            "bfaa263367722819",
+            "3f15f4e45a528f33",
+            "3fc225535b4b8455",
+            "3f683c59df135688",
+            "3fefad3a7994fb6d",
+            "bf982a688a31ece4",
+            "3f268bb05e131884",
+            "3f7d1be59d9884cc",
+            "bf511330b3641e4e",
+            "3f28b0c32767ee1d",
+            "3f8287e1d30440b6"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fbd50baaf52b436",
+            "4015fd2d30c9b4e7",
+            "bfb4a87c37c497ff",
+            "bee97ec9e205e85d",
+            "3fc69241a4e3bf78",
+            "3f684edc0781e2ff",
+            "3fef7f976ba14522",
+            "bfa0b38f6499b9bb",
+            "3f2539044c89fefc",
+            "3f7a27476e6dfa3d",
+            "bf50f8e3d89c51ad",
+            "bf367edaca51c0b9",
+            "3f8218c40b9366b9"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c3c8ad7cad",
+            "3fdcc4ca8e8a0d43",
+            "bf94c43970f8d174",
+            "3ee68de63986df8a",
+            "bf9d3a8405664e5b",
+            "3eb5fef9370f1ff3",
+            "3feffca9841e2439",
+            "3c10000000000000",
+            "0000000000000000",
+            "bc3e000000000000",
+            "bc4fd91be60d0e6d",
+            "bbf59cfd865fd23a",
+            "bc16b644681a41ed"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 432,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd4a120cef4f11e",
+            "3fdff7a7c3a50ef0",
+            "3f87429946982a6a",
+            "bee874d453e201c8",
+            "bf981728b7493113",
+            "bec72a8403faa650",
+            "3feffdbb91ab5bc3",
+            "3f73e5e56e9d44d4",
+            "bf1b2ef998e5f0c0",
+            "3f7594a3766ffab1",
+            "bf53b63c57f00c8c",
+            "bf1a2b350cc03862",
+            "bf5217326cb456a0"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fbfe1b777592c9a",
+            "3ff7f8f7b7f9edd0",
+            "bf7134ed2dc8da16",
+            "bf400c087ba421f0",
+            "3fa24ce0bee220ae",
+            "3f301371289e14e1",
+            "3feffac3a70d9717",
+            "3f89f9ae5daafbce",
+            "3f2e1515727c1efc",
+            "3f8dd38d1453863c",
+            "3f89270df727fcef",
+            "3f439a0d9f00d1c5",
+            "bf7f292273c00a8c"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fc1491582ef4179",
+            "4003fafc03f091bb",
+            "bf92b04c1e02ebc0",
+            "bf471dbe6c535ab6",
+            "3fb214c6f9f9f15f",
+            "3f2f57f2f6dcfb0e",
+            "3fefeb8a05cbffd1",
+            "3f94b049aac35e35",
+            "bf42977d22ec60ff",
+            "3f9b0988a51d639c",
+            "3f888361e92572b4",
+            "3f4044b6ca15102b",
+            "bf78f600c0c99489"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc1a1f6bd39d7e4",
+            "400bf9b31ff2295f",
+            "bfa4138092f74bbf",
+            "bf4d308bebd3b059",
+            "3fbb24fe8e89dd95",
+            "3f2b0cdc73614d84",
+            "3fefd1d09a9fb0b9",
+            "3f9af08361bb84ae",
+            "bf3634b3fb1a3a6c",
+            "3fa39b4d77d53636",
+            "3f863074e575e76d",
+            "3f43b0723672c6c4",
+            "bf702dfb17d4e078"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fc16a5a7cc35891",
+            "4011fc363be24af7",
+            "bfb1b6b67cbfe40d",
+            "bf4e89e8a192a5f6",
+            "3fc21bbc71674a07",
+            "3f294a668b870dc4",
+            "3fefad9a9810075a",
+            "3f9f97c9552f7bce",
+            "3f2fa3fb107e7e3a",
+            "3fa93cfde04cb947",
+            "3f84b77cd9dd9919",
+            "3f5122342fac5506",
+            "bf661b2f6ab82ebf"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fbf63159b010dee",
+            "4015fb8d2433621e",
+            "bfbad92c06b652f5",
+            "bf5051c10fdae00a",
+            "3fc6894083a67b1f",
+            "3f321787c64f686a",
+            "3fef8006d14db94c",
+            "3fa13fabc5ba1009",
+            "3f4203f003109e0a",
+            "3fae8503b396d79b",
+            "3f855e14987a8a1d",
+            "3f50e4de2cc2c316",
+            "bf68764c27ffb187"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c3c8ad7cad",
+            "3fdcc4ca8e8a0d43",
+            "bf94c43970f8d174",
+            "3ee68de63986df8a",
+            "bf9d3a8405664e5b",
+            "3eb5fef9370f1ff3",
+            "3feffca9841e2439",
+            "3c47000000000000",
+            "0000000000000000",
+            "3c2a000000000000",
+            "3c414da2af4c714f",
+            "bbf18e7445fd3738",
+            "bc5b2c6460a137c6"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 486,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd4a6c91e871693",
+            "3fdff8901916c510",
+            "3f880eb129fc3694",
+            "3f16943f3bcf1da8",
+            "bf982cf2af8112fe",
+            "3f06aa249840bbe8",
+            "3feffdb773417f0f",
+            "bf851035d8ffc381",
+            "3f6427901ccc0238",
+            "bf79e99c3d43331f",
+            "3f7ea19ae3495b86",
+            "3f3d2c9b82de9cec",
+            "3f68faaaff9c9b70"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fbff803961309bf",
+            "3ff7fa5009262ce3",
+            "bf6b3bbb294def27",
+            "bf5127400dd4c659",
+            "3fa23e6b9f4a3afa",
+            "3f5a7f4b1ff44561",
+            "3feffac8555b0343",
+            "bfa10497816200f5",
+            "bf63eff2fc2c27af",
+            "bf960dc4b06e5397",
+            "bf9a958684df0c5b",
+            "bf5ec80cab775840",
+            "3fa3aecd4ddb1eaa"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fc0f4c25da1d84b",
+            "4003fbdd01f30c40",
+            "bf923f3ec5699604",
+            "bf55788ff1e2e6ed",
+            "3fb20ba639496a6d",
+            "3f5d2b96965544b9",
+            "3fefeb9a214e8965",
+            "bfb23c0f765072b7",
+            "bf625cd6985640d9",
+            "bfa7f11b556111d4",
+            "bf9c7b17a93e650e",
+            "bf5e1d33272bf0bd",
+            "3fa711d0974c3110"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc0af073924fc11",
+            "400bfac16ea7284b",
+            "bfa47cddb6bc8981",
+            "bf59c1d1154c475b",
+            "3fbb1c31f0ad43a5",
+            "3f5e31b2bb7d518b",
+            "3fefd1e94dff46b4",
+            "bfbd9a1589fd8ac0",
+            "bf636ee50dec1b3a",
+            "bfb31586201ef8ae",
+            "bf9d2abab55fd9f0",
+            "bf5e746e42f8f181",
+            "3fa89b3c02308db1"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fbf55c8bd0d0489",
+            "4011fcbbd2b2c061",
+            "bfb2500ec0daea9d",
+            "bf5c17f295fafadb",
+            "3fc2175a2c3d5af5",
+            "3f5de82cc551d9d2",
+            "3fefadbcfc719dc8",
+            "bfc4ee2526f668d4",
+            "bf6aa8158fec9d81",
+            "bfba5a281cc066a5",
+            "bf9ce5d49da6a4c2",
+            "bf5f4c1e49b8d4fa",
+            "3fa946b0b25f66fb"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fba23153dc9c935",
+            "4015fbfff841cc2c",
+            "bfbbddcfc171cb6d",
+            "bf5de33f241d111f",
+            "3fc6855793781e61",
+            "3f5d1be589cdd13d",
+            "3fef802dca0ef112",
+            "bfcb3a1b5c3a3bdf",
+            "bf74fefa891820a0",
+            "bfc0ce157918a77c",
+            "bf9cf9df39335fc5",
+            "bf596bf96d8326ee",
+            "3fa923284f0ff3d9"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c3c8ad7cad",
+            "3fdcc4ca8e8a0d43",
+            "bf94c43970f8d174",
+            "3ee68de63986df8a",
+            "bf9d3a8405664e5b",
+            "3eb5fef9370f1ff3",
+            "3feffca9841e2439",
+            "bc24000000000000",
+            "0000000000000000",
+            "3c22000000000000",
+            "3c375538494f8c02",
+            "bc1960df5e166e0a",
+            "3c34000a4d981d86"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 540,
+      "bodies": [
+        {
+          "id": "brick-0",
+          "index": 1,
+          "bits": [
+            "3fd4af3dc99f1ec1",
+            "3fdff8ba858da8cd",
+            "3f8a95a0b4697484",
+            "3eda67a39ce16bfb",
+            "bf984e3afa725016",
+            "3f143b9e6d6d3588",
+            "3feffdb1261e3069",
+            "3f802ac416016102",
+            "bf36e7b6cc8b4300",
+            "3f800fd748ce9e6d",
+            "bf6db571935c6d34",
+            "bf49d910ee2ac30a",
+            "bf6aa49f80a42df8"
+          ]
+        },
+        {
+          "id": "brick-1",
+          "index": 2,
+          "bits": [
+            "3fc0583050f2efd6",
+            "3ff7fba9fdec315e",
+            "bf35cab09a2dacb9",
+            "3f08026bbddae1d0",
+            "3fa241e6f518ce02",
+            "3f4cc5516f1d932b",
+            "3feffac96e03d0f1",
+            "3fa8215a24ca8f26",
+            "bf931f68155b3f56",
+            "3f91cfd4416f090e",
+            "3f839caaeb8a3b0b",
+            "bf565429a5118026",
+            "bfa696c96d3f894d"
+          ]
+        },
+        {
+          "id": "brick-2",
+          "index": 3,
+          "bits": [
+            "3fc17e62c61a3966",
+            "4003fc88003b5e66",
+            "bf8c8ae99f25ecac",
+            "3f02274510e9e736",
+            "3fb20ce1e8ef1e8d",
+            "3f53b716f2cb6510",
+            "3fefeb9af48b24e2",
+            "3fb7572387747fc0",
+            "bf94d8fc1bf63054",
+            "3f9a517f79586433",
+            "3f8748d8b1c10c98",
+            "bf597b49c074ad58",
+            "bf950e82889bf9ee"
+          ]
+        },
+        {
+          "id": "brick-3",
+          "index": 4,
+          "bits": [
+            "3fc112da65694659",
+            "400bfb74b8b9ba67",
+            "bfa23629aa43229e",
+            "bef31b87a21fe4bd",
+            "3fbb1dadabe1964b",
+            "3f590b20d6f51fae",
+            "3fefd1e7f8f8227e",
+            "3fbcb81c6acc25cd",
+            "bf942c6f0915faff",
+            "3fa2949088cafda0",
+            "3f8777b2b2d2c0b2",
+            "bf55a1d1ca38b327",
+            "bf57d96b9291201e"
+          ]
+        },
+        {
+          "id": "brick-4",
+          "index": 5,
+          "bits": [
+            "3fbf5102842b3f81",
+            "4011fd328608b50c",
+            "bfb115eb2b6c96df",
+            "bf1702eef375d9a6",
+            "3fc21a37a6afaa3e",
+            "3f5b10d3a1f9a91d",
+            "3fefada68af51944",
+            "3fbd2bc8761d7469",
+            "bf931c04ce761c8e",
+            "3fa839ed937aba24",
+            "3f862f932b3fc009",
+            "bf47ef4f6c0bdba4",
+            "3f7daf65a4ededac"
+          ]
+        },
+        {
+          "id": "brick-5",
+          "index": 6,
+          "bits": [
+            "3fb912129986510c",
+            "4015fc8f8112409a",
+            "bfba9d80bcfad211",
+            "bf2f3068494a4dea",
+            "3fc68768337c00b0",
+            "3f5c1fa4b6e50b86",
+            "3fef8019df556362",
+            "3fbbac1d276a48a6",
+            "bf92d718fbeb2913",
+            "3fae1dcd56d7c932",
+            "3f888159ac1a505e",
+            "bf44b43ace763586",
+            "3f75158ca3011b6b"
+          ]
+        },
+        {
+          "id": "striker",
+          "index": 7,
+          "bits": [
+            "bfe455c3c8ad7cad",
+            "3fdcc4ca8e8a0d43",
+            "bf94c43970f8d174",
+            "3ee68de63986df8a",
+            "bf9d3a8405664e5b",
+            "3eb5fef9370f1ff3",
+            "3feffca9841e2439",
+            "bc46000000000000",
+            "0000000000000000",
+            "bc00000000000000",
+            "bbfaf72ad777874e",
+            "bc0f365ae8bbbde3",
+            "3c56ed40f838c3de"
+          ]
+        }
+      ]
+    }
+  ]
+}

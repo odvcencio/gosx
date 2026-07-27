@@ -5,24 +5,15 @@ import (
 	"math"
 	"sort"
 	"strings"
-
-	"m31labs.dev/gosx/hub"
-	"m31labs.dev/gosx/sim"
 )
 
-// BodyState is the serializable state for one rigid body in a physics world.
-type BodyState struct {
-	ID              string `json:"id,omitempty"`
-	Index           int    `json:"index"`
-	Position        Vec3   `json:"position"`
-	Rotation        Quat   `json:"rotation"`
-	Velocity        Vec3   `json:"velocity,omitempty"`
-	AngularVelocity Vec3   `json:"angularVelocity,omitempty"`
-}
-
-// WorldState is the compact authoritative state broadcast by sim.Runner.
-type WorldState struct {
-	Bodies []BodyState `json:"bodies,omitempty"`
+// Input holds one client's raw input payload for a single step.
+//
+// The type is deliberately local to this package. A transport package converts
+// its own input type into this one, so physics never imports a network or hub
+// package and stays extractable on its own.
+type Input struct {
+	Data []byte
 }
 
 type inputVec3 struct {
@@ -89,23 +80,13 @@ type inputCommand struct {
 	Point     *inputVec3 `json:"point,omitempty"`
 }
 
-// NewRunner wires a physics world into the existing server-authoritative
-// simulation runner instead of starting a package-local ticker.
-func NewRunner(h *hub.Hub, world *World, opts sim.Options) *sim.Runner {
-	if world == nil {
-		world = NewWorld(WorldConfig{})
-	}
-	if opts.TickRate <= 0 {
-		opts.TickRate = tickRateForWorld(world)
-	}
-	return sim.New(h, world, opts)
-}
-
-func tickRateForWorld(world *World) int {
-	if world == nil || world.fixedTimestep <= 0 {
+// TickRate returns the whole ticks per second that match the fixed timestep.
+// A transport layer reads it to drive the world at the rate the world expects.
+func (w *World) TickRate() int {
+	if w == nil || w.fixedTimestep <= 0 {
 		return 60
 	}
-	rate := int(math.Round(1 / world.fixedTimestep))
+	rate := int(math.Round(1 / w.fixedTimestep))
 	if rate <= 0 {
 		return 60
 	}
@@ -114,7 +95,7 @@ func tickRateForWorld(world *World) int {
 
 // Tick applies queued physics inputs, then advances the world by one fixed
 // simulation step.
-func (w *World) Tick(inputs map[string]sim.Input) {
+func (w *World) Tick(inputs map[string]Input) {
 	if w == nil {
 		return
 	}
@@ -122,9 +103,13 @@ func (w *World) Tick(inputs map[string]sim.Input) {
 	w.StepFixed()
 }
 
-// ApplyInputs decodes runner input payloads and applies primitive body
-// commands. Payloads may be a single command object or an array of commands.
-func (w *World) ApplyInputs(inputs map[string]sim.Input) {
+// ApplyInputs decodes input payloads and applies primitive body commands. A
+// payload may be a single command object or an array of commands.
+//
+// Player identifiers are sorted before the payloads run, because Go randomises
+// map iteration and an unsorted order would make two replays of the same frame
+// produce different float results.
+func (w *World) ApplyInputs(inputs map[string]Input) {
 	if w == nil || len(inputs) == 0 {
 		return
 	}
@@ -203,87 +188,4 @@ func (w *World) bodyForInput(command inputCommand) *RigidBody {
 		}
 	}
 	return nil
-}
-
-// Snapshot returns a restorable physics checkpoint for sim.Runner replay.
-func (w *World) Snapshot() []byte {
-	return w.State()
-}
-
-// Restore applies a previously captured Snapshot/State payload.
-func (w *World) Restore(snapshot []byte) {
-	if w == nil || len(snapshot) == 0 {
-		return
-	}
-	var state WorldState
-	if err := json.Unmarshal(snapshot, &state); err != nil {
-		return
-	}
-	w.ApplyState(state)
-}
-
-// State returns the current authoritative state for sim.Runner broadcasts.
-func (w *World) State() []byte {
-	if w == nil {
-		return nil
-	}
-	data, err := json.Marshal(w.StateSnapshot())
-	if err != nil {
-		return nil
-	}
-	return data
-}
-
-// StateSnapshot returns a typed copy of the world's dynamic body state.
-func (w *World) StateSnapshot() WorldState {
-	if w == nil || len(w.bodies) == 0 {
-		return WorldState{}
-	}
-	state := WorldState{Bodies: make([]BodyState, 0, len(w.bodies))}
-	for _, body := range w.bodies {
-		if body == nil {
-			continue
-		}
-		state.Bodies = append(state.Bodies, BodyState{
-			ID:              body.ID,
-			Index:           body.index,
-			Position:        body.Position,
-			Rotation:        body.Rotation,
-			Velocity:        body.Velocity,
-			AngularVelocity: body.AngularVelocity,
-		})
-	}
-	return state
-}
-
-// ApplyState restores matching body transforms and velocities from a snapshot.
-func (w *World) ApplyState(state WorldState) {
-	if w == nil || len(state.Bodies) == 0 {
-		return
-	}
-	byIndex := make(map[int]*RigidBody, len(w.bodies))
-	byID := make(map[string]*RigidBody, len(w.bodies))
-	for _, body := range w.bodies {
-		if body == nil {
-			continue
-		}
-		byIndex[body.index] = body
-		if body.ID != "" {
-			byID[body.ID] = body
-		}
-	}
-	for _, item := range state.Bodies {
-		body := byIndex[item.Index]
-		if body == nil && item.ID != "" {
-			body = byID[item.ID]
-		}
-		if body == nil {
-			continue
-		}
-		body.Position = item.Position
-		body.Rotation = item.Rotation.Normalize()
-		body.Velocity = item.Velocity
-		body.AngularVelocity = item.AngularVelocity
-		body.Wake()
-	}
 }

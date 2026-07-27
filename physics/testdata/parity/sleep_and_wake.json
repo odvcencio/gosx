@@ -1,0 +1,1405 @@
+{
+  "name": "sleep_and_wake",
+  "why": "sleep countdown, sleep blocking through contacts, wake on arrival, warm-start cache reuse",
+  "generatedBy": "go1.26.4 linux/amd64",
+  "fmaContraction": false,
+  "steps": 600,
+  "sampleEvery": 60,
+  "scenario": {
+    "Config": {
+      "Gravity": {
+        "X": 0,
+        "Y": -9.81,
+        "Z": 0
+      },
+      "FixedTimestep": 0.016666666666666666,
+      "SolverIter": 0,
+      "SolverIterations": 10,
+      "BroadPhaseCell": 0,
+      "DisableCCD": false,
+      "DisableWarmStart": false,
+      "SleepTime": 0.4,
+      "SleepLinearSpeed": 0.06,
+      "SleepAngularSpeed": 0.12
+    },
+    "Bodies": [
+      {
+        "Body": {
+          "ID": "sleeper-0",
+          "Mass": 1.5,
+          "Position": {
+            "X": 0,
+            "Y": 0.5,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.7,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": true,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "sleeper-1",
+          "Mass": 1.5,
+          "Position": {
+            "X": 0,
+            "Y": 1.51,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.7,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": true,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "sleeper-2",
+          "Mass": 1.5,
+          "Position": {
+            "X": 0,
+            "Y": 2.52,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.7,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": true,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "sleeper-3",
+          "Mass": 1.5,
+          "Position": {
+            "X": 0,
+            "Y": 3.5300000000000002,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0,
+          "Friction": 0.7,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": true,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 1,
+            "Height": 1,
+            "Depth": 1,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "waker",
+          "Mass": 3,
+          "Position": {
+            "X": 0.2,
+            "Y": 22,
+            "Z": 0
+          },
+          "Rotation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0,
+            "W": 0
+          },
+          "Velocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "Restitution": 0.3,
+          "Friction": 0.4,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 1,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0,
+            "Height": 0,
+            "Depth": 0,
+            "Radius": 0.4,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      }
+    ],
+    "Constraints": null,
+    "Static": [
+      {
+        "Shape": 3,
+        "Offset": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "Rotation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0,
+          "W": 0
+        },
+        "IsTrigger": false,
+        "Width": 0,
+        "Height": 0,
+        "Depth": 0,
+        "Radius": 0,
+        "Normal": {
+          "X": 0,
+          "Y": 1,
+          "Z": 0
+        },
+        "Distance": 0,
+        "Vertices": null,
+        "Indices": null
+      }
+    ],
+    "Diagnostics": null
+  },
+  "specDigest": "e92a6bfd224b9e0d",
+  "stateDigest": "7d24a1a429fe50fe",
+  "contactSteps": 600,
+  "contactPoints": 8948,
+  "samples": [
+    {
+      "step": 60,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf3db661fda8c877",
+            "3fdff7db16c40a62",
+            "3f1cd32019f48c2f",
+            "3eea674aa7f3115f",
+            "bef22640f7f0acf6",
+            "3ee8592fc721f65e",
+            "3fefffffffd741a0",
+            "3f410bf0accadc76",
+            "3f24183a651c2fe8",
+            "bf38bba315cbb50a",
+            "3f56698535490f02",
+            "bf2120a59d5d72b6",
+            "3f5163bbe014a73a"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bf544c3515c87cc7",
+            "3ff7fcf31c5db4bc",
+            "3f43da28214c085d",
+            "bf0c9ead4992f371",
+            "3ee35de8540d9c35",
+            "3f0826de18ba84bf",
+            "3feffffffe9b89c2",
+            "3f5ede653de39236",
+            "3f80440bd1530124",
+            "bf48d4890ef36b32",
+            "bf7534990f8ad6c2",
+            "bf1e2c176237606c",
+            "3f5290815ad9738a"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "bf41c8c8ec6bdf0d",
+            "4003fd9e830701f8",
+            "3f23922c1ceeb1f7",
+            "bf0394a6eaffb221",
+            "3ef18558b3acb2b0",
+            "3f04f4b8e6f5f624",
+            "3fefffffff1f2cd2",
+            "3f5ae13030ba5843",
+            "3f85fff3cc86f1f7",
+            "bf6ec07e5ad59a81",
+            "bf6f12c4b3d0ed4d",
+            "3f2247101dafe135",
+            "3f5d3ae0ee032dbc"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "bf2e177e8d7cfe03",
+            "400bfc9bb8c2fa4b",
+            "bf04928a21677194",
+            "bf055cc2c9e25bfc",
+            "befc15e81cd57018",
+            "3f009e959acf7b6e",
+            "3fefffffff178f96",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "3fc999999999999a",
+            "403103645a1cac06",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "3ff0000000000000",
+            "0000000000000000",
+            "c0239eb851eb8524",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 120,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf69ffb69ede8094",
+            "3fdf7ca803794778",
+            "3fa1b1cf37bd0d9b",
+            "bf736ab745e4055e",
+            "bf1219378ecd1bf7",
+            "3f6b287e12a62bed",
+            "3fefffdce8262aba",
+            "3fd149d5429c9136",
+            "3fbc9e57f74f9532",
+            "bf97b21709a024ee",
+            "bfc9152ac8860826",
+            "3fcfd2035be1dead",
+            "bfc4c5f0b10e0112"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfa519b1e43bf53e",
+            "3ff55214d4bfc3d1",
+            "3f7ad43dd863b99d",
+            "bfb5601fa2220b03",
+            "bf7658a2290e3aa1",
+            "bf8add20cac9f2fc",
+            "3fefe290415f0d42",
+            "3f6487f6439df213",
+            "3fe2067aca0713f5",
+            "bfc180dd735605dd",
+            "bfac9b0621fe1a7e",
+            "3fc59f41e79d8174",
+            "3fbdfa7dfa76f757"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3f86fbfe627b6e19",
+            "4002556707987a10",
+            "bfa45e7c8d5dfb58",
+            "bfae2c9e8af021a5",
+            "3f94c861877554f2",
+            "bfa04170108c7e1b",
+            "3fefebeeda7fcfbc",
+            "bfce6adddfd303d4",
+            "3fe49742bad604ac",
+            "bfd23a8951e12da6",
+            "bfc50521d1248b2e",
+            "3fd30b57b6917923",
+            "3fd520472ab01d54"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fa9ca48e43a63f1",
+            "4009a82fe26ca0d4",
+            "bfa68d82f9cd7fcf",
+            "bf99e2b890bffe4a",
+            "3f8f537e42719241",
+            "bfafdde8a9e756ce",
+            "3fefec88b3af1d25",
+            "3fd267af80b6f75f",
+            "bfcbabfbed683093",
+            "bfdb45eb4ec2b5d6",
+            "3fae64dd4b8b789d",
+            "3fdd53f72d466a06",
+            "bff325be136450e9"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "3fd07678ed1cfd2b",
+            "4010577242afdeb2",
+            "bfae756f59da3f73",
+            "3fa93a1e774948b4",
+            "bf4bfe6436b9d082",
+            "3f9458a4e674a982",
+            "3feff46d8f667a3c",
+            "3fe0ccd0d649d44f",
+            "bfda730f8b126c73",
+            "bfe2860ea0c6db70",
+            "3fde1fdf6f0d5343",
+            "3f95107de9e4d57d",
+            "bfd28f84773c72bb"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 180,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf8a92fb8dc5e4ef",
+            "3fdfeb7b8cb610f4",
+            "3f9edffa3d08422d",
+            "3f4c429f45ffee89",
+            "3f489a5e6337399e",
+            "bf41998723c0ec5b",
+            "3feffffe539335e1",
+            "3f8825f3c121ac52",
+            "bf3769bce778c540",
+            "3f8d4ae1f0e33545",
+            "bf62520b0ad2f7d2",
+            "3f0e5aee82f17f07",
+            "bf58c7c6206ec9f0"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfc9fbad86c52317",
+            "3ff7bcdcee1f0802",
+            "3fb8909baed8863f",
+            "bf8c29efe259e438",
+            "bf93d70245831719",
+            "bf8668988016297f",
+            "3feffd326b949a7b",
+            "3fa35b8b755e3d8a",
+            "3f8c07896e85a852",
+            "3f9e635098725a28",
+            "3f8e60a86d97ee40",
+            "bf5f94de6e216afa",
+            "bf9bada98009b227"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fb89576a887760d",
+            "4003b7411fb17c94",
+            "bfcb26a9b17e3b09",
+            "bf8fd97b5680b12b",
+            "3fafc14f21b62d1e",
+            "bf8cd6260eb11bf9",
+            "3fefee6c238cf086",
+            "3fb2cebbc399e0c4",
+            "3f9d3556838488cd",
+            "bf81c4eb50575c44",
+            "bfb4a81d186ce15a",
+            "3f75304f8beb4d99",
+            "bfa16ac057501fc7"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fc891232d2f834a",
+            "400ba4d4f6a6ff84",
+            "bfd50ac7439c50a1",
+            "bf90a26648c171e8",
+            "3f99eb9390a2b7a0",
+            "bf8fdb8843ab7037",
+            "3feffb4d5e7f5280",
+            "3fbb9a003f88bee7",
+            "3f90ee453c63c8f2",
+            "bfb76ba3d8b04615",
+            "bfb5e8fa526de6ef",
+            "3f753e9e47124d1e",
+            "bfa28526f98a1e5c"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "3ff3c6963d2eccc3",
+            "400bee176a9134ec",
+            "bfeaccd5a8e75ba2",
+            "bfd99859efe747c9",
+            "bfacdb8f6cbd5757",
+            "bfe7768e1bbc9c19",
+            "3fe1817a5e49499b",
+            "3ff2f22502a981e4",
+            "c00bb36503860d9d",
+            "bfeb6a4729f239e0",
+            "bffcb3dee171a190",
+            "3fbc83340236d870",
+            "c008dc73ebb981ad"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 240,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf89cf73fddb8ed0",
+            "3fdff777e99a2f66",
+            "3f9e9bc8e77714c9",
+            "bf221032c46fbfd7",
+            "3f46314bead11fba",
+            "bf1f25d77be730af",
+            "3fefffff7bfc0bdf",
+            "bf5627bcf6a043ed",
+            "bf276ddb035fbc78",
+            "3f2578b2c53f3f37",
+            "bf438856b1fd6e85",
+            "bf0f6127aa22d530",
+            "bf2f1ee3ba51538c"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfc9f1ee24f17304",
+            "3ff7fc8f8a9eaee4",
+            "3fb8f53e1a1ad1e5",
+            "bf260b5787dbdae4",
+            "bf947f72eeae87de",
+            "bf43487272bf3a4d",
+            "3feffe5b673e345d",
+            "bf77e0aa02379012",
+            "bf6da64d9751b230",
+            "3f79c8760029f13f",
+            "3f94fda602fdd0f2",
+            "bf57bbc146ee8e5f",
+            "3f756b19b80feb44"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fb96541c63cb4bd",
+            "4003fcad2509d17f",
+            "bfcae8b407c09843",
+            "bf3256e9834dfcc9",
+            "3fafc7162c73a76f",
+            "bf44657091d3a9e5",
+            "3feff03454307b22",
+            "bf91bc8f2429a60f",
+            "3f7d6e41b342346a",
+            "3fa1b095284ea543",
+            "3fa42dac0f328f97",
+            "bf610cfa30031b05",
+            "3f9177ebc89f3779"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fc9200352fc9010",
+            "400bfb3c78cc635f",
+            "bfd4b9962d0e32a2",
+            "bf33edea6e6aa3c6",
+            "3f99f1eb59afc9fa",
+            "bf443c4c9e920dd8",
+            "3feffd5e40855972",
+            "bfa17a1c41d3cd4d",
+            "3f8bc6c466e5457b",
+            "3fb2da540a7138fc",
+            "3fa3c1c41a72a43b",
+            "bf618944e92c51ef",
+            "3f91577c4a74167a"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "40033c5e25aa5732",
+            "3fe0dd2a6fc53ac3",
+            "bffa813ec77113a4",
+            "bfc7952a958a8eff",
+            "bfa4292c60d213e8",
+            "bfc8da5c189d94a7",
+            "bfeece7fd9938405",
+            "3ff26dbd3dbc7cce",
+            "bfff8391d4842681",
+            "bfe8ebbfdb1e709c",
+            "c001c48a4fbc8cf0",
+            "3fbc83340236d86d",
+            "c00a472b4f25488a"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 300,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf8b216838e6a885",
+            "3fdff77b23e1ed0e",
+            "3f9e8d4bbe9c8d27",
+            "beef7f3418ec48bc",
+            "3f45304d738c421c",
+            "3ece112cf44c4964",
+            "3fefffff8fb2287d",
+            "bf696c50a43dbaa0",
+            "bf48af3f0614b5bc",
+            "3f72adff127e069e",
+            "bf69d866e8811dbe",
+            "3f41be8eba3835b7",
+            "bf5ae848f48a090c"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfca26248b5c2f1e",
+            "3ff7fb189ab24a68",
+            "3fb9317ce7b4d531",
+            "3f1f06e91706dcea",
+            "bf94307b5311f6f1",
+            "3f21b68123d356a9",
+            "3feffe6850bde603",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fb85d664948acb9",
+            "4003fd41f8f8ec33",
+            "bfcabc072814308e",
+            "bf227e7fbe9511a5",
+            "3fb003877d1bef04",
+            "3f27c1eafdb88522",
+            "3fefeff4dc80ffc4",
+            "bf761aa684e41fb3",
+            "bf80dd585ce2ca09",
+            "3f9b1c940b0684a6",
+            "3f946038c1f3b9b7",
+            "bf2e0c7b4ea4f1ee",
+            "bf852f2876297d46"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fc848200017f854",
+            "400bfc4ad3277854",
+            "bfd4af22e3949250",
+            "bf23a28c51ebdefa",
+            "3f9a488a42d6b3d6",
+            "3f2da1e045486581",
+            "3feffd4cfe792a51",
+            "3f70dfd27018bbc5",
+            "bf7dae104f2efac4",
+            "3fa7a10c8a62aead",
+            "3f92febd5878a4ed",
+            "bf329c4a56ef6ccb",
+            "bf837d5ae8541490"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "400cc254388d3bc8",
+            "3fd9916872b01efc",
+            "c003b109902c202c",
+            "3fe10966763e48af",
+            "3f98e913a4c77f05",
+            "3feb135611f959d6",
+            "3f7f4a433748d4c0",
+            "3ff33012a3b3fab0",
+            "0000000000000000",
+            "bfe9f28b727e09c3",
+            "c0003cc953808ae5",
+            "3fbc83340236d86e",
+            "c00803c6966ab827"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 360,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf88b15cffece377",
+            "3fdff60314546992",
+            "3f9efbfca9f2ec54",
+            "bf30cb1457d9bbbc",
+            "3f35e96ea60c04b8",
+            "bf27832f4979009a",
+            "3fefffffc7ba5e8b",
+            "bf66ef8bdad32e71",
+            "bf2883d90d04c334",
+            "bf08d7b16cc27b90",
+            "3f1f41270b3fe980",
+            "3f18ab2d19bb6114",
+            "3f4029ca6006dcb4"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfc9c97d29977648",
+            "3ff7fe223ee98a39",
+            "3fb950c4083a4117",
+            "bf501fdab60fc330",
+            "bf944e09923a90a3",
+            "bf5c4bc8adb2e543",
+            "3feffe5f87778eea",
+            "bf8a599ab825a621",
+            "bf6fa79d05861663",
+            "bf541b4c6f3ba89a",
+            "3f196111bb4211c4",
+            "bf1927e240259d57",
+            "3f91dbf9b5408c57"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fba17e35de2ed17",
+            "4003fcb1ede20588",
+            "bfcaf27d5ddad79c",
+            "bf4f9f55cb0f3553",
+            "3fafb90bea5a9b39",
+            "bf71b9a12f0c919e",
+            "3feff02e1f7bed62",
+            "3f967c505a92a5e9",
+            "3f976bb0a2cb5667",
+            "bf5086e0b1f50d85",
+            "3f6825dd2d4d1573",
+            "bf5270c9275a08af",
+            "bfb55e66d9ea83eb"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fca65987982e8f1",
+            "400bf9479fbcd82e",
+            "bfd509f38adbf41b",
+            "bf537ff6be9a683b",
+            "3f99dec325f0a797",
+            "bf71585e9d9096ad",
+            "3feffd4e5513edaa",
+            "3fbafe249a377cd7",
+            "3f8dfd4b08dfe3b3",
+            "3f5cc6bedfe981ab",
+            "3f661ace4485f240",
+            "bf52ad4ff2ebc0d8",
+            "bfb54a6fe325390a"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "40132d2ec5339cc9",
+            "3fd9916872b020c4",
+            "c00a2dac6ccba2bc",
+            "bfb63db1ea39e55f",
+            "3f9af1cd09d6e142",
+            "bfce73b1d9470f88",
+            "3feef1f7919d018c",
+            "3ff33012a3b3fb60",
+            "0000000000000000",
+            "bfe9f28b727e0ab6",
+            "c0003cc95380896d",
+            "3fbc83340236d86e",
+            "c00803c6966ab5f8"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 420,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf8b0438590085d5",
+            "3fdff684f73bfa32",
+            "3f9fba1c20c6a21d",
+            "bf14940337f63fe1",
+            "3f27dfd16366d31c",
+            "3ef063478c66f7d3",
+            "3feffffff55fd3ba",
+            "bf88cfde9cd558a4",
+            "bf349f047f557378",
+            "bf7ba330293e4d0f",
+            "3f4686f9a4f1d118",
+            "3f36a1b3fe95d557",
+            "3f55900762169c64"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfca59ddb416ba7c",
+            "3ff7fc0a650e9858",
+            "3fb9e1be453220a1",
+            "bf44ac652d1b2253",
+            "bf943af8d2d54c0b",
+            "3f315a5df7d52060",
+            "3feffe66339e62a2",
+            "bfa173be52cbea18",
+            "bf61268ef4654abe",
+            "bf95a2ae579ddae7",
+            "bf918c925c44e2f9",
+            "3f3586a83e051b52",
+            "3f9a79a5921c0db8"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fb6f16b13983798",
+            "4003fcbf3bf2d5e1",
+            "bfca77fce37cd1c1",
+            "bf4b4d33617c0e43",
+            "3fafc91f0f57e43c",
+            "3f1468ef2ae67df8",
+            "3feff0320ec9a118",
+            "bfaf7e8fe13292fe",
+            "3f50397f67041a19",
+            "bfa2d644c40f0748",
+            "bf89d312b4145831",
+            "bf2b483ca04efd5e",
+            "3f9d3876f7e4548f"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fc7787061609374",
+            "400bfb5e3c0753e5",
+            "bfd4be4fed57b741",
+            "bf4b718c3a1541ba",
+            "3f99f41997b03524",
+            "3f1cc63fb5150414",
+            "3feffd5d8ef6c279",
+            "bfb71024c561c923",
+            "3f60e091556e81cb",
+            "bfa9609edd89d75e",
+            "bf8a9e13beff8b8f",
+            "bf3502121e1aa3fb",
+            "3f9d5a8d31e2883c"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "4017f9336e209bb9",
+            "3fd9916872b020c4",
+            "c0105527a4b592a6",
+            "bfdf68eb9d298b20",
+            "bfa2e8b519079da1",
+            "bfe76db82c13d975",
+            "bfde23130189122d",
+            "3ff33012a3b3fb60",
+            "0000000000000000",
+            "bfe9f28b727e0ab6",
+            "c0003cc95380896d",
+            "3fbc83340236d86e",
+            "c00803c6966ab5f8"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 480,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf8bbbb8799cae9d",
+            "3fdfeb58274b29b9",
+            "3fa0a354d3b8c9a1",
+            "3f428900a73643b3",
+            "3f369d9e5a2448f6",
+            "bf415b5f67f2c1b9",
+            "3fefffff3ed44d08",
+            "bf858ff8f12206f9",
+            "3f3608b41953a060",
+            "bf8d972763b9b3dc",
+            "bf805e25e245521e",
+            "3f7115459aae03f6",
+            "bf81b20ab44444f8"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfca4b8ab1110ce8",
+            "3ff7df58c195e8c8",
+            "3fbac1e77b8a33f3",
+            "bf71c7623d5f119a",
+            "bf92ed543236421c",
+            "bf6f47b61b51d00f",
+            "3feffe76af84a9e0",
+            "bf76b54496889a59",
+            "bfb6ceb7d988459c",
+            "bf9c779ed7d7c308",
+            "bfa72a4227541a07",
+            "3f8e6a8400c1837e",
+            "bfacae7858bf0211"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fb7de358e54ea94",
+            "4003d95001285e09",
+            "bfca6ccb565ea36c",
+            "bf738df32d52db4f",
+            "3fb05969cf1da33c",
+            "bf824c7f652a9ed9",
+            "3fefeedb04bc9f16",
+            "3f9f0d77c0888314",
+            "bfbf8b3ade47393e",
+            "bfa458821ccced7c",
+            "bfa999345dce3379",
+            "3f8f2864978a6ea8",
+            "bfbdc4219f72a939"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fc95bfad1ac77eb",
+            "400bb4eae3ece886",
+            "bfd4e0fd57587d68",
+            "bf8153c63552f06a",
+            "3f9a86c972119dfe",
+            "bf81f8866c891954",
+            "3feffca45f4bfd01",
+            "3fc1a493ead4ede2",
+            "bfc215a49e9c5a2a",
+            "bfb65d636a627952",
+            "bfacac59012f47a6",
+            "3f90fdb9e9062dfe",
+            "bfbeea8f0899e612"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "401cc538170d9aa9",
+            "3fd9916872b020c4",
+            "c0139379130553ee",
+            "3fd49b5d45dbcea8",
+            "bf81a7fd03ad53f1",
+            "3fe2d615aeef5a88",
+            "bfe7ba0b362acd10",
+            "3ff33012a3b3fb60",
+            "0000000000000000",
+            "bfe9f28b727e0ab6",
+            "c0003cc95380896d",
+            "3fbc83340236d86e",
+            "c00803c6966ab5f8"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 540,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf8b4e4a04a71f73",
+            "3fdff666df6d1f6a",
+            "3fa0bf5fa2b4d2c4",
+            "beeb94846e7805a6",
+            "3f29f66c3008f467",
+            "3f1308fdf36d7f25",
+            "3feffffff4018dfd",
+            "bf9210beb6ba825f",
+            "bf656484275d63fe",
+            "3f8b312ddafa1dab",
+            "bf793cb99109ad46",
+            "3f5abd6b1b84b624",
+            "bf4eb50d4b4be8a0"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfca6975891ab02a",
+            "3ff7fa6100635f9d",
+            "3fbb31e24372f9e9",
+            "3f2f419c90c4dfe3",
+            "bf934f6c0c63d756",
+            "3f44088e0a32b13a",
+            "3feffe8aa136a4e6",
+            "bfa5f1d08271817d",
+            "bf737cfadd0afcd0",
+            "3fa08116b897cf3f",
+            "3f988073b920d06d",
+            "3f5eabf94bdeb9ce",
+            "3fa043d20fa445d3"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fb763527881d62e",
+            "4003fd3e3f93fde8",
+            "bfc9f2d7708dbb0d",
+            "3f29e8e3a5e5b7e2",
+            "3fb048b4f2a345d9",
+            "3f49cbd7f1012e2e",
+            "3fefef684d9b90c3",
+            "bfb328936cfae9cd",
+            "3f89703ab074c9ed",
+            "3fac37fe1323c2c4",
+            "3f9a77746a7fe791",
+            "3f56ce30ba420d05",
+            "3fa22288817d49f5"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fc8c587109d2392",
+            "400bfc9fbca87e8a",
+            "bfd472f4b8c396a1",
+            "3f2f710d2b8fb742",
+            "3f9a46be53ed0acf",
+            "3f4e4d79dc33709c",
+            "3feffd4c7b983343",
+            "bfbc1abe0600ff03",
+            "3f93dcb391091780",
+            "3fb4a1ba7f8dcae3",
+            "3f9a62a31bec7cd6",
+            "3f569c0cadd2bc65",
+            "3fa1b69703ecd3ce"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "4020c89e5ffd4ccc",
+            "3fd9916872b020c4",
+            "c016d1ca81551536",
+            "3fd589cc4660fd84",
+            "3fa50606153a5c10",
+            "3fdccf7966249fac",
+            "3fea6f42bfe5bbf0",
+            "3ff33012a3b3fb60",
+            "0000000000000000",
+            "bfe9f28b727e0ab6",
+            "c0003cc95380896d",
+            "3fbc83340236d86e",
+            "c00803c6966ab5f8"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 600,
+      "bodies": [
+        {
+          "id": "sleeper-0",
+          "index": 1,
+          "bits": [
+            "bf8b2c28b56a9e99",
+            "3fdff7fd626b6888",
+            "3fa1b9fccf2ccc42",
+            "bf0993db1e444144",
+            "3f1520ad1bf255ce",
+            "bf101aa3a6439417",
+            "3feffffffc9abaa7",
+            "3f5de127ea79f0ae",
+            "3f3750e56ce4982f",
+            "bf6285f8e1f2a274",
+            "3f4f4c27ff0950ee",
+            "bf2b8f52bdff77a0",
+            "3f2feeb0d3b89040"
+          ]
+        },
+        {
+          "id": "sleeper-1",
+          "index": 2,
+          "bits": [
+            "bfca1bfd83007e40",
+            "3ff7fc01da57b583",
+            "3fbc32ed35d569aa",
+            "bf3590ae4bbb6e37",
+            "bf92af80d15649cb",
+            "bf3c802963d60bbc",
+            "3feffea282473777",
+            "3f7947df3cafbfd6",
+            "3f60df8156cf01ec",
+            "bf7bd083e4267b9b",
+            "bf7dec911a368448",
+            "bf3568e449c8383f",
+            "bf7aacda6fcb8b5f"
+          ]
+        },
+        {
+          "id": "sleeper-2",
+          "index": 3,
+          "bits": [
+            "3fbb4e236b99e8e7",
+            "4003fcf2f2eea3a7",
+            "bfc97c35c7a8b394",
+            "bf3aef31011201d1",
+            "3fb0e9a003753abc",
+            "bf5a107c5d961a92",
+            "3fefee179538059f",
+            "bfb5a5658b051557",
+            "bfa58efe3b08dcc9",
+            "bf9339974608c479",
+            "bf917fb6a4131f1b",
+            "bf5589c41811b077",
+            "3fc82bc3c5d90574"
+          ]
+        },
+        {
+          "id": "sleeper-3",
+          "index": 4,
+          "bits": [
+            "3fcc0390873a7048",
+            "400bfaf1a9482eed",
+            "bfd474213074aba0",
+            "bf3d917acf017721",
+            "3f9f0146e317b9b4",
+            "bf5985877bf3ee5d",
+            "3feffc3bb613c760",
+            "bfd1788c30ac286f",
+            "bf96f9aedee15b62",
+            "bfa236fc7178ef8d",
+            "bf9156154666869f",
+            "bf5631fc9d846e0a",
+            "3fc82b89c1ecdbf7"
+          ]
+        },
+        {
+          "id": "waker",
+          "index": 5,
+          "bits": [
+            "40232ea0b473cc44",
+            "3fd9916872b020c4",
+            "c01a101befa4d67e",
+            "bfdeecb4df758aee",
+            "bf86a0e0f8efc018",
+            "bfe9bcaaa5a344f4",
+            "3fd6207add3751df",
+            "3ff33012a3b3fb60",
+            "0000000000000000",
+            "bfe9f28b727e0ab6",
+            "c0003cc95380896d",
+            "3fbc83340236d86e",
+            "c00803c6966ab5f8"
+          ]
+        }
+      ]
+    }
+  ]
+}

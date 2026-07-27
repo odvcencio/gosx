@@ -1,0 +1,2126 @@
+{
+  "name": "mesh_terrain",
+  "why": "triangle mesh hierarchy walk, internal edge filtering, mesh against sphere and box contacts",
+  "generatedBy": "go1.26.4 linux/amd64",
+  "fmaContraction": false,
+  "steps": 420,
+  "sampleEvery": 42,
+  "scenario": {
+    "Config": {
+      "Gravity": {
+        "X": 0,
+        "Y": -9.81,
+        "Z": 0
+      },
+      "FixedTimestep": 0.016666666666666666,
+      "SolverIter": 0,
+      "SolverIterations": 10,
+      "BroadPhaseCell": 0,
+      "DisableCCD": false,
+      "DisableWarmStart": false,
+      "SleepTime": 0,
+      "SleepLinearSpeed": 0,
+      "SleepAngularSpeed": 0
+    },
+    "Bodies": [
+      {
+        "Body": {
+          "ID": "roller-0",
+          "Mass": 1,
+          "Position": {
+            "X": -3,
+            "Y": 2.5,
+            "Z": 0.8377843185055269
+          },
+          "Rotation": {
+            "X": 0.6127653186837823,
+            "Y": 0.622103296575873,
+            "Z": -0.40904195167712926,
+            "W": -0.2649355287158727
+          },
+          "Velocity": {
+            "X": 1.5,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": -3
+          },
+          "Restitution": 0.25,
+          "Friction": 0.45,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 1,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0,
+            "Height": 0,
+            "Depth": 0,
+            "Radius": 0.3,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "roller-1",
+          "Mass": 1.3,
+          "Position": {
+            "X": -1.9,
+            "Y": 2.9,
+            "Z": -0.7076881036164273
+          },
+          "Rotation": {
+            "X": 0.7708504071287277,
+            "Y": 0.3416036249626598,
+            "Z": 0.031255909538898764,
+            "W": -0.5367678095422094
+          },
+          "Velocity": {
+            "X": 1.5,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": -3
+          },
+          "Restitution": 0.25,
+          "Friction": 0.45,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.5,
+            "Height": 0.5,
+            "Depth": 0.5,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "roller-2",
+          "Mass": 1.6,
+          "Position": {
+            "X": -0.7999999999999998,
+            "Y": 3.3,
+            "Z": -0.08235085313963852
+          },
+          "Rotation": {
+            "X": 0.5890360719599067,
+            "Y": 0.5026848989959627,
+            "Z": -0.4334426413814251,
+            "W": 0.4609467158834694
+          },
+          "Velocity": {
+            "X": 1.5,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": -3
+          },
+          "Restitution": 0.25,
+          "Friction": 0.45,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 1,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0,
+            "Height": 0,
+            "Depth": 0,
+            "Radius": 0.3,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "roller-3",
+          "Mass": 1.9,
+          "Position": {
+            "X": 0.30000000000000027,
+            "Y": 3.7,
+            "Z": -0.6399617567386237
+          },
+          "Rotation": {
+            "X": -0.888349677089164,
+            "Y": -0.35590802632991186,
+            "Z": -0.2162699335032123,
+            "W": 0.19336919059674643
+          },
+          "Velocity": {
+            "X": 1.5,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": -3
+          },
+          "Restitution": 0.25,
+          "Friction": 0.45,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.5,
+            "Height": 0.5,
+            "Depth": 0.5,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "roller-4",
+          "Mass": 2.2,
+          "Position": {
+            "X": 1.4000000000000004,
+            "Y": 4.1,
+            "Z": 0.8884887959109189
+          },
+          "Rotation": {
+            "X": 0.5982230553967023,
+            "Y": -0.21259874950991106,
+            "Z": 0.0029328461450200396,
+            "W": 0.772607498094696
+          },
+          "Velocity": {
+            "X": 1.5,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": -3
+          },
+          "Restitution": 0.25,
+          "Friction": 0.45,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 1,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0,
+            "Height": 0,
+            "Depth": 0,
+            "Radius": 0.3,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      },
+      {
+        "Body": {
+          "ID": "roller-5",
+          "Mass": 2.5,
+          "Position": {
+            "X": 2.5,
+            "Y": 4.5,
+            "Z": 0.43155297364097356
+          },
+          "Rotation": {
+            "X": 0.5409589917298657,
+            "Y": -0.22631980824890868,
+            "Z": -0.2596647994756715,
+            "W": 0.7672788968647865
+          },
+          "Velocity": {
+            "X": 1.5,
+            "Y": 0,
+            "Z": 0
+          },
+          "AngularVelocity": {
+            "X": 0,
+            "Y": 0,
+            "Z": -3
+          },
+          "Restitution": 0.25,
+          "Friction": 0.45,
+          "LinearDamping": 0,
+          "AngularDamping": 0,
+          "IsKinematic": false,
+          "CanSleep": false,
+          "Inertia": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "LockRotation": false
+        },
+        "Colliders": [
+          {
+            "Shape": 0,
+            "Offset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 0
+            },
+            "IsTrigger": false,
+            "Width": 0.5,
+            "Height": 0.5,
+            "Depth": 0.5,
+            "Radius": 0,
+            "Normal": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Distance": 0,
+            "Vertices": null,
+            "Indices": null
+          }
+        ]
+      }
+    ],
+    "Constraints": null,
+    "Static": [
+      {
+        "Shape": 7,
+        "Offset": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "Rotation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0,
+          "W": 0
+        },
+        "IsTrigger": false,
+        "Width": 0,
+        "Height": 0,
+        "Depth": 0,
+        "Radius": 0,
+        "Normal": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "Distance": 0,
+        "Vertices": [
+          {
+            "X": -4.5,
+            "Y": 0.8259739434211439,
+            "Z": -4.5
+          },
+          {
+            "X": -3,
+            "Y": 0.3104071462901354,
+            "Z": -4.5
+          },
+          {
+            "X": -1.5,
+            "Y": 0.02848692913264514,
+            "Z": -4.5
+          },
+          {
+            "X": 0,
+            "Y": 0.2799901043719758,
+            "Z": -4.5
+          },
+          {
+            "X": 1.5,
+            "Y": 0.5314932796113064,
+            "Z": -4.5
+          },
+          {
+            "X": 3,
+            "Y": 0.24957306245381622,
+            "Z": -4.5
+          },
+          {
+            "X": 4.5,
+            "Y": -0.2659937346771924,
+            "Z": -4.5
+          },
+          {
+            "X": -4.5,
+            "Y": 0.6873407483371282,
+            "Z": -3
+          },
+          {
+            "X": -3,
+            "Y": 0.1717739512061196,
+            "Z": -3
+          },
+          {
+            "X": -1.5,
+            "Y": -0.11014626595137064,
+            "Z": -3
+          },
+          {
+            "X": 0,
+            "Y": 0.14135690928796002,
+            "Z": -3
+          },
+          {
+            "X": 1.5,
+            "Y": 0.3928600845272907,
+            "Z": -3
+          },
+          {
+            "X": 3,
+            "Y": 0.11093986736980044,
+            "Z": -3
+          },
+          {
+            "X": 4.5,
+            "Y": -0.4046269297612082,
+            "Z": -3
+          },
+          {
+            "X": -4.5,
+            "Y": 0.4066639456394846,
+            "Z": -1.5
+          },
+          {
+            "X": -3,
+            "Y": -0.10890285149152407,
+            "Z": -1.5
+          },
+          {
+            "X": -1.5,
+            "Y": -0.3908230686490143,
+            "Z": -1.5
+          },
+          {
+            "X": 0,
+            "Y": -0.13931989340968362,
+            "Z": -1.5
+          },
+          {
+            "X": 1.5,
+            "Y": 0.11218328182964704,
+            "Z": -1.5
+          },
+          {
+            "X": 3,
+            "Y": -0.1697369353278432,
+            "Z": -1.5
+          },
+          {
+            "X": 4.5,
+            "Y": -0.6853037324588518,
+            "Z": -1.5
+          },
+          {
+            "X": -4.5,
+            "Y": 0.26598383904916817,
+            "Z": 0
+          },
+          {
+            "X": -3,
+            "Y": -0.24958295808184044,
+            "Z": 0
+          },
+          {
+            "X": -1.5,
+            "Y": -0.5315031752393308,
+            "Z": 0
+          },
+          {
+            "X": 0,
+            "Y": -0.28,
+            "Z": 0
+          },
+          {
+            "X": 1.5,
+            "Y": -0.028496824760669365,
+            "Z": 0
+          },
+          {
+            "X": 3,
+            "Y": -0.3104170419181596,
+            "Z": 0
+          },
+          {
+            "X": 4.5,
+            "Y": -0.8259838390491683,
+            "Z": 0
+          },
+          {
+            "X": -4.5,
+            "Y": 0.4066639456394846,
+            "Z": 1.5
+          },
+          {
+            "X": -3,
+            "Y": -0.10890285149152407,
+            "Z": 1.5
+          },
+          {
+            "X": -1.5,
+            "Y": -0.3908230686490143,
+            "Z": 1.5
+          },
+          {
+            "X": 0,
+            "Y": -0.13931989340968362,
+            "Z": 1.5
+          },
+          {
+            "X": 1.5,
+            "Y": 0.11218328182964704,
+            "Z": 1.5
+          },
+          {
+            "X": 3,
+            "Y": -0.1697369353278432,
+            "Z": 1.5
+          },
+          {
+            "X": 4.5,
+            "Y": -0.6853037324588518,
+            "Z": 1.5
+          },
+          {
+            "X": -4.5,
+            "Y": 0.6873407483371282,
+            "Z": 3
+          },
+          {
+            "X": -3,
+            "Y": 0.1717739512061196,
+            "Z": 3
+          },
+          {
+            "X": -1.5,
+            "Y": -0.11014626595137064,
+            "Z": 3
+          },
+          {
+            "X": 0,
+            "Y": 0.14135690928796002,
+            "Z": 3
+          },
+          {
+            "X": 1.5,
+            "Y": 0.3928600845272907,
+            "Z": 3
+          },
+          {
+            "X": 3,
+            "Y": 0.11093986736980044,
+            "Z": 3
+          },
+          {
+            "X": 4.5,
+            "Y": -0.4046269297612082,
+            "Z": 3
+          },
+          {
+            "X": -4.5,
+            "Y": 0.8259739434211439,
+            "Z": 4.5
+          },
+          {
+            "X": -3,
+            "Y": 0.3104071462901354,
+            "Z": 4.5
+          },
+          {
+            "X": -1.5,
+            "Y": 0.02848692913264514,
+            "Z": 4.5
+          },
+          {
+            "X": 0,
+            "Y": 0.2799901043719758,
+            "Z": 4.5
+          },
+          {
+            "X": 1.5,
+            "Y": 0.5314932796113064,
+            "Z": 4.5
+          },
+          {
+            "X": 3,
+            "Y": 0.24957306245381622,
+            "Z": 4.5
+          },
+          {
+            "X": 4.5,
+            "Y": -0.2659937346771924,
+            "Z": 4.5
+          }
+        ],
+        "Indices": [
+          0,
+          7,
+          1,
+          1,
+          7,
+          8,
+          1,
+          8,
+          2,
+          2,
+          8,
+          9,
+          2,
+          9,
+          3,
+          3,
+          9,
+          10,
+          3,
+          10,
+          4,
+          4,
+          10,
+          11,
+          4,
+          11,
+          5,
+          5,
+          11,
+          12,
+          5,
+          12,
+          6,
+          6,
+          12,
+          13,
+          7,
+          14,
+          8,
+          8,
+          14,
+          15,
+          8,
+          15,
+          9,
+          9,
+          15,
+          16,
+          9,
+          16,
+          10,
+          10,
+          16,
+          17,
+          10,
+          17,
+          11,
+          11,
+          17,
+          18,
+          11,
+          18,
+          12,
+          12,
+          18,
+          19,
+          12,
+          19,
+          13,
+          13,
+          19,
+          20,
+          14,
+          21,
+          15,
+          15,
+          21,
+          22,
+          15,
+          22,
+          16,
+          16,
+          22,
+          23,
+          16,
+          23,
+          17,
+          17,
+          23,
+          24,
+          17,
+          24,
+          18,
+          18,
+          24,
+          25,
+          18,
+          25,
+          19,
+          19,
+          25,
+          26,
+          19,
+          26,
+          20,
+          20,
+          26,
+          27,
+          21,
+          28,
+          22,
+          22,
+          28,
+          29,
+          22,
+          29,
+          23,
+          23,
+          29,
+          30,
+          23,
+          30,
+          24,
+          24,
+          30,
+          31,
+          24,
+          31,
+          25,
+          25,
+          31,
+          32,
+          25,
+          32,
+          26,
+          26,
+          32,
+          33,
+          26,
+          33,
+          27,
+          27,
+          33,
+          34,
+          28,
+          35,
+          29,
+          29,
+          35,
+          36,
+          29,
+          36,
+          30,
+          30,
+          36,
+          37,
+          30,
+          37,
+          31,
+          31,
+          37,
+          38,
+          31,
+          38,
+          32,
+          32,
+          38,
+          39,
+          32,
+          39,
+          33,
+          33,
+          39,
+          40,
+          33,
+          40,
+          34,
+          34,
+          40,
+          41,
+          35,
+          42,
+          36,
+          36,
+          42,
+          43,
+          36,
+          43,
+          37,
+          37,
+          43,
+          44,
+          37,
+          44,
+          38,
+          38,
+          44,
+          45,
+          38,
+          45,
+          39,
+          39,
+          45,
+          46,
+          39,
+          46,
+          40,
+          40,
+          46,
+          47,
+          40,
+          47,
+          41,
+          41,
+          47,
+          48
+        ]
+      }
+    ],
+    "Diagnostics": null
+  },
+  "specDigest": "ca2aa94eceba9d34",
+  "stateDigest": "04695130306b63b9",
+  "contactSteps": 369,
+  "contactPoints": 2058,
+  "samples": [
+    {
+      "step": 42,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "bfff333333333344",
+            "3fa4226809d49510",
+            "3feacf210f22a700",
+            "3feb06512d3621f2",
+            "bfcc6a0be2933845",
+            "3f9aea23d99400b6",
+            "bfdf250e6a715c41",
+            "3ff8000000000000",
+            "c01b77ced916872b",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "c008000000000000"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bfeb33333333334e",
+            "3fdc1de69ad42c33",
+            "bfe6a5618599a046",
+            "3fe5c17a0a01696b",
+            "bfdfea65b2609590",
+            "3fdecb464fe06c55",
+            "bfceb745a620d645",
+            "3ff8000000000000",
+            "c01b77ced916872b",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "c008000000000000"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "3fd000000000000b",
+            "3feadbc01a36e2e6",
+            "bfb514f20d084e68",
+            "3fe75503eeee0e14",
+            "bfd0b14f40448585",
+            "bfe3b23646a17e45",
+            "bfc2c4973b90d3f1",
+            "3ff8000000000000",
+            "c01b77ced916872b",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "c008000000000000"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "3ff5999999999998",
+            "3ff3d4467381d7db",
+            "bfe47a9113fc4253",
+            "bfe8060fd342ec27",
+            "3fe2fdd58a2bf43d",
+            "bfd19f3680e20791",
+            "bfb764da80023af8",
+            "3ff8000000000000",
+            "c01b77ced916872b",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "c008000000000000"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "4003999999999992",
+            "3ffa3aacd9e83e41",
+            "3fec6e800e299816",
+            "3fbcfda63154b4b2",
+            "bfe3fd818849952f",
+            "bfe566241b4231bf",
+            "3fd8c4229b1812d1",
+            "3ff8000000000000",
+            "c01b77ced916872b",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "c008000000000000"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "400c66666666665e",
+            "40005089a0275253",
+            "3fdb9e905d11e3d8",
+            "3fb2a6542497aeac",
+            "bfe29e851a47f88a",
+            "bfe96ea6b29b5826",
+            "3fc4096339b9ff15",
+            "3ff8000000000000",
+            "c01b77ced916872b",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "c008000000000000"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 84,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "bfe49b53d416c42e",
+            "bf87edc23a5c6ecc",
+            "3fe8354bca5ee9f5",
+            "bf9b59219d63fd34",
+            "bfb993d70341cd9b",
+            "3fc49797f45f0eb7",
+            "3fef68c915e988a2",
+            "3feefc153d7c16f9",
+            "3fc9aa046c2dea13",
+            "3fda08f1555417cb",
+            "3fc8de69d9d9c4a9",
+            "401c504e4dcc56ae",
+            "c00f9c2beb1e5694"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff11de99709d732",
+            "bfb8032dd6608c2f",
+            "3fc36cd807ba146d",
+            "3fd54e0cb4e01ba9",
+            "bfd529ae16e583ba",
+            "bfe6201d983ab514",
+            "bfe1943e008f3341",
+            "bfe2456a945a9dbf",
+            "bff9e8cf9d43c690",
+            "3fcc8e4a903487f6",
+            "3fc725d2cf498b27",
+            "bfd4148e949ca3b1",
+            "3ffb474dcea0eebe"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "3fd7d14d836a1a03",
+            "3fbd6fb027e8350c",
+            "3fd354b21fa21e24",
+            "3fd47686ba40ba23",
+            "bfc8f01c44567cfc",
+            "bfe63ee3679ffe54",
+            "bfe3a2dacacbcc26",
+            "bfd3a9018e5e1ca7",
+            "bf88a06668d86241",
+            "3fdaf1322831ec94",
+            "3ff62cca408a83f0",
+            "3fd205ea7b6ffc78",
+            "3ff04f6705555b2b"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "400544fa6c520685",
+            "3fd28901fc96b7df",
+            "3fcdf28d7de65bff",
+            "3fe63350d63029ad",
+            "3fc3f9bd4e18275c",
+            "3fe45f7367b3ec7a",
+            "3fd318224346477d",
+            "3ffe4c15b016aeb2",
+            "3fa589a0389bcf78",
+            "3fe53cf4c9717850",
+            "4013400e673e2046",
+            "bfe24c847bbb0358",
+            "c0194ecbb58dc85b"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "4010629332dd8c75",
+            "bfd2eb0d1161655d",
+            "3fe0f1835e18e96d",
+            "bfdc4419e48c5ccd",
+            "3fd50ff0a51bebdd",
+            "3fdd7f33ac477ab2",
+            "bfe64473cfb82234",
+            "40057106f861a954",
+            "c00913267c802187",
+            "bfe6c7876dfdf576",
+            "c00038589c2d112e",
+            "bfc53e9a2f7ce9a7",
+            "c021aa624f03208d"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "40129523f4bd99dd",
+            "bfd5600ae34b7fa5",
+            "bfe387e57ab6b87f",
+            "bfdb9c0d55058dc1",
+            "bfe8427087824e62",
+            "3fdeeb3e87f60175",
+            "3fb371f9f7edfefe",
+            "3fff5f52b3ba4c95",
+            "bff0176440bb0c58",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 126,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "bfd1bb251d70e36a",
+            "3fb1ad096656a876",
+            "3feec2e790035c78",
+            "bfc3ac354b93bdad",
+            "3fe4cc7aaa54fed1",
+            "bfd44154c55237d3",
+            "bfe58e4d5b1cb206",
+            "3fb38f48e2b23bfb",
+            "3fa58ce57544bf92",
+            "3fd3fb0435f9b6d6",
+            "3fbee19a7de8e9b9",
+            "40166895b28d75b5",
+            "bfe91d25ad7032fa"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff1e6bef0d1860e",
+            "bfc816fb53eb40a9",
+            "bf70091dcb5201ce",
+            "3fe0669c1f2a33cc",
+            "bfdf7c7eea3c96c4",
+            "bfe23e001555e452",
+            "bfda69488cdad3fa",
+            "3f3680737b7ac632",
+            "bf1ef61cd32070b4",
+            "3f33d3b2e37ceeed",
+            "3f43dccda4ad3756",
+            "3f15ba2a6c0a5036",
+            "bf5c2898f2284153"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfb6c57875d08551",
+            "3fa69958774341c6",
+            "3fd7386b82d5285d",
+            "3fd120dceada6d6f",
+            "3fa45a623f1dc717",
+            "bfeebafd1d99eac8",
+            "3fb14d59dad84644",
+            "bfed60fdefbf9f7d",
+            "bfc84979456740a1",
+            "bfd86f5100156dbe",
+            "bff1fbef26755ac0",
+            "bff07f9492b7c86d",
+            "4009b8fba20afd8a"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "401105d3c1f3705f",
+            "bfd381e2a6addb2f",
+            "3fe124de1209f431",
+            "bfd8440071abc526",
+            "bfe9d0a92bbe9298",
+            "bfd67434ef3e53a7",
+            "3fd25dcf5fb1f954",
+            "400592d91a4e3b4b",
+            "bff6b6546dd305ef",
+            "bfd3d92ef73bdd2e",
+            "bfee7782c8756b5a",
+            "bfd2cb79ad4d8bec",
+            "c01df7a6daf2dd25"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "4019ec7e3bd0a4f8",
+            "c005180cf8d5df49",
+            "bfb5e87b0f446d96",
+            "bfd2f8a4dd2f4e5c",
+            "bfe3b6cf562c8e2b",
+            "bfe74aacbe307080",
+            "bfab1f9f527acc15",
+            "400b8c19bffa9630",
+            "c019fec72a2874de",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "4018129f3a97cdaf",
+            "c00bfd41395061f1",
+            "bffec742a61bf1a1",
+            "bfcd0c2cba8ce28f",
+            "3fed7592ecbb3404",
+            "3fcb024757bb6dbd",
+            "3fce6aafb1b45014",
+            "3fff5f52b3ba4c95",
+            "c01f7da7e9454a40",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 168,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "bfe03f5cbf348deb",
+            "3fa268ca27e5c062",
+            "3ff055823d6735ba",
+            "3f5141126b5b2181",
+            "bfede1e75e7a80b9",
+            "3fb1f00e0b0d771e",
+            "bfd67371a1d4ecff",
+            "bfe6eea166ca6345",
+            "bfc0f516077962f0",
+            "bfc0d183bed1df44",
+            "bff62a95f8337c31",
+            "40166895b28d75b3",
+            "3ffe8598aba37f52"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff4e330a27fe941",
+            "bfcc1693f5709509",
+            "bf9abef28a992226",
+            "3fe1a6d2b9b44c0c",
+            "bfdc5718400c7765",
+            "bfe0c39aa15617fa",
+            "bfde5eddc42ce1fb",
+            "bfdcf9b0f51f8b15",
+            "bf94d8f6329fe13c",
+            "bfbe00ed38eb084f",
+            "bfd1965d5c09d00e",
+            "3fe3513bdec42827",
+            "bfc2e311cf381feb"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfe88bc7d6311f67",
+            "bfba01fd58cd6274",
+            "bf96af4535fa6486",
+            "bfa80aab72ccf416",
+            "3f9d32a528fec91a",
+            "bfc8ab8356cee520",
+            "3fef59ccff3585e3",
+            "bfdbb2ae272bab4b",
+            "bf918a8490ef3467",
+            "bfe2e9fcbb158446",
+            "c001a3a35c035cb3",
+            "3ff2c7271e9b440b",
+            "3ff9497355da1d56"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "4018c4b7340f5bc7",
+            "c0039e3cc6e304de",
+            "3fe6646647daa8b3",
+            "bfb4432cba7dde2a",
+            "3feb752ce7c73131",
+            "3fcb9f680d808b2b",
+            "bfdd645155475106",
+            "4006190816158a54",
+            "c019b45739f60122",
+            "3fce77085815eb95",
+            "bfe92513886ec8c2",
+            "bfc510ca49fcec6c",
+            "c01e0212d37f37ad"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "4021c85d391a9327",
+            "c0234b0cf1b9cc27",
+            "bfe6a0591bd151f9",
+            "3fe4f928a061b03c",
+            "3fb299b1d263d081",
+            "3f86c4582f177067",
+            "3fe80dcb4b596bb9",
+            "400b8c19bffa9630",
+            "c02abb4b019f7e14",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "401d901a80720181",
+            "c026f0c244bc1dea",
+            "c009e549476e4384",
+            "3fe4c6d174fb1fd3",
+            "bfc017ac91923a4e",
+            "bfe5f126c8941eb5",
+            "bfd3765598e9525f",
+            "3fff5f52b3ba4c95",
+            "c02d7abb612de8ca",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 210,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "bff4b25d91eb7d1e",
+            "bfbe8cae6ba5ab92",
+            "3fe8a368ea1eefcd",
+            "3fd8ef83f5a41508",
+            "3fe0a8248f432573",
+            "3fcbb450dd878afc",
+            "3fe74e23c73f2724",
+            "bff827960dbb3281",
+            "bfd3a6b2bd185ddc",
+            "bfe26643c6f147f4",
+            "c0072174771b835b",
+            "4016680c0a609814",
+            "4012667e09960b17"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff554007a4651cd",
+            "bfcbfadbf296e7cb",
+            "bfa2c7f044fa822d",
+            "3fe0f639715d1809",
+            "bfdd77de37a5f5b4",
+            "bfe11a882f996278",
+            "bfde1c6abba50fb5",
+            "bf2a89ed5a54bc4a",
+            "3eec8ae5c523c020",
+            "3f3782cd8f337746",
+            "bf1fff53a82d8d40",
+            "bf0737bd3b23628e",
+            "bf2a5feacbb1d234"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfe973d8559d3265",
+            "bfb4d492d84e4499",
+            "bfd26fa74bdad51b",
+            "bfe1ef8c718f9b15",
+            "3fd0c83c1835acc5",
+            "bfb283a7046b5175",
+            "3fe907e5668596d2",
+            "bf6ce67271aba3cc",
+            "3f92fd4b0c37f544",
+            "bfca1dda32593c0b",
+            "bfe9500f294cb886",
+            "3fe2ae9e9f1e62be",
+            "3fb115ca31cf2abd"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "402040569de50c7c",
+            "c022d28b512b6d0c",
+            "3febb93af0de7eb9",
+            "3fdffd5dc952ba29",
+            "bfe660412d57168c",
+            "bf8c29e36ea208d4",
+            "3fe059500941b9af",
+            "4006190816158a54",
+            "c02a961309864436",
+            "3fce77085815eb95",
+            "bfe92513886ec8c2",
+            "bfc510ca49fcec6c",
+            "c01e0212d37f37ad"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "40269a7b544cd3c5",
+            "c035769c523634b8",
+            "bff541d16add0b2b",
+            "bfb468d92899b908",
+            "3fe26135d76f3c0d",
+            "3fe71668e6957a9e",
+            "bfd8381e733b1c4f",
+            "400b8c19bffa9630",
+            "c0343b99371560d2",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "402186cae3261a9e",
+            "c0383fab1d293621",
+            "c01233789de7471c",
+            "bfd95eac9b9c9d60",
+            "bfe998ca8436f7d9",
+            "3fdca07524d4ce02",
+            "3fabcff2223c89e6",
+            "3fff5f52b3ba4c95",
+            "c0359b5166dc9629",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 252,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "c0018b286df266c9",
+            "bfb624765b2975ff",
+            "3fb7d8af8685400b",
+            "bfd7d02be27fd927",
+            "3fbb5265784ed09f",
+            "bfc3698837aaa5e1",
+            "bfed1a82f44f7240",
+            "bfebb8f7958bc3ce",
+            "3fa8c244a0d147dc",
+            "bff3872a035f21f0",
+            "c00943f9a71cb9c7",
+            "40155558031e26b4",
+            "40039fd578cd8616"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff554dec5e32daf",
+            "bfcbf9ab25c481a6",
+            "bfa2ad7b232dac05",
+            "3fe0f5b71619f4a5",
+            "bfdd792ecc52f1f4",
+            "bfe11b0654478c62",
+            "bfde1b285d8fce4d",
+            "bf2d40fb9b00c10a",
+            "3eddfe0d56bae420",
+            "3f2ccd544de41d3d",
+            "bf39b7cc053a5fde",
+            "beffd7164b74ff90",
+            "3f27cf5cb26938d8"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfe99c3a62d068c9",
+            "bfb3f265ccecfa16",
+            "bfd55af1a4a2080f",
+            "bfe45080ab33679a",
+            "3fd3064ce73b6e69",
+            "bfa80050dd2ea302",
+            "3fe6c5c4ea37cedb",
+            "3f808d93bd5f6805",
+            "bf6a865463052d13",
+            "3fa913100e860092",
+            "3fc84aea6cd12653",
+            "bfc1e079230692e8",
+            "bfa4c3bdb6400637"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "40241e51a1c26b14",
+            "c0352d54b7e630e9",
+            "3ff08707ccf12a64",
+            "bfe986f1b0acd434",
+            "3fd797e90739a24a",
+            "bfc888e20f3eaf0c",
+            "bfdbf859315df093",
+            "4006190816158a54",
+            "c03428fd3b08c3e3",
+            "3fce77085815eb95",
+            "bfe92513886ec8c2",
+            "bfc510ca49fcec6c",
+            "c01e0212d37f37ad"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "402b6c996f7f1463",
+            "c0430b21959353e4",
+            "bfff337647d16d63",
+            "bfe38255384373e6",
+            "bfd9bf2ed885dea5",
+            "bfdb3640e501200b",
+            "bfe11aa17c8f49b0",
+            "400b8c19bffa9630",
+            "c03b198ced5b0292",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "4024458886133472",
+            "c044eac30bc5c0dd",
+            "c017744c98176c76",
+            "bfd1325d3236e154",
+            "3fec98fc88c58763",
+            "3fd0668c998a806c",
+            "3fd01fe35a6c0e66",
+            "3fff5f52b3ba4c95",
+            "c03c79451d2237e9",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 294,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "c0034b3a93556ecc",
+            "3f80a114a02d20ae",
+            "bfe53b9bdbae285e",
+            "3fcc8a0c295f63aa",
+            "bfecdad9dadc6125",
+            "3facc444c3a8e624",
+            "3fd76e6f53766fdf",
+            "3fc0da412b7b35d0",
+            "3fad0c0a6e567882",
+            "bfebccd6dea96e50",
+            "bfff97d7bb03a1e9",
+            "40150130a2d7e728",
+            "3fa65be132f3c880"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff555aa0e711673",
+            "bfcbf8ac03c6b21f",
+            "bfa293305253cfb3",
+            "3fe0f5381605a33a",
+            "bfdd7a811889e5ba",
+            "bfe11b56d8f84e1a",
+            "bfde1a444b05fd06",
+            "bf267aac9b16f6bb",
+            "bee116ae7606ff40",
+            "3f2bc34c5c1ba70b",
+            "bf310a1db8f1aece",
+            "3f0b3190b23062ea",
+            "beec0327bc3b3380"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfe97301295c2147",
+            "bfb6fe956a6dc94c",
+            "bfc94fbbcbf20af7",
+            "bfd9955c876c601c",
+            "3fc68d367180ba32",
+            "bfbaef5c8fb6b92a",
+            "3fec966c04632701",
+            "3f5d751ab92e6817",
+            "bfa0e463ac0188cd",
+            "3fd6b841c483885d",
+            "3ff6010103fd2739",
+            "bff0275ca2025bca",
+            "bfb9cdc16bd359aa"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "4027fc4ca59fc9ac",
+            "c042dffa6366e7dd",
+            "3ff331722173157c",
+            "3fecc9a15b557495",
+            "3faae51b093ef56f",
+            "3fd6669d6aa1e196",
+            "3fd05ed73f741e64",
+            "4006190816158a54",
+            "c03b06f0f14e65a3",
+            "3fce77085815eb95",
+            "bfe92513886ec8c2",
+            "bfc510ca49fcec6c",
+            "c01e0212d37f37ad"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "40301f5bc558aa82",
+            "c04dc23d81d71fa2",
+            "c004928d9262e7cd",
+            "3fdb7ed566ea4084",
+            "bfd5fba84c6360a2",
+            "bfde8ecc71ee2d40",
+            "3fe5ed02d303629f",
+            "400b8c19bffa9630",
+            "c040fbc051d05229",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "4027044629004e46",
+            "c0500e7c84613c70",
+            "c01cb520924791d0",
+            "3fe4f09a34fb7c90",
+            "bfadbca3b6f65b76",
+            "bfe62fa82977f1c8",
+            "bfd2f502b299180b",
+            "3fff5f52b3ba4c95",
+            "c041ab9c69b3ecd5",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 336,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "c00006d70fd6f094",
+            "bf9b090bc42f1fcf",
+            "bff1d25834dfc539",
+            "bfc2c4e1c2bb5770",
+            "3fe450cfba7f329d",
+            "bfd2e83ef5d681c0",
+            "3fe65badc35548f9",
+            "3ff03a0466e0b28e",
+            "bfc34160839bd680",
+            "bfdb6a918823d07c",
+            "bfde4baecefda73d",
+            "40150130a2d7e465",
+            "c007b7b98f5c48f8"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff5558f3b3d1b41",
+            "bfcbf954027d388a",
+            "bfa28a126c804ed4",
+            "3fe0f3b763e83e2e",
+            "bfdd7bd9d2bf7bd3",
+            "bfe11b448ff6860f",
+            "bfde1c7eddc0e0e2",
+            "3efa2bfaed83d85c",
+            "bee4eac8c19d8002",
+            "beffcb44fe27f91a",
+            "bf051b66971f00fe",
+            "bef4cbf924f89c1c",
+            "3f02dfe27c88ecce"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfe97bd87422e833",
+            "bfb88ee2029bc1f9",
+            "3fc138e1de2653b4",
+            "3fd2a2e45162a9ca",
+            "bfc6c30c26b19023",
+            "bfc20110d4b641af",
+            "3fedbdb6bf0446b4",
+            "bf7fbad3ffbdac84",
+            "3fa3eee8374bdf81",
+            "3fdb741ce11a33f7",
+            "3ffa986f3736b23e",
+            "bff38f766724314f",
+            "3fc20b6377b31e73"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "402bda47a97d2844",
+            "c04d9092eaa6497b",
+            "3ff5dbdc75f50094",
+            "bfe8f9aacb7b53f2",
+            "bfdd7dbc640a9aec",
+            "bfdb07d8d349ecc7",
+            "bf87f5d94193a877",
+            "4006190816158a54",
+            "c040f27253ca03b2",
+            "3fce77085815eb95",
+            "bfe92513886ec8c2",
+            "bfc510ca49fcec6c",
+            "c01e0212d37f37ad"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "4032886ad2f1cae6",
+            "c0557050f6f33ecb",
+            "c0098b6000dd18e9",
+            "3fd73cfd7ebed1dc",
+            "3fe32e7bbd111746",
+            "3fe65feda15e31d4",
+            "3fc21502e746bd80",
+            "400b8c19bffa9630",
+            "c0446aba2cf32309",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "4029c303cbed681a",
+            "c056db3bc2c5618e",
+            "c020fafa463bdb8d",
+            "bfd702a0cdf07d94",
+            "bfead0332b841d82",
+            "3fda3310c26ee9ea",
+            "3fa09a51647f5900",
+            "3fff5f52b3ba4c95",
+            "c0451a9644d6bdb5",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 378,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "bff1c55a0dfc75d0",
+            "bfa8ff2c15d3ebef",
+            "bff32e1f7fc0fc5c",
+            "3fd28bd23fd792ce",
+            "3fb70f0da79f43dc",
+            "bfb5fd4247087192",
+            "bfee5deb24652ce7",
+            "3ff1d49a8f68311b",
+            "3fc579d671034a0a",
+            "3fca06eefdb00107",
+            "bfc33c0637ac8daa",
+            "401410653468d07d",
+            "c00a85ce4ee7258a"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff5556dc7fcbe6c",
+            "bfcbf97c721e12be",
+            "bfa28c2af272a75d",
+            "3fe0f3d35bf8a5a9",
+            "bfdd7ba73aeaa931",
+            "bfe11b33d30ee760",
+            "bfde1c977485085b",
+            "bee9b1dc66b092bd",
+            "beaad4d4f3024150",
+            "becb0cf92c89792c",
+            "beef46c480c04f28",
+            "3efb62981ac68a9d",
+            "3edd35317a00f240"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfea3865e30b1474",
+            "bfb4f60ae096e050",
+            "3fd4d538397e7ccc",
+            "3fe4a4f2bba7eca3",
+            "bfd51ea72cae6fbb",
+            "bfac9521519c4e4b",
+            "3fe5fad12bbda7b7",
+            "bfb4f8c4409ce0f3",
+            "3f51257f90087a52",
+            "3fc42cb2db608623",
+            "3fe3ea6a4495de0e",
+            "bfe0974a1db11998",
+            "3fd4ec445a79e5a1"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "402fb842ad5a86dc",
+            "c0555439f8d89ea8",
+            "3ff88646ca76ebac",
+            "3fde0dadf126d0bb",
+            "3fe82ff78d8e047b",
+            "3fd904eff105adf2",
+            "bfce1d23ced1561d",
+            "4006190816158a54",
+            "c044616c2eecd492",
+            "3fce77085815eb95",
+            "bfe92513886ec8c2",
+            "bfc510ca49fcec6c",
+            "c01e0212d37f37ad"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "4034f179e08aeb4a",
+            "c05d33276ce0b6e1",
+            "c00e84326f574a05",
+            "bfe46a84630a519b",
+            "bf4170625104e280",
+            "3fb3808d18fc1680",
+            "bfe8852c4db0eed5",
+            "400b8c19bffa9630",
+            "c047d9b40815f3e9",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "402c81c16eda81ee",
+            "c05edb9f410f4fc8",
+            "c0239b644353ee25",
+            "bfd3c9da3c474fb0",
+            "3feb99d42d99748e",
+            "3fd338221df4e97e",
+            "3fd0f6f0dde58ba8",
+            "3fff5f52b3ba4c95",
+            "c04889901ff98e95",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    },
+    {
+      "step": 420,
+      "bodies": [
+        {
+          "id": "roller-0",
+          "index": 1,
+          "bits": [
+            "bfe3b009db783e66",
+            "3f7272ba38c9509e",
+            "bfecb67ab8c0e9ce",
+            "bfb1f7b5318c01d9",
+            "bfef289c277a6a2c",
+            "bf997da98f1baec3",
+            "3fcb8e8455be95ce",
+            "3fd419709f3e893f",
+            "bfc12831c4fc7b53",
+            "3fe4c4cf15f24859",
+            "3ff2de64e1691411",
+            "4013fcc42b305727",
+            "bfe984ce7e70c4d1"
+          ]
+        },
+        {
+          "id": "roller-1",
+          "index": 2,
+          "bits": [
+            "bff555287fe0621c",
+            "bfcbfa02df11f09d",
+            "bfa2911f9decbebc",
+            "3fe0f4536dbb1751",
+            "bfdd7b3271ae6cce",
+            "bfe11af5ee386780",
+            "bfde1c7605231551",
+            "3f1924acdbc2fb87",
+            "bef54214b5d94e2f",
+            "bf0868187e102adc",
+            "bf0b8795f401e05c",
+            "bf2529f8dcefad39",
+            "3f0e7083ce57909a"
+          ]
+        },
+        {
+          "id": "roller-2",
+          "index": 3,
+          "bits": [
+            "bfec53280bb40e42",
+            "bfb559b53cc8e816",
+            "3fdb51e5cccfacc3",
+            "3fe9cf4cb9660a92",
+            "bfd5cac1e9983ba1",
+            "3fb483c55d4f2cf0",
+            "3fde7fe9107d28b7",
+            "bfc2fde0fbf4585a",
+            "bf854afb8eeedd27",
+            "3fc3c356c5d2cb3a",
+            "3fe43e10bfff7cd1",
+            "bfe49fdcca65f330",
+            "3fe210478628d37c"
+          ]
+        },
+        {
+          "id": "roller-3",
+          "index": 4,
+          "bits": [
+            "4031cb1ed89bf2ba",
+            "c05d13cebc43e1ad",
+            "3ffb30b11ef8d6c4",
+            "bfa62e1342bc4302",
+            "bfebafc1f1fa1000",
+            "bfd0dc64f12f4b4d",
+            "3fdb29ca72cd11bd",
+            "4006190816158a54",
+            "c047d0660a0fa572",
+            "3fce77085815eb95",
+            "bfe92513886ec8c2",
+            "bfc510ca49fcec6c",
+            "c01e0212d37f37ad"
+          ]
+        },
+        {
+          "id": "roller-4",
+          "index": 5,
+          "bits": [
+            "40375a88ee240bae",
+            "c06314d11159fc0a",
+            "c011be826ee8bd90",
+            "3f6911b2a65d953e",
+            "bfe32bfb326a52a3",
+            "bfe7c616da637ce6",
+            "3fd31a979ccb0b15",
+            "400b8c19bffa9630",
+            "c04b48ade338c4c9",
+            "bfec6944c0711868",
+            "c008b340baac7772",
+            "3fc882bfa1b390db",
+            "c0287edd060c47dd"
+          ]
+        },
+        {
+          "id": "roller-5",
+          "index": 6,
+          "bits": [
+            "402f407f11c79bc2",
+            "c06407d37f9f838f",
+            "c0263bce406c00bd",
+            "3fe50112cc9b342d",
+            "3f84257580461938",
+            "bfe65357b1aeee19",
+            "bfd25cc53df64315",
+            "3fff5f52b3ba4c95",
+            "c04bf889fb1c5f75",
+            "bffe04bb4c80d55a",
+            "c00c093382b17778",
+            "3ff8fc9406258a41",
+            "c01206acc74deb54"
+          ]
+        }
+      ]
+    }
+  ]
+}

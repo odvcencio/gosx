@@ -13,11 +13,7 @@ import (
 // TestClickUpdatesDOM verifies that Click works on a page with a button
 // that updates text.
 func TestClickUpdatesDOM(t *testing.T) {
-	d, err := New(WithHeadless(true), WithTimeout(10*time.Second))
-	if err != nil {
-		t.Skipf("skip: %v", err)
-	}
-	defer d.Close()
+	d := requireDriver(t, 10*time.Second)
 
 	page := `<html><body>
 	<span id="count">0</span>
