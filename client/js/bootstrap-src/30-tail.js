@@ -4361,17 +4361,19 @@
     if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
-  async function mountAllEngines(manifest, reuseEngineIDs) {
+  async function mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap) {
     if (!manifest.engines || manifest.engines.length === 0) return;
-    // reuseEngineIDs is only ever a real Set when this bootstrap is running
-    // as part of a soft navigation (see bootstrapPage/window.__gosx_reusable_engines)
-    // — the initial page load's bootstrapPage() call carries no such
-    // argument (or, via the DOMContentLoaded listener, an Event object,
-    // which also fails this check). isNavigationBootstrap therefore also
-    // gates the "engine-remounted" telemetry below: a freshly mounted
-    // engine on the FIRST page load was never "re"-mounted.
-    const isNavigationBootstrap = reuseEngineIDs instanceof Set;
-    const reuseIDs = isNavigationBootstrap ? reuseEngineIDs : new Set();
+    // isNavigationBootstrap is true only when this bootstrap is running as
+    // part of a soft navigation (see bootstrapPage/window.__gosx_reusable_engines).
+    // It must come from the caller, computed from bootstrapPage's ORIGINAL
+    // argument — reuseEngineIDs itself is always a real Set by the time it
+    // reaches here (pendingEngineReuseIDs coerces a missing/non-Set argument
+    // to an empty Set so downstream .has() calls never need a type check),
+    // so a `reuseEngineIDs instanceof Set` check at this point is always
+    // true, even on a genuine first page load. isNavigationBootstrap
+    // therefore also gates the "engine-remounted" telemetry below: a
+    // freshly mounted engine on the FIRST page load was never "re"-mounted.
+    const reuseIDs = isNavigationBootstrap && reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
 
     const invalidEntries = new Map();
     const seenIDs = new Set();
@@ -7060,7 +7062,7 @@
       return;
     }
 
-    mountAllEngines(pendingManifest, pendingEngineReuseIDs).then(function() {
+    mountAllEngines(pendingManifest, pendingEngineReuseIDs, pendingIsNavigationBootstrap).then(function() {
       return Promise.all([
         hydrateAllIslands(pendingManifest),
         connectAllHubs(pendingManifest),
@@ -7087,11 +7089,17 @@
   // directly, so the reuse set can't just be a local variable / call
   // argument there). Reset unconditionally at the top of every bootstrapPage
   // call so a later plain call (e.g. a future page's initial load) never
-  // sees a stale reuse set from a previous navigation.
+  // sees a stale reuse set from a previous navigation. pendingIsNavigationBootstrap
+  // records whether THIS call's ORIGINAL argument was a real Set, captured
+  // before pendingEngineReuseIDs coerces a missing/non-Set argument away —
+  // that original distinction is what tells a first page load apart from a
+  // soft navigation (see mountAllEngines).
   let pendingEngineReuseIDs = new Set();
+  let pendingIsNavigationBootstrap = false;
 
   async function bootstrapPage(reuseEngineIDs) {
-    pendingEngineReuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
+    pendingIsNavigationBootstrap = reuseEngineIDs instanceof Set;
+    pendingEngineReuseIDs = pendingIsNavigationBootstrap ? reuseEngineIDs : new Set();
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
     mountManagedMotion(document.body || document.documentElement);

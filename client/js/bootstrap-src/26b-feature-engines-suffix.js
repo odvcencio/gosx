@@ -1,8 +1,8 @@
 
     return {
-      runtimeReady(manifest, reuseEngineIDs) {
+      runtimeReady(manifest, reuseEngineIDs, isNavigationBootstrap) {
         return Promise.all([
-          mountAllEngines(manifest, reuseEngineIDs),
+          mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap),
           mountAllEngineSurfaces(),
           mountAllSurfaceKinds(),
         ]);
