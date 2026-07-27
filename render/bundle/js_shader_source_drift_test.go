@@ -36,6 +36,26 @@ func readJSWebGPURenderer(t *testing.T) string {
 	return string(data)
 }
 
+// jsWebGLRendererFile is the browser WebGL2 renderer, relative to this package
+// directory. Two guards read it: the shadow cull guard, because the WebGL2
+// shadow pass decides which face fills the map with a gl.cullFace call rather
+// than with shader text, and the tone-map table guard, because WebGL2 carries
+// two name-to-number tables where WebGPU carries one.
+var jsWebGLRendererFile = filepath.Join("..", "..", "client", "js", "bootstrap-src", "16-scene-webgl.js")
+
+// readJSWebGLRenderer returns the whole browser WebGL2 renderer source.
+func readJSWebGLRenderer(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(jsWebGLRendererFile)
+	if err != nil {
+		t.Fatalf("read %s: %v\nThe Go-to-JS drift guards in render/bundle need this file. Fix the path; do not skip the guard.", jsWebGLRendererFile, err)
+	}
+	if len(data) == 0 {
+		t.Fatalf("%s is empty; the drift guards cannot compare against nothing", jsWebGLRendererFile)
+	}
+	return string(data)
+}
+
 // jsShaderSource resolves one shader constant in the browser WebGPU renderer to
 // the WGSL text the browser compiles.
 //

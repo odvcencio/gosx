@@ -425,8 +425,10 @@ func newColorGradeFragment(bg *BindGroup, dst postTarget) postFragment {
 // newBrightPassFragment mirrors brightPassWGSL in render/bundle/bloom.go.
 //
 // The threshold is a soft knee: subtract the authored threshold from the
-// luminance, then scale the colour by t/(t+1). The browser cuts hard instead.
-// TestBrightPassKneeDivergesFromJSWebGPU in render/bundle records that.
+// luminance, then scale the colour by t/(t+1). The browser WebGPU copy cut hard
+// until 2026-07-27 and now carries the same knee, so all three copies agree.
+// TestBrightPassMatchesJSWebGPU in render/bundle pins the two shader copies, and
+// this CPU copy must follow whichever way they move.
 func newBrightPassFragment(bg *BindGroup, dst postTarget) postFragment {
 	source := postBindTexture(bg, 0)
 	if source == nil {

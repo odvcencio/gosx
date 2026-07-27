@@ -48,6 +48,7 @@ type Feature string
 const (
 	FeatureSkinning                  Feature = "skinning"
 	FeatureIBL                       Feature = "ibl"
+	FeatureEnvironmentMap            Feature = "environment-map"
 	FeatureGPUPicking                Feature = "gpu-picking"
 	FeatureLineDashed                Feature = "line-dashed"
 	FeatureCustomShader              Feature = "custom-shader"
@@ -131,9 +132,18 @@ var Matrix = map[Feature]map[Backend]bool{
 	// function (BRDF) lookup table. The WebGL2 path has none of the three. It
 	// tone maps the source environment to an 8-bit low-dynamic-range texture
 	// through scenePBRTonemapHDRPixels, taps that one equirectangular texture
-	// twice, and scales the result by (1.0 - roughness * 0.65). That factor has
-	// no derivation. The renderer holds no samplerCube, no textureCubeLod and
-	// no u_brdfLUT.
+	// twice, and scales the result by (1.0 - roughness * 0.65). The renderer
+	// holds no samplerCube, no textureCubeLod and no u_brdfLUT.
+	//
+	// (1.0 - roughness * 0.65) HAS NO DERIVATION, and the criticism reaches
+	// further than this cell. render/bundle/lit.go carries the SAME factor on
+	// the SAME line shape: it taps one cube at level zero for the diffuse term,
+	// taps it again along the reflection vector, and scales the second tap by
+	// that expression. So the ad hoc roughness response is a property of the
+	// whole engine, not of the WebGL2 renderer. A split-sum fit would read
+	// roughness through a prefiltered mip chain and a two-term BRDF lookup, and
+	// no backend does. render/bundle/lit_drift_test.go carries the
+	// environment-map row that states this and pins both halves.
 	//
 	// sceneAllocateTextureUnits in 15a-scene-postfx-shared.js already reserves
 	// three units named irradiance, radiance and brdfLUT, and negotiates them
@@ -145,6 +155,34 @@ var Matrix = map[Feature]map[Backend]bool{
 	// ibl.ConsumerRequirements for the five pieces a consumer must add. Flip
 	// this cell when one exists, and not before.
 	FeatureIBL: {BackendWebGPU: false, BackendWebGL: false},
+	// environment-map: does the backend READ Environment.EnvMap at all.
+	//
+	// This row exists because the ibl row above reads as parity and is not. Both
+	// ibl cells are false, correctly, because neither browser backend runs a
+	// split-sum fit. That hid a much larger gap underneath: one backend samples
+	// the authored image and the other never opens it.
+	//
+	// Count the three authored identifiers, case-insensitive, over
+	// client/js/bootstrap-src:
+	//
+	//	identifier      16a-scene-webgpu.js   16-scene-webgl.js
+	//	envMap                            0                  16
+	//	envIntensity                      0                   7
+	//	envRotation                       0                   6
+	//
+	// So an author who writes EnvMap gets a reflection on WebGL2, gets one in a
+	// poster (render/bundle/environment.go loads a cube and lit.go samples it),
+	// and gets NOTHING on WebGPU — which is the preferred backend, so it is the
+	// one most viewers see. Nothing told the author that before this row.
+	//
+	// The cell is a RECORD, not a plan. It is absent from DefaultPolicy, so it
+	// excludes no backend; it adds one name to the WebGPU degraded list, which
+	// is the honest report. Implementing the WebGPU environment map is renderer
+	// work: a cube texture, a sampler, three uniform lanes and the two taps.
+	// Flip this cell when 16a-scene-webgpu.js carries them, and not before.
+	// TestWebGPUReadsNoEnvironmentMap in environmentmap_test.go fails on the day
+	// it does, and names the three edits the flip needs.
+	FeatureEnvironmentMap: {BackendWebGPU: false, BackendWebGL: true},
 	// gpu-picking is implemented on both GPU backends.
 	//
 	// The pick CONTRACT — the gosx:scene3d:input events, the pick/drag/event
@@ -267,6 +305,17 @@ func supports(b Backend, f Feature) bool {
 	}
 	return row[b]
 }
+
+// Supports reports whether one backend implements one feature today.
+//
+// It answers the same question Verdict asks per backend, for a caller that
+// already knows which backend it cares about. scene/preview uses it to warn that
+// a poster shows a term the preferred browser backend will not draw.
+//
+// Read a false answer as "this backend draws nothing for that feature", not as
+// "this backend refuses the scene". DefaultPolicy decides which features exclude
+// a backend; every other false cell only degrades it.
+func Supports(b Backend, f Feature) bool { return supports(b, f) }
 
 type Policy struct{ Required map[Feature]bool }
 

@@ -24,6 +24,25 @@ import (
 //
 // The corpus and the golden both live under source control, so a
 // regeneration shows up as a reviewable diff of every changed digest.
+//
+// REGENERATED on 2026-07-27 for the environment-map capability feature.
+//
+// WHAT MOVED: 178 of the 400 cases, and only those. Each writes a non-empty
+// Environment.EnvMap, so collectFeatures now raises environment-map beside ibl,
+// and the verdict grows one degraded name for WebGPU, one for Canvas2D, and one
+// reason record for each. WebGL2 grows nothing, because it reads the image.
+//
+// WHAT DID NOT MOVE: the other 222 cases, byte for byte. No field was renamed,
+// reordered or reshaped.
+//
+// WHY THE OLD VALUE WAS WRONG: it reported WebGPU and WebGL2 as equally capable
+// of an authored environment map. WebGL2 samples the image; the WebGPU renderer
+// carries the identifiers envMap, envIntensity and envRotation zero times. See
+// the environment-map row in scene/capability/capability.go.
+//
+// EVIDENCE THE DELTA IS EXACTLY THAT: deleting every "environment-map" substring
+// and every reason record naming it, from the NEW bytes of all 400 cases,
+// reproduces the OLD digest in every case. Residual: zero.
 const sceneIRGoldenPath = "testdata/sceneir_marshal_golden.json"
 
 // sceneIRGoldenCases is the number of generated scenes in the corpus.

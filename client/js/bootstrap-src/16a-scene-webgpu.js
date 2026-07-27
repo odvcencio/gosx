@@ -3460,6 +3460,16 @@
     });
   }
 
+  // Both shadow pipelines set cullMode "front" and set no frontFace, so the
+  // WebGPU default "ccw" stands. 12-scene-geometry.js and 16c-scene-shared-pbr.js
+  // wind their solids counter-clockwise as seen from outside, so the lit face is
+  // front-facing and gets discarded. The map therefore records the far wall of a
+  // caster, which pushes the stored depth a caster thickness past the receiver
+  // and is the standard mitigation for peter-panning.
+  //
+  // render/bundle/renderer.go keeps the OPPOSITE face on the native path.
+  // render/bundle/shadow_drift_test.go pins both settings and states why they
+  // differ. Change either side there, not here alone.
   function wgpuCreateShadowPipeline(device, shadowLayout, vertexModule) {
     return device.createRenderPipeline({
       label: "gosx-shadow",
@@ -14402,10 +14412,17 @@
         // its golden frames pass. So "back" here now culls the same faces the
         // native path culls.
         //
-        // UNVERIFIED ON HARDWARE. This is the one path that already culls, so
-        // it is the one path the winding change can move. Confirm on a real
-        // GPU that a non-doubleSided Selena mesh still shows its exterior.
-        // See client/js/12-scene-geometry-winding.test.mjs for the numbers.
+        // UNVERIFIED ON HARDWARE. Confirm on a real GPU that a non-doubleSided
+        // Selena mesh still shows its exterior.
+        //
+        // This is not the only path the winding change moved, and an earlier
+        // note here said it was. Three SHADOW sites cull as well: the two
+        // gosx-shadow pipelines above and the WebGL2 shadow pass. They cull the
+        // FRONT face, so the winding change moved each of them from recording
+        // the near surface of a caster to recording the far one.
+        // render/bundle/shadow_drift_test.go measures that move and pins all
+        // three settings. See client/js/12-scene-geometry-winding.test.mjs for
+        // the winding numbers.
         var selenaPipelineOptions = obj.doubleSided ? { cullMode: "none" } : null;
         var selenaResource = isSkinned
           ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite, selenaPipelineOptions)

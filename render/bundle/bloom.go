@@ -22,16 +22,19 @@ const (
 // The threshold is a soft knee, not a cut. The shader subtracts the authored
 // threshold from the luminance and scales the colour by t/(t+1). Keep it.
 //
-// The browser copy, WGSL_POST_BLOOM_BRIGHT_FRAGMENT in
-// client/js/bootstrap-src/16a-scene-webgpu.js, returns the whole colour above
-// the threshold and black below it. That cut is not continuous at the dial: a
-// pixel one part in a thousand under the threshold contributes nothing, and the
-// same pixel one part over contributes its full colour. A slow camera move then
-// makes a highlight snap on. The knee crosses zero smoothly, so the same move
-// fades the highlight in.
+// WHY THE KNEE. A hard cut is not continuous at the dial: a pixel one part in a
+// thousand under the threshold contributes nothing, and the same pixel one part
+// over contributes its full colour. A slow camera move then makes a highlight
+// snap on. The knee crosses zero smoothly, so the same move fades it in.
 //
-// TestBrightPassKneeDivergesFromJSWebGPU records the difference and names the
-// browser edit that closes it.
+// The browser copy, WGSL_POST_BLOOM_BRIGHT_FRAGMENT in
+// client/js/bootstrap-src/16a-scene-webgpu.js, used the hard cut and adopted the
+// knee on 2026-07-27. Both copies now scale by excess/(excess + 1.0), so the
+// term is an agreement rather than a difference.
+//
+// The bright-pass-soft-knee row of brightSharedTerms in
+// render/bundle/postfx_drift_test.go pins both copies. Either side reverting to
+// a cut fails there.
 const brightPassWGSL = `
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -630,18 +633,24 @@ func resolveToneMapConfig(b engine.RenderBundle) toneMapConfig {
 // toneMapModeCode turns an authored tone-map name into the mode lane of the
 // present uniform.
 //
-// The numbers are the browser numbers. sceneWebGPUToneMapMode and
-// scenePostToneMapMode in client/js use exactly this table, so one authored
-// string reaches one operator on every backend:
+// The numbers are the browser numbers. Three browser functions use exactly this
+// table, so one authored string reaches one operator on every backend:
 //
 //   - 0 — "linear" or "none": clamp only, no curve.
 //   - 1 — anything else, including the empty string: ACES filmic.
 //   - 2 — "reinhard".
 //   - 3 — "filmic".
 //
+// The three are sceneWebGPUToneMapMode in 16a-scene-webgpu.js, and both
+// scenePostToneMapMode and sceneToneMapMode in 16-scene-webgl.js. The last of
+// the three joined the table on 2026-07-27; before that it mapped neither
+// "none" nor "filmic" and it skipped the trim, so a WebGL2 page without a post
+// chain answered differently from the same page with one.
+//
 // This function used to return 0 for every unknown name, and 0 used to mean
 // ACES. "none" therefore applied a full ACES curve natively while the browser
-// only clamped. TestToneMapModeTableMatchesJSWebGPU pins the table.
+// only clamped. TestToneMapModeTablesAgreeAcrossAllFourCopies pins all four
+// copies, and TestBrowserToneMapTablesNormalizeTheAuthoredName pins the trim.
 func toneMapModeCode(mode string) float32 {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "linear", "none":
