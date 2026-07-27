@@ -88,14 +88,24 @@ type snapshot struct {
 }
 
 type Doc struct {
-	mu             stdsync.RWMutex
-	actorID        ActorID
-	objects        map[ObjID]*object
-	changes        []Change
-	changeIndex    map[string]Change
-	deps           []ChangeHash
-	seq            uint64
-	maxOp          uint64
+	mu          stdsync.RWMutex
+	actorID     ActorID
+	objects     map[ObjID]*object
+	changes     []Change
+	changeIndex map[string]Change
+	deps        []ChangeHash
+	seq         uint64
+	maxOp       uint64
+	// pending and pendingPatches hold the journal of the edit in progress.
+	// Commit empties both. A caller that never commits therefore holds every
+	// operation and every patch it ever made, and each slice copies itself
+	// whole every time it doubles.
+	//
+	// One Op is 296 bytes and one Patch is 216, so 200000 uncommitted
+	// keystrokes reach about 100 MB. Commit often: every replicated caller
+	// already does, because a change only replicates once it is committed.
+	// BenchmarkTextTypeChar shows the uncommitted cost and
+	// BenchmarkTextTypeCharCommitted shows the committed cost.
 	pending        []Op
 	pendingPatches []Patch
 	changeHooks    []func([]Patch)
@@ -305,6 +315,97 @@ func (d *Doc) Get(obj ObjID, prop Prop) (Value, ObjID, error) {
 	default:
 		return Value{}, "", fmt.Errorf("unknown object kind %q", target.Kind)
 	}
+}
+
+// Lookup reads one property and reports presence with a boolean.
+//
+// Get formats an error that names the property and the object. That message
+// costs four allocations, and every caller that only tests presence threw it
+// away. An absent property is the normal answer for a presence test, so those
+// four allocations were the common case, not the rare one.
+//
+// Use Get when the caller reports the failure to a person. Use Lookup when it
+// does not.
+//
+// Lookup reports false for an unknown object, an absent or deleted map key, an
+// out-of-range list index, and a list property that is not an index. Get keeps
+// the four separate messages for those four causes.
+func (d *Doc) Lookup(obj ObjID, prop Prop) (Value, ObjID, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	target, ok := d.objects[obj]
+	if !ok {
+		return Value{}, "", false
+	}
+	switch target.Kind {
+	case objectKindMap:
+		return mapEntryValue(target, string(prop))
+	case objectKindList, objectKindText:
+		index, err := strconv.Atoi(string(prop))
+		if err != nil {
+			return Value{}, "", false
+		}
+		return seqElemValue(target, index)
+	default:
+		return Value{}, "", false
+	}
+}
+
+// LookupKey is Lookup for a map object with the key held in a byte buffer.
+//
+// A reader that walks many keys built from one prefix, for example every field
+// of every object in a scene, can reuse one buffer and pay no allocation for
+// the key text. The Go compiler indexes a map with string(key) without copying
+// the bytes, so the key never becomes a string.
+//
+// LookupKey reports false for an object that is not a map. A map is the only
+// kind that has named keys, so a byte key means nothing on a list or a text.
+func (d *Doc) LookupKey(obj ObjID, key []byte) (Value, ObjID, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	target, ok := d.objects[obj]
+	if !ok || target.Kind != objectKindMap {
+		return Value{}, "", false
+	}
+	return mapEntryValue(target, string(key))
+}
+
+// LookupIndex reads one element of a list or a text object by position.
+//
+// Prop is a string, so a positional read through Get had to format the index
+// and parse it back. LookupIndex skips both steps. It reports false for an
+// unknown object, an object that is not list-like, and an index outside the
+// visible range.
+func (d *Doc) LookupIndex(list ObjID, index int) (Value, ObjID, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	target, ok := d.objects[list]
+	if !ok {
+		return Value{}, "", false
+	}
+	if target.Kind != objectKindList && target.Kind != objectKindText {
+		return Value{}, "", false
+	}
+	return seqElemValue(target, index)
+}
+
+// mapEntryValue reads one live map key. A deleted key reads as absent, which is
+// the same rule Get applies.
+func mapEntryValue(target *object, key string) (Value, ObjID, bool) {
+	entry, ok := target.Map[key]
+	if !ok || entry.Deleted {
+		return Value{}, "", false
+	}
+	return entry.Value.Clone(), entry.Value.Obj, true
+}
+
+// seqElemValue reads one visible list or text element by position.
+func seqElemValue(target *object, index int) (Value, ObjID, bool) {
+	elem, ok := target.seq.visibleAt(index)
+	if !ok {
+		return Value{}, "", false
+	}
+	return elem.Value.Clone(), elem.Value.Obj, true
 }
 
 func (d *Doc) MakeMap(obj ObjID, prop Prop) (ObjID, error) {

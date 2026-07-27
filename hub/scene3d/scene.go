@@ -70,11 +70,11 @@
 package scene3d
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -223,9 +223,50 @@ func (d *Doc) Doc() *crdt.Doc { return d.doc }
 // Namespace returns the namespace this Doc writes under.
 func (d *Doc) Namespace() string { return d.ns }
 
-// objectKey builds the root map key for one field of one object.
+// objectKey builds the root map key for one field of one object. Use it when
+// the key must outlive the call, which means a write. A read should use keyBuf.
 func (d *Doc) objectKey(objectID, field string) crdt.Prop {
 	return crdt.Prop(d.objPfx + objectID + "/" + field)
+}
+
+// keyBuf reads per-object keys through one reusable byte buffer.
+//
+// A read loop over n objects asks for up to five keys per object, and each key
+// is the namespace prefix, the object ID, and a one-byte field code. Building
+// those as strings cost one allocation each, which measured at about 15% of the
+// allocations of a whole View. The buffer is rewritten in place instead, and
+// crdt.Doc.LookupKey indexes the root map with the bytes without copying them.
+//
+// A keyBuf holds no lock and belongs to one goroutine. Build one per read loop.
+type keyBuf struct {
+	d   *Doc
+	key []byte
+}
+
+// objectKey rewrites the buffer to hold the key for one field of one object.
+func (k *keyBuf) objectKey(objectID, field string) []byte {
+	k.key = append(k.key[:0], k.d.objPfx...)
+	k.key = append(k.key, objectID...)
+	k.key = append(k.key, '/')
+	k.key = append(k.key, field...)
+	return k.key
+}
+
+// value reads one per-object string field. It reports false when the field is
+// absent or holds another kind, which is what every caller here treats as "the
+// object does not carry this field".
+func (k *keyBuf) value(objectID, field string) (string, bool) {
+	value, _, ok := k.d.doc.LookupKey(crdt.Root, k.objectKey(objectID, field))
+	if !ok || value.Kind != crdt.ValueKindString {
+		return "", false
+	}
+	return value.Str, true
+}
+
+// removed reports whether the removal flag for objectID is currently raised.
+func (k *keyBuf) removed(objectID string) bool {
+	value, _, ok := k.d.doc.LookupKey(crdt.Root, k.objectKey(objectID, fieldGone))
+	return ok && value.Kind == crdt.ValueKindBool && value.Bool
 }
 
 // slotKey builds the root map key for one whole collection.
@@ -358,7 +399,7 @@ func (d *Doc) Apply(commands []scene.Command, message string) (crdt.ChangeHash, 
 // actor-allocated ID from crdt.Doc.MakeList would give each peer a different
 // list, and one of the two would be lost to last-writer-wins on the root key.
 func (d *Doc) ensureIndex() error {
-	if _, _, err := d.doc.Get(crdt.Root, d.indexKey); err == nil {
+	if _, _, ok := d.doc.Lookup(crdt.Root, d.indexKey); ok {
 		return nil
 	}
 	return d.doc.Put(crdt.Root, d.indexKey, crdt.ListValue(d.indexObj))
@@ -392,6 +433,7 @@ func (d *Doc) encodeCommands(commands []scene.Command) ([]func() error, error) {
 	}
 
 	writes := make([]func() error, 0, len(commands)+2)
+	keys := keyBuf{d: d}
 	for _, command := range commands {
 		payload, err := encodeData(command.Data)
 		if err != nil {
@@ -411,7 +453,7 @@ func (d *Doc) encodeCommands(commands []scene.Command) ([]func() error, error) {
 			// A create must clear a removal flag that an earlier change
 			// raised, or the object would stay invisible. Reading the local
 			// flag first keeps the common case at zero extra operations.
-			if d.removed(id) {
+			if keys.removed(id) {
 				writes = append(writes, d.boolWrite(d.objectKey(id, fieldGone), false))
 			}
 		case scene.CommandRemoveObject:
@@ -478,9 +520,9 @@ func (d *Doc) indexSet() (map[string]bool, error) {
 	}
 	set := make(map[string]bool, length)
 	for i := 0; i < length; i++ {
-		value, _, err := d.doc.Get(d.indexObj, crdt.Prop(strconv.Itoa(i)))
-		if err != nil {
-			return nil, fmt.Errorf("scene3d: read object index at %d: %w", i, err)
+		value, _, ok := d.doc.LookupIndex(d.indexObj, i)
+		if !ok {
+			return nil, fmt.Errorf("scene3d: read object index at %d of %d", i, length)
 		}
 		if value.Str != "" {
 			set[value.Str] = true
@@ -490,9 +532,10 @@ func (d *Doc) indexSet() (map[string]bool, error) {
 }
 
 // removed reports whether the removal flag for objectID is currently raised.
+// It builds one key. A loop over many objects should use keyBuf.removed.
 func (d *Doc) removed(objectID string) bool {
-	value, _, err := d.doc.Get(crdt.Root, d.objectKey(objectID, fieldGone))
-	return err == nil && value.Kind == crdt.ValueKindBool && value.Bool
+	buf := keyBuf{d: d}
+	return buf.removed(objectID)
 }
 
 // encodeData renders a command Data field as the JSON the browser runtime
@@ -546,8 +589,9 @@ func (d *Doc) Commands() ([]scene.Command, error) {
 	if err != nil {
 		return nil, err
 	}
+	keys := keyBuf{d: d}
 	for _, id := range ids {
-		payload, ok := d.objectValue(id, fieldCreate)
+		payload, ok := keys.value(id, fieldCreate)
 		if !ok {
 			continue
 		}
@@ -560,7 +604,7 @@ func (d *Doc) Commands() ([]scene.Command, error) {
 	for _, field := range patchFieldOrder {
 		kind := kindForField[field]
 		for _, id := range ids {
-			payload, ok := d.objectValue(id, field)
+			payload, ok := keys.value(id, field)
 			if !ok {
 				continue
 			}
@@ -584,9 +628,9 @@ func (d *Doc) ObjectIDs() ([]string, error) {
 	seen := make(map[string]struct{}, length)
 	ids := make([]string, 0, length)
 	for i := 0; i < length; i++ {
-		value, _, err := d.doc.Get(d.indexObj, crdt.Prop(strconv.Itoa(i)))
-		if err != nil {
-			return nil, fmt.Errorf("scene3d: read object index at %d: %w", i, err)
+		value, _, ok := d.doc.LookupIndex(d.indexObj, i)
+		if !ok {
+			return nil, fmt.Errorf("scene3d: read object index at %d of %d", i, length)
 		}
 		id := value.Str
 		if id == "" {
@@ -614,11 +658,12 @@ func (d *Doc) presentObjectIDs() ([]string, error) {
 		return nil, err
 	}
 	present := make([]string, 0, len(all))
+	keys := keyBuf{d: d}
 	for _, id := range all {
-		if d.removed(id) {
+		if keys.removed(id) {
 			continue
 		}
-		if _, ok := d.objectValue(id, fieldCreate); !ok {
+		if _, ok := keys.value(id, fieldCreate); !ok {
 			continue
 		}
 		present = append(present, id)
@@ -626,17 +671,16 @@ func (d *Doc) presentObjectIDs() ([]string, error) {
 	return present, nil
 }
 
+// objectValue reads one per-object string field. It builds one key. A loop over
+// many objects should use keyBuf.value.
 func (d *Doc) objectValue(objectID, field string) (string, bool) {
-	value, _, err := d.doc.Get(crdt.Root, d.objectKey(objectID, field))
-	if err != nil || value.Kind != crdt.ValueKindString {
-		return "", false
-	}
-	return value.Str, true
+	buf := keyBuf{d: d}
+	return buf.value(objectID, field)
 }
 
 func (d *Doc) slotValue(slot string) (string, bool) {
-	value, _, err := d.doc.Get(crdt.Root, d.slotKey(slot))
-	if err != nil || value.Kind != crdt.ValueKindString {
+	value, _, ok := d.doc.Lookup(crdt.Root, d.slotKey(slot))
+	if !ok || value.Kind != crdt.ValueKindString {
 		return "", false
 	}
 	return value.Str, true
@@ -693,6 +737,7 @@ func (d *Doc) Watch(fn func([]scene.Command)) {
 // crdt.Doc.OnChange hook and do not want a second hook.
 func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 	var commands []scene.Command
+	keys := keyBuf{d: d}
 	for _, patch := range patches {
 		if patch.Obj != crdt.Root {
 			continue
@@ -718,7 +763,7 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 				commands = append(commands, scene.RemoveObjectCommand(key.objectID))
 				continue
 			}
-			if d.removed(key.objectID) {
+			if keys.removed(key.objectID) {
 				// A concurrent removal outranks this create, so the object is
 				// not visible. Emitting the create would show an object the
 				// converged document says is gone.
@@ -736,7 +781,7 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 			if patch.Action == "put" && patch.Value.Kind == crdt.ValueKindBool && !patch.Value.Bool {
 				// The object came back. Replay its stored create payload,
 				// because the create itself is older than this patch.
-				if payload, ok := d.objectValue(key.objectID, fieldCreate); ok && !d.removed(key.objectID) {
+				if payload, ok := keys.value(key.objectID, fieldCreate); ok && !keys.removed(key.objectID) {
 					commands = append(commands,
 						scene.RemoveObjectCommand(key.objectID),
 						scene.Command{
@@ -855,27 +900,31 @@ func (d *Doc) View() (View, error) {
 	if err != nil {
 		return View{}, err
 	}
+	keys := keyBuf{d: d}
+	// One decoder serves the whole loop. It carries the scratch buffers that
+	// the create decode would otherwise allocate once per object.
+	var decoder createDecoder
 	for _, id := range all {
-		if d.removed(id) {
-			if _, ok := d.objectValue(id, fieldCreate); ok {
+		if keys.removed(id) {
+			if _, ok := keys.value(id, fieldCreate); ok {
 				view.Removed = append(view.Removed, id)
 			}
 			continue
 		}
-		payload, ok := d.objectValue(id, fieldCreate)
+		payload, ok := keys.value(id, fieldCreate)
 		if !ok {
 			continue
 		}
-		if err := view.addCreate(id, payload); err != nil {
+		if err := decoder.addCreate(&view, id, payload); err != nil {
 			return View{}, err
 		}
-		if raw, ok := d.objectValue(id, fieldTransform); ok {
+		if raw, ok := keys.value(id, fieldTransform); ok {
 			view.Transforms[id] = json.RawMessage(raw)
 		}
-		if raw, ok := d.objectValue(id, fieldMaterial); ok {
+		if raw, ok := keys.value(id, fieldMaterial); ok {
 			view.MaterialPatches[id] = json.RawMessage(raw)
 		}
-		if raw, ok := d.objectValue(id, fieldLight); ok {
+		if raw, ok := keys.value(id, fieldLight); ok {
 			view.LightPatches[id] = json.RawMessage(raw)
 		}
 	}
@@ -890,44 +939,125 @@ type createEnvelope struct {
 	Props    json.RawMessage `json:"props,omitempty"`
 }
 
-func (v *View) addCreate(objectID, payload string) error {
-	var envelope createEnvelope
-	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+// createDecoder decodes create payloads through reusable parser state.
+//
+// A View of n objects decodes 2n JSON documents: the envelope that names the
+// record kind, and the record itself. json.Unmarshal builds a fresh parser for
+// every call and throws it away, which measured 14 of the 15 allocations one
+// object cost. A json.Decoder keeps its parser between calls, so the same pair
+// of decodes measured 4 allocations, and those four are the record strings.
+//
+// Two rules keep the reuse honest:
+//
+//   - Reset every envelope field before each decode. encoding/json leaves a
+//     struct field untouched when the input omits it, so a payload that carries
+//     no "kind" would inherit the kind of the object decoded before it, and a
+//     mesh would arrive as a light.
+//   - Drop a decoder that did not consume its whole payload. See decodeValue.
+//
+// Do not copy a createDecoder after its first use. Each decoder holds a pointer
+// to the reader beside it.
+type createDecoder struct {
+	payload  []byte
+	envelope createEnvelope
+
+	envelopeSrc bytes.Reader
+	envelopeDec *json.Decoder
+	propsSrc    bytes.Reader
+	propsDec    *json.Decoder
+}
+
+func (c *createDecoder) addCreate(v *View, objectID, payload string) error {
+	c.payload = append(c.payload[:0], payload...)
+	c.envelope.Kind = ""
+	c.envelope.Geometry = ""
+	c.envelope.Props = c.envelope.Props[:0]
+	if err := c.decodeValue(&c.envelopeSrc, &c.envelopeDec, c.payload, &c.envelope); err != nil {
 		return fmt.Errorf("scene3d: decode create payload for %q: %w", objectID, err)
 	}
-	switch envelope.Kind {
+	// Every record decodes straight into the slice that keeps it. A local
+	// record would escape to the heap, because a decode passes it as an
+	// interface, and one scene.ObjectIR is 1000 bytes: at 1000 objects that
+	// was one megabyte of records the append then copied away again.
+	//
+	// Grow the slice first, decode into the new element, and drop the element
+	// when the decode fails. A caller must never see a half-decoded record.
+	switch c.envelope.Kind {
 	case "":
-		var record scene.ObjectIR
-		if err := json.Unmarshal(envelope.Props, &record); err != nil {
+		v.IR.Objects = append(v.IR.Objects, scene.ObjectIR{})
+		if err := c.decodeProps(&v.IR.Objects[len(v.IR.Objects)-1]); err != nil {
+			v.IR.Objects = v.IR.Objects[:len(v.IR.Objects)-1]
 			return fmt.Errorf("scene3d: decode object %q: %w", objectID, err)
 		}
-		v.IR.Objects = append(v.IR.Objects, record)
 	case "label":
-		var record scene.LabelIR
-		if err := json.Unmarshal(envelope.Props, &record); err != nil {
+		v.IR.Labels = append(v.IR.Labels, scene.LabelIR{})
+		if err := c.decodeProps(&v.IR.Labels[len(v.IR.Labels)-1]); err != nil {
+			v.IR.Labels = v.IR.Labels[:len(v.IR.Labels)-1]
 			return fmt.Errorf("scene3d: decode label %q: %w", objectID, err)
 		}
-		v.IR.Labels = append(v.IR.Labels, record)
 	case "sprite":
-		var record scene.SpriteIR
-		if err := json.Unmarshal(envelope.Props, &record); err != nil {
+		v.IR.Sprites = append(v.IR.Sprites, scene.SpriteIR{})
+		if err := c.decodeProps(&v.IR.Sprites[len(v.IR.Sprites)-1]); err != nil {
+			v.IR.Sprites = v.IR.Sprites[:len(v.IR.Sprites)-1]
 			return fmt.Errorf("scene3d: decode sprite %q: %w", objectID, err)
 		}
-		v.IR.Sprites = append(v.IR.Sprites, record)
 	case "html":
-		var record scene.HTMLIR
-		if err := json.Unmarshal(envelope.Props, &record); err != nil {
+		v.IR.HTML = append(v.IR.HTML, scene.HTMLIR{})
+		if err := c.decodeProps(&v.IR.HTML[len(v.IR.HTML)-1]); err != nil {
+			v.IR.HTML = v.IR.HTML[:len(v.IR.HTML)-1]
 			return fmt.Errorf("scene3d: decode html %q: %w", objectID, err)
 		}
-		v.IR.HTML = append(v.IR.HTML, record)
 	case "light":
-		var record scene.LightIR
-		if err := json.Unmarshal(envelope.Props, &record); err != nil {
+		v.IR.Lights = append(v.IR.Lights, scene.LightIR{})
+		if err := c.decodeProps(&v.IR.Lights[len(v.IR.Lights)-1]); err != nil {
+			v.IR.Lights = v.IR.Lights[:len(v.IR.Lights)-1]
 			return fmt.Errorf("scene3d: decode light %q: %w", objectID, err)
 		}
-		v.IR.Lights = append(v.IR.Lights, record)
 	default:
-		return fmt.Errorf("scene3d: object %q has unsupported create kind %q", objectID, envelope.Kind)
+		return fmt.Errorf("scene3d: object %q has unsupported create kind %q", objectID, c.envelope.Kind)
+	}
+	return nil
+}
+
+// decodeProps decodes the record bytes the envelope carries.
+func (c *createDecoder) decodeProps(target any) error {
+	if len(c.envelope.Props) == 0 {
+		// A payload with no record is a fault, and json.Unmarshal names it. A
+		// decoder reading an empty reader reports a bare EOF instead, which
+		// tells a reader nothing about which document was short.
+		return json.Unmarshal(c.envelope.Props, target)
+	}
+	return c.decodeValue(&c.propsSrc, &c.propsDec, c.envelope.Props, target)
+}
+
+// decodeValue reads one JSON value from data through a decoder it reuses.
+//
+// json.Unmarshal reads the whole input and rejects any byte after the top-level
+// value. A decoder reads a stream instead: it stops at the end of the value and
+// keeps the rest for the next call. Trailing bytes would then be blamed on the
+// NEXT object, and trailing space would shift every later offset.
+//
+// So compare what the decoder consumed against the payload length. On any
+// difference, drop the decoder, because its buffer still holds bytes that must
+// not reach the next payload, and let json.Unmarshal decide the outcome. That
+// keeps the error a caller sees identical to the error the plain unmarshal
+// always returned, and it keeps a valid payload with trailing space working.
+//
+// The comparison also holds the invariant the reuse depends on: a decoder that
+// survives a call has an empty buffer and an exhausted reader.
+func (c *createDecoder) decodeValue(src *bytes.Reader, dec **json.Decoder, data []byte, target any) error {
+	src.Reset(data)
+	if *dec == nil {
+		*dec = json.NewDecoder(src)
+	}
+	start := (*dec).InputOffset()
+	if err := (*dec).Decode(target); err != nil {
+		*dec = nil
+		return err
+	}
+	if (*dec).InputOffset()-start != int64(len(data)) {
+		*dec = nil
+		return json.Unmarshal(data, target)
 	}
 	return nil
 }
