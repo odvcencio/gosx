@@ -95,6 +95,19 @@ func (r *PageRuntime) IslandWithProgramAsset(prog *islandprogram.Program, props 
 
 // ComputeIsland registers a headless island program for page-scoped client
 // compute. It shares the island VM and signal bridge without owning a DOM root.
+//
+// It returns the registered identifier, or "" on failure. The empty string
+// covers three different outcomes and tells them apart from none of the others:
+// a nil receiver, a registration error from the renderer, and — in principle —
+// a successful registration that produced an empty identifier. A caller that
+// stores the result and finds it empty knows only that no compute island is
+// running.
+//
+// Errors are dropped deliberately, so that a page renders rather than failing
+// on a compute island that is usually optional. The cost is that a
+// misconfigured program is silent: the page serves, the compute never runs, and
+// nothing in the response says why. When the compute island is load-bearing,
+// check the result against "" at the call site.
 func (r *PageRuntime) ComputeIsland(cfg island.ComputeIslandConfig) string {
 	if r == nil {
 		return ""

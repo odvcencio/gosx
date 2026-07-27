@@ -363,6 +363,20 @@ func (s *Store) String(key string) string {
 }
 
 // Decode unmarshals a stored session value into dst.
+//
+// It reports whether dst was populated. False covers every failure without
+// separating them: a nil store, a nil dst, a key that was never set, a value
+// that will not marshal, and a value whose shape does not fit dst. A caller
+// that needs to tell "absent" from "present but wrong shape" must ask through
+// another method first; this one collapses both to false.
+//
+// The round trip goes through JSON, so dst receives what json.Unmarshal would
+// produce and not the stored Go value. A value stored as a struct and decoded
+// into a map arrives as a map, and unexported fields do not survive.
+//
+// On a shape mismatch dst may already hold partially decoded fields, because
+// json.Unmarshal writes as it goes. Treat dst as undefined when this returns
+// false.
 func (s *Store) Decode(key string, dst any) bool {
 	if s == nil || dst == nil {
 		return false
