@@ -386,7 +386,37 @@ const budgets = [
   // raised it for procedural point clouds. Merging the two feature sets put all
   // three figures over, so the ceiling is set from measurement: 1_363_465 raw,
   // 364_934 gzip, 295_439 brotli, each with about 1_550 bytes of headroom.
-  { file: "bootstrap.js", raw: 1_365_000, gzip: 366_500, brotli: 297_000 },
+  //
+  // Bumped raw 1_365_000 -> 1_366_500 for the Points and Sprite ray pick
+  // (sceneRaycastPickPoints in 17-scene-input.js). Measured after the change:
+  // 1_365_161 raw, 365_590 gzip, 296_053 brotli, so gzip and brotli are still
+  // INSIDE their ceilings and neither moves. Measure all three before you raise
+  // one: this test asserts raw first and stops there, so a raw overage hides a
+  // compressed overage behind it.
+  //
+  // Bumped raw 1_366_500 -> 1_376_000, gzip 366_500 -> 368_500, brotli 297_000
+  // -> 298_500 for the per-feature Scene3D split. The monolith carries EVERY
+  // chunk, so it pays the split's bridges without collecting any of its saving:
+  // the lazy loaders for the compute and decompress chunks, the call-time
+  // resolvers that replaced load-time snapshots, and the typeof guards on the
+  // shared API object.
+  //
+  // Two measurements, both from the same source snapshot, so the concurrent
+  // WebGPU probe and ray-pick work sits in both columns:
+  //   before this split  1_368_537 raw / 366_444 gzip / 296_437 brotli
+  //   after this split   1_374_685 raw / 367_754 gzip / 297_810 brotli
+  // The split therefore costs the monolith 6_148 raw, 1_310 gzip and 1_373
+  // brotli. Raw was ALREADY over its 1_366_500 ceiling before the split, by
+  // 2_037 bytes, from work in flight on this branch.
+  //
+  // All three figures are measured from the files, because the assertions run
+  // raw first and stop, so a raw overage hides the compressed overages.
+  // Re-measured after the KTX2 reader (19a-scene-ktx2.js) and both renderer
+  // upload paths landed in the monolith: 1_381_612 raw, 370_028 gzip, 299_340
+  // brotli. Ceilings raw 1_376_000 -> 1_383_000, gzip 368_500 -> 370_500,
+  // brotli 298_500 -> 300_000, each measured from the file rather than added
+  // to the previous ceiling.
+  { file: "bootstrap.js", raw: 1_383_000, gzip: 370_500, brotli: 300_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -641,7 +671,22 @@ const budgets = [
   //
   // Keep this budget tight so the chunk cannot absorb unrelated code and turn
   // that trade the wrong way. Measured: 148_439 / 41_151 / 35_555.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 151_000, gzip: 41_800, brotli: 36_100 },
+  //
+  // Bumped raw 151_000 -> 191_000, gzip 41_800 -> 51_800, brotli 36_100 ->
+  // 44_200. Three payloads moved INTO this chunk from the base scene3d chunk,
+  // because 16-scene-webgl.js is their only caller in the tree:
+  //   1. 16e-scene-webgl-legacy.js, the legacy vertex-colour renderer.
+  //   2. 15a1-scene-texture-budget.js, the texture-unit table and IBL budget.
+  //   3. 16b-scene-hdr.js, the Radiance HDR decoder.
+  //
+  // This is a move, not growth. A WebGL page paid for all three before, inside
+  // the base chunk; it now pays for them here. A WebGPU page stops paying
+  // altogether. Measured before 148_601 / 41_187 / 35_506; after 190_060 /
+  // 51_373 / 43_892, so this chunk gained 41_459 raw / 10_186 gzip / 8_386
+  // brotli while the base chunk gave up 74_571 / 21_250 / 17_547.
+  //
+  // Re-measured with the KTX2 upload branch: 190_956 / 51_630 / 44_100.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 192_000, gzip: 52_000, brotli: 44_400 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -652,7 +697,41 @@ const budgets = [
   // 16-scene-webgl.js moved to its own lazily fetched chunk, and main raised it
   // for procedural point clouds. Set from measurement after the merge: 533_048
   // raw, 147_437 gzip, 122_182 brotli.
-  { file: "bootstrap-feature-scene3d.js", raw: 535_000, gzip: 149_000, brotli: 124_000 },
+  //
+  // RATCHETED DOWN, raw 535_000 -> 465_000, gzip 149_000 -> 128_500, brotli
+  // 124_000 -> 107_000. Four payloads left this chunk, and every one of them
+  // now loads only for a scene that reaches it:
+  //   1. The legacy vertex-colour WebGL renderer (16e-scene-webgl-legacy.js)
+  //      joined the WebGL chunk. Only createSceneWebGLResult calls it, and the
+  //      PBR factory it backs up already ships there, so a WebGPU page could
+  //      never run it.
+  //   2. The particle systems and the GPU instanced cull (16b-scene-compute.js)
+  //      became bootstrap-feature-scene3d-compute.js.
+  //   3. The quantized decoder and the point generators (11a, 11b) became
+  //      bootstrap-feature-scene3d-decompress.js.
+  //   4. The texture-unit table, the IBL budget (15a1) and the Radiance HDR
+  //      decoder (16b-scene-hdr.js) joined the WebGL chunk, their only caller.
+  //
+  // Measured before 538_114 / 148_997 / 123_683; after 463_543 / 127_747 /
+  // 106_136. That is -74_571 raw, -21_250 gzip and -17_547 brotli off every
+  // Scene3D page, whatever the scene draws. Both figures come from the same
+  // bootstrap-src snapshot.
+  //
+  // Keep this budget tight. A file that drifts back in cancels a saving no
+  // other gate can see, because a per-page transfer has no test.
+  { file: "bootstrap-feature-scene3d.js", raw: 465_000, gzip: 128_500, brotli: 107_000 },
+  // The compute chunk: the WGSL particle simulation, the CPU particle
+  // fallback, the particle force registry and the GPU instanced-cull system.
+  // The mount fetches it when the scene declares a compute particle system or
+  // an instanced mesh, and the island renderer advertises its URL only then.
+  // Measured: 31_046 / 9_174 / 8_281.
+  { file: "bootstrap-feature-scene3d-compute.js", raw: 32_000, gzip: 9_500, brotli: 8_600 },
+  // The decompress chunk: the quantized-array decoder, the progressive and
+  // level-of-detail ladders, and the procedural point generators. The mount
+  // fetches it before it builds the scene state, and only for a scene that
+  // carries a compressed array, a generator descriptor or a compression
+  // policy. Measured: 9_100 / 3_569 / 3_111.
+  { file: "bootstrap-feature-scene3d-decompress.js", raw: 9_500, gzip: 3_800, brotli: 3_300 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
@@ -782,8 +861,23 @@ const budgets = [
   //
   // One entry, both histories. Set from measurement after the merge: 361_500 raw,
   // 85_775 gzip, 71_783 brotli.
+  // Re-measured with the KTX2 upload branch: 362_557 / 86_070 / 72_060. All
+  // three still fit the ceilings below, so none of them moves.
   { file: "bootstrap-feature-scene3d-webgpu.js", raw: 363_500, gzip: 87_300, brotli: 73_300 },
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
+  // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
+  // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
+  // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
+  // 19-scene-gltf.js reads it lexically. A page that loads no model asset never
+  // fetches any of it.
+  //
+  // Three measurements, all from the same bootstrap-src snapshot:
+  //   base (no KTX2, no Scene3D split)  20_236 / 7_749 / 6_843
+  //   with the variant swap only        21_840 / 8_279 / 7_327
+  //   with the reader registered        27_018 / 10_105 / 8_990
+  // The Scene3D chunk split changes no file in this chunk, so none of this
+  // growth is the split. All three figures are read from the files, because
+  // the assertions run raw first and stop.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 27_500, gzip: 10_300, brotli: 9_200 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.js (the JS drift engine): raw 52_000 ->
@@ -1015,9 +1109,26 @@ const routeBudgets = [
     // 261_000 -> 263_000, for the same reason as bootstrap.js above: two feature
     // sets in one route when the audit branch merged main. Measured after the
     // merge: 1_163_921 raw, 308_635 gzip.
-    raw: 1_165_000,
-    gzip: 310_500,
-    brotli: 263_000,
+    //
+    // Bumped raw 1_165_000 -> 1_166_500 for the Points and Sprite ray pick in
+    // 17-scene-input.js, which this route carries inside the base scene3d chunk.
+    // Measured after the change: 1_165_611 raw, 309_298 gzip, 261_293 brotli. Both
+    // compressed figures are still INSIDE their ceilings, so neither moves.
+    //
+    // RATCHETED DOWN, raw 1_166_500 -> 1_097_000, gzip 310_500 -> 290_000,
+    // brotli 263_000 -> 245_500 for the per-feature split of the base scene3d
+    // chunk. The legacy vertex-colour renderer, the texture-unit table and the
+    // Radiance HDR decoder followed the WebGL renderer, which this route never
+    // loads. The particle systems and the quantized decoder became gated
+    // chunks, which a scene with labels and meshes does not reach.
+    //
+    // Measured before 1_168_987 / 310_195 / 262_091; after 1_095_473 / 289_240
+    // / 244_821. That is -73_514 raw, -20_955 gzip and -17_270 brotli, and both
+    // figures come from the same bootstrap-src snapshot. Stated plainly: a full
+    // Scene3D page with labels is now 282 KB gzip, down from 303 KB.
+    raw: 1_097_000,
+    gzip: 290_000,
+    brotli: 245_500,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1068,9 +1179,18 @@ const routeBudgets = [
     // The raw figure passed its ceiling by only 22 bytes while gzip passed by
     // 1_047, which is why all three get measured rather than inferred from the
     // first assertion that happens to fail.
-    raw: 953_000,
-    gzip: 265_500,
-    brotli: 226_000,
+    //
+    // RATCHETED DOWN, raw 953_000 -> 925_000, gzip 265_500 -> 255_500, brotli
+    // 226_000 -> 217_500. The compute and decompress chunks left the base
+    // chunk, and a mesh scene with labels reaches neither. The legacy renderer,
+    // the texture-unit table and the HDR decoder only moved between two chunks
+    // this route already loads, so they cost it nothing either way.
+    //
+    // Measured before 956_088 / 265_607 / 225_814; after 923_872 / 254_800 /
+    // 216_861, so -32_216 raw, -10_807 gzip and -8_953 brotli.
+    raw: 925_000,
+    gzip: 255_500,
+    brotli: 217_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1105,9 +1225,24 @@ const routeBudgets = [
     // this route loads: 1_312_522 raw, 349_822 gzip, 296_096 brotli. Brotli is
     // still INSIDE its ceiling, so that number does not move. Raise only what the
     // measurement actually breaches.
-    raw: 1_315_000,
-    gzip: 351_500,
-    brotli: 296_500,
+    //
+    // Bumped BROTLI ONLY, 296_500 -> 297_500, for the Points and Sprite ray pick
+    // in 17-scene-input.js. Measured after the change: 1_314_212 raw, 350_485
+    // gzip, 296_799 brotli. Raw and gzip still fit with 788 and 1_015 bytes to
+    // spare, so they do not move. This entry is the reason to measure all three
+    // figures from the files: the assertions read raw first, so this brotli
+    // overage sat behind a raw overage on another entry and only appeared once
+    // that one was fixed.
+    //
+    // RATCHETED DOWN, raw 1_315_000 -> 1_288_000, gzip 351_500 -> 341_500,
+    // brotli 297_500 -> 290_000. This route loads both backends, so the three
+    // WebGL-only payloads that left the base chunk cost it nothing; the saving
+    // is the compute and decompress chunks, which a mesh scene never fetches.
+    // Measured before 1_317_588 / 351_382 / 297_597; after 1_286_429 / 340_870
+    // / 288_921, so -31_159 raw, -10_512 gzip and -8_676 brotli.
+    raw: 1_288_000,
+    gzip: 341_500,
+    brotli: 290_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1135,9 +1270,33 @@ const routeBudgets = [
     // chunks this route loads: 1_017_796 raw, 266_374 gzip, 223_003 brotli. The
     // brotli figure passed its ceiling by 3 bytes, which is why every ceiling gets
     // measured instead of inferred from whichever assertion fails first.
-    raw: 1_019_500,
-    gzip: 268_000,
-    brotli: 225_000,
+    //
+    // RATCHETED DOWN, raw 1_019_500 -> 951_000, gzip 268_000 -> 247_500, brotli
+    // 225_000 -> 208_000. This is the headline of the per-feature split, and it
+    // is the route the "no free lunch" rule is really about: a hero scene with
+    // one cube and one directional light.
+    //
+    // Four payloads left this route. Three followed the WebGL renderer it never
+    // loads (the legacy vertex-colour renderer, the texture-unit table and the
+    // Radiance HDR decoder); two became gated chunks it never fetches (the
+    // particle systems with the GPU cull, and the quantized decoder with the
+    // point generators).
+    //
+    // Measured before 1_022_862 / 267_934 / 224_504; after 949_348 / 246_979 /
+    // 207_234. That is -73_514 raw, -20_955 gzip and -17_270 brotli, or 7.8% of
+    // the gzip a minimal Scene3D page downloads. Both figures come from the same
+    // bootstrap-src snapshot, so the concurrent WebGPU probe and ray-pick work
+    // sits in both columns and cannot flatter the delta.
+    //
+    // What is left is not conditional capability. 10-runtime-scene-core.js is
+    // still 26_933 gzip of this route, and an inventory of its 230 functions
+    // found the largest region to be the render-bundle lowering every backend
+    // runs. Splitting it further needs per-node-kind gating (water, HTML
+    // overlay, sprites), and each of those is reachable from a scene command
+    // after mount, so the gate must be a fetch-and-retry rather than a refusal.
+    raw: 951_000,
+    gzip: 247_500,
+    brotli: 208_000,
   },
 ];
 

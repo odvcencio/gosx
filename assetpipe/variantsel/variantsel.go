@@ -25,6 +25,17 @@
 // Canvas2D uploads no GPU texture at all. A page whose only capable backend is
 // Canvas2D therefore gets no texture format tokens, and a selector falls back
 // to the source image. That is the honest answer.
+//
+// # Block formats need device evidence, not a verdict
+//
+// The verdict proves backend fidelity. It does not prove device format support.
+// Every block-compressed format sits behind an optional WebGPU feature and an
+// optional WebGL2 extension, so no static backend table may promise one.
+// backendFormats therefore holds no block token, and FromBackendCaps can never
+// select a block variant. Block tokens enter a set only through
+// FromDeviceEvidence, which reads what the live device reported. The server emits
+// the whole variant set; the runtime picks one after it commits to a backend and
+// reads adapter.features.
 package variantsel
 
 import (
@@ -77,16 +88,184 @@ const (
 	BudgetLow      Token = "budget:low"
 )
 
-// Block-compressed tokens exist so a plan can name a target the pipeline
-// refuses to build. No GoSX build step emits a variant carrying one of these,
-// because no GoSX build step has a block encoder. A selector that sees one and
-// finds no built file must fall through, which the built-state check in the
-// selector guarantees.
+// Block-compressed format tokens.
+//
+// The BC family is built. assetpipe/texture/codec_bcn.go and codec_bc7.go fill
+// BC1, BC3, BC4, BC5 and BC7 payloads, so a variant may carry one of those
+// tokens and name a file that exists.
+//
+// The ASTC and ETC2 tokens still name targets no GoSX build step produces. They
+// exist so a plan can state the gap. A selector that sees one and finds no built
+// file must fall through, which the built-state check in the selector
+// guarantees.
+//
+// Every spelling follows the WebGPU GPUTextureFormat enumeration. BC4 and BC5
+// have no sRGB form, because they store data and not colour.
 const (
-	FormatBC7     Token = "texture-format:bc7-rgba-unorm-srgb"
-	FormatASTC4x4 Token = "texture-format:astc-4x4-unorm-srgb"
-	FormatETC2    Token = "texture-format:etc2-rgba8unorm-srgb"
+	FormatBC1           Token = "texture-format:bc1-rgba-unorm"
+	FormatBC1SRGB       Token = "texture-format:bc1-rgba-unorm-srgb"
+	FormatBC3           Token = "texture-format:bc3-rgba-unorm"
+	FormatBC3SRGB       Token = "texture-format:bc3-rgba-unorm-srgb"
+	FormatBC4           Token = "texture-format:bc4-r-unorm"
+	FormatBC5           Token = "texture-format:bc5-rg-unorm"
+	FormatBC7           Token = "texture-format:bc7-rgba-unorm-srgb"
+	FormatBC7Linear     Token = "texture-format:bc7-rgba-unorm"
+	FormatASTC4x4       Token = "texture-format:astc-4x4-unorm-srgb"
+	FormatASTC4x4Linear Token = "texture-format:astc-4x4-unorm"
+	FormatASTC8x8       Token = "texture-format:astc-8x8-unorm-srgb"
+	FormatETC2          Token = "texture-format:etc2-rgba8unorm-srgb"
+	FormatETC2RGB       Token = "texture-format:etc2-rgb8unorm-srgb"
+	FormatEACR11        Token = "texture-format:eac-r11unorm"
+	FormatEACRG11       Token = "texture-format:eac-rg11unorm"
 )
+
+// Device feature tokens name the optional capability a block format needs.
+//
+// These are not backend guarantees. A WebGPU adapter reports each one in
+// adapter.features, and a WebGL2 context reports the matching extension. The
+// server cannot know any of them from a fidelity verdict, so they enter a
+// request set only through FromDeviceEvidence.
+const (
+	FeatureTextureCompressionBC   Token = "device-feature:texture-compression-bc"
+	FeatureTextureCompressionETC2 Token = "device-feature:texture-compression-etc2"
+	FeatureTextureCompressionASTC Token = "device-feature:texture-compression-astc"
+)
+
+// blockFeatureFormats maps one device feature onto the format tokens it unlocks.
+//
+// The mapping is one-way on purpose. A format token never implies a feature
+// token, because a variant states what it needs and evidence states what the
+// device has.
+var blockFeatureFormats = map[Token][]Token{
+	FeatureTextureCompressionBC: {
+		FormatBC1, FormatBC1SRGB,
+		FormatBC3, FormatBC3SRGB,
+		FormatBC4, FormatBC5,
+		FormatBC7, FormatBC7Linear,
+	},
+	FeatureTextureCompressionETC2: {
+		FormatETC2, FormatETC2RGB, FormatEACR11, FormatEACRG11,
+	},
+	FeatureTextureCompressionASTC: {
+		FormatASTC4x4, FormatASTC4x4Linear, FormatASTC8x8,
+	},
+}
+
+// BlockFeatureForFormat returns the device feature one block format needs, and
+// false for a format that needs none.
+//
+// A variant carries both tokens: the format it holds and the feature that format
+// needs. A selector then rejects the variant unless device evidence supplied
+// both, which is what stops a block file reaching a device that cannot upload it.
+func BlockFeatureForFormat(format Token) (Token, bool) {
+	normalized := Token(strings.ToLower(strings.TrimSpace(string(format))))
+	for feature, formats := range blockFeatureFormats {
+		for _, candidate := range formats {
+			if candidate == normalized {
+				return feature, true
+			}
+		}
+	}
+	return "", false
+}
+
+// FormatsForFeature lists the format tokens one device feature unlocks.
+func FormatsForFeature(feature Token) []Token {
+	normalized := Token(strings.ToLower(strings.TrimSpace(string(feature))))
+	formats := blockFeatureFormats[normalized]
+	out := make([]Token, len(formats))
+	copy(out, formats)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// webgpuFeatureNames maps a WebGPU adapter feature name onto its token. The
+// names are the GPUFeatureName strings the runtime probe already collects.
+var webgpuFeatureNames = map[string]Token{
+	"texture-compression-bc":   FeatureTextureCompressionBC,
+	"texture-compression-etc2": FeatureTextureCompressionETC2,
+	"texture-compression-astc": FeatureTextureCompressionASTC,
+}
+
+// webglExtensionFeatures maps a WebGL2 extension name onto the format tokens it
+// unlocks.
+//
+// WebGL2 splits the BC family across three extensions, so a context can have
+// S3TC and not RGTC. The mapping is therefore per extension and not per family,
+// and a WebGL2 set never carries a whole-family feature token.
+var webglExtensionFeatures = map[string][]Token{
+	"WEBGL_compressed_texture_s3tc":      {FormatBC1, FormatBC3},
+	"WEBGL_compressed_texture_s3tc_srgb": {FormatBC1SRGB, FormatBC3SRGB},
+	"EXT_texture_compression_rgtc":       {FormatBC4, FormatBC5},
+	"EXT_texture_compression_bptc":       {FormatBC7, FormatBC7Linear},
+	"WEBGL_compressed_texture_etc":       {FormatETC2, FormatETC2RGB, FormatEACR11, FormatEACRG11},
+	"WEBGL_compressed_texture_astc":      {FormatASTC4x4, FormatASTC4x4Linear, FormatASTC8x8},
+}
+
+// FromDeviceEvidence turns a live device's own report into a capability set.
+//
+// # Why this function exists and FromBackendCaps cannot do the work
+//
+// The server's fidelity verdict proves which backends could draw the page. It
+// proves nothing about texture formats: every block format sits behind an
+// optional WebGPU feature and an optional WebGL2 extension, and no static table
+// may promise them. The evidence lives on the device, in adapter.features or in
+// gl.getExtension. That evidence arrives after the response left the server, so
+// the runtime is the only place that can supply it.
+//
+// names holds whatever the device reported. Unknown names are ignored, which
+// keeps a new browser feature from breaking selection.
+//
+// The returned set carries the container tokens too, because a consumer that
+// reached this function parses KTX2 and inflates scheme 3.
+func FromDeviceEvidence(backend capability.Backend, names []string) Set {
+	set := NewSet(BackendToken(backend), ContainerKTX2, ContainerZlib)
+	switch backend {
+	case capability.BackendWebGPU:
+		for _, name := range names {
+			feature, ok := webgpuFeatureNames[strings.TrimSpace(name)]
+			if !ok {
+				continue
+			}
+			set.Add(feature)
+			for _, format := range blockFeatureFormats[feature] {
+				set.Add(format)
+			}
+		}
+	case capability.BackendWebGL:
+		for _, name := range names {
+			formats, ok := webglExtensionFeatures[strings.TrimSpace(name)]
+			if !ok {
+				continue
+			}
+			// A WebGL2 extension unlocks part of a family, so the set gains
+			// the whole-family feature token only when every format of that
+			// family is present. The variant gate checks both tokens, so a
+			// partial family stays unselectable rather than half selected.
+			for _, format := range formats {
+				set.Add(format)
+			}
+		}
+		for feature, formats := range blockFeatureFormats {
+			complete := true
+			for _, format := range formats {
+				if !set.Has(format) {
+					complete = false
+					break
+				}
+			}
+			if complete {
+				set.Add(feature)
+			}
+		}
+	}
+	// Every GPU backend uploads the uncompressed formats, so the device set
+	// keeps the backend's own guarantees as well.
+	for _, token := range backendFormats[backend] {
+		set.Add(token)
+	}
+	return set
+}
 
 // BackendToken renders one capability.Backend as a token.
 func BackendToken(b capability.Backend) Token {

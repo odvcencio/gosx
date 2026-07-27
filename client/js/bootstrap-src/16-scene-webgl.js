@@ -4505,6 +4505,61 @@
     return key.endsWith(".hdr") || key.indexOf(".hdr?") >= 0 || key.indexOf(".hdr#") >= 0;
   }
 
+  // KTX2 block-texture path.
+  //
+  // 19a-scene-ktx2.js publishes window.__gosx_scene3d_ktx2 and ships in the
+  // lazily fetched glTF chunk, because only a model asset carries a .ktx2
+  // texture. Resolve the reader at call time and fall back to the image path
+  // when the chunk is absent.
+  function scenePBRIsKTX2URL(url) {
+    return typeof url === "string" && /\.ktx2(\?|#|$)/.test(url);
+  }
+
+  function scenePBRKTX2API() {
+    return typeof window !== "undefined" && window.__gosx_scene3d_ktx2
+      ? window.__gosx_scene3d_ktx2
+      : null;
+  }
+
+  // scenePBRUploadKTX2Texture fetches, decodes and uploads one KTX2 container
+  // into an existing texture record.
+  //
+  // Every failure sets record.failed and warns. It never sets record.loaded
+  // with the 1x1 white placeholder still bound, because a blank texture that
+  // reports success hides the fault. Three failures reach here: a fetch that
+  // does not return 200, a context without the compressed-format extension,
+  // and a level whose byte length disagrees with its block arithmetic.
+  // The signature is (context, url, record), the same shape the WebGPU
+  // uploader uses, because both are published on the one gate global. The
+  // texture object rides in record.texture.
+  function scenePBRUploadKTX2Texture(gl, url, record) {
+    var ktx2 = scenePBRKTX2API();
+    if (!ktx2 || typeof ktx2.load !== "function" || typeof ktx2.uploadWebGL2 !== "function") {
+      record.failed = true;
+      return Promise.resolve(record);
+    }
+    return ktx2.load(url).then(function(image) {
+      ktx2.uploadWebGL2(gl, image, { texture: record.texture });
+      // Block textures carry their own mip chain, so never call generateMipmap
+      // here: WebGL2 rejects it for a compressed target.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER,
+        image.levels.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      record.width = image.width;
+      record.height = image.height;
+      record.ktx2 = true;
+      record.loaded = true;
+      return record;
+    }).catch(function(error) {
+      record.failed = true;
+      record.error = error && error.message ? error.message : String(error);
+      try {
+        console.warn("[gosx] KTX2 texture " + url + " failed: " + record.error);
+      } catch (_e) {}
+      return record;
+    });
+  }
+
   function scenePBRTonemapHDRPixels(parsed) {
     var width = Math.max(1, Math.floor(sceneNumber(parsed && parsed.width, 1)));
     var height = Math.max(1, Math.floor(sceneNumber(parsed && parsed.height, 1)));
@@ -4575,6 +4630,15 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
+      return record;
+    }
+
+    // A .ktx2 URI holds a block-compressed container, not an image an <img>
+    // element can decode. Route it through the KTX2 reader. An image element
+    // fed a .ktx2 URI leaves the 1x1 white placeholder bound and never reports
+    // an error the caller can see.
+    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
+      scenePBRUploadKTX2Texture(gl, key, record);
       return record;
     }
 
@@ -7987,4 +8051,20 @@
         });
       },
     });
+  }
+
+  // Open the KTX2 variant-swap gate for a WebGL2 page.
+  //
+  // Same contract as the WebGPU renderer: 19-scene-gltf.js reads
+  // sceneKTX2UploadPathReady(), which tests this global, before it swaps an
+  // image URI for a block variant. Assign only when this chunk really runs, so
+  // a page with no WebGL2 renderer never claims an upload path it lacks.
+  //
+  // A WebGPU page loads its own renderer chunk and assigns its own uploader.
+  // Whichever chunk lands last wins the global, and both uploaders are correct
+  // for the renderer that owns them, because scenePBRTextureRecord and
+  // wgpuLoadTexture each call their own function directly. The global is the
+  // gate flag, not the dispatch table.
+  if (typeof window !== "undefined" && window.__gosx_scene3d_ktx2_texture_loader == null) {
+    window.__gosx_scene3d_ktx2_texture_loader = scenePBRUploadKTX2Texture;
   }

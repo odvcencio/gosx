@@ -79,24 +79,9 @@
     return indices;
   }
 
-  function sceneBase64Decode(str) {
-    if (typeof atob === "function") {
-      var raw = atob(str);
-      var bytes = new Uint8Array(raw.length);
-      for (var i = 0; i < raw.length; i++) {
-        bytes[i] = raw.charCodeAt(i);
-      }
-      return bytes;
-    }
-    // Node.js fallback for tests
-    if (typeof Buffer !== "undefined") {
-      return new Uint8Array(Buffer.from(str, "base64"));
-    }
-    return new Uint8Array(0);
-  }
-
-  // Decompress a points entry in place — replaces compressedPositions/compressedSizes
-  // with decompressed positions/sizes arrays so the render pipeline sees plain float arrays.
+  // Decompress a points entry in place — replaces compressedPositions and
+  // compressedSizes with decompressed positions and sizes arrays, so the
+  // render pipeline sees plain float arrays.
   function sceneReinterleave(data, stride) {
     var n = data.length / stride;
     var out = new Array(data.length);

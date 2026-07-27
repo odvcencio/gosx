@@ -106,6 +106,108 @@ func EncodeKTX2(levels []*Image, opts EncodeOptions) ([]byte, string, error) {
 	return data, formatName, nil
 }
 
+// BlockEncodeOptions controls the container of a block-compressed variant.
+type BlockEncodeOptions struct {
+	// Supercompress writes zlib payloads, KTX2 scheme 3.
+	//
+	// Turn it on. Supercompression changes wire bytes only: the driver always
+	// receives inflated blocks, so the GPU cost is the same either way.
+	Supercompress bool
+	// KeyValues adds container metadata. The writer always adds KTXwriter.
+	KeyValues map[string]string
+}
+
+// EncodeBlockKTX2 writes a block-compressed mip chain as one KTX2 container.
+//
+// levels carries the geometry of each mip level and payloads carries the block
+// bytes of the same level, in the same order. The two must have the same length,
+// and each payload must be a whole number of blocks for its level, which the
+// writer checks before it builds the container.
+//
+// The container writer refuses a level-0 size that is not a whole number of
+// texel blocks, because WebGPU createTexture refuses the same thing.
+func EncodeBlockKTX2(codec BlockCodec, levels []*Image, payloads [][]byte, opts BlockEncodeOptions) ([]byte, error) {
+	if len(levels) == 0 || levels[0] == nil {
+		return nil, fmt.Errorf("%w: no levels", ErrShape)
+	}
+	if len(payloads) != len(levels) {
+		return nil, fmt.Errorf("%w: %d payloads for %d levels", ErrShape, len(payloads), len(levels))
+	}
+	if codec.VkFormat == 0 {
+		return nil, fmt.Errorf("%w: block codec %q has no VkFormat", ErrShape, codec.ID)
+	}
+	// The codec's colour space and its VkFormat must name the same transfer
+	// function. A mismatch makes the sampler invert a curve the encoder never
+	// applied, which looks plausible and is wrong on every texel.
+	if err := checkBlockTransferPairing(codec); err != nil {
+		return nil, err
+	}
+
+	img := &ktx2.Image{
+		Format: codec.VkFormat,
+		Width:  levels[0].Width,
+		Height: levels[0].Height,
+		Faces:  1,
+		Levels: make([]ktx2.Level, len(levels)),
+	}
+	for i, level := range levels {
+		want := BlockChainLevelBytes(codec, level.Width, level.Height)
+		if len(payloads[i]) != want {
+			return nil, fmt.Errorf("%w: level %d is %dx%d and holds %d bytes, want %d",
+				ErrShape, i, level.Width, level.Height, len(payloads[i]), want)
+		}
+		img.Levels[i] = ktx2.Level{
+			Width:  level.Width,
+			Height: level.Height,
+			Depth:  1,
+			Layers: 1,
+			Faces:  1,
+			Bytes:  payloads[i],
+		}
+	}
+	scheme := ktx2.SupercompressionNone
+	if opts.Supercompress {
+		scheme = ktx2.SupercompressionZlib
+	}
+	return ktx2.Encode(img, ktx2.EncodeOptions{
+		Writer:           "GoSX assetpipe texture",
+		KeyValues:        opts.KeyValues,
+		Supercompression: scheme,
+		ZlibLevel:        6,
+	})
+}
+
+// blockSRGBFormats lists every block VkFormat whose sampler applies the sRGB
+// transfer function. Anything else is linear.
+//
+// The list is short on purpose, so a reader can check it against the Vulkan
+// enumeration by eye. BC4 and BC5 have no sRGB form at all.
+var blockSRGBFormats = map[int]bool{
+	ktx2.VkFormatBC1RGBSRGBBlock:  true,
+	ktx2.VkFormatBC1RGBASRGBBlock: true,
+	ktx2.VkFormatBC3SRGBBlock:     true,
+	ktx2.VkFormatBC7SRGBBlock:     true,
+}
+
+// checkBlockTransferPairing refuses a codec whose colour space and VkFormat
+// disagree about the transfer function.
+func checkBlockTransferPairing(codec BlockCodec) error {
+	wantSRGB := codec.ColorSpace == SRGB
+	gotSRGB := blockSRGBFormats[codec.VkFormat]
+	if wantSRGB != gotSRGB {
+		return fmt.Errorf("%w: codec %q encodes %s but vkFormat %d samples %s",
+			ErrShape, codec.ID, codec.ColorSpace, codec.VkFormat, transferName(gotSRGB))
+	}
+	return nil
+}
+
+func transferName(srgb bool) string {
+	if srgb {
+		return "srgb"
+	}
+	return "linear"
+}
+
 // DecodeKTX2 reads an uncompressed KTX2 texture back into linear images. The
 // texture tests use it to check what the writer produced.
 func DecodeKTX2(data []byte) ([]*Image, ColorSpace, int, error) {

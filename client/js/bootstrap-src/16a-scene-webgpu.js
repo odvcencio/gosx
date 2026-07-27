@@ -2484,10 +2484,16 @@
     "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
     "    let color = textureSample(inputTex, inputSamp, uv).rgb;",
     "    let brightness = dot(color, vec3f(0.2126, 0.7152, 0.0722));",
-    "    if (brightness > params.threshold) {",
-    "        return vec4f(color, 1.0);",
-    "    }",
-    "    return vec4f(0.0, 0.0, 0.0, 1.0);",
+    // Soft knee, not a hard cut. A hard cut is discontinuous at the authored
+    // threshold: a pixel one part in a thousand below it contributes nothing
+    // and the same pixel one part above contributes its whole colour, so a slow
+    // camera move snaps a highlight on. The knee crosses zero smoothly.
+    //
+    // This matches brightPassWGSL in render/bundle/bloom.go, which already used
+    // the knee. render/bundle/postfx_drift_test.go records the divergence and
+    // its brightDivergentTerms row retires when this lands.
+    "    let excess = max(brightness - params.threshold, 0.0);",
+    "    return vec4f(color * (excess / (excess + 1.0)), 1.0);",
     "}",
   ].join("\n");
 
@@ -2849,6 +2855,72 @@
   // Texture Management
   // -----------------------------------------------------------------------
 
+  // KTX2 block-texture path.
+  //
+  // 19a-scene-ktx2.js publishes window.__gosx_scene3d_ktx2 and ships in the
+  // lazily fetched glTF chunk, because only a model asset carries a .ktx2
+  // texture. This renderer therefore resolves the reader at call time and
+  // falls back to the image path when the chunk is absent.
+  //
+  // Registering wgpuUploadKTX2Texture on
+  // window.__gosx_scene3d_ktx2_texture_loader is what opens the variant swap in
+  // 19-scene-gltf.js. Until a renderer registers a loader, the swap keeps
+  // serving the PNG or JPEG URI, because a .ktx2 URI in an image element is a
+  // broken texture.
+  function wgpuIsKTX2URL(url) {
+    return typeof url === "string" && /\.ktx2(\?|#|$)/.test(url);
+  }
+
+  function wgpuKTX2API() {
+    return typeof window !== "undefined" && window.__gosx_scene3d_ktx2
+      ? window.__gosx_scene3d_ktx2
+      : null;
+  }
+
+  // wgpuUploadKTX2Texture fetches, decodes and uploads one KTX2 container into
+  // an existing cache record.
+  //
+  // Every failure marks the record failed and warns. It never leaves the record
+  // in the loaded state with the 1x1 placeholder still bound, because a blank
+  // texture that reports success is worse than a visible failure: the three
+  // failure paths the reader raises are a fetch that does not return 200, a
+  // format this device cannot sample, and a level whose byte length disagrees
+  // with its block arithmetic.
+  // The signature is (context, url, record), the same shape the WebGL2
+  // uploader uses, because both are published on the one gate global.
+  function wgpuUploadKTX2Texture(device, url, record) {
+    var ktx2 = wgpuKTX2API();
+    if (!ktx2 || typeof ktx2.load !== "function" || typeof ktx2.uploadWebGPU !== "function") {
+      record.failed = true;
+      record.pending = false;
+      return Promise.resolve(record);
+    }
+    return ktx2.load(url).then(function(image) {
+      var texture = ktx2.uploadWebGPU(device, image, { label: "gosx.ktx2:" + url });
+      // Swap only after the upload returns. A throw inside uploadWebGPU lands
+      // in the catch below with the placeholder still bound and failed set.
+      if (record.texture && typeof record.texture.destroy === "function") {
+        record.texture.destroy();
+      }
+      record.texture = texture;
+      record.view = texture.createView();
+      record.width = image.width;
+      record.height = image.height;
+      record.ktx2 = true;
+      record.loaded = true;
+      record.pending = false;
+      return record;
+    }).catch(function(error) {
+      record.failed = true;
+      record.pending = false;
+      record.error = error && error.message ? error.message : String(error);
+      try {
+        console.warn("[gosx] KTX2 texture " + url + " failed: " + record.error);
+      } catch (_e) {}
+      return record;
+    });
+  }
+
   function wgpuLoadTexture(device, url, cache) {
     if (!cache) return null;
     var key = typeof url === "string" ? url.trim() : "";
@@ -2870,6 +2942,15 @@
 
     var record = { texture: placeholderTex, view: placeholderTex.createView(), src: key, loaded: false, pending: true, failed: false };
     cache.set(key, record);
+
+    // A .ktx2 URI holds a block-compressed container, not an image an <img>
+    // element can decode. Hand it to the KTX2 reader instead. Feeding it to an
+    // image element produces a broken texture that still reports success, which
+    // is exactly the defect class the upload gate exists to prevent.
+    if (wgpuIsKTX2URL(key) && wgpuKTX2API()) {
+      wgpuUploadKTX2Texture(device, key, record);
+      return record;
+    }
 
     if (typeof Image === "function") {
       var image = new Image();
@@ -14120,15 +14201,32 @@
         // pipelineCullMode there). obj.doubleSided opts a single mesh object
         // out of that default; anything absent/false resolves to the exact
         // same "back" value the hardcoded default produced before this line
-        // existed, so no already-working scene changes. Do NOT default
-        // non-doubleSided objects to "none" -- gosx's own box/sphere
-        // primitives wind triangles with the right-hand normal OPPOSITE
-        // their declared shading normal (see boxTriangleMesh/sphereTriangleMesh
-        // in 12-scene-geometry.js), so "back" facing depends on that inverted
-        // winding lining up with the shading normal the water pool/surface
-        // cullMode anchors establish. cullMode:"none" (doubleSided) draws
-        // both faces regardless of winding, so it's safe independent of that
-        // hazard; flipping the false-case default would not be.
+        // existed. obj.doubleSided opts a mesh out; cullMode:"none" draws both
+        // faces regardless of winding, so it is safe under any convention.
+        //
+        // HISTORY, because the previous comment here inverted the truth and a
+        // reader must not restore it. It warned that "back" facing DEPENDED on
+        // box/sphere winding their triangles with the right-hand normal
+        // OPPOSITE the declared shading normal. That was a real measurement of
+        // a real state, but it described a defect rather than a requirement:
+        // 12-scene-geometry.js wound its solid meshes clockwise while
+        // 16c-scene-shared-pbr.js and scene/geom both wound counter-clockwise,
+        // so the same authored shape had opposite winding depending only on
+        // whether it was instanced.
+        //
+        // 12-scene-geometry.js now winds counter-clockwise, so all three
+        // producers agree and every generator's geometric normal points the
+        // same way as its shading normal. The native renderer is the evidence
+        // that this is the correct sense: render/bundle draws scene/geom with
+        // CullBack plus FrontFaceCCW (renderer.go), render/gpu/jsgpu maps that
+        // pair to cullMode "back" plus frontFace "ccw" with no inversion, and
+        // its golden frames pass. So "back" here now culls the same faces the
+        // native path culls.
+        //
+        // UNVERIFIED ON HARDWARE. This is the one path that already culls, so
+        // it is the one path the winding change can move. Confirm on a real
+        // GPU that a non-doubleSided Selena mesh still shows its exterior.
+        // See client/js/12-scene-geometry-winding.test.mjs for the numbers.
         var selenaPipelineOptions = obj.doubleSided ? { cullMode: "none" } : null;
         var selenaResource = isSkinned
           ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite, selenaPipelineOptions)
@@ -17092,4 +17190,19 @@
   function sceneWebGPUAvailable() {
     var probe = _externalProbe();
     return probe.ready && probe.adapter !== false && probe.adapter !== null;
+  }
+
+  // Open the KTX2 variant-swap gate.
+  //
+  // 19-scene-gltf.js swaps an image URI for a block variant only when
+  // sceneKTX2UploadPathReady() answers true, and that reads this global. The
+  // rule mirrors the Go side, which refuses a variant whose file was never
+  // built: a renderer that cannot upload a block container must keep serving
+  // the PNG or JPEG, or the swap trades a working texture for a broken one.
+  //
+  // Register the WebGPU uploader here, at the end of the renderer file, so the
+  // gate opens only when this renderer is really present. Reading the flag
+  // rather than the function keeps 19-scene-gltf.js free of a backend choice.
+  if (typeof window !== "undefined") {
+    window.__gosx_scene3d_ktx2_texture_loader = wgpuUploadKTX2Texture;
   }

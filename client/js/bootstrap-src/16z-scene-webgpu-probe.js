@@ -136,15 +136,36 @@
     return sceneWebGPUFeatureList(features).indexOf(feature) >= 0;
   }
 
+  // WEBGPU_BLOCK_TEXTURE_FEATURES names the three block-compressed texture
+  // families. The probe asks for every one the adapter reports, on every page,
+  // whatever the manifest says.
+  //
+  // WebGPU permits a format only when the DEVICE was created with the feature
+  // that unlocks it, and a device cannot gain a feature after requestDevice. A
+  // page that asked for no optional feature therefore got a device with no
+  // block support on a block-capable adapter, and a BC7 upload threw. An unused
+  // feature costs nothing at draw time, so the honest default is to ask.
+  var WEBGPU_BLOCK_TEXTURE_FEATURES = [
+    "texture-compression-bc",
+    "texture-compression-etc2",
+    "texture-compression-astc",
+  ];
+
   function sceneWebGPURequestedFeatureList(adapter) {
+    var out = [];
+    for (var block = 0; block < WEBGPU_BLOCK_TEXTURE_FEATURES.length; block++) {
+      if (sceneWebGPUFeatureSupported(adapter, WEBGPU_BLOCK_TEXTURE_FEATURES[block])) {
+        out.push(WEBGPU_BLOCK_TEXTURE_FEATURES[block]);
+      }
+    }
     var requestAllOptional = sceneWebGPUOptionalFeaturesRequestedFromManifest();
     var requestAdaptiveTiming = sceneWebGPUAdaptiveTimingRequestedFromManifest();
     if (!requestAllOptional && !requestAdaptiveTiming) {
-      return [];
+      return out;
     }
-    var out = [];
     for (var i = 0; i < WEBGPU_OPTIONAL_FEATURES.length; i++) {
       var feature = WEBGPU_OPTIONAL_FEATURES[i];
+      if (out.indexOf(feature) >= 0) continue;
       if (!requestAllOptional && feature !== "timestamp-query") continue;
       if (!sceneWebGPUFeatureSupported(adapter, feature)) continue;
       if (feature === "texture-compression-bc-sliced-3d" && !sceneWebGPUFeatureSupported(adapter, "texture-compression-bc")) continue;
@@ -275,6 +296,184 @@
     return sceneWebGPUProbeSnapshot();
   }
 
+  // --------------------------------------------------------------------------
+  // Texture capability tokens
+  // --------------------------------------------------------------------------
+  //
+  // These tables are the browser half of assetpipe/variantsel. The server emits
+  // the whole variant set and cannot know which texture formats the device has,
+  // because every block format sits behind an optional WebGPU feature and an
+  // optional WebGL2 extension. The runtime reads what the live device reported
+  // and produces the same token strings variantsel.FromDeviceEvidence produces,
+  // so one vocabulary gates selection on both sides.
+  //
+  // Read assetpipe/variantsel/variantsel.go before you edit a string here. A
+  // token that differs by one character matches nothing, and the variant then
+  // never ships while every test still passes.
+
+  // SCENE_TEXTURE_BLOCK_FEATURE_FORMATS mirrors blockFeatureFormats. It maps one
+  // WebGPU device feature onto the format tokens that feature unlocks.
+  var SCENE_TEXTURE_BLOCK_FEATURE_FORMATS = {
+    "texture-compression-bc": [
+      "texture-format:bc1-rgba-unorm", "texture-format:bc1-rgba-unorm-srgb",
+      "texture-format:bc3-rgba-unorm", "texture-format:bc3-rgba-unorm-srgb",
+      "texture-format:bc4-r-unorm", "texture-format:bc5-rg-unorm",
+      "texture-format:bc7-rgba-unorm-srgb", "texture-format:bc7-rgba-unorm",
+    ],
+    "texture-compression-etc2": [
+      "texture-format:etc2-rgba8unorm-srgb", "texture-format:etc2-rgb8unorm-srgb",
+      "texture-format:eac-r11unorm", "texture-format:eac-rg11unorm",
+    ],
+    "texture-compression-astc": [
+      "texture-format:astc-4x4-unorm-srgb", "texture-format:astc-4x4-unorm",
+      "texture-format:astc-8x8-unorm-srgb",
+    ],
+  };
+
+  // SCENE_TEXTURE_WEBGL_EXTENSIONS mirrors webglExtensionFeatures. WebGL2 splits
+  // the BC family across four extensions, so a context can hold S3TC and not
+  // RGTC. The map is therefore per extension, and a whole-family feature token
+  // appears only when every format of that family is present.
+  var SCENE_TEXTURE_WEBGL_EXTENSIONS = {
+    "WEBGL_compressed_texture_s3tc": ["texture-format:bc1-rgba-unorm", "texture-format:bc3-rgba-unorm"],
+    "WEBGL_compressed_texture_s3tc_srgb": ["texture-format:bc1-rgba-unorm-srgb", "texture-format:bc3-rgba-unorm-srgb"],
+    "EXT_texture_compression_rgtc": ["texture-format:bc4-r-unorm", "texture-format:bc5-rg-unorm"],
+    "EXT_texture_compression_bptc": ["texture-format:bc7-rgba-unorm-srgb", "texture-format:bc7-rgba-unorm"],
+    "WEBGL_compressed_texture_etc": [
+      "texture-format:etc2-rgba8unorm-srgb", "texture-format:etc2-rgb8unorm-srgb",
+      "texture-format:eac-r11unorm", "texture-format:eac-rg11unorm",
+    ],
+    "WEBGL_compressed_texture_astc": [
+      "texture-format:astc-4x4-unorm-srgb", "texture-format:astc-4x4-unorm",
+      "texture-format:astc-8x8-unorm-srgb",
+    ],
+  };
+
+  // SCENE_TEXTURE_BACKEND_FORMATS mirrors backendFormats. These are guarantees,
+  // so no block token may appear here. WebGPU has no three-channel 8-bit format
+  // at all, which is why rgb8unorm belongs to WebGL2 only. Canvas2D uploads no
+  // GPU texture, so its row is empty.
+  var SCENE_TEXTURE_BACKEND_FORMATS = {
+    webgpu: [
+      "container:ktx2", "container:ktx2-zlib",
+      "texture-format:rgba8unorm", "texture-format:rgba8unorm-srgb",
+      "texture-format:rg8unorm", "texture-format:r8unorm",
+      "texture-format:rgba16float", "texture-format:rg16float",
+      "texture-view:cube",
+    ],
+    webgl: [
+      "container:ktx2", "container:ktx2-zlib",
+      "texture-format:rgba8unorm", "texture-format:rgba8unorm-srgb",
+      "texture-format:rgb8unorm", "texture-format:rgb8unorm-srgb",
+      "texture-format:rg8unorm", "texture-format:r8unorm",
+      "texture-format:rgba16float", "texture-format:rg16float",
+      "texture-view:cube",
+    ],
+    canvas2d: [],
+  };
+
+  // sceneTextureBudgetToken mirrors variantsel.BudgetFromHints. The two signals
+  // are the same ones the server reads from the Save-Data header and the
+  // Device-Memory client hint, so the browser reaches the same verdict without
+  // a round trip. Save-Data is a user instruction and therefore wins outright.
+  function sceneTextureBudgetToken() {
+    if (typeof navigator === "undefined") {
+      return "budget:standard";
+    }
+    var connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (connection && connection.saveData === true) {
+      return "budget:low";
+    }
+    var memory = Number(navigator.deviceMemory);
+    if (Number.isFinite(memory) && memory > 0 && memory <= 1) {
+      return "budget:low";
+    }
+    if (Number.isFinite(memory) && memory >= 4) {
+      return "budget:high";
+    }
+    return "budget:standard";
+  }
+
+  // sceneTextureCapabilityTokens turns one live device's own report into the
+  // capability token set a variant selector reads.
+  //
+  // backend is "webgpu", "webgl" or "canvas2d". evidence is the device feature
+  // name list for WebGPU, and the WebGL2 rendering context for WebGL. An unknown
+  // name is ignored, which keeps a new browser feature from breaking selection.
+  function sceneTextureCapabilityTokens(backend, evidence) {
+    var name = String(backend || "").trim().toLowerCase();
+    if (name !== "webgpu" && name !== "webgl" && name !== "canvas2d") {
+      return [];
+    }
+    var set = {};
+    function add(token) {
+      var normalized = String(token || "").trim().toLowerCase();
+      if (normalized) set[normalized] = true;
+    }
+    add("backend:" + name);
+    if (name === "webgpu") {
+      var names = Array.isArray(evidence) ? evidence : [];
+      for (var i = 0; i < names.length; i++) {
+        var feature = String(names[i] || "").trim();
+        var formats = SCENE_TEXTURE_BLOCK_FEATURE_FORMATS[feature];
+        if (!formats) continue;
+        add("device-feature:" + feature);
+        for (var f = 0; f < formats.length; f++) add(formats[f]);
+      }
+    } else if (name === "webgl") {
+      var gl = evidence;
+      if (gl && typeof gl.getExtension === "function") {
+        for (var extension in SCENE_TEXTURE_WEBGL_EXTENSIONS) {
+          if (!Object.prototype.hasOwnProperty.call(SCENE_TEXTURE_WEBGL_EXTENSIONS, extension)) continue;
+          var granted = null;
+          try {
+            granted = gl.getExtension(extension);
+          } catch (_error) {
+            granted = null;
+          }
+          if (!granted) continue;
+          var unlocked = SCENE_TEXTURE_WEBGL_EXTENSIONS[extension];
+          for (var u = 0; u < unlocked.length; u++) add(unlocked[u]);
+        }
+      }
+      // A partial family must stay unselectable rather than half selected, so
+      // the whole-family token appears only when every format of that family is
+      // present. A variant carries both tokens and the gate checks both.
+      for (var family in SCENE_TEXTURE_BLOCK_FEATURE_FORMATS) {
+        if (!Object.prototype.hasOwnProperty.call(SCENE_TEXTURE_BLOCK_FEATURE_FORMATS, family)) continue;
+        var members = SCENE_TEXTURE_BLOCK_FEATURE_FORMATS[family];
+        var complete = true;
+        for (var m = 0; m < members.length; m++) {
+          if (!set[members[m]]) { complete = false; break; }
+        }
+        if (complete) add("device-feature:" + family);
+      }
+    }
+    var guaranteed = SCENE_TEXTURE_BACKEND_FORMATS[name] || [];
+    for (var g = 0; g < guaranteed.length; g++) add(guaranteed[g]);
+    // Canvas2D uploads no GPU texture, so it gets no budget token either: a
+    // delivery tier only means something to a consumer that uploads pixels.
+    if (name !== "canvas2d") {
+      add(sceneTextureBudgetToken());
+    }
+    return Object.keys(set).sort();
+  }
+
+  // sceneTextureDeviceTokens answers for whatever device this file probed.
+  //
+  // The evidence is snapshot.deviceFeatures and never supportedFeatures. The
+  // adapter list says what the hardware could do; only the device list says what
+  // this device was created with, and a format outside that list throws on
+  // upload. A probe that has no device yet returns an empty set, which keeps the
+  // authored URI in place — the honest answer, not a guess.
+  function sceneTextureDeviceTokens() {
+    var snapshot = sceneWebGPUDiagnostics();
+    if (!snapshot.ready || !snapshot.deviceAvailable) {
+      return [];
+    }
+    return sceneTextureCapabilityTokens("webgpu", snapshot.deviceFeatures);
+  }
+
   function sceneWebGPUDispatchProbeReady(recoveredFromLoss) {
     if (!recoveredFromLoss || typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
       return;
@@ -330,6 +529,16 @@
       };
     };
     window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
+    // __gosx_scene3d_texture_tokens answers the one question a variant selector
+    // asks: which texture capabilities did this device prove? Call it with no
+    // argument for the probed WebGPU device, or pass a backend name and its
+    // evidence for a context this file did not create.
+    window.__gosx_scene3d_texture_tokens = function(backend, evidence) {
+      if (backend == null) {
+        return sceneTextureDeviceTokens();
+      }
+      return sceneTextureCapabilityTokens(backend, evidence);
+    };
     window.__gosx_scene3d_webgpu_probe_ready = function() {
       sceneWebGPUMaybeRetryUnavailableProbe();
       return _webgpuProbePromise.then(function() {

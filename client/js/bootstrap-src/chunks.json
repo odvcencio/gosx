@@ -22,6 +22,7 @@
         "bootstrap-src/10-runtime-scene-utils.js",
         "bootstrap-src/10-runtime-scene-core.js",
         "bootstrap-src/11-scene-math.js",
+        "bootstrap-src/11-scene-base64.js",
         "bootstrap-src/11a-scene-decompress.js",
         "bootstrap-src/11b-scene-points-generate.js",
         "bootstrap-src/12-scene-geometry.js",
@@ -32,8 +33,10 @@
         "bootstrap-src/15b-scene-planner.js",
         "bootstrap-src/15c-scene-backend-registry.js",
         "bootstrap-src/15a-scene-postfx-shared.js",
+        "bootstrap-src/15a1-scene-texture-budget.js",
         "bootstrap-src/16b-scene-hdr.js",
         "bootstrap-src/16c-scene-shared-pbr.js",
+        "bootstrap-src/16e-scene-webgl-legacy.js",
         "bootstrap-src/16-scene-webgl.js",
         "bootstrap-src/16z-scene-webgpu-probe.js",
         "bootstrap-src/16a-scene-webgpu.js",
@@ -41,6 +44,7 @@
         "bootstrap-src/16b-scene-compute.js",
         "bootstrap-src/17-scene-input.js",
         "bootstrap-src/18-scene-canvas.js",
+        "bootstrap-src/19a-scene-ktx2.js",
         "bootstrap-src/19-scene-gltf.js",
         "bootstrap-src/19a-scene-animation.js",
         "bootstrap-src/19b-scene-control-forms.js",
@@ -161,8 +165,7 @@
         "bootstrap-src/10-runtime-primitives.js",
         "bootstrap-src/10-runtime-scene-core.js",
         "bootstrap-src/11-scene-math.js",
-        "bootstrap-src/11a-scene-decompress.js",
-        "bootstrap-src/11b-scene-points-generate.js",
+        "bootstrap-src/11-scene-base64.js",
         "bootstrap-src/12-scene-geometry.js",
         "bootstrap-src/13-scene-material.js",
         "bootstrap-src/14-scene-lighting.js",
@@ -171,8 +174,6 @@
         "bootstrap-src/15b-scene-planner.js",
         "bootstrap-src/15c-scene-backend-registry.js",
         "bootstrap-src/15a-scene-postfx-shared.js",
-        "bootstrap-src/16b-scene-hdr.js",
-        "bootstrap-src/16b-scene-compute.js",
         "bootstrap-src/16c-scene-shared-pbr.js",
         "bootstrap-src/16z-scene-webgpu-probe.js",
         "bootstrap-src/17-scene-input.js",
@@ -195,6 +196,9 @@
       "name": "bootstrap-feature-scene3d-webgl.js",
       "sources": [
         "bootstrap-src/26j-feature-scene3d-webgl-prefix.js",
+        "bootstrap-src/15a1-scene-texture-budget.js",
+        "bootstrap-src/16b-scene-hdr.js",
+        "bootstrap-src/16e-scene-webgl-legacy.js",
         "bootstrap-src/16-scene-webgl.js",
         "bootstrap-src/26j-feature-scene3d-webgl-suffix.js"
       ]
@@ -216,9 +220,27 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-compute.js",
+      "sources": [
+        "bootstrap-src/26k-feature-scene3d-compute-prefix.js",
+        "bootstrap-src/16b-scene-compute.js",
+        "bootstrap-src/26k-feature-scene3d-compute-suffix.js"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-decompress.js",
+      "sources": [
+        "bootstrap-src/26l-feature-scene3d-decompress-prefix.js",
+        "bootstrap-src/11a-scene-decompress.js",
+        "bootstrap-src/11b-scene-points-generate.js",
+        "bootstrap-src/26l-feature-scene3d-decompress-suffix.js"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-gltf.js",
       "sources": [
         "bootstrap-src/26f-feature-scene3d-gltf-prefix.js",
+        "bootstrap-src/19a-scene-ktx2.js",
         "bootstrap-src/19-scene-gltf.js",
         "bootstrap-src/26f-feature-scene3d-gltf-suffix.js"
       ]

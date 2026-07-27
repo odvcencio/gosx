@@ -18,10 +18,9 @@
 // 26e-feature-scene3d-webgpu-prefix.js bridges the WebGPU chunk. Two window
 // namespaces carry them:
 //   - window.__gosx_scene3d_api           (base scene3d chunk)
-//   - window.__gosx_scene3d_resource_api  (shared post-FX and HDR helpers)
 //
-// This chunk always loads AFTER the base scene3d chunk, so both namespaces
-// are populated by the time this IIFE runs.
+// This chunk always loads AFTER the base scene3d chunk, so that namespace is
+// populated by the time this IIFE runs.
 //
 // Adding a new reference from 16-scene-webgl.js to a base symbol REQUIRES a
 // new bridge line here. Without it the browser throws ReferenceError on the
@@ -40,7 +39,6 @@
   }
 
   var sceneApi = window.__gosx_scene3d_api;
-  var resourceApi = window.__gosx_scene3d_resource_api || {};
 
   // --- Primitives and scalar helpers (10-runtime-primitives.js,
   // 10-runtime-scene-core.js, 11-scene-math.js, 15a-scene-postfx-shared.js).
@@ -84,30 +82,66 @@
   // finishes loading.
   var sceneBackendRegistry = sceneApi.sceneBackendRegistry;
 
-  // --- Legacy vertex-color WebGL renderer (10-runtime-scene-core.js). The
-  // PBR path falls back to it when shader compilation fails.
-  var createSceneWebGLRenderer = sceneApi.createSceneWebGLRenderer;
-  var createSceneWebGLProgram = sceneApi.createSceneWebGLProgram;
-  var createSceneWebGLResources = sceneApi.createSceneWebGLResources;
-  var disposeSceneWebGLRenderer = sceneApi.disposeSceneWebGLRenderer;
-  var renderSceneWebGLWorldBundle = sceneApi.renderSceneWebGLWorldBundle;
+  // --- Legacy vertex-color WebGL renderer. It no longer needs a bridge:
+  // 16e-scene-webgl-legacy.js now ships in this chunk, so createSceneWebGLRenderer,
+  // createSceneWebGLProgram, createSceneWebGLResources, disposeSceneWebGLRenderer
+  // and renderSceneWebGLWorldBundle are lexical here. Re-declaring them as
+  // `var x = sceneApi.x` would overwrite the hoisted function declarations with
+  // undefined, because both live in this one IIFE scope.
+
+  // --- Typed float coercion (10-runtime-scene-core.js). Mesh and animation
+  // normalization call it on every backend, so it stayed in the base chunk
+  // while the renderer that also calls it moved here.
+  var sceneTypedFloatArray = sceneApi.sceneTypedFloatArray;
+
+  // --- Camera helpers (10-runtime-scene-core.js) and draw planning
+  // (15-scene-draw-plan.js, 13-scene-material.js). The legacy renderer in
+  // 16e reads all of these; they had no consumer outside the base IIFE
+  // until 16e moved into this chunk.
+  var sceneCameraEquivalent = sceneApi.sceneCameraEquivalent;
+  var sceneOrthographicBounds = sceneApi.sceneOrthographicBounds;
+  var buildSceneWorldDrawPlan = sceneApi.buildSceneWorldDrawPlan;
+  var createSceneWorldDrawScratch = sceneApi.createSceneWorldDrawScratch;
+  var compareSceneWorldPassEntries = sceneApi.compareSceneWorldPassEntries;
+  var sceneWorldObjectRenderPass = sceneApi.sceneWorldObjectRenderPass;
+  var sceneWorldObjectRenderable = sceneApi.sceneWorldObjectRenderable;
+  var sceneFallbackMaterialData = sceneApi.sceneFallbackMaterialData;
+  var sceneMaterialEmissive = sceneApi.sceneMaterialEmissive;
+  var sceneMaterialOpacity = sceneApi.sceneMaterialOpacity;
+  var sceneMaterialShaderData = sceneApi.sceneMaterialShaderData;
 
   // --- Water clock (10-runtime-scene-core.js). The WebGL2 water runtime
   // shares the fixed clock with the WebGPU runtime.
   var sceneWaterAdvanceClock = sceneApi.sceneWaterAdvanceClock;
   var sceneWaterResetClock = sceneApi.sceneWaterResetClock;
 
-  // --- Compute particles (16b-scene-compute.js). WebGL drives the CPU
-  // particle path through the same system objects WebGPU uses.
-  var createSceneParticleSystem = sceneApi.createSceneParticleSystem;
-  var sceneComputeSystemSignature = sceneApi.sceneComputeSystemSignature;
+  // --- Compute particles. WebGL drives the CPU particle path through the same
+  // system objects WebGPU uses. 16b-scene-compute.js now ships in
+  // bootstrap-feature-scene3d-compute.js, which the mount fetches only for a
+  // scene that declares particles or instanced meshes, and which can land
+  // after this chunk. Resolve at CALL time: a load-time snapshot would freeze
+  // `undefined` and the first particle frame would throw.
+  function createSceneParticleSystem(device, entry) {
+    var api = window.__gosx_scene3d_api;
+    if (!api || typeof api.createSceneParticleSystem !== "function") {
+      return null;
+    }
+    return api.createSceneParticleSystem(device, entry);
+  }
 
-  // --- Post-FX budget and HDR decode (15a-scene-postfx-shared.js,
-  // 16b-scene-hdr.js). These publish on __gosx_scene3d_resource_api.
+  function sceneComputeSystemSignature(entry) {
+    var api = window.__gosx_scene3d_api;
+    if (!api || typeof api.sceneComputeSystemSignature !== "function") {
+      return "";
+    }
+    return api.sceneComputeSystemSignature(entry);
+  }
+
+  // --- Post-FX scalars (15a-scene-postfx-shared.js). The texture-unit table
+  // and the Radiance HDR decoder are lexical in this chunk now: 15a1 and 16b-
+  // scene-hdr.js ship here, beside the only renderer that reads them.
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
-  var sceneAllocateTextureUnits = resourceApi.allocateTextureUnits || sceneApi.sceneAllocateTextureUnits;
-  var sceneParseRadianceHDR = resourceApi.parseRadianceHDR || sceneApi.sceneParseRadianceHDR;
 
   // --- Backend-agnostic PBR helpers (16c-scene-shared-pbr.js). These stayed
   // in the base chunk because 15b, 10-runtime-scene-core and the WebGPU chunk
