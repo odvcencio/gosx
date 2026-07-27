@@ -11,8 +11,13 @@
 //     canonical scene and pixel-diff against a golden image, with no
 //     WebGPU driver dependency.
 //
-// Both need "the render/bundle.Renderer runs, produces pixels." Neither
-// needs a physically-correct PBR image. This package delivers pixels.
+// Both need "the render/bundle.Renderer runs, produces pixels."
+//
+// A third use case arrived with three.js material parity: this package is the
+// only GPU-free oracle in the repository, so it also has to answer "does this
+// material field reach a pixel, and with what value". It ran a Lambert term until
+// 2026-07-26, which answered "no" for eleven of the material fields. It now runs
+// the whole fragment stage of litWGSL in render/bundle/lit.go.
 //
 // # Current scope
 //
@@ -34,13 +39,17 @@
 //     DrawIndirect path. Headless treats all uploaded instances as visible,
 //     then rasterizes the lit pipeline as a deterministic material/vertex-color
 //     approximation.
-//   - The lit approximation reads the same scene lighting uniform block and
-//     shadow-map binding as the WebGPU shader, applying Lambertian directional
-//     light, hemisphere ambient, and linear comparison cascaded-shadow
-//     sampling.
-//   - Lit materials read the material uniform block and base-color texture
-//     binding, including linear repeat-addressed UV sampling for deterministic
-//     texture-path validation.
+//   - The lit path reads the same scene lighting uniform block and shadow-map
+//     binding as the WebGPU shader. litProgram.shade in device.go runs the whole
+//     fragment stage of litWGSL per covered pixel: a Cook-Torrance specular lobe
+//     (GGX distribution, Hammon correlated Smith visibility, Schlick Fresnel), an
+//     energy-conserving diffuse lobe, a three-term ambient dome, cubemap
+//     image-based lighting, and linear comparison cascaded-shadow sampling.
+//   - Lit materials read every lane of the material uniform block and all five
+//     texture bindings: base colour, normal, roughness, metalness and emissive.
+//     Every map is sampled per pixel with linear repeat-addressed UV filtering.
+//     Clear coat, sheen, iridescence, anisotropy, transmission and emissive all
+//     reach a pixel. render/gpu/headless/material_gap_test.go measures each one.
 //   - Main-pass depth clears, compares, and writes are honored for the
 //     rasterized paths, so golden/thumbnail checks get the same nearest-pixel
 //     ordering as the GPU renderer for simple scenes.
@@ -57,10 +66,17 @@
 //
 // # Approximation limits
 //
-//   - Full WebGPU-equivalent rasterization. Cook-Torrance PBR lighting,
-//     soft-shadow filtering, exact billboard axes, color-space parity, and
-//     triangle-edge clipping are still approximated or no-op in headless.
-//   - Multi-sample rasterization.
+//   - No tone mapping and no exposure. The browser path writes the lit colour to
+//     a high dynamic range target and tone maps it on the way to the swap chain.
+//     Every post-effect pass is an identity copy here, so a headless frame is the
+//     raw linear value clipped to the byte range. A frame therefore reads darker
+//     than the browser, and a bright emissive material clips instead of rolling
+//     off. This is the largest remaining parity gap in the package.
+//   - One directional light. The browser walks a runtime-sized array of six light
+//     kinds; this package reads the first directional light and ignores the rest.
+//   - Soft-shadow filtering, exact billboard axes, colour-space parity, and
+//     multi-sample rasterization.
+//   - No wireframe. The flag never reaches the material uniform.
 //
 // # Breakout path
 //

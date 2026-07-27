@@ -291,6 +291,11 @@ func TestOffscreenIntegerClearReadback(t *testing.T) {
 // TestBundleFramePresentsBackground verifies the headless backend follows the
 // bundle renderer's HDR -> present path instead of leaving the CPU framebuffer
 // at the present pass clear color.
+//
+// The frame asks for tone mapping "none" so the present pass only clamps. That
+// keeps the assertion an exact transport check. With the default ACES curve the
+// same background reaches the framebuffer at a different value, and
+// TestPresentPassAppliesAuthoredToneMap pins that value instead.
 func TestBundleFramePresentsBackground(t *testing.T) {
 	d, surface := New(4, 4)
 	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
@@ -300,8 +305,9 @@ func TestBundleFramePresentsBackground(t *testing.T) {
 	defer r.Destroy()
 
 	err = r.Frame(engine.RenderBundle{
-		Background: "#336699",
-		Camera:     engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		Background:  "#336699",
+		Camera:      engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		Environment: engine.RenderEnvironment{ToneMapping: "none"},
 	}, 4, 4, 0)
 	if err != nil {
 		t.Fatalf("Frame: %v", err)
@@ -581,13 +587,19 @@ func TestBundleFrameLitRespondsToDirectionalLight(t *testing.T) {
 				Intensity:  1,
 				DirectionZ: dirZ,
 			}},
+			// The ambient dome stays dim on purpose. sceneLighting.shade sums the
+			// ambient, sky and ground terms independently, matching litWGSL, so a
+			// white dome at full intensity saturates the surface to white before
+			// any direct light arrives and this test can no longer tell the two
+			// light directions apart. The earlier form multiplied the dome by the
+			// ambient intensity, which hid a sky intensity of one.
 			Environment: engine.RenderEnvironment{
 				AmbientColor:     "#ffffff",
 				AmbientIntensity: 0.02,
 				SkyColor:         "#ffffff",
-				SkyIntensity:     1,
+				SkyIntensity:     0.05,
 				GroundColor:      "#ffffff",
-				GroundIntensity:  1,
+				GroundIntensity:  0.05,
 			},
 			Materials: []engine.RenderMaterial{{
 				Color: "#ffffff",
@@ -624,7 +636,12 @@ func TestBundleFrameLitRespondsToDirectionalLight(t *testing.T) {
 // consumes the same scene cascade matrices and shadow texture binding as the
 // WebGPU shader, reducing direct light when the sampled depth is occluded.
 func TestActiveLightingSamplesShadowMap(t *testing.T) {
-	scene := &Buffer{data: make([]byte, 368)}
+	// The buffer holds the whole Scene struct. It used to hold 368 bytes, which
+	// is one vec4 short, so activeLighting rejected it and fell back to the
+	// defaults. The test still passed, because the default light direction also
+	// lights the probe normal. Size it correctly or it proves nothing about the
+	// decode.
+	scene := &Buffer{data: make([]byte, sceneUniformSize)}
 	identity := identityMat4()
 	for i := 0; i < 3; i++ {
 		copy(scene.data[64+i*64:64+(i+1)*64], float32Bytes(identity[:]))
@@ -637,6 +654,11 @@ func TestActiveLightingSamplesShadowMap(t *testing.T) {
 	writeFloat32(scene.data, 352, 10)
 	writeFloat32(scene.data, 356, 20)
 	writeFloat32(scene.data, 360, 30)
+	// One light, and it is the light the cascades are fitted to. The bind group
+	// binds no light storage buffer, so activeLighting rebuilds that light from
+	// the primary lanes above. Read keyLightFrom for why.
+	writeFloat32(scene.data, 384, 1)
+	writeFloat32(scene.data, 388, 0)
 
 	shadow := &Texture{
 		width:  4,
@@ -661,10 +683,18 @@ func TestActiveLightingSamplesShadowMap(t *testing.T) {
 		}},
 	}}}
 	lighting := pass.activeLighting()
-	base := [3]float32{1, 1, 1}
-	normal := [3]float32{0, 0, 1}
-	lit := lighting.shade(base, normal, [3]float32{0, 0, 0.1})
-	occluded := lighting.shade(base, normal, [3]float32{0, 0, 0.8})
+	// A plain dielectric, so the shadow factor is the only thing that separates
+	// the two probes below.
+	program := newLitProgram(lighting, defaultMaterialState())
+	probe := func(z float32) [3]float32 {
+		return program.shade(fragment{
+			base:   [3]float32{1, 1, 1},
+			normal: [3]float32{0, 0, 1},
+			world:  [3]float32{0, 0, z},
+		})
+	}
+	lit := probe(0.1)
+	occluded := probe(0.8)
 	shadowFactor := lighting.sampleShadow([3]float32{0, 0, 0.8})
 	if shadowFactor <= 0 || shadowFactor >= 1 {
 		t.Fatalf("linear comparison shadow sample should blend neighboring depths, got %f", shadowFactor)
