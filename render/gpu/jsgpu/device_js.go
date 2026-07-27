@@ -42,12 +42,17 @@ func Open(canvasID string) (*Device, gpu.Surface, error) {
 		return nil, nil, errors.New("jsgpu: no adapter available")
 	}
 
-	features := supportedCompressionFeatures(adapter)
+	// Ask for every compression family the adapter reports. A device cannot
+	// gain a feature after requestDevice, so a family left out here is lost for
+	// the life of the device.
+	adapterFeatures := compressionFeatureSet(adapter)
 	request := map[string]any{}
-	if len(features) > 0 {
-		required := make([]any, 0, len(features))
-		for name := range features {
-			required = append(required, name)
+	if len(adapterFeatures) > 0 {
+		required := make([]any, 0, len(adapterFeatures))
+		for _, name := range blockTextureFeatures() {
+			if adapterFeatures[name] {
+				required = append(required, name)
+			}
 		}
 		request["requiredFeatures"] = required
 	}
@@ -55,6 +60,14 @@ func Open(canvasID string) (*Device, gpu.Surface, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("jsgpu: requestDevice: %w", err)
 	}
+
+	// Read the granted features from the DEVICE, not from the adapter. The
+	// adapter list says what the hardware could do; only the device list says
+	// what this device was created with. A browser may grant fewer than asked,
+	// and a format outside the granted set throws at createTexture. Trusting
+	// the adapter would turn that into a browser error the Go caller never saw
+	// coming.
+	features := compressionFeatureSet(devVal)
 
 	format := parseCanvasFormat(gpuNS.Call("getPreferredCanvasFormat").String())
 
@@ -194,38 +207,21 @@ func (d *Device) CreateTexture(desc gpu.TextureDesc) (gpu.Texture, error) {
 	}, nil
 }
 
-func supportedCompressionFeatures(adapter js.Value) map[string]bool {
-	const (
-		bc   = "texture-compression-bc"
-		astc = "texture-compression-astc"
-		etc2 = "texture-compression-etc2"
-	)
+// compressionFeatureSet reads the texture-compression features one
+// GPUAdapter or GPUDevice reports. Both expose a setlike features member, so
+// one reader serves both.
+func compressionFeatureSet(source js.Value) map[string]bool {
 	features := map[string]bool{}
-	adapterFeatures := adapter.Get("features")
-	if adapterFeatures.IsUndefined() || adapterFeatures.IsNull() {
+	reported := source.Get("features")
+	if reported.IsUndefined() || reported.IsNull() {
 		return features
 	}
-	for _, name := range []string{bc, astc, etc2} {
-		if adapterFeatures.Call("has", name).Bool() {
+	for _, name := range blockTextureFeatures() {
+		if reported.Call("has", name).Bool() {
 			features[name] = true
 		}
 	}
 	return features
-}
-
-func textureCompressionFeature(format gpu.TextureFormat) string {
-	switch format {
-	case gpu.FormatBC7RGBAUnorm, gpu.FormatBC7RGBAUnormSRGB:
-		return "texture-compression-bc"
-	case gpu.FormatASTC4x4Unorm, gpu.FormatASTC4x4UnormSRGB,
-		gpu.FormatASTC6x6Unorm, gpu.FormatASTC6x6UnormSRGB,
-		gpu.FormatASTC8x8Unorm, gpu.FormatASTC8x8UnormSRGB:
-		return "texture-compression-astc"
-	case gpu.FormatETC2RGB8Unorm, gpu.FormatETC2RGB8UnormSRGB,
-		gpu.FormatETC2RGBA8Unorm, gpu.FormatETC2RGBA8UnormSRGB:
-		return "texture-compression-etc2"
-	}
-	return ""
 }
 
 // CreateSampler allocates a GPU sampler.

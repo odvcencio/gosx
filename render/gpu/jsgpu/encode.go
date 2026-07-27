@@ -327,6 +327,25 @@ func encodeTextureFormat(f gpu.TextureFormat) string {
 		return "rgb9e5ufloat"
 	case gpu.FormatRGB10A2Unorm:
 		return "rgb10a2unorm"
+	// The BC family below shipped in gpu.TextureFormat and in the KTX2 loader
+	// before it shipped here, so encodeTextureFormat returned the empty string
+	// for a BC1, BC3, BC4 or BC5 texture. createTexture then received
+	// "format": "" and the browser threw. Every name follows the WebGPU
+	// GPUTextureFormat enumeration.
+	case gpu.FormatBC1RGBAUnorm:
+		return "bc1-rgba-unorm"
+	case gpu.FormatBC1RGBAUnormSRGB:
+		return "bc1-rgba-unorm-srgb"
+	case gpu.FormatBC3RGBAUnorm:
+		return "bc3-rgba-unorm"
+	case gpu.FormatBC3RGBAUnormSRGB:
+		return "bc3-rgba-unorm-srgb"
+	// BC4 and BC5 have no sRGB form. They store data and not colour, so an sRGB
+	// transfer function would bend the numbers.
+	case gpu.FormatBC4RUnorm:
+		return "bc4-r-unorm"
+	case gpu.FormatBC5RGUnorm:
+		return "bc5-rg-unorm"
 	case gpu.FormatBC7RGBAUnorm:
 		return "bc7-rgba-unorm"
 	case gpu.FormatBC7RGBAUnormSRGB:
@@ -363,6 +382,49 @@ func encodeTextureFormat(f gpu.TextureFormat) string {
 		return "r32uint"
 	}
 	return ""
+}
+
+// textureCompressionFeature names the optional WebGPU device feature one block
+// format needs, and the empty string for a format that needs none.
+//
+// The function lives in this file, without the js build tag, because it is a
+// table and a table is where a silent typo hides. Untagged it compiles and
+// tests on every platform.
+//
+// Every BC entry must be present. The table listed BC7 only, so CreateTexture
+// skipped its own guard for a BC1, BC3, BC4 or BC5 texture and let the browser
+// raise the error instead of returning gpu.ErrUnsupported.
+func textureCompressionFeature(format gpu.TextureFormat) string {
+	switch format {
+	case gpu.FormatBC1RGBAUnorm, gpu.FormatBC1RGBAUnormSRGB,
+		gpu.FormatBC3RGBAUnorm, gpu.FormatBC3RGBAUnormSRGB,
+		gpu.FormatBC4RUnorm, gpu.FormatBC5RGUnorm,
+		gpu.FormatBC7RGBAUnorm, gpu.FormatBC7RGBAUnormSRGB:
+		return "texture-compression-bc"
+	case gpu.FormatASTC4x4Unorm, gpu.FormatASTC4x4UnormSRGB,
+		gpu.FormatASTC6x6Unorm, gpu.FormatASTC6x6UnormSRGB,
+		gpu.FormatASTC8x8Unorm, gpu.FormatASTC8x8UnormSRGB:
+		return "texture-compression-astc"
+	case gpu.FormatETC2RGB8Unorm, gpu.FormatETC2RGB8UnormSRGB,
+		gpu.FormatETC2RGBA8Unorm, gpu.FormatETC2RGBA8UnormSRGB:
+		return "texture-compression-etc2"
+	}
+	return ""
+}
+
+// blockTextureFeatures names every optional texture-compression feature the
+// renderer asks for at device creation.
+//
+// WebGPU permits a format only when the DEVICE was created with the feature
+// that unlocks it, and a device cannot gain a feature after requestDevice. An
+// unused feature costs nothing, so the request always names every family the
+// adapter reports.
+func blockTextureFeatures() []string {
+	return []string{
+		"texture-compression-bc",
+		"texture-compression-astc",
+		"texture-compression-etc2",
+	}
 }
 
 func encodeTextureDimension(d gpu.TextureDimension) string {
