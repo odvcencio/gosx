@@ -244,7 +244,7 @@
       if (!feature || typeof feature.runtimeReady !== "function") {
         return null;
       }
-      return feature.runtimeReady(manifest, pendingEngineReuseIDs);
+      return feature.runtimeReady(manifest, pendingEngineReuseIDs, pendingIsNavigationBootstrap);
     }));
     window.__gosx.ready = true;
     refreshGosxDocumentState("ready");
@@ -338,13 +338,22 @@
     pendingManifest = null;
     pendingFeatureLoad = Promise.resolve([]);
     pendingEngineReuseIDs = new Set();
+    pendingIsNavigationBootstrap = false;
     window.__gosx.ready = false;
   }
 
+  // pendingIsNavigationBootstrap records whether the CURRENT bootstrapPage()
+  // call's original argument was a real Set, captured before
+  // pendingEngineReuseIDs coerces a missing/non-Set argument away — mirrors
+  // client/js/bootstrap-src/30-tail.js. That original distinction is what
+  // tells a first page load apart from a soft navigation for
+  // mountAllEngines' "engine-remounted" telemetry.
   let pendingEngineReuseIDs = new Set();
+  let pendingIsNavigationBootstrap = false;
 
   async function bootstrapPage(reuseEngineIDs) {
-    pendingEngineReuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
+    pendingIsNavigationBootstrap = reuseEngineIDs instanceof Set;
+    pendingEngineReuseIDs = pendingIsNavigationBootstrap ? reuseEngineIDs : new Set();
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
     if (typeof window.__gosx_mount_runtime_content === "function") {
@@ -368,6 +377,7 @@
       pendingManifest = null;
       pendingFeatureLoad = Promise.resolve([]);
       pendingEngineReuseIDs = new Set();
+      pendingIsNavigationBootstrap = false;
       window.__gosx.ready = true;
       refreshGosxDocumentState("ready");
       return;
