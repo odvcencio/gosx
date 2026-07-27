@@ -114,8 +114,12 @@ func main() {
 	app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
 	app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
 	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
+	// Only the bare /docs path redirects. A "GET /docs/" pattern would be a
+	// subtree match under Go's ServeMux, so it also matches /docs/getting-started
+	// — the redirect target itself — and every other page below /docs. Each of
+	// those then redirects to a target that redirects again, which the static
+	// export reports as "stopped after 10 redirects".
 	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
-	app.Redirect("GET /docs/", "/docs/getting-started", http.StatusTemporaryRedirect)
 	app.Mount("/demos/collab/ws", collab.Hub)
 	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
