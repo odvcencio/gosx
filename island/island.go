@@ -1162,6 +1162,16 @@ func (r *Renderer) RegisterComputeIsland(cfg ComputeIslandConfig) (string, error
 
 // RenderComputeIsland is a convenience wrapper for callers that mirror the
 // visual island API and only need the assigned manifest ID.
+//
+// It returns "" when RegisterComputeIsland fails, which makes a failure
+// indistinguishable from a registration that yielded an empty identifier. The
+// error itself is discarded here and nowhere else records it, so a caller that
+// needs to know why registration failed must call RegisterComputeIsland and
+// read the error.
+//
+// Prefer RegisterComputeIsland when the compute island is load-bearing. This
+// wrapper exists so a page that treats compute as optional reads like the
+// visual island calls beside it.
 func (r *Renderer) RenderComputeIsland(cfg ComputeIslandConfig) string {
 	id, err := r.RegisterComputeIsland(cfg)
 	if err != nil {
