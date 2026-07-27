@@ -26,6 +26,7 @@ type VM struct {
 	evalDepth      int                         // current Eval recursion depth, guards the general (non-call) recursion path
 	loopSteps      int                         // total OpFor / OpForRange iterations charged in the current top-level dispatch
 	loopBudgetHit  bool                        // sticky once loopSteps exceeds its budget, so every nested loop level stops
+	signalGen      uint32                      // bumped whenever the signals table changes identity or membership
 	hosts          map[string]HostReceiver     // per-VM host-receiver bindings for OpHostCall (Y.E)
 	hostsMu        sync.RWMutex                // guards hosts: BindHost may run on a teardown goroutine concurrently with LookupHost / dispatch
 	diagnostics    []Diagnostic
@@ -96,6 +97,7 @@ func NewVM(prog *program.Program, props map[string]Value) *VM {
 // SetSignal registers a signal by name.
 func (vm *VM) SetSignal(name string, sig *signal.Signal[Value]) {
 	vm.signals[name] = sig
+	vm.signalGen++
 }
 
 // SwapProgram replaces the VM's running program in place, preserving signal
@@ -162,6 +164,7 @@ func (vm *VM) SwapProgram(p *program.Program) {
 		merged[def.Name] = signal.New(vm.Eval(def.Init))
 	}
 	vm.signals = merged
+	vm.signalGen++
 }
 
 // SetProp installs a value under name in the VM's prop map. Use this
@@ -1154,6 +1157,23 @@ func (vm *VM) EvalTree() *ResolvedTree {
 	return tree
 }
 
+// EvalTreeInto is EvalTree against a caller-owned tree. It exists so a live
+// island can alternate between two trees instead of allocating one per event.
+// The tree is emptied first, and its node array is kept when it is already
+// large enough.
+//
+// The caller must not pass the tree the reuse context reads from. Subtree
+// reuse copies nodes out of the previous tree into this one, so the two must
+// be distinct arrays. Island.nextTreeBuffer holds that invariant.
+func (vm *VM) EvalTreeInto(tree *ResolvedTree) {
+	if tree == nil {
+		return
+	}
+	tree.reset(len(vm.program.Nodes))
+	vm.appendNodeRefs(tree, nil, vm.program.Root)
+	tree.releaseTail()
+}
+
 func (vm *VM) resolveNode(node program.Node) ResolvedNode {
 	return vm.resolveNodeWithSource(-1, node)
 }
@@ -1232,7 +1252,8 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 	// The subtree is complete and contiguous now, so record where it
 	// landed. The next walk copies it from here when nothing it reads has
 	// changed. recordReuseSpan ignores nodes the plan cannot reuse.
-	vm.recordReuseSpan(source, idx, len(tree.Nodes))
+	// A freshly evaluated subtree is not a copy, so it is never verbatim.
+	vm.recordReuseSpan(source, idx, len(tree.Nodes), false)
 
 	return idx
 }
