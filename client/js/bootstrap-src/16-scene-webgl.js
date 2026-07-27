@@ -6574,6 +6574,8 @@
       meshDrawn: 0,
       meshViewCulled: 0,
       meshUndrawable: 0,
+      meshMaterialFallback: 0,
+      materialFallbacks: [],
       pointsSubmitted: 0,
       pointsDrawn: 0,
       pointInstancesSubmitted: 0,
@@ -6585,11 +6587,59 @@
       webglRenderTruthStats.meshDrawn = 0;
       webglRenderTruthStats.meshViewCulled = 0;
       webglRenderTruthStats.meshUndrawable = 0;
+      webglRenderTruthStats.meshMaterialFallback = 0;
+      webglRenderTruthStats.materialFallbacks.length = 0;
       webglRenderTruthStats.pointsSubmitted = 0;
       webglRenderTruthStats.pointsDrawn = 0;
       webglRenderTruthStats.pointInstancesSubmitted = 0;
       webglRenderTruthStats.pointInstancesDrawn = 0;
       webglRenderTruthStats.postChain = null;
+    }
+
+    // Material keys already reported this renderer's lifetime. A substitution is
+    // a per-material fact, not a per-frame one: warning once keeps the console
+    // readable at 60fps while still making the FIRST occurrence loud.
+    var webglMaterialFallbackWarned = new Set();
+
+    // noteWebGLMaterialFallback records that a mesh drew with a DIFFERENT
+    // material than the one the author declared.
+    //
+    // Silence is the defect here, not the substitution. A renderer that
+    // quietly swaps a material reports success and draws the wrong thing, and
+    // the only way anyone finds out is by looking at the pixels. Every
+    // fallback path therefore lands in the render-truth surface
+    // (data-gosx-scene3d-render-mesh-material-fallback plus a decoded detail
+    // string) and in the render-truth event journal, and warns once on the
+    // console.
+    //
+    // reason values:
+    //   selena-not-usable   material declares shaderBackend "selena" but the
+    //                       renderer cannot build a program from it (missing
+    //                       GLSL sources, or no shaderLayout.uniformBlock.fields)
+    //   selena-compile      the Selena GLSL failed to compile or link
+    //   selena-skin-augment the skinned Selena variant could not be augmented
+    //   custom-compile      a CustomMaterial shader failed to compile or link
+    //   custom-skinned-unsupported  a CustomMaterial on a skinned mesh, which
+    //                       has no skinned program variant
+    //
+    // message is emitted through console.warn once per (reason, material), in
+    // the wording style of the existing compile-failure warning.
+    function noteWebGLMaterialFallback(reason, material, message) {
+      webglRenderTruthStats.meshMaterialFallback += 1;
+      var layout = material && material.shaderLayout;
+      var label = (layout && typeof layout.material === "string" && layout.material) || (material && material.kind) || "";
+      var detail = label ? reason + "@" + label : reason;
+      var list = webglRenderTruthStats.materialFallbacks;
+      if (list.length < 8 && list.indexOf(detail) < 0) {
+        list.push(detail);
+      }
+      var key = detail + "|" + (material && material.key || "");
+      if (webglMaterialFallbackWarned.has(key)) {
+        return;
+      }
+      webglMaterialFallbackWarned.add(key);
+      webglRenderTruth().record("material-fallback", detail);
+      console.warn(message);
     }
 
     // webglRenderTruth resolves the shared helpers from 15a-scene-postfx-shared.js
@@ -6627,6 +6677,8 @@
         meshDrawn: webglRenderTruthStats.meshDrawn,
         meshViewCulled: webglRenderTruthStats.meshViewCulled,
         meshUndrawable: webglRenderTruthStats.meshUndrawable,
+        meshMaterialFallback: webglRenderTruthStats.meshMaterialFallback,
+        materialFallbacks: webglRenderTruthStats.materialFallbacks,
         pointsSubmitted: webglRenderTruthStats.pointsSubmitted,
         pointsDrawn: webglRenderTruthStats.pointsDrawn,
         pointInstancesSubmitted: webglRenderTruthStats.pointInstancesSubmitted,
@@ -7314,7 +7366,13 @@
       } // end if (hasPBRData)
 
       if (lineResources && bundle.worldVertexCount > 0) {
-        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources);
+        // meshObjects:false — drawPBRObjectList above already drew every mesh
+        // with its OWN program (PBR, CustomMaterial or Selena). The legacy
+        // world path is used here only for line segments and HTML surfaces.
+        // Without this scope it re-drew each untextured mesh with the flat
+        // world program on top of the correct draw, silently replacing an
+        // authored Selena surface with its companion material's base color.
+        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources, { meshObjects: false });
       }
 
       // Draw instanced meshes (after regular meshes, before points).
@@ -7392,9 +7450,11 @@
       }
       const customProgram = createScenePBRCustomProgram(gl, material);
       customProgramCache.set(key, customProgram ? { program: customProgram } : { failed: true });
-      if (!customProgram) {
-        console.warn("[gosx] CustomMaterial shader compilation failed; object will use the standard PBR shader.");
-      }
+      // The console warning and the render-truth counter both live at the DRAW
+      // site (drawPBRObjectList) rather than here. A cached failure returns
+      // early on every later frame, so counting here would report the
+      // substitution once and then read a healthy zero for the rest of the
+      // session while the wrong material kept reaching the framebuffer.
       return customProgram;
     }
 
@@ -7414,12 +7474,62 @@
       }
       const selenaProgram = createSceneSelenaProgram(gl, material, skinned);
       selenaProgramCache.set(key, selenaProgram ? { program: selenaProgram } : { failed: true });
-      if (!selenaProgram) {
-        console.warn(skinned
-          ? "[gosx] Skinned Selena shader compile/augment failed; object will use the standard skinned PBR shader."
-          : "[gosx] Selena shader compilation failed; object will use the standard PBR shader.");
-      }
+      // Reported at the draw site — see ensureCustomProgram's note.
       return selenaProgram;
+    }
+
+    // reportWebGLMeshMaterialFallback classifies why an authored shader material
+    // is about to draw with the built-in PBR shader, and routes that fact into
+    // the render-truth surface plus one console warning per material.
+    //
+    // Called on EVERY frame that draws through a fallback, not only on the frame
+    // that first discovered it: ensureSelenaProgram / ensureCustomProgram cache
+    // their failures, so a compile-time-only counter reads zero forever after
+    // the first frame while the framebuffer keeps showing the wrong material.
+    function reportWebGLMeshMaterialFallback(material, skinned) {
+      // Cheap gate first. Most materials declare no authored shader at all and
+      // must not pay for the classification below on every object of every
+      // frame; all four fields are empty strings or null on a plain PBR
+      // material, so this short-circuits on the first read.
+      if (!material || (!material.shaderBackend && !material.customVertex && !material.customFragment && !material.customUniforms)) {
+        return;
+      }
+      var tail = skinned
+        ? "; object will use the standard skinned PBR shader."
+        : "; object will use the standard PBR shader.";
+      if (material.shaderBackend === "selena") {
+        if (!sceneSelenaIsMaterial(material)) {
+          // The material DECLARES Selena but the renderer cannot build a
+          // program from it: no GLSL sources, or no shaderLayout with a
+          // uniformBlock.fields array. Nothing failed to compile, so the
+          // compile warning never fired and this substitution was completely
+          // silent.
+          noteWebGLMaterialFallback("selena-not-usable", material,
+            "[gosx] Selena material is incomplete for the WebGL backend" + tail);
+          return;
+        }
+        if (skinned) {
+          noteWebGLMaterialFallback("selena-skin-augment", material,
+            "[gosx] Skinned Selena shader compile/augment failed" + tail);
+          return;
+        }
+        noteWebGLMaterialFallback("selena-compile", material,
+          "[gosx] Selena shader compilation failed" + tail);
+        return;
+      }
+      if (!scenePBRHasCustomHooks(material)) {
+        return;
+      }
+      if (skinned) {
+        // ensureCustomProgram is never consulted for skinned draws: there is no
+        // skinned variant of the CustomMaterial program. The object still draws
+        // with a material the author did not write.
+        noteWebGLMaterialFallback("custom-skinned-unsupported", material,
+          "[gosx] CustomMaterial has no skinned variant" + tail);
+        return;
+      }
+      noteWebGLMaterialFallback("custom-compile", material,
+        "[gosx] CustomMaterial shader compilation failed" + tail);
     }
 
     function webGLSelenaObjectModelMatrix(obj) {
@@ -7705,6 +7815,13 @@
         }
 
         var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
+
+        // Reaching this line means the object is about to draw with the
+        // built-in PBR shader. If it authored a Selena or CustomMaterial
+        // surface, that is a material substitution and must be visible.
+        if (!customProgram) {
+          reportWebGLMeshMaterialFallback(mat, isSkinned);
+        }
 
         // Switch to skinned program if this object has skin data.
         if (customProgram) {

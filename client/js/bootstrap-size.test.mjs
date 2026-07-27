@@ -298,7 +298,15 @@ const budgets = [
   // Re-measured on top of the procedural point generator (PR #94), which the
   // original render-truth measurement predated. Measured: 1_342_558 / 357_345
   // / 288_596.
-  { file: "bootstrap.js", raw: 1_345_000, gzip: 358_500, brotli: 290_000 },
+  // Bumped raw 1_345_000 -> 1_347_000 for material-fallback render truth: the
+  // WebGL renderer now counts, names and warns about every draw that used a
+  // different material than the author declared, and the shared publisher
+  // stamps mesh-material-fallback plus a decoded detail string. Measured:
+  // 1_345_941 / 358_320 / 289_235 — +1_383 raw. The gzip and brotli ceilings
+  // are unchanged and still fit. The cost buys the end of a silent
+  // substitution: a Selena plane drew with its companion StandardMaterial for
+  // months while every counter read healthy.
+  { file: "bootstrap.js", raw: 1_347_000, gzip: 358_500, brotli: 290_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -502,7 +510,11 @@ const budgets = [
   // Re-measured on top of the procedural point generator (PR #94), which the
   // original render-truth measurement predated. Measured: 736_443 / 202_810 /
   // 166_954.
-  { file: "bootstrap-feature-scene3d.js", raw: 738_000, gzip: 204_000, brotli: 168_000 },
+  // Bumped raw 738_000 -> 740_000 for material-fallback render truth, the same
+  // addition as the bootstrap.js monolith above (this chunk carries 15a and
+  // 16-scene-webgl.js). Measured: 739_082 / 203_605 / 167_612 — +1_282 raw.
+  // The gzip and brotli ceilings are unchanged and still fit.
+  { file: "bootstrap-feature-scene3d.js", raw: 740_000, gzip: 204_000, brotli: 168_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },

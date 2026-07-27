@@ -6593,9 +6593,31 @@
     }
   }
 
-  function renderSceneWebGLWorldBundle(gl, bundle, canvas, resources) {
+  // renderSceneWebGLWorldBundle draws the world-space half of a bundle: HTML
+  // surfaces, mesh objects, and line segments.
+  //
+  // options.meshObjects === false suppresses the mesh half. The WebGL2 PBR
+  // renderer sets it, because it has ALREADY drawn every mesh object with the
+  // object's own authored program (PBR, CustomMaterial, or Selena) and calls
+  // this function only for the line and surface work it has no path for.
+  //
+  // Leaving the mesh half on for that caller re-drew every untextured mesh a
+  // SECOND time, with the legacy flat world program and the baked
+  // worldMeshColors base color, on top of the correct draw. The over-draw was
+  // invisible in isolation because it only runs when the frame also carries
+  // world line segments (bundle.worldVertexCount > 0, the gate at the WebGL2
+  // call site). One LinesGeometry mesh in the scene was therefore enough to
+  // repaint every Selena plane as a flat quad of its companion StandardMaterial
+  // color -- with no warning, because nothing had failed.
+  //
+  // The legacy WebGL1 fallback renderer keeps the default: the mesh half is its
+  // ONLY mesh path.
+  function renderSceneWebGLWorldBundle(gl, bundle, canvas, resources, options) {
+    const drawMeshObjects = !(options && options.meshObjects === false);
     let drew = renderSceneWebGLSurfaces(gl, bundle, canvas, resources, "opaque");
-    drew = renderSceneWebGLMeshWorldBundle(gl, bundle, canvas, resources) || drew;
+    if (drawMeshObjects) {
+      drew = renderSceneWebGLMeshWorldBundle(gl, bundle, canvas, resources) || drew;
+    }
 
     // Dispatch to the thick-line program when any world line has an explicit
     // width > 1 (scene.LinesGeometry.Width on the Go side). This preserves
