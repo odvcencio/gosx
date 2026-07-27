@@ -12,12 +12,9 @@ func isValueElement(tag string) bool {
 	return t == "input" || t == "textarea" || t == "select"
 }
 
-// childPath builds a slash-separated path from the island root.
-//
-// Called once per reconcile walk step — dozens of times per tree diff.
-// strconv.Itoa + explicit concatenation avoids the fmt.Sprintf
-// format-state scratch (2-3 allocs) that the previous implementation paid
-// on every call.
+// childPath builds a slash-separated path from the island root. It is the
+// reference definition of a patch path; the walk uses patchPath, which
+// produces the same strings without building one per node visited.
 func childPath(parentPath string, childIdx int) string {
 	idxStr := strconv.Itoa(childIdx)
 	if parentPath == "" {
@@ -31,14 +28,144 @@ func childPath(parentPath string, childIdx int) string {
 	return b.String()
 }
 
+// patchPath addresses one node in the DOM tree the patch ops describe.
+//
+// The walk descends through many nodes that emit no patch at all. Joining the
+// slash-separated string at every level charged one allocation per node
+// visited, which a CPU profile of the island benchmarks put at 40% of every
+// allocation the package made. This type carries the child index of each
+// level instead, and joins them only when an op is emitted.
+//
+// One instance serves a whole reconcile. Both its slices keep their arrays
+// across calls, so a steady-state reconcile that emits nothing allocates
+// nothing here.
+type patchPath struct {
+	// idx holds the child index of each level below the island root. The
+	// root itself is the empty path.
+	idx []int
+	// buf is the scratch the joined string is assembled in.
+	buf []byte
+	// built is the last joined value, and valid says it still matches idx.
+	// A node that emits several ops therefore joins once.
+	built string
+	valid bool
+}
+
+func (p *patchPath) reset() {
+	p.idx = p.idx[:0]
+	p.built = ""
+	p.valid = false
+}
+
+func (p *patchPath) push(childIdx int) {
+	p.idx = append(p.idx, childIdx)
+	p.valid = false
+}
+
+func (p *patchPath) pop() {
+	p.idx = p.idx[:len(p.idx)-1]
+	p.valid = false
+}
+
+// String joins the current levels. It returns "" for the island root, which
+// is the path the DOM patch applier reads as "the island element itself".
+func (p *patchPath) String() string {
+	if p.valid {
+		return p.built
+	}
+	p.buf = p.buf[:0]
+	for level, childIdx := range p.idx {
+		if level > 0 {
+			p.buf = append(p.buf, '/')
+		}
+		p.buf = strconv.AppendInt(p.buf, int64(childIdx), 10)
+	}
+	p.built = string(p.buf)
+	p.valid = true
+	return p.built
+}
+
+// child joins the path of the child at childIdx without descending into it.
+// Use it where an op names a child the walk does not enter.
+func (p *patchPath) child(childIdx int) string {
+	p.push(childIdx)
+	joined := p.String()
+	p.pop()
+	return joined
+}
+
+// diffWalk carries the four read-only inputs every level of the tree diff
+// reads: the two trees, the path builder, the static mask and the span table
+// the tree walk just filled.
+//
+// They used to travel as separate arguments. The static mask alone is three
+// machine words, so the recursive walk passed nine words per level and adding
+// one more would have spilled the call to the stack. A live island keeps one
+// diffWalk across events, so bundling them costs no allocation.
+type diffWalk struct {
+	path patchPath
+	prev *ResolvedTree
+	next *ResolvedTree
+	// static is Program.StaticMask, indexed by program node.
+	static []bool
+	// spans is the reuse span table of the walk that produced next, indexed
+	// by program node. nil switches the subtree skip off. See skipsSubtree.
+	spans []nodeSpan
+}
+
 // ReconcileTrees diffs the previous and next resolved trees and returns patch ops.
 func ReconcileTrees(prev, next *ResolvedTree, staticMask []bool) []PatchOp {
+	var w diffWalk
+	return reconcileTreesInto(&w, prev, next, staticMask, nil)
+}
+
+// reconcileTreesInto is ReconcileTrees against a caller-owned walk, so a live
+// island keeps one across events instead of starting from an empty one.
+//
+// spans must come from the walk that produced next, against prev. Pass nil
+// when the caller cannot promise that, and the diff compares every node.
+func reconcileTreesInto(w *diffWalk, prev, next *ResolvedTree, staticMask []bool, spans []nodeSpan) []PatchOp {
 	if prev == nil || next == nil || len(prev.Nodes) == 0 || len(next.Nodes) == 0 {
 		return nil
 	}
+	w.path.reset()
+	w.prev, w.next, w.static, w.spans = prev, next, staticMask, spans
 	var ops []PatchOp
-	reconcileNodePair(&ops, prev, next, 0, 0, "", staticMask)
+	reconcileNodePair(w, &ops, 0, 0)
+	// Drop the borrowed references. A retired tree must not stay reachable
+	// through the walk after the island released it.
+	w.prev, w.next, w.static, w.spans = nil, nil, nil, nil
 	return ops
+}
+
+// skipsSubtree reports whether the diff may stop at the pair of nodes at
+// prevIdx and nextIdx without emitting anything.
+//
+// Two facts carry the proof, and both are needed:
+//
+//   - The tree walk copied the subtree at nextIdx out of the previous tree
+//     into the index range it already held, so both trees hold equal nodes at
+//     equal indices through the whole subtree.
+//   - The pair being diffed is that pair. The record says "next.Nodes[i] came
+//     from prev.Nodes[i]", so it licenses skipping only the comparison of
+//     those two nodes. A sibling inserted ahead of the subtree pairs the same
+//     next node against a DIFFERENT prev node, and that pair carries a real
+//     change.
+//
+// The span table is indexed by program node, so the resolved node's Source
+// field is the way in. A node whose Source was rewritten after the span was
+// recorded, which mergeAdjacentText does, then reads a span whose start names
+// another index and falls through to the full comparison.
+func (w *diffWalk) skipsSubtree(prevIdx, nextIdx int) bool {
+	if prevIdx != nextIdx || len(w.spans) == 0 || nextIdx < 0 || nextIdx >= len(w.next.Nodes) {
+		return false
+	}
+	node := &w.next.Nodes[nextIdx]
+	if !node.HasSource || node.Source < 0 || node.Source >= len(w.spans) {
+		return false
+	}
+	span := w.spans[node.Source]
+	return span.verbatim && int(span.start) == nextIdx
 }
 
 type keyedChildIndex struct {
@@ -59,20 +186,23 @@ type keyedChildrenPlan struct {
 	nextChildren []keyedNextChild
 }
 
-func reconcileNodePair(ops *[]PatchOp, prev, next *ResolvedTree, prevIdx, nextIdx int, path string, staticMask []bool) {
-	pair, ok := resolveNodePair(prev, next, prevIdx, nextIdx)
-	if !ok || shouldSkipReconcileNode(pair.next, nextIdx, staticMask) {
+func reconcileNodePair(w *diffWalk, ops *[]PatchOp, prevIdx, nextIdx int) {
+	if w.skipsSubtree(prevIdx, nextIdx) {
+		return
+	}
+	pair, ok := resolveNodePair(w.prev, w.next, prevIdx, nextIdx)
+	if !ok || shouldSkipReconcileNode(pair.next, nextIdx, w.static) {
 		return
 	}
 	if isLeafNodePair(pair.prev, pair.next) {
-		reconcileLeafNodePair(ops, pair.prev, pair.next, next, nextIdx, path)
+		reconcileLeafNodePair(w, ops, pair.prev, pair.next, nextIdx)
 		return
 	}
 	if pair.prev.Tag != pair.next.Tag {
-		appendReplaceSubtree(ops, next, nextIdx, path)
+		appendReplaceSubtree(w, ops, nextIdx)
 		return
 	}
-	reconcileElementNodePair(ops, prev, next, pair.prev, pair.next, path, staticMask)
+	reconcileElementNodePair(w, ops, pair.prev, pair.next)
 }
 
 type resolvedNodePair struct {
@@ -114,34 +244,33 @@ func isLeafNodePair(prev, next *ResolvedNode) bool {
 	return prev == nil || next == nil || prev.Tag == "" || next.Tag == ""
 }
 
-func reconcileLeafNodePair(ops *[]PatchOp, pn, nn *ResolvedNode, next *ResolvedTree, nextIdx int, path string) {
-
+func reconcileLeafNodePair(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode, nextIdx int) {
 	switch {
 	case pn.Tag == "" && nn.Tag == "":
 		if pn.Text != nn.Text {
-			appendTextPatch(ops, path, nn.Text)
+			appendTextPatch(ops, &w.path, nn.Text)
 		}
 	case pn.Tag != "" && nn.Tag == "":
-		appendTextPatch(ops, path, nn.Text)
+		appendTextPatch(ops, &w.path, nn.Text)
 	default:
-		appendReplaceSubtree(ops, next, nextIdx, path)
+		appendReplaceSubtree(w, ops, nextIdx)
 	}
 }
 
-func reconcileElementNodePair(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
+func reconcileElementNodePair(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode) {
 	if pn.Text != nn.Text && (pn.Text != "" || nn.Text != "") {
-		appendTextPatch(ops, path, nn.Text)
+		appendTextPatch(ops, &w.path, nn.Text)
 	}
-	reconcileAttrs(ops, pn, nn, path)
-	reconcileChildren(ops, prev, next, pn, nn, path, staticMask)
+	reconcileAttrs(ops, pn, nn, &w.path)
+	reconcileChildren(w, ops, pn, nn)
 }
 
-func reconcileChildren(ops *[]PatchOp, prev, next *ResolvedTree, prevNode, nextNode *ResolvedNode, path string, staticMask []bool) {
-	if childrenAreFullyKeyed(prev, prevNode) && childrenAreFullyKeyed(next, nextNode) {
-		reconcileKeyedChildren(ops, prev, next, prevNode, nextNode, path, staticMask)
+func reconcileChildren(w *diffWalk, ops *[]PatchOp, prevNode, nextNode *ResolvedNode) {
+	if childrenAreFullyKeyed(w.prev, prevNode) && childrenAreFullyKeyed(w.next, nextNode) {
+		reconcileKeyedChildren(w, ops, prevNode, nextNode)
 		return
 	}
-	reconcilePositionalChildren(ops, prev, next, prevNode, nextNode, path, staticMask)
+	reconcilePositionalChildren(w, ops, prevNode, nextNode)
 }
 
 func childrenAreFullyKeyed(tree *ResolvedTree, node *ResolvedNode) bool {
@@ -157,17 +286,17 @@ func childrenAreFullyKeyed(tree *ResolvedTree, node *ResolvedNode) bool {
 	return true
 }
 
-func reconcileKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
-	plan, ok := buildKeyedChildrenPlan(prev, next, pn, nn)
+func reconcileKeyedChildren(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode) {
+	plan, ok := buildKeyedChildrenPlan(w.prev, w.next, pn, nn)
 	if !ok {
-		reconcilePositionalChildren(ops, prev, next, pn, nn, path, staticMask)
+		reconcilePositionalChildren(w, ops, pn, nn)
 		return
 	}
 
-	removeMissingKeyedChildren(ops, prev, pn, plan.nextKeys, path)
-	plan.currentOrder = appendMissingKeyedChildren(ops, next, plan, path)
-	appendKeyedReorderOp(ops, path, plan.currentOrder, plan.desiredOrder)
-	reconcileExistingKeyedChildren(ops, prev, next, plan, path, staticMask)
+	removeMissingKeyedChildren(ops, w.prev, pn, plan.nextKeys, &w.path)
+	plan.currentOrder = appendMissingKeyedChildren(w, ops, plan)
+	appendKeyedReorderOp(ops, &w.path, plan.currentOrder, plan.desiredOrder)
+	reconcileExistingKeyedChildren(w, ops, plan)
 }
 
 func buildKeyedChildrenPlan(prev, next *ResolvedTree, pn, nn *ResolvedNode) (keyedChildrenPlan, bool) {
@@ -244,7 +373,7 @@ func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode) (map[string]keyed
 	return byKey, true
 }
 
-func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}, path string) {
+func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}, path *patchPath) {
 	for i := len(node.Children) - 1; i >= 0; i-- {
 		child := resolvedNodeAt(prev, node.Children[i])
 		if child == nil || child.Key == "" {
@@ -253,35 +382,37 @@ func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *Resolv
 		if _, ok := nextKeys[child.Key]; ok {
 			continue
 		}
-		appendRemoveChild(ops, childPath(path, i))
+		appendRemoveChild(ops, path.child(i))
 	}
 }
 
-func appendMissingKeyedChildren(ops *[]PatchOp, next *ResolvedTree, plan keyedChildrenPlan, path string) []string {
+func appendMissingKeyedChildren(w *diffWalk, ops *[]PatchOp, plan keyedChildrenPlan) []string {
 	currentOrder := plan.currentOrder
 	for _, child := range plan.nextChildren {
 		if _, exists := plan.prevByKey[child.key]; exists {
 			continue
 		}
-		appendCreateSubtree(ops, next, child.nodeIdx, path, child.elementIdx)
+		appendCreateSubtree(w, ops, child.nodeIdx, child.elementIdx)
 		currentOrder = insertKey(currentOrder, child.elementIdx, child.key)
 	}
 	return currentOrder
 }
 
-func appendKeyedReorderOp(ops *[]PatchOp, path string, currentOrder, desiredOrder []string) {
+func appendKeyedReorderOp(ops *[]PatchOp, path *patchPath, currentOrder, desiredOrder []string) {
 	if order := reorderIndices(currentOrder, desiredOrder); order != nil {
-		*ops = append(*ops, PatchOp{Kind: PatchReorder, Path: path, Children: order})
+		*ops = append(*ops, PatchOp{Kind: PatchReorder, Path: path.String(), Children: order})
 	}
 }
 
-func reconcileExistingKeyedChildren(ops *[]PatchOp, prev, next *ResolvedTree, plan keyedChildrenPlan, path string, staticMask []bool) {
+func reconcileExistingKeyedChildren(w *diffWalk, ops *[]PatchOp, plan keyedChildrenPlan) {
 	for _, child := range plan.nextChildren {
 		prevChild, ok := plan.prevByKey[child.key]
 		if !ok {
 			continue
 		}
-		reconcileNodePair(ops, prev, next, prevChild.nodeIdx, child.nodeIdx, childPath(path, child.elementIdx), staticMask)
+		w.path.push(child.elementIdx)
+		reconcileNodePair(w, ops, prevChild.nodeIdx, child.nodeIdx)
+		w.path.pop()
 	}
 }
 
@@ -353,10 +484,11 @@ func reorderedIndices(indexByKey map[string]int, desired []string) []int {
 // the live DOM child index as inserts/removals shift it. When identities repeat
 // (unkeyed/duplicate-keyed list rows that fell through from the keyed differ) it
 // falls back to a plain index-positional diff.
-func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, nn *ResolvedNode, path string, staticMask []bool) {
+func reconcilePositionalChildren(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode) {
+	prev, next := w.prev, w.next
 	pc, nc := pn.Children, nn.Children
 	if !childIdentitiesUnique(prev, pc) || !childIdentitiesUnique(next, nc) {
-		reconcileIndexPositional(ops, prev, next, pc, nc, path, staticMask)
+		reconcileIndexPositional(w, ops, pc, nc)
 		return
 	}
 
@@ -369,45 +501,59 @@ func reconcilePositionalChildren(ops *[]PatchOp, prev, next *ResolvedTree, pn, n
 		nid, _ := childIdentity(next, nc[j])
 		switch {
 		case pid == nid:
-			reconcileNodePair(ops, prev, next, pc[i], nc[j], childPath(path, d), staticMask)
+			reconcileChildPair(w, ops, pc[i], nc[j], d)
 			i, j, d = i+1, j+1, d+1
 		case !nextLookup.has(pid):
-			appendRemoveChild(ops, childPath(path, d)) // prev child gone; successor shifts to d
+			appendRemoveChild(ops, w.path.child(d)) // prev child gone; successor shifts to d
 			i++
 		case !prevLookup.has(nid):
-			appendCreateSubtree(ops, next, nc[j], path, d) // next child is new
+			appendCreateSubtree(w, ops, nc[j], d) // next child is new
 			j, d = j+1, d+1
 		default:
-			reconcileNodePair(ops, prev, next, pc[i], nc[j], childPath(path, d), staticMask)
+			reconcileChildPair(w, ops, pc[i], nc[j], d)
 			i, j, d = i+1, j+1, d+1
 		}
 	}
 	for ; i < len(pc); i++ {
-		appendRemoveChild(ops, childPath(path, d))
+		appendRemoveChild(ops, w.path.child(d))
 	}
 	for ; j < len(nc); j++ {
-		appendCreateSubtree(ops, next, nc[j], path, d)
+		appendCreateSubtree(w, ops, nc[j], d)
 		d++
 	}
+}
+
+// reconcileChildPair diffs one matched child pair at DOM child index d.
+//
+// It tests the reuse skip before it pushes the path level. A skipped subtree
+// then costs one array read: no push, no pop, and no invalidation of the
+// joined path the parent already built.
+func reconcileChildPair(w *diffWalk, ops *[]PatchOp, prevIdx, nextIdx, d int) {
+	if w.skipsSubtree(prevIdx, nextIdx) {
+		return
+	}
+	w.path.push(d)
+	reconcileNodePair(w, ops, prevIdx, nextIdx)
+	w.path.pop()
 }
 
 // reconcileIndexPositional is the index-by-index fallback used when identities
 // are not unique: reconcile the shared prefix in place, remove the prev tail
 // last-to-first (so removals don't shift later indices), then append the next
 // tail.
-func reconcileIndexPositional(ops *[]PatchOp, prev, next *ResolvedTree, pc, nc []int, path string, staticMask []bool) {
+func reconcileIndexPositional(w *diffWalk, ops *[]PatchOp, pc, nc []int) {
 	common := len(pc)
 	if len(nc) < common {
 		common = len(nc)
 	}
 	for i := 0; i < common; i++ {
-		reconcileNodePair(ops, prev, next, pc[i], nc[i], childPath(path, i), staticMask)
+		reconcileChildPair(w, ops, pc[i], nc[i], i)
 	}
 	for i := len(pc) - 1; i >= len(nc); i-- {
-		appendRemoveChild(ops, childPath(path, i))
+		appendRemoveChild(ops, w.path.child(i))
 	}
 	for i := len(pc); i < len(nc); i++ {
-		appendCreateSubtree(ops, next, nc[i], path, i)
+		appendCreateSubtree(w, ops, nc[i], i)
 	}
 }
 
@@ -478,16 +624,22 @@ func childIdentitiesUnique(tree *ResolvedTree, indices []int) bool {
 		}
 		return true
 	}
+	// Identities are read once into a stack array and compared from there.
+	// Reading them again inside the inner loop charged the quadratic pass a
+	// bounds check, a nil check and a string compare per pair, which a CPU
+	// profile put above the whole expression interpreter.
+	var ids [childIdentityScanLimit]childID
 	for i, idx := range indices {
 		id, ok := childIdentity(tree, idx)
 		if !ok {
 			return false
 		}
-		for _, prior := range indices[:i] {
-			if other, priorOK := childIdentity(tree, prior); priorOK && other == id {
+		for j := 0; j < i; j++ {
+			if ids[j] == id {
 				return false
 			}
 		}
+		ids[i] = id
 	}
 	return true
 }
@@ -532,35 +684,37 @@ func (l childIdentityLookup) has(id childID) bool {
 	return false
 }
 
-func appendReplaceSubtree(ops *[]PatchOp, tree *ResolvedTree, nodeIdx int, path string) {
-	node := resolvedNodeAt(tree, nodeIdx)
+func appendReplaceSubtree(w *diffWalk, ops *[]PatchOp, nodeIdx int) {
+	node := resolvedNodeAt(w.next, nodeIdx)
 	if node == nil {
 		return
 	}
+	path := &w.path
 	if node.Tag == "" {
 		appendTextPatch(ops, path, node.Text)
 		return
 	}
 
-	*ops = append(*ops, PatchOp{Kind: PatchReplaceElement, Path: path, Tag: node.Tag})
+	*ops = append(*ops, PatchOp{Kind: PatchReplaceElement, Path: path.String(), Tag: node.Tag})
 	appendNodeAttrOps(ops, node, path)
 	if node.Text != "" && len(node.Children) == 0 {
 		appendTextPatch(ops, path, node.Text)
 	}
 	for i, childIdx := range node.Children {
-		appendCreateSubtree(ops, tree, childIdx, path, i)
+		appendCreateSubtree(w, ops, childIdx, i)
 	}
 }
 
-func appendCreateSubtree(ops *[]PatchOp, tree *ResolvedTree, nodeIdx int, parentPath string, insertIdx int) {
-	node := resolvedNodeAt(tree, nodeIdx)
+func appendCreateSubtree(w *diffWalk, ops *[]PatchOp, nodeIdx, insertIdx int) {
+	node := resolvedNodeAt(w.next, nodeIdx)
 	if node == nil {
 		return
 	}
+	parentPath := &w.path
 	if node.Tag == "" {
 		*ops = append(*ops, PatchOp{
 			Kind:     PatchCreateText,
-			Path:     parentPath,
+			Path:     parentPath.String(),
 			Text:     node.Text,
 			Children: []int{insertIdx},
 		})
@@ -569,33 +723,53 @@ func appendCreateSubtree(ops *[]PatchOp, tree *ResolvedTree, nodeIdx int, parent
 
 	*ops = append(*ops, PatchOp{
 		Kind:     PatchCreateElement,
-		Path:     parentPath,
+		Path:     parentPath.String(),
 		Tag:      node.Tag,
 		Children: []int{insertIdx},
 	})
 
-	nodePath := childPath(parentPath, insertIdx)
-	appendNodeAttrOps(ops, node, nodePath)
+	parentPath.push(insertIdx)
+	appendNodeAttrOps(ops, node, parentPath)
 	if node.Text != "" && len(node.Children) == 0 {
-		appendTextPatch(ops, nodePath, node.Text)
+		appendTextPatch(ops, parentPath, node.Text)
 	}
 	for i, childIdx := range node.Children {
-		appendCreateSubtree(ops, tree, childIdx, nodePath, i)
+		appendCreateSubtree(w, ops, childIdx, i)
 	}
+	parentPath.pop()
 }
 
-func reconcileAttrs(ops *[]PatchOp, pn, nn *ResolvedNode, path string) {
-	valueElem := isValueElement(nn.Tag)
+func reconcileAttrs(ops *[]PatchOp, pn, nn *ResolvedNode, path *patchPath) {
 	prevAttrs := pn.effectiveDOMAttrs()
 	nextAttrs := nn.effectiveDOMAttrs()
-	prevValues := attrValueMap(prevAttrs)
-	nextNames := attrPresenceMap(nextAttrs)
+	// Subtree reuse copies a resolved node whole, so an element nothing
+	// touched hands the reconciler the identical attribute array on both
+	// sides. That is the common case on a live island, and it needs no
+	// comparison at all.
+	if attrsAlias(prevAttrs, nextAttrs) {
+		return
+	}
+
+	valueElem := isValueElement(nn.Tag)
+	prevValues := newAttrIndex(prevAttrs)
+	nextNames := newAttrIndex(nextAttrs)
 
 	appendAttrSetOps(ops, nextAttrs, prevValues, valueElem, path)
 	appendAttrRemoveOps(ops, prevAttrs, nextNames, path)
 }
 
-func appendNodeAttrOps(ops *[]PatchOp, node *ResolvedNode, path string) {
+// attrsAlias reports whether two attribute lists are the same array.
+func attrsAlias(left, right []ResolvedAttr) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	if len(left) == 0 {
+		return true
+	}
+	return &left[0] == &right[0]
+}
+
+func appendNodeAttrOps(ops *[]PatchOp, node *ResolvedNode, path *patchPath) {
 	valueElem := isValueElement(node.Tag)
 	for _, attr := range node.effectiveDOMAttrs() {
 		if appendValueAttrSetOp(ops, attr, valueElem, path) {
@@ -605,35 +779,84 @@ func appendNodeAttrOps(ops *[]PatchOp, node *ResolvedNode, path string) {
 	}
 }
 
-func appendTextPatch(ops *[]PatchOp, path, text string) {
+func appendTextPatch(ops *[]PatchOp, path *patchPath, text string) {
 	*ops = append(*ops, PatchOp{
 		Kind: PatchSetText,
-		Path: path,
+		Path: path.String(),
 		Text: text,
 	})
 }
 
+// appendRemoveChild takes the joined path, because every caller names a
+// child the walk does not enter.
 func appendRemoveChild(ops *[]PatchOp, path string) {
 	*ops = append(*ops, PatchOp{Kind: PatchRemoveElement, Path: path})
 }
 
-func attrValueMap(attrs []ResolvedAttr) map[string]string {
-	values := make(map[string]string, len(attrs))
-	for _, attr := range attrs {
-		values[attr.Name] = attr.Value
-	}
-	return values
+// attrScanLimit is the list length up to which attrIndex answers by scanning
+// the slice instead of building a map. An element carries a handful of
+// attributes, so the scan wins: building a map of four entries costs four
+// hashes and an allocation, while four string compares that mostly fail on
+// length cost neither. The map path stays for the wide element a component
+// spread can produce.
+const attrScanLimit = 8
+
+// attrIndex answers "what did this attribute hold before?" and "is this name
+// still present?" for one element pair.
+//
+// Both questions used to be answered by a freshly built map per element pair.
+// A CPU profile of the island benchmarks charged those two maps 11% of all
+// samples, which is more than the whole expression interpreter costs.
+type attrIndex struct {
+	attrs []ResolvedAttr
+	// byName is built only above attrScanLimit. nil means "scan attrs".
+	byName map[string]string
 }
 
-func attrPresenceMap(attrs []ResolvedAttr) map[string]struct{} {
-	values := make(map[string]struct{}, len(attrs))
-	for _, attr := range attrs {
-		values[attr.Name] = struct{}{}
+func newAttrIndex(attrs []ResolvedAttr) attrIndex {
+	if len(attrs) <= attrScanLimit {
+		return attrIndex{attrs: attrs}
 	}
-	return values
+	byName := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		byName[attr.Name] = attr.Value
+	}
+	return attrIndex{attrs: attrs, byName: byName}
 }
 
-func appendAttrSetOps(ops *[]PatchOp, attrs []ResolvedAttr, prevAttrs map[string]string, valueElem bool, path string) {
+// lookup returns the value recorded for name and whether the name is present.
+//
+// The scan runs backwards because a map keeps the LAST value written for a
+// duplicated name. Scanning forwards would return the first, which is a
+// different answer for an element that lists one name twice.
+func (index attrIndex) lookup(name string) (string, bool) {
+	if index.byName != nil {
+		value, ok := index.byName[name]
+		return value, ok
+	}
+	for i := len(index.attrs) - 1; i >= 0; i-- {
+		if index.attrs[i].Name == name {
+			return index.attrs[i].Value, true
+		}
+	}
+	return "", false
+}
+
+// has reports whether name appears in the list.
+func (index attrIndex) has(name string) bool {
+	if index.byName != nil {
+		_, ok := index.byName[name]
+		return ok
+	}
+	for i := range index.attrs {
+		if index.attrs[i].Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func appendAttrSetOps(ops *[]PatchOp, attrs []ResolvedAttr, prevAttrs attrIndex, valueElem bool, path *patchPath) {
 	for _, attr := range attrs {
 		if !attrNeedsUpdate(attr, prevAttrs) {
 			continue
@@ -645,41 +868,41 @@ func appendAttrSetOps(ops *[]PatchOp, attrs []ResolvedAttr, prevAttrs map[string
 	}
 }
 
-func attrNeedsUpdate(attr ResolvedAttr, prevAttrs map[string]string) bool {
-	prevVal, existed := prevAttrs[attr.Name]
+func attrNeedsUpdate(attr ResolvedAttr, prevAttrs attrIndex) bool {
+	prevVal, existed := prevAttrs.lookup(attr.Name)
 	return !existed || prevVal != attr.Value
 }
 
-func appendValueAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, valueElem bool, path string) bool {
+func appendValueAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, valueElem bool, path *patchPath) bool {
 	if !valueElem || attr.Name != "value" {
 		return false
 	}
 	*ops = append(*ops, PatchOp{
 		Kind:     PatchSetValue,
-		Path:     path,
+		Path:     path.String(),
 		Text:     attr.Value,
 		AttrName: "value",
 	})
 	return true
 }
 
-func appendAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, path string) {
+func appendAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, path *patchPath) {
 	*ops = append(*ops, PatchOp{
 		Kind:     PatchSetAttr,
-		Path:     path,
+		Path:     path.String(),
 		AttrName: attr.Name,
 		Text:     attr.Value,
 	})
 }
 
-func appendAttrRemoveOps(ops *[]PatchOp, prevAttrs []ResolvedAttr, nextAttrs map[string]struct{}, path string) {
+func appendAttrRemoveOps(ops *[]PatchOp, prevAttrs []ResolvedAttr, nextAttrs attrIndex, path *patchPath) {
 	for _, attr := range prevAttrs {
-		if _, ok := nextAttrs[attr.Name]; ok {
+		if nextAttrs.has(attr.Name) {
 			continue
 		}
 		*ops = append(*ops, PatchOp{
 			Kind:     PatchRemoveAttr,
-			Path:     path,
+			Path:     path.String(),
 			AttrName: attr.Name,
 		})
 	}

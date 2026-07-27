@@ -1,6 +1,9 @@
 package vm
 
-import "m31labs.dev/gosx/island/program"
+import (
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/signal"
+)
 
 // Subtree reuse — route (b) of the Reconcile design note in island.go.
 //
@@ -111,10 +114,17 @@ type exprReuseInfo struct {
 // nodeSpan records where a program node's resolved subtree landed in a tree.
 // The subtree is contiguous: appendResolvedNode writes the node first and
 // every descendant after it, so [start, end) covers the whole subtree.
+//
+// The two flags share the four bytes of padding after end, so recording where
+// a subtree came from costs no memory.
 type nodeSpan struct {
 	start int32
 	end   int32
 	valid bool
+	// verbatim reports that this walk copied the subtree out of the previous
+	// tree into the index range it already held. The diff reads it and stops
+	// at start. See diffWalk.skipsSubtree.
+	verbatim bool
 }
 
 // treeReuse is the per-walk state the VM reads while building a tree. The
@@ -127,7 +137,8 @@ type treeReuse struct {
 	prev *ResolvedTree
 	// prevSpans locates each reusable node's subtree inside prev.
 	prevSpans []nodeSpan
-	// spans records the same for the tree being built now.
+	// spans records the same for the tree being built now, and marks which
+	// of those subtrees were copied verbatim.
 	spans []nodeSpan
 	// dirty holds one bit per watched input whose value changed.
 	dirty uint64
@@ -136,6 +147,27 @@ type treeReuse struct {
 	// runtime path depends on it.
 	hits int
 }
+
+// Verbatim subtrees and the diff.
+//
+// A subtree the walk copied out of the previous tree into the index range it
+// already held needs no diff at all. The copy is a struct assignment, and at an
+// unchanged index the copied nodes keep the child indices and even the Children
+// arrays they held before. Every node in the range therefore equals the node
+// the diff would compare it against, at the same index, so the diff provably
+// emits nothing and the walk stops at the root.
+//
+// nodeSpan.verbatim carries that fact, and the diff finds the span through the
+// resolved node's Source field. No second table is needed.
+//
+// Read a wrong verbatim flag as a silent defect, not as a wrong patch. It emits
+// no op, the browser keeps the previous generation on screen, and a test that
+// asserts on the emitted ops still passes because the ops it lists are the ops
+// that were emitted. FuzzIslandRecycleMatchesFreshTree drives a third island
+// with skipOff set and compares the ops step by step, which is the guard that
+// can catch it. TestSkipSuppressesTheDiffOfACopiedSubtree pins that the flag
+// disables the skip, so that arm cannot degrade into comparing an island with
+// itself.
 
 // newReusePlan analyses prog and returns a plan, or nil when subtree reuse
 // cannot help. A nil plan makes every reconcile evaluate the whole tree, so
@@ -152,7 +184,16 @@ func newReusePlan(prog *program.Program) *reusePlan {
 	singleton := planSingletons(prog)
 	for id := range prog.Nodes {
 		mask, pure := plan.nodeInfo(prog, program.NodeID(id), 0)
-		reusable := pure && singleton[id] && prog.Nodes[id].Kind == program.NodeElement
+		node := prog.Nodes[id]
+		// The tag requirement is the merge guard, decided here so the walk
+		// pays nothing for it. mergeAdjacentText appends a following
+		// sibling's text into a text node IN PLACE, and it reads any node
+		// with no tag and no children as one. A copied subtree whose root
+		// reads that way could therefore be rewritten after the copy, which
+		// would both corrupt the tree and break the diff skip. Only a tagged
+		// element can be reused, and every element the lowerer emits has a
+		// tag.
+		reusable := pure && singleton[id] && node.Kind == program.NodeElement && node.Tag != ""
 		plan.nodes[id] = nodeReuseInfo{mask: mask, reusable: reusable}
 		if reusable {
 			plan.full = true
@@ -358,6 +399,14 @@ type watchSample struct {
 	num     float64
 	str     string
 	boolean bool
+	// rev is the signal revision this snapshot was read at, and revValid
+	// says the reading came from a live signal. refresh compares them to
+	// skip the read entirely. They live here, next to the value they belong
+	// to, so the snapshot needs no second array. sameSample ignores them:
+	// a write that restored the same value moves the revision and is not a
+	// change of state.
+	rev      uint64
+	revValid bool
 }
 
 // sampleValue snapshots v. present reports whether the input existed at all;
@@ -386,10 +435,92 @@ func sampleDiffers(prev, cur watchSample) bool {
 	if !prev.present || !cur.present || !prev.stable || !cur.stable {
 		return true
 	}
-	return prev != cur
+	return !sameSample(prev, cur)
 }
 
-// currentWatchSample reads the live value of one watched input.
+// sameSample reports whether two snapshots describe the same input state.
+//
+// It names every field it compares. The struct also carries the revision the
+// snapshot was read at, and that number moves on a write that restored the
+// value it already held, which is not a change of state. A whole-struct
+// comparison would report such a write as a change and re-evaluate the subtree
+// that reads it on every reconcile.
+func sameSample(left, right watchSample) bool {
+	return left.present == right.present &&
+		left.stable == right.stable &&
+		left.typ == right.typ &&
+		left.num == right.num &&
+		left.str == right.str &&
+		left.boolean == right.boolean
+}
+
+// watchSampleAt reads the live value of the watched input at index i.
+//
+// It answers a signal from the bound pointer table and a prop from the props
+// map. TestWatchSampleAtMatchesTheNameLookup pins that it agrees with the
+// name-based reference reader below.
+func (r *islandReuse) watchSampleAt(vm *VM, i int, key watchKey) watchSample {
+	if key.kind != watchSignal {
+		v, ok := vm.props[key.name]
+		return sampleValue(v, ok)
+	}
+	sig := r.watchSigs[i]
+	if sig == nil {
+		return watchSample{}
+	}
+	return sampleValue(sig.Get(), true)
+}
+
+// stampedSample reads the value of the watched input at index i and stamps it
+// with a revision the caller ALREADY read.
+//
+// The revision must be the older reading of the two. A write that lands between
+// the two reads then leaves a stamp that is older than the value, so the next
+// refresh finds a different number and reads again, which costs one read. The
+// other order stamps the value with a number that is newer than it, every later
+// refresh finds the numbers equal, and the island renders the value it held
+// before the write for ever. See Signal.Revision.
+//
+// The caller reads the revision first because it uses the number to decide
+// whether to call this at all. Keeping the stamp here, and taking the reading
+// as an argument, means no code path can read the value first.
+func (r *islandReuse) stampedSample(vm *VM, i int, key watchKey, rev uint64, revValid bool) watchSample {
+	cur := r.watchSampleAt(vm, i, key)
+	cur.rev, cur.revValid = rev, revValid
+	return cur
+}
+
+// signalRevision reads the write counter of the watched input at index i. The
+// second result is false for a prop and for a name no signal is bound to.
+func (r *islandReuse) signalRevision(i int) (uint64, bool) {
+	sig := r.watchSigs[i]
+	if sig == nil {
+		return 0, false
+	}
+	return sig.Revision(), true
+}
+
+// unwrittenSince reports that nothing wrote the watched input at index i since
+// the walk that stored r.snap[i], so that sample is still the live value.
+//
+// Three conditions carry the proof:
+//
+//   - Both revisions are readings of the SAME signal. bindWatchedSignals
+//     drops the stored number whenever it replaces a signal.
+//   - The numbers are equal, so no Set or Update changed the value between
+//     the two readings. Every write path in the package goes through one of
+//     those two methods.
+//   - The stored sample is stable, which means it holds a scalar payload. A
+//     composite is mutated in place by OpFieldSet and OpIndexSet without any
+//     Set at all, so its revision proves nothing and sampleValue already
+//     marks it unstable. See the note on sampleValue.
+func (r *islandReuse) unwrittenSince(i int, rev uint64, revValid bool) bool {
+	stored := r.snap[i]
+	return revValid && stored.revValid && stored.rev == rev && stored.stable
+}
+
+// currentWatchSample reads the live value of one watched input by name. It is
+// the reference reader watchSampleAt is checked against.
 func (vm *VM) currentWatchSample(key watchKey) watchSample {
 	switch key.kind {
 	case watchSignal:
@@ -427,6 +558,44 @@ type islandReuse struct {
 	// the reconcile free of a per-event allocation.
 	spansA []nodeSpan
 	spansB []nodeSpan
+	// watchSigs holds the live signal for each watched input of kind
+	// watchSignal, and nil for a prop. Resolving the name once turns a map
+	// probe per input per reconcile into a slice index.
+	watchSigs []*signal.Signal[Value]
+	// watchGen is the VM signal generation watchSigs was bound against.
+	watchGen uint32
+	// watchBound reports that watchSigs has been filled at least once.
+	watchBound bool
+}
+
+// bindWatchedSignals resolves every watched signal name against the VM once.
+//
+// The generation counter is the invalidation. VM.SetSignal and
+// VM.SwapProgram are the only writers of the signal table, and both bump it,
+// so a stale pointer cannot survive either a shared-signal install or a hot
+// swap.
+func (r *islandReuse) bindWatchedSignals(vm *VM) {
+	if r.watchBound && r.watchGen == vm.signalGen {
+		return
+	}
+	if len(r.watchSigs) != len(r.plan.watch) {
+		r.watchSigs = make([]*signal.Signal[Value], len(r.plan.watch))
+	}
+	for i, key := range r.plan.watch {
+		if key.kind != watchSignal {
+			r.watchSigs[i] = nil
+			continue
+		}
+		r.watchSigs[i] = vm.signals[key.name]
+	}
+	// A rebind replaces the signals, and a revision only means something
+	// against the signal it came from. Drop every stored number so the next
+	// refresh reads the values instead of trusting a foreign counter.
+	for i := range r.snap {
+		r.snap[i].revValid = false
+	}
+	r.watchGen = vm.signalGen
+	r.watchBound = true
 }
 
 // newIslandReuse builds the reuse state for prog, or nil when the program
@@ -451,10 +620,21 @@ func newIslandReuse(prog *program.Program) *islandReuse {
 // evaluated during the walk may write a signal; taking the snapshot first
 // means the next reconcile sees that write and re-evaluates. Taking it after
 // would hide the write.
+//
+// Most inputs are unwritten on most reconciles, and reading one costs a mutex
+// lock and unlock inside Signal.Get. unwrittenSince answers "nobody wrote this
+// signal" with one atomic load, so the common case pays neither the lock nor
+// the sampling. It is an early exit only: an input it does not clear falls
+// through to the value comparison below, unchanged.
 func (r *islandReuse) refresh(vm *VM) uint64 {
+	r.bindWatchedSignals(vm)
 	var dirty uint64
 	for i, key := range r.plan.watch {
-		cur := vm.currentWatchSample(key)
+		rev, revValid := r.signalRevision(i)
+		if r.primed && r.unwrittenSince(i, rev, revValid) {
+			continue
+		}
+		cur := r.stampedSample(vm, i, key, rev, revValid)
 		if !r.primed || sampleDiffers(r.snap[i], cur) {
 			dirty |= uint64(1) << uint(i)
 		}
@@ -462,11 +642,16 @@ func (r *islandReuse) refresh(vm *VM) uint64 {
 	}
 	for i, name := range autoKeyProps {
 		v, ok := vm.props[name]
-		cur := sampleValue(v, ok)
 		// Absent on both sides is the normal case for an island that is
-		// not rendered inside a list. Treat it as unchanged, and treat any
-		// presence or value change as a full invalidation.
-		changed := cur != r.autoKeySnap[i]
+		// not rendered inside a list, and it is the case this loop runs
+		// on nearly every reconcile. Answering it from the presence flags
+		// skips building a sample, comparing it and storing it.
+		if !ok && !r.autoKeySnap[i].present {
+			continue
+		}
+		cur := sampleValue(v, ok)
+		// Treat any presence or value change as a full invalidation.
+		changed := !sameSample(cur, r.autoKeySnap[i])
 		r.autoKeySnap[i] = cur
 		if r.primed && changed {
 			dirty = ^uint64(0)
@@ -530,6 +715,7 @@ func (vm *VM) reuseResolvedNode(tree *ResolvedTree, nodeID int) (int, bool) {
 	}
 	base := len(tree.Nodes)
 	tree.Nodes = append(tree.Nodes, r.prev.Nodes[span.start:span.end]...)
+	verbatim := false
 	if delta := base - int(span.start); delta != 0 {
 		for i := base; i < len(tree.Nodes); i++ {
 			node := &tree.Nodes[i]
@@ -542,15 +728,27 @@ func (vm *VM) reuseResolvedNode(tree *ResolvedTree, nodeID int) (int, bool) {
 			}
 			node.Children = shifted
 		}
+	} else {
+		// The copy landed on the indices it came from, so the diff would
+		// compare every node in it against an equal node at an equal index
+		// and emit nothing. Record that, so the diff stops at the root
+		// instead of walking it.
+		//
+		// Nothing rewrites the copy after this point. newReusePlan limits
+		// reuse to a TAGGED element, which is the one shape
+		// mergeAdjacentText never touches, so the check costs plan time
+		// instead of one read per copy.
+		verbatim = true
 	}
-	vm.recordReuseSpan(nodeID, base, len(tree.Nodes))
+	vm.recordReuseSpan(nodeID, base, len(tree.Nodes), verbatim)
 	r.hits++
 	return base, true
 }
 
 // recordReuseSpan notes where a reusable node's subtree landed so the next
-// walk can copy it.
-func (vm *VM) recordReuseSpan(nodeID, start, end int) {
+// walk can copy it. verbatim reports that this walk copied the subtree to the
+// range it already held, which is what lets the diff stop at start.
+func (vm *VM) recordReuseSpan(nodeID, start, end int, verbatim bool) {
 	r := vm.reuse
 	if r == nil || nodeID < 0 || nodeID >= len(r.spans) {
 		return
@@ -558,5 +756,10 @@ func (vm *VM) recordReuseSpan(nodeID, start, end int) {
 	if nodeID >= len(r.plan.nodes) || !r.plan.nodes[nodeID].reusable {
 		return
 	}
-	r.spans[nodeID] = nodeSpan{start: int32(start), end: int32(end), valid: true}
+	r.spans[nodeID] = nodeSpan{
+		start:    int32(start),
+		end:      int32(end),
+		valid:    true,
+		verbatim: verbatim,
+	}
 }

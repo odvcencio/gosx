@@ -26,7 +26,10 @@
 // share one scope; that matches their single-threaded model.
 package signal
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // Subscriber is a callback invoked when a signal's value changes.
 type Subscriber func()
@@ -38,7 +41,12 @@ type Subscribable interface {
 
 // Signal is a mutable reactive value.
 type Signal[T any] struct {
-	mu    sync.Mutex
+	mu sync.Mutex
+	// rev counts the writes that changed the value. Revision reads it with
+	// one atomic load, so a caller can ask "did anything change" without
+	// taking the mutex. It sits before value so that the mutex, the counter
+	// and the value share the same cache line.
+	rev   atomic.Uint64
 	value T
 	subs  []subscriberEntry
 	next  int
@@ -71,6 +79,36 @@ func (s *Signal[T]) Get() T {
 	return v
 }
 
+// Revision returns how many writes have changed the value.
+//
+// It is the uncontended fast path for a caller that polls a signal and only
+// needs to know whether the value moved. Get copies T, so it must hold the
+// mutex; Revision answers with one atomic load and no lock at all. Two reads
+// that return the same number are separated by no write, so a value read
+// between them is still current.
+//
+// Use it in this order, and only in this order:
+//
+//  1. Read Revision.
+//  2. Read the value with Get.
+//  3. Store the two together.
+//
+// A later read that finds the SAME revision may reuse the stored value. The
+// order matters: a write that lands between step 1 and step 2 leaves a stored
+// revision that is older than the stored value, so the next read finds a
+// different number and repeats the work. Reading the revision second would
+// store a number that is newer than the value, and the next read would keep a
+// stale value for ever.
+//
+// Revision does NOT record a dependency. A Computed value that only polled the
+// revision would never learn that it must recompute, so build tracking on Get.
+//
+// Revision counts writes, not distinct values. A Set that restores an earlier
+// value still advances it, and a Set the equality test rejects does not.
+func (s *Signal[T]) Revision() uint64 {
+	return s.rev.Load()
+}
+
 // Set updates the value and notifies subscribers if the value changed.
 func (s *Signal[T]) Set(value T) {
 	s.mu.Lock()
@@ -79,6 +117,10 @@ func (s *Signal[T]) Set(value T) {
 		return
 	}
 	s.value = value
+	// Advance the counter AFTER the value and before the mutex is dropped,
+	// so a reader that took the revision first can never store a number
+	// that is newer than the value it read. See Revision.
+	s.rev.Add(1)
 	subs := s.snapshotSubscribersLocked()
 	s.mu.Unlock()
 
@@ -94,6 +136,7 @@ func (s *Signal[T]) Update(fn func(T) T) {
 		return
 	}
 	s.value = newVal
+	s.rev.Add(1)
 	subs := s.snapshotSubscribersLocked()
 	s.mu.Unlock()
 
