@@ -129,9 +129,14 @@ build-bootstrap:
 #      without a local go.work.
 #   3. The JS runtime unit tests (`node --test`, stdlib-only, with no
 #      npm dependencies to install), across every *.test.js /
-#      *.test.mjs file. This includes the 500+ tests in
-#      runtime.test.js and the size-budget gates in
-#      bootstrap-size.test.mjs.
+#      *.test.mjs file. The glob picks up new test files on its own,
+#      so nothing here needs an edit when a suite is added or split.
+#      This includes the 562 client-runtime tests in the
+#      runtime-NN-*.test.js files (split out of the former
+#      runtime.test.js; their shared setup lives in
+#      client/js/runtime-test-harness.js, which the glob skips
+#      because it is not a *.test.js file) and the size-budget gates
+#      in bootstrap-size.test.mjs.
 test-js:
 	cd cmd/buildbootstrap && GOWORK=off $(GO) test ./...
 	cd cmd/buildbootstrap && GOWORK=off $(GO) run . --check

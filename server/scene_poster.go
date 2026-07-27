@@ -27,6 +27,14 @@ package server
 // The Scene3D runtime in client/js already sets position:relative on the mount
 // and already removes every child before it appends the canvas. This markup
 // depends on both, and changes nothing in the runtime.
+//
+// Drop the child clear and the poster <img> stays under the canvas forever.
+// Drop the relative position and the background poster escapes the mount. Both
+// faults look like a server bug, so the claims below point at the browser file
+// that really owns the behaviour.
+//
+//	gosx:claim has client/js/bootstrap-src/20-scene-mount.js `clearChildren\(ctx.mount\);`
+//	gosx:claim has client/js/bootstrap-src/20-scene-mount.js `ctx.mount.style.position = "relative";`
 
 import (
 	"fmt"

@@ -29,6 +29,14 @@
 // cost every Scene3D page 52_389 source bytes. Load the file directly when a
 // tool needs it.
 //
+// chunks.json is the machine-readable bundle manifest this tool writes, so a
+// file that joins a bundle appears there. The claim below fails the moment the
+// strict validator is bundled again, and it names this paragraph as the thing
+// to correct.
+//
+//	gosx:claim lacks client/js/bootstrap-src/chunks.json `15-scene-ir-schema-strict`
+//	gosx:claim has client/js/bootstrap-src/15-scene-ir-schema-strict.js `__gosx_validate_scene_ir_strict`
+//
 // Set GOSX_BUNDLE_DEBUG=1 to append sourceMappingURL trailers to the bundles.
 package main
 
@@ -149,7 +157,7 @@ var outputs = []output{
 			// legacy monolithic bootstrap.js throws ReferenceError the first
 			// time the scene3d mount path touches the webgpu probe, which in
 			// turn aborts GoSXScene3D engine registration and kills 38 tests
-			// in runtime.test.js that rely on scene3d mount.
+			// in the client/js runtime suite that rely on scene3d mount.
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
 			// 16a1 holds the Selena uniform packer at module scope. 16a calls it
 			// from wgpuCreatePostProcessor, which sits outside the renderer

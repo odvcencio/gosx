@@ -17,14 +17,22 @@
 //
 // # Codec scope
 //
-// Execute materializes three actions today:
+// Execute materializes six actions today. Four register in execute.go:
 //
 //   - prefilter-ibl-ggx builds the GGX-prefiltered specular cubemap, the
 //     diffuse irradiance cubemap, and a spherical-harmonic sidecar.
 //   - generate-split-sum-lut bakes the scene-independent BRDF table.
 //   - build-lod-stack simplifies meshes with the quadric error metric.
+//   - optimize-mesh reorders indices and vertices for the GPU caches.
 //
-// The remaining actions stay plans on purpose:
+// Two more register from execute_texture.go, which appends to the same table
+// from init:
+//
+//   - texture-transcode-ktx2 writes one KTX2 container per tier, block
+//     compressed where an encoder exists.
+//   - generate-mips writes the mip chain in linear light.
+//
+// Two actions stay plans on purpose:
 //
 //   - meshopt-compress needs an EXT_meshopt_compression encoder. The codec
 //     is tractable in Go, but the browser also needs a decoder, and that
@@ -32,9 +40,20 @@
 //   - draco-compress needs the Draco codec. The reference decoder alone is
 //     about 200 KB of WebAssembly plus glue, which is far outside the
 //     framework's byte budget.
-//   - texture-transcode-ktx2 needs a BC7, ASTC, or ETC2 encoder. The KTX2
-//     container writer lives in render/bundle/ktx2 and handles uncompressed
-//     formats, so the missing piece is the block encoder, not the container.
+//
+// The block encoders shipped after this paragraph was first written. BC1, BC3,
+// BC4, BC5 and BC7 encode in pure Go under assetpipe/texture. ASTC, ETC2 and
+// BC6H have no encoder, and RefusedTextureFormats in execute_texture.go names
+// each one with the reason. An earlier version of this paragraph said the whole
+// texture action was still a plan, which told a reader to write an encoder that
+// already existed.
+//
+//	gosx:claim count=4 assetpipe/execute.go `\{action: "`
+//	gosx:claim count=2 assetpipe/execute_texture.go `executor\{action: "`
+//	gosx:claim lacks assetpipe/execute.go `draco-compress`
+//	gosx:claim has assetpipe/texture/bc7/api.go `func Encode\(src Source, opts Options\)`
+//	gosx:claim has assetpipe/texture/bcn/bc1.go `func EncodeBC1\(`
+//	gosx:claim has assetpipe/execute_texture.go `"astc": "needs an ASTC block encoder`
 package assetpipe
 
 import (
