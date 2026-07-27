@@ -110,6 +110,104 @@ func (l *lowerer) hasIslandDirective(n *gotreesitter.Node) bool {
 	return false
 }
 
+// engineDirectiveKinds are the kinds //gosx:engine accepts. The near-miss
+// check reads this so a misspelled directive with a real kind is reported and
+// ordinary prose that happens to begin the same way is not.
+var engineDirectiveKinds = []string{"worker", "surface", "video"}
+
+// checkDirectiveTypos reports a comment above a declaration that was nearly a
+// directive but is not one.
+//
+// Every directive is matched byte for byte. `//gosx:island` makes an island;
+// `// gosx:island` is an ordinary comment, so the component lowers to static
+// markup and its handlers never run. Nothing failed, so `gosx check` printed
+// "ok" and left the author to work out why the page did nothing. A compile
+// error naming the line costs a typo; silence costs an afternoon.
+//
+// A candidate is normalized by removing whitespace and lowering case, then
+// compared against each directive's own shape rather than a shared prefix:
+//
+//   - island takes no argument, so the whole line must reduce to the token.
+//     That is what keeps prose such as "// gosx:island directive on component"
+//     out — the trailing words survive normalization.
+//   - engine takes a kind, so the remainder must be one this compiler accepts.
+//   - capabilities takes a list, so the remainder need only be non-empty.
+//
+// A line already spelled correctly is never reported.
+func (l *lowerer) checkDirectiveTypos(n *gotreesitter.Node) {
+	for _, line := range l.precedingCommentLines(n) {
+		trimmed := strings.TrimSpace(line)
+		if isCanonicalDirective(trimmed) {
+			// Spelled the way the parsers read it. Whether the argument is
+			// valid is their business, not this check's.
+			//
+			// This must test the exact accepted forms rather than the "//gosx:"
+			// prefix. "//gosx: island" and "//gosx:Island" both carry that
+			// prefix and are both typos the parsers ignore.
+			continue
+		}
+
+		squeezed := normalizeDirectiveCandidate(trimmed)
+		switch {
+		case squeezed == "//gosx:island":
+			l.errorf(n, "comment %q is not the island directive", trimmed)
+			l.hintLast("write it exactly as //gosx:island, with no space after // and none around the colon")
+
+		case strings.HasPrefix(squeezed, "//gosx:engine"):
+			kind := strings.TrimPrefix(squeezed, "//gosx:engine")
+			for _, valid := range engineDirectiveKinds {
+				if kind == valid {
+					l.errorf(n, "comment %q is not the engine directive", trimmed)
+					l.hintLast("write it exactly as //gosx:engine " + valid)
+					break
+				}
+			}
+
+		case strings.HasPrefix(squeezed, "//gosx:capabilities"):
+			if strings.TrimPrefix(squeezed, "//gosx:capabilities") != "" {
+				l.errorf(n, "comment %q is not the capabilities directive", trimmed)
+				l.hintLast("write it exactly as //gosx:capabilities followed by the list")
+			}
+		}
+	}
+}
+
+// isCanonicalDirective reports whether a comment is spelled exactly the way
+// the directive parsers match it. It mirrors hasIslandDirective,
+// parseEngineDirective and parseCapabilities; keep the four in step.
+func isCanonicalDirective(trimmed string) bool {
+	return trimmed == "//gosx:island" ||
+		strings.HasPrefix(trimmed, "//gosx:engine ") ||
+		strings.HasPrefix(trimmed, "//gosx:capabilities ")
+}
+
+// normalizeDirectiveCandidate removes every space and lowers the case, so the
+// three ways a directive is usually mistyped — a space after //, spaces around
+// the colon, and a capital letter — all reduce to the canonical token.
+func normalizeDirectiveCandidate(line string) string {
+	var b strings.Builder
+	b.Grow(len(line))
+	for _, r := range line {
+		if r == ' ' || r == '\t' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// hintLast attaches a hint to the diagnostic just recorded. Diagnostic carries
+// a Hint field that String prints in parentheses, and errorf does not set it.
+func (l *lowerer) hintLast(hint string) {
+	if len(l.errs) == 0 {
+		return
+	}
+	l.errs[len(l.errs)-1].Hint = hint
+}
+
 // parseEngineDirective checks for //gosx:engine and extracts the kind.
 // Returns ("worker"|"surface"|"video", true) or ("", false).
 func (l *lowerer) parseEngineDirective(n *gotreesitter.Node) (string, bool) {
@@ -918,6 +1016,10 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	// Analyze the function body for signal/computed/handler declarations.
 	// This extracts the component scope needed for island lowering.
 	scope := l.analyzeBody(bodyNode)
+
+	// Run before reading the directives, so a misspelled one is reported as
+	// itself rather than as a component that mysteriously is not an island.
+	l.checkDirectiveTypos(n)
 
 	comp := Component{
 		Name:      name,
