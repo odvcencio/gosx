@@ -258,6 +258,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 	if diagnostic, ok := materialCoverageDiagnostic(ir); ok {
 		frame.Diagnostics = append(frame.Diagnostics, diagnostic)
 	}
+	frame.Diagnostics = append(frame.Diagnostics, unsupportedRecordDiagnostics(ir)...)
 	textures := newTextureResolver(opts.AssetRoots)
 
 	materialIndexes := make(map[string]int)

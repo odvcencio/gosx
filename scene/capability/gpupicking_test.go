@@ -2,7 +2,6 @@ package capability
 
 import (
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -51,29 +50,30 @@ func TestGPUPickingCapableOnBothGPUBackends(t *testing.T) {
 //   - copyTextureToBuffer:     the 1x1 pixel copy
 //   - mapAsync:                the non-blocking readback
 //   - sceneWebGPUPickResolve:  maps an ID back to the shared hit record
+//
+// The test reads the renderer FIRST and then demands the cell match, so it fails
+// whichever way the cell is wrong. It used to skip when the cell read false, so
+// re-introducing the original defect — a false cell over a working picker —
+// would have deleted this check instead of failing it.
 func TestGPUPickingRendererEvidence(t *testing.T) {
-	if !Matrix[FeatureGPUPicking][BackendWebGPU] {
-		t.Skip("Matrix says WebGPU cannot pick; nothing to corroborate")
-	}
 	const rendererPath = "../../client/js/bootstrap-src/16a-scene-webgpu.js"
 	data, err := os.ReadFile(rendererPath)
 	if err != nil {
 		t.Fatalf("read WebGPU renderer at %s: %v", rendererPath, err)
 	}
 	source := string(data)
-	for _, symbol := range []string{
-		"createSceneWebGPUPicker",
-		"sceneWebGPUPickIDPlan",
-		"sceneWebGPUPickResolve",
-		"r32uint",
-		"copyTextureToBuffer",
-		"mapAsync",
-	} {
-		if !strings.Contains(source, symbol) {
-			t.Errorf("Matrix[gpu-picking][webgpu] is true but %s is missing from %s; "+
-				"flip the cell back or finish the implementation", symbol, rendererPath)
-		}
-	}
+
+	evidenceFor(t, FeatureGPUPicking, BackendWebGPU).
+		needs(rendererPath, source,
+			"createSceneWebGPUPicker",
+			"sceneWebGPUPickIDPlan",
+			"sceneWebGPUPickResolve",
+			"r32uint",
+			"copyTextureToBuffer",
+			"mapAsync",
+		).
+		assertAgrees("an ID-buffer pick needs the picker, an r32uint attachment, a 1x1 " +
+			"copyTextureToBuffer and a mapAsync readback, plus the resolve back to the hit record")
 }
 
 // TestGPUPickingWebGLEvidence records why the WebGL cell is true. Picking on
@@ -82,25 +82,26 @@ func TestGPUPickingRendererEvidence(t *testing.T) {
 // renderer argument, so it serves BOTH GPU backends identically. This test fails
 // if that shared, backend-neutral entry point disappears, because the WebGL cell
 // and the byte-for-byte parity claim both rest on it.
+//
+// The test reads the input module FIRST and then demands the cell match, in
+// whichever direction. The skip it used to open with meant that a WebGL cell
+// flipped to false — which would exclude WebGL2 from every interactive scene,
+// because gpu-picking is REQUIRED — silently removed this check.
 func TestGPUPickingWebGLEvidence(t *testing.T) {
-	if !Matrix[FeatureGPUPicking][BackendWebGL] {
-		t.Skip("Matrix says WebGL cannot pick; nothing to corroborate")
-	}
 	const inputPath = "../../client/js/bootstrap-src/17-scene-input.js"
 	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		t.Fatalf("read scene input at %s: %v", inputPath, err)
 	}
 	source := string(data)
-	for _, symbol := range []string{
-		"function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction)",
-		"function sceneRaycastPick(",
-		"window.__gosx_scene3d_api.sceneRaycastPickGroup = sceneRaycastPickGroup",
-		"window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes = sceneRaycastPickInstancedMeshes",
-	} {
-		if !strings.Contains(source, symbol) {
-			t.Errorf("the shared pick contract changed: %q is missing from %s; "+
-				"re-check both gpu-picking cells and the WebGPU picker's refinement path", symbol, inputPath)
-		}
-	}
+
+	evidenceFor(t, FeatureGPUPicking, BackendWebGL).
+		needs(inputPath, source,
+			"function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction)",
+			"function sceneRaycastPick(",
+			"window.__gosx_scene3d_api.sceneRaycastPickGroup = sceneRaycastPickGroup",
+			"window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes = sceneRaycastPickInstancedMeshes",
+		).
+		assertAgrees("WebGL2 picks by raycasting the scene bundle on the CPU; setupScenePickInteractions " +
+			"takes no renderer argument, so the same entry point serves both GPU backends")
 }

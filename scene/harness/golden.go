@@ -107,6 +107,22 @@ func (s *Session) compareGolden(label, source string, reference image.Image, opt
 // CertifyDeterminism renders the same frame several times and records whether
 // every run produced the same pixels. The verdict comes from real repeated
 // renders, not from an assumption about the backend.
+//
+// Read the scope before you quote the result. This function proves reproducibility
+// inside one process, on one machine, with one Go build. It does not prove:
+//
+//   - Reproducibility in a fresh process. Go randomizes map iteration order per
+//     process, so a lowering step that walked a map would look stable here.
+//     TestFrameRepeatsInAFreshProcess in package render/gpu/headless covers that.
+//   - Identical pixels on a second processor architecture. The rasterizer runs
+//     float32 and float64 arithmetic, and a compiler may fuse a multiply and an
+//     add on a target that offers one instruction for both. A fused result differs
+//     in the last bit, and one bit in a depth comparison flips a pixel.
+//   - Identical pixels on a different Go release.
+//
+// Closing the cross-architecture gap needs a committed golden frame checked on a
+// second architecture in continuous integration. Until such a job exists and is
+// green, do not describe a certified report as bit-reproducible across machines.
 func (s *Session) CertifyDeterminism(label string, time float64, runs int) (DeterminismTelemetry, error) {
 	if runs < 2 {
 		runs = 2

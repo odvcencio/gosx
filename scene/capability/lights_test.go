@@ -118,65 +118,83 @@ func loweredLightKinds(t *testing.T) []string {
 	return kinds
 }
 
+// assertLightKindClaimMatchesRenderers demands that the LightKindFeatures answer
+// for kind agree with renderer source, in whichever direction.
+//
+// LightKindFeatures returning an empty list is a claim: "both GPU backends shade
+// this kind exactly, so it costs the author nothing". missing holds the evidence
+// symbols the renderers do NOT carry. Empty missing means the claim holds, so an
+// empty feature list is right and a non-empty one is wrong. Non-empty missing
+// means the opposite.
+//
+// The two spot and hemisphere tests below used to skip when the feature list
+// stopped being empty, so adding a feature deleted the check that the renderers
+// still match. This reads the renderers first, exactly as the Matrix cell tests
+// now do.
+func assertLightKindClaimMatchesRenderers(t *testing.T, kind string, missing []string) {
+	t.Helper()
+	features := LightKindFeatures(kind)
+	claimsExact := len(features) == 0
+	rendererIsExact := len(missing) == 0
+
+	switch {
+	case rendererIsExact && !claimsExact:
+		t.Fatalf("both renderers carry every %s term, yet LightKindFeatures(%q) returns %v.\n"+
+			"An exactly rendered kind must claim no feature, or the author reads a gap that is not there. "+
+			"Either drop the mapping or say which term the renderers lost.", kind, kind, features)
+	case !rendererIsExact && claimsExact:
+		t.Fatalf("LightKindFeatures(%q) claims no capability gap, but the renderers are missing: %s\n"+
+			"A kind that is not shaded exactly on both backends owes the author a Matrix feature, "+
+			"or the gap goes unreported.", kind, strings.Join(sortedCopy(missing), ", "))
+	}
+	// Both agree. Name the direction, so a reader of a passing run knows which
+	// half of the contract held.
+	t.Logf("%s: renderers exact=%v, LightKindFeatures=%v", kind, rendererIsExact, features)
+}
+
 // TestSpotLightImplementedOnBothBackends corroborates the empty feature list
 // for spot lights. Both renderers must carry the same three cone terms. If
 // either drops out, LightKindFeatures owes spot a feature.
 func TestSpotLightImplementedOnBothBackends(t *testing.T) {
-	if len(LightKindFeatures("spot")) != 0 {
-		t.Skip("spot now maps to a feature; the claim under test is gone")
-	}
 	webgpu := readRenderer(t, webgpuRendererPath)
-	for _, symbol := range []string{
+	webgl := readRenderer(t, webglRendererPath)
+
+	missing := missingSymbols(webgpuRendererPath, webgpu,
 		"fn spotConeAttenuation(",
 		"let outerCos = cos(angle);",
 		"let innerCos = cos(angle * (1.0 - penumbra));",
 		"clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0)",
 		"lightType == 3u",
 		`case "spot": return 3;`,
-	} {
-		if !strings.Contains(webgpu, symbol) {
-			t.Errorf("spot claims no capability gap but %q is missing from %s", symbol, webgpuRendererPath)
-		}
-	}
-	webgl := readRenderer(t, webglRendererPath)
-	for _, symbol := range []string{
+	)
+	missing = append(missing, missingSymbols(webglRendererPath, webgl,
 		"float outerCos = cos(u_lightAngles[i]);",
 		"float innerCos = cos(u_lightAngles[i] * (1.0 - u_lightPenumbras[i]));",
 		"clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0)",
-	} {
-		if !strings.Contains(webgl, symbol) {
-			t.Errorf("spot claims no capability gap but %q is missing from %s", symbol, webglRendererPath)
-		}
-	}
+	)...)
+
+	assertLightKindClaimMatchesRenderers(t, "spot", missing)
 }
 
 // TestHemisphereLightImplementedOnBothBackends corroborates the empty feature
 // list for hemisphere lights: both renderers blend sky against ground with the
 // same normal-Y term.
 func TestHemisphereLightImplementedOnBothBackends(t *testing.T) {
-	if len(LightKindFeatures("hemisphere")) != 0 {
-		t.Skip("hemisphere now maps to a feature; the claim under test is gone")
-	}
 	webgpu := readRenderer(t, webgpuRendererPath)
-	for _, symbol := range []string{
+	webgl := readRenderer(t, webglRendererPath)
+
+	missing := missingSymbols(webgpuRendererPath, webgpu,
 		"lightType == 4u",
 		"let hBlend = N.y * 0.5 + 0.5;",
 		"mix(light.groundPenumbra.rgb, lightColor, hBlend)",
 		`case "hemisphere": return 4;`,
-	} {
-		if !strings.Contains(webgpu, symbol) {
-			t.Errorf("hemisphere claims no capability gap but %q is missing from %s", symbol, webgpuRendererPath)
-		}
-	}
-	webgl := readRenderer(t, webglRendererPath)
-	for _, symbol := range []string{
+	)
+	missing = append(missing, missingSymbols(webglRendererPath, webgl,
 		"float hBlend = N.y * 0.5 + 0.5;",
 		"mix(u_lightGroundColors[i], lightColor, hBlend)",
-	} {
-		if !strings.Contains(webgl, symbol) {
-			t.Errorf("hemisphere claims no capability gap but %q is missing from %s", symbol, webglRendererPath)
-		}
-	}
+	)...)
+
+	assertLightKindClaimMatchesRenderers(t, "hemisphere", missing)
 }
 
 // TestRectAreaLightWebGPUEvidence ties the true cell to the shipped renderer.
@@ -188,57 +206,63 @@ func TestHemisphereLightImplementedOnBothBackends(t *testing.T) {
 //   - ltcEdgeVectorFormFactor:     the edge integral, with three.js constants
 //   - ltcClippedSphereFormFactor:  the closing term
 //   - lightType == 5u:             the shader branch that runs it
+//
+// The test reads the renderer FIRST and then demands the cell match, in whichever
+// direction. It used to skip on a false cell, so flipping this cell to false —
+// which would silently stop reporting a real rect-area shape as supported —
+// deleted the check instead of failing it.
 func TestRectAreaLightWebGPUEvidence(t *testing.T) {
-	if !Matrix[FeatureRectAreaLight][BackendWebGPU] {
-		t.Skip("Matrix says WebGPU has no rect-area light; nothing to corroborate")
-	}
 	source := readRenderer(t, webgpuRendererPath)
-	for _, symbol := range []string{
-		"function sceneWebGPURectAreaBasis(",
-		"areaHalfWidth: vec4f,",
-		"areaHalfHeight: vec4f,",
-		"fn rectAreaFormFactor(",
-		"fn ltcEdgeVectorFormFactor(",
-		"fn ltcClippedSphereFormFactor(",
-		"fn rectAreaLightRadiance(",
-		"lightType == 5u",
-		`case "rect-area": return 5;`,
-		// The three.js edge-integral fit. These constants are what make the
-		// diffuse term exact rather than a guess.
-		"0.8543985 + (0.4965155 + 0.0145206 * y) * y",
-		"3.4175940 + (4.1616724 + y) * y",
-	} {
-		if !strings.Contains(source, symbol) {
-			t.Errorf("Matrix[rect-area-light][webgpu] is true but %s is missing from %s; "+
-				"flip the cell back or finish the implementation", symbol, webgpuRendererPath)
-		}
-	}
+
+	evidenceFor(t, FeatureRectAreaLight, BackendWebGPU).
+		needs(webgpuRendererPath, source,
+			"function sceneWebGPURectAreaBasis(",
+			"areaHalfWidth: vec4f,",
+			"areaHalfHeight: vec4f,",
+			"fn rectAreaFormFactor(",
+			"fn ltcEdgeVectorFormFactor(",
+			"fn ltcClippedSphereFormFactor(",
+			"fn rectAreaLightRadiance(",
+			"lightType == 5u",
+			`case "rect-area": return 5;`,
+			// The three.js edge-integral fit. These constants are what make the
+			// diffuse term exact rather than a guess.
+			"0.8543985 + (0.4965155 + 0.0145206 * y) * y",
+			"3.4175940 + (4.1616724 + y) * y",
+		).
+		assertAgrees("a rect-area light needs the in-plane basis, the two shape fields, the polygon " +
+			"form factor with its edge integral, and the shader branch that runs them")
 }
 
 // TestRectAreaLightWebGLIsFalse records why the WebGL cell is false. The WebGL2
 // renderer folds kind "rect-area" onto light type 2, the point light, so the
 // authored Width and Height never reach a fragment. This test fails if WebGL
 // gains a rect-area path, which is the moment the cell must flip.
+// The test reads the renderer FIRST and then demands the cell match. It used to
+// skip when the cell read true, which is the one case worth catching: a true
+// rect-area cell on WebGL2 would report a point-light image as an exact one.
 func TestRectAreaLightWebGLIsFalse(t *testing.T) {
-	if Matrix[FeatureRectAreaLight][BackendWebGL] {
-		t.Skip("Matrix says WebGL now shades rect-area lights; corroborate the new path instead")
-	}
 	source := readRenderer(t, webglRendererPath)
+
+	// A rect-area path would need the shape uniforms or the linearly transformed
+	// cosine (LTC) evaluation. Their absence is the evidence for the false cell,
+	// so any of them appearing must flip it.
+	evidenceFor(t, FeatureRectAreaLight, BackendWebGL).
+		refutedBy(webglRendererPath, source, "u_lightWidths", "u_lightHeights", "LTC_Evaluate").
+		assertAgrees("the WebGL2 renderer folds kind \"rect-area\" onto light type 2, the point light, " +
+			"so the authored Width and Height never reach a fragment")
+
+	// And pin WHY it is false. The fold onto the point light is the mechanism,
+	// so a reader does not have to rediscover it.
 	anchor := strings.Index(source, `} else if (kind === "rect-area") {`)
 	if anchor < 0 {
 		t.Fatalf("the WebGL rect-area branch moved; re-check Matrix[rect-area-light][webgl]")
 	}
 	branch := source[anchor : anchor+120]
 	if !strings.Contains(branch, "lightType = 2;") {
-		t.Errorf("the WebGL rect-area branch no longer maps to the point light: %q", branch)
-	}
-	// A rect-area path would need the shape uniforms. Their absence is the
-	// evidence for the false cell.
-	for _, absent := range []string{"u_lightWidths", "u_lightHeights", "LTC_Evaluate"} {
-		if strings.Contains(source, absent) {
-			t.Errorf("%s appeared in %s; WebGL may now shade rect-area lights, so re-check the cell",
-				absent, webglRendererPath)
-		}
+		t.Errorf("the WebGL rect-area branch no longer maps to the point light: %q\n"+
+			"If WebGL2 gained a real rect-area shape, flip the cell, fix the manifest and "+
+			"rewrite this test to corroborate the new path.", branch)
 	}
 }
 

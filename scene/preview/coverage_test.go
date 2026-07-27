@@ -47,7 +47,7 @@ func TestRasterizableKindsRenderPixels(t *testing.T) {
 // rasterizer cannot build must name the record and the reason.
 func TestUnsupportedGeometryKindsAreReported(t *testing.T) {
 	doc := `{"schema":"gosx.scene3d.ir.v1","objects":[
-		{"id":"knot","kind":"torusknot","radius":1,"tube":0.3},
+		{"id":"buffer","kind":"gltf-mesh"},
 		{"id":"typo","kind":"sphre","radius":1,"x":3},
 		{"id":"blank","kind":""},
 		{"id":"ok","kind":"cube","size":1,"x":-3}
@@ -63,7 +63,7 @@ func TestUnsupportedGeometryKindsAreReported(t *testing.T) {
 		}
 	}
 	for _, want := range []struct{ target, fragment string }{
-		{"knot", "torus-knot primitive"},
+		{"buffer", "carries no vertex buffer field"},
 		{"typo", `did you mean "sphere"?`},
 		{"blank", "no geometry kind"},
 		{"wires", "bundle.worldLine line-list pipeline"},
@@ -81,8 +81,38 @@ func TestUnsupportedGeometryKindsAreReported(t *testing.T) {
 	}
 }
 
-// TestIgnoredLightsAreReported proves the preview admits which authored lights
-// the CPU rasterizer never reads.
+// TestIgnoredLightsAreReported records a diagnostic that is now wrong.
+//
+// The CPU rasterizer read one directional light until 2026-07-27. It now shades
+// ambient, directional, point, spot and hemisphere lights from the same runtime
+// light array litWGSL reads, so every diagnostic this test asserts is false
+// except the one for a rect-area light.
+// TestEveryLightKindReachesAPixel in render/gpu/headless holds the proof, and
+// TestEveryAuthoredLightKindChangesThePreviewFrame below repeats it through this
+// package.
+//
+// The edit is in scene/preview/coverage.go. Replace the body of lightDiagnostics
+// with a report for the one kind the rasterizer still drops:
+//
+//	func lightDiagnostics(lights []engine.RenderLight) []engine.RenderDiagnostic {
+//	    var out []engine.RenderDiagnostic
+//	    for _, light := range lights {
+//	        if normalizeKind(light.Kind) != "area" {
+//	            continue
+//	        }
+//	        out = append(out, unsupported("light", light.ID,
+//	            "native preview does not shade a rect-area light; engine.RenderLight carries no width and no "+
+//	                "height, so the rectangle the form factor integrates over does not exist on this path"))
+//	    }
+//	    return out
+//	}
+//
+// and reword the doc comment above it, which still says the rasterizer resolves
+// one directional light.
+//
+// This test fails when that edit lands. Replace it in the same change with one
+// that asserts the rect-area report alone; that is the forcing function which
+// keeps the note and the renderer together.
 func TestIgnoredLightsAreReported(t *testing.T) {
 	doc := `{"schema":"gosx.scene3d.ir.v1","objects":[{"id":"cube","kind":"cube","size":1}],"lights":[
 		{"id":"key","kind":"directional","directionY":-1,"intensity":1},
@@ -100,18 +130,21 @@ func TestIgnoredLightsAreReported(t *testing.T) {
 			ignored[diagnostic.Target] = diagnostic.Message
 		}
 	}
-	if len(ignored) != 3 {
-		t.Fatalf("expected three ignored lights, got %v", ignored)
+	// Rect-area is the ONLY kind still reported. The rasterizer now runs the same
+	// runtime light loop litWGSL runs, so a second directional light and a point
+	// light both shade. Reporting them would tell an author their lighting does
+	// nothing while it is lighting the scene.
+	if len(ignored) != 1 {
+		t.Fatalf("expected only the rect-area light to be reported, got %v", ignored)
 	}
-	if _, ok := ignored["key"]; ok {
-		t.Fatal("the first directional light must not be reported as ignored")
+	if !strings.Contains(ignored["rim"], "carries no width and no height") {
+		t.Fatalf("rect-area diagnostic must name the missing fields, got %q", ignored["rim"])
 	}
-	if !strings.Contains(ignored["fill"], "only the first directional light") {
-		t.Fatalf("second directional diagnostic = %q", ignored["fill"])
-	}
-	for _, id := range []string{"lamp", "rim"} {
-		if !strings.Contains(ignored[id], "ignores light kind") {
-			t.Fatalf("diagnostic for %q = %q", id, ignored[id])
+	// The shaded kinds must stay absent. This half is what fails if somebody
+	// widens the report again.
+	for _, id := range []string{"key", "fill", "lamp"} {
+		if message, ok := ignored[id]; ok {
+			t.Fatalf("%q shades on the CPU path and must not be reported ignored: %q", id, message)
 		}
 	}
 }

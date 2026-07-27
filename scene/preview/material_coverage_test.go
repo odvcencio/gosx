@@ -107,11 +107,17 @@ func TestUnresolvedTextureIsReported(t *testing.T) {
 	}
 }
 
-// TestIgnoredMaterialFieldsAreReported proves the preview admits that changing
-// roughness or a normal map does not change the frame.
+// TestIgnoredMaterialFieldsAreReported proves the preview names the material
+// fields the CPU path still cannot express, and names ONLY those.
+//
+// It used to assert roughness, metalness and normalMap were reported as
+// ignored. That was true against a Lambert term and is now false: the rasterizer
+// runs the whole litWGSL fragment stage and shades all three. Reporting them
+// would tell an author their material does nothing while it is shading, which
+// invites deleting work that functions.
 func TestIgnoredMaterialFieldsAreReported(t *testing.T) {
 	doc := `{"schema":"gosx.scene3d.ir.v1","objects":[
-		{"id":"a","kind":"sphere","radius":1,"roughness":0.9,"metalness":0.4,"normalMap":"/n.png"},
+		{"id":"a","kind":"sphere","radius":1,"roughness":0.9,"metalness":0.4,"normalMap":"/n.png","materialKind":"glass"},
 		{"id":"b","kind":"cube","size":1,"x":3,"roughness":0.2,"wireframe":true}
 	]}`
 	result, err := preview.RenderJSON([]byte(doc), preview.Options{Width: 64, Height: 48, DisableShadows: true, DisablePostFX: true})
@@ -123,9 +129,17 @@ func TestIgnoredMaterialFieldsAreReported(t *testing.T) {
 		t.Fatalf("expected one material coverage note: %+v", result.Bundle.Diagnostics)
 	}
 	message := diagnostics[0].Message
-	for _, want := range []string{"roughness(2)", "metalness(1)", "normalMap(1)", "wireframe(1)"} {
+	for _, want := range []string{"wireframe(1)", "materialKind(1)"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("material note missing %q: %s", want, message)
+		}
+	}
+	// The other half, and the one that matters more. A field the fragment stage
+	// shades must NOT appear here. Naming a working field is the expensive
+	// direction of a wrong diagnostic.
+	for _, shaded := range []string{"roughness", "metalness", "normalMap", "clearcoat", "sheen"} {
+		if strings.Contains(message, shaded) {
+			t.Fatalf("%q reaches a CPU pixel and must not be reported as ignored: %s", shaded, message)
 		}
 	}
 	if diagnostics[0].Severity != "info" {
