@@ -739,8 +739,13 @@ const routeBudgets = [
     // Measured 251_895; gzip and brotli ceilings unchanged and still fit.
     // document-env carries the motion subsystem, so every surface that
     // includes it picks up the same addition.
+    // Bumped gzip 70_000 -> 70_100 for the FINDING-001 fix: the motion
+    // reveal guard now compares against a per-page-load token instead of a
+    // plain boolean (GOSX_MOTION_LIFE_TOKEN), so a stale value from a
+    // different page life can no longer suppress the reveal. Raw and brotli
+    // ceilings unchanged and still fit. Measured: 252_472 / 70_035 / 61_684.
     raw: 253_000,
-    gzip: 70_000,
+    gzip: 70_100,
     brotli: 62_000,
   },
 ];

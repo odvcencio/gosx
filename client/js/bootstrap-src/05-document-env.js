@@ -246,7 +246,84 @@
   // presets where the last unit's delay is largest. See gosx issue: hero
   // motion text disappearing on m31labs.dev after the galaxy's progressive
   // scene upgrade.
+  //
+  // The attribute value is NOT a plain "true" flag. Because dispose never
+  // clears it, a boolean value cannot tell "disposed and remounted within
+  // THIS page life" (skip replay — correct) apart from "carried over from a
+  // DIFFERENT page life" (skip replay anyway — wrong: the element/units are
+  // showing whatever the OLD life's markup or last frame looked like, not
+  // this life's natural style, so skipping the reveal leaves them stuck
+  // looking however they happened to be serialized, with no animation ever
+  // having run in this life at all). A prior page life can reach the DOM in
+  // more ways than a live in-memory node surviving: server-rendered HTML can
+  // literally contain the attribute (a static-generation/prerender pass that
+  // executed this same script once and captured its output, a hand-authored
+  // template, or copy-pasted markup), and that value is indistinguishable
+  // from a real one once parsed. The guard must not trust it on sight.
+  //
+  // GOSX_MOTION_LIFE_TOKEN scopes the signal to the CURRENT script
+  // evaluation: it is written into the attribute alongside the reveal, and
+  // read back on the next record for that element. Values only ever match
+  // when both the write and the read happened in the same evaluation of this
+  // module, which is exactly "same page life" for this purpose:
+  //
+  //   - Same-life dispose+remount (the case this attribute exists to fix):
+  //     the module is not re-evaluated, so the token is unchanged. A record
+  //     created after disposal still finds its own token on the element and
+  //     correctly skips the replay.
+  //   - A genuinely fresh full page load re-evaluates the whole bundle, so
+  //     GOSX_MOTION_LIFE_TOKEN is a brand-new random value. Any attribute
+  //     value already on the incoming markup — a real leftover, a stale
+  //     server-rendered value, or a hand-written one — was written by a
+  //     DIFFERENT evaluation and can only match by chance collision with a
+  //     ~2^128-wide random value (crypto RNG where available). It normally
+  //     will not, so the guard does not fire and the element reveals.
+  //   - bfcache restore does NOT re-evaluate top-level script (per the HTML
+  //     spec, a bfcache resume continues the exact suspended realm rather
+  //     than re-running it) — so it is not a case of two different
+  //     evaluations at all. Whatever the token/attribute pairing was at the
+  //     moment of suspension is exactly what it still is on resume: if they
+  //     matched before suspension they match after, and if the record + DOM
+  //     were untouched they are literally the same objects, so
+  //     observeManagedMotion never even manufactures a fresh record for
+  //     them. There is no path through bfcache that desyncs the pairing.
+  //
+  // This is one string in module scope, not a per-element map: memory is
+  // O(1) regardless of how many elements or records come and go.
   const GOSX_MOTION_REVEALED_ATTR = "data-gosx-motion-revealed";
+
+  // gosxCreateMotionLifeToken returns a value that is, for this purpose,
+  // unique to this evaluation of the bundle: prefers the Web Crypto RNG
+  // (crypto.randomUUID, then crypto.getRandomValues) and only falls back to
+  // Math.random()/Date.now() mixing where Web Crypto is unavailable (very
+  // old browsers, or a minimal test harness). It does not need to resist a
+  // deliberate attacker — GOSX_MOTION_REVEALED_ATTR gates a reveal
+  // animation, not anything security-sensitive — it needs only to make an
+  // accidental collision with a value from a different evaluation (e.g. a
+  // prerendered/SSG capture of this same script's own past output)
+  // vanishingly unlikely. A deterministic generator (an incrementing
+  // counter, or one seeded the same way every run) would not do that: a
+  // headless capture and a real page load can both start counting from the
+  // same value.
+  function gosxCreateMotionLifeToken() {
+    const cryptoRef = (typeof window !== "undefined" && window.crypto)
+      || (typeof globalThis !== "undefined" && globalThis.crypto)
+      || null;
+    if (cryptoRef && typeof cryptoRef.randomUUID === "function") {
+      return cryptoRef.randomUUID();
+    }
+    if (cryptoRef && typeof cryptoRef.getRandomValues === "function") {
+      const bytes = cryptoRef.getRandomValues(new Uint32Array(4));
+      return Array.prototype.map.call(bytes, function(n) {
+        return n.toString(36);
+      }).join("-");
+    }
+    return "t" + Date.now().toString(36)
+      + Math.random().toString(36).slice(2)
+      + Math.random().toString(36).slice(2);
+  }
+
+  const GOSX_MOTION_LIFE_TOKEN = gosxCreateMotionLifeToken();
 
   function gosxMotionSplitUnits(element, mode) {
     if (!element || !mode) {
@@ -466,18 +543,22 @@
       gosxManagedMotionState(record, "reduced");
       return;
     }
-    // A fresh record over an element that was already revealed in a prior
-    // record's lifetime (see GOSX_MOTION_REVEALED_ATTR) must not replay the
-    // reveal from its hidden first keyframe: the element/units are already
-    // showing their natural (visible) style, and re-animating would flash
-    // them invisible again for a full delay+duration before they recover.
-    if (record.element.getAttribute(GOSX_MOTION_REVEALED_ATTR) === "true") {
+    // A fresh record over an element that was already revealed earlier in
+    // THIS page life (see GOSX_MOTION_REVEALED_ATTR/GOSX_MOTION_LIFE_TOKEN)
+    // must not replay the reveal from its hidden first keyframe: the
+    // element/units are already showing their natural (visible) style, and
+    // re-animating would flash them invisible again for a full
+    // delay+duration before they recover. Comparing against the per-life
+    // token, not a plain "true", keeps a value written by a DIFFERENT page
+    // life (a stale in-DOM leftover, server-rendered markup) from also
+    // matching and permanently suppressing the reveal for that life.
+    if (record.element.getAttribute(GOSX_MOTION_REVEALED_ATTR) === GOSX_MOTION_LIFE_TOKEN) {
       record.played = true;
       gosxManagedMotionState(record, "finished");
       return;
     }
     record.played = true;
-    setAttrValue(record.element, GOSX_MOTION_REVEALED_ATTR, "true");
+    setAttrValue(record.element, GOSX_MOTION_REVEALED_ATTR, GOSX_MOTION_LIFE_TOKEN);
     gosxManagedMotionState(record, "running");
     cancelManagedMotionAnimation(record);
     if (typeof record.element.animate !== "function") {
