@@ -530,29 +530,99 @@
 
   // --- GPU Compute Particle System ---
 
-  function sceneComputeIsErrorScopeLifecycleMessage(message) {
-    var text = String(message || "").toLowerCase();
-    return text.indexOf("poperrorscope") >= 0 && text.indexOf("instance dropped") >= 0;
+  // -------------------------------------------------------------------------
+  // Per-object pipeline validation
+  // -------------------------------------------------------------------------
+  //
+  // WHY THERE IS NO pushErrorScope HERE ANY MORE.
+  //
+  // pushErrorScope / popErrorScope operate on ONE stack owned by the DEVICE.
+  // gosx built pipelines from six overlapping asynchronous sites (authored
+  // points, authored particle render, Selena custom post, compute payload
+  // kernel, compute builtin kernel, GPU cull kernel) and popped from each
+  // build's own .then / .catch -- that is, in SETTLE order, while the stack is
+  // LIFO. Two builds that overlap therefore SWAP results: the first to settle
+  // pops the last pusher's scope.
+  //
+  // Measured in Firefox against the live m31labs.dev homepage: four authored
+  // points shader modules reported zero compilation messages and their
+  // createRenderPipelineAsync RESOLVED, yet each was marked failed, because it
+  // popped the scope belonging to a compute kernel the driver had genuinely
+  // rejected. A real error in module A silently disabled feature B while B's
+  // own diagnostics read perfectly healthy. 18 of 19 point layers lost their
+  // authored material to an error that was not theirs.
+  //
+  // The per-object signals have no such failure mode, and measurement showed
+  // them to be strictly STRONGER than the scope, not weaker:
+  //
+  //   case                  create*PipelineAsync   error scope        getCompilationInfo
+  //   invalid WGSL          rejected               "Parsing error"    error + line number
+  //   wrong entry point     rejected               null               clean
+  //   bad vertex layout     rejected               null               clean
+  //   valid                 resolved               null               clean
+  //
+  // The scope caught nothing the promise missed; it was BLIND to both
+  // pipeline-validation failures (per spec an async pipeline creation failure
+  // rejects the promise and generates no device error); and for the one case
+  // it did see it produced a vaguer message than getCompilationInfo.
+  //
+  // So: the promise rejection is the VERDICT, and getCompilationInfo is the
+  // per-object second opinion and the source of readable diagnostics. Both are
+  // keyed to the object they describe and cannot be cross-attributed.
+  //
+  // The only error scopes left in the renderer are the per-frame validation
+  // scope and the ensureFBOs allocation scope in 16a-scene-webgpu.js. Those
+  // two are safe because each is pushed and popped without any other push in
+  // between: ensureFBOs pops in the same synchronous block it pushed in, and
+  // the frame scope is guarded against re-entry by pendingWebGPUErrorScope.
+  // Do not add a third.
+
+  // sceneShaderModuleError resolves to the first compilation ERROR
+  // reported by any of the given shader modules, or null. Never rejects and
+  // never reports an error it cannot attribute: a module that does not
+  // implement getCompilationInfo simply contributes nothing.
+  function sceneShaderModuleError(modules) {
+    var pending = [];
+    for (var i = 0; i < modules.length; i++) {
+      var mod = modules[i];
+      if (!mod || typeof mod.getCompilationInfo !== "function") continue;
+      try {
+        var info = mod.getCompilationInfo();
+        if (info && typeof info.then === "function") pending.push(info);
+      } catch (_err) {
+        // getCompilationInfo is optional in older implementations.
+      }
+    }
+    if (pending.length === 0) return Promise.resolve(null);
+    return Promise.all(pending).then(function(infos) {
+      for (var i = 0; i < infos.length; i++) {
+        var messages = (infos[i] && infos[i].messages) ? infos[i].messages : [];
+        for (var j = 0; j < messages.length; j++) {
+          var message = messages[j];
+          if (!message || String(message.type) !== "error") continue;
+          return "L" + (message.lineNum || 0) + ": " + String(message.message || "").slice(0, 160);
+        }
+      }
+      return null;
+    }).catch(function() { return null; });
   }
 
-  function sceneComputePopErrorScope(scopedDevice) {
-    if (!scopedDevice || typeof scopedDevice.popErrorScope !== "function") {
-      return Promise.resolve(null);
-    }
-    try {
-      return scopedDevice.popErrorScope().then(function(scopeErr) {
-        return scopeErr || null;
-      }).catch(function(error) {
-        var message = error && error.message ? error.message : String(error);
-        if (sceneComputeIsErrorScopeLifecycleMessage(message)) return null;
-        return error || new Error(message);
-      });
-    } catch (error) {
-      var message = error && error.message ? error.message : String(error);
-      if (sceneComputeIsErrorScopeLifecycleMessage(message)) {
-        return Promise.resolve(null);
-      }
-      return Promise.resolve(error || new Error(message));
+  // sceneComputeTruth reaches the render-truth publisher (15a) across chunk
+  // boundaries. 16b ships in bootstrap.js, bootstrap-lite.js AND the WebGPU
+  // feature chunk; only the first two also carry 15a, so the global is the
+  // only universal link.
+  function sceneComputeTruth() {
+    if (typeof window === "undefined" || !window) return null;
+    return window.__gosx_scene3d_render_truth_api || null;
+  }
+
+  // sceneReportPipelineFailure publishes a rejected pipeline to render
+  // truth so an authored kernel the driver refused is a counter read rather
+  // than a console.warn nobody was watching.
+  function sceneReportPipelineFailure(stage, id, reason) {
+    var truth = sceneComputeTruth();
+    if (truth && typeof truth.pipelineFailure === "function") {
+      truth.pipelineFailure(stage, id, reason);
     }
   }
 
@@ -631,11 +701,18 @@
       ready = true;
     }
 
-    function buildPipelineFromSource(wgslSource, entryPoint) {
-      var mod = device.createShaderModule({ code: wgslSource });
+    // buildPipelineFromSource returns BOTH the descriptor and the module,
+    // because the module is the object getCompilationInfo() answers for. The
+    // old shape discarded it, which is part of why validation had to reach for
+    // a device-global error scope in the first place.
+    function buildPipelineFromSource(wgslSource, entryPoint, label) {
+      var mod = device.createShaderModule({ label: label, code: wgslSource });
       return {
-        layout: pipelineLayout,
-        compute: { module: mod, entryPoint: entryPoint },
+        module: mod,
+        descriptor: {
+          layout: pipelineLayout,
+          compute: { module: mod, entryPoint: entryPoint },
+        },
       };
     }
 
@@ -643,73 +720,73 @@
     // to the builtin on async validation failure. IMPORTANT: per the WebGPU
     // spec, createShaderModule() never throws on invalid WGSL, and
     // createComputePipeline() does not throw on shader-validation failure either
-    // — errors surface asynchronously via error scopes / getCompilationInfo and
-    // the returned pipeline is internally invalid. We therefore validate with
-    // createComputePipelineAsync (which rejects on failure) and a surrounding
-    // pushErrorScope("validation") / popErrorScope() belt-and-braces check.
-    // The system stays not-ready (isReady() === false) while validation is
-    // pending; frames silently skip the compute pass via the guard at update().
+    // — the returned pipeline is internally invalid. Validation therefore uses
+    // the two PER-OBJECT signals: createComputePipelineAsync (which rejects on
+    // any failure, module or pipeline) and getCompilationInfo() on the module
+    // (which supplies the readable reason). See the block comment on
+    // sceneShaderModuleError for why the previous device-global error
+    // scope was removed. The system stays not-ready (isReady() === false) while
+    // validation is pending; frames silently skip the compute pass via the
+    // guard at update().
     var payloadWGSL = (typeof entry.computeWGSL === "string" && entry.computeWGSL.trim()) ? entry.computeWGSL : null;
     var payloadEntry = (typeof entry.computeEntry === "string" && entry.computeEntry.trim()) ? entry.computeEntry : "simulate";
     var systemID = (entry && typeof entry.id === "string") ? entry.id : "";
 
     function buildBuiltinPipeline() {
       if (disposed) return;
-      var scopedDevice = device;
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        return;
-      }
-      scopedDevice.createComputePipelineAsync(buildPipelineFromSource(SCENE_COMPUTE_PARTICLE_SOURCE, "simulate")).then(function(pipeline) {
-        return sceneComputePopErrorScope(scopedDevice).then(function(scopeErr) {
+      var built = buildPipelineFromSource(SCENE_COMPUTE_PARTICLE_SOURCE, "simulate", "compute-particle-builtin");
+      device.createComputePipelineAsync(built.descriptor).then(function(pipeline) {
+        // Belt-and-braces, per object: a module carrying compilation ERRORS
+        // must never be dispatched even if this implementation resolved the
+        // pipeline anyway. Unlike the error scope this replaced, the answer
+        // belongs to THIS module and cannot come from another build.
+        return sceneShaderModuleError([built.module]).then(function(compileErr) {
           if (disposed) return;
-          if (scopeErr) {
-            console.warn("[gosx] Compute particle builtin pipeline validation error:", scopeErr);
-          } else {
-            markComputePipelineReady(pipeline);
+          if (compileErr) {
+            console.warn("[gosx] Compute particle builtin pipeline validation error:", compileErr);
+            sceneReportPipelineFailure("compute-builtin", systemID, compileErr);
+            return;
           }
+          markComputePipelineReady(pipeline);
         });
       }).catch(function(err) {
-        return sceneComputePopErrorScope(scopedDevice).then(function() {
+        return sceneShaderModuleError([built.module]).then(function(compileErr) {
           if (disposed) return;
-          console.warn("[gosx] Compute particle builtin pipeline creation failed:", err);
+          var reason = compileErr || err;
+          console.warn("[gosx] Compute particle builtin pipeline creation failed:", reason);
+          sceneReportPipelineFailure("compute-builtin", systemID, reason);
         });
       });
     }
 
+    function failPayloadKernel(reason) {
+      // Published, not just logged. An authored kernel the driver refuses used
+      // to leave nothing behind but this console.warn while the scene ran on
+      // the builtin fallback and every counter read healthy.
+      sceneReportPipelineFailure("compute-payload", systemID, reason);
+      if (!payloadKernelFailed) {
+        payloadKernelFailed = true;
+        console.warn("[gosx] Compute particle payload kernel failed for system '" + systemID + "'; falling back to builtin.", reason);
+      }
+      buildBuiltinPipeline();
+    }
+
     function tryBuildPayloadPipelineAsync() {
       if (disposed) return;
-      var scopedDevice = device;
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        buildBuiltinPipeline();
-        return;
-      }
-      scopedDevice.createComputePipelineAsync(buildPipelineFromSource(payloadWGSL, payloadEntry)).then(function(pipeline) {
-        return sceneComputePopErrorScope(scopedDevice).then(function(scopeErr) {
+      var built = buildPipelineFromSource(payloadWGSL, payloadEntry, "compute-particle-payload");
+      device.createComputePipelineAsync(built.descriptor).then(function(pipeline) {
+        return sceneShaderModuleError([built.module]).then(function(compileErr) {
           if (disposed) return;
-          if (scopeErr) {
-            // Scope captured a validation error even though the async pipeline
-            // call resolved — treat as failure (belt-and-braces).
-            if (!payloadKernelFailed) {
-              payloadKernelFailed = true;
-              console.warn("[gosx] Compute particle payload kernel failed for system '" + systemID + "'; falling back to builtin.");
-            }
-            buildBuiltinPipeline();
-          } else {
-            markComputePipelineReady(pipeline);
+          if (compileErr) {
+            failPayloadKernel(compileErr);
+            return;
           }
+          markComputePipelineReady(pipeline);
         });
-      }).catch(function() {
-        return sceneComputePopErrorScope(scopedDevice).then(function() {
+      }).catch(function(err) {
+        return sceneShaderModuleError([built.module]).then(function(compileErr) {
           if (disposed) return;
-          if (!payloadKernelFailed) {
-            payloadKernelFailed = true;
-            console.warn("[gosx] Compute particle payload kernel failed for system '" + systemID + "'; falling back to builtin.");
-          }
-          buildBuiltinPipeline();
+          failPayloadKernel(compileErr || err);
         });
       });
     }
@@ -1494,39 +1571,33 @@
     // not-ready (caller draws-all, D3). No builtin fallback kernel exists for
     // the cull path — the kernel is always payload-provided (from the mesh's
     // cullKernelWGSL; Elio produces this in the native dominance pass).
-    var scopedDevice = device;
-    try {
-      scopedDevice.pushErrorScope("validation");
-    } catch (_err) {
-      // pushErrorScope not supported — proceed without scope guard.
-      scopedDevice.createComputePipelineAsync({
-        layout: pipelineLayout,
-        compute: { module: device.createShaderModule({ code: cullWGSL }), entryPoint: entryPoint },
-      }).then(markReady).catch(function(err) {
-        if (!disposed) console.warn("[gosx] gpu-cull: kernel pipeline creation failed:", err);
+    // Validation is per-object (promise + getCompilationInfo); the device
+    // error scope this used to push could be popped by any other overlapping
+    // build. See sceneShaderModuleError.
+    var cullMeshID = (mesh && mesh.id) || "?";
+    var cullModule = device.createShaderModule({ label: "gpu-cull-kernel", code: cullWGSL });
+    device.createComputePipelineAsync({
+      layout: pipelineLayout,
+      compute: { module: cullModule, entryPoint: entryPoint },
+    }).then(function(pipeline) {
+      return sceneShaderModuleError([cullModule]).then(function(compileErr) {
+        if (disposed) return;
+        if (compileErr) {
+          console.warn("[gosx] gpu-cull: kernel validation error for mesh '" + cullMeshID + "':", compileErr);
+          sceneReportPipelineFailure("gpu-cull", cullMeshID, compileErr);
+          // Stay not-ready — caller draws-all.
+          return;
+        }
+        markReady(pipeline);
       });
-      scopedDevice = null;
-    }
-    if (scopedDevice) {
-      scopedDevice.createComputePipelineAsync({
-        layout: pipelineLayout,
-        compute: { module: device.createShaderModule({ code: cullWGSL }), entryPoint: entryPoint },
-      }).then(function(pipeline) {
-        return sceneComputePopErrorScope(scopedDevice).then(function(scopeErr) {
-          if (disposed) return;
-          if (scopeErr) {
-            console.warn("[gosx] gpu-cull: kernel validation error for mesh '" + (mesh.id || "?") + "':", scopeErr);
-            // Stay not-ready — caller draws-all.
-          } else {
-            markReady(pipeline);
-          }
-        });
-      }).catch(function(err) {
-        return sceneComputePopErrorScope(scopedDevice).then(function() {
-          if (!disposed) console.warn("[gosx] gpu-cull: kernel pipeline rejected for mesh '" + (mesh.id || "?") + "':", err);
-        });
+    }).catch(function(err) {
+      return sceneShaderModuleError([cullModule]).then(function(compileErr) {
+        if (disposed) return;
+        var reason = compileErr || err;
+        console.warn("[gosx] gpu-cull: kernel pipeline rejected for mesh '" + cullMeshID + "':", reason);
+        sceneReportPipelineFailure("gpu-cull", cullMeshID, reason);
       });
-    }
+    });
 
     return {
       inputBuf: inputBuf,
@@ -1703,5 +1774,7 @@
       registerSceneParticleForceKind,
       sceneComputeSystemSignature,
       unregisterSceneParticleForce,
+      sceneShaderModuleError,
+      sceneReportPipelineFailure,
     });
   }

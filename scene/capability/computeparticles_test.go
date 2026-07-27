@@ -27,7 +27,8 @@ func TestComputeParticlesRendererEvidence(t *testing.T) {
 	compute := readRenderer(t, webgpuComputePath)
 	for _, symbol := range []string{
 		"function createSceneComputeParticleSystem(device, entry) {",
-		`scopedDevice.createComputePipelineAsync(buildPipelineFromSource(SCENE_COMPUTE_PARTICLE_SOURCE, "simulate"))`,
+		`buildPipelineFromSource(SCENE_COMPUTE_PARTICLE_SOURCE, "simulate", "compute-particle-builtin")`,
+		"device.createComputePipelineAsync(built.descriptor).then(function(pipeline) {",
 		"GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX",
 		"dispatchWorkgroups",
 	} {

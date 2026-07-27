@@ -5,6 +5,35 @@
   // lighting, shadow maps, fog, and post-processing. Points are rendered
   // as instanced camera-facing quads since WebGPU has no gl_PointSize.
 
+  // renderTruth resolves the shared render-truth helpers published by
+  // 15a-scene-postfx-shared.js. This chunk (bootstrap-feature-scene3d-webgpu.js)
+  // is a SEPARATE <script> whose IIFE does not concatenate 15a, so the only
+  // link is the global. Resolved per call rather than cached at chunk-load
+  // time because the main scene3d bundle and this chunk race on slow networks.
+  // The no-op fallback keeps the renderer working when 15a is absent (an old
+  // cached main bundle) instead of throwing mid-frame.
+  var WEBGPU_RENDER_TRUTH_NOOP = {
+    enabled: function() { return false; },
+    chain: function() { return []; },
+    mark: function() {},
+    publish: function() {},
+    record: function() {},
+    latch: function() {},
+    captureShaderInfo: function() {},
+    implementation: function() { return "unknown"; },
+    PIPELINE_MISSING: "missing",
+    PIPELINE_PENDING: "pending",
+    PIPELINE_FAILED: "failed",
+    PIPELINE_OK: "ok",
+  };
+
+  function renderTruth() {
+    if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
+      return window.__gosx_scene3d_render_truth_api;
+    }
+    return WEBGPU_RENDER_TRUTH_NOOP;
+  }
+
   // -----------------------------------------------------------------------
   // WGSL Shader Sources
   // -----------------------------------------------------------------------
@@ -3636,6 +3665,25 @@
     return text.indexOf("poperrorscope") >= 0 && text.indexOf("instance dropped") >= 0;
   }
 
+  // wgpuPopScopedErrorScope pops ONE device error scope.
+  //
+  // ONLY TWO CALLERS MAY EXIST, and both already do: ensureFBOs' allocation
+  // guard below, and the per-frame validation scope
+  // (beginWebGPUErrorScope / endWebGPUErrorScope). Do not add a third.
+  //
+  // The stack this pops is owned by the DEVICE, not by the operation. Six
+  // asynchronous pipeline-build sites used to push and pop it from their own
+  // .then / .catch — that is, in SETTLE order against a LIFO stack — so two
+  // overlapping builds swapped results and one build's error was reported
+  // against the other. Measured in Firefox on m31labs.dev: four clean authored
+  // points modules with a RESOLVED createRenderPipelineAsync were all marked
+  // failed by an error belonging to a compute kernel. Those sites now validate
+  // per object (create*PipelineAsync + getCompilationInfo); see the block
+  // comment on sceneShaderModuleError in 16b-scene-compute.js.
+  //
+  // The two remaining callers are safe because neither can interleave with
+  // anything: ensureFBOs pushes and pops inside one synchronous block, and the
+  // frame scope is guarded against re-entry by pendingWebGPUErrorScope.
   function wgpuPopScopedErrorScope(scopedDevice) {
     if (!scopedDevice || typeof scopedDevice.popErrorScope !== "function") {
       return Promise.resolve(null);
@@ -3732,6 +3780,15 @@
 
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
 
+    // Render-truth chain state, owned by apply() but hoisted here so
+    // fullscreenPass -- the ONE function every post pass funnels through --
+    // can attribute its dispatch to the effect currently being processed.
+    // Counting at the funnel instead of in each switch case means bloom's four
+    // internal passes are counted honestly (dispatched=4), and it is impossible
+    // to add a new effect case that forgets to report itself.
+    var activePostChain = null;
+    var activePostIndex = -1;
+
     // Lazily compiled pipelines and layouts.
     var pipelines = {};
     var postParamsLayout = null;
@@ -3808,15 +3865,22 @@
         return null;
       }
       var module = scopedDevice.createShaderModule({ label: "selena-post-" + name, code: wgsl });
+      renderTruth().captureShaderInfo(module, "selena-post-" + name);
       var bgl = getSelenaPostBGL();
       var pipelineLayout = scopedDevice.createPipelineLayout({ bindGroupLayouts: [bgl] });
 
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        customPostPipelineCache.delete(cacheKey);
-        return null;
+      function markFailed(reason) {
+        sceneReportPipelineFailure("post", name, reason);
+        if (!customPostFailed.has(name)) {
+          console.warn("[gosx] custom post pass '" + name + "' failed validation; becoming identity passthrough.", reason);
+          customPostFailed.add(name);
+        }
+        customPostPipelineCache.set(cacheKey, { failed: true });
       }
+
+      // Validated per object: the promise is the verdict, getCompilationInfo
+      // the reason. No device error scope — it would be popped by whichever
+      // other async build settled first. See wgpuPopScopedErrorScope.
       scopedDevice.createRenderPipelineAsync({
         label: "gosx-selena-post-" + name,
         layout: pipelineLayout,
@@ -3828,26 +3892,18 @@
         },
         primitive: { topology: "triangle-list" },
       }).then(function(pipeline) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+        return sceneShaderModuleError([module]).then(function(compileErr) {
           if (disposed) return;
-          if (scopeErr) {
-            if (!customPostFailed.has(name)) {
-              console.warn("[gosx] custom post pass '" + name + "' failed validation; becoming identity passthrough.", scopeErr.message);
-              customPostFailed.add(name);
-            }
-            customPostPipelineCache.set(cacheKey, { failed: true });
-          } else {
-            customPostPipelineCache.set(cacheKey, { pipeline: pipeline, bgl: bgl });
+          if (compileErr) {
+            markFailed(compileErr);
+            return;
           }
+          customPostPipelineCache.set(cacheKey, { pipeline: pipeline, bgl: bgl });
         });
       }).catch(function(err) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+        return sceneShaderModuleError([module]).then(function(compileErr) {
           if (disposed) return;
-          if (!customPostFailed.has(name)) {
-            console.warn("[gosx] custom post pass '" + name + "' pipeline error; becoming identity passthrough.", String(err));
-            customPostFailed.add(name);
-          }
-          customPostPipelineCache.set(cacheKey, { failed: true });
+          markFailed(compileErr || err);
         });
       });
       return null; // pending this frame
@@ -4007,6 +4063,11 @@
       pass.setBindGroup(0, bindGroup);
       pass.draw(4);
       pass.end();
+      // Render truth: this is a real, encoded, submitted draw -- the only
+      // point in the post chain where "the pixels were written" becomes true.
+      if (activePostChain && activePostIndex >= 0) {
+        renderTruth().mark(activePostChain, activePostIndex, "ok", 1);
+      }
     }
 
     return {
@@ -4020,12 +4081,27 @@
 
         var currentTexView = sceneTexView;
         var blitPipeline = getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
-        var stats = { postEffects: effects.length, postSSAOPasses: 0, postDOFPasses: 0, postPrecision: postPrecisionMode };
+        // postChain is the per-effect render-truth record. Built ONLY when the
+        // diagnostics tier is on, so production pays one boolean read.
+        //
+        // Every entry starts at pipeline="missing", dispatched=0 and is
+        // upgraded by the switch case that handles it. An effect whose case
+        // never runs -- an unknown kind, or the lowercased-kind mismatch that
+        // made customPost unreachable for three sessions -- therefore stays
+        // visibly dead in the published chain instead of being indistinguishable
+        // from a healthy pass. postEffects (the old counter) counts the chain
+        // LENGTH and would read "1" in exactly that situation.
+        var truth = renderTruth();
+        var postTruthOn = truth.enabled();
+        var postChain = postTruthOn ? truth.chain(effects) : null;
+        var stats = { postEffects: effects.length, postSSAOPasses: 0, postDOFPasses: 0, postPrecision: postPrecisionMode, postChain: postChain };
+        activePostChain = postChain;
 
         for (var i = 0; i < effects.length; i++) {
           var effect = effects[i];
           var isLast = (i === effects.length - 1);
           var outputView = isLast ? finalView : (currentTexView === sceneTexView ? auxTexView : sceneTexView);
+          activePostIndex = i;
 
           switch (effect.kind) {
             case SCENE_POST_TONE_MAPPING: {
@@ -4232,6 +4308,26 @@
               if (!cpRes || cpRes.pending || cpRes.failed) {
                 // Not yet compiled (first frame) or failed → identity passthrough.
                 // currentTexView is unchanged; the output falls through to the blit.
+                //
+                // THIS is the branch that produced zero pixels for three
+                // sessions while every health attribute read green. Distinguish
+                // the three causes explicitly: no WGSL at all (missing), still
+                // compiling (pending -- benign for a frame or two, a defect if
+                // it persists), or rejected by the browser's own WGSL compiler
+                // (failed -- and note that Selena validates with naga while
+                // Edge compiles with Tint, so "failed" here on Edge alone is a
+                // Tint/naga divergence, not necessarily a bad shader).
+                if (postChain) {
+                  var cpState = truth.PIPELINE_MISSING;
+                  if (cpRes && cpRes.pending) cpState = truth.PIPELINE_PENDING;
+                  else if (cpRes && cpRes.failed) cpState = truth.PIPELINE_FAILED;
+                  else if (customPostFailed.has((typeof effect.name === "string" && effect.name) ? effect.name : "custom")) {
+                    cpState = truth.PIPELINE_FAILED;
+                  } else if (customPostWGSLModuleSource(effect)) {
+                    cpState = truth.PIPELINE_PENDING;
+                  }
+                  truth.mark(postChain, i, cpState, 0);
+                }
                 break;
               }
               var cpUniformBuf = ensureCustomPostUniformBuffer(effect);
@@ -4254,6 +4350,12 @@
           }
         }
 
+        // Detach chain attribution BEFORE the final blit: the blit is not an
+        // authored effect, and counting it against the last chain slot would
+        // make a dead trailing pass look alive -- the precise misreading that
+        // let a no-op customPost look like a working one.
+        activePostIndex = -1;
+
         // If no effects matched or we need a final blit.
         if (currentTexView !== finalView) {
           var blitBG = device.createBindGroup({
@@ -4265,6 +4367,7 @@
           });
           fullscreenPass(encoder, blitPipeline, blitBG, finalView);
         }
+        activePostChain = null;
         return stats;
       },
 
@@ -5685,6 +5788,14 @@
     var adapter = probe.adapter;
     var device = probe.device;
     var rendererOptions = options && typeof options === "object" ? options : {};
+    // lastDeviceLostInfo: { reason, message } captured by the device.lost
+    // handler below (see initGPUResources), read back by diagnostics().
+    // Kept on THIS renderer instance rather than read off the shared probe
+    // snapshot, because a successful re-probe nulls that shared snapshot
+    // (16z-scene-webgpu-probe.js's _webgpuDeviceLostInfo) the moment it
+    // recovers — often before the mount-level watchdog's next poll — so
+    // reading the shared snapshot lost the detail exactly when it mattered.
+    var lastDeviceLostInfo = null;
 
     function rendererDeviceStillActive(scopedDevice) {
       return !!device && device === scopedDevice;
@@ -5998,10 +6109,20 @@
     // fallback resilience in 20-scene-mount.js; see diagnostics().frameErrorStreak
     // and disablePostProcessing() below.
     var webGPUConsecutiveFrameErrors = 0;
+    // webGPUConsecutiveCleanFrames: the complement of webGPUConsecutiveFrameErrors
+    // above — consecutive frames that ended with NO reported validation/OOM
+    // error, reset to 0 the moment a frame errors (see reportWebGPUFrameError).
+    // Drives the mount-level RESTORE step of the resilience ladder (see
+    // diagnostics().frameCleanStreak and enablePostProcessing() below): once
+    // a demoted scene has run clean for long enough, the mount re-enables
+    // post-FX.
+    var webGPUConsecutiveCleanFrames = 0;
     // postFXForceDisabled: set by disablePostProcessing() (the "demote" step
     // of the frame-error resilience ladder) — once true, render() never
     // rebuilds or uses the post-FX chain again for this renderer instance,
-    // regardless of bundle.postEffects, until a fresh mount/renderer swap.
+    // until enablePostProcessing() (the "restore" step, called by the mount
+    // once webGPUConsecutiveCleanFrames crosses its threshold) clears it, or
+    // a fresh mount/renderer swap replaces this closure entirely.
     var postFXForceDisabled = false;
     // webGPUBundleCache holds the cached GPURenderBundle and the command stream
     // it was built from. Created on the first eligible frame.
@@ -6818,12 +6939,30 @@
     // returned renderer is fully ready before the factory call returns.
     (function initGPUResources() {
       try {
-        // Handle device loss post-factory and invalidate the shared probe.
+        // Handle device loss post-factory. Record the loss detail on THIS
+        // renderer (lastDeviceLostInfo, read back by diagnostics() below)
+        // for diagnosis, and run our own local cleanup — but do NOT also
+        // invalidate the shared probe here. 16z-scene-webgpu-probe.js's own
+        // sceneWebGPUWatchDeviceLoss already has a `.then()` listener on
+        // this EXACT device (it is the same object handed to us as
+        // probe.device above), and is the probe's single owner for
+        // invalidation/reprobe bookkeeping. A single device.lost event
+        // resolves every listener attached to it, so having both this
+        // handler AND 16z's call sceneWebGPUInvalidateProbe counted one
+        // real loss as two against WEBGPU_LOST_REPROBE_MAX_PER_WINDOW,
+        // arming its reprobe backoff after a single device loss instead of
+        // the intended three.
         device.lost.then(function(info) {
           console.warn("[gosx] WebGPU device lost:", info && info.message);
-          if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_invalidate === "function") {
-            window.__gosx_scene3d_webgpu_probe_invalidate(info);
-          }
+          // Journal the loss with a timestamp. A device that mounts healthy and
+          // dies seconds later (observed on Firefox under GPU-memory pressure)
+          // is indistinguishable from "never had WebGPU" in any single sample;
+          // only an ordered timeline separates the two.
+          renderTruth().record("device-lost", (info && info.reason ? info.reason + " " : "") + String(info && info.message || ""));
+          lastDeviceLostInfo = {
+            reason: (info && info.reason) || "",
+            message: (info && info.message) || "",
+          };
           destroyGPUTimingResources(gpuTiming);
           gpuTiming = false;
           for (var failedTimingIndex = 0; failedTimingIndex < failedGPUTimings.length; failedTimingIndex++) {
@@ -6846,6 +6985,23 @@
           // without waiting for dispose().
           try { disposeWaterSystems(); } catch (_lossE) {}
         }).catch(function() {});
+
+        // uncapturederror carries validation and out-of-memory failures the
+        // per-frame error scopes never see (resource creation outside a scope,
+        // async pipeline work, driver-level complaints). On a Tint/naga
+        // divergence this is frequently the ONLY textual evidence, so it goes
+        // in the journal even though the frame keeps running.
+        if (typeof device.addEventListener === "function") {
+          try {
+            device.addEventListener("uncapturederror", function(event) {
+              var err = event && event.error;
+              renderTruth().record("gpu-uncaptured-error", String((err && err.message) || err || "unknown"));
+            });
+          } catch (_uncapturedErr) {
+            // Older implementations expose device.onuncapturederror only.
+          }
+        }
+        renderTruth().record("webgpu-device-ready", renderTruth().implementation(webGPUAdapterInfoSnapshot()));
 
         configureWebGPUCanvas();
 
@@ -7651,6 +7807,7 @@
         var bindGroupLayout = sceneSelenaBindGroupLayout(device, layout);
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
         var module = device.createShaderModule({ label: "selena-material", code: shader });
+        renderTruth().captureShaderInfo(module, "selena-material");
         var attrs = sceneSelenaPipelineAttributes(layout);
         var buffers = attrs.map(function(attr) {
           return {
@@ -7760,6 +7917,7 @@
         var bindGroupLayout = sceneSelenaBindGroupLayout(device, layout);
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
         var module = device.createShaderModule({ label: "selena-material-skinned", code: shader });
+        renderTruth().captureShaderInfo(module, "selena-material-skinned");
         var pipeline = device.createRenderPipeline({
           label: "gosx-selena-skinned-" + (layout.material || "material") + "-" + blendMode,
           layout: pipelineLayout,
@@ -8047,6 +8205,7 @@
         var bindGroupLayout = sceneSelenaComputeBindGroupLayout(device, layout);
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
         var module = device.createShaderModule({ label: "selena-compute-material", code: shader });
+        renderTruth().captureShaderInfo(module, "selena-compute-material");
         var entryPoint = (layout.entryPoints && layout.entryPoints.compute) || "computeMain";
         var pipeline = device.createComputePipeline({
           label: "gosx-selena-compute-" + (layout.material || "material"),
@@ -8228,6 +8387,7 @@
         var bgl = getSelenaWaterPostBGL();
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
         var module = device.createShaderModule({ label: "selena-post-material", code: shader });
+        renderTruth().captureShaderInfo(module, "selena-post-material");
         var pipeline = device.createRenderPipeline({
           label: "gosx-selena-post-" + pipelineLabelSuffix + (layout.material || "material"),
           layout: pipelineLayout,
@@ -8375,22 +8535,22 @@
         return null;
       }
       var vertMod = scopedDevice.createShaderModule({ label: "points-authored-vert", code: vertWGSL });
+      renderTruth().captureShaderInfo(vertMod, "points-authored-vert");
       var fragMod = scopedDevice.createShaderModule({ label: "points-authored-frag", code: fragWGSL });
+      renderTruth().captureShaderInfo(fragMod, "points-authored-frag");
 
-      function markFailed() {
+      function markFailed(reason) {
+        sceneReportPipelineFailure("points", systemID, reason);
         if (!pointsAuthoredLayerFailed.get(systemID)) {
           pointsAuthoredLayerFailed.set(systemID, true);
-          console.warn("[gosx] Points authored pipeline failed for layer '" + systemID + "'; falling back to builtin.");
+          console.warn("[gosx] Points authored pipeline failed for layer '" + systemID + "'; falling back to builtin.", reason);
         }
         pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
       }
 
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        pointsAuthoredPipelineCache.delete(cacheKey);
-        return null;
-      }
+      // This is the site the mis-pairing bug hit hardest: 19 point layers on
+      // one page build here, all overlapping, all previously sharing one
+      // device error scope stack. Validation is now per object.
       scopedDevice.createRenderPipelineAsync({
         label: "gosx-points-authored-" + blendMode,
         layout: pointsAuthoredVertexPipelineLayout,
@@ -8400,18 +8560,18 @@
         multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
         depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
       }).then(function(pipeline) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          if (scopeErr) {
-            markFailed();
-          } else {
-            pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+          if (compileErr) {
+            markFailed(compileErr);
+            return;
           }
+          pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
         });
-      }).catch(function() {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+      }).catch(function(err) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          markFailed();
+          markFailed(compileErr || err);
         });
       });
       return null; // pending first frame — builtin fallback used
@@ -8449,22 +8609,22 @@
         return null;
       }
       var vertMod = scopedDevice.createShaderModule({ label: "particle-render-authored-vert", code: vertWGSL });
+      renderTruth().captureShaderInfo(vertMod, "particle-render-authored-vert");
       var fragMod = scopedDevice.createShaderModule({ label: "particle-render-authored-frag", code: fragWGSL });
+      renderTruth().captureShaderInfo(fragMod, "particle-render-authored-frag");
 
-      function markFailed() {
+      function markFailed(reason) {
+        sceneReportPipelineFailure("particle-render", systemID, reason);
         if (!pointsAuthoredLayerFailed.get(systemID)) {
           pointsAuthoredLayerFailed.set(systemID, true);
-          console.warn("[gosx] ComputeParticle authored render pipeline failed for system '" + systemID + "'; falling back to builtin.");
+          console.warn("[gosx] ComputeParticle authored render pipeline failed for system '" + systemID + "'; falling back to builtin.", reason);
         }
         pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
       }
 
-      try {
-        scopedDevice.pushErrorScope("validation");
-      } catch (_err) {
-        pointsAuthoredPipelineCache.delete(cacheKey);
-        return null;
-      }
+      // Per-object validation; no device error scope. This build overlaps the
+      // compute kernel build for the SAME system, which is exactly the pairing
+      // that reported a rejected kernel against a healthy render pipeline.
       scopedDevice.createRenderPipelineAsync({
         label: "gosx-particle-render-authored-" + blendMode,
         layout: pointsAuthoredStoragePipelineLayout,
@@ -8474,18 +8634,18 @@
         multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
         depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
       }).then(function(pipeline) {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function(scopeErr) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          if (scopeErr) {
-            markFailed();
-          } else {
-            pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+          if (compileErr) {
+            markFailed(compileErr);
+            return;
           }
+          pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
         });
-      }).catch(function() {
-        return wgpuPopScopedErrorScope(scopedDevice).then(function() {
+      }).catch(function(err) {
+        return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
           if (!rendererDeviceStillActive(scopedDevice)) return;
-          markFailed();
+          markFailed(compileErr || err);
         });
       });
       return null;
@@ -13971,6 +14131,25 @@
       return count;
     }
 
+    // webGPUCountUndrawableMeshObjects counts entries buildDrawList rejects for
+    // DEGENERATE GEOMETRY (non-finite vertexOffset/vertexCount, or zero
+    // vertices) rather than for frustum culling. Without it the accounting is
+    // open-ended: meshObjects - meshDrawCalls - meshViewCulled leaves an
+    // unexplained remainder that could be a cull bug, a planner bug or a
+    // geometry bug. With it the identity
+    //     meshObjects == meshDrawCalls + meshViewCulled + meshUndrawable
+    // closes, and any violation is itself a reportable defect.
+    function webGPUCountUndrawableMeshObjects(bundle) {
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var count = 0;
+      for (var i = 0; i < objects.length; i++) {
+        var obj = objects[i];
+        if (!obj || obj.viewCulled) continue;
+        if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) count++;
+      }
+      return count;
+    }
+
     function webGPUSceneMeshVertexCount(bundle) {
       var count = Math.max(0, Math.floor(sceneNumber(bundle && bundle.worldMeshVertexCount, 0)));
       var positions = bundle && bundle.worldMeshPositions;
@@ -15701,6 +15880,27 @@
       } else {
         mount.removeAttribute("data-gosx-scene3d-webgpu-last-error");
       }
+      // Render-truth surface: backend-neutral attribute names both renderers
+      // write, so probes and deploy gates never branch on which backend won.
+      // Gated on the diagnostics tier -- when it is off nothing here runs and
+      // production pays a single boolean read per diagnostic interval.
+      var truthApi = renderTruth();
+      if (truthApi.enabled()) {
+        truthApi.publish(mount, {
+          backend: "webgpu",
+          postChain: published.postChain,
+          meshSubmitted: published.meshObjects || 0,
+          meshDrawn: published.meshDrawCalls || 0,
+          meshViewCulled: published.meshViewCulled || 0,
+          meshUndrawable: published.meshUndrawable || 0,
+          pointsSubmitted: published.pointEntries || 0,
+          pointsDrawn: published.pointDrawEntries || 0,
+          pointInstancesSubmitted: published.pointInstances || 0,
+          pointInstancesDrawn: published.pointDrawInstances || 0,
+          uniformTime: selenaFrame.time,
+          adapterInfo: webGPUAdapterInfoSnapshot(),
+        });
+      }
       // Cull survivor telemetry: written when __gosx_scene3d_cull_telemetry is
       // enabled; removed otherwise so the attribute is absent in production.
       if (lastCullSurvivors !== null) {
@@ -15726,6 +15926,9 @@
       // to decide when to demote (tear down post-FX) and, if that doesn't
       // help, fall back to WebGL.
       webGPUConsecutiveFrameErrors += 1;
+      // Any error frame breaks a clean streak, however long — the mount
+      // must not restore post-FX on a scene that is still failing.
+      webGPUConsecutiveCleanFrames = 0;
       var stats = Object.assign({}, lastWebGPUFrameStats || {}, { renderer: "webgpu", lastError: text, frameErrorStreak: webGPUConsecutiveFrameErrors });
       publishWebGPUFrameStats(stats);
       if (webGPUErrorReportCount >= 3) return;
@@ -15765,6 +15968,7 @@
             reportWebGPUFrameError(error.message || String(error));
           } else {
             webGPUConsecutiveFrameErrors = 0;
+            webGPUConsecutiveCleanFrames += 1;
             if (lastWebGPUFrameStats && lastWebGPUFrameStats.lastError) {
               var clean = Object.assign({}, lastWebGPUFrameStats);
               delete clean.lastError;
@@ -16625,6 +16829,7 @@
         // pair of counters exists to close.
         meshDrawCalls: 0,
         meshViewCulled: webGPUCountViewCulledMeshObjects(bundle),
+        meshUndrawable: webGPUCountUndrawableMeshObjects(bundle),
         skinnedMeshObjects: webGPUCountSkinnedMeshes(bundle),
         computedMorphDispatches: computedMorphStats.computedMorphDispatches,
         computedMorphVertices: computedMorphStats.computedMorphVertices,
@@ -17069,6 +17274,23 @@
       return true;
     }
 
+    // enablePostProcessing: the frame-error resilience "restore" step — the
+    // way back that disablePostProcessing (above) never had. Called by
+    // 20-scene-mount.js's checkSceneWebGPUFrameErrorResilience once a
+    // demoted renderer has produced enough consecutive clean frames (see
+    // diagnostics().frameCleanStreak). Clears postFXForceDisabled so the
+    // very next render() call with a non-empty bundle.postEffects rebuilds
+    // the post-FX chain itself (usePostProcessing below, and the lazy
+    // `if (!postProcessor) postProcessor = wgpuCreatePostProcessor(...)`
+    // in render()) — no GPU resource construction happens here; this
+    // function only flips the gate. Idempotent — returns false if post-FX
+    // is not currently force-disabled (nothing to do).
+    function enablePostProcessing() {
+      if (!postFXForceDisabled) return false;
+      postFXForceDisabled = false;
+      return true;
+    }
+
     // Device + GPU resources were already initialized synchronously
     // above (using the pre-probed device from 16z). If that setup
     // failed, initFailed is true and render() will no-op; return null
@@ -17104,6 +17326,16 @@
       }
     }
 
+    // webGPUAdapterInfoSnapshot returns the GPUAdapterInfo the probe captured.
+    // Vendor / architecture / device / description together are what let a
+    // dump be attributed to a specific driver, and (with the browser engine)
+    // to Dawn-plus-Tint versus wgpu-plus-naga. "backend=webgpu" alone cannot
+    // distinguish two WGSL compilers with two different sets of bugs.
+    function webGPUAdapterInfoSnapshot() {
+      var base = typeof sceneWebGPUDiagnostics === "function" ? sceneWebGPUDiagnostics() : {};
+      return (base && base.adapterInfo) ? base.adapterInfo : {};
+    }
+
     function diagnostics() {
       var base = typeof sceneWebGPUDiagnostics === "function"
         ? sceneWebGPUDiagnostics()
@@ -17125,7 +17357,11 @@
       out.initFailed = !!initFailed;
       out.initError = initError || "";
       out.deviceLost = !device || !!(base && base.lost);
-      out.deviceLostInfo = base && base.lost ? base.lost : null;
+      // Prefer THIS renderer's own lastDeviceLostInfo (set synchronously by
+      // the device.lost handler above, never cleared) over the shared probe
+      // snapshot (base.lost), which a successful re-probe nulls out the
+      // moment it recovers — often before a watchdog poll gets to read it.
+      out.deviceLostInfo = lastDeviceLostInfo || (base && base.lost ? base.lost : null);
       out.frameSeq = webGPUFrameSeq;
       out.frameAt = lastWebGPUFrameStats && lastWebGPUFrameStats.frameAt || 0;
       out.lastError = lastWebGPUFrameStats && lastWebGPUFrameStats.lastError || "";
@@ -17136,9 +17372,11 @@
       out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
       out.postProcessing = !!postProcessor;
       // Frame-error resilience state (see reportWebGPUFrameError /
-      // disablePostProcessing above and 20-scene-mount.js's
-      // checkSceneWebGPUFrameErrorWatchdog, the poller that acts on these).
+      // disablePostProcessing / enablePostProcessing above and
+      // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog, the poller
+      // that acts on these).
       out.frameErrorStreak = webGPUConsecutiveFrameErrors;
+      out.frameCleanStreak = webGPUConsecutiveCleanFrames;
       out.postFXDisabled = postFXForceDisabled;
       out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
       out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
@@ -17154,6 +17392,16 @@
       // 16a-scene-webgpu.capabilities.json.
       out.gpuPicking = true;
       if (scenePicker) Object.assign(out, scenePicker.diagnostics());
+      // Render truth: implementation identity, the post-chain dispatch record
+      // and the event journal, so a single diagnostics() call is a complete
+      // dump rather than a starting point for DOM scraping.
+      var truthApi = renderTruth();
+      out.implementation = truthApi.implementation(out.adapterInfo || {});
+      out.browserEngine = typeof truthApi.browserEngine === "function" ? truthApi.browserEngine() : "";
+      out.renderTruthEvents = typeof truthApi.events === "function" ? truthApi.events() : [];
+      out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
+      out.postChain = lastWebGPUFrameStats && lastWebGPUFrameStats.postChain || null;
+      out.uniformTime = selenaFrame.time;
       return out;
     }
 
@@ -17169,6 +17417,7 @@
       render: render,
       dispose: dispose,
       disablePostProcessing: disablePostProcessing,
+      enablePostProcessing: enablePostProcessing,
     };
   }
 

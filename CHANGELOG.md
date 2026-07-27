@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.36.0 (2026-07-26)
 
 ### Checkable cross-file claims (`internal/claimcheck`)
 
@@ -90,6 +90,118 @@ sides disagree about `floor()`, which moves a point across its whole axis.
 - Strict IR validation accepts a `generator` in place of positions and rejects
   an unknown kind. At runtime an unrecognized recipe zeroes the layer count so
   the layer disappears instead of indexing an empty buffer.
+
+### Post-FX recovery and device-loss latch fixes
+
+A WebGPU device-loss event pushed a scene down a two-step ladder: demote
+post-processing, then fall back to WebGL. Once demoted, a scene stayed
+demoted for the rest of the session even after the GPU recovered, and two
+independent watchers counted the same loss event twice.
+
+- The ladder is now three steps: demote, restore, fallback. A scene climbs
+  back onto full post-processing after running clean for a scaling number of
+  consecutive frames, instead of staying demoted forever.
+- Automatic restore is capped at three attempts, with each attempt requiring
+  a longer clean streak than the last. A scene that keeps failing latches
+  post-FX off permanently instead of oscillating between demote and restore.
+- `device.lost` was counted once by 16a's renderer-local handler and once
+  more by 16z's shared watcher, for a single physical loss. The count is now
+  taken once.
+- `lastDeviceLostInfo` is now kept per renderer instead of on the shared
+  probe snapshot, which a successful re-probe clears before the watchdog can
+  read it. The watchdog reads a value the probe no longer owns.
+- A scene that falls back from WebGPU to WebGL after a device loss can now
+  climb back onto WebGPU once the probe re-acquires a working device, instead
+  of running WebGL for the rest of the session.
+- Device-lost reason and message (`destroy`, `driver-reset`, `OOM`,
+  `internal-error`) are now on the DOM and in render-watchdog-recovery
+  telemetry, so production can distinguish them instead of seeing one opaque
+  loss event.
+
+### Motion reveal guard scoped to a single page life
+
+`data-gosx-motion-revealed` was a plain `"true"` flag that dispose never
+clears, because its purpose is surviving dispose and remount. A boolean
+cannot tell "re-observed in this page life" from "carried over from a
+different page life through server-rendered markup or a stale DOM value".
+The stale value suppressed the reveal permanently: hero text mounted in its
+markup-declared hidden state and never animated in.
+
+- The boolean is now a per-evaluation token generated once at module load
+  through Web Crypto, with a `Math.random`/`Date.now` fallback. The guard
+  matches only when the write and the read happened in the same bundle
+  evaluation.
+- A bfcache resume does not re-evaluate script, so the token stays paired
+  with the suspended realm and the guard still holds across that path.
+- Regression tests cover a stale literal `"true"`, a stale token from a
+  different evaluation, and a same-life token that must still skip the
+  replay.
+
+### Render-truth telemetry
+
+Every existing counter answered "what was asked for", not "what reached the
+framebuffer". That gap let a `customPost` effect draw zero pixels for three
+sessions, and three mesh planes draw nothing for two weeks, with no signal
+that anything was wrong.
+
+- Added a shared render-truth module
+  (`client/js/bootstrap-src/15a-scene-postfx-shared.js`) that reports
+  observed GPU actions: per-effect post-chain state (missing, pending,
+  failed, ok) and dispatch count; submitted-versus-drawn-versus-culled mesh
+  and point counters; uniform-time advancement; Dawn/Tint versus wgpu/naga
+  implementation identity; an ordered event journal for fallbacks and device
+  loss; latched host-page decisions; and captured `getCompilationInfo`
+  output on authored shaders.
+- Both renderers feed the shared module. WebGL counts each `gl.drawArrays`
+  call and marks post-chain effects per frame. WebGPU marks at the
+  `fullscreenPass` dispatch funnel, so bloom's four internal passes count
+  honestly and a missed case cannot happen. Both publish the same
+  backend-neutral attributes, so a probe never has to branch on which
+  renderer won.
+- Added a consolidated `data-gosx-scene3d-render-backend-truth` JSON record
+  at the mount, unifying fallback reason, implementation identity, adapter
+  info, device-loss state, events, shader diagnostics, post-chain state, and
+  uniform time in one read.
+- Added `data-gosx-scene3d-render-gpu`, derived from the backend that
+  actually ran, so a Canvas2D mount can never report `gpu=true`.
+- Gated on the diagnostics tier
+  (`__gosx_scene3d_render_truth` / `__gosx_scene3d_webgpu_telemetry` /
+  `scene3dDiagnostics`), so production pays only one boolean read per frame.
+  When the tier is off, renderers build no chain records, format no
+  strings, and touch no DOM.
+- Test coverage asserts that the authored-versus-drawn distinction survives,
+  that a hostile effect name cannot forge a chain entry, that uniform-time
+  advancement flips once the clock moves, and that implementation identity
+  separates Dawn/Tint from wgpu/naga by user agent.
+
+### Hub authorizer test flake
+
+`TestHubBinaryChangeAuthorizerRejectsActorSubstitutionBeforeMerge` failed
+intermittently. The bootstrap Bloom filter that seeds `clientState.PeerBloom`
+has a measured false-positive rate near 10%. A false positive on the test's
+single change made `GenerateSyncMessage` advertise only the new head and
+omit the change bytes the test needed to inspect.
+
+- The test now clears `clientState.PeerBloom` before generating the sync
+  message, so the change is always present in the frame.
+- The Bloom-driven omit-and-retry path stays covered elsewhere, in
+  `TestHubSyncDocBootstrapsAndAppliesBinaryChanges`, which forces the false
+  positive on purpose. This test now isolates only the authorizer's
+  per-change actor-binding decision.
+
+### Navigation bootstrap detection
+
+A soft navigation could report a false `engine-remounted` telemetry event on
+the very first page load. `bootstrapPage()` read `isNavigationBootstrap`
+after `pendingEngineReuseIDs` had already coerced its argument to a `Set`, so
+the downstream check `reuseEngineIDs instanceof Set` was always true and
+could not distinguish a first load from a real remount.
+
+- `isNavigationBootstrap` is now captured at `bootstrapPage()` entry, before
+  the coercion, and threaded through `runtimeReady()` into
+  `mountAllEngines()`.
+- Added a regression test asserting that a genuine first page load never
+  emits an `engine-remounted` event.
 
 ## v0.35.10 (2026-07-26)
 

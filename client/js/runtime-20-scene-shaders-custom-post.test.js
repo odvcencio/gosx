@@ -13,12 +13,17 @@ const path = require("node:path");
 
 const {
   bootstrapSource,
+  bootstrapRuntimeSource,
+  bootstrapFeatureEnginesSource,
+  bootstrapFeatureScene3DSource,
   bootstrapScene3DWebGPUSourceFile,
   bootstrapScene3DInputSourceFile,
   bootstrapScene3DMountSourceFile,
   FakeWebGLContext,
   FakeElement,
   createContext,
+  installManualRAF,
+  installManualTimers,
   runScript,
   flushAsyncWork,
   createBoardWebGPUHarness,
@@ -1266,14 +1271,15 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
     pipelineAsyncBehavior(desc) {
       return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
     },
-    // Error scope reports a validation error.
-    errorScopeBehavior() {
-      return Promise.resolve({ message: "fake validation error" });
-    },
   });
+  // Measured browser behaviour for invalid WGSL: createRenderPipelineAsync
+  // REJECTS. This used to be expressed through the device error scope, which
+  // could not say which pipeline the error belonged to.
   fake.device.createRenderPipelineAsync = function(desc) {
     renderPipelineAsyncCalls++;
-    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+    const err = new Error("ShaderModule with '" + (desc && desc.label) + "' label is invalid");
+    err.name = "GPUPipelineError";
+    return Promise.reject(err);
   };
 
   const harness = await createComputeParticleHarness(fake.device);
@@ -1823,4 +1829,350 @@ test("shaderLib hydrate: customVertexWGSL in materials profile reaches point lay
   assert.ok(pt, "point layer must exist");
   assert.equal(pt.customVertexWGSL, shaderSrc, "post-inflate customVertexWGSL must flow from materials profile to point layer");
   assert.equal(pt.customFragmentWGSL, shaderSrc, "post-inflate customFragmentWGSL must flow from materials profile to point layer");
+});
+
+test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope results, and enablePostProcessing rebuilds the post chain", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+
+  // Toggled per-frame by the test; the REAL beginWebGPUErrorScope /
+  // endWebGPUErrorScope pair in render() awaits this exact promise.
+  let nextFrameErrors = false;
+  harness.fake.device.popErrorScope = function() {
+    return nextFrameErrors
+      ? Promise.resolve({ message: "Buffer with '' label is invalid" })
+      : Promise.resolve(null);
+  };
+
+  const state = api.createSceneState({
+    scene: {
+      // A sphere (not a box -- box geometry also emits thick-world-line
+      // edge data that makeFakeGPUDevice's render pass double doesn't
+      // implement setIndexBuffer for) so render() has SOME renderable
+      // content: an empty scene (no PBR/points/lines/water/labels) returns
+      // before ever reaching the post-FX / error-scope code this test
+      // exercises.
+      objects: [{ id: "probe-sphere", kind: "sphere", radius: 0.5, x: 0, y: 0, z: 0, color: "#8de1ff", wireframe: false }],
+      postEffects: [{ kind: "bloom", threshold: 0.8, intensity: 0.2 }],
+    },
+  });
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], [], state.postEffects, 0, false,
+  );
+
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  async function renderFrame(hasError) {
+    nextFrameErrors = hasError;
+    harness.renderer.render(bundle, { width: 64, height: 64 });
+    // endWebGPUErrorScope's device.popErrorScope().then(...) resolves over
+    // two microtask hops (the fake's Promise.resolve(...) plus the real
+    // .then chain) -- drain both before reading diagnostics().
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  await renderFrame(false);
+  let diag = harness.renderer.diagnostics();
+  assert.equal(diag.postFXDisabled, false);
+  assert.equal(diag.postProcessing, true, "a non-empty postEffects bundle must build the post chain when not force-disabled");
+
+  // Five consecutive error frames -> frameErrorStreak must read exactly 5,
+  // driven purely by real popErrorScope rejections.
+  for (let i = 0; i < 5; i++) {
+    await renderFrame(true);
+  }
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameErrorStreak, 5);
+  assert.equal(diag.frameCleanStreak, 0, "an error frame must zero the clean streak");
+
+  // One clean frame breaks the error streak and starts the clean streak.
+  await renderFrame(false);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameErrorStreak, 0, "a clean frame must zero the error streak");
+  assert.equal(diag.frameCleanStreak, 1);
+
+  for (let i = 0; i < 4; i++) {
+    await renderFrame(false);
+  }
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameCleanStreak, 5);
+
+  // disablePostProcessing/enablePostProcessing actually gate the post chain
+  // (diag.postProcessing mirrors !!postProcessor), not just a flag.
+  assert.equal(harness.renderer.disablePostProcessing(), true);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postFXDisabled, true);
+  await renderFrame(false);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postProcessing, false, "disablePostProcessing must actually tear down postProcessor, not just set a flag");
+  assert.equal(diag.frameErrorStreak, 0, "disablePostProcessing gives raw rendering a fresh error-streak window");
+
+  assert.equal(harness.renderer.disablePostProcessing(), false, "idempotent: already demoted");
+  assert.equal(harness.renderer.enablePostProcessing(), true);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postFXDisabled, false);
+  assert.equal(diag.postProcessing, false, "enablePostProcessing only clears the gate -- the chain rebuilds lazily on the NEXT render() call");
+  await renderFrame(false);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postProcessing, true, "the next render() call with a non-empty postEffects bundle must rebuild the post chain");
+  assert.equal(harness.renderer.enablePostProcessing(), false, "idempotent: not currently demoted");
+});
+
+// window_testFrameState sets the window.__testWebGPU* control variables the
+// fake createRenderer() factories above read from their diagnostics()
+// closures -- a lightweight stand-in for a real frame's error/clean streak
+// advancing (see 16a-scene-webgpu.js's webGPUConsecutiveFrameErrors /
+// webGPUConsecutiveCleanFrames, which this harness's diagnostics() field
+// NAMES mirror exactly, and which never move in the same direction at once
+// in production -- reportWebGPUFrameError zeroes the clean streak on any
+// error frame, and endWebGPUErrorScope's clean branch zeroes the error
+// streak on any clean frame).
+function window_testFrameState(env, state) {
+  env.context.__testWebGPUFrameErrorStreak = state.errorStreak || 0;
+  env.context.__testWebGPUFrameCleanStreak = state.cleanStreak || 0;
+}
+
+test("Scene3D WebGPU post-FX demotes at the trip threshold, restores after a scaling clean streak, and latches after repeated cycles", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-postfx-restore";
+  let now = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testWebGPUCreateCount = 0;
+          window.__testWebGPUFrameErrorStreak = 0;
+          window.__testWebGPUFrameCleanStreak = 0;
+          window.__testWebGPUPostFXDisabled = false;
+          window.__testWebGPUDemoteCount = 0;
+          window.__testWebGPURestoreCount = 0;
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              window.__testWebGPUCreateCount += 1;
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  // Advance the mount's frame-seq/frame-at progress markers
+                  // on every diagnostics() poll -- readSceneWebGPUProgress()
+                  // reads them from the DOM, and this fake never runs a real
+                  // render loop (no raf.flush between polls in this test),
+                  // so without this the UNRELATED render-STALL watchdog
+                  // (checkSceneRenderWatchdog's own progress-staleness check,
+                  // a different safety net than the post-FX ladder this test
+                  // exercises) would eventually force an irrelevant WebGL
+                  // fallback after SCENE_RENDER_FALLBACK_STALL_MS.
+                  window.__testWebGPUFrameSeq = (window.__testWebGPUFrameSeq || 0) + 1;
+                  if (canvas && canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
+                    canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-frame-seq", String(window.__testWebGPUFrameSeq));
+                    canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-frame-at", String(window.__testWebGPUFrameSeq));
+                  }
+                  return {
+                    ready: true,
+                    frameErrorStreak: window.__testWebGPUFrameErrorStreak,
+                    frameCleanStreak: window.__testWebGPUFrameCleanStreak,
+                    postFXDisabled: window.__testWebGPUPostFXDisabled,
+                    lastError: window.__testWebGPUFrameErrorStreak > 0 ? "Buffer with '' label is invalid" : ""
+                  };
+                },
+                disablePostProcessing: function() {
+                  if (window.__testWebGPUPostFXDisabled) return false;
+                  window.__testWebGPUPostFXDisabled = true;
+                  window.__testWebGPUDemoteCount += 1;
+                  return true;
+                },
+                enablePostProcessing: function() {
+                  if (!window.__testWebGPUPostFXDisabled) return false;
+                  window.__testWebGPUPostFXDisabled = false;
+                  window.__testWebGPURestoreCount += 1;
+                  return true;
+                },
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-postfx-restore",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-postfx-restore",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  function poll(atMS) {
+    now = atMS;
+    timers.runInterval(2000);
+  }
+
+  // --- Cycle 1 ---
+  // Trip: 40 consecutive error frames (>= the unchanged 30-frame threshold)
+  // -> DEMOTE. Non-regression: the trip condition and behavior are the same
+  // as the sibling "persistent frame errors" test above.
+  events.length = 0;
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(2000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 1, "40 consecutive error frames must demote");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+  assert.equal(events.some((e) => e.msg === "webgpu-postfx-demoted"), true);
+
+  // Too early: 299 clean frames is one short of the 1st-demotion restore
+  // threshold (SCENE_WEBGPU_FRAME_ERROR_RESTORE_STREAK_THRESHOLD x 1 = 300)
+  // -- must NOT restore yet.
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 299 });
+  poll(4000);
+  assert.equal(env.context.__testWebGPURestoreCount, 0, "must not restore before the clean streak reaches the threshold");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  // Exactly 300 clean frames -> RESTORE. This is the additive "way back":
+  // disablePostProcessing() alone never had one.
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 300 });
+  poll(6000);
+  assert.equal(env.context.__testWebGPURestoreCount, 1, "300 consecutive clean frames must restore post-FX");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null, "the DOM flag must clear on restore, not just stop being set");
+  assert.equal(events.some((e) => e.msg === "webgpu-postfx-restored"), true);
+
+  // --- Cycle 2: a scene that trips a SECOND time must require a LONGER
+  // clean streak to earn its next restore (anti-oscillation escalation). ---
+  events.length = 0;
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(8000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 2, "the ladder must still demote on a second, independent bad streak");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  // 300 clean frames was enough for the FIRST restore; it must NOT be
+  // enough for the second (threshold now scales to 300 x 2 = 600) --
+  // otherwise a scene flapping every ~300 frames could cycle forever.
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 300 });
+  poll(10000);
+  assert.equal(env.context.__testWebGPURestoreCount, 1, "300 clean frames must not be enough for the 2nd restore");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 600 });
+  poll(12000);
+  assert.equal(env.context.__testWebGPURestoreCount, 2, "600 consecutive clean frames must restore the 2nd time");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  // --- Cycle 3: third demotion, third (larger) restore threshold. ---
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(14000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 3);
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 900 });
+  poll(16000);
+  assert.equal(env.context.__testWebGPURestoreCount, 3, "900 consecutive clean frames must restore the 3rd time");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  // --- Cycle 4: a FOURTH demotion exceeds SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS
+  // (3) -- the ladder still demotes (raw rendering must still recover), but
+  // restore must now latch off PERMANENTLY for the rest of the session, no
+  // matter how long the clean streak runs. ---
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(18000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 4, "demote must still work past the restore cap -- raw rendering must not be sacrificed");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 1000000 });
+  poll(20000);
+  assert.equal(env.context.__testWebGPURestoreCount, 3, "restore must latch off permanently after SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS demotions, even with an enormous clean streak");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true", "the demoted flag must stay set once restore has latched off");
+
+  // Renderer identity is untouched throughout -- this is purely a post-FX
+  // toggle on the SAME WebGPU renderer, never a backend swap.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(env.context.__testWebGPUCreateCount, 1);
+});
+
+test("custom post WebGPU: a module with compilation errors is refused even when the pipeline resolves", async () => {
+  // The belt-and-braces case the device error scope used to cover, now keyed
+  // to the MODULE it describes. A lenient implementation resolves the pipeline
+  // anyway; getCompilationInfo still says the shader is wrong, and it says so
+  // about this module only, so it cannot demote an unrelated pass.
+  let renderPipelineAsyncCalls = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    compilationInfoBehavior(desc) {
+      if (desc && typeof desc.code === "string" && desc.code.indexOf("BAD WGSL") >= 0) {
+        return [{ type: "error", lineNum: 1, message: "expected declaration" }];
+      }
+      return [];
+    },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    fragmentWGSL: "BAD WGSL FRAGMENT",
+    vertexWGSL: "BAD WGSL VERTEX",
+  });
+
+  harness.renderer.render(bundle, viewport);
+  assert.equal(renderPipelineAsyncCalls, 1);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const warns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("passthrough") || m.includes("validation")));
+  assert.equal(warns.length, 1, "a module carrying compilation errors must still fail the pass");
+  assert.ok(warns[0].includes("expected declaration"), "the warn must carry the module's own compiler message");
 });

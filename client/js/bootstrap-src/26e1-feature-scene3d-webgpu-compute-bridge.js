@@ -33,3 +33,25 @@
     }
     return api.sceneComputeSystemSignature(entry);
   }
+
+  // sceneShaderModuleError and sceneReportPipelineFailure are per-object
+  // shader validation helpers 16b owns (see the block comment on
+  // sceneShaderModuleError in 16b-scene-compute.js). 16a's custom-post,
+  // points-authored and particle-render-authored pipeline builds call both
+  // at pipeline-settle time, so they need the same call-time bridge as the
+  // two thunks above.
+  function sceneShaderModuleError(modules) {
+    var api = window.__gosx_scene3d_api;
+    if (!api || typeof api.sceneShaderModuleError !== "function") {
+      return Promise.resolve(null);
+    }
+    return api.sceneShaderModuleError(modules);
+  }
+
+  function sceneReportPipelineFailure(stage, id, reason) {
+    var api = window.__gosx_scene3d_api;
+    if (!api || typeof api.sceneReportPipelineFailure !== "function") {
+      return;
+    }
+    api.sceneReportPipelineFailure(stage, id, reason);
+  }

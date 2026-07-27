@@ -371,21 +371,53 @@ const budgets = [
   // ceilings unchanged and still fit. The cost is the fix: WebGL customPost
   // read only the author uniform map, so reserved uniforms such as `time`
   // stayed 0 and every time-driven post effect rendered a static frame.
-  // Bumped raw 1_327_000 -> 1_333_000, gzip 352_000 -> 354_000, brotli
-  // 285_000 -> 287_000 for procedural point clouds
-  // (11b-scene-points-generate.js): the canonical sin/log/exp/pow kernel plus
-  // the box-scatter expander. Measured: 1_330_627 / 353_413 / 285_862.
-  // The kernel is ~3.6KB raw of ported Go math that cannot be replaced with
-  // Math.sin/Math.pow without losing bit-exact parity with the server. It
-  // buys far more than it costs: the m31labs.dev starfield alone drops an
-  // 852_163-byte inline manifest to a ~300-byte descriptor, and the saving
-  // scales with every deterministic point layer any app ships.
+  // Bumped raw 1_327_000 -> 1_341_000, gzip 352_000 -> 356_000, brotli
+  // 285_000 -> 288_000 for render-truth telemetry: the shared helpers in
+  // 15a-scene-postfx-shared.js (per-effect post-chain records, the timestamped
+  // device-loss/fallback journal, Dawn-versus-wgpu implementation identity,
+  // getCompilationInfo capture) plus the WebGL and WebGPU call sites that feed
+  // them. Measured: 1_337_953 / 355_010 / 286_800 — +11_977 raw, +3_867 gzip,
+  // +2_746 brotli. The cost buys the ability to tell "the effect is in the
+  // chain" apart from "the effect drew": a customPost pass was tuned across
+  // three sessions while producing zero pixels because every existing
+  // attribute reported the former and none reported the latter.
+  // Re-measured on top of the procedural point generator (PR #94), which the
+  // original render-truth measurement predated. Measured: 1_342_558 / 357_345
+  // / 288_596.
+  // Bumped raw 1_345_000 -> 1_347_000 for material-fallback render truth: the
+  // WebGL renderer now counts, names and warns about every draw that used a
+  // different material than the author declared, and the shared publisher
+  // stamps mesh-material-fallback plus a decoded detail string. Measured:
+  // 1_345_941 / 358_320 / 289_235 — +1_383 raw. The gzip and brotli ceilings
+  // are unchanged and still fit. The cost buys the end of a silent
+  // substitution: a Selena plane drew with its companion StandardMaterial for
+  // months while every counter read healthy.
   //
-  // One entry, both histories. The audit branch ratcheted this budget DOWN when
-  // 16-scene-webgl.js and the strict SceneIR validator left the bundle, and main
-  // raised it for procedural point clouds. Merging the two feature sets put all
-  // three figures over, so the ceiling is set from measurement: 1_363_465 raw,
-  // 364_934 gzip, 295_439 brotli, each with about 1_550 bytes of headroom.
+  // Merged with per-object WebGPU pipeline validation: the six asynchronous
+  // pipeline builds no longer push a device-global error scope, which two
+  // overlapping builds used to pop in the wrong order and so report one
+  // build's error against the other. They now read the two signals that
+  // belong to the object: the create*PipelineAsync promise and
+  // getCompilationInfo(). The chunk also carries the new render-truth
+  // pipeline rejection counter, so a kernel the driver refuses is one
+  // attribute read. Combined the two PRs push gzip past the old 358_500
+  // ceiling (measured 358_639); bumped gzip 358_500 -> 359_000. Measured
+  // on the merged bundle: 1_346_320 / 358_639 / 289_898. That measurement
+  // predates the procedural point generator below (a parallel history off
+  // the same 1_327_000 base) landing on this branch.
+  //
+  // One entry, both histories. This branch added procedural point clouds
+  // (11b-scene-points-generate.js): the canonical sin/log/exp/pow kernel plus
+  // the box-scatter expander. Measured on that branch alone: 1_330_627 /
+  // 353_413 / 285_862. The kernel is ~3.6KB raw of ported Go math that cannot
+  // be replaced with Math.sin/Math.pow without losing bit-exact parity with
+  // the server. It buys far more than it costs: the m31labs.dev starfield
+  // alone drops an 852_163-byte inline manifest to a ~300-byte descriptor,
+  // and the saving scales with every deterministic point layer any app ships.
+  // Merging the two histories (render truth + per-object pipeline validation
+  // from main, procedural point clouds from this branch) puts all three
+  // figures over either side's ceiling alone, so the ceiling below is set
+  // from measurement of the merged bundle.
   //
   // Bumped raw 1_365_000 -> 1_366_500 for the Points and Sprite ray pick
   // (sceneRaycastPickPoints in 17-scene-input.js). Measured after the change:
@@ -416,7 +448,12 @@ const budgets = [
   // brotli. Ceilings raw 1_376_000 -> 1_383_000, gzip 368_500 -> 370_500,
   // brotli 298_500 -> 300_000, each measured from the file rather than added
   // to the previous ceiling.
-  { file: "bootstrap.js", raw: 1_383_000, gzip: 370_500, brotli: 300_000 },
+  //
+  // Merged main's render-truth telemetry and per-object WebGPU pipeline
+  // validation on top of this branch's split + KTX2 measurement above.
+  // Ceiling re-set from measurement of the merged bundle: 1_397_872 raw,
+  // 375_182 gzip, 303_695 brotli.
+  { file: "bootstrap.js", raw: 1_399_000, gzip: 376_000, brotli: 304_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -686,7 +723,11 @@ const budgets = [
   // brotli while the base chunk gave up 74_571 / 21_250 / 17_547.
   //
   // Re-measured with the KTX2 upload branch: 190_956 / 51_630 / 44_100.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 192_000, gzip: 52_000, brotli: 44_400 },
+  //
+  // Merged main's render-truth telemetry: this chunk carries 15a-scene-postfx
+  // -shared.js and 16-scene-webgl.js, both render-truth call sites. Ceiling
+  // re-set from measurement of the merged bundle: 194_403 / 52_664 / 45_104.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 195_000, gzip: 53_000, brotli: 45_400 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -719,7 +760,21 @@ const budgets = [
   //
   // Keep this budget tight. A file that drifts back in cancels a saving no
   // other gate can see, because a per-page transfer has no test.
-  { file: "bootstrap-feature-scene3d.js", raw: 465_000, gzip: 128_500, brotli: 107_000 },
+  //
+  // Merged with render-truth telemetry and per-object WebGPU pipeline
+  // validation. On the pre-split monolith those two features cost this same
+  // scene3d bundle raw 723_000 -> 740_000 (15a's shared render-truth helpers,
+  // 16-scene-webgl.js's per-effect chain marking and mesh/point
+  // submitted-versus-drawn counters, 20-scene-mount.js's single
+  // backend-truth JSON record, and 16b-scene-compute.js's
+  // sceneShaderModuleError reading getCompilationInfo per module instead of
+  // a device-global error scope). After this branch's per-feature split,
+  // 15a and 16-scene-webgl.js ship in bootstrap-feature-scene3d-webgl.js
+  // (below) and sceneShaderModuleError ships in
+  // bootstrap-feature-scene3d-compute.js (below); this chunk only gains
+  // 20-scene-mount.js's backend-truth record. Ceiling set from measurement:
+  // 472_688 / 130_602 / 108_631.
+  { file: "bootstrap-feature-scene3d.js", raw: 474_000, gzip: 131_000, brotli: 109_000 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -863,7 +918,17 @@ const budgets = [
   // 85_775 gzip, 71_783 brotli.
   // Re-measured with the KTX2 upload branch: 362_557 / 86_070 / 72_060. All
   // three still fit the ceilings below, so none of them moves.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 363_500, gzip: 87_300, brotli: 73_300 },
+  //
+  // Merged with main's render-truth telemetry on the WebGPU path: the
+  // post-chain dispatch record marked at fullscreenPass, explicit
+  // pending/failed reporting for customPost, getCompilationInfo capture on
+  // all nine authored Selena shader modules, the uncapturederror listener
+  // and the device-loss journal entry. Main measured this addition alone at
+  // 361_210 / 84_519 / 70_450 (raw 359_000 -> 364_000) against a base without
+  // the KTX2 upload branch above. Ceiling re-set from measurement of the
+  // merged bundle: 365_415 raw (gzip and brotli keep their existing headroom
+  // at 87_101 and 72_916).
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 366_000, gzip: 87_300, brotli: 73_300 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -876,7 +941,9 @@ const budgets = [
   //   with the reader registered        27_018 / 10_105 / 8_990
   // The Scene3D chunk split changes no file in this chunk, so none of this
   // growth is the split. All three figures are read from the files, because
-  // the assertions run raw first and stop.
+  // the assertions run raw first and stop. main carries no KTX2 work, so its
+  // corresponding measurement (22_000 / 8_000 / 7_000) predates all of this
+  // and is superseded by it.
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 27_500, gzip: 10_300, brotli: 9_200 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
@@ -1046,6 +1113,14 @@ const routeBudgets = [
     // 64_500 -> 57_800. bootstrap-runtime.js gave up the text-layout engine to
     // bootstrap-feature-textlayout.js, and a video route holds no text block.
     // Measured before 269_305 / 75_133 / 65_911; after 226_626 / 64_539 / 56_921.
+    //
+    // Merged with main's FINDING-001 fix: the motion reveal guard now compares
+    // against a per-page-load token instead of a plain boolean
+    // (GOSX_MOTION_LIFE_TOKEN), so a stale value from a different page life
+    // can no longer suppress the reveal. Main measured this fix alone (against
+    // a base without the text-layout split above) at 252_472 / 70_035 / 61_684
+    // (gzip 70_000 -> 70_100). Ceiling re-set from measurement of the merged
+    // route.
     raw: 229_000,
     gzip: 65_500,
     brotli: 57_800,
@@ -1126,9 +1201,15 @@ const routeBudgets = [
     // / 244_821. That is -73_514 raw, -20_955 gzip and -17_270 brotli, and both
     // figures come from the same bootstrap-src snapshot. Stated plainly: a full
     // Scene3D page with labels is now 282 KB gzip, down from 303 KB.
-    raw: 1_097_000,
-    gzip: 290_000,
-    brotli: 245_500,
+    //
+    // Merged with main's render-truth telemetry and per-object WebGPU
+    // pipeline validation (see the bootstrap-feature-scene3d.js and
+    // bootstrap-feature-scene3d-webgpu.js budgets above; this route carries
+    // both). Ceiling re-set from measurement of the merged route:
+    // 1_108_083 / 293_291 / 248_309.
+    raw: 1_109_000,
+    gzip: 294_000,
+    brotli: 249_000,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1188,9 +1269,14 @@ const routeBudgets = [
     //
     // Measured before 956_088 / 265_607 / 225_814; after 923_872 / 254_800 /
     // 216_861, so -32_216 raw, -10_807 gzip and -8_953 brotli.
-    raw: 925_000,
-    gzip: 255_500,
-    brotli: 217_500,
+    //
+    // Merged with main's render-truth telemetry (this route carries 15a and
+    // 16-scene-webgl.js through bootstrap-feature-scene3d.js and
+    // bootstrap-feature-scene3d-webgl.js). Ceiling re-set from measurement of
+    // the merged route: 937_071 / 258_854 / 220_497.
+    raw: 938_000,
+    gzip: 259_500,
+    brotli: 221_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1240,9 +1326,14 @@ const routeBudgets = [
     // is the compute and decompress chunks, which a mesh scene never fetches.
     // Measured before 1_317_588 / 351_382 / 297_597; after 1_286_429 / 340_870
     // / 288_921, so -31_159 raw, -10_512 gzip and -8_676 brotli.
-    raw: 1_288_000,
-    gzip: 341_500,
-    brotli: 290_000,
+    //
+    // Merged with main's render-truth telemetry and per-object WebGPU
+    // pipeline validation (this route loads both backends, so it carries the
+    // full cost of both). Ceiling re-set from measurement of the merged
+    // route: 1_302_486 / 345_955 / 293_413.
+    raw: 1_303_500,
+    gzip: 346_500,
+    brotli: 294_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1294,10 +1385,16 @@ const routeBudgets = [
     // runs. Splitting it further needs per-node-kind gating (water, HTML
     // overlay, sprites), and each of those is reachable from a scene command
     // after mount, so the gate must be a fetch-and-retry rather than a refusal.
-    raw: 951_000,
-    gzip: 247_500,
-    brotli: 208_000,
+    //
+    // Merged with main's render-truth telemetry and per-object WebGPU
+    // pipeline validation (this route carries bootstrap-feature-scene3d.js
+    // and bootstrap-feature-scene3d-webgpu.js). Ceiling re-set from
+    // measurement of the merged route: 961_953 / 251_033 / 210_741.
+    raw: 962_500,
+    gzip: 251_500,
+    brotli: 211_000,
   },
+
 ];
 
 function fileSize(relativePath) {

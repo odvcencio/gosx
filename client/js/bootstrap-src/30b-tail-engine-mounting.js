@@ -4699,17 +4699,19 @@
     if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
-  async function mountAllEngines(manifest, reuseEngineIDs) {
+  async function mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap) {
     if (!manifest.engines || manifest.engines.length === 0) return;
-    // reuseEngineIDs is only ever a real Set when this bootstrap is running
-    // as part of a soft navigation (see bootstrapPage/window.__gosx_reusable_engines)
-    // — the initial page load's bootstrapPage() call carries no such
-    // argument (or, via the DOMContentLoaded listener, an Event object,
-    // which also fails this check). isNavigationBootstrap therefore also
-    // gates the "engine-remounted" telemetry below: a freshly mounted
-    // engine on the FIRST page load was never "re"-mounted.
-    const isNavigationBootstrap = reuseEngineIDs instanceof Set;
-    const reuseIDs = isNavigationBootstrap ? reuseEngineIDs : new Set();
+    // isNavigationBootstrap is true only when this bootstrap is running as
+    // part of a soft navigation (see bootstrapPage/window.__gosx_reusable_engines).
+    // It must come from the caller, computed from bootstrapPage's ORIGINAL
+    // argument — reuseEngineIDs itself is always a real Set by the time it
+    // reaches here (pendingEngineReuseIDs coerces a missing/non-Set argument
+    // to an empty Set so downstream .has() calls never need a type check),
+    // so a `reuseEngineIDs instanceof Set` check at this point is always
+    // true, even on a genuine first page load. isNavigationBootstrap
+    // therefore also gates the "engine-remounted" telemetry below: a
+    // freshly mounted engine on the FIRST page load was never "re"-mounted.
+    const reuseIDs = isNavigationBootstrap && reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
 
     const invalidEntries = new Map();
     const seenIDs = new Set();

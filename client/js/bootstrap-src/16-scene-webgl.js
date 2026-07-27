@@ -4083,6 +4083,47 @@
       return prog;
     }
 
+    // --- Render truth -------------------------------------------------------
+    // createScenePostProcessor lives at module scope, a SIBLING of the renderer
+    // closure, so it cannot see webglRenderTruth(). Resolve the shared helpers
+    // from the global the same way.
+    var POST_RENDER_TRUTH_NOOP = {
+      enabled: function() { return false; },
+      chain: function() { return []; },
+      mark: function() {},
+      PIPELINE_MISSING: "missing",
+      PIPELINE_PENDING: "pending",
+      PIPELINE_FAILED: "failed",
+      PIPELINE_OK: "ok",
+    };
+
+    function postProcessorRenderTruth() {
+      if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
+        return window.__gosx_scene3d_render_truth_api;
+      }
+      return POST_RENDER_TRUTH_NOOP;
+    }
+
+    // postEffectPipelineState explains WHY an effect that did not draw did not
+    // draw. WebGL compiles synchronously, so there is no "pending" state here:
+    // either the GLSL was never supplied (missing), the compile/link was
+    // rejected (failed), or a built-in program failed to build (failed).
+    // Distinguishing these matters because a customPost that fails to compile
+    // in Chrome but not Firefox is a translator disagreement, not a bad shader.
+    function postEffectPipelineState(effect) {
+      var api = postProcessorRenderTruth();
+      if (!effect) return api.PIPELINE_MISSING;
+      if (effect.kind === SCENE_POST_CUSTOM_POST) {
+        var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
+        if (customPostFailed[name]) return api.PIPELINE_FAILED;
+        var vertSrc = (typeof effect.vertexGLSL === "string") ? effect.vertexGLSL.trim() : "";
+        var fragSrc = (typeof effect.fragmentGLSL === "string") ? effect.fragmentGLSL.trim() : "";
+        if (!vertSrc || !fragSrc) return api.PIPELINE_MISSING;
+        return api.PIPELINE_FAILED;
+      }
+      return api.PIPELINE_MISSING;
+    }
+
 	    // Bind a target FBO, set viewport, activate a program, and bind the
 	    // input texture to unit 0 as u_texture. Callers set effect-specific
 	    // uniforms afterwards, then call drawSceneFullscreenQuad.
@@ -4130,6 +4171,10 @@
         var prog = createSceneCustomPostProgram(gl, vertSrc, fragSrc);
         if (!prog) {
           console.warn("[gosx] custom post pass '" + name + "' (WebGL2) compile/link failed; falling back to identity.");
+          // Journal it: a GLSL pass that Selena emitted and this driver
+          // rejected is the WebGL-side twin of a Tint/naga disagreement, and
+          // the console warning is lost by the time anyone reads a dump.
+          postProcessorRenderTruth().record("post-compile-failed", "webgl customPost " + name);
           customPostFailed[name] = true;
           customPostPrograms[name] = null;
           return inputTex;
@@ -4380,6 +4425,14 @@
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
+        // Per-effect render truth. Built only under the diagnostics tier.
+        // Each apply* helper returns the INPUT texture unchanged when it takes
+        // its identity/failure path, so "output !== input" is a reliable proxy
+        // for "this effect actually rendered" -- and a null return means the
+        // pass wrote straight to the default framebuffer, which is also a real
+        // dispatch. Both are counted; anything else is a dead pass.
+        var truthApi = postProcessorRenderTruth();
+        var postChain = truthApi.enabled() ? truthApi.chain(effects) : null;
         var currentTexture = sceneFBO.colorTex;
 
         // Multi-effect chains need an auxiliary full-res FBO for intermediate
@@ -4408,6 +4461,7 @@
           // the default framebuffer at canvas dims.
           var passW = isLast ? canvasW : scaledW;
           var passH = isLast ? canvasH : scaledH;
+          var inputTexture = currentTexture;
 
           switch (effect.kind) {
             case SCENE_POST_TONE_MAPPING:
@@ -4453,8 +4507,22 @@
               break;
             }
             default:
-              // Unknown effect — skip.
+              // Unknown effect — skip. A kind that reaches here NEVER draws;
+              // the chain record stays at pipeline="missing", dispatched=0,
+              // which is precisely how a case-sensitivity mismatch on the
+              // effect kind (the customPost defect) becomes visible instead of
+              // being masked by a healthy-looking postEffects count.
               break;
+          }
+
+          if (postChain) {
+            var drew = (currentTexture !== inputTexture);
+            truthApi.mark(
+              postChain,
+              i,
+              drew ? truthApi.PIPELINE_OK : postEffectPipelineState(effect),
+              drew ? 1 : 0
+            );
           }
 
           if (isLast && currentTexture === null) break;
@@ -4467,6 +4535,7 @@
         }
 
         gl.enable(gl.DEPTH_TEST);
+        return { postChain: postChain };
       },
 
       // Release all post-processing GPU resources.
@@ -5889,6 +5958,129 @@
       authoredDrawCalls: 0,
     };
 
+    // webglRenderTruthStats accumulates OBSERVED GPU actions for one frame.
+    // Every field counts something that either happened or provably did not;
+    // none of it reflects configuration. Reset at the top of each render() so a
+    // stalled renderer publishes zeros instead of a stale healthy-looking
+    // snapshot -- a frozen counter that still reads "3 meshes" is exactly the
+    // failure mode this module exists to remove.
+    var webglRenderTruthStats = {
+      meshDrawn: 0,
+      meshViewCulled: 0,
+      meshUndrawable: 0,
+      meshMaterialFallback: 0,
+      materialFallbacks: [],
+      pointsSubmitted: 0,
+      pointsDrawn: 0,
+      pointInstancesSubmitted: 0,
+      pointInstancesDrawn: 0,
+      postChain: null,
+    };
+
+    function resetWebGLRenderTruthStats() {
+      webglRenderTruthStats.meshDrawn = 0;
+      webglRenderTruthStats.meshViewCulled = 0;
+      webglRenderTruthStats.meshUndrawable = 0;
+      webglRenderTruthStats.meshMaterialFallback = 0;
+      webglRenderTruthStats.materialFallbacks.length = 0;
+      webglRenderTruthStats.pointsSubmitted = 0;
+      webglRenderTruthStats.pointsDrawn = 0;
+      webglRenderTruthStats.pointInstancesSubmitted = 0;
+      webglRenderTruthStats.pointInstancesDrawn = 0;
+      webglRenderTruthStats.postChain = null;
+    }
+
+    // Material keys already reported this renderer's lifetime. A substitution is
+    // a per-material fact, not a per-frame one: warning once keeps the console
+    // readable at 60fps while still making the FIRST occurrence loud.
+    var webglMaterialFallbackWarned = new Set();
+
+    // noteWebGLMaterialFallback records that a mesh drew with a DIFFERENT
+    // material than the one the author declared.
+    //
+    // Silence is the defect here, not the substitution. A renderer that
+    // quietly swaps a material reports success and draws the wrong thing, and
+    // the only way anyone finds out is by looking at the pixels. Every
+    // fallback path therefore lands in the render-truth surface
+    // (data-gosx-scene3d-render-mesh-material-fallback plus a decoded detail
+    // string) and in the render-truth event journal, and warns once on the
+    // console.
+    //
+    // reason values:
+    //   selena-not-usable   material declares shaderBackend "selena" but the
+    //                       renderer cannot build a program from it (missing
+    //                       GLSL sources, or no shaderLayout.uniformBlock.fields)
+    //   selena-compile      the Selena GLSL failed to compile or link
+    //   selena-skin-augment the skinned Selena variant could not be augmented
+    //   custom-compile      a CustomMaterial shader failed to compile or link
+    //   custom-skinned-unsupported  a CustomMaterial on a skinned mesh, which
+    //                       has no skinned program variant
+    //
+    // message is emitted through console.warn once per (reason, material), in
+    // the wording style of the existing compile-failure warning.
+    function noteWebGLMaterialFallback(reason, material, message) {
+      webglRenderTruthStats.meshMaterialFallback += 1;
+      var layout = material && material.shaderLayout;
+      var label = (layout && typeof layout.material === "string" && layout.material) || (material && material.kind) || "";
+      var detail = label ? reason + "@" + label : reason;
+      var list = webglRenderTruthStats.materialFallbacks;
+      if (list.length < 8 && list.indexOf(detail) < 0) {
+        list.push(detail);
+      }
+      var key = detail + "|" + (material && material.key || "");
+      if (webglMaterialFallbackWarned.has(key)) {
+        return;
+      }
+      webglMaterialFallbackWarned.add(key);
+      webglRenderTruth().record("material-fallback", detail);
+      console.warn(message);
+    }
+
+    // webglRenderTruth resolves the shared helpers from 15a-scene-postfx-shared.js
+    // through the global, matching how the WebGPU chunk reaches them, so both
+    // renderers publish the SAME attribute names from the same code.
+    var WEBGL_RENDER_TRUTH_NOOP = {
+      enabled: function() { return false; },
+      chain: function() { return []; },
+      mark: function() {},
+      publish: function() {},
+      record: function() {},
+      PIPELINE_MISSING: "missing",
+      PIPELINE_PENDING: "pending",
+      PIPELINE_FAILED: "failed",
+      PIPELINE_OK: "ok",
+    };
+
+    function webglRenderTruth() {
+      if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
+        return window.__gosx_scene3d_render_truth_api;
+      }
+      return WEBGL_RENDER_TRUTH_NOOP;
+    }
+
+    function publishWebGLRenderTruth(bundle) {
+      var api = webglRenderTruth();
+      if (!api.enabled()) return;
+      var mount = canvas && canvas.parentNode ? canvas.parentNode : null;
+      if (!mount) return;
+      var meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
+      api.publish(mount, {
+        backend: "webgl",
+        postChain: webglRenderTruthStats.postChain,
+        meshSubmitted: meshObjects,
+        meshDrawn: webglRenderTruthStats.meshDrawn,
+        meshViewCulled: webglRenderTruthStats.meshViewCulled,
+        meshUndrawable: webglRenderTruthStats.meshUndrawable,
+        meshMaterialFallback: webglRenderTruthStats.meshMaterialFallback,
+        materialFallbacks: webglRenderTruthStats.materialFallbacks,
+        pointsSubmitted: webglRenderTruthStats.pointsSubmitted,
+        pointsDrawn: webglRenderTruthStats.pointsDrawn,
+        pointInstancesSubmitted: webglRenderTruthStats.pointInstancesSubmitted,
+        pointInstancesDrawn: webglRenderTruthStats.pointInstancesDrawn,
+        uniformTime: sceneSelenaFrameTime,
+      });
+    }
+
     function resetWebGLComputeParticleDrawStats() {
       webglComputeParticleDrawStats.drawEntries = 0;
       webglComputeParticleDrawStats.drawInstances = 0;
@@ -6316,10 +6508,15 @@
 
       for (var i = 0; i < objects.length; i++) {
         const obj = objects[i];
+        // Render truth: split the two reasons an authored mesh never draws.
+        // "in the bundle" and "on screen" are different numbers, and conflating
+        // them is what let three Selena planes read healthy for two weeks.
         if (!obj || obj.viewCulled) {
+          webglRenderTruthStats.meshViewCulled += 1;
           continue;
         }
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) {
+          webglRenderTruthStats.meshUndrawable += 1;
           continue;
         }
         const mat = materials[obj.materialIndex] || null;
@@ -6354,6 +6551,7 @@
       // Gate is a single truthy check, ~1ns when disabled — production
       // pages don't pay for it. Marks are cleared after each measure to
       // prevent unbounded accumulation of performance entries.
+      resetWebGLRenderTruthStats();
       var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
       if (perfEnabled) {
         performance.mark("scene3d-render-start");
@@ -6562,7 +6760,13 @@
       } // end if (hasPBRData)
 
       if (lineResources && bundle.worldVertexCount > 0) {
-        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources);
+        // meshObjects:false — drawPBRObjectList above already drew every mesh
+        // with its OWN program (PBR, CustomMaterial or Selena). The legacy
+        // world path is used here only for line segments and HTML surfaces.
+        // Without this scope it re-drew each untextured mesh with the flat
+        // world program on top of the correct draw, silently replacing an
+        // authored Selena surface with its companion material's base color.
+        renderSceneWebGLWorldBundle(gl, bundle, canvas, lineResources, { meshObjects: false });
       }
 
       // Draw instanced meshes (after regular meshes, before points).
@@ -6583,11 +6787,20 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera);
+        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera);
+        if (postResult && postResult.postChain) {
+          webglRenderTruthStats.postChain = postResult.postChain;
+        }
         // Re-activate the PBR program for the next frame since post-processing
         // switches to its own shader programs.
         gl.useProgram(program);
+      } else if (webglRenderTruth().enabled()) {
+        // A scene with NO authored post effects publishes an empty chain, not
+        // a stale one from a previous bundle. "post-authored=0" and
+        // "post-authored=1, post-dispatched=0" must never look alike.
+        webglRenderTruthStats.postChain = [];
       }
+      publishWebGLRenderTruth(bundle);
 
       if (perfEnabled) {
         performance.mark("scene3d-render-end");
@@ -6631,9 +6844,11 @@
       }
       const customProgram = createScenePBRCustomProgram(gl, material);
       customProgramCache.set(key, customProgram ? { program: customProgram } : { failed: true });
-      if (!customProgram) {
-        console.warn("[gosx] CustomMaterial shader compilation failed; object will use the standard PBR shader.");
-      }
+      // The console warning and the render-truth counter both live at the DRAW
+      // site (drawPBRObjectList) rather than here. A cached failure returns
+      // early on every later frame, so counting here would report the
+      // substitution once and then read a healthy zero for the rest of the
+      // session while the wrong material kept reaching the framebuffer.
       return customProgram;
     }
 
@@ -6653,12 +6868,62 @@
       }
       const selenaProgram = createSceneSelenaProgram(gl, material, skinned);
       selenaProgramCache.set(key, selenaProgram ? { program: selenaProgram } : { failed: true });
-      if (!selenaProgram) {
-        console.warn(skinned
-          ? "[gosx] Skinned Selena shader compile/augment failed; object will use the standard skinned PBR shader."
-          : "[gosx] Selena shader compilation failed; object will use the standard PBR shader.");
-      }
+      // Reported at the draw site — see ensureCustomProgram's note.
       return selenaProgram;
+    }
+
+    // reportWebGLMeshMaterialFallback classifies why an authored shader material
+    // is about to draw with the built-in PBR shader, and routes that fact into
+    // the render-truth surface plus one console warning per material.
+    //
+    // Called on EVERY frame that draws through a fallback, not only on the frame
+    // that first discovered it: ensureSelenaProgram / ensureCustomProgram cache
+    // their failures, so a compile-time-only counter reads zero forever after
+    // the first frame while the framebuffer keeps showing the wrong material.
+    function reportWebGLMeshMaterialFallback(material, skinned) {
+      // Cheap gate first. Most materials declare no authored shader at all and
+      // must not pay for the classification below on every object of every
+      // frame; all four fields are empty strings or null on a plain PBR
+      // material, so this short-circuits on the first read.
+      if (!material || (!material.shaderBackend && !material.customVertex && !material.customFragment && !material.customUniforms)) {
+        return;
+      }
+      var tail = skinned
+        ? "; object will use the standard skinned PBR shader."
+        : "; object will use the standard PBR shader.";
+      if (material.shaderBackend === "selena") {
+        if (!sceneSelenaIsMaterial(material)) {
+          // The material DECLARES Selena but the renderer cannot build a
+          // program from it: no GLSL sources, or no shaderLayout with a
+          // uniformBlock.fields array. Nothing failed to compile, so the
+          // compile warning never fired and this substitution was completely
+          // silent.
+          noteWebGLMaterialFallback("selena-not-usable", material,
+            "[gosx] Selena material is incomplete for the WebGL backend" + tail);
+          return;
+        }
+        if (skinned) {
+          noteWebGLMaterialFallback("selena-skin-augment", material,
+            "[gosx] Skinned Selena shader compile/augment failed" + tail);
+          return;
+        }
+        noteWebGLMaterialFallback("selena-compile", material,
+          "[gosx] Selena shader compilation failed" + tail);
+        return;
+      }
+      if (!scenePBRHasCustomHooks(material)) {
+        return;
+      }
+      if (skinned) {
+        // ensureCustomProgram is never consulted for skinned draws: there is no
+        // skinned variant of the CustomMaterial program. The object still draws
+        // with a material the author did not write.
+        noteWebGLMaterialFallback("custom-skinned-unsupported", material,
+          "[gosx] CustomMaterial has no skinned variant" + tail);
+        return;
+      }
+      noteWebGLMaterialFallback("custom-compile", material,
+        "[gosx] CustomMaterial shader compilation failed" + tail);
     }
 
     function webGLSelenaObjectModelMatrix(obj) {
@@ -6934,6 +7199,7 @@
             bindSelenaSkinAttributes(gl, selenaProgram, obj);
           }
           gl.drawArrays(gl.TRIANGLES, 0, selenaCount);
+          webglRenderTruthStats.meshDrawn += 1;
 
           if (selenaDepthWriteOverride) {
             var selenaPass = scenePBRObjectRenderPass(obj, mat);
@@ -6943,6 +7209,13 @@
         }
 
         var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
+
+        // Reaching this line means the object is about to draw with the
+        // built-in PBR shader. If it authored a Selena or CustomMaterial
+        // surface, that is a material substitution and must be visible.
+        if (!customProgram) {
+          reportWebGLMeshMaterialFallback(mat, isSkinned);
+        }
 
         // Switch to skinned program if this object has skin data.
         if (customProgram) {
@@ -7109,6 +7382,7 @@
         }
 
         gl.drawArrays(gl.TRIANGLES, 0, count);
+        webglRenderTruthStats.meshDrawn += 1;
 
         // Restore depth mask if overridden by per-object control.
         if (objDepthWriteOverride) {
@@ -7397,6 +7671,7 @@
 
       for (var i = 0; i < pointsArray.length; i++) {
         var entry = pointsArray[i];
+        webglRenderTruthStats.pointsSubmitted += 1;
         // Select program: authored (GLSL) when customVertex/Fragment present, else builtin.
         var layerID = (typeof entry.id === "string" && entry.id) ? entry.id : ("points-" + i);
         var hasAuthoredGL = (typeof entry.customVertex === "string" && entry.customVertex.trim()) &&
@@ -7475,6 +7750,7 @@
         }
         gl.uniformMatrix4fv(pp.uniforms.modelMatrix, false, _pointsModelMat);
         var count = sceneNumber(entry.count, 0);
+        webglRenderTruthStats.pointInstancesSubmitted += Math.max(0, count);
         if (count <= 0) continue;
 
         // Blend mode.
@@ -7579,6 +7855,11 @@
         }
 
         gl.drawArrays(gl.POINTS, 0, count);
+        // Render truth: an entry that reached this line DREW. Entries skipped
+        // above (no compiled program, zero positions) are counted as submitted
+        // but not drawn, so "submitted 3 / drawn 0" is readable at a glance.
+        webglRenderTruthStats.pointsDrawn += 1;
+        webglRenderTruthStats.pointInstancesDrawn += count;
         if (entry._computeParticlesSynthetic) {
           webglComputeParticleDrawStats.drawEntries += 1;
           webglComputeParticleDrawStats.drawInstances += count;

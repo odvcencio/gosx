@@ -2229,3 +2229,256 @@ test("Scene3D SCENE_CMD_SET_POST_UNIFORMS patches named CustomPost uniforms non-
   assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patches"), "1", "applied counter unchanged on a miss");
   assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patch-misses"), "1", "miss counter bumped");
 });
+
+// The incident: a Selena-material plane drew with the built-in PBR fallback
+// instead of its compiled program whenever a LinesGeometry/GlowMaterial mesh
+// shared the frame. Nothing warned; the renderer reported success. Two
+// investigations missed it because every existing assertion checked only that
+// SOME draw happened, never WHICH program was bound for it.
+//
+// "landingPadTint" is a uniform only the Selena shader declares, so the fake
+// context can name the Selena program by its shader text.
+const SELENA_LANDING_PAD_VERTEX_GLSL = [
+  "attribute vec3 position;",
+  "attribute vec3 normal;",
+  "uniform mat4 mvp;",
+  "uniform mat3 normalMatrix;",
+  "uniform vec3 landingPadTint;",
+  "varying vec3 vWorldNormal;",
+  "",
+  "void main() {",
+  "  vWorldNormal = normalize((normalMatrix * normal));",
+  "  gl_Position = (mvp * vec4(position, 1.0));",
+  "}",
+].join("\n");
+
+const SELENA_LANDING_PAD_FRAGMENT_GLSL = [
+  "precision mediump float;",
+  "uniform mat4 mvp;",
+  "uniform mat3 normalMatrix;",
+  "uniform vec3 landingPadTint;",
+  "varying vec3 vWorldNormal;",
+  "",
+  "void main() {",
+  "  gl_FragColor = vec4(landingPadTint, 1.0);",
+  "}",
+].join("\n");
+
+const SELENA_LANDING_PAD_LAYOUT = {
+  schemaVersion: "selena.descriptor.v1",
+  languageVersion: "selena.lang.v1",
+  material: "LandingPad",
+  kind: "mesh",
+  entryPoints: { vertex: "vertexMain", fragment: "fragmentMain" },
+  attributes: [
+    { location: 0, name: "position", type: "vec3" },
+    { location: 1, name: "normal", type: "vec3" },
+  ],
+  textures: [],
+  uniformBlock: {
+    size: 128,
+    fields: [
+      { name: "mvp", type: "mat4", offset: 0, size: 64 },
+      { name: "normalMatrix", type: "mat3", offset: 64, size: 48 },
+      { name: "landingPadTint", type: "vec3", offset: 112, size: 12 },
+    ],
+    defaults: [
+      { name: "landingPadTint", type: "vec3", values: [1, 0, 1] },
+    ],
+  },
+  wgsl: { group: 0, binding: 0 },
+  metal: { buffer: 0 },
+};
+
+// mountSelenaLandingPadScene mounts one Selena-material plane, optionally
+// alongside a LinesGeometry/GlowMaterial mesh. Everything else is held equal
+// so the lines mesh is the only variable between the two cases.
+async function mountSelenaLandingPadScene(options) {
+  const opts = options || {};
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-selena-landing-pad-root";
+
+  const material = {
+    name: "landing-pad",
+    kind: "custom",
+    // The companion StandardMaterial color. When the renderer substitutes the
+    // built-in material, THIS is the color that reaches the framebuffer -- the
+    // downstream investigation proved the substitution by changing exactly this
+    // field and watching the output follow it.
+    color: "#f8f8f8",
+    wireframe: false,
+    shaderBackend: "selena",
+    customVertex: SELENA_LANDING_PAD_VERTEX_GLSL,
+    customFragment: SELENA_LANDING_PAD_FRAGMENT_GLSL,
+    shaderLayout: SELENA_LANDING_PAD_LAYOUT,
+    customUniforms: { landingPadTint: [1, 0, 1] },
+  };
+  if (opts.incompleteSelena) {
+    // Declares Selena, carries no usable envelope: sceneSelenaIsMaterial says
+    // no, nothing fails to compile, and the object draws standard PBR.
+    delete material.shaderLayout;
+  }
+
+  const materials = [material];
+  const objects = [
+    {
+      id: "landing-pad",
+      kind: "plane",
+      material: "landing-pad",
+      width: 4,
+      depth: 4,
+      x: 0,
+      y: 0,
+      z: 0,
+      wireframe: false,
+    },
+  ];
+  if (opts.withLines) {
+    materials.push({ name: "orbit-glow", kind: "glow", color: "#8de1ff" });
+    objects.push({
+      id: "orbit-wire",
+      kind: "lines",
+      material: "orbit-glow",
+      points: [
+        { x: -2, y: 1, z: 0 },
+        { x: 2, y: 1, z: 0 },
+        { x: 2, y: 1, z: 2 },
+      ],
+      lineSegments: [[0, 1], [1, 2]],
+      lineWidth: 2,
+    });
+  }
+
+  const rejectShaderSources = opts.rejectShaderSources || [];
+  const env = createContext({
+    elements: [mount],
+    createWebGL2Context: () => new FakeWebGLContext({ rejectShaderSources }),
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-selena-landing-pad",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-selena-landing-pad-root",
+          props: {
+            width: 640,
+            height: 360,
+            background: "#08151f",
+            camera: { x: 0, y: 3, z: 8, fov: 72 },
+            scene: { materials, objects },
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  if (opts.renderTruth) {
+    env.context.__gosx_scene3d_render_truth = true;
+  }
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  // Guard the guard: a Canvas2D fallback runs no shaders at all, so every
+  // assertion below would pass vacuously against a scene that never reached
+  // WebGL.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl",
+    "the scene must actually reach the WebGL backend");
+  const gl = mount.children[0].getContext("webgl2");
+  assert.ok(gl, "expected a fake WebGL2 context on the scene canvas");
+  return { env, mount, gl };
+}
+
+// selenaLandingPadDrawSummary splits the frame's triangle draws by the program
+// that was bound when each one was issued.
+function selenaLandingPadDrawSummary(gl) {
+  const selenaProgram = gl.programMatching("landingPadTint");
+  const triangleDraws = gl.ops.filter((entry) => entry[0] === "drawArrays" && entry[1] === gl.TRIANGLES);
+  const selenaID = selenaProgram ? selenaProgram.id : null;
+  return {
+    selenaProgram,
+    triangleDraws,
+    selenaDraws: triangleDraws.filter((entry) => selenaID !== null && entry[4] === selenaID),
+    otherDraws: triangleDraws.filter((entry) => selenaID === null || entry[4] !== selenaID),
+  };
+}
+
+test("Scene3D WebGL never repaints a Selena mesh with the fallback material when a lines mesh shares the frame", async () => {
+  // Control: the Selena plane alone. Proves the fixture compiles and draws
+  // through Selena, so a failure in the mixed case cannot be blamed on it.
+  const solo = await mountSelenaLandingPadScene({ withLines: false });
+  const soloSummary = selenaLandingPadDrawSummary(solo.gl);
+  assert.ok(soloSummary.selenaProgram, "the Selena program must link for the plane-only scene");
+  assert.equal(soloSummary.selenaDraws.length, 1,
+    "plane-only control: the Selena plane must draw once, with the Selena program");
+  assert.equal(soloSummary.otherDraws.length, 0,
+    "plane-only control: no other program may draw triangles");
+
+  // The trigger: add one LinesGeometry/GlowMaterial mesh, change nothing else.
+  const mixed = await mountSelenaLandingPadScene({ withLines: true });
+  const mixedSummary = selenaLandingPadDrawSummary(mixed.gl);
+  assert.ok(mixedSummary.selenaProgram,
+    "the Selena program must still link when a lines mesh shares the frame");
+  assert.equal(mixedSummary.selenaDraws.length, 1,
+    "the Selena plane must still draw with its compiled program");
+
+  // The defect. Before the fix the legacy immediate-mode world-mesh path
+  // (renderSceneWebGLMeshWorldBundle) re-drew the SAME quad with the flat world
+  // program and the material's companion base color, on top of the correct
+  // Selena draw -- but only when the frame also carried world line segments,
+  // which is why neither the plane alone nor the lines alone reproduced it.
+  assert.equal(mixedSummary.otherDraws.length, 0,
+    "no second program may repaint the Selena mesh; extra triangle draws: " +
+    JSON.stringify(mixedSummary.otherDraws));
+
+  // And the substitution counter must stay clean: nothing fell back here.
+  assert.equal(mixed.env.consoleLogs.warn.length, 0,
+    "a healthy Selena draw must not warn, got: " + JSON.stringify(mixed.env.consoleLogs.warn));
+});
+
+test("Scene3D WebGL reports a material fallback through render truth and the console", async () => {
+  // Case 1: a real compile failure. The fake context rejects any shader whose
+  // source mentions landingPadTint, which is exactly what a driver that refuses
+  // the GLSL does.
+  const failed = await mountSelenaLandingPadScene({
+    withLines: true,
+    renderTruth: true,
+    rejectShaderSources: ["landingPadTint"],
+  });
+  assert.equal(failed.mount.getAttribute("data-gosx-scene3d-render-backend"), "webgl",
+    "render truth must be published for the WebGL backend");
+  const failedCount = Number(failed.mount.getAttribute("data-gosx-scene3d-render-mesh-material-fallback"));
+  assert.ok(failedCount >= 1,
+    "a Selena shader the driver rejected must raise the material-fallback counter, got " + failedCount);
+  assert.match(failed.mount.getAttribute("data-gosx-scene3d-render-mesh-material-fallback-detail"),
+    /selena-compile@LandingPad/,
+    "the detail attribute must name the reason and the material");
+  assert.ok(failed.env.consoleLogs.warn.some((line) => String(line).includes("Selena shader compilation failed")),
+    "the compile failure must warn on the console, got: " + JSON.stringify(failed.env.consoleLogs.warn));
+
+  // Case 2: the silent one. The material DECLARES Selena but carries no usable
+  // envelope, so nothing fails to compile and the old code said nothing at all.
+  const incomplete = await mountSelenaLandingPadScene({
+    withLines: true,
+    renderTruth: true,
+    incompleteSelena: true,
+  });
+  const incompleteCount = Number(incomplete.mount.getAttribute("data-gosx-scene3d-render-mesh-material-fallback"));
+  assert.ok(incompleteCount >= 1,
+    "an incomplete Selena envelope must raise the material-fallback counter, got " + incompleteCount);
+  assert.match(incomplete.mount.getAttribute("data-gosx-scene3d-render-mesh-material-fallback-detail"),
+    /selena-not-usable/,
+    "the detail attribute must distinguish an unusable envelope from a compile failure");
+  assert.ok(incomplete.env.consoleLogs.warn.some((line) => String(line).includes("Selena material is incomplete")),
+    "an incomplete Selena material must warn on the console, got: " + JSON.stringify(incomplete.env.consoleLogs.warn));
+
+  // The counter is per FRAME, not per cache miss: ensureSelenaProgram caches
+  // its failure, so a compile-time-only counter would read a healthy zero on
+  // every frame after the first while the wrong material kept drawing.
+  const healthy = await mountSelenaLandingPadScene({ withLines: true, renderTruth: true });
+  assert.equal(healthy.mount.getAttribute("data-gosx-scene3d-render-mesh-material-fallback"), "0",
+    "a healthy frame must report zero material fallbacks");
+  assert.equal(healthy.mount.getAttribute("data-gosx-scene3d-render-mesh-material-fallback-detail"), "");
+});

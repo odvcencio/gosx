@@ -13,11 +13,17 @@
   // directly, so the reuse set can't just be a local variable / call
   // argument there). Reset unconditionally at the top of every bootstrapPage
   // call so a later plain call (e.g. a future page's initial load) never
-  // sees a stale reuse set from a previous navigation.
+  // sees a stale reuse set from a previous navigation. pendingIsNavigationBootstrap
+  // records whether THIS call's ORIGINAL argument was a real Set, captured
+  // before pendingEngineReuseIDs coerces a missing/non-Set argument away —
+  // that original distinction is what tells a first page load apart from a
+  // soft navigation (see mountAllEngines).
   let pendingEngineReuseIDs = new Set();
+  let pendingIsNavigationBootstrap = false;
 
   async function bootstrapPage(reuseEngineIDs) {
-    pendingEngineReuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
+    pendingIsNavigationBootstrap = reuseEngineIDs instanceof Set;
+    pendingEngineReuseIDs = pendingIsNavigationBootstrap ? reuseEngineIDs : new Set();
     refreshGosxEnvironmentState("bootstrap-page");
     refreshGosxDocumentState("bootstrap-page");
     mountManagedMotion(document.body || document.documentElement);

@@ -215,12 +215,16 @@ class FakeCanvasContext2D {
 class FakeWebGLContext {
   constructor(options = {}) {
     this.ops = [];
+    this.programs = [];
     this.bufferUploads = new Map();
     this.textureUploads = new Map();
     this._nextBufferID = 1;
     this._nextTextureID = 1;
+    this._nextProgramID = 1;
     this._boundArrayBuffer = null;
     this._boundTexture = null;
+    this._activeProgram = null;
+    this._rejectShaderSources = Array.isArray(options.rejectShaderSources) ? options.rejectShaderSources : [];
     this._vendor = typeof options.vendor === "string" ? options.vendor : "FakeGPU Inc.";
     this._renderer = typeof options.renderer === "string" ? options.renderer : "FakeGPU Renderer";
     // unmaskedVendor/unmaskedRenderer let a test simulate a browser that
@@ -308,14 +312,44 @@ class FakeWebGLContext {
     this.ops.push(["compileShader", shader.type]);
   }
 
-  getShaderParameter(_shader, param) {
-    return param === this.COMPILE_STATUS;
+  // rejectShaderSources lets a test drive the REAL compile-failure path: any
+  // shader whose source contains one of the listed substrings reports a failed
+  // compile, exactly as a driver that rejects the GLSL would.
+  getShaderParameter(shader, param) {
+    if (param !== this.COMPILE_STATUS) {
+      return false;
+    }
+    const source = String(shader && shader.source || "");
+    for (const needle of this._rejectShaderSources) {
+      if (needle && source.includes(needle)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   createProgram() {
-    const program = { attached: [] };
-    this.ops.push(["createProgram"]);
+    const program = { id: this._nextProgramID++, attached: [] };
+    this.programs.push(program);
+    this.ops.push(["createProgram", program.id]);
     return program;
+  }
+
+  // programShaderSources returns the concatenated GLSL of every shader ever
+  // attached to `program`. Tests use it to name a program by what it draws
+  // ("the one carrying the Selena fragment body") rather than by creation
+  // order, which shifts whenever the renderer gains another built-in program.
+  programShaderSources(program) {
+    if (!program || !Array.isArray(program.attached)) {
+      return "";
+    }
+    return program.attached.map((shader) => String(shader && shader.source || "")).join("\n");
+  }
+
+  // programMatching finds the single created program whose attached shader
+  // sources contain `needle`.
+  programMatching(needle) {
+    return this.programs.find((program) => this.programShaderSources(program).includes(needle)) || null;
   }
 
   attachShader(program, shader) {
@@ -396,8 +430,9 @@ class FakeWebGLContext {
     this.ops.push(["clearDepth", value]);
   }
 
-  useProgram(_program) {
-    this.ops.push(["useProgram"]);
+  useProgram(program) {
+    this._activeProgram = program || null;
+    this.ops.push(["useProgram", program && program.id]);
   }
 
   bindBuffer(target, buffer) {
@@ -474,7 +509,19 @@ class FakeWebGLContext {
   }
 
   drawArrays(mode, first, count) {
-    this.ops.push(["drawArrays", mode, first, count]);
+    // Element 4 records WHICH program was bound at draw time. Without it a
+    // test can only prove that a draw happened, not that the intended shader
+    // ran -- the exact blind spot that let a Selena mesh draw through the
+    // built-in PBR program undetected.
+    this.ops.push(["drawArrays", mode, first, count, this._activeProgram && this._activeProgram.id]);
+  }
+
+  // The thick-line world pass (10-runtime-scene-core.js
+  // renderSceneWebGLWorldBundle) issues indexed draws. Without this method any
+  // scene carrying a LinesGeometry with an explicit width > 1 threw here
+  // instead of rendering, so no test could cover a mixed lines+mesh frame.
+  drawElements(mode, count, type, offset) {
+    this.ops.push(["drawElements", mode, count, type, offset, this._activeProgram && this._activeProgram.id]);
   }
 
   uniform4f(location, x, y, z, w) {
@@ -4581,18 +4628,37 @@ function boardBundleManyObjectsOneMaterial(n) {
 }
 
 // makeFakeGPUDeviceForCompute extends the board fake with controllable async
-// pipeline behaviour and error-scope control, needed for the payload-kernel
-// validation tests.  pipelineAsyncBehavior is a function called with the
-// pipeline descriptor on createComputePipelineAsync; it should return either
-// a resolved or rejected Promise.  errorScopeBehavior is a function called on
-// popErrorScope; it should return a Promise that resolves to null (clean) or a
-// GPUValidationError-like object (error).
+// pipeline behaviour, per-module compilation info, and error-scope control,
+// needed for the payload-kernel validation tests.  pipelineAsyncBehavior is a
+// function called with the pipeline descriptor on createComputePipelineAsync;
+// it should return either a resolved or rejected Promise.
+// compilationInfoBehavior is a function called with the shader-module
+// descriptor; it should return an array of GPUCompilationMessage-like objects
+// for that module, or nothing for a clean module.
+//
+// errorScopeBehavior remains only so the older tests keep their shape. The
+// renderer no longer validates pipelines through the device error scope: that
+// stack is DEVICE-GLOBAL, and popping it from six overlapping async builds
+// attributed one build's error to another. Per-pipeline verdicts come from
+// create*PipelineAsync and per-module reasons from getCompilationInfo, both of
+// which are keyed to the object they describe.
 function makeFakeGPUDeviceForCompute(options) {
   const base = makeFakeGPUDevice();
   const device = base.device;
   const opts = options || {};
   const pendingScopes = [];
   const computePipelineAsyncCalls = [];
+  const innerCreateShaderModule = device.createShaderModule;
+  device.createShaderModule = function(desc) {
+    const module = innerCreateShaderModule.call(device, desc);
+    module.getCompilationInfo = function() {
+      const messages = typeof opts.compilationInfoBehavior === "function"
+        ? (opts.compilationInfoBehavior(desc) || [])
+        : [];
+      return Promise.resolve({ messages });
+    };
+    return module;
+  };
   device.pushErrorScope = function(filter) {
     pendingScopes.push(filter);
   };

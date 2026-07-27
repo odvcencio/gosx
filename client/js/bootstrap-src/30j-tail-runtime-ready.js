@@ -31,7 +31,7 @@
       return;
     }
 
-    mountAllEngines(pendingManifest, pendingEngineReuseIDs).then(function() {
+    mountAllEngines(pendingManifest, pendingEngineReuseIDs, pendingIsNavigationBootstrap).then(function() {
       return Promise.all([
         hydrateAllIslands(pendingManifest),
         connectAllHubs(pendingManifest),

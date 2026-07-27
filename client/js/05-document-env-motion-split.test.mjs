@@ -93,9 +93,13 @@ const exposeSrc = `
   window.__test_hooks = {
     gosxMotionSplitUnits,
     playManagedMotionUnits,
+    playManagedMotion,
     normalizeGosxMotionSplit,
     GOSX_MOTION_UNIT_CLASS,
     GOSX_MOTION_SPLIT_ATTR,
+    GOSX_MOTION_REVEALED_ATTR,
+    GOSX_MOTION_LIFE_TOKEN,
+    document,
   };
 `;
 
@@ -503,5 +507,178 @@ test("playManagedMotionUnits with no units settles the record to finished withou
   assert.doesNotThrow(() => {
     hooks.playManagedMotionUnits(record, []);
   });
+  assert.equal(el.getAttribute("data-gosx-motion-state"), "finished");
+});
+
+// --- re-mount replay guard ------------------------------------------------
+//
+// Regression test for the m31labs.dev hero-text-disappears defect: a fresh
+// managed-motion record over an element that was already fully split and
+// revealed by a PRIOR record (soft navigation replaying page scripts, or
+// any dispose+remount cycle that reuses the live document) must not replay
+// the reveal from its hidden first keyframe. gosxMotionSplitUnits already
+// hands back the existing spans instead of double-wrapping (see the
+// idempotency test above); this test covers the other half of the
+// contract -- playManagedMotion must not re-`animate()` those spans, since
+// Web Animations composites the new call above the old one and, with
+// fill:"both", instantly re-hides text that was already visible.
+test("re-mount replay guard: a fresh record over an already-revealed element does not re-animate it", () => {
+  const hooks = runModule();
+
+  // Every span gosxMotionSplitUnits creates goes through document.createElement
+  // -- patch it once so every unit gets an .animate stub and calls are counted,
+  // without having to reach into the split output between passes.
+  const originalCreateElement = hooks.document.createElement.bind(hooks.document);
+  let animateCallCount = 0;
+  hooks.document.createElement = function (tag) {
+    const node = originalCreateElement(tag);
+    node.animate = function () {
+      animateCallCount += 1;
+      return fakeAnimation();
+    };
+    return node;
+  };
+
+  const el = makeTextEl("Hi");
+  el.animate = () => fakeAnimation(); // satisfies playManagedMotion's element.animate guard ahead of the split branch
+  el.setAttribute("data-gosx-motion", "");
+  el.setAttribute("data-gosx-motion-preset", "slide-up");
+  el.setAttribute("data-gosx-motion-split", "char");
+  el.setAttribute("data-gosx-motion-duration", "200");
+  el.setAttribute("data-gosx-motion-stagger", "20");
+  // Sidesteps gosxManagedMotionReduced's environment-state lookup, which
+  // this minimal harness does not stub.
+  el.setAttribute("data-gosx-motion-respect-reduced", "false");
+
+  // Pass 1: a brand-new record plays the reveal, same as the initial mount.
+  const firstRecord = { element: el, config: null, played: false, animation: null, unitAnimations: null };
+  hooks.playManagedMotion(firstRecord, "load");
+
+  assert.equal(firstRecord.played, true);
+  assert.ok(animateCallCount > 0, "the first pass must animate the split units");
+  assert.equal(
+    el.getAttribute(hooks.GOSX_MOTION_REVEALED_ATTR),
+    hooks.GOSX_MOTION_LIFE_TOKEN,
+    "the revealed attribute is stamped with this evaluation's page-life token, not a plain boolean"
+  );
+  const callsAfterFirstPass = animateCallCount;
+
+  // Pass 2: a fresh record over the SAME still-live element -- what a
+  // re-mount produces. Before this fix, this replayed the invisible-first-
+  // keyframe animation over spans that were already fully visible.
+  const secondRecord = { element: el, config: null, played: false, animation: null, unitAnimations: null };
+  hooks.playManagedMotion(secondRecord, "load");
+
+  assert.equal(secondRecord.played, true);
+  assert.equal(
+    animateCallCount,
+    callsAfterFirstPass,
+    "a re-mount over an already-revealed element must not call animate() again"
+  );
+  assert.equal(el.getAttribute("data-gosx-motion-state"), "finished");
+});
+
+// --- stale revealed-attribute guard (FINDING-001) --------------------------
+//
+// Regression test for a review finding on the fix above: disposeManagedMotion
+// cancels the animation and drops the record, but it never removes
+// GOSX_MOTION_REVEALED_ATTR -- surviving disposal is the whole point of the
+// attribute. A plain "true" value therefore cannot tell "this exact node was
+// disposed and remounted earlier in THIS page life" (skip the replay --
+// correct) apart from "this value was written by a DIFFERENT page life and
+// happens to still be sitting on the element or baked into the markup" (skip
+// the replay anyway -- wrong: nothing has actually run the reveal in this
+// life, so the element is left exactly as its markup described it, with no
+// staggered animation ever having played).
+//
+// GOSX_MOTION_LIFE_TOKEN scopes the match to the current script evaluation.
+// The two tests below cover both shapes a stale value can take: the exact
+// literal "true" that every page life wrote under the plain-boolean design
+// (so any leftover from a life that ran the OLD code reads back as "true"),
+// and an arbitrary already-token-shaped string from a different evaluation
+// (defense in depth for the token design itself, and the case a
+// server-rendered/hand-authored value would also fall into).
+test("FINDING-001: a stale literal \"true\" value from a different page life does not block the reveal", () => {
+  const hooks = runModule();
+  const el = makeTextEl("Hi");
+  let animateCallCount = 0;
+  el.animate = () => {
+    animateCallCount += 1;
+    return fakeAnimation();
+  };
+  el.setAttribute("data-gosx-motion", "");
+  el.setAttribute("data-gosx-motion-preset", "fade");
+  el.setAttribute("data-gosx-motion-respect-reduced", "false");
+  // Simulates the attribute surviving from a DIFFERENT page life: no record
+  // in this evaluation ever wrote it, but the DOM node (or its
+  // server-rendered markup) already carries it when this fresh record is
+  // created.
+  el.setAttribute(hooks.GOSX_MOTION_REVEALED_ATTR, "true");
+
+  const record = { element: el, config: null, played: false, animation: null, unitAnimations: null };
+  hooks.playManagedMotion(record, "load");
+
+  assert.equal(record.played, true);
+  assert.equal(
+    animateCallCount,
+    1,
+    "a stale \"true\" from a prior page life must not suppress this life's reveal"
+  );
+  assert.equal(
+    el.getAttribute(hooks.GOSX_MOTION_REVEALED_ATTR),
+    hooks.GOSX_MOTION_LIFE_TOKEN,
+    "playing the reveal re-stamps the attribute with the CURRENT page-life token"
+  );
+});
+
+test("FINDING-001: a stale token-shaped value from a different page life does not block the reveal", () => {
+  const hooks = runModule();
+  const el = makeTextEl("Hi");
+  let animateCallCount = 0;
+  el.animate = () => {
+    animateCallCount += 1;
+    return fakeAnimation();
+  };
+  el.setAttribute("data-gosx-motion", "");
+  el.setAttribute("data-gosx-motion-preset", "fade");
+  el.setAttribute("data-gosx-motion-respect-reduced", "false");
+  // A value that is shaped like a real life token but was, by construction,
+  // written by a DIFFERENT evaluation -- guaranteed unequal to this
+  // evaluation's token without depending on RNG behavior.
+  const staleToken = "prior-life-" + hooks.GOSX_MOTION_LIFE_TOKEN;
+  el.setAttribute(hooks.GOSX_MOTION_REVEALED_ATTR, staleToken);
+
+  const record = { element: el, config: null, played: false, animation: null, unitAnimations: null };
+  hooks.playManagedMotion(record, "load");
+
+  assert.equal(record.played, true);
+  assert.equal(
+    animateCallCount,
+    1,
+    "a stale token from a different page life must not suppress this life's reveal"
+  );
+  assert.equal(el.getAttribute(hooks.GOSX_MOTION_REVEALED_ATTR), hooks.GOSX_MOTION_LIFE_TOKEN);
+});
+
+test("same-life guard still holds: the current life's own token on the element skips the replay", () => {
+  const hooks = runModule();
+  const el = makeTextEl("Hi");
+  let animateCallCount = 0;
+  el.animate = () => {
+    animateCallCount += 1;
+    return fakeAnimation();
+  };
+  el.setAttribute("data-gosx-motion", "");
+  el.setAttribute("data-gosx-motion-preset", "fade");
+  el.setAttribute("data-gosx-motion-respect-reduced", "false");
+  // What disposeManagedMotion leaves behind after a same-life reveal: the
+  // CURRENT evaluation's own token, not a boolean.
+  el.setAttribute(hooks.GOSX_MOTION_REVEALED_ATTR, hooks.GOSX_MOTION_LIFE_TOKEN);
+
+  const record = { element: el, config: null, played: false, animation: null, unitAnimations: null };
+  hooks.playManagedMotion(record, "load");
+
+  assert.equal(record.played, true);
+  assert.equal(animateCallCount, 0, "a matching same-life token must still skip the replay");
   assert.equal(el.getAttribute("data-gosx-motion-state"), "finished");
 });
