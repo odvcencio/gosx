@@ -156,37 +156,36 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
-	ID                 string    `json:"id"`
-	Kind               string    `json:"kind"`
-	Size               float64   `json:"size,omitempty"`
-	Width              float64   `json:"width,omitempty"`
-	Height             float64   `json:"height,omitempty"`
-	Depth              float64   `json:"depth,omitempty"`
-	Radius             float64   `json:"radius,omitempty"`
-	Segments           int       `json:"segments,omitempty"`
-	Points             []Vector3 `json:"points,omitempty"`
-	LineSegments       [][2]int  `json:"lineSegments,omitempty"`
-	LineWidth          float64   `json:"lineWidth,omitempty"`
-	RadiusTop          float64   `json:"radiusTop,omitempty"`
-	RadiusBottom       float64   `json:"radiusBottom,omitempty"`
-	Tube               float64   `json:"tube,omitempty"`
-	RadialSegments     int       `json:"radialSegments,omitempty"`
-	TubularSegments    int       `json:"tubularSegments,omitempty"`
-	MaterialKind       string    `json:"materialKind,omitempty"`
-	Color              string    `json:"color,omitempty"`
-	Texture            string    `json:"texture,omitempty"`
-	Opacity            *float64  `json:"opacity,omitempty"`
-	Emissive           *float64  `json:"emissive,omitempty"`
-	BlendMode          string    `json:"blendMode,omitempty"`
-	RenderPass         string    `json:"renderPass,omitempty"`
-	Wireframe          *bool     `json:"wireframe,omitempty"`
-	LineDash           *bool     `json:"lineDash,omitempty"`
-	DashSize           float64   `json:"dashSize,omitempty"`
-	GapSize            float64   `json:"gapSize,omitempty"`
-	CustomVertex       string    `json:"customVertex,omitempty"`
-	CustomFragment     string    `json:"customFragment,omitempty"`
-	CustomVertexWGSL   string    `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL string    `json:"customFragmentWGSL,omitempty"`
+	ID                 string   `json:"id"`
+	Kind               string   `json:"kind"`
+	Size               float64  `json:"size,omitempty"`
+	Width              float64  `json:"width,omitempty"`
+	Height             float64  `json:"height,omitempty"`
+	Depth              float64  `json:"depth,omitempty"`
+	Radius             float64  `json:"radius,omitempty"`
+	Segments           int      `json:"segments,omitempty"`
+	LineSegments       [][2]int `json:"lineSegments,omitempty"`
+	LineWidth          float64  `json:"lineWidth,omitempty"`
+	RadiusTop          float64  `json:"radiusTop,omitempty"`
+	RadiusBottom       float64  `json:"radiusBottom,omitempty"`
+	Tube               float64  `json:"tube,omitempty"`
+	RadialSegments     int      `json:"radialSegments,omitempty"`
+	TubularSegments    int      `json:"tubularSegments,omitempty"`
+	MaterialKind       string   `json:"materialKind,omitempty"`
+	Color              string   `json:"color,omitempty"`
+	Texture            string   `json:"texture,omitempty"`
+	Opacity            *float64 `json:"opacity,omitempty"`
+	Emissive           *float64 `json:"emissive,omitempty"`
+	BlendMode          string   `json:"blendMode,omitempty"`
+	RenderPass         string   `json:"renderPass,omitempty"`
+	Wireframe          *bool    `json:"wireframe,omitempty"`
+	LineDash           *bool    `json:"lineDash,omitempty"`
+	DashSize           float64  `json:"dashSize,omitempty"`
+	GapSize            float64  `json:"gapSize,omitempty"`
+	CustomVertex       string   `json:"customVertex,omitempty"`
+	CustomFragment     string   `json:"customFragment,omitempty"`
+	CustomVertexWGSL   string   `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL string   `json:"customFragmentWGSL,omitempty"`
 	// *Ref fields replace their counterparts when hoisted into SceneIR.ShaderLib.
 	CustomVertexRef       string            `json:"customVertexRef,omitempty"`
 	CustomFragmentRef     string            `json:"customFragmentRef,omitempty"`
@@ -252,29 +251,15 @@ type ObjectIR struct {
 	OutState       map[string]any `json:"outState,omitempty"`
 	Live           []string       `json:"live,omitempty"`
 	Vertices       *MeshVertices  `json:"vertices,omitempty"`
-}
 
-// MarshalJSON encodes ObjectIR via the standard reflection path but
-// shadows the Points field so line-point coordinates always emit
-// their x/y/z triple even when zero. The legacy map-based marshaling
-// produced `{"x":0,"y":2,"z":0}` for a point like Vec3(0,2,0);
-// Vector3's default omitempty tag would silently drop the zero
-// coordinates and give `{"y":2}` instead, breaking any JS consumer
-// that expects all three keys.
-//
-// The `type alias` trick sheds ObjectIR's MarshalJSON method so
-// json.Marshal doesn't recurse infinitely, and the outer struct's
-// Points field shadows the embedded alias's Points (shallower depth
-// wins per encoding/json field resolution rules).
-func (o ObjectIR) MarshalJSON() ([]byte, error) {
-	type objectAlias ObjectIR
-	return json.Marshal(struct {
-		objectAlias
-		Points []linePointWire `json:"points,omitempty"`
-	}{
-		objectAlias: objectAlias(o),
-		Points:      toLinePointsWire(o.Points),
-	})
+	// Points holds the polyline vertices of a line object. It sits last
+	// on purpose: a wrapper struct used to shadow it, which pushed
+	// "points" to the end of the object record. Keeping the field last
+	// keeps the wire bytes byte-identical without the wrapper.
+	//
+	// LinePoints, not []Vector3, because a polyline vertex must keep a
+	// zero coordinate on the wire and Vector3 drops it. See LinePoints.
+	Points LinePoints `json:"points,omitempty"`
 }
 
 // ModelIR is the typed compatibility record for one scene model instance.
@@ -304,34 +289,37 @@ type ModelIR struct {
 // The symptom is a Scene3D typed-spread test that
 // expects "src" in the runtime head missing it entirely.
 //
-// Uses the same type-alias trick as ObjectIR.MarshalJSON: alias ObjectIR
-// to shed its MarshalJSON method, then flatten both sets of fields into
-// one struct literal so field shadowing gives the outer Points field
-// precedence (canonical wire shape for lines).
+// It keeps the type-alias trick: alias ObjectIR to shed any method set,
+// then flatten both halves into one struct literal. ObjectIR.Points is
+// last within ObjectIR and marshals itself through LinePoints, so the
+// wire keeps "points" between the object fields and "src" without a
+// shadow field here.
+//
+// The method also normalizes: it trims the fit strings and clamps the
+// animation numbers to non-negative. Callers can build a ModelIR by
+// hand, so the normalization has to stay at the marshal boundary.
 func (m ModelIR) MarshalJSON() ([]byte, error) {
 	type objectAlias ObjectIR
 	type modelWire struct {
 		objectAlias
-		Points             []linePointWire `json:"points,omitempty"`
-		Src                string          `json:"src,omitempty"`
-		ScaleX             float64         `json:"scaleX,omitempty"`
-		ScaleY             float64         `json:"scaleY,omitempty"`
-		ScaleZ             float64         `json:"scaleZ,omitempty"`
-		Bounds             float64         `json:"bounds,omitempty"`
-		Fit                string          `json:"fit,omitempty"`
-		FitAlign           string          `json:"fitAlign,omitempty"`
-		Static             *bool           `json:"static,omitempty"`
-		Animation          string          `json:"animation,omitempty"`
-		AnimationSeq       string          `json:"animationSeq,omitempty"`
-		AnimationSpeed     *float64        `json:"animationSpeed,omitempty"`
-		AnimationWeight    *float64        `json:"animationWeight,omitempty"`
-		AnimationFadeInMS  *int            `json:"animationFadeInMS,omitempty"`
-		AnimationFadeOutMS *int            `json:"animationFadeOutMS,omitempty"`
-		Loop               *bool           `json:"loop,omitempty"`
+		Src                string   `json:"src,omitempty"`
+		ScaleX             float64  `json:"scaleX,omitempty"`
+		ScaleY             float64  `json:"scaleY,omitempty"`
+		ScaleZ             float64  `json:"scaleZ,omitempty"`
+		Bounds             float64  `json:"bounds,omitempty"`
+		Fit                string   `json:"fit,omitempty"`
+		FitAlign           string   `json:"fitAlign,omitempty"`
+		Static             *bool    `json:"static,omitempty"`
+		Animation          string   `json:"animation,omitempty"`
+		AnimationSeq       string   `json:"animationSeq,omitempty"`
+		AnimationSpeed     *float64 `json:"animationSpeed,omitempty"`
+		AnimationWeight    *float64 `json:"animationWeight,omitempty"`
+		AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
+		AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
+		Loop               *bool    `json:"loop,omitempty"`
 	}
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
-		Points:             toLinePointsWire(m.Points),
 		Src:                m.Src,
 		ScaleX:             m.ScaleX,
 		ScaleY:             m.ScaleY,
@@ -1208,17 +1196,23 @@ func (g Graph) SceneIR() SceneIR {
 		return SceneIR{}
 	}
 
-	// Pre-size the top-level slices and the anchors map to len(g.Nodes)
-	// — each node is likely to resolve to one object/light/label/etc.,
-	// so starting with that capacity avoids the 3-5 append doublings
-	// most typical scenes would otherwise trigger. Over-estimates waste
-	// a few slice headers but under-estimates are absorbed by the
-	// append grow path.
-	nodeCount := len(g.Nodes)
+	// Size the accumulators from a counting walk, not from len(g.Nodes).
+	//
+	// len(g.Nodes) counts only the top row. A scene that puts its meshes
+	// in groups undercounts, and ObjectIR is about one kilobyte, so a
+	// single append doubling on a 5000-mesh scene allocates nine
+	// megabytes and copies four more. len(g.Nodes) also oversized the
+	// light slice: a 5000-node scene with five lights reserved
+	// 5000 x 344 bytes for them.
+	//
+	// countGraphNodes walks the same tree with no allocation. A wrong
+	// count only costs speed: append still grows, and spare capacity is
+	// still spare.
+	counts := countGraphNodes(g.Nodes)
 	lowerer := &graphLowerer{
-		anchors: make(map[string]worldTransform, nodeCount),
-		objects: make([]ObjectIR, 0, nodeCount),
-		lights:  make([]LightIR, 0, nodeCount),
+		anchors: make(map[string]worldTransform, counts.total),
+		objects: make([]ObjectIR, 0, counts.objectLike),
+		lights:  make([]LightIR, 0, counts.lights),
 	}
 	for _, node := range g.Nodes {
 		lowerer.lowerNode(node, identityTransform())
@@ -1265,6 +1259,89 @@ func (g Graph) SceneIR() SceneIR {
 	return ir
 }
 
+// graphNodeCounts holds the capacities Graph.SceneIR reserves before it
+// lowers. Each count is an estimate, never a contract.
+type graphNodeCounts struct {
+	// total counts every reachable node. It sizes the anchors map.
+	total int
+	// objectLike counts the nodes that reach the object accumulator. A
+	// helper node expands into several object records, so treat this as
+	// a floor, not an exact figure.
+	objectLike int
+	// lights counts the seven light kinds. Each lowers to exactly one
+	// LightIR, so this one is exact for a graph of plain lights.
+	lights int
+}
+
+// countGraphNodes walks the node tree and reports how many records each
+// accumulator is likely to hold.
+//
+// The walk allocates nothing: it reads the interface type of each node
+// and recurses into the three node kinds that hold children. A node kind
+// that is missing from the switch below still lowers correctly. It only
+// loses its capacity hint, so a new node kind cannot break the scene.
+func countGraphNodes(nodes []Node) graphNodeCounts {
+	var counts graphNodeCounts
+	countNodeSlice(nodes, &counts, 0)
+	return counts
+}
+
+// countNodeDepthLimit stops the counting walk on a cyclic graph. A cycle
+// cannot be built with value nodes, but a pointer node can hold itself.
+// The lowering walk has no such guard, so keep the depth generous: the
+// count is only a hint, and a scene deep enough to hit this limit would
+// hang the lowering anyway.
+const countNodeDepthLimit = 64
+
+func countNodeSlice(nodes []Node, counts *graphNodeCounts, depth int) {
+	for _, node := range nodes {
+		countNode(node, counts, depth)
+	}
+}
+
+func countNode(node Node, counts *graphNodeCounts, depth int) {
+	if node == nil || depth > countNodeDepthLimit {
+		return
+	}
+	counts.total++
+	switch current := node.(type) {
+	case Group:
+		countNodeSlice(current.Children, counts, depth+1)
+	case *Group:
+		if current != nil {
+			countNodeSlice(current.Children, counts, depth+1)
+		}
+	case Mesh:
+		counts.objectLike++
+		countNodeSlice(current.Children, counts, depth+1)
+	case *Mesh:
+		if current != nil {
+			counts.objectLike++
+			countNodeSlice(current.Children, counts, depth+1)
+		}
+	case LODGroup:
+		for _, level := range current.Levels {
+			countNode(level.Node, counts, depth+1)
+		}
+	case *LODGroup:
+		if current != nil {
+			for _, level := range current.Levels {
+				countNode(level.Node, counts, depth+1)
+			}
+		}
+	case Decal, *Decal:
+		counts.objectLike++
+	case AmbientLight, *AmbientLight,
+		DirectionalLight, *DirectionalLight,
+		PointLight, *PointLight,
+		SpotLight, *SpotLight,
+		HemisphereLight, *HemisphereLight,
+		RectAreaLight, *RectAreaLight,
+		LightProbe, *LightProbe:
+		counts.lights++
+	}
+}
+
 // MarshalJSON hoists duplicate shader-source strings into ir.ShaderLib
 // (see hoistShaderLib), then encodes the result through plain reflection
 // over json tags. There is no map[string]any intermediate on this path.
@@ -1283,6 +1360,24 @@ func (g Graph) SceneIR() SceneIR {
 // hold and reuse — for example, marshaling the same SceneIR value
 // twice.
 func (ir SceneIR) MarshalJSON() ([]byte, error) {
+	return ir.marshalWire()
+}
+
+// marshalWire is the body of MarshalJSON, reachable without the
+// json.Marshaler dispatch.
+//
+// encoding/json treats a json.Marshaler's output as untrusted: it runs
+// the returned bytes through appendCompact, a byte-at-a-time state
+// machine, before it copies them into the outer buffer. On a
+// 1000-object scene that re-scan cost about one fifth of the whole
+// server-side page. The bytes come from encoding/json itself one frame
+// down, so the scan can only ever confirm what it already knows.
+//
+// A caller inside this package that wants the scene bytes and nothing
+// else calls marshalWire and skips the scan. Props.spreadPropsFast is
+// that caller. The public MarshalJSON keeps the dispatch, so any
+// outside caller still gets the documented json.Marshaler behaviour.
+func (ir SceneIR) marshalWire() ([]byte, error) {
 	type sceneIRAlias SceneIR
 	if shaderLibNeedsHoist(&ir) {
 		cloneShaderLibCollections(&ir)
@@ -1296,19 +1391,32 @@ func (ir SceneIR) MarshalJSON() ([]byte, error) {
 // bytes long, appears twice or more across ir's shader-bearing
 // collections. It only reads ir, so MarshalJSON can call it before it
 // decides whether to pay for cloneShaderLibCollections.
+//
+// It walks the pairs through eachShaderLibPair rather than through
+// collectShaderLibPairs. Every marshal runs this predicate, and the slice
+// collectShaderLibPairs builds costs 64 bytes per object record for a
+// question that needs no slice at all. The counts map is created on the
+// first candidate string, so a scene with no authored shader — the
+// common one — allocates nothing here.
 func shaderLibNeedsHoist(ir *SceneIR) bool {
-	counts := make(map[string]int)
-	for _, p := range collectShaderLibPairs(ir) {
+	var counts map[string]int
+	found := false
+	eachShaderLibPair(ir, func(p shaderLibPair) bool {
 		s := *p.inline
 		if len(s) < shaderLibThreshold {
-			continue
+			return true
+		}
+		if counts == nil {
+			counts = make(map[string]int, 4)
 		}
 		counts[s]++
 		if counts[s] >= 2 {
-			return true
+			found = true
+			return false
 		}
-	}
-	return false
+		return true
+	})
+	return found
 }
 
 // cloneShaderLibCollections replaces every SceneIR collection that
@@ -1352,14 +1460,30 @@ func cloneShaderLibCollections(ir *SceneIR) {
 // shaderLib refs back to inline fields, via inflateShaderLibStruct,
 // before it returns. This is a single decode pass. It builds no
 // intermediate map[string]any.
+//
+// PostEffects needs a hand-off. Its element type is an interface, and
+// encoding/json cannot build a value for an interface field, so a plain decode
+// of the alias fails for every scene that carries one post effect. The
+// anonymous wrapper below shadows the alias field with a raw-message slice: Go
+// field selection prefers the shallower field, so the decoder fills the raw
+// slice and never touches the interface slice. DecodePostEffectIR then
+// dispatches each entry on its "kind" discriminator.
 func (ir *SceneIR) UnmarshalJSON(data []byte) error {
 	// Use a type alias to avoid infinite recursion.
 	type sceneIRAlias SceneIR
-	var alias sceneIRAlias
-	if err := json.Unmarshal(data, &alias); err != nil {
+	var wire struct {
+		sceneIRAlias
+		PostEffects []json.RawMessage `json:"postEffects,omitempty"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	result := SceneIR(alias)
+	effects, err := decodePostEffectIRList(wire.PostEffects)
+	if err != nil {
+		return err
+	}
+	result := SceneIR(wire.sceneIRAlias)
+	result.PostEffects = effects
 	inflateShaderLibStruct(&result)
 	*ir = result
 	return nil
@@ -1391,25 +1515,64 @@ func collectShaderLibPairs(ir *SceneIR) []shaderLibPair {
 	capacity := 4*(len(ir.Objects)+len(ir.Models)+len(ir.Points)) +
 		len(ir.InstancedMeshes) + 5*len(ir.ComputeParticles) + 14*len(ir.WaterSystems)
 	pairs := make([]shaderLibPair, 0, capacity)
+	eachShaderLibPair(ir, func(p shaderLibPair) bool {
+		pairs = append(pairs, p)
+		return true
+	})
+	return pairs
+}
+
+// eachShaderLibPair holds the single definition of the shader-source
+// traversal. It calls visit once per pair, in collection order, and stops
+// as soon as visit returns false.
+//
+// Both callers share it, so a new shader-bearing collection is added in
+// one place. hoistShaderLib wants the whole list and takes it through
+// collectShaderLibPairs; shaderLibNeedsHoist wants an early answer and
+// takes it directly.
+func eachShaderLibPair(ir *SceneIR, visit func(shaderLibPair) bool) {
 	for i := range ir.Objects {
-		pairs = append(pairs, objectShaderLibPairs(&ir.Objects[i])...)
+		for _, p := range objectShaderLibPairs(&ir.Objects[i]) {
+			if !visit(p) {
+				return
+			}
+		}
 	}
 	for i := range ir.Models {
-		pairs = append(pairs, objectShaderLibPairs(&ir.Models[i].ObjectIR)...)
+		for _, p := range objectShaderLibPairs(&ir.Models[i].ObjectIR) {
+			if !visit(p) {
+				return
+			}
+		}
 	}
 	for i := range ir.Points {
-		pairs = append(pairs, pointsShaderLibPairs(&ir.Points[i])...)
+		for _, p := range pointsShaderLibPairs(&ir.Points[i]) {
+			if !visit(p) {
+				return
+			}
+		}
 	}
 	for i := range ir.InstancedMeshes {
-		pairs = append(pairs, instancedMeshShaderLibPairs(&ir.InstancedMeshes[i])...)
+		for _, p := range instancedMeshShaderLibPairs(&ir.InstancedMeshes[i]) {
+			if !visit(p) {
+				return
+			}
+		}
 	}
 	for i := range ir.ComputeParticles {
-		pairs = append(pairs, computeParticlesShaderLibPairs(&ir.ComputeParticles[i])...)
+		for _, p := range computeParticlesShaderLibPairs(&ir.ComputeParticles[i]) {
+			if !visit(p) {
+				return
+			}
+		}
 	}
 	for i := range ir.WaterSystems {
-		pairs = append(pairs, waterSystemShaderLibPairs(&ir.WaterSystems[i])...)
+		for _, p := range waterSystemShaderLibPairs(&ir.WaterSystems[i]) {
+			if !visit(p) {
+				return
+			}
+		}
 	}
-	return pairs
 }
 
 func objectShaderLibPairs(o *ObjectIR) []shaderLibPair {
