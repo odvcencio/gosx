@@ -17,12 +17,27 @@
 //     this stand-alone fixture __gosx_motion_tick stays undefined and the
 //     material program is never ticked headlessly.
 //
-// Therefore this test HARD-ASSERTS what is headless-verifiable (the scene
-// MOUNTS and the SSR payload carries materialMotionProgram — proving the
-// lowering shipped), RECORDS the seam state, and SKIPS the GPU-gated
-// animation assertion with a clear message when the uniform does not change.
-// A skip here is honest; a hard-fail is not, because the architecture
-// prevents a headless green for the visual.
+// THE SKIP USED TO BE THE FAILURE PATH. The test ended with:
+//
+//	if emissiveChanged { return }
+//	t.Skipf("material-uniform animation not observable headless: ...")
+//
+// So a real regression in the WebAssembly motion pipeline and "headless cannot
+// observe this" produced the SAME green skip. The one condition the test exists
+// to check had no failing outcome at all.
+//
+// The two conditions are now separate, and each has its own failing outcome:
+//
+//  1. Observability. The test reads the seam and decides whether this harness CAN
+//     see a uniform animate. Exactly one reason may make it unobservable: the
+//     documented absence of the WASM motion tick on a stand-alone fixture. Any
+//     other reason — a missing scene-state handle, a missing uniform record, a
+//     GPU backend that ticks and still shows nothing — is a regression and FAILS.
+//  2. Animation. When the harness CAN observe, the uniform MUST change, and the
+//     test fails if it does not.
+//
+// So the unobservable branch now asserts its own precondition instead of assuming
+// it, and it fails the moment the reason changes.
 package e2e
 
 import (
@@ -119,8 +134,8 @@ func TestMotionMaterialProgramShips(t *testing.T) {
 	}
 	t.Logf("[motion-material] Scene3D backend = %s", attrs.Backend)
 
-	// (b) Record the WASM motion seam state without hard-failing on the WASM
-	// exports — on a stand-alone declarative Scene3D they are expected absent.
+	// (b) Read the WASM motion seam state. __gosx_motion_tick is expected absent
+	// on a stand-alone declarative Scene3D, and step (c) decides what that means.
 	var wasmFlag bool
 	page.eval(t, `window.__gosx_motion_wasm === true`, &wasmFlag)
 	if !wasmFlag {
@@ -164,17 +179,61 @@ func TestMotionMaterialProgramShips(t *testing.T) {
 	t.Logf("[motion-material] __gosxScene3DState handle present=%v; emissive t1=%s t2=%s; changed=%v",
 		stateHandlePresent, t1JSON, t2JSON, emissiveChanged)
 
-	// (c) GPU/WASM-gated animation assertion. If the uniform actually
-	// animated, the full pipeline ran headlessly — assert it. Otherwise skip
-	// honestly: the visual requires a WASM runtime + WebGL/WebGPU, which
-	// headless Chrome on a stand-alone declarative Scene3D does not provide.
-	if emissiveChanged {
-		t.Logf("[motion-material] PASS: customUniforms.emissive animated headlessly (WASM motion pipeline ran end-to-end).")
+	// (c) OBSERVABILITY FIRST. Decide whether this harness can see the uniform
+	// change at all, and fail if it cannot for any reason other than the one
+	// documented at the top of this file.
+	//
+	// The scene-state handle is NOT part of that limitation. The mount publishes
+	// __gosxScene3DState for every backend, canvas2d included, and the seam writes
+	// customUniforms through it. So a missing handle means the mount stopped
+	// exposing scene state, which is a regression whatever the backend is.
+	if !stateHandlePresent {
+		t.Fatalf("the scene-state handle or the \"glow-cube\" record is missing at t1=%v t2=%v.\n"+
+			"__gosxScene3DState.objects is how the motion seam reaches customUniforms, and the mount "+
+			"publishes it on every backend including canvas2d. Its absence is a mount regression, "+
+			"NOT the documented headless GPU limitation.\n\nbackend=%s tick=%s\n\nConsole:\n%s\n\nLogs:\n%s",
+			t1.Found, t2.Found, attrs.Backend, tickType, page.Console(), app.logs.String())
+	}
+
+	// The tick export is the one thing a stand-alone fixture is allowed to lack.
+	tickPresent := tickType == "function"
+	if !tickPresent && tickType != "undefined" {
+		t.Fatalf("__gosx_motion_tick is %q. It must be either \"function\" (the WASM runtime loaded, "+
+			"so the animation is observable and asserted below) or \"undefined\" (the documented "+
+			"stand-alone case). Any other value means the seam is half-installed.\n\nConsole:\n%s",
+			tickType, page.Console())
+	}
+
+	// (d) ANIMATION. With the tick installed the pipeline is fully observable, so
+	// a uniform that does not move is a failure, not a skip.
+	if tickPresent {
+		if !emissiveChanged {
+			t.Fatalf("__gosx_motion_tick is installed and the scene-state handle is present, so the "+
+				"material-uniform animation IS observable here — but customUniforms.emissive did not "+
+				"change over 1s (t1=%s t2=%s).\n"+
+				"The WASM motion pipeline ran and produced no movement. That is a regression in "+
+				"motion.Eval, in the materialMotionProgram lowering, or in the seam that writes the "+
+				"uniform back.\n\nbackend=%s\n\nConsole:\n%s\n\nLogs:\n%s",
+				t1JSON, t2JSON, attrs.Backend, page.Console(), app.logs.String())
+		}
+		t.Logf("[motion-material] PASS: customUniforms.emissive animated (WASM motion pipeline ran end-to-end).")
 		return
 	}
-	t.Skipf("material-uniform animation not observable headless: __gosx_motion_tick=%s, "+
-		"state-handle present=%v, backend=%s. Requires WASM runtime + WebGL/WebGPU — run on a "+
-		"GPU host with a shared-runtime Scene3D fixture to verify the visual pulse. "+
-		"Mount + materialMotionProgram-in-SSR assertions (above) passed.",
-		tickType, stateHandlePresent, attrs.Backend)
+
+	// (e) The documented unobservable case, now with its precondition ASSERTED
+	// rather than assumed. The uniform must ALSO be unchanged: a value that moved
+	// with no tick installed would mean something else is writing it, and the
+	// reasoning above would be wrong.
+	if emissiveChanged {
+		t.Fatalf("customUniforms.emissive changed from %s to %s with __gosx_motion_tick undefined.\n"+
+			"Nothing should drive the material program without the WASM tick, so either the runtime "+
+			"now loads on a stand-alone fixture — in which case delete this branch and let the "+
+			"assertion above cover it — or a second writer is touching the uniform.",
+			t1JSON, t2JSON)
+	}
+	t.Logf("[motion-material] the WASM motion tick is absent on this stand-alone fixture "+
+		"(tick=%s, backend=%s), which is the documented case: the runtime loads only for "+
+		"shared-runtime/island scenes. Every headless-observable claim above was asserted, and "+
+		"the uniform correctly did not move. Run a shared-runtime Scene3D fixture on a GPU host "+
+		"to exercise the visual pulse.", tickType, attrs.Backend)
 }
