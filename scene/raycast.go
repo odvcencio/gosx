@@ -320,12 +320,17 @@ func instanceCount(mesh InstancedMesh) int {
 // particles in screen pixels, not world units. Each intersected particle emits
 // one hit and reports its index through RayHit.InstanceIndex.
 //
-// The browser pick path does NOT cover points yet. sceneRaycastPick in
-// client/js/bootstrap-src/17-scene-input.js walks bundle.meshObjects,
-// bundle.instancedMeshes, and bundle.objects only; bundle.points is a separate
-// array it never reads. The WebGPU GPU picker resolves identity on the GPU and
-// then calls the same two shared helpers for every geometric field, so it
-// inherits that gap. See TestRaycastCoverageManifest for the current split.
+// The browser pick path now covers points as well: sceneRaycastPickPoints in
+// client/js/bootstrap-src/17-scene-input.js tests every particle of every
+// bundle.points layer against the same radius, the same near-root sphere test and
+// the same rotate-then-translate order used here, so the two sides report the
+// same distance for the same ray. See TestRaycastCoverageManifest for the split
+// across every node kind.
+//
+// One difference is left on purpose. This walk ignores Points.Spin, so a spinning
+// cloud is picked at its unspun pose, while both renderers draw it spun. The
+// browser pick deliberately ignores Spin too, to keep the two sides in step. Fix
+// it here first, then in the browser.
 func raycastPoints(points Points, parent worldTransform, ray Ray, opts RaycastOptions, trace *RayTrace) {
 	count := points.Count
 	if count <= 0 {
@@ -366,9 +371,12 @@ func raycastPoints(points Points, parent worldTransform, ray Ray, opts RaycastOp
 // world extent to intersect exactly. Anchored sprites (Target set) resolve
 // their position against another node at lower time and are skipped here.
 //
-// The browser pick path does NOT cover sprites either. A sprite lowers to a DOM
-// overlay, so the browser picks it through pointer events on that element, not
-// through a ray. See the raycastPoints comment above for the shared helpers.
+// A sprite also lowers to a DOM overlay, so the browser can pick it through
+// pointer events on that element. It now answers a ray as well:
+// sceneRaycastPickPoints reads the world point and the scale that
+// appendSceneSpriteToBundle writes onto each bundle sprite, and applies this same
+// radius rule. The bundle entry stores its screen position for the overlay, which
+// is why the world point needs its own field.
 func raycastSprite(sprite Sprite, parent worldTransform, ray Ray, opts RaycastOptions, trace *RayTrace) {
 	if strings.TrimSpace(sprite.Target) != "" {
 		trace.FilteredPrimitives++
