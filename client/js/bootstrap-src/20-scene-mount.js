@@ -7699,6 +7699,29 @@
     // poll (2s of frames at any real frame rate); the threshold exists to
     // ignore a single transient validation blip, not to add meaningful delay.
     const SCENE_WEBGPU_FRAME_ERROR_STREAK_THRESHOLD = 30;
+    // SCENE_WEBGPU_FRAME_ERROR_RESTORE_STREAK_THRESHOLD: consecutive CLEAN
+    // WebGPU frames (diagnostics().frameCleanStreak, the complement of
+    // frameErrorStreak above) required before checkSceneWebGPUPostFXRestore
+    // re-enables a demoted post-FX chain. Deliberately ten times the trip
+    // threshold: the trip fires on the FIRST 30-frame bad streak, so a
+    // restore threshold anywhere near that would let a borderline scene
+    // flap demote/restore every couple of seconds. Requiring 10x the clean
+    // frames the trip needed to fail makes oscillation structurally
+    // impossible — reaching restore proves the renderer ran clean for ten
+    // times longer than it ran broken.
+    const SCENE_WEBGPU_FRAME_ERROR_RESTORE_STREAK_THRESHOLD = 300;
+    // SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS: after this many demote/restore
+    // cycles in one mount's session, stop attempting automatic restore and
+    // leave post-FX off for the rest of the session (see
+    // checkSceneWebGPUPostFXRestore). A scene that keeps tripping the
+    // ladder despite the 10x clean-streak margin above has a problem the
+    // ladder cannot fix — a driver bug, or a resource that gets reallocated
+    // the same broken way every time — and further cycles would only burn
+    // GPU work repeating a fight it keeps losing. Each restore attempt
+    // below this cap also requires a progressively longer clean streak
+    // (postFXDemotionCount x the base threshold), so a scene has to prove
+    // increasing stability to earn each additional restore.
+    const SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS = 3;
     let renderWatchdogTimer = null;
     let renderWatchdogLastSeq = -1;
     let renderWatchdogLastAt = 0;
@@ -7706,6 +7729,24 @@
     let renderWatchdogRecoveries = 0;
     let renderWatchdogFallbacks = 0;
     let renderWatchdogActiveReason = "";
+    // renderWatchdogDeviceLostInfo: { reason, message, adapterInfo } read off
+    // the OLD renderer's diagnostics().deviceLostInfo (see 16a-scene-webgpu.js's
+    // lastDeviceLostInfo) the moment recoverSceneWebGPURenderer decides to
+    // act. destroy/driver-reset/OOM/internal-error/local-dispose used to all
+    // collapse into the single reason string "webgpu-device-lost" with no
+    // way to tell them apart in production — this is the detail that lets
+    // gosxSceneEmit("render-watchdog-recovery", ...) and the DOM attribute
+    // below actually distinguish them.
+    let renderWatchdogDeviceLostInfo = null;
+    // postFXDemotionCount: how many times THIS mount has demoted post-FX
+    // this session (see checkSceneWebGPUFrameErrorResilience /
+    // checkSceneWebGPUPostFXRestore below). Persists across a WebGPU
+    // renderer swap within the same mount (recoverSceneWebGPURenderer
+    // constructs a fresh renderer closure whose own postFXForceDisabled
+    // starts false, but the SESSION's demotion history — and therefore how
+    // hard it has to work to earn the next restore — should not reset with
+    // it).
+    let postFXDemotionCount = 0;
     let webgpuProbeReadyListener = null;
 
     // Do not voluntarily lose WebGL while the page is hidden/offscreen.
@@ -7762,6 +7803,11 @@
       setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
       setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-recoveries", renderWatchdogRecoveries || "");
       setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-fallbacks", renderWatchdogFallbacks || "");
+      // Published only alongside an active reason (mirrors -reason above) so
+      // a screenshot harness can read WHY a webgpu-device-lost recovery
+      // happened without needing telemetry — see renderWatchdogDeviceLostInfo.
+      setAttrValue(ctx.mount, "data-gosx-scene3d-webgpu-device-lost-reason",
+        reason && renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason || "" : "");
     }
 
     function rendererReportsWebGPUFailure(diagnostics) {
@@ -7783,6 +7829,17 @@
     function recoverSceneWebGPURenderer(reason, stalledFor, forceFallback) {
       renderWatchdogRecoveries += 1;
       renderWatchdogActiveReason = reason || "webgpu-stalled";
+      // Read the OLD renderer's loss detail before it gets swapped away
+      // below (see 16a-scene-webgpu.js's lastDeviceLostInfo / diagnostics()
+      // .deviceLostInfo, and adapterInfo, which diagnostics() already
+      // carries through from the shared probe snapshot).
+      const priorDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
+      const priorLostInfo = priorDiagnostics && priorDiagnostics.deviceLostInfo;
+      renderWatchdogDeviceLostInfo = priorLostInfo ? {
+        reason: priorLostInfo.reason || "",
+        message: priorLostInfo.message || "",
+        adapterInfo: (priorDiagnostics && priorDiagnostics.adapterInfo) || null,
+      } : null;
       publishSceneRenderWatchdogState(renderWatchdogActiveReason, stalledFor || 0);
       gosxSceneEmit("warn", "render-watchdog-recovery", {
         rendererKind: renderer && renderer.kind ? renderer.kind : "",
@@ -7790,6 +7847,9 @@
         stalledForMS: Math.round(stalledFor || 0),
         recoveryCount: renderWatchdogRecoveries,
         forceFallback: !!forceFallback,
+        deviceLostReason: renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason : "",
+        deviceLostMessage: renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.message : "",
+        adapterInfo: renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.adapterInfo : null,
       });
       cancelFrame();
       cancelScheduledRender();
@@ -7818,8 +7878,84 @@
       return false;
     }
 
+    // recoverSceneWebGPUFromWebGLFallback climbs back onto WebGPU after a
+    // runtime WebGPU failure (device loss / persistent frame errors) forced
+    // a fallback to WebGL. Without this, a later gosx:scene3d:webgpu-probe-ready
+    // (the probe re-acquired a working device) was silently ignored, because
+    // handleSceneWebGPUProbeReady's own guard required the CURRENT renderer
+    // to already be "webgpu" — a session that fell back once stayed on
+    // WebGL for the rest of the page even after the GPU came back. Measured
+    // on the live site: the probe recovered a working device at ~t=12.7s
+    // and the mount was still on WebGL at t=30s.
+    //
+    // Only re-attempts when the fallback that put us on WebGL was itself a
+    // WebGPU failure (sceneFallbackRequiresReplacementCanvas's reason set —
+    // "webgpu-device-lost" / "webgpu-persistent-frame-error"), not an
+    // intentional preference (forceWebGL, environment-constrained, etc.).
+    //
+    // The current canvas is already tainted to WebGL — the fallback that
+    // put us here replaced it with a fresh canvas before configuring a
+    // WebGL context on it (same sceneFallbackRequiresReplacementCanvas
+    // reason set), and a canvas that has had getContext("webgl2") called on
+    // it can never return a working getContext("webgpu") afterward. So this
+    // needs its OWN fresh, as-yet-untainted trial canvas.
+    // createSceneWebGPURendererOrFallback only touches that trial canvas
+    // (calls getContext("webgpu") on it) once sceneWebGPUAvailable() is
+    // already true, so a failed attempt here never taints the LIVE canvas
+    // still on screen — the trial canvas is simply discarded, exactly like
+    // createFallbackSceneWebGLRenderer already does for its own trial
+    // canvas on the WebGPU-losing side of this same recovery machinery.
+    function recoverSceneWebGPUFromWebGLFallback(reason) {
+      if (disposed || !renderer || renderer.kind !== "webgl") {
+        return false;
+      }
+      // Read the PERSISTENT data-gosx-scene3d-renderer-fallback attribute
+      // (set by applySceneRendererState inside swapRenderer), not the
+      // sceneRendererLastSwapReason variable that also records this --
+      // maybeEmitRenderEmpty reads-and-clears that variable on the very
+      // next rendered frame after ANY swap (it needs a one-shot signal for
+      // its own render-empty check), so by the time a LATER probe-ready
+      // event fires, that variable already reads "" even though this is
+      // still, right now, a WebGPU-failure fallback.
+      if (!sceneFallbackRequiresReplacementCanvas(sceneDebugAttr(ctx.mount, "data-gosx-scene3d-renderer-fallback"))) {
+        return false;
+      }
+      const trialCanvas = prepareSceneReplacementCanvas();
+      const nextRenderer = createSceneWebGPURendererOrFallback(trialCanvas, sceneWebGPUOptions(props, capability));
+      if (!nextRenderer || nextRenderer.kind !== "webgpu") {
+        if (nextRenderer && typeof nextRenderer.dispose === "function") {
+          nextRenderer.dispose();
+        }
+        return false;
+      }
+      const swapReason = reason || "webgpu-probe-recovered";
+      commitSceneCanvasReplacement(trialCanvas, swapReason);
+      if (!swapRenderer(nextRenderer, swapReason)) {
+        return false;
+      }
+      renderWatchdogRecoveries += 1;
+      gosxSceneEmit("warn", "render-watchdog-recovery", {
+        rendererKind: "webgl",
+        reason: swapReason,
+        stalledForMS: 0,
+        recoveryCount: renderWatchdogRecoveries,
+        forceFallback: false,
+      });
+      viewportDirty = true;
+      renderLatestSceneBundle(swapReason);
+      scheduleRenderWithViewport(swapReason);
+      return true;
+    }
+
     function handleSceneWebGPUProbeReady() {
-      if (disposed || !renderer || renderer.kind !== "webgpu") {
+      if (disposed || !renderer) {
+        return;
+      }
+      if (renderer.kind === "webgl") {
+        recoverSceneWebGPUFromWebGLFallback("webgpu-probe-recovered");
+        return;
+      }
+      if (renderer.kind !== "webgpu") {
         return;
       }
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
@@ -7835,6 +7971,60 @@
       window.addEventListener("gosx:scene3d:webgpu-probe-ready", webgpuProbeReadyListener);
     }
 
+    // escalateSceneWebGPUToFallback swaps to the WebGL backend at runtime
+    // via the existing fallbackSceneRenderer machinery (same path
+    // webgl-context-lost and webgpu-device-lost already use) — a full
+    // engine re-mount on the same canvas/mount, no page reload required.
+    // Shared by both callers below: a demoted (post-FX already torn down)
+    // renderer that is STILL erroring persistently, either read from a
+    // fresh diagnostics snapshot or discovered synchronously when
+    // disablePostProcessing() itself declines to act.
+    function escalateSceneWebGPUToFallback(streak, diagnostics) {
+      gosxSceneEmit("warn", "webgpu-persistent-frame-error-fallback", {
+        frameErrorStreak: streak,
+        lastError: (diagnostics && diagnostics.lastError) || "",
+      });
+      if (fallbackSceneRenderer("webgpu-persistent-frame-error")) {
+        renderLatestSceneBundle("webgpu-persistent-frame-error");
+        scheduleRenderWithViewport("webgpu-persistent-frame-error");
+      }
+      return true;
+    }
+
+    // checkSceneWebGPUPostFXRestore is the RESTORE step of the resilience
+    // ladder (see checkSceneWebGPUFrameErrorResilience below) — the way
+    // back that disablePostProcessing never had before this change. Called
+    // only while diagnostics.postFXDisabled is true and the error streak
+    // has NOT crossed the trip threshold this poll (the caller handles that
+    // escalation case itself). Re-enables post-FX once the renderer has
+    // produced enough consecutive CLEAN frames in a row — see
+    // SCENE_WEBGPU_FRAME_ERROR_RESTORE_STREAK_THRESHOLD and
+    // SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS above for why the threshold scales
+    // with postFXDemotionCount and why restore attempts are capped.
+    function checkSceneWebGPUPostFXRestore(diagnostics) {
+      if (postFXDemotionCount <= 0 || postFXDemotionCount > SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS) {
+        return false;
+      }
+      const cleanStreak = Math.max(0, Math.floor(sceneNumber(diagnostics.frameCleanStreak, 0)));
+      const restoreThreshold = SCENE_WEBGPU_FRAME_ERROR_RESTORE_STREAK_THRESHOLD * postFXDemotionCount;
+      if (cleanStreak < restoreThreshold) {
+        return false;
+      }
+      if (typeof renderer.enablePostProcessing !== "function" || !renderer.enablePostProcessing()) {
+        return false;
+      }
+      setAttrValue(ctx.mount, "data-gosx-scene3d-webgpu-postfx-demoted", "");
+      gosxSceneEmit("info", "webgpu-postfx-restored", {
+        cleanStreak: cleanStreak,
+        restoreThreshold: restoreThreshold,
+        demotionCount: postFXDemotionCount,
+      });
+      viewportDirty = true;
+      renderLatestSceneBundle("webgpu-postfx-restored");
+      scheduleRenderWithViewport("webgpu-postfx-restored");
+      return true;
+    }
+
     // checkSceneWebGPUFrameErrorResilience reacts to PERSISTENT per-frame
     // WebGPU validation/OOM errors — the failure mode a stalled-frame-seq
     // watchdog (checkSceneRenderWatchdog below) cannot see, because the
@@ -7844,16 +8034,18 @@
     // poisoned resource forever — "Buffer with '' label is invalid" on
     // every frame, black canvas, no recovery).
     //
-    // Two-step ladder, cheapest/least-disruptive first:
+    // Three-step ladder, cheapest/least-disruptive first:
     //   1. DEMOTE: tear down the post-FX chain (disablePostProcessing) and
     //      retry raw rendering — the base scene without post-FX was fine for
     //      the whole session up to the point post-FX's allocation failed, so
     //      this alone recovers the common case.
-    //   2. FALLBACK: if raw rendering (post-FX already torn down) STILL
-    //      errors persistently, swap to the WebGL backend at runtime via the
-    //      existing fallbackSceneRenderer machinery (same path webgl-context-lost
-    //      and webgpu-device-lost already use) — a full engine re-mount on
-    //      the same canvas/mount, no page reload required.
+    //   2. RESTORE: once a demoted scene runs clean for long enough (see
+    //      checkSceneWebGPUPostFXRestore above), re-enable post-FX. This is
+    //      the additive "way back" — DEMOTE alone left a scene permanently
+    //      without post effects for the rest of the session.
+    //   3. FALLBACK: if raw rendering (post-FX already torn down) STILL
+    //      errors persistently instead of settling into a clean streak,
+    //      escalate to the WebGL backend (escalateSceneWebGPUToFallback).
     // Returns true when it took an action this poll (caller should skip the
     // rest of the stall-detection logic for this cycle).
     function checkSceneWebGPUFrameErrorResilience(diagnostics) {
@@ -7861,31 +8053,35 @@
         return false;
       }
       const streak = Math.max(0, Math.floor(sceneNumber(diagnostics.frameErrorStreak, 0)));
+      if (diagnostics.postFXDisabled) {
+        if (streak >= SCENE_WEBGPU_FRAME_ERROR_STREAK_THRESHOLD) {
+          // Already demoted (post-FX torn down) and STILL erroring
+          // persistently — post-FX was not the (sole) problem. Escalate.
+          return escalateSceneWebGPUToFallback(streak, diagnostics);
+        }
+        return checkSceneWebGPUPostFXRestore(diagnostics);
+      }
       if (streak < SCENE_WEBGPU_FRAME_ERROR_STREAK_THRESHOLD) {
         return false;
       }
-      if (!diagnostics.postFXDisabled && typeof renderer.disablePostProcessing === "function" && renderer.disablePostProcessing()) {
+      if (typeof renderer.disablePostProcessing === "function" && renderer.disablePostProcessing()) {
+        postFXDemotionCount += 1;
         setAttrValue(ctx.mount, "data-gosx-scene3d-webgpu-postfx-demoted", "true");
         gosxSceneEmit("warn", "webgpu-postfx-demoted", {
           frameErrorStreak: streak,
           lastError: diagnostics.lastError || "",
+          demotionCount: postFXDemotionCount,
         });
         viewportDirty = true;
         renderLatestSceneBundle("webgpu-postfx-demoted");
         scheduleRenderWithViewport("webgpu-postfx-demoted");
         return true;
       }
-      // Already demoted (post-FX torn down) and STILL erroring persistently
-      // — post-FX was not the (sole) problem. Escalate to a backend swap.
-      gosxSceneEmit("warn", "webgpu-persistent-frame-error-fallback", {
-        frameErrorStreak: streak,
-        lastError: diagnostics.lastError || "",
-      });
-      if (fallbackSceneRenderer("webgpu-persistent-frame-error")) {
-        renderLatestSceneBundle("webgpu-persistent-frame-error");
-        scheduleRenderWithViewport("webgpu-persistent-frame-error");
-      }
-      return true;
+      // disablePostProcessing() declined even though this diagnostics
+      // snapshot read postFXDisabled === false — the renderer's state
+      // changed between the read and the call. Treat it the same as the
+      // already-demoted-and-still-erroring case above.
+      return escalateSceneWebGPUToFallback(streak, diagnostics);
     }
 
     function checkSceneRenderWatchdog() {
@@ -7916,6 +8112,7 @@
         renderWatchdogLastAt = progress.at;
         renderWatchdogLastAdvanceAt = now;
         renderWatchdogActiveReason = "";
+        renderWatchdogDeviceLostInfo = null;
         publishSceneRenderWatchdogState("", 0);
         return;
       }

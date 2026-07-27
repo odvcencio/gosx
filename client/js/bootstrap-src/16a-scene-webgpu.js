@@ -3993,6 +3993,14 @@
     var adapter = probe.adapter;
     var device = probe.device;
     var rendererOptions = options && typeof options === "object" ? options : {};
+    // lastDeviceLostInfo: { reason, message } captured by the device.lost
+    // handler below (see initGPUResources), read back by diagnostics().
+    // Kept on THIS renderer instance rather than read off the shared probe
+    // snapshot, because a successful re-probe nulls that shared snapshot
+    // (16z-scene-webgpu-probe.js's _webgpuDeviceLostInfo) the moment it
+    // recovers — often before the mount-level watchdog's next poll — so
+    // reading the shared snapshot lost the detail exactly when it mattered.
+    var lastDeviceLostInfo = null;
 
     function rendererDeviceStillActive(scopedDevice) {
       return !!device && device === scopedDevice;
@@ -4302,10 +4310,20 @@
     // fallback resilience in 20-scene-mount.js; see diagnostics().frameErrorStreak
     // and disablePostProcessing() below.
     var webGPUConsecutiveFrameErrors = 0;
+    // webGPUConsecutiveCleanFrames: the complement of webGPUConsecutiveFrameErrors
+    // above — consecutive frames that ended with NO reported validation/OOM
+    // error, reset to 0 the moment a frame errors (see reportWebGPUFrameError).
+    // Drives the mount-level RESTORE step of the resilience ladder (see
+    // diagnostics().frameCleanStreak and enablePostProcessing() below): once
+    // a demoted scene has run clean for long enough, the mount re-enables
+    // post-FX.
+    var webGPUConsecutiveCleanFrames = 0;
     // postFXForceDisabled: set by disablePostProcessing() (the "demote" step
     // of the frame-error resilience ladder) — once true, render() never
     // rebuilds or uses the post-FX chain again for this renderer instance,
-    // regardless of bundle.postEffects, until a fresh mount/renderer swap.
+    // until enablePostProcessing() (the "restore" step, called by the mount
+    // once webGPUConsecutiveCleanFrames crosses its threshold) clears it, or
+    // a fresh mount/renderer swap replaces this closure entirely.
     var postFXForceDisabled = false;
 
     function ensureGPUTiming() {
@@ -4883,12 +4901,25 @@
     // returned renderer is fully ready before the factory call returns.
     (function initGPUResources() {
       try {
-        // Handle device loss post-factory and invalidate the shared probe.
+        // Handle device loss post-factory. Record the loss detail on THIS
+        // renderer (lastDeviceLostInfo, read back by diagnostics() below)
+        // for diagnosis, and run our own local cleanup — but do NOT also
+        // invalidate the shared probe here. 16z-scene-webgpu-probe.js's own
+        // sceneWebGPUWatchDeviceLoss already has a `.then()` listener on
+        // this EXACT device (it is the same object handed to us as
+        // probe.device above), and is the probe's single owner for
+        // invalidation/reprobe bookkeeping. A single device.lost event
+        // resolves every listener attached to it, so having both this
+        // handler AND 16z's call sceneWebGPUInvalidateProbe counted one
+        // real loss as two against WEBGPU_LOST_REPROBE_MAX_PER_WINDOW,
+        // arming its reprobe backoff after a single device loss instead of
+        // the intended three.
         device.lost.then(function(info) {
           console.warn("[gosx] WebGPU device lost:", info && info.message);
-          if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_invalidate === "function") {
-            window.__gosx_scene3d_webgpu_probe_invalidate(info);
-          }
+          lastDeviceLostInfo = {
+            reason: (info && info.reason) || "",
+            message: (info && info.message) || "",
+          };
           destroyGPUTimingResources(gpuTiming);
           gpuTiming = false;
           for (var failedTimingIndex = 0; failedTimingIndex < failedGPUTimings.length; failedTimingIndex++) {
@@ -13783,6 +13814,9 @@
       // to decide when to demote (tear down post-FX) and, if that doesn't
       // help, fall back to WebGL.
       webGPUConsecutiveFrameErrors += 1;
+      // Any error frame breaks a clean streak, however long — the mount
+      // must not restore post-FX on a scene that is still failing.
+      webGPUConsecutiveCleanFrames = 0;
       var stats = Object.assign({}, lastWebGPUFrameStats || {}, { renderer: "webgpu", lastError: text, frameErrorStreak: webGPUConsecutiveFrameErrors });
       publishWebGPUFrameStats(stats);
       if (webGPUErrorReportCount >= 3) return;
@@ -13822,6 +13856,7 @@
             reportWebGPUFrameError(error.message || String(error));
           } else {
             webGPUConsecutiveFrameErrors = 0;
+            webGPUConsecutiveCleanFrames += 1;
             if (lastWebGPUFrameStats && lastWebGPUFrameStats.lastError) {
               var clean = Object.assign({}, lastWebGPUFrameStats);
               delete clean.lastError;
@@ -14909,6 +14944,23 @@
       return true;
     }
 
+    // enablePostProcessing: the frame-error resilience "restore" step — the
+    // way back that disablePostProcessing (above) never had. Called by
+    // 20-scene-mount.js's checkSceneWebGPUFrameErrorResilience once a
+    // demoted renderer has produced enough consecutive clean frames (see
+    // diagnostics().frameCleanStreak). Clears postFXForceDisabled so the
+    // very next render() call with a non-empty bundle.postEffects rebuilds
+    // the post-FX chain itself (usePostProcessing below, and the lazy
+    // `if (!postProcessor) postProcessor = wgpuCreatePostProcessor(...)`
+    // in render()) — no GPU resource construction happens here; this
+    // function only flips the gate. Idempotent — returns false if post-FX
+    // is not currently force-disabled (nothing to do).
+    function enablePostProcessing() {
+      if (!postFXForceDisabled) return false;
+      postFXForceDisabled = false;
+      return true;
+    }
+
     // Device + GPU resources were already initialized synchronously
     // above (using the pre-probed device from 16z). If that setup
     // failed, initFailed is true and render() will no-op; return null
@@ -14965,7 +15017,11 @@
       out.initFailed = !!initFailed;
       out.initError = initError || "";
       out.deviceLost = !device || !!(base && base.lost);
-      out.deviceLostInfo = base && base.lost ? base.lost : null;
+      // Prefer THIS renderer's own lastDeviceLostInfo (set synchronously by
+      // the device.lost handler above, never cleared) over the shared probe
+      // snapshot (base.lost), which a successful re-probe nulls out the
+      // moment it recovers — often before a watchdog poll gets to read it.
+      out.deviceLostInfo = lastDeviceLostInfo || (base && base.lost ? base.lost : null);
       out.frameSeq = webGPUFrameSeq;
       out.frameAt = lastWebGPUFrameStats && lastWebGPUFrameStats.frameAt || 0;
       out.lastError = lastWebGPUFrameStats && lastWebGPUFrameStats.lastError || "";
@@ -14976,9 +15032,11 @@
       out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
       out.postProcessing = !!postProcessor;
       // Frame-error resilience state (see reportWebGPUFrameError /
-      // disablePostProcessing above and 20-scene-mount.js's
-      // checkSceneWebGPUFrameErrorWatchdog, the poller that acts on these).
+      // disablePostProcessing / enablePostProcessing above and
+      // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog, the poller
+      // that acts on these).
       out.frameErrorStreak = webGPUConsecutiveFrameErrors;
+      out.frameCleanStreak = webGPUConsecutiveCleanFrames;
       out.postFXDisabled = postFXForceDisabled;
       out.customMaterialFallbacks = lastWebGPUFrameStats && lastWebGPUFrameStats.customMaterialFallbacks || 0;
       out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
@@ -15003,6 +15061,7 @@
       render: render,
       dispose: dispose,
       disablePostProcessing: disablePostProcessing,
+      enablePostProcessing: enablePostProcessing,
     };
   }
 

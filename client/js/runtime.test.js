@@ -11451,6 +11451,121 @@ test("Scene3D WebGPU probe invalidates lost device and reacquires a fresh device
   assert.equal(diagnostics.adapterInfo.vendor, "recovered-vendor");
 });
 
+// --- postfx-recovery / device-lost: a single device.lost event resolves
+// EVERY listener attached to it. Before this fix, BOTH 16z-scene-webgpu-
+// probe.js's own watcher (sceneWebGPUWatchDeviceLoss, attached the moment
+// the probe acquires a device) AND 16a-scene-webgpu.js's renderer-local
+// device.lost handler (attached to that SAME device object, since the
+// renderer is always constructed from probe.device) called
+// sceneWebGPUInvalidateProbe for the one event, counting it twice against
+// WEBGPU_LOST_REPROBE_MAX_PER_WINDOW (3 losses / 10s), which meant TWO real
+// device losses -- not three -- armed the 30s reprobe backoff. This test
+// drives the REAL 16z probe (a genuine navigator.gpu mock, not the
+// createBoardWebGPUHarness shortcut that overrides window.__gosx_scene3d_
+// webgpu_probe and skips 16z entirely) together with the REAL 16a renderer
+// factory, both reacting to ONE controllable device.lost promise.
+test("Scene3D WebGPU device loss counts once (not twice) against the probe's reprobe backoff, and the loss reason survives a later successful reprobe", async () => {
+  const fake1 = makeFakeGPUDevice();
+  let resolveLost1 = null;
+  fake1.device.lost = new Promise((resolve) => { resolveLost1 = resolve; });
+
+  const fake2 = makeFakeGPUDevice();
+  // fake2.device.lost intentionally left as makeFakeGPUDevice's default
+  // (a promise that never resolves) -- this test only loses the FIRST device.
+
+  let deviceRequests = 0;
+  const adapter = {
+    info: { vendor: "test-vendor" },
+    requestDevice: async () => {
+      deviceRequests += 1;
+      return deviceRequests === 1 ? fake1.device : fake2.device;
+    },
+  };
+  let adapterRequests = 0;
+  const env = createContext({
+    enableWebGPU: true,
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests += 1;
+        return adapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+  });
+  env.context.GPUBufferUsage = {
+    MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
+    INDEX: 0x10, VERTEX: 0x20, UNIFORM: 0x40, STORAGE: 0x80,
+    INDIRECT: 0x100, QUERY_RESOLVE: 0x200,
+  };
+  env.context.GPUTextureUsage = {
+    COPY_SRC: 0x1, COPY_DST: 0x2, TEXTURE_BINDING: 0x4,
+    STORAGE_BINDING: 0x8, RENDER_ATTACHMENT: 0x10,
+  };
+  env.context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
+  env.context.createImageBitmap = function(image) {
+    return Promise.resolve({ __kind: "imageBitmap", width: image && image.width || 1, height: image && image.height || 1, close() {} });
+  };
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(adapterRequests, 1);
+  assert.equal(deviceRequests, 1);
+
+  runScript(freshFeatureBundleSource("scene3d-webgpu"), env.context, "bootstrap-feature-scene3d-webgpu.js");
+  const api = env.context.__gosx_scene3d_webgpu_api;
+  assert.ok(api && typeof api.createRenderer === "function");
+
+  const mount = new FakeElement("div", null);
+  const gpuCtx = {
+    configure() {},
+    getCurrentTexture() {
+      return { createView() { return { __kind: "canvasTextureView" }; } };
+    },
+  };
+  const canvas = {
+    width: 64, height: 64, isConnected: true, childNodes: [], parentNode: mount,
+    getBoundingClientRect() { return { width: 64, height: 64 }; },
+    getContext(kind) { return kind === "webgpu" ? gpuCtx : null; },
+  };
+  const renderer = api.createRenderer(canvas, {});
+  assert.ok(renderer, "createRenderer must succeed against fake1 (probe device)");
+
+  const probeBefore = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(probeBefore.lostProbeCount, 0);
+
+  // ONE device.lost event. Both 16z's watcher and 16a's renderer-local
+  // handler are listening on this exact promise.
+  resolveLost1({ reason: "destroyed", message: "Device was destroyed." });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const probeAfterLoss = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(probeAfterLoss.lostProbeCount, 1, "one real device loss must count once against the reprobe backoff window, not twice");
+
+  const rendererDiagAfterLoss = renderer.diagnostics();
+  assert.equal(rendererDiagAfterLoss.deviceLost, true);
+  assert.ok(rendererDiagAfterLoss.deviceLostInfo, "diagnostics().deviceLostInfo must be populated from the real device.lost resolution");
+  assert.equal(rendererDiagAfterLoss.deviceLostInfo.reason, "destroyed");
+  assert.equal(rendererDiagAfterLoss.deviceLostInfo.message, "Device was destroyed.");
+
+  // The immediate reprobe (sceneWebGPUInvalidateProbe -> sceneWebGPUStartProbe)
+  // succeeds against fake2 and clears the SHARED probe snapshot.
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true, "the probe must reacquire a fresh device after the loss");
+  const probeRecovered = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(probeRecovered.lost, null, "the SHARED probe snapshot clears on a successful reprobe");
+  assert.equal(deviceRequests, 2);
+
+  // The renderer's OWN lastDeviceLostInfo must survive that shared-snapshot
+  // clear -- this renderer instance genuinely did lose its device, and that
+  // fact does not become false just because a DIFFERENT device recovered.
+  const rendererDiagAfterRecovery = renderer.diagnostics();
+  assert.ok(rendererDiagAfterRecovery.deviceLostInfo, "the renderer's own loss detail must survive the shared probe snapshot clearing");
+  assert.equal(rendererDiagAfterRecovery.deviceLostInfo.reason, "destroyed");
+  assert.equal(probeAfterLoss.lostProbeCount, 1, "still one -- the reprobe/recovery cycle itself must not add another count");
+});
+
 test("Scene3D WebGPU probe retries null adapter after lost-device reprobe", async () => {
   let now = 0;
   let adapterRequests = 0;
@@ -12927,6 +13042,200 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   assert.equal(events.some((event) => event.msg === "renderer-fallback-unavailable"), false);
 });
 
+// --- postfx-recovery / device-lost: handleSceneWebGPUProbeReady used to
+// refuse to act once the mount had already fallen back to WebGL --
+// "if (disposed || !renderer || renderer.kind !== 'webgpu') return;" --
+// so a LATER gosx:scene3d:webgpu-probe-ready (the probe re-acquired a
+// working device) was silently dropped and the page stayed on WebGL for
+// the rest of the session even though the GPU came back. Measured on the
+// live site: the probe recovered a working device at ~t=12.7s and the
+// mount was still on WebGL at t=30s. This test proves the recovery path
+// actually ADOPTS the recovered device -- not merely that a DOM attribute
+// flips -- by tagging each fake renderer INSTANCE with its own render
+// counter and confirming render() calls land on the NEW instance after
+// recovery, the OLD instance never renders again, and a real animation
+// frame (raf.flush, not just the swap itself) drives the new device.
+test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once the probe recovers, and actually renders through the new device", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-device-lost-recovery";
+  let now = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testWebGPUCreateCount = 0;
+          window.__testWebGPUDeviceLost = false;
+          // One entry per createRenderer() call, in creation order -- lets
+          // this test prove render() calls land on the SPECIFIC new
+          // instance created during recovery, not just that "some webgpu
+          // renderer" rendered (which the OLD, still-broken instance could
+          // also satisfy if the mount had merely flipped a flag instead of
+          // actually swapping renderers).
+          window.__testWebGPUInstances = [];
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              window.__testWebGPUCreateCount += 1;
+              var idx = window.__testWebGPUInstances.length;
+              window.__testWebGPUInstances.push({ renderCount: 0, disposed: false });
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  // Only the FIRST instance ever reports device loss --
+                  // the recovered (second) instance is healthy, matching a
+                  // real fresh device acquired after reprobe.
+                  var lost = idx === 0 && window.__testWebGPUDeviceLost === true;
+                  return {
+                    ready: !lost,
+                    deviceLost: lost,
+                    deviceLostInfo: lost ? { reason: "destroyed", message: "Device was destroyed." } : null,
+                    adapterInfo: { vendor: "test-vendor", architecture: "test-arch" },
+                  };
+                },
+                render: function() { window.__testWebGPUInstances[idx].renderCount += 1; },
+                dispose: function() { window.__testWebGPUInstances[idx].disposed = true; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-device-lost-recovery",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-device-lost-recovery",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const originalCreateElement = env.document.createElement.bind(env.document);
+  env.document.createElement = function(tagName) {
+    const element = originalCreateElement(tagName);
+    if (String(tagName || "").toLowerCase() === "canvas") {
+      const originalGetContext = element.getContext.bind(element);
+      element.getContext = function(kind, options) {
+        const contextKind = String(kind || "");
+        if (
+          this.__webgpuClaimed &&
+          (contextKind === "2d" || contextKind === "webgl" || contextKind === "webgl2" || contextKind === "experimental-webgl")
+        ) {
+          this.contextCalls = this.contextCalls || [];
+          this.contextCalls.push({ kind, options: options || null, blockedByWebGPU: true });
+          return null;
+        }
+        return originalGetContext(kind, options);
+      };
+    }
+    return element;
+  };
+
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+
+  const firstCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(env.context.__testWebGPUCreateCount, 1);
+  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1);
+
+  // --- Device lost -> the watchdog's forceFallback path swaps to WebGL,
+  // exactly like the sibling non-recovery test above. ---
+  env.context.__testWebGPUDeviceLost = true;
+  now = 4000;
+  assert.equal(timers.runInterval(2000), 1);
+  await flushAsyncWork();
+
+  const fallbackCanvas = mount.children[0];
+  assert.notEqual(fallbackCanvas, firstCanvas);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
+  assert.equal(env.context.__testWebGPUInstances[0].disposed, true, "the OLD (broken) webgpu instance must be disposed");
+  // Diagnostic surfacing: the loss reason must reach the DOM and the
+  // render-watchdog-recovery telemetry event, not just live inside the
+  // renderer's own diagnostics().
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-lost-reason"), "destroyed");
+  const recoveryEvent = events.find((event) => event.msg === "render-watchdog-recovery" && event.fields.reason === "webgpu-device-lost");
+  assert.ok(recoveryEvent, "render-watchdog-recovery must fire for the device-lost fallback");
+  assert.equal(recoveryEvent.fields.deviceLostReason, "destroyed");
+  assert.equal(recoveryEvent.fields.deviceLostMessage, "Device was destroyed.");
+  assert.equal(recoveryEvent.fields.adapterInfo && recoveryEvent.fields.adapterInfo.vendor, "test-vendor");
+
+  // --- The probe recovers: this is the exact production trigger
+  // (16z-scene-webgpu-probe.js's sceneWebGPUDispatchProbeReady) for a
+  // device re-acquired after a loss. Before this fix, handleSceneWebGPUProbeReady
+  // silently ignored this because renderer.kind was "webgl". ---
+  events.length = 0;
+  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", "the mount must climb back onto WebGPU once the probe recovers");
+  assert.equal(env.context.__testWebGPUCreateCount, 2, "recovery must construct a genuinely NEW webgpu renderer instance");
+  const recoveredCanvas = mount.children[0];
+  assert.notEqual(recoveredCanvas, fallbackCanvas, "recovery must mount a fresh, untainted canvas -- the WebGL fallback canvas cannot host a WebGPU context");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  // Proof this is a REAL adoption, not a flag flip: the recovery swap
+  // itself already rendered once immediately (renderLatestSceneBundle),
+  // and the OLD, disposed instance must never render again.
+  const recoveredRenderCountAfterSwap = env.context.__testWebGPUInstances[1].renderCount;
+  assert.ok(recoveredRenderCountAfterSwap >= 1, "the RECOVERED renderer instance must actually receive render() calls, not just become the DOM-attribute value");
+  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1, "the OLD, disposed instance must never render again (still just its one pre-loss frame)");
+
+  // Drive a further real animation frame and confirm the continuous render
+  // loop keeps driving THIS SAME recovered instance (proves adoption, not a
+  // one-shot compensating render).
+  raf.flush(16);
+  await flushAsyncWork();
+  assert.ok(env.context.__testWebGPUInstances[1].renderCount > recoveredRenderCountAfterSwap, "the render loop must keep driving the recovered instance on subsequent frames");
+  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1, "the OLD, disposed instance must still never render again");
+
+  assert.equal(events.some((event) => event.msg === "render-watchdog-recovery" && event.fields.reason === "webgpu-probe-recovered"), true);
+});
+
 // --- v0.33.2: persistent per-frame WebGPU validation/OOM errors (frames
 // keep advancing, but every one is invalid — a stalled-frame-seq watchdog
 // cannot see this) must demote (tear down post-FX, retry raw) first, and
@@ -13085,6 +13394,238 @@ test("Scene3D WebGPU persistent frame errors demote post-FX first, then fall bac
   assert.ok((replacementCanvas.contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
   assert.equal(events.some((event) => event.msg === "webgpu-persistent-frame-error-fallback"), true);
   assert.equal(events.some((event) => event.msg === "renderer-swap" && event.fields.to === "webgl"), true);
+});
+
+// window_testFrameState sets the window.__testWebGPU* control variables the
+// fake createRenderer() factories above read from their diagnostics()
+// closures -- a lightweight stand-in for a real frame's error/clean streak
+// advancing (see 16a-scene-webgpu.js's webGPUConsecutiveFrameErrors /
+// webGPUConsecutiveCleanFrames, which this harness's diagnostics() field
+// NAMES mirror exactly, and which never move in the same direction at once
+// in production -- reportWebGPUFrameError zeroes the clean streak on any
+// error frame, and endWebGPUErrorScope's clean branch zeroes the error
+// streak on any clean frame).
+function window_testFrameState(env, state) {
+  env.context.__testWebGPUFrameErrorStreak = state.errorStreak || 0;
+  env.context.__testWebGPUFrameCleanStreak = state.cleanStreak || 0;
+}
+
+// --- postfx-recovery: disablePostProcessing() (the "demote" step above) had
+// no way back -- a page that tripped the resilience ladder once lost post
+// effects for the rest of the session even after the GPU recovered. This
+// test drives 20-scene-mount.js's real checkSceneWebGPUFrameErrorResilience /
+// checkSceneWebGPUPostFXRestore ladder (only the underlying WebGPU device is
+// faked, via the SAME window.__testWebGPU* control-variable harness the
+// sibling "persistent frame errors" test above uses -- diagnostics().
+// frameErrorStreak / .frameCleanStreak / .postFXDisabled are the exact
+// fields 16a-scene-webgpu.js's real diagnostics() produces, see
+// reportWebGPUFrameError / endWebGPUErrorScope's clean branch) proving: the
+// trip is unchanged at 30, restore requires a clean streak that SCALES with
+// how many times this session has already demoted (SCENE_WEBGPU_FRAME_ERROR_
+// RESTORE_STREAK_THRESHOLD x postFXDemotionCount), and restore latches off
+// permanently after SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS demotions -- so a
+// scene cannot cycle demote/restore on any short timescale.
+test("Scene3D WebGPU post-FX demotes at the trip threshold, restores after a scaling clean streak, and latches after repeated cycles", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-postfx-restore";
+  let now = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testWebGPUCreateCount = 0;
+          window.__testWebGPUFrameErrorStreak = 0;
+          window.__testWebGPUFrameCleanStreak = 0;
+          window.__testWebGPUPostFXDisabled = false;
+          window.__testWebGPUDemoteCount = 0;
+          window.__testWebGPURestoreCount = 0;
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              window.__testWebGPUCreateCount += 1;
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  // Advance the mount's frame-seq/frame-at progress markers
+                  // on every diagnostics() poll -- readSceneWebGPUProgress()
+                  // reads them from the DOM, and this fake never runs a real
+                  // render loop (no raf.flush between polls in this test),
+                  // so without this the UNRELATED render-STALL watchdog
+                  // (checkSceneRenderWatchdog's own progress-staleness check,
+                  // a different safety net than the post-FX ladder this test
+                  // exercises) would eventually force an irrelevant WebGL
+                  // fallback after SCENE_RENDER_FALLBACK_STALL_MS.
+                  window.__testWebGPUFrameSeq = (window.__testWebGPUFrameSeq || 0) + 1;
+                  if (canvas && canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
+                    canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-frame-seq", String(window.__testWebGPUFrameSeq));
+                    canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-frame-at", String(window.__testWebGPUFrameSeq));
+                  }
+                  return {
+                    ready: true,
+                    frameErrorStreak: window.__testWebGPUFrameErrorStreak,
+                    frameCleanStreak: window.__testWebGPUFrameCleanStreak,
+                    postFXDisabled: window.__testWebGPUPostFXDisabled,
+                    lastError: window.__testWebGPUFrameErrorStreak > 0 ? "Buffer with '' label is invalid" : ""
+                  };
+                },
+                disablePostProcessing: function() {
+                  if (window.__testWebGPUPostFXDisabled) return false;
+                  window.__testWebGPUPostFXDisabled = true;
+                  window.__testWebGPUDemoteCount += 1;
+                  return true;
+                },
+                enablePostProcessing: function() {
+                  if (!window.__testWebGPUPostFXDisabled) return false;
+                  window.__testWebGPUPostFXDisabled = false;
+                  window.__testWebGPURestoreCount += 1;
+                  return true;
+                },
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-postfx-restore",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-postfx-restore",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  function poll(atMS) {
+    now = atMS;
+    timers.runInterval(2000);
+  }
+
+  // --- Cycle 1 ---
+  // Trip: 40 consecutive error frames (>= the unchanged 30-frame threshold)
+  // -> DEMOTE. Non-regression: the trip condition and behavior are the same
+  // as the sibling "persistent frame errors" test above.
+  events.length = 0;
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(2000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 1, "40 consecutive error frames must demote");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+  assert.equal(events.some((e) => e.msg === "webgpu-postfx-demoted"), true);
+
+  // Too early: 299 clean frames is one short of the 1st-demotion restore
+  // threshold (SCENE_WEBGPU_FRAME_ERROR_RESTORE_STREAK_THRESHOLD x 1 = 300)
+  // -- must NOT restore yet.
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 299 });
+  poll(4000);
+  assert.equal(env.context.__testWebGPURestoreCount, 0, "must not restore before the clean streak reaches the threshold");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  // Exactly 300 clean frames -> RESTORE. This is the additive "way back":
+  // disablePostProcessing() alone never had one.
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 300 });
+  poll(6000);
+  assert.equal(env.context.__testWebGPURestoreCount, 1, "300 consecutive clean frames must restore post-FX");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null, "the DOM flag must clear on restore, not just stop being set");
+  assert.equal(events.some((e) => e.msg === "webgpu-postfx-restored"), true);
+
+  // --- Cycle 2: a scene that trips a SECOND time must require a LONGER
+  // clean streak to earn its next restore (anti-oscillation escalation). ---
+  events.length = 0;
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(8000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 2, "the ladder must still demote on a second, independent bad streak");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  // 300 clean frames was enough for the FIRST restore; it must NOT be
+  // enough for the second (threshold now scales to 300 x 2 = 600) --
+  // otherwise a scene flapping every ~300 frames could cycle forever.
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 300 });
+  poll(10000);
+  assert.equal(env.context.__testWebGPURestoreCount, 1, "300 clean frames must not be enough for the 2nd restore");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 600 });
+  poll(12000);
+  assert.equal(env.context.__testWebGPURestoreCount, 2, "600 consecutive clean frames must restore the 2nd time");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  // --- Cycle 3: third demotion, third (larger) restore threshold. ---
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(14000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 3);
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 900 });
+  poll(16000);
+  assert.equal(env.context.__testWebGPURestoreCount, 3, "900 consecutive clean frames must restore the 3rd time");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  // --- Cycle 4: a FOURTH demotion exceeds SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS
+  // (3) -- the ladder still demotes (raw rendering must still recover), but
+  // restore must now latch off PERMANENTLY for the rest of the session, no
+  // matter how long the clean streak runs. ---
+  window_testFrameState(env, { errorStreak: 40, cleanStreak: 0 });
+  poll(18000);
+  assert.equal(env.context.__testWebGPUDemoteCount, 4, "demote must still work past the restore cap -- raw rendering must not be sacrificed");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true");
+
+  window_testFrameState(env, { errorStreak: 0, cleanStreak: 1000000 });
+  poll(20000);
+  assert.equal(env.context.__testWebGPURestoreCount, 3, "restore must latch off permanently after SCENE_WEBGPU_POSTFX_MAX_DEMOTIONS demotions, even with an enormous clean streak");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), "true", "the demoted flag must stay set once restore has latched off");
+
+  // Renderer identity is untouched throughout -- this is purely a post-FX
+  // toggle on the SAME WebGPU renderer, never a backend swap.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(env.context.__testWebGPUCreateCount, 1);
 });
 
 test("selective Scene3D bootstrap honors explicit WebGPU preference when WebGL is disabled", async () => {
@@ -23725,6 +24266,109 @@ function mainRenderPasses(fake) {
     (pass) => pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) && pass.descriptor.colorAttachments.length > 0,
   );
 }
+
+// --- postfx-recovery: this test drives the REAL createSceneWebGPURenderer
+// (via createBoardWebGPUHarness's { fresh: true }, which reads current
+// bootstrap-src rather than a possibly-stale committed bundle snapshot) with
+// a controllable popErrorScope, so diagnostics().frameErrorStreak /
+// .frameCleanStreak / .postProcessing below are produced by the SAME
+// reportWebGPUFrameError / endWebGPUErrorScope / render() code that ships,
+// not by a synthetic object the test constructs to satisfy its own
+// assertions. Complements the mount-level ladder test above, which proves
+// the DECISION logic against a controllable fake renderer; this test proves
+// the underlying counters and disablePostProcessing/enablePostProcessing
+// gate are real.
+test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope results, and enablePostProcessing rebuilds the post chain", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+
+  // Toggled per-frame by the test; the REAL beginWebGPUErrorScope /
+  // endWebGPUErrorScope pair in render() awaits this exact promise.
+  let nextFrameErrors = false;
+  harness.fake.device.popErrorScope = function() {
+    return nextFrameErrors
+      ? Promise.resolve({ message: "Buffer with '' label is invalid" })
+      : Promise.resolve(null);
+  };
+
+  const state = api.createSceneState({
+    scene: {
+      // A sphere (not a box -- box geometry also emits thick-world-line
+      // edge data that makeFakeGPUDevice's render pass double doesn't
+      // implement setIndexBuffer for) so render() has SOME renderable
+      // content: an empty scene (no PBR/points/lines/water/labels) returns
+      // before ever reaching the post-FX / error-scope code this test
+      // exercises.
+      objects: [{ id: "probe-sphere", kind: "sphere", radius: 0.5, x: 0, y: 0, z: 0, color: "#8de1ff", wireframe: false }],
+      postEffects: [{ kind: "bloom", threshold: 0.8, intensity: 0.2 }],
+    },
+  });
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    objects, [], [], [], [], {}, 0, [], [], [], [], state.postEffects, 0, false,
+  );
+
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  async function renderFrame(hasError) {
+    nextFrameErrors = hasError;
+    harness.renderer.render(bundle, { width: 64, height: 64 });
+    // endWebGPUErrorScope's device.popErrorScope().then(...) resolves over
+    // two microtask hops (the fake's Promise.resolve(...) plus the real
+    // .then chain) -- drain both before reading diagnostics().
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  await renderFrame(false);
+  let diag = harness.renderer.diagnostics();
+  assert.equal(diag.postFXDisabled, false);
+  assert.equal(diag.postProcessing, true, "a non-empty postEffects bundle must build the post chain when not force-disabled");
+
+  // Five consecutive error frames -> frameErrorStreak must read exactly 5,
+  // driven purely by real popErrorScope rejections.
+  for (let i = 0; i < 5; i++) {
+    await renderFrame(true);
+  }
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameErrorStreak, 5);
+  assert.equal(diag.frameCleanStreak, 0, "an error frame must zero the clean streak");
+
+  // One clean frame breaks the error streak and starts the clean streak.
+  await renderFrame(false);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameErrorStreak, 0, "a clean frame must zero the error streak");
+  assert.equal(diag.frameCleanStreak, 1);
+
+  for (let i = 0; i < 4; i++) {
+    await renderFrame(false);
+  }
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameCleanStreak, 5);
+
+  // disablePostProcessing/enablePostProcessing actually gate the post chain
+  // (diag.postProcessing mirrors !!postProcessor), not just a flag.
+  assert.equal(harness.renderer.disablePostProcessing(), true);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postFXDisabled, true);
+  await renderFrame(false);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postProcessing, false, "disablePostProcessing must actually tear down postProcessor, not just set a flag");
+  assert.equal(diag.frameErrorStreak, 0, "disablePostProcessing gives raw rendering a fresh error-streak window");
+
+  assert.equal(harness.renderer.disablePostProcessing(), false, "idempotent: already demoted");
+  assert.equal(harness.renderer.enablePostProcessing(), true);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postFXDisabled, false);
+  assert.equal(diag.postProcessing, false, "enablePostProcessing only clears the gate -- the chain rebuilds lazily on the NEXT render() call");
+  await renderFrame(false);
+  diag = harness.renderer.diagnostics();
+  assert.equal(diag.postProcessing, true, "the next render() call with a non-empty postEffects bundle must rebuild the post chain");
+  assert.equal(harness.renderer.enablePostProcessing(), false, "idempotent: not currently demoted");
+});
 
 // waterPoolSelenaFixture is the REAL Selena-compiled pool.sel WGSL + host
 // binding descriptor (bindings.Layout), generated once via
