@@ -489,14 +489,14 @@
   const previousBootstrap = window.__gosx_bootstrap_page;
   const previousDispose = window.__gosx_dispose_page;
 
-  window.__gosx_bootstrap_page = async function() {
-    if (typeof previousBootstrap === "function") await previousBootstrap();
+  window.__gosx_bootstrap_page = async function(reuseEngineIDs) {
+    if (typeof previousBootstrap === "function") await previousBootstrap(reuseEngineIDs);
     await mountAll(document);
   };
 
-  window.__gosx_dispose_page = async function() {
+  window.__gosx_dispose_page = async function(reuseEngineIDs) {
     await disposeAll();
-    if (typeof previousDispose === "function") await previousDispose();
+    if (typeof previousDispose === "function") await previousDispose(reuseEngineIDs);
   };
 
   if (document.readyState === "loading") {
