@@ -495,6 +495,20 @@ func TestHubBinaryChangeAuthorizerRejectsActorSubstitutionBeforeMerge(t *testing
 	if _, err := clientDoc.Commit("client edit"); err != nil {
 		t.Fatal(err)
 	}
+	// The bootstrap frame seeded clientState.PeerBloom from a tiny (single
+	// entry) server-side Bloom filter, which has a measured ~10% false
+	// positive rate. clientDoc.GenerateSyncMessage consults that filter to
+	// decide whether to include this change's bytes in the frame; a false
+	// positive makes it advertise only the new head and omit the change,
+	// producing an empty changes slice this call never resends (this test
+	// makes one direct handleBinaryMessage call, not a websocket round
+	// trip). That is a real, already-covered protocol behavior — see
+	// TestHubSyncDocBootstrapsAndAppliesBinaryChanges, which forces the
+	// false positive on purpose to exercise the Need/retry path — but it is
+	// orthogonal to what this test checks (the authorizer's per-change
+	// actor-binding decision). Clear the filter so the change is always
+	// present in this single frame, isolating that behavior.
+	clientState.PeerBloom = nil
 	frame, ok := clientDoc.GenerateSyncMessage(clientState)
 	if !ok {
 		t.Fatal("expected client sync message")
