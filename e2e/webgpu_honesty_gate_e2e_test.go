@@ -117,4 +117,39 @@ func TestWebGPUHonestyGate(t *testing.T) {
 		t.Fatalf("expected fallback %q from feature exclusion or %q without a usable adapter, got %q\n\nLogs:\n%s",
 			"skinning", "webgpu-unavailable", attrs.Fallback, app.logs.String())
 	}
+
+	// The fixture's model src (/_test-fixture/skinned.glb) has never existed
+	// in this repo; the fetch always 404s. A broken model asset must degrade
+	// the scene, not the mount: confirm the mount reports a real failure on
+	// the model (data-gosx-scene3d-model-status="error") rather than hanging
+	// mid-hydration. If a hydration failure ever escapes uncaught again, this
+	// element either never appears (the earlier waitFor times out) or never
+	// settles past "loading", so this assertion catches both. Poll rather
+	// than sample once: a live scene may re-apply its declared models through
+	// the runtime command path shortly after the first paint, which can
+	// republish "loading" for a moment before settling back to "error"; that
+	// republish is a separate, pre-existing timing detail, not a hang.
+	var modelStatus struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		page.eval(t, `(() => {
+      const el = document.querySelector("[data-gosx-scene3d-mounted]");
+      if (!el) return null;
+      return {
+        status: el.getAttribute("data-gosx-scene3d-model-status"),
+        error: el.getAttribute("data-gosx-scene3d-model-error"),
+      };
+    })()`, &modelStatus)
+		if modelStatus.Status == "error" || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if modelStatus.Status != "error" {
+		t.Fatalf("expected the missing fixture GLB to fail loudly (data-gosx-scene3d-model-status=%q) without blocking the mount, got status=%q error=%q\n\nLogs:\n%s",
+			"error", modelStatus.Status, modelStatus.Error, app.logs.String())
+	}
 }
