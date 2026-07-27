@@ -9331,6 +9331,35 @@ test("bootstrap renders WebGPU Scene3D static points from instanced vertex buffe
   assert.match(source, /pass\.draw\(6,\s*count\)/);
 });
 
+test("bootstrap guards WebGPU points shaders against zero/stale viewport uniforms", () => {
+  // WGSL_THICK_LINE_VERTEX already clamps the viewport uniform to at least
+  // 1.0 before dividing by it (frame.viewportWidth/Height come from the host
+  // and were previously trusted to be pre-clamped upstream). Both points
+  // shaders billboard their quad by dividing pixelSize by the raw viewport
+  // dimensions with no such guard: a zero or stale uniform reaching that
+  // divide produces enormous point sprites. This test proves both points
+  // shaders adopt the same clamp-to-1 form the thick-line shader uses, and
+  // that neither still divides by the unguarded frame.viewportWidth /
+  // frame.viewportHeight fields directly.
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  const pointsVertexStart = source.indexOf("var WGSL_POINTS_VERTEX = [");
+  const pointsInstancedStart = source.indexOf("var WGSL_POINTS_INSTANCED_VERTEX = [");
+  const pointsFragmentStart = source.indexOf("var WGSL_POINTS_FRAGMENT = [");
+  assert.ok(pointsVertexStart >= 0 && pointsInstancedStart > pointsVertexStart && pointsFragmentStart > pointsInstancedStart);
+
+  const pointsVertex = source.slice(pointsVertexStart, pointsInstancedStart);
+  const pointsInstancedVertex = source.slice(pointsInstancedStart, pointsFragmentStart);
+
+  for (const shader of [pointsVertex, pointsInstancedVertex]) {
+    assert.match(shader, /let viewport = max\(vec2f\(frame\.viewportWidth, frame\.viewportHeight\), vec2f\(1\.0\)\);/);
+    assert.match(shader, /let ndcOffsetX = quad\.x \* pixelSize \/ viewport\.x \* clipPos\.w \* 2\.0;/);
+    assert.match(shader, /let ndcOffsetY = quad\.y \* pixelSize \/ viewport\.y \* clipPos\.w \* 2\.0;/);
+    assert.doesNotMatch(shader, /pixelSize \/ frame\.viewportWidth/);
+    assert.doesNotMatch(shader, /pixelSize \/ frame\.viewportHeight/);
+  }
+});
+
 test("bootstrap renders WebGPU Scene3D glow points with radial alpha", () => {
   const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
