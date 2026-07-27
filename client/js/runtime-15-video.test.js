@@ -2,8 +2,9 @@
 // Built-in video and audio engines: subtitles, follow sync, HLS transport,
 // picture-in-picture, input locking and persisted playback preferences.
 //
-// Split out of client/js/runtime.test.js. Every shared fake, sandbox builder
-// and fixture factory lives in ./runtime-test-harness.js.
+// Split out of the former client/js/runtime.test.js, which this set replaces
+// and which no longer exists. Every shared fake, sandbox builder and fixture
+// factory lives in ./runtime-test-harness.js.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

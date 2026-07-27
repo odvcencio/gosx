@@ -25,6 +25,14 @@
 // Mirrors engine_surface_full.go's registration shape. Pairs with
 // canvas_board_islands_only.go, the elision stub the tiny build uses to keep
 // the canvas2d adapter (and render/bundle) out of the islands-only binary.
+//
+// Each global above is one half of a seam. Rename the browser half and this
+// file still compiles, the board still hydrates, and nothing paints. The
+// claims below fail instead.
+//
+//	gosx:claim has client/js/bootstrap-src/26b1-canvas2d-painter.js `__gosx_render_canvas`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_tick_canvas`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_dispose_canvas`
 
 package main
 

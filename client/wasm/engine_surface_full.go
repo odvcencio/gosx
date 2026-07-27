@@ -22,6 +22,15 @@
 //
 // Pairs with engine_surface_islands_only.go, which is the elision stub
 // the tiny build uses to keep the engine/surface dependency out.
+//
+// This file builds only under js && wasm, so the ordinary test run never
+// compiles it and no Go test can reach these globals. The claims below check
+// the browser side as text, which works under every build tag.
+//
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_hydrate_engine_surface`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_dispatch_engine_surface_event`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_tick_engine_surface`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_dispose_engine_surface`
 
 package main
 

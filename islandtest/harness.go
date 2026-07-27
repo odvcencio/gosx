@@ -61,6 +61,16 @@ func (h *Harness) HTML() string {
 // the island will read the same array as its previous generation.
 //
 // HTML() is safe because it uses the tree immediately and returns a string.
+//
+// This whole lifetime rule is a claim about another package. Two facts carry
+// it: the island hands the retired buffer back to the walk, and it refuses to
+// do so when the spare and the previous tree are the same array. Delete either
+// one and the tree lives forever, which makes this paragraph wrong in the
+// direction that costs least, or the tree dies one generation early, which
+// makes it wrong in the direction that corrupts a test.
+//
+//	gosx:claim has client/vm/island.go `func \(island \*Island\) nextTreeBuffer\(\) \*ResolvedTree`
+//	gosx:claim has client/vm/island.go `island.spare == island.prev`
 func (h *Harness) Tree() *vm.ResolvedTree {
 	if h == nil || h.island == nil {
 		return nil
