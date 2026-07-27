@@ -72,7 +72,7 @@ func Page() Node {
 			<p>
 				Flash messages survive a redirect. Store a notice in the session from an action handler, then read it back in the template after the browser follows the redirect to the GET page.
 			</p>
-			{CodeBlock("go", "import \"github.com/odvcencio/gosx/session\"\n\n// inside an action handler:\nsession.AddFlash(ctx.Request, \"notice\", \"Your changes were saved.\")\nreturn ctx.Success(\"\", nil)")}
+			{CodeBlock("go", "import \"m31labs.dev/gosx/session\"\n\n// inside an action handler:\nsession.AddFlash(ctx.Request, \"notice\", \"Your changes were saved.\")\nreturn ctx.Success(\"\", nil)")}
 			{CodeBlock("gsx", "<p class=\"flash-notice\">{flash.notice}</p>")}
 			<p>
 				The

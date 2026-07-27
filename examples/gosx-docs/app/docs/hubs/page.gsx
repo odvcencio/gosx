@@ -14,7 +14,7 @@ func Page() Node {
 				<span class="inline-code">hub.On</span>
 				. The name appears in the client connection URL.
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/hub"
+			{CodeBlock("go", `import "m31labs.dev/gosx/hub"
 	
 	// Declare the hub once at package level.
 	var collab = hub.New("collab")
@@ -91,12 +91,12 @@ func Page() Node {
 			<h2>CRDT Documents</h2>
 			<p>
 				GoSX ships a first-party CRDT engine in
-				<span class="inline-code">github.com/odvcencio/gosx/crdt</span>
+				<span class="inline-code">m31labs.dev/gosx/crdt</span>
 				. A
 				<span class="inline-code">crdt.Doc</span>
 				is a conflict-free replicated document that can be read and mutated concurrently by multiple actors and will always converge to the same state regardless of operation order.
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/crdt"
+			{CodeBlock("go", `import "m31labs.dev/gosx/crdt"
 	
 	// Create a new document.
 	doc := crdt.NewDoc()
@@ -171,7 +171,7 @@ func Page() Node {
 			<p>
 				For network sync, the CRDT engine uses an efficient vector-clock protocol to exchange only the operations each peer has not yet seen:
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/crdt/sync"
+			{CodeBlock("go", `import "m31labs.dev/gosx/crdt/sync"
 	
 	// Peer A generates a sync message describing its state.
 	msg, err := sync.GenerateSyncMessage(docA)

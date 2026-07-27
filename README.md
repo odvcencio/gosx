@@ -93,14 +93,13 @@ Minimal server without the CLI:
 package main
 
 import (
-    "net/http"
-    "github.com/odvcencio/gosx"
-    "github.com/odvcencio/gosx/server"
+    "m31labs.dev/gosx"
+    "m31labs.dev/gosx/server"
 )
 
 func main() {
     app := server.New()
-    app.Page("/", func(r *http.Request) gosx.Node {
+    app.Page("/", func(ctx *server.Context) gosx.Node {
         return gosx.El("h1", gosx.Text("Hello from GoSX"))
     })
     app.ListenAndServe(":8080")
