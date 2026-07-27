@@ -1,6 +1,7 @@
 {
   "skinning": true,
   "ibl": false,
+  "environment-map": false,
   "gpu-picking": true,
   "line-dashed": false,
   "compute-particles": true,

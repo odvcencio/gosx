@@ -1,12 +1,20 @@
 // Winding gate for the browser solid-mesh generators in 12-scene-geometry.js.
 //
-// A triangle carries no winding of its own in this engine's render state: the
-// WebGL main pass calls gl.disable(gl.CULL_FACE), the WebGPU PBR pipeline sets
-// cullMode "none", and sceneRayIntersectsTriangle accepts both faces. Three
-// permissive defaults therefore hide a reversed face, and every existing test
-// passes with the mesh inside out. The only property that can fail is numeric:
-// the geometric normal of each triangle must agree with the shaded normals its
-// own three vertices carry.
+// The MAIN colour pass reads no winding: the WebGL main pass calls
+// gl.disable(gl.CULL_FACE), the WebGPU PBR pipeline sets cullMode "none", and
+// sceneRayIntersectsTriangle accepts both faces. Three permissive defaults
+// therefore hide a reversed face in every colour image, and every existing test
+// passes with the mesh inside out. The only property that can fail there is
+// numeric: the geometric normal of each triangle must agree with the shaded
+// normals its own three vertices carry.
+//
+// FOUR browser draw paths do read the winding, so a reversed face is not free.
+// The WebGL shadow pass calls cullFace(gl.FRONT); the gosx-shadow and
+// gosx-shadow-instanced WebGPU pipelines set cullMode "front"; and
+// drawPBRObjects leaves a single-sided Selena mesh on cullMode "back". The
+// three shadow sites keep the faces that point away from the light, so the
+// winding below decides which surface a browser shadow map records.
+// render/bundle/shadow_drift_test.go pins all three settings.
 //
 // This file is the JavaScript half of assertWindingMatchesNormals in
 // scene/geom/geom_test.go. Both sides run the same formula on the same shapes, so

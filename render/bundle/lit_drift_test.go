@@ -813,6 +813,57 @@ var litDivergentTerms = []divergentTerm{
 		jsLine:  "let finalOpacity = material.opacity * clamp(in.instanceColor.a, 0.0, 1.0);",
 	},
 	{
+		// The largest gap in this ledger, and the one an author is most likely
+		// to hit, because Environment.EnvMap is one field and the WebGPU
+		// renderer is the PREFERRED backend.
+		//
+		// Count the three authored identifiers, case-insensitive, over
+		// client/js/bootstrap-src:
+		//
+		//	identifier      16a-scene-webgpu.js   16-scene-webgl.js
+		//	envMap                            0                  21
+		//	envIntensity                      0                  10
+		//	envRotation                       0                   8
+		//
+		// So the browser WebGPU copy has no cube texture, no sampler, no
+		// uniform lane and no tap. Its whole environment response is the
+		// hemisphere ambient term on the jsLine below. The native copy loads a
+		// cube in render/bundle/environment.go and taps it twice.
+		//
+		// A SECOND FINDING, recorded so the fix does not copy the defect. The
+		// native tap is NOT image-based lighting either. It samples one cube at
+		// level zero for the diffuse term, samples it again along the
+		// reflection vector for the specular term, and scales the specular tap
+		// by (1.0 - roughness * 0.65). That factor has no derivation, and
+		// scene/capability/capability.go says so about the WebGL2 copy of the
+		// same expression. The criticism is right and it reaches this file
+		// too. A split-sum fit reads roughness through a prefiltered mip chain
+		// and a two-term bidirectional reflectance distribution function (BRDF)
+		// lookup table, and no GoSX backend has either. That is why both ibl
+		// cells stay false while the environment-map cells split.
+		//
+		// CLOSING THIS ROW needs renderer work, not a shader edit: a cube
+		// texture and sampler in the WebGPU bind group layout, three uniform
+		// lanes, and the two taps. Do it against the split-sum products in
+		// assetpipe/ibl rather than against the factor above, then flip
+		// Matrix[environment-map][webgpu] and update the WebGPU manifest.
+		id:      "environment-map",
+		effect:  "An authored environment map lights the scene in a poster and on WebGL2, and contributes nothing on WebGPU, which is the backend most viewers get.",
+		verdict: "Keep the native tap and record the browser gap. Removing the native tap to reach parity would make the poster renderer, which is also the test oracle, ignore an authored field it can already read. scene/capability/capability.go carries the environment-map row that reports the drop per backend, and TestWebGPUReadsNoEnvironmentMap there fails when the gap closes.",
+		goLine:  "let cubeIBL = (cubeDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;",
+		jsLine:  "let ambient = envDiffuse * albedo;",
+	},
+	{
+		// This row records the same underived factor from the other side. The
+		// native copy carries it and the browser WebGPU copy carries nothing,
+		// so a reader who deletes the row above must still meet the factor.
+		id:      "environment-specular-roughness-factor",
+		effect:  "Follows from the row above. A rough native surface reflects the environment through a linear falloff instead of a prefiltered mip level, so a poster reads glossier than a split-sum fit would.",
+		verdict: "Record only. The factor is not defensible on its own, and neither is deleting it while the native path is the one backend that reads the image at all. It retires when a prefiltered cube and a BRDF lookup table land, which is the same work that closes the row above.",
+		goLine:  "let envSpecular = textureSample(envCubeTexture, envCubeSampler, envReflect).rgb * F * (1.0 - roughness * 0.65);",
+		jsLine:  "var color = ambient + Lo + emission;",
+	},
+	{
 		id:      "normal-map-tangent-basis",
 		effect:  "A normal mapped surface lights differently on the two backends, most visibly on low polygon geometry.",
 		verdict: "Go derives the tangent frame per pixel from screen space derivatives because its vertex format carries no tangent. The browser uses the authored vertex tangent. Neither is wrong, but the results differ. Record the gap, or add a tangent attribute to the native path.",
@@ -1211,6 +1262,27 @@ var litDivergentGuardMutations = []litGuardMutation{
 		from:    "out.color = vec4f(color, clamp(material.baseColor.a, 0.0, 1.0));",
 		to:      "out.color = vec4f(color, clamp(material.baseColor.a * in.instanceAlpha, 0.0, 1.0));",
 		wantRow: "output-alpha-source",
+	},
+	{
+		name:    "native renderer drops the environment-map tap to reach parity without updating the ledger",
+		side:    "go",
+		from:    "let cubeIBL = (cubeDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;",
+		to:      "let cubeIBL = vec3f(0.0);",
+		wantRow: "environment-map",
+	},
+	{
+		name:    "browser folds an environment term into its ambient without updating the ledger",
+		side:    "js",
+		from:    "let ambient = envDiffuse * albedo;",
+		to:      "let ambient = (envDiffuse + envCube) * albedo;",
+		wantRow: "environment-map",
+	},
+	{
+		name:    "native renderer replaces the underived roughness factor without updating the ledger",
+		side:    "go",
+		from:    "let envSpecular = textureSample(envCubeTexture, envCubeSampler, envReflect).rgb * F * (1.0 - roughness * 0.65);",
+		to:      "let envSpecular = textureSampleLevel(envCubeTexture, envCubeSampler, envReflect, roughness * 6.0).rgb * F;",
+		wantRow: "environment-specular-roughness-factor",
 	},
 	{
 		name:    "native renderer adopts an authored tangent basis without updating the ledger",

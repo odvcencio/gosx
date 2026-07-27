@@ -223,20 +223,28 @@
   // authored box therefore had opposite winding depending only on whether the
   // renderer instanced it.
   //
-  // Four permissive defaults hid the split:
+  // Four permissive defaults hid the split in the MAIN colour pass:
   //   - the WebGL main pass calls gl.disable(gl.CULL_FACE);
   //   - the WebGPU PBR pipeline sets cullMode "none";
   //   - sceneRayIntersectsTriangle reports a hit on both faces;
   //   - the native Go renderer reads scene/geom and never reads this file.
   //
-  // One browser path does cull today, so read it before you touch this file.
-  // drawPBRObjects in 16a-scene-webgpu.js leaves a mesh object on
-  // getSelenaPipeline's cullMode "back" default whenever the object carries a
-  // Selena custom shader and doubleSided stays false. The comment above that call
-  // still describes the old inverted winding as load-bearing. It is stale now, and
-  // whoever owns 16a-scene-webgpu.js must rewrite it. render/bundle/renderer.go
-  // draws scene/geom with CullBack plus FrontFaceCCW, and
-  // render/gpu/jsgpu/encode.go maps that pair to WebGPU cullMode "back" plus
+  // FOUR browser draw paths DO cull. Read every one before you touch this file.
+  //   - the WebGL shadow pass enables CULL_FACE and calls cullFace(gl.FRONT);
+  //   - the WebGPU gosx-shadow pipeline sets cullMode "front";
+  //   - the WebGPU gosx-shadow-instanced pipeline sets cullMode "front";
+  //   - drawPBRObjects in 16a-scene-webgpu.js leaves a mesh object on
+  //     getSelenaPipeline's cullMode "back" default whenever the object carries
+  //     a Selena custom shader and doubleSided stays false.
+  //
+  // The three shadow sites keep the faces that point AWAY from the light, which
+  // is the standard mitigation for peter-panning. So the winding below decides
+  // which surface a browser shadow map records. render/bundle/renderer.go keeps
+  // the opposite face natively, and render/bundle/shadow_drift_test.go pins all
+  // three settings and states the verdict.
+  //
+  // render/bundle/renderer.go draws scene/geom with CullBack plus FrontFaceCCW,
+  // and render/gpu/jsgpu/encode.go maps that pair to WebGPU cullMode "back" plus
   // frontFace "ccw" with no inversion, so the winding below is the winding that
   // pair expects.
   //

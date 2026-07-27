@@ -16,9 +16,13 @@ import (
 // client/js/bootstrap-src/16a-scene-webgpu.js. Nothing generates one copy from
 // the other, and both decide what a viewer sees.
 //
-// The audit of 2026-07-26 found two differences here. One is closed and now has
-// a shared table below. One stays open and has a ledger row that names the
-// browser edit that closes it.
+// The audit of 2026-07-26 found two differences here. Both are closed, and both
+// now sit in a shared table below. The tone-map mode table closed first. The
+// bright-pass knee closed on 2026-07-27, when the browser adopted the soft knee,
+// and brightDivergentTerms went empty.
+//
+// An EMPTY ledger is the intended resting state, not a disabled guard. Read the
+// note above brightDivergentTerms before deleting it.
 
 const (
 	toneMapJSFragmentName = "WGSL_POST_TONEMAPPING_FRAGMENT"
@@ -162,27 +166,97 @@ func TestToneMapWGSLMatchesJSWebGPU(t *testing.T) {
 // must agree on, plus the names that must fall through to the default.
 var toneMapNameTable = []string{"linear", "none", "reinhard", "filmic", "aces", "", "not-a-mode"}
 
-// TestToneMapModeTableMatchesJSWebGPU pins the string-to-number table that
-// decides which branch of the shader runs.
+// FOUR TABLES SERVE ONE AUTHORED STRING.
 //
-// A PASS PROVES: toneMapModeCode in Go and sceneWebGPUToneMapMode in the browser
-// return the same number for every name in toneMapNameTable, including the
-// default that an unknown name and the empty string take.
+// Environment.ToneMapping is one field, and four functions turn it into the
+// integer a shader branches on:
 //
-// A PASS DOES NOT PROVE: that the browser WebGL path agrees. It has a third
-// table, scenePostToneMapMode in 16-scene-webgl.js, whose post-chain numbers
-// match this one, and a fourth, sceneToneMapMode, whose material-shader numbers
-// do not. Those live outside the WebGPU pair this guard reads.
-func TestToneMapModeTableMatchesJSWebGPU(t *testing.T) {
-	for _, problem := range checkToneMapModeTable(jsToneMapModeTable(t, readJSWebGPURenderer(t))) {
-		t.Error(problem)
+//	toneMapModeCode          render/bundle/bloom.go        native present pass
+//	sceneWebGPUToneMapMode   16a-scene-webgpu.js           WebGPU post chain
+//	scenePostToneMapMode     16-scene-webgl.js             WebGL2 post chain
+//	sceneToneMapMode         16-scene-webgl.js             WebGL2 material shader
+//
+// The fourth was the odd one until 2026-07-27. It mapped neither "none" nor
+// "filmic", so both fell through to ACES, and it skipped the trim the other
+// three apply. scenePBRUploadExposure feeds it only when the page runs NO post
+// chain, so one authored name produced two images on one backend, and which
+// image an author saw depended on whether the page happened to carry a post
+// effect. postfx_drift_test.go recorded that in prose and called it out of
+// scope. It is in scope now, and toneMapModeTables below pins all four.
+
+// toneMapModeTableSite names one table and where to read it.
+type toneMapModeTableSite struct {
+	id       string
+	where    string
+	webgl    bool // read 16-scene-webgl.js instead of 16a-scene-webgpu.js
+	function string
+}
+
+// toneMapModeTables lists every browser table that must agree with Go.
+var toneMapModeTables = []toneMapModeTableSite{
+	{
+		id:       "webgpu-post-chain",
+		where:    "client/js/bootstrap-src/16a-scene-webgpu.js sceneWebGPUToneMapMode",
+		function: toneMapJSFuncName,
+	},
+	{
+		id:       "webgl-post-chain",
+		where:    "client/js/bootstrap-src/16-scene-webgl.js scenePostToneMapMode",
+		webgl:    true,
+		function: "scenePostToneMapMode",
+	},
+	{
+		id:       "webgl-material-shader",
+		where:    "client/js/bootstrap-src/16-scene-webgl.js sceneToneMapMode",
+		webgl:    true,
+		function: "sceneToneMapMode",
+	},
+}
+
+// readToneMapModeTables parses every browser table into name-to-number maps,
+// keyed by site id.
+func readToneMapModeTables(t *testing.T) map[string]map[string]int {
+	t.Helper()
+	webgpu, webgl := readJSWebGPURenderer(t), readJSWebGLRenderer(t)
+	out := make(map[string]map[string]int, len(toneMapModeTables))
+	for _, site := range toneMapModeTables {
+		file, where := webgpu, jsWebGPURendererFile
+		if site.webgl {
+			file, where = webgl, jsWebGLRendererFile
+		}
+		out[site.id] = jsToneMapModeTableIn(t, where, file, site.function)
+	}
+	return out
+}
+
+// TestToneMapModeTablesAgreeAcrossAllFourCopies pins the string-to-number table
+// that decides which branch of the shader runs, on every copy.
+//
+// A PASS PROVES: toneMapModeCode in Go and all three browser tables return the
+// same number for every name in toneMapNameTable, including the default that an
+// unknown name and the empty string take. So "none" reaches the same operator on
+// the native present pass, on the WebGPU post chain, on the WebGL2 post chain
+// and in the WebGL2 material shader, and so does "filmic".
+//
+// A PASS DOES NOT PROVE: that the four shaders then DRAW the same curve for that
+// number. The tables and the branches are separate,
+// TestWebGL2ShadersImplementEveryModeTheirTablesEmit covers the WebGL2 branches,
+// and toneMapSharedTerms covers the native-to-WebGPU pair.
+//
+// TestToneMapModeGuardDetectsMutation proves this test can fail.
+func TestToneMapModeTablesAgreeAcrossAllFourCopies(t *testing.T) {
+	tables := readToneMapModeTables(t)
+	for _, site := range toneMapModeTables {
+		for _, problem := range checkToneMapModeTable(site.where, tables[site.id]) {
+			t.Error(problem)
+		}
 	}
 }
 
 // checkToneMapModeTable returns one problem per name the two tables map
 // differently. It takes the browser table as data so a self test can feed it a
 // mutated copy and prove the guard fires.
-func checkToneMapModeTable(jsTable map[string]int) []string {
+func checkToneMapModeTable(where string, jsTable map[string]int) []string {
 	var problems []string
 	for _, name := range toneMapNameTable {
 		want, ok := jsTable[name]
@@ -191,66 +265,178 @@ func checkToneMapModeTable(jsTable map[string]int) []string {
 		}
 		if got := int(toneMapModeCode(name)); got != want {
 			problems = append(problems, fmt.Sprintf("tone-map name %q: %s returns %d, %s returns %d.\n"+
-				"Both tables serve one authored string, so change both or neither.",
-				name, goModeWhere, got, jsModeWhere, want))
+				"Four tables serve one authored Environment.ToneMapping string, so change all four or none.",
+				name, goModeWhere, got, where, want))
 		}
 	}
 	return problems
 }
 
-// jsToneMapModeTable reads sceneWebGPUToneMapMode and returns the name-to-number
+// TestBrowserToneMapTablesNormalizeTheAuthoredName pins the normalization every
+// table must apply before it compares.
+//
+// A PASS PROVES: all three browser tables trim the authored string and lower its
+// case, so they answer the same way Go does. toneMapModeCode calls
+// strings.ToLower(strings.TrimSpace(mode)), and a table that skips the trim
+// sends " filmic " to the default while Go sends it to the Hejl curve.
+//
+// A PASS DOES NOT PROVE: that the trim is reachable. Each table guards it behind
+// a typeof check, and this guard reads text rather than running the function.
+//
+// WHY A SEPARATE TEST. jsToneMapModeTableIn parses the literal names out of the
+// if-conditions. It models no normalization at all, so a missing trim leaves the
+// parsed map identical and TestToneMapModeTablesAgreeAcrossAllFourCopies stays
+// green. sceneToneMapMode shipped without the trim until 2026-07-27 for exactly
+// that reason.
+func TestBrowserToneMapTablesNormalizeTheAuthoredName(t *testing.T) {
+	webgpu, webgl := readJSWebGPURenderer(t), readJSWebGLRenderer(t)
+	for _, site := range toneMapModeTables {
+		file, where := webgpu, jsWebGPURendererFile
+		if site.webgl {
+			file, where = webgl, jsWebGLRendererFile
+		}
+		body := jsFunctionBody(t, where, file, site.function)
+		for _, call := range []string{".trim()", ".toLowerCase()"} {
+			if strings.Contains(body, call) {
+				continue
+			}
+			t.Errorf("%s does not call %s.\n"+
+				"render/bundle/bloom.go toneMapModeCode calls strings.ToLower(strings.TrimSpace(mode)), so an "+
+				"authored name with a stray space or a capital reaches a different operator on this copy. "+
+				"Four tables serve one authored string.", site.where, call)
+		}
+	}
+}
+
+// webglToneMapShaders names each WebGL2 shader constant and the mode numbers its
+// own table can send it. A number with no branch falls through to the shader's
+// else, which is a DIFFERENT wrong curve from the one the table fixed.
+var webglToneMapShaders = []struct {
+	constant string
+	fedBy    string
+	modes    []int
+	fallsTo  string
+}{
+	{
+		constant: "SCENE_PBR_FRAGMENT_SOURCE",
+		fedBy:    "sceneToneMapMode",
+		modes:    []int{1, 2, 3},
+		fallsTo:  "mode 0, which applies no curve",
+	},
+	{
+		constant: "SCENE_POST_TONEMAPPING_SOURCE",
+		fedBy:    "scenePostToneMapMode",
+		modes:    []int{0, 2, 3},
+		fallsTo:  "mode 1, which applies ACES",
+	},
+}
+
+// TestWebGL2ShadersImplementEveryModeTheirTablesEmit pins the branches behind
+// the numbers.
+//
+// A PASS PROVES: each WebGL2 tone-map shader carries an explicit branch for
+// every mode its own table emits, except the one mode that is meant to be the
+// else. Adding "filmic" to a table without adding the branch fails here.
+//
+// A PASS DOES NOT PROVE: that the branch computes the right curve. That is
+// toneMapSharedTerms for the native-to-WebGPU pair, and no guard reads the GLSL
+// constants term by term today.
+//
+// WHY THIS TEST EXISTS. The material shader had no mode-3 branch when the mode-3
+// name was added to its table. The table fix alone would have moved "filmic"
+// from ACES to no curve at all, which is a different wrong answer, not a fix.
+func TestWebGL2ShadersImplementEveryModeTheirTablesEmit(t *testing.T) {
+	webgl := readJSWebGLRenderer(t)
+	for _, shader := range webglToneMapShaders {
+		body := jsConstArrayBody(t, jsWebGLRendererFile, webgl, shader.constant)
+		for _, mode := range shader.modes {
+			needle := fmt.Sprintf("u_toneMapMode == %d", mode)
+			if strings.Contains(body, needle) {
+				continue
+			}
+			t.Errorf("%s in %s carries no %q branch, but %s can emit %d.\n"+
+				"An emitted mode with no branch falls through to the else, which is %s. "+
+				"Add the branch and the table entry together.",
+				shader.constant, jsWebGLRendererFile, needle, shader.fedBy, mode, shader.fallsTo)
+		}
+	}
+}
+
+// jsConstArrayBody returns the text of a `const NAME = [ ... ].join(` array
+// literal. The WebGL2 renderer keeps its GLSL that way, and jsShaderSource reads
+// only the `var NAME = [` spelling the WebGPU renderer uses.
+func jsConstArrayBody(t *testing.T, where, file, name string) string {
+	t.Helper()
+	needle := "const " + name + " = ["
+	start := strings.Index(file, needle)
+	if start < 0 {
+		t.Fatalf("shader constant %s not found in %s as `const %s = [`. Was it renamed, or is it no longer an array of lines? Update this guard together with the rename.",
+			name, where, name)
+	}
+	end := strings.Index(file[start:], `].join(`)
+	if end < 0 {
+		t.Fatalf("shader constant %s in %s has no `].join(` terminator; the guard cannot tell where it ends", name, where)
+	}
+	return file[start : start+end]
+}
+
+// jsToneMapModeTableIn reads one name-to-number tone-map function and returns the
 // mapping it implements. The empty-string key holds the default the function
 // returns when no name matches.
 //
-// The function is small and regular: a run of `if (normalized === "x" ...)
-// return N;` lines followed by one bare `return N;`. This reader fails instead
-// of guessing when it finds neither.
-func jsToneMapModeTable(t *testing.T, file string) map[string]int {
+// All three browser functions share one small, regular shape: a run of
+// `if (normalized === "x" ...) return N;` lines followed by one bare
+// `return N;`. This reader fails instead of guessing when it finds neither.
+func jsToneMapModeTableIn(t *testing.T, where, file, function string) map[string]int {
 	t.Helper()
-	body := jsFunctionBody(t, file, toneMapJSFuncName)
+	body := jsFunctionBody(t, where, file, function)
 	table := map[string]int{}
 	conditional := regexp.MustCompile(`if \(([^)]*)\) return (\d+);`)
 	name := regexp.MustCompile(`"([a-zA-Z-]*)"`)
 	for _, match := range conditional.FindAllStringSubmatch(body, -1) {
 		code := 0
 		if _, err := fmt.Sscanf(match[2], "%d", &code); err != nil {
-			t.Fatalf("%s returns %q, which is not a number", jsModeWhere, match[2])
+			t.Fatalf("%s returns %q, which is not a number", where, match[2])
 		}
 		names := name.FindAllStringSubmatch(match[1], -1)
 		if len(names) == 0 {
-			t.Fatalf("%s has a branch this guard cannot read: %q", jsModeWhere, match[0])
+			t.Fatalf("%s has a branch this guard cannot read: %q", where, match[0])
 		}
 		for _, n := range names {
 			table[n[1]] = code
 		}
 	}
 	if len(table) == 0 {
-		t.Fatalf("%s maps no name at all; the guard read the wrong function or the shape changed", jsModeWhere)
+		t.Fatalf("%s maps no name at all; the guard read the wrong function or the shape changed", where)
 	}
 	fallback := regexp.MustCompile(`\n\s*return (\d+);`)
 	tail := fallback.FindAllStringSubmatch(body, -1)
 	if len(tail) == 0 {
-		t.Fatalf("%s has no default return; the guard cannot tell what an unknown name maps to", jsModeWhere)
+		t.Fatalf("%s has no default return; the guard cannot tell what an unknown name maps to", where)
 	}
 	last := 0
 	if _, err := fmt.Sscanf(tail[len(tail)-1][1], "%d", &last); err != nil {
-		t.Fatalf("%s default return %q is not a number", jsModeWhere, tail[len(tail)-1][1])
+		t.Fatalf("%s default return %q is not a number", where, tail[len(tail)-1][1])
 	}
 	table[""] = last
 	return table
 }
 
 // jsFunctionBody returns the text between the braces of `function NAME(`.
-func jsFunctionBody(t *testing.T, file, name string) string {
+//
+// where names the file in every failure. Two callers read two different browser
+// renderers, so a hard-coded file name in the message sends the reader to the
+// wrong file.
+func jsFunctionBody(t *testing.T, where, file, name string) string {
 	t.Helper()
 	needle := "function " + name + "("
 	start := strings.Index(file, needle)
 	if start < 0 {
-		t.Fatalf("function %s not found in %s. Was it renamed? Update this guard together with the rename.", name, jsWebGPURendererFile)
+		t.Fatalf("function %s not found in %s. Was it renamed? Update this guard together with the rename.", name, where)
 	}
 	open := strings.IndexByte(file[start:], '{')
 	if open < 0 {
-		t.Fatalf("function %s in %s has no body", name, jsWebGPURendererFile)
+		t.Fatalf("function %s in %s has no body", name, where)
 	}
 	open += start
 	depth := 0
@@ -265,7 +451,7 @@ func jsFunctionBody(t *testing.T, file, name string) string {
 			}
 		}
 	}
-	t.Fatalf("function %s in %s has no closing brace", name, jsWebGPURendererFile)
+	t.Fatalf("function %s in %s has no closing brace", name, where)
 	return ""
 }
 
@@ -319,8 +505,15 @@ var brightDivergentTerms = []divergentTerm{}
 // A PASS PROVES: both weight luminance with the same Rec.709 vector and both
 // read the threshold from a uniform rather than a constant.
 //
-// A PASS DOES NOT PROVE: that the two passes select the same pixels. They do
-// not. TestBrightPassKneeDivergesFromJSWebGPU records why.
+// It also proves both copies scale by the same soft knee, because the
+// bright-pass-soft-knee row moved into this table when the browser adopted it.
+// Both passes therefore select the same pixels from the same input.
+//
+// A PASS DOES NOT PROVE: that the two passes receive the same input. They do
+// not. The native bright pass reads a high dynamic range target that already
+// carries the background clear; the browser reads its own target. A pixel that
+// crosses the threshold on one backend can sit under it on the other, and no row
+// here covers that.
 func TestBrightPassMatchesJSWebGPU(t *testing.T) {
 	goSrc, jsSrc := brightShaderCopies(t)
 	for _, problem := range checkSharedTerms(brightSharedTerms, goBrightWhere, goSrc, jsBrightWhere, jsSrc) {
@@ -328,20 +521,60 @@ func TestBrightPassMatchesJSWebGPU(t *testing.T) {
 	}
 }
 
-// TestBrightPassKneeDivergesFromJSWebGPU pins the open difference in the bright
-// pass.
+// TestBrightPassDivergenceLedgerIsEmptyAndTheKneeIsShared pins the resting state
+// of the bright-pass ledger.
 //
-// A PASS PROVES: the native copy still scales by a soft knee and the browser
-// copy still cuts hard. An edit to either side fails here and forces a fresh
-// decision.
+// The name changed on 2026-07-27, and so did the body. The old name was
+// TestBrightPassKneeDivergesFromJSWebGPU, and it iterated an empty slice: it
+// passed whatever either copy said, so it proved nothing while its own doc
+// comment claimed a live divergence. A test that cannot fail is worse than no
+// test, because the reader counts it.
 //
-// A PASS DOES NOT PROVE: that the difference is acceptable. Read the verdict on
-// the row. It names the browser edit that closes it.
-func TestBrightPassKneeDivergesFromJSWebGPU(t *testing.T) {
+// A PASS PROVES three things:
+//
+//  1. every row still recorded in the ledger is still present on both sides;
+//  2. the ledger is EMPTY, so no row was added without a decision recorded
+//     beside it;
+//  3. the knee that used to be the one row is now pinned as an agreement in
+//     brightSharedTerms, so emptying the ledger did not drop the term.
+//
+// A PASS DOES NOT PROVE: that the two bright passes agree on everything. They
+// agree on the terms brightSharedTerms names and on nothing else.
+//
+// WHEN A NEW DIVERGENCE APPEARS: add its row to brightDivergentTerms with an
+// effect and a verdict, and relax check 2 to name the row you added. Do not
+// delete check 2; it is what stops a row from being parked here forever.
+func TestBrightPassDivergenceLedgerIsEmptyAndTheKneeIsShared(t *testing.T) {
 	goSrc, jsSrc := brightShaderCopies(t)
 	for _, problem := range checkDivergentTerms(brightDivergentTerms, goBrightWhere, goSrc, jsBrightWhere, jsSrc) {
 		t.Error(problem)
 	}
+	if len(brightDivergentTerms) != 0 {
+		ids := make([]string, 0, len(brightDivergentTerms))
+		for _, row := range brightDivergentTerms {
+			ids = append(ids, row.id)
+		}
+		t.Errorf("brightDivergentTerms is no longer empty; it now holds %s.\n"+
+			"That is allowed, and the ledger exists for it. Update this test to name the row, "+
+			"and update the file comment at the top, which still says both audit differences are closed.",
+			strings.Join(ids, ", "))
+	}
+	if !sharedTermsCover(brightSharedTerms, "bright-pass-soft-knee") {
+		t.Error("brightSharedTerms no longer carries the bright-pass-soft-knee row.\n" +
+			"That row is where the knee went when it stopped being a divergence. With the ledger empty and the " +
+			"shared row gone, nothing pins the knee on either copy, and either side could revert to a hard cut in silence.")
+	}
+}
+
+// sharedTermsCover reports whether a table carries a row with the given id. It
+// lets a test assert that a term did not vanish from BOTH tables at once.
+func sharedTermsCover(terms []sharedTerm, id string) bool {
+	for _, term := range terms {
+		if term.id == id {
+			return true
+		}
+	}
+	return false
 }
 
 func toneMapShaderCopies(t *testing.T) (goSrc, jsSrc string) {
@@ -479,43 +712,56 @@ func TestPostFXDriftGuardsDetectMutation(t *testing.T) {
 	})
 }
 
-// TestToneMapModeGuardDetectsMutation proves the mode-table guard can fail.
+// TestToneMapModeGuardDetectsMutation proves the mode-table guard can fail, on
+// every one of the three browser tables.
 //
 // The guard compares a Go function against a parsed JS function, so it cannot
 // mutate shader text. It mutates the parsed browser table instead, one entry per
-// case, and confirms the comparison names that entry.
+// case, and confirms the comparison names that entry. Every case runs against
+// every table, because a guard that only fires on the WebGPU copy is exactly the
+// gap this change closed.
 func TestToneMapModeGuardDetectsMutation(t *testing.T) {
-	shipped := jsToneMapModeTable(t, readJSWebGPURenderer(t))
-	if len(shipped) < 5 {
-		t.Fatalf("the parsed browser table holds %d entries; it must hold linear, none, reinhard, filmic and a default", len(shipped))
-	}
-	if problems := checkToneMapModeTable(shipped); len(problems) != 0 {
-		t.Fatalf("the shipped tables must agree before the mutation check means anything; got:\n%s",
-			strings.Join(problems, "\n"))
+	tables := readToneMapModeTables(t)
+
+	for _, site := range toneMapModeTables {
+		shipped := tables[site.id]
+		if len(shipped) < 5 {
+			t.Fatalf("%s parses to %d entries; it must hold linear, none, reinhard, filmic and a default", site.where, len(shipped))
+		}
+		if problems := checkToneMapModeTable(site.where, shipped); len(problems) != 0 {
+			t.Fatalf("every shipped table must agree before the mutation check means anything; %s gave:\n%s",
+				site.where, strings.Join(problems, "\n"))
+		}
 	}
 
-	for _, mut := range []struct {
-		name string
-		key  string
-		code int
-	}{
-		{"browser stops mapping none to the clamp", "none", 1},
-		{"browser renumbers reinhard", "reinhard", 1},
-		{"browser renumbers filmic", "filmic", 2},
-		{"browser changes the default an unknown name takes", "", 0},
-	} {
-		t.Run(mut.name, func(t *testing.T) {
-			mutated := map[string]int{}
-			for k, v := range shipped {
-				mutated[k] = v
-			}
-			if mutated[mut.key] == mut.code {
-				t.Fatalf("mutation %q sets %q to the value it already holds, so it proves nothing", mut.name, mut.key)
-			}
-			mutated[mut.key] = mut.code
-			problems := checkToneMapModeTable(mutated)
-			if len(problems) == 0 {
-				t.Fatalf("mutation %q produced no problem; the guard does not cover %q", mut.name, mut.key)
+	for _, site := range toneMapModeTables {
+		shipped := tables[site.id]
+		t.Run(site.id, func(t *testing.T) {
+			for _, mut := range []struct {
+				name string
+				key  string
+				code int
+			}{
+				{"stops mapping none to the clamp", "none", 1},
+				{"stops mapping filmic to the Hejl curve", "filmic", 1},
+				{"renumbers reinhard", "reinhard", 1},
+				{"renumbers linear", "linear", 3},
+				{"changes the default an unknown name takes", "", 0},
+			} {
+				t.Run(mut.name, func(t *testing.T) {
+					mutated := map[string]int{}
+					for k, v := range shipped {
+						mutated[k] = v
+					}
+					if mutated[mut.key] == mut.code {
+						t.Fatalf("mutation %q sets %q to the value it already holds, so it proves nothing", mut.name, mut.key)
+					}
+					mutated[mut.key] = mut.code
+					problems := checkToneMapModeTable(site.where, mutated)
+					if len(problems) == 0 {
+						t.Fatalf("mutation %q produced no problem on %s; the guard does not cover %q", mut.name, site.where, mut.key)
+					}
+				})
 			}
 		})
 	}

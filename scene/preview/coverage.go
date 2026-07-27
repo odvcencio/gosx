@@ -7,6 +7,7 @@ import (
 
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/scene/capability"
 	"m31labs.dev/gosx/scene/geom"
 )
 
@@ -155,7 +156,41 @@ func unsupportedRecordDiagnostics(ir scene.SceneIR) []engine.RenderDiagnostic {
 	if diagnostic, ok := environmentDiagnostic(ir.Environment); ok {
 		out = append(out, diagnostic)
 	}
+	if diagnostic, ok := environmentMapBackendDiagnostic(ir.Environment); ok {
+		out = append(out, diagnostic)
+	}
 	return out
+}
+
+// environmentMapBackendDiagnostic warns that the poster shows an environment map
+// the preferred browser backend will not draw.
+//
+// WHY A DIAGNOSTIC FROM THIS PACKAGE NAMES ANOTHER BACKEND. Every other
+// diagnostic here carries Backend "headless", because every other one reports
+// what THIS device drops. This one is the opposite case and it is the more
+// dangerous one: the CPU rasterizer DRAWS the environment map, so the author
+// receives a poster that proves the field works, and then sees nothing on the
+// backend most viewers get. Silence here is what makes the poster misleading.
+//
+// The verdict comes from scene/capability, so this function states no opinion of
+// its own. It fires only while Matrix[environment-map][webgpu] is false, and it
+// stops on its own the day the WebGPU renderer reads the image.
+func environmentMapBackendDiagnostic(env scene.EnvironmentIR) (engine.RenderDiagnostic, bool) {
+	if strings.TrimSpace(env.EnvMap) == "" {
+		return engine.RenderDiagnostic{}, false
+	}
+	if capability.Supports(capability.BackendWebGPU, capability.FeatureEnvironmentMap) {
+		return engine.RenderDiagnostic{}, false
+	}
+	return engine.RenderDiagnostic{
+		Severity: "warning",
+		Code:     "scene.preview.environment_map_backend_gap",
+		Backend:  string(capability.BackendWebGPU),
+		Message: "this poster shades the authored envMap, and so does the WebGL2 browser renderer, but the WebGPU " +
+			"browser renderer reads no environment map at all: envMap, envIntensity and envRotation appear zero " +
+			"times in 16a-scene-webgpu.js. WebGPU is the preferred backend, so most viewers see a scene without " +
+			"the reflection this image shows. Do not size the lighting from this poster alone",
+	}, true
 }
 
 // environmentDiagnostic names the environment fields the frame carries and the
@@ -172,6 +207,11 @@ func unsupportedRecordDiagnostics(ir scene.SceneIR) []engine.RenderDiagnostic {
 // fog term at all: litWGSL carries none, and the browser applies fog inside its
 // material shader rather than a pass. So closing fog is a change to the material
 // on both sides, not another pass on this device.
+//
+// This function reports only what THIS device drops. It says nothing about the
+// browser, and dropping envMap from the list above created a second problem it
+// cannot see: the poster now shades a term the WebGPU browser renderer ignores.
+// environmentMapBackendDiagnostic below reports that half.
 func environmentDiagnostic(env scene.EnvironmentIR) (engine.RenderDiagnostic, bool) {
 	var ignored []string
 	if strings.TrimSpace(env.FogColor) != "" || env.FogDensity != 0 {

@@ -3021,6 +3021,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureWaterObjectTexturePass,
 	capability.FeatureWaterSim,
 	capability.FeatureIBL,
+	capability.FeatureEnvironmentMap,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3093,9 +3094,16 @@ func waterObjectKindUsesMeshProjectedPass(value string) bool {
 func collectFeatures(ir SceneIR) []capability.Feature {
 	seen := map[capability.Feature]bool{}
 
-	// ibl: environment has a non-empty env-map.
+	// ibl and environment-map: the environment carries a non-empty env-map.
+	//
+	// One authored field raises two features because the two questions differ.
+	// ibl asks whether a backend runs a split-sum fit; no backend does, so both
+	// its cells are false. environment-map asks whether a backend opens the
+	// image at all; WebGL2 does and WebGPU does not. Raising only ibl reported
+	// the two backends as equal, and they are not.
 	if strings.TrimSpace(ir.Environment.EnvMap) != "" {
 		seen[capability.FeatureIBL] = true
+		seen[capability.FeatureEnvironmentMap] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.
