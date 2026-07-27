@@ -306,7 +306,18 @@ const budgets = [
   // are unchanged and still fit. The cost buys the end of a silent
   // substitution: a Selena plane drew with its companion StandardMaterial for
   // months while every counter read healthy.
-  { file: "bootstrap.js", raw: 1_347_000, gzip: 358_500, brotli: 290_000 },
+  //
+  // Merged with per-object WebGPU pipeline validation: the six asynchronous
+  // pipeline builds no longer push a device-global error scope, which two
+  // overlapping builds used to pop in the wrong order and so report one
+  // build's error against the other. They now read the two signals that
+  // belong to the object: the create*PipelineAsync promise and
+  // getCompilationInfo(). The chunk also carries the new render-truth
+  // pipeline rejection counter, so a kernel the driver refuses is one
+  // attribute read. Combined the two PRs push gzip past the old 358_500
+  // ceiling (measured 358_639); bumped gzip 358_500 -> 359_000. Measured
+  // on the merged bundle: 1_346_320 / 358_639 / 289_898.
+  { file: "bootstrap.js", raw: 1_347_000, gzip: 359_000, brotli: 290_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -514,6 +525,16 @@ const budgets = [
   // addition as the bootstrap.js monolith above (this chunk carries 15a and
   // 16-scene-webgl.js). Measured: 739_082 / 203_605 / 167_612 — +1_282 raw.
   // The gzip and brotli ceilings are unchanged and still fit.
+  //
+  // Merged with per-object WebGPU pipeline validation: this chunk also
+  // carries 15a's new pipeline-rejection counter and journal entry, plus
+  // 16b-scene-compute.js (sceneShaderModuleError, which reads
+  // getCompilationInfo per module instead of popping a device-global error
+  // scope that any other overlapping build could take). It does NOT carry
+  // 16a-scene-webgpu.js, where deleting three error-scope guards paid for
+  // the additions, so this chunk shows the cost without the saving.
+  // Ceilings unchanged and still fit the merged bundle. Measured:
+  // 739_661 / 203_828 / 167_688.
   { file: "bootstrap-feature-scene3d.js", raw: 740_000, gzip: 204_000, brotli: 168_000 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.

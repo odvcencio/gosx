@@ -27810,18 +27810,37 @@ function boardBundleManyObjectsOneMaterial(n) {
 }
 
 // makeFakeGPUDeviceForCompute extends the board fake with controllable async
-// pipeline behaviour and error-scope control, needed for the payload-kernel
-// validation tests.  pipelineAsyncBehavior is a function called with the
-// pipeline descriptor on createComputePipelineAsync; it should return either
-// a resolved or rejected Promise.  errorScopeBehavior is a function called on
-// popErrorScope; it should return a Promise that resolves to null (clean) or a
-// GPUValidationError-like object (error).
+// pipeline behaviour, per-module compilation info, and error-scope control,
+// needed for the payload-kernel validation tests.  pipelineAsyncBehavior is a
+// function called with the pipeline descriptor on createComputePipelineAsync;
+// it should return either a resolved or rejected Promise.
+// compilationInfoBehavior is a function called with the shader-module
+// descriptor; it should return an array of GPUCompilationMessage-like objects
+// for that module, or nothing for a clean module.
+//
+// errorScopeBehavior remains only so the older tests keep their shape. The
+// renderer no longer validates pipelines through the device error scope: that
+// stack is DEVICE-GLOBAL, and popping it from six overlapping async builds
+// attributed one build's error to another. Per-pipeline verdicts come from
+// create*PipelineAsync and per-module reasons from getCompilationInfo, both of
+// which are keyed to the object they describe.
 function makeFakeGPUDeviceForCompute(options) {
   const base = makeFakeGPUDevice();
   const device = base.device;
   const opts = options || {};
   const pendingScopes = [];
   const computePipelineAsyncCalls = [];
+  const innerCreateShaderModule = device.createShaderModule;
+  device.createShaderModule = function(desc) {
+    const module = innerCreateShaderModule.call(device, desc);
+    module.getCompilationInfo = function() {
+      const messages = typeof opts.compilationInfoBehavior === "function"
+        ? (opts.compilationInfoBehavior(desc) || [])
+        : [];
+      return Promise.resolve({ messages });
+    };
+    return module;
+  };
   device.pushErrorScope = function(filter) {
     pendingScopes.push(filter);
   };
@@ -29326,14 +29345,15 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
     pipelineAsyncBehavior(desc) {
       return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
     },
-    // Error scope reports a validation error.
-    errorScopeBehavior() {
-      return Promise.resolve({ message: "fake validation error" });
-    },
   });
+  // Measured browser behaviour for invalid WGSL: createRenderPipelineAsync
+  // REJECTS. This used to be expressed through the device error scope, which
+  // could not say which pipeline the error belonged to.
   fake.device.createRenderPipelineAsync = function(desc) {
     renderPipelineAsyncCalls++;
-    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+    const err = new Error("ShaderModule with '" + (desc && desc.label) + "' label is invalid");
+    err.name = "GPUPipelineError";
+    return Promise.reject(err);
   };
 
   const harness = await createComputeParticleHarness(fake.device);
@@ -29363,6 +29383,43 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
   // Still exactly one warn.
   const warns2 = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("passthrough") || m.includes("validation")));
   assert.equal(warns2.length, 1, "warn must fire only once (cached failure)");
+});
+
+test("custom post WebGPU: a module with compilation errors is refused even when the pipeline resolves", async () => {
+  // The belt-and-braces case the device error scope used to cover, now keyed
+  // to the MODULE it describes. A lenient implementation resolves the pipeline
+  // anyway; getCompilationInfo still says the shader is wrong, and it says so
+  // about this module only, so it cannot demote an unrelated pass.
+  let renderPipelineAsyncCalls = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    compilationInfoBehavior(desc) {
+      if (desc && typeof desc.code === "string" && desc.code.indexOf("BAD WGSL") >= 0) {
+        return [{ type: "error", lineNum: 1, message: "expected declaration" }];
+      }
+      return [];
+    },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    fragmentWGSL: "BAD WGSL FRAGMENT",
+    vertexWGSL: "BAD WGSL VERTEX",
+  });
+
+  harness.renderer.render(bundle, viewport);
+  assert.equal(renderPipelineAsyncCalls, 1);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const warns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("passthrough") || m.includes("validation")));
+  assert.equal(warns.length, 1, "a module carrying compilation errors must still fail the pass");
+  assert.ok(warns[0].includes("expected declaration"), "the warn must carry the module's own compiler message");
 });
 
 // -------------------------------------------------------------------------
