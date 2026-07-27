@@ -48,6 +48,29 @@ const (
 	VkFormatR32G32Sfloat       = 103
 	VkFormatR32G32B32A32Sfloat = 109
 
+	// Block-compressed BC formats. Every value below was read from
+	// /usr/include/vulkan/vulkan_core.h, VK_HEADER_VERSION 275, which is the
+	// Khronos-published header. A wrong number here produces a file that
+	// uploads as the wrong format, so the numbers are not written from memory.
+	//
+	// BC1 has an RGB pair and an RGBA pair. WebGPU exposes only
+	// bc1-rgba-unorm, so the writer uses the RGBA pair even for an opaque
+	// encode. An opaque BC1 payload decodes the same under both pairs, because
+	// the encoder never emits the transparent index.
+	VkFormatBC1RGBUnormBlock  = 131
+	VkFormatBC1RGBSRGBBlock   = 132
+	VkFormatBC1RGBAUnormBlock = 133
+	VkFormatBC1RGBASRGBBlock  = 134
+
+	VkFormatBC3UnormBlock = 137
+	VkFormatBC3SRGBBlock  = 138
+
+	// BC4 and BC5 have no sRGB pair. Vulkan lists a signed-normalized pair
+	// (140 and 142) which this package does not describe, because no GoSX
+	// encoder writes it.
+	VkFormatBC4UnormBlock = 139
+	VkFormatBC5UnormBlock = 141
+
 	VkFormatBC7UnormBlock = 145
 	VkFormatBC7SRGBBlock  = 146
 
@@ -239,11 +262,16 @@ func FormatBlockInfo(vkFormat int) (BlockInfo, bool) {
 
 	switch vkFormat {
 	case VkFormatBC7UnormBlock, VkFormatBC7SRGBBlock,
+		VkFormatBC3UnormBlock, VkFormatBC3SRGBBlock,
+		VkFormatBC5UnormBlock,
 		VkFormatETC2R8G8B8A8UnormBlock, VkFormatETC2R8G8B8A8SRGBBlock,
 		VkFormatASTC4x4UnormBlock, VkFormatASTC4x4SRGBBlock:
 		return BlockInfo{Width: 4, Height: 4, BytesPerBlock: 16, Compressed: true}, true
 
-	case VkFormatETC2R8G8B8UnormBlock, VkFormatETC2R8G8B8SRGBBlock:
+	case VkFormatBC1RGBUnormBlock, VkFormatBC1RGBSRGBBlock,
+		VkFormatBC1RGBAUnormBlock, VkFormatBC1RGBASRGBBlock,
+		VkFormatBC4UnormBlock,
+		VkFormatETC2R8G8B8UnormBlock, VkFormatETC2R8G8B8SRGBBlock:
 		return BlockInfo{Width: 4, Height: 4, BytesPerBlock: 8, Compressed: true}, true
 
 	case VkFormatASTC6x6UnormBlock, VkFormatASTC6x6SRGBBlock:

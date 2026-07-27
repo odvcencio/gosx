@@ -355,8 +355,9 @@ func TestCascadeCountMatchesTheShaderAndTheUniformBlock(t *testing.T) {
 		t.Fatalf("cascadeCount is %d; litWGSL still declares three lightViewProj "+
 			"members and pickCascade still branches on three splits", cascadeCount)
 	}
-	// 4 mat4 (view-projection plus three cascades) + 8 vec4.
-	if want := 4*64 + 8*16; sceneUniformSize != want {
+	// 4 mat4 (view-projection plus three cascades) + 9 vec4. The ninth vec4 is
+	// lightParams, appended when litWGSL gained the scene light array.
+	if want := 4*64 + 9*16; sceneUniformSize != want {
 		t.Fatalf("sceneUniformSize is %d, want %d for %d cascades",
 			sceneUniformSize, want, cascadeCount)
 	}
