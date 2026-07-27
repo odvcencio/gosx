@@ -22,31 +22,28 @@ const webgpuComputePath = "../../client/js/bootstrap-src/16b-scene-compute.js"
 //   - drawArgsBuf with INDIRECT usage: the indirect-draw argument buffer
 //   - atomicAdd:                       compaction of survivors
 //   - drawIndirect:                    the draw that reads the compacted count
+//
+// The test reads the renderer FIRST and then demands the cell match, so it fails
+// whichever way the cell is wrong. It used to skip when the cell read false,
+// which made flipping the cell to a lie also delete the check. See cellEvidence
+// in evidence_test.go.
 func TestGPUCullRendererEvidence(t *testing.T) {
-	if !Matrix[FeatureGPUCull][BackendWebGPU] {
-		t.Skip("Matrix says WebGPU cannot GPU-cull; nothing to corroborate")
-	}
 	compute := readRenderer(t, webgpuComputePath)
 	renderer := readRenderer(t, webgpuRendererPath)
 
-	for _, symbol := range []string{
-		"function createSceneInstancedCullSystem(",
-		"GPUBufferUsage.INDIRECT",
-		"atomicAdd(&drawArgs[1], 1u)",
-		"beginComputePass()",
-	} {
-		if !strings.Contains(compute, symbol) {
-			t.Errorf("16b-scene-compute.js must contain %q for gpu-cull to be true", symbol)
-		}
-	}
-	for _, symbol := range []string{
-		"pass.drawIndirect(cullSys.drawArgsBuf, 0)",
-		"updateInstancedCullSystems(",
-	} {
-		if !strings.Contains(renderer, symbol) {
-			t.Errorf("16a-scene-webgpu.js must contain %q for gpu-cull to be true", symbol)
-		}
-	}
+	evidenceFor(t, FeatureGPUCull, BackendWebGPU).
+		needs(webgpuComputePath, compute,
+			"function createSceneInstancedCullSystem(",
+			"GPUBufferUsage.INDIRECT",
+			"atomicAdd(&drawArgs[1], 1u)",
+			"beginComputePass()",
+		).
+		needs(webgpuRendererPath, renderer,
+			"pass.drawIndirect(cullSys.drawArgsBuf, 0)",
+			"updateInstancedCullSystems(",
+		).
+		assertAgrees("a GPU cull needs a compute pass that compacts survivors with atomicAdd, " +
+			"an INDIRECT argument buffer, and a draw that reads the compacted count")
 }
 
 // TestGPUCullScalesRadiusPerInstance pins the correctness property that makes
@@ -97,20 +94,22 @@ func TestGPUCullScalesRadiusPerInstance(t *testing.T) {
 // TestGPUCullAbsentOnWebGL corroborates the FALSE half of the row. A false cell
 // is a claim too, and it degrades a scene onto a backend that cannot cull. The
 // WebGL2 renderer has no compute stage at all, so it must carry no compute cull.
+//
+// The three symbols are the ones a compute cull cannot do without. Their absence
+// IS the evidence for the false cell, so any of them appearing must flip it. The
+// test used to skip when the cell read true, which is exactly the case worth
+// catching.
 func TestGPUCullAbsentOnWebGL(t *testing.T) {
-	if Matrix[FeatureGPUCull][BackendWebGL] {
-		t.Skip("Matrix says WebGL can GPU-cull; this test corroborates the false cell")
-	}
 	webgl := readRenderer(t, webglRendererPath)
-	for _, symbol := range []string{
-		"beginComputePass",
-		"drawIndirect",
-		"createComputePipeline",
-	} {
-		if strings.Contains(webgl, symbol) {
-			t.Errorf("16-scene-webgl.js contains %q, so the false gpu-cull cell is wrong", symbol)
-		}
-	}
+
+	evidenceFor(t, FeatureGPUCull, BackendWebGL).
+		refutedBy(webglRendererPath, webgl,
+			"beginComputePass",
+			"drawIndirect",
+			"createComputePipeline",
+		).
+		assertAgrees("WebGL2 has no compute stage, so a compute cull would need one of these three " +
+			"WebGPU-only calls; their absence is why the cell reads false")
 }
 
 // TestGPUCullDegradesRatherThanExcludes keeps gpu-cull out of the required set.

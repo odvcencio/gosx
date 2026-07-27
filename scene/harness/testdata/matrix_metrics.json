@@ -1,0 +1,236 @@
+{
+  "env-ambient": {
+    "pixelSHA256": "d538d00c2aba2a9209067d8fccfb7f02630537561481c65ead928627d7f7c6d3",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 285,
+    "luminanceVariance": 0.038867073025807115,
+    "edgeEnergy": 0.013226930657679659,
+    "batches": 1,
+    "materials": 1
+  },
+  "env-hemisphere": {
+    "pixelSHA256": "51fe15333ed507f4d2ad69e26cf09cd1adf673313ece9b85dc6b3c3c20dbaa45",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 567,
+    "luminanceVariance": 0.01619571595931984,
+    "edgeEnergy": 0.009092014910130718,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-box": {
+    "pixelSHA256": "91658092cae37ca1a86c0fbfc24f779df4601f534d1e279d166ef403c3788660",
+    "coverage": 0.09293619791666667,
+    "uniqueColors": 3,
+    "luminanceVariance": 0.01574732387025905,
+    "edgeEnergy": 0.007985411560457524,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-cone": {
+    "pixelSHA256": "aa1abae714c1ce8d204fbcb06ec002a3834581e5f3c77b4734c0eba23e06f879",
+    "coverage": 0.050944010416666664,
+    "uniqueColors": 87,
+    "luminanceVariance": 0.01489179438860518,
+    "edgeEnergy": 0.008974345128676469,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-cube": {
+    "pixelSHA256": "02a02149f5480dbb0930464dd8344656d7478db0f635bec2b5e1f5aaa706e942",
+    "coverage": 0.07454427083333333,
+    "uniqueColors": 3,
+    "luminanceVariance": 0.013658426458387236,
+    "edgeEnergy": 0.007501814236111117,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-cylinder": {
+    "pixelSHA256": "b8e964f86c1039bba2d1c3b5d6c214317e28a571878be1ab6570300ca94c2708",
+    "coverage": 0.06852213541666667,
+    "uniqueColors": 75,
+    "luminanceVariance": 0.015880830302507615,
+    "edgeEnergy": 0.008142789522058833,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-plane": {
+    "pixelSHA256": "975123f702e3ca2bbd41921f66b9a8f5b3106bd03189a57b975db343a85aa980",
+    "coverage": 0.013346354166666666,
+    "uniqueColors": 2,
+    "luminanceVariance": 0.005290063203172871,
+    "edgeEnergy": 0.005570693933823526,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-pyramid": {
+    "pixelSHA256": "8e127ba76c540499b61346797e3ffaac77a2f8561775ba350eea0170ef65d00b",
+    "coverage": 0.048502604166666664,
+    "uniqueColors": 7,
+    "luminanceVariance": 0.01422488853332647,
+    "edgeEnergy": 0.008564897109885611,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-sphere": {
+    "pixelSHA256": "289bbb5f40a1ad4c13cffaa224764e2b5b053d368020ae107fbddbdcf0747c89",
+    "coverage": 0.07958984375,
+    "uniqueColors": 301,
+    "luminanceVariance": 0.015852775778753773,
+    "edgeEnergy": 0.00860065946691179,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-torus": {
+    "pixelSHA256": "7ac433207bf96cbf589d87ed4510766133be7ce7e8219da9b9720f20426f84bc",
+    "coverage": 0.052408854166666664,
+    "uniqueColors": 205,
+    "luminanceVariance": 0.012945705226784192,
+    "edgeEnergy": 0.00901913015727125,
+    "batches": 1,
+    "materials": 1
+  },
+  "geom-torusknot": {
+    "pixelSHA256": "50a77c77b846c416a62ef7c18603ff0995a01ffedfc919cc945fc2fcd10cfd10",
+    "coverage": 0.16569010416666666,
+    "uniqueColors": 420,
+    "luminanceVariance": 0.029689215450946983,
+    "edgeEnergy": 0.028441675985498405,
+    "batches": 1,
+    "materials": 1
+  },
+  "instanced-colors": {
+    "pixelSHA256": "0e3751933972888792dd9d627a0b46fcbcce2ece53620abf235b94006fef11e8",
+    "coverage": 0.040364583333333336,
+    "uniqueColors": 6,
+    "luminanceVariance": 0.015701799904388268,
+    "edgeEnergy": 0.013968425755718987,
+    "batches": 1,
+    "materials": 1
+  },
+  "light-absent": {
+    "pixelSHA256": "bafc51bd6ab794c6494614c78b906d4032e28ee30d6acef80fb922d6281b9c17",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 397,
+    "luminanceVariance": 0.03127492903297806,
+    "edgeEnergy": 0.01210991447099679,
+    "batches": 1,
+    "materials": 1
+  },
+  "light-directional-down": {
+    "pixelSHA256": "2707ebfe3e03454d15f8c5258ded9dd8ab155c2e364ed9276b88b8054d54884c",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 202,
+    "luminanceVariance": 0.029794445613036107,
+    "edgeEnergy": 0.012081074601715732,
+    "batches": 1,
+    "materials": 1
+  },
+  "light-directional-side": {
+    "pixelSHA256": "ce7e415524f80ab018d8ab62d858ff942ba98b4d0f60f8e9506d4cfd9e4365da",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 283,
+    "luminanceVariance": 0.025407877640308565,
+    "edgeEnergy": 0.01174756229575167,
+    "batches": 1,
+    "materials": 1
+  },
+  "mat-color": {
+    "pixelSHA256": "676ed839eff51b71250a9d0444a9e62355a4538ee26918baa8b6296dbc1e2aa3",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 355,
+    "luminanceVariance": 0.017345579904525937,
+    "edgeEnergy": 0.009333421670751659,
+    "batches": 1,
+    "materials": 1
+  },
+  "mat-emissive": {
+    "pixelSHA256": "eec3f10bf652f05df77a94eb7504f994cd9ab0a4d4d005b944cff3e4247ba7a9",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 90,
+    "luminanceVariance": 0.051331847451801534,
+    "edgeEnergy": 0.014467221456291061,
+    "batches": 1,
+    "materials": 1
+  },
+  "mat-opacity-additive": {
+    "pixelSHA256": "4bc2b654d985101018ea808866b21b64e2c461e105d98c6898516e10f417c8f3",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 269,
+    "luminanceVariance": 0.005197103915724205,
+    "edgeEnergy": 0.0058610386029411335,
+    "batches": 1,
+    "materials": 1
+  },
+  "mat-opacity-alpha": {
+    "pixelSHA256": "c5e70a6c9038616f5e072a77323cbe0693bbfc97c82d3e6596cb77189e81a5cd",
+    "coverage": 0.11149088541666667,
+    "uniqueColors": 191,
+    "luminanceVariance": 0.002298405213964494,
+    "edgeEnergy": 0.004093757659313726,
+    "batches": 1,
+    "materials": 1
+  },
+  "postfx-chain": {
+    "pixelSHA256": "53319895b715f7b890debfb1e1f2a54e69c5f4106e3948a8e46d13c91ef78430",
+    "coverage": 0.2657877604166667,
+    "uniqueColors": 208,
+    "luminanceVariance": 0.07752775012641461,
+    "edgeEnergy": 0.018020436580882395,
+    "batches": 1,
+    "materials": 1
+  },
+  "raster-depth-order": {
+    "pixelSHA256": "648b0251eb43656d78c319f7427496f8d4b2fade7cc749defa96eba4c6219774",
+    "coverage": 0.23486328125,
+    "uniqueColors": 4,
+    "luminanceVariance": 0.009659131312566118,
+    "edgeEnergy": 0.006946311019199358,
+    "batches": 2,
+    "materials": 2
+  },
+  "raster-near-plane-ground": {
+    "pixelSHA256": "89b2f93dad3aaace49931bf98ea50cc4bc1ee88b7f0be0413f68b21e8db6f12a",
+    "coverage": 0.796875,
+    "uniqueColors": 2,
+    "luminanceVariance": 0.06176107532386976,
+    "edgeEnergy": 0.00965162990196078,
+    "batches": 1,
+    "materials": 1
+  },
+  "shadow-off": {
+    "pixelSHA256": "fee06fafd5a15543c0f11645b5e17382d0caf58521441184a10f7e91ee28bd01",
+    "coverage": 0.8904622395833334,
+    "uniqueColors": 3,
+    "luminanceVariance": 0.04040052757040147,
+    "edgeEnergy": 0.018102575444240144,
+    "batches": 4,
+    "materials": 1
+  },
+  "shadow-on": {
+    "pixelSHA256": "53c9c6081fadaa7c17a431543f0475140d7354b94d1759d32e2cb2e128b9b44a",
+    "coverage": 0.8904622395833334,
+    "uniqueColors": 5,
+    "luminanceVariance": 0.040239624978732236,
+    "edgeEnergy": 0.020463686555351225,
+    "batches": 4,
+    "materials": 1
+  },
+  "shadow-on-heading-oblique": {
+    "pixelSHA256": "06ae3c803a6905a2a7fa4fcc0d683527dd0d611679a3a8953f6346478891790c",
+    "coverage": 0.8763020833333334,
+    "uniqueColors": 8,
+    "luminanceVariance": 0.04396938765022268,
+    "edgeEnergy": 0.023791356336805722,
+    "batches": 4,
+    "materials": 1
+  },
+  "shadow-on-heading-quarter": {
+    "pixelSHA256": "53c9c6081fadaa7c17a431543f0475140d7354b94d1759d32e2cb2e128b9b44a",
+    "coverage": 0.8904622395833334,
+    "uniqueColors": 5,
+    "luminanceVariance": 0.040239624978732236,
+    "edgeEnergy": 0.020463686555351225,
+    "batches": 4,
+    "materials": 1
+  }
+}
