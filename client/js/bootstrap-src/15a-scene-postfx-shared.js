@@ -642,6 +642,20 @@ function sceneRenderTruthShaderCounts() {
   return { messages: sceneRenderTruthShaderMessages, errors: sceneRenderTruthShaderErrors };
 }
 
+// sceneRenderTruthEncodeFallbacks formats the material-substitution reasons for
+// a DOM attribute: "selena-compile@GalaxyDisk|custom-compile@custom". The
+// separators are stripped from each entry so a material name cannot forge extra
+// records, and the list is bounded so a pathological scene cannot grow the
+// attribute without limit.
+function sceneRenderTruthEncodeFallbacks(reasons) {
+  if (!Array.isArray(reasons) || reasons.length === 0) return "";
+  var parts = [];
+  for (var i = 0; i < reasons.length && i < 8; i++) {
+    parts.push(String(reasons[i] == null ? "" : reasons[i]).replace(/[|:]+/g, "-").slice(0, 64));
+  }
+  return parts.join("|");
+}
+
 // sceneRenderTruthPublish stamps the backend-neutral attribute surface. Both
 // renderers write the SAME attribute names, so a probe, a deploy gate or a
 // human reading the DOM never has to branch on which backend won.
@@ -653,6 +667,10 @@ function sceneRenderTruthShaderCounts() {
 //   meshDrawn         number  pass.draw() calls actually issued for meshes
 //   meshViewCulled    number  mesh objects dropped by the CPU frustum cull
 //   meshUndrawable    number  mesh objects dropped for degenerate geometry
+//   meshMaterialFallback  number  draws that used a DIFFERENT material than the
+//                       author declared (a Selena or CustomMaterial surface
+//                       that fell back to the built-in PBR shader)
+//   materialFallbacks array  short "reason@material" strings for the above
 //   pointsSubmitted   number  point entries in the bundle
 //   pointsDrawn       number  point entries that issued a draw
 //   pointInstancesSubmitted / pointInstancesDrawn  number
@@ -674,6 +692,12 @@ function sceneRenderTruthPublish(mount, truth) {
   set("mesh-drawn", Math.max(0, Math.floor(truth.meshDrawn || 0)));
   set("mesh-view-culled", Math.max(0, Math.floor(truth.meshViewCulled || 0)));
   set("mesh-undrawable", Math.max(0, Math.floor(truth.meshUndrawable || 0)));
+  // A non-zero mesh-material-fallback means the framebuffer holds a surface
+  // the author did not ask for. It reads 0 on every healthy frame, so any
+  // other value is actionable on sight, and mesh-material-fallback-detail
+  // names the reason and the material without a second query.
+  set("mesh-material-fallback", Math.max(0, Math.floor(truth.meshMaterialFallback || 0)));
+  set("mesh-material-fallback-detail", sceneRenderTruthEncodeFallbacks(truth.materialFallbacks));
   set("points-submitted", Math.max(0, Math.floor(truth.pointsSubmitted || 0)));
   set("points-drawn", Math.max(0, Math.floor(truth.pointsDrawn || 0)));
   set("point-instances-submitted", Math.max(0, Math.floor(truth.pointInstancesSubmitted || 0)));
@@ -711,6 +735,7 @@ if (typeof window !== "undefined") {
     chain: sceneRenderTruthChain,
     mark: sceneRenderTruthMark,
     encodeChain: sceneRenderTruthEncodeChain,
+    encodeFallbacks: sceneRenderTruthEncodeFallbacks,
     chainCounts: sceneRenderTruthChainCounts,
     publish: sceneRenderTruthPublish,
     record: sceneRenderTruthRecord,
