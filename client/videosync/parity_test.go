@@ -152,7 +152,10 @@ func TestParityFixtures(t *testing.T) {
 		t.Fatalf("glob testdata/parity_*.json: %v", err)
 	}
 	if len(matches) == 0 {
-		t.Skip("no parity_*.json fixtures found in testdata/")
+		// Fail, never skip. The fixtures ARE the test: an empty glob means the
+		// corpus moved or got deleted, and a skip would report green while the
+		// Go↔JavaScript drift engine parity check no longer runs.
+		t.Fatal("no parity_*.json fixtures found in testdata/; regenerate with `go test ./client/videosync -update`")
 	}
 
 	for fi, path := range matches {
