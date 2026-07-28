@@ -464,7 +464,9 @@ const budgets = [
   // accounting, and change-only WebGL telemetry publication. Exact regenerated
   // measurement: 1_458_092 / 393_850 / 316_914. Only the breached raw ceiling
   // moves; compressed ceilings retain their prior headroom.
-  { file: "bootstrap.js", raw: 1_458_092, gzip: 394_000, brotli: 317_000 },
+  // WebGPU point-billboard viewport guards add 138 raw bytes while compressed
+  // output remains inside the existing ceilings.
+  { file: "bootstrap.js", raw: 1_458_230, gzip: 394_000, brotli: 317_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -956,7 +958,8 @@ const budgets = [
   // 73_252, so only the breached gzip ceiling moves.
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 381_939, gzip: 92_096, brotli: 77_192 },
+  // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_077, gzip: 92_098, brotli: 77_192 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1241,8 +1244,9 @@ const routeBudgets = [
     // 1_122_619 / 297_774 / 252_038.
     // Final integrated measurement: 1_149_871 / 305_600 / 258_349.
     // FINAL-FIX-19 exact measurement: 1_150_801 / 305_824 / 258_630.
-    // Only the breached raw and Brotli ceilings move.
-    raw: 1_150_801,
+    // WebGPU point-billboard viewport guards add 138 raw bytes while
+    // compressed output remains inside the existing ceilings.
+    raw: 1_150_939,
     gzip: 306_000,
     brotli: 258_630,
   },
@@ -1373,7 +1377,8 @@ const routeBudgets = [
     // 1_317_451 / 350_565 / 297_215.
     // Final integrated measurement: 1_359_573 / 363_164 / 307_393.
     // FINAL-FIX-19 exact measurement: 1_360_411 / 363_436 / 307_637.
-    raw: 1_360_411,
+    // WebGPU point-billboard viewport guards add 138 raw bytes.
+    raw: 1_360_549,
     gzip: 363_500,
     brotli: 307_637,
   },
@@ -1436,8 +1441,10 @@ const routeBudgets = [
     // 976_489 / 255_516 / 214_470.
     // Final integrated measurement: 1_003_741 / 263_342 / 220_781.
     // FINAL-FIX-19 exact measurement: 1_004_671 / 263_566 / 221_062.
-    raw: 1_004_671,
-    gzip: 263_566,
+    // WebGPU point-billboard viewport guards measure 1_004_809 / 263_568 /
+    // 220_952; Brotli remains under its existing ceiling.
+    raw: 1_004_809,
+    gzip: 263_568,
     brotli: 221_062,
   },
 
