@@ -36,7 +36,7 @@ func Page() Node {
 				</li>
 			</ul>
 			{CodeBlock("go", `import "m31labs.dev/gosx/scene"
-	
+
 	props := scene.Props{
 	    Width:      1280,
 	    Height:     720,
@@ -121,7 +121,7 @@ func Page() Node {
 			</ul>
 			{CodeBlock("go", `// Wrong: Group has no Scale field. This does not compile.
 	// scene.Group{Scale: scene.Vec3(2, 2, 2), Children: ...}
-	
+
 	// Right: scale each leaf mesh.
 	scene.Group{
 	    ID:       "cluster",
@@ -291,7 +291,7 @@ func Page() Node {
 	    engine.WebGPULimit("maxTextureDimension2D", 4096),
 	    engine.WebGPUAdapterLimit("maxTextureDimension2D", 8192),
 	)
-	
+
 	props.WebGPUAlphaMode = "opaque"
 	props.WebGPUColorSpace = "display-p3"
 	props.WebGPUToneMapping = "extended"
@@ -333,7 +333,7 @@ func Page() Node {
 	    Far:          1000,
 	    TransitionMS: 600,
 	},
-	
+
 	// Orthographic replaces the perspective camera when set.
 	OrthographicCamera: &scene.OrthographicCamera{
 	    Position: scene.Vec3(0, 10, 0),
@@ -371,13 +371,13 @@ func Page() Node {
 	ControlPitchLimit:      1.2,
 	ControlRotateDirection: "grab", // "orbit" keeps the historical direction
 	DragToRotate:           scene.Bool(true),
-	
+
 	// First-person alternative.
 	// Controls:         scene.ControlFirstPerson,
 	// PointerLock:      scene.Bool(true),
 	// ControlLookSpeed: 0.9,
 	// ControlMoveSpeed: 6,
-	
+
 	// Scroll-driven camera for parallax hero sections. The two values are
 	// page-scroll fractions: 0 is the top of the page, 1 is the bottom.
 	ScrollCameraStart: 0.0,
@@ -494,7 +494,7 @@ func Page() Node {
 			{CodeBlock("go", `// A building footprint with a courtyard, at ground level.
 	outline := []float64{0, 0, 20, 0, 20, 14, 0, 14}
 	courtyard := [][]float64{{6, 4, 14, 4, 14, 10, 6, 10}}
-	
+
 	scene.Mesh{
 	    Geometry: scene.PolygonGeometry(outline, courtyard, 0),
 	    Material: scene.StandardMaterial{Color: "#2c3a46", Roughness: 0.9},
@@ -511,7 +511,7 @@ func Page() Node {
 	    Material: scene.StandardMaterial{Color: "#D4AF37", Roughness: 0.2, Metalness: 0.9},
 	    Position: scene.Vec3(0, 1.5, 0),
 	}
-	
+
 	// A cone: a cylinder with a zero top radius.
 	scene.Mesh{
 	    Geometry: scene.CylinderGeometry{
@@ -538,7 +538,7 @@ func Page() Node {
 	    Roughness: 0.15, // 0 = mirror, 1 = fully diffuse
 	    Metalness: 0.95, // 0 = dielectric, 1 = conductor
 	}
-	
+
 	// Car paint: a clearcoat layer over a coloured base.
 	scene.StandardMaterial{
 	    Color:     "#8f1d2c",
@@ -546,7 +546,7 @@ func Page() Node {
 	    Metalness: 0.1,
 	    Clearcoat: 0.9,
 	}
-	
+
 	// Brushed steel with texture maps.
 	scene.StandardMaterial{
 	    Color:        "#9BA0A8",
@@ -555,7 +555,7 @@ func Page() Node {
 	    RoughnessMap: "/textures/brushed-roughness.png",
 	    NormalMap:    "/textures/brushed-normal.png",
 	}
-	
+
 	// Frosted glass: transmission plus roughness.
 	scene.StandardMaterial{
 	    Color:        "#aaddff",
@@ -564,7 +564,7 @@ func Page() Node {
 	    Opacity:      scene.Float(0.6),
 	    BlendMode:    scene.BlendAlpha,
 	}
-	
+
 	// Soap bubble: thin-film iridescence.
 	scene.StandardMaterial{
 	    Color:       "#ffffff",
@@ -599,7 +599,7 @@ func Page() Node {
 	    MaterialStyle: scene.MaterialStyle{Color: "#8ecfff"},
 	    Width:         3,
 	}
-	
+
 	scene.LineDashedMaterial{
 	    MaterialStyle: scene.MaterialStyle{Color: "#8ecfff"},
 	    Width:         2,
@@ -715,7 +715,7 @@ func Page() Node {
 	    return err
 	}
 	_ = layout // the binding layout, for tooling and validation
-	
+
 	mesh := scene.Mesh{
 	    Geometry: scene.SphereGeometry{Radius: 1, Segments: 48},
 	    Material: material,
@@ -732,7 +732,7 @@ func Page() Node {
 	    Pulse float64   // resolves to "pulse"
 	    Tint  []float64 // resolves to "tint"
 	}
-	
+
 	uniforms, err := scene.SelenaUniforms(GlowUniforms{
 	    Pulse: 0.4,
 	    Tint:  []float64{1, 0.85, 0.4},
@@ -770,7 +770,7 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", `// Ambient — flat fill, no direction.
 	scene.AmbientLight{Color: "#ffffff", Intensity: 0.15}
-	
+
 	// Directional — parallel rays from infinity. Casts shadows.
 	scene.DirectionalLight{
 	    Color:          "#fff1d6",
@@ -782,7 +782,7 @@ func Page() Node {
 	    ShadowCascades: 3,
 	    ShadowSoftness: 1.5,
 	}
-	
+
 	// Point — omnidirectional with distance falloff.
 	scene.PointLight{
 	    Color:     "#D4AF37",
@@ -791,7 +791,7 @@ func Page() Node {
 	    Range:     20,
 	    Decay:     2,
 	}
-	
+
 	// Spot — a cone with a soft edge.
 	scene.SpotLight{
 	    Color:     "#ffffff",
@@ -803,14 +803,14 @@ func Page() Node {
 	    Range:     30,
 	    Decay:     2,
 	}
-	
+
 	// Hemisphere — a sky and ground gradient.
 	scene.HemisphereLight{
 	    SkyColor:    "#87ceeb",
 	    GroundColor: "#2d4a1e",
 	    Intensity:   0.4,
 	}
-	
+
 	// Rect-area — a rectangular emitter.
 	scene.RectAreaLight{
 	    Color:     "#ffffff",
@@ -820,7 +820,7 @@ func Page() Node {
 	    Width:     4,
 	    Height:    2,
 	}
-	
+
 	// Light probe — an ambient probe.
 	scene.LightProbe{
 	    Color:     "#cfe6ff",
@@ -865,7 +865,7 @@ func Page() Node {
 				The cap matters for memory. A light that requests 4096 with the default cap gets a 1024 map. Per-light depth memory drops from about 64 MB to about 4 MB.
 			</p>
 			{CodeBlock("go", `props.Shadows = scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024}
-	
+
 	// Presets: ShadowMaxPixels512, ShadowMaxPixels1024 (default),
 	// ShadowMaxPixels2048, ShadowMaxPixels4096.
 	// Opt out with scene.ShadowMaxPixelsUnbounded.`)}
@@ -961,7 +961,7 @@ func Page() Node {
 	        scene.FXAA{}, // always last: it searches tonemapped luma
 	    },
 	}
-	
+
 	// A ready-made 60 fps chain: half-resolution bloom, ACES, FXAA, 720p cap.
 	props.PostFX = scene.GameplayPostFX()`)}
 			<p>
@@ -1179,7 +1179,7 @@ func Page() Node {
 	for i := range positions {
 	    positions[i] = scene.Vec3((rand.Float64()-0.5)*20, 0, (rand.Float64()-0.5)*20)
 	}
-	
+
 	scene.InstancedMesh{
 	    ID:            "grass",
 	    Count:         500,
@@ -1345,31 +1345,31 @@ func Page() Node {
 			{CodeBlock("go", `scene.WaterSystem{
 	    ID:         "pool",
 	    Resolution: 512, // simulation grid along one axis
-	
+
 	    // Surface topology is independent from the simulation grid, so you can
 	    // match a reference mesh budget without paying for it in compute state.
 	    SurfaceResolution: 256,
-	
+
 	    PoolShape:    "rounded",
 	    PoolWidth:    12,
 	    PoolHeight:   4,
 	    PoolLength:   12,
 	    CornerRadius: 1.5,
-	
+
 	    WaveSpeed:   1.0,
 	    Damping:     0.995,
 	    NormalScale: 1.2,
-	
+
 	    SeedDrops:    6,
 	    DropRadius:   0.06,
 	    DropStrength: 0.9,
-	
+
 	    ShallowColor:    "#7fd4e8",
 	    DeepColor:       "#0b3a4a",
 	    AboveWaterColor: scene.Vec3(1.2, 1.05, 0.95), // linear HDR, may exceed 1
 	    CubeMap:         "/textures/sky-cube.ktx2",
 	    TileTexture:     "/textures/pool-tile.png",
-	
+
 	    Caustics:           true,
 	    Reflection:         true,
 	    Refraction:         true,
@@ -1502,10 +1502,10 @@ func Page() Node {
 	    Scale:    scene.Vec3(1.2, 1.2, 1.2),
 	    Fit:      "contain",
 	    Bounds:   2.5,
-	
+
 	    // Override the asset material from Go — useful for theming shared assets.
 	    Material: scene.StandardMaterial{Color: "#D4AF37", Roughness: 0.3, Metalness: 0.8},
-	
+
 	    CastShadow:    true,
 	    ReceiveShadow: true,
 	    Static:        scene.Bool(true),
@@ -1602,13 +1602,13 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", `props.Compression = &scene.Compression{
 	    BitWidth: 12, // 1-8 for point clouds; 12 for transforms
-	
+
 	    // Progressive: ship a 2-bit preview beside the full payload. The client
 	    // renders the preview at once and upgrades when the full data arrives.
 	    Progressive:        true,
 	    PreviewBitWidth:    2,
 	    ProgressiveDelayMS: 400, // spend upgrade CPU after first paint
-	
+
 	    // LOD: keep both payloads and pick per object by camera distance.
 	    LOD:          true,
 	    LODThreshold: 20,
@@ -1638,7 +1638,7 @@ func Page() Node {
 				{StatCard("1 alloc", "per ray, either path")}
 			</div>
 			{CodeBlock("go", `accel := scene.NewSceneAccelerator(props.Graph, scene.PointThreshold(0.25))
-	
+
 	hit, ok := accel.Raycast(scene.Ray{
 	    Origin:    scene.Vec3(0, 4, 12),
 	    Direction: scene.Vec3(0, -0.3, -1),
@@ -1863,7 +1863,7 @@ func Page() Node {
 	        {Shape: "plane", Normal: scene.Vec3(0, 1, 0), Distance: 0},
 	    },
 	}
-	
+
 	scene.Mesh{
 	    ID:       "crate-1",
 	    Geometry: scene.CubeGeometry{Size: 1},
@@ -1976,10 +1976,10 @@ func Page() Node {
 	        LayerGroups: []string{"core", "detail", "dust"}},
 	}
 	props.QualityStartRung = 1
-	
+
 	// Tag a mesh or a points layer into a rung group.
 	scene.Mesh{QualityGroup: "dust", /* ... */ }
-	
+
 	// Map a GLB-baked points layer by name when the layer cannot carry a tag.
 	props.PointQualityGroups = map[string]string{"nebula-dust": "dust"}`)}
 			<p>
@@ -2055,7 +2055,7 @@ func Page() Node {
 	if err != nil {
 	    return err
 	}
-	
+
 	file, err := os.Create("scene.png")
 	if err != nil {
 	    return err
@@ -2064,7 +2064,7 @@ func Page() Node {
 	if err := preview.WritePNG(file, result); err != nil {
 	    return err
 	}
-	
+
 	// result.Bundle and result.Stats expose the exact renderer payload:
 	// draw batches, instance counts, materials, and native fallback diagnostics.`)}
 			<h3>scene/harness</h3>
@@ -2091,7 +2091,7 @@ func Page() Node {
 				</li>
 			</ul>
 			{CodeBlock("go", `session := harness.New(props, preview.Options{Width: 640, Height: 360})
-	
+
 	if _, err := session.Render(0); err != nil {
 	    return err
 	}
@@ -2159,7 +2159,7 @@ func Page() Node {
 	        return ProductScene(ctx.Assets)
 	    },
 	})
-	
+
 	func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
 	    ctx.Runtime().BindHub("inventory", "/ws/inventory", nil)
 	    ctx.Runtime().ComputeIsland(island.ComputeIslandConfig{

@@ -64,6 +64,7 @@ func PublicAssetURL(path string) string {
 }
 
 func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
+	opts = withDocSceneFeature(opts)
 	metadata := opts.Metadata
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
@@ -93,6 +94,7 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 }
 
 func RegisterStaticDocsPage(title, description string, opts route.FileModuleOptions) {
+	opts = withDocSceneFeature(opts)
 	metaMetadata := opts.Metadata
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {

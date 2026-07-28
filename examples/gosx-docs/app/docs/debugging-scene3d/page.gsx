@@ -191,6 +191,168 @@ func Page() Node {
 				exiting non-zero when it is not.
 			</p>
 		</section>
+		<section id="model-hydration-diagnostics" class="docs-section-block">
+			<h2>Model Hydration Diagnostics</h2>
+			<p>
+				Model loading has two observable layers. The per-asset
+				<span class="inline-code">gosx:scene3d:model-status</span>
+				event reports
+				<span class="inline-code">loading</span>
+				,
+				<span class="inline-code">loaded</span>
+				,
+				<span class="inline-code">cached</span>
+				, or
+				<span class="inline-code">error</span>
+				along with the asset URL, cache state, generation, model ID and index, stage, and error. Its latest values are mirrored to
+				<span class="inline-code">data-gosx-scene3d-model-status</span>
+				,
+				<span class="inline-code">-asset</span>
+				,
+				<span class="inline-code">-cache</span>
+				,
+				<span class="inline-code">-error</span>
+				,
+				<span class="inline-code">-generation</span>
+				,
+				<span class="inline-code">-id</span>
+				, and
+				<span class="inline-code">-stage</span>
+				on the mount.
+			</p>
+			<p>
+				The generation-level
+				<span class="inline-code">gosx:scene3d:model-hydration-status</span>
+				event reports
+				<span class="inline-code">loading</span>
+				,
+				<span class="inline-code">committed</span>
+				, or
+				<span class="inline-code">failed</span>
+				for the current transaction.
+			</p>
+			{CodeBlock("javascript", `const mount = document.querySelector("[data-gosx-scene3d-mounted]")
+	mount.addEventListener("gosx:scene3d:model-hydration-status", ({ detail }) => {
+	    console.log(detail.status, detail.generation, detail.counts, detail.error)
+	})`)}
+			<p>
+				Its detail contains
+				<span class="inline-code">status</span>
+				,
+				<span class="inline-code">generation</span>
+				,
+				<span class="inline-code">currentGeneration</span>
+				,
+				<span class="inline-code">committed</span>
+				,
+				<span class="inline-code">stale</span>
+				,
+				<span class="inline-code">stage</span>
+				,
+				<span class="inline-code">modelID</span>
+				,
+				<span class="inline-code">modelIndex</span>
+				,
+				<span class="inline-code">asset</span>
+				,
+				<span class="inline-code">error</span>
+				, and counts for models, objects, points, labels, sprites, HTML entries, and lights.
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">loading</span>
+					means one generation is staging all of its model-derived records.
+				</li>
+				<li>
+					<span class="inline-code">committed</span>
+					means the generation remained current and its staged records replaced the previous model-derived records in one commit. A network or parser error is reported by the per-asset event and can contribute an empty asset, so committed does not claim that every asset loaded successfully.
+				</li>
+				<li>
+					<span class="inline-code">failed</span>
+					means staging rolled back. The prior committed generation remains live; inspect
+					<span class="inline-code">stage</span>
+					and
+					<span class="inline-code">error</span>
+					for a declaration, fit, instantiation, or skin failure.
+				</li>
+				<li>
+					A
+					<span class="inline-code">stale</span>
+					outcome means a newer command superseded the generation. Stale is returned to command orchestration as an outcome with
+					<span class="inline-code">committed: false</span>
+					and
+					<span class="inline-code">stale: true</span>
+					; it is not dispatched as a mount status event and cannot overwrite the newer generation's attributes. The runtime telemetry stream records
+					<span class="inline-code">model-hydration-stale</span>
+					with both generation numbers.
+				</li>
+			</ul>
+			<p>
+				The latest current-generation result is mirrored to
+				<span class="inline-code">
+					data-gosx-scene3d-model-hydration-status
+				</span>
+				,
+				<span class="inline-code">-generation</span>
+				,
+				<span class="inline-code">-current-generation</span>
+				,
+				<span class="inline-code">-stale</span>
+				,
+				<span class="inline-code">-committed</span>
+				,
+				<span class="inline-code">-failure-stage</span>
+				,
+				<span class="inline-code">-error</span>
+				, and
+				<span class="inline-code">-counts</span>
+				(the final field is JSON). Use the generation and committed fields together; an asset reporting
+				<span class="inline-code">loaded</span>
+				does not by itself prove that its generation won the transaction.
+			</p>
+			<h3>Mount-scoped texture variants</h3>
+			<p>
+				KTX2 and model texture selection uses the actual renderer attached to this mount: its backend, whether that renderer has a concrete KTX2 uploader, and its sorted capability-token set. A built block-compressed variant is selected only when both uploader readiness and the required tokens allow it; otherwise the authored image URI remains in use. This context is isolated per mount, so WebGL and WebGPU surfaces on the same page cannot leak texture choices into one another.
+			</p>
+			<p>
+				Direct model loads and preload calls that do not have a mount context remain deliberately neutral. They do not infer support from page-global WebGPU state. External image URIs referenced by either a
+				<span class="inline-code">.gltf</span>
+				document or a GLB pass through the same texture-variant resolver.
+			</p>
+			<p>
+				The runtime mirrors the renderer context and the latest per-model selection context to these mount attributes:
+			</p>
+			{CodeBlock("text", `data-gosx-scene3d-texture-variant-backend
+	data-gosx-scene3d-texture-variant-upload-ready
+	data-gosx-scene3d-texture-variant-token-count
+	data-gosx-scene3d-texture-variant-scope
+	data-gosx-scene3d-model-variant-scope
+	data-gosx-scene3d-model-variant-backend
+	data-gosx-scene3d-model-variant-upload-ready`)}
+			<p>
+				Each
+				<span class="inline-code">gosx:scene3d:model-status</span>
+				event also reports
+				<span class="inline-code">variantScope</span>
+				,
+				<span class="inline-code">variantBackend</span>
+				,
+				<span class="inline-code">variantUploadReady</span>
+				, and
+				<span class="inline-code">variantTokenCount</span>
+				in its detail.
+			</p>
+			<p>
+				Treat the mount's
+				<span class="inline-code">rendererDiagnostics</span>
+				and these attributes as the source of truth. Page-scoped
+				<span class="inline-code">pageCapabilities.webgpu</span>
+				only describes the page probe and does not prove that a particular mount is using WebGPU or can upload the selected format.
+			</p>
+			<p>
+				If a renderer swap changes the texture-variant fingerprint — backend, uploader readiness, or token set — the runtime creates a new scope and starts generation-fenced model rehydration. An older in-flight generation cannot commit over it. Parsed model cache entries are scope-qualified for the same isolation; the correctness tradeoff is that separate mounts can repeat fetch and parse work for the same model URL.
+			</p>
+		</section>
 		<section id="live-inspector" class="docs-section-block">
 			<h2>Tier 3 — Live Inspector</h2>
 			<p>
@@ -202,23 +364,74 @@ func Page() Node {
 			</p>
 			{CodeBlock("javascript", `window.__gosx_scene3d_debug.listSurfaces();
 	// [{ id, backend, ready, fallbackReason, counts, ... }, ...]
-	
+
 	window.__gosx_scene3d_debug.inspect("scene-mount");
 	// renderer kind, fallbackReason, node counts, feature matrix,
 	// camera, GPU resources, webgpuStats, renderer diagnostics
-	
+
 	window.__gosx_scene3d_debug.captureFrame("scene-mount");
 	// { surfaceID, mimeType: "image/png", dataURL }
-	
+
 	window.__gosx_scene3d_debug.getDiagnostics("scene-mount");
 	window.__gosx_scene3d_debug.getLastPick("scene-mount");`)}
 			<p>
-				<span class="inline-code">window.__gosx_scene3d_telemetry(mount)</span>
-				returns one aggregated, read-only snapshot without calling into the registry: backend, ready state, capability tier, adaptive-quality state, parsed cull-survivor counts, a compact WebGPU adapter diagnostics slice, camera, orbit, and renderer stats. Pass
+				The read-only telemetry helper supports legacy and explicitly scoped calls. It uses the debug registry and live mount handle when available, then combines that evidence with strictly parsed mount attributes:
+			</p>
+			{CodeBlock("javascript", `const legacy = window.__gosx_scene3d_telemetry(mount)
+	const first = window.__gosx_scene3d_telemetry(null) // first mounted surface
+	const one = window.__gosx_scene3d_telemetry({ scope: "mount", mount })
+	const page = window.__gosx_scene3d_telemetry({ scope: "page" })`)}
+			<p>
+				Legacy
+				<span class="inline-code">mount</span>
+				and
 				<span class="inline-code">null</span>
-				to use the first
-				<span class="inline-code">[data-gosx-scene3d-mounted]</span>
-				element on the page.
+				calls return one mount snapshot; explicit mount scope returns the same shape. Page scope returns a page object with
+				<span class="inline-code">scope</span>
+				,
+				<span class="inline-code">mountCount</span>
+				,
+				<span class="inline-code">mounts</span>
+				,
+				<span class="inline-code">diagnostics</span>
+				, and
+				<span class="inline-code">pageCapabilities</span>
+				for every live registry mount. Its
+				<span class="inline-code">diagnostics</span>
+				array flattens every mount's diagnostics and tags each entry with
+				<span class="inline-code">surfaceID</span>
+				,
+				<span class="inline-code">mountID</span>
+				, and
+				<span class="inline-code">engineID</span>
+				so multi-surface failures remain attributable.
+			</p>
+			<p>
+				<span class="inline-code">pageCapabilities.webgpu</span>
+				is page-global probe evidence, and every mount snapshot labels it with
+				<span class="inline-code">webgpuProbeScope: "page"</span>
+				. The legacy
+				<span class="inline-code">webgpu</span>
+				field is an alias for that same page capability, not proof that this mount uses WebGPU.
+				<span class="inline-code">rendererDiagnostics</span>
+				is the per-mount renderer truth: a WebGL mount can therefore report a ready page-level WebGPU probe while its renderer diagnostics correctly identify WebGL.
+			</p>
+			<p>
+				Boolean attributes accept only
+				<span class="inline-code">true</span>
+				or
+				<span class="inline-code">false</span>
+				, numeric attributes must be finite, and JSON telemetry such as cull survivors must be an object. Missing attributes stay
+				<span class="inline-code">null</span>
+				without a warning. Invalid values become
+				<span class="inline-code">null</span>
+				and add structured
+				<span class="inline-code">scene.telemetry.invalid_attribute</span>
+				diagnostics; malformed JSON adds
+				<span class="inline-code">scene.telemetry.parse_error</span>
+				. A failing registry snapshot, mount producer, or page capability probe is contained and reported as
+				<span class="inline-code">scene.telemetry.snapshot_failed</span>
+				with the producer and error in its diagnostic data.
 			</p>
 			<p>
 				For an always-visible heads-up display instead of console calls, enable the on-page inspector overlay:

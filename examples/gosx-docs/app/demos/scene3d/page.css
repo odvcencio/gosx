@@ -29,8 +29,8 @@
 /* Overlay — bottom-left teaching layer; its compact bounds leave the scene interactive. */
 .scene3d-showcase__overlay {
   position: absolute;
-  bottom: var(--space-lg, 2rem);
-  left: var(--space-lg, 2rem);
+  bottom: var(--space-lg);
+  left: var(--space-lg);
   z-index: 1;
   display: flex;
   flex-direction: column;
@@ -115,9 +115,13 @@
 }
 
 .scene3d-showcase__proof summary {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
   width: fit-content;
   color: var(--color-text-secondary);
   cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
 }
 
 .scene3d-showcase__proof summary:hover,
@@ -139,13 +143,22 @@
 
 .scene3d-showcase__proof a {
   color: var(--demo-accent);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.scene3d-showcase__proof a:hover,
+.scene3d-showcase__proof a:active {
+  color: var(--demo-fg);
 }
 
 /* Responsive — smaller overlay on narrow viewports */
 @media (max-width: 700px) {
   .scene3d-showcase__overlay {
-    bottom: var(--space-md, 1.25rem);
-    left: var(--space-md, 1.25rem);
+    right: var(--space-md);
+    bottom: var(--space-md);
+    left: var(--space-md);
+    max-width: none;
+    padding: var(--space-sm);
   }
 
   .scene3d-showcase__proof ul { display: none; }
@@ -153,9 +166,9 @@
 
 /* Reduced-motion: honour system preference (AutoRotate is purely JS-side) */
 @media (prefers-reduced-motion: reduce) {
-  .scene3d-showcase__title::after {
+  .scene3d-showcase__title::after,
+  .scene3d-showcase__proof summary,
+  .scene3d-showcase__proof a {
     transition: none;
   }
 }
-    max-width: calc(100% - 2 * var(--space-md));
-    padding: var(--space-sm);

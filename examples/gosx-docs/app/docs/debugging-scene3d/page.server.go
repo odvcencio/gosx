@@ -17,6 +17,7 @@ func init() {
 					{"href": "#quick-start", "label": "My Geometry Is Invisible"},
 					{"href": "#cpu-reference-renderer", "label": "CPU Reference Renderer"},
 					{"href": "#state-and-draw-recorder", "label": "State & Draw Recorder"},
+					{"href": "#model-hydration-diagnostics", "label": "Model Hydration"},
 					{"href": "#live-inspector", "label": "Live Inspector"},
 					{"href": "#compositor-diagnostics", "label": "Compositor Diagnostics"},
 					{"href": "#enforce-backend-in-captures", "label": "Enforce a Backend in Captures"},
