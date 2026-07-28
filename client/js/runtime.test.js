@@ -24628,6 +24628,7 @@ function freshFeatureBundleSource(name, options) {
       "15b-scene-planner.js",
       "15c-scene-backend-registry.js",
       "15a-scene-postfx-shared.js",
+      "15d-scene-dom-regions.js",
       "16b-scene-hdr.js",
       "16b-scene-compute.js",
       "16-scene-webgl.js",
@@ -29353,6 +29354,8 @@ test("CustomPost DOMRegions resolves current canvas after replacement", async ()
 });
 
 test("CustomPost DOMRegions tracker is wired into Scene3D mount lifecycle", () => {
+  assert.match(bootstrapFeatureScene3DSource, /__gosx_scene3d_dom_regions/);
+  assert.match(bootstrapFeatureScene3DSource, /createSceneCustomPostDOMRegionTracker/);
   assert.match(bootstrapScene3DMountSourceFile, /createSceneCustomPostDOMRegionTracker\(ctx\.mount,\s*function\(\) \{ return canvas; \},\s*sceneState,\s*scheduleRender\)/);
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.configure\(sceneState\.postEffects\)/);
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.dispose\(\)/);
