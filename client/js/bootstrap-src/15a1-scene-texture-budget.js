@@ -29,7 +29,6 @@ function sceneClampInteger(value, min, max) {
   if (next > max) return max;
   return next;
 }
-
 // Allocates Scene3D texture units from one shared table:
 //   0-4: material maps
 //   5..N: shadow maps / CSM cascades
@@ -252,4 +251,3 @@ if (typeof window !== "undefined") {
     resolveIBLRenderTargetMode: sceneResolveIBLRenderTargetMode,
   });
 }
-
