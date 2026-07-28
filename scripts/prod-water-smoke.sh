@@ -46,6 +46,8 @@ while ! curl -fsS "${base_url}/readyz" >/dev/null 2>&1; do
 	sleep 0.25
 done
 
+# Production static routes canonicalize directory-backed pages with a trailing
+# slash. Follow that bounded redirect while retaining curl's loop/error checks.
 page="$(curl -fsSL "${base_url}/demos/water")"
 printf '%s' "$page" | grep -q 'data-gosx-scene3d'
 
