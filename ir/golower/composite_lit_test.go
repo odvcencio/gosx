@@ -250,7 +250,7 @@ func Count() int { return len(positions) }`)
 	// Initialize the signal from its Init expr — mirrors how the
 	// runtime sets up signals before invoking handlers.
 	initVal := machine.Eval(prog.Signals[0].Init)
-	if initVal.Map() == nil {
+	if !initVal.IsMap() {
 		t.Errorf("positions init = %+v, want empty Fields map", initVal)
 	}
 }

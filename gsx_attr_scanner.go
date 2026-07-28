@@ -4,19 +4,70 @@ package gosx
 
 import gotreesitter "github.com/odvcencio/gotreesitter"
 
+// External token names. GosxGrammar appends the three jsx_* externals to the
+// base Go grammar, which owns _automatic_semicolon.
+//
+// Resolve these names against the language at run time. Do not hard-code the
+// external indices. GoGrammar declared no externals until gotreesitter
+// v0.35.0, so the jsx_* tokens once sat at 0, 1, and 2. Go then gained real
+// automatic semicolon insertion through _automatic_semicolon, which took
+// index 0 and pushed every jsx_* token up by one. Fixed indices read the
+// wrong validSymbols slot after that change and every parse failed, Go source
+// included.
+const (
+	gsxExternalNameAttributeExpression = "jsx_attribute_expression"
+	gsxExternalNameText                = "jsx_text"
+	gsxExternalNameRawText             = "jsx_raw_text"
+	gsxExternalNameAutoSemicolon       = "_automatic_semicolon"
+)
+
 // gsxScanner lexes GSX externals. The CST still exposes `jsx_*` token names
 // for compatibility with the generated grammar, but the scanner behavior is
 // GSX-specific and Go-native.
+//
+// The scanner also owns the base Go grammar's _automatic_semicolon token,
+// because a language carries exactly one external scanner and GoSX extends Go.
 type gsxScanner struct {
 	lang *gotreesitter.Language
+
+	// External token indices into validSymbols. A value of -1 means the
+	// language does not declare that external.
+	idxAttributeExpression int
+	idxText                int
+	idxRawText             int
+	idxAutoSemicolon       int
 }
 
-// Keep these in the same order as GosxGrammar appends g.Externals.
-const (
-	gsxExternalAttributeExpression = iota
-	gsxExternalText
-	gsxExternalRawText
-)
+// newGSXScanner binds a scanner to lang and resolves the external indices.
+func newGSXScanner(lang *gotreesitter.Language) *gsxScanner {
+	s := &gsxScanner{
+		lang:                   lang,
+		idxAttributeExpression: externalIndexByName(lang, gsxExternalNameAttributeExpression),
+		idxText:                externalIndexByName(lang, gsxExternalNameText),
+		idxRawText:             externalIndexByName(lang, gsxExternalNameRawText),
+		idxAutoSemicolon:       externalIndexByName(lang, gsxExternalNameAutoSemicolon),
+	}
+	return s
+}
+
+// externalIndexByName returns the validSymbols index of the named external
+// token, or -1 when the language does not declare it.
+func externalIndexByName(lang *gotreesitter.Language, name string) int {
+	if lang == nil {
+		return -1
+	}
+	for i, sym := range lang.ExternalSymbols {
+		if int(sym) < len(lang.SymbolNames) && lang.SymbolNames[sym] == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// externalSymbol returns the concrete symbol ID for an external index.
+func (s *gsxScanner) externalSymbol(idx int) gotreesitter.Symbol {
+	return s.lang.ExternalSymbols[idx]
+}
 
 func (s *gsxScanner) Create() any { return nil }
 
@@ -36,20 +87,70 @@ func (s *gsxScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validS
 	// parser's validSymbols tells us when to swallow the body verbatim.
 	// Check it before the ordinary text scan: inside a raw-text element the
 	// `<` and `{` terminators of scanGSXText do not apply.
-	if gsxValid(validSymbols, gsxExternalRawText) {
+	if gsxValid(validSymbols, s.idxRawText) {
 		if s.scanRawText(lexer) {
 			return true
 		}
 	}
-	if gsxValid(validSymbols, gsxExternalAttributeExpression) && lexer.Lookahead() == '{' {
+	if gsxValid(validSymbols, s.idxAttributeExpression) && lexer.Lookahead() == '{' {
 		return s.scanAttributeExpression(lexer)
 	}
-	if gsxValid(validSymbols, gsxExternalText) {
+	if gsxValid(validSymbols, s.idxText) {
 		if s.scanGSXText(lexer) {
 			return true
 		}
 	}
+	// Go's terminator rule comes last. The GSX externals win any position
+	// where both are valid, because GSX text may start with a newline.
+	if gsxValid(validSymbols, s.idxAutoSemicolon) {
+		if s.scanAutomaticSemicolon(lexer) {
+			return true
+		}
+	}
 	return false
+}
+
+// scanAutomaticSemicolon resolves Go's automatic semicolon insertion.
+//
+// The base Go grammar routes its `terminator` rule through this external
+// token. A shared lexer DFA cannot choose between the zero-width end-of-file
+// sentinel and the one-byte newline pattern, so it always takes the zero-width
+// accept and drops the trailing newline from the enclosing statement. An
+// external scanner reads the raw bytes and decides without a tie-break.
+//
+// This mirrors grammars.GoExternalScanner. GoSX cannot call that scanner,
+// because it writes a Go-grammar symbol ID that the extended GSX grammar
+// renumbers.
+func (s *gsxScanner) scanAutomaticSemicolon(lexer *gotreesitter.ExternalLexer) bool {
+	// Skip horizontal whitespace. The newline itself decides the match.
+	// Leave comments alone: decline instead, and the parser matches the
+	// comment as an extra and then calls this scanner again.
+	for {
+		switch lexer.Lookahead() {
+		case ' ', '\t', '\r':
+			lexer.Advance(true)
+			continue
+		}
+		break
+	}
+
+	switch lexer.Lookahead() {
+	case '\n':
+		// Take the newline as the token span, as the `/\n/` alternative does.
+		lexer.Advance(false)
+		lexer.MarkEnd()
+		lexer.SetResultSymbol(s.externalSymbol(s.idxAutoSemicolon))
+		return true
+	case 0:
+		// End of file. Match zero width, as the `'\0'` alternative does.
+		lexer.MarkEnd()
+		lexer.SetResultSymbol(s.externalSymbol(s.idxAutoSemicolon))
+		return true
+	default:
+		// An explicit `;`, a comment start, or a syntax error. Decline and
+		// let the DFA match it.
+		return false
+	}
 }
 
 // rawTextCloseTags are the closing tags that terminate a raw-text body. HTML
@@ -101,7 +202,7 @@ func (s *gsxScanner) scanRawText(lexer *gotreesitter.ExternalLexer) bool {
 		}
 		if ch == '<' && s.consumeRawTextCloseTag(lexer) {
 			lexer.MarkEnd()
-			lexer.SetResultSymbol(s.lang.ExternalSymbols[gsxExternalRawText])
+			lexer.SetResultSymbol(s.externalSymbol(s.idxRawText))
 			return true
 		}
 		lexer.Advance(false)
@@ -181,7 +282,7 @@ func (s *gsxScanner) scanGSXText(lexer *gotreesitter.ExternalLexer) bool {
 		return false
 	}
 	lexer.MarkEnd()
-	lexer.SetResultSymbol(s.lang.ExternalSymbols[gsxExternalText])
+	lexer.SetResultSymbol(s.externalSymbol(s.idxText))
 	return true
 }
 
@@ -201,7 +302,7 @@ func (s *gsxScanner) scanAttributeExpression(lexer *gotreesitter.ExternalLexer) 
 			lexer.Advance(false)
 			if depth == 0 {
 				lexer.MarkEnd()
-				lexer.SetResultSymbol(s.lang.ExternalSymbols[gsxExternalAttributeExpression])
+				lexer.SetResultSymbol(s.externalSymbol(s.idxAttributeExpression))
 				return true
 			}
 		case '"':
@@ -226,7 +327,9 @@ func (s *gsxScanner) scanAttributeExpression(lexer *gotreesitter.ExternalLexer) 
 	}
 }
 
-func gsxValid(vs []bool, idx int) bool { return idx < len(vs) && vs[idx] }
+// gsxValid reports whether the parser accepts the external token at idx.
+// An idx of -1 means the language does not declare that external.
+func gsxValid(vs []bool, idx int) bool { return idx >= 0 && idx < len(vs) && vs[idx] }
 
 func scanQuotedGoLiteral(lexer *gotreesitter.ExternalLexer, quote rune) {
 	lexer.Advance(false)

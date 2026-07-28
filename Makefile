@@ -98,6 +98,8 @@ test-fuzz-smoke:
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./crdt -run '^$$' -fuzz FuzzDanmujiLoadDocumentNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./physics -run '^$$' -fuzz FuzzDanmujiRaycastHandlesBoundedNumericInputs -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./route -run '^$$' -fuzz FuzzDanmujiRouterHandlesArbitraryEscapedPaths -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzVMEvalNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzIslandReuseMatchesFullEval -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 
 # build-bootstrap regenerates the client bootstrap bundles (pure Go — no npm, no
 # node_modules; see cmd/buildbootstrap).
@@ -111,10 +113,20 @@ test-fuzz-smoke:
 build-bootstrap:
 	cd cmd/buildbootstrap && $(GO) run .
 
-# test-js needs only a bare Node runtime for `node --test` (stdlib-only unit
-# tests); the bundle staleness check is pure Go.
+# test-js runs two independent checks:
+#   1. The bundle staleness check (pure Go). cmd/buildbootstrap is
+#      its own module (see build-bootstrap above). So a repo-local
+#      go.work that omits it makes `go run .` fail with "main module
+#      does not contain package". GOWORK=off forces module mode for
+#      this one command. The target then works the same, with or
+#      without a local go.work.
+#   2. The JS runtime unit tests (`node --test`, stdlib-only, with no
+#      npm dependencies to install), across every *.test.js /
+#      *.test.mjs file. This includes the 500+ tests in
+#      runtime.test.js and the size-budget gates in
+#      bootstrap-size.test.mjs.
 test-js:
-	cd cmd/buildbootstrap && $(GO) run . --check
+	cd cmd/buildbootstrap && GOWORK=off $(GO) run . --check
 	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
 
 test-wasm:

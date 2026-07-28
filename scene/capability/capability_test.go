@@ -16,16 +16,46 @@ func TestVerdict(t *testing.T) {
 			[]Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D}, nil},
 		{"skinning supports webgpu and webgl", []Feature{FeatureSkinning},
 			[]Backend{BackendWebGPU, BackendWebGL}, nil},
-		{"ibl droppable: webgpu+canvas2d stay, ibl degraded", []Feature{FeatureIBL},
+		// ibl is droppable and false on EVERY backend, so every backend stays
+		// capable and every backend carries the gap. The cell used to read true
+		// for WebGL2 while that renderer only tone mapped an equirectangular
+		// texture. See TestIBLIsFalseOnBothBackends in water_shadow_test.go.
+		{"ibl droppable: every backend stays, every backend degraded", []Feature{FeatureIBL},
 			[]Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D},
-			map[Backend][]Feature{BackendWebGPU: {FeatureIBL}, BackendCanvas2D: {FeatureIBL}}},
-		{"skinning+ibl: webgpu degraded by ibl, webgl full", []Feature{FeatureSkinning, FeatureIBL},
+			map[Backend][]Feature{
+				BackendWebGPU:   {FeatureIBL},
+				BackendWebGL:    {FeatureIBL},
+				BackendCanvas2D: {FeatureIBL},
+			}},
+		{"skinning+ibl: canvas2d excluded by skinning, both GPU backends degraded by ibl",
+			[]Feature{FeatureSkinning, FeatureIBL},
 			[]Backend{BackendWebGPU, BackendWebGL},
-			map[Backend][]Feature{BackendWebGPU: {FeatureIBL}}},
+			map[Backend][]Feature{
+				BackendWebGPU: {FeatureIBL},
+				BackendWebGL:  {FeatureIBL},
+			}},
 		{"water simulation supports webgpu and webgl", []Feature{FeatureWaterSim},
 			[]Backend{BackendWebGPU, BackendWebGL}, nil},
-		{"water object mesh shadow pass supports webgpu and webgl", []Feature{FeatureWaterObjectMeshShadowPass},
-			[]Backend{BackendWebGPU, BackendWebGL}, nil},
+		// The mesh-shadow pass is WebGPU-only and DROPPABLE, so WebGL2 stays
+		// capable with the gap listed. canvas2d also stays capable here only
+		// because this case names the feature alone; a real water scene also
+		// carries water-simulation and water-object-texture-pass, and both of
+		// those are required and exclude canvas2d. The next case shows that.
+		{"water object mesh shadow pass degrades webgl and canvas2d, excludes nobody",
+			[]Feature{FeatureWaterObjectMeshShadowPass},
+			[]Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D},
+			map[Backend][]Feature{
+				BackendWebGL:    {FeatureWaterObjectMeshShadowPass},
+				BackendCanvas2D: {FeatureWaterObjectMeshShadowPass},
+			}},
+		// A realistic water scene. canvas2d falls out on the two required water
+		// features; WebGL2 survives and reports only the shadow-shape gap.
+		{"full water scene: canvas2d excluded, webgl degraded by the mesh shadow alone",
+			[]Feature{FeatureWaterSim, FeatureWaterObjectTexturePass, FeatureWaterObjectMeshShadowPass},
+			[]Backend{BackendWebGPU, BackendWebGL},
+			map[Backend][]Feature{
+				BackendWebGL: {FeatureWaterObjectMeshShadowPass},
+			}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,15 +70,23 @@ func TestVerdict(t *testing.T) {
 	}
 }
 
+// TestVerdictReportsEveryRequiredUnsupportedFeature checks that an excluded
+// backend gets a named reason for EACH required feature it fails, not just the
+// first one. An author fixing one gap must see the rest.
+//
+// Only the two REQUIRED water features exclude canvas2d. The mesh-shadow pass
+// is droppable, so it can never exclude anybody; TestVerdict covers its degrade
+// path and water_shadow_test.go explains why it is droppable.
 func TestVerdictReportsEveryRequiredUnsupportedFeature(t *testing.T) {
-	features := []Feature{FeatureWaterObjectMeshShadowPass, FeatureWaterObjectTexturePass, FeatureWaterSim}
+	required := []Feature{FeatureWaterObjectTexturePass, FeatureWaterSim}
+	features := append([]Feature{FeatureWaterObjectMeshShadowPass}, required...)
 	got := Verdict(features, nil, DefaultPolicy())
-	// WebGPU and WebGL both implement the water features now; only canvas2d is
-	// excluded by the required-feature gate.
+	// Both GPU backends implement the two required water features, so only
+	// canvas2d falls out.
 	if !backendsEqual(got.Capable, []Backend{BackendWebGPU, BackendWebGL}) {
 		t.Fatalf("Capable = %v, want [webgpu webgl]", got.Capable)
 	}
-	for _, feature := range features {
+	for _, feature := range required {
 		if !hasExcludeReason(got.Reasons, feature, BackendCanvas2D) {
 			t.Fatalf("expected exclude reason for %s/%s, got %+v", feature, BackendCanvas2D, got.Reasons)
 		}
@@ -56,8 +94,19 @@ func TestVerdictReportsEveryRequiredUnsupportedFeature(t *testing.T) {
 			t.Fatalf("did not expect webgl exclusion for %s now that WebGL implements it, got %+v", feature, got.Reasons)
 		}
 	}
-	if len(got.Degraded) != 0 {
-		t.Fatalf("excluded backends should not accumulate degraded features, got %v", got.Degraded)
+	// A droppable feature must never produce an exclude reason for any backend.
+	for _, b := range []Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D} {
+		if hasExcludeReason(got.Reasons, FeatureWaterObjectMeshShadowPass, b) {
+			t.Fatalf("water-object-mesh-shadow-pass is droppable and must never exclude %s, got %+v", b, got.Reasons)
+		}
+	}
+	// An EXCLUDED backend must not also accumulate degraded features. canvas2d is
+	// gone, so its mesh-shadow gap is moot; WebGL2 survives and keeps its gap.
+	if _, ok := got.Degraded[BackendCanvas2D]; ok {
+		t.Fatalf("an excluded backend must not accumulate degraded features, got %v", got.Degraded)
+	}
+	if want := []Feature{FeatureWaterObjectMeshShadowPass}; len(got.Degraded[BackendWebGL]) != 1 || got.Degraded[BackendWebGL][0] != want[0] {
+		t.Fatalf("WebGL2 must be degraded by the mesh-shadow pass alone, got %v", got.Degraded)
 	}
 }
 

@@ -77,6 +77,12 @@ jobs:
       - name: Fuzz smoke tests
         run: make test-fuzz-smoke
 
+      # The desktop host is largely behind a windows build tag. release.yml
+      # cross-compiles the binary, but this gate also links the Windows test
+      # binaries so desktop-only test regressions fail in CI.
+      - name: Desktop tests and Windows cross-compile gate
+        run: make test-desktop
+
       - name: Build CLI
         run: make build-cli
 
@@ -147,6 +153,13 @@ jobs:
 
       - name: Island-only WASM runtime tests
         run: make test-wasm-islands
+
+      # motion is one Go evaluator that drives the server IR, the native
+      # renderer, the client VM and the WASM exports. This target proves the
+      # native and js/wasm builds agree on floats, against a native-generated
+      # golden corpus. No other gate ran it, so a divergence could ship.
+      - name: Motion cross-target float parity gate
+        run: make test-motion-parity
 
       - name: WASM size-budget gate
         run: make wasm-size-budget

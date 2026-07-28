@@ -112,13 +112,13 @@ func (h *propsIntoHost) Call(method string, args []vm.Value) (vm.Value, error) {
 		return vm.ZeroValue(0), nil
 	}
 	target := args[0]
-	if target.Map() == nil {
+	if !target.IsMap() {
 		// Pre-Y.G this is the failure point — the host has no map
 		// to write into, and even allocating one locally would not
 		// propagate back to the caller's local.
 		return vm.ZeroValue(0), nil
 	}
-	target.Map()["Center"] = vm.StringVal(h.value)
-	target.Map()["Name"] = vm.StringVal(h.value)
+	target.SetField("Center", vm.StringVal(h.value))
+	target.SetField("Name", vm.StringVal(h.value))
 	return vm.ZeroValue(0), nil
 }

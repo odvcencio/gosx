@@ -107,14 +107,14 @@ func (h *propsIntoHostNamed) Call(method string, args []vm.Value) (vm.Value, err
 		return vm.ZeroValue(0), nil
 	}
 	target := args[0]
-	if target.Map() == nil {
+	if !target.IsMap() {
 		// Y.G's eager struct zero-init means this branch should
 		// not fire; if it does, the test fails the props-propagate
 		// assertion above.
 		return vm.ZeroValue(0), nil
 	}
-	target.Map()["Name"] = vm.StringVal(h.name)
-	target.Map()["Count"] = vm.IntVal(h.count)
+	target.SetField("Name", vm.StringVal(h.name))
+	target.SetField("Count", vm.IntVal(h.count))
 	return vm.ZeroValue(0), nil
 }
 
