@@ -28,12 +28,13 @@ jobs:
   # go-tests: Go checks and tests, plus TinyGo — cmd/gosx/build_test.go
   # exercises a real production GoSX build (`go run ./cmd/gosx build --prod`)
   # via `make test`, which requires TinyGo on PATH. No Node or Chrome install:
-  # nothing here shells out to either. This is the heaviest job (~11 minutes
-  # of measured step time before the TinyGo install) but no longer serializes
-  # behind or ahead of the JS/WASM/browser jobs.
+  # nothing here shells out to either. This temporary exhaustive lane runs the
+  # full unit and race sweeps serially before fuzz and platform builds. PR117
+  # measured 6m31s for unit tests and 10m48s for race tests (the BC7 package
+  # alone took 504.697s), so the 20-minute cap canceled fuzz after both passed.
   go-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
