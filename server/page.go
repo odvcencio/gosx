@@ -102,7 +102,7 @@ type Context struct {
 func newContext(r *http.Request) *Context {
 	ctx := &Context{
 		Request:   r,
-		PageState: *NewPageState(),
+		PageState: *NewPageStateForRequest(r),
 	}
 	// Carry the generated Content-Security-Policy nonce, so the document shell
 	// and the streamed chunks attach the same value the header names.
