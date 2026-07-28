@@ -358,6 +358,9 @@
     const htmlElements = new Map();
     const htmlTextureState = createSceneHTMLTextureState();
     htmlTextureState.requestRender = scheduleRender;
+    const releaseTextureLoadListener = typeof onSceneTextureLoaded === "function"
+      ? onSceneTextureLoaded(function() { scheduleRender("texture-loaded"); })
+      : null;
     let labelRefreshHandle = null;
 
     function syncSceneNodeSentinels(bundle) {
@@ -3015,6 +3018,9 @@
         sceneControlHandle.dispose();
         renderer.dispose();
         disposeSceneHTMLTextureState(htmlTextureState);
+        if (typeof releaseTextureLoadListener === "function") {
+          releaseTextureLoadListener();
+        }
         if (wasmMotionState === 1 && typeof window !== "undefined"
             && typeof window.__gosx_motion_unload === "function") {
           window.__gosx_motion_unload(wasmMotionHandle);

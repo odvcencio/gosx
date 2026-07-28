@@ -711,6 +711,7 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
 
   const env = createContext({
     elements: [mount],
+    devicePixelRatio: 2,
     manifest: {
       engines: [
         {
@@ -751,6 +752,9 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
       ],
     },
   });
+  env.document.styleSheets = [
+    { cssRules: [{ type: 1, cssText: ".hud { display:grid; color:#8de1ff; }" }] },
+  ];
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -778,7 +782,17 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-pending-bytes"), null);
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-manager"), "svg-foreignobject");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-rasterized"), "true");
-  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-bytes"), "655360");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-bytes"), "2621440");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-raster-width"), "1024");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-raster-height"), "640");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-pixel-ratio"), "2");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-style-sheets"), "1");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-font-state"), "unavailable");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-mirror"), "true");
+  assert.match(
+    decodeURIComponent(html.getAttribute("data-gosx-scene-html-texture-key")),
+    /\.hud \{ display:grid; color:#8de1ff; \}/,
+  );
   assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-count"), "1");
   assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-ready"), "1");
   assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-bytes"), "655360");
@@ -791,6 +805,20 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
   assert.equal(html.innerHTML, '<section class="hud"><strong>HTML</strong> <span>scene</span></section>');
   assert.equal(html.textContent, "HTML scene");
   assert.equal(html.style["--gosx-scene-html-pointer-events"], "auto");
+  assert.equal(env.context.__gosx_scene3d_html.schema, "gosx.scene3d.html.v1");
+  assert.equal(env.context.__gosx_scene3d_html.invalidate("hud-card"), true);
+  assert.equal(env.context.__gosx_scene3d_html.invalidateStyles(), true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(env.context.__gosx_scene3d_html.styleState())),
+    {
+      revision: 1,
+      styleSheets: 1,
+      blockedSheets: 0,
+      fontFaces: 0,
+      fontBytes: 0,
+      fontState: "unavailable",
+    },
+  );
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -819,6 +847,9 @@ test("bootstrap emits ready HTML texture surfaces into render bundles", async ()
         z: 0,
         surfaceWidth: 1.6,
         surfaceHeight: 0.9,
+        rotationX: -Math.PI / 2,
+        rotationY: 0.2,
+        spinY: 0.4,
         textureWidth: 256,
         textureHeight: 128,
         textureReady: true,
@@ -839,12 +870,18 @@ test("bootstrap emits ready HTML texture surfaces into render bundles", async ()
   assert.equal(bundle.html.length, 1);
   assert.equal(bundle.html[0].textureBytes, 131072);
   assert.equal(bundle.html[0].textureReady, true);
+  assert.equal(bundle.html[0].rotationX, -Math.PI / 2);
+  assert.equal(bundle.html[0].rotationY, 0.2);
+  assert.equal(bundle.html[0].spinY, 0.4);
   assert.equal(bundle.surfaces.length, 1);
   assert.equal(bundle.surfaces[0].sourceKind, "html");
   assert.equal(bundle.surfaces[0].sourceID, "panel");
   assert.equal(bundle.surfaces[0].textureKey, "gosx-html://panel");
   assert.equal(bundle.surfaces[0].textureBytes, 131072);
   assert.equal(bundle.surfaces[0].textureReady, true);
+  assert.equal(bundle.surfaces[0].contentWidth, 256);
+  assert.equal(bundle.surfaces[0].contentHeight, 128);
+  assert.equal(new Set(Array.from(bundle.surfaces[0].positions, (value) => value.toFixed(9))).size > 2, true);
   assert.equal(bundle.materials[bundle.surfaces[0].materialIndex].texture, "gosx-html://panel");
 
   const pending = api.createSceneRenderBundle(

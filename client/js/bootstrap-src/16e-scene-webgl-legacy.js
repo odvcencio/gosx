@@ -579,6 +579,9 @@
     image.onload = function() {
       uploadSceneWebGLTextureImage(gl, resources, texture, image);
       record.loaded = true;
+      if (typeof notifySceneTextureLoaded === "function") {
+        notifySceneTextureLoaded(key);
+      }
     };
     image.onerror = function() {
       record.failed = true;

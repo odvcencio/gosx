@@ -9,8 +9,8 @@ import (
 )
 
 func TestDemoCatalogContracts(t *testing.T) {
-	if len(Demos()) != 9 {
-		t.Fatalf("Demos() length = %d, want 9", len(Demos()))
+	if len(Demos()) != 10 {
+		t.Fatalf("Demos() length = %d, want 10", len(Demos()))
 	}
 	seen := make(map[string]bool, len(Demos()))
 	validStatus := map[string]bool{"featured": true, "live": true, "lab": true, "prototype": true}

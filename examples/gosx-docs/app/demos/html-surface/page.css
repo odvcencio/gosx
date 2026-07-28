@@ -1,0 +1,167 @@
+/* HTML surfaces on 3D geometry.
+   These are ordinary page styles. The runtime serializes the live CSSOM into
+   the foreignObject raster, so the same rules style both the accessible DOM
+   mirror and the texture mapped onto scene geometry. */
+
+.html-surface {
+  position: relative;
+  min-height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--demo-bg);
+}
+
+.html-surface__canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.html-surface__canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.html-surface__overlay {
+  position: absolute;
+  bottom: var(--space-lg, 2rem);
+  left: var(--space-lg, 2rem);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-width: min(30rem, calc(100% - 2 * var(--space-lg)));
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--color-canvas) 88%, transparent);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.5rem;
+  box-shadow: 0 1rem 3rem var(--color-backdrop);
+}
+
+.html-surface__eyebrow {
+  margin: 0;
+  color: var(--demo-accent);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.html-surface__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-2xl);
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.html-surface__tagline {
+  margin: 0;
+  color: var(--color-ink-muted);
+  font-size: var(--type-sm);
+  line-height: 1.5;
+}
+
+.html-surface__proof {
+  font-size: var(--type-xs);
+}
+
+.html-surface__proof ul {
+  margin: var(--space-2xs, 0.35rem) 0 0;
+  padding-left: 1.1rem;
+  color: var(--color-ink-muted);
+  line-height: 1.5;
+}
+
+.diegetic-panel {
+  --panel-edge: #35d6ff;
+  --panel-ink: #e8f6ff;
+  --panel-ink-dim: #8fb6cc;
+  --panel-ok: #6ff5a8;
+}
+
+.diegetic-panel__inner {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  height: 100%;
+  padding: 1.5rem 1.6rem;
+  border: 1px solid color-mix(in srgb, var(--panel-edge) 55%, transparent);
+  border-radius: 0.75rem;
+  background: linear-gradient(155deg, rgba(9, 26, 40, 0.96), rgba(6, 15, 24, 0.98));
+  color: var(--panel-ink);
+  font-family: var(--font-sans, system-ui), system-ui, sans-serif;
+}
+
+.diegetic-panel__inner--compact {
+  gap: 0.35rem;
+  padding: 1.1rem 1.2rem;
+}
+
+.diegetic-panel__eyebrow {
+  margin: 0;
+  color: var(--panel-edge);
+  font-family: var(--font-mono, ui-monospace), ui-monospace, monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.18em;
+}
+
+.diegetic-panel__title {
+  margin: 0;
+  font-family: var(--font-display, inherit);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.diegetic-panel__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem 1.4rem;
+  margin: 0;
+}
+
+.diegetic-panel__grid dt {
+  color: var(--panel-ink-dim);
+  font-family: var(--font-mono, ui-monospace), ui-monospace, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.diegetic-panel__grid dd {
+  margin: 0;
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.diegetic-panel__grid .is-ok {
+  color: var(--panel-ok);
+}
+
+.diegetic-panel__list {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--panel-ink-dim);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.diegetic-panel__foot {
+  margin: auto 0 0;
+  color: var(--panel-ink-dim);
+  font-family: var(--font-mono, ui-monospace), ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.diegetic-panel--angled {
+  --panel-edge: #ffb547;
+}
+
+.diegetic-panel--floor {
+  --panel-edge: #b18cff;
+}
