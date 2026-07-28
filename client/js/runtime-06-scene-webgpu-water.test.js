@@ -829,26 +829,31 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   assert.match(waterPage, /data-gosx-scene3d-help-panel="true"/);
   assert.match(waterPage, /data-gosx-scene3d-rounded-control="true"/);
   assert.match(waterPage, /data-gosx-scene3d-pool-boundary-control="true"/);
-  assert.match(waterPage, /GoSX Water/);
+  assert.match(waterPage, /Water, in motion\./);
   assert.match(waterPage, /jeantimex\/threejs-water/);
   assert.match(waterPage, /Press SPACEBAR to pause and unpause/);
   assert.match(waterPage, /controlTargetY=\{-0\.5\}/);
   // gosx fmt renders the <Camera> tag with one attribute per line, so match
   // the camera-position contract per attribute rather than as a single line.
-  assert.match(waterPage, /x=\{1\.2695827068526726\}/);
-  assert.match(waterPage, /y=\{1\.1904730469627978\}/);
-  assert.match(waterPage, /z=\{3\.395653196065958\}/);
+  assert.match(waterPage, /x=\{1\.38\}/);
+  assert.match(waterPage, /y=\{1\.52\}/);
+  assert.match(waterPage, /z=\{2\.87\}/);
   assert.match(waterPage, /interactionProfile="water-object-drop-orbit"/);
   assert.match(waterPage, /interactionTarget="water-main"/);
   assert.match(waterPage, /interactionObject="Sphere"/);
   assert.doesNotMatch(waterPage, /water-demo__overlay/);
   assert.doesNotMatch(waterPage, /water-demo__readout/);
   assert.doesNotMatch(waterPage, /Selena Surface/);
-  assert.match(waterPage, /shallowColor="#7ad1eb"/);
-  assert.match(waterPage, /deepColor="#082e57"/);
-  assert.match(waterPage, /aboveWaterColorR=\{0\.25\}/);
-  assert.match(waterPage, /aboveWaterColorG=\{1\.0\}/);
-  assert.match(waterPage, /aboveWaterColorB=\{1\.25\}/);
+  assert.match(waterPage, /shallowColor="#54c4d8"/);
+  assert.match(waterPage, /deepColor="#041c38"/);
+  assert.match(waterPage, /aboveWaterColorR=\{0\.18\}/);
+  assert.match(waterPage, /aboveWaterColorG=\{0\.78\}/);
+  assert.match(waterPage, /aboveWaterColorB=\{0\.98\}/);
+  assert.match(waterPage, /qualityProfiles=\{data\.diagQualityProfiles\}/);
+  assert.match(waterPage, /msaaSamples=\{data\.diagMsaa\}/);
+  assert.match(waterPage, /antialias=\{data\.diagAntialias\}/);
+  assert.match(waterPage, /capabilityTier=\{data\.diagCapabilityTier\}/);
+  assert.match(waterPage, /aria-current=\{data\.diagQualityBalancedCurrent\}/);
   // The hand-written Elio/Selena *WGSL props have been retired -- Selena is
   // the sole primary WGSL source now (see the *SelenaWGSL props below).
   assert.doesNotMatch(waterPage, /displacementWGSL=\{data\.waterDisplacementWGSL\}/);
@@ -1491,7 +1496,10 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
     assert.match(webgpu, new RegExp(`${field}: f32`));
     assert.match(webgpu, new RegExp(`material\\.${field}`));
   }
-  assert.match(webgpu, /new ArrayBuffer\(80\)/);
+  assert.match(webgpu, /new ArrayBuffer\(160\)/);
+  assert.match(webgpu, /modelMatrix: mat4x4f/);
+  assert.match(webgpu, /modelScaleSigns: vec4f/);
+  assert.match(webgpu, /f\[20 \+ mi\] = model/);
   assert.match(webgpu, /f\[7\] = clamp01\(sceneNumber\(mat\.clearcoat, 0\)\)/);
   assert.match(webgpu, /f\[8\] = clamp01\(sceneNumber\(mat\.sheen, 0\)\)/);
   assert.match(webgpu, /f\[9\] = clamp01\(sceneNumber\(mat\.transmission, 0\)\)/);

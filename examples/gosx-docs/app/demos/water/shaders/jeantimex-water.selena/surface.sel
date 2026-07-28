@@ -332,12 +332,27 @@ material WaterSurface {
             coord = clamp(coord + pinfo.zw * 0.005, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
             pinfo = stateAt(coord)
         }
-        let n         = normalFromState(pinfo, normalScale)
+        // Preserve the simulation normal as the low-frequency shape, then add
+        // two low-amplitude, incommensurate detail bands. The detail is
+        // procedural and texture-free, so it survives every asset/backend
+        // path without adding a sample or changing the heightfield itself.
+        let baseNormal  = normalFromState(pinfo, normalScale)
+        let detailPhase = coord.x * 71.0 + coord.y * 53.0 + pinfo.x * 19.0
+        let microPhase  = coord.x * 173.0 - coord.y * 137.0 - pinfo.x * 31.0
+        let fineSlope   = vec2f(
+            sin(detailPhase) * 0.010 + sin(microPhase) * 0.004,
+            cos(detailPhase * 0.91) * 0.010 + cos(microPhase * 1.07) * 0.004
+        )
+        let n         = normalize(vec3f(baseNormal.x + fineSlope.x, max(baseNormal.y, 0.08), baseNormal.z + fineSlope.y))
         let ldir      = normalize(lightDir)
         let viewDir   = normalize(cameraPos - wp)
         let reflectD  = reflect(-viewDir, n)
-        let refractD  = refract(-viewDir, n, 1.0 / 1.333)
-        let fresnel   = mix(0.25, 1.0, pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0))
+        let waterIOR  = 1.333
+        let refractD  = refract(-viewDir, n, 1.0 / waterIOR)
+        let f0Ratio   = (1.0 - waterIOR) / (1.0 + waterIOR)
+        let f0        = f0Ratio * f0Ratio
+        let viewCos   = clamp(dot(n, viewDir), 0.0, 1.0)
+        let fresnel   = f0 + (1.0 - f0) * pow(1.0 - viewCos, 5.0)
 
         let objC      = vec3f(objectCenter.x * poolWidth, objectCenter.y, objectCenter.z * poolLength)
         let objH      = vec3f(objectHalf.x * poolWidth, objectHalf.y, objectHalf.z * poolLength)
@@ -353,6 +368,7 @@ material WaterSurface {
         // were evaluated across every water pixel and then selected away.
         var rfHitObj  = 0.0
         var rfObjColor = vec3f(0.0, 0.0, 0.0)
+        var rfObjTravel = 1000000.0
         if (objActive && objectKind < 2.5) {
             let rfSimple  = objectHitSimple(wp, refractD, objectKind, objC, objR, objH)
             let rfObjDist = rfSimple.x
@@ -366,6 +382,7 @@ material WaterSurface {
                 let rfObjSub      = rfObjP.y < rfObjWaterH ? 1.0 : 0.0
                 let rfObjCaustic  = sampleLevel(causticTexture, objectCausticUV(rfObjP, ldir, poolWidth, poolLength), 0.0).x
                 rfObjColor = objectColorSB(rfObjN, rfObjKind, ldir, rfObjCaustic, rfObjSub, opticsCaustic)
+                rfObjTravel = rfObjDist
                 rfHitObj = 1.0
             }
         }
@@ -382,7 +399,23 @@ material WaterSurface {
         let rfSky      = sampleCube(sky, refractD).rgb + sunGlint(refractD, ldir)
         let rfHitWall  = refractD.y < 0.0 || rfWallP.y < 2.0 / 12.0
         let rfBase     = rfHitObj > 0.5 ? rfObjColor : rfHitWall ? rfWallColor : rfSky
-        let refracted  = refractD.y < 0.0 ? rfBase * waterColor : rfBase
+        let waterTravel = clamp(
+            rfHitObj > 0.5 ? max(rfObjTravel, 0.0) : max(rfPool.y, 0.0),
+            0.0,
+            max(ph * 2.5, 0.1)
+        )
+        // Beer-Lambert attenuation: red leaves the volume first, while a
+        // restrained blue-green in-scatter keeps deep water luminous instead
+        // of multiplying every underwater hit by one flat tint.
+        let transmittance = vec3f(
+            exp(-0.72 * waterTravel),
+            exp(-0.24 * waterTravel),
+            exp(-0.11 * waterTravel)
+        )
+        let scatterAmount = 1.0 - (transmittance.x + transmittance.y + transmittance.z) / 3.0
+        let scatterColor  = mix(vec3f(0.025, 0.20, 0.24), waterColor, 0.32)
+        let volumeColor   = rfBase * transmittance + scatterColor * scatterAmount * 0.58
+        let refracted     = refractD.y < 0.0 ? volumeColor : rfBase
 
         var rlHitObj   = 0.0
         var rlObjColor = vec3f(0.0, 0.0, 0.0)
@@ -444,6 +477,20 @@ material WaterSurface {
             }
         }
 
-        return vec4f(mix(refractedM, reflectedM, fresnel), 1.0)
+        let opticalColor = mix(refractedM, reflectedM, fresnel)
+
+        // A narrow boundary meniscus and a restrained object-contact ring make
+        // the water read as touching its container/subject. These are cues,
+        // not opaque white decals: they remain subordinate to reflection and
+        // disappear quickly away from contact.
+        let edgeDistance = -roundedPoolDistance(wp.xz, vec2f(hw, hl), cornerRadius)
+        let edgeFoam     = (1.0 - smoothstep(0.012, 0.070, edgeDistance)) * 0.10
+        let contactRing  = abs(length(wp.xz - objC.xz) - objR)
+        let contactNear  = 1.0 - smoothstep(0.10, 0.34, abs(objC.y - wp.y))
+        let contactFoam  = objActive ? (1.0 - smoothstep(0.014, 0.052, contactRing)) * contactNear * 0.16 : 0.0
+        let crestFoam    = smoothstep(0.14, 0.42, length(pinfo.zw) * normalScale) * 0.045
+        let foam         = clamp(edgeFoam + contactFoam + crestFoam, 0.0, 0.22)
+        let heroColor    = opticalColor + vec3f(0.42, 0.72, 0.78) * foam
+        return vec4f(heroColor, 1.0)
     }
 }

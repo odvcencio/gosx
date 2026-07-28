@@ -11,8 +11,8 @@ import (
 
 func init() {
 	docsapp.RegisterStaticDocsPage(
-		"Water Lab",
-		"GoSX Scene3D water system with Elio simulation, Selena material hooks, caustics, reflections, and object interaction.",
+		"Water",
+		"Flagship GoSX Scene3D water with Elio simulation, Selena optics, depth-aware light transport, caustics, and object interaction.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				addWaterDemoPreloadHead(ctx)
@@ -21,9 +21,9 @@ func init() {
 				if err != nil {
 					return nil, err
 				}
-				// Cost knobs resolved from the URL (see diag.go). With no query
-				// parameters these are exactly the shipped values, so the demo is
-				// unchanged for everyone who does not ask for the diagnostics.
+				// Cost knobs and the named Hero/Balanced/Battery profiles resolve
+				// from the URL (see diag.go). Balanced is the measured default;
+				// every individual diagnostic query knob remains authoritative.
 				for k, v := range WaterDiagConfig(ctx) {
 					data["diag"+strings.ToUpper(k[:1])+k[1:]] = v
 				}
