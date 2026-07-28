@@ -72,7 +72,7 @@
     // WebGL2 water runtime, not the generic PBR path which cannot draw the
     // simulation.
     if (sceneFirstWaterEntry(props)) {
-      var waterResult = createSceneWaterWebGLResult(canvas, props, fallbackReason);
+      var waterResult = createSceneWaterWebGLResult(canvas, props, capability, fallbackReason);
       if (waterResult) {
         return waterResult;
       }
@@ -91,7 +91,7 @@
       const gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
         alpha: useCanvasAlpha,
         premultipliedAlpha: useCanvasAlpha,
-        antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+        antialias: sceneWebGLAntialias(props, capability),
         powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
       }) : null;
       if (gl) {
@@ -104,7 +104,7 @@
       return null;
     }
     const webglRenderer = legacyFactory(canvas, {
-      antialias: capability.tier === "full" && !capability.lowPower && !capability.reducedData,
+      antialias: sceneWebGLAntialias(props, capability),
       powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
     });
     return webglRenderer ? { renderer: webglRenderer, fallbackReason: fallbackReason, degraded: [] } : null;
@@ -117,18 +117,27 @@
     return systems[0] || null;
   }
 
+  function sceneWebGLAntialias(props, capability) {
+    var caps = capability || {};
+    var requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
+    if (requestedSamples > 1) return true;
+    if (requestedSamples === 1) return false;
+    var tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    return sceneBool(props && props.antialias, tierDefault);
+  }
+
   // createSceneWaterWebGLResult builds the WebGL2 water runtime for a water
   // scene. It is the single construction point shared by (a) the real A3
   // capability-gate fallback (WebGPU unavailable / lost) and (b) the
   // device-loss recovery path.
-  function createSceneWaterWebGLResult(canvas, props, fallbackReason) {
+  function createSceneWaterWebGLResult(canvas, props, capability, fallbackReason) {
     var waterFactory = sceneWaterWebGLRendererFactory();
     if (!waterFactory) return null;
     var entry = sceneFirstWaterEntry(props);
     if (!entry) return null;
     var gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-      alpha: false, premultipliedAlpha: false, antialias: true, depth: true,
-      powerPreference: "high-performance",
+      alpha: false, premultipliedAlpha: false, antialias: sceneWebGLAntialias(props, capability), depth: true,
+      powerPreference: capability && (capability.lowPower || capability.tier === "constrained") ? "low-power" : "high-performance",
     }) : null;
     if (!gl) return null;
     var renderer = null;
@@ -169,7 +178,7 @@
     if (verdict.backend === "webgpu" && webgpuAvail) return null;
     // Only intercept when WebGL2 is the active backend for this water scene.
     if (verdict.backend !== "webgl") return null;
-    return createSceneWaterWebGLResult(canvas, props, verdict.fallbackReason || "webgpu-unavailable") || {
+    return createSceneWaterWebGLResult(canvas, props, capability, verdict.fallbackReason || "webgpu-unavailable") || {
       renderer: null,
       fallbackReason: verdict.fallbackReason || "webgpu-unavailable",
       unsupportedReason: "water-webgl2-unavailable",
@@ -325,7 +334,112 @@
 
   const sceneModelAssetCache = new Map();
   const sceneModelAssetReady = new Set();
-  const sceneModelAssetFailures = new Set();
+  let sceneModelTextureVariantScopeSequence = 0;
+
+  function normalizeSceneModelTextureVariantContext(value, fallbackBackend) {
+    const source = value && typeof value === "object" ? value : {};
+    const backend = String(source.backend || fallbackBackend || "").trim().toLowerCase();
+    const seen = {};
+    const tokens = [];
+    const input = Array.isArray(source.tokens) ? source.tokens : [];
+    for (let index = 0; index < input.length; index += 1) {
+      const token = String(input[index] || "").trim().toLowerCase();
+      if (!token || seen[token]) continue;
+      seen[token] = true;
+      tokens.push(token);
+    }
+    tokens.sort();
+    return {
+      backend: backend === "canvas" ? "canvas2d" : backend,
+      uploadReady: source.uploadReady === true,
+      tokens,
+    };
+  }
+
+  function sceneModelTextureVariantFingerprint(context) {
+    const normalized = normalizeSceneModelTextureVariantContext(context, "");
+    return [
+      normalized.backend,
+      normalized.uploadReady ? "ready" : "authored",
+      normalized.tokens.join(","),
+    ].join("|");
+  }
+
+  function sceneModelTextureVariantContextForRenderer(renderer) {
+    const kind = renderer && renderer.kind ? renderer.kind : "";
+    return normalizeSceneModelTextureVariantContext(
+      renderer && renderer.textureVariantContext,
+      kind === "canvas" ? "canvas2d" : kind
+    );
+  }
+
+  function createSceneModelTextureVariantScope(context) {
+    const scope = {
+      key: "scene-model-variant-" + String(++sceneModelTextureVariantScopeSequence),
+      context: null,
+      fingerprint: "",
+      settled: false,
+      ready: null,
+      _resolve: null,
+    };
+    scope.ready = new Promise(function(resolve) {
+      scope._resolve = resolve;
+    });
+    if (arguments.length > 0) {
+      settleSceneModelTextureVariantScope(scope, context);
+    }
+    return scope;
+  }
+
+  function settleSceneModelTextureVariantScope(scope, context) {
+    if (!scope || scope.settled) {
+      return scope && scope.context;
+    }
+    const normalized = normalizeSceneModelTextureVariantContext(context, "");
+    scope.context = normalized;
+    scope.fingerprint = sceneModelTextureVariantFingerprint(normalized);
+    scope.settled = true;
+    const resolve = scope._resolve;
+    scope._resolve = null;
+    if (typeof resolve === "function") {
+      resolve(normalized);
+    }
+    return normalized;
+  }
+
+  function replaceSceneModelTextureVariantScope(state, renderer) {
+    if (!state) {
+      return { changed: false, scope: null };
+    }
+    const context = sceneModelTextureVariantContextForRenderer(renderer);
+    const fingerprint = sceneModelTextureVariantFingerprint(context);
+    const current = state._modelTextureVariantScope;
+    if (current && current.settled && current.fingerprint === fingerprint) {
+      return { changed: false, scope: current };
+    }
+    const scope = createSceneModelTextureVariantScope(context);
+    state._modelTextureVariantScope = scope;
+    return { changed: true, scope };
+  }
+
+  function publishSceneModelTextureVariantContext(mount, scope) {
+    if (!mount) return;
+    const context = scope && scope.context
+      ? normalizeSceneModelTextureVariantContext(scope.context, "")
+      : normalizeSceneModelTextureVariantContext(null, "");
+    const snapshot = {
+      scope: scope && scope.key ? String(scope.key) : "",
+      fingerprint: scope && scope.fingerprint ? String(scope.fingerprint) : "",
+      backend: context.backend,
+      uploadReady: context.uploadReady,
+      tokens: context.tokens.slice(),
+    };
+    mount.__gosxScene3DTextureVariantContext = snapshot;
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-backend", snapshot.backend);
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-upload-ready", snapshot.uploadReady ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-token-count", String(snapshot.tokens.length));
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-scope", snapshot.scope);
+  }
 
   function resolveSceneModelAssetURL(baseSrc, value) {
     const raw = typeof value === "string" ? value.trim() : "";
@@ -402,17 +516,28 @@
     );
   }
 
-  function sceneModelEffectivelyHidden(model) {
+  function sceneModelZeroOpacityHidesObject(model, object) {
+    const opacity = object && Object.prototype.hasOwnProperty.call(object, "opacity")
+      ? sceneNumber(object.opacity, sceneNumber(model && model.opacity, 1))
+      : sceneNumber(model && model.opacity, 1);
+    if (opacity > 0.0001) {
+      return false;
+    }
+    const material = sceneObjectMaterialProfile(object);
+    return !sceneMaterialUsesAuthoredMeshShader(material);
+  }
+
+  function sceneModelEffectivelyHidden(model, object) {
     return Boolean(model && model.visible === false)
       || sceneModelMaxScale(model) <= 0.0015
-      || sceneNumber(model && model.opacity, 1) <= 0.0001;
+      || sceneModelZeroOpacityHidesObject(model, object);
   }
 
   function sceneApplyModelObjectHiddenState(object, model) {
     if (!object) {
       return;
     }
-    object._modelHidden = sceneModelEffectivelyHidden(model);
+    object._modelHidden = sceneModelEffectivelyHidden(model, object);
   }
 
   function sceneModelRotateDirection(point, model) {
@@ -1597,6 +1722,47 @@
     return sceneGLTFFeaturePromise;
   }
 
+  function scenePropsHasIBLProducts(props) {
+    var scene = props && props.scene && typeof props.scene === "object" ? props.scene : props;
+    var environment = scene && scene.environment && typeof scene.environment === "object"
+      ? scene.environment
+      : null;
+    var ibl = environment && environment.ibl && typeof environment.ibl === "object"
+      ? environment.ibl
+      : null;
+    return Boolean(
+      ibl &&
+      ibl.radiance && typeof ibl.radiance.uri === "string" && ibl.radiance.uri.trim() &&
+      ibl.irradiance && typeof ibl.irradiance.uri === "string" && ibl.irradiance.uri.trim() &&
+      ibl.brdfLUT && typeof ibl.brdfLUT.uri === "string" && ibl.brdfLUT.uri.trim()
+    );
+  }
+
+  // IBL products use the small KTX2 reader that currently ships ahead of the
+  // glTF parser in the glTF sub-feature. Settle it before renderer creation so
+  // WebGPU cannot silently construct a frame layout that ignores an authored
+  // Environment.IBL descriptor. The parser chunk is cached page-wide.
+  async function settleSceneIBLFeature(props) {
+    if (!scenePropsHasIBLProducts(props)) return true;
+    try {
+      await ensureGLTFFeatureLoaded();
+      var ready = Boolean(window.__gosx_scene3d_ktx2);
+      if (!ready) {
+        gosxSceneEmit("warn", "ibl-loader-unavailable", {
+          reason: "ktx2-api-not-published",
+        });
+      }
+      return ready;
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D IBL products:", error && error.message ? error.message : error);
+      gosxSceneEmit("warn", "ibl-loader-unavailable", {
+        reason: "ktx2-feature-load-failed",
+        error: error && error.message ? String(error.message) : String(error),
+      });
+      return false;
+    }
+  }
+
   // Cached promise for the animation sub-feature chunk. Consumers that
   // want to drive keyframe or skeletal animations can await this helper
   // and then use window.__gosx_scene3d_animation_api.
@@ -1858,38 +2024,121 @@
     }
   }
 
-  function publishSceneModelAssetStatus(mount, status, asset, cached, error) {
+  function sceneModelHydrationIsCurrent(meta) {
+    if (!meta || !meta.state) {
+      return true;
+    }
+    return Number(meta.state._modelHydrationGeneration) === Number(meta.generation);
+  }
+
+  function invalidateSceneModelHydration(state) {
+    if (!state) return 0;
+    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
+    state._modelHydrationGeneration = generation;
+    return generation;
+  }
+
+  function publishSceneModelAssetStatus(mount, status, asset, cached, error, meta) {
     if (!mount) return;
+    const context = meta && typeof meta === "object" ? meta : {};
+    const variantScope = context.variantScope;
+    const variantContext = variantScope && variantScope.context
+      ? normalizeSceneModelTextureVariantContext(variantScope.context, "")
+      : normalizeSceneModelTextureVariantContext(null, "");
     const detail = {
       status: String(status || ""),
       asset: String(asset || ""),
       cached: Boolean(cached),
       error: error ? String(error) : "",
+      generation: Math.max(0, Math.floor(sceneNumber(context.generation, 0))),
+      modelID: String(context.modelID || ""),
+      modelIndex: Math.max(0, Math.floor(sceneNumber(context.modelIndex, 0))),
+      stage: String(context.stage || "load"),
+      stale: Boolean(context.stale),
+      committed: Boolean(context.committed),
+      variantScope: variantScope && variantScope.key ? String(variantScope.key) : "",
+      variantBackend: variantContext.backend,
+      variantUploadReady: variantContext.uploadReady,
+      variantTokenCount: variantContext.tokens.length,
     };
     setAttrValue(mount, "data-gosx-scene3d-model-status", detail.status);
     setAttrValue(mount, "data-gosx-scene3d-model-asset", detail.asset);
     setAttrValue(mount, "data-gosx-scene3d-model-cache", detail.cached ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-model-error", detail.error);
+    setAttrValue(mount, "data-gosx-scene3d-model-generation", String(detail.generation));
+    setAttrValue(mount, "data-gosx-scene3d-model-id", detail.modelID);
+    setAttrValue(mount, "data-gosx-scene3d-model-stage", detail.stage);
+    setAttrValue(mount, "data-gosx-scene3d-model-variant-scope", detail.variantScope);
+    setAttrValue(mount, "data-gosx-scene3d-model-variant-backend", detail.variantBackend);
+    setAttrValue(mount, "data-gosx-scene3d-model-variant-upload-ready", detail.variantUploadReady ? "true" : "false");
     if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
       mount.dispatchEvent(new CustomEvent("gosx:scene3d:model-status", { detail, bubbles: true }));
     }
   }
 
-  async function loadSceneModelAsset(src, mount) {
+  function publishSceneModelHydrationStatus(mount, status, detail) {
+    if (!mount) return;
+    const source = detail && typeof detail === "object" ? detail : {};
+    const counts = source.counts && typeof source.counts === "object" ? source.counts : {};
+    const eventDetail = {
+      status: String(status || ""),
+      generation: Math.max(0, Math.floor(sceneNumber(source.generation, 0))),
+      currentGeneration: Math.max(0, Math.floor(sceneNumber(source.currentGeneration, source.generation))),
+      stale: Boolean(source.stale),
+      committed: Boolean(source.committed),
+      stage: String(source.stage || ""),
+      modelID: String(source.modelID || ""),
+      modelIndex: Math.max(0, Math.floor(sceneNumber(source.modelIndex, 0))),
+      asset: String(source.asset || ""),
+      error: source.error ? String(source.error) : "",
+      counts,
+    };
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-status", eventDetail.status);
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-generation", String(eventDetail.generation));
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-current-generation", String(eventDetail.currentGeneration));
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-stale", eventDetail.stale ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-committed", eventDetail.committed ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-failure-stage", eventDetail.stage);
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-error", eventDetail.error);
+    try {
+      setAttrValue(mount, "data-gosx-scene3d-model-hydration-counts", JSON.stringify(counts));
+    } catch (_error) {
+      setAttrValue(mount, "data-gosx-scene3d-model-hydration-counts", "{}");
+    }
+    if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
+      mount.dispatchEvent(new CustomEvent("gosx:scene3d:model-hydration-status", { detail: eventDetail, bubbles: true }));
+    }
+  }
+
+  async function loadSceneModelAsset(src, mount, hydrationMeta) {
     const key = String(src || "").trim();
     if (!key) {
       return parseSceneModelAsset({}, key);
     }
-    const cached = sceneModelAssetCache.has(key);
-    if (sceneModelAssetReady.has(key)) {
-      publishSceneModelAssetStatus(mount, "cached", key, true, "");
-      return sceneModelAssetCache.get(key);
+    const format = sceneModelAssetFormat(key);
+    const variantScope = hydrationMeta && hydrationMeta.variantScope
+      ? hydrationMeta.variantScope
+      : (hydrationMeta && hydrationMeta.state ? hydrationMeta.state._modelTextureVariantScope : null);
+    const cacheKey = (format === "glb" || format === "gltf") && variantScope && variantScope.key
+      ? String(variantScope.key) + "\u0000" + key
+      : key;
+    const statusMeta = hydrationMeta
+      ? Object.assign({}, hydrationMeta, { variantScope })
+      : { variantScope };
+    const cached = sceneModelAssetCache.has(cacheKey);
+    if (sceneModelAssetReady.has(cacheKey)) {
+      const readyResult = await sceneModelAssetCache.get(cacheKey);
+      if (sceneModelHydrationIsCurrent(hydrationMeta)) {
+        publishSceneModelAssetStatus(mount, "cached", key, true, "", statusMeta);
+      }
+      return readyResult.asset;
     }
-    publishSceneModelAssetStatus(mount, "loading", key, cached, "");
+    if (sceneModelHydrationIsCurrent(hydrationMeta)) {
+      publishSceneModelAssetStatus(mount, "loading", key, cached, "", statusMeta);
+    }
     if (!cached) {
-      sceneModelAssetCache.set(key, (async function() {
+      const loadPromise = (async function() {
         try {
-          const format = sceneModelAssetFormat(key);
           if (format === "glb" || format === "gltf") {
             // GLTF parsing lives in a sub-feature chunk that's fetched
             // on demand — the first .glb/.gltf request on a page pays
@@ -1897,46 +2146,60 @@
             // cached module. Pages that never load models never fetch
             // the chunk at all.
             var gltfApi = await ensureGLTFFeatureLoaded();
-            const asset = parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(await gltfApi.sceneLoadGLTFModel(key), key), key);
-            sceneModelAssetReady.add(key);
-            return asset;
+            const variantContext = variantScope ? variantScope.ready : null;
+            const asset = parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(
+              await gltfApi.sceneLoadGLTFModel(key, variantContext),
+              key
+            ), key);
+            sceneModelAssetReady.add(cacheKey);
+            return { asset, error: null };
           }
           const response = await fetch(key, { credentials: "same-origin" });
           if (!response || !response.ok) {
             throw new Error("HTTP " + String(response && response.status || 0));
           }
           const asset = parseSceneModelAsset(await response.json(), key);
-          sceneModelAssetReady.add(key);
-          return asset;
+          sceneModelAssetReady.add(cacheKey);
+          return { asset, error: null };
         } catch (error) {
-          sceneModelAssetFailures.add(key);
           console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
           gosxSceneEmit("warn", "model-asset-load-failed", {
             asset: String(key || ""),
             error: error && error.message ? String(error.message) : String(error),
           });
-          return parseSceneModelAsset({}, key);
+          return { asset: parseSceneModelAsset({}, key), error };
         }
-      })());
+      })();
+      sceneModelAssetCache.set(cacheKey, loadPromise);
+      // Failed entries must not poison the page for its lifetime. Keep the
+      // in-flight Promise long enough to deduplicate current waiters, then
+      // evict it before a subsequent request so a transient failure can retry.
+      loadPromise.then(function(result) {
+        if (result && result.error && sceneModelAssetCache.get(cacheKey) === loadPromise) {
+          sceneModelAssetCache.delete(cacheKey);
+        }
+      });
     }
-    const asset = await sceneModelAssetCache.get(key);
-    if (sceneModelAssetFailures.has(key)) {
-      publishSceneModelAssetStatus(mount, "error", key, cached, "model asset failed to load");
-    } else {
-      publishSceneModelAssetStatus(mount, cached ? "cached" : "loaded", key, cached, "");
+    const result = await sceneModelAssetCache.get(cacheKey);
+    if (sceneModelHydrationIsCurrent(hydrationMeta)) {
+      if (result.error) {
+        publishSceneModelAssetStatus(mount, "error", key, cached,
+          result.error && result.error.message ? result.error.message : "model asset failed to load", statusMeta);
+      } else {
+        publishSceneModelAssetStatus(mount, cached ? "cached" : "loaded", key, cached, "", statusMeta);
+      }
     }
-    return asset;
+    return result.asset;
   }
 
   // Public prewarm hook for progressive single-engine upgrades (e.g. a boot
   // script that swaps a preview mount from a small preview GLB to the full
   // model without tearing down/re-mounting the engine). Fetching + parsing a
-  // GLB/glTF model asset ahead of the actual swap lands the parsed result in
-  // the module-level asset cache (sceneModelAssetCache / sceneModelAssetReady)
-  // keyed by src, so a later hydrateSceneStateModels() call for the same src
-  // — e.g. triggered through handle.applyCommands([{kind: CommandSetModels}])
-  // — resolves synchronously from cache instead of paying fetch+parse cost
-  // inline with the visible swap frame. Safe to call with no mounted engine;
+  // model asset ahead of the actual swap lands the parsed result in the
+  // module-level asset cache. JSON assets remain reusable by a later mount.
+  // GLB/glTF preloads are intentionally neutral and do not populate a
+  // renderer-scoped parsed cache: guessing a backend here would let one mount
+  // choose texture URIs for another. Safe to call with no mounted engine;
   // resolves to the parsed asset ({objects, points, labels, sprites, html,
   // lights, ...}, all empty arrays on failure) so callers can verify the load
   // actually produced content before committing to a swap.
@@ -2219,11 +2482,14 @@
     } else if (typeof animationApi.createMixer === "function") {
       if (clips.length) {
         const mixer = animationApi.createMixer();
+        // Own the mixer before clip registration: addClip is extensible and may
+        // throw, so failed transactional staging must still be able to dispose
+        // the resource through the already-registered model record.
+        record.mixer = mixer;
         for (let index = 0; index < clips.length; index += 1) {
           const clip = clips[index];
           mixer.addClip(clip.name, clip);
         }
-        record.mixer = mixer;
         sceneRegisterModelAnimationRecord(state, record);
         const requestedAnimation = typeof instanceModel.animation === "string" ? instanceModel.animation.trim() : "";
         if (requestedAnimation) {
@@ -2796,107 +3062,317 @@
     state._hydratedModelRecords = null;
   }
 
-  // P4-M3: free WASM motion mixers attached to model records before they are
-  // dropped (re-hydration or teardown). No-op when the flag is off / no mixers.
+  // Free motion mixers attached to model records before they are dropped
+  // (re-hydration, failed staging, supersession or teardown). The name is kept
+  // for compatibility with source-level consumers from the original WASM-only
+  // cleanup, but JS mixers are resources too and must follow the same lifetime.
   function sceneDestroyModelWasmMixers(records) {
-    if (!Array.isArray(records) || typeof window === "undefined" || typeof window.__gosx_motion_mixer_destroy !== "function") {
+    if (!Array.isArray(records)) {
       return;
     }
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
-      if (record && record.wasmMixer) {
+      if (!record) {
+        continue;
+      }
+      if (record.wasmMixer && typeof window !== "undefined" && typeof window.__gosx_motion_mixer_destroy === "function") {
         window.__gosx_motion_mixer_destroy(record.wasmMixer);
         record.wasmMixer = 0;
         record.wasmMixerActive = false;
       }
+      if (record.mixer && typeof record.mixer.dispose === "function") {
+        record.mixer.dispose();
+        record.mixer = null;
+      }
     }
   }
 
-  async function hydrateSceneStateModels(state, props) {
-    const models = sceneHydrationModels(state, props);
-    sceneDestroyModelWasmMixers(state && state._modelSkins);
-    state._modelAnimations = [];
-    state._modelSkins = [];
-    sceneClearHydratedModelRecords(state);
-    if (!models.length) {
-      return { models: 0, objects: 0, points: 0, labels: 0, sprites: 0, html: 0, lights: 0 };
-    }
-    const hydrated = { objects: [], points: [], labels: [], sprites: [], html: [], lights: [] };
-    let objectCount = 0;
-    let pointCount = 0;
-    let labelCount = 0;
-    let spriteCount = 0;
-    let htmlCount = 0;
-    let lightCount = 0;
-    await Promise.all(models.map(async function(model, modelIndex) {
-      const asset = await loadSceneModelAsset(model.src, state && state._modelStatusMount);
+  function sceneModelHydrationCounts(modelCount) {
+    return {
+      models: Math.max(0, Math.floor(sceneNumber(modelCount, 0))),
+      objects: 0,
+      points: 0,
+      labels: 0,
+      sprites: 0,
+      html: 0,
+      lights: 0,
+    };
+  }
+
+  function sceneModelHydrationOutcome(counts, generation, outcome, committed, stale, failureStage) {
+    return Object.assign({}, counts, {
+      generation,
+      outcome: String(outcome || ""),
+      committed: Boolean(committed),
+      stale: Boolean(stale),
+      failureStage: String(failureStage || ""),
+    });
+  }
+
+  async function sceneStageModelHydration(state, model, modelIndex, generation) {
+    const staged = {
+      model,
+      modelIndex,
+      objects: [],
+      points: [],
+      labels: [],
+      sprites: [],
+      html: [],
+      lights: [],
+      modelAnimations: [],
+      modelSkins: [],
+    };
+    const stageState = {
+      _modelAnimations: staged.modelAnimations,
+      _modelSkins: staged.modelSkins,
+    };
+    let stage = "load";
+    try {
+      const asset = await loadSceneModelAsset(model.src, state && state._modelStatusMount, {
+        state,
+        generation,
+        modelID: model.id || "",
+        modelIndex,
+        stage: "load",
+        variantScope: state && state._modelTextureVariantScope,
+      });
+      // A newer command already owns the scene. Avoid needless instantiation
+      // and mixer creation; the terminal generation check still fences the
+      // whole batch in case supersession happens later.
+      if (Number(state._modelHydrationGeneration) !== Number(generation)) {
+        return { ok: true, staged };
+      }
+      stage = "fit";
       const instanceModel = sceneModelWithAssetFit(model, asset);
       const prefix = model.id || ("scene-model-" + modelIndex);
+      stage = "skin-clone";
       const skinInstances = sceneCloneModelSkins(asset.skins);
       const objectIDs = [];
+      stage = "object";
       for (let i = 0; i < asset.objects.length; i += 1) {
         const object = sceneInstantiateModelObject(asset.objects[i], instanceModel, prefix, i, skinInstances);
         if (!object) {
           continue;
         }
-        state.objects.set(object.id, object);
-        hydrated.objects.push(object.id);
+        staged.objects.push(object);
         objectIDs.push(object.id);
-        objectCount += 1;
       }
+      stage = "points";
       for (let i = 0; i < asset.points.length; i += 1) {
         const point = sceneInstantiateModelPointsEntry(asset.points[i], instanceModel, prefix, i);
-        if (!point || point.count <= 0) {
-          continue;
+        if (point && point.count > 0) {
+          staged.points.push(point);
         }
-        state.points.push(point);
-        hydrated.points.push(point.id);
-        pointCount += 1;
       }
+      stage = "label";
       for (let i = 0; i < asset.labels.length; i += 1) {
         const label = sceneInstantiateModelLabel(asset.labels[i], instanceModel, prefix, i);
-        if (!label || !label.text.trim()) {
-          continue;
+        if (label && label.text.trim()) {
+          staged.labels.push(label);
         }
-        state.labels.set(label.id, label);
-        hydrated.labels.push(label.id);
-        labelCount += 1;
       }
+      stage = "sprite";
       for (let i = 0; i < asset.sprites.length; i += 1) {
         const sprite = sceneInstantiateModelSprite(asset.sprites[i], instanceModel, prefix, i);
-        if (!sprite) {
-          continue;
+        if (sprite) {
+          staged.sprites.push(sprite);
         }
-        state.sprites.set(sprite.id, sprite);
-        hydrated.sprites.push(sprite.id);
-        spriteCount += 1;
       }
+      stage = "html";
       for (let i = 0; i < asset.html.length; i += 1) {
         const entry = sceneInstantiateModelHTML(asset.html[i], instanceModel, prefix, i);
-        if (!entry) {
-          continue;
+        if (entry) {
+          staged.html.push(entry);
         }
-        state.html.set(entry.id, entry);
-        hydrated.html.push(entry.id);
-        htmlCount += 1;
       }
+      stage = "light";
       for (let i = 0; i < asset.lights.length; i += 1) {
         const light = sceneInstantiateModelLight(asset.lights[i], instanceModel, prefix, i);
-        if (!light) {
-          continue;
+        if (light) {
+          staged.lights.push(light);
         }
+      }
+      stage = "skin";
+      if (sceneModelHasSkins(skinInstances)) {
+        await scenePrepareModelSkinPlayback(stageState, asset, instanceModel, skinInstances, objectIDs);
+      } else {
+        sceneRegisterStaticModelLiveRecord(stageState, instanceModel, objectIDs);
+      }
+      return { ok: true, staged };
+    } catch (error) {
+      return { ok: false, staged, stage, error };
+    }
+  }
+
+  function sceneDestroyStagedModelHydrations(results) {
+    for (let index = 0; index < results.length; index += 1) {
+      const staged = results[index] && results[index].staged;
+      if (staged) {
+        sceneDestroyModelWasmMixers(staged.modelSkins);
+      }
+    }
+  }
+
+  async function hydrateSceneStateModels(state, props) {
+    if (!state) {
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(0), 0, "failed", false, false, "state");
+    }
+    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
+    state._modelHydrationGeneration = generation;
+    let models;
+    try {
+      // Commands can replace the declaration arrays while their assets are in
+      // flight. Clone the fully-expanded list once so this generation has an
+      // immutable, deterministic declaration order.
+      models = sceneHydrationModels(state, props).map(sceneCloneData);
+    } catch (error) {
+      const counts = sceneModelHydrationCounts(0);
+      publishSceneModelHydrationStatus(state._modelStatusMount, "failed", {
+        generation,
+        currentGeneration: state._modelHydrationGeneration,
+        committed: false,
+        stage: "declarations",
+        error: error && error.message ? error.message : error,
+        counts,
+      });
+      return sceneModelHydrationOutcome(counts, generation, "failed", false, false, "declarations");
+    }
+
+    const counts = sceneModelHydrationCounts(models.length);
+    publishSceneModelHydrationStatus(state._modelStatusMount, "loading", {
+      generation,
+      currentGeneration: generation,
+      committed: false,
+      counts,
+    });
+    if (!models.length) {
+      sceneDestroyModelWasmMixers(state._modelSkins);
+      sceneClearHydratedModelRecords(state);
+      state._modelAnimations = [];
+      state._modelSkins = [];
+      publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+        generation,
+        currentGeneration: generation,
+        committed: true,
+        counts,
+      });
+      gosxSceneEmit("info", "model-hydration-committed", {
+        generation,
+        committed: true,
+        stale: false,
+        models: 0,
+      });
+      return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
+    }
+
+    const results = await Promise.all(models.map(function(model, modelIndex) {
+      return sceneStageModelHydration(state, model, modelIndex, generation);
+    }));
+
+    if (Number(state._modelHydrationGeneration) !== Number(generation)) {
+      sceneDestroyStagedModelHydrations(results);
+      gosxSceneEmit("info", "model-hydration-stale", {
+        generation,
+        currentGeneration: state._modelHydrationGeneration,
+        committed: false,
+        stale: true,
+      });
+      return sceneModelHydrationOutcome(counts, generation, "stale", false, true, "");
+    }
+
+    const failure = results.find(function(result) { return !result || result.ok !== true; });
+    if (failure) {
+      sceneDestroyStagedModelHydrations(results);
+      const failedStage = failure && failure.stage ? failure.stage : "unknown";
+      const failedError = failure && failure.error;
+      const failedStaged = failure && failure.staged;
+      publishSceneModelHydrationStatus(state._modelStatusMount, "failed", {
+        generation,
+        currentGeneration: generation,
+        committed: false,
+        stage: failedStage,
+        modelID: failedStaged && failedStaged.model ? failedStaged.model.id : "",
+        modelIndex: failedStaged ? failedStaged.modelIndex : 0,
+        asset: failedStaged && failedStaged.model ? failedStaged.model.src : "",
+        error: failedError && failedError.message ? failedError.message : failedError,
+        counts,
+      });
+      console.warn("[gosx] Scene3D model hydration failed during " + failedStage + ":",
+        failedError && failedError.message ? failedError.message : failedError);
+      gosxSceneEmit("warn", "model-hydration-failed", {
+        generation,
+        committed: false,
+        stale: false,
+        stage: failedStage,
+        modelID: failedStaged && failedStaged.model ? String(failedStaged.model.id || "") : "",
+        asset: failedStaged && failedStaged.model ? String(failedStaged.model.src || "") : "",
+        error: failedError && failedError.message ? String(failedError.message) : String(failedError || ""),
+      });
+      return sceneModelHydrationOutcome(counts, generation, "failed", false, false, failedStage);
+    }
+
+    // The entire generation is ready and still current. Replace the previous
+    // model-derived records in one synchronous turn, preserving declaration
+    // order regardless of network completion order.
+    sceneDestroyModelWasmMixers(state._modelSkins);
+    sceneClearHydratedModelRecords(state);
+    state._modelAnimations = [];
+    state._modelSkins = [];
+    const hydrated = { objects: [], points: [], labels: [], sprites: [], html: [], lights: [] };
+    for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
+      const staged = results[modelIndex].staged;
+      for (let index = 0; index < staged.objects.length; index += 1) {
+        const object = staged.objects[index];
+        state.objects.set(object.id, object);
+        hydrated.objects.push(object.id);
+      }
+      for (let index = 0; index < staged.points.length; index += 1) {
+        const point = staged.points[index];
+        state.points.push(point);
+        hydrated.points.push(point.id);
+      }
+      for (let index = 0; index < staged.labels.length; index += 1) {
+        const label = staged.labels[index];
+        state.labels.set(label.id, label);
+        hydrated.labels.push(label.id);
+      }
+      for (let index = 0; index < staged.sprites.length; index += 1) {
+        const sprite = staged.sprites[index];
+        state.sprites.set(sprite.id, sprite);
+        hydrated.sprites.push(sprite.id);
+      }
+      for (let index = 0; index < staged.html.length; index += 1) {
+        const entry = staged.html[index];
+        state.html.set(entry.id, entry);
+        hydrated.html.push(entry.id);
+      }
+      for (let index = 0; index < staged.lights.length; index += 1) {
+        const light = staged.lights[index];
         state.lights.set(light.id, light);
         hydrated.lights.push(light.id);
-        lightCount += 1;
       }
-      if (sceneModelHasSkins(skinInstances)) {
-        await scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs);
-      } else {
-        sceneRegisterStaticModelLiveRecord(state, instanceModel, objectIDs);
-      }
-    }));
+      Array.prototype.push.apply(state._modelAnimations, staged.modelAnimations);
+      Array.prototype.push.apply(state._modelSkins, staged.modelSkins);
+    }
     state._hydratedModelRecords = hydrated;
-    return { models: models.length, objects: objectCount, points: pointCount, labels: labelCount, sprites: spriteCount, html: htmlCount, lights: lightCount };
+    counts.objects = hydrated.objects.length;
+    counts.points = hydrated.points.length;
+    counts.labels = hydrated.labels.length;
+    counts.sprites = hydrated.sprites.length;
+    counts.html = hydrated.html.length;
+    counts.lights = hydrated.lights.length;
+    publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+      generation,
+      currentGeneration: generation,
+      committed: true,
+      counts,
+    });
+    gosxSceneEmit("info", "model-hydration-committed", Object.assign({
+      generation,
+      committed: true,
+      stale: false,
+    }, counts));
+    return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
   }
 
   function normalizeSceneCapabilityTier(value) {
@@ -3762,4 +4238,3 @@
     applySceneAdaptiveQualityState(mount, state, now, false);
     return false;
   }
-

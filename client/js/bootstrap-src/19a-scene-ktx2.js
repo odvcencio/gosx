@@ -16,9 +16,10 @@
 //
 // Scope
 //
-// Block-compressed formats only. An uncompressed KTX2 container raises a named
-// error, because an image element already loads those pixels and a second path
-// would only add bytes.
+// Native block-compressed material textures plus the two uncompressed
+// half-float products written by assetpipe/ibl. The latter cannot go through an
+// image element: they carry cube faces, a roughness mip chain and linear HDR
+// values that an image decoder would flatten or tone map.
 //
 // Chunks: bootstrap.js and bootstrap-feature-scene3d-gltf.js. It must load
 // before 19-scene-gltf.js, which reads sceneKTX2UploadPathReady.
@@ -37,7 +38,10 @@
   //   2 the texel block width
   //   3 the texel block height
   //   4 the bytes one texel block holds
-  //   5 the WebGL2 extension that turns the internal format on
+  //   5 the WebGL2 extension that turns the internal format on ("" for core)
+  //   6 whether the format is block compressed
+  //   7 the WebGL2 external format for uncompressed payloads
+  //   8 the WebGL2 element type for uncompressed payloads
   //
   // The VkFormat numbers come from render/bundle/ktx2/ktx2.go. The WebGPU names
   // come from ktx2FormatToGPU in render/bundle/ktx2_loader.go composed with
@@ -52,16 +56,20 @@
   // ASTC and ETC2 have no row. No GoSX build step writes those payloads, so a
   // row for them would describe a file that never exists.
   var SCENE_KTX2_FORMATS = {
-    131: ["bc1-rgba-unorm", 0x83F0, 4, 4, 8, "WEBGL_compressed_texture_s3tc"],
-    132: ["bc1-rgba-unorm-srgb", 0x8C4C, 4, 4, 8, "WEBGL_compressed_texture_s3tc_srgb"],
-    133: ["bc1-rgba-unorm", 0x83F1, 4, 4, 8, "WEBGL_compressed_texture_s3tc"],
-    134: ["bc1-rgba-unorm-srgb", 0x8C4D, 4, 4, 8, "WEBGL_compressed_texture_s3tc_srgb"],
-    137: ["bc3-rgba-unorm", 0x83F3, 4, 4, 16, "WEBGL_compressed_texture_s3tc"],
-    138: ["bc3-rgba-unorm-srgb", 0x8C4F, 4, 4, 16, "WEBGL_compressed_texture_s3tc_srgb"],
-    139: ["bc4-r-unorm", 0x8DBB, 4, 4, 8, "EXT_texture_compression_rgtc"],
-    141: ["bc5-rg-unorm", 0x8DBD, 4, 4, 16, "EXT_texture_compression_rgtc"],
-    145: ["bc7-rgba-unorm", 0x8E8C, 4, 4, 16, "EXT_texture_compression_bptc"],
-    146: ["bc7-rgba-unorm-srgb", 0x8E8D, 4, 4, 16, "EXT_texture_compression_bptc"],
+    // VK_FORMAT_R16G16_SFLOAT / VK_FORMAT_R16G16B16A16_SFLOAT. WebGL enum
+    // values are RG16F/RG and RGBA16F/RGBA; HALF_FLOAT is 0x140B.
+    83:  ["rg16float", 0x822F, 1, 1, 4, "OES_texture_float_linear", false, 0x8227, 0x140B],
+    97:  ["rgba16float", 0x881A, 1, 1, 8, "OES_texture_float_linear", false, 0x1908, 0x140B],
+    131: ["bc1-rgba-unorm", 0x83F0, 4, 4, 8, "WEBGL_compressed_texture_s3tc", true, 0, 0],
+    132: ["bc1-rgba-unorm-srgb", 0x8C4C, 4, 4, 8, "WEBGL_compressed_texture_s3tc_srgb", true, 0, 0],
+    133: ["bc1-rgba-unorm", 0x83F1, 4, 4, 8, "WEBGL_compressed_texture_s3tc", true, 0, 0],
+    134: ["bc1-rgba-unorm-srgb", 0x8C4D, 4, 4, 8, "WEBGL_compressed_texture_s3tc_srgb", true, 0, 0],
+    137: ["bc3-rgba-unorm", 0x83F3, 4, 4, 16, "WEBGL_compressed_texture_s3tc", true, 0, 0],
+    138: ["bc3-rgba-unorm-srgb", 0x8C4F, 4, 4, 16, "WEBGL_compressed_texture_s3tc_srgb", true, 0, 0],
+    139: ["bc4-r-unorm", 0x8DBB, 4, 4, 8, "EXT_texture_compression_rgtc", true, 0, 0],
+    141: ["bc5-rg-unorm", 0x8DBD, 4, 4, 16, "EXT_texture_compression_rgtc", true, 0, 0],
+    145: ["bc7-rgba-unorm", 0x8E8C, 4, 4, 16, "EXT_texture_compression_bptc", true, 0, 0],
+    146: ["bc7-rgba-unorm-srgb", 0x8E8D, 4, 4, 16, "EXT_texture_compression_bptc", true, 0, 0],
   };
 
   // sceneKTX2Error names the failure, so a caller branches on a code instead of
@@ -98,6 +106,9 @@
       blockHeight: row[3],
       bytesPerBlock: row[4],
       webglExtension: row[5],
+      compressed: row[6],
+      webglFormat: row[7],
+      webglType: row[8],
     };
   }
 
@@ -135,6 +146,7 @@
       faces: u32(36) || 1,
       levelCount: u32(40) || 1,
       supercompressionScheme: u32(44),
+      keyValues: {},
       levels: [],
     };
     if (image.width < 1 || image.height < 1) {
@@ -159,6 +171,44 @@
         uncompressedByteLength: u64(entry + 16),
         bytes: bytes.subarray(offset, offset + length),
       });
+    }
+    // KTX2 key/value data is a sequence of uint32 byte lengths followed by a
+    // NUL-terminated UTF-8 key, the value bytes, and 4-byte padding. IBL uses
+    // it to pin role/color/model metadata. Malformed optional metadata is a
+    // container error: accepting it would make the shader convention a guess.
+    var kvdOffset = u32(56);
+    var kvdLength = u32(60);
+    if (kvdLength > 0) {
+      if (kvdOffset < indexEnd || kvdOffset + kvdLength > bytes.byteLength) {
+        throw sceneKTX2Error("kvd-range", "key/value data runs past the file");
+      }
+      var decoder = typeof TextDecoder === "function" ? new TextDecoder("utf-8") : null;
+      var kvCursor = kvdOffset;
+      var kvEnd = kvdOffset + kvdLength;
+      while (kvCursor + 4 <= kvEnd) {
+        var pairLength = u32(kvCursor);
+        kvCursor += 4;
+        if (pairLength < 2 || kvCursor + pairLength > kvEnd) {
+          throw sceneKTX2Error("kvd-entry", "invalid key/value entry length " + pairLength);
+        }
+        var pair = bytes.subarray(kvCursor, kvCursor + pairLength);
+        var zero = pair.indexOf(0);
+        if (zero <= 0) {
+          throw sceneKTX2Error("kvd-entry", "key/value entry has no key terminator");
+        }
+        var keyBytes = pair.subarray(0, zero);
+        var valueBytes = pair.subarray(zero + 1);
+        // render/bundle/ktx2 writes key\0value\0. Remove exactly the one
+        // KTX2 string terminator, not arbitrary NULs inside a binary value.
+        if (valueBytes.length > 0 && valueBytes[valueBytes.length - 1] === 0) {
+          valueBytes = valueBytes.subarray(0, valueBytes.length - 1);
+        }
+        var key = decoder ? decoder.decode(keyBytes) : String.fromCharCode.apply(null, keyBytes);
+        var value = decoder ? decoder.decode(valueBytes) : String.fromCharCode.apply(null, valueBytes);
+        image.keyValues[key] = value;
+        kvCursor += pairLength;
+        kvCursor = (kvCursor + 3) & ~3;
+      }
     }
     return image;
   }
@@ -262,6 +312,7 @@
     var texture = device.createTexture({
       label: opts.label || "gosx.ktx2",
       size: { width: image.width, height: image.height, depthOrArrayLayers: slices },
+      dimension: "2d",
       format: layout.webgpuFormat,
       mipLevelCount: image.levels.length,
       // TEXTURE_BINDING | COPY_DST. The bit values are stable WebGPU spec
@@ -293,16 +344,38 @@
   function sceneKTX2UploadWebGL2(gl, image, options) {
     var layout = sceneKTX2DecodedLayout(image);
     var opts = options || {};
-    if (typeof gl.getExtension !== "function" || !gl.getExtension(layout.webglExtension)) {
+    if (layout.webglExtension && (typeof gl.getExtension !== "function" || !gl.getExtension(layout.webglExtension))) {
       throw sceneKTX2Error("extension", "this context has no " + layout.webglExtension);
     }
     var texture = opts.texture || gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
+    var cube = image.faces === 6;
+    if (image.faces !== 1 && !cube) {
+      throw sceneKTX2Error("faces", "WebGL upload supports 1 or 6 faces, got " + image.faces);
+    }
+    var target = cube ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
+    gl.bindTexture(target, texture);
     for (var i = 0; i < image.levels.length; i++) {
       var level = image.levels[i];
-      gl.compressedTexImage2D(gl.TEXTURE_2D, i, layout.webglInternalFormat, level.width, level.height, 0, level.bytes);
+      var faceBytes = level.bytes.byteLength / image.faces;
+      if (!Number.isInteger(faceBytes)) {
+        throw sceneKTX2Error("face-size", "level " + i + " does not divide into " + image.faces + " faces");
+      }
+      for (var face = 0; face < image.faces; face++) {
+        var faceTarget = cube ? gl.TEXTURE_CUBE_MAP_POSITIVE_X + face : gl.TEXTURE_2D;
+        var payload = level.bytes.subarray(face * faceBytes, (face + 1) * faceBytes);
+        if (layout.compressed) {
+          gl.compressedTexImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, payload);
+        } else {
+          gl.texImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, layout.webglFormat, layout.webglType, payload);
+        }
+      }
     }
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, image.levels.length - 1);
+    gl.texParameteri(target, gl.TEXTURE_MAX_LEVEL, image.levels.length - 1);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    if (cube && gl.TEXTURE_WRAP_R !== undefined) {
+      gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+    }
     return texture;
   }
 

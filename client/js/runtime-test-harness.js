@@ -3712,7 +3712,7 @@ function makeFakeGPUDevice(options) {
     return pass;
   }
   const device = {
-    lost: new Promise(() => {}),
+    lost: options && options.lost ? options.lost : new Promise(() => {}),
     features: new Set(timestampQuery ? ["timestamp-query"] : []),
     limits: timestampQuery ? { timestampPeriod: 1 } : {},
     queue: {
@@ -4682,8 +4682,12 @@ function makeFakeGPUDeviceForCompute(options) {
 // createComputeParticleHarness boots the same chunk stack as
 // createBoardWebGPUHarness but injects a caller-supplied fake device instead
 // of the default makeFakeGPUDevice(), enabling per-test async pipeline control.
-async function createComputeParticleHarness(fakeDevice) {
-  const env = createContext({ enableWebGPU: true });
+async function createComputeParticleHarness(fakeDevice, options) {
+  const opts = options || {};
+  const env = createContext({
+    enableWebGPU: true,
+    performanceNow: opts.performanceNow,
+  });
   env.context.GPUBufferUsage = {
     MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
     INDEX: 0x10, VERTEX: 0x20, UNIFORM: 0x40, STORAGE: 0x80,
@@ -4961,10 +4965,18 @@ function makeBundleWithCustomPost(options) {
 
 // createWebGLRendererForPost: helper that boots the WebGL2 backend (same
 // pattern as other WebGL2 renderer tests in this file).
-function createWebGLRendererForPost() {
+function createWebGLRendererForPost(options) {
+  const opts = options || {};
   const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
-  runScript(bootstrapSource, env.context, "bootstrap.js");
+  if (opts.fresh) {
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+    runScript(freshFeatureBundleSource("scene3d-compute"), env.context, "bootstrap-feature-scene3d-compute.js");
+    runScript(freshFeatureBundleSource("scene3d-webgl"), env.context, "bootstrap-feature-scene3d-webgl.js");
+  } else {
+    runScript(bootstrapSource, env.context, "bootstrap.js");
+  }
   const api = env.context.__gosx_scene3d_api;
   const registry = api.sceneBackendRegistry;
   const backend = registry.select({ webgl: true, webgl2: true, webgpu: false, canvas: false, canvas2d: false });

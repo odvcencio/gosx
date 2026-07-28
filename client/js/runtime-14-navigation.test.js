@@ -165,6 +165,94 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.equal(env.scrollCalls[0][0].behavior, "instant");
 });
 
+test("navigation runtime sends typed beacons once per soft navigation path", async () => {
+  function beaconScript() {
+    const script = new FakeElement("script", null);
+    script.setAttribute("type", "application/json");
+    script.setAttribute("data-gosx-navigation-beacon", "");
+    script.textContent = JSON.stringify({
+      name: "first-party-pageview",
+      url: "/__internal/attribution/pageview",
+      method: "POST",
+      credentials: "same-origin",
+      keepalive: true,
+      pathField: "path",
+      navigationIDField: "navigation_id",
+    });
+    return script;
+  }
+
+  const parsedDocs = new Map();
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs?tab=runtime");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Docs";
+
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/docs?tab=runtime": {
+        text: "__DOCS_PAGE__",
+        url: "http://localhost:3000/docs?tab=runtime",
+      },
+      "/__internal/attribution/pageview": { status: 204, text: "" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  appendManagedHead(env.document, [beaconScript()]);
+
+  const samePageLink = new FakeElement("a", null);
+  samePageLink.setAttribute("href", "/docs?tab=runtime");
+  samePageLink.setAttribute("data-gosx-link", "");
+  samePageLink.textContent = "Docs current";
+
+  const nextMain = new FakeElement("main", null);
+  nextMain.id = "docs-page";
+  nextMain.appendChild(samePageLink);
+  parsedDocs.set("__DOCS_PAGE__", buildNavigatedDocument({
+    title: "Docs",
+    headNodes: [beaconScript()],
+    bodyNodes: [nextMain],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs?tab=runtime");
+  await flushAsyncWork();
+
+  const beaconCalls = () => env.fetchCalls.filter((call) => call.url === "/__internal/attribution/pageview");
+  assert.equal(beaconCalls().length, 1);
+  const first = beaconCalls()[0];
+  assert.equal(first.init.method, "POST");
+  assert.equal(first.init.credentials, "same-origin");
+  assert.equal(first.init.keepalive, true);
+  const payload = JSON.parse(first.init.body);
+  assert.deepEqual(payload, {
+    path: "/docs?tab=runtime",
+    navigation_id: payload.navigation_id,
+  });
+  assert.match(payload.navigation_id, /^[0-9a-f-]{36}$/);
+
+  const clickListener = env.document.eventListeners.get("click")[0];
+  clickListener({
+    type: "click",
+    button: 0,
+    target: samePageLink,
+    defaultPrevented: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(beaconCalls().length, 1);
+});
+
 test("navigation runtime aborts stale fetches and lets the newest navigation win", async () => {
   class TestAbortSignal {
     constructor() {
@@ -1439,6 +1527,66 @@ test("navigation runtime leaves non-interceptable links to native handling", asy
   }
 
   assert.equal(env.fetchCalls.length, 0);
+});
+
+test("navigation runtime consumes exact current-page link clicks without soft navigation", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-prefetch", "intent");
+  link.textContent = "Home";
+
+  const stableBody = new FakeElement("main", null);
+  stableBody.id = "stable-page";
+  stableBody.textContent = "Home";
+
+  const disposeCalls = [];
+  const bootstrapCalls = [];
+  const env = createContext({
+    elements: [link, stableBody],
+  });
+  env.context.__gosx_dispose_page = async function() {
+    disposeCalls.push("dispose");
+  };
+  env.context.__gosx_bootstrap_page = async function() {
+    bootstrapCalls.push("bootstrap");
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+
+  let prevented = false;
+  const clickListener = env.document.eventListeners.get("click")[0];
+  clickListener({
+    type: "click",
+    target: link,
+    button: 0,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true, "current managed link should not fall through to a native reload");
+  assert.equal(env.fetchCalls.length, 0, "current managed link should not prefetch or fetch itself");
+  assert.deepEqual(disposeCalls, []);
+  assert.deepEqual(bootstrapCalls, []);
+  assert.equal(env.document.getElementById("stable-page"), stableBody);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:navigate");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.url, "http://localhost:3000/");
+  assert.equal(
+    JSON.stringify(env.scrollCalls.at(-1)),
+    JSON.stringify([{ top: 0, left: 0, behavior: "instant" }]),
+  );
 });
 
 test("navigation runtime absolutizes managed asset URLs during navigation", async () => {

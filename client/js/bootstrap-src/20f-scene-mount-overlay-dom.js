@@ -992,4 +992,3 @@
       setSceneHTMLTextureLayerAttrs(layer, sceneHTMLTextureStats(entries, nextLifecycle), entries.length);
     }
   }
-

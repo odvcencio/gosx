@@ -338,7 +338,11 @@
       normalMap: object && typeof object.normalMap === "string" ? object.normalMap.trim() : "",
       roughnessMap: object && typeof object.roughnessMap === "string" ? object.roughnessMap.trim() : "",
       metalnessMap: object && typeof object.metalnessMap === "string" ? object.metalnessMap.trim() : "",
+      occlusionMap: object && typeof object.occlusionMap === "string" ? object.occlusionMap.trim() : "",
       emissiveMap: object && typeof object.emissiveMap === "string" ? object.emissiveMap.trim() : "",
+      textureDescriptors: typeof normalizeSceneMaterialTextureDescriptors === "function"
+        ? normalizeSceneMaterialTextureDescriptors(object && object.textureDescriptors, null)
+        : (object && object.textureDescriptors ? sceneCloneData(object.textureDescriptors) : null),
     };
     profile.renderPass = normalizeSceneMaterialRenderPass(object && object.renderPass, profile.blendMode, profile.opacity, kind);
     profile.key = sceneMaterialProfileKey(profile);
@@ -379,7 +383,9 @@
       String(profile && profile.normalMap || ""),
       String(profile && profile.roughnessMap || ""),
       String(profile && profile.metalnessMap || ""),
+      String(profile && profile.occlusionMap || ""),
       String(profile && profile.emissiveMap || ""),
+      JSON.stringify(profile && profile.textureDescriptors || null),
     ];
     if (registryProfile) {
       parts.push("profile:" + registryProfile.version + ":" + String(registryProfile.key || ""));

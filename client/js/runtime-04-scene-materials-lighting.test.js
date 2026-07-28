@@ -13,13 +13,35 @@ const vm = require("node:vm");
 
 const {
   bootstrapSource,
+  bootstrapRuntimeSource,
+  bootstrapFeatureEnginesSource,
   FakeWebGLContext,
   FakeElement,
   buildMinimalGLBBytes,
+  buildSkinnedGLBBytes,
   createContext,
   runScript,
   flushAsyncWork,
+  freshFeatureBundleSource,
 } = require("./runtime-test-harness.js");
+
+function createDeferredModelRoute() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function modelAssetJSON(id) {
+  return {
+    text: JSON.stringify({
+      objects: [{ id, kind: "box", width: 1, height: 1, depth: 1 }],
+    }),
+  };
+}
 
 test("bootstrap allocates Scene3D texture units without CSM and IBL collisions", () => {
   const env = createContext({});
@@ -29,19 +51,19 @@ test("bootstrap allocates Scene3D texture units without CSM and IBL collisions",
   assert.equal(typeof api.allocateTextureUnits, "function");
 
   const twoShadowLayout = api.allocateTextureUnits({ shadowCount: 2, ibl: true, maxUnits: 16 });
-  assert.deepEqual(Array.from(twoShadowLayout.shadows), [5, 6]);
-  assert.deepEqual({ ...twoShadowLayout.ibl }, { irradiance: 7, radiance: 8, brdfLUT: 9 });
+  assert.deepEqual(Array.from(twoShadowLayout.shadows), [6, 7]);
+  assert.deepEqual({ ...twoShadowLayout.ibl }, { irradiance: 8, radiance: 9, brdfLUT: 10 });
 
   const defaultLayout = api.allocateTextureUnits({ shadowCount: 2, ibl: true });
-  assert.deepEqual(Array.from(defaultLayout.shadows), [5, 6]);
-  assert.deepEqual({ ...defaultLayout.ibl }, { irradiance: 7, radiance: 8, brdfLUT: 9 });
+  assert.deepEqual(Array.from(defaultLayout.shadows), [6, 7]);
+  assert.deepEqual({ ...defaultLayout.ibl }, { irradiance: 8, radiance: 9, brdfLUT: 10 });
 
   const csmLayout = api.allocateTextureUnits({ shadowCount: 4, ibl: true, maxUnits: 16 });
-  assert.deepEqual(Array.from(csmLayout.shadows), [5, 6, 7, 8]);
-  assert.deepEqual({ ...csmLayout.ibl }, { irradiance: 9, radiance: 10, brdfLUT: 11 });
+  assert.deepEqual(Array.from(csmLayout.shadows), [6, 7, 8, 9]);
+  assert.deepEqual({ ...csmLayout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
 
   const constrained = api.allocateTextureUnits({ shadowCount: 6, ibl: true, maxUnits: 10 });
-  assert.deepEqual(Array.from(constrained.shadows), [5, 6]);
+  assert.deepEqual(Array.from(constrained.shadows), [6]);
   assert.deepEqual({ ...constrained.ibl }, { irradiance: 7, radiance: 8, brdfLUT: 9 });
   assert.equal(constrained.warnings.length > 0, true);
 });
@@ -309,15 +331,22 @@ test("bootstrap binds Scene3D environment maps for WebGL PBR", async () => {
     },
   });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
+  env.context.window.__gosx_scene3d_perf = true;
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
   await flushAsyncWork();
 
   assert.equal(env.imageLoads.includes("/hdri/studio.png"), true);
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.children[0].listenerCount("gosx:scene3d:resource-ready"), 1);
   const gl = mount.children[0].getContext("webgl2");
+  assert.ok(
+    mount.__gosxScene3DScheduleCounts["schedule:resource-ready"] >= 1,
+    "a static scene must schedule a post-load frame when its environment texture becomes ready",
+  );
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_hasEnvMap" && entry[2] === 1));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 7));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 8));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envIntensity" && entry[2] === 1.25));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envRotation" && entry[2] === 0.5));
   assert.equal(env.consoleLogs.error.length, 0);
@@ -385,17 +414,18 @@ test("bootstrap keeps Scene3D CSM shadow units ahead of IBL units", async () => 
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  await flushAsyncWork();
 
   assert.equal(env.imageLoads.includes("/hdri/studio.png"), true);
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   const gl = mount.children[0].getContext("webgl2");
   assert.equal(gl.ops.filter((entry) => entry[0] === "createFramebuffer").length, 4);
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowCascades0" && entry[2] === 4));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_0" && entry[2] === 5));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_1" && entry[2] === 6));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_2" && entry[2] === 7));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_3" && entry[2] === 8));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 9));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_0" && entry[2] === 6));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_1" && entry[2] === 7));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_2" && entry[2] === 8));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_3" && entry[2] === 9));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 10));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1fv" && entry[1] === "u_shadowCascadeSplits0" && entry[2] === 4));
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -412,6 +442,14 @@ test("bootstrap fetches Radiance HDR Scene3D environment maps for WebGL PBR", as
     elements: [mount],
     enableWebGL2: true,
     disableCanvas2D: true,
+    createWebGL2Context() {
+      const gl = new FakeWebGLContext();
+      const getExtension = gl.getExtension.bind(gl);
+      gl.getExtension = function(name) {
+        return name === "OES_texture_float_linear" ? { name } : getExtension(name);
+      };
+      return gl;
+    },
     fetchRoutes: {
       "/hdri/studio.hdr": {
         bytes: Array.from(rawHDR),
@@ -453,12 +491,13 @@ test("bootstrap fetches Radiance HDR Scene3D environment maps for WebGL PBR", as
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  await flushAsyncWork();
 
   assert.equal(env.fetchCalls.some((call) => call.url === "/hdri/studio.hdr"), true);
   assert.equal(env.imageLoads.includes("/hdri/studio.hdr"), false);
   const gl = mount.children[0].getContext("webgl2");
   assert.ok(gl.ops.filter((entry) => entry[0] === "texImage2D").length >= 2);
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 7));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 8));
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -1809,6 +1848,494 @@ test("bootstrap applies Scene3D model, instanced GLB, and animation diff command
   assert.equal(state.animations.length, 1);
   assert.equal(state.animations[0].name, "pulse");
   assert.equal(state.animations[0].channels[0].targetNode, "batch/a/card");
+});
+
+test("bootstrap keeps authored zero-opacity model meshes in mesh bundle", async () => {
+  const vertices = {
+    positions: [
+      -0.5, -0.5, 0,
+       0.5, -0.5, 0,
+       0.0,  0.5, 0,
+    ],
+    normals: [
+      0, 0, 1,
+      0, 0, 1,
+      0, 0, 1,
+    ],
+    uvs: [
+      0, 0,
+      1, 0,
+      0.5, 1,
+    ],
+    count: 3,
+  };
+  const env = createContext({
+    fetchRoutes: {
+      "/models/triangle.gosx3d.json": {
+        text: JSON.stringify({
+          objects: [{ id: "tri", kind: "mesh", vertices }],
+        }),
+      },
+    },
+  });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { objects: [] } });
+  await api.applySceneCommands(state, [{
+    kind: 10,
+    data: {
+      models: [
+        { id: "selena", src: "/models/triangle.gosx3d.json", opacity: 0, shaderBackend: "selena" },
+        {
+          id: "custom",
+          src: "/models/triangle.gosx3d.json",
+          opacity: 0,
+          customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4f(0.0, 1.0, 0.0, 1.0); }",
+        },
+        { id: "plain", src: "/models/triangle.gosx3d.json", opacity: 0 },
+      ],
+    },
+  }]);
+
+  assert.equal(state.objects.get("selena/tri")._modelHidden, false);
+  assert.equal(state.objects.get("custom/tri")._modelHidden, false);
+  assert.equal(state.objects.get("plain/tri")._modelHidden, true);
+
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  assert.deepEqual(Array.from(bundle.meshObjects, (object) => object.id), [
+    "selena/tri",
+    "custom/tri",
+  ]);
+  assert.equal(bundle.meshObjects.some((object) => object.id === "plain/tri"), false);
+});
+
+async function assertNewestSceneModelHydrationWins(resolveNewestFirst) {
+  const routeA = createDeferredModelRoute();
+  const routeB = createDeferredModelRoute();
+  const env = createContext({
+    fetchRoutes: {
+      "/models/deferred-a.gosx3d.json": () => routeA.promise,
+      "/models/deferred-b.gosx3d.json": () => routeB.promise,
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { objects: [] } });
+  const mount = new FakeElement("div", null);
+  const assetStatuses = [];
+  const hydrationStatuses = [];
+  mount.addEventListener("gosx:scene3d:model-status", (event) => assetStatuses.push(event.detail));
+  mount.addEventListener("gosx:scene3d:model-hydration-status", (event) => hydrationStatuses.push(event.detail));
+  state._modelStatusMount = mount;
+
+  const hydrationA = api.applySceneCommands(state, [{
+    kind: 10,
+    data: { models: [{ id: "generation-a", src: "/models/deferred-a.gosx3d.json" }] },
+  }]);
+  const hydrationB = api.applySceneCommands(state, [{
+    kind: 10,
+    data: { models: [{ id: "generation-b", src: "/models/deferred-b.gosx3d.json" }] },
+  }]);
+
+  assert.deepEqual(Array.from(state.objects.keys()), [], "neither pending generation may mutate live records");
+  if (resolveNewestFirst) {
+    routeB.resolve(modelAssetJSON("mesh-b"));
+    await hydrationB;
+    assert.deepEqual(Array.from(state.objects.keys()), ["generation-b/mesh-b"]);
+    routeA.resolve(modelAssetJSON("mesh-a"));
+    await hydrationA;
+  } else {
+    routeA.resolve(modelAssetJSON("mesh-a"));
+    await hydrationA;
+    assert.deepEqual(Array.from(state.objects.keys()), [], "a superseded generation may not commit even before the newest load completes");
+    routeB.resolve(modelAssetJSON("mesh-b"));
+    await hydrationB;
+  }
+
+  assert.deepEqual(Array.from(state.objects.keys()), ["generation-b/mesh-b"]);
+  assert.deepEqual(Array.from(state._hydratedModelRecords.objects), ["generation-b/mesh-b"]);
+  assert.equal(state._modelHydrationGeneration, 2);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-status"), "committed");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-generation"), "2");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-committed"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-stale"), "false");
+  assert.equal(hydrationStatuses.filter((entry) => entry.status === "committed").length, 1);
+  assert.equal(hydrationStatuses.some((entry) => entry.status === "stale"), false,
+    "a stale completion must not overwrite the newest mount-scoped status");
+  assert.deepEqual(
+    assetStatuses.filter((entry) => entry.status === "loaded").map((entry) => entry.modelID),
+    ["generation-b"],
+    "a stale asset completion must not publish a misleading final load status",
+  );
+}
+
+test("Scene3D model hydration commits only the newest generation when B resolves before A", async () => {
+  await assertNewestSceneModelHydrationWins(true);
+});
+
+test("Scene3D model hydration commits only the newest generation when A resolves before B", async () => {
+  await assertNewestSceneModelHydrationWins(false);
+});
+
+test("Scene3D supersession during skin setup discards the stale mixer and live records", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/models/superseded-rig.glb": { bytes: buildSkinnedGLBBytes() },
+      "/models/superseding-model.gosx3d.json": modelAssetJSON("latest-mesh"),
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { objects: [] } });
+  const mount = new FakeElement("div", null);
+  const hydrationStatuses = [];
+  mount.addEventListener("gosx:scene3d:model-hydration-status", (event) => hydrationStatuses.push(event.detail));
+  state._modelStatusMount = mount;
+
+  const animationAPI = env.context.__gosx_scene3d_animation_api;
+  const originalCreateMixer = animationAPI.createMixer;
+  const originalComputeJointMatrices = animationAPI.computeJointMatrices;
+  let disposedMixers = 0;
+  let hydrationB = null;
+  animationAPI.createMixer = function trackedStaleMixer() {
+    const mixer = originalCreateMixer.call(animationAPI);
+    const originalDispose = mixer.dispose;
+    mixer.dispose = function disposeTrackedMixer() {
+      disposedMixers += 1;
+      return originalDispose.call(mixer);
+    };
+    return mixer;
+  };
+  animationAPI.computeJointMatrices = function supersedeDuringSkin(skin, transforms) {
+    if (!hydrationB) {
+      hydrationB = api.applySceneCommands(state, [{
+        kind: 10,
+        data: {
+          models: [{
+            id: "latest-model",
+            src: "/models/superseding-model.gosx3d.json",
+          }],
+        },
+      }]);
+    }
+    return originalComputeJointMatrices.call(animationAPI, skin, transforms);
+  };
+
+  try {
+    const hydrationA = api.applySceneCommands(state, [{
+      kind: 10,
+      data: {
+        models: [{
+          id: "stale-rig",
+          src: "/models/superseded-rig.glb",
+          animation: "bend",
+        }],
+      },
+    }]);
+    await hydrationA;
+    assert.ok(hydrationB, "skin setup must trigger the superseding generation");
+    await hydrationB;
+
+    assert.equal(disposedMixers, 1, "the superseded generation's staged mixer must be disposed");
+    assert.deepEqual(Array.from(state.objects.keys()), ["latest-model/latest-mesh"]);
+    assert.deepEqual(Array.from(state._hydratedModelRecords.objects), ["latest-model/latest-mesh"]);
+    assert.deepEqual(Array.from(state._modelSkins), []);
+    assert.deepEqual(Array.from(state._modelAnimations), []);
+    assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-status"), "committed");
+    assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-generation"), "2");
+    assert.equal(hydrationStatuses.filter((entry) => entry.status === "committed").length, 1);
+    assert.equal(hydrationStatuses.some((entry) => entry.status === "stale"), false);
+  } finally {
+    animationAPI.createMixer = originalCreateMixer;
+    animationAPI.computeJointMatrices = originalComputeJointMatrices;
+  }
+});
+
+test("Scene3D multi-model hydration stages out-of-order loads and commits in declaration order", async () => {
+  const routeFirst = createDeferredModelRoute();
+  const routeSecond = createDeferredModelRoute();
+  const env = createContext({
+    fetchRoutes: {
+      "/models/declaration-first.gosx3d.json": () => routeFirst.promise,
+      "/models/declaration-second.gosx3d.json": () => routeSecond.promise,
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { objects: [] } });
+  const hydration = api.applySceneCommands(state, [{
+    kind: 10,
+    data: {
+      models: [
+        { id: "declared-first", src: "/models/declaration-first.gosx3d.json" },
+        { id: "declared-second", src: "/models/declaration-second.gosx3d.json" },
+      ],
+    },
+  }]);
+
+  routeSecond.resolve(modelAssetJSON("mesh"));
+  await flushAsyncWork();
+  assert.deepEqual(Array.from(state.objects.keys()), [],
+    "a resolved model must remain staged until every declaration is ready");
+
+  routeFirst.resolve(modelAssetJSON("mesh"));
+  await hydration;
+  assert.deepEqual(Array.from(state.objects.keys()), [
+    "declared-first/mesh",
+    "declared-second/mesh",
+  ]);
+  assert.deepEqual(Array.from(state._hydratedModelRecords.objects), [
+    "declared-first/mesh",
+    "declared-second/mesh",
+  ]);
+});
+
+test("Scene3D throwing skin hydration rolls back staged records and mixers, then recovers", async () => {
+  const routeRig = createDeferredModelRoute();
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-transaction-root";
+  const hydrationStatuses = [];
+  mount.addEventListener("gosx:scene3d:model-hydration-status", (event) => hydrationStatuses.push(event.detail));
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/transaction-rig.glb": () => routeRig.promise,
+      "/models/transaction-recovery.gosx3d.json": modelAssetJSON("recovered-mesh"),
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-model-transaction",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-model-transaction-root",
+        props: {
+          width: 480,
+          height: 300,
+          scene: {
+            objects: [{ id: "authored-baseline", kind: "box" }],
+            models: [{ id: "broken-rig", src: "/models/transaction-rig.glb", animation: "bend" }],
+          },
+        },
+      }],
+    },
+  });
+
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on("unhandledRejection", onUnhandled);
+  let originalComputeJointMatrices;
+  let originalCreateMixer;
+  let disposedMixers = 0;
+  try {
+    runScript(bootstrapSource, env.context, "bootstrap.js");
+    await flushAsyncWork();
+    assert.equal(env.fetchCalls.some((call) => call.url === "/models/transaction-rig.glb"), true);
+
+    const animationAPI = env.context.__gosx_scene3d_animation_api;
+    originalComputeJointMatrices = animationAPI.computeJointMatrices;
+    originalCreateMixer = animationAPI.createMixer;
+    animationAPI.computeJointMatrices = function throwingSkinStage() {
+      throw new Error("transactional-skin-stage-boom");
+    };
+    animationAPI.createMixer = function trackedMixer() {
+      return {
+        addClip() {},
+        play() {},
+        stop() {},
+        update() {},
+        isPlaying() { return false; },
+        dispose() { disposedMixers += 1; },
+      };
+    };
+
+    routeRig.resolve({ bytes: buildSkinnedGLBBytes() });
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await flushAsyncWork();
+    }
+
+    const mounted = env.context.__gosx.engines.get("gosx-engine-model-transaction");
+    assert.ok(mounted, "the scene must finish mounting after a real skin-stage throw");
+    const state = mount.__gosxScene3DState;
+    assert.ok(state);
+    assert.deepEqual(Array.from(state.objects.keys()), ["authored-baseline"]);
+    assert.equal(state._hydratedModelRecords, undefined);
+    assert.deepEqual(Array.from(state._modelSkins || []), []);
+    assert.deepEqual(Array.from(state._modelAnimations || []), []);
+    assert.equal(disposedMixers, 1, "the failed generation's staged mixer must be disposed");
+    assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-status"), "failed");
+    assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-failure-stage"), "skin");
+    assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+    assert.deepEqual(unhandled, [], "hydration rejection handling must be attached before the mount awaits it");
+
+    animationAPI.computeJointMatrices = originalComputeJointMatrices;
+    animationAPI.createMixer = originalCreateMixer;
+    await mounted.handle.applyCommands([{
+      kind: 10,
+      data: {
+        models: [{
+          id: "recovered-model",
+          src: "/models/transaction-recovery.gosx3d.json",
+        }],
+      },
+    }]);
+    assert.deepEqual(Array.from(state.objects.keys()), [
+      "authored-baseline",
+      "recovered-model/recovered-mesh",
+    ]);
+    assert.equal(mount.getAttribute("data-gosx-scene3d-model-hydration-status"), "committed");
+    assert.equal(hydrationStatuses.some((entry) => entry.status === "failed" && entry.stage === "skin"), true);
+    assert.equal(hydrationStatuses.some((entry) => entry.status === "committed" && entry.generation === 2), true);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandled);
+    if (env.context.__gosx_scene3d_animation_api) {
+      if (originalComputeJointMatrices) {
+        env.context.__gosx_scene3d_animation_api.computeJointMatrices = originalComputeJointMatrices;
+      }
+      if (originalCreateMixer) {
+        env.context.__gosx_scene3d_animation_api.createMixer = originalCreateMixer;
+      }
+    }
+  }
+});
+
+test("Scene3D model asset cache evicts transient failures so the same source can retry", async () => {
+  let attempts = 0;
+  const env = createContext({
+    fetchRoutes: {
+      "/models/transient-retry.gosx3d.json": () => {
+        attempts += 1;
+        return attempts === 1
+          ? { ok: false, status: 503 }
+          : modelAssetJSON("retry-success");
+      },
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const first = await env.context.__gosx_scene3d_preload_model("/models/transient-retry.gosx3d.json");
+  const second = await env.context.__gosx_scene3d_preload_model("/models/transient-retry.gosx3d.json");
+  assert.equal(first.objects.length, 0);
+  assert.equal(second.objects.length, 1);
+  assert.equal(second.objects[0].id, "retry-success");
+  assert.equal(attempts, 2);
+});
+
+test("Scene3D unsupported renderer fences initial model hydration before late assets resolve", async () => {
+  const route = createDeferredModelRoute();
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-unsupported-fence";
+  let state = null;
+  Object.defineProperty(mount, "__gosxScene3DState", {
+    configurable: true,
+    get() { return state; },
+    set(value) { state = value; },
+  });
+  const assetStatuses = [];
+  const hydrationStatuses = [];
+  mount.addEventListener("gosx:scene3d:model-status", (event) => assetStatuses.push(event.detail));
+  mount.addEventListener("gosx:scene3d:model-hydration-status", (event) => hydrationStatuses.push(event.detail));
+  const env = createContext({
+    elements: [mount],
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/models/unsupported-late.gosx3d.json": () => route.promise,
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-model-unsupported-fence",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: mount.id,
+        props: {
+          width: 320,
+          height: 180,
+          models: [{ id: "late", src: "/models/unsupported-late.gosx3d.json" }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  assert.ok(state, "state must exist while unsupported cleanup is being evaluated");
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "unsupported");
+  assert.ok(state._modelHydrationGeneration >= 2);
+
+  route.resolve(modelAssetJSON("must-not-commit"));
+  for (let attempt = 0; attempt < 5; attempt += 1) await flushAsyncWork();
+  assert.deepEqual(Array.from(state.objects.keys()), []);
+  assert.equal(assetStatuses.some((entry) => entry.status === "loaded"), false);
+  assert.equal(hydrationStatuses.some((entry) => entry.status === "committed"), false);
+});
+
+test("Scene3D disposal fences a deferred SetModels hydration before late commit or status", async () => {
+  const route = createDeferredModelRoute();
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-dispose-fence";
+  const assetStatuses = [];
+  const hydrationStatuses = [];
+  mount.addEventListener("gosx:scene3d:model-status", (event) => assetStatuses.push(event.detail));
+  mount.addEventListener("gosx:scene3d:model-hydration-status", (event) => hydrationStatuses.push(event.detail));
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/models/disposed-late.gosx3d.json": () => route.promise,
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-model-dispose-fence",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: mount.id,
+        props: {
+          width: 320,
+          height: 180,
+          scene: { objects: [{ id: "authored-baseline", kind: "box" }] },
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  const mounted = env.context.__gosx.engines.get("gosx-engine-model-dispose-fence");
+  assert.ok(mounted);
+  const state = mount.__gosxScene3DState;
+  const hydration = mounted.handle.applyCommands([{
+    kind: 10,
+    data: { models: [{ id: "late", src: "/models/disposed-late.gosx3d.json" }] },
+  }]);
+  await flushAsyncWork();
+  const generationBeforeDispose = state._modelHydrationGeneration;
+  env.context.__gosx_dispose_engine("gosx-engine-model-dispose-fence");
+  assert.ok(state._modelHydrationGeneration > generationBeforeDispose);
+
+  route.resolve(modelAssetJSON("must-not-commit"));
+  await hydration;
+  for (let attempt = 0; attempt < 5; attempt += 1) await flushAsyncWork();
+  assert.deepEqual(Array.from(state.objects.keys()), ["authored-baseline"]);
+  assert.equal(assetStatuses.some((entry) => entry.status === "loaded"), false);
+  assert.equal(hydrationStatuses.some((entry) => entry.status === "committed" && entry.generation > 1), false);
 });
 
 test("bootstrap prepares Scene3D pass plans and cached buffers through shared planner", async () => {
