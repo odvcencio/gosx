@@ -308,7 +308,7 @@ func (a *App) HandleRedirect(route RedirectRoute) {
 	if route.Status == 0 {
 		route.Status = http.StatusTemporaryRedirect
 	}
-	matchPattern := normalizePattern(route.Pattern)
+	matchPattern := normalizeRedirectPattern(route.Pattern)
 	a.redirects[matchPattern] = registeredRedirectRoute{
 		pattern:     route.Pattern,
 		destination: route.Destination,
@@ -1291,6 +1291,20 @@ func normalizePattern(pattern string) string {
 		return normalized
 	}
 	return strings.TrimSpace(pattern)
+}
+
+func normalizeRedirectPattern(pattern string) string {
+	normalized := normalizePattern(pattern)
+	fields := strings.Fields(normalized)
+	if len(fields) == 0 {
+		return normalized
+	}
+	pathPattern := fields[len(fields)-1]
+	if !strings.HasSuffix(pathPattern, "/") {
+		return normalized
+	}
+	fields[len(fields)-1] = pathPattern + "{$}"
+	return strings.Join(fields, " ")
 }
 
 func normalizedRootPattern(fields []string) (string, bool) {
