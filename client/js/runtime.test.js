@@ -29446,6 +29446,24 @@ test("Scene3D authored picks reserve pointer gestures before orbit controls", ()
 // Task 5: gpu-cull capability (from Go capability Matrix + JSON manifests)
 // -------------------------------------------------------------------------
 
+function webGPUGPUCullImplementationComplete() {
+  const compute = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16b-scene-compute.js"), "utf8"
+  );
+  const renderer = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8"
+  );
+  return [
+    "function createSceneInstancedCullSystem(",
+    "GPUBufferUsage.INDIRECT",
+    "atomicAdd(&drawArgs[1], 1u)",
+    "beginComputePass()",
+  ].every((symbol) => compute.includes(symbol)) && [
+    "pass.drawIndirect(cullSys.drawArgsBuf, 0)",
+    "updateInstancedCullSystems(",
+  ].every((symbol) => renderer.includes(symbol));
+}
+
 test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", () => {
   // Read the capability JSON files directly from bootstrap-src, same as the Go drift guard.
   const webgpuCaps = JSON.parse(fs.readFileSync(
@@ -29454,12 +29472,14 @@ test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", 
   const webglCaps = JSON.parse(fs.readFileSync(
     path.join(__dirname, "bootstrap-src", "16-scene-webgl.capabilities.json"), "utf8"
   ));
-  assert.equal(webgpuCaps["gpu-cull"], true, "WebGPU capabilities JSON must declare gpu-cull: true");
+  assert.equal(webgpuCaps["gpu-cull"], webGPUGPUCullImplementationComplete(),
+    "WebGPU gpu-cull capability must match the complete renderer implementation");
   assert.equal(webglCaps["gpu-cull"], false, "WebGL2 capabilities JSON must declare gpu-cull: false (explicit, not absent)");
   assert.ok("gpu-cull" in webglCaps, "gpu-cull must be an explicit key in WebGL2 capabilities JSON (not absent)");
   assert.equal(webgpuCaps["water-object-texture-pass"], true, "WebGPU capabilities JSON must declare water-object-texture-pass: true");
-  // A3: WebGL2 now implements the water passes via the runtime water renderer,
-  // so the manifest declares them true (WebGPU stays primary, WebGL2 fallback).
+  // WebGL2 implements simulation and the analytic object texture pass. It does
+  // not rasterize the authored mesh into the water-shadow target, so that
+  // stronger capability must remain explicitly false.
   assert.equal(webglCaps["water-object-texture-pass"], true, "WebGL2 capabilities JSON must declare water-object-texture-pass: true (runtime water renderer)");
   assert.ok("water-object-texture-pass" in webglCaps, "water-object-texture-pass must be explicit in WebGL2 capabilities JSON");
   assert.equal(webglCaps["water-simulation"], true, "WebGL2 capabilities JSON must declare water-simulation: true");
@@ -31670,12 +31690,13 @@ test("gpu-cull T5-drawIndirect: makePass records drawIndirect calls (harness ext
   assert.equal(pass.drawIndirects[0].offset, 0, "drawIndirect must record offset=0");
 });
 
-test("gpu-cull T5-capability: gpu-cull is true in WebGPU capabilities and false in WebGL2", () => {
+test("gpu-cull T5-capability: manifests track implementation completeness", () => {
   const webgpuCaps = JSON.parse(fs.readFileSync(
     path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.capabilities.json"), "utf8"));
   const webglCaps = JSON.parse(fs.readFileSync(
     path.join(__dirname, "bootstrap-src", "16-scene-webgl.capabilities.json"), "utf8"));
-  assert.equal(webgpuCaps["gpu-cull"], true, "WebGPU must declare gpu-cull: true");
+  assert.equal(webgpuCaps["gpu-cull"], webGPUGPUCullImplementationComplete(),
+    "WebGPU gpu-cull capability must match the complete renderer implementation");
   assert.equal(webglCaps["gpu-cull"], false, "WebGL2 must declare gpu-cull: false");
 });
 

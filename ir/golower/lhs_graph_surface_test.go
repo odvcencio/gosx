@@ -141,7 +141,7 @@ func F() float64 {
 // target sub-expression is OpSignalGet → ObjectVal whose Fields map
 // the OpFieldSet mutates in place. Critically, the test confirms the
 // mutation is visible through subsequent OpSignalGet reads: because
-// Value.Fields is a map (reference type), every signal-get returns a
+// Value.Map() is a map (reference type), every signal-get returns a
 // Value sharing the same underlying Fields map, so the OpFieldSet
 // write propagates without a signal.Set() roundtrip.
 func TestLowerGraphSurfacePackageVarStructField(t *testing.T) {
