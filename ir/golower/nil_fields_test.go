@@ -6,7 +6,7 @@
 // which reads the local's current Value. Pre-Y.G, OpLocalDecl reserves
 // the slot with the bare zero Value{} — Fields map is nil — and the
 // host receives a Value-by-value copy whose Fields map is also nil.
-// Any host-side `target.Fields[key] = ...` write either panics (writing
+// Any host-side `target.Map()[key] = ...` write either panics (writing
 // to a nil map) or, with a workaround that allocates the map, lands in
 // the host's copy and never propagates back to the caller's local.
 //

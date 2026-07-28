@@ -577,7 +577,7 @@ func newRouteContext(req *http.Request) *RouteContext {
 	// closure assigns a sized map only when the route declares parameters.
 	ctx := &RouteContext{
 		Request:   req,
-		PageState: *server.NewPageState(),
+		PageState: *server.NewPageStateForRequest(req),
 	}
 	// Carry the generated Content-Security-Policy nonce, so the document shell
 	// and the streamed chunks attach the same value the header names.
