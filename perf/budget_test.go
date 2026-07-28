@@ -197,3 +197,25 @@ func TestEvaluateBudgetFailsOnMissingMetricAndRegression(t *testing.T) {
 		t.Fatalf("unexpected formatted result:\n%s", out)
 	}
 }
+
+func TestEvaluateBudgetSkipsUnavailableOptionalMetric(t *testing.T) {
+	report := &Report{PageReport: PageReport{URL: "http://localhost:3000/scene"}}
+	budget := &BudgetFile{
+		DefaultProfile: "scene3d",
+		Profiles: map[string]BudgetProfile{
+			"scene3d": {Assertions: []string{"gpu_total_p95? <= 20"}},
+		},
+	}
+
+	result, err := EvaluateBudget(report, budget, "")
+	if err != nil {
+		t.Fatalf("EvaluateBudget: %v", err)
+	}
+	assertion := result.Pages[0].Assertions[0]
+	if !result.Passed || !assertion.Passed || assertion.Found || !assertion.Optional || !assertion.Skipped {
+		t.Fatalf("optional unavailable metric should be skipped/pass: %+v", result)
+	}
+	if out := FormatBudgetResult(result); !strings.Contains(out, "optional metric unavailable (skipped)") {
+		t.Fatalf("formatted result does not explain skip:\n%s", out)
+	}
+}

@@ -1,7 +1,9 @@
 package perf
 
 import (
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -163,10 +165,25 @@ type IslandMetric struct {
 
 // SceneMetric holds Scene3D rendering metrics.
 type SceneMetric struct {
+	// Legacy CPU render/submit fields retained for JSON and budget
+	// compatibility. They are not presentation or GPU timings.
 	FirstFrameMs  float64    `json:"firstFrameMs"`
 	FrameStats    FrameStats `json:"frameStats"`
 	DroppedFrames int        `json:"droppedFrames"`
 	FrameCount    int        `json:"frameCount"`
+
+	FirstRenderStartMs float64                    `json:"firstRenderStartMs,omitempty"`
+	CPURenderSubmit    *TelemetrySeries           `json:"cpuRenderSubmit,omitempty"`
+	CPUTimings         map[string]TelemetrySeries `json:"cpuTimings,omitempty"`
+	Presentation       *PresentationMetric        `json:"presentation,omitempty"`
+	GPU                *SceneGPUTelemetry         `json:"gpu,omitempty"`
+	Mounts             []SceneMountMetric         `json:"mounts,omitempty"`
+	Counters           map[string]float64         `json:"counters,omitempty"`
+	Geometry           map[string]float64         `json:"geometry,omitempty"`
+	Pipeline           map[string]float64         `json:"pipeline,omitempty"`
+	Status             map[string]string          `json:"status,omitempty"`
+	Events             []SceneTelemetryEvent      `json:"events,omitempty"`
+	Unavailable        map[string]string          `json:"unavailable,omitempty"`
 }
 
 // FrameStats holds percentile statistics for frame durations.
@@ -177,6 +194,61 @@ type FrameStats struct {
 	Max   float64 `json:"max"`
 	Mean  float64 `json:"mean"`
 	Count int     `json:"count"`
+}
+
+// TelemetrySeries separates a timing distribution into all, cold, and warm
+// samples. Empty phase stats are kept as zero-count values rather than being
+// inferred from another source.
+type TelemetrySeries struct {
+	Source string     `json:"source"`
+	Unit   string     `json:"unit"`
+	Stats  FrameStats `json:"stats"`
+	Cold   FrameStats `json:"cold"`
+	Warm   FrameStats `json:"warm"`
+}
+
+// PresentationMetric describes requestAnimationFrame display-opportunity
+// cadence. EstimatedMissedVsyncs is not a compositor dropped-frame count.
+type PresentationMetric struct {
+	TelemetrySeries
+	EstimatedRefreshIntervalMs float64        `json:"estimatedRefreshIntervalMs"`
+	EstimatedMissedVsyncs      int            `json:"estimatedMissedVsyncs"`
+	HitchIntervals             int            `json:"hitchIntervals"`
+	HitchClusters              []HitchCluster `json:"hitchClusters,omitempty"`
+}
+
+// HitchCluster is a consecutive run of rAF intervals that missed one or more
+// estimated refresh opportunities.
+type HitchCluster struct {
+	StartTime             float64 `json:"startTime"`
+	IntervalCount         int     `json:"intervalCount"`
+	EstimatedMissedVsyncs int     `json:"estimatedMissedVsyncs"`
+	DurationMs            float64 `json:"durationMs"`
+	MaxIntervalMs         float64 `json:"maxIntervalMs"`
+}
+
+// SceneGPUTelemetry contains renderer-published timestamp-query timings.
+type SceneGPUTelemetry struct {
+	Total  *TelemetrySeries           `json:"total,omitempty"`
+	Passes map[string]TelemetrySeries `json:"passes,omitempty"`
+	Status string                     `json:"status,omitempty"`
+}
+
+// SceneMountMetric captures the runtime profile actually selected for one
+// Scene3D mount, plus the original stable attributes for debugging.
+type SceneMountMetric struct {
+	Index               int                  `json:"index"`
+	ID                  string               `json:"id,omitempty"`
+	Backend             string               `json:"backend,omitempty"`
+	Renderer            string               `json:"renderer,omitempty"`
+	Fallback            string               `json:"fallback,omitempty"`
+	Profile             string               `json:"profile,omitempty"`
+	RenderGPU           string               `json:"renderGpu,omitempty"`
+	PixelRatio          float64              `json:"pixelRatio,omitempty"`
+	DevicePixelRatio    float64              `json:"devicePixelRatio,omitempty"`
+	EffectivePixelRatio float64              `json:"effectivePixelRatio,omitempty"`
+	Canvas              *SceneCanvasSnapshot `json:"canvas,omitempty"`
+	Attributes          map[string]string    `json:"attributes,omitempty"`
 }
 
 // InteractionMetric holds a single dispatch interaction measurement.
@@ -222,43 +294,23 @@ func CollectPageReport(d *Driver, url string) (*PageReport, error) {
 	}
 	pr.IslandHydrationMs = totalHydration
 
-	// Scene3D frames
-	frames, err := QuerySceneFrames(d)
+	// Scene3D CPU measures and renderer-published telemetry. scene3d-render
+	// measures CPU command planning/submission; rAF and GPU timings remain
+	// separate sources throughout the report.
+	sceneMeasures, err := QueryPerformanceMeasures(d, "scene3d-")
 	if err != nil {
 		return nil, err
 	}
-	if len(frames) > 0 {
-		durations := make([]float64, len(frames))
-		for i, f := range frames {
-			durations[i] = f.Duration
-		}
-		stats := ComputeFrameStats(durations)
-
-		// First frame timing
-		var firstFrameMs float64
-		if len(frames) > 0 {
-			firstFrameMs = frames[0].Duration
-		}
-
-		// Dropped frames: those exceeding 16.67ms budget (60fps)
-		var dropped int
-		for _, dur := range durations {
-			if dur > 16.67 {
-				dropped++
-			}
-		}
-
+	snapshot, err := QuerySceneTelemetry(d)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.Available || len(sceneMeasures) > 0 {
 		rs, err := QueryRuntimeState(d)
 		if err != nil {
 			return nil, err
 		}
-
-		pr.Scene = &SceneMetric{
-			FirstFrameMs:  firstFrameMs,
-			FrameStats:    stats,
-			DroppedFrames: dropped,
-			FrameCount:    rs.FrameCount,
-		}
+		pr.Scene = BuildSceneMetric(sceneMeasures, snapshot, rs.FrameCount)
 	}
 
 	// Dispatch log → interactions
@@ -397,4 +449,371 @@ func percentile(sorted []float64, p float64) float64 {
 	}
 	frac := rank - float64(lo)
 	return sorted[lo] + frac*(sorted[hi]-sorted[lo])
+}
+
+// BuildSceneMetric aggregates strictly source-labelled Scene3D telemetry.
+// It is exported so offline tooling and tests can build the same report shape
+// without a live browser.
+func BuildSceneMetric(measures []PerfEntry, snapshot SceneTelemetrySnapshot, frameCount int) *SceneMetric {
+	scene := &SceneMetric{
+		FrameCount:  frameCount,
+		CPUTimings:  map[string]TelemetrySeries{},
+		Counters:    map[string]float64{},
+		Geometry:    map[string]float64{},
+		Pipeline:    map[string]float64{},
+		Status:      map[string]string{},
+		Unavailable: map[string]string{},
+		Events:      append([]SceneTelemetryEvent(nil), snapshot.TelemetryEvents...),
+	}
+
+	measureGroups := map[string][]SceneTelemetrySample{}
+	var renderEntries []PerfEntry
+	for _, entry := range measures {
+		phase := telemetryPhase(entry.StartTime, snapshot.WarmAt)
+		sample := SceneTelemetrySample{
+			Name:         entry.Name,
+			NumericValue: entry.Duration,
+			StartTime:    entry.StartTime,
+			Phase:        phase,
+		}
+		measureGroups[entry.Name] = append(measureGroups[entry.Name], sample)
+		if entry.Name == "scene3d-render" {
+			renderEntries = append(renderEntries, entry)
+		}
+	}
+	if len(renderEntries) > 0 {
+		renderSamples := measureGroups["scene3d-render"]
+		series := buildTelemetrySeries("performance.measure:scene3d-render", "ms", renderSamples)
+		scene.CPURenderSubmit = &series
+		scene.FrameStats = series.Stats
+		scene.FirstFrameMs = renderEntries[0].Duration
+		scene.FirstRenderStartMs = renderEntries[0].StartTime
+	}
+	for name, samples := range measureGroups {
+		if name == "scene3d-render" {
+			continue
+		}
+		key := strings.TrimPrefix(name, "scene3d-")
+		scene.CPUTimings[key] = buildTelemetrySeries("performance.measure:"+name, "ms", samples)
+	}
+
+	attributeGroups := map[string][]SceneTelemetrySample{}
+	for _, sample := range snapshot.AttributeSamples {
+		if validMetricNumber(sample.NumericValue) {
+			attributeGroups[sample.Name] = append(attributeGroups[sample.Name], sample)
+		}
+	}
+
+	// Ensure a latest mount value remains reportable even when the Mutation
+	// Observer attached after a backend's one-time initialization write.
+	for _, mount := range snapshot.Mounts {
+		for name, raw := range mount.Attributes {
+			value, ok := parseMetricNumber(raw)
+			if !ok || !isTimingAttribute(name) || len(attributeGroups[name]) > 0 {
+				continue
+			}
+			attributeGroups[name] = append(attributeGroups[name], SceneTelemetrySample{
+				Mount:        mount.Index,
+				Name:         name,
+				Value:        raw,
+				NumericValue: value,
+				StartTime:    snapshot.CapturedAt,
+				Phase:        telemetryPhase(snapshot.CapturedAt, snapshot.WarmAt),
+			})
+		}
+	}
+
+	gpu := &SceneGPUTelemetry{Passes: map[string]TelemetrySeries{}}
+	for name, samples := range attributeGroups {
+		key := sceneAttributeKey(name)
+		switch {
+		case strings.Contains(name, "-gpu-pass-") && strings.HasSuffix(name, "-ms"):
+			gpu.Passes[gpuPassKey(name)] = buildTelemetrySeries("mount-attribute:"+name, "ms", samples)
+		case strings.HasSuffix(name, "-gpu-ms"):
+			series := buildTelemetrySeries("mount-attribute:"+name, "ms", samples)
+			gpu.Total = &series
+		case strings.HasSuffix(name, "-cpu-ms"):
+			scene.CPUTimings[key] = buildTelemetrySeries("mount-attribute:"+name, "ms", samples)
+		}
+	}
+
+	for _, mount := range snapshot.Mounts {
+		metric := buildSceneMountMetric(mount, snapshot.DevicePixelRatio)
+		scene.Mounts = append(scene.Mounts, metric)
+		prefix := ""
+		if len(snapshot.Mounts) > 1 {
+			prefix = "mount" + strconv.Itoa(mount.Index) + "."
+		}
+		for name, raw := range mount.Attributes {
+			key := prefix + sceneAttributeKey(name)
+			if value, ok := parseMetricNumber(raw); ok && isCounterAttribute(name) {
+				scene.Counters[key] = value
+				if strings.Contains(name, "-retained-") {
+					scene.Geometry[key] = value
+				}
+				if containsAny(name, "pipeline", "shader", "compile", "warmup", "cache") {
+					scene.Pipeline[key] = value
+				}
+			}
+			if isStatusAttribute(name) && raw != "" {
+				scene.Status[key] = raw
+			}
+			if strings.HasSuffix(name, "-gpu-timing") {
+				gpu.Status = raw
+			}
+		}
+	}
+
+	if gpu.Total != nil || len(gpu.Passes) > 0 || gpu.Status != "" {
+		scene.GPU = gpu
+	}
+
+	var presentationSamples []AnimationFrameSample
+	startAt := snapshot.SceneStartedAt
+	if startAt == 0 && len(renderEntries) > 0 {
+		startAt = renderEntries[0].StartTime
+	}
+	for _, sample := range snapshot.PresentedFrameIntervals {
+		if startAt > 0 && sample.StartTime < startAt {
+			continue
+		}
+		if validMetricNumber(sample.Duration) && sample.Duration > 0 {
+			presentationSamples = append(presentationSamples, sample)
+		}
+	}
+	if len(presentationSamples) > 0 {
+		presentation := ComputePresentationMetric(presentationSamples)
+		scene.Presentation = &presentation
+		// Deprecated compatibility alias, now derived only from rAF cadence.
+		scene.DroppedFrames = presentation.EstimatedMissedVsyncs
+	}
+
+	if scene.CPURenderSubmit == nil {
+		scene.Unavailable["cpuRenderSubmit"] = "no scene3d-render performance measures were emitted"
+	}
+	if scene.Presentation == nil {
+		reason := "no visible-tab requestAnimationFrame intervals were observed after Scene3D started"
+		if !snapshot.RAFAvailable {
+			reason = "requestAnimationFrame is unavailable"
+		}
+		scene.Unavailable["presentation"] = reason
+	}
+	if scene.GPU == nil || (scene.GPU.Total == nil && len(scene.GPU.Passes) == 0) {
+		reason := "renderer did not publish GPU timestamp-query values"
+		if gpu.Status != "" {
+			reason = gpu.Status
+		}
+		scene.Unavailable["gpu"] = reason
+	}
+	if _, ok := scene.CPUTimings["planner"]; !ok {
+		if _, ok := scene.CPUTimings["planner-cpu-ms"]; !ok {
+			scene.Unavailable["planner"] = "renderer did not publish planner CPU timing"
+		}
+	}
+
+	if len(scene.CPUTimings) == 0 {
+		scene.CPUTimings = nil
+	}
+	if len(scene.Counters) == 0 {
+		scene.Counters = nil
+	}
+	if len(scene.Geometry) == 0 {
+		scene.Geometry = nil
+	}
+	if len(scene.Pipeline) == 0 {
+		scene.Pipeline = nil
+	}
+	if len(scene.Status) == 0 {
+		scene.Status = nil
+	}
+	return scene
+}
+
+// ComputePresentationMetric computes cadence percentiles and estimated
+// missed-vsync clusters from rAF intervals. The refresh interval is estimated
+// from the tenth percentile to resist occasional startup hitches.
+func ComputePresentationMetric(samples []AnimationFrameSample) PresentationMetric {
+	converted := make([]SceneTelemetrySample, 0, len(samples))
+	durations := make([]float64, 0, len(samples))
+	for _, sample := range samples {
+		if !validMetricNumber(sample.Duration) || sample.Duration <= 0 {
+			continue
+		}
+		converted = append(converted, SceneTelemetrySample{
+			NumericValue: sample.Duration,
+			StartTime:    sample.StartTime,
+			Phase:        sample.Phase,
+		})
+		durations = append(durations, sample.Duration)
+	}
+	result := PresentationMetric{
+		TelemetrySeries: buildTelemetrySeries(
+			"requestAnimationFrame timestamp interval (display opportunity; not compositor proof)",
+			"ms",
+			converted,
+		),
+	}
+	if len(durations) == 0 {
+		return result
+	}
+	sort.Float64s(durations)
+	baseline := percentile(durations, 0.10)
+	if baseline <= 0 {
+		return result
+	}
+	result.EstimatedRefreshIntervalMs = baseline
+	hitchThreshold := math.Max(50, baseline*3)
+
+	var active *HitchCluster
+	for _, sample := range samples {
+		ratio := sample.Duration / baseline
+		missed := 0
+		if ratio > 1.5 {
+			missed = int(math.Round(ratio)) - 1
+			if missed < 1 {
+				missed = 1
+			}
+		}
+		if sample.Duration >= hitchThreshold {
+			result.HitchIntervals++
+		}
+		if missed == 0 {
+			if active != nil {
+				result.HitchClusters = append(result.HitchClusters, *active)
+				active = nil
+			}
+			continue
+		}
+		result.EstimatedMissedVsyncs += missed
+		if active == nil {
+			active = &HitchCluster{StartTime: sample.StartTime}
+		}
+		active.IntervalCount++
+		active.EstimatedMissedVsyncs += missed
+		active.DurationMs += sample.Duration
+		if sample.Duration > active.MaxIntervalMs {
+			active.MaxIntervalMs = sample.Duration
+		}
+	}
+	if active != nil {
+		result.HitchClusters = append(result.HitchClusters, *active)
+	}
+	return result
+}
+
+func buildTelemetrySeries(source, unit string, samples []SceneTelemetrySample) TelemetrySeries {
+	var all, cold, warm []float64
+	for _, sample := range samples {
+		if !validMetricNumber(sample.NumericValue) {
+			continue
+		}
+		all = append(all, sample.NumericValue)
+		if sample.Phase == "warm" {
+			warm = append(warm, sample.NumericValue)
+		} else {
+			cold = append(cold, sample.NumericValue)
+		}
+	}
+	return TelemetrySeries{
+		Source: source,
+		Unit:   unit,
+		Stats:  ComputeFrameStats(all),
+		Cold:   ComputeFrameStats(cold),
+		Warm:   ComputeFrameStats(warm),
+	}
+}
+
+func buildSceneMountMetric(mount SceneMountSnapshot, devicePixelRatio float64) SceneMountMetric {
+	attrs := mount.Attributes
+	metric := SceneMountMetric{
+		Index:            mount.Index,
+		ID:               mount.ID,
+		Backend:          firstAttribute(attrs, "data-gosx-scene3d-backend", "data-gosx-scene3d-render-backend"),
+		Renderer:         attrs["data-gosx-scene3d-renderer"],
+		Fallback:         attrs["data-gosx-scene3d-renderer-fallback"],
+		Profile:          firstAttribute(attrs, "data-gosx-scene3d-quality-active", "data-gosx-scene3d-quality-tier"),
+		RenderGPU:        attrs["data-gosx-scene3d-render-gpu"],
+		DevicePixelRatio: devicePixelRatio,
+		Canvas:           mount.Canvas,
+		Attributes:       attrs,
+	}
+	metric.PixelRatio, _ = parseMetricNumber(attrs["data-gosx-scene3d-pixel-ratio"])
+	if mount.Canvas != nil && mount.Canvas.CSSWidth > 0 {
+		metric.EffectivePixelRatio = mount.Canvas.Width / mount.Canvas.CSSWidth
+	}
+	return metric
+}
+
+func telemetryPhase(at, warmAt float64) string {
+	if warmAt > 0 && at >= warmAt {
+		return "warm"
+	}
+	return "cold"
+}
+
+func sceneAttributeKey(name string) string {
+	return strings.TrimPrefix(name, "data-gosx-scene3d-")
+}
+
+func gpuPassKey(name string) string {
+	parts := strings.SplitN(name, "-gpu-pass-", 2)
+	if len(parts) != 2 {
+		return sceneAttributeKey(name)
+	}
+	return strings.TrimSuffix(parts[1], "-ms")
+}
+
+func isTimingAttribute(name string) bool {
+	return strings.HasSuffix(name, "-gpu-ms") ||
+		(strings.Contains(name, "-gpu-pass-") && strings.HasSuffix(name, "-ms")) ||
+		strings.HasSuffix(name, "-cpu-ms")
+}
+
+func isCounterAttribute(name string) bool {
+	if isTimingAttribute(name) {
+		return false
+	}
+	return containsAny(name,
+		"pipeline", "shader", "compile", "warmup", "cache", "upload",
+		"allocation", "retirement", "rebuild", "fallback", "draw",
+		"dispatch", "pass", "bytes", "entries", "miss", "hit", "retained",
+	)
+}
+
+func isStatusAttribute(name string) bool {
+	return containsAny(name,
+		"backend", "renderer", "fallback", "quality-active", "quality-tier",
+		"quality-reason", "gpu-timing", "gpu-pass-timing", "pipeline-failed",
+		"device-lost", "target-format", "sample-count",
+	)
+}
+
+func containsAny(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstAttribute(attrs map[string]string, names ...string) string {
+	for _, name := range names {
+		if value := attrs[name]; value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func parseMetricNumber(raw string) (float64, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	return value, err == nil && validMetricNumber(value)
+}
+
+func validMetricNumber(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }

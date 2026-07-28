@@ -35,7 +35,9 @@
         "long_tasks <= 3",
         "tbt <= 250",
         "scene_p95 <= 33",
-        "scene_p99 <= 50"
+        "scene_p99 <= 50",
+        "presented_p95? <= 33",
+        "gpu_total_p95? <= 20"
       ]
     },
     "water-ci": {
