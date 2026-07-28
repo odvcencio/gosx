@@ -15,4 +15,6 @@
   // The base scene3d chunk always loads before this chunk, so the API object
   // carries both symbols by the time this file runs.
   var createSceneParticleSystem = sceneApi.createSceneParticleSystem;
+  var sceneReportPipelineFailure = sceneApi.sceneReportPipelineFailure;
+  var sceneShaderModuleError = sceneApi.sceneShaderModuleError;
   var sceneComputeSystemSignature = sceneApi.sceneComputeSystemSignature;

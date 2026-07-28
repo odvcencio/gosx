@@ -33,6 +33,23 @@ function readSource(name) {
 }
 
 const webgpuSource = readSource("16a-scene-webgpu.js");
+const computeSource = readSource("16b-scene-compute.js");
+const computeBridgeSource = readSource("26e1-feature-scene3d-webgpu-compute-bridge.js");
+
+test("pipeline validation helpers cross the gated WebGPU chunk boundary", () => {
+  for (const helper of ["sceneReportPipelineFailure", "sceneShaderModuleError"]) {
+    assert.match(
+      computeSource,
+      new RegExp(`Object\\.assign\\([\\s\\S]*\\b${helper}\\b`),
+      `${helper} must be published by the base Scene3D chunk`,
+    );
+    assert.match(
+      computeBridgeSource,
+      new RegExp(`var ${helper} = sceneApi\\.${helper};`),
+      `${helper} must be imported by the WebGPU feature chunk`,
+    );
+  }
+});
 
 function createContext() {
   const sandbox = {

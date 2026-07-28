@@ -386,7 +386,9 @@ const budgets = [
   // raised it for procedural point clouds. Merging the two feature sets put all
   // three figures over, so the ceiling is set from measurement: 1_363_465 raw,
   // 364_934 gzip, 295_439 brotli, each with about 1_550 bytes of headroom.
-  { file: "bootstrap.js", raw: 1_365_000, gzip: 366_500, brotli: 297_000 },
+  // Main-compat merge: render-truth telemetry and per-pipeline validation now
+  // cross the gated feature split. Measured: 1_379_211 / 371_346 / 299_230.
+  { file: "bootstrap.js", raw: 1_381_000, gzip: 372_000, brotli: 300_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -641,7 +643,8 @@ const budgets = [
   //
   // Keep this budget tight so the chunk cannot absorb unrelated code and turn
   // that trade the wrong way. Measured: 148_439 / 41_151 / 35_555.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 151_000, gzip: 41_800, brotli: 36_100 },
+  // Main-compat render-truth call sites. Measured: 151_727 / 42_180 / 36_334.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 152_500, gzip: 42_500, brotli: 36_700 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -652,7 +655,9 @@ const budgets = [
   // 16-scene-webgl.js moved to its own lazily fetched chunk, and main raised it
   // for procedural point clouds. Set from measurement after the merge: 533_048
   // raw, 147_437 gzip, 122_182 brotli.
-  { file: "bootstrap-feature-scene3d.js", raw: 535_000, gzip: 149_000, brotli: 124_000 },
+  // Main-compat backend truth and pipeline bridge. Measured:
+  // 542_199 / 151_066 / 124_852.
+  { file: "bootstrap-feature-scene3d.js", raw: 543_000, gzip: 152_000, brotli: 125_500 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
@@ -782,7 +787,9 @@ const budgets = [
   //
   // One entry, both histories. Set from measurement after the merge: 361_500 raw,
   // 85_775 gzip, 71_783 brotli.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 363_500, gzip: 87_300, brotli: 73_300 },
+  // Main-compat per-module validation bridge. Measured:
+  // 364_136 / 86_913 / 72_624.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 365_000, gzip: 87_300, brotli: 73_300 },
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 22_000, gzip: 8_000, brotli: 7_000 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
@@ -1015,9 +1022,10 @@ const routeBudgets = [
     // 261_000 -> 263_000, for the same reason as bootstrap.js above: two feature
     // sets in one route when the audit branch merged main. Measured after the
     // merge: 1_163_921 raw, 308_635 gzip.
-    raw: 1_165_000,
-    gzip: 310_500,
-    brotli: 263_000,
+    // Main-compat gated-chunk measurement: 1_176_315 / 313_844 / 264_238.
+    raw: 1_178_000,
+    gzip: 314_500,
+    brotli: 265_000,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1068,9 +1076,10 @@ const routeBudgets = [
     // The raw figure passed its ceiling by only 22 bytes while gzip passed by
     // 1_047, which is why all three get measured rather than inferred from the
     // first assertion that happens to fail.
-    raw: 953_000,
-    gzip: 265_500,
-    brotli: 226_000,
+    // Main-compat gated-chunk measurement: 963_906 / 269_111 / 227_948.
+    raw: 965_000,
+    gzip: 270_000,
+    brotli: 229_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1105,9 +1114,10 @@ const routeBudgets = [
     // this route loads: 1_312_522 raw, 349_822 gzip, 296_096 brotli. Brotli is
     // still INSIDE its ceiling, so that number does not move. Raise only what the
     // measurement actually breaches.
-    raw: 1_315_000,
-    gzip: 351_500,
-    brotli: 296_500,
+    // Main-compat gated-chunk measurement: 1_328_042 / 356_024 / 300_572.
+    raw: 1_330_000,
+    gzip: 357_000,
+    brotli: 302_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1135,9 +1145,10 @@ const routeBudgets = [
     // chunks this route loads: 1_017_796 raw, 266_374 gzip, 223_003 brotli. The
     // brotli figure passed its ceiling by 3 bytes, which is why every ceiling gets
     // measured instead of inferred from whichever assertion fails first.
-    raw: 1_019_500,
-    gzip: 268_000,
-    brotli: 225_000,
+    // Main-compat gated-chunk measurement: 1_030_185 / 271_435 / 226_670.
+    raw: 1_032_000,
+    gzip: 272_000,
+    brotli: 228_000,
   },
 ];
 
