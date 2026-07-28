@@ -144,17 +144,14 @@ func TestWaterSimAndTexturePassStayTrueOnWebGL(t *testing.T) {
 	}
 }
 
-// TestIBLIsFalseOnBothBackends corroborates the second corrected cell.
+// TestIBLIsFalseOnBothBackends pins the intentionally staged capability cell.
 //
-// The WebGL2 cell read true. Image-based lighting (IBL) needs a prefiltered
-// specular cube, an irradiance cube and a split-sum bidirectional reflectance
-// distribution function (BRDF) lookup table. The WebGL2 path has none of them:
-// it tone maps the environment to an 8-bit low-dynamic-range texture and taps
-// that one equirectangular texture twice.
-//
-// assetpipe/ibl/consumer_test.go already pins the renderer evidence in detail
-// and lists the five pieces a consumer must add. This test ties the Matrix cell
-// to the same conclusion, so the record and the evidence cannot drift apart.
+// Both renderers now consume assetpipe's radiance cube, irradiance cube and
+// split-sum BRDF LUT. The matrix remains false until that path is universally
+// available on both backends: WebGL2 must compile a bounded legacy variant on
+// the spec-minimum 16-fragment-sampler devices because the full material + CSM
+// + IBL layout needs 18. Claiming the feature at the matrix level would hide
+// that deterministic degradation.
 func TestIBLIsFalseOnBothBackends(t *testing.T) {
 	for _, b := range []Backend{BackendWebGPU, BackendWebGL} {
 		if Matrix[FeatureIBL][b] {
@@ -163,25 +160,39 @@ func TestIBLIsFalseOnBothBackends(t *testing.T) {
 	}
 
 	webgl := readRenderer(t, webglWaterShadowPath)
+	webgpu := readRenderer(t, webgpuWaterShadowPath)
 
-	// Present today, and each one is a reason the cell is false.
+	// Real split-sum consumption exists on both backends. These are positive
+	// evidence, not a reason to flip the unconditional capability cell.
 	for _, marker := range []string{
-		"scenePBRTonemapHDRPixels",
-		"envEquirectUV",
+		"u_iblIrradiance",
+		"u_iblRadiance",
+		"u_iblBRDFLUT",
+		"textureLod(u_iblRadiance",
+		"prefiltered * (F0 * brdf.x + brdf.y)",
+		"scenePBRLinearHDRPixels",
 	} {
 		if !strings.Contains(webgl, marker) {
-			t.Errorf("expected %q in 16-scene-webgl.js: the tone-mapped equirectangular path is why ibl is false", marker)
+			t.Errorf("expected real WebGL2 IBL marker %q in 16-scene-webgl.js", marker)
+		}
+	}
+	for _, marker := range []string{
+		"iblIrradiance: texture_cube<f32>",
+		"iblRadiance: texture_cube<f32>",
+		"iblBRDFLUT: texture_2d<f32>",
+		"textureSampleLevel(iblRadiance",
+		"prefiltered * (F0 * brdf.x + brdf.y)",
+	} {
+		if !strings.Contains(webgpu, marker) {
+			t.Errorf("expected real WebGPU IBL marker %q in 16a-scene-webgpu.js", marker)
 		}
 	}
 
-	// Absent today. Any one of these appearing means real IBL landed, and then
-	// the cell and this test must change together.
-	for _, marker := range []string{
-		"u_brdfLUT",
-		"textureCubeLod",
-	} {
-		if strings.Contains(webgl, marker) {
-			t.Errorf("16-scene-webgl.js now contains %q; if prefiltered IBL landed, flip the ibl cell and rewrite this test", marker)
+	// This explicit resource gate is why FeatureIBL stays false despite the real
+	// capable-device path above. Keep the matrix and diagnostic coupled.
+	for _, marker := range []string{"maxUnits >= 18", "fragment-texture-units<18"} {
+		if !strings.Contains(webgl, marker) {
+			t.Errorf("expected staged WebGL2 IBL resource gate %q", marker)
 		}
 	}
 

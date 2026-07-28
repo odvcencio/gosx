@@ -76,16 +76,19 @@ type Environment struct {
 	GroundColor      string
 	GroundIntensity  float64
 	EnvironmentMap   string
-	EnvIntensity     float64
-	EnvRotation      float64
-	Exposure         float64
-	ToneMapping      string // "aces", "reinhard", "linear", "" (default = aces)
-	FogColor         string
-	FogDensity       float64 // for exponential fog (0 = no fog)
-	Transition       Transition
-	InState          *EnvironmentProps
-	OutState         *EnvironmentProps
-	Live             []string
+	// IBL carries prefiltered HDR products and their sampling semantics. It is
+	// additive metadata; renderer capability remains governed by capability.Matrix.
+	IBL          EnvironmentIBL
+	EnvIntensity float64
+	EnvRotation  float64
+	Exposure     float64
+	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
+	FogColor     string
+	FogDensity   float64 // for exponential fog (0 = no fog)
+	Transition   Transition
+	InState      *EnvironmentProps
+	OutState     *EnvironmentProps
+	Live         []string
 }
 
 // Props is the typed Go-side Scene3D surface. It lowers into the current
@@ -160,10 +163,14 @@ type Props struct {
 	ControlPitchLimit      float64 `json:"controlPitchLimit,omitempty"`
 	ScrollCameraStart      float64 `json:"scrollCameraStart,omitempty"`
 	ScrollCameraEnd        float64 `json:"scrollCameraEnd,omitempty"`
-	MaxFrameRate           float64 `json:"maxFrameRate,omitempty"`
-	MaxFPS                 float64 `json:"maxFPS,omitempty"`
-	FrameIntervalMS        float64 `json:"frameIntervalMS,omitempty"`
-	MaxDevicePixelRatio    float64 `json:"maxDevicePixelRatio,omitempty"`
+	// ScrollCameraOffset applies a camera-position delta per CSS pixel scrolled.
+	// It complements ScrollCameraStart/End, which preserve the legacy z-range
+	// interpolation contract.
+	ScrollCameraOffset  Vector3 `json:"scrollCameraOffset,omitempty"`
+	MaxFrameRate        float64 `json:"maxFrameRate,omitempty"`
+	MaxFPS              float64 `json:"maxFPS,omitempty"`
+	FrameIntervalMS     float64 `json:"frameIntervalMS,omitempty"`
+	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	// MaxPixels caps the render target by total backing pixels after DPR.
 	// Zero leaves the render target governed by the DPR cap alone.
 	MaxPixels             int     `json:"maxPixels,omitempty"`
@@ -1439,6 +1446,7 @@ type StandardMaterial struct {
 	NormalMap    string
 	RoughnessMap string
 	MetalnessMap string
+	OcclusionMap string
 	EmissiveMap  string
 	Emissive     float64
 	Opacity      *float64
@@ -1777,6 +1785,13 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "controlPitchLimit", p.ControlPitchLimit)
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
+	if p.ScrollCameraOffset != (Vector3{}) {
+		out["scrollCameraOffset"] = map[string]any{
+			"x": p.ScrollCameraOffset.X,
+			"y": p.ScrollCameraOffset.Y,
+			"z": p.ScrollCameraOffset.Z,
+		}
+	}
 	setNumeric(out, "maxFrameRate", p.MaxFrameRate)
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
@@ -2892,6 +2907,9 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if metalnessMap, ok := mapStringValue(materialProps["metalnessMap"]); ok {
 			record.MetalnessMap = metalnessMap
 		}
+		if occlusionMap, ok := mapStringValue(materialProps["occlusionMap"]); ok {
+			record.OcclusionMap = occlusionMap
+		}
 		if emissiveMap, ok := mapStringValue(materialProps["emissiveMap"]); ok {
 			record.EmissiveMap = emissiveMap
 		}
@@ -3959,6 +3977,9 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if metalnessMap, ok := mapStringValue(props["metalnessMap"]); ok {
 		record.MetalnessMap = metalnessMap
 	}
+	if occlusionMap, ok := mapStringValue(props["occlusionMap"]); ok {
+		record.OcclusionMap = occlusionMap
+	}
 	if emissiveMap, ok := mapStringValue(props["emissiveMap"]); ok {
 		record.EmissiveMap = emissiveMap
 	}
@@ -4262,6 +4283,7 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
 		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
 		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
+		record.OcclusionMap = strings.TrimSpace(m.OcclusionMap)
 		record.EmissiveMap = strings.TrimSpace(m.EmissiveMap)
 		if m.Emissive != 0 {
 			record.Emissive = Float(m.Emissive)
@@ -4302,6 +4324,7 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
 		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
 		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
+		record.OcclusionMap = strings.TrimSpace(m.OcclusionMap)
 		record.EmissiveMap = strings.TrimSpace(m.EmissiveMap)
 		if m.Emissive != 0 {
 			record.Emissive = Float(m.Emissive)
@@ -4422,6 +4445,7 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setString(out, "normalMap", m.NormalMap)
 	setString(out, "roughnessMap", m.RoughnessMap)
 	setString(out, "metalnessMap", m.MetalnessMap)
+	setString(out, "occlusionMap", m.OcclusionMap)
 	setString(out, "emissiveMap", m.EmissiveMap)
 	setNumeric(out, "emissive", m.Emissive)
 	setNumericPtr(out, "opacity", m.Opacity)
