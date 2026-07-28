@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -79,8 +78,9 @@ func TestIBLSidecarPinsBRDFModel(t *testing.T) {
 	}
 }
 
-// TestIBLSidecarReportsTheMissingConsumer checks that the build states the gap
-// in the file it writes, next to the products nobody reads.
+// TestIBLSidecarReportsTheMissingConsumer checks the exact staged consumer
+// matrix copied into the generated sidecar. Runtime availability policy
+// (including the intentionally non-universal IBL capability) remains separate.
 func TestIBLSidecarReportsTheMissingConsumer(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteBytes(t, filepath.Join(dir, "env", "studio.hdr"), writeTestHDR(t, 16, 8, 1, 1, 1))
@@ -103,21 +103,33 @@ func TestIBLSidecarReportsTheMissingConsumer(t *testing.T) {
 	if err := json.Unmarshal(sidecarBytes, &sidecar); err != nil {
 		t.Fatal(err)
 	}
-	if sidecar.Consumer.Ready {
-		t.Fatal("the sidecar claims a ready consumer; no renderer samples these products")
+	if !sidecar.Consumer.Ready {
+		t.Fatalf("the sidecar reports implemented consumer pieces missing: %v", sidecar.Consumer.Missing)
 	}
-	got := append([]string(nil), sidecar.Consumer.Missing...)
-	sort.Strings(got)
-	want := []string{"brdf-lut-upload", "cube-upload", "ir-carrier", "ktx2-reader-js", "shader-combine"}
-	if len(got) != len(want) {
-		t.Fatalf("the sidecar lists %v, want %v", got, want)
+	if len(sidecar.Consumer.Missing) != 0 {
+		t.Fatalf("ready consumer has missing requirements: %v", sidecar.Consumer.Missing)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("the sidecar lists %v, want %v", got, want)
+	want := map[string]bool{
+		"ktx2-reader-js":  true,
+		"cube-upload":     true,
+		"brdf-lut-upload": true,
+		"shader-combine":  true,
+		"ir-carrier":      true,
+	}
+	for _, requirement := range ibl.ConsumerRequirements() {
+		present, ok := want[requirement.ID]
+		if !ok {
+			t.Fatalf("unexpected consumer requirement %q", requirement.ID)
 		}
+		if requirement.Present != present {
+			t.Fatalf("requirement %q present=%v, want %v", requirement.ID, requirement.Present, present)
+		}
+		delete(want, requirement.ID)
 	}
-	if !strings.Contains(sidecar.Consumer.Note, "tone maps") {
-		t.Fatalf("the sidecar note does not say what the runtime does instead: %q", sidecar.Consumer.Note)
+	if len(want) != 0 {
+		t.Fatalf("missing staged requirements: %v", want)
+	}
+	if sidecar.Consumer.Note != "" {
+		t.Fatalf("ready consumer must not carry obsolete fallback note: %q", sidecar.Consumer.Note)
 	}
 }
