@@ -829,7 +829,7 @@ test("each pick draw reads its own base ID through a dynamic offset", () => {
 
   const layout = gpu.log.bindGroupLayouts[0];
   assert.equal(layout.hasDynamicOffset, true, "the pick bind group needs a dynamic offset");
-  assert.equal(layout.minBindingSize, 80, "PickUniforms is mat4x4f + 4 u32 = 80 bytes");
+  assert.equal(layout.minBindingSize, 144, "PickUniforms is 2 mat4x4f + 4 u32 = 144 bytes");
 
   // Exactly one upload for the whole pass.
   const uniformWrites = gpu.log.writes.filter((w) => w.label === "gosx-pick-uniforms");
