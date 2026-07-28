@@ -1265,14 +1265,15 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
     pipelineAsyncBehavior(desc) {
       return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
     },
-    // Error scope reports a validation error.
-    errorScopeBehavior() {
-      return Promise.resolve({ message: "fake validation error" });
-    },
   });
+  // Measured browser behaviour for invalid WGSL: createRenderPipelineAsync
+  // rejects. This used to be expressed through the device error scope, which
+  // could not say which pipeline the error belonged to.
   fake.device.createRenderPipelineAsync = function(desc) {
     renderPipelineAsyncCalls++;
-    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+    const err = new Error("ShaderModule with '" + (desc && desc.label) + "' label is invalid");
+    err.name = "GPUPipelineError";
+    return Promise.reject(err);
   };
 
   const harness = await createComputeParticleHarness(fake.device);

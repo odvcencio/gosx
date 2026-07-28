@@ -68,8 +68,9 @@ test("bootstrap engines feature runs canvas2d surface-kind mount on runtime read
   );
 
   // runtimeReady must fan out to the surface-kind mount alongside the existing
-  // engine + engine-surface mounts.
-  assert.match(suffix, /mountAllEngines\(manifest, reuseEngineIDs\)/);
+  // engine + engine-surface mounts. isNavigationBootstrap threads through so
+  // mountAllEngines' "engine-remounted" telemetry never fires on a first load.
+  assert.match(suffix, /mountAllEngines\(manifest, reuseEngineIDs, isNavigationBootstrap\)/);
   assert.match(suffix, /mountAllEngineSurfaces\(\)/);
   assert.match(suffix, /mountAllSurfaceKinds\(\)/);
 });
