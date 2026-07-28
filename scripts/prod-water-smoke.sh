@@ -46,7 +46,7 @@ while ! curl -fsS "${base_url}/readyz" >/dev/null 2>&1; do
 	sleep 0.25
 done
 
-page="$(curl -fsS "${base_url}/demos/water")"
+page="$(curl -fsSL "${base_url}/demos/water")"
 printf '%s' "$page" | grep -q 'data-gosx-scene3d'
 
 for asset_name in bootstrap-feature-scene3d bootstrap-feature-scene3d-webgpu; do
