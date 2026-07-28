@@ -97,7 +97,7 @@ string at startup and calls `EnableCrossFrameRelay` automatically.
 
 ```go
 // In the storefront's layout init (e.g. app/layout.server.go):
-import "github.com/odvcencio/gosx/island"
+import "m31labs.dev/gosx/island"
 
 func init() {
     island.EnablePreviewBootstrap()
