@@ -184,6 +184,10 @@ func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
 	// handles bundle.lit, bundle.unlit, bundle.shadow and particles, and skips
 	// bundle.worldLine, so a line list draws nothing on the CPU path.
 	//
+	// "lamp" is a rect-area light because that is the one authored light kind
+	// the CPU preview genuinely cannot shade. Point lights are supported and
+	// must not be used as the positive fixture for unsupported_light.
+	//
 	// Note that a polyhedron would NOT work here: tetrahedron, icosahedron and
 	// the rest carry no wire kind of their own. They lower to "gltf-mesh" with
 	// baked vertices, so the schema vocabulary rejects their authored names and
