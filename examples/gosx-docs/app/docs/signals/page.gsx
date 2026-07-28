@@ -2,22 +2,49 @@ package docs
 
 func Page() Node {
 	return <div>
+		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
+			<div id={docScene.SurfaceID} class="doc-scene__surface">
+				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
+					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
+				</Scene3D>
+			</div>
+			<div class="doc-scene__teaching">
+				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
+					{docScene.Title}
+				</p>
+				<p class="doc-scene__summary">{docScene.Summary}</p>
+				<dl class="doc-scene__facts">
+					<div>
+						<dt>Backend contract</dt>
+						<dd>{docScene.BackendTruth}</dd>
+					</div>
+					<div>
+						<dt>Interaction</dt>
+						<dd>{docScene.InteractionHint}</dd>
+					</div>
+				</dl>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
+					{docScene.DemoLabel}
+				</a>
+			</div>
+		</section>
 		<section id="signal-basics">
 			<h2 class="chrome-text">Signal Basics</h2>
 			<p>
 				A signal is a reactive cell — a value with a subscriber list. When the value changes, every subscriber is notified and re-evaluates. Signals are the atomic unit of reactivity in GoSX; there is no framework-owned state tree, no context providers, and no prop threading.
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-	
+
 	// New creates a writable signal with an initial value.
 	count := signal.New(0)
-	
+
 	// Get reads the current value.
 	n := count.Get() // 0
-	
+
 	// Set writes a new value and notifies subscribers.
 	count.Set(n + 1) // subscribers re-run
-	
+
 	// Peek reads without registering a dependency.
 	// Safe to call from non-reactive contexts.
 	n = count.Peek()`)}
@@ -37,7 +64,7 @@ func Page() Node {
 	label  := signal.New("idle")      // Signal[string]
 	ratio  := signal.New(0.0)         // Signal[float64]
 	items  := signal.New([]string{})  // Signal[[]string]
-	
+
 	// ReadOnly wraps a signal to prevent external writes.
 	var ro signal.ReadOnly[bool] = active.ReadOnly()`)}
 		</section>
@@ -47,10 +74,10 @@ func Page() Node {
 				A computed value derives from one or more signals. It re-evaluates lazily when any dependency changes and caches its result until the next change. Computeds are themselves read-only signals, so they can be used anywhere a signal value is expected.
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-	
+
 	items  := signal.New([]string{"apple", "banana", "cherry"})
 	filter := signal.New("")
-	
+
 	// Computed re-runs whenever items or filter changes.
 	visible := signal.Computed(func() []string {
 	    f := filter.Get()
@@ -65,7 +92,7 @@ func Page() Node {
 	    }
 	    return out
 	})
-	
+
 	// Read the derived value — never stale.
 	shown := visible.Get()`)}
 			<p>
@@ -95,17 +122,17 @@ func Page() Node {
 				An effect is a side-effecting function that runs whenever its signal dependencies change. Effects are scheduled after all signal writes in a batch have propagated, so they always see a consistent state snapshot.
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-	
+
 	count := signal.New(0)
-	
+
 	// Effect runs immediately once, then again on each change.
 	stop := signal.Effect(func() {
 	    fmt.Printf("count is now %d\n", count.Get())
 	})
-	
+
 	count.Set(1) // prints: count is now 1
 	count.Set(2) // prints: count is now 2
-	
+
 	// Call stop to unsubscribe the effect.
 	stop()`)}
 			<p>
@@ -125,7 +152,7 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", `showDetails := signal.New(false)
 	details     := signal.New("...")
-	
+
 	// This computed only depends on details when showDetails is true.
 	// If showDetails is false, changes to details do NOT trigger a re-run.
 	summary := signal.Computed(func() string {
@@ -174,15 +201,15 @@ func Page() Node {
 				groups writes into a single propagation pass:
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-	
+
 	firstName := signal.New("")
 	lastName  := signal.New("")
-	
+
 	// fullName would re-run twice without batching.
 	fullName := signal.Computed(func() string {
 	    return firstName.Get() + " " + lastName.Get()
 	})
-	
+
 	// Batch: fullName re-runs exactly once.
 	signal.Batch(func() {
 	    firstName.Set("Ada")
@@ -210,7 +237,7 @@ func Page() Node {
 	    Discount signal.Signal[float64]
 	    Total    signal.Computed[float64]
 	}
-	
+
 	func NewCartStore() *CartStore {
 	    items    := signal.New([]CartItem{})
 	    discount := signal.New(0.0)
@@ -223,7 +250,7 @@ func Page() Node {
 	    })
 	    return &CartStore{Items: items, Discount: discount, Total: total}
 	}
-	
+
 	// In the route loader:
 	func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
 	    cart := NewCartStore()

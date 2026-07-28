@@ -2,6 +2,33 @@ package docs
 
 func Page() Node {
 	return <div>
+		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
+			<div id={docScene.SurfaceID} class="doc-scene__surface">
+				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
+					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
+				</Scene3D>
+			</div>
+			<div class="doc-scene__teaching">
+				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
+					{docScene.Title}
+				</p>
+				<p class="doc-scene__summary">{docScene.Summary}</p>
+				<dl class="doc-scene__facts">
+					<div>
+						<dt>Backend contract</dt>
+						<dd>{docScene.BackendTruth}</dd>
+					</div>
+					<div>
+						<dt>Interaction</dt>
+						<dd>{docScene.InteractionHint}</dd>
+					</div>
+				</dl>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
+					{docScene.DemoLabel}
+				</a>
+			</div>
+		</section>
 		<section id="engine-model">
 			<h2 class="chrome-text">Engine Model</h2>
 			<p>
@@ -105,13 +132,13 @@ func Page() Node {
 			{CodeBlock("go", `// Engine program — runs inside the canvas context.
 	func MyCanvasProgram(ctx engine.Context) {
 	    c := ctx.Canvas2D()
-	
+
 	    ctx.OnFrame(func(dt float64) {
 	        c.ClearRect(0, 0, ctx.Width(), ctx.Height())
 	        c.SetFillStyle("#D4AF37")
 	        c.FillRect(10, 10, 100*dt, 60)
 	    })
-	
+
 	    ctx.OnPointer(func(ev engine.PointerEvent) {
 	        // React to mouse/touch without touching the main DOM.
 	    })
@@ -199,23 +226,23 @@ func Page() Node {
 	    Canvas2D() Canvas2DContext
 	    WebGL2()   WebGL2Context
 	    WebGPU()   WebGPUContext
-	
+
 	    // Dimensions (updated on resize).
 	    Width()  float64
 	    Height() float64
-	
+
 	    // Frame loop.
 	    OnFrame(fn func(dt float64))
 	    CancelFrame()
-	
+
 	    // Input events.
 	    OnPointer(fn func(PointerEvent))
 	    OnKey(fn func(KeyEvent))
-	
+
 	    // Messaging.
 	    Send(msg Message)
 	    OnMessage(fn func(Message))
-	
+
 	    // Lifecycle.
 	    OnDispose(fn func())
 	}`)}
@@ -226,7 +253,7 @@ func Page() Node {
 	    engine.Register("my-canvas", MyCanvasProgram)
 	    engine.Register("bg-worker", BackgroundWorkerProgram)
 	}
-	
+
 	// In the route loader, reference by name.
 	eng := engine.NewByName("my-canvas", engine.Options{
 	    Capabilities: []engine.Cap{engine.CapCanvas, engine.CapPointer},

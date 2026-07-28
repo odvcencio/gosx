@@ -2,6 +2,33 @@ package docs
 
 func Page() Node {
 	return <div>
+		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
+			<div id={docScene.SurfaceID} class="doc-scene__surface">
+				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
+					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
+				</Scene3D>
+			</div>
+			<div class="doc-scene__teaching">
+				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
+					{docScene.Title}
+				</p>
+				<p class="doc-scene__summary">{docScene.Summary}</p>
+				<dl class="doc-scene__facts">
+					<div>
+						<dt>Backend contract</dt>
+						<dd>{docScene.BackendTruth}</dd>
+					</div>
+					<div>
+						<dt>Interaction</dt>
+						<dd>{docScene.InteractionHint}</dd>
+					</div>
+				</dl>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
+					{docScene.DemoLabel}
+				</a>
+			</div>
+		</section>
 		<section id="hub-rooms">
 			<h2>Hub Rooms</h2>
 			<p>
@@ -15,17 +42,17 @@ func Page() Node {
 				. The name appears in the client connection URL.
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/hub"
-	
+
 	// Declare the hub once at package level.
 	var collab = hub.New("collab")
-	
+
 	func init() {
 	    // Handle a custom "cursor" event from any client.
 	    collab.On("cursor", func(ctx *hub.Context) error {
 	        // Broadcast cursor position to all other clients in the room.
 	        return ctx.BroadcastOthers("cursor", ctx.Payload)
 	    })
-	
+
 	    // Handle client connect / disconnect lifecycle.
 	    collab.OnConnect(func(ctx *hub.Context) error {
 	        return ctx.Broadcast("presence", map[string]any{
@@ -54,13 +81,13 @@ func Page() Node {
 	    "message": "Your document was saved.",
 	    "at":      time.Now().Unix(),
 	})
-	
+
 	// Broadcast to every client in the room
 	ctx.Broadcast("presence", map[string]any{"event": "join", "clientID": ctx.Client.ID})
-	
+
 	// Broadcast to everyone except the sender
 	ctx.BroadcastOthers("cursor", cursorPayload)
-	
+
 	// Send to a specific client by ID
 	ctx.SendTo(targetClientID, "dm", payload)`)}
 			<p>
@@ -69,12 +96,12 @@ func Page() Node {
 				API.
 			</p>
 			{CodeBlock("javascript", `const ws = new WebSocket("wss://example.com/ws/collab")
-	
+
 	ws.onmessage = (e) => {
 	    const { event, payload } = JSON.parse(e.data)
 	    if (event === "cursor") updateCursor(payload)
 	}
-	
+
 	function sendCursor(x, y) {
 	    ws.send(JSON.stringify({ event: "cursor", payload: { x, y } }))
 	}`)}
@@ -83,7 +110,7 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", `// Write
 	collab.SetState("count", activeCount)
-	
+
 	// Read
 	count, _ := collab.State("count")`)}
 		</section>
@@ -97,22 +124,22 @@ func Page() Node {
 				is a conflict-free replicated document that can be read and mutated concurrently by multiple actors and will always converge to the same state regardless of operation order.
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/crdt"
-	
+
 	// Create a new document.
 	doc := crdt.NewDoc()
-	
+
 	// Put a value into the root map.
 	crdt.Put(doc, crdt.Root, "title", crdt.Str("Untitled"))
 	crdt.Put(doc, crdt.Root, "counter", crdt.Int(0))
 	crdt.Put(doc, crdt.Root, "active", crdt.Bool(true))
-	
+
 	// Commit the pending operations into a change.
 	change, err := crdt.Commit(doc)
-	
+
 	// Read values back.
 	title, _ := crdt.Get(doc, crdt.Root, "title")  // crdt.Value
 	fmt.Println(title.String())                     // "Untitled"
-	
+
 	counter, _ := crdt.Get(doc, crdt.Root, "counter")
 	fmt.Println(counter.Int())                      // 0`)}
 			<p>
@@ -135,12 +162,12 @@ func Page() Node {
 			{CodeBlock("go", `// Create a sub-map
 	prefs, _ := crdt.MakeMap(doc, crdt.Root, "prefs")
 	crdt.Put(doc, prefs, "theme", crdt.Str("dark"))
-	
+
 	// Create a list
 	items, _ := crdt.MakeList(doc, crdt.Root, "items")
 	crdt.Append(doc, items, crdt.Str("first"))
 	crdt.Append(doc, items, crdt.Str("second"))
-	
+
 	// Delete a key
 	crdt.Delete(doc, crdt.Root, "active")`)}
 		</section>
@@ -154,36 +181,36 @@ func Page() Node {
 			{CodeBlock("go", `// Alice and Bob start from the same base.
 	alice := crdt.NewDoc()
 	bob := crdt.NewDoc()
-	
+
 	// Alice edits title.
 	crdt.Put(alice, crdt.Root, "title", crdt.Str("Alice's Doc"))
 	aliceChange, _ := crdt.Commit(alice)
-	
+
 	// Bob edits counter concurrently.
 	crdt.Put(bob, crdt.Root, "counter", crdt.Int(42))
 	bobChange, _ := crdt.Commit(bob)
-	
+
 	// Merge: both docs converge to the same state.
 	crdt.Merge(alice, bobChange)
 	crdt.Merge(bob, aliceChange)
-	
+
 	// Both docs now have title="Alice's Doc" and counter=42.`)}
 			<p>
 				For network sync, the CRDT engine uses an efficient vector-clock protocol to exchange only the operations each peer has not yet seen:
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/crdt/sync"
-	
+
 	// Peer A generates a sync message describing its state.
 	msg, err := sync.GenerateSyncMessage(docA)
-	
+
 	// Peer B receives the message and generates a response.
 	response, changes, err := sync.ReceiveSyncMessage(docB, msg)
-	
+
 	// Apply changes to docB.
 	for _, c := range changes {
 	    crdt.Merge(docB, c)
 	}
-	
+
 	// Peer A applies the response.
 	_, newChanges, err := sync.ReceiveSyncMessage(docA, response)
 	for _, c := range newChanges {

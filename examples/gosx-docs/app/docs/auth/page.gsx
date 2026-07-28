@@ -109,7 +109,7 @@ func Page() Node {
 	    "/auth/webauthn/register",
 	    { csrfToken: document.querySelector("[name=csrf_token]").value }
 	)
-	
+
 	// Authentication
 	await GoSXWebAuthn.authenticate(
 	    "/auth/webauthn/login/options",
@@ -137,7 +137,7 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", `authn := auth.New(sessions, auth.Options{LoginPath: "/login"})
 	app.Use(authn.Middleware)
-	
+
 	// Guard a specific subtree
 	router.AddDir("./app/admin", route.FileRoutesOptions{
 	    Middleware: []route.Middleware{authn.Require("admin")},

@@ -104,3 +104,8 @@ Statuses are:
 - **Lab** — technical diagnostics for advanced users.
 - **Prototype** — visible only with clear experimental framing; never presented as complete.
 
+## Scene3D showcase contract
+
+The demos index leads with one live, typed Scene3D canvas—not a grid of competing canvases. Its deterministic, asset-free scene must stay within an explicit node and pixel budget and remain bounded inside the editorial hero. Static copy explains the honest WebGPU → WebGL2 → Canvas2D/unsupported fallback contract; the visible live badge reads the selected renderer and fallback reason from the mount attributes rather than claiming a backend before selection.
+
+The canvas and its DOM overlay form one labelled region. The overlay must remain legible without blocking orbit input, expose keyboard-visible route and source links, and explain both interaction and fallback behavior. Narrow layouts place the overlay in document flow, preserve a practical touch target, and never force horizontal scrolling. Autonomous scene motion is excluded from the index; all decorative CSS motion must stop under `prefers-reduced-motion: reduce`.

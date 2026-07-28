@@ -2,6 +2,33 @@ package docs
 
 func Page() Node {
 	return <div>
+		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
+			<div id={docScene.SurfaceID} class="doc-scene__surface">
+				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
+					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
+				</Scene3D>
+			</div>
+			<div class="doc-scene__teaching">
+				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
+					{docScene.Title}
+				</p>
+				<p class="doc-scene__summary">{docScene.Summary}</p>
+				<dl class="doc-scene__facts">
+					<div>
+						<dt>Backend contract</dt>
+						<dd>{docScene.BackendTruth}</dd>
+					</div>
+					<div>
+						<dt>Interaction</dt>
+						<dd>{docScene.InteractionHint}</dd>
+					</div>
+				</dl>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
+					{docScene.DemoLabel}
+				</a>
+			</div>
+		</section>
 		<section id="what-are-islands">
 			<h2 class="chrome-text">What Are Islands</h2>
 			<p>
@@ -109,16 +136,16 @@ func Page() Node {
 				package provides the signal types:
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-	
+
 	// A writable signal with an initial value.
 	count := signal.New(0)
-	
+
 	// Read the current value.
 	n := count.Get()
-	
+
 	// Write a new value — notifies all subscribers.
 	count.Set(n + 1)
-	
+
 	// A read-only view of a signal.
 	var ro signal.ReadOnly[int] = count.ReadOnly()`)}
 			<p>
@@ -134,7 +161,7 @@ func Page() Node {
 	        </button>
 	    </Island>
 	}
-	
+
 	func ThemeLabel() Node {
 	    return <Island>
 	        <span class={if $theme == "dark" { "label label--dark" } else { "label" }}>
@@ -152,10 +179,10 @@ func Page() Node {
 				Computed signals derive their value from one or more source signals. They are re-evaluated lazily when any dependency changes:
 			</p>
 			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-	
+
 	items  := signal.New([]string{"apple", "banana", "cherry"})
 	filter := signal.New("")
-	
+
 	// Computed re-runs whenever items or filter changes.
 	visible := signal.Computed(func() []string {
 	    f := filter.Get()
@@ -206,7 +233,7 @@ func Page() Node {
 	func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
 	    count := signal.New(0)
 	    theme := signal.New("dark")
-	
+
 	    return map[string]any{
 	        "count": count,
 	        "theme": theme,
