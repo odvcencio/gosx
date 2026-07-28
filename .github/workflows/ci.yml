@@ -159,6 +159,13 @@ jobs:
           go1.25.5 download
           tinygo version
 
+      # Guards the zero-CGo portability claim: README states every package
+      # compiles to WASM. It had stopped being true and nothing noticed,
+      # because `make test` builds for the host and test-wasm below builds
+      # only ./client/wasm. This builds every package.
+      - name: Every package builds for js/wasm
+        run: make build-wasm-all
+
       - name: WASM runtime tests
         run: make test-wasm
 

@@ -162,6 +162,21 @@ test-editor:
 	cd editor && GOWORK=off $(GO) vet ./...
 	cd editor && GOWORK=off $(GO) test ./...
 
+# build-wasm-all: the gate behind the zero-CGo portability claim.
+#
+# README says every package compiles to WASM. Nothing enforced that, so the
+# claim drifted: examples/vecdb-webgpu-smoke referenced a vecdb prepared-query
+# API that had been deleted, and js/wasm had not built cleanly for some time.
+# The breakage was documented in prose and in an e2e test gated behind the tag
+# `webgpusmoke`, which no target, workflow or script ever passed — so the guard
+# could never fail and the prose rotted beside it.
+#
+# `make test` cannot catch this: it builds for the host, where a _js.go suffix
+# excludes the offending file. test-wasm below builds only ./client/wasm.
+# This target builds EVERY package for js/wasm, which is what the claim says.
+build-wasm-all:
+	GOOS=js GOARCH=wasm $(GO) build ./...
+
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
 
