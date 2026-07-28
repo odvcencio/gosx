@@ -153,7 +153,7 @@ func F(s string) int {
 
 // TestLowerAddressOfDropsThrough verifies that `&x` lowers to the
 // underlying expression (composite reference semantics already
-// propagate through Value.Fields/Items per Y.C/Y.D; the explicit `&`
+// propagate through Value.Map()/Items per Y.C/Y.D; the explicit `&`
 // has no additional opcode-level meaning in the supported subset).
 // Mirrors graph_surface.go's Mount handler: `ctx.PropsInto(&props)`.
 func TestLowerAddressOfDropsThrough(t *testing.T) {

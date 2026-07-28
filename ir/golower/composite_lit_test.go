@@ -49,7 +49,7 @@ func F(x float64, y float64) float64 {
 }
 
 // TestLowerNamedStructLiteral verifies `Node{ID: id, Pos: pos}` lowers
-// such that the resulting Value.Fields map is keyed by the explicit
+// such that the resulting Value.Map() map is keyed by the explicit
 // field names.
 func TestLowerNamedStructLiteral(t *testing.T) {
 	src := []byte(`package handlers
