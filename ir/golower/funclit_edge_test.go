@@ -37,8 +37,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 10 {
-		t.Errorf("F() = %v, want 10", got.Num)
+	if int(got.Number()) != 10 {
+		t.Errorf("F() = %v, want 10", got.Number())
 	}
 }
 
@@ -66,8 +66,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 30 {
-		t.Errorf("F() = %v, want 30 (nested closures lost a capture)", got.Num)
+	if int(got.Number()) != 30 {
+		t.Errorf("F() = %v, want 30 (nested closures lost a capture)", got.Number())
 	}
 }
 
@@ -103,8 +103,8 @@ func F() int {
 	// Now invoke F() and observe that the closure sees the signal.
 	fH := findHandler(t, prog.Handlers, "F")
 	got := machine.EvalWithFrame(fH.Body[0])
-	if int(got.Num) != 99 {
-		t.Errorf("F() = %v, want 99 (closure should see package-var signal value)", got.Num)
+	if int(got.Number()) != 99 {
+		t.Errorf("F() = %v, want 99 (closure should see package-var signal value)", got.Number())
 	}
 }
 
@@ -131,8 +131,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 15 {
-		t.Errorf("F() = %v, want 15 (cross-invocation capture share broken)", got.Num)
+	if int(got.Number()) != 15 {
+		t.Errorf("F() = %v, want 15 (cross-invocation capture share broken)", got.Number())
 	}
 }
 
@@ -176,7 +176,7 @@ func F() bool {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if !got.Bool {
+	if !got.Truth() {
 		t.Errorf("F() = false, want true (closure should return literal true)")
 	}
 }

@@ -79,8 +79,8 @@ func F() float64 {
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
 	want := refGraphSurfaceHelpers()
-	if math.Abs(got.Num-want) > 1e-9 {
-		t.Errorf("F() = %f, want %f", got.Num, want)
+	if math.Abs(got.Number()-want) > 1e-9 {
+		t.Errorf("F() = %f, want %f", got.Number(), want)
 	}
 }
 
@@ -127,8 +127,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 3.0 {
-		t.Errorf("F() = %f, want 3.0 (map mutation through nested call frames)", got.Num)
+	if got.Number() != 3.0 {
+		t.Errorf("F() = %f, want 3.0 (map mutation through nested call frames)", got.Number())
 	}
 }
 
@@ -155,7 +155,7 @@ func helperDefinedLater(n int) int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 42 {
-		t.Errorf("F() = %d, want 42 (forward reference must resolve via registry pre-pass)", int(got.Num))
+	if int(got.Number()) != 42 {
+		t.Errorf("F() = %d, want 42 (forward reference must resolve via registry pre-pass)", int(got.Number()))
 	}
 }

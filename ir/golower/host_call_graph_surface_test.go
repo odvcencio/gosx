@@ -59,14 +59,14 @@ func Draw(c *surface.Canvas, x1 float64, y1 float64, x2 float64, y2 float64, col
 		}
 	}
 	// Spot-check arg propagation.
-	if rec.Calls[1].Args[0].Num != 10 || rec.Calls[1].Args[1].Num != 20 {
+	if rec.Calls[1].Args[0].Number() != 10 || rec.Calls[1].Args[1].Number() != 20 {
 		t.Errorf("MoveTo args = %+v, want [10, 20]", rec.Calls[1].Args)
 	}
-	if rec.Calls[2].Args[0].Num != 30 || rec.Calls[2].Args[1].Num != 40 {
+	if rec.Calls[2].Args[0].Number() != 30 || rec.Calls[2].Args[1].Number() != 40 {
 		t.Errorf("LineTo args = %+v, want [30, 40]", rec.Calls[2].Args)
 	}
-	if rec.Calls[3].Args[0].Str != "rgba(120,100,75,0.25)" {
-		t.Errorf("SetStrokeStyle arg = %q, want \"rgba(120,100,75,0.25)\"", rec.Calls[3].Args[0].Str)
+	if rec.Calls[3].Args[0].Text() != "rgba(120,100,75,0.25)" {
+		t.Errorf("SetStrokeStyle arg = %q, want \"rgba(120,100,75,0.25)\"", rec.Calls[3].Args[0].Text())
 	}
 }
 
@@ -98,8 +98,8 @@ func Step(c *surface.Canvas, n int) int {
 	})
 	machine.BindHost("c", rec)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 2 {
-		t.Errorf("Step returned %d, want 2 (len of fx after two writes)", int(got.Num))
+	if int(got.Number()) != 2 {
+		t.Errorf("Step returned %d, want 2 (len of fx after two writes)", int(got.Number()))
 	}
 	if len(rec.Calls) != 1 || rec.Calls[0].Method != "SetFillStyle" {
 		t.Errorf("expected one SetFillStyle host call; got %+v", rec.Calls)

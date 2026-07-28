@@ -2,7 +2,7 @@
 // retrospective handoff guarantee.
 //
 // Y.C's retrospective documented: "OpFieldSet on a parameter-typed
-// receiver already propagates because Value.Fields is reference-
+// receiver already propagates because Value.Map() is reference-
 // typed." Y.D inherits this verbatim — composite arguments are passed
 // by Value-by-value copy but their Fields/Items storage is shared, so
 // the callee's mutations land in the caller's storage.
@@ -45,8 +45,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 101.0 {
-		t.Errorf("F() = %f, want 101.0 (struct param mutation must propagate per Y.C retrospective)", got.Num)
+	if got.Number() != 101.0 {
+		t.Errorf("F() = %f, want 101.0 (struct param mutation must propagate per Y.C retrospective)", got.Number())
 	}
 }
 
@@ -72,8 +72,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 43.0 {
-		t.Errorf("F() = %f, want 43.0 (map param mutation must propagate per Y.C retrospective)", got.Num)
+	if got.Number() != 43.0 {
+		t.Errorf("F() = %f, want 43.0 (map param mutation must propagate per Y.C retrospective)", got.Number())
 	}
 }
 
@@ -101,8 +101,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 0.0 {
-		t.Errorf("F() = %f, want 0.0 (slice element mutation through param must propagate)", got.Num)
+	if got.Number() != 0.0 {
+		t.Errorf("F() = %f, want 0.0 (slice element mutation through param must propagate)", got.Number())
 	}
 }
 
@@ -130,7 +130,7 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 7 {
-		t.Errorf("F() = %d, want 7 (scalar param must NOT mutate caller's value)", int(got.Num))
+	if int(got.Number()) != 7 {
+		t.Errorf("F() = %d, want 7 (scalar param must NOT mutate caller's value)", int(got.Number()))
 	}
 }

@@ -74,8 +74,8 @@ func Mount() string {
 
 	handler := findHandler(t, prog.Handlers, "Mount")
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Str != "Mount-via-bytecode" {
-		t.Errorf("Mount returned %q, want %q (props decode + propagate)", got.Str, "Mount-via-bytecode")
+	if got.Text() != "Mount-via-bytecode" {
+		t.Errorf("Mount returned %q, want %q (props decode + propagate)", got.Text(), "Mount-via-bytecode")
 	}
 	if !vm.IsClosure(captured.cb) {
 		t.Fatal("c.StartLoop did not receive a ClosureVal")
@@ -107,14 +107,14 @@ func (h *propsIntoHostNamed) Call(method string, args []vm.Value) (vm.Value, err
 		return vm.ZeroValue(0), nil
 	}
 	target := args[0]
-	if target.Fields == nil {
+	if target.Map() == nil {
 		// Y.G's eager struct zero-init means this branch should
 		// not fire; if it does, the test fails the props-propagate
 		// assertion above.
 		return vm.ZeroValue(0), nil
 	}
-	target.Fields["Name"] = vm.StringVal(h.name)
-	target.Fields["Count"] = vm.IntVal(h.count)
+	target.Map()["Name"] = vm.StringVal(h.name)
+	target.Map()["Count"] = vm.IntVal(h.count)
 	return vm.ZeroValue(0), nil
 }
 

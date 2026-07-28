@@ -6,7 +6,7 @@
 // which reads the local's current Value. Pre-Y.G, OpLocalDecl reserves
 // the slot with the bare zero Value{} — Fields map is nil — and the
 // host receives a Value-by-value copy whose Fields map is also nil.
-// Any host-side `target.Fields[key] = ...` write either panics (writing
+// Any host-side `target.Map()[key] = ...` write either panics (writing
 // to a nil map) or, with a workaround that allocates the map, lands in
 // the host's copy and never propagates back to the caller's local.
 //
@@ -60,8 +60,8 @@ func Mount() string {
 	machine.BindHost("host", &propsIntoHost{value: "ALPHA"})
 
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Str != "ALPHA" {
-		t.Errorf("props.Center = %q, want \"ALPHA\"\n(host wrote Center to the Fields map but caller didn't observe the write — `&x` pass-through on a nil-Fields receiver dropped the update)", got.Str)
+	if got.Text() != "ALPHA" {
+		t.Errorf("props.Center = %q, want \"ALPHA\"\n(host wrote Center to the Fields map but caller didn't observe the write — `&x` pass-through on a nil-Fields receiver dropped the update)", got.Text())
 	}
 }
 
@@ -89,8 +89,8 @@ func F() string {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Str != "set" {
-		t.Errorf("F() = %q, want \"set\" (b.Name = \"set\" must land in the local's Fields map even when b was declared via `var b Box`)", got.Str)
+	if got.Text() != "set" {
+		t.Errorf("F() = %q, want \"set\" (b.Name = \"set\" must land in the local's Fields map even when b was declared via `var b Box`)", got.Text())
 	}
 }
 
@@ -112,13 +112,13 @@ func (h *propsIntoHost) Call(method string, args []vm.Value) (vm.Value, error) {
 		return vm.ZeroValue(0), nil
 	}
 	target := args[0]
-	if target.Fields == nil {
+	if target.Map() == nil {
 		// Pre-Y.G this is the failure point — the host has no map
 		// to write into, and even allocating one locally would not
 		// propagate back to the caller's local.
 		return vm.ZeroValue(0), nil
 	}
-	target.Fields["Center"] = vm.StringVal(h.value)
-	target.Fields["Name"] = vm.StringVal(h.value)
+	target.Map()["Center"] = vm.StringVal(h.value)
+	target.Map()["Name"] = vm.StringVal(h.value)
 	return vm.ZeroValue(0), nil
 }

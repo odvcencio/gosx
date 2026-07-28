@@ -58,8 +58,8 @@ func Paint(c *surface.Canvas, kind string) {
 		if rec.Calls[0].Method != "SetFillStyle" {
 			t.Errorf("kind=%q: method = %q, want SetFillStyle", kind, rec.Calls[0].Method)
 		}
-		if rec.Calls[0].Args[0].Str != want {
-			t.Errorf("kind=%q: arg = %q, want %q", kind, rec.Calls[0].Args[0].Str, want)
+		if rec.Calls[0].Args[0].Text() != want {
+			t.Errorf("kind=%q: arg = %q, want %q", kind, rec.Calls[0].Args[0].Text(), want)
 		}
 	}
 }
@@ -97,8 +97,8 @@ func Trunc(label string, n int) string {
 			"n":     vm.IntVal(tc.n),
 		})
 		got := machine.EvalWithFrame(handler.Body[0])
-		if got.Str != tc.want {
-			t.Errorf("Trunc(%q, %d) = %q, want %q", tc.label, tc.n, got.Str, tc.want)
+		if got.Text() != tc.want {
+			t.Errorf("Trunc(%q, %d) = %q, want %q", tc.label, tc.n, got.Text(), tc.want)
 		}
 	}
 }
@@ -128,8 +128,8 @@ func F(n int) float64 {
 		"n": vm.IntVal(4),
 	})
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 3.0 {
-		t.Errorf("F(4) = %f, want 3.0 (1.0 + 2.0)", got.Num)
+	if got.Number() != 3.0 {
+		t.Errorf("F(4) = %f, want 3.0 (1.0 + 2.0)", got.Number())
 	}
 }
 
@@ -185,8 +185,8 @@ func Step(c *surface.Canvas, n int) int {
 	})
 	machine.BindHost("c", rec)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 1 {
-		t.Errorf("Step returned %d, want 1 (one node)", int(got.Num))
+	if int(got.Number()) != 1 {
+		t.Errorf("Step returned %d, want 1 (one node)", int(got.Number()))
 	}
 	if len(rec.Calls) != 1 || rec.Calls[0].Method != "SetFillStyle" {
 		t.Errorf("expected one SetFillStyle host call; got %+v", rec.Calls)

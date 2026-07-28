@@ -70,8 +70,8 @@ func TestGraphSurfaceTier1IsGraftKind(t *testing.T) {
 	for _, tc := range cases {
 		machine := vm.NewVM(prog, map[string]vm.Value{"kind": vm.StringVal(tc.kind)})
 		got := machine.EvalWithFrame(handler.Body[0])
-		if got.Bool != tc.want {
-			t.Errorf("IsGraftKind(%q) = %v, want %v", tc.kind, got.Bool, tc.want)
+		if got.Truth() != tc.want {
+			t.Errorf("IsGraftKind(%q) = %v, want %v", tc.kind, got.Truth(), tc.want)
 		}
 	}
 }
@@ -87,8 +87,8 @@ func TestGraphSurfaceTier2AccumulateAngle(t *testing.T) {
 		machine := vm.NewVM(prog, map[string]vm.Value{"n": vm.IntVal(n)})
 		got := machine.EvalWithFrame(handler.Body[0])
 		want := refAccumulateAngle(n)
-		if math.Abs(got.Num-want) > 1e-9 {
-			t.Errorf("AccumulateAngle(%d) = %f, want %f", n, got.Num, want)
+		if math.Abs(got.Number()-want) > 1e-9 {
+			t.Errorf("AccumulateAngle(%d) = %f, want %f", n, got.Number(), want)
 		}
 	}
 }
@@ -163,8 +163,8 @@ func F() float64 {
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
 	want := refStepLayoutKernel()
-	if math.Abs(got.Num-want) > 1e-9 {
-		t.Errorf("F() = %f, want %f", got.Num, want)
+	if math.Abs(got.Number()-want) > 1e-9 {
+		t.Errorf("F() = %f, want %f", got.Number(), want)
 	}
 }
 
@@ -211,8 +211,8 @@ func TestGraphSurfaceTier3ForceFalloff(t *testing.T) {
 		})
 		got := machine.EvalWithFrame(handler.Body[0])
 		want := refForceFalloff(tc.dx, tc.dy)
-		if math.Abs(got.Num-want) > 1e-3 {
-			t.Errorf("ForceFalloff(%f, %f) = %f, want %f", tc.dx, tc.dy, got.Num, want)
+		if math.Abs(got.Number()-want) > 1e-3 {
+			t.Errorf("ForceFalloff(%f, %f) = %f, want %f", tc.dx, tc.dy, got.Number(), want)
 		}
 	}
 }
