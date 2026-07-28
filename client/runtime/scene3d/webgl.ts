@@ -4304,6 +4304,9 @@
       var api = postProcessorRenderTruth();
       if (!effect) return api.PIPELINE_MISSING;
       if (effect.kind === SCENE_POST_CUSTOM_POST) {
+        if (typeof sceneCustomPostDOMRegionsVisible === "function" && !sceneCustomPostDOMRegionsVisible(effect)) {
+          return api.PIPELINE_OK;
+        }
         var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
         if (customPostFailed[name]) return api.PIPELINE_FAILED;
         var vertSrc = (typeof effect.vertexGLSL === "string") ? effect.vertexGLSL.trim() : "";
@@ -4737,30 +4740,36 @@
               // un-post-processed scene straight over the pass's own output. A
               // trailing custom pass therefore produced zero visible pixels even
               // when it compiled, bound and drew correctly.
-              var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
-              var roi = scenePostDOMRegionPixelBounds(effect, passW, passH);
-              if (roi.mode === "union" && !roi.bounds) {
-                stats.postDOMRegionBoundedSkips += 1;
-                forcedPipelineState = "skipped";
-                forcedDispatch = 0;
-                break;
-              }
-              if (roi.mode === "union") {
-                if (!blitProg) {
-                  blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
+              if (typeof sceneCustomPostDOMRegionsVisible === "function" && !sceneCustomPostDOMRegionsVisible(effect)) {
+                if (postChain) {
+                  truthApi.mark(postChain, i, truthApi.PIPELINE_OK, 0);
                 }
-                if (blitProg) {
-                  if (targetFBO) {
-                    postPass(blitProg, currentTexture, targetFBO, passW, passH);
-                  } else {
-                    blitToScreen(currentTexture, passW, passH);
-                  }
-                }
-                currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH, roi.bounds);
-                stats.postDOMRegionBoundedPasses += 1;
-                stats.postDOMRegionBoundedPixels += roi.bounds.width * roi.bounds.height;
               } else {
-                currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
+                var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
+                var roi = scenePostDOMRegionPixelBounds(effect, passW, passH);
+                if (roi.mode === "union" && !roi.bounds) {
+                  stats.postDOMRegionBoundedSkips += 1;
+                  forcedPipelineState = "skipped";
+                  forcedDispatch = 0;
+                  break;
+                }
+                if (roi.mode === "union") {
+                  if (!blitProg) {
+                    blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
+                  }
+                  if (blitProg) {
+                    if (targetFBO) {
+                      postPass(blitProg, currentTexture, targetFBO, passW, passH);
+                    } else {
+                      blitToScreen(currentTexture, passW, passH);
+                    }
+                  }
+                  currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH, roi.bounds);
+                  stats.postDOMRegionBoundedPasses += 1;
+                  stats.postDOMRegionBoundedPixels += roi.bounds.width * roi.bounds.height;
+                } else {
+                  currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
+                }
               }
               break;
             }
@@ -7603,7 +7612,10 @@
       // --- Main Render Pass ---
 
       // Determine if post-processing is active for this frame.
-      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var authoredPostEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var postEffects = typeof sceneCustomPostDOMRegionsFilterEffects === "function"
+        ? sceneCustomPostDOMRegionsFilterEffects(authoredPostEffects)
+        : authoredPostEffects;
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var usePostProcessing = postEffects.length > 0;
 
