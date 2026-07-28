@@ -206,7 +206,7 @@ func Page() Node {
 
 func TestRunFmtCheckLeavesRawStringCodeExamplesStable(t *testing.T) {
 	dir := t.TempDir()
-	writeTempFile(t, dir, "page.gsx", "package main\n\nfunc Page() Node {\n\treturn <article>\n\t\t{DocsCodeBlock(\"gosx\", `func Demo() Node {\n\t\t    return <Scene3D>\n\t\t        <div class=\"fallback\">Ready</div>\n\t\t    </Scene3D>\n\t\t}`)}\n\t</article>\n}\n")
+	writeTempFile(t, dir, "page.gsx", "package main\n\nfunc Page() Node {\n\treturn <article>\n\t\t{CodeBlock(\"go\", `func Demo() Node {\n\t\t    title := \"Scene\"\n\n\t\t    \t\n\t\t    return <Scene3D ariaLabel={title}>\n\t\t        <div class=\"fallback\">Ready</div>\n\t\t    </Scene3D>\n\t\t}`)}\n\t</article>\n}\n")
 	path := filepath.Join(dir, "page.gsx")
 
 	var stderr bytes.Buffer
@@ -220,7 +220,24 @@ func TestRunFmtCheckLeavesRawStringCodeExamplesStable(t *testing.T) {
 	}
 
 	formatted := readFile(t, path)
-	if strings.Count(formatted, "    return <Scene3D>") != 1 {
+	if strings.Count(formatted, `    return <Scene3D ariaLabel={title}>`) != 1 {
 		t.Fatalf("expected raw string example indentation to stay stable, got:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "title := \"Scene\"\n\n\n") {
+		t.Fatalf("expected empty and whitespace-only raw-string lines to normalize to zero width, got:\n%s", formatted)
+	}
+	for lineNumber, line := range strings.Split(formatted, "\n") {
+		if line != "" && strings.Trim(line, " \t\r") == "" {
+			t.Fatalf("line %d contains whitespace-only blank content %q:\n%s", lineNumber+1, line, formatted)
+		}
+	}
+
+	beforeSecondPass := formatted
+	stderr.Reset()
+	if _, err := RunFmt(path, &stderr); err != nil {
+		t.Fatalf("RunFmt second pass (%s): %v", path, err)
+	}
+	if afterSecondPass := readFile(t, path); afterSecondPass != beforeSecondPass {
+		t.Fatalf("raw string formatting is not idempotent\nfirst:\n%s\nsecond:\n%s", beforeSecondPass, afterSecondPass)
 	}
 }

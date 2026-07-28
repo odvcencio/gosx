@@ -36,7 +36,7 @@ func Page() Node {
 				{`import (
 		  _ "your/module/app"
 		)
-		
+
 		if err := route.RegisterFileModuleHere(route.FileModuleOptions{ ... }); err != nil {
 		  log.Fatal(err)
 		}`}
