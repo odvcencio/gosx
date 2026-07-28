@@ -29352,6 +29352,12 @@ test("CustomPost DOMRegions resolves current canvas after replacement", async ()
   assert.deepEqual(Array.from(harness.state.postEffects[0].uniforms.uRegion0Rect), [0.3, 0.45, 0.25, 0.25]);
 });
 
+test("CustomPost DOMRegions tracker is wired into Scene3D mount lifecycle", () => {
+  assert.match(bootstrapScene3DMountSourceFile, /createSceneCustomPostDOMRegionTracker\(ctx\.mount,\s*function\(\) \{ return canvas; \},\s*sceneState,\s*scheduleRender\)/);
+  assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.configure\(sceneState\.postEffects\)/);
+  assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.dispose\(\)/);
+});
+
 // makeBundleWithCustomPost returns a minimal Scene3D bundle that carries one
 // customPost effect in postEffects. Callers may supply fragmentWGSL/vertexWGSL
 // to exercise the authored WGSL path, or omit them for the absent/no-op path.
