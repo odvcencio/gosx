@@ -52,6 +52,82 @@ func TestDocumentContextUsesRequestURIForPathAndPageID(t *testing.T) {
 	}
 }
 
+func TestContextHeadUsesRequestPathForAutomaticMetadataURLs(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		requestPath   string
+		meta          Metadata
+		wantCanonical string
+		wantOpenGraph string
+	}{
+		{
+			name:        "nested route",
+			requestPath: "/blog/example?preview=1",
+			meta: Metadata{
+				MetadataBase: "https://example.com",
+			},
+			wantCanonical: "https://example.com/blog/example",
+			wantOpenGraph: "https://example.com/blog/example",
+		},
+		{
+			name:        "root route",
+			requestPath: "/",
+			meta: Metadata{
+				MetadataBase: "https://example.com",
+			},
+			wantCanonical: "https://example.com/",
+			wantOpenGraph: "https://example.com/",
+		},
+		{
+			name:        "explicit URLs win",
+			requestPath: "/blog/example",
+			meta: Metadata{
+				MetadataBase: "https://example.com",
+				Alternates:   &Alternates{Canonical: "/posts/canonical"},
+				OpenGraph:    &OpenGraph{URL: "https://social.example/override"},
+			},
+			wantCanonical: "https://example.com/posts/canonical",
+			wantOpenGraph: "https://social.example/override",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newContext(httptest.NewRequest(http.MethodGet, tc.requestPath, nil))
+			ctx.SetMetadata(tc.meta)
+			html := gosx.RenderHTML(ctx.Head())
+			if !strings.Contains(html, `rel="canonical" href="`+tc.wantCanonical+`"`) {
+				t.Fatalf("canonical URL missing from %q", html)
+			}
+			if !strings.Contains(html, `property="og:url" content="`+tc.wantOpenGraph+`"`) {
+				t.Fatalf("Open Graph URL missing from %q", html)
+			}
+		})
+	}
+}
+
+func TestStandalonePageStateAndMetadataHeadDefaultToRoot(t *testing.T) {
+	meta := Metadata{MetadataBase: "https://example.com"}
+	state := NewPageState()
+	state.SetMetadata(meta)
+
+	for _, tc := range []struct {
+		name string
+		node gosx.Node
+	}{
+		{name: "page state", node: state.Head()},
+		{name: "metadata", node: meta.Head()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html := gosx.RenderHTML(tc.node)
+			if !strings.Contains(html, `rel="canonical" href="https://example.com/"`) {
+				t.Fatalf("root canonical URL missing from %q", html)
+			}
+			if !strings.Contains(html, `property="og:url" content="https://example.com/"`) {
+				t.Fatalf("root Open Graph URL missing from %q", html)
+			}
+		})
+	}
+}
+
 func TestLinkTagNodeNormalizesRelativeHrefAndKeepsDeterministicOrder(t *testing.T) {
 	html := gosx.RenderHTML(LinkTag{
 		Rel:   "stylesheet",
