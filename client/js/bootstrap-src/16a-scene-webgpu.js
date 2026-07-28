@@ -3959,6 +3959,11 @@
               // Selena post contract: WGSL fullscreen triangle, vertexMain/fragmentMain,
               // @group(0) bindings: 0=sceneColor, 1=sceneColorSampler, 2=sceneDepth,
               //   3=sceneDepthSampler, 4=UserUniforms (16-byte placeholder when absent).
+              if (typeof sceneCustomPostDOMRegionsVisible === "function" && !sceneCustomPostDOMRegionsVisible(effect)) {
+                if (postChain) truth.mark(postChain, i, truth.PIPELINE_OK, 0);
+                stats.postDOMRegionCustomPostSkipped = (stats.postDOMRegionCustomPostSkipped || 0) + 1;
+                break;
+              }
               var cpRes = buildCustomPostPipelineAsync(effect);
               if (!cpRes || cpRes.pending || cpRes.failed) {
                 // Not yet compiled (first frame) or failed → identity passthrough.
@@ -14563,7 +14568,10 @@
       // instance — a scene that persistently fails post-FX allocation/
       // validation retries RAW rendering instead of drawing dead frames
       // forever with a poisoned post-FX target.
-      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var authoredPostEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var postEffects = typeof sceneCustomPostDOMRegionsFilterEffects === "function"
+        ? sceneCustomPostDOMRegionsFilterEffects(authoredPostEffects)
+        : authoredPostEffects;
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
 
       // Compute scaled render-target dimensions (PostFX memory cap).

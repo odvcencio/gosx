@@ -83,6 +83,14 @@
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
+  var sceneCustomPostDOMRegionsVisible =
+    sceneApi.sceneCustomPostDOMRegionsVisible ||
+    (window.__gosx_scene3d_dom_regions && window.__gosx_scene3d_dom_regions.customPostVisible) ||
+    function() { return true; };
+  var sceneCustomPostDOMRegionsFilterEffects =
+    sceneApi.sceneCustomPostDOMRegionsFilterEffects ||
+    (window.__gosx_scene3d_dom_regions && window.__gosx_scene3d_dom_regions.filterEffects) ||
+    function(effects) { return Array.isArray(effects) ? effects : []; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
   // sceneIsNumericTypedArray: typed-array guard used by drawPointsEntries in
   // 16a to validate entry.positions / sizes / colors before caching them.

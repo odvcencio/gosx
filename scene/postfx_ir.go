@@ -366,9 +366,11 @@ type DOMRegionUniformsIR struct {
 
 // CustomPostDOMRegionsIR is the browser CustomPost DOM-region tracker config.
 type CustomPostDOMRegionsIR struct {
-	Selector string              `json:"selector"`
-	Max      int                 `json:"max,omitempty"`
-	Uniforms DOMRegionUniformsIR `json:"uniforms,omitempty"`
+	Selector              string              `json:"selector"`
+	Max                   int                 `json:"max,omitempty"`
+	SkipWhenHidden        bool                `json:"skipWhenHidden,omitempty"`
+	SuspendWhileScrolling bool                `json:"suspendWhileScrolling,omitempty"`
+	Uniforms              DOMRegionUniformsIR `json:"uniforms,omitempty"`
 }
 
 func (ir CustomPostIR) legacyProps() map[string]any {
@@ -530,9 +532,11 @@ func lowerCustomPostDOMRegions(dom CustomPostDOMRegions) *CustomPostDOMRegionsIR
 		Meta:   customPostUniformPattern(dom.Uniforms.Meta, "region%dMeta"),
 	}
 	return &CustomPostDOMRegionsIR{
-		Selector: selector,
-		Max:      max,
-		Uniforms: uniforms,
+		Selector:              selector,
+		Max:                   max,
+		SkipWhenHidden:        dom.SkipWhenHidden,
+		SuspendWhileScrolling: dom.SuspendWhileScrolling,
+		Uniforms:              uniforms,
 	}
 }
 

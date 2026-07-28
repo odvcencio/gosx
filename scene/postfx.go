@@ -202,11 +202,16 @@ type DOMRegionUniforms struct {
 }
 
 // CustomPostDOMRegions configures browser-side DOM measurement for a
-// CustomPost pass. Max defaults to 8 and is capped at 16.
+// CustomPost pass. Max defaults to 8 and is capped at 16. SkipWhenHidden
+// skips the pass when all measured regions are hidden or outside the canvas.
+// SuspendWhileScrolling skips the pass during active scroll gestures and
+// remeasures after scroll idle.
 type CustomPostDOMRegions struct {
-	Selector string
-	Max      int
-	Uniforms DOMRegionUniforms
+	Selector              string
+	Max                   int
+	SkipWhenHidden        bool
+	SuspendWhileScrolling bool
+	Uniforms              DOMRegionUniforms
 }
 
 // FXAA applies fast approximate anti-aliasing (the FXAA 3.11 quality

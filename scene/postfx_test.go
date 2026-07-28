@@ -304,8 +304,10 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 		Name:     "Glass",
 		Material: mat,
 		DOMRegions: CustomPostDOMRegions{
-			Selector: " .glass-card ",
-			Max:      32,
+			Selector:              " .glass-card ",
+			Max:                   32,
+			SkipWhenHidden:        true,
+			SuspendWhileScrolling: true,
 			Uniforms: DOMRegionUniforms{
 				Count:  "uRegionCount",
 				Aspect: "bad uniform",
@@ -330,6 +332,12 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 	}
 	if cp.DOMRegions.Max != 16 {
 		t.Errorf("Max = %d, want hard cap 16", cp.DOMRegions.Max)
+	}
+	if !cp.DOMRegions.SkipWhenHidden {
+		t.Error("SkipWhenHidden = false, want true")
+	}
+	if !cp.DOMRegions.SuspendWhileScrolling {
+		t.Error("SuspendWhileScrolling = false, want true")
 	}
 	if cp.DOMRegions.Uniforms.Count != "uRegionCount" {
 		t.Errorf("Count uniform = %q", cp.DOMRegions.Uniforms.Count)
@@ -372,6 +380,12 @@ func TestCustomPostDOMRegionsJSONDefaults(t *testing.T) {
 	}
 	if rawDOM["max"] != float64(8) {
 		t.Errorf("max = %v, want 8", rawDOM["max"])
+	}
+	if _, ok := rawDOM["skipWhenHidden"]; ok {
+		t.Errorf("skipWhenHidden default should be omitted, got %#v", rawDOM["skipWhenHidden"])
+	}
+	if _, ok := rawDOM["suspendWhileScrolling"]; ok {
+		t.Errorf("suspendWhileScrolling default should be omitted, got %#v", rawDOM["suspendWhileScrolling"])
 	}
 	rawUniforms, ok := rawDOM["uniforms"].(map[string]any)
 	if !ok {

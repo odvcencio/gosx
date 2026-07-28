@@ -28080,7 +28080,7 @@ test("compute particle payload kernel: invalid WGSL (async rejection) falls back
     },
   });
 
-  const harness = await createComputeParticleHarness(fake.device);
+  const harness = await createComputeParticleHarness(fake.device, { fresh: true });
   const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
 
   // Frame 1: render triggers createSceneParticleSystem which kicks off async
@@ -28139,7 +28139,7 @@ test("compute particle payload kernel: valid WGSL uses the payload pipeline, not
     },
   });
 
-  const harness = await createComputeParticleHarness(fake.device);
+  const harness = await createComputeParticleHarness(fake.device, { fresh: true });
   const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
 
   const entry = {
@@ -29200,20 +29200,23 @@ function createDOMRegionTrackerHarness(options = {}) {
     target.setAttribute("class", "glass-card");
     target.width = 100;
     target.height = 50;
+    const rectOverride = Array.isArray(options.targetRects) ? options.targetRects[i] : null;
     target.getBoundingClientRect = () => ({
-      left: 110 + i * 20,
-      top: 70 + i * 10,
-      right: 210 + i * 20,
-      bottom: 120 + i * 10,
-      width: 100,
-      height: 50,
+      left: rectOverride ? rectOverride.left : 110 + i * 20,
+      top: rectOverride ? rectOverride.top : 70 + i * 10,
+      right: rectOverride ? rectOverride.right : 210 + i * 20,
+      bottom: rectOverride ? rectOverride.bottom : 120 + i * 10,
+      width: rectOverride ? rectOverride.width : 100,
+      height: rectOverride ? rectOverride.height : 50,
     });
-    target.computedStyle = { borderRadius: "20px", opacity: "1", display: "block", visibility: "visible" };
+    const styleOverride = Array.isArray(options.targetStyles) ? options.targetStyles[i] : null;
+    target.computedStyle = styleOverride || { borderRadius: "20px", opacity: "1", display: "block", visibility: "visible" };
     targets.push(target);
   }
 
   const env = createContext({ elements: [mount].concat(targets) });
   const raf = installManualRAF(env.context);
+  const timers = installManualTimers(env.context);
   const patches = [];
   const renders = [];
   env.context.applyScenePostUniformsCommand = function(state, data) {
@@ -29235,6 +29238,8 @@ function createDOMRegionTrackerHarness(options = {}) {
       domRegions: {
         selector: ".glass-card",
         max: options.max,
+        skipWhenHidden: options.skipWhenHidden === true,
+        suspendWhileScrolling: options.suspendWhileScrolling === true,
         uniforms: options.uniforms || { count: "uCount", aspect: "uAspect", rect: "uRegion%dRect", meta: "uRegion%dMeta" },
       },
     }],
@@ -29254,6 +29259,7 @@ function createDOMRegionTrackerHarness(options = {}) {
     set activeCanvas(value) { activeCanvas = value; },
     targets,
     raf,
+    timers,
     patches,
     renders,
     state,
@@ -29275,6 +29281,44 @@ test("CustomPost DOMRegions packs rect/meta uniforms in post UV space", async ()
   assert.deepEqual(Array.from(uniforms.uRegion0Rect), [0.375, 0.375, 0.125, 0.125]);
   assert.deepEqual(Array.from(uniforms.uRegion0Meta), [0.1, 1, 0, 0]);
   assert.equal(harness.renders[0], "custom-post-dom-regions");
+});
+
+test("CustomPost DOMRegions reports count 0 when every target is offscreen", async () => {
+  const harness = createDOMRegionTrackerHarness({
+    targetCount: 2,
+    targetRects: [
+      { left: 500, top: 70, right: 600, bottom: 120, width: 100, height: 50 },
+      { left: 110, top: 260, right: 210, bottom: 310, width: 100, height: 50 },
+    ],
+  });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  const uniforms = harness.state.postEffects[0].uniforms;
+  assert.equal(uniforms.uCount, 0);
+  assert.deepEqual(Array.from(uniforms.uRegion0Rect), [0, 0, 0, 0]);
+  assert.deepEqual(Array.from(uniforms.uRegion0Meta), [0, 0, 0, 0]);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-region-visible-count"), "0");
+  harness.tracker.dispose();
+});
+
+test("CustomPost DOMRegions compacts visible targets and preserves DOM ordinal", async () => {
+  const harness = createDOMRegionTrackerHarness({
+    targetCount: 3,
+    targetRects: [
+      { left: 500, top: 70, right: 600, bottom: 120, width: 100, height: 50 },
+      { left: 110, top: 70, right: 210, bottom: 120, width: 100, height: 50 },
+      { left: 130, top: 80, right: 230, bottom: 130, width: 100, height: 50 },
+    ],
+  });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  const uniforms = harness.state.postEffects[0].uniforms;
+  assert.equal(uniforms.uCount, 2);
+  assert.deepEqual(Array.from(uniforms.uRegion0Meta), [0.1, 1, 1, 0]);
+  assert.deepEqual(Array.from(uniforms.uRegion1Meta), [0.1, 1, 2, 0]);
+  harness.tracker.dispose();
 });
 
 test("CustomPost DOMRegions caps targets and clears stale slots", async () => {
@@ -29301,10 +29345,90 @@ test("CustomPost DOMRegions caps targets and clears stale slots", async () => {
 test("CustomPost DOMRegions normalizes unsafe slot patterns", () => {
   const harness = createDOMRegionTrackerHarness({
     uniforms: { count: "uCount", aspect: "uAspect", rect: "bad slot", meta: "slot%d%dMeta" },
+    skipWhenHidden: true,
   });
   const config = harness.env.context.__gosx_scene3d_dom_regions.config(harness.state.postEffects[0]);
   assert.equal(config.uniforms.rect, "region%dRect");
   assert.equal(config.uniforms.meta, "region%dMeta");
+  assert.equal(config.skipWhenHidden, true);
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.customPostVisible({
+    kind: "customPost",
+    name: "Glass",
+    domRegions: harness.state.postEffects[0].domRegions,
+    uniforms: { uCount: 0 },
+  }), false);
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.customPostVisible({
+    kind: "customPost",
+    name: "Glass",
+    domRegions: Object.assign({}, harness.state.postEffects[0].domRegions, { skipWhenHidden: false }),
+    uniforms: { uCount: 0 },
+  }), true);
+  harness.tracker.dispose();
+});
+
+test("CustomPost DOMRegions keeps observing offscreen targets for later visibility", async () => {
+  const harness = createDOMRegionTrackerHarness({
+    targetCount: 2,
+    max: 1,
+    targetRects: [
+      { left: 500, top: 70, right: 600, bottom: 120, width: 100, height: 50 },
+      { left: 620, top: 70, right: 720, bottom: 120, width: 100, height: 50 },
+    ],
+  });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  assert.equal(harness.state.postEffects[0].uniforms.uCount, 0);
+  assert.equal(harness.env.resizeObservers.at(-1).targets.has(harness.targets[0]), true);
+  assert.equal(harness.env.resizeObservers.at(-1).targets.has(harness.targets[1]), true);
+
+  harness.targets[1].getBoundingClientRect = () => ({ left: 110, top: 70, right: 210, bottom: 120, width: 100, height: 50 });
+  harness.tracker.schedule();
+  harness.raf.flush(32);
+  await flushAsyncWork();
+
+  assert.equal(harness.state.postEffects[0].uniforms.uCount, 1);
+  assert.deepEqual(Array.from(harness.state.postEffects[0].uniforms.uRegion0Meta), [0.1, 1, 1, 0]);
+  harness.tracker.dispose();
+});
+
+test("CustomPost DOMRegions suspendWhileScrolling marks effect inactive without patch chasing", async () => {
+  const harness = createDOMRegionTrackerHarness({ suspendWhileScrolling: true });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+  assert.equal(harness.patches.length, 1);
+
+  const scrollListeners = harness.env.windowListeners.get("scroll") || [];
+  assert.equal(scrollListeners.length > 0, true);
+  scrollListeners[0]();
+
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.customPostVisible(harness.state.postEffects[0]), false);
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.filterEffects(harness.state.postEffects).length, 0);
+  assert.equal(harness.patches.length, 1, "scroll must not measure and patch during the active gesture");
+  assert.equal(harness.renders.includes("custom-post-dom-regions-scroll-suspended"), true);
+
+  harness.tracker.dispose();
+});
+
+test("CustomPost DOMRegions suspendWhileScrolling resumes with one idle remeasure", async () => {
+  const harness = createDOMRegionTrackerHarness({ suspendWhileScrolling: true });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+  const patchesBefore = harness.patches.length;
+
+  const scrollListeners = harness.env.windowListeners.get("scroll") || [];
+  scrollListeners[0]();
+  assert.equal(harness.raf.count(), 0, "active scroll must not schedule measurement");
+  assert.equal(harness.timers.runDelay(120), 1);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "false");
+  assert.equal(harness.raf.count(), 1, "idle should schedule one remeasure");
+
+  harness.raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(harness.patches.length, patchesBefore + 1);
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.customPostVisible(harness.state.postEffects[0]), true);
+
   harness.tracker.dispose();
 });
 
@@ -29416,6 +29540,47 @@ test("custom post WebGPU: absent fragmentWGSL goes straight to identity without 
   assert.equal(renderPipelineAsyncCalls, 0, "absent WGSL must not attempt a pipeline build");
   const warns = harness.warnLog.filter(m => m.includes("custom post pass"));
   assert.equal(warns.length, 0, "no warn for absent WGSL");
+});
+
+test("custom post WebGPU: skipWhenHidden avoids pipeline build until a DOMRegion is visible", async () => {
+  let renderPipelineAsyncCalls = 0;
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    renderPipelineAsyncCalls++;
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device, { fresh: true });
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    name: "lazy-glass",
+    fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }",
+    vertexWGSL: "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }",
+    domRegions: {
+      selector: ".glass-card",
+      skipWhenHidden: true,
+      uniforms: { count: "regionCount", meta: "region%dMeta" },
+    },
+    uniforms: { regionCount: 0, region0Meta: [0, 0, 0, 0] },
+  });
+
+  const texturesBefore = fake.state.textures.length;
+  harness.renderer.render(bundle, viewport);
+  await flushAsyncWork();
+  assert.equal(renderPipelineAsyncCalls, 0, "hidden DOMRegions must skip before buildCustomPostPipelineAsync");
+  assert.equal(fake.state.textures.slice(texturesBefore).some((texture) => texture.desc && texture.desc.format !== "depth24plus"), false,
+    "hidden-only DOMRegions must render direct without post-FX color textures");
+
+  bundle.postEffects[0].uniforms = { regionCount: 1, region0Meta: [0, 1, 3, 0] };
+  harness.renderer.render(bundle, viewport);
+  assert.equal(renderPipelineAsyncCalls, 1, "visible DOMRegions must resume and build the custom post pipeline");
+  assert.equal(fake.state.textures.slice(texturesBefore).some((texture) => texture.desc && texture.desc.format !== "depth24plus"), true,
+    "visible DOMRegions must re-enable post-FX color targets");
 });
 
 test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline and uses it on frame 2", async () => {
@@ -29855,10 +30020,16 @@ test("custom post WebGPU: a module with compilation errors is refused even when 
 
 // createWebGLRendererForPost: helper that boots the WebGL2 backend (same
 // pattern as other WebGL2 renderer tests in this file).
-function createWebGLRendererForPost() {
+function createWebGLRendererForPost(options) {
+  const opts = options || {};
   const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
-  runScript(bootstrapSource, env.context, "bootstrap.js");
+  if (opts.fresh) {
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  } else {
+    runScript(bootstrapSource, env.context, "bootstrap.js");
+  }
   const api = env.context.__gosx_scene3d_api;
   const registry = api.sceneBackendRegistry;
   const backend = registry.select({ webgl: true, webgl2: true, webgpu: false, canvas: false, canvas2d: false });
@@ -29938,6 +30109,114 @@ test("custom post WebGL2: valid vertexGLSL+fragmentGLSL compiles and links the p
   const warns = warnLog.filter(m => m.includes("custom post pass") || m.includes("gl-lens"));
   assert.equal(warns.length, 0, "valid GLSL must not warn");
 
+  renderer.dispose();
+});
+
+test("custom post WebGL2: skipWhenHidden avoids applyCustomPost compile until visible", async () => {
+  const { renderer, canvas, warnLog } = createWebGLRendererForPost({ fresh: true });
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const gl = canvas.getContext("webgl2");
+  const validVert = "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const validFrag = "precision mediump float; varying vec2 v_uv; uniform sampler2D _sceneColor; void main() { gl_FragColor = texture2D(_sceneColor, v_uv); }";
+  const bundle = makeWebGLBundleWithCustomPost({
+    vertexGLSL: validVert,
+    fragmentGLSL: validFrag,
+    domRegions: {
+      selector: ".glass-card",
+      skipWhenHidden: true,
+      uniforms: { count: "regionCount", meta: "region%dMeta" },
+    },
+    uniforms: { regionCount: 0, region0Meta: [0, 0, 0, 0] },
+  });
+  renderer.render(Object.assign({}, makeWebGLBundleWithCustomPost({}), { postEffects: [] }), viewport);
+  const linkedBefore = gl.ops.filter(op => op[0] === "linkProgram").length;
+  const framebuffersBefore = gl.ops.filter(op => op[0] === "createFramebuffer").length;
+
+  renderer.render(bundle, viewport);
+  const linkedHidden = gl.ops.filter(op => op[0] === "linkProgram").length;
+  assert.equal(linkedHidden, linkedBefore, "hidden opt-in DOMRegions must skip before applyCustomPost compiles GLSL");
+  assert.equal(gl.ops.filter(op => op[0] === "createFramebuffer").length, framebuffersBefore,
+    "hidden-only DOMRegions must render direct without post-FX FBO allocation");
+
+  bundle.postEffects[0].uniforms = { regionCount: 1, region0Meta: [0, 1, 2, 0] };
+  renderer.render(bundle, viewport);
+  const linkedVisible = gl.ops.filter(op => op[0] === "linkProgram").length;
+  assert.equal(linkedVisible > linkedHidden, true, "visible DOMRegions must resume the custom post path");
+  assert.equal(gl.ops.filter(op => op[0] === "createFramebuffer").length > framebuffersBefore, true,
+    "visible DOMRegions must re-enable post-FX FBO allocation");
+  assert.deepEqual(warnLog.filter(m => m.includes("custom post pass") || m.includes("gl-lens")), []);
+
+  renderer.dispose();
+});
+
+test("custom post WebGL2: DOMRegions without skipWhenHidden keep generic customPost behavior", async () => {
+  const { renderer, canvas } = createWebGLRendererForPost();
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const gl = canvas.getContext("webgl2");
+  const validVert = "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const validFrag = "precision mediump float; varying vec2 v_uv; uniform sampler2D _sceneColor; void main() { gl_FragColor = texture2D(_sceneColor, v_uv); }";
+  const linkedBefore = gl.ops.filter(op => op[0] === "linkProgram").length;
+
+  renderer.render(makeWebGLBundleWithCustomPost({
+    vertexGLSL: validVert,
+    fragmentGLSL: validFrag,
+    domRegions: {
+      selector: ".glass-card",
+      skipWhenHidden: false,
+      uniforms: { count: "regionCount", meta: "region%dMeta" },
+    },
+    uniforms: { regionCount: 0, region0Meta: [0, 0, 0, 0] },
+  }), viewport);
+
+  const linkedAfter = gl.ops.filter(op => op[0] === "linkProgram").length;
+  assert.equal(linkedAfter > linkedBefore, true, "skipWhenHidden false must leave custom posts unchanged");
+  renderer.dispose();
+});
+
+test("custom post WebGL2: suspendWhileScrolling filters the only post before post-FX activation", async () => {
+  const { env, renderer, canvas } = createWebGLRendererForPost({ fresh: true });
+  const raf = installManualRAF(env.context);
+  const timers = installManualTimers(env.context);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const gl = canvas.getContext("webgl2");
+  const validVert = "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const validFrag = "precision mediump float; varying vec2 v_uv; uniform sampler2D _sceneColor; void main() { gl_FragColor = texture2D(_sceneColor, v_uv); }";
+  const effect = {
+    kind: "customPost",
+    name: "gl-scroll-lens",
+    vertexGLSL: validVert,
+    fragmentGLSL: validFrag,
+    domRegions: {
+      selector: ".glass-card",
+      suspendWhileScrolling: true,
+      uniforms: { count: "regionCount", meta: "region%dMeta" },
+    },
+    uniforms: { regionCount: 1, region0Meta: [0, 1, 0, 0] },
+  };
+  const mount = env.document.createElement("div");
+  const target = env.document.createElement("div");
+  target.setAttribute("class", "glass-card");
+  mount.appendChild(target);
+  env.document.body.appendChild(mount);
+  const tracker = env.context.__gosx_scene3d_dom_regions.createTracker(mount, () => canvas, { postEffects: [effect] }, function() {});
+
+  renderer.render(Object.assign({}, makeWebGLBundleWithCustomPost({}), { postEffects: [] }), viewport);
+  const linkedBefore = gl.ops.filter(op => op[0] === "linkProgram").length;
+  const framebuffersBefore = gl.ops.filter(op => op[0] === "createFramebuffer").length;
+  const scrollListeners = env.windowListeners.get("scroll") || [];
+  scrollListeners[0]();
+
+  renderer.render(makeWebGLBundleWithCustomPost(effect), viewport);
+  assert.equal(gl.ops.filter(op => op[0] === "linkProgram").length, linkedBefore);
+  assert.equal(gl.ops.filter(op => op[0] === "createFramebuffer").length, framebuffersBefore);
+
+  assert.equal(timers.runDelay(120), 1);
+  raf.flush(64);
+  await flushAsyncWork();
+  renderer.render(makeWebGLBundleWithCustomPost(effect), viewport);
+  assert.equal(gl.ops.filter(op => op[0] === "linkProgram").length > linkedBefore, true);
+
+  tracker.dispose();
   renderer.dispose();
 });
 

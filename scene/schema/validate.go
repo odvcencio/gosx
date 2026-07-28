@@ -838,6 +838,16 @@ func validateCustomPostDOMRegions(report *Report, record map[string]any, path st
 			report.add(Error, "scene.post_effect.dom_regions.max", "CustomPost domRegions max must be an integer from 0 to 16", path+".domRegions.max", "", nil)
 		}
 	}
+	if rawSkip, ok := dom["skipWhenHidden"]; ok && rawSkip != nil {
+		if _, ok := rawSkip.(bool); !ok {
+			report.add(Error, "scene.post_effect.dom_regions.skip_when_hidden", "CustomPost domRegions skipWhenHidden must be a boolean", path+".domRegions.skipWhenHidden", "", nil)
+		}
+	}
+	if rawSuspend, ok := dom["suspendWhileScrolling"]; ok && rawSuspend != nil {
+		if _, ok := rawSuspend.(bool); !ok {
+			report.add(Error, "scene.post_effect.dom_regions.suspend_while_scrolling", "CustomPost domRegions suspendWhileScrolling must be a boolean", path+".domRegions.suspendWhileScrolling", "", nil)
+		}
+	}
 	if rawUniforms, ok := dom["uniforms"]; ok && rawUniforms != nil {
 		uniforms, ok := rawUniforms.(map[string]any)
 		if !ok {

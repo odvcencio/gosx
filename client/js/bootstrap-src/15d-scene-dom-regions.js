@@ -3,6 +3,8 @@
 
   var SCENE_DOM_REGION_MAX = 16;
   var SCENE_DOM_REGION_DEFAULT_MAX = 8;
+  var SCENE_DOM_REGION_SCROLL_IDLE_MS = 120;
+  var sceneDOMRegionScrollActive = false;
 
   function sceneDOMRegionNumber(value, fallback) {
     var n = Number(value);
@@ -48,6 +50,8 @@
       name: effect.name.trim(),
       selector: selector,
       max: sceneDOMRegionMax(raw.max),
+      skipWhenHidden: raw.skipWhenHidden === true,
+      suspendWhileScrolling: raw.suspendWhileScrolling === true,
       uniforms: {
         count: sceneDOMRegionUniformName(uniforms.count, "regionCount"),
         aspect: sceneDOMRegionUniformName(uniforms.aspect, "regionAspect"),
@@ -145,6 +149,7 @@
       var element = list[i];
       var rect = sceneDOMRegionRect(element);
       var presence = sceneDOMRegionHidden(element, rect) ? 0 : sceneDOMRegionOverlapPresence(rect, viewport);
+      if (presence <= 0) continue;
       var centerX = ((rect.left + rect.right) * 0.5 - viewport.left) / width;
       var centerY = ((rect.top + rect.bottom) * 0.5 - viewport.top) / height;
       var base = count * 4;
@@ -154,7 +159,7 @@
       rects[base + 3] = rect.height / height * 0.5;
       meta[base] = sceneDOMRegionCornerRadius(element, basis);
       meta[base + 1] = presence;
-      meta[base + 2] = count;
+      meta[base + 2] = i;
       meta[base + 3] = 0;
       count += 1;
     }
@@ -188,9 +193,43 @@
     return { name: config.name, uniforms: uniforms };
   }
 
+  function sceneCustomPostDOMRegionsVisible(effect) {
+    var config = sceneCustomPostDOMRegionsConfig(effect);
+    if (!config) return true;
+    if (config.suspendWhileScrolling && sceneDOMRegionScrollActive) return false;
+    if (!config.skipWhenHidden) return true;
+    var uniforms = effect && effect.uniforms && typeof effect.uniforms === "object" ? effect.uniforms : {};
+    var count = Math.floor(sceneDOMRegionNumber(uniforms[config.uniforms.count], 0));
+    if (count <= 0) return false;
+    var limit = Math.min(count, config.max);
+    for (var i = 0; i < limit; i += 1) {
+      var meta = uniforms[sceneDOMRegionFormat(config.uniforms.meta, i)];
+      var presence = Array.isArray(meta) || (meta && typeof meta.length === "number")
+        ? sceneDOMRegionNumber(meta[1], 0)
+        : 0;
+      if (presence > 0) return true;
+    }
+    return false;
+  }
+
+  function sceneCustomPostDOMRegionsFilterEffects(effects) {
+    if (!Array.isArray(effects) || effects.length === 0) return [];
+    var out = null;
+    for (var i = 0; i < effects.length; i += 1) {
+      var effect = effects[i];
+      if (sceneCustomPostDOMRegionsVisible(effect)) {
+        if (out) out.push(effect);
+      } else if (!out) {
+        out = effects.slice(0, i);
+      }
+    }
+    return out || effects;
+  }
+
   function createSceneCustomPostDOMRegionTracker(mount, canvas, state, scheduleRender) {
     var disposed = false;
     var raf = null;
+    var scrollIdleTimer = null;
     var configs = [];
     var key = "";
     var lastPatchKey = "";
@@ -252,12 +291,15 @@
       var targetKeyParts = [];
       var allTargets = [];
       var activeCanvas = currentCanvas();
+      var visibleCount = 0;
       for (var i = 0; i < configs.length; i += 1) {
         var config = configs[i];
         var targets = queryTargets(config.selector);
-        allTargets = allTargets.concat(targets.slice(0, config.max));
+        var measurement = sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max);
+        allTargets = allTargets.concat(targets);
         targetKeyParts.push(config.name + ":" + config.selector + ":" + targets.length);
-        entries.push(sceneDOMRegionPatch(config, sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max)));
+        visibleCount += measurement.count;
+        entries.push(sceneDOMRegionPatch(config, measurement));
       }
       observeTargets(allTargets);
       var patchKey = JSON.stringify(entries);
@@ -269,6 +311,7 @@
       scheduledRender("custom-post-dom-regions");
       if (mount && typeof mount.setAttribute === "function") {
         mount.setAttribute("data-gosx-scene3d-dom-regions", String(entries.length));
+        mount.setAttribute("data-gosx-scene3d-dom-region-visible-count", String(visibleCount));
         mount.setAttribute("data-gosx-scene3d-dom-region-targets", targetKeyParts.join("|"));
       }
     }
@@ -279,6 +322,20 @@
         ? window.requestAnimationFrame.bind(window)
         : function(callback) { return setTimeout(function() { callback(Date.now()); }, 0); };
       raf = rafFn(measureNow);
+    }
+
+    function hasScrollSuspendedConfig() {
+      for (var i = 0; i < configs.length; i += 1) {
+        if (configs[i] && configs[i].suspendWhileScrolling) return true;
+      }
+      return false;
+    }
+
+    function setScrollSuspended(value) {
+      sceneDOMRegionScrollActive = value === true;
+      if (mount && typeof mount.setAttribute === "function") {
+        mount.setAttribute("data-gosx-scene3d-dom-regions-suspended", sceneDOMRegionScrollActive ? "true" : "false");
+      }
     }
 
     function configure(postEffects) {
@@ -302,11 +359,36 @@
       scheduleMeasure();
     }
 
+    function onScroll() {
+      if (disposed) return;
+      if (!hasScrollSuspendedConfig()) {
+        onGeometryChange();
+        return;
+      }
+      if (raf != null) {
+        var cancel = typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function"
+          ? window.cancelAnimationFrame.bind(window)
+          : clearTimeout;
+        cancel(raf);
+        raf = null;
+      }
+      setScrollSuspended(true);
+      scheduledRender("custom-post-dom-regions-scroll-suspended");
+      if (scrollIdleTimer != null) clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = setTimeout(function() {
+        scrollIdleTimer = null;
+        if (disposed) return;
+        setScrollSuspended(false);
+        lastPatchKey = "";
+        scheduleMeasure();
+      }, SCENE_DOM_REGION_SCROLL_IDLE_MS);
+    }
+
     if (typeof ResizeObserver === "function") {
       resizeObserver = new ResizeObserver(onGeometryChange);
     }
     if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-      window.addEventListener("scroll", onGeometryChange, true);
+      window.addEventListener("scroll", onScroll, true);
       window.addEventListener("resize", onGeometryChange);
     }
 
@@ -325,8 +407,13 @@
           cancel(raf);
           raf = null;
         }
+        if (scrollIdleTimer != null) {
+          clearTimeout(scrollIdleTimer);
+          scrollIdleTimer = null;
+        }
+        setScrollSuspended(false);
         if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
-          window.removeEventListener("scroll", onGeometryChange, true);
+          window.removeEventListener("scroll", onScroll, true);
           window.removeEventListener("resize", onGeometryChange);
         }
       },
@@ -338,10 +425,19 @@
     window.__gosx_scene3d_dom_regions = {
       config: sceneCustomPostDOMRegionsConfig,
       measure: sceneDOMRegionMeasure,
+      customPostVisible: sceneCustomPostDOMRegionsVisible,
+      filterEffects: sceneCustomPostDOMRegionsFilterEffects,
+      scrollActive: function() { return sceneDOMRegionScrollActive; },
       createTracker: createSceneCustomPostDOMRegionTracker,
     };
+    if (window.__gosx_scene3d_api) {
+      window.__gosx_scene3d_api.sceneCustomPostDOMRegionsVisible = sceneCustomPostDOMRegionsVisible;
+      window.__gosx_scene3d_api.sceneCustomPostDOMRegionsFilterEffects = sceneCustomPostDOMRegionsFilterEffects;
+    }
   }
   if (typeof globalThis !== "undefined") {
     globalThis.createSceneCustomPostDOMRegionTracker = createSceneCustomPostDOMRegionTracker;
+    globalThis.sceneCustomPostDOMRegionsVisible = sceneCustomPostDOMRegionsVisible;
+    globalThis.sceneCustomPostDOMRegionsFilterEffects = sceneCustomPostDOMRegionsFilterEffects;
   }
 })();

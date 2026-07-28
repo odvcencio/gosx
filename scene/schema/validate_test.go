@@ -247,6 +247,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"[data-glass]",
 				"max":8,
+				"skipWhenHidden":true,
+				"suspendWhileScrolling":true,
 				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"region%dRect","meta":"region%dMeta"}
 			}
 		}]
@@ -261,6 +263,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"",
 				"max":17,
+				"skipWhenHidden":"yes",
+				"suspendWhileScrolling":"yes",
 				"uniforms":{"rect":"bad uniform","meta":"region%d%dMeta"}
 			}
 		}]
@@ -271,6 +275,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 	for _, code := range []string{
 		"scene.post_effect.dom_regions.selector",
 		"scene.post_effect.dom_regions.max",
+		"scene.post_effect.dom_regions.skip_when_hidden",
+		"scene.post_effect.dom_regions.suspend_while_scrolling",
 		"scene.post_effect.dom_regions.uniform",
 	} {
 		if !hasCode(invalid, code) {

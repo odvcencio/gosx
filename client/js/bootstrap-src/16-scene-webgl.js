@@ -4300,6 +4300,9 @@
       var api = postProcessorRenderTruth();
       if (!effect) return api.PIPELINE_MISSING;
       if (effect.kind === SCENE_POST_CUSTOM_POST) {
+        if (typeof sceneCustomPostDOMRegionsVisible === "function" && !sceneCustomPostDOMRegionsVisible(effect)) {
+          return api.PIPELINE_OK;
+        }
         var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
         if (customPostFailed[name]) return api.PIPELINE_FAILED;
         var vertSrc = (typeof effect.vertexGLSL === "string") ? effect.vertexGLSL.trim() : "";
@@ -4688,8 +4691,14 @@
               // un-post-processed scene straight over the pass's own output. A
               // trailing custom pass therefore produced zero visible pixels even
               // when it compiled, bound and drew correctly.
-              var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
-              currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
+              if (typeof sceneCustomPostDOMRegionsVisible === "function" && !sceneCustomPostDOMRegionsVisible(effect)) {
+                if (postChain) {
+                  truthApi.mark(postChain, i, truthApi.PIPELINE_OK, 0);
+                }
+              } else {
+                var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
+                currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
+              }
               break;
             }
             default:
@@ -7265,7 +7274,10 @@
       // --- Main Render Pass ---
 
       // Determine if post-processing is active for this frame.
-      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var authoredPostEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var postEffects = typeof sceneCustomPostDOMRegionsFilterEffects === "function"
+        ? sceneCustomPostDOMRegionsFilterEffects(authoredPostEffects)
+        : authoredPostEffects;
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
       var usePostProcessing = postEffects.length > 0;
 
