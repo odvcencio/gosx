@@ -8,7 +8,7 @@
 // reads see the new value.
 //
 // **Critical implementation note.** The mutation works because
-// Value.Fields and Value.Items are reference types (map / slice). When
+// Value.Map() and Value.List() are reference types (map / slice). When
 // OpSignalGet returns Value-by-value, the inner Fields map and Items
 // slice still alias the same storage held by the signal. The mutation
 // does NOT call signal.Set(), so signal subscribers are not notified

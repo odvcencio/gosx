@@ -37,6 +37,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -200,8 +201,18 @@ func TestSelenaMaterialOwnsItsPixelsBesideALinesMesh(t *testing.T) {
 	defer cancel()
 
 	if err := chromedp.Run(ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			// The fixture renders on demand. Installing the diagnostics flag
+			// after Navigate races the first (and possibly only) healthy frame:
+			// pixels are correct, but no telemetry attributes are published.
+			// Seed the flag in every new document before any application script
+			// can schedule that frame.
+			_, err := page.AddScriptToEvaluateOnNewDocument(
+				`window.__gosx_scene3d_render_truth = true`,
+			).Do(ctx)
+			return err
+		}),
 		chromedp.Navigate(server.URL),
-		chromedp.EvaluateAsDevTools(`window.__gosx_scene3d_render_truth = true`, nil),
 	); err != nil {
 		t.Skipf("chrome could not start in this environment: %v", err)
 	}

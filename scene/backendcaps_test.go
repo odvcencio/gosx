@@ -43,15 +43,10 @@ func TestSceneIRBackendCapsIBL(t *testing.T) {
 	}
 }
 
-// Test 2: a pickable mesh keeps both GPU backends and drops canvas2d.
-// gpu-picking is required by DefaultPolicy, both WebGPU and WebGL2 implement
-// it, and Canvas2D does not.
-//
-// This test asserted webgl-only until gpu-picking shipped on WebGPU. That
-// exclusion sent every interactive scene to WebGL2, because collectFeatures
-// raises gpu-picking as soon as one object is Pickable. See the
-// FeatureGPUPicking comment in scene/capability/capability.go.
-func TestSceneIRBackendCapsPickableKeepsGPUBackends(t *testing.T) {
+// Test 2: a pickable mesh follows the phase-correct gpu-picking Matrix row.
+// The capability slice has only the shared WebGL raycast path; the later
+// runtime slice flips WebGPU true when its ID-buffer implementation lands.
+func TestSceneIRBackendCapsPickableTracksMatrix(t *testing.T) {
 	pickable := true
 	props := Props{Graph: NewGraph(Mesh{
 		ID:       "m",
@@ -64,15 +59,18 @@ func TestSceneIRBackendCapsPickableKeepsGPUBackends(t *testing.T) {
 		t.Fatalf("expected BackendCaps to be set on SceneIR")
 	}
 	got := backendSet(ir.BackendCaps.Capable)
-	if len(ir.BackendCaps.Capable) != 2 || !got[capability.BackendWebGPU] || !got[capability.BackendWebGL] {
-		t.Fatalf("expected Capable == [webgpu webgl], got %v", ir.BackendCaps.Capable)
+	wantWebGPU := capability.Matrix[capability.FeatureGPUPicking][capability.BackendWebGPU]
+	if got[capability.BackendWebGPU] != wantWebGPU {
+		t.Fatalf("webgpu capability must match Matrix=%v, got Capable=%v", wantWebGPU, ir.BackendCaps.Capable)
+	}
+	if !got[capability.BackendWebGL] {
+		t.Fatalf("expected webgl capable for gpu-picking, got %v", ir.BackendCaps.Capable)
 	}
 	if got[capability.BackendCanvas2D] {
 		t.Fatalf("expected canvas2d excluded for gpu-picking, got %v", ir.BackendCaps.Capable)
 	}
-	// WebGPU must be capable outright, not merely degraded.
-	if degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGPU], capability.FeatureGPUPicking) {
-		t.Fatalf("expected webgpu NOT degraded on gpu-picking, got %v", ir.BackendCaps.Degraded)
+	if wantWebGPU && degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGPU], capability.FeatureGPUPicking) {
+		t.Fatalf("supported webgpu picking must not be degraded, got %v", ir.BackendCaps.Degraded)
 	}
 }
 
