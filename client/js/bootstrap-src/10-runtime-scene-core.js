@@ -5825,7 +5825,12 @@
     if (object._modelHidden) {
       return true;
     }
-    if (material && sceneNumber(material.opacity, 1) <= 0.0001) {
+    const authoredMeshShader = material && (
+      material.shaderBackend === "selena"
+      || String(material.customVertexWGSL || "").trim()
+      || String(material.customFragmentWGSL || "").trim()
+    );
+    if (material && sceneNumber(material.opacity, 1) <= 0.0001 && !authoredMeshShader) {
       return true;
     }
     const scaleX = Math.abs(sceneNumber(object.scaleX, sceneNumber(object.scale, 1)));

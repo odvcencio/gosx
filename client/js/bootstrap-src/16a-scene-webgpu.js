@@ -5584,7 +5584,7 @@
       return suffix ? "_gosxWGPUSelenaUniform_" + suffix : "_gosxWGPUSelenaUniform";
     }
 
-    function sceneSelenaUniformValue(material, layout, field, owner, renderContext) {
+    function sceneSelenaUniformValue(material, layout, field, owner, renderContext, frame) {
       var name = field && field.name;
       if (name === "mvp") return scratchSelenaViewProjection;
       if (name === "viewProjectionMatrix") return scratchSelenaViewProjection;
@@ -5595,7 +5595,7 @@
       // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
       // customUniforms so a declared `param time` — whose compiled default ships
       // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
-      if (name === "time") return sceneSelenaFrameTime;
+      if (name === "time") return typeof frame === "number" ? frame : sceneSelenaFrameTime;
       var value = sceneSelenaMaterialValue(material, name);
       if (value !== undefined) return value;
       var def = sceneSelenaUniformDefault(layout, name);
@@ -5667,7 +5667,7 @@
       }
     }
 
-    function sceneSelenaUniformData(material, owner, renderContext) {
+    function sceneSelenaUniformData(material, owner, renderContext, frame) {
       var layout = sceneSelenaMaterialLayout(material);
       if (!layout) return null;
       var size = Math.max(16, Math.floor(sceneNumber(layout.uniformBlock.size, 16)));
@@ -5680,7 +5680,7 @@
           f32,
           Math.floor(sceneNumber(field.offset, 0) / 4),
           String(field.type || "float"),
-          sceneSelenaUniformValue(material, layout, field, owner, renderContext),
+          sceneSelenaUniformValue(material, layout, field, owner, renderContext, frame),
           field
         );
       }
@@ -5935,7 +5935,10 @@
     function getSelenaPipeline(material, blendMode, depthWrite, options) {
       if (!sceneSelenaIsMaterial(material)) return null;
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
-      var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(options && options.sampleCount, activeSampleCount || 1)));
+      var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(
+        options && options.sampleCount != null ? options.sampleCount : activeSampleCount,
+        activeSampleCount || 1
+      )));
       var pipelineLabelSuffix = options && options.labelSuffix ? String(options.labelSuffix) + "-" : "";
       // cullMode defaults to "back" when the caller passes no options (or
       // options.cullMode is absent/falsy) -- unchanged from before options.cullMode
@@ -6192,7 +6195,7 @@
     }
 
     function createSelenaBindGroup(material, resource, cacheOwner, renderContext) {
-      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext);
+      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, sceneSelenaFrameTime);
       if (!uniformData || !resource) return null;
       var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
       var uniformSlot = sceneSelenaUniformBufferSlot(renderContext);
@@ -6477,7 +6480,7 @@
       entries.push({ binding: sceneNumber(stateWGSL.outBinding, 2), resource: { buffer: outBuf } });
       var hasUniforms = layout.uniformBlock && Array.isArray(layout.uniformBlock.fields) && layout.uniformBlock.fields.length > 0;
       if (hasUniforms) {
-        var uniformData = sceneSelenaUniformData({ shaderLayout: layout }, system, renderContext);
+        var uniformData = sceneSelenaUniformData({ shaderLayout: layout }, system, renderContext, sceneSelenaFrameTime);
         if (!uniformData) return null;
         var uniformBuffer = wgpuCachedTrackedBuffer(
           system,
@@ -6634,7 +6637,7 @@
     // WGSL), so the placeholder views are never actually sampled -- they exist
     // purely to satisfy the fixed bind group layout's entry count/kind.
     function createSelenaPostBindGroup(material, resource, cacheOwner, renderContext) {
-      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext);
+      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, sceneSelenaFrameTime);
       if (!uniformData || !resource) return null;
       var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
       var uniformSlot = sceneSelenaUniformBufferSlot(renderContext) + "_post";
@@ -6869,7 +6872,7 @@
     // ensurePointsAuthoredUserUniformBuffer: allocates / updates a per-layer
     // user-uniform buffer from entry.customUniforms and shaderLayout.
     function ensurePointsAuthoredUserUniformBuffer(entry, ownerKey, uniforms, layout) {
-      var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout });
+      var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout }, null, null, sceneSelenaFrameTime);
       if (!uniformData || uniformData.byteLength === 0) {
         // No user uniforms — create a minimal 16-byte placeholder so group(1) is always bound.
         uniformData = new Float32Array(4);
@@ -14418,7 +14421,7 @@
           var ownerKey = (typeof label.id === "string" && label.id) ? label.id : ("__bt:" + font + ":" + li);
           var owner = boardTextOwners.get(ownerKey);
           if (!owner) { owner = {}; boardTextOwners.set(ownerKey, owner); }
-          var uniformData = sceneSelenaUniformData(boardTextMaterial);
+          var uniformData = sceneSelenaUniformData(boardTextMaterial, null, null, sceneSelenaFrameTime);
           var uniformBuffer = wgpuCachedTrackedBuffer(
             owner, "_gosxBoardTextUniform", uniformData,
             GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true
@@ -14699,7 +14702,11 @@
       var postTarget = null;
 
       if (usePostProcessing) {
-        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError, sceneSelenaUniformData);
+        if (!postProcessor) {
+          postProcessor = wgpuCreatePostProcessor(device, targetFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
+            return sceneSelenaUniformData(material, owner, renderContext, sceneSelenaFrameTime);
+          });
+        }
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
         if (sampleCount > 1) {
           mainColorView = ensureMSAAColor(scaledW, scaledH, sampleCount);

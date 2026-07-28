@@ -5832,6 +5832,73 @@ test("bootstrap loads declarative Scene3D model assets without authored JS", asy
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("Scene3D model hydration preserves authored zero-opacity model meshes in mesh bundle", async () => {
+  const vertices = {
+    positions: [
+      -0.5, -0.5, 0,
+       0.5, -0.5, 0,
+       0.0,  0.5, 0,
+    ],
+    normals: [
+      0, 0, 1,
+      0, 0, 1,
+      0, 0, 1,
+    ],
+    uvs: [
+      0, 0,
+      1, 0,
+      0.5, 1,
+    ],
+    count: 3,
+  };
+  const env = createContext({
+    fetchRoutes: {
+      "/models/triangle.gosx3d.json": {
+        text: JSON.stringify({
+          objects: [{ id: "tri", kind: "mesh", vertices }],
+        }),
+      },
+    },
+  });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { objects: [] } });
+  await api.applySceneCommands(state, [{
+    kind: 10,
+    data: {
+      models: [
+        { id: "selena", src: "/models/triangle.gosx3d.json", opacity: 0, shaderBackend: "selena" },
+        {
+          id: "custom",
+          src: "/models/triangle.gosx3d.json",
+          opacity: 0,
+          customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4f(0.0, 1.0, 0.0, 1.0); }",
+        },
+        { id: "plain", src: "/models/triangle.gosx3d.json", opacity: 0 },
+      ],
+    },
+  }]);
+
+  assert.equal(state.objects.get("selena/tri")._modelHidden, false);
+  assert.equal(state.objects.get("custom/tri")._modelHidden, false);
+  assert.equal(state.objects.get("plain/tri")._modelHidden, true);
+
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  assert.deepEqual(Array.from(bundle.meshObjects, (object) => object.id), [
+    "selena/tri",
+    "custom/tri",
+  ]);
+  assert.equal(bundle.meshObjects.some((object) => object.id === "plain/tri"), false);
+});
+
 test("bootstrap loads declarative Scene3D GLB model assets through the native renderer path", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-model-glb-root";
@@ -20013,6 +20080,66 @@ test("navigation runtime leaves non-interceptable links to native handling", asy
   assert.equal(env.fetchCalls.length, 0);
 });
 
+test("navigation runtime consumes exact current-page link clicks without soft navigation", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-prefetch", "intent");
+  link.textContent = "Home";
+
+  const stableBody = new FakeElement("main", null);
+  stableBody.id = "stable-page";
+  stableBody.textContent = "Home";
+
+  const disposeCalls = [];
+  const bootstrapCalls = [];
+  const env = createContext({
+    elements: [link, stableBody],
+  });
+  env.context.__gosx_dispose_page = async function() {
+    disposeCalls.push("dispose");
+  };
+  env.context.__gosx_bootstrap_page = async function() {
+    bootstrapCalls.push("bootstrap");
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+
+  let prevented = false;
+  const clickListener = env.document.eventListeners.get("click")[0];
+  clickListener({
+    type: "click",
+    target: link,
+    button: 0,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true, "current managed link should not fall through to a native reload");
+  assert.equal(env.fetchCalls.length, 0, "current managed link should not prefetch or fetch itself");
+  assert.deepEqual(disposeCalls, []);
+  assert.deepEqual(bootstrapCalls, []);
+  assert.equal(env.document.getElementById("stable-page"), stableBody);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:navigate");
+  assert.equal(env.document.dispatchedEvents.at(-1).detail.url, "http://localhost:3000/");
+  assert.equal(
+    JSON.stringify(env.scrollCalls.at(-1)),
+    JSON.stringify([{ top: 0, left: 0, behavior: "instant" }]),
+  );
+});
+
 test("navigation runtime absolutizes managed asset URLs during navigation", async () => {
   const parsedDocs = new Map();
   const env = createContext({
@@ -27864,8 +27991,9 @@ function makeFakeGPUDeviceForCompute(options) {
 // createComputeParticleHarness boots the same chunk stack as
 // createBoardWebGPUHarness but injects a caller-supplied fake device instead
 // of the default makeFakeGPUDevice(), enabling per-test async pipeline control.
-async function createComputeParticleHarness(fakeDevice) {
-  const env = createContext({ enableWebGPU: true });
+async function createComputeParticleHarness(fakeDevice, options) {
+  const opts = options || {};
+  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow });
   env.context.GPUBufferUsage = {
     MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
     INDEX: 0x10, VERTEX: 0x20, UNIFORM: 0x40, STORAGE: 0x80,
@@ -27881,13 +28009,13 @@ async function createComputeParticleHarness(fakeDevice) {
   };
 
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
-  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  runScript(opts.fresh ? freshFeatureBundleSource("scene3d") : bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
   await flushAsyncWork();
 
   env.context.__gosx_scene3d_webgpu_probe = function() {
     return { adapter: { __kind: "adapter" }, device: fakeDevice, ready: true };
   };
-  runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(opts.fresh ? freshFeatureBundleSource("scene3d-webgpu") : bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
 
   const api = env.context.__gosx_scene3d_webgpu_api;
   const mount = new FakeElement("div", null);
@@ -29250,6 +29378,122 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
 
   const failWarns = harness.warnLog.filter((m) => m.includes("custom post pass"));
   assert.deepEqual(failWarns, [], "a valid authored custom pass must not warn");
+});
+
+test("custom post WebGPU: reserved time and patched uniforms reach the post uniform buffer", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  let nowMS = 3100;
+  const harness = await createComputeParticleHarness(fake.device, {
+    fresh: true,
+    performanceNow: () => nowMS,
+  });
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    name: "galaxy-liquid-glass",
+    fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }",
+    vertexWGSL: "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }",
+    uniforms: { time: 0, cardPresence: 0.75 },
+    shaderLayout: {
+      uniformBlock: {
+        name: "UserUniforms",
+        size: 16,
+        fields: [
+          { name: "time", type: "float", offset: 0 },
+          { name: "cardPresence", type: "float", offset: 4 },
+        ],
+      },
+    },
+  });
+
+  harness.renderer.render(bundle, viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  nowMS = 4200;
+  harness.renderer.render(bundle, viewport);
+
+  const postUniformWrites = fake.state.writeBufferCalls
+    .filter((call) => call.data && call.data.length >= 2)
+    .filter((call) => Math.abs(Number(call.data[1]) - 0.75) < 0.00001);
+  assert.equal(postUniformWrites.length >= 1, true, "patched cardPresence must reach the custom post uniform buffer");
+  const packed = postUniformWrites[postUniformWrites.length - 1].data;
+  assert.equal(Math.abs(Number(packed[0]) - 4.2) < 0.00001, true,
+    "reserved time must use the renderer frame clock, not the compiled default or effect.uniforms.time");
+});
+
+test("Selena mesh WebGPU: postFX MSAA render pass uses a matching pipeline sample count", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const selenaWGSL = [
+    "struct UserUniforms { value: vec4f };",
+    "@group(0) @binding(0) var<uniform> user: UserUniforms;",
+    "struct VertexOutput { @builtin(position) clipPos: vec4f };",
+    "@vertex fn vertexMain(@location(0) position: vec3f) -> VertexOutput {",
+    "  var out: VertexOutput;",
+    "  out.clipPos = vec4f(position, 1.0);",
+    "  return out;",
+    "}",
+    "@fragment fn fragmentMain() -> @location(0) vec4f {",
+    "  return user.value;",
+    "}",
+  ].join("\n");
+  const bundle = {
+    camera: { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    msaaSamples: 4,
+    points: [], instancedMeshes: [], objects: [],
+    materials: [{
+      key: "selena-msaa",
+      shaderBackend: "selena",
+      renderPass: "additive",
+      customVertexWGSL: selenaWGSL,
+      customFragmentWGSL: selenaWGSL,
+      customUniforms: { value: [1, 1, 1, 1] },
+      shaderLayout: {
+        material: "MSAAPostSelena",
+        attributes: [{ name: "position", type: "vec3", location: 0 }],
+        uniformBlock: {
+          size: 16,
+          fields: [{ name: "value", type: "vec4", offset: 0 }],
+        },
+        wgsl: { group: 0, binding: 0 },
+      },
+    }],
+    meshObjects: [{ id: "selena-plane", materialIndex: 0, vertexOffset: 0, vertexCount: 3 }],
+    postEffects: [{ kind: "toneMapping", exposure: 1 }],
+    computeParticles: [], labels: [], sprites: [], lights: [],
+    positions: new Float32Array(0), colors: new Float32Array(0),
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0, 0.5, 0]),
+    worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0,
+    worldVertexCount: 0,
+  };
+
+  harness.renderer.render(bundle, viewport);
+
+  const selenaPipelines = harness.fake.state.renderPipelines.filter((pipeline) => {
+    return pipeline.desc && pipeline.desc.label === "gosx-selena-MSAAPostSelena-additive";
+  });
+  assert.equal(selenaPipelines.length, 1, "the Selena mesh must build one pipeline for this material");
+  assert.equal(selenaPipelines[0].desc.multisample && selenaPipelines[0].desc.multisample.count, 4,
+    "Selena mesh pipeline sample count must match the active MSAA render pass");
+  const passes = mainRenderPasses(harness.fake);
+  assert.ok(passes.some((pass) => pass.draws.some((draw) => draw.pipeline === selenaPipelines[0])),
+    "the MSAA-compatible Selena pipeline must be used by the main render pass");
 });
 
 test("custom post WebGPU: identical complete WGSL module is submitted once", async () => {

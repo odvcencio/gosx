@@ -432,6 +432,14 @@
     return !!left && !!right && left.origin === right.origin && left.path === right.path && left.search === right.search;
   }
 
+  function sameDocumentNavigationURL(left, right) {
+    const target = parsedNavigationURL(left);
+    const current = parsedNavigationURL(right || windowLocationHref());
+    return !!target && !!current
+      && sameNavigationURL(navigationURLParts(target.href), navigationURLParts(current.href))
+      && String(target.hash || "") === String(current.hash || "");
+  }
+
   function ancestorNavigationURL(parent, child) {
     if (!parent || !child || parent.origin !== child.origin) {
       return false;
@@ -1553,6 +1561,7 @@
     if (!shouldPrefetchLink(anchor, trigger || "intent")) return Promise.resolve(false);
     const url = navigationURLParts(anchor.getAttribute("href"));
     if (!url) return Promise.resolve(false);
+    if (sameDocumentNavigationURL(url.href, windowLocationHref())) return Promise.resolve(false);
     anchor.setAttribute(LINK_PREFETCH_STATE_ATTR, "pending");
     return fetchPage(url.href).then(function() {
       anchor.setAttribute(LINK_PREFETCH_STATE_ATTR, "ready");
@@ -1722,6 +1731,10 @@
     if (!shouldHandleLink(anchor, event)) return;
     event.preventDefault();
     const url = new URL(anchor.getAttribute("href"), window.location.href);
+    if (sameDocumentNavigationURL(url.href, windowLocationHref())) {
+      finalizeNavigation(url.href, { preserveScroll: false, replace: true }, resolveNavigationA11y(url.href));
+      return;
+    }
     navigate(url.href, { replace: false, sourceLink: anchor }).catch(function(err) {
       console.error("[gosx] navigation failed:", err);
       window.location.href = url.href;

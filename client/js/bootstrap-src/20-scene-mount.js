@@ -1482,17 +1482,36 @@
     );
   }
 
-  function sceneModelEffectivelyHidden(model) {
+  function sceneModelUsesAuthoredMeshShader(object) {
+    const material = sceneObjectMaterialProfile(object);
+    return Boolean(
+      material &&
+      (
+        material.shaderBackend === "selena"
+        || String(material.customVertexWGSL || "").trim()
+        || String(material.customFragmentWGSL || "").trim()
+      )
+    );
+  }
+
+  function sceneModelZeroOpacityHidesObject(model, object) {
+    const opacity = object && Object.prototype.hasOwnProperty.call(object, "opacity")
+      ? sceneNumber(object.opacity, sceneNumber(model && model.opacity, 1))
+      : sceneNumber(model && model.opacity, 1);
+    return opacity <= 0.0001 && !sceneModelUsesAuthoredMeshShader(object);
+  }
+
+  function sceneModelEffectivelyHidden(model, object) {
     return Boolean(model && model.visible === false)
       || sceneModelMaxScale(model) <= 0.0015
-      || sceneNumber(model && model.opacity, 1) <= 0.0001;
+      || sceneModelZeroOpacityHidesObject(model, object);
   }
 
   function sceneApplyModelObjectHiddenState(object, model) {
     if (!object) {
       return;
     }
-    object._modelHidden = sceneModelEffectivelyHidden(model);
+    object._modelHidden = sceneModelEffectivelyHidden(model, object);
   }
 
   function sceneModelRotateDirection(point, model) {
