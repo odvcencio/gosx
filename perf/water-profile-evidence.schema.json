@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gosx.dev/schemas/water-profile-evidence.schema.json",
+  "title": "GoSX water profile/workload evidence",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "sourceURL", "environment", "cases", "validation"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "runStartedAt": { "type": "string", "format": "date-time" },
+    "sourceURL": { "type": "string", "format": "uri" },
+    "schema": { "type": "string" },
+    "budget": { "type": "string" },
+    "environment": {
+      "type": "object",
+      "required": ["classification", "platform", "node", "viewport", "samples", "warmupFrames"],
+      "properties": {
+        "classification": { "enum": ["unspecified", "hardware", "software-raster"] },
+        "platform": { "type": "string" },
+        "architecture": { "type": "string" },
+        "node": { "type": "string" },
+        "hostname": { "type": "string" },
+        "viewport": {
+          "type": "object",
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "samples": { "type": "integer", "minimum": 1 },
+        "warmupFrames": { "type": "integer", "minimum": 1 },
+        "hardwareThresholdsEnforced": { "type": "boolean" }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["passed", "failures", "warnings"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": [
+        "profile",
+        "selectedProfile",
+        "workload",
+        "timings",
+        "backend",
+        "authored",
+        "resolved",
+        "adaptive",
+        "shaderDiagnostics",
+        "featureState",
+        "objectTarget",
+        "raf",
+        "advance",
+        "passDrawCounters",
+        "telemetryAvailability",
+        "network",
+        "errors",
+        "screenshot"
+      ],
+      "properties": {
+        "profile": { "enum": ["hero", "balanced", "battery"] },
+        "selectedProfile": { "enum": ["hero", "balanced", "battery"] },
+        "workload": {
+          "type": "object",
+          "required": ["id", "label", "kind"],
+          "properties": {
+            "id": { "enum": ["sphere", "duck"] },
+            "label": { "type": "string" },
+            "kind": { "enum": ["analytic", "gltf"] }
+          }
+        },
+        "timings": {
+          "type": "object",
+          "required": ["cold", "warm", "workloadReadyMS"],
+          "properties": {
+            "cold": { "$ref": "#/$defs/navigationTiming" },
+            "warm": { "$ref": "#/$defs/navigationTiming" },
+            "workloadReadyMS": { "type": "number", "minimum": 0 }
+          }
+        },
+        "backend": {
+          "type": "object",
+          "required": ["renderer", "backend", "waterRenderer", "fallbackReason", "gpu"],
+          "properties": {
+            "renderer": { "type": "string" },
+            "backend": { "enum": ["webgpu", "webgl"] },
+            "waterRenderer": { "type": "string" },
+            "fallbackReason": { "type": "string" },
+            "gpu": { "type": "boolean" },
+            "implementation": { "type": "string" },
+            "browserEngine": { "type": "string" }
+          }
+        },
+        "authored": {
+          "type": "object",
+          "required": [
+            "dprCap",
+            "maxPixels",
+            "simulationResolution",
+            "surfaceResolution",
+            "causticsResolution",
+            "objectShadowResolution",
+            "objectTextureMaxSide",
+            "objectTexturePixelBudget",
+            "features"
+          ]
+        },
+        "resolved": {
+          "type": "object",
+          "required": [
+            "actualDevicePixelRatio",
+            "dprCap",
+            "surfaceResolution",
+            "causticsResolution",
+            "objectShadowResolution",
+            "objectTextureMaxSide",
+            "objectTexturePixelBudget"
+          ]
+        },
+        "adaptive": {
+          "type": "object",
+          "required": ["enabled", "requestedTier", "activeTier", "reason", "revision", "measurement"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "requestedTier": { "type": "string" },
+            "activeTier": { "type": "string" },
+            "reason": { "type": "string" },
+            "revision": { "type": "number", "minimum": 0 },
+            "measurement": { "type": "string" }
+          }
+        },
+        "shaderDiagnostics": {
+          "type": "object",
+          "required": ["messages", "errors"],
+          "properties": {
+            "messages": { "type": "number", "minimum": 0 },
+            "errors": { "type": "number", "minimum": 0 }
+          }
+        },
+        "raf": {
+          "type": "object",
+          "required": ["samples", "fps", "p50MS", "p95MS", "p99MS", "maxMS"],
+          "properties": {
+            "samples": { "type": "integer", "minimum": 1 },
+            "fps": { "type": "number", "minimum": 0 },
+            "p50MS": { "type": "number", "minimum": 0 },
+            "p95MS": { "type": "number", "minimum": 0 },
+            "p99MS": { "type": "number", "minimum": 0 },
+            "maxMS": { "type": "number", "minimum": 0 }
+          }
+        },
+        "featureState": {
+          "type": "object",
+          "required": [
+            "waterSystems",
+            "objectSystems",
+            "causticSystems",
+            "reflectionSystems",
+            "refractionSystems",
+            "activeObject",
+            "lifecycle",
+            "watchdog"
+          ]
+        },
+        "objectTarget": {
+          "type": "object",
+          "required": ["actualTargets", "actualWidth", "actualHeight", "actualPixels", "actualShadowPixels"]
+        },
+        "advance": {
+          "type": "object",
+          "required": ["frame", "simulation", "before", "after"],
+          "properties": {
+            "frame": { "type": "number", "minimum": 1 },
+            "simulation": { "type": "number", "minimum": 1 }
+          }
+        },
+        "passDrawCounters": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "telemetryAvailability": {
+          "type": "object",
+          "required": ["backendPassCounters", "objectTargetActuals"],
+          "properties": {
+            "backendPassCounters": { "type": "boolean" },
+            "objectTargetActuals": { "type": "boolean" }
+          }
+        },
+        "network": {
+          "type": "object",
+          "required": ["requestCount", "duckAssetRequests"],
+          "properties": {
+            "requestCount": { "type": "integer", "minimum": 0 },
+            "duckAssetRequests": { "type": "array", "items": { "type": "string", "format": "uri" } }
+          }
+        },
+        "errors": {
+          "type": "object",
+          "required": ["console", "page", "requests", "ignoredRequests", "http"],
+          "properties": {
+            "console": { "type": "array" },
+            "page": { "type": "array" },
+            "requests": { "type": "array" },
+            "ignoredRequests": { "type": "array" },
+            "http": { "type": "array" }
+          }
+        },
+        "screenshot": {
+          "type": "object",
+          "required": ["path", "width", "height"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "navigationTiming": {
+      "type": "object",
+      "required": ["externalReadyMS", "responseEndMS", "domContentLoadedMS", "loadEventMS"],
+      "properties": {
+        "externalReadyMS": { "type": "number", "minimum": 0 },
+        "responseEndMS": { "type": "number", "minimum": 0 },
+        "domContentLoadedMS": { "type": "number", "minimum": 0 },
+        "loadEventMS": { "type": "number", "minimum": 0 },
+        "transferSize": { "type": "number", "minimum": 0 },
+        "encodedBodySize": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

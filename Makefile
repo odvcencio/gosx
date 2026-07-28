@@ -16,6 +16,10 @@ PERF_URLS ?= http://localhost:8080/
 PERF_BUDGET ?= perf/budgets/default.json
 PERF_OUT ?= build/perf-report.json
 PERF_FLAGS ?= --mobile pixel7 --throttle 4 --coverage
+WATER_EVIDENCE_URL ?= http://127.0.0.1:3000/demos/water
+WATER_EVIDENCE_OUT ?= build/water-profile-evidence
+WATER_EVIDENCE_BUDGET ?= perf/budgets/water-profile-evidence.json
+WATER_EVIDENCE_FLAGS ?=
 FUZZTIME ?= 5s
 FUZZ_TIMEOUT ?= 45s
 FUZZ_PARALLEL ?= 2
@@ -23,7 +27,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-water-prod test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -257,6 +261,13 @@ perf-budget:
 
 perf-budget-ci:
 	$(SHELL) ./scripts/perf-budget-ci.sh
+
+test-water-profile-evidence:
+	$(NODE) --test scripts/water-profile-evidence.test.mjs
+	$(NODE) scripts/water-profile-evidence.mjs --check-config --budget $(WATER_EVIDENCE_BUDGET)
+
+water-profile-evidence:
+	$(NODE) scripts/water-profile-evidence.mjs --url $(WATER_EVIDENCE_URL) --out-dir $(WATER_EVIDENCE_OUT) --budget $(WATER_EVIDENCE_BUDGET) $(WATER_EVIDENCE_FLAGS)
 
 build-cli:
 	$(GO) build ./cmd/gosx
