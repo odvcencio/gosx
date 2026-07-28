@@ -104,6 +104,16 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 				Uniforms:      map[string]any{"shieldStrength": 0.58},
 			},
 			Uniforms: map[string]any{"iris": true},
+			DOMRegions: CustomPostDOMRegions{
+				Selector: "[data-flare-shield]",
+				Max:      5,
+				Uniforms: DOMRegionUniforms{
+					Count:  "shieldCount",
+					Aspect: "shieldAspect",
+					Rect:   "shield%dRect",
+					Meta:   "shield%dMeta",
+				},
+			},
 		},
 		wantIR: CustomPostIR{
 			Name:          "flare-shield",
@@ -115,6 +125,16 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 			ShaderBackend: "selena",
 			ShaderLayout:  map[string]any{"group": "0", "binding": "4"},
 			Uniforms:      map[string]any{"shieldStrength": 0.58, "iris": true},
+			DOMRegions: &CustomPostDOMRegionsIR{
+				Selector: "[data-flare-shield]",
+				Max:      5,
+				Uniforms: DOMRegionUniformsIR{
+					Count:  "shieldCount",
+					Aspect: "shieldAspect",
+					Rect:   "shield%dRect",
+					Meta:   "shield%dMeta",
+				},
+			},
 		},
 	},
 }

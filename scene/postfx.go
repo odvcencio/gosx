@@ -178,12 +178,36 @@ type CustomPost struct {
 	// Uniforms holds per-frame uniform overrides. Merged with the material's
 	// own defaults; keys match the Selena param names.
 	Uniforms map[string]any
+	// DOMRegions binds DOM element geometry into this custom post pass.
+	// Rect and Meta uniforms use vec4 slots:
+	// Rect = (centerX, centerY, halfW, halfH)
+	// Meta = (cornerRadius, presence, ordinal, flags)
+	DOMRegions CustomPostDOMRegions
 	// Stage controls ordering relative to bloom/tonemap.
 	// Empty string and "beforeTonemap" are equivalent (default).
 	Stage CustomPostStage
 }
 
 func (CustomPost) isPostEffect() {}
+
+// DOMRegionUniforms names the uniforms patched by a CustomPost DOMRegions
+// tracker. Empty Count and Aspect names fall back to regionCount and
+// regionAspect. Rect and Meta are printf-style slot patterns with exactly one
+// %d. Empty patterns fall back to region%dRect and region%dMeta.
+type DOMRegionUniforms struct {
+	Count  string
+	Aspect string
+	Rect   string
+	Meta   string
+}
+
+// CustomPostDOMRegions configures browser-side DOM measurement for a
+// CustomPost pass. Max defaults to 8 and is capped at 16.
+type CustomPostDOMRegions struct {
+	Selector string
+	Max      int
+	Uniforms DOMRegionUniforms
+}
 
 // FXAA applies fast approximate anti-aliasing (the FXAA 3.11 quality
 // preset) as a full-resolution pass.
