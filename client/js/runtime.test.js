@@ -1323,9 +1323,12 @@ class FakeResizeObserver {
   constructor(callback) {
     this.callback = callback;
     this.targets = new Set();
+    this.observeCalls = 0;
+    this.disconnectCalls = 0;
   }
 
   observe(target) {
+    this.observeCalls++;
     this.targets.add(target);
   }
 
@@ -1334,6 +1337,7 @@ class FakeResizeObserver {
   }
 
   disconnect() {
+    this.disconnectCalls++;
     this.targets.clear();
   }
 
@@ -29505,6 +29509,35 @@ test("CustomPost DOMRegions follow mode remeasures once after scroll idle", asyn
   assert.equal(harness.layoutReads.rect > initialRects, true, "idle must perform a stable remeasure");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-scroll-active"), "false");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "false");
+
+  harness.tracker.dispose();
+});
+
+test("CustomPost DOMRegions keeps ResizeObserver subscriptions stable after unchanged measurements", async () => {
+  const harness = createDOMRegionTrackerHarness({ targetCount: 2, scrollMode: "follow", scrollIdleMS: 80 });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  const observer = harness.env.resizeObservers.at(-1);
+  const initialObserveCalls = observer.observeCalls;
+  const initialDisconnectCalls = observer.disconnectCalls;
+  assert.equal(observer.targets.size, 4, "mount, canvas, and both targets must be observed");
+
+  observer.trigger();
+  assert.equal(harness.raf.count(), 1, "one ResizeObserver notification may schedule one stable measurement");
+  harness.raf.flush(32);
+  await flushAsyncWork();
+
+  assert.equal(observer.observeCalls, initialObserveCalls, "unchanged target identity must not re-observe nodes");
+  assert.equal(observer.disconnectCalls, initialDisconnectCalls, "unchanged target identity must not reconnect ResizeObserver");
+  assert.equal(harness.raf.count(), 0, "unchanged remeasure must not leave another measurement queued");
+
+  harness.env.context.scrollY = 40;
+  const scrollListeners = harness.env.windowListeners.get("scroll") || [];
+  scrollListeners[0]();
+  harness.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(observer.observeCalls, initialObserveCalls, "follow-mode scroll patches must not touch ResizeObserver");
 
   harness.tracker.dispose();
 });

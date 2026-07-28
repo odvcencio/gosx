@@ -381,22 +381,33 @@
       observed = [];
     }
 
+    function sameObserved(targets) {
+      if (!Array.isArray(targets) || targets.length !== observed.length) return false;
+      for (var i = 0; i < targets.length; i += 1) {
+        if (targets[i] !== observed[i]) return false;
+      }
+      return true;
+    }
+
     function observeTargets(targets) {
       if (!resizeObserver || typeof resizeObserver.observe !== "function") return;
-      disconnectObserved();
+      var next = [];
       if (mount) {
-        resizeObserver.observe(mount);
-        observed.push(mount);
+        next.push(mount);
       }
       var activeCanvas = currentCanvas();
       if (activeCanvas) {
-        resizeObserver.observe(activeCanvas);
-        observed.push(activeCanvas);
+        next.push(activeCanvas);
       }
       for (var i = 0; i < targets.length; i += 1) {
-        resizeObserver.observe(targets[i]);
-        observed.push(targets[i]);
+        next.push(targets[i]);
       }
+      if (sameObserved(next)) return;
+      disconnectObserved();
+      for (var targetIndex = 0; targetIndex < next.length; targetIndex += 1) {
+        resizeObserver.observe(next[targetIndex]);
+      }
+      observed = next;
     }
 
     function queryTargets(selector) {
@@ -519,12 +530,17 @@
       return sceneDOMRegionScrollActive && hasScrollMode(SCENE_DOM_REGION_SCROLL_SUSPEND);
     }
 
+    function setMountAttribute(name, value) {
+      if (!mount || typeof mount.setAttribute !== "function") return;
+      var next = String(value);
+      if (typeof mount.getAttribute === "function" && mount.getAttribute(name) === next) return;
+      mount.setAttribute(name, next);
+    }
+
     function setScrollActive(value) {
       sceneDOMRegionScrollActive = value === true;
-      if (mount && typeof mount.setAttribute === "function") {
-        mount.setAttribute("data-gosx-scene3d-dom-regions-scroll-active", sceneDOMRegionScrollActive ? "true" : "false");
-        mount.setAttribute("data-gosx-scene3d-dom-regions-suspended", hasActiveSuspendMode() ? "true" : "false");
-      }
+      setMountAttribute("data-gosx-scene3d-dom-regions-scroll-active", sceneDOMRegionScrollActive ? "true" : "false");
+      setMountAttribute("data-gosx-scene3d-dom-regions-suspended", hasActiveSuspendMode() ? "true" : "false");
     }
 
     function configure(postEffects) {
