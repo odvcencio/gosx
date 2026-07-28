@@ -26,6 +26,7 @@
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
   const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
+  const NAVIGATION_BEACON_SELECTOR = "script[type=\"application/json\"][data-gosx-navigation-beacon]";
   const URL_ATTRS = ["href", "src", "action", "poster"];
   const SUBMITTER_ATTRS = {
     formAction: "formaction",
@@ -43,8 +44,10 @@
   let activeNavigationController = null;
   let announceSeq = 0;
   let navigationFrameSequence = 0;
+  const navigationBeaconLastPath = window.__gosx_navigation_beacon_last_path || new Map();
   window.__gosx_loaded_scripts = scriptCache;
   window.__gosx_page_cache = pageCache;
+  window.__gosx_navigation_beacon_last_path = navigationBeaconLastPath;
 
   function gosxRuntimeRequest(input, init) {
     if (window.__gosx && typeof window.__gosx.request === "function") {
@@ -535,6 +538,88 @@
       return;
     }
     document.dispatchEvent(new CustomEvent(type, init || {}));
+  }
+
+  function currentNavigationBeaconPath() {
+    let pathname = String(window.location && window.location.pathname || "");
+    let search = String(window.location && window.location.search || "");
+    if (!pathname) {
+      try {
+        const parsed = new URL(windowLocationHref());
+        pathname = parsed.pathname;
+        search = parsed.search;
+      } catch (_) {
+        pathname = "/";
+        search = "";
+      }
+    }
+    const path = pathname + search;
+    if (!path || path.charAt(0) !== "/" || path.indexOf("//") === 0) return "";
+    return path;
+  }
+
+  function navigationBeaconID() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, function(c) {
+      const n = window.crypto && typeof window.crypto.getRandomValues === "function"
+        ? window.crypto.getRandomValues(new Uint8Array(1))[0]
+        : Math.floor(Math.random() * 256);
+      return (c ^ n & 15 >> c / 4).toString(16);
+    });
+  }
+
+  function navigationBeaconConfigs() {
+    if (!document.querySelectorAll) return [];
+    const nodes = document.querySelectorAll(NAVIGATION_BEACON_SELECTOR);
+    const configs = [];
+    for (const node of toArray(nodes)) {
+      try {
+        const config = JSON.parse(String(node.textContent || ""));
+        if (config && config.url) configs.push(config);
+      } catch (_) {}
+    }
+    return configs;
+  }
+
+  function navigationBeaconKey(config) {
+    return String(config.name || "") + "\n" + String(config.url || "");
+  }
+
+  function postNavigationBeacon(config) {
+    if (typeof fetch !== "function" || !config || !config.url) return;
+    const path = currentNavigationBeaconPath();
+    if (!path) return;
+
+    const key = navigationBeaconKey(config);
+    if (navigationBeaconLastPath.get(key) === path) return;
+    navigationBeaconLastPath.set(key, path);
+
+    const pathField = String(config.pathField || "path");
+    const idField = String(config.navigationIDField || "navigation_id");
+    const payload = {};
+    payload[pathField] = path;
+    payload[idField] = navigationBeaconID();
+
+    const headers = {};
+    const contentType = String(config.contentType || "application/json");
+    if (contentType) headers["Content-Type"] = contentType;
+    try {
+      fetch(String(config.url), {
+        method: String(config.method || "POST").toUpperCase(),
+        headers: headers,
+        credentials: String(config.credentials || "same-origin"),
+        keepalive: config.keepalive !== false,
+        body: JSON.stringify(payload),
+      }).catch(function() {});
+    } catch (_) {}
+  }
+
+  function dispatchNavigationBeacons() {
+    for (const config of navigationBeaconConfigs()) {
+      postNavigationBeacon(config);
+    }
   }
 
   function observeNavigation(level, message, fields) {
@@ -1773,6 +1858,7 @@
   document.addEventListener("mouseover", onMouseOver);
   document.addEventListener("focusin", onFocusIn);
   document.addEventListener("submit", onSubmit);
+  document.addEventListener("gosx:navigate", dispatchNavigationBeacons);
   if (typeof window.addEventListener === "function") {
     window.addEventListener("popstate", onPopState);
   }

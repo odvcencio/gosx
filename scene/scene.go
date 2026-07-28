@@ -160,10 +160,14 @@ type Props struct {
 	ControlPitchLimit      float64 `json:"controlPitchLimit,omitempty"`
 	ScrollCameraStart      float64 `json:"scrollCameraStart,omitempty"`
 	ScrollCameraEnd        float64 `json:"scrollCameraEnd,omitempty"`
-	MaxFrameRate           float64 `json:"maxFrameRate,omitempty"`
-	MaxFPS                 float64 `json:"maxFPS,omitempty"`
-	FrameIntervalMS        float64 `json:"frameIntervalMS,omitempty"`
-	MaxDevicePixelRatio    float64 `json:"maxDevicePixelRatio,omitempty"`
+	// ScrollCameraOffset applies a camera-position delta per CSS pixel scrolled.
+	// It complements ScrollCameraStart/End, which preserve the legacy z-range
+	// interpolation contract.
+	ScrollCameraOffset  Vector3 `json:"scrollCameraOffset,omitempty"`
+	MaxFrameRate        float64 `json:"maxFrameRate,omitempty"`
+	MaxFPS              float64 `json:"maxFPS,omitempty"`
+	FrameIntervalMS     float64 `json:"frameIntervalMS,omitempty"`
+	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	// MaxPixels caps the render target by total backing pixels after DPR.
 	// Zero leaves the render target governed by the DPR cap alone.
 	MaxPixels             int     `json:"maxPixels,omitempty"`
@@ -1771,6 +1775,13 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "controlPitchLimit", p.ControlPitchLimit)
 	setNumeric(out, "scrollCameraStart", p.ScrollCameraStart)
 	setNumeric(out, "scrollCameraEnd", p.ScrollCameraEnd)
+	if p.ScrollCameraOffset != (Vector3{}) {
+		out["scrollCameraOffset"] = map[string]any{
+			"x": p.ScrollCameraOffset.X,
+			"y": p.ScrollCameraOffset.Y,
+			"z": p.ScrollCameraOffset.Z,
+		}
+	}
 	setNumeric(out, "maxFrameRate", p.MaxFrameRate)
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)

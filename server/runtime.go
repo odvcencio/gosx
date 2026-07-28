@@ -13,9 +13,10 @@ import (
 // PageRuntime tracks page-scoped islands, engines, and hubs plus the bootstrap
 // assets needed to mount them on the client.
 type PageRuntime struct {
-	renderer *island.Renderer
-	active   bool
-	head     []gosx.Node
+	renderer          *island.Renderer
+	active            bool
+	head              []gosx.Node
+	navigationBeacons []NavigationBeaconOptions
 }
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
@@ -207,6 +208,15 @@ func (r *PageRuntime) LifecycleScript(src string, args ...any) {
 	r.AddHead(LifecycleScript(src, args...))
 }
 
+// NavigationBeacon appends a typed navigation beacon contract to the page
+// runtime head. The GoSX navigation runtime sends it after soft navigations.
+func (r *PageRuntime) NavigationBeacon(opts NavigationBeaconOptions) {
+	if r == nil {
+		return
+	}
+	r.navigationBeacons = append(r.navigationBeacons, opts)
+}
+
 // Head renders the preload, manifest, and bootstrap tags required by the page runtime.
 func (r *PageRuntime) Head() gosx.Node {
 	if r == nil {
@@ -218,6 +228,11 @@ func (r *PageRuntime) Head() gosx.Node {
 			r.renderer.PreloadHints(),
 			r.renderer.PageHead(),
 		)
+	}
+	for _, beacon := range r.navigationBeacons {
+		if node := NavigationBeacon(beacon); !node.IsZero() {
+			nodes = append(nodes, node)
+		}
 	}
 	nodes = append(nodes, r.head...)
 	if len(nodes) == 0 {

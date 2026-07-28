@@ -272,6 +272,15 @@ func (s *PageState) LifecycleScript(src string, args ...any) {
 	s.Runtime().LifecycleScript(src, args...)
 }
 
+// NavigationBeacon appends a typed navigation beacon contract to the page
+// runtime head.
+func (s *PageState) NavigationBeacon(opts NavigationBeaconOptions) {
+	if s == nil {
+		return
+	}
+	s.Runtime().NavigationBeacon(opts)
+}
+
 // Defer renders fallback content immediately, then streams the resolved node
 // into place once the resolver finishes.
 func (s *PageState) Defer(fallback gosx.Node, resolve DeferredResolver) gosx.Node {
