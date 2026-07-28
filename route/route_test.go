@@ -46,6 +46,19 @@ func TestRouterBasic(t *testing.T) {
 	}
 }
 
+func TestRouteContextHeadUsesRequestPathForAutomaticMetadataURLs(t *testing.T) {
+	ctx := newRouteContext(httptest.NewRequest(http.MethodGet, "/blog/example", nil))
+	ctx.SetMetadata(server.Metadata{MetadataBase: "https://example.com"})
+
+	html := gosx.RenderHTML(ctx.Head())
+	if !strings.Contains(html, `rel="canonical" href="https://example.com/blog/example"`) {
+		t.Fatalf("route canonical URL missing from %q", html)
+	}
+	if !strings.Contains(html, `property="og:url" content="https://example.com/blog/example"`) {
+		t.Fatalf("route Open Graph URL missing from %q", html)
+	}
+}
+
 func TestRouterBuildCheckedReturnsRegistrationError(t *testing.T) {
 	router := NewRouter()
 	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})

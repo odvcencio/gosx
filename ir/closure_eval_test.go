@@ -31,14 +31,15 @@ func TestClosureRoundTripFilterByField(t *testing.T) {
 	if got.Type != program.TypeAny {
 		// ArrayVal carries TypeAny; the underlying Items slice is what matters.
 	}
-	if len(got.List()) != 2 {
-		t.Fatalf("expected 2 active items, got %d (%+v)", len(got.List()), got.List())
+	gotItems := got.List()
+	if len(gotItems) != 2 {
+		t.Fatalf("expected 2 active items, got %d (%+v)", len(gotItems), gotItems)
 	}
-	if got.List()[0].IndexVal(vm.StringVal("name")).Text() != "alpha" {
-		t.Fatalf("first kept item should be alpha, got %+v", got.List()[0])
+	if gotItems[0].IndexVal(vm.StringVal("name")).Text() != "alpha" {
+		t.Fatalf("first kept item should be alpha, got %+v", gotItems[0])
 	}
-	if got.List()[1].IndexVal(vm.StringVal("name")).Text() != "gamma" {
-		t.Fatalf("second kept item should be gamma, got %+v", got.List()[1])
+	if gotItems[1].IndexVal(vm.StringVal("name")).Text() != "gamma" {
+		t.Fatalf("second kept item should be gamma, got %+v", gotItems[1])
 	}
 }
 
@@ -56,11 +57,12 @@ func TestClosureRoundTripMapProject(t *testing.T) {
 
 	machine := vm.NewVM(&program.Program{Name: "round-trip", Exprs: exprs}, map[string]vm.Value{"items": items})
 	got := machine.Eval(rootID)
-	if len(got.List()) != 2 {
-		t.Fatalf("expected 2 projected items, got %d", len(got.List()))
+	gotItems := got.List()
+	if len(gotItems) != 2 {
+		t.Fatalf("expected 2 projected items, got %d", len(gotItems))
 	}
-	if got.List()[0].Text() != "one" || got.List()[1].Text() != "two" {
-		t.Fatalf("expected [one, two], got %+v", got.List())
+	if gotItems[0].Text() != "one" || gotItems[1].Text() != "two" {
+		t.Fatalf("expected [one, two], got %+v", gotItems)
 	}
 }
 
@@ -79,11 +81,12 @@ func TestClosureRoundTripChainedFilterMap(t *testing.T) {
 
 	machine := vm.NewVM(&program.Program{Name: "round-trip", Exprs: exprs}, map[string]vm.Value{"items": items})
 	got := machine.Eval(rootID)
-	if len(got.List()) != 2 {
-		t.Fatalf("expected 2 names, got %d (%+v)", len(got.List()), got.List())
+	gotItems := got.List()
+	if len(gotItems) != 2 {
+		t.Fatalf("expected 2 names, got %d (%+v)", len(gotItems), gotItems)
 	}
-	if got.List()[0].Text() != "alpha" || got.List()[1].Text() != "gamma" {
-		t.Fatalf("expected [alpha, gamma], got %+v", got.List())
+	if gotItems[0].Text() != "alpha" || gotItems[1].Text() != "gamma" {
+		t.Fatalf("expected [alpha, gamma], got %+v", gotItems)
 	}
 }
 
