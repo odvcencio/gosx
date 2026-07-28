@@ -464,10 +464,9 @@ const budgets = [
   // accounting, and change-only WebGL telemetry publication. Exact regenerated
   // measurement: 1_458_092 / 393_850 / 316_914. Only the breached raw ceiling
   // moves; compressed ceilings retain their prior headroom.
-  // Authored-points time support adds a raw-only Scene3D point normalizer /
-  // frame-clock delta. Exact regenerated measurement:
-  // 1_459_875 / 394_097 / 317_380.
-  { file: "bootstrap.js", raw: 1_459_875, gzip: 394_100, brotli: 317_400 },
+  // Authored-points time support plus DOM-region custom-post tracking.
+  // Measured: 1_466_190 / 396_503 / 318_902.
+  { file: "bootstrap.js", raw: 1_466_190, gzip: 396_503, brotli: 318_902 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -801,8 +800,9 @@ const budgets = [
   // in the final audit. Measured: 484_997 / 133_999 / 111_308.
   // Final integrated measurement: 496_933 / 137_294 / 113_937.
   // FINAL-FIX-19 exact measurement: 497_103 / 137_333 / 113_960.
-  // Authored-points time support exact measurement: 498_790 / 137_622 / 114_072.
-  { file: "bootstrap-feature-scene3d.js", raw: 498_790, gzip: 137_700, brotli: 114_200 },
+  // Authored-points time support plus DOM-region custom-post tracking.
+  // Measured: 505_058 / 139_828 / 116_000.
+  { file: "bootstrap-feature-scene3d.js", raw: 505_058, gzip: 139_828, brotli: 116_000 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1245,12 +1245,11 @@ const routeBudgets = [
     // 1_122_619 / 297_774 / 252_038.
     // Final integrated measurement: 1_149_871 / 305_600 / 258_349.
     // FINAL-FIX-19 exact measurement: 1_150_801 / 305_824 / 258_630.
-    // Only the breached raw and Brotli ceilings move.
-    // Authored-points time support exact measurement:
-    // 1_152_488 / 306_113 / 258_742.
-    raw: 1_152_488,
-    gzip: 306_200,
-    brotli: 258_800,
+    // Authored-points time support plus DOM-region custom-post tracking.
+    // Measured: 1_158_756 / 308_319 / 260_670.
+    raw: 1_158_756,
+    gzip: 308_319,
+    brotli: 260_670,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1318,11 +1317,11 @@ const routeBudgets = [
     // Final hydration/lifecycle/telemetry measurement:
     // 951_588 / 263_185 / 223_963.
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
-    // Authored-points time support exact measurement:
-    // 980_275 / 271_649 / 230_652.
-    raw: 980_275,
-    gzip: 271_700,
-    brotli: 230_700,
+    // Authored-points time support plus DOM-region custom-post tracking.
+    // Measured: 986_543 / 273_855 / 232_580.
+    raw: 986_543,
+    gzip: 273_855,
+    brotli: 232_580,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1381,10 +1380,11 @@ const routeBudgets = [
     // 1_317_451 / 350_565 / 297_215.
     // Final integrated measurement: 1_359_573 / 363_164 / 307_393.
     // FINAL-FIX-19 exact measurement: 1_360_411 / 363_436 / 307_637.
-    // Authored-points time support exact measurement: 1_362_214 / 363_745 / 307_844.
-    raw: 1_362_214,
-    gzip: 363_800,
-    brotli: 307_900,
+    // Authored-points time support plus DOM-region custom-post tracking.
+    // Measured: 1_368_482 / 365_951 / 309_772.
+    raw: 1_368_482,
+    gzip: 365_951,
+    brotli: 309_772,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1445,10 +1445,11 @@ const routeBudgets = [
     // 976_489 / 255_516 / 214_470.
     // Final integrated measurement: 1_003_741 / 263_342 / 220_781.
     // FINAL-FIX-19 exact measurement: 1_004_671 / 263_566 / 221_062.
-    // Authored-points time support exact measurement: 1_006_358 / 263_855 / 221_174.
-    raw: 1_006_358,
-    gzip: 263_900,
-    brotli: 221_300,
+    // Authored-points time support plus DOM-region custom-post tracking.
+    // Measured: 1_012_626 / 266_061 / 223_102.
+    raw: 1_012_626,
+    gzip: 266_061,
+    brotli: 223_102,
   },
 
 ];

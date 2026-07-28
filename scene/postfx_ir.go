@@ -469,15 +469,32 @@ func (ir FXAAIR) MarshalJSON() ([]byte, error) {
 //   - "" / "beforeTonemap" → after bloom, before tonemap (default)
 //   - "afterTonemap"       → after tonemap, in the LDR region
 type CustomPostIR struct {
-	Name          string         `json:"name"`
-	Stage         string         `json:"stage,omitempty"`
-	FragmentWGSL  string         `json:"fragmentWGSL,omitempty"`
-	VertexWGSL    string         `json:"vertexWGSL,omitempty"`
-	FragmentGLSL  string         `json:"fragmentGLSL,omitempty"`
-	VertexGLSL    string         `json:"vertexGLSL,omitempty"`
-	ShaderBackend string         `json:"shaderBackend,omitempty"`
-	ShaderLayout  map[string]any `json:"shaderLayout,omitempty"`
-	Uniforms      map[string]any `json:"uniforms,omitempty"`
+	Name          string                  `json:"name"`
+	Stage         string                  `json:"stage,omitempty"`
+	FragmentWGSL  string                  `json:"fragmentWGSL,omitempty"`
+	VertexWGSL    string                  `json:"vertexWGSL,omitempty"`
+	FragmentGLSL  string                  `json:"fragmentGLSL,omitempty"`
+	VertexGLSL    string                  `json:"vertexGLSL,omitempty"`
+	ShaderBackend string                  `json:"shaderBackend,omitempty"`
+	ShaderLayout  map[string]any          `json:"shaderLayout,omitempty"`
+	Uniforms      map[string]any          `json:"uniforms,omitempty"`
+	DOMRegions    *CustomPostDOMRegionsIR `json:"domRegions,omitempty"`
+}
+
+// DOMRegionUniformsIR names the CustomPost uniforms that receive measured
+// DOM region data.
+type DOMRegionUniformsIR struct {
+	Count  string `json:"count,omitempty"`
+	Aspect string `json:"aspect,omitempty"`
+	Rect   string `json:"rect,omitempty"`
+	Meta   string `json:"meta,omitempty"`
+}
+
+// CustomPostDOMRegionsIR is the browser CustomPost DOM-region tracker config.
+type CustomPostDOMRegionsIR struct {
+	Selector string              `json:"selector"`
+	Max      int                 `json:"max,omitempty"`
+	Uniforms DOMRegionUniformsIR `json:"uniforms,omitempty"`
 }
 
 func (ir CustomPostIR) legacyProps() map[string]any {
@@ -505,6 +522,9 @@ func (ir CustomPostIR) legacyProps() map[string]any {
 	}
 	if len(ir.Uniforms) > 0 {
 		out["uniforms"] = ir.Uniforms
+	}
+	if ir.DOMRegions != nil {
+		out["domRegions"] = ir.DOMRegions
 	}
 	return out
 }
@@ -606,7 +626,77 @@ func lowerCustomPost(cp CustomPost) *CustomPostIR {
 	if len(merged) > 0 {
 		ir.Uniforms = merged
 	}
+	if dom := lowerCustomPostDOMRegions(cp.DOMRegions); dom != nil {
+		ir.DOMRegions = dom
+	}
 	return ir
+}
+
+const (
+	customPostDOMRegionsDefaultMax = 8
+	customPostDOMRegionsHardMax    = 16
+)
+
+func lowerCustomPostDOMRegions(dom CustomPostDOMRegions) *CustomPostDOMRegionsIR {
+	selector := strings.TrimSpace(dom.Selector)
+	if selector == "" {
+		return nil
+	}
+	max := dom.Max
+	if max <= 0 {
+		max = customPostDOMRegionsDefaultMax
+	}
+	if max > customPostDOMRegionsHardMax {
+		max = customPostDOMRegionsHardMax
+	}
+	uniforms := DOMRegionUniformsIR{
+		Count:  customPostUniformName(dom.Uniforms.Count, "regionCount"),
+		Aspect: customPostUniformName(dom.Uniforms.Aspect, "regionAspect"),
+		Rect:   customPostUniformPattern(dom.Uniforms.Rect, "region%dRect"),
+		Meta:   customPostUniformPattern(dom.Uniforms.Meta, "region%dMeta"),
+	}
+	return &CustomPostDOMRegionsIR{
+		Selector: selector,
+		Max:      max,
+		Uniforms: uniforms,
+	}
+}
+
+func customPostUniformName(value, fallback string) string {
+	name := strings.TrimSpace(value)
+	if name == "" {
+		return fallback
+	}
+	for _, r := range name {
+		if !(r == '_' || r == '[' || r == ']' || r == '.' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+			return fallback
+		}
+	}
+	return name
+}
+
+func customPostUniformPattern(value, fallback string) string {
+	pattern := strings.TrimSpace(value)
+	if pattern == "" {
+		return fallback
+	}
+	if strings.Count(pattern, "%d") != 1 {
+		return fallback
+	}
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		if c == '%' {
+			if i+1 >= len(pattern) || pattern[i+1] != 'd' {
+				return fallback
+			}
+			i++
+			continue
+		}
+		if !(c == '_' || c == '[' || c == ']' || c == '.' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') {
+			return fallback
+		}
+	}
+	return pattern
 }
 
 func tonemapModeString(m TonemapMode) string {

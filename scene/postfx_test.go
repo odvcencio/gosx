@@ -298,6 +298,103 @@ func TestCustomPostIRMarshalJSON(t *testing.T) {
 	}
 }
 
+func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
+	mat := &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"}
+	pfx := PostFX{Effects: []PostEffect{CustomPost{
+		Name:     "Glass",
+		Material: mat,
+		DOMRegions: CustomPostDOMRegions{
+			Selector: " .glass-card ",
+			Max:      32,
+			Uniforms: DOMRegionUniforms{
+				Count:  "uRegionCount",
+				Aspect: "bad uniform",
+				Rect:   "uRegion%dRect",
+				Meta:   "uRegionMeta",
+			},
+		},
+	}}}
+	irs := pfx.sceneIR()
+	if len(irs) != 1 {
+		t.Fatalf("got %d IRs, want 1", len(irs))
+	}
+	cp, ok := irs[0].(CustomPostIR)
+	if !ok {
+		t.Fatalf("irs[0] = %T, want CustomPostIR", irs[0])
+	}
+	if cp.DOMRegions == nil {
+		t.Fatal("DOMRegions = nil")
+	}
+	if cp.DOMRegions.Selector != ".glass-card" {
+		t.Errorf("Selector = %q, want .glass-card", cp.DOMRegions.Selector)
+	}
+	if cp.DOMRegions.Max != 16 {
+		t.Errorf("Max = %d, want hard cap 16", cp.DOMRegions.Max)
+	}
+	if cp.DOMRegions.Uniforms.Count != "uRegionCount" {
+		t.Errorf("Count uniform = %q", cp.DOMRegions.Uniforms.Count)
+	}
+	if cp.DOMRegions.Uniforms.Aspect != "regionAspect" {
+		t.Errorf("Aspect uniform = %q, want fallback", cp.DOMRegions.Uniforms.Aspect)
+	}
+	if cp.DOMRegions.Uniforms.Rect != "uRegion%dRect" {
+		t.Errorf("Rect uniform = %q", cp.DOMRegions.Uniforms.Rect)
+	}
+	if cp.DOMRegions.Uniforms.Meta != "region%dMeta" {
+		t.Errorf("Meta uniform = %q, want fallback", cp.DOMRegions.Uniforms.Meta)
+	}
+}
+
+func TestCustomPostDOMRegionsJSONDefaults(t *testing.T) {
+	mat := &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"}
+	pfx := PostFX{Effects: []PostEffect{CustomPost{
+		Name:     "Glass",
+		Material: mat,
+		DOMRegions: CustomPostDOMRegions{
+			Selector: "[data-glass]",
+		},
+	}}}
+	cp := pfx.sceneIR()[0].(CustomPostIR)
+	b, err := json.Marshal(cp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	rawDOM, ok := got["domRegions"].(map[string]any)
+	if !ok {
+		t.Fatalf("domRegions = %T", got["domRegions"])
+	}
+	if rawDOM["selector"] != "[data-glass]" {
+		t.Errorf("selector = %v", rawDOM["selector"])
+	}
+	if rawDOM["max"] != float64(8) {
+		t.Errorf("max = %v, want 8", rawDOM["max"])
+	}
+	rawUniforms, ok := rawDOM["uniforms"].(map[string]any)
+	if !ok {
+		t.Fatalf("uniforms = %T", rawDOM["uniforms"])
+	}
+	if rawUniforms["rect"] != "region%dRect" || rawUniforms["meta"] != "region%dMeta" {
+		t.Errorf("uniforms = %#v", rawUniforms)
+	}
+}
+
+func TestCustomPostDOMRegionsEmptySelectorSkipped(t *testing.T) {
+	mat := &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"}
+	pfx := PostFX{Effects: []PostEffect{CustomPost{
+		Name:       "Glass",
+		Material:   mat,
+		DOMRegions: CustomPostDOMRegions{Selector: "   "},
+	}}}
+	cp := pfx.sceneIR()[0].(CustomPostIR)
+	if cp.DOMRegions != nil {
+		t.Fatalf("DOMRegions = %#v, want nil", cp.DOMRegions)
+	}
+}
+
 func TestCustomPostNilMaterialIsSkipped(t *testing.T) {
 	pfx := PostFX{Effects: []PostEffect{
 		CustomPost{Name: "NilMat", Material: nil},
