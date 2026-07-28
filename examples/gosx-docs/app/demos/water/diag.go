@@ -26,14 +26,16 @@ package docs
 // parameters the values are exactly the shipped ones.
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx/route"
 )
 
-// waterDiagDefaults are the shipped values. A knob absent from the URL keeps its
-// default, so /demos/water is byte-identical to what it was without diag.
+// waterDiagDefaults are the shipped Balanced values. A knob absent from the
+// URL keeps the selected quality profile's value; with no quality query the
+// profile is Balanced, preserving the measured configuration below.
 //
 // These defaults ARE the shipped configuration: page.gsx binds every knob to
 // the resolved diag value, so this table is the single source of truth. That
@@ -43,9 +45,13 @@ import (
 // identifies as the 17 fps cliff, and turned every knob below into a dead
 // no-op. If page.gsx and this table ever disagree again, page.gsx is wrong.
 var waterDiagDefaults = map[string]any{
-	"diag":      false,
-	"dpr":       1.6,
-	"maxPixels": 1200000,
+	"diag":           false,
+	"quality":        "balanced",
+	"dpr":            1.6,
+	"maxPixels":      1200000,
+	"msaa":           0,
+	"antialias":      nil,
+	"capabilityTier": "",
 	// 256 matches the reference implementation's simulation grid. Simulation,
 	// normals and shading sample the heightfield by uv at this resolution
 	// regardless of mesh density, and the sim passes are cheap (fixed 256^2
@@ -96,30 +102,123 @@ var waterDiagDefaults = map[string]any{
 	"water": true,
 }
 
-// WaterDiagConfig resolves the water system's cost knobs from the URL, falling back
-// to the shipped defaults. Returns the values plus whether the overlay is on.
-func WaterDiagConfig(ctx *route.RouteContext) map[string]any {
-	out := make(map[string]any, len(waterDiagDefaults))
-	for k, v := range waterDiagDefaults {
-		out[k] = v
+// waterQualityProfiles are presentation presets, not hidden capability
+// switches. Every tier keeps simulation, reflection, refraction, caustics and
+// shadows enabled; the lower tiers reduce tessellation and offscreen work
+// before reducing canvas clarity. The existing diagnostic query knobs remain
+// authoritative and can override any individual value after a profile is
+// selected.
+var waterQualityProfiles = map[string]map[string]any{
+	"hero": {
+		"dpr": 1.9, "maxPixels": 2073600, "msaa": 4, "antialias": true, "capabilityTier": "full", "resolution": 256, "meshRes": 64,
+		"causticsRes": 1024, "shadowRes": 1024, "objectTexBudget": 786432,
+		"caustics": true, "reflection": true, "refraction": true, "water": true,
+	},
+	"balanced": {
+		"dpr": 1.6, "maxPixels": 1200000, "msaa": 0, "antialias": nil, "capabilityTier": "", "resolution": 256, "meshRes": 48,
+		"causticsRes": 1024, "shadowRes": 1024, "objectTexBudget": 393216,
+		"caustics": true, "reflection": true, "refraction": true, "water": true,
+	},
+	"battery": {
+		"dpr": 1.25, "maxPixels": 921600, "msaa": 1, "antialias": false, "capabilityTier": "constrained", "resolution": 256, "meshRes": 32,
+		"causticsRes": 512, "shadowRes": 512, "objectTexBudget": 230400,
+		"caustics": true, "reflection": true, "refraction": true, "water": true,
+	},
+}
+
+func waterQualityProfile(name string) (string, map[string]any) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	profile, ok := waterQualityProfiles[name]
+	if !ok {
+		name = "balanced"
+		profile = waterQualityProfiles[name]
 	}
+	out := make(map[string]any, len(waterDiagDefaults))
+	for key, value := range waterDiagDefaults {
+		out[key] = value
+	}
+	for key, value := range profile {
+		out[key] = value
+	}
+	out["quality"] = name
+	return name, out
+}
+
+// WaterDiagConfig resolves the water system's cost knobs from the URL, falling back
+// to the selected profile. Returns the values plus whether the overlay is on.
+func WaterDiagConfig(ctx *route.RouteContext) map[string]any {
 	if ctx == nil || ctx.Request == nil {
+		_, out := waterQualityProfile("")
+		out["qualityProfiles"] = waterAdaptiveQualityProfiles(out)
+		waterSetQualityCurrent(out)
 		return out
 	}
 
+	_, out := waterQualityProfile(ctx.Query("quality"))
 	out["diag"] = waterDiagBool(ctx, "diag", false)
-	out["dpr"] = waterDiagFloat(ctx, "dpr", waterDiagDefaults["dpr"].(float64), 0.5, 3.0)
-	out["maxPixels"] = waterDiagInt(ctx, "maxPixels", waterDiagDefaults["maxPixels"].(int), 100000, 16000000)
-	out["resolution"] = waterDiagInt(ctx, "res", waterDiagDefaults["resolution"].(int), 16, 512)
-	out["meshRes"] = waterDiagInt(ctx, "meshRes", waterDiagDefaults["meshRes"].(int), 0, 512)
-	out["causticsRes"] = waterDiagInt(ctx, "causticsRes", waterDiagDefaults["causticsRes"].(int), 0, 2048)
-	out["shadowRes"] = waterDiagInt(ctx, "shadowRes", waterDiagDefaults["shadowRes"].(int), 0, 2048)
-	out["caustics"] = waterDiagBool(ctx, "caustics", waterDiagDefaults["caustics"].(bool))
-	out["reflection"] = waterDiagBool(ctx, "reflection", waterDiagDefaults["reflection"].(bool))
-	out["refraction"] = waterDiagBool(ctx, "refraction", waterDiagDefaults["refraction"].(bool))
-	out["objectTexBudget"] = waterDiagInt(ctx, "objectTexBudget", waterDiagDefaults["objectTexBudget"].(int), 0, 8000000)
-	out["water"] = waterDiagBool(ctx, "water", waterDiagDefaults["water"].(bool))
+	out["dpr"] = waterDiagFloat(ctx, "dpr", out["dpr"].(float64), 0.5, 3.0)
+	out["maxPixels"] = waterDiagInt(ctx, "maxPixels", out["maxPixels"].(int), 100000, 16000000)
+	out["msaa"] = waterDiagInt(ctx, "msaa", out["msaa"].(int), 0, 8)
+	out["resolution"] = waterDiagInt(ctx, "res", out["resolution"].(int), 16, 512)
+	out["meshRes"] = waterDiagInt(ctx, "meshRes", out["meshRes"].(int), 0, 512)
+	out["causticsRes"] = waterDiagInt(ctx, "causticsRes", out["causticsRes"].(int), 0, 2048)
+	out["shadowRes"] = waterDiagInt(ctx, "shadowRes", out["shadowRes"].(int), 0, 2048)
+	out["caustics"] = waterDiagBool(ctx, "caustics", out["caustics"].(bool))
+	out["reflection"] = waterDiagBool(ctx, "reflection", out["reflection"].(bool))
+	out["refraction"] = waterDiagBool(ctx, "refraction", out["refraction"].(bool))
+	out["objectTexBudget"] = waterDiagInt(ctx, "objectTexBudget", out["objectTexBudget"].(int), 0, 8000000)
+	out["water"] = waterDiagBool(ctx, "water", out["water"].(bool))
+	out["qualityProfiles"] = waterAdaptiveQualityProfiles(out)
+	waterSetQualityCurrent(out)
 	return out
+}
+
+func waterSetQualityCurrent(config map[string]any) {
+	quality, _ := config["quality"].(string)
+	config["qualityHeroCurrent"] = ""
+	config["qualityBalancedCurrent"] = ""
+	config["qualityBatteryCurrent"] = ""
+	switch quality {
+	case "hero":
+		config["qualityHeroCurrent"] = "page"
+	case "battery":
+		config["qualityBatteryCurrent"] = "page"
+	default:
+		config["qualityBalancedCurrent"] = "page"
+	}
+}
+
+// waterAdaptiveQualityProfiles makes the selected demo profile the adaptive
+// governor's initial "full" rung. Without this local override, Scene3D's
+// generic full rung truthfully renders the authored mesh but publishes and
+// applies its unrelated 1.6 DPR/160-grid budget, masking Battery's requested
+// caps in runtime telemetry. The local balanced/survival rungs scale every
+// expensive axis monotonically so adaptive demotion can never increase work.
+func waterAdaptiveQualityProfiles(config map[string]any) map[string]map[string]any {
+	baseDPR := config["dpr"].(float64)
+	baseSurface := max(32, config["meshRes"].(int))
+	baseCaustics := max(64, config["causticsRes"].(int))
+	baseShadow := max(64, config["shadowRes"].(int))
+	baseObjectBudget := max(65536, config["objectTexBudget"].(int))
+
+	profile := func(dprScale, surfaceScale, offscreenScale, objectScale float64, cadence int) map[string]any {
+		objectBudget := max(65536, int(math.Floor(float64(baseObjectBudget)*objectScale)))
+		objectMaxSide := int(math.Ceil(math.Sqrt(float64(objectBudget))))
+		return map[string]any{
+			"dprCap":                   math.Max(1, baseDPR*dprScale),
+			"surfaceResolution":        max(32, int(math.Floor(float64(baseSurface)*surfaceScale))),
+			"causticsResolution":       max(64, int(math.Floor(float64(baseCaustics)*offscreenScale))),
+			"objectShadowResolution":   max(64, int(math.Floor(float64(baseShadow)*offscreenScale))),
+			"objectTextureMaxSide":     max(64, min(2048, objectMaxSide)),
+			"objectTexturePixelBudget": objectBudget,
+			"expensivePassCadence":     cadence,
+		}
+	}
+	return map[string]map[string]any{
+		"full":     profile(1, 1, 1, 1, 1),
+		"balanced": profile(0.8, 0.75, 0.5, 0.5, 2),
+		"survival": profile(0.6, 0.5, 0.25, 0.25, 3),
+	}
 }
 
 func waterDiagBool(ctx *route.RouteContext, name string, fallback bool) bool {

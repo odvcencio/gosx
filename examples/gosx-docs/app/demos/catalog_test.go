@@ -62,6 +62,39 @@ func TestDemoCatalogContracts(t *testing.T) {
 	}
 }
 
+func TestShowcaseDemosHaveStableTruthfulPromotion(t *testing.T) {
+	want := []struct {
+		slug   string
+		status string
+	}{
+		{slug: "water", status: "featured"},
+		{slug: "scene3d", status: "live"},
+		{slug: "checkers", status: "live"},
+		{slug: "scene3d-bench", status: "lab"},
+	}
+	got := ShowcaseDemos()
+	if len(got) != len(want) {
+		t.Fatalf("ShowcaseDemos() length = %d, want %d", len(got), len(want))
+	}
+	for i, demo := range got {
+		if demo.Slug != want[i].slug || demo.Status != want[i].status {
+			t.Errorf("ShowcaseDemos()[%d] = %q (%s), want %q (%s)", i, demo.Slug, demo.Status, want[i].slug, want[i].status)
+		}
+		if demo.ShowcaseRank != i+1 {
+			t.Errorf("ShowcaseDemos()[%d].ShowcaseRank = %d, want %d", i, demo.ShowcaseRank, i+1)
+		}
+		if !strings.HasPrefix(demoSourceURL(demo.SourcePath), "https://github.com/odvcencio/gosx/blob/main/") {
+			t.Errorf("showcase demo %q does not resolve to a source link", demo.Slug)
+		}
+	}
+	if got[3].Status == "featured" {
+		t.Error("the benchmark must remain labelled lab even when editorially promoted")
+	}
+	if len(AdditionalDemos())+len(got) != len(Demos()) {
+		t.Error("showcase and additional catalog slices must partition Demos()")
+	}
+}
+
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

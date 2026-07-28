@@ -59,7 +59,10 @@ material WaterDuckMaterial {
         if (submerged) {
             diffuse = diffuse * caustic * 4.0
         }
-        let underwater = vec3f(0.4, 0.9, 1.0)
+        // The pool surface already performs depth absorption. Keep this
+        // object-local tint deliberately subtle so shallow yellow albedo does
+        // not lose most of its red channel and turn fluorescent green.
+        let underwater = vec3f(0.86, 0.96, 1.0)
         var col = albedo * (0.4 + diffuse)
         if (submerged) {
             col = col * underwater * 1.2
