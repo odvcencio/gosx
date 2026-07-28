@@ -241,7 +241,15 @@ func (f *formatter) indentEmbedded(text string, prefix string) string {
 	if prefix == "" || !strings.Contains(text, "\n") {
 		return text
 	}
-	return strings.ReplaceAll(text, "\n", "\n"+prefix)
+	lines := strings.Split(text, "\n")
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (f *formatter) lineLeadingWhitespace(pos uint32) string {

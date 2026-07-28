@@ -467,7 +467,7 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 // TestDemosIndexLists9Cards verifies the /demos index page files have the
 // expected structure and roster. We use raw-source grep rather than rendering
 // because the GSX IR does not expose an HTML renderer in tests.
-func TestDemosIndexLists9Cards(t *testing.T) {
+func TestDemosIndexUsesSharedCatalogHierarchy(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	demosDir := filepath.Join(filepath.Dir(thisFile), "app", "demos")
 	pagePath := filepath.Join(demosDir, "page.gsx")
@@ -487,8 +487,9 @@ func TestDemosIndexLists9Cards(t *testing.T) {
 		t.Fatal("app/demos/page.gsx has no components (bare-fragment form breaks route resolution)")
 	}
 
-	// 2. The shared catalog must contain all 8 demo slugs, while the loader
-	// consumes Demos() rather than maintaining another roster.
+	// 2. The shared catalog must contain all nine demo slugs, while the loader
+	// consumes its promoted and additional views rather than maintaining
+	// another roster.
 	serverSource, err := os.ReadFile(serverPath)
 	if err != nil {
 		t.Fatalf("read app/demos/page.server.go: %v", err)
@@ -506,8 +507,14 @@ func TestDemosIndexLists9Cards(t *testing.T) {
 			t.Errorf("app/demos/catalog.go missing demo slug %q", slug)
 		}
 	}
-	if !strings.Contains(serverSrc, `"demos": Demos()`) {
-		t.Error("app/demos/page.server.go does not load the shared catalog")
+	for _, required := range []string{
+		`"showreel":   DemoShowreelProgram()`,
+		`"showcase":   ShowcaseDemos()`,
+		`"additional": AdditionalDemos()`,
+	} {
+		if !strings.Contains(serverSrc, required) {
+			t.Errorf("app/demos/page.server.go missing shared showcase data %q", required)
+		}
 	}
 
 	// 3. Must use RegisterStaticDocsPage.

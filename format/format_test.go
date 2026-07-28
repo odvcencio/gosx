@@ -83,13 +83,30 @@ func Page() Node {
 }
 
 func TestSourceKeepsRawStringCodeExamplesStable(t *testing.T) {
-	formatted, err := Source([]byte("package main\n\nfunc Page() Node {\n\treturn <article>\n\t\t{DocsCodeBlock(\"gosx\", `func Demo() Node {\n\t\t    return <Scene3D>\n\t\t        <div class=\"fallback\">Ready</div>\n\t\t    </Scene3D>\n\t\t}`)}\n\t</article>\n}\n"))
+	source := []byte("package main\n\nfunc Page() Node {\n\treturn <article>\n\t\t{CodeBlock(\"go\", `func Demo() Node {\n\t\t    title := \"Scene\"\n\n\t\t    \t\n\t\t    return <Scene3D ariaLabel={title}>\n\t\t        <div class=\"fallback\">Ready</div>\n\t\t    </Scene3D>\n\t\t}`)}\n\t</article>\n}\n")
+	formatted, err := Source(source)
 	if err != nil {
 		t.Fatalf("Source: %v", err)
 	}
 
 	output := string(formatted)
-	if strings.Count(output, "    return <Scene3D>") != 1 {
+	if strings.Count(output, `    return <Scene3D ariaLabel={title}>`) != 1 {
 		t.Fatalf("expected raw string example indentation to stay stable, got:\n%s", output)
+	}
+	if !strings.Contains(output, "title := \"Scene\"\n\n\n") {
+		t.Fatalf("expected empty and whitespace-only raw-string lines to normalize to zero width, got:\n%s", output)
+	}
+	for lineNumber, line := range strings.Split(output, "\n") {
+		if line != "" && strings.Trim(line, " \t\r") == "" {
+			t.Fatalf("line %d contains whitespace-only blank content %q:\n%s", lineNumber+1, line, output)
+		}
+	}
+
+	reformatted, err := Source(formatted)
+	if err != nil {
+		t.Fatalf("Source (second pass): %v", err)
+	}
+	if string(reformatted) != output {
+		t.Fatalf("raw string formatting is not idempotent\nfirst:\n%s\nsecond:\n%s", output, reformatted)
 	}
 }
