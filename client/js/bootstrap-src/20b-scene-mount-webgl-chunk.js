@@ -244,8 +244,7 @@
     }, { webgpu: webgpuAvail, webgl: true });
     const preferWebGPU = verdict ? verdict.backend === "webgpu" : (webgpuPreference === "prefer" && !webgpuFeatureGap);
     const verdictFallback = verdict ? verdict.fallbackReason : "";
-    const allowWebGL = (webglPreference === "prefer" || webglPreference === "force")
-      && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    const allowWebGL = sceneAllowsWebGLBackend(verdict, webglPreference, backendCaps);
     const request = {
       props,
       capability,
@@ -296,6 +295,17 @@
       }
     }
     return null;
+  }
+
+  // A backend-capability verdict is the final selection policy. In particular,
+  // it may choose WebGL after a preferred WebGPU probe fails even when the
+  // adaptive environment preference would otherwise avoid WebGL. The
+  // preference remains the policy for legacy manifests without backendCaps.
+  function sceneAllowsWebGLBackend(verdict, webglPreference, backendCaps) {
+    const selected = verdict
+      ? verdict.backend === "webgl"
+      : (webglPreference === "prefer" || webglPreference === "force");
+    return selected && sceneBackendCapsAllowsKind(backendCaps, "webgl");
   }
 
   const sceneModelAssetCache = new Map();
@@ -1461,8 +1471,7 @@
       ? verdict.backend === "webgpu"
       : (webgpuPreference === "prefer" && !sceneNeedsWebGLForWebGPUCoverage(props));
     const preferWebGPU = wantsWebGPU && webgpuAvail && sceneBackendCapsAllowsKind(backendCaps, "webgpu");
-    const allowWebGL = (webglPreference === "prefer" || webglPreference === "force")
-      && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    const allowWebGL = sceneAllowsWebGLBackend(verdict, webglPreference, backendCaps);
     return {
       props,
       capability,
@@ -3503,4 +3512,3 @@
     applySceneAdaptiveQualityState(mount, state, now, false);
     return false;
   }
-

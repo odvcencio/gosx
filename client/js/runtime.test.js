@@ -13540,6 +13540,54 @@ test("Scene3D WebGPU page does not fetch the WebGL chunk at mount", async () => 
   );
 });
 
+test("Scene3D null WebGPU adapter falls back through the lazy WebGL chunk", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-null-adapter";
+  const softwareWebGL = () => new FakeWebGLContext({
+    vendor: "Google Inc.",
+    renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device))",
+  });
+  const scene = {
+    backendCaps: {
+      capable: ["webgpu", "webgl", "canvas2d"],
+      degraded: {},
+      reasons: [],
+    },
+    objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }],
+  };
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    createWebGL2Context: softwareWebGL,
+    navigatorGPU: {
+      requestAdapter: async () => null,
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": { text: bootstrapFeatureScene3DWebGPUSource },
+    },
+    manifest: scene3dWebGLSplitManifest("scene-webgpu-null-adapter", {
+      preferWebGPU: true,
+      scene,
+    }),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length,
+    1,
+    "a failed WebGPU probe must request the WebGL fallback chunk exactly once",
+  );
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.ok((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+});
+
 test("Scene3D falls through to canvas2d when the lazy WebGL chunk publishes no API", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgl-broken-chunk";
