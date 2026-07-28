@@ -4,7 +4,11 @@
   var SCENE_DOM_REGION_MAX = 16;
   var SCENE_DOM_REGION_DEFAULT_MAX = 8;
   var SCENE_DOM_REGION_SCROLL_IDLE_MS = 120;
+  var SCENE_DOM_REGION_SCROLL_MEASURE = "measure";
+  var SCENE_DOM_REGION_SCROLL_FOLLOW = "follow";
+  var SCENE_DOM_REGION_SCROLL_SUSPEND = "suspend";
   var sceneDOMRegionScrollActive = false;
+  var sceneDOMRegionActiveScrollPostFXMaxPixels = 0;
 
   function sceneDOMRegionNumber(value, fallback) {
     var n = Number(value);
@@ -37,6 +41,25 @@
     return pattern;
   }
 
+  function sceneDOMRegionScrollMode(raw) {
+    var mode = raw && typeof raw.scrollMode === "string" ? raw.scrollMode.trim().toLowerCase() : "";
+    if (mode === SCENE_DOM_REGION_SCROLL_FOLLOW || mode === SCENE_DOM_REGION_SCROLL_SUSPEND || mode === SCENE_DOM_REGION_SCROLL_MEASURE) {
+      return mode;
+    }
+    return raw && raw.suspendWhileScrolling === true ? SCENE_DOM_REGION_SCROLL_SUSPEND : SCENE_DOM_REGION_SCROLL_MEASURE;
+  }
+
+  function sceneDOMRegionScrollIdleMS(raw) {
+    var value = raw && Object.prototype.hasOwnProperty.call(raw, "scrollIdleMS") ? Number(raw.scrollIdleMS) : SCENE_DOM_REGION_SCROLL_IDLE_MS;
+    if (!Number.isFinite(value) || value < 0) return SCENE_DOM_REGION_SCROLL_IDLE_MS;
+    return Math.floor(value);
+  }
+
+  function sceneDOMRegionScrollMaxPixels(raw) {
+    var value = raw && Object.prototype.hasOwnProperty.call(raw, "scrollMaxPixels") ? Number(raw.scrollMaxPixels) : 0;
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
   function sceneDOMRegionFormat(pattern, index) {
     return pattern.replace("%d", String(index));
   }
@@ -52,6 +75,9 @@
       max: sceneDOMRegionMax(raw.max),
       skipWhenHidden: raw.skipWhenHidden === true,
       suspendWhileScrolling: raw.suspendWhileScrolling === true,
+      scrollMode: sceneDOMRegionScrollMode(raw),
+      scrollIdleMS: sceneDOMRegionScrollIdleMS(raw),
+      scrollMaxPixels: sceneDOMRegionScrollMaxPixels(raw),
       uniforms: {
         count: sceneDOMRegionUniformName(uniforms.count, "regionCount"),
         aspect: sceneDOMRegionUniformName(uniforms.aspect, "regionAspect"),
@@ -135,20 +161,87 @@
     return Math.max(0, Math.min(1, area / targetArea));
   }
 
-  function sceneDOMRegionMeasure(canvas, targets, max) {
-    var viewport = sceneDOMRegionRect(canvas);
+  function sceneDOMRegionScrollPosition() {
+    if (typeof window === "undefined") return { x: 0, y: 0 };
+    var doc = typeof document !== "undefined" ? document.documentElement : null;
+    var body = typeof document !== "undefined" ? document.body : null;
+    var x = sceneDOMRegionNumber(window.scrollX, sceneDOMRegionNumber(window.pageXOffset, sceneDOMRegionNumber(doc && doc.scrollLeft, sceneDOMRegionNumber(body && body.scrollLeft, 0))));
+    var y = sceneDOMRegionNumber(window.scrollY, sceneDOMRegionNumber(window.pageYOffset, sceneDOMRegionNumber(doc && doc.scrollTop, sceneDOMRegionNumber(body && body.scrollTop, 0))));
+    return { x: x, y: y };
+  }
+
+  function sceneDOMRegionViewportRecord(canvas) {
+    var rect = sceneDOMRegionRect(canvas);
+    var scroll = sceneDOMRegionScrollPosition();
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+      docLeft: rect.left + scroll.x,
+      docTop: rect.top + scroll.y,
+      scrollX: scroll.x,
+      scrollY: scroll.y,
+    };
+  }
+
+  function sceneDOMRegionStableRecord(element, rect, viewport, basis, ordinal) {
+    var scroll = sceneDOMRegionScrollPosition();
+    var hidden = sceneDOMRegionHidden(element, rect);
+    return {
+      element: element,
+      ordinal: ordinal,
+      hidden: hidden,
+      radius: sceneDOMRegionCornerRadius(element, basis),
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+      docLeft: rect.left + scroll.x,
+      docTop: rect.top + scroll.y,
+      docRight: rect.right + scroll.x,
+      docBottom: rect.bottom + scroll.y,
+      presence: hidden ? 0 : sceneDOMRegionOverlapPresence(rect, viewport),
+    };
+  }
+
+  function sceneDOMRegionRectFromRecord(record, scroll) {
+    return {
+      left: record.docLeft - scroll.x,
+      top: record.docTop - scroll.y,
+      right: record.docRight - scroll.x,
+      bottom: record.docBottom - scroll.y,
+      width: record.width,
+      height: record.height,
+    };
+  }
+
+  function sceneDOMRegionEmptyMeasurement(max, aspect) {
+    var limit = sceneDOMRegionMax(max);
+    return {
+      count: 0,
+      aspect: aspect || 1,
+      rects: new Array(limit * 4).fill(0),
+      meta: new Array(limit * 4).fill(0),
+    };
+  }
+
+  function sceneDOMRegionPack(viewport, records, max, scroll, activeFollow) {
     var width = Math.max(1, viewport.width);
     var height = Math.max(1, viewport.height);
-    var basis = Math.max(1, Math.min(width, height));
     var limit = sceneDOMRegionMax(max);
     var rects = new Array(limit * 4).fill(0);
     var meta = new Array(limit * 4).fill(0);
     var count = 0;
-    var list = Array.isArray(targets) ? targets : [];
+    var list = Array.isArray(records) ? records : [];
     for (var i = 0; i < list.length && count < limit; i += 1) {
-      var element = list[i];
-      var rect = sceneDOMRegionRect(element);
-      var presence = sceneDOMRegionHidden(element, rect) ? 0 : sceneDOMRegionOverlapPresence(rect, viewport);
+      var record = list[i];
+      var rect = activeFollow ? sceneDOMRegionRectFromRecord(record, scroll) : record;
+      var presence = record.hidden ? 0 : sceneDOMRegionOverlapPresence(rect, viewport);
       if (presence <= 0) continue;
       var centerX = ((rect.left + rect.right) * 0.5 - viewport.left) / width;
       var centerY = ((rect.top + rect.bottom) * 0.5 - viewport.top) / height;
@@ -157,9 +250,9 @@
       rects[base + 1] = centerY;
       rects[base + 2] = rect.width / width * 0.5;
       rects[base + 3] = rect.height / height * 0.5;
-      meta[base] = sceneDOMRegionCornerRadius(element, basis);
+      meta[base] = sceneDOMRegionNumber(record.radius, 0);
       meta[base + 1] = presence;
-      meta[base + 2] = i;
+      meta[base + 2] = sceneDOMRegionNumber(record.ordinal, i);
       meta[base + 3] = 0;
       count += 1;
     }
@@ -169,6 +262,21 @@
       rects: rects,
       meta: meta,
     };
+  }
+
+  function sceneDOMRegionMeasure(canvas, targets, max) {
+    var viewport = sceneDOMRegionRect(canvas);
+    var width = Math.max(1, viewport.width);
+    var height = Math.max(1, viewport.height);
+    var basis = Math.max(1, Math.min(width, height));
+    var list = Array.isArray(targets) ? targets : [];
+    var records = [];
+    for (var i = 0; i < list.length; i += 1) {
+      var element = list[i];
+      var rect = sceneDOMRegionRect(element);
+      records.push(sceneDOMRegionStableRecord(element, rect, viewport, basis, i));
+    }
+    return sceneDOMRegionPack(viewport, records, max, sceneDOMRegionScrollPosition(), false);
   }
 
   function sceneDOMRegionPatch(config, measurement) {
@@ -196,7 +304,7 @@
   function sceneCustomPostDOMRegionsVisible(effect) {
     var config = sceneCustomPostDOMRegionsConfig(effect);
     if (!config) return true;
-    if (config.suspendWhileScrolling && sceneDOMRegionScrollActive) return false;
+    if (config.scrollMode === SCENE_DOM_REGION_SCROLL_SUSPEND && sceneDOMRegionScrollActive) return false;
     if (!config.skipWhenHidden) return true;
     var uniforms = effect && effect.uniforms && typeof effect.uniforms === "object" ? effect.uniforms : {};
     var count = Math.floor(sceneDOMRegionNumber(uniforms[config.uniforms.count], 0));
@@ -213,17 +321,30 @@
   }
 
   function sceneCustomPostDOMRegionsFilterEffects(effects) {
-    if (!Array.isArray(effects) || effects.length === 0) return [];
+    if (!Array.isArray(effects) || effects.length === 0) {
+      sceneDOMRegionActiveScrollPostFXMaxPixels = 0;
+      return [];
+    }
     var out = null;
+    var activeMax = 0;
     for (var i = 0; i < effects.length; i += 1) {
       var effect = effects[i];
       if (sceneCustomPostDOMRegionsVisible(effect)) {
+        var config = sceneCustomPostDOMRegionsConfig(effect);
+        if (sceneDOMRegionScrollActive && config && config.scrollMode === SCENE_DOM_REGION_SCROLL_FOLLOW && config.scrollMaxPixels > 0) {
+          activeMax = activeMax > 0 ? Math.min(activeMax, config.scrollMaxPixels) : config.scrollMaxPixels;
+        }
         if (out) out.push(effect);
       } else if (!out) {
         out = effects.slice(0, i);
       }
     }
+    sceneDOMRegionActiveScrollPostFXMaxPixels = activeMax;
     return out || effects;
+  }
+
+  function sceneCustomPostDOMRegionsActivePostFXMaxPixels() {
+    return sceneDOMRegionActiveScrollPostFXMaxPixels;
   }
 
   function createSceneCustomPostDOMRegionTracker(mount, canvas, state, scheduleRender) {
@@ -235,6 +356,9 @@
     var lastPatchKey = "";
     var resizeObserver = null;
     var observed = [];
+    var cached = [];
+    var stableViewport = null;
+    var stableScroll = sceneDOMRegionScrollPosition();
     var scheduledRender = typeof scheduleRender === "function" ? scheduleRender : function() {};
 
     function currentCanvas() {
@@ -284,7 +408,7 @@
       }
     }
 
-    function measureNow() {
+    function measureStable() {
       raf = null;
       if (disposed || configs.length === 0) return;
       var entries = [];
@@ -292,23 +416,75 @@
       var allTargets = [];
       var activeCanvas = currentCanvas();
       var visibleCount = 0;
+      var nextCached = [];
+      stableViewport = sceneDOMRegionViewportRecord(activeCanvas || mount);
+      var viewport = {
+        left: stableViewport.left,
+        top: stableViewport.top,
+        right: stableViewport.right,
+        bottom: stableViewport.bottom,
+        width: stableViewport.width,
+        height: stableViewport.height,
+      };
+      var basis = Math.max(1, Math.min(Math.max(1, viewport.width), Math.max(1, viewport.height)));
+      stableScroll = sceneDOMRegionScrollPosition();
       for (var i = 0; i < configs.length; i += 1) {
         var config = configs[i];
         var targets = queryTargets(config.selector);
-        var measurement = sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max);
+        var records = [];
+        for (var targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+          var element = targets[targetIndex];
+          var rect = sceneDOMRegionRect(element);
+          records.push(sceneDOMRegionStableRecord(element, rect, viewport, basis, targetIndex));
+        }
+        var measurement = sceneDOMRegionPack(viewport, records, config.max, stableScroll, false);
+        nextCached.push({ config: config, targets: targets, records: records });
         allTargets = allTargets.concat(targets);
         targetKeyParts.push(config.name + ":" + config.selector + ":" + targets.length);
         visibleCount += measurement.count;
         entries.push(sceneDOMRegionPatch(config, measurement));
       }
+      cached = nextCached;
       observeTargets(allTargets);
+      patchEntries(entries, visibleCount, targetKeyParts, "custom-post-dom-regions");
+    }
+
+    function measureFollow() {
+      raf = null;
+      if (disposed || configs.length === 0) return;
+      var entries = [];
+      var targetKeyParts = [];
+      var visibleCount = 0;
+      var scroll = sceneDOMRegionScrollPosition();
+      var viewport = stableViewport
+        ? {
+          left: stableViewport.left,
+          top: stableViewport.top,
+          right: stableViewport.right,
+          bottom: stableViewport.bottom,
+          width: stableViewport.width,
+          height: stableViewport.height,
+        }
+        : sceneDOMRegionRect(currentCanvas() || mount);
+      for (var i = 0; i < configs.length; i += 1) {
+        var config = configs[i];
+        var cache = cached[i] || { targets: [], records: [] };
+        var measurement = sceneDOMRegionPack(viewport, cache.records, config.max, scroll, true);
+        targetKeyParts.push(config.name + ":" + config.selector + ":" + cache.targets.length + ":follow");
+        visibleCount += measurement.count;
+        entries.push(sceneDOMRegionPatch(config, measurement));
+      }
+      patchEntries(entries, visibleCount, targetKeyParts, "custom-post-dom-regions-scroll-follow");
+    }
+
+    function patchEntries(entries, visibleCount, targetKeyParts, reason) {
       var patchKey = JSON.stringify(entries);
       if (patchKey === lastPatchKey) return;
       lastPatchKey = patchKey;
       if (typeof applyScenePostUniformsCommand === "function") {
         applyScenePostUniformsCommand(state, { effects: entries });
       }
-      scheduledRender("custom-post-dom-regions");
+      scheduledRender(reason || "custom-post-dom-regions");
       if (mount && typeof mount.setAttribute === "function") {
         mount.setAttribute("data-gosx-scene3d-dom-regions", String(entries.length));
         mount.setAttribute("data-gosx-scene3d-dom-region-visible-count", String(visibleCount));
@@ -316,19 +492,27 @@
       }
     }
 
-    function scheduleMeasure() {
+    function scheduleMeasure(follow) {
       if (disposed || configs.length === 0 || raf != null) return;
       var rafFn = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
         ? window.requestAnimationFrame.bind(window)
         : function(callback) { return setTimeout(function() { callback(Date.now()); }, 0); };
-      raf = rafFn(measureNow);
+      raf = rafFn(follow === true ? measureFollow : measureStable);
     }
 
-    function hasScrollSuspendedConfig() {
+    function hasScrollMode(mode) {
       for (var i = 0; i < configs.length; i += 1) {
-        if (configs[i] && configs[i].suspendWhileScrolling) return true;
+        if (configs[i] && configs[i].scrollMode === mode) return true;
       }
       return false;
+    }
+
+    function scrollIdleDelayMS() {
+      var delay = 0;
+      for (var i = 0; i < configs.length; i += 1) {
+        delay = Math.max(delay, sceneDOMRegionNumber(configs[i] && configs[i].scrollIdleMS, SCENE_DOM_REGION_SCROLL_IDLE_MS));
+      }
+      return Math.floor(delay > 0 ? delay : SCENE_DOM_REGION_SCROLL_IDLE_MS);
     }
 
     function setScrollSuspended(value) {
@@ -350,6 +534,9 @@
       key = nextKey;
       configs = next;
       lastPatchKey = "";
+      cached = [];
+      stableViewport = null;
+      stableScroll = sceneDOMRegionScrollPosition();
       disconnectObserved();
       scheduleMeasure();
     }
@@ -361,7 +548,7 @@
 
     function onScroll() {
       if (disposed) return;
-      if (!hasScrollSuspendedConfig()) {
+      if (!hasScrollMode(SCENE_DOM_REGION_SCROLL_SUSPEND) && !hasScrollMode(SCENE_DOM_REGION_SCROLL_FOLLOW)) {
         onGeometryChange();
         return;
       }
@@ -373,7 +560,12 @@
         raf = null;
       }
       setScrollSuspended(true);
-      scheduledRender("custom-post-dom-regions-scroll-suspended");
+      if (hasScrollMode(SCENE_DOM_REGION_SCROLL_FOLLOW) && cached.length > 0 && stableViewport) {
+        lastPatchKey = "";
+        scheduleMeasure(true);
+      } else {
+        scheduledRender("custom-post-dom-regions-scroll-suspended");
+      }
       if (scrollIdleTimer != null) clearTimeout(scrollIdleTimer);
       scrollIdleTimer = setTimeout(function() {
         scrollIdleTimer = null;
@@ -381,7 +573,7 @@
         setScrollSuspended(false);
         lastPatchKey = "";
         scheduleMeasure();
-      }, SCENE_DOM_REGION_SCROLL_IDLE_MS);
+      }, scrollIdleDelayMS());
     }
 
     if (typeof ResizeObserver === "function") {
@@ -397,6 +589,18 @@
     return {
       configure: configure,
       schedule: scheduleMeasure,
+      prepare: function() {
+        if (raf == null || disposed) return;
+        var cancel = typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function"
+          ? window.cancelAnimationFrame.bind(window)
+          : clearTimeout;
+        cancel(raf);
+        if (sceneDOMRegionScrollActive && hasScrollMode(SCENE_DOM_REGION_SCROLL_FOLLOW)) {
+          measureFollow();
+        } else {
+          measureStable();
+        }
+      },
       dispose: function() {
         disposed = true;
         disconnectObserved();
@@ -417,7 +621,8 @@
           window.removeEventListener("resize", onGeometryChange);
         }
       },
-      _measureNow: measureNow,
+      _measureNow: measureStable,
+      _measureFollow: measureFollow,
     };
   }
 
@@ -427,17 +632,20 @@
       measure: sceneDOMRegionMeasure,
       customPostVisible: sceneCustomPostDOMRegionsVisible,
       filterEffects: sceneCustomPostDOMRegionsFilterEffects,
+      activePostFXMaxPixels: sceneCustomPostDOMRegionsActivePostFXMaxPixels,
       scrollActive: function() { return sceneDOMRegionScrollActive; },
       createTracker: createSceneCustomPostDOMRegionTracker,
     };
     if (window.__gosx_scene3d_api) {
       window.__gosx_scene3d_api.sceneCustomPostDOMRegionsVisible = sceneCustomPostDOMRegionsVisible;
       window.__gosx_scene3d_api.sceneCustomPostDOMRegionsFilterEffects = sceneCustomPostDOMRegionsFilterEffects;
+      window.__gosx_scene3d_api.sceneCustomPostDOMRegionsActivePostFXMaxPixels = sceneCustomPostDOMRegionsActivePostFXMaxPixels;
     }
   }
   if (typeof globalThis !== "undefined") {
     globalThis.createSceneCustomPostDOMRegionTracker = createSceneCustomPostDOMRegionTracker;
     globalThis.sceneCustomPostDOMRegionsVisible = sceneCustomPostDOMRegionsVisible;
     globalThis.sceneCustomPostDOMRegionsFilterEffects = sceneCustomPostDOMRegionsFilterEffects;
+    globalThis.sceneCustomPostDOMRegionsActivePostFXMaxPixels = sceneCustomPostDOMRegionsActivePostFXMaxPixels;
   }
 })();

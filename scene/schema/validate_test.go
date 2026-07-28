@@ -249,6 +249,9 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 				"max":8,
 				"skipWhenHidden":true,
 				"suspendWhileScrolling":true,
+				"scrollMode":"follow",
+				"scrollIdleMS":80,
+				"scrollMaxPixels":360000,
 				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"region%dRect","meta":"region%dMeta"}
 			}
 		}]
@@ -265,6 +268,9 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 				"max":17,
 				"skipWhenHidden":"yes",
 				"suspendWhileScrolling":"yes",
+				"scrollMode":"bad",
+				"scrollIdleMS":-1,
+				"scrollMaxPixels":-1,
 				"uniforms":{"rect":"bad uniform","meta":"region%d%dMeta"}
 			}
 		}]
@@ -277,6 +283,9 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 		"scene.post_effect.dom_regions.max",
 		"scene.post_effect.dom_regions.skip_when_hidden",
 		"scene.post_effect.dom_regions.suspend_while_scrolling",
+		"scene.post_effect.dom_regions.scroll_mode",
+		"scene.post_effect.dom_regions.scroll_idle_ms",
+		"scene.post_effect.dom_regions.scroll_max_pixels",
 		"scene.post_effect.dom_regions.uniform",
 	} {
 		if !hasCode(invalid, code) {

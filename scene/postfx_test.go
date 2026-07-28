@@ -308,6 +308,9 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 			Max:                   32,
 			SkipWhenHidden:        true,
 			SuspendWhileScrolling: true,
+			ScrollMode:            DOMRegionScrollModeFollow,
+			ScrollIdleMS:          80,
+			ScrollMaxPixels:       360000,
 			Uniforms: DOMRegionUniforms{
 				Count:  "uRegionCount",
 				Aspect: "bad uniform",
@@ -339,6 +342,15 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 	if !cp.DOMRegions.SuspendWhileScrolling {
 		t.Error("SuspendWhileScrolling = false, want true")
 	}
+	if cp.DOMRegions.ScrollMode != string(DOMRegionScrollModeFollow) {
+		t.Errorf("ScrollMode = %q, want follow", cp.DOMRegions.ScrollMode)
+	}
+	if cp.DOMRegions.ScrollIdleMS != 80 {
+		t.Errorf("ScrollIdleMS = %d, want 80", cp.DOMRegions.ScrollIdleMS)
+	}
+	if cp.DOMRegions.ScrollMaxPixels != 360000 {
+		t.Errorf("ScrollMaxPixels = %v, want 360000", cp.DOMRegions.ScrollMaxPixels)
+	}
 	if cp.DOMRegions.Uniforms.Count != "uRegionCount" {
 		t.Errorf("Count uniform = %q", cp.DOMRegions.Uniforms.Count)
 	}
@@ -350,6 +362,25 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 	}
 	if cp.DOMRegions.Uniforms.Meta != "region%dMeta" {
 		t.Errorf("Meta uniform = %q, want fallback", cp.DOMRegions.Uniforms.Meta)
+	}
+}
+
+func TestCustomPostDOMRegionsLegacySuspendScrollMode(t *testing.T) {
+	mat := &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"}
+	pfx := PostFX{Effects: []PostEffect{CustomPost{
+		Name:     "Glass",
+		Material: mat,
+		DOMRegions: CustomPostDOMRegions{
+			Selector:              ".glass-card",
+			SuspendWhileScrolling: true,
+		},
+	}}}
+	cp := pfx.sceneIR()[0].(CustomPostIR)
+	if cp.DOMRegions == nil {
+		t.Fatal("DOMRegions = nil")
+	}
+	if cp.DOMRegions.ScrollMode != string(DOMRegionScrollModeSuspend) {
+		t.Fatalf("ScrollMode = %q, want suspend", cp.DOMRegions.ScrollMode)
 	}
 }
 

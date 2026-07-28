@@ -7279,6 +7279,12 @@
         ? sceneCustomPostDOMRegionsFilterEffects(authoredPostEffects)
         : authoredPostEffects;
       var postFXMaxPixels = (typeof bundle.postFXMaxPixels === "number") ? bundle.postFXMaxPixels : 0;
+      var activeDOMRegionPostFXMaxPixels = typeof sceneCustomPostDOMRegionsActivePostFXMaxPixels === "function"
+        ? sceneCustomPostDOMRegionsActivePostFXMaxPixels()
+        : 0;
+      if (activeDOMRegionPostFXMaxPixels > 0) {
+        postFXMaxPixels = postFXMaxPixels > 0 ? Math.min(postFXMaxPixels, activeDOMRegionPostFXMaxPixels) : activeDOMRegionPostFXMaxPixels;
+      }
       var usePostProcessing = postEffects.length > 0;
 
       // renderW/renderH reflect the actual render target. When postfx is

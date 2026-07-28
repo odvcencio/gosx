@@ -848,6 +848,24 @@ func validateCustomPostDOMRegions(report *Report, record map[string]any, path st
 			report.add(Error, "scene.post_effect.dom_regions.suspend_while_scrolling", "CustomPost domRegions suspendWhileScrolling must be a boolean", path+".domRegions.suspendWhileScrolling", "", nil)
 		}
 	}
+	if rawMode, ok := dom["scrollMode"]; ok && rawMode != nil {
+		mode, ok := rawMode.(string)
+		if !ok || !validCustomPostDOMRegionScrollMode(mode) {
+			report.add(Error, "scene.post_effect.dom_regions.scroll_mode", "CustomPost domRegions scrollMode must be measure, follow, or suspend", path+".domRegions.scrollMode", "", nil)
+		}
+	}
+	if rawIdle, ok := dom["scrollIdleMS"]; ok && rawIdle != nil {
+		idle, ok := rawIdle.(float64)
+		if !ok || idle < 0 || math.Trunc(idle) != idle {
+			report.add(Error, "scene.post_effect.dom_regions.scroll_idle_ms", "CustomPost domRegions scrollIdleMS must be a non-negative integer", path+".domRegions.scrollIdleMS", "", nil)
+		}
+	}
+	if rawMax, ok := dom["scrollMaxPixels"]; ok && rawMax != nil {
+		maxPixels, ok := rawMax.(float64)
+		if !ok || maxPixels < 0 {
+			report.add(Error, "scene.post_effect.dom_regions.scroll_max_pixels", "CustomPost domRegions scrollMaxPixels must be a non-negative number", path+".domRegions.scrollMaxPixels", "", nil)
+		}
+	}
 	if rawUniforms, ok := dom["uniforms"]; ok && rawUniforms != nil {
 		uniforms, ok := rawUniforms.(map[string]any)
 		if !ok {
@@ -870,6 +888,15 @@ func validateCustomPostDOMRegions(report *Report, record map[string]any, path st
 				}
 			}
 		}
+	}
+}
+
+func validCustomPostDOMRegionScrollMode(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "measure", "follow", "suspend":
+		return true
+	default:
+		return false
 	}
 }
 

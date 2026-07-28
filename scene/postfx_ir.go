@@ -370,6 +370,9 @@ type CustomPostDOMRegionsIR struct {
 	Max                   int                 `json:"max,omitempty"`
 	SkipWhenHidden        bool                `json:"skipWhenHidden,omitempty"`
 	SuspendWhileScrolling bool                `json:"suspendWhileScrolling,omitempty"`
+	ScrollMode            string              `json:"scrollMode,omitempty"`
+	ScrollIdleMS          int                 `json:"scrollIdleMS,omitempty"`
+	ScrollMaxPixels       float64             `json:"scrollMaxPixels,omitempty"`
 	Uniforms              DOMRegionUniformsIR `json:"uniforms,omitempty"`
 }
 
@@ -531,12 +534,42 @@ func lowerCustomPostDOMRegions(dom CustomPostDOMRegions) *CustomPostDOMRegionsIR
 		Rect:   customPostUniformPattern(dom.Uniforms.Rect, "region%dRect"),
 		Meta:   customPostUniformPattern(dom.Uniforms.Meta, "region%dMeta"),
 	}
+	scrollMode := customPostDOMRegionScrollMode(dom.ScrollMode, dom.SuspendWhileScrolling)
+	scrollIdleMS := dom.ScrollIdleMS
+	if scrollIdleMS < 0 {
+		scrollIdleMS = 0
+	}
+	scrollMaxPixels := dom.ScrollMaxPixels
+	if scrollMaxPixels < 0 {
+		scrollMaxPixels = 0
+	}
 	return &CustomPostDOMRegionsIR{
 		Selector:              selector,
 		Max:                   max,
 		SkipWhenHidden:        dom.SkipWhenHidden,
 		SuspendWhileScrolling: dom.SuspendWhileScrolling,
+		ScrollMode:            scrollMode,
+		ScrollIdleMS:          scrollIdleMS,
+		ScrollMaxPixels:       scrollMaxPixels,
 		Uniforms:              uniforms,
+	}
+}
+
+func customPostDOMRegionScrollMode(value DOMRegionScrollMode, suspend bool) string {
+	mode := strings.TrimSpace(string(value))
+	switch mode {
+	case string(DOMRegionScrollModeFollow), string(DOMRegionScrollModeSuspend), string(DOMRegionScrollModeMeasure):
+		return mode
+	case "":
+		if suspend {
+			return string(DOMRegionScrollModeSuspend)
+		}
+		return ""
+	default:
+		if suspend {
+			return string(DOMRegionScrollModeSuspend)
+		}
+		return ""
 	}
 }
 

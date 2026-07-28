@@ -91,6 +91,10 @@
     sceneApi.sceneCustomPostDOMRegionsFilterEffects ||
     (window.__gosx_scene3d_dom_regions && window.__gosx_scene3d_dom_regions.filterEffects) ||
     function(effects) { return Array.isArray(effects) ? effects : []; };
+  var sceneCustomPostDOMRegionsActivePostFXMaxPixels =
+    sceneApi.sceneCustomPostDOMRegionsActivePostFXMaxPixels ||
+    (window.__gosx_scene3d_dom_regions && window.__gosx_scene3d_dom_regions.activePostFXMaxPixels) ||
+    function() { return 0; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
   // sceneIsNumericTypedArray: typed-array guard used by drawPointsEntries in
   // 16a to validate entry.positions / sizes / colors before caching them.

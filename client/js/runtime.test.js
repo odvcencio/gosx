@@ -29181,17 +29181,24 @@ test("getSelenaPipeline memo: N objects sharing one material build the content k
 // -------------------------------------------------------------------------
 
 function createDOMRegionTrackerHarness(options = {}) {
+  const layoutReads = { rect: 0, style: 0 };
   const mount = new FakeElement("div", null);
   mount.id = "dom-region-scene";
   mount.width = 400;
   mount.height = 200;
-  mount.getBoundingClientRect = () => ({ left: 10, top: 20, right: 410, bottom: 220, width: 400, height: 200 });
+  mount.getBoundingClientRect = () => {
+    layoutReads.rect++;
+    return { left: 10, top: 20, right: 410, bottom: 220, width: 400, height: 200 };
+  };
 
   const canvasA = new FakeElement("canvas", null);
   canvasA.setAttribute("data-gosx-scene3d-canvas", "true");
   canvasA.width = 400;
   canvasA.height = 200;
-  canvasA.getBoundingClientRect = () => ({ left: 10, top: 20, right: 410, bottom: 220, width: 400, height: 200 });
+  canvasA.getBoundingClientRect = () => {
+    layoutReads.rect++;
+    return { left: 10, top: 20, right: 410, bottom: 220, width: 400, height: 200 };
+  };
   mount.appendChild(canvasA);
 
   const targets = [];
@@ -29201,20 +29208,28 @@ function createDOMRegionTrackerHarness(options = {}) {
     target.width = 100;
     target.height = 50;
     const rectOverride = Array.isArray(options.targetRects) ? options.targetRects[i] : null;
-    target.getBoundingClientRect = () => ({
-      left: rectOverride ? rectOverride.left : 110 + i * 20,
-      top: rectOverride ? rectOverride.top : 70 + i * 10,
-      right: rectOverride ? rectOverride.right : 210 + i * 20,
-      bottom: rectOverride ? rectOverride.bottom : 120 + i * 10,
-      width: rectOverride ? rectOverride.width : 100,
-      height: rectOverride ? rectOverride.height : 50,
-    });
+    target.getBoundingClientRect = () => {
+      layoutReads.rect++;
+      return {
+        left: rectOverride ? rectOverride.left : 110 + i * 20,
+        top: rectOverride ? rectOverride.top : 70 + i * 10,
+        right: rectOverride ? rectOverride.right : 210 + i * 20,
+        bottom: rectOverride ? rectOverride.bottom : 120 + i * 10,
+        width: rectOverride ? rectOverride.width : 100,
+        height: rectOverride ? rectOverride.height : 50,
+      };
+    };
     const styleOverride = Array.isArray(options.targetStyles) ? options.targetStyles[i] : null;
     target.computedStyle = styleOverride || { borderRadius: "20px", opacity: "1", display: "block", visibility: "visible" };
     targets.push(target);
   }
 
   const env = createContext({ elements: [mount].concat(targets) });
+  const realGetComputedStyle = env.context.getComputedStyle;
+  env.context.getComputedStyle = function(element) {
+    layoutReads.style++;
+    return realGetComputedStyle(element);
+  };
   const raf = installManualRAF(env.context);
   const timers = installManualTimers(env.context);
   const patches = [];
@@ -29240,6 +29255,9 @@ function createDOMRegionTrackerHarness(options = {}) {
         max: options.max,
         skipWhenHidden: options.skipWhenHidden === true,
         suspendWhileScrolling: options.suspendWhileScrolling === true,
+        scrollMode: options.scrollMode,
+        scrollIdleMS: options.scrollIdleMS,
+        scrollMaxPixels: options.scrollMaxPixels,
         uniforms: options.uniforms || { count: "uCount", aspect: "uAspect", rect: "uRegion%dRect", meta: "uRegion%dMeta" },
       },
     }],
@@ -29258,6 +29276,7 @@ function createDOMRegionTrackerHarness(options = {}) {
     get activeCanvas() { return activeCanvas; },
     set activeCanvas(value) { activeCanvas = value; },
     targets,
+    layoutReads,
     raf,
     timers,
     patches,
@@ -29432,6 +29451,55 @@ test("CustomPost DOMRegions suspendWhileScrolling resumes with one idle remeasur
   harness.tracker.dispose();
 });
 
+test("CustomPost DOMRegions follow mode updates during scroll without layout reads", async () => {
+  const harness = createDOMRegionTrackerHarness({ scrollMode: "follow", scrollIdleMS: 80, scrollMaxPixels: 120000 });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+  const initialRects = harness.layoutReads.rect;
+  const initialStyles = harness.layoutReads.style;
+  const initialPatches = harness.patches.length;
+
+  harness.env.context.scrollY = 60;
+  const scrollListeners = harness.env.windowListeners.get("scroll") || [];
+  scrollListeners[0]();
+  harness.raf.flush(32);
+  await flushAsyncWork();
+
+  const uniforms = harness.state.postEffects[0].uniforms;
+  assert.equal(harness.layoutReads.rect, initialRects, "active follow scroll must not read layout rects");
+  assert.equal(harness.layoutReads.style, initialStyles, "active follow scroll must not read computed style");
+  assert.equal(harness.patches.length, initialPatches + 1);
+  assert.deepEqual(Array.from(uniforms.uRegion0Rect), [0.375, 0.075, 0.125, 0.125]);
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.customPostVisible(harness.state.postEffects[0]), true);
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.filterEffects(harness.state.postEffects).length, 1);
+  assert.equal(harness.env.context.__gosx_scene3d_dom_regions.activePostFXMaxPixels(), 120000);
+  assert.equal(harness.renders.includes("custom-post-dom-regions-scroll-follow"), true);
+
+  harness.tracker.dispose();
+});
+
+test("CustomPost DOMRegions follow mode remeasures once after scroll idle", async () => {
+  const harness = createDOMRegionTrackerHarness({ scrollMode: "follow", scrollIdleMS: 80 });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+  const initialRects = harness.layoutReads.rect;
+
+  harness.env.context.scrollY = 40;
+  const scrollListeners = harness.env.windowListeners.get("scroll") || [];
+  scrollListeners[0]();
+  harness.raf.flush(32);
+  await flushAsyncWork();
+  assert.equal(harness.layoutReads.rect, initialRects, "active follow must not remeasure");
+
+  assert.equal(harness.timers.runDelay(80), 1);
+  harness.raf.flush(96);
+  await flushAsyncWork();
+  assert.equal(harness.layoutReads.rect > initialRects, true, "idle must perform a stable remeasure");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "false");
+
+  harness.tracker.dispose();
+});
+
 test("CustomPost DOMRegions coalesces unchanged keys and disposes listeners", async () => {
   const harness = createDOMRegionTrackerHarness();
   assert.equal(harness.raf.count(), 1);
@@ -29481,8 +29549,19 @@ test("CustomPost DOMRegions tracker is wired into Scene3D mount lifecycle", () =
   assert.match(bootstrapFeatureScene3DSource, /__gosx_scene3d_dom_regions/);
   assert.match(bootstrapFeatureScene3DSource, /createSceneCustomPostDOMRegionTracker/);
   assert.match(bootstrapScene3DMountSourceFile, /createSceneCustomPostDOMRegionTracker\(ctx\.mount,\s*function\(\) \{ return canvas; \},\s*sceneState,\s*scheduleRender\)/);
+  assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.prepare\(\)/);
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.configure\(sceneState\.postEffects\)/);
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.dispose\(\)/);
+});
+
+test("CustomPost DOMRegions active follow post-FX pixel cap is shared by WebGPU and WebGL", () => {
+  assert.match(bootstrapScene3DDOMRegionsSourceFile, /sceneCustomPostDOMRegionsActivePostFXMaxPixels/);
+  assert.match(bootstrapScene3DWebGPUSourceFile, /sceneCustomPostDOMRegionsActivePostFXMaxPixels/);
+  assert.match(bootstrapScene3DWebGPUSourceFile, /Math\.min\(postFXMaxPixels,\s*activeDOMRegionPostFXMaxPixels\)/);
+  assert.match(bootstrapFeatureScene3DWebGPUSource, /sceneCustomPostDOMRegionsActivePostFXMaxPixels/);
+  const webglSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  assert.match(webglSource, /sceneCustomPostDOMRegionsActivePostFXMaxPixels/);
+  assert.match(webglSource, /Math\.min\(postFXMaxPixels,\s*activeDOMRegionPostFXMaxPixels\)/);
 });
 
 // makeBundleWithCustomPost returns a minimal Scene3D bundle that carries one

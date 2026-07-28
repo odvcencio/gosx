@@ -8626,6 +8626,9 @@
         return false;
       }
       recordScenePerfCounter("render:" + (reason || "restore"));
+      if (domRegionTracker && typeof domRegionTracker.prepare === "function") {
+        domRegionTracker.prepare();
+      }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(null));
       recordSceneWaterFrame(ctx.mount, latestBundle);
@@ -9778,6 +9781,9 @@
         return;
       }
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
+      if (domRegionTracker && typeof domRegionTracker.prepare === "function") {
+        domRegionTracker.prepare();
+      }
       const timeSeconds = now / 1000;
       const modelAnimationDelta = lastModelAnimationTimeSeconds == null
         ? 0

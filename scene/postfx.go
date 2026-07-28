@@ -201,16 +201,39 @@ type DOMRegionUniforms struct {
 	Meta   string
 }
 
-// CustomPostDOMRegions configures browser-side DOM measurement for a
-// CustomPost pass. Max defaults to 8 and is capped at 16. SkipWhenHidden
-// skips the pass when all measured regions are hidden or outside the canvas.
-// SuspendWhileScrolling skips the pass during active scroll gestures and
-// remeasures after scroll idle.
+// DOMRegionScrollMode selects how a CustomPost DOM-region tracker behaves
+// while the page scrolls.
+type DOMRegionScrollMode string
+
+const (
+	// DOMRegionScrollModeMeasure preserves the historical behavior. Scroll
+	// invalidates geometry and the tracker remeasures in the next animation
+	// frame.
+	DOMRegionScrollModeMeasure DOMRegionScrollMode = "measure"
+	// DOMRegionScrollModeFollow keeps the pass alive during active scroll. It
+	// reuses cached stable document geometry and reads only scroll offsets.
+	DOMRegionScrollModeFollow DOMRegionScrollMode = "follow"
+	// DOMRegionScrollModeSuspend disables the pass during active scroll and
+	// remeasures once scrolling becomes idle.
+	DOMRegionScrollModeSuspend DOMRegionScrollMode = "suspend"
+)
+
+// CustomPostDOMRegions configures browser-side DOM measurement for a CustomPost
+// pass. Max defaults to 8 and is capped at 16. SkipWhenHidden skips the pass
+// when all measured regions are hidden or outside the canvas. ScrollModeFollow
+// keeps cached regions alive during scroll without active layout reads.
+// ScrollIdleMS defaults to 120. ScrollMaxPixels caps the post-FX render target
+// pixel count during active follow scrolling. It does not limit scroll
+// distance. SuspendWhileScrolling remains a compatible alias for
+// ScrollModeSuspend.
 type CustomPostDOMRegions struct {
 	Selector              string
 	Max                   int
 	SkipWhenHidden        bool
 	SuspendWhileScrolling bool
+	ScrollMode            DOMRegionScrollMode
+	ScrollIdleMS          int
+	ScrollMaxPixels       float64
 	Uniforms              DOMRegionUniforms
 }
 
