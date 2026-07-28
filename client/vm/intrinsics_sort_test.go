@@ -39,12 +39,12 @@ func TestSortSliceAscending(t *testing.T) {
 	})
 	vm := NewVM(prog, props)
 	got := vm.Eval(7)
-	if len(got.Items) != 3 {
-		t.Fatalf("sort.Slice result len = %d, want 3", len(got.Items))
+	if len(got.List()) != 3 {
+		t.Fatalf("sort.Slice result len = %d, want 3", len(got.List()))
 	}
-	if int(got.Items[0].Num) != 1 || int(got.Items[1].Num) != 2 || int(got.Items[2].Num) != 3 {
+	if int(got.List()[0].num) != 1 || int(got.List()[1].num) != 2 || int(got.List()[2].num) != 3 {
 		t.Errorf("sorted = [%f %f %f], want [1 2 3]",
-			got.Items[0].Num, got.Items[1].Num, got.Items[2].Num)
+			got.List()[0].num, got.List()[1].num, got.List()[2].num)
 	}
 }
 
@@ -68,15 +68,15 @@ func TestSortSliceStability(t *testing.T) {
 	})
 	vm := NewVM(prog, props)
 	got := vm.Eval(2)
-	if len(got.Items) != 3 {
-		t.Fatalf("len = %d", len(got.Items))
+	if len(got.List()) != 3 {
+		t.Fatalf("len = %d", len(got.List()))
 	}
-	if got.Items[0].Fields["tag"].Str != "a" ||
-		got.Items[1].Fields["tag"].Str != "b" ||
-		got.Items[2].Fields["tag"].Str != "c" {
+	if got.List()[0].Map()["tag"].Text() != "a" ||
+		got.List()[1].Map()["tag"].Text() != "b" ||
+		got.List()[2].Map()["tag"].Text() != "c" {
 		t.Errorf("stability broken; got tags %q %q %q",
-			got.Items[0].Fields["tag"].Str,
-			got.Items[1].Fields["tag"].Str,
-			got.Items[2].Fields["tag"].Str)
+			got.List()[0].Map()["tag"].Text(),
+			got.List()[1].Map()["tag"].Text(),
+			got.List()[2].Map()["tag"].Text())
 	}
 }

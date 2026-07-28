@@ -938,3 +938,51 @@ func TestReconcileNoKeysUnchanged(t *testing.T) {
 		t.Fatalf("expected 0 ops for unchanged tree, got %d", len(ops))
 	}
 }
+
+// TestSingleChildWithoutIdentityUsesIndexWalk pins the one-child edge case.
+//
+// A lone child with no key and no program source has no identity. The identity
+// walk would then read it as absent from the other side and emit a remove plus a
+// create, where the index walk reconciles it in place. childIdentitiesUnique must
+// therefore reject a single identity-less child, not wave it through.
+func TestSingleChildWithoutIdentityUsesIndexWalk(t *testing.T) {
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "div", HasSource: true, Source: 0, Children: []int{1}},
+		{Tag: "span", HasSource: false, Text: "old"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "div", HasSource: true, Source: 0, Children: []int{1}},
+		{Tag: "span", HasSource: false, Text: "new"},
+	}}
+
+	ops := ReconcileTrees(prev, next, nil)
+	for _, op := range ops {
+		if op.Kind == PatchRemoveElement || op.Kind == PatchCreateElement {
+			t.Fatalf("an identity-less single child must reconcile in place, got %+v in %+v", op, ops)
+		}
+	}
+	if len(ops) != 1 || ops[0].Kind != PatchSetText || ops[0].Path != "0" || ops[0].Text != "new" {
+		t.Fatalf("expected one SetText at path 0, got %+v", ops)
+	}
+}
+
+// TestSingleChildIdentityMismatchStillReplaces confirms the index walk keeps
+// working when a lone identity-less child has more siblings on the next side.
+func TestSingleChildWithoutIdentityAgainstLongerNextList(t *testing.T) {
+	prev := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", HasSource: true, Source: 0, Children: []int{1}},
+		{Tag: "li", HasSource: false, Text: "only"},
+	}}
+	next := &ResolvedTree{Nodes: []ResolvedNode{
+		{Tag: "ul", HasSource: true, Source: 0, Children: []int{1, 2}},
+		{Tag: "li", HasSource: false, Text: "first"},
+		{Tag: "li", HasSource: false, Text: "second"},
+	}}
+
+	ops := ReconcileTrees(prev, next, nil)
+	for _, op := range ops {
+		if op.Kind == PatchRemoveElement {
+			t.Fatalf("the shared prefix must reconcile in place, got a remove in %+v", ops)
+		}
+	}
+}

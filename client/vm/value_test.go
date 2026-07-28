@@ -2,6 +2,7 @@ package vm
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/island/program"
@@ -12,8 +13,8 @@ func TestStringVal(t *testing.T) {
 	if v.Type != program.TypeString {
 		t.Fatalf("expected TypeString, got %d", v.Type)
 	}
-	if v.Str != "hello" {
-		t.Fatalf("expected 'hello', got %q", v.Str)
+	if v.Text() != "hello" {
+		t.Fatalf("expected 'hello', got %q", v.Text())
 	}
 }
 
@@ -22,8 +23,8 @@ func TestIntVal(t *testing.T) {
 	if v.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", v.Type)
 	}
-	if v.Num != 42 {
-		t.Fatalf("expected 42, got %f", v.Num)
+	if v.num != 42 {
+		t.Fatalf("expected 42, got %f", v.num)
 	}
 }
 
@@ -32,8 +33,8 @@ func TestFloatVal(t *testing.T) {
 	if v.Type != program.TypeFloat {
 		t.Fatalf("expected TypeFloat, got %d", v.Type)
 	}
-	if v.Num != 3.14 {
-		t.Fatalf("expected 3.14, got %f", v.Num)
+	if v.num != 3.14 {
+		t.Fatalf("expected 3.14, got %f", v.num)
 	}
 }
 
@@ -42,12 +43,12 @@ func TestBoolVal(t *testing.T) {
 	if v.Type != program.TypeBool {
 		t.Fatalf("expected TypeBool, got %d", v.Type)
 	}
-	if !v.Bool {
+	if !v.Truth() {
 		t.Fatal("expected true")
 	}
 
 	v2 := BoolVal(false)
-	if v2.Bool {
+	if v2.Truth() {
 		t.Fatal("expected false")
 	}
 }
@@ -70,14 +71,14 @@ func TestZeroValue(t *testing.T) {
 		if v.Type != tt.typ {
 			t.Errorf("ZeroValue(%d): type = %d, want %d", tt.typ, v.Type, tt.typ)
 		}
-		if v.Str != tt.wantStr {
-			t.Errorf("ZeroValue(%d): Str = %q, want %q", tt.typ, v.Str, tt.wantStr)
+		if v.Text() != tt.wantStr {
+			t.Errorf("ZeroValue(%d): Str = %q, want %q", tt.typ, v.Text(), tt.wantStr)
 		}
-		if v.Num != tt.wantNum {
-			t.Errorf("ZeroValue(%d): Num = %f, want %f", tt.typ, v.Num, tt.wantNum)
+		if v.num != tt.wantNum {
+			t.Errorf("ZeroValue(%d): Num = %f, want %f", tt.typ, v.num, tt.wantNum)
 		}
-		if v.Bool != tt.wantBol {
-			t.Errorf("ZeroValue(%d): Bool = %v, want %v", tt.typ, v.Bool, tt.wantBol)
+		if v.Truth() != tt.wantBol {
+			t.Errorf("ZeroValue(%d): Bool = %v, want %v", tt.typ, v.Truth(), tt.wantBol)
 		}
 	}
 }
@@ -91,8 +92,8 @@ func TestAddInt(t *testing.T) {
 	if r.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", r.Type)
 	}
-	if r.Num != 13 {
-		t.Fatalf("expected 13, got %f", r.Num)
+	if r.num != 13 {
+		t.Fatalf("expected 13, got %f", r.num)
 	}
 }
 
@@ -103,8 +104,8 @@ func TestAddFloat(t *testing.T) {
 	if r.Type != program.TypeFloat {
 		t.Fatalf("expected TypeFloat, got %d", r.Type)
 	}
-	if r.Num != 4.0 {
-		t.Fatalf("expected 4.0, got %f", r.Num)
+	if r.num != 4.0 {
+		t.Fatalf("expected 4.0, got %f", r.num)
 	}
 }
 
@@ -115,8 +116,8 @@ func TestAddIntFloat(t *testing.T) {
 	if r.Type != program.TypeFloat {
 		t.Fatalf("expected TypeFloat for mixed add, got %d", r.Type)
 	}
-	if r.Num != 3.5 {
-		t.Fatalf("expected 3.5, got %f", r.Num)
+	if r.num != 3.5 {
+		t.Fatalf("expected 3.5, got %f", r.num)
 	}
 }
 
@@ -127,8 +128,8 @@ func TestSubInt(t *testing.T) {
 	if r.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", r.Type)
 	}
-	if r.Num != 7 {
-		t.Fatalf("expected 7, got %f", r.Num)
+	if r.num != 7 {
+		t.Fatalf("expected 7, got %f", r.num)
 	}
 }
 
@@ -136,8 +137,8 @@ func TestSubFloat(t *testing.T) {
 	a := FloatVal(5.5)
 	b := FloatVal(2.0)
 	r := a.Sub(b)
-	if r.Num != 3.5 {
-		t.Fatalf("expected 3.5, got %f", r.Num)
+	if r.num != 3.5 {
+		t.Fatalf("expected 3.5, got %f", r.num)
 	}
 }
 
@@ -148,8 +149,8 @@ func TestMulInt(t *testing.T) {
 	if r.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", r.Type)
 	}
-	if r.Num != 20 {
-		t.Fatalf("expected 20, got %f", r.Num)
+	if r.num != 20 {
+		t.Fatalf("expected 20, got %f", r.num)
 	}
 }
 
@@ -157,8 +158,8 @@ func TestMulFloat(t *testing.T) {
 	a := FloatVal(2.5)
 	b := FloatVal(4.0)
 	r := a.Mul(b)
-	if r.Num != 10.0 {
-		t.Fatalf("expected 10.0, got %f", r.Num)
+	if r.num != 10.0 {
+		t.Fatalf("expected 10.0, got %f", r.num)
 	}
 }
 
@@ -170,8 +171,8 @@ func TestDivInt(t *testing.T) {
 		t.Fatalf("expected TypeInt, got %d", r.Type)
 	}
 	// integer division: 10 / 3 = 3
-	if r.Num != 3 {
-		t.Fatalf("expected 3 (integer division), got %f", r.Num)
+	if r.num != 3 {
+		t.Fatalf("expected 3 (integer division), got %f", r.num)
 	}
 }
 
@@ -183,8 +184,8 @@ func TestDivFloat(t *testing.T) {
 		t.Fatalf("expected TypeFloat, got %d", r.Type)
 	}
 	expected := 10.0 / 3.0
-	if math.Abs(r.Num-expected) > 1e-12 {
-		t.Fatalf("expected %f, got %f", expected, r.Num)
+	if math.Abs(r.num-expected) > 1e-12 {
+		t.Fatalf("expected %f, got %f", expected, r.num)
 	}
 }
 
@@ -192,8 +193,8 @@ func TestDivByZeroInt(t *testing.T) {
 	a := IntVal(10)
 	b := IntVal(0)
 	r := a.Div(b)
-	if r.Num != 0 {
-		t.Fatalf("expected 0 for div by zero, got %f", r.Num)
+	if r.num != 0 {
+		t.Fatalf("expected 0 for div by zero, got %f", r.num)
 	}
 }
 
@@ -201,8 +202,8 @@ func TestDivByZeroFloat(t *testing.T) {
 	a := FloatVal(10.0)
 	b := FloatVal(0.0)
 	r := a.Div(b)
-	if r.Num != 0 {
-		t.Fatalf("expected 0 for div by zero, got %f", r.Num)
+	if r.num != 0 {
+		t.Fatalf("expected 0 for div by zero, got %f", r.num)
 	}
 }
 
@@ -213,8 +214,8 @@ func TestModInt(t *testing.T) {
 	if r.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", r.Type)
 	}
-	if r.Num != 1 {
-		t.Fatalf("expected 1, got %f", r.Num)
+	if r.num != 1 {
+		t.Fatalf("expected 1, got %f", r.num)
 	}
 }
 
@@ -223,16 +224,16 @@ func TestModFloat(t *testing.T) {
 	b := FloatVal(3.0)
 	r := a.Mod(b)
 	expected := math.Mod(10.5, 3.0)
-	if math.Abs(r.Num-expected) > 1e-12 {
-		t.Fatalf("expected %f, got %f", expected, r.Num)
+	if math.Abs(r.num-expected) > 1e-12 {
+		t.Fatalf("expected %f, got %f", expected, r.num)
 	}
 }
 
 func TestNeg(t *testing.T) {
 	a := IntVal(5)
 	r := a.Neg()
-	if r.Num != -5 {
-		t.Fatalf("expected -5, got %f", r.Num)
+	if r.num != -5 {
+		t.Fatalf("expected -5, got %f", r.num)
 	}
 	if r.Type != program.TypeInt {
 		t.Fatalf("expected TypeInt, got %d", r.Type)
@@ -240,8 +241,8 @@ func TestNeg(t *testing.T) {
 
 	b := FloatVal(3.14)
 	r2 := b.Neg()
-	if r2.Num != -3.14 {
-		t.Fatalf("expected -3.14, got %f", r2.Num)
+	if r2.num != -3.14 {
+		t.Fatalf("expected -3.14, got %f", r2.num)
 	}
 }
 
@@ -253,86 +254,86 @@ func TestIntSemantics(t *testing.T) {
 	b := IntVal(2)
 
 	div := a.Div(b)
-	if div.Num != 3 {
-		t.Fatalf("7/2 should be 3 (int), got %f", div.Num)
+	if div.num != 3 {
+		t.Fatalf("7/2 should be 3 (int), got %f", div.num)
 	}
 
 	mod := a.Mod(b)
-	if mod.Num != 1 {
-		t.Fatalf("7%%2 should be 1, got %f", mod.Num)
+	if mod.num != 1 {
+		t.Fatalf("7%%2 should be 1, got %f", mod.num)
 	}
 }
 
 // --- Comparisons ---
 
 func TestEq(t *testing.T) {
-	if !IntVal(5).Eq(IntVal(5)).Bool {
+	if !IntVal(5).Eq(IntVal(5)).Truth() {
 		t.Fatal("5 == 5 should be true")
 	}
-	if IntVal(5).Eq(IntVal(6)).Bool {
+	if IntVal(5).Eq(IntVal(6)).Truth() {
 		t.Fatal("5 == 6 should be false")
 	}
-	if !StringVal("hi").Eq(StringVal("hi")).Bool {
+	if !StringVal("hi").Eq(StringVal("hi")).Truth() {
 		t.Fatal(`"hi" == "hi" should be true`)
 	}
-	if StringVal("hi").Eq(StringVal("bye")).Bool {
+	if StringVal("hi").Eq(StringVal("bye")).Truth() {
 		t.Fatal(`"hi" == "bye" should be false`)
 	}
-	if !BoolVal(true).Eq(BoolVal(true)).Bool {
+	if !BoolVal(true).Eq(BoolVal(true)).Truth() {
 		t.Fatal("true == true should be true")
 	}
 }
 
 func TestNeq(t *testing.T) {
-	if IntVal(5).Neq(IntVal(5)).Bool {
+	if IntVal(5).Neq(IntVal(5)).Truth() {
 		t.Fatal("5 != 5 should be false")
 	}
-	if !IntVal(5).Neq(IntVal(6)).Bool {
+	if !IntVal(5).Neq(IntVal(6)).Truth() {
 		t.Fatal("5 != 6 should be true")
 	}
 }
 
 func TestLt(t *testing.T) {
-	if !IntVal(3).Lt(IntVal(5)).Bool {
+	if !IntVal(3).Lt(IntVal(5)).Truth() {
 		t.Fatal("3 < 5 should be true")
 	}
-	if IntVal(5).Lt(IntVal(3)).Bool {
+	if IntVal(5).Lt(IntVal(3)).Truth() {
 		t.Fatal("5 < 3 should be false")
 	}
-	if IntVal(5).Lt(IntVal(5)).Bool {
+	if IntVal(5).Lt(IntVal(5)).Truth() {
 		t.Fatal("5 < 5 should be false")
 	}
 }
 
 func TestGt(t *testing.T) {
-	if !IntVal(5).Gt(IntVal(3)).Bool {
+	if !IntVal(5).Gt(IntVal(3)).Truth() {
 		t.Fatal("5 > 3 should be true")
 	}
-	if IntVal(3).Gt(IntVal(5)).Bool {
+	if IntVal(3).Gt(IntVal(5)).Truth() {
 		t.Fatal("3 > 5 should be false")
 	}
 }
 
 func TestLte(t *testing.T) {
-	if !IntVal(3).Lte(IntVal(5)).Bool {
+	if !IntVal(3).Lte(IntVal(5)).Truth() {
 		t.Fatal("3 <= 5 should be true")
 	}
-	if !IntVal(5).Lte(IntVal(5)).Bool {
+	if !IntVal(5).Lte(IntVal(5)).Truth() {
 		t.Fatal("5 <= 5 should be true")
 	}
-	if IntVal(6).Lte(IntVal(5)).Bool {
+	if IntVal(6).Lte(IntVal(5)).Truth() {
 		t.Fatal("6 <= 5 should be false")
 	}
 }
 
 func TestGte(t *testing.T) {
-	if !IntVal(5).Gte(IntVal(3)).Bool {
+	if !IntVal(5).Gte(IntVal(3)).Truth() {
 		t.Fatal("5 >= 3 should be true")
 	}
-	if !IntVal(5).Gte(IntVal(5)).Bool {
+	if !IntVal(5).Gte(IntVal(5)).Truth() {
 		t.Fatal("5 >= 5 should be true")
 	}
-	if IntVal(3).Gte(IntVal(5)).Bool {
+	if IntVal(3).Gte(IntVal(5)).Truth() {
 		t.Fatal("3 >= 5 should be false")
 	}
 }
@@ -340,34 +341,34 @@ func TestGte(t *testing.T) {
 // --- Boolean ops ---
 
 func TestAnd(t *testing.T) {
-	if !BoolVal(true).And(BoolVal(true)).Bool {
+	if !BoolVal(true).And(BoolVal(true)).Truth() {
 		t.Fatal("true && true should be true")
 	}
-	if BoolVal(true).And(BoolVal(false)).Bool {
+	if BoolVal(true).And(BoolVal(false)).Truth() {
 		t.Fatal("true && false should be false")
 	}
-	if BoolVal(false).And(BoolVal(true)).Bool {
+	if BoolVal(false).And(BoolVal(true)).Truth() {
 		t.Fatal("false && true should be false")
 	}
 }
 
 func TestOr(t *testing.T) {
-	if !BoolVal(true).Or(BoolVal(false)).Bool {
+	if !BoolVal(true).Or(BoolVal(false)).Truth() {
 		t.Fatal("true || false should be true")
 	}
-	if !BoolVal(false).Or(BoolVal(true)).Bool {
+	if !BoolVal(false).Or(BoolVal(true)).Truth() {
 		t.Fatal("false || true should be true")
 	}
-	if BoolVal(false).Or(BoolVal(false)).Bool {
+	if BoolVal(false).Or(BoolVal(false)).Truth() {
 		t.Fatal("false || false should be false")
 	}
 }
 
 func TestNot(t *testing.T) {
-	if BoolVal(true).Not().Bool {
+	if BoolVal(true).Not().Truth() {
 		t.Fatal("!true should be false")
 	}
-	if !BoolVal(false).Not().Bool {
+	if !BoolVal(false).Not().Truth() {
 		t.Fatal("!false should be true")
 	}
 }
@@ -378,8 +379,8 @@ func TestConcat(t *testing.T) {
 	a := StringVal("hello")
 	b := StringVal(" world")
 	r := a.Concat(b)
-	if r.Str != "hello world" {
-		t.Fatalf("expected 'hello world', got %q", r.Str)
+	if r.Text() != "hello world" {
+		t.Fatalf("expected 'hello world', got %q", r.Text())
 	}
 	if r.Type != program.TypeString {
 		t.Fatalf("expected TypeString, got %d", r.Type)
@@ -426,8 +427,8 @@ func TestArrayValCreation(t *testing.T) {
 	if v.Type != program.TypeAny {
 		t.Fatalf("expected TypeAny, got %d", v.Type)
 	}
-	if len(v.Items) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(v.Items))
+	if len(v.List()) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(v.List()))
 	}
 }
 
@@ -447,60 +448,60 @@ func TestArrayLen(t *testing.T) {
 func TestAppendVal(t *testing.T) {
 	v := ArrayVal([]Value{IntVal(1), IntVal(2)})
 	v2 := v.AppendVal(IntVal(3))
-	if len(v2.Items) != 3 {
-		t.Fatalf("expected 3 items after append, got %d", len(v2.Items))
+	if len(v2.List()) != 3 {
+		t.Fatalf("expected 3 items after append, got %d", len(v2.List()))
 	}
-	if v2.Items[2].Num != 3 {
-		t.Fatalf("expected last item=3, got %f", v2.Items[2].Num)
+	if v2.List()[2].num != 3 {
+		t.Fatalf("expected last item=3, got %f", v2.List()[2].num)
 	}
 	// Original should be unchanged (immutability)
-	if len(v.Items) != 2 {
-		t.Fatalf("original should still have 2 items, got %d", len(v.Items))
+	if len(v.List()) != 2 {
+		t.Fatalf("original should still have 2 items, got %d", len(v.List()))
 	}
 }
 
 func TestFilterFunc(t *testing.T) {
 	v := ArrayVal([]Value{IntVal(1), IntVal(2), IntVal(3), IntVal(4)})
 	even := v.FilterFunc(func(val Value) bool {
-		return int(val.Num)%2 == 0
+		return int(val.num)%2 == 0
 	})
-	if len(even.Items) != 2 {
-		t.Fatalf("expected 2 even items, got %d", len(even.Items))
+	if len(even.List()) != 2 {
+		t.Fatalf("expected 2 even items, got %d", len(even.List()))
 	}
-	if even.Items[0].Num != 2 || even.Items[1].Num != 4 {
-		t.Fatalf("expected [2, 4], got [%f, %f]", even.Items[0].Num, even.Items[1].Num)
+	if even.List()[0].num != 2 || even.List()[1].num != 4 {
+		t.Fatalf("expected [2, 4], got [%f, %f]", even.List()[0].num, even.List()[1].num)
 	}
 }
 
 func TestMapFunc(t *testing.T) {
 	v := ArrayVal([]Value{IntVal(1), IntVal(2), IntVal(3)})
 	doubled := v.MapFunc(func(val Value, i int) Value {
-		return IntVal(int(val.Num) * 2)
+		return IntVal(int(val.num) * 2)
 	})
-	if len(doubled.Items) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(doubled.Items))
+	if len(doubled.List()) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(doubled.List()))
 	}
-	if doubled.Items[0].Num != 2 || doubled.Items[1].Num != 4 || doubled.Items[2].Num != 6 {
+	if doubled.List()[0].num != 2 || doubled.List()[1].num != 4 || doubled.List()[2].num != 6 {
 		t.Fatalf("expected [2, 4, 6]")
 	}
 }
 
 func TestContainsValArray(t *testing.T) {
 	v := ArrayVal([]Value{IntVal(1), IntVal(2), IntVal(3)})
-	if !v.ContainsVal(IntVal(2)).Bool {
+	if !v.ContainsVal(IntVal(2)).Truth() {
 		t.Fatal("array should contain 2")
 	}
-	if v.ContainsVal(IntVal(5)).Bool {
+	if v.ContainsVal(IntVal(5)).Truth() {
 		t.Fatal("array should not contain 5")
 	}
 }
 
 func TestContainsValString(t *testing.T) {
 	v := StringVal("hello world")
-	if !v.ContainsVal(StringVal("world")).Bool {
+	if !v.ContainsVal(StringVal("world")).Truth() {
 		t.Fatal("string should contain 'world'")
 	}
-	if v.ContainsVal(StringVal("xyz")).Bool {
+	if v.ContainsVal(StringVal("xyz")).Truth() {
 		t.Fatal("string should not contain 'xyz'")
 	}
 }
@@ -520,24 +521,68 @@ func TestArrayEq(t *testing.T) {
 	c := ArrayVal([]Value{IntVal(1), IntVal(3)})
 	d := ArrayVal([]Value{IntVal(1)})
 
-	if !a.Eq(b).Bool {
+	if !a.Eq(b).Truth() {
 		t.Fatal("[1,2] == [1,2] should be true")
 	}
-	if a.Eq(c).Bool {
+	if a.Eq(c).Truth() {
 		t.Fatal("[1,2] == [1,3] should be false")
 	}
-	if a.Eq(d).Bool {
+	if a.Eq(d).Truth() {
 		t.Fatal("[1,2] == [1] should be false (different length)")
+	}
+}
+
+// TestValueStringSelfReferentialArrayDoesNotOverflow pins the
+// unrecoverable-crash reproduction from OpIndexSet's in-place
+// mutation. `arr[0] = arr` makes Items[0] alias the very array it
+// lives in. Value.Items is a shared slice header, so the write is
+// visible through every alias (see lhs_set.go's file header).
+//
+// The pre-fix String() recursed over Items with no depth guard and
+// no visited set. A self-referential Value recurses forever, so the
+// test hung until the goroutine stack hit its limit. The process
+// then died with "fatal error: stack overflow", which recover()
+// cannot catch. String() must now degrade to the cycle sentinel
+// instead.
+func TestValueStringSelfReferentialArrayDoesNotOverflow(t *testing.T) {
+	arr := ArrayVal([]Value{{}})
+	arr.List()[0] = arr // build the cycle exactly as OpIndexSet would
+
+	got := arr.String()
+	if got == "" {
+		t.Fatal("String() on a self-referential array returned empty; want a bounded, non-empty result")
+	}
+	if !strings.Contains(got, cycleSentinel) {
+		t.Fatalf("String() on a self-referential array = %q, want it to contain the cycle sentinel %q", got, cycleSentinel)
+	}
+}
+
+// TestValueEqSelfReferentialArrayDoesNotOverflow mirrors the String()
+// regression above for Eq(), which recurses over Items the same way.
+func TestValueEqSelfReferentialArrayDoesNotOverflow(t *testing.T) {
+	arr := ArrayVal([]Value{{}})
+	arr.List()[0] = arr
+
+	other := ArrayVal([]Value{{}})
+	other.List()[0] = other
+
+	// The assertion here is simply that Eq returns without
+	// crashing. Depth-capped comparison on a genuine cycle is
+	// inherently inconclusive. So BoolVal(false) is the safe answer
+	// once the depth guard fires.
+	got := arr.Eq(other)
+	if got.Type != program.TypeBool {
+		t.Fatalf("Eq on self-referential arrays = %+v, want a BoolVal", got)
 	}
 }
 
 func TestSliceVal(t *testing.T) {
 	v := ArrayVal([]Value{IntVal(1), IntVal(2), IntVal(3), IntVal(4)})
 	s := v.SliceVal(1, 3)
-	if len(s.Items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(s.Items))
+	if len(s.List()) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(s.List()))
 	}
-	if s.Items[0].Num != 2 || s.Items[1].Num != 3 {
+	if s.List()[0].num != 2 || s.List()[1].num != 3 {
 		t.Fatalf("expected [2, 3]")
 	}
 }
@@ -545,16 +590,59 @@ func TestSliceVal(t *testing.T) {
 func TestSliceValBoundsClamp(t *testing.T) {
 	v := ArrayVal([]Value{IntVal(1), IntVal(2)})
 	s := v.SliceVal(-1, 100)
-	if len(s.Items) != 2 {
-		t.Fatalf("expected clamped to 2 items, got %d", len(s.Items))
+	if len(s.List()) != 2 {
+		t.Fatalf("expected clamped to 2 items, got %d", len(s.List()))
+	}
+}
+
+// TestSliceValNegativeEndDoesNotPanic pins the exact crash
+// reproduction for `items[0:len(items)-1]` on an empty array. end
+// (len(items)-1) evaluates to -1. The pre-fix SliceVal only clamped
+// end on its high side (end > n), never on its low side.
+//
+// A negative end reached the start-over-end swap as the smaller
+// value. It then reached v.Items[start:end] as a negative index and
+// panicked with "slice bounds out of range [:-1]". Before the fix
+// this test panicked. It now must return an empty array with no
+// panic.
+func TestSliceValNegativeEndDoesNotPanic(t *testing.T) {
+	v := ArrayVal(nil)
+	got := v.SliceVal(0, len(v.List())-1)
+	if len(got.List()) != 0 {
+		t.Fatalf("SliceVal(0, -1) on empty array = %+v, want 0 items", got)
+	}
+}
+
+// TestSliceValInfEndDoesNotPanic pins the float-literal
+// reproduction. A source expression like `9e999` parses to +Inf,
+// and int(+Inf) is math.MinInt64 on amd64. Passed straight through
+// as `end`, the old SliceVal panicked with "slice bounds out of
+// range [:-9223372036854775808]".
+//
+// The fixed SliceVal clamps end into [0, n] regardless of how it
+// got there. The degenerate cast lands on a deeply negative int
+// here, so the safe, non-panicking answer is an empty slice, not
+// the full array.
+//
+// vm.go's safeBoundInt intercepts the float itself before this
+// conversion happens. So a real OpSlice dispatch sees +Inf clamp
+// toward the array's length instead — see
+// TestVMOpSliceFloatOverflowEndDoesNotPanic in safety_test.go. This
+// test pins SliceVal's own defense-in-depth clamp in isolation.
+func TestSliceValInfEndDoesNotPanic(t *testing.T) {
+	v := ArrayVal([]Value{IntVal(1), IntVal(2)})
+	end := int(math.Inf(1))
+	got := v.SliceVal(0, end)
+	if len(got.List()) != 0 {
+		t.Fatalf("SliceVal(0, MinInt64-from-+Inf) = %+v, want an empty (not panicking) result", got)
 	}
 }
 
 func TestJoinVal(t *testing.T) {
 	v := ArrayVal([]Value{StringVal("a"), StringVal("b"), StringVal("c")})
 	joined := v.JoinVal(", ")
-	if joined.Str != "a, b, c" {
-		t.Fatalf("expected 'a, b, c', got %q", joined.Str)
+	if joined.Text() != "a, b, c" {
+		t.Fatalf("expected 'a, b, c', got %q", joined.Text())
 	}
 }
 
@@ -562,32 +650,32 @@ func TestJoinVal(t *testing.T) {
 
 func TestToUpper(t *testing.T) {
 	v := StringVal("hello")
-	if v.ToUpper().Str != "HELLO" {
-		t.Fatalf("expected 'HELLO', got %q", v.ToUpper().Str)
+	if v.ToUpper().Text() != "HELLO" {
+		t.Fatalf("expected 'HELLO', got %q", v.ToUpper().Text())
 	}
 }
 
 func TestToLower(t *testing.T) {
 	v := StringVal("HELLO")
-	if v.ToLower().Str != "hello" {
-		t.Fatalf("expected 'hello', got %q", v.ToLower().Str)
+	if v.ToLower().Text() != "hello" {
+		t.Fatalf("expected 'hello', got %q", v.ToLower().Text())
 	}
 }
 
 func TestTrimVal(t *testing.T) {
 	v := StringVal("  hello  ")
-	if v.TrimVal().Str != "hello" {
-		t.Fatalf("expected 'hello', got %q", v.TrimVal().Str)
+	if v.TrimVal().Text() != "hello" {
+		t.Fatalf("expected 'hello', got %q", v.TrimVal().Text())
 	}
 }
 
 func TestSplitVal(t *testing.T) {
 	v := StringVal("a,b,c")
 	result := v.SplitVal(",")
-	if len(result.Items) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(result.Items))
+	if len(result.List()) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(result.List()))
 	}
-	if result.Items[0].Str != "a" || result.Items[1].Str != "b" || result.Items[2].Str != "c" {
+	if result.List()[0].Text() != "a" || result.List()[1].Text() != "b" || result.List()[2].Text() != "c" {
 		t.Fatal("split items don't match")
 	}
 }
@@ -595,43 +683,67 @@ func TestSplitVal(t *testing.T) {
 func TestReplaceVal(t *testing.T) {
 	v := StringVal("hello world world")
 	r := v.ReplaceVal("world", "go")
-	if r.Str != "hello go go" {
-		t.Fatalf("expected 'hello go go', got %q", r.Str)
+	if r.Text() != "hello go go" {
+		t.Fatalf("expected 'hello go go', got %q", r.Text())
 	}
 }
 
 func TestSubstringVal(t *testing.T) {
 	v := StringVal("hello world")
 	s := v.SubstringVal(0, 5)
-	if s.Str != "hello" {
-		t.Fatalf("expected 'hello', got %q", s.Str)
+	if s.Text() != "hello" {
+		t.Fatalf("expected 'hello', got %q", s.Text())
 	}
 }
 
 func TestSubstringValBoundsClamp(t *testing.T) {
 	v := StringVal("hi")
 	s := v.SubstringVal(-1, 100)
-	if s.Str != "hi" {
-		t.Fatalf("expected clamped to 'hi', got %q", s.Str)
+	if s.Text() != "hi" {
+		t.Fatalf("expected clamped to 'hi', got %q", s.Text())
+	}
+}
+
+// TestSubstringValNegativeEndDoesNotPanic pins the exact crash
+// reproduction for `name[0:len(name)-1]` on an empty string. end
+// evaluates to -1. The pre-fix SubstringVal panicked the same way
+// SliceVal did ("slice bounds out of range [:-1]").
+func TestSubstringValNegativeEndDoesNotPanic(t *testing.T) {
+	v := StringVal("")
+	got := v.SubstringVal(0, len(v.Text())-1)
+	if got.Text() != "" {
+		t.Fatalf("SubstringVal(0, -1) on empty string = %q, want \"\"", got.Text())
+	}
+}
+
+// TestSubstringValInfEndDoesNotPanic mirrors
+// TestSliceValInfEndDoesNotPanic for the string path: the degenerate
+// MinInt64 cast clamps to an empty result rather than panicking.
+func TestSubstringValInfEndDoesNotPanic(t *testing.T) {
+	v := StringVal("hello")
+	end := int(math.Inf(1))
+	got := v.SubstringVal(0, end)
+	if got.Text() != "" {
+		t.Fatalf("SubstringVal(0, MinInt64-from-+Inf) = %q, want an empty (not panicking) result", got.Text())
 	}
 }
 
 func TestStartsWithVal(t *testing.T) {
 	v := StringVal("hello world")
-	if !v.StartsWithVal(StringVal("hello")).Bool {
+	if !v.StartsWithVal(StringVal("hello")).Truth() {
 		t.Fatal("should start with 'hello'")
 	}
-	if v.StartsWithVal(StringVal("world")).Bool {
+	if v.StartsWithVal(StringVal("world")).Truth() {
 		t.Fatal("should not start with 'world'")
 	}
 }
 
 func TestEndsWithVal(t *testing.T) {
 	v := StringVal("hello world")
-	if !v.EndsWithVal(StringVal("world")).Bool {
+	if !v.EndsWithVal(StringVal("world")).Truth() {
 		t.Fatal("should end with 'world'")
 	}
-	if v.EndsWithVal(StringVal("hello")).Bool {
+	if v.EndsWithVal(StringVal("hello")).Truth() {
 		t.Fatal("should not end with 'hello'")
 	}
 }
@@ -639,16 +751,16 @@ func TestEndsWithVal(t *testing.T) {
 // --- Type conversions ---
 
 func TestToStringVal(t *testing.T) {
-	if IntVal(42).ToStringVal().Str != "42" {
+	if IntVal(42).ToStringVal().Text() != "42" {
 		t.Fatal("int 42 should convert to string '42'")
 	}
-	if FloatVal(3.14).ToStringVal().Str != "3.14" {
+	if FloatVal(3.14).ToStringVal().Text() != "3.14" {
 		t.Fatal("float 3.14 should convert to string '3.14'")
 	}
-	if BoolVal(true).ToStringVal().Str != "true" {
+	if BoolVal(true).ToStringVal().Text() != "true" {
 		t.Fatal("bool true should convert to string 'true'")
 	}
-	if StringVal("hi").ToStringVal().Str != "hi" {
+	if StringVal("hi").ToStringVal().Text() != "hi" {
 		t.Fatal("string should stay the same")
 	}
 }
@@ -656,47 +768,47 @@ func TestToStringVal(t *testing.T) {
 func TestToIntVal(t *testing.T) {
 	// From string
 	v := StringVal("42").ToIntVal()
-	if v.Type != program.TypeInt || v.Num != 42 {
-		t.Fatalf("expected IntVal(42), got type=%d num=%f", v.Type, v.Num)
+	if v.Type != program.TypeInt || v.num != 42 {
+		t.Fatalf("expected IntVal(42), got type=%d num=%f", v.Type, v.num)
 	}
 
 	// From float (truncates)
 	v = FloatVal(3.9).ToIntVal()
-	if v.Type != program.TypeInt || v.Num != 3 {
-		t.Fatalf("expected IntVal(3), got type=%d num=%f", v.Type, v.Num)
+	if v.Type != program.TypeInt || v.num != 3 {
+		t.Fatalf("expected IntVal(3), got type=%d num=%f", v.Type, v.num)
 	}
 
 	// From bool
-	if BoolVal(true).ToIntVal().Num != 1 {
+	if BoolVal(true).ToIntVal().num != 1 {
 		t.Fatal("true should convert to 1")
 	}
-	if BoolVal(false).ToIntVal().Num != 0 {
+	if BoolVal(false).ToIntVal().num != 0 {
 		t.Fatal("false should convert to 0")
 	}
 
 	// Invalid string
 	v = StringVal("abc").ToIntVal()
-	if v.Num != 0 {
-		t.Fatalf("invalid string should give 0, got %f", v.Num)
+	if v.num != 0 {
+		t.Fatalf("invalid string should give 0, got %f", v.num)
 	}
 }
 
 func TestToFloatVal(t *testing.T) {
 	// From string
 	v := StringVal("3.14").ToFloatVal()
-	if v.Type != program.TypeFloat || v.Num != 3.14 {
-		t.Fatalf("expected FloatVal(3.14), got type=%d num=%f", v.Type, v.Num)
+	if v.Type != program.TypeFloat || v.num != 3.14 {
+		t.Fatalf("expected FloatVal(3.14), got type=%d num=%f", v.Type, v.num)
 	}
 
 	// From int (promotes)
 	v = IntVal(5).ToFloatVal()
-	if v.Type != program.TypeFloat || v.Num != 5 {
-		t.Fatalf("expected FloatVal(5), got type=%d num=%f", v.Type, v.Num)
+	if v.Type != program.TypeFloat || v.num != 5 {
+		t.Fatalf("expected FloatVal(5), got type=%d num=%f", v.Type, v.num)
 	}
 
 	// Invalid string
 	v = StringVal("abc").ToFloatVal()
-	if v.Num != 0 {
-		t.Fatalf("invalid string should give 0, got %f", v.Num)
+	if v.num != 0 {
+		t.Fatalf("invalid string should give 0, got %f", v.num)
 	}
 }

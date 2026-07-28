@@ -99,7 +99,7 @@ type Context struct {
 func newContext(r *http.Request) *Context {
 	return &Context{
 		Request:   r,
-		PageState: *NewPageState(),
+		PageState: *NewPageStateForRequest(r),
 	}
 }
 

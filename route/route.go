@@ -563,7 +563,7 @@ func newRouteContext(req *http.Request) *RouteContext {
 	// closure assigns a sized map only when the route declares parameters.
 	return &RouteContext{
 		Request:   req,
-		PageState: *server.NewPageState(),
+		PageState: *server.NewPageStateForRequest(req),
 	}
 }
 

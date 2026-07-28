@@ -12,13 +12,14 @@ import (
 // PageState carries shared request-scoped page response state used by both
 // server.Context and route.RouteContext.
 type PageState struct {
-	headers  http.Header
-	status   int
-	metadata Metadata
-	head     []gosx.Node
-	deferred *DeferredRegistry
-	cache    *CacheState
-	runtime  *PageRuntime
+	requestPath string
+	headers     http.Header
+	status      int
+	metadata    Metadata
+	head        []gosx.Node
+	deferred    *DeferredRegistry
+	cache       *CacheState
+	runtime     *PageRuntime
 }
 
 // NewPageState creates an empty shared page-state container.
@@ -31,6 +32,17 @@ type PageState struct {
 // passthrough.
 func NewPageState() *PageState {
 	return &PageState{}
+}
+
+// NewPageStateForRequest creates page state whose automatic metadata URLs use
+// the request's route path. NewPageState intentionally remains pathless so
+// standalone metadata rendering keeps its root-path default.
+func NewPageStateForRequest(r *http.Request) *PageState {
+	state := NewPageState()
+	if r != nil && r.URL != nil {
+		state.requestPath = r.URL.Path
+	}
+	return state
 }
 
 // Header returns the response headers to apply when the request completes.
@@ -186,7 +198,7 @@ func (s *PageState) Head() gosx.Node {
 		return gosx.Text("")
 	}
 	nodes := []gosx.Node{}
-	if metaHead := s.metadata.Head(); !metaHead.IsZero() {
+	if metaHead := s.metadata.head(SiteMetadata{}, s.requestPath); !metaHead.IsZero() {
 		nodes = append(nodes, metaHead)
 	}
 	nodes = append(nodes, s.head...)

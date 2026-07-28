@@ -65,8 +65,8 @@ func F(t string) string {
 			"t": vm.StringVal(tc.in),
 		})
 		got := machine.EvalWithFrame(handler.Body[0])
-		if got.Str != tc.want {
-			t.Errorf("F(%q) = %q, want %q", tc.in, got.Str, tc.want)
+		if got.Text() != tc.want {
+			t.Errorf("F(%q) = %q, want %q", tc.in, got.Text(), tc.want)
 		}
 	}
 }
@@ -96,8 +96,8 @@ func F(t string) int {
 			"t": vm.StringVal(in),
 		})
 		got := machine.EvalWithFrame(handler.Body[0])
-		if int(got.Num) != want {
-			t.Errorf("F(%q) = %d, want %d", in, int(got.Num), want)
+		if int(got.Number()) != want {
+			t.Errorf("F(%q) = %d, want %d", in, int(got.Number()), want)
 		}
 	}
 }
@@ -121,8 +121,8 @@ func F(s string) string {
 		"s": vm.StringVal("hello"),
 	})
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Str != "ell" {
-		t.Errorf("F(\"hello\")[1:4] = %q, want \"ell\"", got.Str)
+	if got.Text() != "ell" {
+		t.Errorf("F(\"hello\")[1:4] = %q, want \"ell\"", got.Text())
 	}
 }
 
@@ -146,14 +146,14 @@ func F(s string) int {
 	got := machine.EvalWithFrame(handler.Body[0])
 	// "héllo" is 5 runes; the VM treats len(string) as byte length
 	// historically, but len([]rune(...)) must use rune count.
-	if int(got.Num) != 5 {
-		t.Errorf("len([]rune(\"héllo\")) = %d, want 5", int(got.Num))
+	if int(got.Number()) != 5 {
+		t.Errorf("len([]rune(\"héllo\")) = %d, want 5", int(got.Number()))
 	}
 }
 
 // TestLowerAddressOfDropsThrough verifies that `&x` lowers to the
 // underlying expression (composite reference semantics already
-// propagate through Value.Fields/Items per Y.C/Y.D; the explicit `&`
+// propagate through Value.Map()/Items per Y.C/Y.D; the explicit `&`
 // has no additional opcode-level meaning in the supported subset).
 // Mirrors graph_surface.go's Mount handler: `ctx.PropsInto(&props)`.
 func TestLowerAddressOfDropsThrough(t *testing.T) {
@@ -192,8 +192,8 @@ func F(ctx *surface.Context, x float64) {
 	if len(rec.Calls) != 1 || rec.Calls[0].Method != "Set" {
 		t.Fatalf("expected one Set call; got %+v", rec.Calls)
 	}
-	if rec.Calls[0].Args[0].Num != 7.5 {
-		t.Errorf("&x lowered arg = %f, want 7.5 (underlying value)", rec.Calls[0].Args[0].Num)
+	if rec.Calls[0].Args[0].Number() != 7.5 {
+		t.Errorf("&x lowered arg = %f, want 7.5 (underlying value)", rec.Calls[0].Args[0].Number())
 	}
 }
 
@@ -214,7 +214,7 @@ func F(label string) string {
 		"label": vm.StringVal("héllo world"),
 	})
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Str != "hél…" {
-		t.Errorf("F(\"héllo world\") = %q, want %q", got.Str, "hél…")
+	if got.Text() != "hél…" {
+		t.Errorf("F(\"héllo world\") = %q, want %q", got.Text(), "hél…")
 	}
 }

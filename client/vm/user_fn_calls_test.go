@@ -28,8 +28,8 @@ func TestEvalIndirectCallZeroArg(t *testing.T) {
 	}
 	vm := NewVM(prog, nil)
 	got := vm.Eval(3)
-	if got.Str != "hi" {
-		t.Errorf("OpIndirectCall greet() = %q, want %q", got.Str, "hi")
+	if got.Text() != "hi" {
+		t.Errorf("OpIndirectCall greet() = %q, want %q", got.Text(), "hi")
 	}
 }
 
@@ -53,8 +53,8 @@ func TestEvalIndirectCallSingleParam(t *testing.T) {
 	}
 	vm := NewVM(prog, nil)
 	got := vm.Eval(6)
-	if int(got.Num) != 42 {
-		t.Errorf("double(21) = %d, want 42", int(got.Num))
+	if int(got.num) != 42 {
+		t.Errorf("double(21) = %d, want 42", int(got.num))
 	}
 }
 

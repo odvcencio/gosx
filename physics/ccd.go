@@ -4,12 +4,56 @@ import "math"
 
 const ccdSlop = 1e-4
 
+// ccdMotionRatio is the share of a body's own radius that one step of motion
+// must exceed before the swept pass runs.
+//
+// A body that moves less than half its own radius cannot pass through anything,
+// so the discrete contacts already hold it. Skipping the sweep for such a body
+// does two things: it removes the cost of the sweep from every resting body,
+// and it stops the sweep from clamping the lateral motion of a body that leans
+// on a static box.
+const ccdMotionRatio = 0.5
+
 type ccdHit struct {
 	Collider *Collider
 	Normal   Vec3
 	Distance float64
 }
 
+// bodyNeedsSweep reports whether one step of the given displacement is long
+// enough to justify a swept test.
+func bodyNeedsSweep(body *RigidBody, displacement Vec3) bool {
+	if body == nil {
+		return false
+	}
+	travel2 := displacement.Len2()
+	if travel2 <= epsilon {
+		return false
+	}
+	largest := 0.0
+	for _, collider := range body.colliders {
+		radius, ok := movingSweepRadius(collider)
+		if !ok || collider.IsTrigger {
+			continue
+		}
+		if radius > largest {
+			largest = radius
+		}
+	}
+	if largest <= 0 {
+		return false
+	}
+	threshold := ccdMotionRatio * largest
+	return travel2 > threshold*threshold
+}
+
+// sweepBody finds the nearest static collider that the body's swept volume
+// reaches this step.
+//
+// Candidates come from the broadphase's static cell map, which holds only
+// immovable, non-trigger colliders. That keeps the per-body cost proportional
+// to the swept volume instead of to the whole collider list. The caller must
+// have rebuilt the broadphase for the current step; ensureBroadphase does that.
 func (w *World) sweepBody(body *RigidBody, displacement Vec3) (ccdHit, bool) {
 	if w == nil || body == nil || displacement.Len2() <= epsilon {
 		return ccdHit{}, false
@@ -27,21 +71,48 @@ func (w *World) sweepBody(body *RigidBody, displacement Vec3) (ccdHit, bool) {
 		if !ok {
 			continue
 		}
-		for _, target := range w.colliders {
-			if target == nil || target == moving || target.Body == body || target.IsTrigger || !staticCollider(target) {
+		w.sweepTargets = w.broadphase.QueryStaticAABB(
+			sweptSphereBounds(origin, radius, direction, distance),
+			w.sweepTargets[:0],
+		)
+		for _, target := range w.sweepTargets {
+			if target == moving || target.Body == body {
 				continue
 			}
 			hit, ok := sweepSphereLikeCollider(origin, radius, direction, distance, target)
 			if !ok {
 				continue
 			}
-			if !found || hit.Distance < best.Distance {
+			if !found || closerSweepHit(hit, best) {
 				best = hit
 				found = true
 			}
 		}
 	}
 	return best, found
+}
+
+// closerSweepHit decides which of two swept hits wins. Ties break on the lower
+// collider index so the result does not depend on the order the broadphase
+// happens to report candidates in. Replay determinism needs that.
+func closerSweepHit(candidate, best ccdHit) bool {
+	if candidate.Distance < best.Distance-epsilon {
+		return true
+	}
+	if candidate.Distance > best.Distance+epsilon {
+		return false
+	}
+	return colliderIndex(candidate.Collider) < colliderIndex(best.Collider)
+}
+
+// sweptSphereBounds returns the world box that encloses a sphere swept from
+// origin along direction for the given distance. Every point the sweep can
+// touch lies inside this box, so it is safe to reject anything outside it.
+func sweptSphereBounds(origin Vec3, radius float64, direction Vec3, distance float64) AABB {
+	end := origin.Add(direction.Mul(distance))
+	box := AABB{Min: origin.Min(end), Max: origin.Max(end)}
+	pad := math.Abs(radius)
+	return box.Expand(pad)
 }
 
 func staticCollider(c *Collider) bool {
@@ -82,7 +153,10 @@ func sweepSpherePlane(origin Vec3, radius float64, direction Vec3, maxDistance f
 	normal, planeDistance := target.Plane()
 	signed := normal.Dot(origin) - planeDistance
 	if signed <= radius {
-		return ccdHit{Collider: target, Normal: normal, Distance: 0}, true
+		// The sphere already touches the plane. Report no swept hit and leave
+		// the case to the discrete contact solver. A zero-distance hit here
+		// would clamp the whole step, which freezes a resting body sideways.
+		return ccdHit{}, false
 	}
 	denom := normal.Dot(direction)
 	if denom >= -epsilon {
@@ -102,11 +176,8 @@ func sweepSphereSphere(origin Vec3, radius float64, direction Vec3, maxDistance 
 	b := m.Dot(direction)
 	c := m.Dot(m) - combined*combined
 	if c <= 0 {
-		normal := origin.Sub(center).Normalize()
-		if normal.Len2() <= epsilon {
-			normal = direction.Neg()
-		}
-		return ccdHit{Collider: target, Normal: normal, Distance: 0}, true
+		// Already overlapping. The discrete solver owns this case.
+		return ccdHit{}, false
 	}
 	if b > 0 {
 		return ccdHit{}, false
@@ -174,7 +245,10 @@ func sweepSphereBox(origin Vec3, radius float64, direction Vec3, maxDistance flo
 			return ccdHit{}, false
 		}
 	}
-	if tMin < 0 || tMin > maxDistance {
+	if tMin <= 0 || tMin > maxDistance {
+		// tMin stays at zero when the swept sphere starts inside the expanded
+		// box. Report no hit there: a zero-distance hit clamps the whole step
+		// and freezes a body that rests on the box.
 		return ccdHit{}, false
 	}
 	normal := rotation.Rotate(enterNormal).Normalize()

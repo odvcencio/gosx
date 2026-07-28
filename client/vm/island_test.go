@@ -133,7 +133,7 @@ func TestReentrantBatch(t *testing.T) {
 		})
 	})
 
-	if !s.Get().Eq(IntVal(2)).Bool {
+	if !s.Get().Eq(IntVal(2)).Truth() {
 		t.Fatalf("expected 2 after nested batch, got %v", s.Get())
 	}
 }

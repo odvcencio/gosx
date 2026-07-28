@@ -28,7 +28,7 @@ func TestReconcilerInterfaceShape(t *testing.T) {
 	r.Dispose()
 	got := r.EvalExpr(7)
 	want := IntVal(7)
-	if got.Type != want.Type || got.Num != want.Num {
+	if got.Type != want.Type || got.num != want.num {
 		t.Errorf("EvalExpr returned %v, want %v", got, want)
 	}
 	r.SetSharedSignal("x", signal.New(IntVal(1)))

@@ -56,8 +56,8 @@ func F() float64 {
 	vm.InitSignals(machine, prog)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// 1.0 + 2.0 + 3.0 + 4.0 = 10.0
-	if got.Num != 10.0 {
-		t.Errorf("F() = %f, want 10.0 (initPositions cascade must populate gPos through nested user-fn calls)", got.Num)
+	if got.Number() != 10.0 {
+		t.Errorf("F() = %f, want 10.0 (initPositions cascade must populate gPos through nested user-fn calls)", got.Number())
 	}
 }
 
@@ -91,7 +91,7 @@ func F() int {
 	vm.InitSignals(machine, prog)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// 0+1+2+3+4 = 10
-	if int(got.Num) != 10 {
-		t.Errorf("F() = %d, want 10 (recursive seeding over package state must accumulate)", int(got.Num))
+	if int(got.Number()) != 10 {
+		t.Errorf("F() = %d, want 10 (recursive seeding over package state must accumulate)", int(got.Number()))
 	}
 }

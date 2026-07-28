@@ -258,42 +258,44 @@ func resolveProps(machine *VM, props map[string]islandprogram.ExprID) map[string
 }
 
 func valueToAny(value Value) any {
-	if value.Fields != nil {
-		out := make(map[string]any, len(value.Fields))
-		keys := make([]string, 0, len(value.Fields))
-		for key := range value.Fields {
+	if value.isMap() {
+		fields := value.dict()
+		out := make(map[string]any, len(fields))
+		keys := make([]string, 0, len(fields))
+		for key := range fields {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			out[key] = valueToAny(value.Fields[key])
+			out[key] = valueToAny(fields[key])
 		}
 		return out
 	}
-	if value.Items != nil {
-		out := make([]any, len(value.Items))
-		for i, item := range value.Items {
+	if value.isList() {
+		items := value.list()
+		out := make([]any, len(items))
+		for i, item := range items {
 			out[i] = valueToAny(item)
 		}
 		return out
 	}
 	switch value.Type {
 	case islandprogram.TypeString:
-		return value.Str
+		return value.text()
 	case islandprogram.TypeBool:
-		return value.Bool
+		return value.truth()
 	case islandprogram.TypeInt:
-		return int(value.Num)
+		return int(value.num)
 	case islandprogram.TypeFloat:
-		return value.Num
+		return value.num
 	default:
-		if value.Str != "" {
-			return value.Str
+		if text := value.text(); text != "" {
+			return text
 		}
-		if value.Bool {
+		if value.truth() {
 			return true
 		}
-		return value.Num
+		return value.num
 	}
 }
 

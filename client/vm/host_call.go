@@ -99,10 +99,7 @@ func (vm *VM) LookupHost(name string) (HostReceiver, bool) {
 // for the given identifier) record a `host_unbound` diagnostic and
 // likewise yield the zero value so handler bodies continue to
 // evaluate the rest of their statements.
-func (vm *VM) evalHostCallExpr(e program.Expr) (Value, bool) {
-	if e.Op != program.OpHostCall {
-		return Value{}, false
-	}
+func (vm *VM) hostCallValue(e *program.Expr) Value {
 	dot := strings.IndexByte(e.Value, '.')
 	if dot <= 0 || dot == len(e.Value)-1 {
 		vm.recordExprDiagnostic(
@@ -111,7 +108,7 @@ func (vm *VM) evalHostCallExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
 	recvName := e.Value[:dot]
 	methodName := e.Value[dot+1:]
@@ -125,7 +122,7 @@ func (vm *VM) evalHostCallExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
 	args := make([]Value, len(e.Operands))
 	for i, op := range e.Operands {
@@ -139,9 +136,9 @@ func (vm *VM) evalHostCallExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
-	return result, true
+	return result
 }
 
 // --- Test helper: HostRecorder ---

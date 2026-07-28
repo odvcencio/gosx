@@ -189,16 +189,16 @@ func TestCanvasBoardEventPickWritesSelectedID(t *testing.T) {
 	if !ok {
 		t.Fatalf("$surface.event.selectedID not written")
 	}
-	if got.Str != "node-A" {
-		t.Errorf("selectedID = %q, want node-A", got.Str)
+	if got.Text() != "node-A" {
+		t.Errorf("selectedID = %q, want node-A", got.Text())
 	}
 	// Legacy alias must forward (ADR 0007).
-	if legacy, ok := store.Get("$scene.event.selectedID"); !ok || legacy.Str != "node-A" {
-		t.Errorf("legacy $scene.event.selectedID = (%q,%v), want node-A", legacy.Str, ok)
+	if legacy, ok := store.Get("$scene.event.selectedID"); !ok || legacy.Text() != "node-A" {
+		t.Errorf("legacy $scene.event.selectedID = (%q,%v), want node-A", legacy.Text(), ok)
 	}
 	target, _ := store.Get("$surface.event.targetID")
-	if target.Str != "node-A" {
-		t.Errorf("targetID = %q, want node-A", target.Str)
+	if target.Text() != "node-A" {
+		t.Errorf("targetID = %q, want node-A", target.Text())
 	}
 
 	// A pick over empty space clears the selection.
@@ -206,8 +206,8 @@ func TestCanvasBoardEventPickWritesSelectedID(t *testing.T) {
 		t.Fatalf("pick miss event: %v", err)
 	}
 	cleared, _ := store.Get("$surface.event.selectedID")
-	if cleared.Str != "" {
-		t.Errorf("selectedID after miss = %q, want empty", cleared.Str)
+	if cleared.Text() != "" {
+		t.Errorf("selectedID after miss = %q, want empty", cleared.Text())
 	}
 }
 
@@ -222,8 +222,8 @@ func TestCanvasBoardEventPickPointerSignals(t *testing.T) {
 	}
 	store := b.GetStore()
 	px, ok := store.Get("$surface.event.pointerX")
-	if !ok || px.Num != 150 {
-		t.Errorf("pointerX = (%v,%v), want 150", px.Num, ok)
+	if !ok || px.Number() != 150 {
+		t.Errorf("pointerX = (%v,%v), want 150", px.Number(), ok)
 	}
 	if _, ok := store.Get("$surface.event.revision"); !ok {
 		t.Errorf("revision not written on pick")
@@ -304,12 +304,12 @@ func TestCanvasBoardEventMarqueeWritesSelectedIDs(t *testing.T) {
 	if !ok {
 		t.Fatalf("$surface.event.selectedIDs not written")
 	}
-	if ids.Str != "node-A,node-B" {
-		t.Errorf("selectedIDs = %q, want \"node-A,node-B\"", ids.Str)
+	if ids.Text() != "node-A,node-B" {
+		t.Errorf("selectedIDs = %q, want \"node-A,node-B\"", ids.Text())
 	}
 	primary, _ := store.Get("$surface.event.selectedID")
-	if primary.Str != "node-A" {
-		t.Errorf("primary selectedID = %q, want node-A (first of the marquee set)", primary.Str)
+	if primary.Text() != "node-A" {
+		t.Errorf("primary selectedID = %q, want node-A (first of the marquee set)", primary.Text())
 	}
 }
 
@@ -324,18 +324,18 @@ func TestCanvasBoardEventMarqueeEmptyClears(t *testing.T) {
 	store := b.GetStore()
 	// First select something.
 	_ = b.CanvasBoardEvent("board-mqc", CanvasBoardEventMarquee, []float64{0, 0, 600, 400, 600, 400}, "")
-	if got, _ := store.Get("$surface.event.selectedIDs"); got.Str == "" {
+	if got, _ := store.Get("$surface.event.selectedIDs"); got.Text() == "" {
 		t.Fatalf("precondition: expected a selection before clear")
 	}
 	// A zero-area marquee clears.
 	if err := b.CanvasBoardEvent("board-mqc", CanvasBoardEventMarquee, []float64{0, 0, 0, 0, 600, 400}, ""); err != nil {
 		t.Fatalf("clear marquee: %v", err)
 	}
-	if got, _ := store.Get("$surface.event.selectedIDs"); got.Str != "" {
-		t.Errorf("selectedIDs after clear = %q, want empty", got.Str)
+	if got, _ := store.Get("$surface.event.selectedIDs"); got.Text() != "" {
+		t.Errorf("selectedIDs after clear = %q, want empty", got.Text())
 	}
-	if got, _ := store.Get("$surface.event.selectedID"); got.Str != "" {
-		t.Errorf("selectedID after clear = %q, want empty", got.Str)
+	if got, _ := store.Get("$surface.event.selectedID"); got.Text() != "" {
+		t.Errorf("selectedID after clear = %q, want empty", got.Text())
 	}
 }
 
@@ -358,8 +358,8 @@ func TestCanvasBoardEventNavWritesSelectedID(t *testing.T) {
 		t.Fatalf("nav event: %v", err)
 	}
 	got, _ := store.Get("$surface.event.selectedID")
-	if got.Str != "R" {
-		t.Errorf("selectedID after nav right = %q, want R", got.Str)
+	if got.Text() != "R" {
+		t.Errorf("selectedID after nav right = %q, want R", got.Text())
 	}
 }
 
@@ -377,8 +377,8 @@ func TestCanvasBoardEventNavFromEmptyPicksFirst(t *testing.T) {
 		t.Fatalf("nav event: %v", err)
 	}
 	got, _ := store.Get("$surface.event.selectedID")
-	if got.Str != "high" {
-		t.Errorf("selectedID after nav from empty = %q, want high (topmost-leftmost)", got.Str)
+	if got.Text() != "high" {
+		t.Errorf("selectedID after nav from empty = %q, want high (topmost-leftmost)", got.Text())
 	}
 }
 
@@ -399,8 +399,8 @@ func TestCanvasBoardEventNavNoNeighborKeepsSelection(t *testing.T) {
 		t.Fatalf("nav event: %v", err)
 	}
 	got, _ := store.Get("$surface.event.selectedID")
-	if got.Str != "C" {
-		t.Errorf("selectedID after no-neighbor nav = %q, want unchanged C", got.Str)
+	if got.Text() != "C" {
+		t.Errorf("selectedID after no-neighbor nav = %q, want unchanged C", got.Text())
 	}
 }
 

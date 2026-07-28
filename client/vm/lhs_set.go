@@ -45,17 +45,6 @@ import (
 // Returns (value, true) for any LHS-set opcode (value is the assigned
 // RHS, mirroring OpAssign's return so callers can chain through an
 // OpSeq). Returns (Value{}, false) for any other opcode.
-func (vm *VM) evalLHSSetExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpFieldSet:
-		return vm.fieldSetValue(e), true
-	case program.OpIndexSet:
-		return vm.indexSetValue(e), true
-	default:
-		return Value{}, false
-	}
-}
-
 // fieldSetValue evaluates `target.<Value> = Operands[1]` and writes
 // the assigned value into Operands[0]'s Fields map in place. The field
 // name lives in Value because it's always a compile-time identifier in
@@ -77,13 +66,13 @@ func (vm *VM) evalLHSSetExpr(e program.Expr) (Value, bool) {
 // Go maps are reference types. If the caller obtained `target` via
 // OpLocalGet (a Value-by-value copy), the Fields map inside that copy
 // still points at the same underlying storage as the original.
-func (vm *VM) fieldSetValue(e program.Expr) Value {
+func (vm *VM) fieldSetValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 2) {
 		return ZeroValue(program.TypeAny)
 	}
 	target := vm.Eval(e.Operands[0])
 	value := vm.Eval(e.Operands[1])
-	if target.Fields == nil {
+	if !target.SetField(e.Value, value) {
 		vm.recordExprDiagnostic(
 			"field_set_non_struct",
 			fmt.Sprintf("OpFieldSet target field %q evaluates to a Value with no Fields map (Value type %d)", e.Value, target.Type),
@@ -96,7 +85,6 @@ func (vm *VM) fieldSetValue(e program.Expr) Value {
 		// caller. Drop the write but keep the panic-free contract.
 		return value
 	}
-	target.Fields[e.Value] = value
 	return value
 }
 
@@ -118,7 +106,7 @@ func (vm *VM) fieldSetValue(e program.Expr) Value {
 // ArrayVal (Items non-nil, Fields nil) — those go through Items. A
 // Value can't legally have both populated in the supported subset, so
 // "Items first if non-nil" is unambiguous.
-func (vm *VM) indexSetValue(e program.Expr) Value {
+func (vm *VM) indexSetValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 3) {
 		return ZeroValue(program.TypeAny)
 	}
@@ -127,21 +115,40 @@ func (vm *VM) indexSetValue(e program.Expr) Value {
 	value := vm.Eval(e.Operands[2])
 
 	switch {
-	case target.Items != nil:
-		idx := int(key.Num)
-		if idx < 0 || idx >= len(target.Items) {
+	case target.isList():
+		items := target.list()
+		idx := int(key.num)
+		if idx < 0 || idx >= len(items) {
 			vm.recordExprDiagnostic(
 				"index_set_out_of_range",
-				fmt.Sprintf("OpIndexSet index %d out of range [0,%d)", idx, len(target.Items)),
+				fmt.Sprintf("OpIndexSet index %d out of range [0,%d)", idx, len(items)),
 				e.Op,
 				e.Value,
 			)
 			return value
 		}
-		target.Items[idx] = value
+		if valueAliasesItems(value, items) {
+			// `arr[idx] = arr` (or any value that aliases the exact
+			// same backing array as target) builds a Value that
+			// contains itself. The write still goes through. Y.C's
+			// in-place-mutation contract is deliberate — see the file
+			// header. But String, Eq, and ToAny would otherwise
+			// recurse forever over the cycle. Those three walkers
+			// carry their own depth guard (value.go's
+			// maxValueRecursionDepth). It degrades to a sentinel
+			// instead of crashing. This diagnostic just makes the
+			// cycle visible at its origin.
+			vm.recordExprDiagnostic(
+				"self_referential_value",
+				"OpIndexSet wrote a value that aliases its own target array, creating a cycle",
+				e.Op,
+				e.Value,
+			)
+		}
+		items[idx] = value
 		return value
-	case target.Fields != nil:
-		target.Fields[key.String()] = value
+	case target.isMap():
+		target.dict()[key.String()] = value
 		return value
 	default:
 		vm.recordExprDiagnostic(
@@ -152,4 +159,19 @@ func (vm *VM) indexSetValue(e program.Expr) Value {
 		)
 		return value
 	}
+}
+
+// valueAliasesItems reports whether value's Items slice shares the
+// exact same backing array as target. In other words, it reports
+// whether value is an alias of the array target belongs to. This
+// check catches `arr[idx] = arr` at the point of the write. Comparing
+// lengths plus the address of the first element needs no reflect or
+// unsafe dependency, and it never flags two distinct arrays that
+// merely hold equal contents.
+func valueAliasesItems(value Value, target []Value) bool {
+	items := value.list()
+	if items == nil || len(target) == 0 || len(items) != len(target) {
+		return false
+	}
+	return &items[0] == &target[0]
 }

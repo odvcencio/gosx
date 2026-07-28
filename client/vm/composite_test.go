@@ -38,14 +38,14 @@ func TestOpCompositeStructPositional(t *testing.T) {
 	prog := &program.Program{Exprs: exprs}
 	machine := NewVM(prog, nil)
 	got := machine.Eval(4)
-	if got.Fields == nil {
+	if got.Map() == nil {
 		t.Fatalf("OpComposite struct: Fields nil; got %+v", got)
 	}
-	if got.Fields["X"].Num != 3.5 {
-		t.Errorf("Fields[X] = %f, want 3.5", got.Fields["X"].Num)
+	if got.Map()["X"].num != 3.5 {
+		t.Errorf("Fields[X] = %f, want 3.5", got.Map()["X"].num)
 	}
-	if got.Fields["Y"].Num != 1.25 {
-		t.Errorf("Fields[Y] = %f, want 1.25", got.Fields["Y"].Num)
+	if got.Map()["Y"].num != 1.25 {
+		t.Errorf("Fields[Y] = %f, want 1.25", got.Map()["Y"].num)
 	}
 }
 
@@ -69,11 +69,11 @@ func TestOpCompositeSliceMaterialization(t *testing.T) {
 	prog := &program.Program{Exprs: exprs}
 	machine := NewVM(prog, nil)
 	got := machine.Eval(6)
-	if len(got.Items) != 3 {
-		t.Fatalf("Items length = %d, want 3", len(got.Items))
+	if len(got.List()) != 3 {
+		t.Fatalf("Items length = %d, want 3", len(got.List()))
 	}
-	if got.Items[0].Str != "alpha" || got.Items[2].Str != "gamma" {
-		t.Errorf("Items = %+v, want [alpha beta gamma]", got.Items)
+	if got.List()[0].Text() != "alpha" || got.List()[2].Text() != "gamma" {
+		t.Errorf("Items = %+v, want [alpha beta gamma]", got.List())
 	}
 }
 
@@ -94,11 +94,11 @@ func TestOpCompositeMapMaterialization(t *testing.T) {
 	prog := &program.Program{Exprs: exprs}
 	machine := NewVM(prog, nil)
 	got := machine.Eval(4)
-	if got.Fields == nil || len(got.Fields) != 2 {
-		t.Fatalf("Fields = %+v, want 2 entries", got.Fields)
+	if got.Map() == nil || len(got.Map()) != 2 {
+		t.Fatalf("Fields = %+v, want 2 entries", got.Map())
 	}
-	if got.Fields["x"].Num != 1.5 || got.Fields["y"].Num != 2.5 {
-		t.Errorf("Fields = %+v, want {x:1.5, y:2.5}", got.Fields)
+	if got.Map()["x"].num != 1.5 || got.Map()["y"].num != 2.5 {
+		t.Errorf("Fields = %+v, want {x:1.5, y:2.5}", got.Map())
 	}
 }
 
@@ -112,11 +112,11 @@ func TestOpCompositeEmptyStruct(t *testing.T) {
 	prog := &program.Program{Exprs: exprs}
 	machine := NewVM(prog, nil)
 	got := machine.Eval(0)
-	if got.Fields == nil {
+	if got.Map() == nil {
 		t.Fatalf("empty struct should still allocate Fields, got %+v", got)
 	}
-	if len(got.Fields) != 0 {
-		t.Errorf("empty struct Fields = %d entries, want 0", len(got.Fields))
+	if len(got.Map()) != 0 {
+		t.Errorf("empty struct Fields = %d entries, want 0", len(got.Map()))
 	}
 }
 
@@ -135,7 +135,7 @@ func TestOpCompositeOddOperandsDiagnostic(t *testing.T) {
 	prog := &program.Program{Exprs: exprs}
 	machine := NewVM(prog, nil)
 	got := machine.Eval(1)
-	if got.Fields != nil {
+	if got.Map() != nil {
 		t.Errorf("malformed OpComposite should fall back to zero Any, got %+v", got)
 	}
 	diags := machine.Diagnostics()
@@ -153,7 +153,7 @@ func TestOpCompositeUnknownKindDiagnostic(t *testing.T) {
 	prog := &program.Program{Exprs: exprs}
 	machine := NewVM(prog, nil)
 	got := machine.Eval(0)
-	if got.Fields != nil || got.Items != nil {
+	if got.Map() != nil || got.List() != nil {
 		t.Errorf("unknown OpComposite kind should fall back to zero Any, got %+v", got)
 	}
 	diags := machine.Diagnostics()

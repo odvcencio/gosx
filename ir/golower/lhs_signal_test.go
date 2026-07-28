@@ -8,7 +8,7 @@
 // reads see the new value.
 //
 // **Critical implementation note.** The mutation works because
-// Value.Fields and Value.Items are reference types (map / slice). When
+// Value.Map() and Value.List() are reference types (map / slice). When
 // OpSignalGet returns Value-by-value, the inner Fields map and Items
 // slice still alias the same storage held by the signal. The mutation
 // does NOT call signal.Set(), so signal subscribers are not notified
@@ -51,8 +51,8 @@ func F() float64 {
 	vm.InitSignals(machine, prog)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// 99 + (4 + 5) = 108.
-	if got.Num != 108.0 {
-		t.Errorf("F() = %f, want 108.0", got.Num)
+	if got.Number() != 108.0 {
+		t.Errorf("F() = %f, want 108.0", got.Number())
 	}
 }
 
@@ -85,8 +85,8 @@ func F() float64 {
 	vm.InitSignals(machine, prog)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// 42 + 100 = 142.
-	if got.Num != 142.0 {
-		t.Errorf("F() = %f, want 142.0", got.Num)
+	if got.Number() != 142.0 {
+		t.Errorf("F() = %f, want 142.0", got.Number())
 	}
 }
 
@@ -127,8 +127,8 @@ func Read() float64 {
 	}
 	got := machine.EvalWithFrame(readHandler.Body[0])
 	// X = 0 + 1 + 1 + 1 = 3; Scale = 1 * 2 * 2 * 2 = 8; sum = 11.
-	if got.Num != 11.0 {
-		t.Errorf("Read() after 3 steps = %f, want 11.0", got.Num)
+	if got.Number() != 11.0 {
+		t.Errorf("Read() after 3 steps = %f, want 11.0", got.Number())
 	}
 }
 
@@ -167,8 +167,8 @@ func F() float64 {
 	machine := vm.NewVM(prog, nil)
 	vm.InitSignals(machine, prog)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 15.0 {
-		t.Errorf("F() = %f, want 15.0 (7 + 8)", got.Num)
+	if got.Number() != 15.0 {
+		t.Errorf("F() = %f, want 15.0 (7 + 8)", got.Number())
 	}
 }
 
@@ -195,7 +195,7 @@ func F() float64 {
 	vm.InitSignals(machine, prog)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// 0 + 2 + 4 + 6 = 12.
-	if got.Num != 12.0 {
-		t.Errorf("F() = %f, want 12.0", got.Num)
+	if got.Number() != 12.0 {
+		t.Errorf("F() = %f, want 12.0", got.Number())
 	}
 }

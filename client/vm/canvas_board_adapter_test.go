@@ -518,7 +518,7 @@ func TestCanvasBoardAdapterLifecycleMirrorsSceneAdapter(t *testing.T) {
 
 	sceneVal := scene.EvalExpr(islandprogram.ExprID(0))
 	boardVal := board.EvalExpr(islandprogram.ExprID(0))
-	if sceneVal.Num != boardVal.Num {
+	if sceneVal.num != boardVal.num {
 		t.Errorf("EvalExpr divergence: scene=%v board=%v", sceneVal, boardVal)
 	}
 

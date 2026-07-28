@@ -23,11 +23,11 @@ func TestEvalOpMakeEmptyMap(t *testing.T) {
 	}
 	vm := NewVM(prog, nil)
 	got := vm.Eval(0)
-	if got.Fields == nil {
+	if got.Map() == nil {
 		t.Fatalf("OpMake(map) should return a Value with a non-nil Fields map")
 	}
-	if len(got.Fields) != 0 {
-		t.Errorf("OpMake(map) should be empty; got %d entries", len(got.Fields))
+	if len(got.Map()) != 0 {
+		t.Errorf("OpMake(map) should be empty; got %d entries", len(got.Map()))
 	}
 }
 
@@ -43,11 +43,11 @@ func TestEvalOpMakeSizedSlice(t *testing.T) {
 	}
 	vm := NewVM(prog, nil)
 	got := vm.Eval(1)
-	if got.Items == nil {
+	if got.List() == nil {
 		t.Fatalf("OpMake(slice, 5) should return a Value with a non-nil Items slice")
 	}
-	if len(got.Items) != 5 {
-		t.Errorf("OpMake(slice, 5) len = %d, want 5", len(got.Items))
+	if len(got.List()) != 5 {
+		t.Errorf("OpMake(slice, 5) len = %d, want 5", len(got.List()))
 	}
 }
 
@@ -63,11 +63,11 @@ func TestEvalOpMakeEmptySlice(t *testing.T) {
 	}
 	vm := NewVM(prog, nil)
 	got := vm.Eval(1)
-	if got.Items == nil {
+	if got.List() == nil {
 		t.Errorf("OpMake(slice, 0) should still allocate a non-nil empty slice")
 	}
-	if len(got.Items) != 0 {
-		t.Errorf("OpMake(slice, 0) len = %d, want 0", len(got.Items))
+	if len(got.List()) != 0 {
+		t.Errorf("OpMake(slice, 0) len = %d, want 0", len(got.List()))
 	}
 }
 
@@ -83,8 +83,8 @@ func TestEvalOpMakeNegativeLength(t *testing.T) {
 	}
 	vm := NewVM(prog, nil)
 	got := vm.Eval(1)
-	if len(got.Items) != 0 {
-		t.Errorf("OpMake(slice, -3) should clamp to len=0; got len=%d", len(got.Items))
+	if len(got.List()) != 0 {
+		t.Errorf("OpMake(slice, -3) should clamp to len=0; got len=%d", len(got.List()))
 	}
 	// A diagnostic should have been recorded — the VM's recordExprDiagnostic
 	// surface is internal to the test scope; we verify the safe-output
@@ -101,11 +101,11 @@ func TestEvalOpMakeUnknownKindTag(t *testing.T) {
 	}
 	vm := NewVM(prog, nil)
 	got := vm.Eval(0)
-	if got.Fields != nil {
-		t.Errorf("OpMake(\"chan\") should NOT return a populated Fields map; got %v", got.Fields)
+	if got.Map() != nil {
+		t.Errorf("OpMake(\"chan\") should NOT return a populated Fields map; got %v", got.Map())
 	}
-	if got.Items != nil {
-		t.Errorf("OpMake(\"chan\") should NOT return a populated Items slice; got %v", got.Items)
+	if got.List() != nil {
+		t.Errorf("OpMake(\"chan\") should NOT return a populated Items slice; got %v", got.List())
 	}
 }
 
@@ -123,8 +123,8 @@ func TestEvalOpMakeMapIsFreshAllocation(t *testing.T) {
 	vm := NewVM(prog, nil)
 	a := vm.Eval(0)
 	b := vm.Eval(0)
-	a.Fields["k"] = StringVal("from-a")
-	if _, ok := b.Fields["k"]; ok {
+	a.Map()["k"] = StringVal("from-a")
+	if _, ok := b.Map()["k"]; ok {
 		t.Errorf("each OpMake(map) eval must allocate a fresh Fields map; got aliased storage")
 	}
 }

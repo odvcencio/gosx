@@ -2,6 +2,7 @@ package vm
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"sync"
@@ -16,15 +17,25 @@ type VM struct {
 	props          map[string]Value
 	signals        map[string]*signal.Signal[Value]
 	exprs          []program.Expr
+	lits           []litSlot                   // numeric literals decoded once, indexed by ExprID
 	eventData      map[string]string           // current event data (set during handler dispatch)
 	frame          *frame                      // locals table for the current handler evaluation (X.A)
-	forCap         int                         // per-loop iteration cap (X.C); 0 → default
+	forCap         int                         // per-loop AND per-dispatch total iteration cap (X.C, loops.go); 0 → default
 	funcs          map[string]*program.FuncDef // user-function registry (Y.D)
 	callDepth      int                         // current OpIndirectCall recursion depth (Y.D)
+	evalDepth      int                         // current Eval recursion depth, guards the general (non-call) recursion path
+	loopSteps      int                         // total OpFor / OpForRange iterations charged in the current top-level dispatch
+	loopBudgetHit  bool                        // sticky once loopSteps exceeds its budget, so every nested loop level stops
 	hosts          map[string]HostReceiver     // per-VM host-receiver bindings for OpHostCall (Y.E)
 	hostsMu        sync.RWMutex                // guards hosts: BindHost may run on a teardown goroutine concurrently with LookupHost / dispatch
 	diagnostics    []Diagnostic
 	diagnosticSink DiagnosticSink
+
+	// reuse carries the subtree-reuse context for the current EvalTree
+	// call. The Island sets it before the walk and clears it after, so a
+	// direct EvalTree caller sees the original full-evaluation behaviour.
+	// nil means "evaluate every node". See reuse.go.
+	reuse *treeReuse
 }
 
 type iterationContext struct {
@@ -68,6 +79,7 @@ func NewVM(prog *program.Program, props map[string]Value) *VM {
 		return vm
 	}
 	vm.exprs = prog.Exprs
+	vm.lits = buildLiteralTable(prog.Exprs)
 	// Slice Y.D: build a fast funcDef lookup so OpIndirectCall is one
 	// map probe. Programs without user functions (Funcs nil/empty)
 	// pay nothing — the map stays nil and the dispatcher records the
@@ -127,6 +139,7 @@ func (vm *VM) SwapProgram(p *program.Program) {
 	// its funcs releases the old map).
 	vm.program = p
 	vm.exprs = p.Exprs
+	vm.lits = buildLiteralTable(p.Exprs)
 	vm.funcs = nil
 	if len(p.Funcs) > 0 {
 		vm.funcs = make(map[string]*program.FuncDef, len(p.Funcs))
@@ -179,6 +192,18 @@ func (vm *VM) DeleteProp(name string) {
 	delete(vm.props, name)
 }
 
+// maxEvalDepth bounds Eval's own recursion. Program.MaxCallDepth
+// (Y.D) only guards OpIndirectCall and closure dispatch. A
+// self-referential or pathologically deep expression graph instead
+// reaches Eval through ordinary operand recursion, with no call
+// boundary at all. Examples include evalBinary, OpCond, and OpSeq.
+// This path needs its own, independent cap.
+//
+// The cap is generous relative to the deepest legitimate
+// call/expression nesting seen in the test suite. It still sits far
+// below the depth that would exhaust the goroutine stack.
+const maxEvalDepth = 10000
+
 // Eval evaluates an expression by ID and returns its value. The VM keeps its
 // panic-free contract: malformed programs produce zero values and structured
 // diagnostics instead of panics.
@@ -192,67 +217,167 @@ func (vm *VM) Eval(id program.ExprID) Value {
 		})
 		return ZeroValue(program.TypeAny)
 	}
-	return vm.evalExpr(vm.exprs[id])
+	// evalDepth == 0 marks the start of a fresh top-level dispatch: a
+	// call from EvalWithFrame, EvalTree, or a direct Eval by a host.
+	// Reset the loop step budget here. This bounds the total OpFor /
+	// OpForRange work for THIS dispatch, not for every dispatch the
+	// VM ever runs.
+	if vm.evalDepth == 0 {
+		vm.loopSteps = 0
+		vm.loopBudgetHit = false
+	}
+	if vm.evalDepth >= maxEvalDepth {
+		vm.recordExprDiagnostic(
+			"eval_depth_exceeded",
+			fmt.Sprintf("Eval recursion exceeded depth cap %d; aborting to avoid a stack overflow", maxEvalDepth),
+			vm.exprs[id].Op,
+			vm.exprs[id].Value,
+		)
+		return ZeroValue(program.TypeAny)
+	}
+	// Numeric literals answer straight from the table built at program load.
+	// A loop body re-evaluates the same literal once per iteration, so this
+	// removes up to one strconv parse per iteration. Literals recurse into
+	// nothing, so they need no depth charge.
+	if int(id) < len(vm.lits) {
+		if slot := vm.lits[id]; slot.kind != litNone {
+			return vm.decodedLiteral(id, slot)
+		}
+	}
+	vm.evalDepth++
+	v := vm.evalExpr(&vm.exprs[id])
+	vm.evalDepth--
+	return v
 }
 
-func (vm *VM) evalExpr(e program.Expr) Value {
-	if value, ok := vm.evalLiteralExpr(e); ok {
-		return value
+// evalExpr routes one expression to its handler.
+//
+// Dispatch is a single switch on the opcode. It replaced a chain of nineteen
+// "try this opcode family, else try the next" calls, which charged a late
+// opcode up to eighteen extra calls and switches before it reached its own
+// handler. The Expr arrives by pointer: the struct is 56 bytes, and the old
+// chain copied it once per stage.
+func (vm *VM) evalExpr(e *program.Expr) Value {
+	switch e.Op {
+	// --- literals ---
+	case program.OpLitString:
+		return StringVal(e.Value)
+	case program.OpLitInt:
+		return vm.parseIntLiteral(e)
+	case program.OpLitFloat:
+		return vm.parseFloatLiteral(e)
+	case program.OpLitBool:
+		return BoolVal(e.Value == "true")
+
+	// --- props, signals, event data ---
+	case program.OpPropGet:
+		return vm.propValue(e.Value, e.Type)
+	case program.OpSignalGet:
+		return vm.signalValue(e.Value, e.Type)
+	case program.OpSignalSet, program.OpSignalUpdate:
+		return vm.updateSignal(e)
+	case program.OpEventGet:
+		return vm.eventValue(e.Value)
+
+	// --- two-operand arithmetic, comparison, boolean and string joins ---
+	case program.OpAdd, program.OpSub, program.OpMul, program.OpDiv,
+		program.OpMod, program.OpEq, program.OpNeq, program.OpLt,
+		program.OpGt, program.OpLte, program.OpGte, program.OpAnd,
+		program.OpOr, program.OpConcat:
+		return vm.evalBinaryOp(e)
+
+	// --- one-operand negation, conversion and string case/trim ---
+	case program.OpNeg, program.OpNot, program.OpToUpper, program.OpToLower,
+		program.OpTrim, program.OpToString, program.OpToInt, program.OpToFloat:
+		return vm.evalUnaryOp(e)
+
+	// --- formatting and control flow ---
+	case program.OpFormat:
+		return vm.formatValue(e)
+	case program.OpCond:
+		return vm.conditionalValue(e)
+	case program.OpCall:
+		return vm.callValue(e)
+
+	// --- collections ---
+	case program.OpIndex:
+		return vm.indexValue(e)
+	case program.OpLen:
+		return vm.lenValue(e)
+	case program.OpRange:
+		return ZeroValue(program.TypeAny)
+	case program.OpMap:
+		return vm.mapValue(e)
+	case program.OpFilter:
+		return vm.filterValue(e)
+	case program.OpFind:
+		return vm.findValue(e)
+	case program.OpSlice:
+		return vm.sliceValue(e)
+	case program.OpAppend:
+		return vm.appendValue(e)
+	case program.OpContains:
+		return vm.containsValue(e)
+
+	// --- string methods with extra operands ---
+	case program.OpSplit:
+		return vm.splitValue(e)
+	case program.OpJoin:
+		return vm.joinValue(e)
+	case program.OpReplace:
+		return vm.replaceValue(e)
+	case program.OpSubstring:
+		return vm.substringValue(e)
+	case program.OpStartsWith:
+		return vm.startsWithValue(e)
+	case program.OpEndsWith:
+		return vm.endsWithValue(e)
+	case program.OpToRunes:
+		return vm.toRunesValue(e)
+
+	// --- statement sequencing and locals (Slice X.A) ---
+	case program.OpSeq:
+		return vm.seqValue(e)
+	case program.OpAssign:
+		return vm.assignValue(e)
+	case program.OpLocalDecl:
+		return vm.localDeclValue(e)
+	case program.OpLocalGet:
+		return vm.localGetValue(e)
+	case program.OpLocalSet:
+		return vm.localSetValue(e)
+
+	// --- imperative iteration and control exits (Slice X.C) ---
+	case program.OpFor:
+		return vm.forValue(e)
+	case program.OpForRange:
+		return vm.forRangeValue(e)
+	case program.OpReturn:
+		return vm.returnValue(e)
+	case program.OpBreak:
+		return Value{}.WithControl(ControlBreak)
+	case program.OpContinue:
+		return Value{}.WithControl(ControlContinue)
+
+	// --- composites, lookups, in-place writes, calls (Slices Y.A–Y.G) ---
+	case program.OpComposite:
+		return vm.compositeValue(e)
+	case program.OpMapLookup:
+		return vm.mapLookupValue(e)
+	case program.OpFieldSet:
+		return vm.fieldSetValue(e)
+	case program.OpIndexSet:
+		return vm.indexSetValue(e)
+	case program.OpIndirectCall:
+		return vm.indirectCallValue(e)
+	case program.OpMake:
+		return vm.makeValue(e)
+	case program.OpHostCall:
+		return vm.hostCallValue(e)
+	case program.OpClosure:
+		return vm.closureValue(e)
 	}
-	if value, ok := vm.evalAccessExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalArithmeticExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalComparisonExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalBooleanExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalStringExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalControlExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalCollectionExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalIterationExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalStringMethodExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalConversionExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalSequencingExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalCompositeExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalMapLookupExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalLHSSetExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalIndirectCallExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalMakeExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalHostCallExpr(e); ok {
-		return value
-	}
-	if value, ok := vm.evalClosureExpr(e); ok {
-		return value
-	}
+
 	vm.recordExprDiagnostic(
 		"unknown_opcode",
 		fmt.Sprintf("unknown island VM opcode %d", e.Op),
@@ -278,10 +403,7 @@ func (vm *VM) evalExpr(e program.Expr) Value {
 //
 // Unknown kind tags record an "invalid_composite" diagnostic and fall
 // back to the zero Any value so the VM's panic-free contract holds.
-func (vm *VM) evalCompositeExpr(e program.Expr) (Value, bool) {
-	if e.Op != program.OpComposite {
-		return Value{}, false
-	}
+func (vm *VM) compositeValue(e *program.Expr) Value {
 	if len(e.Operands)%2 != 0 {
 		vm.recordExprDiagnostic(
 			"invalid_composite",
@@ -289,15 +411,15 @@ func (vm *VM) evalCompositeExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
 	switch {
 	case e.Value == "slice":
-		return vm.compositeSlice(e), true
+		return vm.compositeSlice(e)
 	case e.Value == "map":
-		return vm.compositeMap(e), true
+		return vm.compositeMap(e)
 	case len(e.Value) >= 7 && e.Value[:7] == "struct:":
-		return vm.compositeStruct(e), true
+		return vm.compositeStruct(e)
 	default:
 		vm.recordExprDiagnostic(
 			"invalid_composite",
@@ -305,7 +427,7 @@ func (vm *VM) evalCompositeExpr(e program.Expr) (Value, bool) {
 			e.Op,
 			e.Value,
 		)
-		return ZeroValue(program.TypeAny), true
+		return ZeroValue(program.TypeAny)
 	}
 }
 
@@ -313,7 +435,7 @@ func (vm *VM) evalCompositeExpr(e program.Expr) (Value, bool) {
 // (keyExpr, valueExpr) operand pairs. Keys must evaluate to strings —
 // the lowerer always emits OpLitString for them, so this is a near-
 // noop string read at runtime.
-func (vm *VM) compositeStruct(e program.Expr) Value {
+func (vm *VM) compositeStruct(e *program.Expr) Value {
 	fields := make(map[string]Value, len(e.Operands)/2)
 	for i := 0; i < len(e.Operands); i += 2 {
 		key := vm.Eval(e.Operands[i]).String()
@@ -326,7 +448,7 @@ func (vm *VM) compositeStruct(e program.Expr) Value {
 // each (indexExpr, valueExpr) operand pair. The index operand is
 // evaluated for side effects but its result is discarded — items
 // land in the slice in pair order.
-func (vm *VM) compositeSlice(e program.Expr) Value {
+func (vm *VM) compositeSlice(e *program.Expr) Value {
 	items := make([]Value, 0, len(e.Operands)/2)
 	for i := 0; i < len(e.Operands); i += 2 {
 		// Evaluate the index expr for any side effects (typically a literal).
@@ -339,7 +461,7 @@ func (vm *VM) compositeSlice(e program.Expr) Value {
 // compositeMap materializes a map Value whose Fields keys are each
 // pair's evaluated key (stringified through Value.String). Duplicate
 // keys are last-wins, matching Go's map literal evaluation order.
-func (vm *VM) compositeMap(e program.Expr) Value {
+func (vm *VM) compositeMap(e *program.Expr) Value {
 	fields := make(map[string]Value, len(e.Operands)/2)
 	for i := 0; i < len(e.Operands); i += 2 {
 		key := vm.Eval(e.Operands[i]).String()
@@ -348,7 +470,7 @@ func (vm *VM) compositeMap(e program.Expr) Value {
 	return ObjectVal(fields)
 }
 
-// evalMapLookupExpr dispatches the Slice Y.B two-value map lookup
+// mapLookupValue evaluates the Slice Y.B two-value map lookup
 // opcode. OpMapLookup mirrors Go's comma-ok form (`v, ok := m[k]`) by
 // returning an ObjectVal with "value" and "ok" fields so the lowerer
 // can extract each binding via two OpIndex reads against the result.
@@ -362,19 +484,16 @@ func (vm *VM) compositeMap(e program.Expr) Value {
 //   - key present  → {"value": <stored>, "ok": true}
 //   - key absent   → {"value": <zero Any>, "ok": false}
 //   - non-map LHS  → {"value": <zero Any>, "ok": false} + diagnostic
-func (vm *VM) evalMapLookupExpr(e program.Expr) (Value, bool) {
-	if e.Op != program.OpMapLookup {
-		return Value{}, false
-	}
+func (vm *VM) mapLookupValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 2) {
 		return ObjectVal(map[string]Value{
 			"value": ZeroValue(program.TypeAny),
 			"ok":    BoolVal(false),
-		}), true
+		})
 	}
 	coll := vm.Eval(e.Operands[0])
 	key := vm.Eval(e.Operands[1]).String()
-	if coll.Fields == nil {
+	if !coll.isMap() {
 		// Non-map collection — diagnose and yield the zero/false pair so
 		// downstream OpIndex reads still resolve to safe defaults.
 		vm.recordExprDiagnostic(
@@ -386,61 +505,29 @@ func (vm *VM) evalMapLookupExpr(e program.Expr) (Value, bool) {
 		return ObjectVal(map[string]Value{
 			"value": ZeroValue(program.TypeAny),
 			"ok":    BoolVal(false),
-		}), true
+		})
 	}
-	if got, ok := coll.Fields[key]; ok {
+	if got, ok := coll.dict()[key]; ok {
 		return ObjectVal(map[string]Value{
 			"value": got,
 			"ok":    BoolVal(true),
-		}), true
+		})
 	}
 	return ObjectVal(map[string]Value{
 		"value": ZeroValue(program.TypeAny),
 		"ok":    BoolVal(false),
-	}), true
-}
-
-// evalSequencingExpr dispatches the Slice X.A statement-sequencing opcodes:
-// OpSeq, OpAssign, OpLocalDecl, OpLocalGet, OpLocalSet, plus the Slice X.C
-// imperative iteration opcodes OpFor and OpForRange. These let a Program
-// carry multi-statement handler bodies as a single Expr tree.
-func (vm *VM) evalSequencingExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpSeq:
-		return vm.seqValue(e), true
-	case program.OpAssign:
-		return vm.assignValue(e), true
-	case program.OpLocalDecl:
-		return vm.localDeclValue(e), true
-	case program.OpLocalGet:
-		return vm.localGetValue(e), true
-	case program.OpLocalSet:
-		return vm.localSetValue(e), true
-	case program.OpFor:
-		return vm.forValue(e), true
-	case program.OpForRange:
-		return vm.forRangeValue(e), true
-	case program.OpReturn:
-		return vm.returnValue(e), true
-	case program.OpBreak:
-		return Value{Control: ControlBreak}, true
-	case program.OpContinue:
-		return Value{Control: ControlContinue}, true
-	default:
-		return Value{}, false
-	}
+	})
 }
 
 // returnValue evaluates Operands[0] (or yields zero when absent) and
 // marks the result with ControlReturn so OpSeq and EvalWithFrame can
 // unwind to the handler boundary.
-func (vm *VM) returnValue(e program.Expr) Value {
+func (vm *VM) returnValue(e *program.Expr) Value {
 	var payload Value
 	if len(e.Operands) > 0 {
 		payload = vm.Eval(e.Operands[0])
 	}
-	payload.Control = ControlReturn
-	return payload
+	return payload.WithControl(ControlReturn)
 }
 
 // seqValue evaluates each operand in order and returns the last one's
@@ -451,14 +538,14 @@ func (vm *VM) returnValue(e program.Expr) Value {
 // If any operand returns a Control signal (return / break / continue
 // from X.C), evaluation stops and the signal propagates up; the
 // enclosing loop or EvalWithFrame is responsible for catching it.
-func (vm *VM) seqValue(e program.Expr) Value {
+func (vm *VM) seqValue(e *program.Expr) Value {
 	if len(e.Operands) == 0 {
 		return ZeroValue(program.TypeAny)
 	}
 	var last Value
 	for _, op := range e.Operands {
 		last = vm.Eval(op)
-		if last.Control != ControlNone {
+		if last.Control() != ControlNone {
 			return last
 		}
 	}
@@ -474,7 +561,7 @@ func (vm *VM) seqValue(e program.Expr) Value {
 //  4. with no frame and no signal — diagnostic and zero return.
 //
 // Returns the assigned value so OpSeq sequences can chain assignments.
-func (vm *VM) assignValue(e program.Expr) Value {
+func (vm *VM) assignValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 1) {
 		return ZeroValue(program.TypeAny)
 	}
@@ -499,7 +586,7 @@ func (vm *VM) assignValue(e program.Expr) Value {
 // localDeclValue reserves a slot in the current frame. Re-declarations
 // are no-ops so the lowerer can emit OpLocalDecl idempotently. Returns
 // the zero Value of TypeAny.
-func (vm *VM) localDeclValue(e program.Expr) Value {
+func (vm *VM) localDeclValue(e *program.Expr) Value {
 	if vm.frame == nil {
 		vm.recordExprDiagnostic(
 			"missing_frame",
@@ -523,7 +610,7 @@ func (vm *VM) localDeclValue(e program.Expr) Value {
 //
 // Only when none of the tiers contain the name does the VM record a
 // missing_local diagnostic and return the zero value.
-func (vm *VM) localGetValue(e program.Expr) Value {
+func (vm *VM) localGetValue(e *program.Expr) Value {
 	if v, ok := vm.frame.get(e.Value); ok {
 		return v
 	}
@@ -545,7 +632,7 @@ func (vm *VM) localGetValue(e program.Expr) Value {
 // localSetValue writes Operands[0] to the local named in Value. Unlike
 // OpAssign, OpLocalSet never falls through to signals; the lowerer
 // emits it only when the target is known to be a local.
-func (vm *VM) localSetValue(e program.Expr) Value {
+func (vm *VM) localSetValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 1) {
 		return ZeroValue(program.TypeAny)
 	}
@@ -578,222 +665,231 @@ func (vm *VM) EvalWithFrame(id program.ExprID) Value {
 	vm.frame = newFrame()
 	defer func() { vm.frame = prev }()
 	v := vm.Eval(id)
-	if v.Control == ControlReturn {
-		v.Control = ControlNone
+	if v.Control() == ControlReturn {
+		return v.WithControl(ControlNone)
 	}
 	return v
 }
 
-func (vm *VM) evalLiteralExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpLitString:
-		return StringVal(e.Value), true
-	case program.OpLitInt:
-		n, err := strconv.ParseInt(e.Value, 10, 64)
-		if err != nil {
-			vm.recordExprDiagnostic("invalid_int_literal", fmt.Sprintf("invalid integer literal %q: %v", e.Value, err), e.Op, e.Value)
-			return ZeroValue(program.TypeInt), true
-		}
-		return IntVal(int(n)), true
-	case program.OpLitFloat:
-		f, err := strconv.ParseFloat(e.Value, 64)
-		if err != nil {
-			vm.recordExprDiagnostic("invalid_float_literal", fmt.Sprintf("invalid float literal %q: %v", e.Value, err), e.Op, e.Value)
-			return ZeroValue(program.TypeFloat), true
-		}
-		return FloatVal(f), true
-	case program.OpLitBool:
-		return BoolVal(e.Value == "true"), true
-	default:
-		return Value{}, false
-	}
+// litKind tags a slot in the pre-decoded numeric literal table.
+type litKind uint8
+
+const (
+	litNone  litKind = iota // the expression is not a numeric literal
+	litInt                  // OpLitInt whose text parsed
+	litFloat                // OpLitFloat whose text parsed
+	litBad                  // numeric literal whose text does not parse
+)
+
+// litSlot caches the decoded form of one OpLitInt or OpLitFloat expression.
+type litSlot struct {
+	num  float64
+	kind litKind
 }
 
-func (vm *VM) evalAccessExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpPropGet:
-		return vm.propValue(e.Value, e.Type), true
-	case program.OpSignalGet:
-		return vm.signalValue(e.Value, e.Type), true
-	case program.OpSignalSet, program.OpSignalUpdate:
-		return vm.updateSignal(e), true
-	case program.OpEventGet:
-		return vm.eventValue(e.Value), true
-	default:
-		return Value{}, false
+// buildLiteralTable decodes every numeric literal in the expression table once,
+// at program load.
+//
+// A tree-walking VM re-evaluates the same literal expression on every visit, so
+// a loop bounded at 1<<20 paid up to a million strconv calls for one literal.
+// The table is indexed by ExprID and stops after the last numeric literal, so a
+// program with none allocates nothing.
+func buildLiteralTable(exprs []program.Expr) []litSlot {
+	last := -1
+	for i := range exprs {
+		switch exprs[i].Op {
+		case program.OpLitInt, program.OpLitFloat:
+			last = i
+		}
 	}
+	if last < 0 {
+		return nil
+	}
+	table := make([]litSlot, last+1)
+	for i := 0; i <= last; i++ {
+		switch exprs[i].Op {
+		case program.OpLitInt:
+			n, err := strconv.ParseInt(exprs[i].Value, 10, 64)
+			if err != nil {
+				table[i] = litSlot{kind: litBad}
+				continue
+			}
+			// Match IntVal(int(n)) exactly, including its narrowing.
+			table[i] = litSlot{num: float64(int(n)), kind: litInt}
+		case program.OpLitFloat:
+			f, err := strconv.ParseFloat(exprs[i].Value, 64)
+			if err != nil {
+				table[i] = litSlot{kind: litBad}
+				continue
+			}
+			table[i] = litSlot{num: f, kind: litFloat}
+		}
+	}
+	return table
 }
 
-func (vm *VM) evalArithmeticExpr(e program.Expr) (Value, bool) {
+// decodedLiteral turns a pre-decoded slot into a Value. A slot that failed to
+// parse falls back to the parsing path, which records the diagnostic naming the
+// offending text.
+func (vm *VM) decodedLiteral(id program.ExprID, slot litSlot) Value {
+	switch slot.kind {
+	case litInt:
+		return Value{Type: program.TypeInt, num: slot.num}
+	case litFloat:
+		return Value{Type: program.TypeFloat, num: slot.num}
+	}
+	e := &vm.exprs[id]
+	if e.Op == program.OpLitFloat {
+		return vm.parseFloatLiteral(e)
+	}
+	return vm.parseIntLiteral(e)
+}
+
+// parseIntLiteral decodes an OpLitInt from its text. Eval normally answers from
+// the pre-decoded table; this path serves synthetic expressions that carry no
+// ExprID and literals whose text is invalid.
+func (vm *VM) parseIntLiteral(e *program.Expr) Value {
+	n, err := strconv.ParseInt(e.Value, 10, 64)
+	if err != nil {
+		vm.recordExprDiagnostic("invalid_int_literal", fmt.Sprintf("invalid integer literal %q: %v", e.Value, err), e.Op, e.Value)
+		return ZeroValue(program.TypeInt)
+	}
+	return IntVal(int(n))
+}
+
+// parseFloatLiteral decodes an OpLitFloat from its text. See parseIntLiteral.
+func (vm *VM) parseFloatLiteral(e *program.Expr) Value {
+	f, err := strconv.ParseFloat(e.Value, 64)
+	if err != nil {
+		vm.recordExprDiagnostic("invalid_float_literal", fmt.Sprintf("invalid float literal %q: %v", e.Value, err), e.Op, e.Value)
+		return ZeroValue(program.TypeFloat)
+	}
+	return FloatVal(f)
+}
+
+// evalBinaryOp evaluates both operands once, then applies the opcode.
+//
+// The previous shape passed a method value (Value.Add and friends) into a
+// generic helper, which forced an indirect call and an extra Value copy on
+// every arithmetic step.
+func (vm *VM) evalBinaryOp(e *program.Expr) Value {
+	if !vm.requireOperands(e, 2) {
+		return ZeroValue(program.TypeAny)
+	}
+	left := vm.Eval(e.Operands[0])
+	right := vm.Eval(e.Operands[1])
 	switch e.Op {
 	case program.OpAdd:
-		return vm.evalBinary(e, Value.Add), true
+		return left.Add(right)
 	case program.OpSub:
-		return vm.evalBinary(e, Value.Sub), true
+		return left.Sub(right)
 	case program.OpMul:
-		return vm.evalBinary(e, Value.Mul), true
+		return left.Mul(right)
 	case program.OpDiv:
-		return vm.evalBinary(e, Value.Div), true
+		return left.Div(right)
 	case program.OpMod:
-		return vm.evalBinary(e, Value.Mod), true
-	case program.OpNeg:
-		return vm.evalUnary(e, Value.Neg, program.TypeInt), true
-	default:
-		return Value{}, false
-	}
-}
-
-func (vm *VM) evalComparisonExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
+		return left.Mod(right)
 	case program.OpEq:
-		return vm.evalBinary(e, Value.Eq), true
+		return left.Eq(right)
 	case program.OpNeq:
-		return vm.evalBinary(e, Value.Neq), true
+		return left.Neq(right)
 	case program.OpLt:
-		return vm.evalBinary(e, Value.Lt), true
+		return left.Lt(right)
 	case program.OpGt:
-		return vm.evalBinary(e, Value.Gt), true
+		return left.Gt(right)
 	case program.OpLte:
-		return vm.evalBinary(e, Value.Lte), true
+		return left.Lte(right)
 	case program.OpGte:
-		return vm.evalBinary(e, Value.Gte), true
-	default:
-		return Value{}, false
-	}
-}
-
-func (vm *VM) evalBooleanExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
+		return left.Gte(right)
 	case program.OpAnd:
-		return vm.evalBinary(e, Value.And), true
+		return left.And(right)
 	case program.OpOr:
-		return vm.evalBinary(e, Value.Or), true
+		return left.Or(right)
+	default: // program.OpConcat
+		return left.Concat(right)
+	}
+}
+
+// evalUnaryOp evaluates the single operand once, then applies the opcode. A
+// missing operand yields the zero value the opcode's result type expects.
+func (vm *VM) evalUnaryOp(e *program.Expr) Value {
+	if !vm.requireOperands(e, 1) {
+		return unaryFallback(e.Op)
+	}
+	operand := vm.Eval(e.Operands[0])
+	switch e.Op {
+	case program.OpNeg:
+		return operand.Neg()
 	case program.OpNot:
-		return vm.evalUnary(e, Value.Not, program.TypeBool), true
-	default:
-		return Value{}, false
-	}
-}
-
-func (vm *VM) evalStringExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpConcat:
-		return vm.evalBinary(e, Value.Concat), true
-	case program.OpFormat:
-		return vm.formatValue(e), true
-	default:
-		return Value{}, false
-	}
-}
-
-func (vm *VM) evalControlExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpCond:
-		return vm.conditionalValue(e), true
-	case program.OpCall:
-		// Slice X.B: OpCall first tries the stdlib intrinsic registry
-		// (math.Sin, strings.Split, ...). Unknown callee names fall back
-		// to the existing zero-Value behavior so legacy programs that
-		// never registered an intrinsic keep evaluating identically.
-		//
-		// sort.Slice is dispatched via a dedicated path because its
-		// comparator operand is a body expression that must be
-		// re-evaluated for each comparison, not pre-evaluated once.
-		if e.Value == "sort.Slice" {
-			return vm.sortSliceValue(e), true
-		}
-		if v, ok := vm.callIntrinsic(e); ok {
-			return v, true
-		}
-		return ZeroValue(program.TypeAny), true
-	default:
-		return Value{}, false
-	}
-}
-
-func (vm *VM) evalCollectionExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpIndex:
-		return vm.indexValue(e), true
-	case program.OpLen:
-		return vm.lenValue(e), true
-	case program.OpRange:
-		return ZeroValue(program.TypeAny), true
-	default:
-		return Value{}, false
-	}
-}
-
-func (vm *VM) evalIterationExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpMap:
-		return vm.mapValue(e), true
-	case program.OpFilter:
-		return vm.filterValue(e), true
-	case program.OpFind:
-		return vm.findValue(e), true
-	case program.OpSlice:
-		return vm.sliceValue(e), true
-	case program.OpAppend:
-		return vm.appendValue(e), true
-	case program.OpContains:
-		return vm.containsValue(e), true
-	default:
-		return Value{}, false
-	}
-}
-
-func (vm *VM) evalStringMethodExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
+		return operand.Not()
 	case program.OpToUpper:
-		return vm.stringUnary(e, Value.ToUpper, StringVal("")), true
+		return operand.ToUpper()
 	case program.OpToLower:
-		return vm.stringUnary(e, Value.ToLower, StringVal("")), true
+		return operand.ToLower()
 	case program.OpTrim:
-		return vm.stringUnary(e, Value.TrimVal, StringVal("")), true
-	case program.OpSplit:
-		return vm.splitValue(e), true
-	case program.OpJoin:
-		return vm.joinValue(e), true
-	case program.OpReplace:
-		return vm.replaceValue(e), true
-	case program.OpSubstring:
-		return vm.substringValue(e), true
-	case program.OpStartsWith:
-		return vm.startsWithValue(e), true
-	case program.OpEndsWith:
-		return vm.endsWithValue(e), true
-	default:
-		return Value{}, false
+		return operand.TrimVal()
+	case program.OpToString:
+		return operand.ToStringVal()
+	case program.OpToInt:
+		return operand.ToIntVal()
+	default: // program.OpToFloat
+		return operand.ToFloatVal()
 	}
 }
 
-func (vm *VM) evalConversionExpr(e program.Expr) (Value, bool) {
-	switch e.Op {
-	case program.OpToString:
-		return vm.stringUnary(e, Value.ToStringVal, StringVal("")), true
+// unaryFallback returns the value a one-operand opcode yields when its operand
+// is missing.
+func unaryFallback(op program.OpCode) Value {
+	switch op {
+	case program.OpNeg:
+		return ZeroValue(program.TypeInt)
+	case program.OpNot:
+		return ZeroValue(program.TypeBool)
 	case program.OpToInt:
-		return vm.intUnary(e, Value.ToIntVal), true
+		return IntVal(0)
 	case program.OpToFloat:
-		return vm.floatUnary(e, Value.ToFloatVal), true
-	case program.OpToRunes:
-		// Slice Y.E.3: `[]rune(s)` / `[]byte(s)` — convert a string
-		// into an ArrayVal whose Items are one-rune StringVals. Reading
-		// len() returns the rune count; slicing returns a rune
-		// subsequence; OpToString concatenates back to a string via
-		// the ToStringVal join path.
-		if !vm.requireOperands(e, 1) {
-			return ArrayVal(nil), true
-		}
-		src := vm.Eval(e.Operands[0]).Str
-		items := make([]Value, 0, len(src))
-		for _, r := range src {
-			items = append(items, StringVal(string(r)))
-		}
-		return ArrayVal(items), true
-	default:
-		return Value{}, false
+		return FloatVal(0)
+	default: // OpToUpper, OpToLower, OpTrim, OpToString
+		return StringVal("")
 	}
+}
+
+// callValue evaluates OpCall.
+//
+// Slice X.B: OpCall first tries the stdlib intrinsic registry (math.Sin,
+// strings.Split, ...). Unknown callee names fall back to the zero Value so
+// legacy programs that never registered an intrinsic keep evaluating
+// identically.
+//
+// sort.Slice takes a dedicated path because its comparator operand is a body
+// expression that must be re-evaluated for each comparison, not pre-evaluated
+// once.
+func (vm *VM) callValue(e *program.Expr) Value {
+	if e.Value == "sort.Slice" {
+		return vm.sortSliceValue(e)
+	}
+	if v, ok := vm.callIntrinsic(e); ok {
+		return v
+	}
+	return ZeroValue(program.TypeAny)
+}
+
+// toRunesValue evaluates OpToRunes.
+//
+// Slice Y.E.3: `[]rune(s)` / `[]byte(s)` — convert a string into an ArrayVal
+// whose Items are one-rune StringVals. Reading len() returns the rune count;
+// slicing returns a rune subsequence; OpToString concatenates back to a string
+// via the ToStringVal join path.
+func (vm *VM) toRunesValue(e *program.Expr) Value {
+	if !vm.requireOperands(e, 1) {
+		return ArrayVal(nil)
+	}
+	src := vm.Eval(e.Operands[0]).Text()
+	items := make([]Value, 0, len(src))
+	for _, r := range src {
+		items = append(items, StringVal(string(r)))
+	}
+	return ArrayVal(items)
 }
 
 func (vm *VM) propValue(name string, typ program.ExprType) Value {
@@ -810,7 +906,7 @@ func (vm *VM) signalValue(name string, typ program.ExprType) Value {
 	return ZeroValue(typ)
 }
 
-func (vm *VM) updateSignal(e program.Expr) Value {
+func (vm *VM) updateSignal(e *program.Expr) Value {
 	if !vm.requireOperands(e, 1) {
 		return ZeroValue(program.TypeAny)
 	}
@@ -831,35 +927,7 @@ func (vm *VM) eventValue(name string) Value {
 	return StringVal("")
 }
 
-func (vm *VM) evalUnary(e program.Expr, fn func(Value) Value, fallback program.ExprType) Value {
-	if vm.requireOperands(e, 1) {
-		return fn(vm.Eval(e.Operands[0]))
-	}
-	return ZeroValue(fallback)
-}
-
-func (vm *VM) stringUnary(e program.Expr, fn func(Value) Value, fallback Value) Value {
-	if vm.requireOperands(e, 1) {
-		return fn(vm.Eval(e.Operands[0]))
-	}
-	return fallback
-}
-
-func (vm *VM) intUnary(e program.Expr, fn func(Value) Value) Value {
-	if vm.requireOperands(e, 1) {
-		return fn(vm.Eval(e.Operands[0]))
-	}
-	return IntVal(0)
-}
-
-func (vm *VM) floatUnary(e program.Expr, fn func(Value) Value) Value {
-	if vm.requireOperands(e, 1) {
-		return fn(vm.Eval(e.Operands[0]))
-	}
-	return FloatVal(0)
-}
-
-func (vm *VM) formatValue(e program.Expr) Value {
+func (vm *VM) formatValue(e *program.Expr) Value {
 	result := e.Value
 	for _, op := range e.Operands {
 		result += vm.Eval(op).String()
@@ -867,62 +935,88 @@ func (vm *VM) formatValue(e program.Expr) Value {
 	return StringVal(result)
 }
 
-func (vm *VM) conditionalValue(e program.Expr) Value {
+func (vm *VM) conditionalValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 3) {
 		return ZeroValue(program.TypeAny)
 	}
-	if vm.Eval(e.Operands[0]).Bool {
+	if vm.Eval(e.Operands[0]).Truth() {
 		return vm.Eval(e.Operands[1])
 	}
 	return vm.Eval(e.Operands[2])
 }
 
-func (vm *VM) indexValue(e program.Expr) Value {
+func (vm *VM) indexValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).IndexVal(vm.Eval(e.Operands[1]))
 	}
 	return ZeroValue(program.TypeAny)
 }
 
-func (vm *VM) lenValue(e program.Expr) Value {
+func (vm *VM) lenValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 1) {
 		return IntVal(vm.Eval(e.Operands[0]).Len())
 	}
 	return IntVal(0)
 }
 
-func (vm *VM) mapValue(e program.Expr) Value {
+func (vm *VM) mapValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 2) {
 		return ArrayVal(nil)
 	}
 	coll := vm.Eval(e.Operands[0])
-	return ArrayVal(vm.mapItems(coll.Items, e.Operands[1]))
+	return ArrayVal(vm.mapItems(coll.list(), e.Operands[1]))
 }
 
-func (vm *VM) filterValue(e program.Expr) Value {
+func (vm *VM) filterValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 2) {
 		return ArrayVal(nil)
 	}
 	coll := vm.Eval(e.Operands[0])
-	return ArrayVal(vm.filterItems(coll.Items, e.Operands[1]))
+	return ArrayVal(vm.filterItems(coll.list(), e.Operands[1]))
 }
 
-func (vm *VM) findValue(e program.Expr) Value {
+func (vm *VM) findValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 2) {
 		return ZeroValue(program.TypeAny)
 	}
 	coll := vm.Eval(e.Operands[0])
-	if found, ok := vm.findItem(coll.Items, e.Operands[1]); ok {
+	if found, ok := vm.findItem(coll.list(), e.Operands[1]); ok {
 		return found
 	}
 	return ZeroValue(program.TypeAny)
 }
 
-func (vm *VM) sliceValue(e program.Expr) Value {
+// safeBoundInt converts a slice/substring bound's float64 field to
+// an int. It never lets NaN or +/-Inf produce a huge or negative
+// int.
+//
+// Go's float-to-int conversion is implementation-defined once the
+// value is outside the target range. In practice, NaN and Inf both
+// land on math.MinInt64 on amd64. So a literal like 9e999 (which
+// parses as +Inf) would otherwise reach SliceVal / SubstringVal as
+// MinInt64.
+//
+// SliceVal and SubstringVal both clamp into [0, n] on their own now.
+// Clamping the cast here too keeps any future caller of this
+// conversion safe by construction, not just by convention.
+func safeBoundInt(f float64) int {
+	if math.IsNaN(f) {
+		return 0
+	}
+	if f > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if f < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int(f)
+}
+
+func (vm *VM) sliceValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 3) {
 		coll := vm.Eval(e.Operands[0])
-		start := int(vm.Eval(e.Operands[1]).Num)
-		end := int(vm.Eval(e.Operands[2]).Num)
+		start := safeBoundInt(vm.Eval(e.Operands[1]).num)
+		end := safeBoundInt(vm.Eval(e.Operands[2]).num)
 		// Slice Y.E.3: OpSlice now dispatches on the runtime collection
 		// kind so the lowerer's *ast.SliceExpr handler can emit a single
 		// opcode without knowing whether the source operand is a slice
@@ -930,7 +1024,7 @@ func (vm *VM) sliceValue(e program.Expr) Value {
 		// rune-array operands (produced by Y.E's `[]rune(s)` cast)
 		// route through the existing SliceVal path because they carry
 		// Items, not Str.
-		if coll.Items == nil && coll.Str != "" {
+		if !coll.isList() && coll.text() != "" {
 			return coll.SubstringVal(start, end)
 		}
 		return coll.SliceVal(start, end)
@@ -938,35 +1032,35 @@ func (vm *VM) sliceValue(e program.Expr) Value {
 	return ArrayVal(nil)
 }
 
-func (vm *VM) appendValue(e program.Expr) Value {
+func (vm *VM) appendValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).AppendVal(vm.Eval(e.Operands[1]))
 	}
 	return ArrayVal(nil)
 }
 
-func (vm *VM) containsValue(e program.Expr) Value {
+func (vm *VM) containsValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).ContainsVal(vm.Eval(e.Operands[1]))
 	}
 	return BoolVal(false)
 }
 
-func (vm *VM) splitValue(e program.Expr) Value {
+func (vm *VM) splitValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 1) {
 		return ArrayVal(nil)
 	}
 	return vm.Eval(e.Operands[0]).SplitVal(vm.separatorValue(e))
 }
 
-func (vm *VM) joinValue(e program.Expr) Value {
+func (vm *VM) joinValue(e *program.Expr) Value {
 	if !vm.requireOperands(e, 1) {
 		return StringVal("")
 	}
 	return vm.Eval(e.Operands[0]).JoinVal(vm.separatorValue(e))
 }
 
-func (vm *VM) separatorValue(e program.Expr) string {
+func (vm *VM) separatorValue(e *program.Expr) string {
 	sep := e.Value
 	if len(e.Operands) >= 2 {
 		sep = vm.Eval(e.Operands[1]).String()
@@ -974,28 +1068,31 @@ func (vm *VM) separatorValue(e program.Expr) string {
 	return sep
 }
 
-func (vm *VM) replaceValue(e program.Expr) Value {
+func (vm *VM) replaceValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 3) {
-		return vm.Eval(e.Operands[0]).ReplaceVal(vm.Eval(e.Operands[1]).Str, vm.Eval(e.Operands[2]).Str)
+		return vm.Eval(e.Operands[0]).ReplaceVal(vm.Eval(e.Operands[1]).Text(), vm.Eval(e.Operands[2]).Text())
 	}
 	return StringVal("")
 }
 
-func (vm *VM) substringValue(e program.Expr) Value {
+func (vm *VM) substringValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 3) {
-		return vm.Eval(e.Operands[0]).SubstringVal(int(vm.Eval(e.Operands[1]).Num), int(vm.Eval(e.Operands[2]).Num))
+		coll := vm.Eval(e.Operands[0])
+		start := safeBoundInt(vm.Eval(e.Operands[1]).num)
+		end := safeBoundInt(vm.Eval(e.Operands[2]).num)
+		return coll.SubstringVal(start, end)
 	}
 	return StringVal("")
 }
 
-func (vm *VM) startsWithValue(e program.Expr) Value {
+func (vm *VM) startsWithValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).StartsWithVal(vm.Eval(e.Operands[1]))
 	}
 	return BoolVal(false)
 }
 
-func (vm *VM) endsWithValue(e program.Expr) Value {
+func (vm *VM) endsWithValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 2) {
 		return vm.Eval(e.Operands[0]).EndsWithVal(vm.Eval(e.Operands[1]))
 	}
@@ -1021,7 +1118,7 @@ func (vm *VM) filterItems(items []Value, exprID program.ExprID) []Value {
 	for i, item := range items {
 		vm.props["_item"] = item
 		vm.props["_index"] = IntVal(i)
-		if vm.Eval(exprID).Bool {
+		if vm.Eval(exprID).Truth() {
 			result = append(result, item)
 		}
 	}
@@ -1034,18 +1131,11 @@ func (vm *VM) findItem(items []Value, exprID program.ExprID) (Value, bool) {
 	for i, item := range items {
 		vm.props["_item"] = item
 		vm.props["_index"] = IntVal(i)
-		if vm.Eval(exprID).Bool {
+		if vm.Eval(exprID).Truth() {
 			return item, true
 		}
 	}
 	return Value{}, false
-}
-
-func (vm *VM) evalBinary(e program.Expr, fn func(Value, Value) Value) Value {
-	if vm.requireOperands(e, 2) {
-		return fn(vm.Eval(e.Operands[0]), vm.Eval(e.Operands[1]))
-	}
-	return ZeroValue(program.TypeAny)
 }
 
 // EvalTree walks the island's node tree, evaluating all dynamic expressions,
@@ -1113,6 +1203,9 @@ func (vm *VM) appendNodeRefs(tree *ResolvedTree, out []int, nodeID program.NodeI
 	case program.NodeConditional:
 		return vm.appendConditional(tree, out, int(nodeID), node)
 	default:
+		if idx, ok := vm.reuseResolvedNode(tree, int(nodeID)); ok {
+			return append(out, idx)
+		}
 		idx := vm.appendResolvedNode(tree, int(nodeID), node)
 		return append(out, idx)
 	}
@@ -1135,6 +1228,11 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 		vm.resolveElementNode(&tree.Nodes[idx], source, node)
 		tree.Nodes[idx].Children = vm.resolveChildren(tree, node.Children)
 	}
+
+	// The subtree is complete and contiguous now, so record where it
+	// landed. The next walk copies it from here when nothing it reads has
+	// changed. recordReuseSpan ignores nodes the plan cannot reuse.
+	vm.recordReuseSpan(source, idx, len(tree.Nodes))
 
 	return idx
 }
@@ -1302,7 +1400,7 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 	for _, event := range events {
 		eventType := eventAttrType(event.Name)
 		domAttrs = append(domAttrs, ResolvedAttr{
-			Name:  "data-gosx-on-" + eventType,
+			Name:  eventMarkerAttr(eventType),
 			Value: event.Handler,
 		})
 		if eventType == "click" {
@@ -1324,7 +1422,7 @@ func (vm *VM) autoKey(source int, tag string) (string, bool) {
 	if !hasIndex {
 		return "", false
 	}
-	return fmt.Sprintf("_auto_%d_%s_%d", int(idxVal.Num), tag, source), true
+	return fmt.Sprintf("_auto_%d_%s_%d", int(idxVal.num), tag, source), true
 }
 
 type eachEntry struct {
@@ -1362,30 +1460,31 @@ func (vm *VM) appendConditional(tree *ResolvedTree, out []int, source int, node 
 }
 
 func valueTruthy(value Value) bool {
-	if value.Items != nil {
-		return len(value.Items) > 0
+	if value.isList() {
+		return len(value.list()) > 0
 	}
-	if value.Fields != nil {
-		return len(value.Fields) > 0
+	if value.isMap() {
+		return len(value.dict()) > 0
 	}
 	switch value.Type {
 	case program.TypeBool:
-		return value.Bool
+		return value.truth()
 	case program.TypeString:
-		return value.Str != "" && value.Str != "0" && value.Str != "false"
+		text := value.text()
+		return text != "" && text != "0" && text != "false"
 	case program.TypeInt, program.TypeFloat:
-		return value.Num != 0
+		return value.num != 0
 	default:
-		return value.Bool || value.Num != 0 || value.Str != ""
+		return value.truth() || value.num != 0 || value.text() != ""
 	}
 }
 
 func valueEachEntries(value Value) []eachEntry {
-	if value.Items != nil {
-		return arrayEachEntries(value.Items)
+	if value.isList() {
+		return arrayEachEntries(value.list())
 	}
-	if value.Fields != nil {
-		return objectEachEntries(value.Fields)
+	if value.isMap() {
+		return objectEachEntries(value.dict())
 	}
 	return nil
 }
@@ -1499,15 +1598,26 @@ func (vm *VM) resolveFallbackText(tree *ResolvedTree, source int, fallbackID pro
 	return []int{idx}
 }
 
+// captureProps records the state of every scoped name before a forEach binds
+// it, so restoreProps can put the scope back exactly as it was.
+//
+// present records a name even when the name is ABSENT. That matters: a
+// forEach binds `_item`, `_index`, `_key` and the `as`/`index` names, and
+// most of those do not exist before the loop starts. Recording only the
+// names that existed left the rest in vm.props after the loop returned, so
+// the last iteration's index stayed visible to every later node. autoKey
+// reads `_index`, so a plain element after a list picked up a key built from
+// a loop it never belonged to.
 func (vm *VM) captureProps(names []string) iterationContext {
 	ctx := iterationContext{
 		values:  make(map[string]Value, len(names)),
 		present: make(map[string]bool, len(names)),
 	}
 	for _, name := range names {
-		if value, ok := vm.props[name]; ok {
+		value, ok := vm.props[name]
+		ctx.present[name] = ok
+		if ok {
 			ctx.values[name] = value
-			ctx.present[name] = true
 		}
 	}
 	return ctx
@@ -1530,10 +1640,6 @@ func forEachStaticAttr(attrs []program.Attr, name string) string {
 		}
 	}
 	return ""
-}
-
-func forEachFallbackExpr(attrs []program.Attr) (program.ExprID, bool) {
-	return fallbackExpr(attrs)
 }
 
 func fallbackExpr(attrs []program.Attr) (program.ExprID, bool) {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"m31labs.dev/gosx/client/enginevm"
 	"m31labs.dev/gosx/client/videosync"
 	"m31labs.dev/gosx/client/vm"
 	rootengine "m31labs.dev/gosx/engine"
@@ -17,7 +16,7 @@ import (
 type Bridge struct {
 	islands        map[string]*vm.Island
 	computeIslands map[string]struct{}
-	engines        map[string]*enginevm.Runtime
+	engines        map[string]*vm.SceneAdapter
 	// boards holds canvas2d adapter instances (Phase 2). Typed as the
 	// Reconciler interface so the islands-only build can elide the concrete
 	// *vm.CanvasBoardAdapter from the binary entirely; the full build's
@@ -166,7 +165,7 @@ func New() *Bridge {
 	b := &Bridge{
 		islands:        make(map[string]*vm.Island),
 		computeIslands: make(map[string]struct{}),
-		engines:        make(map[string]*enginevm.Runtime),
+		engines:        make(map[string]*vm.SceneAdapter),
 		boards:         make(map[string]vm.Reconciler),
 		reconcilers:    make(map[string]vm.Reconciler),
 		engineSurfaces: make(map[string]any),
@@ -279,7 +278,7 @@ func (b *Bridge) HydrateEngine(id, componentName, propsJSON string, programData 
 		b.DisposeEngine(id)
 	}
 
-	runtime := enginevm.New(prog, propsJSON)
+	runtime := vm.NewSceneAdapter(prog, propsJSON)
 	connectSharedEngineSignals(runtime, b.store, prog.Signals)
 	b.engines[id] = runtime
 	b.reconcilers[id] = runtime
@@ -374,12 +373,13 @@ func (b *Bridge) RenderEngine(id string, width, height int, timeSeconds float64)
 }
 
 // MarshalPatches serializes patch ops to JSON for the JS patch applier.
+//
+// The encoder is hand-rolled and byte-identical to encoding/json — see
+// patch_json.go for why, and patch_json_test.go for the equality proof. The
+// error return stays for source compatibility; this path cannot fail.
 func MarshalPatches(patches []vm.PatchOp) (string, error) {
-	data, err := json.Marshal(patches)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	buf := make([]byte, 0, patchesJSONSize(patches))
+	return string(appendPatchesJSON(buf, patches)), nil
 }
 
 // DisposeIsland cleans up an island and unsubscribes from all shared signals.
@@ -443,7 +443,7 @@ func (b *Bridge) ReconcilerCount() int {
 // LookupReconciler returns the reconciler registered under id, if any. The
 // returned value satisfies the vm.Reconciler lifecycle interface; callers
 // that need surface-specific behavior (PatchOp emission, Command emission)
-// must type-assert to *vm.Island or *enginevm.Runtime.
+// must type-assert to *vm.Island or *vm.SceneAdapter.
 func (b *Bridge) LookupReconciler(id string) (vm.Reconciler, bool) {
 	r, ok := b.reconcilers[id]
 	return r, ok
@@ -487,7 +487,7 @@ func sharedSignalDefs(prog *program.Program) []program.SignalDef {
 	return defs
 }
 
-func connectSharedEngineSignals(runtime *enginevm.Runtime, store *Store, defs []program.SignalDef) {
+func connectSharedEngineSignals(runtime *vm.SceneAdapter, store *Store, defs []program.SignalDef) {
 	for _, def := range defs {
 		if !isSharedSignal(def.Name) {
 			continue

@@ -320,19 +320,20 @@ func (r *CanvasHostReceiver) dispatchCanvasMethod(method string, args []vm.Value
 	return vm.ZeroValue(0), nil
 }
 
-// arg returns args[i].Num or 0 if i is out of range. Centralizes the
-// bounds-tolerance contract so each dispatch case stays one line.
+// arg returns the number payload of args[i], or 0 if i is out of range.
+// Centralizes the bounds-tolerance contract so each dispatch case stays
+// one line.
 func arg(args []vm.Value, i int) float64 {
 	if i < 0 || i >= len(args) {
 		return 0
 	}
-	return args[i].Num
+	return args[i].Number()
 }
 
-// argStr returns args[i].Str or "" if i is out of range.
+// argStr returns the text payload of args[i], or "" if i is out of range.
 func argStr(args []vm.Value, i int) string {
 	if i < 0 || i >= len(args) {
 		return ""
 	}
-	return args[i].Str
+	return args[i].Text()
 }

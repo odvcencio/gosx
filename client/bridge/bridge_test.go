@@ -193,10 +193,10 @@ func TestSetSharedSignalJSON(t *testing.T) {
 	if val.Type != program.TypeAny {
 		t.Fatalf("expected any type, got %d", val.Type)
 	}
-	if got := val.Fields["count"].Num; got != 2 {
+	if got := val.Map()["count"].Number(); got != 2 {
 		t.Fatalf("expected count=2, got %v", got)
 	}
-	if got := val.Fields["members"].Items[1].Str; got != "b" {
+	if got := val.Map()["members"].List()[1].Text(); got != "b" {
 		t.Fatalf("expected member b, got %q", got)
 	}
 }
@@ -216,10 +216,10 @@ func TestSetSharedSignalBatchJSON(t *testing.T) {
 	if !ok {
 		t.Fatal("expected pointer signal value")
 	}
-	if got := pointer.Fields["x"].Num; got != 12.5 {
+	if got := pointer.Map()["x"].Number(); got != 12.5 {
 		t.Fatalf("expected x=12.5, got %v", got)
 	}
-	if got := pointer.Fields["y"].Num; got != -3 {
+	if got := pointer.Map()["y"].Number(); got != -3 {
 		t.Fatalf("expected y=-3, got %v", got)
 	}
 
@@ -227,8 +227,8 @@ func TestSetSharedSignalBatchJSON(t *testing.T) {
 	if !ok {
 		t.Fatal("expected key signal value")
 	}
-	if !keyboard.Fields["space"].Bool {
-		t.Fatalf("expected space=true, got %#v", keyboard.Fields["space"])
+	if !keyboard.Map()["space"].Truth() {
+		t.Fatalf("expected space=true, got %#v", keyboard.Map()["space"])
 	}
 }
 

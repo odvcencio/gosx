@@ -40,8 +40,8 @@ func F() int {
 	machine := vm.NewVM(prog, nil)
 	vm.InitSignals(machine, prog)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 7 {
-		t.Errorf("F() = %d, want 7 (param must shadow signal in callee frame)", int(got.Num))
+	if int(got.Number()) != 7 {
+		t.Errorf("F() = %d, want 7 (param must shadow signal in callee frame)", int(got.Number()))
 	}
 }
 
@@ -68,8 +68,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 42 {
-		t.Errorf("F() = %d, want 42 (caller's local must survive the call)", int(got.Num))
+	if int(got.Number()) != 42 {
+		t.Errorf("F() = %d, want 42 (caller's local must survive the call)", int(got.Number()))
 	}
 }
 
@@ -105,8 +105,8 @@ func F() int {
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
 	// a(5) = b(5)+1 = (c(5)+10)+1 = (5+100+10)+1 = 116
-	if int(got.Num) != 116 {
-		t.Errorf("F() = %d, want 116 (3-deep nested call stack must compose)", int(got.Num))
+	if int(got.Number()) != 116 {
+		t.Errorf("F() = %d, want 116 (3-deep nested call stack must compose)", int(got.Number()))
 	}
 }
 
@@ -139,7 +139,7 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 0 {
-		t.Errorf("F() = %d, want 0 (callee's hiddenVar must not leak into caller frame)", int(got.Num))
+	if int(got.Number()) != 0 {
+		t.Errorf("F() = %d, want 0 (callee's hiddenVar must not leak into caller frame)", int(got.Number()))
 	}
 }

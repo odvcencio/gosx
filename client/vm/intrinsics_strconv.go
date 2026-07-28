@@ -17,13 +17,13 @@ func init() {
 		if len(args) != 1 {
 			return Value{}, errors.New("strconv.Itoa expects 1 argument")
 		}
-		return StringVal(strconv.Itoa(int(args[0].Num))), nil
+		return StringVal(strconv.Itoa(int(args[0].num))), nil
 	})
 	RegisterIntrinsic("strconv.Atoi", func(args []Value) (Value, error) {
 		if len(args) != 1 {
 			return Value{}, errors.New("strconv.Atoi expects 1 argument")
 		}
-		n, err := strconv.Atoi(args[0].Str)
+		n, err := strconv.Atoi(args[0].text())
 		if err != nil {
 			return Value{}, err
 		}
@@ -36,17 +36,17 @@ func init() {
 		}
 		// fmt byte is encoded as a single-char string.
 		var format byte = 'g'
-		if args[1].Str != "" {
-			format = args[1].Str[0]
+		if spec := args[1].text(); spec != "" {
+			format = spec[0]
 		}
-		return StringVal(strconv.FormatFloat(args[0].Num, format, int(args[2].Num), int(args[3].Num))), nil
+		return StringVal(strconv.FormatFloat(args[0].num, format, int(args[2].num), int(args[3].num))), nil
 	})
 	RegisterIntrinsic("strconv.ParseFloat", func(args []Value) (Value, error) {
 		// Go signature: ParseFloat(s string, bitSize int)
 		if len(args) != 2 {
 			return Value{}, errors.New("strconv.ParseFloat expects 2 arguments")
 		}
-		f, err := strconv.ParseFloat(args[0].Str, int(args[1].Num))
+		f, err := strconv.ParseFloat(args[0].text(), int(args[1].num))
 		if err != nil {
 			return Value{}, err
 		}

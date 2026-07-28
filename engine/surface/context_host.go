@@ -25,7 +25,6 @@ import (
 	"fmt"
 
 	"m31labs.dev/gosx/client/vm"
-	"m31labs.dev/gosx/island/program"
 )
 
 // ContextHostReceiver bridges per-mount surface context state (props,
@@ -104,7 +103,7 @@ func (r *ContextHostReceiver) propsInto(args []vm.Value) (vm.Value, error) {
 		return vm.ZeroValue(0), fmt.Errorf("PropsInto expects 1 arg, got %d", len(args))
 	}
 	target := args[0]
-	if target.Fields == nil {
+	if !target.IsMap() {
 		return vm.ZeroValue(0), fmt.Errorf("PropsInto target has nil Fields (declare props as a struct type so the lowerer's eager zero-init runs)")
 	}
 	if len(r.propsJSON) == 0 {
@@ -118,9 +117,9 @@ func (r *ContextHostReceiver) propsInto(args []vm.Value) (vm.Value, error) {
 
 	for key, val := range raw {
 		v := jsonToVMValue(val)
-		target.Fields[key] = v
+		target.SetField(key, v)
 		if pascal := pascalCase(key); pascal != key {
-			target.Fields[pascal] = v
+			target.SetField(pascal, v)
 		}
 	}
 	return vm.ZeroValue(0), nil
@@ -164,7 +163,7 @@ func jsonToVMValue(v any) vm.Value {
 		for i, e := range x {
 			items[i] = jsonToVMValue(e)
 		}
-		return vm.Value{Type: program.TypeAny, Items: items}
+		return vm.ArrayVal(items)
 	case map[string]any:
 		fields := make(map[string]vm.Value, len(x)*2)
 		for k, val := range x {

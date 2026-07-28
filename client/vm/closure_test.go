@@ -55,14 +55,14 @@ func TestClosureValCaptureByReference(t *testing.T) {
 	// must see the update.
 	f.set("y", IntVal(20))
 
-	got, ok := cv.closure.frame.get("y")
+	got, ok := cv.closureRefOf().frame.get("y")
 	if !ok {
 		t.Fatalf("captured frame does not have y")
 	}
-	if int(got.Num) != 20 {
-		t.Errorf("captured y = %v, want 20 (capture-by-reference broken)", got.Num)
+	if int(got.num) != 20 {
+		t.Errorf("captured y = %v, want 20 (capture-by-reference broken)", got.num)
 	}
-	if !cv.closure.captured["y"] {
+	if !cv.closureRefOf().captured["y"] {
 		t.Errorf("captured set does not record y")
 	}
 }

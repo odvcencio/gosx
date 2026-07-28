@@ -43,13 +43,13 @@ func F(x float64, y float64) float64 {
 		"y": vm.FloatVal(1.25),
 	})
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 4.75 {
-		t.Errorf("F(3.5, 1.25) = %f, want 4.75", got.Num)
+	if got.Number() != 4.75 {
+		t.Errorf("F(3.5, 1.25) = %f, want 4.75", got.Number())
 	}
 }
 
 // TestLowerNamedStructLiteral verifies `Node{ID: id, Pos: pos}` lowers
-// such that the resulting Value.Fields map is keyed by the explicit
+// such that the resulting Value.Map() map is keyed by the explicit
 // field names.
 func TestLowerNamedStructLiteral(t *testing.T) {
 	src := []byte(`package handlers
@@ -73,8 +73,8 @@ func F(id string, pos float64) string {
 		"pos": vm.FloatVal(2.5),
 	})
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Str != "n42" {
-		t.Errorf("F() = %q, want %q", got.Str, "n42")
+	if got.Text() != "n42" {
+		t.Errorf("F() = %q, want %q", got.Text(), "n42")
 	}
 }
 
@@ -96,8 +96,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 0 {
-		t.Errorf("F() = %f, want 0", got.Num)
+	if got.Number() != 0 {
+		t.Errorf("F() = %f, want 0", got.Number())
 	}
 }
 
@@ -119,8 +119,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 3 {
-		t.Errorf("len([]Node{a,b,c}) = %d, want 3", int(got.Num))
+	if int(got.Number()) != 3 {
+		t.Errorf("len([]Node{a,b,c}) = %d, want 3", int(got.Number()))
 	}
 }
 
@@ -141,8 +141,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 4.0 {
-		t.Errorf("F() = %f, want 4.0", got.Num)
+	if got.Number() != 4.0 {
+		t.Errorf("F() = %f, want 4.0", got.Number())
 	}
 }
 
@@ -172,8 +172,8 @@ func F() string {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Str != "second" {
-		t.Errorf("F() = %q, want %q", got.Str, "second")
+	if got.Text() != "second" {
+		t.Errorf("F() = %q, want %q", got.Text(), "second")
 	}
 }
 
@@ -198,8 +198,8 @@ func F() float64 {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if got.Num != 4.0 {
-		t.Errorf("F() = %f, want 4.0", got.Num)
+	if got.Number() != 4.0 {
+		t.Errorf("F() = %f, want 4.0", got.Number())
 	}
 }
 
@@ -222,8 +222,8 @@ func F() int {
 	handler := findHandler(t, prog.Handlers, "F")
 	machine := vm.NewVM(prog, nil)
 	got := machine.EvalWithFrame(handler.Body[0])
-	if int(got.Num) != 0 {
-		t.Errorf("F() = %d, want 0", int(got.Num))
+	if int(got.Number()) != 0 {
+		t.Errorf("F() = %d, want 0", int(got.Number()))
 	}
 }
 
@@ -250,7 +250,7 @@ func Count() int { return len(positions) }`)
 	// Initialize the signal from its Init expr — mirrors how the
 	// runtime sets up signals before invoking handlers.
 	initVal := machine.Eval(prog.Signals[0].Init)
-	if initVal.Fields == nil {
+	if initVal.Map() == nil {
 		t.Errorf("positions init = %+v, want empty Fields map", initVal)
 	}
 }
