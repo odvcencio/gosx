@@ -25,6 +25,8 @@ const {
   runScript,
   flushAsyncWork,
   scene3dWebGLSplitManifest,
+  makeFakeGPUDevice,
+  freshFeatureBundleSource,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap registers and selects Scene3D backends through registry", async () => {
@@ -991,4 +993,287 @@ test("selective Scene3D bootstrap uses WebGL when WebGPU cannot cover scene feat
   );
   assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgpu"), false);
   assert.equal((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl" || call.kind === "webgl2"), true);
+});
+
+test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once the probe recovers, and actually renders through the new device", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-device-lost-recovery";
+  let now = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testWebGPUCreateCount = 0;
+          window.__testWebGPUDeviceLost = false;
+          // One entry per createRenderer() call, in creation order -- lets
+          // this test prove render() calls land on the SPECIFIC new
+          // instance created during recovery, not just that "some webgpu
+          // renderer" rendered (which the OLD, still-broken instance could
+          // also satisfy if the mount had merely flipped a flag instead of
+          // actually swapping renderers).
+          window.__testWebGPUInstances = [];
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              window.__testWebGPUCreateCount += 1;
+              var idx = window.__testWebGPUInstances.length;
+              window.__testWebGPUInstances.push({ renderCount: 0, disposed: false });
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  // Only the FIRST instance ever reports device loss --
+                  // the recovered (second) instance is healthy, matching a
+                  // real fresh device acquired after reprobe.
+                  var lost = idx === 0 && window.__testWebGPUDeviceLost === true;
+                  return {
+                    ready: !lost,
+                    deviceLost: lost,
+                    deviceLostInfo: lost ? { reason: "destroyed", message: "Device was destroyed." } : null,
+                    adapterInfo: { vendor: "test-vendor", architecture: "test-arch" },
+                  };
+                },
+                render: function() { window.__testWebGPUInstances[idx].renderCount += 1; },
+                dispose: function() { window.__testWebGPUInstances[idx].disposed = true; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-device-lost-recovery",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-device-lost-recovery",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const originalCreateElement = env.document.createElement.bind(env.document);
+  env.document.createElement = function(tagName) {
+    const element = originalCreateElement(tagName);
+    if (String(tagName || "").toLowerCase() === "canvas") {
+      const originalGetContext = element.getContext.bind(element);
+      element.getContext = function(kind, options) {
+        const contextKind = String(kind || "");
+        if (
+          this.__webgpuClaimed &&
+          (contextKind === "2d" || contextKind === "webgl" || contextKind === "webgl2" || contextKind === "experimental-webgl")
+        ) {
+          this.contextCalls = this.contextCalls || [];
+          this.contextCalls.push({ kind, options: options || null, blockedByWebGPU: true });
+          return null;
+        }
+        return originalGetContext(kind, options);
+      };
+    }
+    return element;
+  };
+
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+
+  const firstCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(env.context.__testWebGPUCreateCount, 1);
+  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1);
+
+  // --- Device lost -> the watchdog's forceFallback path swaps to WebGL,
+  // exactly like the sibling non-recovery test above. ---
+  env.context.__testWebGPUDeviceLost = true;
+  now = 4000;
+  assert.equal(timers.runInterval(2000), 1);
+  await flushAsyncWork();
+
+  const fallbackCanvas = mount.children[0];
+  assert.notEqual(fallbackCanvas, firstCanvas);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
+  assert.equal(env.context.__testWebGPUInstances[0].disposed, true, "the OLD (broken) webgpu instance must be disposed");
+  // Diagnostic surfacing: the loss reason must reach the DOM and the
+  // render-watchdog-recovery telemetry event, not just live inside the
+  // renderer's own diagnostics().
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-lost-reason"), "destroyed");
+  const recoveryEvent = events.find((event) => event.msg === "render-watchdog-recovery" && event.fields.reason === "webgpu-device-lost");
+  assert.ok(recoveryEvent, "render-watchdog-recovery must fire for the device-lost fallback");
+  assert.equal(recoveryEvent.fields.deviceLostReason, "destroyed");
+  assert.equal(recoveryEvent.fields.deviceLostMessage, "Device was destroyed.");
+  assert.equal(recoveryEvent.fields.adapterInfo && recoveryEvent.fields.adapterInfo.vendor, "test-vendor");
+
+  // --- The probe recovers: this is the exact production trigger
+  // (16z-scene-webgpu-probe.js's sceneWebGPUDispatchProbeReady) for a
+  // device re-acquired after a loss. Before this fix, handleSceneWebGPUProbeReady
+  // silently ignored this because renderer.kind was "webgl". ---
+  events.length = 0;
+  env.context.dispatchEvent({ type: "gosx:scene3d:webgpu-probe-ready" });
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", "the mount must climb back onto WebGPU once the probe recovers");
+  assert.equal(env.context.__testWebGPUCreateCount, 2, "recovery must construct a genuinely NEW webgpu renderer instance");
+  const recoveredCanvas = mount.children[0];
+  assert.notEqual(recoveredCanvas, fallbackCanvas, "recovery must mount a fresh, untainted canvas -- the WebGL fallback canvas cannot host a WebGPU context");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted"), null);
+
+  // Proof this is a REAL adoption, not a flag flip: the recovery swap
+  // itself already rendered once immediately (renderLatestSceneBundle),
+  // and the OLD, disposed instance must never render again.
+  const recoveredRenderCountAfterSwap = env.context.__testWebGPUInstances[1].renderCount;
+  assert.ok(recoveredRenderCountAfterSwap >= 1, "the RECOVERED renderer instance must actually receive render() calls, not just become the DOM-attribute value");
+  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1, "the OLD, disposed instance must never render again (still just its one pre-loss frame)");
+
+  // Drive a further real animation frame and confirm the continuous render
+  // loop keeps driving THIS SAME recovered instance (proves adoption, not a
+  // one-shot compensating render).
+  raf.flush(16);
+  await flushAsyncWork();
+  assert.ok(env.context.__testWebGPUInstances[1].renderCount > recoveredRenderCountAfterSwap, "the render loop must keep driving the recovered instance on subsequent frames");
+  assert.equal(env.context.__testWebGPUInstances[0].renderCount, 1, "the OLD, disposed instance must still never render again");
+
+  assert.equal(events.some((event) => event.msg === "render-watchdog-recovery" && event.fields.reason === "webgpu-probe-recovered"), true);
+});
+
+test("Scene3D WebGPU device loss counts once (not twice) against the probe's reprobe backoff, and the loss reason survives a later successful reprobe", async () => {
+  const fake1 = makeFakeGPUDevice();
+  let resolveLost1 = null;
+  fake1.device.lost = new Promise((resolve) => { resolveLost1 = resolve; });
+
+  const fake2 = makeFakeGPUDevice();
+  // fake2.device.lost intentionally left as makeFakeGPUDevice's default
+  // (a promise that never resolves) -- this test only loses the FIRST device.
+
+  let deviceRequests = 0;
+  const adapter = {
+    info: { vendor: "test-vendor" },
+    requestDevice: async () => {
+      deviceRequests += 1;
+      return deviceRequests === 1 ? fake1.device : fake2.device;
+    },
+  };
+  let adapterRequests = 0;
+  const env = createContext({
+    enableWebGPU: true,
+    navigatorGPU: {
+      requestAdapter: async () => {
+        adapterRequests += 1;
+        return adapter;
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+  });
+  env.context.GPUBufferUsage = {
+    MAP_READ: 0x1, MAP_WRITE: 0x2, COPY_SRC: 0x4, COPY_DST: 0x8,
+    INDEX: 0x10, VERTEX: 0x20, UNIFORM: 0x40, STORAGE: 0x80,
+    INDIRECT: 0x100, QUERY_RESOLVE: 0x200,
+  };
+  env.context.GPUTextureUsage = {
+    COPY_SRC: 0x1, COPY_DST: 0x2, TEXTURE_BINDING: 0x4,
+    STORAGE_BINDING: 0x8, RENDER_ATTACHMENT: 0x10,
+  };
+  env.context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
+  env.context.createImageBitmap = function(image) {
+    return Promise.resolve({ __kind: "imageBitmap", width: image && image.width || 1, height: image && image.height || 1, close() {} });
+  };
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+  assert.equal(adapterRequests, 1);
+  assert.equal(deviceRequests, 1);
+
+  runScript(freshFeatureBundleSource("scene3d-webgpu"), env.context, "bootstrap-feature-scene3d-webgpu.js");
+  const api = env.context.__gosx_scene3d_webgpu_api;
+  assert.ok(api && typeof api.createRenderer === "function");
+
+  const mount = new FakeElement("div", null);
+  const gpuCtx = {
+    configure() {},
+    getCurrentTexture() {
+      return { createView() { return { __kind: "canvasTextureView" }; } };
+    },
+  };
+  const canvas = {
+    width: 64, height: 64, isConnected: true, childNodes: [], parentNode: mount,
+    getBoundingClientRect() { return { width: 64, height: 64 }; },
+    getContext(kind) { return kind === "webgpu" ? gpuCtx : null; },
+  };
+  const renderer = api.createRenderer(canvas, {});
+  assert.ok(renderer, "createRenderer must succeed against fake1 (probe device)");
+
+  const probeBefore = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(probeBefore.lostProbeCount, 0);
+
+  // ONE device.lost event. Both 16z's watcher and 16a's renderer-local
+  // handler are listening on this exact promise.
+  resolveLost1({ reason: "destroyed", message: "Device was destroyed." });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const probeAfterLoss = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(probeAfterLoss.lostProbeCount, 1, "one real device loss must count once against the reprobe backoff window, not twice");
+
+  const rendererDiagAfterLoss = renderer.diagnostics();
+  assert.equal(rendererDiagAfterLoss.deviceLost, true);
+  assert.ok(rendererDiagAfterLoss.deviceLostInfo, "diagnostics().deviceLostInfo must be populated from the real device.lost resolution");
+  assert.equal(rendererDiagAfterLoss.deviceLostInfo.reason, "destroyed");
+  assert.equal(rendererDiagAfterLoss.deviceLostInfo.message, "Device was destroyed.");
+
+  // The immediate reprobe (sceneWebGPUInvalidateProbe -> sceneWebGPUStartProbe)
+  // succeeds against fake2 and clears the SHARED probe snapshot.
+  assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true, "the probe must reacquire a fresh device after the loss");
+  const probeRecovered = env.context.__gosx_scene3d_webgpu_probe();
+  assert.equal(probeRecovered.lost, null, "the SHARED probe snapshot clears on a successful reprobe");
+  assert.equal(deviceRequests, 2);
+
+  // The renderer's OWN lastDeviceLostInfo must survive that shared-snapshot
+  // clear -- this renderer instance genuinely did lose its device, and that
+  // fact does not become false just because a DIFFERENT device recovered.
+  const rendererDiagAfterRecovery = renderer.diagnostics();
+  assert.ok(rendererDiagAfterRecovery.deviceLostInfo, "the renderer's own loss detail must survive the shared probe snapshot clearing");
+  assert.equal(rendererDiagAfterRecovery.deviceLostInfo.reason, "destroyed");
+  assert.equal(probeAfterLoss.lostProbeCount, 1, "still one -- the reprobe/recovery cycle itself must not add another count");
 });
