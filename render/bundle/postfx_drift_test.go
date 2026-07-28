@@ -644,19 +644,28 @@ var brightGuardMutations = []litGuardMutation{
 		to:      "vec3f(0.3333, 0.3333, 0.3334)",
 		wantRow: "bright-pass-rec709-luma-weights",
 	},
+	// Both knee mutations now name the SHARED row, not the divergence row. The
+	// browser adopted the soft knee, so the difference these two recorded no
+	// longer exists and its ledger entry retired into brightSharedTerms. Either
+	// side reverting to a hard cut must break the agreement.
 	{
-		name:    "native renderer drops the knee for a hard cut",
+		name:    "native renderer reverts to a hard cut",
 		side:    "go",
 		from:    "let soft = thresholdedLum / (thresholdedLum + 1.0);",
 		to:      "let soft = step(0.0001, thresholdedLum);",
-		wantRow: "bright-pass-soft-knee-against-hard-cut",
+		wantRow: "bright-pass-soft-knee",
 	},
 	{
-		name:    "browser adopts the knee",
-		side:    "js",
-		from:    "if (brightness > params.threshold) {",
-		to:      "let excess = max(brightness - params.threshold, 0.0);",
-		wantRow: "bright-pass-soft-knee-against-hard-cut",
+		name: "browser reverts to a hard cut",
+		side: "js",
+		// Mutate the RETURN, not the excess line. The shared row pins
+		// "(excess + 1.0)", which is the knee's denominator and the thing that
+		// makes the curve continuous. Changing only how excess is computed
+		// leaves that denominator in place and the guard would not fire, which
+		// would make this mutation prove nothing.
+		from:    "return vec4f(color * (excess / (excess + 1.0)), 1.0);",
+		to:      "return vec4f(color * step(0.0001, excess), 1.0);",
+		wantRow: "bright-pass-soft-knee",
 	},
 }
 
