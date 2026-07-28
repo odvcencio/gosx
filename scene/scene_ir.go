@@ -461,6 +461,12 @@ type HTMLIR struct {
 	X                float64      `json:"x,omitempty"`
 	Y                float64      `json:"y,omitempty"`
 	Z                float64      `json:"z,omitempty"`
+	RotationX        float64      `json:"rotationX,omitempty"`
+	RotationY        float64      `json:"rotationY,omitempty"`
+	RotationZ        float64      `json:"rotationZ,omitempty"`
+	SpinX            float64      `json:"spinX,omitempty"`
+	SpinY            float64      `json:"spinY,omitempty"`
+	SpinZ            float64      `json:"spinZ,omitempty"`
 	Priority         float64      `json:"priority,omitempty"`
 	ShiftX           float64      `json:"shiftX,omitempty"`
 	ShiftY           float64      `json:"shiftY,omitempty"`
@@ -2471,6 +2477,12 @@ func (item HTMLIR) legacyProps() map[string]any {
 	setNumeric(record, "x", item.X)
 	setNumeric(record, "y", item.Y)
 	setNumeric(record, "z", item.Z)
+	setNumeric(record, "rotationX", item.RotationX)
+	setNumeric(record, "rotationY", item.RotationY)
+	setNumeric(record, "rotationZ", item.RotationZ)
+	setNumeric(record, "spinX", item.SpinX)
+	setNumeric(record, "spinY", item.SpinY)
+	setNumeric(record, "spinZ", item.SpinZ)
 	setNumeric(record, "priority", item.Priority)
 	setNumeric(record, "shiftX", item.ShiftX)
 	setNumeric(record, "shiftY", item.ShiftY)

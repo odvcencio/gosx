@@ -2390,6 +2390,15 @@
       '  opacity: 0;',
       '  visibility: hidden;',
       '}',
+      // A live texture surface already draws this content in the scene.
+      // clip-path removes the paint without removing the box: layout,
+      // computed styles and the accessibility tree stay intact, which is what
+      // both the screen reader and the rasterizer read.
+      '[data-gosx-scene-html][data-gosx-scene-html-texture-mirror="true"] {',
+      '  clip-path: inset(50%);',
+      '  pointer-events: none;',
+      '  transition: none;',
+      '}',
       '[data-gosx-scene-html][data-gosx-scene-html-occluded="true"] {',
       '  --gosx-scene-html-opacity: 0.42;',
       '}',
@@ -2399,7 +2408,14 @@
       '[data-gosx-scene3d-mounted="true"][data-gosx-scene3d-reduced-motion="true"] [data-gosx-scene-html] {',
       '  transition: none;',
       '}',
-    ].join("\\n");
+      // Join with a REAL newline. A literal backslash-n made CSS read the
+      // escape sequence as an identifier, so every rule after the first
+      // parsed as `n[data-gosx-...]` -- a type selector for a <n> element
+      // that does not exist. The whole Scene3D overlay presentation
+      // stylesheet (labels, sprites, HTML overlays) was dead except its
+      // first rule, with no error anywhere: overlays fell back to normal
+      // flow instead of being positioned over the canvas.
+    ].join("\n");
     document.head.appendChild(style);
   }
 

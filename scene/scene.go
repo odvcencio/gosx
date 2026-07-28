@@ -970,6 +970,21 @@ const (
 )
 
 // HTML lowers into a DOM-backed Scene3D overlay projected from world space.
+//
+// Post-processing order (deliberate): a texture-mode surface draws INSIDE the
+// post chain, with the rest of the scene. That is correct for the case this
+// exists to serve — a panel mounted on a wall is scene geometry and must
+// receive the same tonemap, bloom and grade as the wall, or it reads as a
+// sticker. The cost is that a post pass which frosts or blurs the frame also
+// frosts the panel's own text.
+//
+// An opt-out is the right primitive for the case where the panel is chrome
+// rather than set dressing, but it is NOT implemented: excluding a surface
+// means a second pass against the post-composited target, which needs its own
+// pipeline and depth handling in both backends. Shipping the field wired on
+// one backend only would be a dead channel, so the field is absent until the
+// pass exists. Until then, a scene that must keep a panel crisp should keep
+// the frosting post pass off, or keep that panel in HTMLDOM mode.
 type HTML struct {
 	ID               string
 	Target           string
@@ -985,35 +1000,54 @@ type HTML struct {
 	SurfaceWidth     float64
 	SurfaceHeight    float64
 	Position         Vector3
-	Priority         float64
-	Shift            Vector3
-	DriftSpeed       float64
-	DriftPhase       float64
-	Width            float64
-	Height           float64
-	Scale            float64
-	Opacity          float64
-	OffsetX          float64
-	OffsetY          float64
-	AnchorX          float64
-	AnchorY          float64
-	Occlude          bool
-	PointerEvents    string
-	Transition       Transition
-	Live             []string
+	// Rotation orients a texture-mode surface in world space, in radians,
+	// applied X then Y then Z. The quad is authored in the XZ plane, so a
+	// surface with no rotation lies flat and is edge-on (invisible) to a
+	// camera that looks along -Z. An upright wall panel wants
+	// Rotation.X = -math.Pi/2. Rotation has no effect in DOM mode, where the
+	// overlay is a screen-space element.
+	Rotation Euler
+	// Spin adds constant angular velocity in radians per second, applied on
+	// top of Rotation. It drives the same per-frame transform the scene uses
+	// for meshes, so a slowly turning panel costs nothing extra.
+	Spin          Euler
+	Priority      float64
+	Shift         Vector3
+	DriftSpeed    float64
+	DriftPhase    float64
+	Width         float64
+	Height        float64
+	Scale         float64
+	Opacity       float64
+	OffsetX       float64
+	OffsetY       float64
+	AnchorX       float64
+	AnchorY       float64
+	Occlude       bool
+	PointerEvents string
+	Transition    Transition
+	Live          []string
 }
 
 // HTMLSurface declares a texture-mode HTML surface. Until the native texture
 // manager lands, it lowers as an explicit DOM overlay fallback with mode kept
 // in SceneIR so runtimes and tooling can diagnose the degradation.
 type HTMLSurface struct {
-	ID               string
-	Target           string
-	Markup           string
-	ClassName        string
-	Fallback         string
-	FallbackReason   string
-	Position         Vector3
+	ID             string
+	Target         string
+	Markup         string
+	ClassName      string
+	Fallback       string
+	FallbackReason string
+	Position       Vector3
+	// Rotation orients the surface in world space, in radians, applied X then
+	// Y then Z. The quad is authored in the XZ plane, so an unrotated surface
+	// lies flat and reads edge-on from a camera on +Z. An upright panel wants
+	// Rotation.X = -math.Pi/2.
+	Rotation Euler
+	// Spin adds constant angular velocity in radians per second on top of
+	// Rotation.
+	Spin             Euler
 	SurfaceWidth     float64
 	SurfaceHeight    float64
 	Width            float64
@@ -2274,6 +2308,8 @@ func htmlSurfaceFallback(surface HTMLSurface) HTML {
 		SurfaceWidth:     surfaceWidth,
 		SurfaceHeight:    surfaceHeight,
 		Position:         surface.Position,
+		Rotation:         surface.Rotation,
+		Spin:             surface.Spin,
 		Priority:         surface.Priority,
 		Width:            surfaceWidth,
 		Height:           surfaceHeight,
@@ -3762,6 +3798,12 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 		X:                position.X,
 		Y:                position.Y,
 		Z:                position.Z,
+		RotationX:        item.html.Rotation.X,
+		RotationY:        item.html.Rotation.Y,
+		RotationZ:        item.html.Rotation.Z,
+		SpinX:            item.html.Spin.X,
+		SpinY:            item.html.Spin.Y,
+		SpinZ:            item.html.Spin.Z,
 		Priority:         item.html.Priority,
 		ShiftX:           item.html.Shift.X,
 		ShiftY:           item.html.Shift.Y,

@@ -2690,6 +2690,13 @@
             record.view = tex.createView();
             record.loaded = true;
             record.pending = false;
+            // The decode always finishes after the frame that requested it.
+            // A static scene renders once, so without a scheduled frame the
+            // real texture is uploaded and never sampled: the surface holds
+            // the 1x1 white placeholder and nothing reports a fault.
+            if (typeof notifySceneTextureLoaded === "function") {
+              notifySceneTextureLoaded(key);
+            }
           }).catch(function() {
             record.failed = true;
             record.pending = false;

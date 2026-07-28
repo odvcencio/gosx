@@ -6468,8 +6468,17 @@
     const attribs = pbrProgram.attributes;
     const uniforms = pbrProgram.uniforms;
     const lineProgram = typeof createSceneWebGLProgram === "function" ? createSceneWebGLProgram(gl) : null;
+    // The surface program is NOT optional here. renderSceneWebGLSurfaces
+    // returns immediately when resources.surfaceProgram is missing, so
+    // passing null made this renderer drop every textured surface —
+    // every HTML-texture 3D panel and every textured plane — with no
+    // error, no counter and no diagnostic. The legacy renderer in
+    // 10-runtime-scene-core.js always compiled it; this one did not.
+    const surfaceProgram = typeof createSceneWebGLSurfaceProgram === "function"
+      ? createSceneWebGLSurfaceProgram(gl)
+      : null;
     const lineResources = lineProgram && typeof createSceneWebGLResources === "function"
-      ? createSceneWebGLResources(gl, lineProgram, null)
+      ? createSceneWebGLResources(gl, lineProgram, surfaceProgram)
       : null;
 
 	    // Skinned PBR program — compiled lazily on first skinned object.

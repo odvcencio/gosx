@@ -47,9 +47,27 @@
     return indexSegments(boxVertices(object.width, object.height, object.depth), boxEdgePairs);
   }
 
+  // A plane is the XZ ring of the box vertex list, not its first four entries.
+  // boxVertices packs the -Z face first and the +Z face second, so with
+  // height 0 the slice [0..3] collapses onto ONE edge: index 2 duplicates 1
+  // and index 3 duplicates 0. That produces zero-area quads and invisible
+  // planes. Indices [0, 1, 5, 4] walk the real ring:
+  // (-x,-z) -> (+x,-z) -> (+x,+z) -> (-x,+z). This matches the native
+  // reference generator in render/bundle/primitive.go planeGeometry.
+  const planeQuadIndices = [0, 1, 5, 4];
+
+  function planeQuadVertices(width, depth) {
+    const vertices = boxVertices(width, 0, depth);
+    return [
+      vertices[planeQuadIndices[0]],
+      vertices[planeQuadIndices[1]],
+      vertices[planeQuadIndices[2]],
+      vertices[planeQuadIndices[3]],
+    ];
+  }
+
   function planeSegments(object) {
-    const vertices = boxVertices(object.width, 0, object.depth);
-    return indexSegments(vertices.slice(0, 4), [
+    return indexSegments(planeQuadVertices(object.width, object.depth), [
       [0, 1], [1, 2], [2, 3], [3, 0],
     ]);
   }
@@ -232,7 +250,7 @@
   }
 
   function planeTriangleMesh(object) {
-    const vertices = boxVertices(object.width, 0, object.depth).slice(0, 4);
+    const vertices = planeQuadVertices(object.width, object.depth);
     const out = scenePrimitiveMeshBuilder();
     const normal = { x: 0, y: 1, z: 0 };
     scenePushMeshTriangle(out, vertices[0], vertices[1], vertices[2], normal, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 });
@@ -506,11 +524,10 @@
   }
 
   function scenePlaneLocalCorners(object) {
-    return boxVertices(
+    return planeQuadVertices(
       sceneNumber(object && object.width, 1),
-      0,
       sceneNumber(object && object.depth, sceneNumber(object && object.height, 1)),
-    ).slice(0, 4);
+    );
   }
 
   // Module-level scratch for scenePlaneSurfaceCorners. Four stable corner

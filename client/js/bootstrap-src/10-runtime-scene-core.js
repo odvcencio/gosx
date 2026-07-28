@@ -2180,6 +2180,15 @@
       x: sceneNumber(item.x, sceneNumber(current.x, 0)),
       y: sceneNumber(item.y, sceneNumber(current.y, 0)),
       z: sceneNumber(item.z, sceneNumber(current.z, 0)),
+      // Texture-mode surfaces are quads in the XZ plane, so with no rotation
+      // they lie flat and read edge-on from a camera on +Z. rotationX =
+      // -PI/2 stands one up as a wall panel. DOM mode ignores these.
+      rotationX: sceneNumber(item.rotationX, sceneNumber(current.rotationX, 0)),
+      rotationY: sceneNumber(item.rotationY, sceneNumber(current.rotationY, 0)),
+      rotationZ: sceneNumber(item.rotationZ, sceneNumber(current.rotationZ, 0)),
+      spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
+      spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
+      spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
       priority: sceneNumber(item.priority, sceneNumber(current.priority, 0)),
       shiftX: sceneNumber(item.shiftX, sceneNumber(current.shiftX, 0)),
       shiftY: sceneNumber(item.shiftY, sceneNumber(current.shiftY, 0)),
@@ -4547,6 +4556,16 @@
     if (!entry || typeof entry !== "object") {
       return false;
     }
+    // Spin turns a texture-mode surface every frame, so a scene that holds
+    // only spinning panels still needs an animation loop. Without this the
+    // scene reports itself static, renders one frame and freezes mid-turn.
+    if (
+      sceneNumber(entry.spinX, 0) !== 0 ||
+      sceneNumber(entry.spinY, 0) !== 0 ||
+      sceneNumber(entry.spinZ, 0) !== 0
+    ) {
+      return true;
+    }
     if (sceneNumber(entry.driftSpeed, 0) === 0) {
       return false;
     }
@@ -6237,6 +6256,12 @@
       textureReady: texture.ready,
       surfaceWidth: sceneNumber(entry.surfaceWidth, sceneNumber(entry.width, 1.8)),
       surfaceHeight: sceneNumber(entry.surfaceHeight, sceneNumber(entry.height, 0.72)),
+      rotationX: sceneNumber(entry.rotationX, 0),
+      rotationY: sceneNumber(entry.rotationY, 0),
+      rotationZ: sceneNumber(entry.rotationZ, 0),
+      spinX: sceneNumber(entry.spinX, 0),
+      spinY: sceneNumber(entry.spinY, 0),
+      spinZ: sceneNumber(entry.spinZ, 0),
       position: { x: projected.x, y: projected.y },
       depth: projected.depth,
       priority: sceneNumber(entry.priority, 0),
@@ -6284,12 +6309,12 @@
       scaleX: 1,
       scaleY: 1,
       scaleZ: 1,
-      rotationX: 0,
-      rotationY: 0,
-      rotationZ: 0,
-      spinX: 0,
-      spinY: 0,
-      spinZ: 0,
+      rotationX: sceneNumber(entry.rotationX, 0),
+      rotationY: sceneNumber(entry.rotationY, 0),
+      rotationZ: sceneNumber(entry.rotationZ, 0),
+      spinX: sceneNumber(entry.spinX, 0),
+      spinY: sceneNumber(entry.spinY, 0),
+      spinZ: sceneNumber(entry.spinZ, 0),
       shiftX: sceneNumber(entry.shiftX, 0),
       shiftY: sceneNumber(entry.shiftY, 0),
       shiftZ: sceneNumber(entry.shiftZ, 0),
@@ -6334,6 +6359,14 @@
       textureBytes: texture.bytes,
       textureMaxBytes: texture.maxBytes,
       textureReady: true,
+      // contentWidth/contentHeight are the CSS-pixel box the markup was laid
+      // out in. They are NOT the raster size (which is scaled by the device
+      // pixel ratio) and NOT the world size. Pointer routing needs them:
+      // a raycast hit gives a UV, and UV * content size is the CSS-pixel
+      // coordinate inside the source element. Keeping them on the surface
+      // means input can be added without re-deriving the mapping.
+      contentWidth: texture.width,
+      contentHeight: texture.height,
       fallback: entry.fallback,
       fallbackReason: entry.fallbackReason,
       materialIndex,
@@ -6964,12 +6997,42 @@
     image.onload = function() {
       uploadSceneWebGLTextureImage(gl, resources, texture, image);
       record.loaded = true;
+      // A surface texture decodes at least one tick after the frame that
+      // asked for it. A static scene renders once and stops, so without this
+      // the pixels land in a texture nothing ever samples: the surface stays
+      // blank and no counter reports a problem. This is exactly how an HTML
+      // texture surface reads as "ready, rasterized, invisible".
+      notifySceneTextureLoaded(key);
     };
     image.onerror = function() {
       record.failed = true;
     };
     image.src = key;
     return record;
+  }
+
+  // Renderers are created per mount and a page may hold several, so the
+  // listeners are a set rather than a single callback.
+  const sceneTextureLoadListeners = new Set();
+
+  function onSceneTextureLoaded(listener) {
+    if (typeof listener !== "function") {
+      return function() {};
+    }
+    sceneTextureLoadListeners.add(listener);
+    return function() {
+      sceneTextureLoadListeners.delete(listener);
+    };
+  }
+
+  function notifySceneTextureLoaded(src) {
+    sceneTextureLoadListeners.forEach(function(listener) {
+      try {
+        listener(src);
+      } catch (_err) {
+        // One mount's scheduler must not stop another's.
+      }
+    });
   }
 
   function createSceneWebGLImage() {

@@ -93,6 +93,15 @@ var demoCatalog = []DemoDefinition{
 		Limitations: "Measurements reflect the current machine and browser; they are not cross-device benchmarks.",
 	},
 	{
+		Slug: "html-surface", Title: "Diegetic Panels", Tag: "HTML textured onto 3D geometry",
+		Promise: "Read three HTML panels rendered as textures on real scene geometry: one head-on, one turned 36 degrees away, one lying flat and turning.",
+		Lesson:  "A texture-mode scene.HTML is a quad in the scene graph, so the page's own CSS, grid layout and webfonts render on a surface that rotates, occludes and holds depth like any other mesh.",
+		Accent:  "#35d6ff", Facets: []string{"Scene3D", "HTML surface", "WebGPU", "WebGL2"},
+		SourcePath: "examples/gosx-docs/app/demos/html-surface/program.go", Packages: []string{"scene", "route"},
+		Status: "lab", RenderMode: "SSR + Scene3D GPU runtime",
+		Limitations: "Pointer input on a surface is not routed yet: the surface carries the content box a raycast hit would map into, but no synthetic DOM event is dispatched. Rasterization is triggered explicitly or by a change of markup, content box, device pixel ratio or stylesheet set, not by arbitrary DOM mutation. Cross-origin stylesheets cannot be read and are reported as blocked rather than guessed at.",
+	},
+	{
 		Slug: "cms", Title: "CMS Editor", Tag: "block-editor with live preview",
 		Promise: "Add blocks, watch the preview update instantly, and publish a validated document through a protected GoSX server Action.",
 		Lesson:  "Client-side interactivity (dynamic blocks, live preview) and a rate-limited, CSRF-protected server Action compose on the same page — no separate API layer, no client framework.",

@@ -5911,6 +5911,18 @@
     return entries;
   }
 
+  // sceneHTMLTextureSurfaceIsLive reports whether the 3D surface is actually
+  // drawing this entry's content. Only then may the DOM mirror stop painting.
+  function sceneHTMLTextureSurfaceIsLive(htmlEntry) {
+    return Boolean(
+      htmlEntry &&
+      normalizeSceneHTMLMode(htmlEntry.mode, "dom") === "texture" &&
+      htmlEntry.textureReady &&
+      htmlEntry.textureRasterized &&
+      !htmlEntry.textureOverBudget
+    );
+  }
+
   function renderSceneHTMLElement(element, htmlEntry, box, hidden, occluded) {
     const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(htmlEntry.priority, 0) * 10) - Math.round(sceneNumber(htmlEntry.depth, 0) * 10));
     element.setAttribute("data-gosx-scene-html", htmlEntry.id || "");
@@ -5933,6 +5945,26 @@
     setAttrValue(element, "data-gosx-scene-html-texture-manager", htmlEntry.textureManager || "");
     setAttrValue(element, "data-gosx-scene-html-texture-rasterized", htmlEntry.textureRasterized ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-texture-upload-bytes", sceneNumber(htmlEntry.textureUploadBytes, 0) > 0 ? sceneNumber(htmlEntry.textureUploadBytes, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-raster-width", sceneNumber(htmlEntry.textureRasterWidth, 0) > 0 ? sceneNumber(htmlEntry.textureRasterWidth, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-raster-height", sceneNumber(htmlEntry.textureRasterHeight, 0) > 0 ? sceneNumber(htmlEntry.textureRasterHeight, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-pixel-ratio", sceneNumber(htmlEntry.textureDevicePixelRatio, 0) > 0 ? sceneNumber(htmlEntry.textureDevicePixelRatio, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-style-sheets", sceneNumber(htmlEntry.textureStyleSheets, 0) > 0 ? sceneNumber(htmlEntry.textureStyleSheets, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-blocked-sheets", sceneNumber(htmlEntry.textureBlockedSheets, 0) > 0 ? sceneNumber(htmlEntry.textureBlockedSheets, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-font-faces", sceneNumber(htmlEntry.textureFontFaces, 0) > 0 ? sceneNumber(htmlEntry.textureFontFaces, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-font-state", htmlEntry.textureFontState || "");
+    // Gap: the mirror used to paint alongside its own texture, so every
+    // texture-mode surface drew its content twice — once in the scene, once
+    // as a flat DOM overlay in front of it. The mirror is not deleted: it is
+    // the accessibility and copy/paste representation of the surface, and the
+    // rasterizer clones it to get real page CSS. It is CLIPPED instead, which
+    // suppresses paint while keeping layout, computed styles and the
+    // accessibility tree intact. When the texture is not live the mirror is
+    // the documented DOM-overlay fallback and must keep painting.
+    setAttrValue(
+      element,
+      "data-gosx-scene-html-texture-mirror",
+      sceneHTMLTextureSurfaceIsLive(htmlEntry) ? "true" : "false"
+    );
     setAttrValue(element, "data-gosx-scene-html-occlude", htmlEntry.occlude ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-occluded", occluded ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-visibility", hidden ? "hidden" : "visible");
@@ -5996,8 +6028,13 @@
       if (!element || typeof element.dispatchEvent !== "function") {
         continue;
       }
-      const width = Math.max(1, sceneNumber(htmlEntry.width, 1));
-      const height = Math.max(1, sceneNumber(htmlEntry.height, 1));
+      // localX/localY must be CSS pixels INSIDE the rasterized content, not
+      // the projected on-screen size of the DOM mirror. A texture surface is
+      // laid out at textureWidth x textureHeight CSS px and then rasterized;
+      // that box is the coordinate space a synthetic DOM event has to land
+      // in. Falling back to the projected size keeps DOM-mode callers working.
+      const width = Math.max(1, sceneNumber(htmlEntry.textureWidth, sceneNumber(htmlEntry.width, 1)));
+      const height = Math.max(1, sceneNumber(htmlEntry.textureHeight, sceneNumber(htmlEntry.height, 1)));
       const uvX = clamp01(sceneHTMLTextureNumber(detail.uvX, 0));
       const uvY = clamp01(sceneHTMLTextureNumber(detail.uvY, 0));
       const localX = uvX * width;
@@ -6064,6 +6101,17 @@
     return "scene-html-" + index;
   }
 
+  // The signature decides when a surface re-rasterizes. It deliberately
+  // includes more than the markup:
+  //
+  //   - devicePixelRatio, so dragging a window to a display with a different
+  //     scale re-rasterizes instead of upscaling a blurry texture;
+  //   - the shared style revision, so a webfont that finishes inlining, or an
+  //     explicit invalidate() call, reaches an already-drawn panel;
+  //   - the content box, so a resize re-lays-out rather than stretching.
+  //
+  // Everything here is a cheap scalar read per frame. Re-rastering is the
+  // expensive part and only happens when one of them actually moves.
   function sceneHTMLTextureLifecycleSignature(html, record) {
     const textureKey = record && record.textureKey === (html && html.textureKey) && record.sourceKey
       ? record.sourceKey
@@ -6074,8 +6122,96 @@
       sceneNumber(html && html.textureHeight, 0),
       sceneNumber(html && html.textureBytes, 0),
       sceneNumber(html && html.textureMaxBytes, 0),
+      sceneHTMLTextureCurrentDevicePixelRatio().toFixed(3),
+      sceneHTMLTextureStyleCache.revision,
+      sceneHTMLTextureInvalidationToken(record && record.id),
       html && html.html ? html.html : "",
     ].join("|");
+  }
+
+  function sceneHTMLTextureCurrentDevicePixelRatio() {
+    const dpr = sceneNumber(typeof window !== "undefined" ? window.devicePixelRatio : 1, 1);
+    return dpr > 0 ? Math.min(4, dpr) : 1;
+  }
+
+  // Explicit invalidation is the re-raster trigger.
+  //
+  // The alternative — a MutationObserver per surface — re-rasterizes on every
+  // attribute write the overlay itself performs each frame, so it either
+  // thrashes or needs a filter that is a guess. A live panel knows when its
+  // own content changed; asking it to say so costs one call and is
+  // predictable. Automatic invalidation is kept for the cases the surface
+  // CANNOT know about: device pixel ratio, the content box, the page's own
+  // stylesheet set, and the authored markup.
+  const sceneHTMLTextureInvalidations = new Map();
+  let sceneHTMLTextureGlobalInvalidation = 0;
+
+  function sceneHTMLTextureInvalidationToken(id) {
+    const scoped = id ? sceneHTMLTextureInvalidations.get(id) : 0;
+    return sceneHTMLTextureGlobalInvalidation + (scoped || 0);
+  }
+
+  function invalidateSceneHTMLTexture(surfaceID) {
+    const key = typeof surfaceID === "string" ? surfaceID.trim() : "";
+    if (key) {
+      sceneHTMLTextureInvalidations.set(key, (sceneHTMLTextureInvalidations.get(key) || 0) + 1);
+    } else {
+      sceneHTMLTextureGlobalInvalidation += 1;
+    }
+    return true;
+  }
+
+  function publishSceneHTMLTextureAPI() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (window.__gosx_scene3d_html && window.__gosx_scene3d_html.schema === "gosx.scene3d.html.v1") {
+      return;
+    }
+    const api = {
+      schema: "gosx.scene3d.html.v1",
+      // invalidate(id) re-rasterizes one surface on the next frame.
+      // invalidate() with no argument re-rasterizes every live surface.
+      invalidate: invalidateSceneHTMLTexture,
+      // invalidateStyles() additionally drops the cached page CSS. Use it
+      // after inserting a stylesheet.
+      invalidateStyles: function() {
+        sceneHTMLTextureInvalidateStyles();
+        return true;
+      },
+      styleState: function() {
+        return {
+          revision: sceneHTMLTextureStyleCache.revision,
+          styleSheets: sceneHTMLTextureStyleCache.sheetCount,
+          blockedSheets: sceneHTMLTextureStyleCache.blockedSheets,
+          fontFaces: sceneHTMLTextureStyleCache.fontFaces,
+          fontBytes: sceneHTMLTextureStyleCache.fontBytes,
+          fontState: sceneHTMLTextureStyleCache.fontState,
+        };
+      },
+    };
+    try {
+      Object.defineProperty(window, "__gosx_scene3d_html", { configurable: true, value: api });
+    } catch (_err) {
+      window.__gosx_scene3d_html = api;
+    }
+  }
+
+  // The bundle rebuilds its html entries every frame, so the raster facts the
+  // rasterizer discovered live on the lifecycle record and are copied back
+  // onto whichever entry object the frame is holding. Without this the
+  // diagnostics attributes read empty on every frame after the raster.
+  function applySceneHTMLTextureRasterFields(html, record) {
+    if (!html || !record) {
+      return;
+    }
+    html.textureRasterWidth = record.rasterWidth || 0;
+    html.textureRasterHeight = record.rasterHeight || 0;
+    html.textureDevicePixelRatio = record.devicePixelRatio || 0;
+    html.textureStyleSheets = record.styleSheets || 0;
+    html.textureBlockedSheets = record.blockedSheets || 0;
+    html.textureFontFaces = record.fontFaces || 0;
+    html.textureFontState = record.fontState || "";
   }
 
   function syncSceneHTMLTextureState(state, entries) {
@@ -6083,6 +6219,7 @@
     if (!state || !state.records) {
       return lifecycle;
     }
+    publishSceneHTMLTextureAPI();
     const active = new Set();
     for (let index = 0; index < entries.length; index += 1) {
       const html = entries[index] && entries[index].html;
@@ -6120,6 +6257,7 @@
       html.textureManager = record.manager || "";
       html.textureRasterized = Boolean(record.rasterized);
       html.textureUploadBytes = record.uploadBytes || 0;
+      applySceneHTMLTextureRasterFields(html, record);
       if (record.dirty) {
         lifecycle.dirty += 1;
         lifecycle.dirtyBytes += record.dirtyBytes;
@@ -6168,28 +6306,487 @@
     return stats;
   }
 
-  function sceneHTMLTextureDataURL(html) {
-    const width = Math.max(1, Math.floor(sceneNumber(html && html.textureWidth, 512)));
-    const height = Math.max(1, Math.floor(sceneNumber(html && html.textureHeight, 320)));
+  // ---------------------------------------------------------------------
+  // HTML texture rasterization.
+  //
+  // A texture-mode surface is rasterized through an SVG <foreignObject>.
+  // That gives real CSS layout — flexbox, grid, border-radius, the lot — but
+  // it renders in an ISOLATED document: nothing from the host page reaches
+  // it automatically, and it cannot fetch anything over the network. So the
+  // three things that decide whether a surface looks like the page are all
+  // this module's job:
+  //
+  //   1. Page CSS. Serialised from the live CSSOM once per document and
+  //      inlined as a <style> block, so class names in the markup resolve
+  //      against the same rules the page uses.
+  //   2. Webfonts. foreignObject CANNOT fetch a font file, so an @font-face
+  //      with a url() src silently renders in the fallback family. Fonts are
+  //      fetched here, base64-inlined and cached; the first raster uses
+  //      whatever is already cached and every live surface is invalidated
+  //      when the cache fills, so text never blocks on the network.
+  //   3. Device pixel ratio. The SVG's pixel size is the CSS box times the
+  //      DPR with the viewBox left in CSS units, so the same layout
+  //      rasterizes at display resolution instead of blurring.
+  // ---------------------------------------------------------------------
+
+  // One shared style cache for the whole document. Every surface on the page
+  // wants the same answer and reading cssRules is the expensive part, so this
+  // is computed once. `revision` participates in each surface's lifecycle
+  // signature: bumping it re-rasterizes every live surface, which is how a
+  // late webfont or a hot-reloaded stylesheet reaches an already-drawn panel.
+  const sceneHTMLTextureStyleCache = {
+    revision: 0,
+    css: "",
+    sheetCount: 0,
+    blockedSheets: 0,
+    fontCSS: "",
+    fontFaces: 0,
+    fontBytes: 0,
+    fontState: "idle",
+    collected: false,
+  };
+
+  // Fonts are the expensive part of the payload. 4 MB of base64 is already a
+  // large data URL; past that the raster costs more than the legibility is
+  // worth, so inlining stops and the remaining families fall back.
+  const SCENE_HTML_TEXTURE_FONT_BYTE_CAP = 4 * 1024 * 1024;
+
+  function sceneHTMLTextureCSSOMAvailable() {
+    return typeof document !== "undefined" && document && typeof document.styleSheets === "object" && document.styleSheets;
+  }
+
+  // sceneHTMLTextureCollectDocumentCSS serialises every readable stylesheet.
+  // A cross-origin sheet throws on .cssRules and is counted, not guessed at:
+  // the count surfaces as data-gosx-scene-html-texture-blocked-sheets so a
+  // surface that renders unstyled has a visible reason instead of none.
+  function sceneHTMLTextureCollectDocumentCSS() {
+    if (!sceneHTMLTextureCSSOMAvailable()) {
+      return { css: "", sheets: 0, blocked: 0 };
+    }
+    const parts = [];
+    let sheets = 0;
+    let blocked = 0;
+    const sheetList = document.styleSheets;
+    for (let i = 0; i < sheetList.length; i += 1) {
+      let rules = null;
+      try {
+        rules = sheetList[i] && sheetList[i].cssRules;
+      } catch (_err) {
+        rules = null;
+      }
+      if (!rules) {
+        blocked += 1;
+        continue;
+      }
+      sheets += 1;
+      for (let r = 0; r < rules.length; r += 1) {
+        const rule = rules[r];
+        if (!rule || typeof rule.cssText !== "string") {
+          continue;
+        }
+        // @font-face with a remote src is dead weight inside a foreignObject.
+        // The inlined copies replace it.
+        if (rule.type === 5) {
+          continue;
+        }
+        parts.push(rule.cssText);
+      }
+    }
+    return { css: parts.join("\n"), sheets, blocked };
+  }
+
+  function sceneHTMLTextureEnsureDocumentCSS() {
+    if (sceneHTMLTextureStyleCache.collected) {
+      return sceneHTMLTextureStyleCache;
+    }
+    const collected = sceneHTMLTextureCollectDocumentCSS();
+    sceneHTMLTextureStyleCache.css = collected.css;
+    sceneHTMLTextureStyleCache.sheetCount = collected.sheets;
+    sceneHTMLTextureStyleCache.blockedSheets = collected.blocked;
+    sceneHTMLTextureStyleCache.collected = true;
+    return sceneHTMLTextureStyleCache;
+  }
+
+  // sceneHTMLTextureInvalidateStyles drops the cached document CSS and bumps
+  // the revision. Call it when stylesheets change (a dev-server hot reload,
+  // a lazily inserted <style>) so live surfaces pick the new rules up.
+  function sceneHTMLTextureInvalidateStyles() {
+    sceneHTMLTextureStyleCache.collected = false;
+    sceneHTMLTextureStyleCache.revision += 1;
+  }
+
+  function sceneHTMLTextureFontURLs(cssText) {
+    const out = [];
+    const pattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]+))\s*\)/g;
+    let match = pattern.exec(cssText);
+    while (match) {
+      const url = match[1] || match[2] || match[3] || "";
+      if (url && url.indexOf("data:") !== 0) {
+        out.push(url);
+      }
+      match = pattern.exec(cssText);
+    }
+    return out;
+  }
+
+  function sceneHTMLTextureBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    if (typeof btoa !== "function") {
+      return "";
+    }
+    return btoa(binary);
+  }
+
+  function sceneHTMLTextureFontMime(url) {
+    const clean = String(url).split("?")[0].split("#")[0].toLowerCase();
+    if (clean.endsWith(".woff2")) return "font/woff2";
+    if (clean.endsWith(".woff")) return "font/woff";
+    if (clean.endsWith(".otf")) return "font/otf";
+    if (clean.endsWith(".ttf")) return "font/ttf";
+    return "application/octet-stream";
+  }
+
+  // sceneHTMLTextureInlineFonts walks every readable @font-face rule and
+  // rewrites its url() sources as base64 data URLs. It runs at most once per
+  // document and never blocks a raster: the first pass draws with fallback
+  // metrics, and the revision bump re-rasterizes with the real face.
+  function sceneHTMLTextureInlineFonts() {
+    if (sceneHTMLTextureStyleCache.fontState !== "idle") {
+      return;
+    }
+    if (!sceneHTMLTextureCSSOMAvailable() || typeof fetch !== "function" || typeof btoa !== "function") {
+      sceneHTMLTextureStyleCache.fontState = "unavailable";
+      return;
+    }
+    const faces = [];
+    const sheetList = document.styleSheets;
+    for (let i = 0; i < sheetList.length; i += 1) {
+      let rules = null;
+      try {
+        rules = sheetList[i] && sheetList[i].cssRules;
+      } catch (_err) {
+        rules = null;
+      }
+      if (!rules) {
+        continue;
+      }
+      for (let r = 0; r < rules.length; r += 1) {
+        const rule = rules[r];
+        if (rule && rule.type === 5 && typeof rule.cssText === "string") {
+          faces.push(rule.cssText);
+        }
+      }
+    }
+    if (faces.length === 0) {
+      sceneHTMLTextureStyleCache.fontState = "none";
+      return;
+    }
+    sceneHTMLTextureStyleCache.fontState = "loading";
+    let budget = SCENE_HTML_TEXTURE_FONT_BYTE_CAP;
+    const inlined = [];
+    const pending = faces.map(function(cssText) {
+      const urls = sceneHTMLTextureFontURLs(cssText);
+      if (urls.length === 0) {
+        return Promise.resolve();
+      }
+      // One source per face is enough — the first readable one wins, which
+      // matches how a browser picks from a src list it can actually load.
+      const url = urls[0];
+      return fetch(url, { credentials: "same-origin" }).then(function(response) {
+        if (!response || !response.ok) {
+          return null;
+        }
+        return response.arrayBuffer();
+      }).then(function(buffer) {
+        if (!buffer || buffer.byteLength > budget) {
+          return;
+        }
+        const base64 = sceneHTMLTextureBase64(buffer);
+        if (!base64) {
+          return;
+        }
+        budget -= buffer.byteLength;
+        sceneHTMLTextureStyleCache.fontBytes += buffer.byteLength;
+        sceneHTMLTextureStyleCache.fontFaces += 1;
+        const dataURL = "url(data:" + sceneHTMLTextureFontMime(url) + ";base64," + base64 + ")";
+        inlined.push(cssText.replace(/src\s*:[^;}]*/i, "src: " + dataURL));
+      }).catch(function() {
+        // A font that will not load is a legibility downgrade, not a failure
+        // worth aborting the surface for.
+      });
+    });
+    Promise.all(pending).then(function() {
+      sceneHTMLTextureStyleCache.fontCSS = inlined.join("\n");
+      sceneHTMLTextureStyleCache.fontState = inlined.length > 0 ? "ready" : "unavailable";
+      sceneHTMLTextureStyleCache.revision += 1;
+    });
+  }
+
+  // Properties a rasterized surface inherits from its place in the page.
+  // The clone is reparented into a bare SVG document, so anything inherited
+  // from an ancestor — the body font, the theme colour — would otherwise be
+  // lost and the panel would render in Times New Roman.
+  const SCENE_HTML_TEXTURE_INHERITED = [
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "font-variant",
+    "font-feature-settings",
+    "line-height",
+    "letter-spacing",
+    "word-spacing",
+    "color",
+    "text-align",
+    "text-transform",
+    "direction",
+    "-webkit-font-smoothing",
+  ];
+
+  // Custom properties are how a design system reaches a component, so a
+  // surface that drops them renders with every token at its fallback. The cap
+  // keeps a pathological token set from dominating the data URL.
+  const SCENE_HTML_TEXTURE_CUSTOM_PROPERTY_CAP = 256;
+
+  function sceneHTMLTextureInheritedStyle(element) {
+    if (!element || typeof window === "undefined" || typeof window.getComputedStyle !== "function") {
+      return "";
+    }
+    let computed = null;
+    try {
+      computed = window.getComputedStyle(element);
+    } catch (_err) {
+      computed = null;
+    }
+    if (!computed || typeof computed.getPropertyValue !== "function") {
+      return "";
+    }
+    const declarations = [];
+    for (const property of SCENE_HTML_TEXTURE_INHERITED) {
+      const value = computed.getPropertyValue(property);
+      if (value) {
+        declarations.push(property + ":" + value);
+      }
+    }
+    let customCount = 0;
+    const length = Math.max(0, Math.floor(sceneNumber(computed.length, 0)));
+    for (let i = 0; i < length && customCount < SCENE_HTML_TEXTURE_CUSTOM_PROPERTY_CAP; i += 1) {
+      const name = typeof computed.item === "function" ? computed.item(i) : "";
+      if (typeof name !== "string" || name.indexOf("--") !== 0) {
+        continue;
+      }
+      const value = computed.getPropertyValue(name);
+      if (!value) {
+        continue;
+      }
+      declarations.push(name + ":" + value);
+      customCount += 1;
+    }
+    return declarations.join(";");
+  }
+
+  // GoSX scopes route and layout CSS by rewriting each rule to
+  //
+  //     :where([data-gosx-s="ID"]) .cls, .cls:where([data-gosx-s="ID"])
+  //
+  // and stamping data-gosx-s on the fragment roots (route/filelayout.go).
+  // A rasterized clone is reparented into a bare SVG document, so it has no
+  // scoped ancestor and EVERY scoped rule stops matching — the panel renders
+  // with the page's global tokens and none of its own component CSS, which
+  // looks exactly like "the stylesheet did not load". Collecting the scope
+  // chain and rebuilding it around the clone is what makes a component render
+  // the same on the page and on the surface.
+  const SCENE_HTML_TEXTURE_SCOPE_ATTR = "data-gosx-s";
+
+  function sceneHTMLTextureScopeChain(element) {
+    const scopes = [];
+    const seen = new Set();
+    let node = element;
+    while (node && typeof node.getAttribute === "function") {
+      const value = node.getAttribute(SCENE_HTML_TEXTURE_SCOPE_ATTR);
+      if (value && !seen.has(value)) {
+        seen.add(value);
+        // Outermost first, so the rebuilt chain nests in document order.
+        scopes.unshift(value);
+      }
+      node = node.parentElement;
+    }
+    return scopes;
+  }
+
+  function sceneHTMLTextureWrapInScopes(content, scopes) {
+    if (!scopes.length) {
+      return content;
+    }
+    let open = "";
+    let close = "";
+    for (const scope of scopes) {
+      open += '<div xmlns="http://www.w3.org/1999/xhtml" ' +
+        SCENE_HTML_TEXTURE_SCOPE_ATTR + '="' + sceneHTMLTextureEscapeAttr(scope) +
+        '" style="display:contents">';
+      close += "</div>";
+    }
+    return open + content + close;
+  }
+
+  function sceneHTMLTextureEscapeAttr(value) {
+    return String(value)
+      .split("&").join("&amp;")
+      .split("<").join("&lt;")
+      .split('"').join("&quot;");
+  }
+
+  // sceneHTMLTextureSerializeContent produces XML-well-formed markup. The
+  // SVG data URL is parsed as XML, so HTML shorthand (an unclosed <br>, a
+  // bare attribute) breaks the whole image with no error the page can see.
+  // XMLSerializer over a real cloned node is what makes that safe, and using
+  // the LIVE element rather than the authored markup string is what lets a
+  // panel show live content.
+  function sceneHTMLTextureSerializeContent(html, element, width, height) {
+    const inheritedStyle = sceneHTMLTextureInheritedStyle(element);
+    // The mirror is absolutely positioned and clipped inside the overlay.
+    // The raster wants it at origin, at its content size, fully painted.
+    const resetStyle = [
+      "box-sizing:border-box",
+      "position:static",
+      "inset:auto",
+      "margin:0",
+      "transform:none",
+      "opacity:1",
+      "visibility:visible",
+      "clip-path:none",
+      "contain:none",
+      "width:" + width + "px",
+      // An EXACT height, not just a minimum. The raster box is fixed, so a
+      // child with `height: 100%` must resolve against it. Against an
+      // auto-height parent that percentage resolves to auto, the content
+      // collapses to its intrinsic height, and the panel renders as a small
+      // block floating in a mostly transparent texture.
+      "height:" + height + "px",
+      "min-height:" + height + "px",
+    ].join(";");
+    if (
+      element &&
+      typeof element.cloneNode === "function" &&
+      typeof XMLSerializer === "function" &&
+      typeof document !== "undefined"
+    ) {
+      try {
+        const clone = element.cloneNode(true);
+        if (typeof clone.removeAttribute === "function") {
+          // Overlay bookkeeping means nothing inside the raster and would
+          // only re-trigger the mirror's own hidden styling.
+          clone.removeAttribute("data-gosx-scene-html-visibility");
+          clone.removeAttribute("data-gosx-scene-html-texture-mirror");
+          clone.removeAttribute("aria-hidden");
+        }
+        if (clone.querySelectorAll) {
+          const scripts = clone.querySelectorAll("script");
+          for (let i = 0; i < scripts.length; i += 1) {
+            if (scripts[i] && scripts[i].parentNode) {
+              scripts[i].parentNode.removeChild(scripts[i]);
+            }
+          }
+        }
+        if (typeof clone.setAttribute === "function") {
+          clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+          clone.setAttribute("style", (inheritedStyle ? inheritedStyle + ";" : "") + resetStyle);
+        }
+        const serialized = new XMLSerializer().serializeToString(clone);
+        if (serialized) {
+          return serialized;
+        }
+      } catch (_err) {
+        // Fall through to the markup string below.
+      }
+    }
     const markup = typeof html.html === "string" ? html.html : "";
     if (!markup.trim()) {
       return "";
     }
-    const bodyStyle = [
-      "box-sizing:border-box",
-      "width:" + width + "px",
-      "min-height:" + height + "px",
-      "font:14px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif",
-      "color:#fff",
-    ].join(";");
+    return '<div xmlns="http://www.w3.org/1999/xhtml" style="' +
+      (inheritedStyle ? inheritedStyle + ";" : "") + resetStyle + '">' + markup + "</div>";
+  }
+
+  // sceneHTMLTextureDevicePixelRatio resolves the raster scale, then clamps
+  // it so the raster never exceeds the surface's own pixel budget. Without
+  // the clamp a 3x display would silently blow past maxTexturePixels.
+  function sceneHTMLTextureDevicePixelRatio(html, width, height) {
+    let dpr = sceneNumber(html && html.textureDevicePixelRatio, 0);
+    if (dpr <= 0) {
+      dpr = sceneNumber(typeof window !== "undefined" ? window.devicePixelRatio : 1, 1);
+    }
+    if (!(dpr > 0)) {
+      dpr = 1;
+    }
+    dpr = Math.min(4, dpr);
+    const maxPixels = Math.max(0, Math.floor(sceneNumber(html && html.maxTexturePixels, 0)));
+    if (maxPixels > 0) {
+      const budgetScale = Math.sqrt(maxPixels / Math.max(1, width * height));
+      if (budgetScale < dpr) {
+        dpr = budgetScale;
+      }
+    }
+    return Math.max(0.5, dpr);
+  }
+
+  function sceneHTMLTextureDataURL(html, element) {
+    const width = Math.max(1, Math.floor(sceneNumber(html && html.textureWidth, 512)));
+    const height = Math.max(1, Math.floor(sceneNumber(html && html.textureHeight, 320)));
+    const content = sceneHTMLTextureSerializeContent(html, element, width, height);
+    if (!content) {
+      return null;
+    }
+    const styles = sceneHTMLTextureEnsureDocumentCSS();
+    sceneHTMLTextureInlineFonts();
+    const dpr = sceneHTMLTextureDevicePixelRatio(html, width, height);
+    const rasterWidth = Math.max(1, Math.round(width * dpr));
+    const rasterHeight = Math.max(1, Math.round(height * dpr));
+    // The <style> element MUST sit inside the foreignObject and carry the
+    // XHTML namespace. A <style> child of <svg> is an SVG style element: it
+    // styles the SVG tree and leaves the foreign HTML subtree completely
+    // unstyled, which renders as unformatted text with no error anywhere.
+    //
+    // The CSS is wrapped in CDATA because the data URL is parsed as XML,
+    // where a bare `&` — a `content: "&"` declaration, an `&` inside a
+    // url() query string — is a fatal parse error that kills the whole
+    // image rather than one rule.
+    const styleCSS = [sceneHTMLTextureStyleCache.fontCSS, styles.css]
+      .filter(Boolean)
+      .join("\n");
+    const styleBlock = styleCSS
+      ? '<style xmlns="http://www.w3.org/1999/xhtml" type="text/css"><![CDATA[' +
+        styleCSS.split("]]>").join("]]&gt;") +
+        "]]></style>"
+      : "";
     const svg = [
-      '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '">',
+      // width/height in device pixels, viewBox in CSS pixels: same layout,
+      // rasterized at display resolution.
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' + rasterWidth + '" height="' + rasterHeight +
+        '" viewBox="0 0 ' + width + " " + height + '">',
       '<foreignObject x="0" y="0" width="100%" height="100%">',
-      '<div xmlns="http://www.w3.org/1999/xhtml" style="' + bodyStyle + '">',
-      markup,
+      '<div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing:border-box;width:' + width +
+        "px;height:" + height + 'px">',
+      styleBlock,
+      sceneHTMLTextureWrapInScopes(content, sceneHTMLTextureScopeChain(element)),
       "</div></foreignObject></svg>",
     ].join("");
-    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    return {
+      url: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg),
+      width,
+      height,
+      rasterWidth,
+      rasterHeight,
+      devicePixelRatio: dpr,
+      sheetCount: styles.sheetCount,
+      blockedSheets: styles.blockedSheets,
+      fontFaces: sceneHTMLTextureStyleCache.fontFaces,
+      fontState: sceneHTMLTextureStyleCache.fontState,
+    };
   }
 
   function rasterizeSceneHTMLTextureEntry(textureState, html, element, index) {
@@ -6201,11 +6798,12 @@
     if (!record || html.textureOverBudget || !record.dirty) {
       return false;
     }
-    const textureKey = sceneHTMLTextureDataURL(html);
-    if (!textureKey) {
+    const raster = sceneHTMLTextureDataURL(html, element);
+    if (!raster || !raster.url) {
       record.manager = "unavailable";
       return false;
     }
+    const textureKey = raster.url;
     record.sourceKey = html.textureKey || ("gosx-html://" + id);
     record.textureKey = textureKey;
     record.manager = "svg-foreignobject";
@@ -6214,7 +6812,16 @@
     record.dirty = false;
     record.dirtyBytes = 0;
     record.pendingUploadBytes = 0;
-    record.uploadBytes = Math.max(0, Math.floor(sceneNumber(html.textureBytes, 0)));
+    // Upload bytes follow the RASTER, not the CSS box. A 2x panel costs four
+    // times the memory and the diagnostics have to say so.
+    record.uploadBytes = raster.rasterWidth * raster.rasterHeight * 4;
+    record.rasterWidth = raster.rasterWidth;
+    record.rasterHeight = raster.rasterHeight;
+    record.devicePixelRatio = raster.devicePixelRatio;
+    record.styleSheets = raster.sheetCount;
+    record.blockedSheets = raster.blockedSheets;
+    record.fontFaces = raster.fontFaces;
+    record.fontState = raster.fontState;
     html.textureKey = textureKey;
     html.textureReady = true;
     html.textureManager = record.manager;
@@ -6223,6 +6830,13 @@
     html.textureDirtyBytes = 0;
     html.texturePendingUploadBytes = 0;
     html.textureUploadBytes = record.uploadBytes;
+    html.textureRasterWidth = raster.rasterWidth;
+    html.textureRasterHeight = raster.rasterHeight;
+    html.textureDevicePixelRatio = raster.devicePixelRatio;
+    html.textureStyleSheets = raster.sheetCount;
+    html.textureBlockedSheets = raster.blockedSheets;
+    html.textureFontFaces = raster.fontFaces;
+    html.textureFontState = raster.fontState;
     if (html.fallbackReason === "html-texture-manager-unavailable" || !html.fallbackReason) {
       html.fallbackReason = "html-texture-accessibility-mirror";
     }
@@ -6254,6 +6868,7 @@
       entry.textureManager = record.manager || "";
       entry.textureRasterized = Boolean(record.rasterized);
       entry.textureUploadBytes = record.uploadBytes || 0;
+      applySceneHTMLTextureRasterFields(entry, record);
       entry.textureDirty = false;
       entry.textureDirtyBytes = 0;
       entry.texturePendingUploadBytes = 0;
@@ -7679,6 +8294,11 @@
     const htmlElements = new Map();
     const htmlTextureState = createSceneHTMLTextureState();
     htmlTextureState.requestRender = scheduleRender;
+    // A texture image decodes asynchronously. Schedule a frame when one
+    // lands so a static scene actually samples it.
+    const releaseTextureLoadListener = typeof onSceneTextureLoaded === "function"
+      ? onSceneTextureLoaded(function() { scheduleRender("texture-loaded"); })
+      : null;
     let labelRefreshHandle = null;
 
     function syncSceneNodeSentinels(bundle) {
@@ -10210,6 +10830,9 @@
         sceneControlHandle.dispose();
         renderer.dispose();
         disposeSceneHTMLTextureState(htmlTextureState);
+        if (typeof releaseTextureLoadListener === "function") {
+          releaseTextureLoadListener();
+        }
         if (wasmMotionState === 1 && typeof window !== "undefined"
             && typeof window.__gosx_motion_unload === "function") {
           window.__gosx_motion_unload(wasmMotionHandle);

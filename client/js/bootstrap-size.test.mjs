@@ -317,7 +317,17 @@ const budgets = [
   // attribute read. Combined the two PRs push gzip past the old 358_500
   // ceiling (measured 358_639); bumped gzip 358_500 -> 359_000. Measured
   // on the merged bundle: 1_346_320 / 358_639 / 289_898.
-  { file: "bootstrap.js", raw: 1_347_000, gzip: 359_000, brotli: 290_000 },
+  //
+  // Bumped raw 1_347_000 -> 1_356_000, gzip 359_000 -> 362_000, brotli
+  // 290_000 -> 292_500 for the HTML-texture 3D surface path. The rasterizer
+  // stopped being a stub: it serialises the page's own CSSOM into the
+  // foreignObject, inlines @font-face sources as data URLs (a foreignObject
+  // cannot fetch a font file, so a url() src silently renders in the
+  // fallback family), carries inherited typography and custom properties
+  // across the document boundary, and sizes the raster by device pixel
+  // ratio. Surfaces also gained rotation, an explicit invalidation API and
+  // seven diagnostic attributes. Measured: 1_353_787 / 360_910 / 291_389.
+  { file: "bootstrap.js", raw: 1_356_000, gzip: 362_000, brotli: 292_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -535,7 +545,13 @@ const budgets = [
   // the additions, so this chunk shows the cost without the saving.
   // Ceilings unchanged and still fit the merged bundle. Measured:
   // 739_661 / 203_828 / 167_688.
-  { file: "bootstrap-feature-scene3d.js", raw: 740_000, gzip: 204_000, brotli: 168_000 },
+  //
+  // Bumped raw 740_000 -> 750_000, gzip 204_000 -> 207_000, brotli
+  // 168_000 -> 170_500 for the HTML-texture 3D surface path. This chunk
+  // carries 20-scene-mount.js, so it pays the whole rasterizer: CSSOM
+  // serialisation, @font-face inlining, device-pixel-ratio raster sizing and
+  // the invalidation API. Measured: 746_970 / 206_049 / 169_464.
+  { file: "bootstrap-feature-scene3d.js", raw: 750_000, gzip: 207_000, brotli: 170_500 },
   // New split command chunk for lazy public Scene3D command dispatch. Measured:
   // 2_249 / 960 / 811.
   { file: "bootstrap-feature-scene3d-command.js", raw: 3_000, gzip: 1_200, brotli: 1_000 },
