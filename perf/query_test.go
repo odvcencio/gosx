@@ -11,11 +11,7 @@ import (
 )
 
 func TestQueryNavigationTiming(t *testing.T) {
-	d, err := New(WithHeadless(true), WithTimeout(10*time.Second))
-	if err != nil {
-		t.Skipf("skipping: %v", err)
-	}
-	defer d.Close()
+	d := requireDriver(t, 10*time.Second)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -47,11 +43,7 @@ func TestQueryNavigationTiming(t *testing.T) {
 }
 
 func TestQueryRuntimeState(t *testing.T) {
-	d, err := New(WithHeadless(true), WithTimeout(10*time.Second))
-	if err != nil {
-		t.Skipf("skipping: %v", err)
-	}
-	defer d.Close()
+	d := requireDriver(t, 10*time.Second)
 
 	if err := InjectDriver(d); err != nil {
 		t.Fatalf("InjectDriver: %v", err)

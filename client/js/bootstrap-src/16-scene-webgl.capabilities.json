@@ -1,8 +1,9 @@
 {
   "skinning": true,
   "ibl": false,
+  "environment-map": true,
   "gpu-picking": true,
-  "line-dashed": true,
+  "line-dashed": false,
   "compute-particles": false,
   "gpu-cull": false,
   "water-simulation": true,

@@ -204,6 +204,57 @@
     return { positions: [], normals: [], uvs: [], count: 0 };
   }
 
+  // Winding convention for every solid mesh below.
+  //
+  // Wind each triangle counter-clockwise as seen from outside the surface. The
+  // geometric normal that the right-hand rule gives then agrees with the outward
+  // normals the three vertices carry.
+  //
+  // Three producers build the same primitive kinds, and one authored shape can
+  // reach the screen through any of them:
+  //   - this file, when the renderer draws the object on its own;
+  //   - generateInstancedGeometry in 16c-scene-shared-pbr.js, when the renderer
+  //     instances the object;
+  //   - scene/geom in Go, for the native renderer and the headless oracle.
+  //
+  // box, plane, sphere and torus were wound the other way here. They measured
+  // -1.000000, -1.000000, -0.999170 and -0.997526 against their own normals,
+  // while 16c and scene/geom measured the same three figures positive. One
+  // authored box therefore had opposite winding depending only on whether the
+  // renderer instanced it.
+  //
+  // Four permissive defaults hid the split in the MAIN colour pass:
+  //   - the WebGL main pass calls gl.disable(gl.CULL_FACE);
+  //   - the WebGPU PBR pipeline sets cullMode "none";
+  //   - sceneRayIntersectsTriangle reports a hit on both faces;
+  //   - the native Go renderer reads scene/geom and never reads this file.
+  //
+  // FOUR browser draw paths DO cull. Read every one before you touch this file.
+  //   - the WebGL shadow pass enables CULL_FACE and calls cullFace(gl.FRONT);
+  //   - the WebGPU gosx-shadow pipeline sets cullMode "front";
+  //   - the WebGPU gosx-shadow-instanced pipeline sets cullMode "front";
+  //   - drawPBRObjects in 16a-scene-webgpu.js leaves a mesh object on
+  //     getSelenaPipeline's cullMode "back" default whenever the object carries
+  //     a Selena custom shader and doubleSided stays false.
+  //
+  // The three shadow sites keep the faces that point AWAY from the light, which
+  // is the standard mitigation for peter-panning. So the winding below decides
+  // which surface a browser shadow map records. render/bundle/renderer.go keeps
+  // the opposite face natively, and render/bundle/shadow_drift_test.go pins all
+  // three settings and states the verdict.
+  //
+  // render/bundle/renderer.go draws scene/geom with CullBack plus FrontFaceCCW,
+  // and render/gpu/jsgpu/encode.go maps that pair to WebGPU cullMode "back" plus
+  // frontFace "ccw" with no inversion, so the winding below is the winding that
+  // pair expects.
+  //
+  // Only the vertex order inside each triangle changed. Every vertex, the
+  // triangle count and the triangle order stay the same, so a pick still reports
+  // the same triangle index and every raycast test keeps its answer.
+  //
+  // 12-scene-geometry-winding.test.mjs measures the dot product per generator and
+  // fails on a reversed face. It also builds one shape through both browser paths
+  // and compares the two signs directly.
   function boxTriangleMesh(object) {
     const vertices = boxVertices(object.width, object.height, object.depth);
     const out = scenePrimitiveMeshBuilder();
@@ -225,8 +276,10 @@
       const b = vertices[face.indices[1]];
       const c = vertices[face.indices[2]];
       const d = vertices[face.indices[3]];
-      scenePushMeshTriangle(out, a, b, c, face.normal, uv0, uv1, uv2);
-      scenePushMeshTriangle(out, a, c, d, face.normal, uv0, uv2, uv3);
+      // Each face lists its four corners clockwise about its own outward normal,
+      // so the quad fan runs a, c, b and a, d, c. Each UV travels with its corner.
+      scenePushMeshTriangle(out, a, c, b, face.normal, uv0, uv2, uv1);
+      scenePushMeshTriangle(out, a, d, c, face.normal, uv0, uv3, uv2);
     }
     return sceneFinalizePrimitiveMesh(out);
   }
@@ -236,14 +289,18 @@
     // boxVertices lists the -z face first (indices 0..3), so slice(0, 4) with
     // height 0 gave four points that all share z = -depth/2: a zero-area strip
     // instead of a plane. Indices 0, 1, 5 and 4 are the corners that span x
-    // and z. The winding stays clockwise about the +y normal, which is the
-    // convention every other generator in this file uses.
+    // and z.
+    //
+    // The four corners run clockwise about the +y normal, so the fan runs 0, 2, 1
+    // and 0, 3, 2. That winds both triangles counter-clockwise seen from above,
+    // which is where the +y normal points. generateInstancedPlaneGeometry in
+    // 16c-scene-shared-pbr.js measures +1.000000 for the same quad.
     const box = boxVertices(object.width, 0, object.depth);
     const vertices = [box[0], box[1], box[5], box[4]];
     const out = scenePrimitiveMeshBuilder();
     const normal = { x: 0, y: 1, z: 0 };
-    scenePushMeshTriangle(out, vertices[0], vertices[1], vertices[2], normal, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 0 });
-    scenePushMeshTriangle(out, vertices[0], vertices[2], vertices[3], normal, { x: 0, y: 1 }, { x: 1, y: 0 }, { x: 0, y: 0 });
+    scenePushMeshTriangle(out, vertices[0], vertices[2], vertices[1], normal, { x: 0, y: 1 }, { x: 1, y: 0 }, { x: 1, y: 1 });
+    scenePushMeshTriangle(out, vertices[0], vertices[3], vertices[2], normal, { x: 0, y: 1 }, { x: 0, y: 0 }, { x: 1, y: 0 });
     return sceneFinalizePrimitiveMesh(out);
   }
 
@@ -274,15 +331,19 @@
         const b = point(lat + 1, lon);
         const c = point(lat + 1, nextLon);
         const d = point(lat, nextLon);
+        // a and d sit on ring lat, b and c sit on ring lat + 1. Latitude grows
+        // downward from the north pole, so a, d, b and d, c, b wind
+        // counter-clockwise seen from outside the ball. The top and the bottom row
+        // each drop one triangle, because a pole quad collapses to a sliver.
         if (lat > 0) {
           scenePushMeshVertex(out, a.position, a.normal, a.uv);
-          scenePushMeshVertex(out, b.position, b.normal, b.uv);
           scenePushMeshVertex(out, d.position, d.normal, d.uv);
+          scenePushMeshVertex(out, b.position, b.normal, b.uv);
         }
         if (lat < rings - 1) {
           scenePushMeshVertex(out, d.position, d.normal, d.uv);
-          scenePushMeshVertex(out, b.position, b.normal, b.uv);
           scenePushMeshVertex(out, c.position, c.normal, c.uv);
+          scenePushMeshVertex(out, b.position, b.normal, b.uv);
         }
       }
     }
@@ -316,12 +377,17 @@
         const b = point(i + 1, j);
         const c = point(i + 1, j + 1);
         const d = point(i, j + 1);
+        // i sweeps the major ring and j sweeps the tube cross-section, so the quad
+        // a, b, c, d reads clockwise from outside the tube. Fan it a, c, b and
+        // a, d, c to wind both triangles with the outward normals.
+        // generateInstancedTorusGeometry in 16c-scene-shared-pbr.js measures
+        // +0.997526 for the same default torus.
         scenePushMeshVertex(out, a.position, a.normal, a.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
         scenePushMeshVertex(out, b.position, b.normal, b.uv);
-        scenePushMeshVertex(out, c.position, c.normal, c.uv);
         scenePushMeshVertex(out, a.position, a.normal, a.uv);
-        scenePushMeshVertex(out, c.position, c.normal, c.uv);
         scenePushMeshVertex(out, d.position, d.normal, d.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
       }
     }
     return sceneFinalizePrimitiveMesh(out);
@@ -416,6 +482,22 @@
       };
     }
     const out = scenePrimitiveMeshBuilder();
+    // Wind each quad counter-clockwise as seen from outside the tube, so the
+    // geometric normal of every triangle agrees with the outward normals its own
+    // three vertices carry.
+    //
+    // The old order (a, b, c) and (a, c, d) opposed those normals at a dot
+    // product of -0.998. Four permissive defaults hid it: the WebGL main pass
+    // calls gl.disable(gl.CULL_FACE), the WebGPU pipeline sets cullMode "none",
+    // sceneRayIntersectsTriangle accepts both faces, and the native renderer
+    // skipped the shape. The native renderer culls back faces with a
+    // counter-clockwise front face, so it needs this order to draw the near wall
+    // of the tube instead of the far one.
+    //
+    // buildTorusKnot in scene/geom/primitives.go now emits the same two
+    // triangles in the same order. Only the vertex order inside each triangle
+    // changed here, so the triangle count, the triangle order and every vertex
+    // stay the same and a pick still reports the same triangle index.
     for (let i = 0; i < tubularSegments; i++) {
       for (let j = 0; j < radialSegments; j++) {
         const a = knotVertex(i, j);
@@ -423,11 +505,11 @@
         const c = knotVertex(i + 1, j + 1);
         const d = knotVertex(i, j + 1);
         scenePushMeshVertex(out, a.position, a.normal, a.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
         scenePushMeshVertex(out, b.position, b.normal, b.uv);
-        scenePushMeshVertex(out, c.position, c.normal, c.uv);
         scenePushMeshVertex(out, a.position, a.normal, a.uv);
-        scenePushMeshVertex(out, c.position, c.normal, c.uv);
         scenePushMeshVertex(out, d.position, d.normal, d.uv);
+        scenePushMeshVertex(out, c.position, c.normal, c.uv);
       }
     }
     return sceneFinalizePrimitiveMesh(out);

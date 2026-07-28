@@ -3,9 +3,6 @@ package physics
 import (
 	"math"
 	"testing"
-
-	"m31labs.dev/gosx/hub"
-	"m31labs.dev/gosx/sim"
 )
 
 func TestWorldFixedTimestepAccumulator(t *testing.T) {
@@ -272,15 +269,24 @@ func TestWorldRaycastFindsClosestColliderAtScale(t *testing.T) {
 	}
 }
 
-func TestWorldImplementsSimSimulation(t *testing.T) {
-	var _ sim.Simulation = (*World)(nil)
-}
-
-func TestNewRunnerUsesWorldFixedTimestep(t *testing.T) {
-	world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 0.25, SolverIter: 1})
-	runner := NewRunner(hub.New("physics-runner-test"), world, sim.Options{})
-	if runner.TickRate() != 4 {
-		t.Fatalf("TickRate() = %d, want 4", runner.TickRate())
+func TestWorldTickRateFollowsFixedTimestep(t *testing.T) {
+	cases := []struct {
+		timestep float64
+		want     int
+	}{
+		{timestep: 0.25, want: 4},
+		{timestep: 1.0 / 60.0, want: 60},
+		{timestep: 1.0 / 144.0, want: 144},
+	}
+	for _, tc := range cases {
+		world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: tc.timestep, SolverIter: 1})
+		if got := world.TickRate(); got != tc.want {
+			t.Fatalf("TickRate() for timestep %v = %d, want %d", tc.timestep, got, tc.want)
+		}
+	}
+	var nilWorld *World
+	if got := nilWorld.TickRate(); got != 60 {
+		t.Fatalf("nil World TickRate() = %d, want 60", got)
 	}
 }
 
@@ -310,7 +316,7 @@ func TestWorldTickAppliesRunnerInputCommands(t *testing.T) {
 	world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 0.5, SolverIter: 1})
 	body := world.AddBody(BodyConfig{ID: "ball", Mass: 2})
 
-	world.Tick(map[string]sim.Input{
+	world.Tick(map[string]Input{
 		"player-1": {Data: []byte(`{"type":"impulse","bodyID":"ball","impulse":{"x":4}}`)},
 	})
 
@@ -321,7 +327,7 @@ func TestWorldTickAppliesRunnerInputCommands(t *testing.T) {
 		t.Fatalf("position after impulse tick = %+v", body.Position)
 	}
 
-	world.Tick(map[string]sim.Input{
+	world.Tick(map[string]Input{
 		"player-1": {Data: []byte(`[{"type":"force","bodyID":"ball","force":[4,0,0]},{"type":"torque","bodyID":"ball","torque":{"z":2}}]`)},
 	})
 

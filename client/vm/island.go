@@ -26,9 +26,18 @@ type Island struct {
 	// changed instead of evaluating them. nil disables the optimisation
 	// and restores whole-tree evaluation. See reuse.go.
 	reuse *islandReuse
-	// reuseBuilt records that the analysis already ran, so a program that
-	// cannot benefit is analysed once instead of on every reconcile.
-	reuseBuilt bool
+
+	// spare holds the tree Reconcile retired one generation ago. The next
+	// reconcile walks into it instead of allocating, which removes the
+	// largest allocation on the event path. See nextTreeBuffer.
+	spare *ResolvedTree
+
+	// diff is the state the tree diff walks with: the path builder, the two
+	// trees, the static mask and the reuse skip set. It is a pointer, and
+	// the first Reconcile creates it, so an island that renders once and
+	// never receives an event carries one word instead of the state. That
+	// path is the server-side render, which builds one island per request.
+	diff *diffWalk
 
 	// PatchCallback is called when shared signals trigger a re-render.
 	// Set by the bridge to push patches to JS.
@@ -38,6 +47,22 @@ type Island struct {
 	// HTML and the client's initial evaluation. Non-empty means the server and
 	// client produced different output — a potential bug in props or timing.
 	HydrationMismatches []string
+
+	// The two flags sit last so they share one word of padding.
+	//
+	// reuseBuilt records that the analysis already ran, so a program that
+	// cannot benefit is analysed once instead of on every reconcile.
+	reuseBuilt bool
+	// recycleOff disables the spare buffer and makes every reconcile
+	// allocate a fresh tree, which is the behaviour before double
+	// buffering. FuzzIslandRecycleMatchesFreshTree drives both paths and
+	// compares them, so the reference path must stay reachable.
+	recycleOff bool
+	// skipOff makes the diff walk into the subtrees the reuse pass copied
+	// verbatim, which is the behaviour before the skip. The same fuzz
+	// target drives it as a third arm, because a wrong skip emits no patch
+	// and no op assertion can see it. See nodeSpan.verbatim.
+	skipOff bool
 }
 
 // CheckHydration compares the initial client-side tree against what the server
@@ -89,14 +114,42 @@ func (island *Island) ensureReuse() {
 // The snapshot refresh runs before the walk. Read refresh's doc comment for
 // why that order is the safe one.
 func (island *Island) evalTree() *ResolvedTree {
+	tree := &ResolvedTree{}
+	island.evalTreeInto(tree)
+	return tree
+}
+
+// evalTreeInto is evalTree against a caller-owned tree. Reconcile uses it to
+// walk into the retired tree from the generation before last.
+func (island *Island) evalTreeInto(tree *ResolvedTree) {
 	reuse := island.reuse
 	if reuse == nil {
-		return island.vm.EvalTree()
+		island.vm.EvalTreeInto(tree)
+		return
 	}
 	dirty := reuse.refresh(island.vm)
 	reuse.begin(island.vm, island.prev, dirty)
 	defer reuse.end(island.vm)
-	return island.vm.EvalTree()
+	island.vm.EvalTreeInto(tree)
+}
+
+// nextTreeBuffer returns the tree the next walk writes into.
+//
+// The spare is the tree Reconcile retired one generation ago. Nothing inside
+// the island reads it: prev is the newer tree, and the reuse context copies
+// only out of prev. Handing it back to the walk therefore reuses a live-sized
+// node array instead of allocating one.
+//
+// The identity check is the safety gate. Subtree reuse appends slices of
+// prev.Nodes into the tree under construction, so writing into prev itself
+// would read and overwrite the same array.
+func (island *Island) nextTreeBuffer() *ResolvedTree {
+	if island.recycleOff || island.spare == nil || island.spare == island.prev {
+		return &ResolvedTree{}
+	}
+	spare := island.spare
+	island.spare = nil
+	return spare
 }
 
 // EvalExpr evaluates an expression by ID in this island's VM.
@@ -115,7 +168,11 @@ func (island *Island) HasHandler(name string) bool {
 }
 
 // CurrentTree returns the most recently reconciled tree for inspection.
-// Callers should treat the returned tree as read-only.
+//
+// Treat the returned tree as read-only, and read it before the next
+// Reconcile. Reconcile alternates between two trees, so the second Reconcile
+// after this call overwrites the one returned here. Copy the parts you need
+// if you must keep them longer.
 func (island *Island) CurrentTree() *ResolvedTree {
 	if island == nil {
 		return nil
@@ -221,10 +278,32 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 // property for a subtree and covers the dynamic-but-unchanged case too.
 func (island *Island) Reconcile() []PatchOp {
 	island.ensureReuse()
-	next := island.evalTree()
-	ops := ReconcileTrees(island.prev, next, island.program.StaticMask)
-	island.prev = next
+	next := island.nextTreeBuffer()
+	island.evalTreeInto(next)
+	if island.diff == nil {
+		island.diff = &diffWalk{}
+	}
+	ops := reconcileTreesInto(island.diff, island.prev, next, island.program.StaticMask, island.verbatimSpans())
+	// The tree that was current becomes the buffer the walk after next
+	// writes into. It stays readable until then, which is what
+	// CurrentTree's one-reconcile validity window states.
+	island.spare, island.prev = island.prev, next
 	return ops
+}
+
+// verbatimSpans returns the span table the walk that just ran filled, so the
+// diff can stop at the subtrees that walk copied verbatim. It returns nil when
+// the island has no reuse plan, and when skipOff switches the optimisation off
+// for the fuzz target.
+//
+// The table describes the tree the walk just produced, against the tree the
+// walk copied from. Reconcile diffs exactly that pair, so the table is valid
+// only for the diff that follows the walk that filled it.
+func (island *Island) verbatimSpans() []nodeSpan {
+	if island.skipOff || island.reuse == nil {
+		return nil
+	}
+	return island.reuse.ctx.spans
 }
 
 // Dispose cleans up the island's signals and effects.
@@ -232,6 +311,7 @@ func (island *Island) Dispose() {
 	// Signal cleanup is handled by GC since we don't have persistent subscriptions
 	// in this version. The bridge removes the island from its map.
 	island.prev = nil
+	island.spare = nil
 }
 
 func minNodeCount(left, right *ResolvedTree) int {

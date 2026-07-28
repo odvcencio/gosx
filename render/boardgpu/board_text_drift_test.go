@@ -20,7 +20,12 @@ func TestBoardTextJSWGSLMatchesGo(t *testing.T) {
 	jsPath := filepath.Join("..", "..", "client", "js", "bootstrap-src", "16a-scene-webgpu.js")
 	data, err := os.ReadFile(jsPath)
 	if err != nil {
-		t.Skipf("16a source not available (%v); JS↔Go BoardText drift guard skipped", err)
+		// Fail, never skip. This is the only Go-to-JavaScript shader drift guard
+		// in the repository, so a stale relative path or a moved source file
+		// deletes the guard and still reports a green run. A missing input is a
+		// broken test, not an absent one.
+		t.Fatalf("cannot read %s (%v); the JS↔Go BoardText drift guard needs this file — fix the path or restore the file",
+			jsPath, err)
 	}
 	re := regexp.MustCompile(`var BOARD_TEXT_WGSL = ("(?:[^"\\]|\\.)*");`)
 	m := re.FindSubmatch(data)

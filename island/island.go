@@ -58,6 +58,17 @@ type Renderer struct {
 	bootstrapFeatureScene3dWebGLPath     string
 	bootstrapFeatureScene3dGLTFPath      string
 	bootstrapFeatureScene3dAnimationPath string
+	// bootstrapFeatureScene3dComputePath serves the GPU particle simulation,
+	// the CPU particle fallback and the GPU instanced cull. The URL is
+	// advertised only when a scene on the page declares a compute particle
+	// system or an instanced mesh. A scene with one cube and one directional
+	// light gets no URL, so its runtime cannot fetch the chunk at all.
+	bootstrapFeatureScene3dComputePath string
+	// bootstrapFeatureScene3dDecompressPath serves the quantized-array decoder
+	// and the procedural point generators. Advertised only when a scene
+	// carries a compressed array, a generator descriptor or a compression
+	// policy.
+	bootstrapFeatureScene3dDecompressPath string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -183,6 +194,8 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dWebGLPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgl.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGL.Hash))
 	renderer.bootstrapFeatureScene3dGLTFPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-gltf.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DGLTF.Hash))
 	renderer.bootstrapFeatureScene3dAnimationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-animation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DAnimation.Hash))
+	renderer.bootstrapFeatureScene3dComputePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-compute.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCompute.Hash))
+	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	// Cross-frame relay script. Default unversioned; SetRelayPath can
@@ -517,6 +530,30 @@ func (r *Renderer) SetBootstrapFeatureScene3DAnimationPath(path string) {
 	r.bootstrapFeatureScene3dAnimationPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DComputePath overrides the lazy Scene3D compute
+// sub-feature chunk URL. NOT emitted as a static <script> tag: the base
+// scene3d bundle inserts a script with this URL when the scene declares a
+// compute particle system or an instanced mesh. A scene with neither gets no
+// URL at all, so it cannot fetch the chunk.
+func (r *Renderer) SetBootstrapFeatureScene3DComputePath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dComputePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DDecompressPath overrides the lazy Scene3D
+// decompress sub-feature chunk URL. NOT emitted as a static <script> tag: the
+// base scene3d bundle inserts a script with this URL before it builds the
+// scene state, and only when the scene carries a compressed array, a generator
+// descriptor or a compression policy.
+func (r *Renderer) SetBootstrapFeatureScene3DDecompressPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dDecompressPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetVideoHLSPath overrides the runtime HLS library URL used by the built-in
 // video engine when native HLS playback is unavailable.
 func (r *Renderer) SetVideoHLSPath(path string) {
@@ -562,6 +599,10 @@ func (r *Renderer) compatRuntimeHash(path string) string {
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DGLTF.Hash)
 	case "/gosx/bootstrap-feature-scene3d-animation.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DAnimation.Hash)
+	case "/gosx/bootstrap-feature-scene3d-compute.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCompute.Hash)
+	case "/gosx/bootstrap-feature-scene3d-decompress.js":
+		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DDecompress.Hash)
 	case "/gosx/bootstrap-feature-textlayout.js":
 		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureTextlayout.Hash)
 	case "/gosx/patch.js":
@@ -583,7 +624,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -631,6 +672,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DWebGLPath(runtime.BootstrapFeatureScene3DWebGL)
 	r.SetBootstrapFeatureScene3DGLTFPath(runtime.BootstrapFeatureScene3DGLTF)
 	r.SetBootstrapFeatureScene3DAnimationPath(runtime.BootstrapFeatureScene3DAnimation)
+	r.SetBootstrapFeatureScene3DComputePath(runtime.BootstrapFeatureScene3DCompute)
+	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -850,6 +893,22 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			b.WriteString(html.EscapeString(webglPath))
 			b.WriteByte('"')
 		}
+		// The compute and decompress chunks are gated on the scene itself, not
+		// on the browser. Advertise a URL only when a scene on this page reaches
+		// the chunk. The runtime refuses to guess a path, so a scene with one
+		// cube and one directional light cannot fetch either chunk, and the
+		// bytes stay on the server.
+		needsCompute, needsDecompress := r.scene3DChunkNeeds()
+		if computePath := r.bootstrapFeatureScene3dComputePath; needsCompute && computePath != "" {
+			b.WriteString(` data-gosx-scene3d-compute-url="`)
+			b.WriteString(html.EscapeString(computePath))
+			b.WriteByte('"')
+		}
+		if decompressPath := r.bootstrapFeatureScene3dDecompressPath; needsDecompress && decompressPath != "" {
+			b.WriteString(` data-gosx-scene3d-decompress-url="`)
+			b.WriteString(html.EscapeString(decompressPath))
+			b.WriteByte('"')
+		}
 		b.WriteString(` src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString(`"`)
@@ -980,6 +1039,14 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		gosx.Attr("data-gosx-enhance-layer", "runtime"),
 		gosx.Attr("data-gosx-fallback", enhancementFallbackForNode(fallback, "none")),
 	}
+	// A Scene3D poster paints while WebAssembly and the renderer boot. It has
+	// to reach the mount element before any other style, and its own style must
+	// lose to an author style, so collect it here and merge it below.
+	poster, hasPoster := scenePosterFromEngine(cfg)
+	if hasPoster {
+		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-poster", poster.Poster))
+	}
+	mountStyle := ""
 	for name, value := range cfg.MountAttrs {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -988,8 +1055,14 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		switch name {
 		case "id", "data-gosx-engine", "data-gosx-engine-id", "data-gosx-engine-kind", "data-gosx-engine-capabilities", "data-gosx-engine-required-capabilities", "data-gosx-engine-capability-state", "data-gosx-engine-missing-capabilities":
 			continue
+		case "style":
+			mountStyle = strings.TrimSpace(fmt.Sprint(value))
+			continue
 		}
 		attrs = append(attrs, gosx.Attr(name, value))
+	}
+	if style := joinMountStyles(scenePosterMountStyle(poster, hasPoster), mountStyle); style != "" {
+		attrs = append(attrs, gosx.Attr("style", style))
 	}
 	if len(cfg.Capabilities) > 0 {
 		attrs = append(attrs, gosx.Attr("data-gosx-engine-capabilities", strings.Join(engineCapabilities(cfg.Capabilities), " ")))
@@ -1008,6 +1081,11 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	}
 
 	args := []any{gosx.Attrs(attrs...)}
+	// The poster image comes before the fallback, so a reader with no
+	// JavaScript sees the picture first and the text fallback under it.
+	if hasPoster {
+		args = append(args, scenePosterImageNode(poster))
+	}
 	if !fallback.IsZero() {
 		args = append(args, fallback)
 	}
@@ -1739,6 +1817,141 @@ func (r *Renderer) hasVideoEngines() bool {
 	return false
 }
 
+// scene3DChunkRecord is the narrow view of one points, instanced-mesh or
+// animation-channel record that decides whether a page needs the decompress
+// chunk. Only the keys named here are decoded, so a large scene costs a scan
+// and a few slice headers, not a full generic decode.
+//
+// The field names match the readers in
+// client/js/bootstrap-src/11a-scene-decompress.js and
+// 11b-scene-points-generate.js. Add a field here whenever one of those files
+// learns to read a new key, or the page will not advertise the chunk that
+// reads it.
+type scene3DChunkRecord struct {
+	Generator            json.RawMessage `json:"generator"`
+	CompressedPositions  json.RawMessage `json:"compressedPositions"`
+	CompressedSizes      json.RawMessage `json:"compressedSizes"`
+	CompressedTransforms json.RawMessage `json:"compressedTransforms"`
+	CompressedTimes      json.RawMessage `json:"compressedTimes"`
+	CompressedValues     json.RawMessage `json:"compressedValues"`
+	PreviewPositions     json.RawMessage `json:"previewPositions"`
+	PreviewSizes         json.RawMessage `json:"previewSizes"`
+	PreviewTransforms    json.RawMessage `json:"previewTransforms"`
+	PreviewTimes         json.RawMessage `json:"previewTimes"`
+	PreviewValues        json.RawMessage `json:"previewValues"`
+}
+
+func (rec scene3DChunkRecord) needsDecompress() bool {
+	return len(rec.Generator) > 0 ||
+		len(rec.CompressedPositions) > 0 ||
+		len(rec.CompressedSizes) > 0 ||
+		len(rec.CompressedTransforms) > 0 ||
+		len(rec.CompressedTimes) > 0 ||
+		len(rec.CompressedValues) > 0 ||
+		len(rec.PreviewPositions) > 0 ||
+		len(rec.PreviewSizes) > 0 ||
+		len(rec.PreviewTransforms) > 0 ||
+		len(rec.PreviewTimes) > 0 ||
+		len(rec.PreviewValues) > 0
+}
+
+type scene3DChunkClip struct {
+	Channels []scene3DChunkRecord `json:"channels"`
+}
+
+// scene3DChunkProbe reads the two shapes a Scene3D engine can carry: the wire
+// IR under props.scene, and the flat props form the runtime also accepts.
+type scene3DChunkProbe struct {
+	Scene            *scene3DChunkProbe   `json:"scene"`
+	Compression      json.RawMessage      `json:"compression"`
+	ComputeParticles []json.RawMessage    `json:"computeParticles"`
+	InstancedMeshes  []scene3DChunkRecord `json:"instancedMeshes"`
+	Points           []scene3DChunkRecord `json:"points"`
+	Animations       []scene3DChunkClip   `json:"animations"`
+}
+
+// needsComputeChunk reports whether the scene reaches
+// bootstrap-feature-scene3d-compute.js. Two paths do: a compute particle
+// system, which both renderers build through createSceneParticleSystem, and an
+// instanced mesh, which the WebGPU renderer culls on the GPU with a kernel from
+// the same file.
+//
+// Be permissive on purpose. A URL the runtime never uses costs about sixty
+// bytes of HTML; a missing URL drops a particle system the author asked for.
+func (p *scene3DChunkProbe) needsComputeChunk() bool {
+	if p == nil {
+		return false
+	}
+	if len(p.ComputeParticles) > 0 || len(p.InstancedMeshes) > 0 {
+		return true
+	}
+	return p.Scene.needsComputeChunk()
+}
+
+// needsDecompressChunk reports whether the scene reaches
+// bootstrap-feature-scene3d-decompress.js. A compression policy alone is
+// enough: progressive and level-of-detail mode both drive the chunk after the
+// first frame, even when the first payload arrives plain.
+func (p *scene3DChunkProbe) needsDecompressChunk() bool {
+	if p == nil {
+		return false
+	}
+	if len(p.Compression) > 0 && string(p.Compression) != "null" {
+		return true
+	}
+	for i := range p.Points {
+		if p.Points[i].needsDecompress() {
+			return true
+		}
+	}
+	for i := range p.InstancedMeshes {
+		if p.InstancedMeshes[i].needsDecompress() {
+			return true
+		}
+	}
+	for i := range p.Animations {
+		for j := range p.Animations[i].Channels {
+			if p.Animations[i].Channels[j].needsDecompress() {
+				return true
+			}
+		}
+	}
+	return p.Scene.needsDecompressChunk()
+}
+
+// scene3DChunkNeeds decodes every Scene3D engine on the page once and reports
+// which gated sub-feature chunks the page must advertise. A page with several
+// scenes advertises a chunk when any one scene needs it.
+func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool) {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		if len(entry.Props) == 0 {
+			continue
+		}
+		var probe scene3DChunkProbe
+		if err := json.Unmarshal(entry.Props, &probe); err != nil {
+			// A scene whose props do not decode is a scene this renderer cannot
+			// reason about. Advertise both chunks rather than drop a feature the
+			// author declared: a wrong URL costs bytes, a missing one costs the
+			// feature.
+			return true, true
+		}
+		if probe.needsComputeChunk() {
+			needsCompute = true
+		}
+		if probe.needsDecompressChunk() {
+			needsDecompress = true
+		}
+		if needsCompute && needsDecompress {
+			return true, true
+		}
+	}
+	return needsCompute, needsDecompress
+}
+
 func (r *Renderer) hasSceneEngines() bool {
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
@@ -1829,4 +2042,135 @@ func renderEngineError(err error) gosx.Node {
 		gosx.Attrs(gosx.Attr("class", "gosx-error")),
 		gosx.Text(fmt.Sprintf("engine error: %v", err)),
 	)
+}
+
+// --- Scene3D poster -------------------------------------------------------
+//
+// A GoSX 3D page paints nothing until WebAssembly and a renderer boot. A poster
+// is a still image of the same scene, produced at build time by the GPU-free CPU
+// rasterizer, that paints while the runtime loads. Three rules shape the markup.
+//
+//  1. The mount reserves its box with an aspect ratio before any image or canvas
+//     arrives. A poster that pops into the flow moves the page and costs
+//     Cumulative Layout Shift, which trades one Core Web Vital for another.
+//  2. The same URL appears twice: as an <img> child and as the mount's
+//     background image. The <img> gives a crawler real content, an alt string,
+//     and an element Largest Contentful Paint can measure. The background keeps
+//     the picture after the Scene3D runtime clears the mount's children, which
+//     it does before it creates the canvas. Both draw the same decoded bytes, so
+//     removing the child reveals an identical picture and nothing flashes.
+//  3. The canvas needs no z-index. CSS paints a parent background before every
+//     descendant, so the canvas covers the poster as soon as it draws.
+//
+// A page with no poster emits none of this. Markup that points at a missing
+// image costs a request and paints a broken-image glyph.
+
+// scenePosterProps is the contract an author writes on a Scene3D element:
+//
+//	<Scene3D poster="/posters/hero.9f3c.png" posterWidth={640} posterHeight={360}
+//	         posterAlt="A lit sphere over a dark floor">
+//
+// Unknown Scene3D attributes lower into the engine props, so these four values
+// need no compiler change to reach this renderer. Produce the image with
+// `gosx scene poster`, which refuses to write a frame that misrepresents the
+// scene.
+type scenePosterProps struct {
+	Poster       string  `json:"poster"`
+	PosterWidth  float64 `json:"posterWidth"`
+	PosterHeight float64 `json:"posterHeight"`
+	PosterAlt    string  `json:"posterAlt"`
+}
+
+// scenePosterFromEngine reads the poster contract from a Scene3D engine. It
+// reports false for every other engine and for a scene with no poster.
+func scenePosterFromEngine(cfg engine.Config) (scenePosterProps, bool) {
+	if !strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") || len(cfg.Props) == 0 {
+		return scenePosterProps{}, false
+	}
+	var props scenePosterProps
+	if err := json.Unmarshal(cfg.Props, &props); err != nil {
+		return scenePosterProps{}, false
+	}
+	props.Poster = strings.TrimSpace(props.Poster)
+	if props.Poster == "" {
+		return scenePosterProps{}, false
+	}
+	return props, true
+}
+
+// scenePosterMountStyle returns the inline style that reserves the mount box and
+// repeats the poster behind the canvas. It returns an empty string when the page
+// has no poster.
+//
+// A poster with no declared size gets no aspect ratio. A guessed ratio shifts
+// layout exactly as much as no ratio, and it also hides the mistake.
+func scenePosterMountStyle(poster scenePosterProps, ok bool) string {
+	if !ok {
+		return ""
+	}
+	declarations := []string{
+		"position:relative",
+		"background-image:url(" + scenePosterCSSURL(poster.Poster) + ")",
+		"background-size:cover",
+		"background-position:center",
+		"background-repeat:no-repeat",
+	}
+	if poster.PosterWidth > 0 && poster.PosterHeight > 0 {
+		declarations = append(declarations, fmt.Sprintf("aspect-ratio:%d / %d",
+			int(poster.PosterWidth), int(poster.PosterHeight)))
+	}
+	return strings.Join(declarations, ";")
+}
+
+// scenePosterImageNode returns the <img> the mount carries before hydration.
+// It is absolutely positioned so it adds no height of its own; the mount's
+// aspect ratio is the only thing that reserves the box.
+func scenePosterImageNode(poster scenePosterProps) gosx.Node {
+	attrs := []any{
+		gosx.Attr("src", poster.Poster),
+		gosx.Attr("alt", poster.PosterAlt),
+		gosx.Attr("data-gosx-scene3d-poster", "true"),
+		gosx.Attr("decoding", "async"),
+		gosx.Attr("loading", "eager"),
+		gosx.Attr("fetchpriority", "high"),
+		gosx.Attr("style", "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit"),
+	}
+	if poster.PosterWidth > 0 {
+		attrs = append(attrs, gosx.Attr("width", int(poster.PosterWidth)))
+	}
+	if poster.PosterHeight > 0 {
+		attrs = append(attrs, gosx.Attr("height", int(poster.PosterHeight)))
+	}
+	return gosx.El("img", gosx.Attrs(attrs...))
+}
+
+// joinMountStyles puts the author style last, so an author declaration wins over
+// the poster declaration it repeats.
+func joinMountStyles(poster, author string) string {
+	switch {
+	case poster == "":
+		return author
+	case author == "":
+		return poster
+	default:
+		return poster + ";" + author
+	}
+}
+
+// scenePosterCSSURL wraps a poster URL in a CSS string and escapes only what a
+// CSS string must escape: the backslash, the closing quote, and a line break.
+//
+// It does not use strconv.Quote. Go escapes a non-ASCII rune as \uXXXX, and CSS
+// reads a backslash followed by a non-hexadecimal character as that literal
+// character, so strconv.Quote turns "café.png" into "cafu00e9.png" and the
+// browser requests a file that does not exist.
+func scenePosterCSSURL(value string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", `\A `,
+		"\r", `\D `,
+		"</", `<\/`,
+	)
+	return `"` + replacer.Replace(value) + `"`
 }

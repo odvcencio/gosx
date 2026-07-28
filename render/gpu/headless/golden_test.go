@@ -10,6 +10,13 @@ import (
 	"m31labs.dev/gosx/render/bundle"
 )
 
+// TestBundleFrameMatchesGoldenFullscreenQuad pins that an unlit red quad
+// reaches every pixel of the framebuffer.
+//
+// The frame asks for tone mapping "none". The claim under test is coverage, not
+// colour, and a clamp keeps the expected colour a constant this file can write
+// down. Under the default ACES curve the same quad presents 0xF6, because the
+// curve rolls the top of the range off.
 func TestBundleFrameMatchesGoldenFullscreenQuad(t *testing.T) {
 	d, surface := New(8, 8)
 	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
@@ -19,8 +26,9 @@ func TestBundleFrameMatchesGoldenFullscreenQuad(t *testing.T) {
 	defer r.Destroy()
 
 	err = r.Frame(engine.RenderBundle{
-		Background: "#000000",
-		Camera:     engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		Background:  "#000000",
+		Camera:      engine.RenderCamera{Z: 5, FOV: 1, Near: 0.1, Far: 100},
+		Environment: engine.RenderEnvironment{ToneMapping: "none"},
 		Passes: []engine.RenderPassBundle{{
 			Positions: []float64{
 				-100, -100, 0,

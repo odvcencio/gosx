@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 
 	"m31labs.dev/gosx/render/gpu"
 )
@@ -199,6 +200,7 @@ func (q *Queue) WriteBuffer(b gpu.Buffer, offset int, data []byte) {
 	copy(buf.data[offset:], data)
 	buf.lastWriteOffset = offset
 	buf.lastWriteSize = len(data)
+	buf.writeGeneration++
 }
 
 // WriteTexture blits raw bytes into a Texture. The headless backend keeps
@@ -259,6 +261,13 @@ type Buffer struct {
 	data            []byte
 	lastWriteOffset int
 	lastWriteSize   int
+	// writeGeneration counts the Queue.WriteBuffer calls this buffer has taken.
+	// It is the only invalidation key a decode cache needs, and lightCache below
+	// is the one such cache. See decodeSceneLightsCached.
+	writeGeneration uint64
+	lightCache      []sceneLight
+	lightCacheGen   uint64
+	lightCacheAt    int
 }
 
 func (b *Buffer) Size() int              { return b.size }
@@ -505,6 +514,17 @@ func (r *RenderPassEncoder) SetVertexBuffer(slot int, b gpu.Buffer) {
 // through this backend renders nothing and reports no error.
 func (r *RenderPassEncoder) SetIndexBuffer(gpu.Buffer, gpu.IndexFormat) {}
 func (r *RenderPassEncoder) Draw(vertexCount, instanceCount, firstVertex, firstInstance int) {
+	// A fullscreen pass this backend implements runs its fragment stage. The
+	// tone-map, bloom, vignette and colour-grade passes are in that set; read
+	// postFragmentFor in postfx.go for the list and the reason.
+	if r.bindGroup != nil {
+		if dst, ok := r.postDestination(); ok {
+			if shade := postFragmentFor(r.desc.Label, r.bindGroup, dst); shade != nil {
+				runPostPass(dst, shade)
+				return
+			}
+		}
+	}
 	if !isFullscreenCopyPass(r.desc.Label) || r.bindGroup == nil {
 		r.rasterizeDraw(vertexCount, instanceCount, firstVertex, firstInstance)
 		return
@@ -549,13 +569,28 @@ func (r *RenderPassEncoder) DrawIndirect(b gpu.Buffer, offset int) {
 }
 func (r *RenderPassEncoder) End() {}
 
+// isFullscreenCopyPass reports whether a render pass draws one screen-filling
+// triangle that reads its whole input from the texture at binding zero and that
+// this backend does not shade. Such a pass copies its source through unchanged.
+//
+// Draw asks postFragmentFor first, so a label this backend does shade never
+// reaches the copy. The set that still copies is ambient occlusion, depth of
+// field, anti-aliasing, and every Selena custom pass. The first two read the
+// depth attachment and the last runs author-supplied WGSL, none of which this
+// backend interprets.
+//
+// Read the chain to see why. Each effect clears a scratch target, draws into it,
+// and hands the scratch view to the next stage. The last stage's target becomes
+// the presented image. A dropped draw therefore presents a target that holds
+// only its clear colour, so one authored vignette turned every headless frame
+// into flat black and the backend reported success. A copy makes the effect
+// visibly absent instead, which is honest and keeps the scene.
 func isFullscreenCopyPass(label string) bool {
 	switch label {
 	case "bundle.present", "bundle.present.compose", "bundle.fxaa311":
 		return true
-	default:
-		return false
 	}
+	return strings.HasPrefix(label, "bundle.postfx.")
 }
 
 type ComputePassEncoder struct {
@@ -724,14 +759,22 @@ func clearDepthTexture(t *Texture, depth float64) {
 	clearDepthView(t, -1, depth)
 }
 
+// clearDepthView fills one depth layer, or the whole texture when layer is
+// negative, with a single depth value.
+//
+// The fill runs through repeatPattern instead of a per-texel loop because this is
+// the hottest function in the whole backend. render/bundle clears three
+// 2048-square shadow cascades on every frame, which is twelve million texels, and
+// it does so whether or not the scene has a shadow caster. A CPU profile of an
+// empty sixteen-pixel frame put 98.8 percent of all samples in this function.
 func clearDepthView(t *Texture, layer int, depth float64) {
 	if t == nil || !t.format.HasDepth() {
 		return
 	}
 	v := float32(clamp01(depth))
 	start, end := textureLayerRange(t, layer)
-	for i := start; i < end && i < len(t.depth); i++ {
-		t.depth[i] = v
+	if depthEnd := min(end, len(t.depth)); start < depthEnd {
+		repeatFloat32(t.depth[start:depthEnd], v)
 	}
 	bpp := bytesPerPixel(t.format)
 	if bpp == 0 || len(t.data) == 0 {
@@ -743,22 +786,46 @@ func clearDepthView(t *Texture, layer int, depth float64) {
 		dataStart = 0
 		dataEnd = len(t.data)
 	}
+	limit := min(dataEnd, len(t.data))
+	if dataStart < 0 || dataStart+bpp > limit {
+		return
+	}
+	// Round the span down to whole texels. The per-texel loop this replaced
+	// stopped before a partial trailing texel, so keep that boundary exactly.
+	region := t.data[dataStart : dataStart+((limit-dataStart)/bpp)*bpp]
 	switch t.format {
 	case gpu.FormatDepth16Unorm:
-		encoded := uint16(math.Round(float64(v * 0xffff)))
-		for i := dataStart; i+1 < dataEnd && i+1 < len(t.data); i += bpp {
-			binary.LittleEndian.PutUint16(t.data[i:i+2], encoded)
-		}
+		binary.LittleEndian.PutUint16(region[:2], uint16(math.Round(float64(v*0xffff))))
 	case gpu.FormatDepth24Plus, gpu.FormatDepth24PlusStencil8:
-		encoded := uint32(math.Round(float64(v * 0x00ffffff)))
-		for i := dataStart; i+3 < dataEnd && i+3 < len(t.data); i += bpp {
-			binary.LittleEndian.PutUint32(t.data[i:i+4], encoded)
-		}
+		binary.LittleEndian.PutUint32(region[:4], uint32(math.Round(float64(v*0x00ffffff))))
 	case gpu.FormatDepth32Float:
-		encoded := math.Float32bits(v)
-		for i := dataStart; i+3 < dataEnd && i+3 < len(t.data); i += bpp {
-			binary.LittleEndian.PutUint32(t.data[i:i+4], encoded)
-		}
+		binary.LittleEndian.PutUint32(region[:4], math.Float32bits(v))
+	default:
+		return
+	}
+	repeatPattern(region, bpp)
+}
+
+// repeatPattern copies the first stride bytes of dst across the rest of dst. It
+// doubles the written span each round, so the Go runtime serves the fill with
+// memmove and it runs at memory bandwidth rather than one write per texel.
+func repeatPattern(dst []byte, stride int) {
+	if stride <= 0 || len(dst) <= stride {
+		return
+	}
+	for filled := stride; filled < len(dst); {
+		filled += copy(dst[filled:], dst[:filled])
+	}
+}
+
+// repeatFloat32 fills dst with one value using the same doubling copy.
+func repeatFloat32(dst []float32, value float32) {
+	if len(dst) == 0 {
+		return
+	}
+	dst[0] = value
+	for filled := 1; filled < len(dst); {
+		filled += copy(dst[filled:], dst[:filled])
 	}
 }
 
@@ -854,6 +921,17 @@ const instanceRecordStride = 80
 // cullPlaneCount is the number of frustum planes the cull uniform carries.
 const cullPlaneCount = 6
 
+// cullUniformInstanceCountOffset is the byte offset of the live instance count
+// inside the cull uniform block, and cullUnboundedInstanceCount is the value a
+// caller writes when it supplies no count. Both mirror render/bundle/cull.go;
+// keep the two in step. TestCullUniformCarriesLiveInstanceCount over there pins
+// the writer, and TestCullDropsRecordsPastTheLiveInstanceCount here pins this
+// reader.
+const (
+	cullUniformInstanceCountOffset = 104
+	cullUnboundedInstanceCount     = uint32(0xffffffff)
+)
+
 // runCullFrustum executes the render/bundle cull shader on the CPU. It is a
 // counterpart of cullWGSL: one bounding-sphere test per instance against six
 // frustum planes, with the primitive radius scaled by the instance's largest
@@ -865,7 +943,9 @@ const cullPlaneCount = 6
 // GPU present.
 //
 // A zero uniform block degrades to "everything visible", because a zero plane
-// gives distance 0 and 0 is never below a negative radius.
+// gives distance 0 and 0 is never below a negative radius. The instance-count
+// lane is the exception: zero there means zero live instances, exactly as it
+// does on a real device.
 func runCullFrustum(bg *BindGroup) {
 	var uniforms, input, output, drawArgs *Buffer
 	for _, entry := range bg.desc.Entries {
@@ -900,6 +980,15 @@ func runCullFrustum(bg *BindGroup) {
 			}
 		}
 		baseRadius = readFloat32(uniforms.data, 100)
+	}
+	// The kernel bounds its threads on min(cull.instanceCount, buffer length).
+	// Apply the same bound here, or this oracle keeps records a real device
+	// drops. cullUnboundedInstanceCount means the caller supplied no count.
+	if uniforms != nil && len(uniforms.data) >= cullUniformInstanceCountOffset+4 {
+		live := binary.LittleEndian.Uint32(uniforms.data[cullUniformInstanceCountOffset : cullUniformInstanceCountOffset+4])
+		if live != cullUnboundedInstanceCount && int(live) < instanceCount {
+			instanceCount = int(live)
+		}
 	}
 
 	visible := 0
@@ -1206,9 +1295,10 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 	}
 	// The lit pipeline shades per pixel. Every other pipeline hands the fill a
 	// finished colour to interpolate.
-	var shading *sceneLighting
+	var shading *litProgram
 	if label == "bundle.lit" {
-		shading = &lighting
+		program := newLitProgram(lighting, material)
+		shading = &program
 	}
 	var tri [3]clipVertex
 	var clipScratch [4]clipVertex
@@ -1239,9 +1329,13 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 				tri[i].clip = transformToClip(mvp, worldPos)
 				tri[i].world = worldPos
 				if label == "bundle.lit" {
-					// The base colour and the normal travel to the fill, which
-					// runs the lighting model per pixel like litWGSL does.
-					tri[i].color = material.resolve(readColor(colorBuf, vertex), readUV(uvBuf, vertex))
+					// The solid colour, the normal and the texture coordinate
+					// travel to the fill, which runs the whole material model per
+					// pixel as litWGSL does. Every map is sampled there, not here:
+					// sampling at the corners quantized a texture to the triangle
+					// and left a normal map with nothing to perturb.
+					tri[i].color = material.solidColor(readColor(colorBuf, vertex))
+					tri[i].uv = readUV(uvBuf, vertex)
 					normal := readNormal(normalBuf, vertex)
 					if instanceBuf != nil {
 						normal = transformDirection(model, normal)
@@ -1267,6 +1361,7 @@ type clipVertex struct {
 	color  [4]float32
 	world  [3]float32
 	normal [3]float32
+	uv     [2]float32
 }
 
 // rasterizeClippedTriangle clips one triangle against the near plane and draws
@@ -1279,7 +1374,7 @@ type clipVertex struct {
 // in this package could witness a shadow landing on a ground plane, and the
 // backend reported a black frame instead of failing.
 func (r *RenderPassEncoder) rasterizeClippedTriangle(
-	target rasterTarget, tri [3]clipVertex, scratch []clipVertex, shading *sceneLighting,
+	target rasterTarget, tri [3]clipVertex, scratch []clipVertex, shading *litProgram,
 ) {
 	poly := clipTriangleNearPlane(tri, scratch)
 	if len(poly) < 3 {
@@ -1297,7 +1392,7 @@ func (r *RenderPassEncoder) rasterizeClippedTriangle(
 			}
 			verts[j] = rasterVertex{
 				x: x, y: y, depth: depth, invW: 1 / v.clip[3],
-				color: v.color, world: v.world, normal: v.normal,
+				color: v.color, world: v.world, normal: v.normal, uv: v.uv,
 			}
 		}
 		if ok && !triangleOutsideClip([3]float32{verts[0].depth, verts[1].depth, verts[2].depth}) {
@@ -1361,6 +1456,9 @@ func lerpClipVertex(a, b clipVertex, t float32) clipVertex {
 	for i := 0; i < 3; i++ {
 		out.world[i] = a.world[i] + (b.world[i]-a.world[i])*t
 		out.normal[i] = a.normal[i] + (b.normal[i]-a.normal[i])*t
+	}
+	for i := 0; i < 2; i++ {
+		out.uv[i] = a.uv[i] + (b.uv[i]-a.uv[i])*t
 	}
 	return out
 }
@@ -1762,22 +1860,127 @@ func readUV(buf *Buffer, vertex int) [2]float32 {
 	}
 }
 
-type materialState struct {
-	baseColor        [3]float32
-	opacity          float32
-	emissive         [3]float32
-	emissiveScale    float32
-	useVertexColor   bool
-	baseColorTexture *Texture
-	baseColorLayer   int
+// textureBinding is one bound texture view: the texture plus the array layer the
+// view selects, or -1 when the view covers the whole texture.
+type textureBinding struct {
+	tex   *Texture
+	layer int
 }
 
+func (b textureBinding) bound() bool { return b.tex != nil }
+
+// sampleRGB reads the texture at one UV and returns white when nothing is bound.
+// White is the identity for every place litWGSL multiplies a sample in, so an
+// absent map leaves the flat material factor alone.
+func (b textureBinding) sampleRGB(uv [2]float32) [3]float32 {
+	return sampleTextureRGB(b.tex, b.layer, uv)
+}
+
+// sampleCube reads a cube map along dir.
+//
+// WebGPU orders the six cube faces +X, -X, +Y, -Y, +Z, -Z, and stores each one in
+// its own array layer. Pick the layer from the major axis, then project the other
+// two axes onto that face. render/bundle builds one texel per face today, so the
+// projection changes nothing yet; write it out so a larger cube map still reads
+// correctly.
+func (b textureBinding) sampleCube(dir [3]float32) [3]float32 {
+	if b.tex == nil || b.tex.layers < 6 {
+		return [3]float32{1, 1, 1}
+	}
+	ax, ay, az := absf(dir[0]), absf(dir[1]), absf(dir[2])
+	var face int
+	var major, sc, tc float32
+	switch {
+	case ax >= ay && ax >= az:
+		if dir[0] > 0 {
+			face, major, sc, tc = 0, ax, -dir[2], -dir[1]
+		} else {
+			face, major, sc, tc = 1, ax, dir[2], -dir[1]
+		}
+	case ay >= az:
+		if dir[1] > 0 {
+			face, major, sc, tc = 2, ay, dir[0], dir[2]
+		} else {
+			face, major, sc, tc = 3, ay, dir[0], -dir[2]
+		}
+	default:
+		if dir[2] > 0 {
+			face, major, sc, tc = 4, az, dir[0], -dir[1]
+		} else {
+			face, major, sc, tc = 5, az, -dir[0], -dir[1]
+		}
+	}
+	if major <= 1e-8 {
+		return [3]float32{1, 1, 1}
+	}
+	u := 0.5 * (sc/major + 1)
+	v := 0.5 * (tc/major + 1)
+	return sampleTexturePixelRGB(b.tex, face,
+		clampIndex(int(u*float32(b.tex.width)), b.tex.width),
+		clampIndex(int(v*float32(b.tex.height)), b.tex.height))
+}
+
+func clampIndex(i, size int) int {
+	if i < 0 {
+		return 0
+	}
+	if i >= size {
+		return size - 1
+	}
+	return i
+}
+
+// materialState is the CPU copy of the Material uniform litWGSL reads at group 1
+// binding 0, plus the five texture views bound beside it.
+//
+// The byte offsets follow materialUniformBytes in render/bundle/material.go. Add
+// a lane there and add a field here, or the rasterizer shades a material the
+// shader would shade differently and no golden frame can see the difference.
+type materialState struct {
+	baseColor      [3]float32
+	opacity        float32
+	metalness      float32
+	roughness      float32
+	emissiveScale  float32
+	useVertexColor bool
+	// emissive holds the Material.emissive vec4. litWGSL no longer reads it:
+	// the emissive colour comes from the base colour, or from the emissive map
+	// when one is bound. Keep the field so a dedicated emissive colour has a
+	// place to arrive.
+	emissive [3]float32
+
+	clearcoat    float32
+	sheen        float32
+	transmission float32
+	iridescence  float32
+	anisotropy   float32
+
+	hasNormalMap   bool
+	hasRoughMap    bool
+	hasMetalMap    bool
+	hasEmissiveMap bool
+
+	baseColorMap textureBinding
+	normalMap    textureBinding
+	roughMap     textureBinding
+	metalMap     textureBinding
+	emissiveMap  textureBinding
+}
+
+// defaultMaterialState matches defaultVertexColorMaterial in render/bundle: a
+// vertex-coloured dielectric at roughness 0.6. A draw with no material bind group
+// takes it.
 func defaultMaterialState() materialState {
 	return materialState{
 		baseColor:      [3]float32{1, 1, 1},
 		opacity:        1,
+		roughness:      0.6,
 		useVertexColor: true,
-		baseColorLayer: -1,
+		baseColorMap:   textureBinding{layer: -1},
+		normalMap:      textureBinding{layer: -1},
+		roughMap:       textureBinding{layer: -1},
+		metalMap:       textureBinding{layer: -1},
+		emissiveMap:    textureBinding{layer: -1},
 	}
 }
 
@@ -1787,6 +1990,13 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 	if bg == nil {
 		return state
 	}
+	bind := func(entry gpu.BindGroupEntry) textureBinding {
+		view, ok := entry.TextureView.(*TextureView)
+		if !ok || view == nil {
+			return textureBinding{layer: -1}
+		}
+		return textureBinding{tex: view.owner, layer: view.layer}
+	}
 	for _, entry := range bg.desc.Entries {
 		switch entry.Binding {
 		case 0:
@@ -1795,49 +2005,65 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 				continue
 			}
 			offset := entry.Offset
-			if offset < 0 || offset+48 > len(buf.data) {
+			if offset < 0 || offset+16 > len(buf.data) {
 				continue
 			}
-			state.baseColor = [3]float32{
-				readFloat32(buf.data, offset+0),
-				readFloat32(buf.data, offset+4),
-				readFloat32(buf.data, offset+8),
-			}
-			state.opacity = clamp01f(readFloat32(buf.data, offset+12))
-			state.emissiveScale = readFloat32(buf.data, offset+24)
-			state.useVertexColor = readFloat32(buf.data, offset+28) >= 0.5
-			state.emissive = [3]float32{
-				readFloat32(buf.data, offset+32),
-				readFloat32(buf.data, offset+36),
-				readFloat32(buf.data, offset+40),
-			}
+			// Every lane past the base colour reads through a bounds-checked
+			// helper. A unit test binds a short buffer on purpose, and a short
+			// buffer must yield zeros rather than panic.
+			data := buf.data
+			state.baseColor = readVec3At(data, offset+0)
+			state.opacity = clamp01f(readFloat32At(data, offset+12))
+			state.metalness = readFloat32At(data, offset+16)
+			state.roughness = readFloat32At(data, offset+20)
+			state.emissiveScale = readFloat32At(data, offset+24)
+			state.useVertexColor = readFloat32At(data, offset+28) >= 0.5
+			state.emissive = readVec3At(data, offset+32)
+			state.hasNormalMap = readFloat32At(data, offset+52) >= 0.5
+			state.hasRoughMap = readFloat32At(data, offset+56) >= 0.5
+			state.hasMetalMap = readFloat32At(data, offset+60) >= 0.5
+			state.hasEmissiveMap = readFloat32At(data, offset+64) >= 0.5
+			state.clearcoat = readFloat32At(data, offset+80)
+			state.sheen = readFloat32At(data, offset+84)
+			state.transmission = readFloat32At(data, offset+88)
+			state.iridescence = readFloat32At(data, offset+92)
+			state.anisotropy = readFloat32At(data, offset+96)
 		case 1:
-			view, ok := entry.TextureView.(*TextureView)
-			if !ok || view == nil {
-				continue
-			}
-			state.baseColorTexture = view.owner
-			state.baseColorLayer = view.layer
+			state.baseColorMap = bind(entry)
+		case 3:
+			state.normalMap = bind(entry)
+		case 5:
+			state.roughMap = bind(entry)
+		case 6:
+			state.metalMap = bind(entry)
+		case 7:
+			state.emissiveMap = bind(entry)
 		}
 	}
 	return state
 }
 
-func (m materialState) resolve(vertex [3]float32, uv [2]float32) [4]float32 {
-	base := [3]float32{
-		clamp01f(m.baseColor[0] + m.emissive[0]*m.emissiveScale),
-		clamp01f(m.baseColor[1] + m.emissive[1]*m.emissiveScale),
-		clamp01f(m.baseColor[2] + m.emissive[2]*m.emissiveScale),
-	}
+// solidColor returns the untextured base colour and the opacity, which is what
+// litWGSL resolves before it samples the base colour map. The rasterizer carries
+// this value on the vertex and applies the map per pixel, so a texture no longer
+// gets quantized to the triangle corners.
+func (m *materialState) solidColor(vertex [3]float32) [4]float32 {
+	base := m.baseColor
 	if m.useVertexColor {
 		base = vertex
 	}
-	sample := sampleTextureRGB(m.baseColorTexture, m.baseColorLayer, uv)
+	return [4]float32{base[0], base[1], base[2], m.opacity}
+}
+
+// resolve composes the solid colour with the base colour map at one UV.
+func (m materialState) resolve(vertex [3]float32, uv [2]float32) [4]float32 {
+	solid := m.solidColor(vertex)
+	sample := m.baseColorMap.sampleRGB(uv)
 	return [4]float32{
-		clamp01f(base[0] * sample[0]),
-		clamp01f(base[1] * sample[1]),
-		clamp01f(base[2] * sample[2]),
-		m.opacity,
+		solid[0] * sample[0],
+		solid[1] * sample[1],
+		solid[2] * sample[2],
+		solid[3],
 	}
 }
 
@@ -1850,9 +2076,63 @@ type sceneLighting struct {
 	skyColor       [4]float32
 	groundColor    [4]float32
 	cascadeSplits  [3]float32
-	shadow         *Texture
-	shadowLayer    int
+	// envParams mirrors the Scene uniform lane litWGSL reads: x is the cubemap
+	// intensity, y is the rotation about Y in radians, z is one when a cubemap
+	// is authored. z stays zero for a scene with no environment map, and then
+	// the whole image-based term drops out.
+	envParams   [4]float32
+	envCube     textureBinding
+	shadow      *Texture
+	shadowLayer int
+
+	// lights holds every authored scene light, in bundle order. litWGSL reads
+	// the same records from a storage buffer at group 0 binding 5 and shades one
+	// Cook-Torrance lobe per light.
+	//
+	// lightParams.x is the live record count and lightParams.y is the index of
+	// the light the cascaded shadow map is fitted to. The storage buffer's
+	// capacity is a power of two, so it runs past the count; bound on the count,
+	// never on the buffer length, or a zero record shades as a black ambient
+	// light at the origin.
+	lights      []sceneLight
+	lightParams [4]float32
 }
+
+// sceneLight is one decoded record of the light storage buffer. Every field
+// names the lane it comes from in the Light struct of litWGSL.
+type sceneLight struct {
+	position    [3]float32 // world position; a directional light leaves it zero
+	kind        int        // 0 ambient, 1 directional, 2 point, 3 spot, 4 hemisphere, 5 rect-area
+	direction   [3]float32 // the direction the light shines
+	intensity   float32
+	color       [3]float32 // colour, or the sky colour of a hemisphere light
+	rangeLimit  float32    // zero means no windowed falloff
+	decay       float32
+	coneAngle   float32
+	groundColor [3]float32 // hemisphere ground colour
+	penumbra    float32    // spot penumbra, zero to one
+}
+
+// lightKind codes. These are the codes lightKindCode in render/bundle writes and
+// both browser renderers read. A light probe folds onto ambient, because a probe
+// carries no position.
+const (
+	lightKindAmbient     = 0
+	lightKindDirectional = 1
+	lightKindPoint       = 2
+	lightKindSpot        = 3
+	lightKindHemisphere  = 4
+	lightKindRectArea    = 5
+)
+
+// lightRecordSize is the byte size of one packed light: five vec4 of float32.
+// render/bundle/renderer.go writes this layout; keep the two in step.
+const lightRecordSize = 80
+
+// sceneUniformSize is the byte size of the Scene struct litWGSL reads: four mat4
+// and nine vec4. It mirrors sceneUniformSize in render/bundle/renderer.go, and
+// activeLighting reads every lane of it.
+const sceneUniformSize = 400
 
 func defaultSceneLighting() sceneLighting {
 	state := sceneLighting{
@@ -1861,12 +2141,37 @@ func defaultSceneLighting() sceneLighting {
 		ambientColor: [4]float32{0.35, 0.38, 0.45, 0.35},
 		skyColor:     [4]float32{0.8, 0.88, 1, 1},
 		groundColor:  [4]float32{0.28, 0.24, 0.22, 1},
+		envCube:      textureBinding{layer: -1},
 		shadowLayer:  -1,
 	}
 	for i := range state.lightViewProjs {
 		state.lightViewProjs[i] = identityMat4()
 	}
+	state.lights = []sceneLight{keyLightFrom(state)}
+	state.lightParams = [4]float32{1, 0, 0, 0}
 	return state
+}
+
+// keyLightFrom builds one directional light out of the primary light lanes of
+// the scene uniform.
+//
+// It exists because a caller may bind a scene uniform and no light storage
+// buffer. Every such caller predates the light array, and the old single-light
+// path shaded exactly one directional light from scene.lightDir and
+// scene.lightColor, with the intensity in the alpha lane. Rebuilding that light
+// keeps those callers rendering the image they rendered before, so no golden
+// frame moves.
+//
+// resolveSceneLights in render/bundle always uploads at least one record, so the
+// real path never reaches this.
+func keyLightFrom(state sceneLighting) sceneLight {
+	return sceneLight{
+		kind:      lightKindDirectional,
+		direction: state.lightDir,
+		intensity: state.lightColor[3],
+		color:     [3]float32{state.lightColor[0], state.lightColor[1], state.lightColor[2]},
+		decay:     2,
+	}
 }
 
 func (r *RenderPassEncoder) activeLighting() sceneLighting {
@@ -1886,7 +2191,11 @@ func (r *RenderPassEncoder) activeLighting() sceneLighting {
 				continue
 			}
 			offset := entry.Offset
-			if offset < 0 || offset+368 > len(buf.data) {
+			// The guard covers every lane this switch reads. It used to stop at
+			// 368, which is the offset of envParams and not its end, so the
+			// envParams read below could run past a buffer of exactly 384 bytes.
+			// lightParams ends at 400.
+			if offset < 0 || offset+sceneUniformSize > len(buf.data) {
 				continue
 			}
 			for i := range state.lightViewProjs {
@@ -1900,6 +2209,14 @@ func (r *RenderPassEncoder) activeLighting() sceneLighting {
 			state.groundColor = readVec4At(buf.data, offset+336)
 			splits := readVec4At(buf.data, offset+352)
 			state.cascadeSplits = [3]float32{splits[0], splits[1], splits[2]}
+			state.envParams = readVec4At(buf.data, offset+368)
+			state.lightParams = readVec4At(buf.data, offset+384)
+		case 5:
+			buf, ok := entry.Buffer.(*Buffer)
+			if !ok || buf == nil {
+				continue
+			}
+			state.lights = decodeSceneLightsCached(buf, entry.Offset)
 		case 1:
 			view, ok := entry.TextureView.(*TextureView)
 			if !ok || view == nil {
@@ -1907,27 +2224,569 @@ func (r *RenderPassEncoder) activeLighting() sceneLighting {
 			}
 			state.shadow = view.owner
 			state.shadowLayer = view.layer
+		case 3:
+			view, ok := entry.TextureView.(*TextureView)
+			if !ok || view == nil {
+				continue
+			}
+			state.envCube = textureBinding{tex: view.owner, layer: view.layer}
 		}
+	}
+	// A caller that bound a scene uniform and no light storage buffer gets the
+	// primary light rebuilt as one directional record. Read keyLightFrom for why.
+	if len(state.lights) == 0 {
+		state.lights = []sceneLight{keyLightFrom(state)}
+		state.lightParams[0] = 1
+		state.lightParams[1] = 0
 	}
 	return state
 }
 
-func (l sceneLighting) shade(base, normal, worldPos [3]float32) [3]float32 {
-	n := normalize3(normal)
-	light := normalize3([3]float32{-l.lightDir[0], -l.lightDir[1], -l.lightDir[2]})
-	ndotl := max(0, float32(n[0]*light[0]+n[1]*light[1]+n[2]*light[2]))
-	hemiT := clamp01f(n[1]*0.5 + 0.5)
-	hemi := [3]float32{
-		mix(l.groundColor[0], l.skyColor[0], hemiT),
-		mix(l.groundColor[1], l.skyColor[1], hemiT),
-		mix(l.groundColor[2], l.skyColor[2], hemiT),
+// decodeSceneLightsCached decodes the light storage buffer once per upload.
+//
+// activeLighting runs once per draw call, so a scene with a thousand meshes
+// decoded the same records a thousand times and allocated a slice each time. The
+// buffer's write generation is the whole invalidation rule: a frame writes the
+// lights once, before the first pass, so every draw in that frame reads the same
+// bytes. A caller that never writes the buffer keeps the first decode, which is
+// correct because the bytes never change either.
+func decodeSceneLightsCached(buf *Buffer, offset int) []sceneLight {
+	if buf.lightCache != nil && buf.lightCacheGen == buf.writeGeneration && buf.lightCacheAt == offset {
+		return buf.lightCache
 	}
-	shadow := l.sampleShadow(worldPos)
+	decoded := decodeSceneLights(buf.data, offset)
+	buf.lightCache = decoded
+	buf.lightCacheGen = buf.writeGeneration
+	buf.lightCacheAt = offset
+	return decoded
+}
+
+// decodeSceneLights reads every 80-byte record the light storage buffer holds.
+//
+// It decodes the whole buffer, not the live count. The count lives in the scene
+// uniform, which this switch may not have read yet, and shade bounds its loop on
+// that count exactly as litWGSL does. Decoding the tail costs a few reads on a
+// buffer whose capacity is at most 256 records.
+func decodeSceneLights(data []byte, offset int) []sceneLight {
+	if offset < 0 || offset > len(data) {
+		return nil
+	}
+	data = data[offset:]
+	count := len(data) / lightRecordSize
+	if count == 0 {
+		return nil
+	}
+	out := make([]sceneLight, count)
+	for i := range out {
+		base := i * lightRecordSize
+		position := readVec4At(data, base+0)
+		direction := readVec4At(data, base+16)
+		color := readVec4At(data, base+32)
+		params := readVec4At(data, base+48)
+		ground := readVec4At(data, base+64)
+		out[i] = sceneLight{
+			position:    [3]float32{position[0], position[1], position[2]},
+			kind:        int(position[3]),
+			direction:   [3]float32{direction[0], direction[1], direction[2]},
+			intensity:   direction[3],
+			color:       [3]float32{color[0], color[1], color[2]},
+			rangeLimit:  color[3],
+			decay:       params[0],
+			coneAngle:   params[3],
+			groundColor: [3]float32{ground[0], ground[1], ground[2]},
+			penumbra:    ground[3],
+		}
+	}
+	return out
+}
+
+// litProgram is the CPU copy of the fragment stage of litWGSL in
+// render/bundle/lit.go. rasterizeTriangle runs it at every covered pixel, so a
+// headless frame answers the same material question as the WebGPU backend.
+//
+// The model was Lambert diffuse plus an ambient dome until 2026-07-26. It carried
+// no specular lobe, so roughness and metalness reached the uniform and left no
+// mark on a pixel, and every material feature added for three.js parity was
+// unverifiable by the only GPU-free oracle in the repository.
+//
+// Read litWGSL as the specification, not this file. Each term below names the
+// shader line it copies. render/bundle/lit_drift_test.go records where litWGSL
+// and the browser copies still disagree and which one this repository judges
+// correct.
+type litProgram struct {
+	lighting sceneLighting
+	material materialState
+
+	// light is the direction toward the primary light, which is the light the
+	// cascade fit uses. litWGSL keeps it as `let L = normalize(-scene.lightDir.xyz)`
+	// outside its light loop and takes the Fresnel term of the image-based
+	// lighting block from it, so a cubemap keeps the response it had before the
+	// light array arrived. It is constant for a draw, so resolve it once.
+	light [3]float32
+
+	// lights is the slice shade loops over, already cut to the live count the
+	// scene uniform carries. shadowLight is the index inside it that reads the
+	// cascaded shadow map, or -1 when no light does.
+	lights      []sceneLight
+	shadowLight int
+}
+
+// newLitProgram binds one lighting state to one material and precomputes the
+// per-draw constants.
+func newLitProgram(lighting sceneLighting, material materialState) litProgram {
+	// Cut the light slice to the live count. The storage buffer's capacity is a
+	// power of two, so the tail holds zero records, and a zero record decodes to
+	// a black ambient light. litWGSL takes the same minimum.
+	count := int(maxF(lighting.lightParams[0], 0))
+	if count > len(lighting.lights) {
+		count = len(lighting.lights)
+	}
+	return litProgram{
+		lighting: lighting,
+		material: material,
+		light: normalize3([3]float32{
+			-lighting.lightDir[0], -lighting.lightDir[1], -lighting.lightDir[2],
+		}),
+		lights:      lighting.lights[:count],
+		shadowLight: int(lighting.lightParams[1]),
+	}
+}
+
+// pointLightAttenuation is the distance falloff of a point or spot light.
+//
+// A light with a range takes the windowed inverse square law three.js uses; a
+// light with no range takes the plain inverse power of the decay. Both browser
+// renderers and litWGSL carry the same two expressions.
+func pointLightAttenuation(dist, rangeLimit, decay float32) float32 {
+	if rangeLimit > 0 {
+		ratio := clamp01f(1 - float32(math.Pow(float64(dist/rangeLimit), float64(rangeWindowExponent))))
+		return ratio * ratio / max32(dist*dist, attenuationFloor)
+	}
+	return 1 / max32(float32(math.Pow(float64(dist), float64(decay))), attenuationFloor)
+}
+
+// spotConeAttenuation is the cone falloff of a spot light. L points from the
+// surface toward the light and spotDir is the direction the light shines. A
+// penumbra of zero gives a hard edge; a penumbra of one fades from the axis.
+func spotConeAttenuation(L, spotDir [3]float32, angle, penumbra float32) float32 {
+	axis := normalize3(spotDir)
+	cosAngle := dotVec3(L, [3]float32{-axis[0], -axis[1], -axis[2]})
+	outerCos := float32(math.Cos(float64(angle)))
+	innerCos := float32(math.Cos(float64(angle * (1 - penumbra))))
+	return clamp01f((cosAngle - outerCos) / max32(innerCos-outerCos, spotConeFloor))
+}
+
+func max32(a, b float32) float32 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// fragment is one interpolated surface point: the CPU equivalent of the VSOut
+// litWGSL receives.
+//
+// base is the solid material colour before the base colour map. frame is the
+// texture-space basis of the triangle, which a normal map needs and every other
+// material reads past.
+type fragment struct {
+	base   [3]float32
+	world  [3]float32
+	normal [3]float32
+	uv     [2]float32
+	frame  tangentFrame
+}
+
+// tangentFrame is the texture-space tangent of one triangle.
+//
+// litWGSL derives the same basis from screen-space derivatives, because a
+// fragment shader cannot see the other two corners of its triangle. A CPU
+// rasterizer can, so it solves the same equation from the triangle itself. The
+// two agree on a planar triangle, and this form carries no quad quantization.
+// lit_drift_test.go records the tangent basis as a known divergence from the
+// browser, which uses an authored vertex tangent.
+type tangentFrame struct {
+	tangent [3]float32
+	valid   bool
+}
+
+// triangleTangent solves the same linear system litWGSL solves with dpdx and
+// dpdy. Substituting the two triangle edges for the two screen derivatives gives
+// the same tangent, because both pairs span the same surface.
+func triangleTangent(verts [3]rasterVertex) tangentFrame {
+	e1 := subVec3(verts[1].world, verts[0].world)
+	e2 := subVec3(verts[2].world, verts[0].world)
+	du1 := verts[1].uv[0] - verts[0].uv[0]
+	dv1 := verts[1].uv[1] - verts[0].uv[1]
+	du2 := verts[2].uv[0] - verts[0].uv[0]
+	dv2 := verts[2].uv[1] - verts[0].uv[1]
+	det := du1*dv2 - du2*dv1
+	if absf(det) < 1e-8 {
+		return tangentFrame{}
+	}
+	inv := 1 / det
+	tangent := [3]float32{
+		(e1[0]*dv2 - e2[0]*dv1) * inv,
+		(e1[1]*dv2 - e2[1]*dv1) * inv,
+		(e1[2]*dv2 - e2[2]*dv1) * inv,
+	}
+	if length3(tangent) < 1e-8 {
+		return tangentFrame{}
+	}
+	return tangentFrame{tangent: tangent, valid: true}
+}
+
+// perturbNormal rotates the geometric normal by a tangent-space normal map
+// sample. It copies perturbNormal in litWGSL, including the Gram-Schmidt step
+// that squares the tangent against the normal.
+func perturbNormal(geomN [3]float32, frame tangentFrame, sample [3]float32) [3]float32 {
+	if !frame.valid {
+		return geomN
+	}
+	raw := frame.tangent
+	along := dotVec3(geomN, raw)
+	tangent := normalize3([3]float32{
+		raw[0] - geomN[0]*along,
+		raw[1] - geomN[1]*along,
+		raw[2] - geomN[2]*along,
+	})
+	bitangent := normalize3(crossVec3(geomN, tangent))
+	mapped := [3]float32{sample[0]*2 - 1, sample[1]*2 - 1, sample[2]*2 - 1}
+	return normalize3([3]float32{
+		tangent[0]*mapped[0] + bitangent[0]*mapped[1] + geomN[0]*mapped[2],
+		tangent[1]*mapped[0] + bitangent[1]*mapped[1] + geomN[1]*mapped[2],
+		tangent[2]*mapped[0] + bitangent[2]*mapped[1] + geomN[2]*mapped[2],
+	})
+}
+
+// distributionGGX is the Trowbridge-Reitz normal distribution, copied from
+// litWGSL. It sets the width of the specular highlight.
+func distributionGGX(NdotH, roughness float32) float32 {
+	a := roughness * roughness
+	a2 := a * a
+	d := NdotH*NdotH*(a2-1) + 1
+	return a2 / (math.Pi*d*d + 1e-7)
+}
+
+// geometrySmith is the Hammon height-correlated Smith visibility term, copied
+// from litWGSL. It already contains the 1/(4 NdotL NdotV) factor, so the caller
+// multiplies D, G and F and divides by nothing.
+//
+// This is the one term where the Go shader and the browser shaders disagree on
+// purpose. lit_drift_test.go row "specular-geometry-term" holds the measurement
+// and the verdict: the correlated form approaches no masking as the surface
+// approaches a mirror, and the browser Schlick form never does.
+func geometrySmith(NdotV, NdotL, roughness float32) float32 {
+	a := roughness * roughness
+	ggxV := NdotL * (NdotV*(1-a) + a)
+	ggxL := NdotV * (NdotL*(1-a) + a)
+	return 0.5 / max(ggxV+ggxL, 1e-5)
+}
+
+// fresnelSchlick is the Schlick approximation, copied from litWGSL. The fifth
+// power runs as four multiplications, because math.Pow on a constant integer
+// exponent costs about twenty times as much and this call sits in the pixel loop.
+func fresnelSchlick(f0 [3]float32, VdotH float32) [3]float32 {
+	t := clamp01f(1 - VdotH)
+	t2 := t * t
+	k := t2 * t2 * t
 	return [3]float32{
-		clamp01f(base[0] * (l.ambientColor[0]*l.ambientColor[3]*hemi[0] + l.lightColor[0]*l.lightColor[3]*ndotl*shadow)),
-		clamp01f(base[1] * (l.ambientColor[1]*l.ambientColor[3]*hemi[1] + l.lightColor[1]*l.lightColor[3]*ndotl*shadow)),
-		clamp01f(base[2] * (l.ambientColor[2]*l.ambientColor[3]*hemi[2] + l.lightColor[2]*l.lightColor[3]*ndotl*shadow)),
+		f0[0] + (1-f0[0])*k,
+		f0[1] + (1-f0[1])*k,
+		f0[2] + (1-f0[2])*k,
 	}
+}
+
+// rotateEnvY turns a direction about the Y axis, copied from litWGSL. It applies
+// the authored environment rotation to a cubemap lookup.
+func rotateEnvY(v [3]float32, radians float32) [3]float32 {
+	if radians == 0 {
+		return v
+	}
+	c := float32(math.Cos(float64(radians)))
+	s := float32(math.Sin(float64(radians)))
+	return [3]float32{v[0]*c - v[2]*s, v[1], v[0]*s + v[2]*c}
+}
+
+// The constants below are the numbers litProgram.shade shares with litWGSL in
+// render/bundle/lit.go. Naming them buys one thing: lit_parity_test.go compares
+// each value against the shader source, so a change to one copy fails a test
+// instead of producing a picture only one backend draws.
+//
+// The name of each constant is the identifier used by the pinned row that guards
+// it. Do not change a value here without changing litWGSL and the browser copies
+// in the same commit.
+const (
+	// dielectricF0 is the normal-incidence reflectance of a non-metal.
+	dielectricF0 = float32(0.04)
+	// roughnessFloor stops a polished material collapsing to a pinpoint mirror.
+	roughnessFloor = float32(0.04)
+	// anisotropyRoughnessGain is how far anisotropy narrows the lobe.
+	anisotropyRoughnessGain = float32(0.28)
+	// clearcoatPowerLow and clearcoatPowerHigh bound the coat exponent.
+	clearcoatPowerLow  = float32(12)
+	clearcoatPowerHigh = float32(96)
+	// clearcoatGain scales the coat lobe.
+	clearcoatGain = float32(0.28)
+	// sheenGain scales the velvet term.
+	sheenGain = float32(0.55)
+	// iridescencePhaseGreen, iridescencePhaseBlue and iridescenceFrequency set
+	// the hue sweep. iridescenceTintBase and iridescenceTintGain set its depth.
+	iridescencePhaseGreen = float32(2.1)
+	iridescencePhaseBlue  = float32(4.2)
+	iridescenceFrequency  = float32(8.0)
+	iridescenceTintBase   = float32(0.65)
+	iridescenceTintGain   = float32(0.7)
+	// transmissionBaseGain and transmissionMixGain set how far a transmissive
+	// surface fades toward the ambient term.
+	transmissionBaseGain = float32(0.1)
+	transmissionMixGain  = float32(0.55)
+	// envSpecularRoughFade is how fast a rough surface loses its cubemap
+	// reflection.
+	envSpecularRoughFade = float32(0.65)
+	// rangeWindowExponent shapes the window a ranged point or spot light fades
+	// through. three.js uses the fourth power and both browser renderers copy it.
+	rangeWindowExponent = float32(4)
+	// attenuationFloor stops a light at zero distance dividing by zero.
+	attenuationFloor = float32(0.0001)
+	// spotConeFloor stops a spot light with a zero-width penumbra band dividing
+	// by zero.
+	spotConeFloor = float32(0.001)
+)
+
+// shade evaluates the material at one surface point.
+//
+// directLight sums one Cook-Torrance lobe per scene light. It is the CPU copy of
+// the light loop in litWGSL, term for term and branch for branch.
+//
+// The kinds are the codes both browser renderers use: ambient, directional,
+// point, spot and hemisphere. Ambient and hemisphere carry no bidirectional
+// reflectance distribution function and no cosine term, so each adds a flat
+// product and skips the lobe. A rect-area light contributes nothing, because
+// engine.RenderLight carries no width and no height, so the rectangle the form
+// factor integrates over does not exist on this path.
+//
+// One cascaded shadow map exists and it is fitted to the primary directional
+// light. Only that light samples it; every other light is unshadowed. litWGSL
+// makes the same restriction.
+func (p *litProgram) directLight(
+	f fragment,
+	N, V, baseColor, f0 [3]float32,
+	metalness, roughness, NdotV float32,
+) [3]float32 {
+	const invPi = float32(1 / math.Pi)
+	var sum [3]float32
+	for index := range p.lights {
+		light := &p.lights[index]
+		switch light.kind {
+		case lightKindAmbient:
+			for i := 0; i < 3; i++ {
+				sum[i] += baseColor[i] * light.color[i] * light.intensity
+			}
+			continue
+		case lightKindHemisphere:
+			hemiBlend := N[1]*0.5 + 0.5
+			for i := 0; i < 3; i++ {
+				hemiColor := mix(light.groundColor[i], light.color[i], hemiBlend)
+				sum[i] += baseColor[i] * hemiColor * light.intensity
+			}
+			continue
+		case lightKindRectArea:
+			continue
+		}
+
+		var L [3]float32
+		attenuation := float32(1)
+		switch light.kind {
+		case lightKindDirectional:
+			L = normalize3([3]float32{-light.direction[0], -light.direction[1], -light.direction[2]})
+		case lightKindSpot:
+			toLight := subVec3(light.position, f.world)
+			dist := length3(toLight)
+			L = scaleVec3(toLight, 1/max32(dist, 0.0001))
+			cone := spotConeAttenuation(L, light.direction, light.coneAngle, light.penumbra)
+			attenuation = pointLightAttenuation(dist, light.rangeLimit, light.decay) * cone
+		default:
+			toLight := subVec3(light.position, f.world)
+			dist := length3(toLight)
+			L = scaleVec3(toLight, 1/max32(dist, 0.0001))
+			attenuation = pointLightAttenuation(dist, light.rangeLimit, light.decay)
+		}
+
+		H := normalize3(add3(V, L))
+		NdotL := max(0, dotVec3(N, L))
+		NdotH := max(0, dotVec3(N, H))
+		VdotH := max(0, dotVec3(V, H))
+
+		d := distributionGGX(NdotH, roughness)
+		g := geometrySmith(NdotV, NdotL, roughness)
+		fresnel := fresnelSchlick(f0, VdotH)
+		dg := d * g
+
+		shadow := float32(1)
+		if light.kind == lightKindDirectional && index == p.shadowLight {
+			shadow = p.lighting.sampleShadow(f.world)
+		}
+		for i := 0; i < 3; i++ {
+			// Energy conservation: what the specular lobe reflects, the diffuse
+			// lobe cannot, and a metal has no diffuse lobe at all.
+			kD := (1 - fresnel[i]) * (1 - metalness)
+			diffuse := kD * baseColor[i] * invPi
+			specular := dg * fresnel[i]
+			// The falloff rides in the radiance, exactly as litWGSL puts it
+			// there, so the direct term is the same product in both copies.
+			radiance := light.color[i] * light.intensity * attenuation
+			sum[i] += (diffuse + specular) * radiance * NdotL * shadow
+		}
+	}
+	return sum
+}
+
+// Every term below carries the name it has in litWGSL, in the same order, so the
+// two copies can be read side by side. A term whose parameter is zero contributes
+// exactly zero, so the guards that skip those terms change no pixel; they only
+// keep a plain dielectric off the cost of five physical lobes.
+func (p *litProgram) shade(f fragment) [3]float32 {
+	m := &p.material
+	l := &p.lighting
+
+	geomN := normalize3(f.normal)
+	N := geomN
+	if m.hasNormalMap {
+		N = perturbNormal(geomN, f.frame, m.normalMap.sampleRGB(f.uv))
+	}
+	V := normalize3(subVec3(l.cameraPos, f.world))
+	// The primary light decides the Fresnel term the image-based lighting block
+	// reuses. litWGSL keeps the same two lines outside its light loop.
+	H := normalize3(add3(V, p.light))
+
+	NdotV := max(1e-4, dotVec3(N, V))
+	VdotH := max(0, dotVec3(V, H))
+
+	// Base colour: the solid colour the vertex carried, modulated by the base
+	// colour map. A texture tints, it does not replace.
+	sample := m.baseColorMap.sampleRGB(f.uv)
+	baseColor := [3]float32{
+		f.base[0] * sample[0],
+		f.base[1] * sample[1],
+		f.base[2] * sample[2],
+	}
+
+	// glTF 2.0 packs roughness in green and metalness in blue. Read the same two
+	// channels litWGSL reads, or a packed texture drives both factors from the
+	// occlusion channel.
+	metalness := m.metalness
+	if m.hasMetalMap {
+		metalness *= m.metalMap.sampleRGB(f.uv)[2]
+	}
+	metalness = clamp01f(metalness)
+	roughness := m.roughness
+	if m.hasRoughMap {
+		roughness *= m.roughMap.sampleRGB(f.uv)[1]
+	}
+	roughness = clampRange(roughness, roughnessFloor, 1)
+	anisotropy := clampSignedUnit(m.anisotropy)
+	roughness = clampRange(roughness*(1-absf(anisotropy)*anisotropyRoughnessGain), roughnessFloor, 1)
+
+	// F0 is 0.04 for a dielectric and the base colour for a metal.
+	f0 := [3]float32{
+		mix(dielectricF0, baseColor[0], metalness),
+		mix(dielectricF0, baseColor[1], metalness),
+		mix(dielectricF0, baseColor[2], metalness),
+	}
+	// Fresnel and kD at the primary light. The image-based terms at the end reuse
+	// both, so a cubemap keeps the exact response it had before the light array
+	// arrived. Each light in the loop below computes its own pair.
+	fresnel := fresnelSchlick(f0, VdotH)
+	kD := [3]float32{
+		(1 - fresnel[0]) * (1 - metalness),
+		(1 - fresnel[1]) * (1 - metalness),
+		(1 - fresnel[2]) * (1 - metalness),
+	}
+
+	// Direct light: one Cook-Torrance lobe per scene light, summed.
+	color := p.directLight(f, N, V, baseColor, f0, metalness, roughness, NdotV)
+
+	// Environment ambient: three independent terms, each gated by its own
+	// intensity only. The sky and ground intensities arrive premultiplied into
+	// the colour from resolveHemisphereAmbient in render/bundle/renderer.go.
+	hemi := clamp01f(N[1]*0.5 + 0.5)
+	var ambient [3]float32
+	for i := 0; i < 3; i++ {
+		envDiffuse := l.ambientColor[i]*l.ambientColor[3] +
+			l.skyColor[i]*hemi + l.groundColor[i]*(1-hemi)
+		ambient[i] = envDiffuse * baseColor[i]
+		color[i] += ambient[i]
+	}
+
+	// Image-based lighting. envParams.z is zero for a scene with no environment
+	// map, and then this whole block contributes nothing.
+	if l.envParams[2] != 0 && l.envCube.bound() {
+		rotation := l.envParams[1]
+		diffuseEnv := l.envCube.sampleCube(rotateEnvY(N, rotation))
+		reflected := reflect3(V, N)
+		specularEnv := l.envCube.sampleCube(rotateEnvY(reflected, rotation))
+		gain := l.envParams[0] * l.envParams[2]
+		roughFade := 1 - roughness*envSpecularRoughFade
+		for i := 0; i < 3; i++ {
+			cubeDiffuse := diffuseEnv[i] * baseColor[i] * kD[i]
+			cubeSpecular := specularEnv[i] * fresnel[i] * roughFade
+			color[i] += (cubeDiffuse + cubeSpecular) * gain
+		}
+	}
+
+	// Emissive. The map replaces the emissive colour; it does not tint it. The
+	// term is added after the light, so an unlit face still glows.
+	if m.emissiveScale != 0 {
+		emissiveColor := baseColor
+		if m.hasEmissiveMap {
+			emissiveColor = m.emissiveMap.sampleRGB(f.uv)
+		}
+		for i := 0; i < 3; i++ {
+			color[i] += emissiveColor[i] * m.emissiveScale
+		}
+	}
+
+	// Clear coat: a second, tighter lobe over the whole surface.
+	if clearcoat := clamp01f(m.clearcoat); clearcoat > 0 {
+		power := mix(clearcoatPowerLow, clearcoatPowerHigh, 1-roughness)
+		lobe := float32(math.Pow(float64(NdotV), float64(power))) * clearcoat * clearcoatGain
+		color[0] += lobe
+		color[1] += lobe
+		color[2] += lobe
+	}
+
+	// Sheen: the velvet edge of a fabric, added rather than blended.
+	if sheen := clamp01f(m.sheen); sheen > 0 {
+		facing := 1 - NdotV
+		velvet := facing * facing * facing * sheen
+		for i := 0; i < 3; i++ {
+			color[i] += baseColor[i] * velvet * sheenGain
+		}
+	}
+
+	// Iridescence: a thin-film hue sweep that grows toward the silhouette.
+	if iridescence := clamp01f(m.iridescence); iridescence > 0 {
+		facing := 1 - NdotV
+		weight := iridescence * facing * facing
+		phases := [3]float32{0, iridescencePhaseGreen, iridescencePhaseBlue}
+		for i := 0; i < 3; i++ {
+			iri := 0.5 + 0.5*float32(math.Cos(float64(phases[i]+NdotV*iridescenceFrequency)))
+			color[i] = mix(color[i], color[i]*(iridescenceTintBase+iri*iridescenceTintGain), weight)
+		}
+	}
+
+	// Transmission. This is the same single-pixel approximation litWGSL and both
+	// browser renderers use: fade the shaded colour toward the ambient term plus
+	// a tenth of the base colour. None of the four renderers refracts, because
+	// refraction needs a second pass over the whole scene.
+	if transmission := clamp01f(m.transmission) * (1 - metalness); transmission > 0 {
+		weight := transmission * transmissionMixGain
+		for i := 0; i < 3; i++ {
+			color[i] = mix(color[i], ambient[i]+baseColor[i]*transmissionBaseGain, weight)
+		}
+	}
+	return color
 }
 
 func (l sceneLighting) sampleShadow(worldPos [3]float32) float32 {
@@ -2056,6 +2915,7 @@ type rasterVertex struct {
 	color  [4]float32
 	world  [3]float32
 	normal [3]float32
+	uv     [2]float32
 }
 
 // rasterizeTriangle fills one screen-space triangle.
@@ -2072,7 +2932,13 @@ type rasterVertex struct {
 // linear interpolation is close enough on a small triangle but wildly wrong on
 // a ground plane running to the horizon, which is precisely the surface a
 // shadow lands on.
-func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *sceneLighting) {
+func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *litProgram) {
+	// The texture-space basis is a property of the triangle, so solve it once
+	// outside the pixel loop, and only when a normal map is bound.
+	var frame tangentFrame
+	if shading != nil && shading.material.hasNormalMap {
+		frame = triangleTangent(verts)
+	}
 	pts := [3][2]float32{
 		{verts[0].x, verts[0].y},
 		{verts[1].x, verts[1].y},
@@ -2118,12 +2984,18 @@ func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *scen
 				out[i] = verts[0].color[i]*p0 + verts[1].color[i]*p1 + verts[2].color[i]*p2
 			}
 			if shading != nil {
-				var world, normal [3]float32
-				for i := 0; i < 3; i++ {
-					world[i] = verts[0].world[i]*p0 + verts[1].world[i]*p1 + verts[2].world[i]*p2
-					normal[i] = verts[0].normal[i]*p0 + verts[1].normal[i]*p1 + verts[2].normal[i]*p2
+				frag := fragment{
+					base:  [3]float32{out[0], out[1], out[2]},
+					frame: frame,
 				}
-				lit := shading.shade([3]float32{out[0], out[1], out[2]}, normal, world)
+				for i := 0; i < 3; i++ {
+					frag.world[i] = verts[0].world[i]*p0 + verts[1].world[i]*p1 + verts[2].world[i]*p2
+					frag.normal[i] = verts[0].normal[i]*p0 + verts[1].normal[i]*p1 + verts[2].normal[i]*p2
+				}
+				for i := 0; i < 2; i++ {
+					frag.uv[i] = verts[0].uv[i]*p0 + verts[1].uv[i]*p1 + verts[2].uv[i]*p2
+				}
+				lit := shading.shade(frag)
 				out[0], out[1], out[2] = lit[0], lit[1], lit[2]
 			}
 			writeRasterColor(target, x, y, color.RGBA{
@@ -2378,6 +3250,12 @@ func sampleTextureRGB(t *Texture, layer int, uv [2]float32) [3]float32 {
 	if t == nil || t.width <= 0 || t.height <= 0 {
 		return [3]float32{1, 1, 1}
 	}
+	// render/bundle binds a one-texel fallback in every unused map slot, so this
+	// case is the common one. Bilinear filtering of one texel costs four reads
+	// and three blends and returns that same texel.
+	if t.width == 1 && t.height == 1 {
+		return sampleTexturePixelRGB(t, layer, 0, 0)
+	}
 	u := fract32(uv[0])
 	v := fract32(uv[1])
 	x := u*float32(t.width) - 0.5
@@ -2600,6 +3478,42 @@ func normalize3(v [3]float32) [3]float32 {
 		return [3]float32{0, 1, 0}
 	}
 	return [3]float32{v[0] / l, v[1] / l, v[2] / l}
+}
+
+// reflect3 mirrors the view vector about the normal and returns the direction a
+// cubemap lookup needs. litWGSL writes reflect(-V, N); this is the same vector.
+func reflect3(v, n [3]float32) [3]float32 {
+	d := 2 * dotVec3(n, v)
+	return [3]float32{d*n[0] - v[0], d*n[1] - v[1], d*n[2] - v[2]}
+}
+
+func absf(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func clampRange(v, low, high float32) float32 {
+	if math.IsNaN(float64(v)) || v < low {
+		return low
+	}
+	if v > high {
+		return high
+	}
+	return v
+}
+
+func clampSignedUnit(v float32) float32 { return clampRange(v, -1, 1) }
+
+// readFloat32At reads one float and returns zero when the offset falls outside
+// the buffer. A unit test binds a uniform buffer shorter than the shader struct
+// on purpose, and a short buffer must read as zero rather than panic.
+func readFloat32At(data []byte, offset int) float32 {
+	if offset < 0 || offset+4 > len(data) {
+		return 0
+	}
+	return readFloat32(data, offset)
 }
 
 func hash13(p [3]float32) float32 {

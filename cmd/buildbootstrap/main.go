@@ -122,6 +122,7 @@ var outputs = []output{
 			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.js"),
+			sourceFile("bootstrap-src/11-scene-base64.js"),
 			sourceFile("bootstrap-src/11a-scene-decompress.js"),
 			sourceFile("bootstrap-src/11b-scene-points-generate.js"),
 			sourceFile("bootstrap-src/12-scene-geometry.js"),
@@ -132,11 +133,16 @@ var outputs = []output{
 			sourceFile("bootstrap-src/15b-scene-planner.js"),
 			sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
 			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
+			sourceFile("bootstrap-src/15a1-scene-texture-budget.js"),
 			sourceFile("bootstrap-src/16b-scene-hdr.js"),
 			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.js"),
+			// 16e holds the legacy vertex-colour WebGL renderer that
+			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
+			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
+			sourceFile("bootstrap-src/16e-scene-webgl-legacy.js"),
 			sourceFile("bootstrap-src/16-scene-webgl.js"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
@@ -154,6 +160,11 @@ var outputs = []output{
 			sourceFile("bootstrap-src/16b-scene-compute.js"),
 			sourceFile("bootstrap-src/17-scene-input.js"),
 			sourceFile("bootstrap-src/18-scene-canvas.js"),
+			// 19a-scene-ktx2.js holds the browser KTX2 reader and the block
+			// uploader. It must load BEFORE 19-scene-gltf.js, which reads
+			// sceneKTX2UploadPathReady before it swaps an image URI for a block
+			// variant.
+			sourceFile("bootstrap-src/19a-scene-ktx2.js"),
 			sourceFile("bootstrap-src/19-scene-gltf.js"),
 			sourceFile("bootstrap-src/19a-scene-animation.js"),
 			sourceFile("bootstrap-src/19b-scene-control-forms.js"),
@@ -312,8 +323,15 @@ var outputs = []output{
 			// this chunk reads from window.__gosx_runtime_api.
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.js"),
-			sourceFile("bootstrap-src/11a-scene-decompress.js"),
-			sourceFile("bootstrap-src/11b-scene-points-generate.js"),
+			// 11-scene-base64.js stays eager. 20-scene-mount.js decodes a motion
+			// program with it on pages that carry no compressed array at all.
+			sourceFile("bootstrap-src/11-scene-base64.js"),
+			// 11a-scene-decompress.js and 11b-scene-points-generate.js are NOT
+			// here any more — they moved to
+			// bootstrap-feature-scene3d-decompress.js. A scene with plain float
+			// arrays and no generator descriptor runs neither, and used to pay
+			// 8_514 raw / 3_164 gzip / 2_602 brotli minified bytes for both.
+			// createSceneState awaits the chunk before it decodes.
 			sourceFile("bootstrap-src/12-scene-geometry.js"),
 			sourceFile("bootstrap-src/13-scene-material.js"),
 			sourceFile("bootstrap-src/14-scene-lighting.js"),
@@ -321,9 +339,20 @@ var outputs = []output{
 			sourceFile("bootstrap-src/15-scene-draw-plan.js"),
 			sourceFile("bootstrap-src/15b-scene-planner.js"),
 			sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
+			// 15a keeps only the scalars the scene core and both renderers read.
+			// The texture-unit table and the IBL budget moved to
+			// 15a1-scene-texture-budget.js, which ships in the WebGL chunk.
+			// 16b-scene-hdr.js moved there too: sceneParseRadianceHDR has one
+			// caller in the tree, and it is 16-scene-webgl.js.
 			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
-			sourceFile("bootstrap-src/16b-scene-hdr.js"),
-			sourceFile("bootstrap-src/16b-scene-compute.js"),
+			// 16b-scene-compute.js is NOT here any more — it moved to
+			// bootstrap-feature-scene3d-compute.js. A scene with one cube and one
+			// directional light runs no particle simulation, no CPU particle
+			// fallback and no GPU instanced cull, and it used to pay 30_189 raw /
+			// 8_772 gzip / 7_409 brotli minified bytes for all three. The mount
+			// fetches the chunk when the scene declares compute particles or an
+			// instanced mesh, and the renderers read the symbols through
+			// window.__gosx_scene3d_api at call time.
 			// 16-scene-webgl.js is NOT here any more — it moved to
 			// bootstrap-feature-scene3d-webgl.js. A WebGPU-capable browser
 			// downloaded both GPU backends and drew with one of them, so the
@@ -383,6 +412,20 @@ var outputs = []output{
 		name: "bootstrap-feature-scene3d-webgl.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-prefix.js"),
+			// 15a1 and 16b-scene-hdr.js follow the renderer that reads them.
+			// 16-scene-webgl.js is the only caller of sceneAllocateTextureUnits,
+			// sceneResolveIBLRenderTargetMode and sceneParseRadianceHDR, so a
+			// WebGPU page stops paying for a WebGL2 sampler table, an IBL budget
+			// solver and a Radiance HDR decoder it can never reach.
+			sourceFile("bootstrap-src/15a1-scene-texture-budget.js"),
+			sourceFile("bootstrap-src/16b-scene-hdr.js"),
+			// 16e is the legacy vertex-colour renderer. It left
+			// 10-runtime-scene-core.js, where every Scene3D page paid for it,
+			// and joined the renderer it backs up. createSceneWebGLResult in
+			// 20b calls it only after the PBR factory declines, and that
+			// factory ships in this same chunk, so a WebGPU page can never
+			// reach either one.
+			sourceFile("bootstrap-src/16e-scene-webgl-legacy.js"),
 			sourceFile("bootstrap-src/16-scene-webgl.js"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.js"),
 		},
@@ -409,9 +452,39 @@ var outputs = []output{
 		},
 	},
 	{
+		// Compute chunk: the GPU particle simulation, the CPU particle
+		// fallback, the particle force registry and the GPU instanced-cull
+		// system. Both renderers read it, and neither can carry it, so it is
+		// its own chunk rather than a passenger on one backend.
+		name: "bootstrap-feature-scene3d-compute.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26k-feature-scene3d-compute-prefix.js"),
+			sourceFile("bootstrap-src/16b-scene-compute.js"),
+			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.js"),
+		},
+	},
+	{
+		// Decompress chunk: the quantized-array decoder, the progressive and
+		// level-of-detail ladders, and the procedural point generators. The two
+		// files call each other, so they share one chunk.
+		name: "bootstrap-feature-scene3d-decompress.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-prefix.js"),
+			sourceFile("bootstrap-src/11a-scene-decompress.js"),
+			sourceFile("bootstrap-src/11b-scene-points-generate.js"),
+			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-suffix.js"),
+		},
+	},
+	{
 		name: "bootstrap-feature-scene3d-gltf.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-prefix.js"),
+			// 19a holds the KTX2 reader and the block uploader. It must load
+			// before 19-scene-gltf.js, which reads sceneKTX2UploadPathReady
+			// before it swaps an image URI for a block variant. It ships in
+			// this chunk only: the base scene3d chunk has no lexical reader of
+			// it, and a second copy would be a second download.
+			sourceFile("bootstrap-src/19a-scene-ktx2.js"),
 			sourceFile("bootstrap-src/19-scene-gltf.js"),
 			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.js"),
 		},

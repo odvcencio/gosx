@@ -20,6 +20,10 @@
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
+    // createSceneState decodes every compressed array as its first statement,
+    // so the decompress chunk must land first. A scene with plain float arrays
+    // and no generator descriptor fetches nothing and resolves at once.
+    await settleSceneDecompressFeature(props);
     const sceneState = createSceneState(props, capability);
     sceneState._modelStatusMount = ctx.mount;
     // The manifest is immutable for the lifetime of an engine mount. Parse its
@@ -186,6 +190,11 @@
     // createSceneRenderer call. This resolves immediately on a WebGPU page and
     // on the monolith.
     await settlePreferredWebGLBackend(props, capability);
+    // The compute chunk carries the particle systems and the GPU instanced
+    // cull. Settle it too, so a particle scene draws its particles on the
+    // first frame instead of skipping them. A scene with no particles and no
+    // instanced mesh resolves immediately and fetches nothing.
+    await settleSceneComputeFeature(sceneState);
 
     let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
     scenePrimeAdaptiveQuality(adaptiveQuality, viewport, ctx.mount, sceneState);
@@ -1461,6 +1470,11 @@
       }
       lastRenderReason = reason || "refresh";
       recordScenePerfCounter("schedule:" + (reason || "refresh"));
+      // A runtime program or a scene command can add a particle system or an
+      // instanced mesh after the mount settled. Ask for the compute chunk
+      // again here; ensureComputeFeatureLoaded caches, so a scene that already
+      // has it, or never needs it, pays two array checks.
+      requestSceneComputeFeatureIfNeeded(sceneState);
       if (initPending) {
         initReason = lastRenderReason;
         applySceneRenderLoopState(lastRenderReason);
@@ -2510,11 +2524,15 @@
       applyWasmMaterialMotionFrame(timeSeconds);
       sceneAdvanceTransitions(sceneState, now);
       // LOD: swap vertex data based on camera distance before building render bundle.
-      if (typeof sceneApplyLOD === "function" && props.compression && props.compression.lod) {
+      // sceneApplyLOD lives in the lazily fetched decompress chunk. Resolve it
+      // through the API object each frame; the mount awaited the chunk before
+      // it built the state, so this lookup finds it.
+      var applyLOD = sceneDecompressAPIFunction("sceneApplyLOD");
+      if (applyLOD && props.compression && props.compression.lod) {
         var cam = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
         var camX = cam.x || 0, camY = cam.y || 0, camZ = cam.z || 0;
         for (var li = 0; li < sceneState.points.length; li++) {
-          sceneApplyLOD(sceneState.points[li], camX, camY, camZ);
+          applyLOD(sceneState.points[li], camX, camY, camZ);
         }
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
@@ -2692,9 +2710,11 @@
     scheduleInitialRender();
 
     // Progressive: upgrade from preview to full resolution after first paint.
-    if (typeof sceneUpgradeProgressive === "function" && props.compression && props.compression.progressive) {
+    if (sceneDecompressAPIFunction("sceneUpgradeProgressive") && props.compression && props.compression.progressive) {
       scheduleSceneIdleTask(function() {
-        sceneUpgradeProgressive(props);
+        var upgrade = sceneDecompressAPIFunction("sceneUpgradeProgressive");
+        if (!upgrade) return;
+        upgrade(props);
         // Force a re-render with upgraded data
         if (sceneWantsAnimation()) {
           // Animation loop will pick it up

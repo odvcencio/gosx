@@ -330,7 +330,10 @@ func TestGrammarBlobMatchesInCodeGrammarOnRepoCorpus(t *testing.T) {
 	}
 	files := gsxCorpusFiles(t)
 	if len(files) == 0 {
-		t.Skip("no .gsx files found")
+		// Fail, never skip. The repository always holds .gsx files, so an empty
+		// corpus means the walk roots went stale. A skip would hide that and
+		// report green with the shipped-code parity check switched off.
+		t.Fatal("no .gsx files found in the repository corpus; the walk roots in gsxCorpusFiles went stale")
 	}
 	blobLang := blobLanguage(t)
 	codeLang := codeLanguage(t)

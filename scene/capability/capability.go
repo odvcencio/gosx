@@ -13,13 +13,42 @@ const (
 	BackendCanvas2D Backend = "canvas2d"
 )
 
+// allBackends lists every backend Verdict considers when the author names none.
+//
+// The list stops at three on purpose. GoSX ships five render surfaces, and the
+// other two carry no row because a row would answer a question nobody asks:
+//
+//	render/bundle          the caller picks it in Go; no runtime alternative
+//	                       exists to fall back to, and it reports its own gaps
+//	                       per RECORD through engine.RenderDiagnostic
+//	render/gpu/headless    not a surface at all; it implements gpu.Device, so
+//	                       render/bundle.Renderer runs ON it rather than beside it
+//
+// TestFiveRenderSurfacesReduceToThreeBackends records the reasoning and fails if
+// either premise stops holding.
 var allBackends = []Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D}
+
+// CANVAS2D BLANKET RULE.
+//
+// Canvas2D draws exactly two things: line segments and screen-space point
+// sprites. Read createSceneCanvasRenderer in 18-scene-canvas.js — it calls
+// renderSceneCanvasPoints and renderSceneCanvasWorldBundle, and nothing else.
+// It rasterizes no triangle, so it shades no material, reads no light, runs no
+// pass and samples no texture.
+//
+// So a missing canvas2d key in a Matrix row is a STATED blanket exclusion, not
+// an oversight: supports(canvas2d, f) returns false for every feature that needs
+// a mesh. Add a canvas2d key only when Canvas2D genuinely draws the feature.
+//
+// One feature earns that key today. See the FeatureLineDashed row.
+// TestCanvas2DBlanketExclusionIsStated pins both halves.
 
 type Feature string
 
 const (
 	FeatureSkinning                  Feature = "skinning"
 	FeatureIBL                       Feature = "ibl"
+	FeatureEnvironmentMap            Feature = "environment-map"
 	FeatureGPUPicking                Feature = "gpu-picking"
 	FeatureLineDashed                Feature = "line-dashed"
 	FeatureCustomShader              Feature = "custom-shader"
@@ -48,10 +77,11 @@ const (
 //
 // The two that remain carry real gaps. See the Matrix rows below.
 //
-// Nothing calls this yet. The wire-side collector lives in
-// scene/scene_ir.go (collectFeatures), which this change does not own, so the
-// runtime reports these two gaps itself through reportIssue in
-// 16a-scene-webgpu.js. Wire the call here when collectFeatures next changes.
+// collectFeatures in scene/scene_ir.go calls this for every LightIR the graph
+// lowerer emits, so a rect-area light or a light probe raises its features on
+// the wire. The WebGPU renderer also reports the same two gaps to the author
+// itself, through the "rect-area-specular" and "light-probe-sh" issue codes in
+// 16a-scene-webgpu.js.
 func LightKindFeatures(kind string) []Feature {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "rect-area":
@@ -64,9 +94,36 @@ func LightKindFeatures(kind string) []Feature {
 
 // Matrix records which backends implement each feature TODAY. A feature absent
 // from the map is supported everywhere. Flip a cell when a renderer gains the
-// feature; the drift guard (later task) ties this to renderer manifests.
-// custom-shader is per-material (resolved via ShaderResolver), not a flat cell.
+// feature; the drift guard in drift_test.go ties this to the renderer manifests.
+//
+// custom-shader has NO row, and that is a decision rather than an omission. A
+// flat cell would have to answer "can this backend draw a custom material", and
+// no boolean answers it: the answer depends on which shading language THAT
+// material ships. Either value lies. True claims WebGPU serves a material with
+// GLSL only; false claims WebGPU serves no custom material even when the author
+// wrote WGSL. ShaderResolver asks the per-material question instead, and
+// Props.SceneIR applies the answer as a post-filter over Capable. See
+// TestCustomShaderHasNoFlatCellOnPurpose in customshader_test.go.
 var Matrix = map[Feature]map[Backend]bool{
+	// Both GPU backends deform a skinned mesh, so both cells are true.
+	//
+	// WebGL2 skins in the vertex shader: SCENE_PBR_SKINNED_VERTEX_SOURCE builds
+	// skinMatrix from a_joints, a_weights and u_jointMatrices[64].
+	// WebGPU skins in a compute pass: SCENE_ELIO_SKIN_LBS_SOURCE runs linear
+	// blend skinning over a storage buffer of bone matrices, and
+	// webGPUBindElioSkinnedBuffers binds the result as vertex slot 0.
+	//
+	// The two are NOT equally faithful, and the difference has no cell today.
+	// The WGSL kernel writes three floats per vertex — position only. Its 28
+	// lines contain the strings "normal" and "tangent" zero times. WebGL2 skins
+	// all three: "pos = skinMatrix * pos", "norm = mat3(skinMatrix) * norm" and
+	// "tang = mat3(skinMatrix) * tang". So a skinned limb on WebGPU lights from
+	// rest-pose normals.
+	//
+	// TestSkinnedNormalGapIsRecordedNotClaimed states the recommended follow-up:
+	// a skinned-normals feature, false on WebGPU and true on WebGL2. It needs a
+	// key in both renderer manifests, so it is a reported finding here, not a
+	// silent row.
 	FeatureSkinning: {BackendWebGPU: true, BackendWebGL: true},
 	// False everywhere. The WebGL2 cell read true and no code backed it.
 	//
@@ -75,9 +132,18 @@ var Matrix = map[Feature]map[Backend]bool{
 	// function (BRDF) lookup table. The WebGL2 path has none of the three. It
 	// tone maps the source environment to an 8-bit low-dynamic-range texture
 	// through scenePBRTonemapHDRPixels, taps that one equirectangular texture
-	// twice, and scales the result by (1.0 - roughness * 0.65). That factor has
-	// no derivation. The renderer holds no samplerCube, no textureCubeLod and
-	// no u_brdfLUT.
+	// twice, and scales the result by (1.0 - roughness * 0.65). The renderer
+	// holds no samplerCube, no textureCubeLod and no u_brdfLUT.
+	//
+	// (1.0 - roughness * 0.65) HAS NO DERIVATION, and the criticism reaches
+	// further than this cell. render/bundle/lit.go carries the SAME factor on
+	// the SAME line shape: it taps one cube at level zero for the diffuse term,
+	// taps it again along the reflection vector, and scales the second tap by
+	// that expression. So the ad hoc roughness response is a property of the
+	// whole engine, not of the WebGL2 renderer. A split-sum fit would read
+	// roughness through a prefiltered mip chain and a two-term BRDF lookup, and
+	// no backend does. render/bundle/lit_drift_test.go carries the
+	// environment-map row that states this and pins both halves.
 	//
 	// sceneAllocateTextureUnits in 15a-scene-postfx-shared.js already reserves
 	// three units named irradiance, radiance and brdfLUT, and negotiates them
@@ -89,6 +155,34 @@ var Matrix = map[Feature]map[Backend]bool{
 	// ibl.ConsumerRequirements for the five pieces a consumer must add. Flip
 	// this cell when one exists, and not before.
 	FeatureIBL: {BackendWebGPU: false, BackendWebGL: false},
+	// environment-map: does the backend READ Environment.EnvMap at all.
+	//
+	// This row exists because the ibl row above reads as parity and is not. Both
+	// ibl cells are false, correctly, because neither browser backend runs a
+	// split-sum fit. That hid a much larger gap underneath: one backend samples
+	// the authored image and the other never opens it.
+	//
+	// Count the three authored identifiers, case-insensitive, over
+	// client/js/bootstrap-src:
+	//
+	//	identifier      16a-scene-webgpu.js   16-scene-webgl.js
+	//	envMap                            0                  16
+	//	envIntensity                      0                   7
+	//	envRotation                       0                   6
+	//
+	// So an author who writes EnvMap gets a reflection on WebGL2, gets one in a
+	// poster (render/bundle/environment.go loads a cube and lit.go samples it),
+	// and gets NOTHING on WebGPU — which is the preferred backend, so it is the
+	// one most viewers see. Nothing told the author that before this row.
+	//
+	// The cell is a RECORD, not a plan. It is absent from DefaultPolicy, so it
+	// excludes no backend; it adds one name to the WebGPU degraded list, which
+	// is the honest report. Implementing the WebGPU environment map is renderer
+	// work: a cube texture, a sampler, three uniform lanes and the two taps.
+	// Flip this cell when 16a-scene-webgpu.js carries them, and not before.
+	// TestWebGPUReadsNoEnvironmentMap in environmentmap_test.go fails on the day
+	// it does, and names the three edits the flip needs.
+	FeatureEnvironmentMap: {BackendWebGPU: false, BackendWebGL: true},
 	// gpu-picking is implemented on both GPU backends.
 	//
 	// The pick CONTRACT — the gosx:scene3d:input events, the pick/drag/event
@@ -104,13 +198,58 @@ var Matrix = map[Feature]map[Backend]bool{
 	// design in render/bundle/pick.go. It resolves identity on the GPU and
 	// derives every geometric field from the same shared CPU raycast helpers
 	// WebGL2 uses, so both backends report the same numbers.
-	FeatureGPUPicking:   {BackendWebGPU: true, BackendWebGL: true},
-	FeatureLineDashed:   {BackendWebGPU: false, BackendWebGL: true},
+	FeatureGPUPicking: {BackendWebGPU: true, BackendWebGL: true},
+	// The WebGL2 cell read true and no code backed it. The true cell also sat on
+	// the wrong backend entirely.
+	//
+	// A dash pattern needs a per-fragment arc-length test or a setLineDash call.
+	// Count the evidence:
+	//
+	//	16-scene-webgl.js       "dash" appears 0 times, case-insensitive
+	//	16a-scene-webgpu.js     "lineDash" appears 3 times, all of them in
+	//	                        webGPUUnsupportedLineStyles, which REFUSES the draw
+	//	18-scene-canvas.js      "dash" appears 16 times, and line 31 calls
+	//	                        ctx2d.setLineDash([dashSize, gapSize])
+	//
+	// So WebGL2 draws a dashed line as a SOLID line, WebGPU drops the line data
+	// (webGPUUnsupportedLineStyles gates hasWorldLineData), and Canvas2D is the
+	// only backend that draws the dashes. The row now says exactly that, and the
+	// canvas2d key is the one earned exception to the blanket rule above.
+	//
+	// The runtime already knew. sceneWebGPUFeatureGap in 20a-scene-mount-backend.js
+	// returns "line-styles" for a dashed scene and routes to WebGL2 — but only
+	// when the scene carries NO backendCaps, because that function returns early
+	// on a present verdict. So the wrong cell overrode the runtime's own guess and
+	// sent dashed scenes to the backend that drops them.
+	//
+	// See linedashed_test.go. This is a degraded image, not a different scene: a
+	// solid line still occupies the same pixels, so the feature stays droppable.
+	FeatureLineDashed: {BackendWebGPU: false, BackendWebGL: false, BackendCanvas2D: true},
+	// compute-particles means the simulation advances in a GPU compute pass.
+	//
+	// WebGPU: createSceneComputeParticleSystem in 16b-scene-compute.js owns the
+	// state buffer, the params uniform and the compute pipeline, and it accepts an
+	// authored WGSL kernel through entry.computeWGSL.
+	//
+	// WebGL2: the renderer has no compute stage. createComputePipeline,
+	// beginComputePass and dispatchWorkgroups each appear 0 times in
+	// 16-scene-webgl.js. It substitutes createSceneCPUParticleSystem, a CPU mirror
+	// of the same 8-float layout and the same hash RNG, so particles still move.
+	// Two limits make the mirror a fallback rather than the feature: it clamps to
+	// Math.min(entry.count || 0, 10000), and it cannot run an authored WGSL
+	// kernel. See computeparticles_test.go.
 	FeatureComputeParts: {BackendWebGPU: true, BackendWebGL: false},
 	FeatureGPUCull:      {BackendWebGPU: true, BackendWebGL: false},
 	// Water features are implemented on WebGL2 by the runtime water renderer
 	// (createSceneWaterRendererWebGL/createSceneWaterSimWebGL); WebGPU stays the
 	// preferred/primary backend, WebGL2 is the honest fallback.
+	//
+	// Both cells corroborated against source. WebGL2 ping-pongs two RGBA32F (or
+	// RGBA16F) float render targets and compiles the five lowered GLES programs
+	// named in passSpecs: simulation, normal, seed, drop and displacement. WebGPU
+	// runs the same five stages through dispatchWaterComputeStage inside a
+	// compute pass labelled gosx-water-sim-normal-pass. Neither side fakes the
+	// height field. See watersim_test.go.
 	FeatureWaterSim:               {BackendWebGPU: true, BackendWebGL: true},
 	FeatureWaterObjectTexturePass: {BackendWebGPU: true, BackendWebGL: true},
 	// The WebGL2 cell read true and no code backed it.
@@ -166,6 +305,17 @@ func supports(b Backend, f Feature) bool {
 	}
 	return row[b]
 }
+
+// Supports reports whether one backend implements one feature today.
+//
+// It answers the same question Verdict asks per backend, for a caller that
+// already knows which backend it cares about. scene/preview uses it to warn that
+// a poster shows a term the preferred browser backend will not draw.
+//
+// Read a false answer as "this backend draws nothing for that feature", not as
+// "this backend refuses the scene". DefaultPolicy decides which features exclude
+// a backend; every other false cell only degrades it.
+func Supports(b Backend, f Feature) bool { return supports(b, f) }
 
 type Policy struct{ Required map[Feature]bool }
 

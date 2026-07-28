@@ -14,6 +14,13 @@ const (
 	FormatBGRA8Unorm
 	FormatBGRA8UnormSRGB
 
+	// Narrow unorm variants. The texture pipeline emits these when a source
+	// uses one or two channels, which cuts GPU bytes to a quarter or a half.
+	// WebGPU has no three-channel 8-bit format, so no RGB8 enum exists and the
+	// loader keeps rejecting the WebGL2-only rgb8unorm container.
+	FormatR8Unorm
+	FormatRG8Unorm
+
 	// Color, higher precision.
 	FormatRGBA16Float
 	FormatRGBA32Float
@@ -21,6 +28,19 @@ const (
 	FormatRGB10A2Unorm
 
 	// Color, compressed block formats.
+	//
+	// Every block format below sits behind an optional WebGPU feature and an
+	// optional WebGL2 extension. A device may have none of them, so the
+	// pipeline always keeps an uncompressed variant as the fallback.
+	//
+	// BC4 and BC5 have no sRGB form. They store data, not colour, so an sRGB
+	// transfer function would bend the numbers.
+	FormatBC1RGBAUnorm
+	FormatBC1RGBAUnormSRGB
+	FormatBC3RGBAUnorm
+	FormatBC3RGBAUnormSRGB
+	FormatBC4RUnorm
+	FormatBC5RGUnorm
 	FormatBC7RGBAUnorm
 	FormatBC7RGBAUnormSRGB
 	FormatASTC4x4Unorm

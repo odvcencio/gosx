@@ -98,14 +98,47 @@ func TestExecuteBuildsTextureVariants(t *testing.T) {
 		t.Fatal("the stage built nothing")
 	}
 
-	// No block-compressed variant may survive. The plan named bc7, astc, and
-	// etc2; none of the three can be built, so none may claim a file.
+	// No unbuildable block variant may survive. ASTC and ETC2 still have no
+	// encoder, so a variant naming either one must never claim a file. BC7 left
+	// this list when the encoder landed, and the check below proves the BC7 file
+	// really exists rather than only claiming to.
 	for _, variant := range after.Variants {
-		for _, marker := range []string{"bc7", "astc", "etc2"} {
+		for _, marker := range []string{"astc", "etc2"} {
 			if strings.Contains(variant.Compression, marker) && variant.Exists() {
 				t.Fatalf("variant %q claims a built %s file", variant.URI, marker)
 			}
 		}
+	}
+	// Every built variant must resolve to a real file of the size it reports.
+	// A selector that named a missing file would return a 404 at request time.
+	blockVariants := 0
+	for _, variant := range after.Variants {
+		if variant.Kind != "texture" || !variant.Exists() {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(variant.URI)))
+		if err != nil {
+			t.Fatalf("built variant %q: %v", variant.URI, err)
+		}
+		if info.Size() != variant.Bytes {
+			t.Errorf("variant %q reports %d bytes, the file holds %d", variant.URI, variant.Bytes, info.Size())
+		}
+		if !strings.Contains(variant.Compression, "bc") {
+			continue
+		}
+		blockVariants++
+		// A block variant must name its format token and the optional device
+		// feature that token needs. Without the feature token a static server
+		// table could select it, and an adapter with no BC support would fail
+		// the upload in the browser.
+		caps := strings.Join(variant.RequiredCapabilities, " ")
+		if !strings.Contains(caps, "device-feature:texture-compression-bc") {
+			t.Errorf("block variant %q does not require texture-compression-bc: %v",
+				variant.URI, variant.RequiredCapabilities)
+		}
+	}
+	if blockVariants == 0 {
+		t.Fatal("no block-compressed variant was built; the encoders are wired to nothing")
 	}
 
 	// Two distinct tiers, because 1024 caps at 1024, 1024, and 512. The high
@@ -249,17 +282,31 @@ func TestExecuteTexturePrunesAnOpaqueGrayscaleMask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An opaque grayscale mask ships two forms per tier: the portable r8unorm
+	// container, which every GPU backend uploads, and a BC4 container, which
+	// halves the GPU bytes again on a device that reported
+	// texture-compression-bc. Both must appear, and nothing else may.
 	asset := findAsset(t, executed, "tex/wall_ao.png")
+	seen := map[string]int{}
 	for _, variant := range asset.Variants {
 		if variant.Kind != "texture" || !variant.Exists() {
 			continue
 		}
-		if variant.Compression != "ktx2-r8unorm-zlib" {
-			t.Fatalf("an opaque grayscale mask produced %q, want ktx2-r8unorm-zlib", variant.Compression)
+		switch variant.Compression {
+		case "ktx2-r8unorm-zlib", "ktx2-bc4-r-unorm-zlib":
+			seen[variant.Compression]++
+		default:
+			t.Errorf("an opaque grayscale mask produced %q, want r8unorm or bc4-r-unorm", variant.Compression)
 		}
 		if len(variant.RequiredCapabilities) == 0 {
-			t.Fatal("a built variant must name its capabilities")
+			t.Errorf("built variant %q must name its capabilities", variant.URI)
 		}
+	}
+	if seen["ktx2-r8unorm-zlib"] == 0 {
+		t.Errorf("the portable r8unorm form is missing; block formats are optional everywhere")
+	}
+	if seen["ktx2-bc4-r-unorm-zlib"] == 0 {
+		t.Errorf("the BC4 form is missing; a single-channel mask is exactly what BC4 is for")
 	}
 	// The file name marks it as data, so the stage must not apply the sRGB
 	// transfer function. A roughness map decoded as sRGB shades wrong
@@ -305,6 +352,150 @@ func TestSelectVariantRefusesPlannedVariants(t *testing.T) {
 	variant, ok := SelectVariant(asset, "texture", caps)
 	if !ok || variant.URI != "tex/albedo.low.rgba8unorm-srgb.ktx2" {
 		t.Fatalf("the selector chose %+v, want the built low variant", variant)
+	}
+}
+
+// TestSelectVariantRefusesPlannedBlockVariants extends the refusal to every block
+// format the vocabulary can spell.
+//
+// The rule is absolute: a variant that does not exist must never be selected. The
+// BC family is now buildable, which makes the rule easier to break, not harder. A
+// planned BC5 variant looks exactly like a built one apart from its State, and a
+// device that reported texture-compression-bc satisfies its capability list
+// completely.
+func TestSelectVariantRefusesPlannedBlockVariants(t *testing.T) {
+	formats := []variantsel.Token{
+		variantsel.FormatBC1, variantsel.FormatBC1SRGB,
+		variantsel.FormatBC3, variantsel.FormatBC3SRGB,
+		variantsel.FormatBC4, variantsel.FormatBC5,
+		variantsel.FormatBC7, variantsel.FormatBC7Linear,
+		variantsel.FormatETC2, variantsel.FormatETC2RGB,
+		variantsel.FormatEACR11, variantsel.FormatEACRG11,
+		variantsel.FormatASTC4x4, variantsel.FormatASTC4x4Linear, variantsel.FormatASTC8x8,
+	}
+
+	// Build a capability set that satisfies every one of those tokens, as a
+	// device with all three optional features would report.
+	caps := variantsel.NewSet(variantsel.ContainerKTX2, variantsel.ContainerZlib)
+	for _, format := range formats {
+		caps.Add(format)
+		if feature, ok := variantsel.BlockFeatureForFormat(format); ok {
+			caps.Add(feature)
+		}
+	}
+
+	asset := Asset{Path: "tex/hero.png", Kind: "texture"}
+	for _, format := range formats {
+		name := strings.TrimPrefix(string(format), "texture-format:")
+		tokens := []variantsel.Token{variantsel.ContainerKTX2, format}
+		if feature, ok := variantsel.BlockFeatureForFormat(format); ok {
+			tokens = append(tokens, feature)
+		}
+		asset.Variants = append(asset.Variants, Variant{
+			URI:     "tex/hero.high." + name + ".ktx2",
+			Kind:    "texture",
+			Quality: "high",
+			// State stays empty: this variant is planned, not built.
+			RequiredCapabilities: variantsel.Strings(tokens...),
+		})
+	}
+	if variant, ok := SelectVariant(asset, "texture", caps); ok {
+		t.Fatalf("the selector chose planned variant %q; the file does not exist", variant.URI)
+	}
+	if selected := SelectVariantsByKind(asset, caps); len(selected) != 0 {
+		t.Fatalf("SelectVariantsByKind returned %v for planned variants only", selected)
+	}
+
+	// The same set through the manifest reader. BuildVariantManifest must drop
+	// every planned variant before a selector ever sees it.
+	manifest := BuildVariantManifest(Report{Assets: []Asset{asset}})
+	if _, ok := SelectFromManifest(manifest, asset.Path, "texture", caps); ok {
+		t.Fatal("SelectFromManifest chose a planned variant")
+	}
+	for _, entry := range manifest.Assets {
+		if len(entry.Variants) != 0 {
+			t.Fatalf("the manifest published %d planned variants", len(entry.Variants))
+		}
+	}
+
+	// Now mark one variant built. The selector must find exactly that one, so
+	// the refusal above cannot pass by refusing everything.
+	asset.Variants[0].State = VariantBuilt
+	asset.Variants[0].Bytes = 4096
+	variant, ok := SelectVariant(asset, "texture", caps)
+	if !ok || variant.URI != asset.Variants[0].URI {
+		t.Fatalf("the selector chose %+v, want the one built variant %q", variant, asset.Variants[0].URI)
+	}
+	manifest = BuildVariantManifest(Report{Assets: []Asset{asset}})
+	chosen, ok := SelectFromManifest(manifest, asset.Path, "texture", caps)
+	if !ok || chosen.URI != asset.Variants[0].URI {
+		t.Fatalf("SelectFromManifest chose %+v, want %q", chosen, asset.Variants[0].URI)
+	}
+}
+
+// TestBlockVariantsNeedDeviceEvidence is the other half of the honesty rule.
+//
+// A built block file must not reach a device that cannot upload it. The verdict
+// cannot say whether a device can: every block format is an optional WebGPU
+// feature and an optional WebGL2 extension. So a set built from the verdict alone
+// must never select a block variant, however capable the backends look.
+func TestBlockVariantsNeedDeviceEvidence(t *testing.T) {
+	asset := Asset{
+		Path: "tex/hero.png",
+		Kind: "texture",
+		Variants: []Variant{
+			{
+				URI: "tex/hero.high.bc7-rgba-unorm-srgb.ktx2", Kind: "texture", Quality: "high",
+				State: VariantBuilt, Bytes: 100000,
+				RequiredCapabilities: variantsel.Strings(
+					variantsel.ContainerKTX2, variantsel.FormatBC7, variantsel.FeatureTextureCompressionBC),
+			},
+			{
+				URI: "tex/hero.high.rgba8unorm-srgb.ktx2", Kind: "texture", Quality: "high",
+				State: VariantBuilt, Bytes: 400000,
+				RequiredCapabilities: variantsel.Strings(
+					variantsel.ContainerKTX2, variantsel.FormatRGBA8UnormSRGB),
+			},
+		},
+	}
+
+	// A verdict that names every GPU backend as capable. It still may not pick
+	// the BC7 file.
+	verdict := variantsel.FromBackendCaps(capability.BackendCaps{
+		Capable: []capability.Backend{capability.BackendWebGPU, capability.BackendWebGL},
+	})
+	chosen, ok := SelectVariant(asset, "texture", verdict)
+	if !ok {
+		t.Fatal("the verdict selected nothing; the uncompressed variant must always be reachable")
+	}
+	if strings.Contains(chosen.URI, "bc7") {
+		t.Errorf("a verdict-only set chose %q; no static table may promise an optional device feature", chosen.URI)
+	}
+
+	// Device evidence from a WebGPU adapter that reported the BC feature. Now
+	// the BC7 file is reachable, and it wins because it is smaller.
+	evidence := variantsel.FromDeviceEvidence(capability.BackendWebGPU,
+		[]string{"texture-compression-bc", "shader-f16"})
+	chosen, ok = SelectVariant(asset, "texture", evidence)
+	if !ok || !strings.Contains(chosen.URI, "bc7") {
+		t.Errorf("device evidence chose %+v, want the BC7 variant", chosen)
+	}
+
+	// An adapter that reported only ASTC must not reach the BC7 file.
+	astcOnly := variantsel.FromDeviceEvidence(capability.BackendWebGPU,
+		[]string{"texture-compression-astc"})
+	chosen, ok = SelectVariant(asset, "texture", astcOnly)
+	if !ok {
+		t.Fatal("an ASTC-only adapter selected nothing")
+	}
+	if strings.Contains(chosen.URI, "bc7") {
+		t.Errorf("an ASTC-only adapter chose %q", chosen.URI)
+	}
+
+	// Canvas2D uploads no GPU texture, so it must reach neither file.
+	canvas := variantsel.FromDeviceEvidence(capability.BackendCanvas2D, []string{"texture-compression-bc"})
+	if canvas.Has(variantsel.FormatBC7) {
+		t.Error("a Canvas2D set carries a block format token")
 	}
 }
 

@@ -19,15 +19,29 @@ var (
 	// ErrEncodeShape reports level bytes that disagree with the declared
 	// width, height, depth, layer, and face counts.
 	ErrEncodeShape = errors.New("ktx2: level bytes do not match the declared shape")
-	// ErrEncodeBlockCompressed reports a block-compressed VkFormat. The
-	// writer refuses these on purpose. A BC7, ASTC, or ETC2 payload needs a
-	// rate-distortion block encoder, and this package has none. Writing the
-	// container without the encoder would produce a file that claims a
-	// format nobody filled in.
+	// ErrEncodeBlockCompressed reports a block-compressed VkFormat this
+	// writer cannot describe. The writer emits a real Basic Data Format
+	// Descriptor for every format it accepts, so a format with no descriptor
+	// entry is refused rather than written with a descriptor nobody filled in.
+	//
+	// The BC family has descriptors, so the writer accepts BC1, BC3, BC4, BC5
+	// and BC7 payloads. ASTC and ETC2 keep the refusal: no GoSX encoder writes
+	// those payloads, so a container claiming one would hold nothing.
 	//
 	// The error wraps ErrEncodeFormat, so a caller that only checks the
 	// broader case keeps working.
-	ErrEncodeBlockCompressed = fmt.Errorf("%w: this writer has no block encoder for compressed formats", ErrEncodeFormat)
+	ErrEncodeBlockCompressed = fmt.Errorf("%w: this writer has no block descriptor for that compressed format", ErrEncodeFormat)
+	// ErrEncodeBlockAlignment reports a level-0 size that is not a whole
+	// number of texel blocks.
+	//
+	// WebGPU createTexture validates that the width and the height of a
+	// compressed texture are multiples of the texel block width and height.
+	// A file that breaks the rule fails at upload, in the browser, long after
+	// the build claimed success. The writer therefore refuses it here.
+	//
+	// The rule applies to level 0 only. Mip levels below the block size are
+	// legal: the GPU derives them from level 0 and pads the last block.
+	ErrEncodeBlockAlignment = errors.New("ktx2: level 0 is not a whole number of texel blocks")
 )
 
 // Supercompression selects the payload compression the writer applies.
@@ -64,9 +78,10 @@ const defaultWriterID = "GoSX assetpipe ktx2 writer"
 // The writer stores level payloads from the smallest mip to the largest, as
 // the KTX2 specification requires. Level 0 stays first in the level index.
 //
-// Encode accepts uncompressed formats only. A Basic Data Format Descriptor
-// must describe every channel, and this writer does not build descriptors for
-// block-compressed formats. Encode returns ErrEncodeFormat for those.
+// Encode accepts every format that has a Basic Data Format Descriptor entry.
+// That covers the uncompressed formats and the BC block family. A format with
+// no descriptor entry, such as ASTC or ETC2, returns ErrEncodeBlockCompressed
+// rather than a container whose descriptor claims something nobody wrote.
 func Encode(img *Image, opts EncodeOptions) ([]byte, error) {
 	if img == nil {
 		return nil, fmt.Errorf("%w: nil image", ErrEncodeShape)
@@ -74,7 +89,7 @@ func Encode(img *Image, opts EncodeOptions) ([]byte, error) {
 	desc, ok := formatDescriptor(img.Format)
 	if !ok {
 		if block, known := FormatBlockInfo(img.Format); known && block.Compressed {
-			return nil, fmt.Errorf("%w: vkFormat %d needs a %dx%d block encoder", ErrEncodeBlockCompressed, img.Format, block.Width, block.Height)
+			return nil, fmt.Errorf("%w: vkFormat %d is a %dx%d block format with no descriptor entry", ErrEncodeBlockCompressed, img.Format, block.Width, block.Height)
 		}
 		return nil, fmt.Errorf("%w: vkFormat %d", ErrEncodeFormat, img.Format)
 	}
@@ -90,17 +105,30 @@ func Encode(img *Image, opts EncodeOptions) ([]byte, error) {
 		return nil, fmt.Errorf("%w: faceCount %d must be 1 or 6", ErrEncodeShape, faces)
 	}
 
+	// Refuse a level-0 size that is not a whole number of texel blocks. Read
+	// the ErrEncodeBlockAlignment comment for the reason.
+	if desc.compressed {
+		if width%desc.blockWidth != 0 || height%desc.blockHeight != 0 {
+			return nil, fmt.Errorf("%w: vkFormat %d is %dx%d blocks and level 0 is %dx%d",
+				ErrEncodeBlockAlignment, img.Format, desc.blockWidth, desc.blockHeight, width, height)
+		}
+	}
+
 	// Validate every level against the declared shape before writing bytes.
 	for i, level := range img.Levels {
 		wantWidth := max1(width >> i)
 		wantHeight := max1(height >> i)
 		wantDepth := max1(max1(depth) >> i)
-		perImage := wantWidth * wantHeight * wantDepth * desc.bytesPerPixel
+		// A block format stores whole blocks, so a level smaller than the
+		// block rounds up. A 2x2 level of a 4x4 format still costs one block.
+		columns := divCeil(wantWidth, desc.blockWidth)
+		rows := divCeil(wantHeight, desc.blockHeight)
+		perImage := columns * rows * wantDepth * desc.bytesPerBlock
 		images := max1(layers) * faces
 		want := perImage * images
 		if len(level.Bytes) != want {
-			return nil, fmt.Errorf("%w: level %d has %d bytes, want %d (%dx%dx%d, %d images, %d bytes per pixel)",
-				ErrEncodeShape, i, len(level.Bytes), want, wantWidth, wantHeight, wantDepth, images, desc.bytesPerPixel)
+			return nil, fmt.Errorf("%w: level %d has %d bytes, want %d (%dx%dx%d, %d images, %d blocks of %d bytes)",
+				ErrEncodeShape, i, len(level.Bytes), want, wantWidth, wantHeight, wantDepth, images, columns*rows, desc.bytesPerBlock)
 		}
 	}
 
@@ -137,7 +165,7 @@ func Encode(img *Image, opts EncodeOptions) ([]byte, error) {
 	// texel block size and 4. Supercompressed levels need no padding.
 	align := 1
 	if opts.Supercompression == SupercompressionNone {
-		align = lcm(desc.bytesPerPixel, 4)
+		align = lcm(desc.bytesPerBlock, 4)
 	}
 
 	type placed struct {
@@ -228,6 +256,34 @@ const (
 	dfSampleWords      = 16
 )
 
+// KDF colour models for the BC block family, from the Khronos Data Format
+// Specification. Every value below was read from the KHR/khr_df.h header
+// shipped with KTX-Software 4.4.2, not written from memory. A wrong model makes
+// ktx2check reject the file.
+//
+// BC1 with and without alpha share one model. The descriptor tells the two
+// apart through the channel ID of its single sample.
+const (
+	dfModelBC1A = 128
+	dfModelBC3  = 130
+	dfModelBC4  = 131
+	dfModelBC5  = 132
+	dfModelBC7  = 134
+)
+
+// Channel IDs the BC models use. A block format has no per-component channel
+// layout, so each sample names a whole 64-bit or 128-bit part of the block.
+const (
+	dfChannelBC1AColor = 0
+	dfChannelBC1AAlpha = 1
+	dfChannelBC3Color  = 0
+	dfChannelBC3Alpha  = 15
+	dfChannelBC4Data   = 0
+	dfChannelBC5Red    = 0
+	dfChannelBC5Green  = 1
+	dfChannelBC7Color  = 0
+)
+
 type sampleDesc struct {
 	channel   int
 	bitOffset int
@@ -238,15 +294,30 @@ type sampleDesc struct {
 }
 
 type formatDesc struct {
-	bytesPerPixel int
+	// model is the KDF colour model. An uncompressed format uses RGBSDA; a
+	// block format names its own model.
+	model int
+	// blockWidth and blockHeight hold the texel block size. Both are 1 for an
+	// uncompressed format, which makes the block arithmetic in Encode cover
+	// both cases with one expression.
+	blockWidth  int
+	blockHeight int
+	// bytesPerBlock is bytesPlane0. For a 1x1 block it is the pixel stride.
+	bytesPerBlock int
 	typeSize      int
 	transfer      int
-	samples       []sampleDesc
+	// compressed marks a block format, which Encode checks for level-0
+	// block alignment.
+	compressed bool
+	samples    []sampleDesc
 }
 
-// formatDescriptor returns the channel layout Encode writes into the Basic
-// Data Format Descriptor. Only uncompressed formats appear here.
+// formatDescriptor returns the layout Encode writes into the Basic Data Format
+// Descriptor. It covers the uncompressed formats and the BC block family.
 func formatDescriptor(vkFormat int) (formatDesc, bool) {
+	if desc, ok := blockDescriptor(vkFormat); ok {
+		return desc, true
+	}
 	unorm8 := func(order []int, srgb bool) formatDesc {
 		transfer := dfTransferLinear
 		if srgb {
@@ -268,7 +339,15 @@ func formatDescriptor(vkFormat int) (formatDesc, bool) {
 				upper:     255,
 			})
 		}
-		return formatDesc{bytesPerPixel: len(order), typeSize: 1, transfer: transfer, samples: samples}
+		return formatDesc{
+			model:         dfModelRGBSDA,
+			blockWidth:    1,
+			blockHeight:   1,
+			bytesPerBlock: len(order),
+			typeSize:      1,
+			transfer:      transfer,
+			samples:       samples,
+		}
 	}
 	sfloat := func(channels []int, bits int) formatDesc {
 		samples := make([]sampleDesc, 0, len(channels))
@@ -283,7 +362,10 @@ func formatDescriptor(vkFormat int) (formatDesc, bool) {
 			})
 		}
 		return formatDesc{
-			bytesPerPixel: len(channels) * bits / 8,
+			model:         dfModelRGBSDA,
+			blockWidth:    1,
+			blockHeight:   1,
+			bytesPerBlock: len(channels) * bits / 8,
 			typeSize:      bits / 8,
 			transfer:      dfTransferLinear,
 			samples:       samples,
@@ -332,6 +414,86 @@ func formatDescriptor(vkFormat int) (formatDesc, bool) {
 	return formatDesc{}, false
 }
 
+// blockDescriptor returns the descriptor of one BC block format.
+//
+// The layout of every entry was checked byte for byte against a file that
+// KTX-Software 4.4.2 wrote for the same VkFormat. testdata holds those files
+// and TestBlockDescriptorMatchesKhronosGolden compares the bytes, so this table
+// has an oracle outside this package.
+//
+// A block format carries no per-component channel layout. Each sample names a
+// whole 64-bit or 128-bit part of the block instead, and lower and upper span
+// the full unsigned range.
+func blockDescriptor(vkFormat int) (formatDesc, bool) {
+	// full spans one whole part of a block. bits is 64 for a half block and
+	// 128 for a whole 16-byte block.
+	full := func(channel, bitOffset, bits, qualifier int) sampleDesc {
+		return sampleDesc{
+			channel:   channel,
+			bitOffset: bitOffset,
+			bitLength: bits,
+			qualifier: qualifier,
+			lower:     0,
+			upper:     0xFFFFFFFF,
+		}
+	}
+	desc := func(model, transfer, blockBytes int, samples ...sampleDesc) (formatDesc, bool) {
+		return formatDesc{
+			model:         model,
+			blockWidth:    4,
+			blockHeight:   4,
+			bytesPerBlock: blockBytes,
+			typeSize:      1,
+			transfer:      transfer,
+			compressed:    true,
+			samples:       samples,
+		}, true
+	}
+
+	switch vkFormat {
+	// BC1 without alpha. One 64-bit colour sample.
+	case VkFormatBC1RGBUnormBlock:
+		return desc(dfModelBC1A, dfTransferLinear, 8, full(dfChannelBC1AColor, 0, 64, 0))
+	case VkFormatBC1RGBSRGBBlock:
+		return desc(dfModelBC1A, dfTransferSRGB, 8, full(dfChannelBC1AColor, 0, 64, 0))
+
+	// BC1 with one alpha bit. The model is the same as the opaque pair; the
+	// alpha channel ID is the only difference.
+	case VkFormatBC1RGBAUnormBlock:
+		return desc(dfModelBC1A, dfTransferLinear, 8, full(dfChannelBC1AAlpha, 0, 64, 0))
+	case VkFormatBC1RGBASRGBBlock:
+		return desc(dfModelBC1A, dfTransferSRGB, 8, full(dfChannelBC1AAlpha, 0, 64, 0))
+
+	// BC3 holds the alpha half first and the colour half second. In the sRGB
+	// pair the alpha sample carries the LINEAR qualifier, because the sRGB
+	// transfer function applies to colour only.
+	case VkFormatBC3UnormBlock:
+		return desc(dfModelBC3, dfTransferLinear, 16,
+			full(dfChannelBC3Alpha, 0, 64, 0),
+			full(dfChannelBC3Color, 64, 64, 0))
+	case VkFormatBC3SRGBBlock:
+		return desc(dfModelBC3, dfTransferSRGB, 16,
+			full(dfChannelBC3Alpha, 0, 64, dfSampleLinear),
+			full(dfChannelBC3Color, 64, 64, 0))
+
+	// BC4 holds one channel. BC5 holds two, red first.
+	case VkFormatBC4UnormBlock:
+		return desc(dfModelBC4, dfTransferLinear, 8, full(dfChannelBC4Data, 0, 64, 0))
+	case VkFormatBC5UnormBlock:
+		return desc(dfModelBC5, dfTransferLinear, 16,
+			full(dfChannelBC5Red, 0, 64, 0),
+			full(dfChannelBC5Green, 64, 64, 0))
+
+	// BC7 holds one 128-bit sample. The mode bits live inside it, so the
+	// descriptor says nothing about them.
+	case VkFormatBC7UnormBlock:
+		return desc(dfModelBC7, dfTransferLinear, 16, full(dfChannelBC7Color, 0, 128, 0))
+	case VkFormatBC7SRGBBlock:
+		return desc(dfModelBC7, dfTransferSRGB, 16, full(dfChannelBC7Color, 0, 128, 0))
+	}
+	return formatDesc{}, false
+}
+
 func buildBasicDescriptor(desc formatDesc) []byte {
 	blockSize := dfDescriptorHeader + dfSampleWords*len(desc.samples)
 	out := make([]byte, 4+blockSize)
@@ -339,12 +501,14 @@ func buildBasicDescriptor(desc formatDesc) []byte {
 	put(0, uint32(len(out)))        // dfdTotalSize
 	put(4, 0)                       // vendorId 0 (Khronos), descriptorType 0 (basic)
 	put(8, 2|uint32(blockSize)<<16) // versionNumber 2, descriptorBlockSize
-	put(12, uint32(dfModelRGBSDA)|  // colorModel
+	put(12, uint32(desc.model)|     // colorModel
 		uint32(dfPrimariesBT709)<<8| // colorPrimaries
 		uint32(desc.transfer)<<16| // transferFunction
 		0<<24) // flags: straight alpha
-	put(16, 0)                          // texelBlockDimension 1x1x1x1 (stored as size-1)
-	put(20, uint32(desc.bytesPerPixel)) // bytesPlane0, planes 1..3 zero
+	// texelBlockDimension holds one byte per axis, each stored as size-1. A
+	// 1x1 uncompressed pixel therefore writes zero, and a 4x4 block writes 3.
+	put(16, uint32(max1(desc.blockWidth)-1)|uint32(max1(desc.blockHeight)-1)<<8)
+	put(20, uint32(desc.bytesPerBlock)) // bytesPlane0, planes 1..3 zero
 	put(24, 0)                          // bytesPlane4..7
 	for i, sample := range desc.samples {
 		off := 28 + i*dfSampleWords

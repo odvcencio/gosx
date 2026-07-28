@@ -512,6 +512,8 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL},
 		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF},
 		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation},
+		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute},
+		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
 		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
 		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge},
@@ -1036,6 +1038,10 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DGLTF.File)
 	case "/gosx/bootstrap-feature-scene3d-animation.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DAnimation.File)
+	case "/gosx/bootstrap-feature-scene3d-compute.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCompute.File)
+	case "/gosx/bootstrap-feature-scene3d-decompress.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
 	case "/gosx/patch.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.Patch.File)
 	case "/gosx/hls.min.js":

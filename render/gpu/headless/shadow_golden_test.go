@@ -73,6 +73,19 @@ func shadowScene(headingRadians float64) engine.RenderBundle {
 			// key light, and a saturated surface hides the shadow it receives.
 			{Kind: "standard", Color: "#8a8a8a", Roughness: 0.9},
 		},
+		// Author every environment term, and keep the dome dim.
+		//
+		// Two reasons. resolveHemisphereAmbient substitutes a sky and ground
+		// intensity of one when either is unset, and that default is under dispute,
+		// so a fixture must not depend on it. And sceneLighting.shade now sums the
+		// three ambient terms independently, matching litWGSL, so a bright dome
+		// plus a full-strength key light saturates the mid-grey ground and the
+		// fixture loses the range it needs to show a shadow.
+		Environment: engine.RenderEnvironment{
+			AmbientColor: "#404858", AmbientIntensity: 0.35,
+			SkyColor: "#ccddff", SkyIntensity: 0.15,
+			GroundColor: "#483c38", GroundIntensity: 0.10,
+		},
 		Lights: []engine.RenderLight{{
 			Kind: "directional", Color: "#ffffff", Intensity: 1,
 			DirectionX: 0, DirectionY: -1, DirectionZ: 0,
@@ -94,13 +107,22 @@ func shadowScene(headingRadians float64) engine.RenderBundle {
 // renderShadowScene draws one heading and returns the framebuffer.
 func renderShadowScene(t *testing.T, headingRadians float64) *image.RGBA {
 	t.Helper()
+	return renderShadowSceneWithToneMap(t, headingRadians, "")
+}
+
+// renderShadowSceneWithToneMap draws one heading under one tone-map name. An
+// empty name takes the default, which resolveToneMapConfig turns into ACES.
+func renderShadowSceneWithToneMap(t *testing.T, headingRadians float64, toneMapping string) *image.RGBA {
+	t.Helper()
 	d, surface := New(shadowSceneWidth, shadowSceneHeight)
 	r, err := bundle.New(bundle.Config{Device: d, Surface: surface})
 	if err != nil {
 		t.Fatalf("bundle.New: %v", err)
 	}
 	defer r.Destroy()
-	if err := r.Frame(shadowScene(headingRadians), shadowSceneWidth, shadowSceneHeight, 0); err != nil {
+	frame := shadowScene(headingRadians)
+	frame.Environment.ToneMapping = toneMapping
+	if err := r.Frame(frame, shadowSceneWidth, shadowSceneHeight, 0); err != nil {
 		t.Fatalf("Frame: %v", err)
 	}
 	return d.Framebuffer()
@@ -110,7 +132,18 @@ func renderShadowScene(t *testing.T, headingRadians float64) *image.RGBA {
 // lit ground. The ground is mid grey and rough, so a shadowed sample keeps only
 // its ambient term and reads far below a lit one. Fully black pixels are
 // background and do not count.
+//
+// The lit threshold moved from 300 to 160 when litProgram.shade adopted the
+// energy-conserving diffuse lobe of litWGSL. The old model wrote base*NdotL, and
+// the new one writes kD*base/pi, which is the form litWGSL, both browser
+// renderers and three.js all use. That is about three times darker.
+//
+// The present pass then started running the ACES curve, which lifted all four
+// levels: 0 background, 93 an unlit cube face, 135 shadowed ground and 333
+// sunlit ground. Any split between 135 and 333 separates the two ground states,
+// and 160 still sits inside that gap, so the threshold did not move again.
 func shadowedPixels(img *image.RGBA) (shadowed, lit int) {
+	const litChannelSum = 160
 	bounds := img.Bounds()
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
@@ -119,7 +152,7 @@ func shadowedPixels(img *image.RGBA) (shadowed, lit int) {
 			switch {
 			case v < 24:
 				// Background.
-			case v < 300:
+			case v < litChannelSum:
 				shadowed++
 			default:
 				lit++
@@ -176,6 +209,75 @@ func TestShadowedSceneMatchesGoldenAtHeadingZero(t *testing.T) {
 	got := renderShadowScene(t, 0)
 	want := decodeLuminanceGolden(t, shadowSceneWidth, shadowSceneHeight, shadowGoldenHeading0)
 	assertGoldenMatch(t, quantizeLuminance(got), want, 0)
+}
+
+// TestPresentPassMovesLevelsNotShadowGeometry is the evidence behind the last
+// regeneration of shadowGoldenHeading0.
+//
+// The present pass now runs the authored tone map instead of copying the frame,
+// so every level in the fixture moved. That is the whole change. The check below
+// renders the same scene twice, once with tone mapping "none" so the pass only
+// clamps, and once with the default ACES curve, then proves three things:
+//
+//  1. the two frames differ, so the curve reaches the image;
+//  2. the run-length structure of the fixture is identical, so no pixel changed
+//     which patch it belongs to;
+//  3. shadowedPixels counts the same shadowed and lit totals, so the shadow
+//     boundary sits where it did.
+//
+// Together those reject the failure a regenerated golden hides: a curve that
+// also moved, softened or erased a shadow edge.
+func TestPresentPassMovesLevelsNotShadowGeometry(t *testing.T) {
+	clamped := renderShadowSceneWithToneMap(t, 0, "none")
+	curved := renderShadowSceneWithToneMap(t, 0, "")
+
+	if imagesEqual(clamped, curved) {
+		t.Fatal("the ACES curve changed no pixel; the present pass is still a copy")
+	}
+
+	clampedRuns := goldenRunLengths(encodeLuminanceGolden(quantizeLuminance(clamped)))
+	curvedRuns := goldenRunLengths(encodeLuminanceGolden(quantizeLuminance(curved)))
+	if len(clampedRuns) != len(curvedRuns) {
+		t.Fatalf("the curve changed the run count from %d to %d, so it moved a patch boundary, not only a level",
+			len(clampedRuns), len(curvedRuns))
+	}
+	for i := range clampedRuns {
+		if clampedRuns[i] != curvedRuns[i] {
+			t.Fatalf("run %d is %d pixels long clamped and %d curved; the curve moved a patch boundary",
+				i, clampedRuns[i], curvedRuns[i])
+		}
+	}
+
+	clampedShadow, clampedLit := shadowedPixels(clamped)
+	curvedShadow, curvedLit := shadowedPixels(curved)
+	if clampedShadow != curvedShadow || clampedLit != curvedLit {
+		t.Fatalf("the curve changed the shadow area from %d/%d to %d/%d shadowed over lit pixels",
+			clampedShadow, clampedLit, curvedShadow, curvedLit)
+	}
+	if clampedShadow == 0 || clampedLit == 0 {
+		t.Fatalf("the fixture scene shows %d shadowed and %d lit pixels, so it cannot prove anything",
+			clampedShadow, clampedLit)
+	}
+}
+
+// goldenRunLengths returns the length of every run in an encoded fixture and
+// discards the ramp step. Two fixtures with the same lengths hold the same
+// patches at the same places, whatever value each patch carries.
+func goldenRunLengths(encoded string) []int {
+	runs := strings.Split(encoded, ",")
+	out := make([]int, 0, len(runs))
+	for _, run := range runs {
+		if star := strings.IndexByte(run, '*'); star >= 0 {
+			count, err := strconv.Atoi(run[star+1:])
+			if err != nil {
+				count = 0
+			}
+			out = append(out, count)
+			continue
+		}
+		out = append(out, 1)
+	}
+	return out
 }
 
 // luminanceRampStep is the width of one step of the golden fixture's luminance
@@ -271,6 +373,97 @@ func encodeLuminanceGolden(img *image.RGBA) string {
 	return strings.Join(runs, ",")
 }
 
+// TestShadowSkipDoesNotLeaveAStaleOccluder is the pixel proof for the shadow-pass
+// skip in render/bundle/renderer.go.
+//
+// recordShadowPass returns early on a frame with no caster, so the cascades keep
+// whatever the previous frame drew. That is safe only while the cascades hold the
+// clear value. This test drives the dangerous order on one reused renderer: draw
+// the casters, then take them away, then read the ground.
+//
+// A PASS PROVES: the ground carries no shadow after the casters go, and the
+// picture matches a renderer that never saw a caster at all.
+//
+// A PASS DOES NOT PROVE: that the skip fires. TestShadowPassSkipsWhenNothingCasts
+// in render/bundle counts the recorded passes.
+func TestShadowSkipDoesNotLeaveAStaleOccluder(t *testing.T) {
+	withCasters := shadowScene(0)
+	// Same scene, casters removed. The ground and the light stay, so every pixel
+	// that changes is a shadow and nothing else.
+	noCasters := withCasters
+	noCasters.InstancedMeshes = append([]engine.RenderInstancedMesh(nil),
+		withCasters.InstancedMeshes[:1]...)
+
+	// One renderer, three frames, in the order that exposes a stale map.
+	device, surface := New(shadowSceneWidth, shadowSceneHeight)
+	renderer, err := bundle.New(bundle.Config{Device: device, Surface: surface})
+	if err != nil {
+		t.Fatalf("bundle.New: %v", err)
+	}
+	defer renderer.Destroy()
+	frame := func(scene engine.RenderBundle, index int) *image.RGBA {
+		if err := renderer.Frame(scene, shadowSceneWidth, shadowSceneHeight, float64(index)/60); err != nil {
+			t.Fatalf("Frame %d: %v", index, err)
+		}
+		return cloneTestRGBA(device.Framebuffer())
+	}
+	shadowed := frame(withCasters, 0)
+	if got, _ := shadowedPixels(shadowed); got == 0 {
+		t.Fatal("the caster frame drew no shadow, so this test cannot see a stale one")
+	}
+	// The frame straight after the casters go, then one more. The skip only fires
+	// on the second, so both have to be clean.
+	firstClear := frame(noCasters, 1)
+	secondClear := frame(noCasters, 2)
+
+	// A renderer that never saw a caster is the reference.
+	reference := func() *image.RGBA {
+		freshDevice, freshSurface := New(shadowSceneWidth, shadowSceneHeight)
+		freshRenderer, err := bundle.New(bundle.Config{Device: freshDevice, Surface: freshSurface})
+		if err != nil {
+			t.Fatalf("bundle.New: %v", err)
+		}
+		defer freshRenderer.Destroy()
+		if err := freshRenderer.Frame(noCasters, shadowSceneWidth, shadowSceneHeight, 0); err != nil {
+			t.Fatalf("reference Frame: %v", err)
+		}
+		return cloneTestRGBA(freshDevice.Framebuffer())
+	}()
+	if got, _ := shadowedPixels(reference); got != 0 {
+		t.Fatalf("the caster-free reference already holds %d shadowed pixels; the fixture is wrong", got)
+	}
+
+	for _, tc := range []struct {
+		name string
+		img  *image.RGBA
+	}{
+		{"the frame after the casters go", firstClear},
+		{"the frame after that, where the skip fires", secondClear},
+	} {
+		if got, _ := shadowedPixels(tc.img); got != 0 {
+			t.Errorf("%s still holds %d shadowed pixels; "+
+				"recordShadowPass skipped a frame whose cascades were not clear", tc.name, got)
+		}
+		if diff := imagePixelDiff(tc.img, reference); diff != 0 {
+			t.Errorf("%s differs from a renderer that never saw a caster in %d pixels", tc.name, diff)
+		}
+	}
+}
+
+// imagePixelDiff counts pixels that differ between two images of the same size.
+func imagePixelDiff(a, b *image.RGBA) int {
+	count := 0
+	bounds := a.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if a.RGBAAt(x, y) != b.RGBAAt(x, y) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 // TestLuminanceGoldenCodecRoundTrips guards the fixture format itself. An
 // encoding that cannot survive a round trip makes the golden test above compare
 // the render against noise and pass or fail for the wrong reason.
@@ -292,10 +485,43 @@ func TestLuminanceGoldenCodecRoundTrips(t *testing.T) {
 // shadowed, instanced scene at heading zero. Regenerate it only with a
 // deliberate rendering change, and say which change in the commit message.
 //
-// Reading the fixture: 0 is the background and the unlit side of a cube, 1 is
-// ground in shadow, and 9 is sunlit ground. The three shadow patches sit in the
+// Reading the fixture: 0 is the background, 1 is the unlit side of a cube, 2 is
+// ground in shadow, and 6 is sunlit ground. The three shadow patches sit in the
 // band below the row of cubes.
-const shadowGoldenHeading0 = `0*240,9*47,0,9*64,0,9*13,0,9*26,0*8,9*4,0*5,9*4,0*8,9*20,0*7,9*4,0*5,9*4,0*7,9*21,` +
-	`0*7,9*4,0*5,9*4,0*7,9*21,0*7,9*4,0*5,9*4,0*7,9*22,0*6,9*4,0*5,9*4,0*6,9*23,0*5,9*5,` +
-	`0*5,9*5,0*5,9*25,1*5,9*3,1*5,9*3,1*5,9*27,1*4,9*4,1*5,9*4,1*4,9*26,1*5,9*4,1*5,9*4,` +
-	`1*5,9*733`
+//
+// Regenerated four times, each for a deliberate change:
+//
+//   - The shading model sums the ambient, sky and ground terms independently,
+//     matching litWGSL and both browser renderers. The earlier form multiplied
+//     the dome by the ambient intensity and made every frame about three times
+//     too dark.
+//   - The scene now authors its environment instead of taking the defaults, so
+//     the fixture no longer depends on the disputed sky and ground intensity
+//     substitution in resolveHemisphereAmbient.
+//   - litProgram.shade replaced the Lambert term with the whole fragment stage
+//     of litWGSL: an energy-conserving diffuse lobe of kD*base/pi plus a
+//     Cook-Torrance specular lobe. Sunlit ground moved from ramp step a to ramp
+//     step 4 for that reason alone. Every run of the fixture kept its position
+//     and its length, so the shape of the three shadow patches did not move.
+//     The old value was wrong: base*NdotL carries about pi times the energy the
+//     surface reflects, and no headless frame could see it.
+//   - The headless device runs the present pass instead of copying it, so the
+//     authored tone map reaches the frame. This scene takes the default, which
+//     is ACES. The curve lifts the low end and rolls the high end off, so all
+//     four levels moved: the background stayed at 0, an unlit cube face went
+//     from a channel sum of 75 to 93, shadowed ground from 98 to 135, and
+//     sunlit ground from 228 to 333. Nothing else moved. Every one of the 62
+//     runs kept its length, and shadowedPixels still counts 155 shadowed and
+//     1140 lit pixels, the same two numbers as before. The old value was wrong
+//     because the browser tone maps the same frame and this device did not, so
+//     a headless capture and a poster read brighter in the shadows and clipped
+//     in the highlights. TestPresentPassMovesLevelsNotShadowGeometry holds that
+//     evidence as a running test.
+//
+// The curve separated two levels that used to share a ramp step. A shadowed
+// ground sample now reads 2 and an unlit cube face reads 1. Read the shape of
+// the three patches first; the gap between those two values is small.
+const shadowGoldenHeading0 = `0*240,6*47,0,6*64,1,6*13,1,6*26,1*8,6*4,1*5,6*4,1*8,6*20,1*7,6*4,1*5,6*4,1*7,6*21,` +
+	`1*7,6*4,1*5,6*4,1*7,6*21,1*7,6*4,1*5,6*4,1*7,6*22,1*6,6*4,1*5,6*4,1*6,6*23,1*5,6*5,` +
+	`1*5,6*5,1*5,6*25,2*5,6*3,2*5,6*3,2*5,6*27,2*4,6*4,2*5,6*4,2*4,6*26,2*5,6*4,2*5,6*4,` +
+	`2*5,6*733`

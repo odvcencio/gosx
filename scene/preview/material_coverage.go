@@ -25,22 +25,49 @@ import (
 // paths against real directories before the frame is built.
 
 // ignoredMaterialFields lists the material fields that reach the renderer and
-// never reach the CPU pixel. render/gpu/headless decodes base colour, opacity,
-// emissive colour, emissive scale, the vertex-colour flag, and one base colour
-// texture, and nothing else.
+// never reach the CPU pixel.
+//
+// The list used to hold thirteen entries and was accurate then: the rasterizer
+// shaded a Lambert term and read base colour, opacity, emissive and one base
+// colour texture. render/gpu/headless now runs the whole litWGSL fragment
+// stage, so roughness, metalness, clearcoat, sheen, iridescence, anisotropy,
+// transmission, the normal map, the roughness map, the metalness map and the
+// emissive map all reach a pixel. Keeping them here told an author their
+// material was ignored when it was not, which is the more expensive direction
+// of a wrong diagnostic: it invites deleting work that functions.
+//
+// Two remain, for different reasons.
+//
+// materialKind: render/bundle drops it before the GPU. materialFromRender reads
+// colour, opacity, the physical scalars and the map slots, and never reads Kind.
+// So a flat, ghost, glass, glow, matte or custom material still produces pixels
+// byte-identical to a standard material with the same colour and opacity.
+// TestMaterialKindsShadeIdentically pins that.
+//
+// wireframe: it has no lane in materialFingerprint, so it never reaches the
+// material uniform at all. It needs a line-topology pipeline and an edge walk in
+// render/bundle, not a shading term, so no shader change can move it.
+//
+// Note on metalnessMap and emissiveMap: both are MODULATING maps. They scale a
+// factor, so they change nothing when that factor is zero. They are sampled, and
+// therefore not ignored — but an author who sees no change should check the
+// scalar before suspecting the map.
 var ignoredMaterialFields = []string{
-	"anisotropy",
-	"clearcoat",
-	"emissiveMap",
-	"iridescence",
-	"metalness",
-	"metalnessMap",
-	"normalMap",
-	"roughness",
-	"roughnessMap",
-	"sheen",
-	"transmission",
+	"materialKind",
 	"wireframe",
+}
+
+// cpuBaselineMaterialKind is the one authored material kind that describes what
+// the CPU rasterizer actually does. Any other kind changes nothing, so the frame
+// says so; this kind changes nothing because nothing else was promised.
+const cpuBaselineMaterialKind = "standard"
+
+// materialKindIgnored reports whether an authored material kind promises a look
+// the CPU rasterizer does not produce. An empty kind lowers to "standard", so it
+// promises nothing and raises no note.
+func materialKindIgnored(kind string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(kind))
+	return trimmed != "" && trimmed != cpuBaselineMaterialKind
 }
 
 // IgnoredMaterialFields returns the authored material fields that the CPU
@@ -66,16 +93,12 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 		}
 	}
 	for _, object := range ir.Objects {
-		countIgnoredMaterialFields(count, object.Roughness, object.Metalness, object.Clearcoat,
-			object.Sheen, object.Transmission, object.Iridescence, object.Anisotropy,
-			object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap,
-			boolValue(object.Wireframe))
+		countIgnoredMaterialFields(count, boolValue(object.Wireframe))
+		count("materialKind", materialKindIgnored(object.MaterialKind))
 	}
 	for _, mesh := range ir.InstancedMeshes {
-		countIgnoredMaterialFields(count, mesh.Roughness, mesh.Metalness, mesh.Clearcoat,
-			mesh.Sheen, mesh.Transmission, mesh.Iridescence, mesh.Anisotropy,
-			mesh.NormalMap, mesh.RoughnessMap, mesh.MetalnessMap, mesh.EmissiveMap,
-			boolValue(mesh.Wireframe))
+		countIgnoredMaterialFields(count, boolValue(mesh.Wireframe))
+		count("materialKind", materialKindIgnored(mesh.MaterialKind))
 	}
 	if len(used) == 0 {
 		return engine.RenderDiagnostic{}, false
@@ -89,26 +112,21 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 		Severity: "info",
 		Code:     "scene.preview.material_fields_ignored",
 		Backend:  "headless",
-		Message: "native preview shades from base color, opacity, emissive, and one base color texture; " +
-			"these authored fields did not change the frame, with the number of records that set each: " +
+		Message: "native preview runs the full physically-based fragment stage; " +
+			"these authored fields still did not change the frame, with the number of records that set each: " +
 			strings.Join(names, ", "),
 	}, true
 }
 
-func countIgnoredMaterialFields(count func(string, bool), roughness, metalness, clearcoat, sheen,
-	transmission, iridescence, anisotropy float64,
-	normalMap, roughnessMap, metalnessMap, emissiveMap string, wireframe bool) {
-	count("roughness", roughness != 0)
-	count("metalness", metalness != 0)
-	count("clearcoat", clearcoat != 0)
-	count("sheen", sheen != 0)
-	count("transmission", transmission != 0)
-	count("iridescence", iridescence != 0)
-	count("anisotropy", anisotropy != 0)
-	count("normalMap", strings.TrimSpace(normalMap) != "")
-	count("roughnessMap", strings.TrimSpace(roughnessMap) != "")
-	count("metalnessMap", strings.TrimSpace(metalnessMap) != "")
-	count("emissiveMap", strings.TrimSpace(emissiveMap) != "")
+// countIgnoredMaterialFields counts only the fields the CPU rasterizer really
+// cannot express. It used to count eleven more, and every one of those now
+// reaches a pixel through the litWGSL fragment stage. Counting them told an
+// author their roughness or normal map was ignored while it was shading, which
+// is the expensive direction of a wrong diagnostic.
+//
+// Keep this function in step with ignoredMaterialFields; the doc comment there
+// explains why materialKind and wireframe are the two that remain.
+func countIgnoredMaterialFields(count func(string, bool), wireframe bool) {
 	count("wireframe", wireframe)
 }
 

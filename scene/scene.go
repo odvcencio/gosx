@@ -1711,7 +1711,10 @@ func (p Props) spreadPropsFast() map[string]any {
 	base := p.legacyBaseProps()
 	sceneIR := p.SceneIR()
 	if !sceneIR.isZero() {
-		sceneBytes, err := json.Marshal(sceneIR)
+		// marshalWire, not json.Marshal(sceneIR): both produce the same
+		// bytes, but json.Marshal would re-scan every one of them through
+		// appendCompact first. See SceneIR.marshalWire.
+		sceneBytes, err := sceneIR.marshalWire()
 		if err == nil {
 			base["scene"] = json.RawMessage(sceneBytes)
 		}

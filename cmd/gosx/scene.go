@@ -68,6 +68,8 @@ func runSceneCommand(args []string, stdout io.Writer) error {
 		return runSceneDiffCommand(args[1:], stdout)
 	case "inspect":
 		return runSceneInspectCommand(args[1:], stdout)
+	case "poster":
+		return runScenePosterCommand(args[1:], stdout)
 	case "render":
 		return runSceneRenderCommand(args[1:], stdout)
 	case "schema":
@@ -630,12 +632,17 @@ Usage:
   gosx scene check [--json] [--golden baseline.png] [--repeat N] [--assets root] <scene-file>
   gosx scene diff [--json] [--out diff.png] <reference.png> <candidate.png>
   gosx scene inspect [--json] [--strict] [--budget file] [--assets root] <file-or-dir>...
+  gosx scene poster [--out poster.png | --out-dir dir] [--width N] [--height N] [--repeat N] <file-or-dir>...
   gosx scene render [--out image.png] [--width N] [--height N] <scene-file>
   gosx scene schema [--out path]
   gosx scene validate [--json] [--strict] [--max-texture-pixels N] <file-or-dir>...
 
 Start with 'gosx scene check'. It runs validation, cost, render, determinism,
 and baseline comparison in one command and returns one verdict.
+
+Use 'gosx scene poster' at build time. It writes the still image a page paints
+before the renderer boots, and refuses a frame that does not represent the
+scene.
 
 `)
 }

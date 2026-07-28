@@ -1499,20 +1499,186 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Texture variant selection
+  // ---------------------------------------------------------------------------
+  //
+  // The asset pipeline writes several encodings of one texture and lists the
+  // built ones in the manifest under textureVariants. The device reports which
+  // block families it has, and this code swaps each image URI for the best
+  // variant that device can upload. A BC7 base colour map costs a quarter of the
+  // GPU memory of rgba8unorm and a BC4 mask costs an eighth.
+  //
+  // Three rules keep the swap safe:
+  //
+  //   - the manifest lists BUILT files only, so a selected URI always exists.
+  //     assetpipe.BuildVariantManifest skips a planned variant and
+  //     TestSelectVariantRefusesPlannedVariants proves the refusal;
+  //   - only a block-compressed variant may replace the authored URI, and only
+  //     when the device token set holds every capability that variant requires.
+  //     An uncompressed KTX2 file saves no GPU memory and an image element
+  //     already loads the authored source, so a device with no block feature
+  //     keeps that source unchanged;
+  //   - the swap runs only when a renderer registered a KTX2 upload path. A
+  //     renderer that loads every image URI through an image element cannot
+  //     decode a .ktx2 file, and swapping would trade a working texture for a
+  //     broken one.
+  //
+  // The ranking mirrors SelectFromManifest in assetpipe/variantmanifest.go:
+  // higher tier first, then the smaller file, then the lower URI.
+
+  var GLTF_VARIANT_QUALITY_RANK = { ultra: 5, high: 4, standard: 3, medium: 3, low: 2 };
+
+  function gltfVariantQualityRank(quality) {
+    var rank = GLTF_VARIANT_QUALITY_RANK[String(quality || "").trim().toLowerCase()];
+    return rank ? rank : 1;
+  }
+
+  function gltfTextureVariantTable() {
+    var manifest = typeof loadManifest === "function" ? loadManifest() : null;
+    var table = manifest && manifest.textureVariants;
+    return table && typeof table === "object" ? table : null;
+  }
+
+  // gltfTextureVariantTokens reads the capability set the live device proved.
+  // An absent probe means no evidence, which means no swap.
+  function gltfTextureVariantTokens() {
+    if (typeof window === "undefined" || typeof window.__gosx_scene3d_texture_tokens !== "function") {
+      return null;
+    }
+    var tokens = window.__gosx_scene3d_texture_tokens();
+    if (!Array.isArray(tokens) || !tokens.length) {
+      return null;
+    }
+    var set = {};
+    for (var i = 0; i < tokens.length; i++) {
+      set[String(tokens[i] || "").trim().toLowerCase()] = true;
+    }
+    return set;
+  }
+
+  function gltfVariantUploadPathReady() {
+    return typeof window !== "undefined"
+      && !!window.__gosx_scene3d_ktx2
+      && typeof window.__gosx_scene3d_ktx2.uploadPathReady === "function"
+      && window.__gosx_scene3d_ktx2.uploadPathReady();
+  }
+
+  // gltfVariantTableKeys lists the spellings a manifest may use for one image.
+  // The table is keyed by SOURCE asset path, which is a build-relative path, and
+  // the resolved URI is absolute. Both spellings are tried, with and without the
+  // leading slash.
+  function gltfVariantTableKeys(resolved, authored) {
+    var keys = [];
+    function push(value) {
+      if (typeof value === "string" && value && keys.indexOf(value) < 0) keys.push(value);
+    }
+    push(authored);
+    var pathname = "";
+    try {
+      pathname = new URL(resolved).pathname;
+    } catch (_error) {
+      pathname = "";
+    }
+    push(pathname);
+    if (pathname.charAt(0) === "/") push(pathname.slice(1));
+    push(resolved);
+    return keys;
+  }
+
+  // gltfVariantEligible reports whether one variant is both block-compressed and
+  // fully supported by the device.
+  //
+  // The block requirement is what keeps an uncompressed KTX2 file from replacing
+  // the authored image. Only a block variant cuts GPU memory, and the authored
+  // source already loads through an image element with no extra code.
+  function gltfVariantEligible(variant, tokens) {
+    if (!variant || typeof variant.uri !== "string" || !variant.uri) {
+      return false;
+    }
+    var required = Array.isArray(variant.requiredCapabilities) ? variant.requiredCapabilities : [];
+    var block = false;
+    for (var i = 0; i < required.length; i++) {
+      var token = String(required[i] || "").trim().toLowerCase();
+      if (!tokens[token]) {
+        return false;
+      }
+      if (token.indexOf("device-feature:texture-compression-") === 0) {
+        block = true;
+      }
+    }
+    return block;
+  }
+
+  // gltfVariantOutranks is the comparison SelectFromManifest sorts with.
+  function gltfVariantOutranks(candidate, best) {
+    var left = gltfVariantQualityRank(candidate.quality);
+    var right = gltfVariantQualityRank(best.quality);
+    if (left !== right) {
+      return left > right;
+    }
+    var leftBytes = Number(candidate.bytes) || 0;
+    var rightBytes = Number(best.bytes) || 0;
+    if (leftBytes !== rightBytes) {
+      return leftBytes < rightBytes;
+    }
+    return String(candidate.uri) < String(best.uri);
+  }
+
+  function gltfSelectTextureVariant(variants, tokens) {
+    if (!Array.isArray(variants)) {
+      return null;
+    }
+    var best = null;
+    for (var i = 0; i < variants.length; i++) {
+      var variant = variants[i];
+      if (!gltfVariantEligible(variant, tokens)) {
+        continue;
+      }
+      if (best === null || gltfVariantOutranks(variant, best)) {
+        best = variant;
+      }
+    }
+    return best;
+  }
+
   function gltfResolveExternalImageURIs(gltf, baseURL) {
     if (!gltf || !gltf.images || !gltf.images.length) {
       return;
     }
+    // Read the table, the tokens and the upload gate once per document. Any of
+    // the three missing means every image keeps its authored URI.
+    var table = gltfVariantUploadPathReady() ? gltfTextureVariantTable() : null;
+    var tokens = table ? gltfTextureVariantTokens() : null;
     for (var i = 0; i < gltf.images.length; i += 1) {
       var image = gltf.images[i];
       if (!image || typeof image.uri !== "string" || !image.uri || image.uri.indexOf("data:") === 0) {
         continue;
       }
+      var authored = image.uri;
       try {
         image.uri = new URL(image.uri, baseURL).toString();
       } catch (_error) {
         // Keep the authored URI; downstream texture loading will report any
         // remaining failure with the original value.
+        continue;
+      }
+      if (!tokens) {
+        continue;
+      }
+      var keys = gltfVariantTableKeys(image.uri, authored);
+      for (var k = 0; k < keys.length; k++) {
+        var winner = gltfSelectTextureVariant(table[keys[k]], tokens);
+        if (!winner) {
+          continue;
+        }
+        try {
+          image.uri = new URL(winner.uri, baseURL).toString();
+        } catch (_variantError) {
+          // A manifest URI that will not resolve is not a reason to lose the
+          // authored texture, so the loop leaves the resolved source in place.
+        }
+        break;
       }
     }
   }

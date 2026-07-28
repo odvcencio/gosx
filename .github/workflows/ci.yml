@@ -28,12 +28,13 @@ jobs:
   # go-tests: Go checks and tests, plus TinyGo — cmd/gosx/build_test.go
   # exercises a real production GoSX build (`go run ./cmd/gosx build --prod`)
   # via `make test`, which requires TinyGo on PATH. No Node or Chrome install:
-  # nothing here shells out to either. This is the heaviest job (~11 minutes
-  # of measured step time before the TinyGo install) but no longer serializes
-  # behind or ahead of the JS/WASM/browser jobs.
+  # nothing here shells out to either. This temporary exhaustive lane runs the
+  # full unit and race sweeps serially before fuzz and platform builds. PR117
+  # measured 6m31s for unit tests and 10m48s for race tests (the BC7 package
+  # alone took 504.697s), so the 20-minute cap canceled fuzz after both passed.
   go-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -71,25 +72,36 @@ jobs:
       - name: Unit and integration tests
         run: make test
 
+      # editor/ is a nested Go module, so nothing above reaches it: `go list
+      # ./editor/...` fails from the root and `make test` never compiles it.
+      # That left 3404 non-test lines and 68 tests with no gate on any runner.
+      # The target builds, vets and tests the module against the working tree.
+      - name: Editor module tests
+        run: make test-editor
+
       - name: Race tests
         run: make test-race
 
       - name: Fuzz smoke tests
         run: make test-fuzz-smoke
 
-      # The desktop host is largely behind a windows build tag. release.yml
-      # cross-compiles the binary, but this gate also links the Windows test
-      # binaries so desktop-only test regressions fail in CI.
-      - name: Desktop tests and Windows cross-compile gate
-        run: make test-desktop
-
       - name: Build CLI
         run: make build-cli
 
-  # js-tests: Node for `node --test`, plus Go — `make test-js` also runs
-  # `cd cmd/buildbootstrap && go run . --check` (the bundle staleness gate),
-  # which needs a Go toolchain. No TinyGo/Chrome setup: nothing here shells
-  # out to either.
+      # The desktop host holds 3520 lines behind a windows build tag against 62
+      # lines of windows-gated test, and this runner is Linux. release.yml
+      # cross-compiles the binary, but nothing compiled the windows TEST
+      # binaries, so a broken desktop test could not fail anywhere. This runs the
+      # portable tests and links both windows test binaries.
+      - name: Desktop tests and Windows cross-compile gate
+        run: make test-desktop
+
+  # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
+  # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
+  # staleness gate), and both need a Go toolchain. The unit tests matter here
+  # because cmd/buildbootstrap writes every shipped client bundle: --check
+  # catches a stale bundle, and only the tests catch a wrong one. No
+  # TinyGo/Chrome setup: nothing here shells out to either.
   js-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -161,6 +173,16 @@ jobs:
       - name: Motion cross-target float parity gate
         run: make test-motion-parity
 
+      # physics is one rigid body engine that serves the server's authoritative
+      # step and the client's predicted step. This target replays the golden
+      # corpus under js/wasm and demands bit equality, so the two steps cannot
+      # drift. Verified locally: 7 scenarios, 3600 steps, 48074 contact points,
+      # bit exact with zero tolerance. The gate needs a build that does not fuse
+      # a floating point multiply and add, which is GOAMD64 v2 or lower (the Go
+      # default) and js/wasm, which has no fused instruction.
+      - name: Physics cross-target float parity gate
+        run: make test-physics-parity
+
       - name: WASM size-budget gate
         run: make wasm-size-budget
 
@@ -207,6 +229,19 @@ jobs:
         env:
           GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: make test-e2e
+
+      # The perf driver's own browser tests. They sit behind `//go:build
+      # browser` and nothing passed that tag before this step existed, so 11
+      # tests never compiled anywhere.
+      #
+      # GOSX_CHROME_NO_SANDBOX is required: the runner cannot give Chrome a user
+      # namespace. The make target also sets GOSX_REQUIRE_CHROME, so a broken
+      # Chrome install fails this step instead of skipping every test in it.
+      - name: Perf driver browser tests
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_CHROME_NO_SANDBOX: "1"
+        run: make test-perf-browser
 
       - name: Perf budget gate
         env:

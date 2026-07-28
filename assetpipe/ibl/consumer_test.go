@@ -128,7 +128,15 @@ func TestNeitherRendererConsumesTheGeneratedIBLProducts(t *testing.T) {
 // unit budget is already accounted for, so a real consumer does not have to
 // renegotiate texture units with the cascaded shadow allocator.
 func TestTheIBLTextureSlotsExistButStayUnbound(t *testing.T) {
-	const sharedPath = "../../client/js/bootstrap-src/15a-scene-postfx-shared.js"
+	// The three units moved out of 15a-scene-postfx-shared.js into
+	// 15a1-scene-texture-budget.js when the base 3D chunk was split by feature.
+	// 15a1 ships in the WebGL chunk now, because 16-scene-webgl.js is its only
+	// caller, so a WebGPU page stops paying for a WebGL2 sampler table.
+	//
+	// The reservation itself is unchanged, which is the point of this test: the
+	// units are still allocated and still negotiated against the cascaded shadow
+	// allocator, and radiance and brdfLUT are still never bound.
+	const sharedPath = "../../client/js/bootstrap-src/15a1-scene-texture-budget.js"
 	data, err := os.ReadFile(sharedPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", sharedPath, err)

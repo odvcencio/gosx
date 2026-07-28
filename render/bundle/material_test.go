@@ -178,8 +178,10 @@ func TestEnvironmentMapRebuildsLitBindGroupWithCubeView(t *testing.T) {
 	}
 
 	bg := r.litBindGrp.(*fakeBindGroup)
-	if len(bg.desc.Entries) != 5 {
-		t.Fatalf("lit bind group entries = %d, want 5", len(bg.desc.Entries))
+	// Six entries: scene uniform, shadow array, shadow sampler, environment
+	// cube, material sampler, scene light storage buffer.
+	if len(bg.desc.Entries) != 6 {
+		t.Fatalf("lit bind group entries = %d, want 6", len(bg.desc.Entries))
 	}
 	view := bg.desc.Entries[3].TextureView.(*fakeTextureView)
 	if view.desc.Dimension != gpu.TextureViewDimensionCube {

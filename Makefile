@@ -23,7 +23,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e test-water-prod test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-water-prod test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -113,21 +113,49 @@ test-fuzz-smoke:
 build-bootstrap:
 	cd cmd/buildbootstrap && $(GO) run .
 
-# test-js runs two independent checks:
-#   1. The bundle staleness check (pure Go). cmd/buildbootstrap is
+# test-js runs three independent checks:
+#   1. The unit tests of the bundle builder itself. cmd/buildbootstrap
+#      writes every shipped client bundle, so a defect there corrupts
+#      bootstrap.js, bootstrap-lite.js, bootstrap-runtime.js, every
+#      bootstrap-feature-*.js, and each .br/.gz/.map sibling. Check 2
+#      below detects a STALE bundle; only these tests detect a WRONG
+#      one. They also pin the chunk-to-symbol map, so a split that
+#      re-duplicates a payload fails here by name.
+#   2. The bundle staleness check (pure Go). cmd/buildbootstrap is
 #      its own module (see build-bootstrap above). So a repo-local
 #      go.work that omits it makes `go run .` fail with "main module
 #      does not contain package". GOWORK=off forces module mode for
 #      this one command. The target then works the same, with or
 #      without a local go.work.
-#   2. The JS runtime unit tests (`node --test`, stdlib-only, with no
+#   3. The JS runtime unit tests (`node --test`, stdlib-only, with no
 #      npm dependencies to install), across every *.test.js /
 #      *.test.mjs file. This includes the 500+ tests in
 #      runtime.test.js and the size-budget gates in
 #      bootstrap-size.test.mjs.
 test-js:
+	cd cmd/buildbootstrap && GOWORK=off $(GO) test ./...
 	cd cmd/buildbootstrap && GOWORK=off $(GO) run . --check
 	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
+
+# test-editor builds, vets and tests the nested editor module.
+#
+# editor/ is its own Go module, so nothing at the repository root reaches it:
+# `go list ./editor/...` fails, `make test` never compiles it, and the string
+# "editor" appeared nowhere in this file. That hid 3404 non-test lines and 68
+# tests from every gate.
+#
+# GOWORK=off is required, for the same reason as build-bootstrap: the repo-local
+# go.work lists the root, ../prism and ../selena, so a command run inside
+# editor/ fails with "directory prefix . does not contain modules listed in
+# go.work". The module reaches gosx through a replace directive to the parent
+# directory, so this target tests the editor against the working tree.
+#
+# fmt-check already covers these files: GOFILES walks the whole tree with find,
+# which crosses the module boundary.
+test-editor:
+	cd editor && GOWORK=off $(GO) build ./...
+	cd editor && GOWORK=off $(GO) vet ./...
+	cd editor && GOWORK=off $(GO) test ./...
 
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
@@ -143,6 +171,17 @@ test-motion-parity:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
 
+# test-physics-parity: native↔WASM parity gate for the rigid body engine.
+# Replays the golden corpus under GOOS=js GOARCH=wasm and demands bit equality,
+# so a server's authoritative step and a client's predicted step cannot drift.
+# The claim needs a build that does not fuse a floating point multiply and add:
+# GOAMD64 v2 or lower (the default) on amd64, and js/wasm, which has no fused
+# multiply-add instruction. GOAMD64 v3 and arm64 fuse and fail with that reason.
+test-physics-parity:
+	$(GO) test ./physics/...
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./physics/ -run 'TestParityCorpus|TestFusedMultiplyAddProbeIsSound' -v
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./physics/
+
 # wasm-size-budget builds both client/wasm flavors and asserts they stay within
 # the budget. Override WASM_FULL_BUDGET_KB / WASM_TINY_BUDGET_KB to raise the
 # bar for a planned-growth slice (require an ADR for any >10% bump).
@@ -151,6 +190,27 @@ wasm-size-budget:
 
 test-e2e:
 	$(GO) test -tags e2e -timeout 30m ./e2e
+
+# test-perf-browser runs the perf driver's own browser tests.
+#
+# perf/ holds six test files behind `//go:build browser`, and until this target
+# existed NOTHING in the repository passed -tags browser: not this file, not any
+# workflow, not any script. So `go test ./perf/` reported "ok ... [no tests to
+# run]" and 11 tests over about 505 lines never compiled. The first run under
+# the tag failed: TestRecordGIF proved that Page.startScreencast captures
+# nothing over a page that holds still, which broke `gosx perf --record` for
+# every still page. See perf/record.go.
+#
+# The tag is correct and stays: these tests launch Chrome. This target is the
+# thing that was missing.
+#
+# GOSX_REQUIRE_CHROME turns "Chrome not found" from a skip into a failure. Every
+# test in perf/ needs a browser, so without it this target would print "ok" over
+# zero executed tests — the same invisible pass the build tag produced. A plain
+# `go test -tags browser ./perf/...` still skips, which is right for a machine
+# without Chrome.
+test-perf-browser:
+	GOSX_REQUIRE_CHROME=1 $(GO) test -tags browser -timeout 10m ./perf/...
 
 # Build the deployable docs bundle and prove the production server can serve
 # the water route and its content-addressed Scene3D runtime assets.
@@ -223,4 +283,4 @@ release-gate:
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 
-ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-wasm test-wasm-islands wasm-size-budget test-e2e perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime

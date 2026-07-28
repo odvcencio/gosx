@@ -524,18 +524,31 @@
     // Apply exposure.
     "    color *= u_exposure;",
     "",
-    // Tone mapping.
-    "    if (u_toneMapMode == 1) {",
+    // Tone mapping, then the display encode.
+    //
+    // Mode 3 is the Hejl-Burgess-Dawson filmic curve, and it is the one branch
+    // that skips the encode below. That curve already returns display-referred
+    // values, so raising it to 1/2.2 a second time washes the whole image out.
+    // The other three branches return linear light and need the encode.
+    //
+    // Mode 3 arrives here only from sceneToneMapMode, which learned the name
+    // "filmic" on 2026-07-27. Before that the name fell through to ACES.
+    "    if (u_toneMapMode == 3) {",
+    "        vec3 hejl = max(vec3(0.0), color - vec3(0.004));",
+    "        color = clamp((hejl * (6.2 * hejl + 0.5)) / (hejl * (6.2 * hejl + 1.7) + 0.06), 0.0, 1.0);",
+    "    } else {",
+    "        if (u_toneMapMode == 1) {",
     // ACES filmic.
-    "        color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);",
-    "    } else if (u_toneMapMode == 2) {",
+    "            color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);",
+    "        } else if (u_toneMapMode == 2) {",
     // Reinhard.
-    "        color = color / (color + vec3(1.0));",
+    "            color = color / (color + vec3(1.0));",
+    "        }",
+    // else: mode 0, no curve. The draw target is 8-bit, so it clamps on write;
+    // an explicit clamp here would also clamp the post chain, which forces mode
+    // 0 and needs values above one to feed the bloom bright pass.
+    "        color = pow(color, vec3(1.0 / 2.2));",
     "    }",
-    // else: linear (no tone mapping).
-    "",
-    // Gamma correction.
-    "    color = pow(color, vec3(1.0 / 2.2));",
     "",
     "    float opacity = u_opacity;",
     "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
@@ -1213,7 +1226,21 @@
     gl.depthFunc(gl.LEQUAL);
     gl.disable(gl.BLEND);
 
-    // Only cull back faces for shadow pass to reduce peter-panning.
+    // Cull the LIT face and keep the face that points away from the light.
+    //
+    // The call below discards front-facing triangles, so the map records the far
+    // wall of a caster instead of the near one. The recorded depth then sits a
+    // caster thickness beyond the receiver, which is the standard mitigation for
+    // peter-panning. The earlier comment here said "cull back faces", which
+    // names the opposite operation; the call was always right and the words were
+    // wrong.
+    //
+    // This only works because 12-scene-geometry.js winds its solids
+    // counter-clockwise as seen from outside, and WebGL treats
+    // counter-clockwise as front-facing by default. This file sets no
+    // frontFace, so that default is load-bearing. render/bundle keeps the
+    // OPPOSITE face; render/bundle/shadow_drift_test.go pins both and states
+    // why they differ.
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.FRONT);
 
@@ -4574,6 +4601,61 @@
     return key.endsWith(".hdr") || key.indexOf(".hdr?") >= 0 || key.indexOf(".hdr#") >= 0;
   }
 
+  // KTX2 block-texture path.
+  //
+  // 19a-scene-ktx2.js publishes window.__gosx_scene3d_ktx2 and ships in the
+  // lazily fetched glTF chunk, because only a model asset carries a .ktx2
+  // texture. Resolve the reader at call time and fall back to the image path
+  // when the chunk is absent.
+  function scenePBRIsKTX2URL(url) {
+    return typeof url === "string" && /\.ktx2(\?|#|$)/.test(url);
+  }
+
+  function scenePBRKTX2API() {
+    return typeof window !== "undefined" && window.__gosx_scene3d_ktx2
+      ? window.__gosx_scene3d_ktx2
+      : null;
+  }
+
+  // scenePBRUploadKTX2Texture fetches, decodes and uploads one KTX2 container
+  // into an existing texture record.
+  //
+  // Every failure sets record.failed and warns. It never sets record.loaded
+  // with the 1x1 white placeholder still bound, because a blank texture that
+  // reports success hides the fault. Three failures reach here: a fetch that
+  // does not return 200, a context without the compressed-format extension,
+  // and a level whose byte length disagrees with its block arithmetic.
+  // The signature is (context, url, record), the same shape the WebGPU
+  // uploader uses, because both are published on the one gate global. The
+  // texture object rides in record.texture.
+  function scenePBRUploadKTX2Texture(gl, url, record) {
+    var ktx2 = scenePBRKTX2API();
+    if (!ktx2 || typeof ktx2.load !== "function" || typeof ktx2.uploadWebGL2 !== "function") {
+      record.failed = true;
+      return Promise.resolve(record);
+    }
+    return ktx2.load(url).then(function(image) {
+      ktx2.uploadWebGL2(gl, image, { texture: record.texture });
+      // Block textures carry their own mip chain, so never call generateMipmap
+      // here: WebGL2 rejects it for a compressed target.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER,
+        image.levels.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      record.width = image.width;
+      record.height = image.height;
+      record.ktx2 = true;
+      record.loaded = true;
+      return record;
+    }).catch(function(error) {
+      record.failed = true;
+      record.error = error && error.message ? error.message : String(error);
+      try {
+        console.warn("[gosx] KTX2 texture " + url + " failed: " + record.error);
+      } catch (_e) {}
+      return record;
+    });
+  }
+
   function scenePBRTonemapHDRPixels(parsed) {
     var width = Math.max(1, Math.floor(sceneNumber(parsed && parsed.width, 1)));
     var height = Math.max(1, Math.floor(sceneNumber(parsed && parsed.height, 1)));
@@ -4644,6 +4726,15 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
+      return record;
+    }
+
+    // A .ktx2 URI holds a block-compressed container, not an image an <img>
+    // element can decode. Route it through the KTX2 reader. An image element
+    // fed a .ktx2 URI leaves the 1x1 white placeholder bound and never reports
+    // an error the caller can see.
+    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
+      scenePBRUploadKTX2Texture(gl, key, record);
       return record;
     }
 
@@ -5559,14 +5650,28 @@
     gl.uniform3f(uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
   }
 
-  // Convert a tone mapping string to the shader int mode.
-  // 0 = linear (no tone mapping), 1 = ACES filmic, 2 = Reinhard.
-  // Default (empty string) maps to ACES.
+  // Convert a tone mapping string to the shader int mode, for the MATERIAL
+  // shader that runs when the page carries no post chain.
+  //
+  // 0 = no curve, 1 = ACES filmic, 2 = Reinhard, 3 = Hejl filmic. An unknown
+  // name and the empty string both take ACES.
+  //
+  // This table must match scenePostToneMapMode above and sceneWebGPUToneMapMode
+  // in 16a-scene-webgpu.js. It did not until 2026-07-27: it mapped neither
+  // "none" nor "filmic", so both fell through to ACES. An author who wrote
+  // either name got ACES on a page with no post effect and the correct curve on
+  // a page that happened to carry one, so the image depended on an unrelated
+  // authoring choice. It also skipped the trim the other two apply, so a name
+  // with a stray space took the default.
+  //
+  // render/bundle/postfx_drift_test.go pins all four names across all four
+  // tables.
   function sceneToneMapMode(str) {
     if (typeof str === "string") {
-      var s = str.toLowerCase();
-      if (s === "linear") return 0;
+      var s = str.trim().toLowerCase();
+      if (s === "linear" || s === "none") return 0;
       if (s === "reinhard") return 2;
+      if (s === "filmic") return 3;
     }
     return 1; // default: ACES
   }
@@ -8268,4 +8373,20 @@
         });
       },
     });
+  }
+
+  // Open the KTX2 variant-swap gate for a WebGL2 page.
+  //
+  // Same contract as the WebGPU renderer: 19-scene-gltf.js reads
+  // sceneKTX2UploadPathReady(), which tests this global, before it swaps an
+  // image URI for a block variant. Assign only when this chunk really runs, so
+  // a page with no WebGL2 renderer never claims an upload path it lacks.
+  //
+  // A WebGPU page loads its own renderer chunk and assigns its own uploader.
+  // Whichever chunk lands last wins the global, and both uploaders are correct
+  // for the renderer that owns them, because scenePBRTextureRecord and
+  // wgpuLoadTexture each call their own function directly. The global is the
+  // gate flag, not the dispatch table.
+  if (typeof window !== "undefined" && window.__gosx_scene3d_ktx2_texture_loader == null) {
+    window.__gosx_scene3d_ktx2_texture_loader = scenePBRUploadKTX2Texture;
   }

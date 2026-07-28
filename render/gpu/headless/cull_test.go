@@ -61,8 +61,16 @@ func newCullHarness(t *testing.T, capacity int) *cullHarness {
 	return h
 }
 
-// writeUniform packs the six frustum planes plus the unscaled radius.
+// writeUniform packs the six frustum planes plus the unscaled radius, and
+// leaves the live instance count unbounded. The renderer's three-argument call
+// writes the same sentinel today.
 func (h *cullHarness) writeUniform(planes [6][4]float32, radius float32) {
+	h.writeUniformWithCount(planes, radius, cullUnboundedInstanceCount)
+}
+
+// writeUniformWithCount packs the whole uniform block, including the live
+// instance count the kernel bounds its threads on.
+func (h *cullHarness) writeUniformWithCount(planes [6][4]float32, radius float32, instanceCount uint32) {
 	data := make([]byte, 112)
 	for p := 0; p < 6; p++ {
 		for c := 0; c < 4; c++ {
@@ -71,6 +79,7 @@ func (h *cullHarness) writeUniform(planes [6][4]float32, radius float32) {
 	}
 	binary.LittleEndian.PutUint32(data[96:100], 36) // vertexCount
 	binary.LittleEndian.PutUint32(data[100:104], floatBits(radius))
+	binary.LittleEndian.PutUint32(data[cullUniformInstanceCountOffset:cullUniformInstanceCountOffset+4], instanceCount)
 	h.device.Queue().WriteBuffer(h.uniform, 0, data)
 }
 
@@ -184,11 +193,16 @@ func TestCullScalesRadiusByInstanceScale(t *testing.T) {
 	}
 }
 
-// TestCullKeepsEverythingWithoutAUniformBlock keeps the degenerate path safe:
-// a zero uniform block must behave like "all visible" so a caller that never
-// wrote the planes still draws.
-func TestCullKeepsEverythingWithoutAUniformBlock(t *testing.T) {
+// TestCullKeepsEverythingWithZeroPlanes keeps the degenerate plane path safe.
+// A zero plane gives distance zero, and zero is never below a negative radius,
+// so a caller that never wrote the planes still draws every instance.
+//
+// The live instance count is the one lane that must be written. Zero there means
+// zero live instances, and TestCullDropsRecordsPastTheLiveInstanceCount covers
+// that half.
+func TestCullKeepsEverythingWithZeroPlanes(t *testing.T) {
 	h := newCullHarness(t, 3)
+	h.writeUniformWithCount([6][4]float32{}, 0, cullUnboundedInstanceCount)
 	h.writeInstances([][16]float32{
 		translatedModel(1, 0, 0, 0),
 		translatedModel(1, 1000, 0, 0),
@@ -196,7 +210,50 @@ func TestCullKeepsEverythingWithoutAUniformBlock(t *testing.T) {
 	})
 	count, _ := h.dispatch(t, 1)
 	if count != 3 {
-		t.Fatalf("survivors = %d, want all 3 with an unwritten uniform block", count)
+		t.Fatalf("survivors = %d, want all 3 with a zero plane block", count)
+	}
+}
+
+// TestCullDropsRecordsPastTheLiveInstanceCount is the oracle for the cull fix of
+// 2026-07-26.
+//
+// The input buffer's capacity runs past the live instance count, and a buffer is
+// zero-initialized, so a thread past the live data reads an all-zero matrix. Its
+// centre is the origin and its scale is zero, so it keeps the base radius and
+// passes the frustum test. The kernel used to compact those records and inflate
+// the survivor count. It now bounds on the count the uniform carries.
+//
+// The case writes four records, declares two of them live, and puts all four
+// inside the frustum. A kernel that ignored the count would report four.
+func TestCullDropsRecordsPastTheLiveInstanceCount(t *testing.T) {
+	h := newCullHarness(t, 4)
+	models := [][16]float32{
+		translatedModel(1, 0, 0, 0),
+		translatedModel(1, 0.5, 0, 0),
+		translatedModel(1, 0, 0, 0),
+		translatedModel(1, 0, 0, 0),
+	}
+
+	h.writeUniformWithCount(unitBoxPlanes(), 0.1, cullUnboundedInstanceCount)
+	h.writeInstances(models)
+	if count, _ := h.dispatch(t, 1); count != 4 {
+		t.Fatalf("unbounded survivors = %d, want 4; the case cannot show a bound that is never crossed", count)
+	}
+
+	h.writeUniformWithCount(unitBoxPlanes(), 0.1, 2)
+	h.writeInstances(models)
+	count, ids := h.dispatch(t, 1)
+	if count != 2 {
+		t.Fatalf("survivors = %d, want 2; the kernel is compacting records past the live instance count", count)
+	}
+	if ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("compacted pick IDs = %v, want [1 2]", ids)
+	}
+
+	h.writeUniformWithCount(unitBoxPlanes(), 0.1, 0)
+	h.writeInstances(models)
+	if count, _ := h.dispatch(t, 1); count != 0 {
+		t.Fatalf("survivors = %d at a live count of zero, want 0; a mesh with no instances must draw nothing", count)
 	}
 }
 

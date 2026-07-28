@@ -11,6 +11,13 @@
   var SCENE_POINTER_PAD_MIN = 12;
   var SCENE_POINTER_PAD_RANGE = 22;
   var SCENE_POINTER_PAD_SCALE = 0.08;
+  // SCENE_POINT_PICK_RADIUS is the world-space hit radius for a primitive that
+  // has no world extent: one particle of a Points cloud, or a Sprite billboard.
+  // Both size themselves in screen pixels, so neither owns a surface a ray can
+  // intersect. The value mirrors scene.DefaultPointThreshold in
+  // scene/raycast.go, so a headless trace and a browser pick return the same
+  // distance for the same ray. Change both or neither.
+  var SCENE_POINT_PICK_RADIUS = 0.1;
 
   function sceneLocalPointerPoint(event, canvas, width, height) {
     const rect = canvas.getBoundingClientRect();
@@ -94,18 +101,36 @@
     return target && target.object && typeof target.object.id === "string" ? target.object.id : "";
   }
 
+  // sceneTargetKind reports the kind a pick landed on. A mesh carries its kind on
+  // the object; a Points cloud and a Sprite carry none, so the raycast records
+  // "points" or "sprite" on the hit itself and this reads that instead. Without
+  // the second branch every points and sprite pick would publish an empty kind,
+  // while scene/raycast.go sets RayHit.Kind for both.
   function sceneTargetKind(target) {
-    return target && target.object && typeof target.object.kind === "string" ? target.object.kind : "";
+    if (target && target.object && typeof target.object.kind === "string") {
+      return target.object.kind;
+    }
+    return target && typeof target.kind === "string" ? target.kind : "";
   }
 
   function sceneTargetInt(target, key) {
     return target && target[key] != null ? Math.max(-1, Math.floor(sceneNumber(target[key], -1))) : -1;
   }
 
+  // sceneTargetHitSnapshot flattens a pick record into the scalar fields the
+  // signal batch and the interaction event publish.
+  //
+  // The ray comes from sceneScreenToRay, which names its direction `dir`. This
+  // read asked for `direction` alone until 2026-07-26, so every ray pick
+  // published a direction of (0, 0, 0) while the origin came through — the
+  // failure mode of a field that is declared and never assigned. Read both names:
+  // `dir` is what the producer writes, `direction` is what scene.Ray calls it in
+  // Go, and a bundle replayed from a Go trace uses that spelling.
   function sceneTargetHitSnapshot(target) {
     const world = target && (target.worldPosition || target.point) ? (target.worldPosition || target.point) : null;
     const local = target && target.localPosition ? target.localPosition : world;
     const uv = target && target.uv ? target.uv : null;
+    const dir = target && target.ray ? (target.ray.dir || target.ray.direction) : null;
     return {
       targetInstanceIndex: sceneTargetInt(target, "instanceIndex"),
       targetPrimitiveIndex: sceneTargetInt(target, "primitiveIndex"),
@@ -122,9 +147,9 @@
       rayOriginX: sceneNumber(target && target.ray && target.ray.origin && target.ray.origin.x, 0),
       rayOriginY: sceneNumber(target && target.ray && target.ray.origin && target.ray.origin.y, 0),
       rayOriginZ: sceneNumber(target && target.ray && target.ray.origin && target.ray.origin.z, 0),
-      rayDirX: sceneNumber(target && target.ray && target.ray.direction && target.ray.direction.x, 0),
-      rayDirY: sceneNumber(target && target.ray && target.ray.direction && target.ray.direction.y, 0),
-      rayDirZ: sceneNumber(target && target.ray && target.ray.direction && target.ray.direction.z, 0),
+      rayDirX: sceneNumber(dir && dir.x, 0),
+      rayDirY: sceneNumber(dir && dir.y, 0),
+      rayDirZ: sceneNumber(dir && dir.z, 0),
     };
   }
 
@@ -627,6 +652,7 @@
     var closest = sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions, 0, bundle.worldMeshUVs);
     closest = sceneNearestRaycastHit(closest, sceneRaycastPickInstancedMeshes(ray, bundle.instancedMeshes, 0));
     closest = sceneNearestRaycastHit(closest, sceneRaycastPickGroup(ray, bundle.objects, bundle.worldPositions, 0, null));
+    closest = sceneNearestRaycastHit(closest, sceneRaycastPickPoints(ray, bundle));
     if (closest) closest.ray = ray;
     return closest;
   }
@@ -795,6 +821,158 @@
       }
     }
 
+    return closest;
+  }
+
+  // sceneRaycastSphereHit intersects a world-space sphere and returns the near
+  // root, or the far root when the origin sits inside. It mirrors
+  // intersectWorldSphere in scene/raycast.go term by term. The ray direction is
+  // unit length, so the quadratic needs no leading coefficient.
+  //
+  // The two comparisons are written to reject a NaN as well as a miss. A NaN
+  // coordinate in a points buffer would otherwise return a NaN distance, and
+  // every later `distance < closest.distance` test reads false against a NaN, so
+  // the first bad particle would keep the pick for the whole frame. This rejection
+  // lets the callers read the buffer without a guard on each coordinate.
+  function sceneRaycastSphereHit(ray, cx, cy, cz, radius) {
+    var ox = ray.origin.x - cx;
+    var oy = ray.origin.y - cy;
+    var oz = ray.origin.z - cz;
+    var b = ox * ray.dir.x + oy * ray.dir.y + oz * ray.dir.z;
+    var c = ox * ox + oy * oy + oz * oz - radius * radius;
+    var discriminant = b * b - c;
+    if (!(discriminant >= 0)) return -1;
+    var root = Math.sqrt(discriminant);
+    var distance = -b - root;
+    if (distance < 0) distance = -b + root;
+    return distance >= 0 ? distance : -1;
+  }
+
+  // sceneZeroExtentHit builds the pick record for a hit on a Points particle or a
+  // Sprite. It carries the same field set sceneRaycastPickGroup returns, because
+  // sceneTargetHitSnapshot reads one shape for every hit and a missing field
+  // publishes a silent zero.
+  function sceneZeroExtentHit(ray, entry, index, kind, distance, radius, instanceIndex) {
+    var point = {
+      x: ray.origin.x + ray.dir.x * distance,
+      y: ray.origin.y + ray.dir.y * distance,
+      z: ray.origin.z + ray.dir.z * distance,
+    };
+    return {
+      index: index,
+      object: entry,
+      kind: kind,
+      distance: distance,
+      inside: true,
+      depth: distance,
+      area: Math.PI * radius * radius,
+      point: point,
+      worldPosition: point,
+      localPosition: point,
+      instanceIndex: instanceIndex,
+      primitiveIndex: -1,
+      triangleIndex: -1,
+    };
+  }
+
+  // scenePointsRotationMatrix returns the 3x3 rotation an Euler triple describes,
+  // laid out row by row. The order is rotate X, then Y, then Z, which is what
+  // sceneRotatePoint applies and what quaternionFromEuler builds in scene/scene.go
+  // (qz * qy * qx).
+  //
+  // The matrix is built once per cloud instead of calling sceneRotatePoint per
+  // particle, because that helper allocates a point and a starfield holds tens of
+  // thousands of them. sceneRotatePoint stays the reference: a test compares the
+  // two for a rotation about all three axes.
+  function scenePointsRotationMatrix(rx, ry, rz) {
+    var sx = Math.sin(rx), cx = Math.cos(rx);
+    var sy = Math.sin(ry), cy = Math.cos(ry);
+    var sz = Math.sin(rz), cz = Math.cos(rz);
+    return [
+      cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz,
+      cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz,
+      -sy, sx * cy, cx * cy,
+    ];
+  }
+
+  // sceneSpriteWorldCenter returns the world point a sprite billboard sits on, or
+  // null when the entry carries none.
+  //
+  // A render bundle stores the projected screen position under `position` and the
+  // world point under `world`. An authored sprite carries x/y/z instead. Return
+  // null rather than a default of the origin: a hit reported at (0, 0, 0) for a
+  // sprite that sits elsewhere is worse than no hit at all.
+  function sceneSpriteWorldCenter(sprite) {
+    var world = sprite && sprite.world;
+    if (world && typeof world === "object") {
+      return [sceneNumber(world.x, 0), sceneNumber(world.y, 0), sceneNumber(world.z, 0)];
+    }
+    if (!sprite || (sprite.x == null && sprite.y == null && sprite.z == null)) {
+      return null;
+    }
+    return [sceneNumber(sprite.x, 0), sceneNumber(sprite.y, 0), sceneNumber(sprite.z, 0)];
+  }
+
+  // sceneRaycastPickPoints picks the two primitive families with no world extent:
+  // one particle of a Points cloud, and one Sprite billboard. Each is tested as a
+  // sphere of SCENE_POINT_PICK_RADIUS.
+  //
+  // sceneRaycastPick walked bundle.meshObjects, bundle.instancedMeshes and
+  // bundle.objects only, while scene.TraceGraph picked both families in Go. A
+  // headless test therefore reported a hit the browser could not reproduce, and
+  // the WebGPU picker inherited the same gap because it derives every geometric
+  // field from these shared helpers. The loops below mirror raycastPoints and
+  // raycastSprite in scene/raycast.go: the same radius, the same near-root sphere
+  // test, the same rotate-then-translate order, and the same hit kind.
+  //
+  // One known difference stays: scene/raycast.go ignores Points.Spin, so both
+  // sides pick a spinning cloud at its unspun pose. Honor spin here and the
+  // browser would leave the oracle behind again. Fix the Go walk first.
+  function sceneRaycastPickPoints(ray, bundle) {
+    if (!ray || !bundle) return null;
+    var closest = null;
+    var clouds = Array.isArray(bundle.points) ? bundle.points : [];
+    for (var cloudIndex = 0; cloudIndex < clouds.length; cloudIndex++) {
+      var cloud = clouds[cloudIndex];
+      var positions = cloud && cloud.positions;
+      if (!positions || typeof positions.length !== "number") continue;
+      var available = Math.floor(positions.length / 3);
+      var count = Math.floor(sceneNumber(cloud.count, 0));
+      if (count <= 0) count = available;
+      if (count > available) count = available;
+      var offsetX = sceneNumber(cloud.x, 0);
+      var offsetY = sceneNumber(cloud.y, 0);
+      var offsetZ = sceneNumber(cloud.z, 0);
+      var rx = sceneNumber(cloud.rotationX, 0);
+      var ry = sceneNumber(cloud.rotationY, 0);
+      var rz = sceneNumber(cloud.rotationZ, 0);
+      var m = rx || ry || rz ? scenePointsRotationMatrix(rx, ry, rz) : null;
+      for (var particle = 0; particle < count; particle++) {
+        var lx = positions[particle * 3];
+        var ly = positions[particle * 3 + 1];
+        var lz = positions[particle * 3 + 2];
+        var wx = m ? m[0] * lx + m[1] * ly + m[2] * lz : lx;
+        var wy = m ? m[3] * lx + m[4] * ly + m[5] * lz : ly;
+        var wz = m ? m[6] * lx + m[7] * ly + m[8] * lz : lz;
+        var distance = sceneRaycastSphereHit(ray, wx + offsetX, wy + offsetY, wz + offsetZ, SCENE_POINT_PICK_RADIUS);
+        if (distance < 0 || (closest && distance >= closest.distance)) continue;
+        closest = sceneZeroExtentHit(ray, cloud, cloudIndex, "points", distance, SCENE_POINT_PICK_RADIUS, particle);
+      }
+    }
+    var sprites = Array.isArray(bundle.sprites) ? bundle.sprites : [];
+    for (var spriteIndex = 0; spriteIndex < sprites.length; spriteIndex++) {
+      var sprite = sprites[spriteIndex];
+      // An anchored sprite takes its position from another node at a lower stage,
+      // so it owns no point to intersect. raycastSprite skips it as well.
+      if (sprite && typeof sprite.target === "string" && sprite.target.trim() !== "") continue;
+      var center = sceneSpriteWorldCenter(sprite);
+      if (!center) continue;
+      var scale = sceneNumber(sprite.scale, 1);
+      var radius = SCENE_POINT_PICK_RADIUS * (scale > 0 ? scale : 1);
+      var spriteDistance = sceneRaycastSphereHit(ray, center[0], center[1], center[2], radius);
+      if (spriteDistance < 0 || (closest && spriteDistance >= closest.distance)) continue;
+      closest = sceneZeroExtentHit(ray, sprite, spriteIndex, "sprite", spriteDistance, radius, -1);
+    }
     return closest;
   }
 

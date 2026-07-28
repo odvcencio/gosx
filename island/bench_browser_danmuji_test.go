@@ -85,12 +85,18 @@ func TestBrowserScene3DFrameBudget(t *testing.T) {
 			//line island/bench_browser.dmj:65
 			t.Run("scene is detected", func(t *testing.T) {
 				if report.Scene == nil {
-					t.Skip("no scene detected")
+					t.Fatal("no Scene3D metrics for /demos/galaxy. The route ships a scene, so a " +
+						"missing report means scene detection stopped working — and a regression " +
+						"that stops it is exactly what a skip here would hide, taking the frame " +
+						"budget check below with it.")
 				}
 			})
-			//line island/bench_browser.dmj:70
+			//line island/bench_browser.dmj:73
 			t.Run("p95 frame budget is under 16ms", func(t *testing.T) {
-				if report.Scene != nil && report.Scene.FrameStats.P95 > 16 {
+				if report.Scene == nil {
+					t.Fatal("no Scene3D metrics; the frame budget cannot be checked")
+				}
+				if report.Scene.FrameStats.P95 > 16 {
 					t.Fatalf("p95 exceeded: %.2fms", report.Scene.FrameStats.P95)
 				}
 			})

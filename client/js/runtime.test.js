@@ -13,6 +13,8 @@ const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "boot
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const bootstrapFeatureScene3DCommandSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-command.js"), "utf8");
+const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-compute.js"), "utf8");
+const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
 const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
@@ -9152,7 +9154,11 @@ test("bootstrap Scene3D world planner keeps front bounds and drops behind bounds
 });
 
 test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  // The legacy vertex-colour renderer and its shaders left
+  // 10-runtime-scene-core.js for 16e-scene-webgl-legacy.js, which ships in the
+  // WebGL chunk instead of on every Scene3D page. Read the file that holds the
+  // shaders now, and keep every assertion the depth contract had.
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
 
   assert.match(core, /uniform vec2 u_depth_range;/);
   assert.match(core, /a_position\.z - u_camera\.z/);
@@ -11381,16 +11387,28 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
 
   assert.equal(requestedAdapterOptions.powerPreference, "high-performance");
-  assert.deepEqual(Array.from(requestedDescriptor.requiredFeatures), [
-    "timestamp-query",
-    "indirect-first-instance",
-    "shader-f16",
-    "texture-compression-bc",
-    "texture-compression-bc-sliced-3d",
-    "subgroups",
-    "subgroups-f16",
-    "future-rendering-mode",
-  ]);
+  // Compare the SET, not the order. requestDevice reads requiredFeatures as an
+  // unordered collection, so pinning the order tests the loop that builds the
+  // list rather than the contract the browser honours. This assertion used to
+  // pin the order and broke when the block-texture features moved to the front,
+  // even though the requested set was byte-for-byte the same eight names.
+  //
+  // The set still matters exactly: a feature missing here cannot be added after
+  // requestDevice, so a texture-compression feature absent from this list means
+  // every block-compressed upload throws on a device whose adapter supports it.
+  assert.deepEqual(
+    Array.from(requestedDescriptor.requiredFeatures).slice().sort(),
+    [
+      "future-rendering-mode",
+      "indirect-first-instance",
+      "shader-f16",
+      "subgroups",
+      "subgroups-f16",
+      "texture-compression-bc",
+      "texture-compression-bc-sliced-3d",
+      "timestamp-query",
+    ],
+  );
   assert.equal(requestedDescriptor.requiredLimits.maxComputeWorkgroupSizeX, 128);
   assert.equal(requestedDescriptor.requiredLimits.maxTextureDimension2D, 4096);
   const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
@@ -11481,13 +11499,41 @@ test("Scene3D WebGPU probe keeps optional features opt-in for headless devices",
   await flushAsyncWork();
 
   assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
-  assert.equal(requestedDescriptor, undefined);
+
+  // The rule this test pins has TWO halves, and they differ by kind.
+  //
+  // A PERFORMANCE feature stays opt-in. timestamp-query, subgroups and
+  // shader-f16 make an already-correct frame faster or better measured, so a
+  // page that did not ask keeps a lean device and none are requested.
+  //
+  // A BLOCK-TEXTURE feature is NOT optional in the same sense. It is a
+  // prerequisite for content the SERVER may ship: the asset pipeline emits
+  // block-compressed KTX2 variants and the client selects one from the device
+  // token set. A feature cannot be added after requestDevice, so a device
+  // created without texture-compression-bc on a bc-capable adapter throws on
+  // every block upload. Requesting a feature the adapter already reports costs
+  // nothing when the page never uploads a block texture.
+  //
+  // So the descriptor now exists and carries exactly the compression features
+  // the adapter offers, and nothing else.
+  const requested = Array.from((requestedDescriptor && requestedDescriptor.requiredFeatures) || []);
+  assert.deepEqual(requested, ["texture-compression-bc"],
+    "a non-adaptive page must request the adapter's block-texture features and no performance features");
+
   const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
   assert.equal(diagnostics.ready, true);
   assert.ok(diagnostics.supportedFeatures.includes("timestamp-query"));
-  assert.equal(diagnostics.requestedFeatures.length, 0);
-  assert.equal(diagnostics.deviceFeatures.length, 0);
-  assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:timestamp-query"), false);
+  // Array.from crosses the realm: diagnostics comes from the sandbox context,
+  // so its arrays carry the sandbox Array.prototype and deepEqual reports
+  // "same structure but not reference-equal" against a literal built here.
+  const reported = Array.from(diagnostics.requestedFeatures);
+  assert.deepEqual(reported, ["texture-compression-bc"]);
+  // The performance features stay off, which is the half that must not regress.
+  for (const perf of ["timestamp-query", "subgroups", "shader-f16", "indirect-first-instance"]) {
+    assert.equal(reported.includes(perf), false,
+      perf + " is a performance feature and must stay opt-in");
+    assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:" + perf), false);
+  }
 });
 
 test("Scene3D adaptive WebGPU requests only supported timestamp-query", async () => {
@@ -12397,6 +12443,14 @@ test("selective Scene3D bootstrap exposes CPU compute particles for WebGL", asyn
   const env = createContext({});
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+
+  // The base chunk carries no particle code any more. Prove that first, then
+  // load the compute chunk and prove it fills the same API slots. A scene with
+  // no particle system and no instanced mesh never reaches this fetch.
+  assert.equal(typeof env.context.__gosx_scene3d_api.createSceneParticleSystem, "undefined",
+    "the base scene3d chunk must not carry the particle systems");
+  runScript(bootstrapFeatureScene3DComputeSource, env.context, "bootstrap-feature-scene3d-compute.js");
   await flushAsyncWork();
 
   const api = env.context.__gosx_scene3d_api;
@@ -25008,6 +25062,14 @@ async function createBoardWebGPUHarness(options) {
 
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(scene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  // The GPU instanced cull moved to bootstrap-feature-scene3d-compute.js. Any
+  // board scene here carries instanced meshes, so the mount would fetch the
+  // chunk in a browser. Load it the same way.
+  runScript(
+    opts.fresh ? freshFeatureBundleSource("scene3d-compute") : bootstrapFeatureScene3DComputeSource,
+    env.context,
+    "bootstrap-feature-scene3d-compute.js",
+  );
   await flushAsyncWork();
   assert.ok(env.context.__gosx_scene3d_api, "scene3d chunk must publish __gosx_scene3d_api");
 
@@ -28328,6 +28390,11 @@ async function createComputeParticleHarness(fakeDevice) {
 
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  // The particle systems and the GPU instanced cull left the base chunk for
+  // bootstrap-feature-scene3d-compute.js. The mount fetches it for a scene
+  // that declares particles or instanced meshes, which is exactly what these
+  // harnesses build, so load it here the way the browser would.
+  runScript(bootstrapFeatureScene3DComputeSource, env.context, "bootstrap-feature-scene3d-compute.js");
   await flushAsyncWork();
 
   env.context.__gosx_scene3d_webgpu_probe = function() {
@@ -30540,6 +30607,11 @@ async function createCullSystemHarness(fakeDevice) {
   };
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  // The particle systems and the GPU instanced cull left the base chunk for
+  // bootstrap-feature-scene3d-compute.js. The mount fetches it for a scene
+  // that declares particles or instanced meshes, which is exactly what these
+  // harnesses build, so load it here the way the browser would.
+  runScript(bootstrapFeatureScene3DComputeSource, env.context, "bootstrap-feature-scene3d-compute.js");
   await flushAsyncWork();
 
   env.context.__gosx_scene3d_webgpu_probe = function() {
@@ -34180,4 +34252,72 @@ test("Scene3D primitive kinds all build solid triangle meshes", () => {
     const wanted = kind === "plane" ? 2 : 3;
     assert.ok(spread >= wanted, `${kind} must span ${wanted} axes, spans ${spread} (${extent})`);
   }
+});
+
+// A Points cloud and a Sprite must be pickable through the bundle the runtime
+// really builds, not only through a bundle a test writes by hand.
+//
+// scene.TraceGraph picks both families in Go. sceneRaycastPick reached neither
+// until it started to call sceneRaycastPickPoints, so a headless test proved a
+// hit the browser could not reproduce. The sprite half needs two fields
+// appendSceneSpriteToBundle now writes: `world`, because `position` holds the
+// projected screen point and a ray needs the world one, and `scale`, because
+// spriteRadiusScale in scene/raycast.go grows the hit radius with it.
+//
+// The camera sits at (0, 0, 4) and looks down -Z, so a pick through the middle of
+// the viewport travels the same ray the Go tests use. A particle at (0, 0, -3)
+// therefore answers at 7 - 0.1 = 6.9.
+test("Scene3D render bundles keep Points and Sprites ray-pickable", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const camera = { x: 0, y: 0, z: 4, fov: 75, near: 0.05, far: 128 };
+  const sprite = api.normalizeSceneSprite({ id: "badge", src: "/badge.png", x: 0, y: 0, z: -3, scale: 2 }, 0, null);
+  const bundle = api.createSceneRenderBundle(
+    640,
+    360,
+    "#08151f",
+    camera,
+    [],
+    [],
+    [sprite],
+    [],
+    [],
+    { ambientColor: "#ffffff", ambientIntensity: 0.1 },
+    0,
+    [{ id: "stars", count: 2, positions: [4, 4, -3, 0, 0, -3], size: 2 }],
+    [],
+    [],
+    [],
+    [],
+    0,
+  );
+
+  assert.equal(bundle.sprites.length, 1);
+  // Read the fields one by one: the bundle is built inside the script realm, so a
+  // deep compare against a literal from this realm fails on the prototype alone.
+  assert.equal(bundle.sprites[0].world.x, 0);
+  assert.equal(bundle.sprites[0].world.y, 0);
+  assert.equal(bundle.sprites[0].world.z, -3);
+  assert.equal(bundle.sprites[0].scale, 2);
+
+  // The sprite radius is 0.1 * scale, so the sprite answers first at 6.8.
+  const spriteHit = api.sceneRaycastPick(320, 180, 640, 360, bundle.camera, bundle);
+  assert.ok(spriteHit, "expected a ray pick on the sprite");
+  assert.equal(spriteHit.object.id, "badge");
+  assert.equal(spriteHit.kind, "sprite");
+  assert.ok(Math.abs(spriteHit.distance - 6.8) < 1e-9, `sprite distance ${spriteHit.distance}`);
+
+  // Drop the sprite and the particle behind it answers at 6.9, with the particle
+  // index Go reports through RayHit.InstanceIndex.
+  const pointsOnly = Object.assign({}, bundle, { sprites: [] });
+  const pointsHit = api.sceneRaycastPick(320, 180, 640, 360, pointsOnly.camera, pointsOnly);
+  assert.ok(pointsHit, "expected a ray pick on the point cloud");
+  assert.equal(pointsHit.object.id, "stars");
+  assert.equal(pointsHit.kind, "points");
+  assert.equal(pointsHit.instanceIndex, 1);
+  assert.ok(Math.abs(pointsHit.distance - 6.9) < 1e-9, `points distance ${pointsHit.distance}`);
+  assert.ok(Math.abs(pointsHit.worldPosition.z - -2.9) < 1e-9, `points hit z ${pointsHit.worldPosition.z}`);
 });

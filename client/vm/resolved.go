@@ -8,6 +8,34 @@ type ResolvedTree struct {
 	Nodes []ResolvedNode
 }
 
+// reset empties the tree for a fresh walk and keeps the node array when it is
+// already large enough. hint is the node count the walk expects.
+//
+// Reusing the array is what makes a steady-state reconcile allocation-free.
+// A resolved node is 160 bytes and holds five pointers, so a six-node counter
+// island allocated a 1 KB pointer-dense object on every event. That object
+// dominated both the allocator and the garbage collector in a CPU profile of
+// the dispatch and reconcile benchmarks.
+//
+// Every entry the walk writes is a whole struct assignment, so a stale field
+// from the previous generation can never survive into the new tree.
+func (tree *ResolvedTree) reset(hint int) {
+	if cap(tree.Nodes) < hint {
+		tree.Nodes = make([]ResolvedNode, 0, hint)
+		return
+	}
+	tree.Nodes = tree.Nodes[:0]
+}
+
+// releaseTail zeroes the array entries past the new length so a tree that
+// shrank does not keep the strings and slices of the previous generation
+// alive. The common case is a tree of unchanged size, where the tail is empty
+// and this costs nothing.
+func (tree *ResolvedTree) releaseTail() {
+	nodes := tree.Nodes
+	clear(nodes[len(nodes):cap(nodes)])
+}
+
 // ResolvedNode is a single node in the resolved tree.
 type ResolvedNode struct {
 	Source    int

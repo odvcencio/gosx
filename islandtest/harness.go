@@ -46,7 +46,21 @@ func (h *Harness) HTML() string {
 	return island.RenderResolvedHTML(h.program, h.island.CurrentTree())
 }
 
-// Tree returns the current resolved tree. Callers should treat it as read-only.
+// Tree returns the current resolved tree. Treat it as read-only, and note that
+// it is only valid until the SECOND Reconcile after this call.
+//
+// The island double-buffers its resolved trees: it keeps the tree it retired one
+// generation ago and walks into that buffer instead of allocating a fresh one.
+// That is what took a reconcile from about 1 KB and 3 allocations down to 8
+// bytes and 1. The cost is a lifetime: the next Reconcile writes into the OTHER
+// buffer, so the tree this returns survives it, and the one after that
+// overwrites the tree in place.
+//
+// So a caller may read it, compare it, or render it. A caller must not hold it
+// across two reconciles and expect the old contents, and must not mutate it —
+// the island will read the same array as its previous generation.
+//
+// HTML() is safe because it uses the tree immediately and returns a string.
 func (h *Harness) Tree() *vm.ResolvedTree {
 	if h == nil || h.island == nil {
 		return nil

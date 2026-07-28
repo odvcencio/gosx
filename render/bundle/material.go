@@ -27,10 +27,12 @@ type materialFingerprint struct {
 	// normalURL: "" means no normal map; the shader keeps the interpolated
 	// geometric normal and ignores the bound fallback texture.
 	normalURL string
-	// roughnessURL / metalnessURL / emissiveURL: separate glTF-PBR map
-	// slots. When set the shader samples the map's red channel and
-	// multiplies it against the scalar factor in pbrParams. Empty = fallback
-	// white, which degrades to the flat factor only (no tint).
+	// roughnessURL / metalnessURL / emissiveURL: separate glTF map slots.
+	// litWGSL samples roughness from green and metalness from blue, the
+	// channels glTF 2.0 defines, and multiplies each one against the scalar
+	// factor in pbrParams. The emissive map replaces the emissive colour, it
+	// does not tint it. Empty means the 1x1 white fallback, which leaves the
+	// flat factor unchanged.
 	roughnessURL string
 	metalnessURL string
 	emissiveURL  string
@@ -144,9 +146,14 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		// materials to a practical default while preserving explicit values.
 		rough = 0.4
 	}
-	// RenderMaterial.Emissive is a scalar strength in the bundle schema; we
-	// interpret it as a multiplier on the base color to avoid needing a
-	// separate emissive color. A dedicated emissive color lands in R3.
+	// RenderMaterial.Emissive is a scalar strength in the bundle schema, so the
+	// emissive colour has to come from somewhere else. Both browser renderers
+	// start from the shaded albedo. litWGSL now does the same: it takes the base
+	// colour it already sampled, and lets an emissive map replace it. The
+	// emissiveR/G/B lanes below therefore hold the flat base colour, and litWGSL
+	// no longer reads them. Keep them: they hold the Material.emissive vec4 that
+	// fixes the offset of every later field, and a dedicated emissive colour
+	// will fill them.
 	emissiveStrength := float32(mat.Emissive)
 	return materialFingerprint{
 		baseColorR:       quantize(base[0]),
@@ -313,7 +320,7 @@ func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.B
 //
 //	 0..16  baseColor     vec4 (rgba)
 //	16..32  pbrParams     vec4 (metalness, roughness, emissiveStrength, useVertexColor)
-//	32..48  emissive      vec4 (rgba)
+//	32..48  emissive      vec4 (rgba) — reserved, litWGSL reads baseColor
 //	48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
 //	64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
 //	80..96  physicalParams vec4 (clearcoat, sheen, transmission, iridescence)

@@ -170,12 +170,35 @@ func TestRunSceneCheckWithoutAssetRootSaysItDidNotLook(t *testing.T) {
 // TestRunSceneCheckSurfacesPreviewCoverageGaps proves the loop never returns a
 // silent blank frame for geometry the CPU rasterizer cannot draw.
 func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
+	// "knot" is here to prove a NEGATIVE, and it used to prove the opposite.
+	//
+	// This test asserted that a torusknot reports unsupported_geometry. That
+	// diagnostic was wrong: render/bundle delegates to scene/geom.buildTorusKnot
+	// and a headless render of one produces 785 non-background pixels, while
+	// preview.CanRasterizeKind returned false for it. So the warning told an
+	// author to delete working geometry, which is worse than a missing warning.
+	// CanRasterizeKind now delegates to geom.NormalizeKind, the same function
+	// render/bundle calls, so the two cannot drift apart again.
+	//
+	// "gap" uses a kind the rasterizer genuinely cannot draw. rasterizeDraw
+	// handles bundle.lit, bundle.unlit, bundle.shadow and particles, and skips
+	// bundle.worldLine, so a line list draws nothing on the CPU path.
+	//
+	// "lamp" is a rect-area light because that is the one authored light kind
+	// the CPU preview genuinely cannot shade. Point lights are supported and
+	// must not be used as the positive fixture for unsupported_light.
+	//
+	// Note that a polyhedron would NOT work here: tetrahedron, icosahedron and
+	// the rest carry no wire kind of their own. They lower to "gltf-mesh" with
+	// baked vertices, so the schema vocabulary rejects their authored names and
+	// the document would fail validation before any diagnostic ran.
 	document := `{"schema":"gosx.scene3d.ir.v1","objects":[
+		{"id":"gap","kind":"lines","positions":[0,0,0,1,1,1]},
 		{"id":"knot","kind":"torusknot","radius":0.6,"tube":0.2},
 		{"id":"ok","kind":"cube","size":1,"x":-2}
 	],"lights":[
 		{"id":"key","kind":"directional","directionY":-1,"intensity":1},
-		{"id":"lamp","kind":"point","intensity":3,"y":3}
+		{"id":"lamp","kind":"rect-area","intensity":3,"y":3,"width":4,"height":4}
 	]}`
 	_, scenePath, _ := writeCheckFixture(t, document)
 
@@ -196,13 +219,21 @@ func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
 			codes[diag.Code+"/"+diag.Target] = diag.Message
 		}
 	}
-	for _, key := range []string{"scene.preview.unsupported_geometry/knot", "scene.preview.unsupported_light/lamp"} {
+	for _, key := range []string{"scene.preview.unsupported_geometry/gap", "scene.preview.unsupported_light/lamp"} {
 		if _, ok := codes[key]; !ok {
 			t.Fatalf("expected %s in frame diagnostics: %v", key, codes)
 		}
 	}
-	if _, ok := codes["scene.preview.unsupported_geometry/ok"]; ok {
-		t.Fatal("a drawable cube must not be reported as unsupported")
+	// The two negatives matter as much as the positives. A diagnostic that names
+	// a kind the rasterizer DOES draw sends an author to delete working
+	// geometry, so both of these must stay absent.
+	for _, key := range []string{
+		"scene.preview.unsupported_geometry/ok",
+		"scene.preview.unsupported_geometry/knot",
+	} {
+		if message, ok := codes[key]; ok {
+			t.Fatalf("%s is drawable and must not be reported as unsupported, got %q", key, message)
+		}
 	}
 }
 

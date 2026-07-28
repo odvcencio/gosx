@@ -15,10 +15,26 @@ const (
 	defaultBloomScale     = 0.5
 )
 
-// brightPassWGSL does two things in one shader: threshold-filter the HDR
-// image (anything dimmer than 1.0 contributes zero) and downsample by
-// bilinear sampling a 2x2 tap pattern. The output lives in a half-res RGBA16F
-// target that feeds the blur chain.
+// brightPassWGSL selects the part of the HDR image that blooms and writes it to
+// a half-res target that feeds the blur chain. One bilinear sample per output
+// texel does the downsample, because the target is half the size of the source.
+//
+// The threshold is a soft knee, not a cut. The shader subtracts the authored
+// threshold from the luminance and scales the colour by t/(t+1). Keep it.
+//
+// WHY THE KNEE. A hard cut is not continuous at the dial: a pixel one part in a
+// thousand under the threshold contributes nothing, and the same pixel one part
+// over contributes its full colour. A slow camera move then makes a highlight
+// snap on. The knee crosses zero smoothly, so the same move fades it in.
+//
+// The browser copy, WGSL_POST_BLOOM_BRIGHT_FRAGMENT in
+// client/js/bootstrap-src/16a-scene-webgpu.js, used the hard cut and adopted the
+// knee on 2026-07-27. Both copies now scale by excess/(excess + 1.0), so the
+// term is an agreement rather than a difference.
+//
+// The bright-pass-soft-knee row of brightSharedTerms in
+// render/bundle/postfx_drift_test.go pins both copies. Either side reverting to
+// a cut fails there.
 const brightPassWGSL = `
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -124,9 +140,14 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 }
 `
 
-// composePresentWGSL samples HDR + bloom and applies ACES tone mapping into
-// an LDR intermediate. Anti-aliasing is intentionally not folded into this
-// shader; the following FXAA pass evaluates final display luminance.
+// composePresentWGSL samples the HDR target and the blurred bloom target, adds
+// them, and runs the authored tone-map operator into an LDR intermediate.
+// Anti-aliasing is intentionally not folded into this shader; the following
+// FXAA pass evaluates final display luminance.
+//
+// This shader is the specification for the CPU path. newComposePresentFragment in
+// render/gpu/headless/postfx.go evaluates the same terms per pixel, so a
+// headless capture and a poster frame carry the authored curve.
 const composePresentWGSL = `
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -186,14 +207,27 @@ fn filmicToneMap(x : vec3<f32>) -> vec3<f32> {
                vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// applyToneMap selects one operator by the mode lane of the present uniform.
+// The mode numbers are the browser numbers, so an authored string reaches the
+// same operator on both backends. Read toneMapModeCode below for the table.
+//
+// Mode 0 is the clamp. It exists because an author who writes
+// Environment.ToneMapping = "none" asks for no curve. This shader used to fold
+// every unknown mode to ACES, so "none" applied a full filmic curve natively
+// and a clamp in the browser. The same scene then read darker on the server.
+//
+// The two max() calls guard a negative exposure and a negative input. Neither
+// can occur today, because configureToneMap forces the exposure above zero and
+// the lit pass writes no negative colour.
 fn applyToneMap(x : vec3<f32>) -> vec3<f32> {
   let exposed = max(x * max(present.params.y, 0.0), vec3<f32>(0.0));
-  let mode = present.params.x;
-  if (mode > 1.5) {
-    return filmicToneMap(exposed);
-  }
-  if (mode > 0.5) {
+  let mode = i32(present.params.x);
+  if (mode == 0) {
+    return clamp(exposed, vec3<f32>(0.0), vec3<f32>(1.0));
+  } else if (mode == 2) {
     return reinhardToneMap(exposed);
+  } else if (mode == 3) {
+    return filmicToneMap(exposed);
   }
   return acesFilmic(exposed);
 }
@@ -596,14 +630,37 @@ func resolveToneMapConfig(b engine.RenderBundle) toneMapConfig {
 	return cfg
 }
 
+// toneMapModeCode turns an authored tone-map name into the mode lane of the
+// present uniform.
+//
+// The numbers are the browser numbers. Three browser functions use exactly this
+// table, so one authored string reaches one operator on every backend:
+//
+//   - 0 — "linear" or "none": clamp only, no curve.
+//   - 1 — anything else, including the empty string: ACES filmic.
+//   - 2 — "reinhard".
+//   - 3 — "filmic".
+//
+// The three are sceneWebGPUToneMapMode in 16a-scene-webgpu.js, and both
+// scenePostToneMapMode and sceneToneMapMode in 16-scene-webgl.js. The last of
+// the three joined the table on 2026-07-27; before that it mapped neither
+// "none" nor "filmic" and it skipped the trim, so a WebGL2 page without a post
+// chain answered differently from the same page with one.
+//
+// This function used to return 0 for every unknown name, and 0 used to mean
+// ACES. "none" therefore applied a full ACES curve natively while the browser
+// only clamped. TestToneMapModeTablesAgreeAcrossAllFourCopies pins all four
+// copies, and TestBrowserToneMapTablesNormalizeTheAuthoredName pins the trim.
 func toneMapModeCode(mode string) float32 {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "reinhard":
-		return 1
-	case "filmic":
-		return 2
-	default:
+	case "linear", "none":
 		return 0
+	case "reinhard":
+		return 2
+	case "filmic":
+		return 3
+	default:
+		return 1
 	}
 }
 
