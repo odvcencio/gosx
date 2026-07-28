@@ -93,13 +93,233 @@
 
     // Apply every operation in order.  The WASM side guarantees a safe ordering
     // (e.g. removals go last-to-first so indices stay valid).
-    for (var i = 0; i < ops.length; i++) {
-      applyPatch(root, ops[i]);
+    beginPathCache(root);
+    try {
+      for (var i = 0; i < ops.length; i++) {
+        applyPatch(root, ops[i]);
+      }
+    } finally {
+      endPathCache();
     }
 
     // Restore focus / cursor position.
     restoreFocus(focusState);
   };
+
+  // ---------------------------------------------------------------------------
+  // Path resolution cache
+  // ---------------------------------------------------------------------------
+  //
+  // Ops arrive in depth-first order, so one batch repeats the same path
+  // prefixes many times. Uncached, every op re-walks from the island root and
+  // every step copies the child list: a 100-row list costs about 41,000
+  // child-node visits to place 400 nodes. The cache holds one entry per
+  // resolved prefix for the life of one batch, and each entry keeps a cursor
+  // so a forward walk resumes where the last one stopped. One list build then
+  // costs one pass over the children, not one pass per row.
+  //
+  // A stale entry patches the wrong element in silence, so every op that
+  // changes a child list must dirty the entry owning that list. applyPatch
+  // names the dirtied entry per kind. Attribute and value ops change no child
+  // list and dirty nothing.
+
+  // Root entry of the batch in flight, or null between batches. A null cache
+  // sends every resolve down the plain walk.
+  var pathCache = null;
+
+  // Marks a path the fast walker refuses. Only slash-separated decimal digits
+  // take the cached route; anything else falls back to the lenient parseInt
+  // walk so odd paths keep their old behaviour.
+  var MALFORMED = { malformed: true };
+
+  /**
+   * Build a cache entry.
+   *
+   * box is skipImplicit(node) — the node that owns the child indices. kids maps
+   * effective child index to entry. cursor* memoize the last child resolved
+   * here. attached is true only for entries reachable from the cache root; a
+   * detached entry reads fine but its position is unknown, so dirtying it
+   * dirties the whole cache.
+   *
+   * @param {Node} node
+   * @param {boolean} attached
+   */
+  function newCacheEntry(node, attached) {
+    return {
+      node: node,
+      attached: attached,
+      box: null,
+      kids: null,
+      cursorIndex: -1,
+      cursorRaw: -1,
+      cursorNode: null,
+    };
+  }
+
+  /** Install a fresh cache for one apply pass. */
+  function beginPathCache(root) {
+    pathCache = newCacheEntry(root, true);
+  }
+
+  /** Drop the cache so no entry outlives the batch that built it. */
+  function endPathCache() {
+    pathCache = null;
+  }
+
+  /**
+   * Forget what an entry knows about its children. Clearing kids releases every
+   * descendant, so one call covers the whole subtree below the changed list.
+   *
+   * @param {Object|null} entry
+   */
+  function dropChildState(entry) {
+    if (!entry) return;
+    // Unknown position: dirty the root rather than leave a stale descendant.
+    if (!entry.attached) entry = pathCache;
+    if (!entry) return;
+    entry.box = null;
+    entry.kids = null;
+    entry.cursorIndex = -1;
+    entry.cursorRaw = -1;
+    entry.cursorNode = null;
+  }
+
+  /**
+   * Keep the child state after a node was appended past every existing child.
+   * An append shifts no index, so the memoized children and the cursor stay
+   * correct — this is what makes a list build linear.
+   *
+   * One risk: appending the first element child can make skipImplicit pick a
+   * <tbody>, which remaps every index. Drop the child state in that case.
+   *
+   * @param {Object|null} entry
+   */
+  function noteChildAppended(entry) {
+    if (!entry) return;
+    if (!entry.attached) {
+      dropChildState(pathCache);
+      return;
+    }
+    if (entry.box === null) return; // nothing memoized yet
+    if (entry.box !== entry.node || skipImplicit(entry.node) !== entry.node) {
+      dropChildState(entry);
+    }
+  }
+
+  /**
+   * Dirty the entry that owns `path`. Removing or replacing a node changes its
+   * parent's child list, not its own.
+   *
+   * @param {Element} root
+   * @param {string} path
+   */
+  function dropParentChildState(root, path) {
+    if (pathCache === null) return;
+    var text = String(path == null ? "" : path);
+    var cut = text.lastIndexOf("/");
+    if (cut < 0) {
+      dropChildState(pathCache);
+      return;
+    }
+    dropChildState(resolveEntry(root, text.slice(0, cut)));
+  }
+
+  /** Return skipImplicit(entry.node), computed once per child-list version. */
+  function entryBox(entry) {
+    if (entry.box === null) entry.box = skipImplicit(entry.node);
+    return entry.box;
+  }
+
+  /**
+   * Return the effective child of `entry` at `index`, or null. Effective
+   * children are elements and text nodes, matching the Go VDOM's child list.
+   * The scan resumes from the cursor when index sits at or after it, so a
+   * left-to-right build visits each child once.
+   *
+   * @param {Object} entry
+   * @param {number} index
+   * @returns {Node|null}
+   */
+  function effectiveChildAt(entry, index) {
+    if (!(index >= 0)) return null;
+    var box = entryBox(entry);
+    var children = box.childNodes;
+    if (!children) return null;
+    var total = children.length;
+    var elementType = Node.ELEMENT_NODE;
+    var textType = Node.TEXT_NODE;
+
+    var raw = 0;
+    var count = 0;
+    if (entry.cursorIndex >= 0 && entry.cursorIndex <= index) {
+      if (entry.cursorIndex === index) return entry.cursorNode;
+      raw = entry.cursorRaw + 1;
+      count = entry.cursorIndex + 1;
+    }
+
+    for (; raw < total; raw++) {
+      var child = children[raw];
+      var kind = child.nodeType;
+      if (kind !== elementType && kind !== textType) continue;
+      if (count === index) {
+        entry.cursorIndex = index;
+        entry.cursorRaw = raw;
+        entry.cursorNode = child;
+        return child;
+      }
+      count++;
+    }
+    return null;
+  }
+
+  /** Return the memoized cache entry for the child at `index`, or null. */
+  function childEntry(entry, index) {
+    var kids = entry.kids;
+    if (kids !== null) {
+      var cached = kids.get(index);
+      if (cached !== undefined) return cached;
+    }
+    var node = effectiveChildAt(entry, index);
+    if (node === null) return null;
+    var created = newCacheEntry(node, true);
+    if (kids === null) {
+      kids = new Map();
+      entry.kids = kids;
+    }
+    kids.set(index, created);
+    return created;
+  }
+
+  /**
+   * Walk `path` through the cache, memoizing every prefix. Returns the entry,
+   * null when the path does not resolve, or MALFORMED when the path is not a
+   * plain slash-separated digit list.
+   *
+   * @param {string} path
+   * @returns {Object|null}
+   */
+  function walkCachedPath(path) {
+    var entry = pathCache;
+    var len = path.length;
+    var i = 0;
+    for (;;) {
+      var value = 0;
+      var digits = 0;
+      while (i < len) {
+        var code = path.charCodeAt(i);
+        if (code === 47) break; // '/'
+        if (code < 48 || code > 57) return MALFORMED;
+        value = value * 10 + (code - 48);
+        digits++;
+        i++;
+      }
+      if (digits === 0) return MALFORMED;
+      entry = childEntry(entry, value);
+      if (entry === null) return null;
+      if (i >= len) return entry;
+      i++; // step over the separator
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Path resolution
@@ -116,8 +336,40 @@
    * @returns {Node|null}
    */
   function resolvePath(root, path) {
-    if (!path || path === "") return root;
+    var entry = resolveEntry(root, path);
+    return entry === null ? null : entry.node;
+  }
 
+  /**
+   * Resolve a path to a cache entry, which mutating callers need so they can
+   * dirty it. Rejected paths and resolves made between batches get a detached
+   * entry: correct to read, safe to dirty.
+   *
+   * @param {Element} root
+   * @param {string} path
+   * @returns {Object|null}
+   */
+  function resolveEntry(root, path) {
+    if (!path || path === "") {
+      return pathCache !== null ? pathCache : newCacheEntry(root, false);
+    }
+    if (pathCache !== null) {
+      var entry = walkCachedPath(path);
+      if (entry !== MALFORMED) return entry;
+    }
+    var node = walkPathUncached(root, path);
+    return node === null ? null : newCacheEntry(node, false);
+  }
+
+  /**
+   * Walk a path with no cache. The original resolver, kept for malformed paths
+   * and for resolves made outside a batch.
+   *
+   * @param {Element} root
+   * @param {string} path
+   * @returns {Node|null}
+   */
+  function walkPathUncached(root, path) {
     var indices = path.split("/");
     var node = root;
 
@@ -184,6 +436,9 @@
     } else {
       resolved.parent.insertBefore(textNode, children[resolved.index]);
     }
+    // The insert changed the parent's child list. Dirty it so later ops see
+    // the new node instead of a cached pre-insert sibling.
+    dropParentChildState(root, path);
     return textNode;
   }
 
@@ -242,30 +497,25 @@
    * @param {Object}  op   - A PatchOp object (deserialized from JSON).
    */
   function applyPatch(root, op) {
-    var target = resolvePath(root, op.path);
+    var entry = resolveEntry(root, op.path);
+    var target = entry === null ? null : entry.node;
+
     if (!target && op.kind === PATCH_SET_TEXT) {
       target = createMissingTextTarget(root, op.path);
+      // The fresh text node owns no children, so there is nothing to dirty.
+      entry = null;
     }
 
     if (!target) {
-      var warnKey = String(op.path || "") + ":" + String(op.kind);
-      if (
-        typeof console !== "undefined" &&
-        !missingPatchPathWarnings.has(warnKey) &&
-        missingPatchPathWarnings.size < MAX_MISSING_PATCH_WARNINGS
-      ) {
-        missingPatchPathWarnings.add(warnKey);
-        console.warn(
-          "[gosx/patch] could not resolve path: " + op.path +
-          " (kind=" + op.kind + ")"
-        );
-      }
+      warnUnresolvedPath(op);
       return;
     }
 
     switch (op.kind) {
       case PATCH_SET_TEXT:
         applySetText(target, op);
+        // textContent replaces every child of an element target.
+        dropChildState(entry);
         break;
 
       case PATCH_SET_ATTR:
@@ -277,23 +527,32 @@
         break;
 
       case PATCH_CREATE_ELEMENT:
-        applyCreateElement(target, op);
+        // An insert before the end shifts every later sibling; an append
+        // shifts nothing, so the memoized children survive it.
+        if (applyCreateElement(target, op)) noteChildAppended(entry);
+        else dropChildState(entry);
         break;
 
       case PATCH_CREATE_TEXT:
-        applyCreateText(target, op);
+        if (applyCreateText(target, op)) noteChildAppended(entry);
+        else dropChildState(entry);
         break;
 
       case PATCH_REMOVE_ELEMENT:
         applyRemoveElement(target);
+        // The target leaves its parent's child list.
+        dropParentChildState(root, op.path);
         break;
 
       case PATCH_REPLACE_ELEMENT:
         applyReplaceElement(target, op);
+        // A different node now sits at this index of the parent.
+        dropParentChildState(root, op.path);
         break;
 
       case PATCH_REORDER:
         applyReorder(target, op);
+        dropChildState(entry);
         break;
 
       case PATCH_SET_VALUE:
@@ -302,12 +561,29 @@
 
       case PATCH_SET_HTML:
         applySetHTML(target, op);
+        dropChildState(entry);
         break;
 
       default:
         if (typeof console !== "undefined") {
           console.warn("[gosx/patch] unknown patch kind: " + op.kind);
         }
+    }
+  }
+
+  /** Warn once per path/kind pair that failed to resolve. */
+  function warnUnresolvedPath(op) {
+    var warnKey = String(op.path || "") + ":" + String(op.kind);
+    if (
+      typeof console !== "undefined" &&
+      !missingPatchPathWarnings.has(warnKey) &&
+      missingPatchPathWarnings.size < MAX_MISSING_PATCH_WARNINGS
+    ) {
+      missingPatchPathWarnings.add(warnKey);
+      console.warn(
+        "[gosx/patch] could not resolve path: " + op.path +
+        " (kind=" + op.kind + ")"
+      );
     }
   }
 
@@ -358,6 +634,8 @@
    * op.tag      — tag name for the new element (e.g. "div").
    * op.text     — optional initial text content.
    * op.children — optional [insertIndex] indicating position among siblings.
+   *
+   * Returns true when the node landed after every existing child.
    */
   function applyCreateElement(target, op) {
     var el = document.createElement(op.tag);
@@ -366,37 +644,43 @@
       el.textContent = op.text;
     }
 
-    // Determine insertion position.  op.children[0] is the desired child
-    // index; if omitted we append.
-    var insertIdx =
-      op.children && op.children.length > 0
-        ? op.children[0]
-        : target.childNodes.length;
-
-    if (insertIdx < target.childNodes.length) {
-      target.insertBefore(el, target.childNodes[insertIdx]);
-    } else {
-      target.appendChild(el);
-    }
+    return insertChildAt(target, el, op);
   }
 
   /**
    * Kind 4 — CreateText: create a new text node and insert it as a child of
    * the target (the path points to the *parent*).
+   *
+   * Returns true when the node landed after every existing child.
    */
   function applyCreateText(target, op) {
     var text = document.createTextNode(op.text == null ? "" : String(op.text));
 
-    var insertIdx =
-      op.children && op.children.length > 0
-        ? op.children[0]
-        : target.childNodes.length;
+    return insertChildAt(target, text, op);
+  }
 
-    if (insertIdx < target.childNodes.length) {
-      target.insertBefore(text, target.childNodes[insertIdx]);
-    } else {
-      target.appendChild(text);
+  /**
+   * Insert `node` into `target` at the offset the op carries. op.children[0]
+   * holds the wanted offset; a missing list means append. The child list is
+   * read once, because a live NodeList read is not free.
+   *
+   * @param {Node} target
+   * @param {Node} node
+   * @param {Object} op
+   * @returns {boolean} true when the node landed after every existing child.
+   */
+  function insertChildAt(target, node, op) {
+    var children = target.childNodes;
+    var count = children.length;
+    var insertIdx =
+      op.children && op.children.length > 0 ? op.children[0] : count;
+
+    if (insertIdx < count) {
+      target.insertBefore(node, children[insertIdx]);
+      return false;
     }
+    target.appendChild(node);
+    return true;
   }
 
   /**
