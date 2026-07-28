@@ -9,7 +9,7 @@ import (
 )
 
 // VariantManifestSchemaVersion versions the variant manifest contract.
-const VariantManifestSchemaVersion = 1
+const VariantManifestSchemaVersion = 2
 
 // VariantManifest is the file a server reads to choose an asset variant without
 // opening the asset.
@@ -48,6 +48,12 @@ type ManifestAsset struct {
 type ManifestVariant struct {
 	URI                  string   `json:"uri"`
 	Kind                 string   `json:"kind,omitempty"`
+	Role                 string   `json:"role,omitempty"`
+	ColorSpace           string   `json:"colorSpace,omitempty"`
+	Channels             string   `json:"channels,omitempty"`
+	View                 string   `json:"view,omitempty"`
+	Format               string   `json:"format,omitempty"`
+	MipLevels            int      `json:"mipLevels,omitempty"`
 	Quality              string   `json:"quality,omitempty"`
 	Compression          string   `json:"compression,omitempty"`
 	Bytes                int64    `json:"bytes,omitempty"`
@@ -82,6 +88,12 @@ func BuildVariantManifest(report Report) VariantManifest {
 			entry.Variants = append(entry.Variants, ManifestVariant{
 				URI:                  variant.URI,
 				Kind:                 variant.Kind,
+				Role:                 variant.Role,
+				ColorSpace:           variant.ColorSpace,
+				Channels:             variant.Channels,
+				View:                 variant.View,
+				Format:               variant.Format,
+				MipLevels:            variant.MipLevels,
 				Quality:              variant.Quality,
 				Compression:          variant.Compression,
 				Bytes:                variant.Bytes,

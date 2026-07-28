@@ -105,6 +105,8 @@ func runPrefilterIBL(ctx *executeContext, asset Asset) (actionOutcome, error) {
 	}
 	keyValues := map[string]string{
 		"GoSXiblModel":     ibl.BRDFModel,
+		"GoSXiblRole":      string(ibl.ProductRoleRadiance),
+		"GoSXColorSpace":   "linear",
 		"GoSXiblRoughness": strings.Join(roughness, ","),
 		"GoSXiblSamples":   strconv.Itoa(samples),
 		"GoSXiblSource":    asset.Path,
@@ -125,8 +127,10 @@ func runPrefilterIBL(ctx *executeContext, asset Asset) (actionOutcome, error) {
 	}
 
 	irradianceBytes, err := ibl.EncodeCubeKTX2Options(ibl.Chain{irradiance}, map[string]string{
-		"GoSXiblModel":  "lambert-sh9",
-		"GoSXiblSource": asset.Path,
+		"GoSXiblModel":   "lambert-sh9",
+		"GoSXiblRole":    string(ibl.ProductRoleIrradiance),
+		"GoSXColorSpace": "linear",
+		"GoSXiblSource":  asset.Path,
 	}, scheme)
 	if err != nil {
 		return actionOutcome{}, err
@@ -137,6 +141,10 @@ func runPrefilterIBL(ctx *executeContext, asset Asset) (actionOutcome, error) {
 		return actionOutcome{}, err
 	}
 
+	brdfLUTURI := strings.TrimSpace(opts.BRDFLUTPath)
+	if brdfLUTURI == "" {
+		brdfLUTURI = plannedVariantURI(asset, "generate-split-sum-lut", ".brdf-lut", ".ktx2")
+	}
 	sidecar := iblSidecar{
 		SchemaVersion:      1,
 		Source:             asset.Path,
@@ -160,6 +168,59 @@ func runPrefilterIBL(ctx *executeContext, asset Asset) (actionOutcome, error) {
 	}
 	for i, coefficient := range harmonics {
 		sidecar.SphericalHarmonics[i] = [3]float64{coefficient.X, coefficient.Y, coefficient.Z}
+	}
+	sidecar.IBL = ibl.EnvironmentDescriptor{
+		SchemaVersion: ibl.DescriptorSchemaVersion,
+		Source:        asset.Path,
+		Radiance: ibl.ProductDescriptor{
+			URI:        specularURI,
+			Role:       ibl.ProductRoleRadiance,
+			ColorSpace: "linear",
+			Channels:   "rgba",
+			View:       "cube",
+			Format:     "rgba16f",
+			MipLevels:  len(chain),
+			Width:      cubeSize,
+			Height:     cubeSize,
+			Faces:      6,
+		},
+		Irradiance: ibl.ProductDescriptor{
+			URI:        irradianceURI,
+			Role:       ibl.ProductRoleIrradiance,
+			ColorSpace: "linear",
+			Channels:   "rgba",
+			View:       "cube",
+			Format:     "rgba16f",
+			MipLevels:  1,
+			Width:      irradianceSize,
+			Height:     irradianceSize,
+			Faces:      6,
+		},
+		BRDFLUT: ibl.ProductDescriptor{
+			URI:        brdfLUTURI,
+			Role:       ibl.ProductRoleBRDFLUT,
+			ColorSpace: "linear",
+			Channels:   "rg",
+			View:       "2d",
+			Format:     "rg16f",
+			MipLevels:  1,
+			Width: func() int {
+				if opts.BRDFLUTSize > 0 {
+					return opts.BRDFLUTSize
+				}
+				return ibl.DefaultBRDFLUTSize
+			}(),
+			Height: func() int {
+				if opts.BRDFLUTSize > 0 {
+					return opts.BRDFLUTSize
+				}
+				return ibl.DefaultBRDFLUTSize
+			}(),
+			Faces: 1,
+		},
+		BRDFModel:          ibl.BRDFModel,
+		RoughnessPerLevel:  append([]float64(nil), sidecar.RoughnessPerLevel...),
+		SphericalHarmonics: append([][3]float64(nil), sidecar.SphericalHarmonics...),
 	}
 	sidecarBytes, err := json.MarshalIndent(sidecar, "", "  ")
 	if err != nil {
@@ -187,6 +248,12 @@ func runPrefilterIBL(ctx *executeContext, asset Asset) (actionOutcome, error) {
 			{
 				URI:                  specularURI,
 				Kind:                 "environment",
+				Role:                 string(ibl.ProductRoleRadiance),
+				ColorSpace:           "linear",
+				Channels:             "rgba",
+				View:                 "cube",
+				Format:               "rgba16f",
+				MipLevels:            len(chain),
 				Compression:          "ktx2",
 				SourceAction:         "prefilter-ibl-ggx",
 				State:                VariantBuilt,
@@ -196,6 +263,12 @@ func runPrefilterIBL(ctx *executeContext, asset Asset) (actionOutcome, error) {
 			{
 				URI:                  irradianceURI,
 				Kind:                 "environment-irradiance",
+				Role:                 string(ibl.ProductRoleIrradiance),
+				ColorSpace:           "linear",
+				Channels:             "rgba",
+				View:                 "cube",
+				Format:               "rgba16f",
+				MipLevels:            1,
 				Compression:          "ktx2",
 				SourceAction:         "prefilter-ibl-ggx",
 				State:                VariantBuilt,
@@ -236,6 +309,8 @@ func runSplitSumLUT(ctx *executeContext, asset Asset) (actionOutcome, error) {
 		lut := ibl.GenerateBRDFLUT(size, samples)
 		encoded, err := ibl.EncodeBRDFLUTKTX2(lut, map[string]string{
 			"GoSXiblModel":   ibl.BRDFModel,
+			"GoSXiblRole":    string(ibl.ProductRoleBRDFLUT),
+			"GoSXColorSpace": "linear",
 			"GoSXlutAxes":    "x=NdotV,y=roughness,texel-centre",
 			"GoSXlutSamples": strconv.Itoa(samples),
 		})
@@ -270,6 +345,12 @@ func runSplitSumLUT(ctx *executeContext, asset Asset) (actionOutcome, error) {
 		outputs: []Variant{{
 			URI:                  uri,
 			Kind:                 "environment-lut",
+			Role:                 string(ibl.ProductRoleBRDFLUT),
+			ColorSpace:           "linear",
+			Channels:             "rg",
+			View:                 "2d",
+			Format:               "rg16f",
+			MipLevels:            1,
 			Compression:          "ktx2",
 			SourceAction:         "generate-split-sum-lut",
 			State:                VariantBuilt,
@@ -287,22 +368,23 @@ func runSplitSumLUT(ctx *executeContext, asset Asset) (actionOutcome, error) {
 // iblSidecar is the JSON contract a renderer reads to bind the generated
 // environment products.
 type iblSidecar struct {
-	SchemaVersion      int          `json:"schemaVersion"`
-	Source             string       `json:"source"`
-	SourceFormat       string       `json:"sourceFormat,omitempty"`
-	SourceWidth        int          `json:"sourceWidth,omitempty"`
-	SourceHeight       int          `json:"sourceHeight,omitempty"`
-	BRDFModel          string       `json:"brdfModel"`
-	SpecularURI        string       `json:"specularUri"`
-	SpecularSize       int          `json:"specularSize"`
-	SpecularMipLevels  int          `json:"specularMipLevels"`
-	SpecularSamples    int          `json:"specularSamples"`
-	IrradianceURI      string       `json:"irradianceUri"`
-	IrradianceSize     int          `json:"irradianceSize"`
-	Format             string       `json:"format"`
-	RoughnessPerLevel  []float64    `json:"roughnessPerLevel"`
-	SphericalHarmonics [][3]float64 `json:"sphericalHarmonics"`
-	Consumer           IBLConsumer  `json:"consumer"`
+	SchemaVersion      int                       `json:"schemaVersion"`
+	Source             string                    `json:"source"`
+	SourceFormat       string                    `json:"sourceFormat,omitempty"`
+	SourceWidth        int                       `json:"sourceWidth,omitempty"`
+	SourceHeight       int                       `json:"sourceHeight,omitempty"`
+	BRDFModel          string                    `json:"brdfModel"`
+	SpecularURI        string                    `json:"specularUri"`
+	SpecularSize       int                       `json:"specularSize"`
+	SpecularMipLevels  int                       `json:"specularMipLevels"`
+	SpecularSamples    int                       `json:"specularSamples"`
+	IrradianceURI      string                    `json:"irradianceUri"`
+	IrradianceSize     int                       `json:"irradianceSize"`
+	Format             string                    `json:"format"`
+	RoughnessPerLevel  []float64                 `json:"roughnessPerLevel"`
+	SphericalHarmonics [][3]float64              `json:"sphericalHarmonics"`
+	IBL                ibl.EnvironmentDescriptor `json:"ibl"`
+	Consumer           IBLConsumer               `json:"consumer"`
 }
 
 // IBLConsumer reports whether a shipped renderer can read these products.
