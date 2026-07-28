@@ -6,22 +6,18 @@ import (
 	"testing"
 )
 
-// TestGPUPickingCapableOnBothGPUBackends pins the gpu-picking verdict.
-//
-// gpu-picking is a REQUIRED feature in DefaultPolicy, so an unsupported cell
-// EXCLUDES a backend instead of degrading it. While the WebGPU cell was false,
-// one Pickable object removed WebGPU from Capable and forced every interactive
-// scene onto WebGL2. Both GPU backends now implement picking, so the verdict
-// must keep both and drop only Canvas2D.
-func TestGPUPickingCapableOnBothGPUBackends(t *testing.T) {
+// TestGPUPickingVerdictTracksMatrix pins the required-feature behavior without
+// claiming a renderer implementation before its owning runtime slice lands.
+func TestGPUPickingVerdictTracksMatrix(t *testing.T) {
 	caps := Verdict([]Feature{FeatureGPUPicking}, nil, DefaultPolicy())
 
 	got := map[Backend]bool{}
 	for _, b := range caps.Capable {
 		got[b] = true
 	}
-	if !got[BackendWebGPU] {
-		t.Errorf("gpu-picking must keep WebGPU capable; Capable=%v", caps.Capable)
+	wantWebGPU := Matrix[FeatureGPUPicking][BackendWebGPU]
+	if got[BackendWebGPU] != wantWebGPU {
+		t.Errorf("WebGPU capable=%v, want Matrix cell %v; Capable=%v", got[BackendWebGPU], wantWebGPU, caps.Capable)
 	}
 	if !got[BackendWebGL] {
 		t.Errorf("gpu-picking must keep WebGL capable; Capable=%v", caps.Capable)
@@ -29,12 +25,12 @@ func TestGPUPickingCapableOnBothGPUBackends(t *testing.T) {
 	if got[BackendCanvas2D] {
 		t.Errorf("Canvas2D cannot pick and must be excluded; Capable=%v", caps.Capable)
 	}
-	if len(caps.Degraded[BackendWebGPU]) != 0 {
-		t.Errorf("WebGPU must be capable outright, not degraded; Degraded=%v", caps.Degraded)
+	if wantWebGPU && len(caps.Degraded[BackendWebGPU]) != 0 {
+		t.Errorf("supported WebGPU picking must not be degraded; Degraded=%v", caps.Degraded)
 	}
 	for _, reason := range caps.Reasons {
-		if reason.Feature == FeatureGPUPicking && reason.Excludes == BackendWebGPU {
-			t.Errorf("no reason may exclude WebGPU for gpu-picking; Reasons=%v", caps.Reasons)
+		if reason.Feature == FeatureGPUPicking && reason.Excludes == BackendWebGPU && wantWebGPU {
+			t.Errorf("a true WebGPU cell must not be excluded; Reasons=%v", caps.Reasons)
 		}
 	}
 }

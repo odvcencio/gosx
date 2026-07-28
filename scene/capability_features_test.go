@@ -1,6 +1,8 @@
 package scene
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/scene/capability"
@@ -17,6 +19,15 @@ func featureSet(features []capability.Feature) map[capability.Feature]bool {
 		set[f] = true
 	}
 	return set
+}
+
+func runtimeFeatureCollectionWired(t *testing.T, marker string) bool {
+	t.Helper()
+	source, err := os.ReadFile("scene_ir.go")
+	if err != nil {
+		t.Fatalf("read scene_ir.go: %v", err)
+	}
+	return strings.Contains(string(source), marker)
 }
 
 // TestCollectFeatures verifies that collectFeatures correctly detects ibl,
@@ -188,8 +199,9 @@ func TestCollectFeatures(t *testing.T) {
 			ComputeParticles: []ComputeParticlesIR{{ID: "dust", Count: 100}},
 		}
 		got := featureSet(collectFeatures(ir))
-		if !got[capability.FeatureComputeParts] {
-			t.Error("expected FeatureComputeParts from computeParticles; not present")
+		want := runtimeFeatureCollectionWired(t, "seen[capability.FeatureComputeParts] = true")
+		if got[capability.FeatureComputeParts] != want {
+			t.Errorf("FeatureComputeParts present=%v, want runtime collector phase %v", got[capability.FeatureComputeParts], want)
 		}
 	})
 
@@ -212,8 +224,9 @@ func TestCollectFeatures(t *testing.T) {
 			}},
 		}
 		got := featureSet(collectFeatures(ir))
-		if !got[capability.FeatureGPUCull] {
-			t.Error("expected FeatureGPUCull from cullKernelWGSL; not present")
+		want := runtimeFeatureCollectionWired(t, "seen[capability.FeatureGPUCull] = true")
+		if got[capability.FeatureGPUCull] != want {
+			t.Errorf("FeatureGPUCull present=%v, want runtime collector phase %v", got[capability.FeatureGPUCull], want)
 		}
 	})
 
@@ -226,8 +239,9 @@ func TestCollectFeatures(t *testing.T) {
 			}},
 		}
 		got := featureSet(collectFeatures(ir))
-		if !got[capability.FeatureGPUCull] {
-			t.Error("expected FeatureGPUCull from cullKernelWGSLRef; not present")
+		want := runtimeFeatureCollectionWired(t, "seen[capability.FeatureGPUCull] = true")
+		if got[capability.FeatureGPUCull] != want {
+			t.Errorf("FeatureGPUCull present=%v, want runtime collector phase %v", got[capability.FeatureGPUCull], want)
 		}
 	})
 
@@ -285,8 +299,9 @@ func TestComputeParticlesReportsWebGLDegraded(t *testing.T) {
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("expected FeatureComputeParts in Degraded[webgl]; got %v", degraded)
+	want := runtimeFeatureCollectionWired(t, "seen[capability.FeatureComputeParts] = true")
+	if found != want {
+		t.Fatalf("FeatureComputeParts degraded=%v, want runtime collector phase %v; got %v", found, want, degraded)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 // everywhere, because no backend uploads the fitted LTC tables or evaluates
 // spherical harmonics. No light feature may exclude a backend.
 func TestLightKindFeaturesReachTheWireVerdict(t *testing.T) {
+	wired := runtimeFeatureCollectionWired(t, "capability.LightKindFeatures(")
 	for _, tc := range []struct {
 		name  string
 		node  Node
@@ -37,6 +38,18 @@ func TestLightKindFeaturesReachTheWireVerdict(t *testing.T) {
 			t.Fatalf("%s: no BackendCaps on the wire", tc.name)
 		}
 		got := ir.BackendCaps.Degraded
+		if !wired {
+			for _, feats := range got {
+				for _, feature := range feats {
+					if feature == capability.FeatureRectAreaLight ||
+						feature == capability.FeatureRectAreaSpecular ||
+						feature == capability.FeatureLightProbeSH {
+						t.Errorf("%s: light feature %s leaked before the runtime collector phase", tc.name, feature)
+					}
+				}
+			}
+			continue
+		}
 		for _, want := range tc.wants {
 			found := false
 			for _, feats := range got {

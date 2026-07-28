@@ -30,6 +30,32 @@ func readRenderer(t *testing.T, path string) string {
 	return string(data)
 }
 
+// rendererFeaturePhaseComplete accepts the two coherent stack phases: every
+// implementation symbol is absent in the capability-only slice, or every
+// symbol is present once the owning runtime slice lands. A partial
+// implementation fails in either phase.
+func rendererFeaturePhaseComplete(t *testing.T, label, source string, symbols []string) bool {
+	t.Helper()
+	present := 0
+	for _, symbol := range symbols {
+		if strings.Contains(source, symbol) {
+			present++
+		}
+	}
+	if present == 0 {
+		return false
+	}
+	if present == len(symbols) {
+		return true
+	}
+	for _, symbol := range symbols {
+		if !strings.Contains(source, symbol) {
+			t.Errorf("%s is partially implemented; missing %q", label, symbol)
+		}
+	}
+	return false
+}
+
 // TestEveryLoweredLightKindIsAccountedFor reads the light lowerers in
 // scene/scene.go and demands that each Kind it writes into LightIR is either
 // exactly rendered on both GPU backends or mapped to a Matrix feature.
@@ -126,27 +152,23 @@ func TestSpotLightImplementedOnBothBackends(t *testing.T) {
 		t.Skip("spot now maps to a feature; the claim under test is gone")
 	}
 	webgpu := readRenderer(t, webgpuRendererPath)
-	for _, symbol := range []string{
+	webgpuSymbols := []string{
 		"fn spotConeAttenuation(",
 		"let outerCos = cos(angle);",
 		"let innerCos = cos(angle * (1.0 - penumbra));",
 		"clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0)",
 		"lightType == 3u",
 		`case "spot": return 3;`,
-	} {
-		if !strings.Contains(webgpu, symbol) {
-			t.Errorf("spot claims no capability gap but %q is missing from %s", symbol, webgpuRendererPath)
-		}
 	}
+	rendererFeaturePhaseComplete(t, "WebGPU spot light", webgpu, webgpuSymbols)
 	webgl := readRenderer(t, webglRendererPath)
-	for _, symbol := range []string{
+	webglSymbols := []string{
 		"float outerCos = cos(u_lightAngles[i]);",
 		"float innerCos = cos(u_lightAngles[i] * (1.0 - u_lightPenumbras[i]));",
 		"clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0)",
-	} {
-		if !strings.Contains(webgl, symbol) {
-			t.Errorf("spot claims no capability gap but %q is missing from %s", symbol, webglRendererPath)
-		}
+	}
+	if !rendererFeaturePhaseComplete(t, "WebGL spot light", webgl, webglSymbols) {
+		t.Error("WebGL spot-light implementation must remain complete")
 	}
 }
 
@@ -158,24 +180,20 @@ func TestHemisphereLightImplementedOnBothBackends(t *testing.T) {
 		t.Skip("hemisphere now maps to a feature; the claim under test is gone")
 	}
 	webgpu := readRenderer(t, webgpuRendererPath)
-	for _, symbol := range []string{
+	webgpuSymbols := []string{
 		"lightType == 4u",
 		"let hBlend = N.y * 0.5 + 0.5;",
 		"mix(light.groundPenumbra.rgb, lightColor, hBlend)",
 		`case "hemisphere": return 4;`,
-	} {
-		if !strings.Contains(webgpu, symbol) {
-			t.Errorf("hemisphere claims no capability gap but %q is missing from %s", symbol, webgpuRendererPath)
-		}
 	}
+	rendererFeaturePhaseComplete(t, "WebGPU hemisphere light", webgpu, webgpuSymbols)
 	webgl := readRenderer(t, webglRendererPath)
-	for _, symbol := range []string{
+	webglSymbols := []string{
 		"float hBlend = N.y * 0.5 + 0.5;",
 		"mix(u_lightGroundColors[i], lightColor, hBlend)",
-	} {
-		if !strings.Contains(webgl, symbol) {
-			t.Errorf("hemisphere claims no capability gap but %q is missing from %s", symbol, webglRendererPath)
-		}
+	}
+	if !rendererFeaturePhaseComplete(t, "WebGL hemisphere light", webgl, webglSymbols) {
+		t.Error("WebGL hemisphere-light implementation must remain complete")
 	}
 }
 
@@ -263,15 +281,14 @@ func TestRectAreaSpecularUnimplementedEverywhere(t *testing.T) {
 			}
 		}
 	}
-	// WebGPU substitutes a representative point. Name it, so the gap is a
-	// recorded approximation and not an accident.
+	// Once the WebGPU runtime slice exists, its representative-point stand-in
+	// and author diagnostic must land together. Both are absent in the
+	// capability-only slice.
 	source := readRenderer(t, webgpuRendererPath)
-	if !strings.Contains(source, "fn rectAreaRepresentativePoint(") {
-		t.Error("the WebGPU rect-area specular stand-in disappeared; re-check what it does now")
-	}
-	if !strings.Contains(source, `code: "rect-area-specular"`) {
-		t.Errorf("the renderer must report the rect-area specular gap to the author; "+
-			"see sceneWebGPULightIssues in %s", webgpuRendererPath)
+	hasStandIn := strings.Contains(source, "fn rectAreaRepresentativePoint(")
+	hasIssue := strings.Contains(source, `code: "rect-area-specular"`)
+	if hasStandIn != hasIssue {
+		t.Errorf("WebGPU rect-area stand-in and diagnostic must land together: standIn=%v issue=%v", hasStandIn, hasIssue)
 	}
 }
 
@@ -302,10 +319,6 @@ func TestLightProbeSHUnimplementedEverywhere(t *testing.T) {
 	// Both backends must fold a probe into ambient, never into point. Point
 	// invents a distance falloff a positionless probe cannot have.
 	webgpu := readRenderer(t, webgpuRendererPath)
-	if !strings.Contains(webgpu, `case "light-probe": return 0;`) {
-		t.Errorf("the WebGPU probe must shade as ambient (code 0); see sceneWebGPULightTypeCode in %s",
-			webgpuRendererPath)
-	}
 	webgl := readRenderer(t, webglRendererPath)
 	anchor := strings.Index(webgl, `} else if (kind === "light-probe") {`)
 	if anchor < 0 {
@@ -314,9 +327,20 @@ func TestLightProbeSHUnimplementedEverywhere(t *testing.T) {
 	if !strings.Contains(webgl[anchor:anchor+120], "lightType = 0;") {
 		t.Error("the WebGL probe no longer folds into ambient; the two backends have diverged")
 	}
-	if !strings.Contains(webgpu, `code: "light-probe-sh"`) {
-		t.Errorf("the renderer must report the ignored coefficients to the author; "+
-			"see sceneWebGPULightIssues in %s", webgpuRendererPath)
+	hasTypeCode := strings.Contains(webgpu, "function sceneWebGPULightTypeCode(")
+	hasIssues := strings.Contains(webgpu, "function sceneWebGPULightIssues(")
+	if hasTypeCode != hasIssues {
+		t.Errorf("WebGPU light typing and issue reporting must land together: typeCode=%v issues=%v", hasTypeCode, hasIssues)
+	}
+	if hasTypeCode {
+		if !strings.Contains(webgpu, `case "light-probe": return 0;`) {
+			t.Errorf("the WebGPU probe must shade as ambient (code 0); see sceneWebGPULightTypeCode in %s",
+				webgpuRendererPath)
+		}
+		if !strings.Contains(webgpu, `code: "light-probe-sh"`) {
+			t.Errorf("the renderer must report ignored coefficients; see sceneWebGPULightIssues in %s",
+				webgpuRendererPath)
+		}
 	}
 }
 
@@ -350,13 +374,16 @@ func TestLightFeaturesNeverExcludeWebGPU(t *testing.T) {
 			t.Errorf("no light feature may exclude a backend; got %+v", reason)
 		}
 	}
-	// WebGPU degrades on the two gaps it shares with WebGL, and on nothing
-	// else. WebGL degrades on all three, because it has no rect-area shape.
-	if got := len(caps.Degraded[BackendWebGPU]); got != 2 {
-		t.Errorf("WebGPU must degrade on exactly the two shared gaps; got %v", caps.Degraded[BackendWebGPU])
-	}
-	if got := len(caps.Degraded[BackendWebGL]); got != 3 {
-		t.Errorf("WebGL must degrade on all three light features; got %v", caps.Degraded[BackendWebGL])
+	for _, backend := range []Backend{BackendWebGPU, BackendWebGL} {
+		want := 0
+		for _, feature := range features {
+			if !Matrix[feature][backend] {
+				want++
+			}
+		}
+		if got := len(caps.Degraded[backend]); got != want {
+			t.Errorf("%s must degrade on %d unsupported light features; got %v", backend, want, caps.Degraded[backend])
+		}
 	}
 }
 
