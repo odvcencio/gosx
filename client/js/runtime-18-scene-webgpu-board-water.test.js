@@ -1919,6 +1919,7 @@ test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D 
     materials: [{ kind: "flat", color: "#fff" }],
     objects: [{ id: "r", kind: "rect", vertexOffset: 0, vertexCount: 6 }],
     worldPositions: [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0],
+    worldColors: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     worldNormals: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
   };
   harness.renderer.render(perspective, {});

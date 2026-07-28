@@ -264,6 +264,52 @@ test("Scene3D initial render waits for the second frame boundary", async () => {
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
 });
 
+test("Scene3D scroll camera offset moves camera by absolute scroll pixels", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-scroll-offset-root";
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-scroll-offset",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-scroll-offset-root",
+          props: {
+            width: 320,
+            height: 180,
+            background: "#08151f",
+            camera: { x: 1, y: 2, z: 520, fov: 52, near: 1, far: 2400 },
+            scrollCameraOffset: { y: -0.06 },
+          },
+        },
+      ],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await Promise.resolve();
+  raf.flush(32);
+  await Promise.resolve();
+
+  const mounted = env.context.__gosx.engines.get("gosx-engine-scroll-offset");
+  assert.ok(mounted, "expected mounted Scene3D engine");
+  assert.equal(mounted.handle.getCamera().y, 2);
+
+  env.context.scrollY = 200;
+  env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(mounted.handle.getCamera().y, -10);
+  assert.equal(mounted.handle.getCamera().x, 1);
+  assert.equal(mounted.handle.getCamera().z, 520);
+});
+
 test("Scene3D disposal cancels pending initial render before frame two", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-initial-dispose-root";

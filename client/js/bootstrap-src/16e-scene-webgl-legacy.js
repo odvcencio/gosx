@@ -43,6 +43,7 @@
     const resources = createSceneWebGLResources(gl, program, surfaceProgram);
     return {
       kind: "webgl",
+      supportsRetainedGeometry: false,
       render(bundle) {
         const geometry = sceneWebGLBundleGeometry(bundle);
         prepareSceneWebGLFrame(gl, canvas, bundle, geometry.usePerspective, resources);

@@ -47,4 +47,3 @@
 
     window.__gosx.computeIslands.delete(islandID);
   };
-

@@ -756,7 +756,7 @@
   }
 
   function sceneRaycastPickGroup(ray, objects, positions, indexOffset, uvs) {
-    if (!Array.isArray(objects) || !objects.length || !positions || typeof positions.length !== "number") {
+    if (!Array.isArray(objects) || !objects.length) {
       return null;
     }
     var closest = null;
@@ -781,11 +781,39 @@
       // Narrow phase: triangle intersection against world positions.
       var vertexOffset = Math.max(0, Math.floor(sceneNumber(obj.vertexOffset, 0)));
       var vertexCount = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
+      var directPositions = obj.directVertices && obj.vertices && obj.vertices.positions;
+      var directUVs = obj.directVertices && obj.vertices && obj.vertices.uvs;
+      var modelMatrix = obj.directVertices && obj.modelMatrix && obj.modelMatrix.length >= 16
+        ? obj.modelMatrix
+        : null;
+
+      function meshPointAt(localIndex) {
+        if (!directPositions || typeof directPositions.length !== "number") {
+          return sceneWorldPointAt(positions, vertexOffset + localIndex);
+        }
+        var offset = localIndex * 3;
+        if (offset + 2 >= directPositions.length) return null;
+        var x = sceneNumber(directPositions[offset], 0);
+        var y = sceneNumber(directPositions[offset + 1], 0);
+        var z = sceneNumber(directPositions[offset + 2], 0);
+        if (!modelMatrix) return { x: x, y: y, z: z };
+        return {
+          x: modelMatrix[0] * x + modelMatrix[4] * y + modelMatrix[8] * z + modelMatrix[12],
+          y: modelMatrix[1] * x + modelMatrix[5] * y + modelMatrix[9] * z + modelMatrix[13],
+          z: modelMatrix[2] * x + modelMatrix[6] * y + modelMatrix[10] * z + modelMatrix[14],
+        };
+      }
+
+      function meshUVAt(localIndex) {
+        return directUVs && typeof directUVs.length === "number"
+          ? sceneWorldUVAt(directUVs, localIndex)
+          : sceneWorldUVAt(uvs, vertexOffset + localIndex);
+      }
 
       for (var tri = 0; tri + 2 < vertexCount; tri += 3) {
-        var v0 = sceneWorldPointAt(positions, vertexOffset + tri);
-        var v1 = sceneWorldPointAt(positions, vertexOffset + tri + 1);
-        var v2 = sceneWorldPointAt(positions, vertexOffset + tri + 2);
+        var v0 = meshPointAt(tri);
+        var v1 = meshPointAt(tri + 1);
+        var v2 = meshPointAt(tri + 2);
         if (!v0 || !v1 || !v2) continue;
 
         var hit = sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2);
@@ -796,9 +824,9 @@
             z: ray.origin.z + ray.dir.z * hit.distance,
           };
           var uv = sceneInterpolatedHitUV(
-            sceneWorldUVAt(uvs, vertexOffset + tri),
-            sceneWorldUVAt(uvs, vertexOffset + tri + 1),
-            sceneWorldUVAt(uvs, vertexOffset + tri + 2),
+            meshUVAt(tri),
+            meshUVAt(tri + 1),
+            meshUVAt(tri + 2),
             hit,
           );
           var triangleIndex = Math.floor(tri / 3);

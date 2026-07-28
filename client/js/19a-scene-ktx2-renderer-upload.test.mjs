@@ -22,10 +22,13 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const webglChunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
-const webgpuChunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
+const require = createRequire(import.meta.url);
+const { freshFeatureBundleSource } = require("./runtime-test-harness.js");
+const webglChunk = freshFeatureBundleSource("scene3d-webgl");
+const webgpuChunk = freshFeatureBundleSource("scene3d-webgpu");
 const gltfChunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-gltf.js"), "utf8");
 const ktx2Source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19a-scene-ktx2.js"), "utf8");
 
@@ -64,6 +67,19 @@ function loadGateGlobal(chunkSource) {
   const context = vm.createContext(win);
   vm.runInContext(chunkSource, context, { filename: "chunk.js" });
   return win;
+}
+
+function loadInternalTextureLoader(chunkSource, functionName) {
+  const win = makeWindow();
+  const context = vm.createContext(win);
+  const marker = "})();";
+  const end = chunkSource.lastIndexOf(marker);
+  assert.ok(end >= 0, "fresh feature bundle must end in an IIFE");
+  const instrumented = chunkSource.slice(0, end) +
+    "window.__gosx_test_texture_loader = " + functionName + ";\n" +
+    chunkSource.slice(end);
+  vm.runInContext(instrumented, context, { filename: "instrumented-chunk.js" });
+  return { win, context, loader: win.__gosx_test_texture_loader };
 }
 
 // A fake KTX2 API that fails the way the real reader fails. The reader raises a
@@ -195,6 +211,172 @@ test("a successful upload swaps the texture and clears pending", async () => {
   assert.equal(record.ktx2, true, "a good container must record the block path");
   assert.equal(record.texture, uploaded, "the block texture must replace the placeholder");
   assert.equal(destroyed, true, "the placeholder texture must be released");
+});
+
+test("late KTX2 completion after renderer generation disposal destroys WebGPU resources and never republishes", async () => {
+  const win = loadGateGlobal(webgpuChunk);
+  let resolveLoad;
+  let replacementDestroyed = false;
+  const replacement = {
+    createView: () => ({ __kind: "late-view" }),
+    destroy() { replacementDestroyed = true; },
+  };
+  win.__gosx_scene3d_ktx2 = {
+    load() {
+      return new Promise((resolve) => { resolveLoad = resolve; });
+    },
+    uploadWebGPU() { return replacement; },
+  };
+  const placeholder = { destroy() {} };
+  const generation = { disposed: false };
+  const record = { loaded: false, failed: false, pending: true, texture: placeholder, generation };
+  const pending = win.__gosx_scene3d_ktx2_texture_loader({}, "/late.ktx2", record);
+  generation.disposed = true;
+  record.disposed = true;
+  resolveLoad({ width: 8, height: 8, faces: 1, vkFormat: 83, levels: [{ bytes: new Uint8Array(4) }] });
+  await pending;
+  assert.equal(replacementDestroyed, true);
+  assert.equal(record.texture, placeholder);
+  assert.equal(record.loaded, false);
+});
+
+test("late KTX2 completion after WebGL disposal never calls the deleted-context uploader", async () => {
+  const win = loadGateGlobal(webglChunk);
+  let resolveLoad;
+  let uploads = 0;
+  win.__gosx_scene3d_ktx2 = {
+    load() {
+      return new Promise((resolve) => { resolveLoad = resolve; });
+    },
+    uploadWebGL2() { uploads += 1; },
+  };
+  const generation = { disposed: false };
+  const record = { loaded: false, failed: false, texture: {}, generation };
+  const pending = win.__gosx_scene3d_ktx2_texture_loader({}, "/late.ktx2", record);
+  generation.disposed = true;
+  record.disposed = true;
+  resolveLoad({ width: 8, height: 8, faces: 1, levels: [{ bytes: new Uint8Array(4) }] });
+  await pending;
+  assert.equal(uploads, 0);
+  assert.equal(record.loaded, false);
+});
+
+test("late ordinary WebGL image completion is fenced before touching a disposed context", () => {
+  const { win, context, loader } = loadInternalTextureLoader(webglChunk, "scenePBRLoadTexture");
+  const images = [];
+  win.Image = class {
+    constructor() { images.push(this); }
+    set src(value) { this._src = value; }
+  };
+  let uploads = 0;
+  const gl = {
+    TEXTURE_2D: 0x0DE1, TEXTURE_CUBE_MAP: 0x8513, RGBA: 0x1908,
+    UNSIGNED_BYTE: 0x1401, LINEAR: 0x2601, CLAMP_TO_EDGE: 0x812F,
+    TEXTURE_MIN_FILTER: 0x2801, TEXTURE_MAG_FILTER: 0x2800,
+    TEXTURE_WRAP_S: 0x2802, TEXTURE_WRAP_T: 0x2803,
+    RGBA8: 0x8058, SRGB8_ALPHA8: 0x8C43,
+    createTexture() { return {}; },
+    bindTexture() {},
+    texImage2D() { uploads += 1; },
+    texParameteri() {},
+    generateMipmap() {},
+  };
+  const cache = vm.runInContext("new Map()", context);
+  let notifications = 0;
+  cache._gosxGeneration = {
+    disposed: false,
+    onResourceReady() { notifications += 1; },
+  };
+  const record = loader(gl, "/late.png", cache, { uri: "/late.png", colorSpace: "srgb", view: "2d" });
+  assert.equal(images.length, 1);
+  const lateCallback = images[0].onload;
+  cache._gosxGeneration.disposed = true;
+  record.disposed = true;
+  lateCallback();
+  assert.equal(uploads, 1, "only the placeholder upload may touch GL");
+  assert.equal(record.loaded, false);
+  assert.equal(notifications, 0, "a disposed WebGL texture completion must not request another frame");
+});
+
+test("ordinary WebGL image completion notifies a live renderer generation", () => {
+  const { win, context, loader } = loadInternalTextureLoader(webglChunk, "scenePBRLoadTexture");
+  const images = [];
+  win.Image = class {
+    constructor() { images.push(this); }
+    set src(value) { this._src = value; }
+  };
+  const gl = {
+    TEXTURE_2D: 0x0DE1, TEXTURE_CUBE_MAP: 0x8513, RGBA: 0x1908,
+    UNSIGNED_BYTE: 0x1401, LINEAR: 0x2601, CLAMP_TO_EDGE: 0x812F,
+    TEXTURE_MIN_FILTER: 0x2801, TEXTURE_MAG_FILTER: 0x2800,
+    TEXTURE_WRAP_S: 0x2802, TEXTURE_WRAP_T: 0x2803,
+    RGBA8: 0x8058, SRGB8_ALPHA8: 0x8C43,
+    createTexture() { return {}; },
+    bindTexture() {},
+    texImage2D() {},
+    texParameteri() {},
+    generateMipmap() {},
+  };
+  let notifications = 0;
+  const cache = vm.runInContext("new Map()", context);
+  cache._gosxGeneration = {
+    disposed: false,
+    onResourceReady() { notifications += 1; },
+  };
+  const record = loader(gl, "/ready.png", cache, { uri: "/ready.png", colorSpace: "srgb", view: "2d" });
+  images[0].onload();
+  assert.equal(record.loaded, true);
+  assert.equal(notifications, 1);
+});
+
+test("late ordinary WebGPU bitmap completion destroys its replacement texture", async () => {
+  const { win, context, loader } = loadInternalTextureLoader(webgpuChunk, "wgpuLoadTexture");
+  win.GPUTextureUsage = {
+    COPY_DST: 0x02,
+    TEXTURE_BINDING: 0x04,
+    RENDER_ATTACHMENT: 0x10,
+  };
+  const images = [];
+  win.Image = class {
+    constructor() { images.push(this); this.width = 4; this.height = 4; }
+    set src(value) { this._src = value; }
+  };
+  let resolveBitmap;
+  win.createImageBitmap = () => new Promise((resolve) => { resolveBitmap = resolve; });
+  let copyCalls = 0;
+  const textures = [];
+  const device = {
+    queue: {
+      writeTexture() {},
+      copyExternalImageToTexture() { copyCalls += 1; },
+    },
+    createTexture() {
+      const texture = {
+        destroyed: false,
+        createView() { return {}; },
+        destroy() { texture.destroyed = true; },
+      };
+      textures.push(texture);
+      return texture;
+    },
+  };
+  const cache = vm.runInContext("new Map()", context);
+  let notifications = 0;
+  cache._gosxGeneration = {
+    disposed: false,
+    onResourceReady() { notifications += 1; },
+  };
+  const record = loader(device, "/late.png", cache, { uri: "/late.png", colorSpace: "srgb", view: "2d" });
+  images[0].onload();
+  assert.equal(textures.length, 2, "placeholder plus replacement");
+  cache._gosxGeneration.disposed = true;
+  record.disposed = true;
+  resolveBitmap({ close() {} });
+  await settle();
+  assert.equal(textures[1].destroyed, true);
+  assert.equal(copyCalls, 0);
+  assert.equal(record.loaded, false);
+  assert.equal(notifications, 0, "a disposed WebGPU bitmap completion must not request another frame");
 });
 
 test("the gate global is what sceneKTX2UploadPathReady reads", () => {

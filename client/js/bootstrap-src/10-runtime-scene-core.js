@@ -600,6 +600,15 @@
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
       count,
+      // Retained geometry is an explicit snapshot contract, never inferred
+      // from typed-array identity. For immutable=true, every attribute remains
+      // immutable until revision changes; dynamic=true always forces baking.
+      immutable: item.immutable === true,
+      revision: Object.prototype.hasOwnProperty.call(item, "revision") &&
+        Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
+          ? Math.floor(Number(item.revision))
+          : null,
+      dynamic: item.dynamic === true,
     };
   }
 
@@ -693,6 +702,15 @@
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
+      roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
+      metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
+      occlusionMap: typeof sceneObjectMaterialValue(item, "occlusionMap") === "string" ? sceneObjectMaterialValue(item, "occlusionMap").trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
+      emissiveMap: typeof sceneObjectMaterialValue(item, "emissiveMap") === "string" ? sceneObjectMaterialValue(item, "emissiveMap").trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      textureDescriptors: normalizeSceneMaterialTextureDescriptors(
+        sceneObjectMaterialValue(item, "textureDescriptors"),
+        current.textureDescriptors,
+      ),
       lineDash: sceneBool(sceneObjectMaterialHasValue(item, "lineDash") ? sceneObjectMaterialValue(item, "lineDash") : current.lineDash, false),
       dashSize: sceneNumber(sceneObjectMaterialValue(item, "dashSize"), sceneNumber(current.dashSize, 0)),
       gapSize: sceneNumber(sceneObjectMaterialValue(item, "gapSize"), sceneNumber(current.gapSize, 0)),
@@ -1745,7 +1763,12 @@
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
+      occlusionMap: typeof sceneObjectMaterialValue(item, "occlusionMap") === "string" ? sceneObjectMaterialValue(item, "occlusionMap").trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
       emissiveMap: typeof sceneObjectMaterialValue(item, "emissiveMap") === "string" ? sceneObjectMaterialValue(item, "emissiveMap").trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      textureDescriptors: normalizeSceneMaterialTextureDescriptors(
+        sceneObjectMaterialValue(item, "textureDescriptors"),
+        current.textureDescriptors,
+      ),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(
         sceneObjectMaterialHasValue(item, "renderPass") ? sceneObjectMaterialValue(item, "renderPass") : current.renderPass,
@@ -2181,7 +2204,9 @@
       normalMap: typeof item.normalMap === "string" ? item.normalMap.trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof item.roughnessMap === "string" ? item.roughnessMap.trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof item.metalnessMap === "string" ? item.metalnessMap.trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
+      occlusionMap: typeof item.occlusionMap === "string" ? item.occlusionMap.trim() : (typeof current.occlusionMap === "string" ? current.occlusionMap : ""),
       emissiveMap: typeof item.emissiveMap === "string" ? item.emissiveMap.trim() : (typeof current.emissiveMap === "string" ? current.emissiveMap : ""),
+      textureDescriptors: normalizeSceneMaterialTextureDescriptors(item.textureDescriptors, current.textureDescriptors),
       blendMode,
       renderPass: normalizeSceneMaterialRenderPass(item.renderPass || current.renderPass, blendMode, numericOpacity, kind),
       wireframe: sceneBool(Object.prototype.hasOwnProperty.call(item, "wireframe") ? item.wireframe : current.wireframe, false),
@@ -2462,6 +2487,65 @@
     };
   }
 
+  function normalizeSceneTextureDescriptor(raw, fallback) {
+    const source = sceneIsPlainObject(raw) ? raw : (sceneIsPlainObject(fallback) ? fallback : null);
+    if (!source || typeof source.uri !== "string" || !source.uri.trim()) {
+      return null;
+    }
+    return {
+      uri: source.uri.trim(),
+      role: typeof source.role === "string" ? source.role.trim().toLowerCase() : "",
+      colorSpace: typeof source.colorSpace === "string" ? source.colorSpace.trim().toLowerCase() : "",
+      channels: typeof source.channels === "string" ? source.channels.trim().toLowerCase() : "",
+      view: typeof source.view === "string" ? source.view.trim().toLowerCase() : "2d",
+      format: typeof source.format === "string" ? source.format.trim().toLowerCase() : "",
+      mipLevels: Math.max(0, Math.floor(sceneNumber(source.mipLevels, 0))),
+      width: Math.max(0, Math.floor(sceneNumber(source.width, 0))),
+      height: Math.max(0, Math.floor(sceneNumber(source.height, 0))),
+      faces: Math.max(0, Math.floor(sceneNumber(source.faces, 0))),
+    };
+  }
+
+  function normalizeSceneMaterialTextureDescriptors(raw, fallback) {
+    const source = sceneIsPlainObject(raw) ? raw : {};
+    const base = sceneIsPlainObject(fallback) ? fallback : {};
+    const out = {};
+    for (const name of ["baseColor", "normal", "roughness", "metalness", "occlusion", "emissive"]) {
+      const descriptor = normalizeSceneTextureDescriptor(source[name], base[name]);
+      if (descriptor) out[name] = descriptor;
+    }
+    if (sceneIsPlainObject(source.data) || sceneIsPlainObject(base.data)) {
+      const dataSource = sceneIsPlainObject(source.data) ? source.data : base.data;
+      const data = {};
+      for (const name of Object.keys(dataSource)) {
+        const descriptor = normalizeSceneTextureDescriptor(dataSource[name], null);
+        if (descriptor) data[name] = descriptor;
+      }
+      if (Object.keys(data).length) out.data = data;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  function normalizeSceneEnvironmentIBL(raw, fallback) {
+    const source = sceneIsPlainObject(raw) ? raw : (sceneIsPlainObject(fallback) ? fallback : null);
+    if (!source) return null;
+    const out = {
+      schemaVersion: Math.max(0, Math.floor(sceneNumber(source.schemaVersion, 0))),
+      source: typeof source.source === "string" ? source.source.trim() : "",
+      radiance: normalizeSceneTextureDescriptor(source.radiance, null),
+      irradiance: normalizeSceneTextureDescriptor(source.irradiance, null),
+      brdfLUT: normalizeSceneTextureDescriptor(source.brdfLUT, null),
+      brdfModel: typeof source.brdfModel === "string" ? source.brdfModel.trim() : "",
+      roughnessPerLevel: Array.isArray(source.roughnessPerLevel)
+        ? source.roughnessPerLevel.map(function(value) { return sceneNumber(value, 0); })
+        : [],
+      sphericalHarmonics: Array.isArray(source.sphericalHarmonics)
+        ? sceneCloneData(source.sphericalHarmonics)
+        : [],
+    };
+    return out.radiance || out.irradiance || out.brdfLUT || out.source ? out : null;
+  }
+
   function normalizeSceneEnvironment(raw, fallback) {
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const source = sceneIsPlainObject(raw) ? raw : {};
@@ -2474,6 +2558,7 @@
       groundColor: typeof source.groundColor === "string" && source.groundColor ? source.groundColor : (typeof base.groundColor === "string" ? base.groundColor : ""),
       groundIntensity: sceneClampNumberOrCSSVar(source.groundIntensity, sceneNumber(base.groundIntensity, 0), 0, 4),
       envMap: typeof source.envMap === "string" && source.envMap ? source.envMap : (typeof base.envMap === "string" ? base.envMap : ""),
+      ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       envIntensity: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: sceneClampNumberOrCSSVar(source.envRotation, sceneNumber(base.envRotation, 0), Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(Object.prototype.hasOwnProperty.call(source, "exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
@@ -2494,6 +2579,7 @@
       environment.groundColor ||
       environment.groundIntensity !== 0 ||
       environment.envMap ||
+      environment.ibl ||
       environment.envIntensity !== 1 ||
       environment.envRotation !== 0 ||
       environment.fogColor ||
@@ -2521,6 +2607,7 @@
         groundColor: typeof environment.groundColor === "string" ? environment.groundColor : "",
         groundIntensity: sceneClampNumberOrCSSVar(environment.groundIntensity, 0, 0, 4),
         envMap: typeof environment.envMap === "string" ? environment.envMap : "",
+        ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
@@ -2600,8 +2687,22 @@
       _deferredPostEffects: deferPostFX ? postEffects : null,
       _adaptiveSourcePostEffects: postEffects,
       _transitions: [],
-      _scrollCamera: (sceneNumber(props.scrollCameraStart, 0) !== 0 || sceneNumber(props.scrollCameraEnd, 0) !== 0)
-        ? { start: sceneNumber(props.scrollCameraStart, 0), end: sceneNumber(props.scrollCameraEnd, 0) }
+      _scrollCamera: (
+        sceneNumber(props.scrollCameraStart, 0) !== 0 ||
+        sceneNumber(props.scrollCameraEnd, 0) !== 0 ||
+        sceneNumber(props.scrollCameraOffset && props.scrollCameraOffset.x, 0) !== 0 ||
+        sceneNumber(props.scrollCameraOffset && props.scrollCameraOffset.y, 0) !== 0 ||
+        sceneNumber(props.scrollCameraOffset && props.scrollCameraOffset.z, 0) !== 0
+      )
+        ? {
+            start: sceneNumber(props.scrollCameraStart, 0),
+            end: sceneNumber(props.scrollCameraEnd, 0),
+            offset: {
+              x: sceneNumber(props.scrollCameraOffset && props.scrollCameraOffset.x, 0),
+              y: sceneNumber(props.scrollCameraOffset && props.scrollCameraOffset.y, 0),
+              z: sceneNumber(props.scrollCameraOffset && props.scrollCameraOffset.z, 0),
+            },
+          }
         : null,
       environment: normalizeSceneEnvironment(rawSceneEnvironment(props), null),
     };
@@ -2741,7 +2842,9 @@
       normalMap: material.normalMap || object.normalMap,
       roughnessMap: material.roughnessMap || object.roughnessMap,
       metalnessMap: material.metalnessMap || object.metalnessMap,
+      occlusionMap: material.occlusionMap || object.occlusionMap,
       emissiveMap: material.emissiveMap || object.emissiveMap,
+      textureDescriptors: material.textureDescriptors || object.textureDescriptors,
       blendMode: material.blendMode || object.blendMode,
       renderPass: material.renderPass || object.renderPass,
       wireframe: material.wireframe != null ? material.wireframe : object.wireframe,
@@ -3623,11 +3726,15 @@
     const promise = hydrateSceneStateModels(state, null);
     if (promise && typeof promise.then === "function") {
       state._modelHydrationPromise = promise;
-      promise.finally(function() {
+      const clearCurrentPromise = function() {
         if (state._modelHydrationPromise === promise) {
           state._modelHydrationPromise = null;
         }
-      });
+      };
+      // Do not use an ignored finally() Promise here. When hydration rejects,
+      // that derived Promise rejects too and can surface as unhandled even when
+      // the command caller correctly awaits the original Promise.
+      promise.then(clearCurrentPromise, clearCurrentPromise);
     }
     return promise;
   }
@@ -4253,7 +4360,10 @@
     return selected;
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities) {
+    const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const renderCamera = sceneRenderCamera(camera);
     const bundle = {
@@ -4304,7 +4414,19 @@
       vertexCount: 0,
       worldVertexCount: 0,
       worldMeshVertexCount: 0,
+      retainedMeshObjectCount: 0,
+      retainedMeshVertexCount: 0,
+      worldBakedMeshObjectCount: 0,
+      worldBakedMeshVertexCount: 0,
       objectCount: 0,
+      // Fail closed: callers which do not identify a retained-capable
+      // renderer receive a backend-neutral, fully baked bundle.
+      retainedGeometryEnabled: Boolean(rendererCapabilities && rendererCapabilities.retainedGeometry === true),
+      retainedGeometryTelemetry: {
+        eligible: 0,
+        retained: 0,
+        fallback: 0,
+      },
     };
     const normalizedPostFXMaxPixels = Math.max(0, Math.floor(sceneNumber(postFXMaxPixels, 0)));
     if (normalizedPostFXMaxPixels > 0) {
@@ -4342,6 +4464,10 @@
     bundle.worldMeshTangents = new Float32Array(bundle.worldMeshTangents);
     bundle.worldMeshVertexCount = bundle.worldMeshPositions.length / 3;
     bundle.objectCount = bundle.objects.length;
+    bundle.bundleBuildCPUms = Math.max(0, (
+      (typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now()) -
+      bundleBuildStartedAt
+    ));
     return bundle;
   }
 
@@ -4440,6 +4566,10 @@
 	  const _objectMatrixXScratch = { x: 0, y: 0, z: 0 };
 	  const _objectMatrixYScratch = { x: 0, y: 0, z: 0 };
 	  const _objectMatrixZScratch = { x: 0, y: 0, z: 0 };
+	  const _sceneObjectModelMatrixCache = new WeakMap();
+	  const _sceneObjectModelScaleSignsCache = new WeakMap();
+	  const _sceneObjectMeshBakeLinearStateCache = new WeakMap();
+	  const _sceneMeshLocalBoundsCache = new WeakMap();
 
 	  function sceneObjectModelMatrix(object, timeSeconds) {
 	    const origin = _objectMatrixOriginScratch;
@@ -4451,7 +4581,15 @@
 	    translateScenePointInto(axisY, 0, 1, 0, object, timeSeconds);
 	    translateScenePointInto(axisZ, 0, 0, 1, object, timeSeconds);
 
-	    const out = new Float32Array(16);
+	    let out = object && typeof object === "object"
+	      ? _sceneObjectModelMatrixCache.get(object)
+	      : null;
+	    if (!out) {
+	      out = new Float32Array(16);
+	      if (object && typeof object === "object") {
+	        _sceneObjectModelMatrixCache.set(object, out);
+	      }
+	    }
 	    out[0] = axisX.x - origin.x;
 	    out[1] = axisX.y - origin.y;
 	    out[2] = axisX.z - origin.z;
@@ -4469,6 +4607,154 @@
 	    out[14] = origin.z;
 	    out[15] = 1;
 	    return out;
+	  }
+
+	  // Build the normal transform and orientation for the world-baked mesh
+	  // fallback from the exact linear part of the object matrix. The first nine
+	  // entries are a column-major inverse-transpose up to one positive scalar;
+	  // normalization at the call site makes that scalar irrelevant. Computing
+	  // cofactors instead of dividing by the determinant also keeps a useful,
+	  // finite direction for a near-singular scale.
+	  //
+	  // The cofactor matrix is det(M) * inverseTranspose(M). Multiplying it by
+	  // sign(det(M)) therefore removes the orientation sign while retaining the
+	  // inverse-transpose direction. Entry 9 carries that sign for triangle
+	  // winding and tangent-frame handedness.
+	  function sceneObjectMeshBakeLinearState(object, modelMatrix) {
+	    let out = object && typeof object === "object"
+	      ? _sceneObjectMeshBakeLinearStateCache.get(object)
+	      : null;
+	    if (!out) {
+	      out = new Float64Array(10);
+	      if (object && typeof object === "object") {
+	        _sceneObjectMeshBakeLinearStateCache.set(object, out);
+	      }
+	    }
+
+	    const a = modelMatrix[0], b = modelMatrix[4], c = modelMatrix[8];
+	    const d = modelMatrix[1], e = modelMatrix[5], f = modelMatrix[9];
+	    const g = modelMatrix[2], h = modelMatrix[6], i = modelMatrix[10];
+	    const c00 = e * i - f * h;
+	    const c01 = f * g - d * i;
+	    const c02 = d * h - e * g;
+	    const c10 = c * h - b * i;
+	    const c11 = a * i - c * g;
+	    const c12 = b * g - a * h;
+	    const c20 = b * f - c * e;
+	    const c21 = c * d - a * f;
+	    const c22 = a * e - b * d;
+	    const determinant = a * c00 + b * c01 + c * c02;
+	    const orientation = determinant < -1e-12 ? -1 : 1;
+
+	    out[0] = c00 * orientation;
+	    out[1] = c10 * orientation;
+	    out[2] = c20 * orientation;
+	    out[3] = c01 * orientation;
+	    out[4] = c11 * orientation;
+	    out[5] = c21 * orientation;
+	    out[6] = c02 * orientation;
+	    out[7] = c12 * orientation;
+	    out[8] = c22 * orientation;
+	    out[9] = orientation;
+	    return out;
+	  }
+
+	  function sceneObjectModelScaleSigns(object) {
+	    let out = object && typeof object === "object"
+	      ? _sceneObjectModelScaleSignsCache.get(object)
+	      : null;
+	    if (!out) {
+	      out = new Float32Array(4);
+	      if (object && typeof object === "object") {
+	        _sceneObjectModelScaleSignsCache.set(object, out);
+	      }
+	    }
+	    out[0] = sceneNumber(object && object.scaleX, 1) < 0 ? -1 : 1;
+	    out[1] = sceneNumber(object && object.scaleY, 1) < 0 ? -1 : 1;
+	    out[2] = sceneNumber(object && object.scaleZ, 1) < 0 ? -1 : 1;
+	    out[3] = 0;
+	    return out;
+	  }
+
+	  function sceneMeshGeometryRevision(object, vertices) {
+	    if (object && Object.prototype.hasOwnProperty.call(object, "geometryRevision") && object.geometryRevision != null) {
+	      const revision = Number(object.geometryRevision);
+	      return Number.isFinite(revision) && revision >= 0 ? Math.floor(revision) : null;
+	    }
+	    if (vertices && Object.prototype.hasOwnProperty.call(vertices, "revision") && vertices.revision != null) {
+	      const revision = Number(vertices.revision);
+	      return Number.isFinite(revision) && revision >= 0 ? Math.floor(revision) : null;
+	    }
+	    return null;
+	  }
+
+	  function sceneMeshLocalBounds(vertices, revision) {
+	    const positions = vertices && vertices.positions;
+	    const count = Math.max(0, Math.floor(sceneNumber(vertices && vertices.count, 0)));
+	    if (!positions || typeof positions.length !== "number" || count <= 0) {
+	      return null;
+	    }
+	    const cached = _sceneMeshLocalBoundsCache.get(vertices);
+	    if (
+	      cached &&
+	      cached.positions === positions &&
+	      cached.count === count &&
+	      cached.revision === revision
+	    ) {
+	      return cached.bounds;
+	    }
+	    let bounds = null;
+	    const limit = Math.min(count * 3, positions.length);
+	    for (let offset = 0; offset + 2 < limit; offset += 3) {
+	      const x = sceneNumber(positions[offset], 0);
+	      const y = sceneNumber(positions[offset + 1], 0);
+	      const z = sceneNumber(positions[offset + 2], 0);
+	      if (!bounds) {
+	        bounds = { minX: x, minY: y, minZ: z, maxX: x, maxY: y, maxZ: z };
+	      } else {
+	        if (x < bounds.minX) bounds.minX = x;
+	        if (y < bounds.minY) bounds.minY = y;
+	        if (z < bounds.minZ) bounds.minZ = z;
+	        if (x > bounds.maxX) bounds.maxX = x;
+	        if (y > bounds.maxY) bounds.maxY = y;
+	        if (z > bounds.maxZ) bounds.maxZ = z;
+	      }
+	    }
+	    if (bounds) {
+	      _sceneMeshLocalBoundsCache.set(vertices, {
+	        positions,
+	        count,
+	        revision,
+	        bounds,
+	      });
+	    }
+	    return bounds;
+	  }
+
+	  function sceneTransformMeshBounds(localBounds, modelMatrix) {
+	    if (!localBounds || !modelMatrix || modelMatrix.length < 16) {
+	      return null;
+	    }
+	    let bounds = null;
+	    for (let corner = 0; corner < 8; corner += 1) {
+	      const x = corner & 1 ? localBounds.maxX : localBounds.minX;
+	      const y = corner & 2 ? localBounds.maxY : localBounds.minY;
+	      const z = corner & 4 ? localBounds.maxZ : localBounds.minZ;
+	      const wx = modelMatrix[0] * x + modelMatrix[4] * y + modelMatrix[8] * z + modelMatrix[12];
+	      const wy = modelMatrix[1] * x + modelMatrix[5] * y + modelMatrix[9] * z + modelMatrix[13];
+	      const wz = modelMatrix[2] * x + modelMatrix[6] * y + modelMatrix[10] * z + modelMatrix[14];
+	      if (!bounds) {
+	        bounds = { minX: wx, minY: wy, minZ: wz, maxX: wx, maxY: wy, maxZ: wz };
+	      } else {
+	        if (wx < bounds.minX) bounds.minX = wx;
+	        if (wy < bounds.minY) bounds.minY = wy;
+	        if (wz < bounds.minZ) bounds.minZ = wz;
+	        if (wx > bounds.maxX) bounds.maxX = wx;
+	        if (wy > bounds.maxY) bounds.maxY = wy;
+	        if (wz > bounds.maxZ) bounds.maxZ = wz;
+	      }
+	    }
+	    return bounds;
 	  }
 
   function appendSceneGridToBundle(bundle, width, height) {
@@ -4658,28 +4944,52 @@
     };
   }
 
-  function sceneMeshWorldNormal(object, vertices, index, timeSeconds) {
+  function sceneMeshWorldNormal(vertices, index, normalTransform) {
     const normal = sceneMeshVertexNormal(vertices, index);
-    return sceneNormalizeDirection(sceneRotatePoint(
-      normal,
-      object.rotationX + object.spinX * timeSeconds,
-      object.rotationY + object.spinY * timeSeconds,
-      object.rotationZ + object.spinZ * timeSeconds,
-    ));
+    return sceneNormalizeDirection({
+      x: normalTransform[0] * normal.x + normalTransform[3] * normal.y + normalTransform[6] * normal.z,
+      y: normalTransform[1] * normal.x + normalTransform[4] * normal.y + normalTransform[7] * normal.z,
+      z: normalTransform[2] * normal.x + normalTransform[5] * normal.y + normalTransform[8] * normal.z,
+    });
   }
 
-  function sceneMeshWorldTangent(object, vertices, index, timeSeconds) {
+  function sceneMeshWorldTangent(vertices, index, modelMatrix, normal, orientation) {
     const tangent = sceneMeshVertexTangent(vertices, index);
-    const rotated = sceneNormalizeDirection(sceneRotatePoint({
-      x: tangent.x,
-      y: tangent.y,
-      z: tangent.z,
-    }, object.rotationX + object.spinX * timeSeconds, object.rotationY + object.spinY * timeSeconds, object.rotationZ + object.spinZ * timeSeconds));
+    let x = modelMatrix[0] * tangent.x + modelMatrix[4] * tangent.y + modelMatrix[8] * tangent.z;
+    let y = modelMatrix[1] * tangent.x + modelMatrix[5] * tangent.y + modelMatrix[9] * tangent.z;
+    let z = modelMatrix[2] * tangent.x + modelMatrix[6] * tangent.y + modelMatrix[10] * tangent.z;
+
+    // A tangent is a surface direction, so it follows the ordinary linear
+    // transform rather than the normal matrix. Remove any accumulated
+    // non-orthogonality before the shader reconstructs B = cross(N, T) * w.
+    const normalDot = x * normal.x + y * normal.y + z * normal.z;
+    x -= normal.x * normalDot;
+    y -= normal.y * normalDot;
+    z -= normal.z * normalDot;
+    let length = Math.sqrt(x * x + y * y + z * z);
+    if (length <= 0.000001) {
+      // Degenerate authored tangents or singular scales still need a finite
+      // direction. Pick the least-aligned cardinal axis and cross it with N.
+      if (Math.abs(normal.x) <= Math.abs(normal.y) && Math.abs(normal.x) <= Math.abs(normal.z)) {
+        x = 0;
+        y = -normal.z;
+        z = normal.y;
+      } else if (Math.abs(normal.y) <= Math.abs(normal.z)) {
+        x = normal.z;
+        y = 0;
+        z = -normal.x;
+      } else {
+        x = -normal.y;
+        y = normal.x;
+        z = 0;
+      }
+      length = Math.max(0.000001, Math.sqrt(x * x + y * y + z * z));
+    }
     return {
-      x: rotated.x,
-      y: rotated.y,
-      z: rotated.z,
-      w: tangent.w,
+      x: x / length,
+      y: y / length,
+      z: z / length,
+      w: tangent.w * orientation,
     };
   }
 
@@ -4733,7 +5043,7 @@
     if (object._modelHidden) {
       return true;
     }
-    if (material && sceneNumber(material.opacity, 1) <= 0.0001) {
+    if (material && sceneNumber(material.opacity, 1) <= 0.0001 && !sceneMaterialUsesAuthoredMeshShader(material)) {
       return true;
     }
     const scaleX = Math.abs(sceneNumber(object.scaleX, sceneNumber(object.scale, 1)));
@@ -4742,8 +5052,59 @@
     return Math.max(scaleX, scaleY, scaleZ) <= 0.0015;
   }
 
+  function sceneMaterialUsesAuthoredMeshShader(material) {
+    if (!material || typeof material !== "object") {
+      return false;
+    }
+    if (String(material.shaderBackend || "").trim().toLowerCase() === "selena") {
+      return true;
+    }
+    return Boolean(
+      typeof material.customVertex === "string" && material.customVertex.trim() ||
+      typeof material.customFragment === "string" && material.customFragment.trim() ||
+      typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim() ||
+      typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim() ||
+      typeof material.shaderSource === "string" && material.shaderSource.trim()
+    );
+  }
+
   function sceneMaterialSuppressesGeneratedWireSegments(material) {
     return material && material.shaderBackend === "selena";
+  }
+
+  function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments) {
+    const count = Math.max(0, Math.floor(sceneNumber(vertices && vertices.count, 0)));
+    const scaleX = sceneNumber(object && object.scaleX, 1);
+    const scaleY = sceneNumber(object && object.scaleY, 1);
+    const scaleZ = sceneNumber(object && object.scaleZ, 1);
+    const scaleMagnitude = Math.max(1, Math.abs(scaleX), Math.abs(scaleY), Math.abs(scaleZ));
+    const uniformScale = Math.abs(scaleX - scaleY) <= scaleMagnitude * 0.000001 &&
+      Math.abs(scaleY - scaleZ) <= scaleMagnitude * 0.000001;
+    function hasAttribute(name, tupleSize) {
+      const data = vertices && vertices[name];
+      return data instanceof Float32Array && data.length >= count * tupleSize;
+    }
+    return Boolean(
+      count > 0 &&
+      bundle && bundle.retainedGeometryEnabled === true &&
+      vertices && vertices.immutable === true &&
+      sceneMeshGeometryRevision(object, vertices) !== null &&
+      vertices.dynamic !== true &&
+      scaleX > 0.000001 && scaleY > 0.000001 && scaleZ > 0.000001 &&
+      uniformScale &&
+      !emitWireSegments &&
+      !(bundle && Array.isArray(bundle.waterSystems) && bundle.waterSystems.length) &&
+      !(object && object.castShadow) &&
+      !(object && object.skin) &&
+      !(object && object.computedMorph) &&
+      !(object && (object.dynamicGeometry || object.geometryDynamic || object.geometryDirty)) &&
+      !(vertices && (vertices.dynamic || vertices.dirty || vertices.needsUpdate)) &&
+      !sceneMaterialUsesAuthoredMeshShader(material) &&
+      hasAttribute("positions", 3) &&
+      hasAttribute("normals", 3) &&
+      hasAttribute("uvs", 2) &&
+      hasAttribute("tangents", 4)
+    );
   }
 
   function appendSceneMeshObjectToBundle(bundle, materialLookup, camera, width, height, object, lights, environment, timeSeconds) {
@@ -4762,6 +5123,10 @@
     const objectPassString = sceneWorldObjectRenderPass(object, material);
     const objectPassIndex = objectPassString === "alpha" ? 1 : (objectPassString === "additive" ? 2 : 0);
     const emitWireSegments = !sceneMaterialSuppressesGeneratedWireSegments(material) && Boolean(material && material.wireframe || outlineWidth > 0);
+    const geometryRevision = sceneMeshGeometryRevision(object, vertices);
+    if (bundle && bundle.retainedGeometryTelemetry) {
+      bundle.retainedGeometryTelemetry.eligible += 1;
+    }
     // bundle.worldMeshColors is a CPU-baked per-vertex LIT color (ambient +
     // sky/ground + every scene light, via sceneLitColorRGBA) that historically
     // fed the legacy immediate-mode WebGL mesh fallback
@@ -4822,6 +5187,50 @@
       });
       return;
     }
+    if (sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments)) {
+      const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
+      const localBounds = sceneMeshLocalBounds(vertices, geometryRevision);
+      const bounds = sceneTransformMeshBounds(localBounds, modelMatrix);
+      if (bounds) {
+        const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
+        const depth = sceneBoundsDepthMetrics(bounds, camera, object);
+        bundle.meshObjects.push({
+          id: object.id,
+          kind: object.kind,
+          pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
+          materialIndex: materialIndex,
+          renderPass: objectPassString,
+          texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
+          static: Boolean(object.static),
+          castShadow: false,
+          receiveShadow: Boolean(object.receiveShadow),
+          depthWrite: object.depthWrite,
+          bounds,
+          depthNear: depth.near,
+          depthFar: depth.far,
+          depthCenter: depth.center,
+          viewCulled: Boolean(object.viewCulled) || sceneBoundsViewCulled(bounds, camera, object),
+          doubleSided: Boolean(object.doubleSided),
+          skin: null,
+          vertices,
+          directVertices: true,
+          retainedGeometry: true,
+          resourceOwner: object,
+          geometryRevision,
+          modelMatrix,
+          modelScaleSigns: sceneObjectModelScaleSigns(object),
+          vertexOffset: 0,
+          vertexCount,
+        });
+        bundle.retainedMeshObjectCount += 1;
+        bundle.retainedMeshVertexCount += vertexCount;
+        bundle.retainedGeometryTelemetry.retained += 1;
+        return;
+      }
+    }
+    if (bundle && bundle.retainedGeometryTelemetry) {
+      bundle.retainedGeometryTelemetry.fallback += 1;
+    }
     const wireVertexOffset = bundle.worldPositions.length / 3;
     const meshVertexOffset = bundle.worldMeshPositions.length / 3;
     let wireVertexCount = 0;
@@ -4830,6 +5239,9 @@
 
     const points = _meshTrianglePoints;
     const positions = vertices.positions;
+    const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
+    const bakeLinearState = sceneObjectMeshBakeLinearState(object, modelMatrix);
+    const reverseWinding = bakeLinearState[9] < 0;
     for (let tri = 0; tri + 2 < vertices.count; tri += 3) {
       // Translate the three triangle vertices directly from the raw
       // positions Float32Array into hoisted scratch points, skipping the
@@ -4839,17 +5251,29 @@
       // (lighting computation, mesh buffer push loop, three wire segment
       // calls) read fields inline before the next iteration clobbers
       // them, so the scratch is stable within each triangle.
-      const triOffset = tri * 3;
-      const tri0 = triOffset;
-      const tri1 = triOffset + 3;
-      const tri2 = triOffset + 6;
-      translateScenePointInto(points[0], positions[tri0], positions[tri0 + 1], positions[tri0 + 2], object, timeSeconds);
-      translateScenePointInto(points[1], positions[tri1], positions[tri1 + 1], positions[tri1 + 2], object, timeSeconds);
-      translateScenePointInto(points[2], positions[tri2], positions[tri2 + 1], positions[tri2 + 2], object, timeSeconds);
+      // A negative determinant reverses the rasterizer's front-face sense.
+      // Swap vertices 1 and 2 while baking so every backend can keep its fixed
+      // CCW front-face contract. UVs, normals, and tangents use the same source
+      // order below, preserving picking interpolation and triangle identity.
+      const source0 = tri;
+      const source1 = reverseWinding ? tri + 2 : tri + 1;
+      const source2 = reverseWinding ? tri + 1 : tri + 2;
+      const tri0 = source0 * 3;
+      const tri1 = source1 * 3;
+      const tri2 = source2 * 3;
+      points[0].x = modelMatrix[0] * positions[tri0] + modelMatrix[4] * positions[tri0 + 1] + modelMatrix[8] * positions[tri0 + 2] + modelMatrix[12];
+      points[0].y = modelMatrix[1] * positions[tri0] + modelMatrix[5] * positions[tri0 + 1] + modelMatrix[9] * positions[tri0 + 2] + modelMatrix[13];
+      points[0].z = modelMatrix[2] * positions[tri0] + modelMatrix[6] * positions[tri0 + 1] + modelMatrix[10] * positions[tri0 + 2] + modelMatrix[14];
+      points[1].x = modelMatrix[0] * positions[tri1] + modelMatrix[4] * positions[tri1 + 1] + modelMatrix[8] * positions[tri1 + 2] + modelMatrix[12];
+      points[1].y = modelMatrix[1] * positions[tri1] + modelMatrix[5] * positions[tri1 + 1] + modelMatrix[9] * positions[tri1 + 2] + modelMatrix[13];
+      points[1].z = modelMatrix[2] * positions[tri1] + modelMatrix[6] * positions[tri1 + 1] + modelMatrix[10] * positions[tri1 + 2] + modelMatrix[14];
+      points[2].x = modelMatrix[0] * positions[tri2] + modelMatrix[4] * positions[tri2 + 1] + modelMatrix[8] * positions[tri2 + 2] + modelMatrix[12];
+      points[2].y = modelMatrix[1] * positions[tri2] + modelMatrix[5] * positions[tri2 + 1] + modelMatrix[9] * positions[tri2 + 2] + modelMatrix[13];
+      points[2].z = modelMatrix[2] * positions[tri2] + modelMatrix[6] * positions[tri2 + 1] + modelMatrix[10] * positions[tri2 + 2] + modelMatrix[14];
       const normals = [
-        sceneMeshWorldNormal(object, vertices, tri, timeSeconds),
-        sceneMeshWorldNormal(object, vertices, tri + 1, timeSeconds),
-        sceneMeshWorldNormal(object, vertices, tri + 2, timeSeconds),
+        sceneMeshWorldNormal(vertices, source0, bakeLinearState),
+        sceneMeshWorldNormal(vertices, source1, bakeLinearState),
+        sceneMeshWorldNormal(vertices, source2, bakeLinearState),
       ];
       // Full per-vertex analytic lighting is only computed when its result
       // is actually visible (wire segments) -- see flatMeshColor's comment
@@ -4864,14 +5288,14 @@
         ]
         : null;
       const uvs = [
-        sceneMeshVertexUV(vertices, tri),
-        sceneMeshVertexUV(vertices, tri + 1),
-        sceneMeshVertexUV(vertices, tri + 2),
+        sceneMeshVertexUV(vertices, source0),
+        sceneMeshVertexUV(vertices, source1),
+        sceneMeshVertexUV(vertices, source2),
       ];
       const tangents = [
-        sceneMeshWorldTangent(object, vertices, tri, timeSeconds),
-        sceneMeshWorldTangent(object, vertices, tri + 1, timeSeconds),
-        sceneMeshWorldTangent(object, vertices, tri + 2, timeSeconds),
+        sceneMeshWorldTangent(vertices, source0, modelMatrix, normals[0], bakeLinearState[9]),
+        sceneMeshWorldTangent(vertices, source1, modelMatrix, normals[1], bakeLinearState[9]),
+        sceneMeshWorldTangent(vertices, source2, modelMatrix, normals[2], bakeLinearState[9]),
       ];
 
       for (let index = 0; index < 3; index += 1) {
@@ -4934,6 +5358,8 @@
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
     }));
+    bundle.worldBakedMeshObjectCount += 1;
+    bundle.worldBakedMeshVertexCount += meshVertexCount;
   }
 
   function sceneObjectHasTexturedSurface(object, material) {

@@ -23,4 +23,3 @@
       await window.__gosx_scene3d_webgpu_probe_ready();
     }
   }
-

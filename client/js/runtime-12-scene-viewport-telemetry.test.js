@@ -276,6 +276,7 @@ test("bootstrap installs a client-event telemetry emitter that POSTs to /_gosx/c
   assert.equal(typeof env.context.__gosx.telemetry.emit, "function");
   assert.equal(typeof env.context.__gosx.telemetry.flush, "function");
   assert.equal(env.context.__gosx.telemetry.session(), env.context.__gosx_telemetry_session());
+  assert.equal(typeof env.context.__gosx.telemetry.snapshot, "function");
   assert.equal(env.context.__gosx.telemetry.enabled, true);
 
   env.context.__gosx_emit("warn", "test", "hello world", { k: "v" });
@@ -321,7 +322,12 @@ test("bootstrap telemetry drops into no-op when disabled via config", async () =
       "/_gosx/client-events": { status: 204, text: "" },
     },
   });
-  env.context.__gosx_telemetry_config = { enabled: false, flushInterval: 0 };
+  env.context.__gosx_telemetry_config = {
+    enabled: false,
+    flushInterval: 0,
+    maxBatch: Infinity,
+    maxQueue: Infinity,
+  };
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -333,6 +339,36 @@ test("bootstrap telemetry drops into no-op when disabled via config", async () =
   assert.equal(telemetryEvents(env).length, 0, "disabled telemetry must not POST");
   assert.equal(env.context.__gosx.telemetry.enabled, false);
   assert.equal(env.context.__gosx.telemetry.session(), "");
+  assert.deepEqual(
+    Object.assign({}, env.context.__gosx.telemetry.snapshot()),
+    {
+      enabled: false,
+      session: "",
+      queueDepth: 0,
+      queueCapacity: 200,
+      batchCapacity: 20,
+      emittedEvents: 0,
+      attemptedEvents: 0,
+      attemptedBatches: 0,
+      dispatchedEvents: 0,
+      dispatchedBatches: 0,
+      browserAcceptedEvents: 0,
+      browserAcceptedBatches: 0,
+      serverAcceptedEvents: 0,
+      serverAcceptedBatches: 0,
+      droppedOverflowEvents: 0,
+      droppedSerializationEvents: 0,
+      failedEvents: 0,
+      failedBatches: 0,
+      beaconFailures: 0,
+      fetchFailures: 0,
+      pendingRequests: 0,
+      lastFlushAt: 0,
+      lastFlushReason: "",
+      lastFailureAt: 0,
+      lastFailureReason: "",
+    },
+  );
 });
 
 test("bootstrap telemetry captures uncaught window errors", async () => {
@@ -634,6 +670,191 @@ test("bootstrap telemetry flushes via sendBeacon on visibility hidden", async ()
   const parsed = JSON.parse(beaconCalls[0].body);
   assert.equal(parsed.events[0].cat, "visibility-test");
   assert.equal(telemetryPostBodies(env).length, 0, "should prefer beacon over fetch when available");
+});
+
+test("bootstrap telemetry drains every queued batch via beacon when visibility becomes hidden", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  const beaconBodies = [];
+  env.context.navigator.sendBeacon = function (_url, body) {
+    beaconBodies.push(JSON.parse(body));
+    return true;
+  };
+  env.context.__gosx_telemetry_config = {
+    flushInterval: 30000,
+    maxBatch: 2.9,
+    maxQueue: 5.9,
+  };
+  const timers = installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  for (let i = 0; i < 5; i += 1) {
+    env.context.__gosx_emit("info", "hidden-drain", "event-" + i, { i });
+  }
+  assert.equal(timers.count(), 1);
+
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(timers.count(), 0);
+  assert.deepEqual(beaconBodies.map((body) => body.events.length), [2, 2, 1]);
+  assert.deepEqual(
+    beaconBodies.flatMap((body) => body.events.map((event) => event.msg)),
+    ["event-0", "event-1", "event-2", "event-3", "event-4"],
+  );
+  const snapshot = env.context.__gosx.telemetry.snapshot();
+  assert.equal(snapshot.queueDepth, 0);
+  assert.equal(snapshot.queueCapacity, 5);
+  assert.equal(snapshot.batchCapacity, 2);
+  assert.equal(snapshot.attemptedEvents, 5);
+  assert.equal(snapshot.attemptedBatches, 3);
+  assert.equal(snapshot.dispatchedEvents, 5);
+  assert.equal(snapshot.browserAcceptedEvents, 5);
+  assert.equal(snapshot.browserAcceptedBatches, 3);
+  assert.equal(snapshot.serverAcceptedEvents, 0, "beacon acceptance must not claim server delivery");
+  assert.equal(snapshot.failedEvents, 0);
+  assert.equal(snapshot.lastFlushReason, "visibility-hidden");
+});
+
+test("bootstrap telemetry reports queue overflow and returns immutable snapshots", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = {
+    flushInterval: 30000,
+    maxBatch: 2,
+    maxQueue: 3,
+  };
+  installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  for (let i = 0; i < 5; i += 1) {
+    env.context.__gosx_emit("info", "overflow", "event-" + i, {});
+  }
+
+  const snapshot = env.context.__gosx.telemetry.snapshot();
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(snapshot.enabled, true);
+  assert.equal(snapshot.session, env.context.__gosx.telemetry.session());
+  assert.equal(snapshot.queueDepth, 3);
+  assert.equal(snapshot.queueCapacity, 3);
+  assert.equal(snapshot.batchCapacity, 2);
+  assert.equal(snapshot.emittedEvents, 5);
+  assert.equal(snapshot.droppedOverflowEvents, 2);
+  assert.equal(snapshot.lastFailureReason, "queue-overflow");
+  assert.equal(Reflect.set(snapshot, "queueDepth", 999), false);
+
+  const nextSnapshot = env.context.__gosx.telemetry.snapshot();
+  assert.notEqual(nextSnapshot, snapshot, "snapshot must not expose a live stats object");
+  assert.equal(nextSnapshot.queueDepth, 3);
+});
+
+test("bootstrap telemetry records rejected beacons while successful fetch fallback proves server acceptance", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  let beaconCalls = 0;
+  env.context.navigator.sendBeacon = function () {
+    beaconCalls += 1;
+    return false;
+  };
+  env.context.__gosx_telemetry_config = { flushInterval: 30000 };
+  installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("warn", "beacon-fallback", "fallback", {});
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(beaconCalls, 1);
+  assert.equal(telemetryEvents(env).length, 1);
+  const snapshot = env.context.__gosx.telemetry.snapshot();
+  assert.equal(snapshot.beaconFailures, 1);
+  assert.equal(snapshot.dispatchedEvents, 1);
+  assert.equal(snapshot.serverAcceptedEvents, 1);
+  assert.equal(snapshot.serverAcceptedBatches, 1);
+  assert.equal(snapshot.browserAcceptedEvents, 0);
+  assert.equal(snapshot.failedEvents, 0, "successful fallback keeps the logical batch successful");
+  assert.equal(snapshot.lastFailureReason, "beacon-rejected");
+});
+
+test("bootstrap telemetry records rejected fetch requests and pending request depth", async () => {
+  let rejectRequest;
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": () => new Promise((_resolve, reject) => {
+        rejectRequest = reject;
+      }),
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 30000 };
+  installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.context.__gosx_emit("error", "fetch-failure", "network down", {});
+  env.context.__gosx_telemetry_flush();
+  assert.equal(env.context.__gosx.telemetry.snapshot().pendingRequests, 1);
+
+  rejectRequest(new Error("offline"));
+  await flushAsyncWork();
+
+  const snapshot = env.context.__gosx.telemetry.snapshot();
+  assert.equal(snapshot.pendingRequests, 0);
+  assert.equal(snapshot.attemptedEvents, 1);
+  assert.equal(snapshot.dispatchedEvents, 1);
+  assert.equal(snapshot.serverAcceptedEvents, 0);
+  assert.equal(snapshot.fetchFailures, 1);
+  assert.equal(snapshot.failedEvents, 1);
+  assert.equal(snapshot.failedBatches, 1);
+  assert.equal(snapshot.lastFailureReason, "fetch-rejected");
+  assert.ok(snapshot.lastFailureAt > 0);
+});
+
+test("bootstrap telemetry drops unserializable batches without throwing or recursively emitting", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+  });
+  env.context.__gosx_telemetry_config = { flushInterval: 30000 };
+  installManualTimers(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const circular = {};
+  circular.self = circular;
+  env.context.__gosx_emit("error", "serialization", "circular", circular);
+  assert.doesNotThrow(() => env.context.__gosx_telemetry_flush());
+  await flushAsyncWork();
+
+  const snapshot = env.context.__gosx.telemetry.snapshot();
+  assert.equal(snapshot.queueDepth, 0);
+  assert.equal(snapshot.emittedEvents, 1);
+  assert.equal(snapshot.attemptedEvents, 1);
+  assert.equal(snapshot.dispatchedEvents, 0);
+  assert.equal(snapshot.droppedSerializationEvents, 1);
+  assert.equal(snapshot.failedEvents, 1);
+  assert.equal(snapshot.failedBatches, 1);
+  assert.equal(snapshot.lastFailureReason, "serialization-error");
+  assert.equal(telemetryPostBodies(env).length, 0);
 });
 
 test("bootstrap keeps Scene3D static when autoRotate is omitted", async () => {

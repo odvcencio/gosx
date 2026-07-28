@@ -299,7 +299,7 @@ var litSharedTerms = []sharedTerm{
 		id:     "ambient-scaled-by-base-colour",
 		effect: "Ambient light stops taking the surface colour, so every shadowed face turns grey.",
 		goPat:  `let ambient = envDiffuse \* baseColor;`,
-		jsPat:  `let ambient = envDiffuse \* albedo;`,
+		jsPat:  `ambient = envDiffuse \* albedo;`,
 	},
 
 	// The rows below arrived with the scene light array. The native copy read
@@ -813,45 +813,17 @@ var litDivergentTerms = []divergentTerm{
 		jsLine:  "let finalOpacity = material.opacity * clamp(in.instanceColor.a, 0.0, 1.0);",
 	},
 	{
-		// The largest gap in this ledger, and the one an author is most likely
-		// to hit, because Environment.EnvMap is one field and the WebGPU
-		// renderer is the PREFERRED backend.
-		//
-		// Count the three authored identifiers, case-insensitive, over
-		// client/js/bootstrap-src:
-		//
-		//	identifier      16a-scene-webgpu.js   16-scene-webgl.js
-		//	envMap                            0                  21
-		//	envIntensity                      0                  10
-		//	envRotation                       0                   8
-		//
-		// So the browser WebGPU copy has no cube texture, no sampler, no
-		// uniform lane and no tap. Its whole environment response is the
-		// hemisphere ambient term on the jsLine below. The native copy loads a
-		// cube in render/bundle/environment.go and taps it twice.
-		//
-		// A SECOND FINDING, recorded so the fix does not copy the defect. The
-		// native tap is NOT image-based lighting either. It samples one cube at
-		// level zero for the diffuse term, samples it again along the
-		// reflection vector for the specular term, and scales the specular tap
-		// by (1.0 - roughness * 0.65). That factor has no derivation, and
-		// scene/capability/capability.go says so about the WebGL2 copy of the
-		// same expression. The criticism is right and it reaches this file
-		// too. A split-sum fit reads roughness through a prefiltered mip chain
-		// and a two-term bidirectional reflectance distribution function (BRDF)
-		// lookup table, and no GoSX backend has either. That is why both ibl
-		// cells stay false while the environment-map cells split.
-		//
-		// CLOSING THIS ROW needs renderer work, not a shader edit: a cube
-		// texture and sampler in the WebGPU bind group layout, three uniform
-		// lanes, and the two taps. Do it against the split-sum products in
-		// assetpipe/ibl rather than against the factor above, then flip
-		// Matrix[environment-map][webgpu] and update the WebGPU manifest.
+		// Browser WebGPU now consumes the generated assetpipe split-sum
+		// radiance/irradiance/LUT products. This row remains because the native
+		// renderer consumes the separate raw EnvironmentMap field and its
+		// underived level-zero approximation, while browser WebGPU does not.
+		// Closing it requires one transport vocabulary (preferably the generated
+		// products) across native and browser, not removal of either live path.
 		id:      "environment-map",
-		effect:  "An authored environment map lights the scene in a poster and on WebGL2, and contributes nothing on WebGPU, which is the backend most viewers get.",
-		verdict: "Keep the native tap and record the browser gap. Removing the native tap to reach parity would make the poster renderer, which is also the test oracle, ignore an authored field it can already read. scene/capability/capability.go carries the environment-map row that reports the drop per backend, and TestWebGPUReadsNoEnvironmentMap there fails when the gap closes.",
+		effect:  "The native renderer consumes the authored raw environment cube while browser WebGPU consumes only generated split-sum IBL products, so the two surfaces can light differently.",
+		verdict: "Keep both honest paths and record the remaining carrier gap. Browser WebGPU now consumes assetpipe split-sum products, but it still does not consume the raw EnvironmentMap field that the native renderer samples.",
 		goLine:  "let cubeIBL = (cubeDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;",
-		jsLine:  "let ambient = envDiffuse * albedo;",
+		jsLine:  "ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
 	},
 	{
 		// This row records the same underived factor from the other side. The
@@ -1271,10 +1243,10 @@ var litDivergentGuardMutations = []litGuardMutation{
 		wantRow: "environment-map",
 	},
 	{
-		name:    "browser folds an environment term into its ambient without updating the ledger",
+		name:    "browser drops generated split-sum IBL without updating the ledger",
 		side:    "js",
-		from:    "let ambient = envDiffuse * albedo;",
-		to:      "let ambient = (envDiffuse + envCube) * albedo;",
+		from:    "ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
+		to:      "ambient = diffuseIBL * env.envIntensity;",
 		wantRow: "environment-map",
 	},
 	{

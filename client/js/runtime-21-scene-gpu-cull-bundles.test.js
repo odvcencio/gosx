@@ -60,6 +60,70 @@ test("gpu-cull T1: WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT and cull pipeline acces
     "no shadow cull pipeline must exist (shadows stay draw-all)");
 });
 
+test("mesh bundle cull keeps authored zero-opacity shaders and culls plain zero-opacity meshes", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const vertices = {
+    positions: [
+      -0.5, -0.5, 0,
+       0.5, -0.5, 0,
+       0.0,  0.5, 0,
+    ],
+    normals: [
+      0, 0, 1,
+      0, 0, 1,
+      0, 0, 1,
+    ],
+    uvs: [
+      0, 0,
+      1, 0,
+      0.5, 1,
+    ],
+    count: 3,
+  };
+  const state = api.createSceneState({
+    scene: {
+      objects: [
+        {
+          id: "selena-zero-opacity",
+          kind: "mesh",
+          vertices,
+          opacity: 0,
+          shaderBackend: "selena",
+        },
+        {
+          id: "custom-zero-opacity",
+          kind: "mesh",
+          vertices,
+          opacity: 0,
+          customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4f(1.0, 0.0, 0.0, 1.0); }",
+        },
+        {
+          id: "plain-zero-opacity",
+          kind: "mesh",
+          vertices,
+          opacity: 0,
+        },
+      ],
+    },
+  }, { tier: "full" });
+
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  assert.deepEqual(Array.from(bundle.meshObjects, (object) => object.id), [
+    "selena-zero-opacity",
+    "custom-zero-opacity",
+  ]);
+  assert.equal(bundle.materials[bundle.meshObjects[0].materialIndex].opacity, 0);
+  assert.equal(bundle.materials[bundle.meshObjects[0].materialIndex].shaderBackend, "selena");
+  assert.equal(bundle.materials[bundle.meshObjects[1].materialIndex].opacity, 0);
+  assert.equal(bundle.meshObjects.some((object) => object.id === "plain-zero-opacity"), false);
+});
+
 // -------------------------------------------------------------------------
 // Task 2: createSceneInstancedCullSystem — buffer sizes and usage flags
 // -------------------------------------------------------------------------
@@ -1398,6 +1462,241 @@ test("telemetry T2: __gosx_scene3d_telemetry(null) returns null when no mounted 
 
   const snap = ctx.window.__gosx_scene3d_telemetry(null);
   assert.equal(snap, null, "must return null when no mounted scene found");
+});
+
+test("telemetry T2a: explicit page scope exposes every registered mount and standard diagnostics", () => {
+  function fakeMount(id, backend) {
+    const attrs = {
+      "data-gosx-scene3d-backend": backend,
+      "data-gosx-scene3d-renderer": backend,
+      "data-gosx-scene3d-ready": "true",
+      "data-gosx-scene3d-mounted": "true",
+    };
+    return {
+      id,
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null;
+      },
+    };
+  }
+
+  const first = fakeMount("first-scene", "webgpu");
+  const second = fakeMount("second-scene", "webgl");
+  const registry = new Map([
+    ["first-engine", {
+      mount: first,
+      snapshot() {
+        return {
+          id: "first-scene",
+          mountID: "first-scene",
+          engineID: "first-engine",
+          component: "scene3d",
+          diagnostics: [{severity: "info", code: "scene.backend.selected", backend: "webgpu"}],
+          rendererDiagnostics: {ready: true, backend: "webgpu"},
+        };
+      },
+    }],
+    ["second-engine", {
+      mount: second,
+      snapshot() {
+        return {
+          id: "second-scene",
+          mountID: "second-scene",
+          engineID: "second-engine",
+          component: "scene3d",
+          diagnostics: [{severity: "warn", code: "scene.backend.fallback", backend: "webgl"}],
+          rendererDiagnostics: {ready: true, backend: "webgl"},
+        };
+      },
+    }],
+  ]);
+  const mountSrc = readSceneMountSrc();
+  const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
+  const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
+  let webgpuProbeCalls = 0;
+  const ctx = vm.createContext({
+    window: {
+      __gosx_scene3d_debug_registry: registry,
+      __gosx_scene3d_webgpu_diagnostics() {
+        webgpuProbeCalls += 1;
+        return {
+          ready: true,
+          adapterAvailable: true,
+          deviceAvailable: true,
+          deviceFeatures: ["timestamp-query"],
+        };
+      },
+    },
+    document: {
+      querySelector() { return first; },
+      querySelectorAll() { return [first, second]; },
+    },
+    JSON,
+    parseFloat,
+  });
+  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+
+  const page = ctx.window.__gosx_scene3d_telemetry({scope: "page"});
+  assert.equal(webgpuProbeCalls, 1, "one page snapshot must read page-global WebGPU capability exactly once");
+  assert.equal(page.scope, "page");
+  assert.equal(page.mountCount, 2);
+  assert.equal(page.mounts.length, 2);
+  assert.equal(page.mounts[0].engineID, "first-engine");
+  assert.equal(page.mounts[1].engineID, "second-engine");
+  assert.equal(page.mounts[0].rendererDiagnostics.backend, "webgpu");
+  assert.equal(page.mounts[1].diagnostics[0].code, "scene.backend.fallback");
+  assert.equal(page.diagnostics.length, 2);
+  assert.equal(page.diagnostics[1].mountID, "second-scene");
+  assert.equal(page.diagnostics[1].engineID, "second-engine");
+  assert.equal(page.pageCapabilities.webgpu.ready, true);
+
+  const explicit = ctx.window.__gosx_scene3d_telemetry({scope: "mount", mount: second});
+  assert.equal(webgpuProbeCalls, 2, "an explicit mount snapshot probes page capability once");
+  assert.equal(explicit.scope, "mount");
+  assert.equal(explicit.mountID, "second-scene");
+  assert.equal(explicit.backend, "webgl");
+  assert.equal(explicit.renderer, "webgl");
+  assert.equal(explicit.rendererDiagnostics.backend, "webgl",
+    "renderer-specific truth must remain WebGL even when the page-level WebGPU probe is ready");
+  assert.equal(explicit.webgpuProbeScope, "page");
+  assert.equal(explicit.pageCapabilities.webgpu.ready, true);
+  assert.equal(explicit.webgpu.ready, true, "legacy webgpu alias remains page-scoped probe evidence");
+
+  const legacy = ctx.window.__gosx_scene3d_telemetry(null);
+  assert.equal(webgpuProbeCalls, 3, "a legacy mount snapshot probes page capability once");
+  assert.equal(legacy.mountID, "first-scene", "legacy null must still select the first mounted scene");
+});
+
+test("telemetry T2b: strict typed parsing surfaces invalid values and malformed JSON", () => {
+  const attrs = {
+    "data-gosx-scene3d-ready": "yes",
+    "data-gosx-scene3d-mounted": "true",
+    "data-gosx-scene3d-in-viewport": "1",
+    "data-gosx-scene3d-pixel-ratio": "16ms",
+    "data-gosx-scene3d-quality-frame-ms": "Infinity",
+    "data-gosx-scene3d-cull-survivors": "{",
+  };
+  const mount = {
+    id: "invalid-scene",
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null;
+    },
+  };
+  const mountSrc = readSceneMountSrc();
+  const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
+  const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
+  const ctx = vm.createContext({
+    window: {},
+    document: {querySelector() { return mount; }},
+    JSON,
+    parseFloat,
+  });
+  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+
+  const snap = ctx.window.__gosx_scene3d_telemetry(mount);
+  assert.equal(snap.ready, null);
+  assert.equal(snap.mounted, true);
+  assert.equal(snap.inViewport, null);
+  assert.equal(snap.pixelRatio, null);
+  assert.equal(snap.qualityFrameMs, null);
+  assert.equal(snap.cullSurvivors, null);
+  assert.equal(snap.diagnostics.filter((entry) => entry.code === "scene.telemetry.invalid_attribute").length, 4);
+  assert.equal(snap.diagnostics.filter((entry) => entry.code === "scene.telemetry.parse_error").length, 1);
+  const pixelError = snap.diagnostics.find((entry) => entry.data.attribute === "data-gosx-scene3d-pixel-ratio");
+  assert.equal(pixelError.data.value, "16ms");
+  assert.equal(pixelError.data.expected, "finite-number");
+
+  attrs["data-gosx-scene3d-cull-survivors"] = "[]";
+  const wrongShape = ctx.window.__gosx_scene3d_telemetry(mount);
+  assert.equal(wrongShape.cullSurvivors, null);
+  assert.ok(wrongShape.diagnostics.some((entry) =>
+    entry.code === "scene.telemetry.invalid_attribute"
+      && entry.data.attribute === "data-gosx-scene3d-cull-survivors"
+      && entry.data.expected === "json-object"));
+});
+
+test("telemetry T2c: missing attributes stay quiet while producer failures are contained", () => {
+  const quietMount = {
+    getAttribute() { return null; },
+  };
+  const failingMount = {
+    id: "failing-scene",
+    getAttribute() { return null; },
+    __gosxScene3DHandle: {
+      getTelemetry() { throw new Error("handle failed"); },
+    },
+  };
+  const registry = new Map([["failing-engine", {
+    mount: failingMount,
+    snapshot() { throw new Error("debug failed"); },
+  }]]);
+  const mountSrc = readSceneMountSrc();
+  const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
+  const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
+  let webgpuProbeCalls = 0;
+  let webgpuProbeFails = true;
+  const ctx = vm.createContext({
+    window: {
+      __gosx_scene3d_debug_registry: registry,
+      __gosx_scene3d_webgpu_diagnostics() {
+        webgpuProbeCalls += 1;
+        if (webgpuProbeFails) throw new Error("webgpu failed");
+        return {
+          ready: true,
+          adapterAvailable: true,
+          deviceAvailable: true,
+          deviceFeatures: [],
+        };
+      },
+    },
+    document: {
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    },
+    JSON,
+    parseFloat,
+  });
+  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+
+  const quiet = ctx.window.__gosx_scene3d_telemetry(quietMount);
+  assert.equal(webgpuProbeCalls, 1, "direct mount scope probes once");
+  assert.equal(quiet.diagnostics.length, 1,
+    "only the page-global WebGPU producer failure should be reported; missing attributes are not invalid");
+  assert.equal(quiet.diagnostics[0].data.producer, "webgpu-diagnostics");
+
+  const failing = ctx.window.__gosx_scene3d_telemetry(failingMount);
+  assert.equal(webgpuProbeCalls, 2, "each direct mount snapshot probes once");
+  const producers = failing.diagnostics
+    .filter((entry) => entry.code === "scene.telemetry.snapshot_failed")
+    .map((entry) => entry.data.producer)
+    .sort();
+  assert.deepEqual([...producers], ["debug-surface", "mount-handle", "webgpu-diagnostics"]);
+  assert.equal(failing.camera, null);
+
+  registry.clear();
+  webgpuProbeFails = false;
+  const page = ctx.window.__gosx_scene3d_telemetry({scope: "page"});
+  assert.equal(webgpuProbeCalls, 3, "an empty page still probes page-global capability exactly once");
+  assert.equal(page.scope, "page");
+  assert.equal(page.mountCount, 0);
+  assert.equal(page.mounts.length, 0);
+  assert.equal(page.diagnostics.length, 0);
+  assert.equal(page.pageCapabilities.webgpu.ready, true,
+    "an empty page still returns page-global WebGPU capability evidence");
+
+  webgpuProbeFails = true;
+  const failedPage = ctx.window.__gosx_scene3d_telemetry({scope: "page"});
+  assert.equal(webgpuProbeCalls, 4, "a failed page snapshot still invokes the probe only once");
+  assert.equal(failedPage.mountCount, 0);
+  assert.equal(failedPage.pageCapabilities.webgpu, null);
+  assert.equal(failedPage.diagnostics.length, 1,
+    "a page-global probe failure must appear exactly once at page scope");
+  assert.equal(failedPage.diagnostics[0].code, "scene.telemetry.snapshot_failed");
+  assert.equal(failedPage.diagnostics[0].data.producer, "webgpu-diagnostics");
+
+  assert.equal(ctx.window.__gosx_scene3d_telemetry(null), null,
+    "legacy null still returns null when no mounted scene exists");
+  assert.equal(webgpuProbeCalls, 4, "a missing legacy mount must not invoke the page probe");
 });
 
 // -------------------------------------------------------------------------

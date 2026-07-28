@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +58,27 @@ const FIXTURES = [
   { file: "bc7.ktx2", vkFormat: 145, webgpu: "bc7-rgba-unorm", webgl: 0x8E8C, blockBytes: 16 },
   { file: "bc7s.ktx2", vkFormat: 146, webgpu: "bc7-rgba-unorm-srgb", webgl: 0x8E8D, blockBytes: 16 },
 ];
+
+test("the JS reader consumes key/value metadata emitted by the real Go writer", () => {
+  const go = process.env.GOSX_GO || "go";
+  const encoded = execFileSync(
+    go,
+    ["run", "./client/js/testdata/ktx2-go-writer-fixture"],
+    { cwd: path.join(__dirname, "..", ".."), encoding: "utf8" },
+  ).trim();
+  const image = loadKTX2().api.parse(new Uint8Array(Buffer.from(encoded, "base64")));
+  assert.equal(image.vkFormat, 83);
+  assert.equal(image.width, 1);
+  assert.equal(image.height, 1);
+  assert.equal(image.faces, 1);
+  assert.equal(image.levels.length, 1);
+  assert.deepEqual(image.keyValues, {
+    GoSXColorSpace: "linear",
+    GoSXiblModel: IBL_BRDF_MODEL,
+    GoSXiblRole: "brdf-lut",
+    KTXwriter: "GoSX assetpipe ktx2 writer",
+  });
+});
 
 // --- reading the reference containers ---------------------------------------
 
@@ -105,6 +127,38 @@ test("every VkFormat maps to its WebGPU name and its WebGL2 internal format", ()
     assert.equal(info.blockHeight, 4);
     assert.equal(info.bytesPerBlock, fixture.blockBytes);
   }
+});
+
+test("the assetpipe IBL half-float formats map without pretending to be compressed", () => {
+  const { api } = loadKTX2();
+  assert.deepEqual(
+    api.formatInfo(83),
+    {
+      webgpuFormat: "rg16float",
+      webglInternalFormat: 0x822F,
+      blockWidth: 1,
+      blockHeight: 1,
+      bytesPerBlock: 4,
+      webglExtension: "OES_texture_float_linear",
+      compressed: false,
+      webglFormat: 0x8227,
+      webglType: 0x140B,
+    },
+  );
+  assert.deepEqual(
+    api.formatInfo(97),
+    {
+      webgpuFormat: "rgba16float",
+      webglInternalFormat: 0x881A,
+      blockWidth: 1,
+      blockHeight: 1,
+      bytesPerBlock: 8,
+      webglExtension: "OES_texture_float_linear",
+      compressed: false,
+      webglFormat: 0x1908,
+      webglType: 0x140B,
+    },
+  );
 });
 
 test("an uncompressed VkFormat is refused by name", () => {
@@ -165,6 +219,106 @@ function buildZlibContainer(vkFormat, width, height, levelPayloads) {
   }
   return out;
 }
+
+function buildIBLContainer(vkFormat, width, height, faces, levelPayloads, keyValues) {
+  const identifier = [0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A];
+  const encoder = new TextEncoder();
+  const kvEntries = Object.entries(keyValues || {}).map(([key, value]) => {
+    const keyBytes = encoder.encode(key);
+    const valueBytes = encoder.encode(value);
+    // Match render/bundle/ktx2.encodeKeyValues exactly: key\0value\0.
+    const pairLength = keyBytes.byteLength + 1 + valueBytes.byteLength + 1;
+    const paddedLength = (pairLength + 3) & ~3;
+    const entry = new Uint8Array(4 + paddedLength);
+    new DataView(entry.buffer).setUint32(0, pairLength, true);
+    entry.set(keyBytes, 4);
+    entry[4 + keyBytes.byteLength] = 0;
+    entry.set(valueBytes, 5 + keyBytes.byteLength);
+    entry[5 + keyBytes.byteLength + valueBytes.byteLength] = 0;
+    return entry;
+  });
+  const indexEnd = 80 + levelPayloads.length * 24;
+  const kvdOffset = indexEnd;
+  const kvdLength = kvEntries.reduce((total, entry) => total + entry.byteLength, 0);
+  const dataStart = kvdOffset + kvdLength;
+  const offsets = [];
+  let total = dataStart;
+  for (const payload of levelPayloads) {
+    offsets.push(total);
+    total += payload.byteLength;
+  }
+
+  const out = new Uint8Array(total);
+  out.set(identifier, 0);
+  const view = new DataView(out.buffer);
+  view.setUint32(12, vkFormat, true);
+  view.setUint32(16, 2, true);
+  view.setUint32(20, width, true);
+  view.setUint32(24, height, true);
+  view.setUint32(28, 0, true);
+  view.setUint32(32, 0, true);
+  view.setUint32(36, faces, true);
+  view.setUint32(40, levelPayloads.length, true);
+  view.setUint32(44, 0, true);
+  view.setUint32(56, kvdOffset, true);
+  view.setUint32(60, kvdLength, true);
+  for (let i = 0; i < levelPayloads.length; i++) {
+    const entry = 80 + i * 24;
+    view.setBigUint64(entry, BigInt(offsets[i]), true);
+    view.setBigUint64(entry + 8, BigInt(levelPayloads[i].byteLength), true);
+    view.setBigUint64(entry + 16, BigInt(levelPayloads[i].byteLength), true);
+  }
+  let kvCursor = kvdOffset;
+  for (const entry of kvEntries) {
+    out.set(entry, kvCursor);
+    kvCursor += entry.byteLength;
+  }
+  for (let i = 0; i < levelPayloads.length; i++) {
+    out.set(levelPayloads[i], offsets[i]);
+  }
+  return out;
+}
+
+const IBL_BRDF_MODEL = "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel";
+
+test("assetpipe radiance metadata and six-face mip payloads survive decode", async () => {
+  const { api } = loadKTX2();
+  const level0 = Uint8Array.from({ length: 4 * 4 * 6 * 8 }, (_, index) => index & 0xFF);
+  const level1 = Uint8Array.from({ length: 2 * 2 * 6 * 8 }, (_, index) => (index + 17) & 0xFF);
+  const image = await api.decode(buildIBLContainer(97, 4, 4, 6, [level0, level1], {
+    GoSXiblRole: "radiance",
+    GoSXColorSpace: "linear",
+    GoSXiblModel: IBL_BRDF_MODEL,
+  }));
+
+  assert.equal(image.faces, 6);
+  assert.equal(image.levelCount, 2);
+  assert.equal(image.layout.webgpuFormat, "rgba16float");
+  assert.deepEqual(image.keyValues, {
+    GoSXiblRole: "radiance",
+    GoSXColorSpace: "linear",
+    GoSXiblModel: IBL_BRDF_MODEL,
+  });
+  assert.equal(image.levels[0].blockColumns, 4);
+  assert.equal(image.levels[0].blockRows, 4);
+  assert.deepEqual(Array.from(image.levels[1].bytes), Array.from(level1));
+});
+
+test("assetpipe BRDF LUT remains a two-channel linear half-float texture", async () => {
+  const { api } = loadKTX2();
+  const payload = Uint8Array.from({ length: 4 * 4 * 4 }, (_, index) => (index * 3) & 0xFF);
+  const image = await api.decode(buildIBLContainer(83, 4, 4, 1, [payload], {
+    GoSXiblRole: "brdf-lut",
+    GoSXColorSpace: "linear",
+    GoSXiblModel: IBL_BRDF_MODEL,
+  }));
+
+  assert.equal(image.faces, 1);
+  assert.equal(image.layout.webgpuFormat, "rg16float");
+  assert.equal(image.layout.compressed, false);
+  assert.equal(image.keyValues.GoSXiblRole, "brdf-lut");
+  assert.deepEqual(Array.from(image.levels[0].bytes), Array.from(payload));
+});
 
 test("supercompression scheme 3 inflates back to the Khronos payload", async () => {
   const { api } = loadKTX2();
@@ -295,6 +449,36 @@ test("the WebGPU uploader writes one call per mip level", async () => {
   assert.deepEqual(third.size, { width: 4, height: 4, depthOrArrayLayers: 1 });
 });
 
+test("the WebGPU uploader preserves every IBL cube face and mip", async () => {
+  const { api } = loadKTX2();
+  const level0 = new Uint8Array(4 * 4 * 6 * 8);
+  const level1 = new Uint8Array(2 * 2 * 6 * 8);
+  const image = await api.decode(buildIBLContainer(97, 4, 4, 6, [level0, level1], {
+    GoSXiblRole: "radiance",
+    GoSXColorSpace: "linear",
+    GoSXiblModel: IBL_BRDF_MODEL,
+  }));
+  const device = recordingDevice();
+  const texture = api.uploadWebGPU(device, image, { label: "ibl-radiance" });
+
+  assert.equal(texture.descriptor.format, "rgba16float");
+  assert.equal(texture.descriptor.mipLevelCount, 2);
+  assert.deepEqual(texture.descriptor.size, { width: 4, height: 4, depthOrArrayLayers: 6 });
+  assert.equal(device.calls.writeTexture.length, 2);
+  assert.equal(device.calls.writeTexture[0].layout.bytesPerRow, 32);
+  assert.equal(device.calls.writeTexture[0].layout.rowsPerImage, 4);
+  assert.deepEqual(device.calls.writeTexture[0].size, {
+    width: 4,
+    height: 4,
+    depthOrArrayLayers: 6,
+  });
+  assert.deepEqual(device.calls.writeTexture[1].size, {
+    width: 2,
+    height: 2,
+    depthOrArrayLayers: 6,
+  });
+});
+
 test("the WebGPU uploader refuses an image that was never decoded", () => {
   const { api } = loadKTX2();
   const parsed = api.parse(readFixture("bc7.ktx2"));
@@ -304,11 +488,17 @@ test("the WebGPU uploader refuses an image that was never decoded", () => {
 // recordingGL captures every WebGL2 call and grants the named extensions.
 function recordingGL(extensions) {
   const granted = new Set(extensions);
-  const calls = { compressedTexImage2D: [], extensions: [] };
+  const calls = { compressedTexImage2D: [], texImage2D: [], extensions: [] };
   return {
     calls,
     TEXTURE_2D: 0x0DE1,
+    TEXTURE_CUBE_MAP: 0x8513,
+    TEXTURE_CUBE_MAP_POSITIVE_X: 0x8515,
     TEXTURE_MAX_LEVEL: 0x813D,
+    TEXTURE_WRAP_S: 0x2802,
+    TEXTURE_WRAP_T: 0x2803,
+    TEXTURE_WRAP_R: 0x8072,
+    CLAMP_TO_EDGE: 0x812F,
     getExtension(name) {
       calls.extensions.push(name);
       return granted.has(name) ? {} : null;
@@ -318,6 +508,12 @@ function recordingGL(extensions) {
     texParameteri: () => {},
     compressedTexImage2D(target, level, internalFormat, width, height, border, data) {
       calls.compressedTexImage2D.push({ level, internalFormat, width, height, border, byteLength: data.byteLength });
+    },
+    texImage2D(target, level, internalFormat, width, height, border, format, type, data) {
+      calls.texImage2D.push({
+        target, level, internalFormat, width, height, border, format, type,
+        byteLength: data.byteLength,
+      });
     },
   };
 }
@@ -353,6 +549,65 @@ test("the WebGL2 uploader refuses a context without the matching extension", asy
     return true;
   });
   assert.equal(gl.calls.compressedTexImage2D.length, 0, "nothing may upload without the extension");
+});
+
+test("the WebGL2 uploader preserves the native half-float IBL cube faces and mips", async () => {
+  const { api } = loadKTX2();
+  const image = await api.decode(buildIBLContainer(
+    97,
+    4,
+    4,
+    6,
+    [new Uint8Array(4 * 4 * 6 * 8), new Uint8Array(2 * 2 * 6 * 8)],
+    {
+      GoSXiblRole: "radiance",
+      GoSXColorSpace: "linear",
+      GoSXiblModel: IBL_BRDF_MODEL,
+    },
+  ));
+  const gl = recordingGL(["OES_texture_float_linear"]);
+  api.uploadWebGL2(gl, image);
+
+  assert.equal(gl.calls.compressedTexImage2D.length, 0);
+  assert.equal(gl.calls.texImage2D.length, 12, "six faces times two mip levels");
+  for (let face = 0; face < 6; face++) {
+    const upload = gl.calls.texImage2D[face];
+    assert.equal(upload.target, gl.TEXTURE_CUBE_MAP_POSITIVE_X + face);
+    assert.equal(upload.level, 0);
+    assert.equal(upload.internalFormat, 0x881A);
+    assert.equal(upload.format, 0x1908);
+    assert.equal(upload.type, 0x140B);
+    assert.equal(upload.byteLength, 4 * 4 * 8);
+  }
+  for (let face = 0; face < 6; face++) {
+    const upload = gl.calls.texImage2D[6 + face];
+    assert.equal(upload.target, gl.TEXTURE_CUBE_MAP_POSITIVE_X + face);
+    assert.equal(upload.level, 1);
+    assert.equal(upload.byteLength, 2 * 2 * 8);
+  }
+});
+
+test("the WebGL2 IBL uploader fails visibly without half-float linear filtering", async () => {
+  const { api } = loadKTX2();
+  const image = await api.decode(buildIBLContainer(
+    83,
+    2,
+    2,
+    1,
+    [new Uint8Array(2 * 2 * 4)],
+    {
+      GoSXiblRole: "brdf-lut",
+      GoSXColorSpace: "linear",
+      GoSXiblModel: IBL_BRDF_MODEL,
+    },
+  ));
+  const gl = recordingGL([]);
+  assert.throws(() => api.uploadWebGL2(gl, image), (error) => {
+    assert.equal(error.code, "extension");
+    assert.match(error.message, /OES_texture_float_linear/);
+    return true;
+  });
+  assert.equal(gl.calls.texImage2D.length, 0);
 });
 
 // --- the upload gate ---------------------------------------------------------
