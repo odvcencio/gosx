@@ -194,7 +194,8 @@ func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
 		{"id":"ok","kind":"cube","size":1,"x":-2}
 	],"lights":[
 		{"id":"key","kind":"directional","directionY":-1,"intensity":1},
-		{"id":"lamp","kind":"point","intensity":3,"y":3}
+		{"id":"shaded","kind":"point","intensity":2,"y":2},
+		{"id":"lamp","kind":"rect-area","intensity":3,"y":3,"width":2,"height":2}
 	]}`
 	_, scenePath, _ := writeCheckFixture(t, document)
 
@@ -215,6 +216,12 @@ func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
 			codes[diag.Code+"/"+diag.Target] = diag.Message
 		}
 	}
+	// "lamp" is a RECT-AREA light, not a point light. A point light used to be
+	// reported here and now shades: the CPU rasterizer runs the same runtime
+	// light loop the native shader runs, covering ambient, directional, point,
+	// spot and hemisphere. Rect-area is the one kind still dropped, and for a
+	// structural reason — engine.RenderLight carries no width and no height, so
+	// the rectangle the polygon form factor integrates over cannot be built.
 	for _, key := range []string{"scene.preview.unsupported_geometry/gap", "scene.preview.unsupported_light/lamp"} {
 		if _, ok := codes[key]; !ok {
 			t.Fatalf("expected %s in frame diagnostics: %v", key, codes)
@@ -226,6 +233,8 @@ func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
 	for _, key := range []string{
 		"scene.preview.unsupported_geometry/ok",
 		"scene.preview.unsupported_geometry/knot",
+		"scene.preview.unsupported_light/shaded",
+		"scene.preview.unsupported_light/key",
 	} {
 		if message, ok := codes[key]; ok {
 			t.Fatalf("%s is drawable and must not be reported as unsupported, got %q", key, message)

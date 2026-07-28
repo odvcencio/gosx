@@ -1772,9 +1772,9 @@
       listSceneParticleForces,
       registerSceneParticleForce,
       registerSceneParticleForceKind,
-      sceneReportPipelineFailure,
-      sceneShaderModuleError,
       sceneComputeSystemSignature,
       unregisterSceneParticleForce,
+      sceneShaderModuleError,
+      sceneReportPipelineFailure,
     });
   }
