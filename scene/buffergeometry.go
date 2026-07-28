@@ -13,7 +13,17 @@ type BufferGeometry struct {
 	Positions []float64
 	Normals   []float64
 	UVs       []float64
+	Tangents  []float64
 	Indices   []int
+
+	// Immutable opts this geometry into renderer-side retained GPU buffers.
+	// Authors must treat every attribute slice as immutable for a given
+	// Revision. To publish changed data, replace the slices and increment
+	// Revision. Revisionless or Dynamic geometry deliberately takes the
+	// conservative CPU-baked path.
+	Immutable bool
+	Revision  uint64
+	Dynamic   bool
 }
 
 func (BufferGeometry) sceneGeometry() {}
@@ -33,7 +43,11 @@ type MeshVertices struct {
 	Positions []float64 `json:"positions,omitempty"`
 	Normals   []float64 `json:"normals,omitempty"`
 	UVs       []float64 `json:"uvs,omitempty"`
+	Tangents  []float64 `json:"tangents,omitempty"`
 	Count     int       `json:"count"`
+	Immutable bool      `json:"immutable,omitempty"`
+	Revision  *uint64   `json:"revision,omitempty"`
+	Dynamic   bool      `json:"dynamic,omitempty"`
 }
 
 // bufferGeometryVertices flattens a BufferGeometry into inline MeshVertices.
@@ -41,22 +55,35 @@ type MeshVertices struct {
 // draws item.vertices as a flat triangle soup (count = len(positions)/3).
 // Returns nil for empty geometry so the object simply carries no vertices.
 func bufferGeometryVertices(g BufferGeometry) *MeshVertices {
-	pos, nrm, uvs := g.Positions, g.Normals, g.UVs
+	pos, nrm, uvs, tangents := g.Positions, g.Normals, g.UVs, g.Tangents
 	if len(g.Indices) > 0 {
 		pos = expandBufferAttr(g.Positions, g.Indices, 3)
 		nrm = expandBufferAttr(g.Normals, g.Indices, 3)
 		uvs = expandBufferAttr(g.UVs, g.Indices, 2)
+		tangents = expandBufferAttr(g.Tangents, g.Indices, 4)
 	}
 	count := len(pos) / 3
 	if count == 0 {
 		return nil
 	}
-	out := &MeshVertices{Count: count, Positions: append([]float64(nil), pos...)}
+	out := &MeshVertices{
+		Count:     count,
+		Positions: append([]float64(nil), pos...),
+		Immutable: g.Immutable,
+		Dynamic:   g.Dynamic,
+	}
+	if g.Immutable || g.Revision != 0 {
+		revision := g.Revision
+		out.Revision = &revision
+	}
 	if len(nrm) > 0 {
 		out.Normals = append([]float64(nil), nrm...)
 	}
 	if len(uvs) > 0 {
 		out.UVs = append([]float64(nil), uvs...)
+	}
+	if len(tangents) > 0 {
+		out.Tangents = append([]float64(nil), tangents...)
 	}
 	return out
 }
