@@ -264,8 +264,13 @@
     }, { webgpu: webgpuAvail, webgl: true });
     const preferWebGPU = verdict ? verdict.backend === "webgpu" : (webgpuPreference === "prefer" && !webgpuFeatureGap);
     const verdictFallback = verdict ? verdict.fallbackReason : "";
-    const allowWebGL = (webglPreference === "prefer" || webglPreference === "force")
-      && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    // Same fix as sceneWebGLBackendRequest above: trust the verdict over the
+    // raw avoid/prefer/force preference when backendCaps gave chooseSceneBackend
+    // enough to resolve one. See that function for the full incident note.
+    const wantsWebGL = verdict
+      ? verdict.backend === "webgl"
+      : (webglPreference === "prefer" || webglPreference === "force");
+    const allowWebGL = wantsWebGL && sceneBackendCapsAllowsKind(backendCaps, "webgl");
     const request = {
       props,
       capability,
@@ -1481,8 +1486,19 @@
       ? verdict.backend === "webgpu"
       : (webgpuPreference === "prefer" && !sceneNeedsWebGLForWebGPUCoverage(props));
     const preferWebGPU = wantsWebGPU && webgpuAvail && sceneBackendCapsAllowsKind(backendCaps, "webgpu");
-    const allowWebGL = (webglPreference === "prefer" || webglPreference === "force")
-      && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    // Trust the verdict the same way wantsWebGPU does above. Without this, a
+    // scene whose backendCaps exclude canvas2d (skinning, water) and whose
+    // capability tier marks WebGL "avoid" (low-power/reduced-data) computed
+    // allowWebGL=false even when verdict.backend was "webgl" — the ONLY real
+    // backend chooseSceneBackend could pick once WebGPU was unavailable. That
+    // starved settlePreferredWebGLBackend of a reason to fetch the WebGL
+    // chunk, so createSceneRenderer ran with no factory loaded and reported
+    // "could not acquire a renderer" even though WebGL was the correct and
+    // only viable backend.
+    const wantsWebGL = verdict
+      ? verdict.backend === "webgl"
+      : (webglPreference === "prefer" || webglPreference === "force");
+    const allowWebGL = wantsWebGL && sceneBackendCapsAllowsKind(backendCaps, "webgl");
     return {
       props,
       capability,
