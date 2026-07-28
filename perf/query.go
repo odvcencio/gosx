@@ -38,6 +38,66 @@ type DispatchEntry struct {
 	Patches int     `json:"patches"`
 }
 
+// SceneTelemetrySample is one observed timing-like Scene3D mount attribute.
+// Phase is "cold" for the first instrumentation window and "warm" afterward.
+type SceneTelemetrySample struct {
+	Mount        int     `json:"mount"`
+	Name         string  `json:"name"`
+	Value        string  `json:"value"`
+	NumericValue float64 `json:"numericValue"`
+	StartTime    float64 `json:"startTime"`
+	Phase        string  `json:"phase"`
+}
+
+// AnimationFrameSample is one visible-tab requestAnimationFrame timestamp
+// interval. It measures browser display-opportunity cadence, not GPU work.
+type AnimationFrameSample struct {
+	Duration  float64 `json:"duration"`
+	StartTime float64 `json:"startTime"`
+	Phase     string  `json:"phase"`
+}
+
+// SceneCanvasSnapshot records the canvas backing-store and CSS dimensions.
+type SceneCanvasSnapshot struct {
+	Width     float64 `json:"width"`
+	Height    float64 `json:"height"`
+	CSSWidth  float64 `json:"cssWidth"`
+	CSSHeight float64 `json:"cssHeight"`
+}
+
+// SceneMountSnapshot contains the latest stable Scene3D diagnostic attributes
+// for one mount.
+type SceneMountSnapshot struct {
+	Index      int                  `json:"index"`
+	ID         string               `json:"id"`
+	Attributes map[string]string    `json:"attributes"`
+	Canvas     *SceneCanvasSnapshot `json:"canvas,omitempty"`
+}
+
+// SceneTelemetryEvent preserves an optional structured renderer event.
+type SceneTelemetryEvent struct {
+	Type      string                 `json:"type"`
+	Detail    map[string]interface{} `json:"detail,omitempty"`
+	StartTime float64                `json:"startTime"`
+	Phase     string                 `json:"phase"`
+}
+
+// SceneTelemetrySnapshot is emitted by the pre-navigation instrument script.
+type SceneTelemetrySnapshot struct {
+	Available               bool                   `json:"available"`
+	RAFAvailable            bool                   `json:"rafAvailable"`
+	VisibilityState         string                 `json:"visibilityState"`
+	ColdFrameCount          int                    `json:"coldFrameCount"`
+	SceneStartedAt          float64                `json:"sceneStartedAt"`
+	WarmAt                  float64                `json:"warmAt"`
+	CapturedAt              float64                `json:"capturedAt"`
+	DevicePixelRatio        float64                `json:"devicePixelRatio"`
+	PresentedFrameIntervals []AnimationFrameSample `json:"presentedFrameIntervals"`
+	AttributeSamples        []SceneTelemetrySample `json:"attributeSamples"`
+	TelemetryEvents         []SceneTelemetryEvent  `json:"telemetryEvents"`
+	Mounts                  []SceneMountSnapshot   `json:"mounts"`
+}
+
 // QueryPerformanceMeasures returns all performance.measure entries whose name
 // starts with prefix.
 func QueryPerformanceMeasures(d *Driver, prefix string) ([]PerfEntry, error) {
@@ -157,6 +217,28 @@ func QueryDispatchLog(d *Driver) ([]DispatchEntry, error) {
 // "scene3d-render" prefix.
 func QuerySceneFrames(d *Driver) ([]PerfEntry, error) {
 	return QueryPerformanceMeasures(d, "scene3d-render")
+}
+
+// QuerySceneTelemetry returns rAF cadence and renderer-published Scene3D
+// attributes. Older instrumentation returns an empty, unavailable snapshot.
+func QuerySceneTelemetry(d *Driver) (SceneTelemetrySnapshot, error) {
+	var snapshot SceneTelemetrySnapshot
+	err := d.Evaluate(`(typeof window.__gosx_perf_scene_snapshot === "function")
+		? window.__gosx_perf_scene_snapshot()
+		: {available:false, rafAvailable:false, presentedFrameIntervals:[], attributeSamples:[], mounts:[]}`, &snapshot)
+	if snapshot.PresentedFrameIntervals == nil {
+		snapshot.PresentedFrameIntervals = []AnimationFrameSample{}
+	}
+	if snapshot.AttributeSamples == nil {
+		snapshot.AttributeSamples = []SceneTelemetrySample{}
+	}
+	if snapshot.TelemetryEvents == nil {
+		snapshot.TelemetryEvents = []SceneTelemetryEvent{}
+	}
+	if snapshot.Mounts == nil {
+		snapshot.Mounts = []SceneMountSnapshot{}
+	}
+	return snapshot, err
 }
 
 // jsString returns a JavaScript string literal for s, using JSON encoding
