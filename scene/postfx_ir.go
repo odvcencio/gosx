@@ -526,8 +526,8 @@ func lowerCustomPostDOMRegions(dom CustomPostDOMRegions) *CustomPostDOMRegionsIR
 	uniforms := DOMRegionUniformsIR{
 		Count:  customPostUniformName(dom.Uniforms.Count, "regionCount"),
 		Aspect: customPostUniformName(dom.Uniforms.Aspect, "regionAspect"),
-		Rect:   customPostUniformName(dom.Uniforms.Rect, "regionRects"),
-		Meta:   customPostUniformName(dom.Uniforms.Meta, "regionMeta"),
+		Rect:   customPostUniformPattern(dom.Uniforms.Rect, "region%dRect"),
+		Meta:   customPostUniformPattern(dom.Uniforms.Meta, "region%dMeta"),
 	}
 	return &CustomPostDOMRegionsIR{
 		Selector: selector,
@@ -547,6 +547,30 @@ func customPostUniformName(value, fallback string) string {
 		}
 	}
 	return name
+}
+
+func customPostUniformPattern(value, fallback string) string {
+	pattern := strings.TrimSpace(value)
+	if pattern == "" {
+		return fallback
+	}
+	if strings.Count(pattern, "%d") != 1 {
+		return fallback
+	}
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		if c == '%' {
+			if i+1 >= len(pattern) || pattern[i+1] != 'd' {
+				return fallback
+			}
+			i++
+			continue
+		}
+		if !(c == '_' || c == '[' || c == ']' || c == '.' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') {
+			return fallback
+		}
+	}
+	return pattern
 }
 
 func tonemapModeString(m TonemapMode) string {

@@ -309,7 +309,7 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 			Uniforms: DOMRegionUniforms{
 				Count:  "uRegionCount",
 				Aspect: "bad uniform",
-				Rect:   "uRegionRects",
+				Rect:   "uRegion%dRect",
 				Meta:   "uRegionMeta",
 			},
 		},
@@ -336,6 +336,12 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 	}
 	if cp.DOMRegions.Uniforms.Aspect != "regionAspect" {
 		t.Errorf("Aspect uniform = %q, want fallback", cp.DOMRegions.Uniforms.Aspect)
+	}
+	if cp.DOMRegions.Uniforms.Rect != "uRegion%dRect" {
+		t.Errorf("Rect uniform = %q", cp.DOMRegions.Uniforms.Rect)
+	}
+	if cp.DOMRegions.Uniforms.Meta != "region%dMeta" {
+		t.Errorf("Meta uniform = %q, want fallback", cp.DOMRegions.Uniforms.Meta)
 	}
 }
 
@@ -371,7 +377,7 @@ func TestCustomPostDOMRegionsJSONDefaults(t *testing.T) {
 	if !ok {
 		t.Fatalf("uniforms = %T", rawDOM["uniforms"])
 	}
-	if rawUniforms["rect"] != "regionRects" || rawUniforms["meta"] != "regionMeta" {
+	if rawUniforms["rect"] != "region%dRect" || rawUniforms["meta"] != "region%dMeta" {
 		t.Errorf("uniforms = %#v", rawUniforms)
 	}
 }

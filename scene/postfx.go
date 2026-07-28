@@ -191,8 +191,9 @@ type CustomPost struct {
 func (CustomPost) isPostEffect() {}
 
 // DOMRegionUniforms names the uniforms patched by a CustomPost DOMRegions
-// tracker. Empty names fall back to regionCount, regionAspect, regionRects,
-// and regionMeta.
+// tracker. Empty Count and Aspect names fall back to regionCount and
+// regionAspect. Rect and Meta are printf-style slot patterns with exactly one
+// %d. Empty patterns fall back to region%dRect and region%dMeta.
 type DOMRegionUniforms struct {
 	Count  string
 	Aspect string

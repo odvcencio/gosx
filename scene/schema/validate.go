@@ -844,11 +844,19 @@ func validateCustomPostDOMRegions(report *Report, record map[string]any, path st
 			report.add(Error, "scene.post_effect.dom_regions.uniforms", "CustomPost domRegions uniforms must be an object", path+".domRegions.uniforms", "", nil)
 			return
 		}
-		for _, name := range []string{"count", "aspect", "rect", "meta"} {
+		for _, name := range []string{"count", "aspect"} {
 			if rawName, ok := uniforms[name]; ok && rawName != nil {
 				value, ok := rawName.(string)
 				if !ok || strings.TrimSpace(value) == "" || !validCustomPostUniformName(value) {
 					report.add(Error, "scene.post_effect.dom_regions.uniform", "CustomPost domRegions uniform name is invalid", path+".domRegions.uniforms."+name, "", nil)
+				}
+			}
+		}
+		for _, name := range []string{"rect", "meta"} {
+			if rawName, ok := uniforms[name]; ok && rawName != nil {
+				value, ok := rawName.(string)
+				if !ok || strings.TrimSpace(value) == "" || !validCustomPostUniformPattern(value) {
+					report.add(Error, "scene.post_effect.dom_regions.uniform", "CustomPost domRegions uniform pattern is invalid", path+".domRegions.uniforms."+name, "", nil)
 				}
 			}
 		}
@@ -862,6 +870,27 @@ func validCustomPostUniformName(value string) bool {
 		}
 	}
 	return strings.TrimSpace(value) != ""
+}
+
+func validCustomPostUniformPattern(value string) bool {
+	pattern := strings.TrimSpace(value)
+	if pattern == "" || strings.Count(pattern, "%d") != 1 {
+		return false
+	}
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		if c == '%' {
+			if i+1 >= len(pattern) || pattern[i+1] != 'd' {
+				return false
+			}
+			i++
+			continue
+		}
+		if !(c == '_' || c == '[' || c == ']' || c == '.' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateMaterialScalars(report *Report, id, path string, values ...float64) {

@@ -19,6 +19,26 @@
     return typeof value === "string" && value.trim() ? value.trim() : fallback;
   }
 
+  function sceneDOMRegionUniformPattern(value, fallback) {
+    var pattern = typeof value === "string" ? value.trim() : "";
+    if (!pattern) return fallback;
+    if ((pattern.match(/%d/g) || []).length !== 1) return fallback;
+    for (var i = 0; i < pattern.length; i += 1) {
+      var c = pattern.charAt(i);
+      if (c === "%") {
+        if (pattern.charAt(i + 1) !== "d") return fallback;
+        i += 1;
+        continue;
+      }
+      if (!/[A-Za-z0-9_[\].]/.test(c)) return fallback;
+    }
+    return pattern;
+  }
+
+  function sceneDOMRegionFormat(pattern, index) {
+    return pattern.replace("%d", String(index));
+  }
+
   function sceneCustomPostDOMRegionsConfig(effect) {
     var raw = effect && effect.domRegions && typeof effect.domRegions === "object" ? effect.domRegions : null;
     var selector = raw && typeof raw.selector === "string" ? raw.selector.trim() : "";
@@ -31,8 +51,8 @@
       uniforms: {
         count: sceneDOMRegionUniformName(uniforms.count, "regionCount"),
         aspect: sceneDOMRegionUniformName(uniforms.aspect, "regionAspect"),
-        rect: sceneDOMRegionUniformName(uniforms.rect, "regionRects"),
-        meta: sceneDOMRegionUniformName(uniforms.meta, "regionMeta"),
+        rect: sceneDOMRegionUniformPattern(uniforms.rect, "region%dRect"),
+        meta: sceneDOMRegionUniformPattern(uniforms.meta, "region%dMeta"),
       },
     };
   }
@@ -150,8 +170,21 @@
     var uniforms = {};
     uniforms[config.uniforms.count] = measurement.count;
     uniforms[config.uniforms.aspect] = measurement.aspect;
-    uniforms[config.uniforms.rect] = measurement.rects;
-    uniforms[config.uniforms.meta] = measurement.meta;
+    for (var i = 0; i < config.max; i += 1) {
+      var base = i * 4;
+      uniforms[sceneDOMRegionFormat(config.uniforms.rect, i)] = [
+        measurement.rects[base] || 0,
+        measurement.rects[base + 1] || 0,
+        measurement.rects[base + 2] || 0,
+        measurement.rects[base + 3] || 0,
+      ];
+      uniforms[sceneDOMRegionFormat(config.uniforms.meta, i)] = [
+        measurement.meta[base] || 0,
+        measurement.meta[base + 1] || 0,
+        measurement.meta[base + 2] || 0,
+        measurement.meta[base + 3] || 0,
+      ];
+    }
     return { name: config.name, uniforms: uniforms };
   }
 

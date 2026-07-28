@@ -29234,7 +29234,7 @@ function createDOMRegionTrackerHarness(options = {}) {
       domRegions: {
         selector: ".glass-card",
         max: options.max,
-        uniforms: options.uniforms || { count: "uCount", aspect: "uAspect", rect: "uRect", meta: "uMeta" },
+        uniforms: options.uniforms || { count: "uCount", aspect: "uAspect", rect: "uRegion%dRect", meta: "uRegion%dMeta" },
       },
     }],
   };
@@ -29269,8 +29269,10 @@ test("CustomPost DOMRegions packs rect/meta uniforms in post UV space", async ()
   const uniforms = harness.state.postEffects[0].uniforms;
   assert.equal(uniforms.uCount, 1);
   assert.equal(uniforms.uAspect, 2);
-  assert.deepEqual(uniforms.uRect.slice(0, 4), [0.375, 0.375, 0.125, 0.125]);
-  assert.deepEqual(uniforms.uMeta.slice(0, 4), [0.1, 1, 0, 0]);
+  assert.equal(uniforms.uRect, undefined);
+  assert.equal(uniforms.uMeta, undefined);
+  assert.deepEqual(Array.from(uniforms.uRegion0Rect), [0.375, 0.375, 0.125, 0.125]);
+  assert.deepEqual(Array.from(uniforms.uRegion0Meta), [0.1, 1, 0, 0]);
   assert.equal(harness.renders[0], "custom-post-dom-regions");
 });
 
@@ -29281,8 +29283,7 @@ test("CustomPost DOMRegions caps targets and clears stale slots", async () => {
 
   let uniforms = harness.state.postEffects[0].uniforms;
   assert.equal(uniforms.uCount, 2);
-  assert.equal(uniforms.uRect.length, 8);
-  assert.notEqual(uniforms.uRect[4], 0);
+  assert.notEqual(uniforms.uRegion1Rect[0], 0);
 
   harness.targets[1].setAttribute("class", "gone");
   harness.targets[2].setAttribute("class", "gone");
@@ -29292,8 +29293,18 @@ test("CustomPost DOMRegions caps targets and clears stale slots", async () => {
 
   uniforms = harness.state.postEffects[0].uniforms;
   assert.equal(uniforms.uCount, 1);
-  assert.deepEqual(uniforms.uRect.slice(4, 8), [0, 0, 0, 0]);
-  assert.deepEqual(uniforms.uMeta.slice(4, 8), [0, 0, 0, 0]);
+  assert.deepEqual(Array.from(uniforms.uRegion1Rect), [0, 0, 0, 0]);
+  assert.deepEqual(Array.from(uniforms.uRegion1Meta), [0, 0, 0, 0]);
+});
+
+test("CustomPost DOMRegions normalizes unsafe slot patterns", () => {
+  const harness = createDOMRegionTrackerHarness({
+    uniforms: { count: "uCount", aspect: "uAspect", rect: "bad slot", meta: "slot%d%dMeta" },
+  });
+  const config = harness.env.context.__gosx_scene3d_dom_regions.config(harness.state.postEffects[0]);
+  assert.equal(config.uniforms.rect, "region%dRect");
+  assert.equal(config.uniforms.meta, "region%dMeta");
+  harness.tracker.dispose();
 });
 
 test("CustomPost DOMRegions coalesces unchanged keys and disposes listeners", async () => {
@@ -29325,7 +29336,7 @@ test("CustomPost DOMRegions resolves current canvas after replacement", async ()
   const harness = createDOMRegionTrackerHarness();
   harness.raf.flush(16);
   await flushAsyncWork();
-  assert.equal(harness.state.postEffects[0].uniforms.uRect[0], 0.375);
+  assert.equal(harness.state.postEffects[0].uniforms.uRegion0Rect[0], 0.375);
 
   const canvasB = new FakeElement("canvas", null);
   canvasB.setAttribute("data-gosx-scene3d-canvas", "true");
@@ -29338,7 +29349,7 @@ test("CustomPost DOMRegions resolves current canvas after replacement", async ()
   await flushAsyncWork();
 
   assert.equal(harness.state.postEffects[0].uniforms.uAspect, 2);
-  assert.deepEqual(harness.state.postEffects[0].uniforms.uRect.slice(0, 4), [0.3, 0.45, 0.25, 0.25]);
+  assert.deepEqual(Array.from(harness.state.postEffects[0].uniforms.uRegion0Rect), [0.3, 0.45, 0.25, 0.25]);
 });
 
 // makeBundleWithCustomPost returns a minimal Scene3D bundle that carries one

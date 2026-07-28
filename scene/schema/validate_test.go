@@ -247,7 +247,7 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"[data-glass]",
 				"max":8,
-				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"regionRects","meta":"regionMeta"}
+				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"region%dRect","meta":"region%dMeta"}
 			}
 		}]
 	}`), Options{})
@@ -261,7 +261,7 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"",
 				"max":17,
-				"uniforms":{"rect":"bad uniform"}
+				"uniforms":{"rect":"bad uniform","meta":"region%d%dMeta"}
 			}
 		}]
 	}`), Options{})
