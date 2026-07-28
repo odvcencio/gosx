@@ -13,7 +13,7 @@ import (
 // TestMarshalPatchesMatchesEncodingJSON pins the hand-rolled encoder to
 // encoding/json byte for byte.
 //
-// patch.js, runtime.test.js and recorded fixtures all read this exact text, so a
+// patch.js, the client/js runtime suite and recorded fixtures all read this exact text, so a
 // single escaping difference is a wire break. Any change to appendPatchesJSON
 // must keep this test green.
 func TestMarshalPatchesMatchesEncodingJSON(t *testing.T) {

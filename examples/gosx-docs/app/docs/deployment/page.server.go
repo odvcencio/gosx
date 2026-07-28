@@ -82,7 +82,7 @@ jobs:
           sudo dpkg -i tinygo.deb
       - uses: actions/configure-pages@v5
       - name: Build static site
-        run: go run github.com/odvcencio/gosx/cmd/gosx build --prod .
+        run: go run m31labs.dev/gosx/cmd/gosx build --prod .
       - name: Disable Jekyll
         run: touch dist/static/.nojekyll
       - uses: actions/upload-pages-artifact@v4

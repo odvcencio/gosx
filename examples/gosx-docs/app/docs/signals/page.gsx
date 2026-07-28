@@ -7,7 +7,7 @@ func Page() Node {
 			<p>
 				A signal is a reactive cell — a value with a subscriber list. When the value changes, every subscriber is notified and re-evaluates. Signals are the atomic unit of reactivity in GoSX; there is no framework-owned state tree, no context providers, and no prop threading.
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/signal"
+			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
 	
 	// New creates a writable signal with an initial value.
 	count := signal.New(0)
@@ -46,7 +46,7 @@ func Page() Node {
 			<p>
 				A computed value derives from one or more signals. It re-evaluates lazily when any dependency changes and caches its result until the next change. Computeds are themselves read-only signals, so they can be used anywhere a signal value is expected.
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/signal"
+			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
 	
 	items  := signal.New([]string{"apple", "banana", "cherry"})
 	filter := signal.New("")
@@ -94,7 +94,7 @@ func Page() Node {
 			<p>
 				An effect is a side-effecting function that runs whenever its signal dependencies change. Effects are scheduled after all signal writes in a batch have propagated, so they always see a consistent state snapshot.
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/signal"
+			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
 	
 	count := signal.New(0)
 	
@@ -173,7 +173,7 @@ func Page() Node {
 				<span class="inline-code">signal.Batch</span>
 				groups writes into a single propagation pass:
 			</p>
-			{CodeBlock("go", `import "github.com/odvcencio/gosx/signal"
+			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
 	
 	firstName := signal.New("")
 	lastName  := signal.New("")
