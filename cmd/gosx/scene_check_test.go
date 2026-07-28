@@ -184,6 +184,10 @@ func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
 	// handles bundle.lit, bundle.unlit, bundle.shadow and particles, and skips
 	// bundle.worldLine, so a line list draws nothing on the CPU path.
 	//
+	// "lamp" is a rect-area light because that is the one authored light kind
+	// the CPU preview genuinely cannot shade. Point lights are supported and
+	// must not be used as the positive fixture for unsupported_light.
+	//
 	// Note that a polyhedron would NOT work here: tetrahedron, icosahedron and
 	// the rest carry no wire kind of their own. They lower to "gltf-mesh" with
 	// baked vertices, so the schema vocabulary rejects their authored names and
@@ -194,7 +198,7 @@ func TestRunSceneCheckSurfacesPreviewCoverageGaps(t *testing.T) {
 		{"id":"ok","kind":"cube","size":1,"x":-2}
 	],"lights":[
 		{"id":"key","kind":"directional","directionY":-1,"intensity":1},
-		{"id":"lamp","kind":"point","intensity":3,"y":3}
+		{"id":"lamp","kind":"rect-area","intensity":3,"y":3,"width":4,"height":4}
 	]}`
 	_, scenePath, _ := writeCheckFixture(t, document)
 
