@@ -239,6 +239,46 @@ func TestValidateJSONPostEffectsRequireKindOrType(t *testing.T) {
 	}
 }
 
+func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
+	valid := ValidateJSON([]byte(`{
+		"postEffects":[{
+			"kind":"customPost",
+			"name":"Glass",
+			"domRegions":{
+				"selector":"[data-glass]",
+				"max":8,
+				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"regionRects","meta":"regionMeta"}
+			}
+		}]
+	}`), Options{})
+	if !valid.Valid {
+		t.Fatalf("expected valid DOMRegions, got %+v", valid.Diagnostics)
+	}
+
+	invalid := ValidateJSON([]byte(`{
+		"postEffects":[{
+			"kind":"customPost",
+			"domRegions":{
+				"selector":"",
+				"max":17,
+				"uniforms":{"rect":"bad uniform"}
+			}
+		}]
+	}`), Options{})
+	if invalid.Valid {
+		t.Fatal("expected invalid DOMRegions to fail")
+	}
+	for _, code := range []string{
+		"scene.post_effect.dom_regions.selector",
+		"scene.post_effect.dom_regions.max",
+		"scene.post_effect.dom_regions.uniform",
+	} {
+		if !hasCode(invalid, code) {
+			t.Fatalf("expected %s diagnostic: %+v", code, invalid.Diagnostics)
+		}
+	}
+}
+
 func TestJSONSchemaEmbedded(t *testing.T) {
 	data := JSONSchema()
 	if len(data) == 0 {
