@@ -788,7 +788,7 @@ The six libraries the framework's runtime paths use:
 
 **The module graph is larger, and `go.mod` is the honest record.** Beyond those six it carries direct requires for tooling and optional subsystems: `chromedp` and `cdproto` (the `perf` profiler and browser tests), `brotli` (asset compression), `fsnotify` (the dev watcher), `mdpp` (Markdown++ in `content`), `pixelmatch` (visual regression), `go-redis` and `miniredis` (the optional Redis stores and their tests), `selena` (shader compilation), and `golang.org/x/sys`. A `//go:build tools` file additionally pins sibling M31 Labs modules ahead of their migrations, which is why `google.golang.org/grpc` and `protobuf` appear in `go.sum` — they reach no shipped binary, but they do reach a dependency audit.
 
-**No CGo.** `CGO_ENABLED=0 go build ./...` is clean, and `windows/amd64`, `darwin/arm64` and `linux/arm64` all cross-compile clean. `GOOS=js GOARCH=wasm` builds every package except `examples/vecdb-webgpu-smoke`, which references a removed `vecdb` prepared-query API — a known breakage documented at `e2e/vecdb_webgpu_smoke_test.go`.
+**No CGo.** `CGO_ENABLED=0 go build ./...` is clean, and `windows/amd64`, `darwin/arm64` and `linux/arm64` all cross-compile clean. `GOOS=js GOARCH=wasm` builds every package, with no exceptions — `make build-wasm-all` is a CI gate, so this sentence fails the build rather than going stale.
 
 **No JavaScript toolchain** — for your app. The framework itself contains roughly 79,000 lines of hand-written browser JavaScript and vendors `hls.min.js` for HLS playback. The claim is about your build, and there it holds: no Node, no npm, no bundler config.
 
