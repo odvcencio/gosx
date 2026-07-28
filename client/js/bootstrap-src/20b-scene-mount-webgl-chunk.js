@@ -264,13 +264,7 @@
     }, { webgpu: webgpuAvail, webgl: true });
     const preferWebGPU = verdict ? verdict.backend === "webgpu" : (webgpuPreference === "prefer" && !webgpuFeatureGap);
     const verdictFallback = verdict ? verdict.fallbackReason : "";
-    // Same fix as sceneWebGLBackendRequest above: trust the verdict over the
-    // raw avoid/prefer/force preference when backendCaps gave chooseSceneBackend
-    // enough to resolve one. See that function for the full incident note.
-    const wantsWebGL = verdict
-      ? verdict.backend === "webgl"
-      : (webglPreference === "prefer" || webglPreference === "force");
-    const allowWebGL = wantsWebGL && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    const allowWebGL = sceneAllowsWebGLBackend(verdict, webglPreference, backendCaps);
     const request = {
       props,
       capability,
@@ -321,6 +315,20 @@
       }
     }
     return null;
+  }
+
+  // A backend-capability verdict is the final selection policy. In particular,
+  // it may choose WebGL after a preferred WebGPU probe fails even when the
+  // adaptive environment preference would otherwise avoid WebGL. This matters
+  // for scenes whose backendCaps exclude canvas2d (for example skinning or
+  // water): rejecting the verdict here leaves no viable backend and reports
+  // "could not acquire a renderer" even though WebGL is available. The
+  // preference remains the policy for legacy manifests without backendCaps.
+  function sceneAllowsWebGLBackend(verdict, webglPreference, backendCaps) {
+    const selected = verdict
+      ? verdict.backend === "webgl"
+      : (webglPreference === "prefer" || webglPreference === "force");
+    return selected && sceneBackendCapsAllowsKind(backendCaps, "webgl");
   }
 
   const sceneModelAssetCache = new Map();
@@ -1486,19 +1494,7 @@
       ? verdict.backend === "webgpu"
       : (webgpuPreference === "prefer" && !sceneNeedsWebGLForWebGPUCoverage(props));
     const preferWebGPU = wantsWebGPU && webgpuAvail && sceneBackendCapsAllowsKind(backendCaps, "webgpu");
-    // Trust the verdict the same way wantsWebGPU does above. Without this, a
-    // scene whose backendCaps exclude canvas2d (skinning, water) and whose
-    // capability tier marks WebGL "avoid" (low-power/reduced-data) computed
-    // allowWebGL=false even when verdict.backend was "webgl" — the ONLY real
-    // backend chooseSceneBackend could pick once WebGPU was unavailable. That
-    // starved settlePreferredWebGLBackend of a reason to fetch the WebGL
-    // chunk, so createSceneRenderer ran with no factory loaded and reported
-    // "could not acquire a renderer" even though WebGL was the correct and
-    // only viable backend.
-    const wantsWebGL = verdict
-      ? verdict.backend === "webgl"
-      : (webglPreference === "prefer" || webglPreference === "force");
-    const allowWebGL = wantsWebGL && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    const allowWebGL = sceneAllowsWebGLBackend(verdict, webglPreference, backendCaps);
     return {
       props,
       capability,
@@ -3762,4 +3758,3 @@
     applySceneAdaptiveQualityState(mount, state, now, false);
     return false;
   }
-
