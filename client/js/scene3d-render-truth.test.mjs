@@ -31,7 +31,7 @@ const webgpuSource = readSrc("16a-scene-webgpu.js");
 // 20b-scene-mount-webgl-chunk.js, not 20-scene-mount.js: applySceneRendererState
 // (its only caller) moved there when the former single 20-scene-mount.js split
 // into the 20a..20h file set.
-const mountSource = readSrc("20b-scene-mount-webgl-chunk.js");
+const backendMountSource = readSrc("20b-scene-mount-webgl-chunk.js");
 
 // loadRenderTruth evaluates 15a in a throwaway VM with a minimal window and
 // returns the published API. No DOM library needed: the only DOM surface the
@@ -264,10 +264,10 @@ test("render truth: device loss and uncaptured GPU errors reach the journal", ()
 });
 
 test("render truth: the mount publishes ONE machine-readable backend record", () => {
-  assert.match(mountSource, /function sceneRenderBackendTruth\(mount, renderer, fallbackReason, degraded\)/);
-  assert.match(mountSource, /data-gosx-scene3d-render-backend-truth/);
-  assert.match(mountSource, /data-gosx-scene3d-render-gpu/);
+  assert.match(backendMountSource, /function sceneRenderBackendTruth\(mount, renderer, fallbackReason, degraded\)/);
+  assert.match(backendMountSource, /data-gosx-scene3d-render-backend-truth/);
+  assert.match(backendMountSource, /data-gosx-scene3d-render-gpu/);
   // gpu must be derived from the backend that actually ran, so a Canvas2D
   // mount -- which runs no shader at all -- can never report gpu=true.
-  assert.match(mountSource, /gpu: kind === "webgpu" \|\| kind === "webgl"/);
+  assert.match(backendMountSource, /gpu: kind === "webgpu" \|\| kind === "webgl"/);
 });
