@@ -2,8 +2,9 @@
 // The DOM label and HTML overlay layers above a canvas board, plus the
 // canvas2d routing decision between the WebGPU path and the 2D painter.
 //
-// Split out of client/js/runtime.test.js. Every shared fake, sandbox builder
-// and fixture factory lives in ./runtime-test-harness.js.
+// Split out of the former client/js/runtime.test.js, which this set replaces
+// and which no longer exists. Every shared fake, sandbox builder and fixture
+// factory lives in ./runtime-test-harness.js.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

@@ -163,9 +163,16 @@ func NewRenderer(bundleID string) *Renderer {
 	// Load the manifest once. NewRenderer used to call
 	// loadDefaultBuildManifest twice — once through loadDefaultRuntimeAssets
 	// and once for ApplyBuildManifest — and each call tried up to two
-	// buildmanifest.Load disk reads. route/fileeval.go reaches this per
-	// request. The measured fixed cost was 419 allocations and 47.4 KB per
-	// request.
+	// buildmanifest.Load disk reads. The measured fixed cost was 419
+	// allocations and 47.4 KB per request.
+	//
+	// The per-request caller is server.NewPageRuntime, which page_state.go
+	// runs once for every page response. An earlier version of this comment
+	// named route/fileeval.go, and that file names neither this package nor
+	// this function. Both claims below fail when the chain moves again.
+	//
+	// gosx:claim has server/runtime.go `island.NewRenderer\("gosx-page"\)`
+	// gosx:claim has server/page_state.go `s.runtime = NewPageRuntime\(\)`
 	manifest := loadDefaultBuildManifest()
 	runtimeAssets := buildmanifest.RuntimeAssets{}
 	if manifest != nil {
@@ -1155,6 +1162,16 @@ func (r *Renderer) RegisterComputeIsland(cfg ComputeIslandConfig) (string, error
 
 // RenderComputeIsland is a convenience wrapper for callers that mirror the
 // visual island API and only need the assigned manifest ID.
+//
+// It returns "" when RegisterComputeIsland fails, which makes a failure
+// indistinguishable from a registration that yielded an empty identifier. The
+// error itself is discarded here and nowhere else records it, so a caller that
+// needs to know why registration failed must call RegisterComputeIsland and
+// read the error.
+//
+// Prefer RegisterComputeIsland when the compute island is load-bearing. This
+// wrapper exists so a page that treats compute as optional reads like the
+// visual island calls beside it.
 func (r *Renderer) RenderComputeIsland(cfg ComputeIslandConfig) string {
 	id, err := r.RegisterComputeIsland(cfg)
 	if err != nil {

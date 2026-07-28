@@ -46,6 +46,39 @@ func BenchmarkTextTypeChar(b *testing.B) {
 	}
 }
 
+// BenchmarkTextTypeCharCommitted measures one keystroke in a session that
+// commits, which is what every replicated caller does: hub/scene3d commits at
+// the end of every Apply, and an editor commits to make a change replicate.
+//
+// Compare it against BenchmarkTextTypeChar, which never commits. That one holds
+// every operation and every patch in the two pending slices for the whole run,
+// so it measures an unbounded journal as much as it measures a keystroke: at
+// 200000 iterations the pending slices reach about 100 MB and the doubling
+// copies them again and again. The committed form pays a Change per keystroke
+// instead, and the two together separate the cost of the journal from the cost
+// of the edit.
+func BenchmarkTextTypeCharCommitted(b *testing.B) {
+	for _, size := range []int{200, 3200} {
+		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
+			doc, textID := setupTextDoc(b, size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				length, err := doc.ListLen(textID)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, _, err := doc.SpliceText(textID, uint64(length), 0, "x"); err != nil {
+					b.Fatal(err)
+				}
+				if _, err := doc.Commit("type"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkTextTypeSequence measures typing 200 runes one at a time into a
 // document that already holds size runes.
 func BenchmarkTextTypeSequence(b *testing.B) {

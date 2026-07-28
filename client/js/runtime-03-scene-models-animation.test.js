@@ -2,8 +2,9 @@
 // Declarative Scene3D model loading: glTF and GLB parsing, point and line
 // primitives, skinning, animation playback and the Selena skin material.
 //
-// Split out of client/js/runtime.test.js. Every shared fake, sandbox builder
-// and fixture factory lives in ./runtime-test-harness.js.
+// Split out of the former client/js/runtime.test.js, which this set replaces
+// and which no longer exists. Every shared fake, sandbox builder and fixture
+// factory lives in ./runtime-test-harness.js.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");

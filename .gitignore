@@ -22,3 +22,10 @@ go.work.sum
 # these at the repository root; one reached 8.2 MB.
 *.test
 *.test.exe
+
+# Cross-compiled CLI binaries. The Windows build gate leaves gosx.exe at the
+# repository root; it is 36 MB, and *.test.exe above does not match it.
+# Anchored with a leading slash: an unanchored "gosx" would also ignore the
+# cmd/gosx source directory.
+/gosx
+/gosx.exe

@@ -2690,7 +2690,27 @@
       });
     }
 
-    await sceneModelHydration;
+    // hydrateSceneStateModels already turns a per-model load failure (e.g. a
+    // 404 on a declared GLB/glTF src) into a logged warning and an empty
+    // asset, never a rejection — see loadSceneModelAsset's try/catch in
+    // 20b-scene-mount-webgl-chunk.js. This guard is defense in depth for any
+    // OTHER step in the hydration pipeline (asset instantiation, skin setup)
+    // that is not yet behind its own try/catch: a broken model asset must
+    // degrade the scene, not abort the mount. Without this, the mount would
+    // never reach scheduleInitialRender below, so it would never publish
+    // data-gosx-scene3d-mounted or -backend, and any caller waiting on the
+    // mount (including the honesty-gate contract: a scene must always report
+    // its chosen backend even when one of its assets fails to load) would
+    // hang instead of seeing an honest, if degraded, mount.
+    try {
+      await sceneModelHydration;
+    } catch (error) {
+      console.warn("[gosx] Scene3D model hydration failed; mounting without the affected model(s):",
+        error && error.message ? error.message : error);
+      gosxSceneEmit("warn", "model-hydration-failed", {
+        error: error && error.message ? String(error.message) : String(error),
+      });
+    }
     scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
 
     // Defer the first Scene3D render until after a first-paint boundary.

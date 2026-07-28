@@ -2,6 +2,51 @@
 
 ## v0.36.0 (2026-07-26)
 
+### Checkable cross-file claims (`internal/claimcheck`)
+
+A comment that describes code in another file goes stale in silence. One audit
+found eight such comments in two days. The worst of them said a feature did not
+work when it did, which tells the next author to delete working code.
+
+- Added `internal/claimcheck`. Write one marker line inside an ordinary comment.
+  The marker names a verb, a repository-relative path, and a regular expression
+  in backticks. The verbs are `has`, `lacks` and `count=N`.
+  `TestRepoClaimsHold` walks the tree, parses every marker, and checks it
+  against the file it names.
+- A missing target file fails. It never skips. A marker that does not parse
+  fails with a different message than a claim that is false, so a typo can never
+  read as a passing guard.
+- The walk asserts a floor on the claim count and asserts that every parsed
+  claim was evaluated, so a checker that reads nothing cannot report success.
+- The mechanism is about 300 lines and works across build tags and languages,
+  because it reads source as text.
+- Converted 38 comments, including the Go and JavaScript canvas board event
+  enums, the engine-surface and canvas2d browser seams, the island tree
+  lifetime rule, the audio engine homes, and the asset pipeline codec scope.
+
+### Corrected asset pipeline codec scope
+
+The `assetpipe` package doc said Execute materialized three actions and that
+`texture-transcode-ktx2` still needed a block encoder. Execute materializes six,
+and the BC1, BC3, BC4, BC5 and BC7 encoders shipped. The paragraph told a reader
+to write an encoder that already existed. ASTC, ETC2 and BC6H remain refused,
+and `RefusedTextureFormats` names each with the reason.
+
+### Corrected island renderer hot-path note
+
+`island.NewRenderer` said `route/fileeval.go` reached it once per request. That
+file names neither the package nor the function. The per-request caller is
+`server.NewPageRuntime`, which `server/page_state.go` runs for every page
+response.
+
+### Removed dead WASM data externalization
+
+`cmd/gosx/wasmstrip.go` held `wasmExternalizeData`, `readLEB128` and
+`readSignedLEB128`: about 140 lines with no caller anywhere in the tree, no
+test, and no browser loader for the `.data` sidecar it wrote. The v0.13.0 entry
+advertised it as shipped. The file is deleted and that entry is marked
+withdrawn.
+
 ### Procedural point clouds (`scene.PointsGenerator`)
 
 `scene.Points` accepted only explicit `Positions` and `Sizes` arrays. A
@@ -3698,9 +3743,13 @@ New `sim` package providing server-authoritative game simulation over gosx hubs.
 
 Production builds now strip DWARF debug sections from WASM binaries via `wasm-opt --strip-debug --strip-producers`. Debug symbols were 45% of the binary (1.3 MB) and served no purpose in the browser. Result: 1032 KB → 526 KB gzipped, a 49% reduction. Dev builds retain debug symbols.
 
-### WASM Data Section Externalization (experimental)
+### WASM Data Section Externalization (experimental) — withdrawn
 
-`wasmExternalizeData` post-processor splits the WASM data section (strings, type tables, reflection metadata) into a separate file for parallel loading. The browser can start compiling WASM code while the data section downloads independently.
+**Withdrawn on 2026-07-27. This entry described a feature that never shipped. Read the correction below, not the paragraph it corrects.**
+
+The original entry said: "`wasmExternalizeData` post-processor splits the WASM data section (strings, type tables, reflection metadata) into a separate file for parallel loading. The browser can start compiling WASM code while the data section downloads independently."
+
+Only the writer half existed. `wasmExternalizeData` sat in `cmd/gosx/wasmstrip.go` with no caller in the build, no test, and no loader in the browser bootstrap. No build ever produced a `.data` sidecar and no page ever fetched one, so no user saw the parallel load this entry promised. The code was removed in the Unreleased section above.
 
 ## v0.12.0
 

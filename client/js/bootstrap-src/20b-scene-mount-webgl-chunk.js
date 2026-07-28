@@ -319,7 +319,10 @@
 
   // A backend-capability verdict is the final selection policy. In particular,
   // it may choose WebGL after a preferred WebGPU probe fails even when the
-  // adaptive environment preference would otherwise avoid WebGL. The
+  // adaptive environment preference would otherwise avoid WebGL. This matters
+  // for scenes whose backendCaps exclude canvas2d (for example skinning or
+  // water): rejecting the verdict here leaves no viable backend and reports
+  // "could not acquire a renderer" even though WebGL is available. The
   // preference remains the policy for legacy manifests without backendCaps.
   function sceneAllowsWebGLBackend(verdict, webglPreference, backendCaps) {
     const selected = verdict

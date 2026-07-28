@@ -35,6 +35,18 @@ func (w *World) Restore(snapshot []byte) {
 }
 
 // State returns the current authoritative state as JSON for broadcast.
+//
+// It returns nil for a nil world and nil when the snapshot will not marshal.
+// Because the result is usually written straight to a transport, a nil here
+// becomes an empty frame rather than an error, and a peer that receives nothing
+// cannot tell a marshalling failure from a world that was never stepped. Check
+// for nil before broadcasting when a missed frame matters.
+//
+// The bytes describe the state at the moment of the call. World carries no
+// mutex — the package has none — so this is not safe to call while another
+// goroutine steps the world. Reading a body's position while the step writes it
+// is a data race, not merely a stale frame. Serialize the call with the step,
+// or snapshot from the same goroutine that advances the simulation.
 func (w *World) State() []byte {
 	if w == nil {
 		return nil

@@ -66,12 +66,20 @@ type TextureOptions struct {
 // DefaultTextureOptions returns the settings the Execute path applies.
 //
 // Execute cannot carry per-stage texture settings yet. ExecuteOptions holds an
-// IBL field and a LOD field, and adding a Texture field means editing
-// execute.go, which this change does not own. Until that field exists, Execute
-// runs the texture stage on these defaults, and a caller that needs other
-// settings calls BuildTexture directly.
+// IBL field, a LOD field and an Optimize field, and adding a Texture field
+// means editing execute.go, which this change does not own. Until that field
+// exists, Execute runs the texture stage on these defaults, and a caller that
+// needs other settings calls BuildTexture directly.
+//
 // BlockCompression is on. A block variant costs encode time once and saves four
 // to eight times the GPU memory on every frame a device draws it.
+//
+// The lacks claim retires this workaround by itself. The moment execute.go
+// grows the field, the claim fails and names this comment, so the paragraph
+// cannot outlive the limit it describes.
+//
+//	gosx:claim lacks assetpipe/execute.go `Texture TextureOptions`
+//	gosx:claim has assetpipe/execute.go `Optimize OptimizeOptions`
 func DefaultTextureOptions() TextureOptions {
 	return TextureOptions{Filter: "lanczos3", BlockCompression: true, BlockQuality: "balanced"}
 }

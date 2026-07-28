@@ -388,10 +388,19 @@ func (rt *CanvasBoardAdapter) PickWorldRect(minX, minY, maxX, maxY float64) []st
 
 // NavFrom returns the id of the pickable rect node spatially nearest to
 // currentID in direction dir ("up" | "down" | "left" | "right"), mirroring the
-// DOM board's nearestNodeKey (sitemapruntime/island_runtime.js): the cost of a
-// candidate is its primary-axis distance plus 2× its perpendicular-axis
-// distance, and candidates strictly behind the pressed direction are filtered
-// out (the half-plane gate). The lowest-cost candidate wins.
+// DOM board's nearestNodeKey: the cost of a candidate is its primary-axis
+// distance plus 2× its perpendicular-axis distance, and candidates strictly
+// behind the pressed direction are filtered out (the half-plane gate). The
+// lowest-cost candidate wins.
+//
+// The DOM board is sitemapruntime/island_runtime.js in a SEPARATE product, not
+// in this repository. An earlier version of this comment gave that path with no
+// such warning, so a reader searched this tree for a file that was never here.
+// The cost model therefore has no second copy in this tree to drift against.
+// Two tests pin it instead, and the claims below fail when either is renamed.
+//
+//	gosx:claim has client/vm/canvas_board_selection_test.go `func TestNavFromHalfPlaneFilter`
+//	gosx:claim has client/vm/canvas_board_selection_test.go `func TestNavFromPrefersOnAxis`
 //
 // Orientation note: the canvas paints with world +Y UP (the OrthoCamera2D Y
 // flip the JS painter applies), so "up" on screen is +Y in world. The direction

@@ -19,8 +19,8 @@
 //     voice-over, recorded SFX) to register once at mount time and then
 //     play/stop by ID, optionally positioned in world space.
 //
-//   - arcadeAudio (client/js/bootstrap-src/30-tail.js) is a procedural
-//     synth: oscillator tones, frequency sweeps, and filtered noise bursts
+//   - arcadeAudio (client/js/bootstrap-src/30c2-tail-arcade-audio.js) is a
+//     procedural synth: oscillator tones, frequency sweeps, and noise bursts
 //     shaped by short attack/decay/sustain/release gain envelopes, mixed
 //     through a shared compressor bus with a 28-voice limiter. It needs no
 //     asset loading. Use SynthPatch (built from ToneLayer, SweepLayer, and
@@ -38,8 +38,18 @@
 // "audio" key of the engine's props — e.g. props["audio"] = manifest.Props().
 // The client's mountEngine already does the rest: whenever entry.props.audio
 // is present it calls window.__gosx.audio.registerManifest(entry.props.audio)
-// automatically (client/js/bootstrap-src/30-tail.js, ~line 3712). No client
-// changes were needed for this path.
+// automatically (client/js/bootstrap-src/30b-tail-engine-mounting.js). No
+// client changes were needed for this path.
+//
+// The three paragraphs above named client/js/bootstrap-src/30-tail.js, which
+// the bundle build split into the 30a..30k file set. A reader who opened that
+// path found nothing and had no way to tell which of eleven files replaced it.
+// The claims below name the real homes and fail on the next split.
+//
+//	gosx:claim has client/js/bootstrap-src/30c2-tail-arcade-audio.js `arcadeAudio`
+//	gosx:claim has client/js/bootstrap-src/30b-tail-engine-mounting.js `window.__gosx.audio.registerManifest\(entry.props.audio\)`
+//	gosx:claim has client/js/bootstrap-src/30c1-tail-hub-fight-input.js `function onHubMessage`
+//	gosx:claim has client/js/bootstrap-src/05-document-env.js `registerManifest`
 //
 // AudioCue is the live-fire counterpart: a single "play this now" event a
 // server-driven scene sends per tick or on demand. See AudioCue's doc for
@@ -445,7 +455,7 @@ func (p SynthPatch) Props() map[string]any {
 //     AudioCue.Props() under the "audio" key of whatever payload a hub
 //     broadcasts as e.g. its "tick" event. The engine's built-in hub
 //     input controller (createHubInputController's onHubMessage, in
-//     client/js/bootstrap-src/30-tail.js) already reads message.data.audio
+//     client/js/bootstrap-src/30c1-tail-hub-fight-input.js) reads data.audio
 //     and fires playArcadeSFX(cue.cue || <inferred from event.kind>,
 //     {intensity, pan, depth}) plus phase/state cues (round/fight/ko/
 //     surge/...) inferred from other tick fields. Seq/Cue/PhaseCue/
