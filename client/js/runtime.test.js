@@ -29421,6 +29421,7 @@ test("CustomPost DOMRegions suspendWhileScrolling marks effect inactive without 
   assert.equal(scrollListeners.length > 0, true);
   scrollListeners[0]();
 
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-scroll-active"), "true");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
   assert.equal(harness.env.context.__gosx_scene3d_dom_regions.customPostVisible(harness.state.postEffects[0]), false);
   assert.equal(harness.env.context.__gosx_scene3d_dom_regions.filterEffects(harness.state.postEffects).length, 0);
@@ -29439,7 +29440,10 @@ test("CustomPost DOMRegions suspendWhileScrolling resumes with one idle remeasur
   const scrollListeners = harness.env.windowListeners.get("scroll") || [];
   scrollListeners[0]();
   assert.equal(harness.raf.count(), 0, "active scroll must not schedule measurement");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-scroll-active"), "true");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
   assert.equal(harness.timers.runDelay(120), 1);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-scroll-active"), "false");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "false");
   assert.equal(harness.raf.count(), 1, "idle should schedule one remeasure");
 
@@ -29462,6 +29466,8 @@ test("CustomPost DOMRegions follow mode updates during scroll without layout rea
   harness.env.context.scrollY = 60;
   const scrollListeners = harness.env.windowListeners.get("scroll") || [];
   scrollListeners[0]();
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-scroll-active"), "true");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "false");
   harness.raf.flush(32);
   await flushAsyncWork();
 
@@ -29487,6 +29493,8 @@ test("CustomPost DOMRegions follow mode remeasures once after scroll idle", asyn
   harness.env.context.scrollY = 40;
   const scrollListeners = harness.env.windowListeners.get("scroll") || [];
   scrollListeners[0]();
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-scroll-active"), "true");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "false");
   harness.raf.flush(32);
   await flushAsyncWork();
   assert.equal(harness.layoutReads.rect, initialRects, "active follow must not remeasure");
@@ -29495,6 +29503,7 @@ test("CustomPost DOMRegions follow mode remeasures once after scroll idle", asyn
   harness.raf.flush(96);
   await flushAsyncWork();
   assert.equal(harness.layoutReads.rect > initialRects, true, "idle must perform a stable remeasure");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-scroll-active"), "false");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "false");
 
   harness.tracker.dispose();

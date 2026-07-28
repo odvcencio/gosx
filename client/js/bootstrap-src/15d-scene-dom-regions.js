@@ -515,10 +515,15 @@
       return Math.floor(delay > 0 ? delay : SCENE_DOM_REGION_SCROLL_IDLE_MS);
     }
 
-    function setScrollSuspended(value) {
+    function hasActiveSuspendMode() {
+      return sceneDOMRegionScrollActive && hasScrollMode(SCENE_DOM_REGION_SCROLL_SUSPEND);
+    }
+
+    function setScrollActive(value) {
       sceneDOMRegionScrollActive = value === true;
       if (mount && typeof mount.setAttribute === "function") {
-        mount.setAttribute("data-gosx-scene3d-dom-regions-suspended", sceneDOMRegionScrollActive ? "true" : "false");
+        mount.setAttribute("data-gosx-scene3d-dom-regions-scroll-active", sceneDOMRegionScrollActive ? "true" : "false");
+        mount.setAttribute("data-gosx-scene3d-dom-regions-suspended", hasActiveSuspendMode() ? "true" : "false");
       }
     }
 
@@ -559,7 +564,7 @@
         cancel(raf);
         raf = null;
       }
-      setScrollSuspended(true);
+      setScrollActive(true);
       if (hasScrollMode(SCENE_DOM_REGION_SCROLL_FOLLOW) && cached.length > 0 && stableViewport) {
         lastPatchKey = "";
         scheduleMeasure(true);
@@ -570,7 +575,7 @@
       scrollIdleTimer = setTimeout(function() {
         scrollIdleTimer = null;
         if (disposed) return;
-        setScrollSuspended(false);
+        setScrollActive(false);
         lastPatchKey = "";
         scheduleMeasure();
       }, scrollIdleDelayMS());
@@ -615,7 +620,7 @@
           clearTimeout(scrollIdleTimer);
           scrollIdleTimer = null;
         }
-        setScrollSuspended(false);
+        setScrollActive(false);
         if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
           window.removeEventListener("scroll", onScroll, true);
           window.removeEventListener("resize", onGeometryChange);
